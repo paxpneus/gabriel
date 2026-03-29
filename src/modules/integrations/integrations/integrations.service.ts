@@ -24,7 +24,7 @@ export class IntegrationService extends BaseService<
   async getFullIntegration(params: FindOptions, redisKey?: string): Promise<FullIntegration> {
     if (redisKey) {
       const cachedIntegrationsData = await RedisService.get(
-        `fullintegration:${redisKey}`,
+        `fullintegration:${redisKey}`
       );
 
       if (cachedIntegrationsData != null || cachedIntegrationsData != undefined)

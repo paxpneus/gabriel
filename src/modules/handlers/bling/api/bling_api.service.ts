@@ -17,7 +17,7 @@ function processQueue(error: unknown, token: string | null = null): void {
 }
  
 // Busca a integração com a bling (options, chave redis para cache)
-const getBlingIntegration = async (cacheKey?: string): Promise<FullIntegration> => {
+export const getBlingIntegration = async (cacheKey?: string): Promise<FullIntegration> => {
     const integration = await integrationsService.getFullIntegration({where: {
         name: 'Bling',
         type: 'SYSTEM',
@@ -35,7 +35,7 @@ const getBlingIntegration = async (cacheKey?: string): Promise<FullIntegration> 
 const getBlingToken = async ():Promise<ConfigToken> =>  {
     const integration = await getBlingIntegration('Bling')
 
-    const token = integration.tokens?.[0]
+    const token = integration.tokens
 
     if (!token) throw new Error('BlingApi Nenhum configToken Encontrado')
 
@@ -46,7 +46,7 @@ const doRefreshToken = async(): Promise<string> => {
   
   const integration = await getBlingIntegration()
  
-  const configToken = integration.tokens?.[0]
+  const configToken = integration.tokens
   if (!configToken) throw new Error('[BlingApi] ConfigToken não encontrado para refresh.')
  
   // Bling exige Basic Auth com clientId:clientSecret em Base64
@@ -133,3 +133,44 @@ export const blingApi: AxiosInstance = createAxiosInstance({
     }
   },
 })
+
+export const handleBlingOAuthCallback = async (code: string): Promise<void> => {
+  const integration = await getBlingIntegration()
+  const configToken = integration.tokens
+  
+  if (!configToken) throw new Error('ConfigToken não encontrado')
+
+  const basic = Buffer
+    .from(`${configToken.client_id}:${configToken.client_secret}`)
+    .toString('base64')
+
+    console.log({
+  url: configToken.access_token_url,
+  client_id: configToken.client_id,
+  redirect_uri: configToken.callback_url,
+  code,
+})
+
+  const tokenRes = await fetch(configToken.access_token_url!, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Basic ${basic}`,
+    },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: configToken.callback_url!,
+    }).toString(),
+  })
+
+  if (!tokenRes.ok) {
+  const errorBody = await tokenRes.text()
+  console.log('Bling error body:', errorBody)
+  throw new Error(`Erro ao trocar code: ${tokenRes.status}`)
+}
+
+  const { access_token, refresh_token } = await tokenRes.json() as BlingTokenResponse
+await configToken.update({ access_token, refresh_token })
+
+}

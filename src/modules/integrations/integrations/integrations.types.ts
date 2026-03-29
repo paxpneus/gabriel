@@ -13,5 +13,5 @@ export interface integrationsAttributes {
 export type integrationsCreationAttributes = Omit<integrationsAttributes, 'id'>
 
 export interface FullIntegration extends Integration {
-  tokens: ConfigToken[]
+  tokens: ConfigToken
 }

@@ -37,7 +37,7 @@ ConfigToken.init(
         },
         access_token: {
             type: DataTypes.TEXT,
-            allowNull: false,
+            allowNull: true,
         },
         refresh_token: {
             type: DataTypes.TEXT,
