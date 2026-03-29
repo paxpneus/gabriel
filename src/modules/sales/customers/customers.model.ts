@@ -28,7 +28,7 @@ Customer.init(
             allowNull: false,
         },
         type: {
-            type: DataTypes.ENUM('P', 'J'),
+            type: DataTypes.ENUM('F', 'J'),
             allowNull: false,
         },
         document: {
