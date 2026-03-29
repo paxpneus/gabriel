@@ -42,7 +42,7 @@ const getBlingToken = async ():Promise<ConfigToken> =>  {
         return token 
 }
 
-const doRefreshToken = async(): Promise<string> {
+const doRefreshToken = async(): Promise<string> => {
   
   const integration = await getBlingIntegration()
  
