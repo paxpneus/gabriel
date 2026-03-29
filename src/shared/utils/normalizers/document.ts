@@ -10,6 +10,11 @@ const normalizeDocument = <T extends hasDocument> (instance: T) => {
     }
 };
 
+const cleanDocument = (doc: string) => String(doc).replace(/\D/g, '')
+
+
+
 export {
-    normalizeDocument
+    normalizeDocument,
+    cleanDocument
 }

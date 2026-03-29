@@ -35,33 +35,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
   }
 })
 
-/**
- * GET /bling-orders/test-api
- *
- * Testa se o blingApi está funcionando: faz uma chamada real para a API do Bling
- * e retorna os dados. Use para validar token, refresh e conexão.
- *
- * Não precisa de payload — só chame a rota e veja o retorno.
- */
-router.get('/test-api', async (req: Request, res: Response) => {
-  try {
-    const { data } = await blingApi.get('/pedidos/vendas', {
-      params: { limite: 1 } // busca só 1 pedido para não pesar
-    })
-    res.status(200).json({
-      ok: true,
-      message: 'blingApi funcionando',
-      sample: data
-    })
-  } catch (error: any) {
-    res.status(500).json({
-      ok: false,
-      message: 'blingApi com erro',
-      error: error.message
-    })
-  }
-})
-
+// Rota Callback para colocar no campo de callback url na bling
 router.get('/callback', async (req: Request, res: Response) => {
   const { code, state } = req.query as Record<string, string>
 

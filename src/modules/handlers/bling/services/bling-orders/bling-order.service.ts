@@ -1,18 +1,16 @@
 import { AxiosInstance } from "axios";
-import { blingApi, getBlingIntegration } from "../../api/bling_api.service";
+import { getBlingIntegration } from "../../api/bling_api.service";
 import { blingOrderWebHookData } from "./bling-order.types";
 import ordersService from "../../../../sales/orders/orders.service";
-import customersService from "../../../../sales/customers/customers.service";
 import { orderCreationAttributes } from "../../../../sales/orders/orders.types";
-import RedisService from "../../../../../shared/utils/base-models/base-redis";
-import { FullIntegration } from "../../../../integrations/integrations/integrations.types";
-import { customerCreationAttributes } from "../../../../sales/customers/customers.types";
-
+import {BlingCustomerService} from "../bling-customers/bling-customer.service";
 export class BlingOrderService {
   public blingApi: AxiosInstance;
+  private blingCustomerService: BlingCustomerService
 
   constructor(blingApi: AxiosInstance) {
     this.blingApi = blingApi;
+    this.blingCustomerService = new BlingCustomerService(blingApi)
   }
 
   
@@ -28,7 +26,7 @@ export class BlingOrderService {
     }
 
     // 1. Resolve o cliente (Busca ou Cria)
-    const customer = await this.getOrCreateCustomer(orderData.contato);
+    const customer = await this.blingCustomerService.getOrCreateCustomer(orderData.contato);
 
     // 2. Prepara o payload do pedido
     const ordersPayload: orderCreationAttributes = {
@@ -40,33 +38,8 @@ export class BlingOrderService {
 
     // 3. Cria o pedido
     await ordersService.create(ordersPayload);
-  }
-
+  }   
   
-   // Lógica separada para gerenciar a existência do cliente
-   
-  private async getOrCreateCustomer(contato: any) {
-    // Tenta encontrar o cliente existente
-    let customer = await customersService.findOne({
-      where: {
-        name: contato.nome,
-        document: contato.numeroDocumento,
-      },
-    });
-
-    // Se não existir, cria um novo
-    if (!customer) {
-      const customerPayload: customerCreationAttributes = {
-        name: contato.nome,
-        type: contato.tipoPessoa,
-        document: contato.numeroDocumento,
-      };
-
-      customer = await customersService.create(customerPayload);
-    }
-
-    return customer;
-  }
 }
 
 export default BlingOrderService

@@ -42,6 +42,7 @@ const getBlingToken = async ():Promise<ConfigToken> =>  {
         return token 
 }
 
+// Renova um token que já existe
 const doRefreshToken = async(): Promise<string> => {
   
   const integration = await getBlingIntegration()
@@ -81,6 +82,7 @@ const doRefreshToken = async(): Promise<string> => {
   return data.access_token
 }
 
+// Instancia do axios para bling
 export const blingApi: AxiosInstance = createAxiosInstance({
   baseURL: 'https://www.bling.com.br/Api/v3',
  
