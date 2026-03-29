@@ -8,6 +8,7 @@ export interface configTokensAtributes {
     access_token_url: string,
     auth_url: string,
     callback_url: string,
+    oauth_state?: string,
 }
 
 export type configTokensCreationAtributes = Omit<configTokensAtributes, 'id'>

@@ -13,6 +13,7 @@ class ConfigToken extends Model<configTokensAtributes, configTokensCreationAtrib
     public access_token_url!: string;
     public auth_url!: string;
     public callback_url!: string;
+    public oauth_state?: string | undefined;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -55,6 +56,10 @@ ConfigToken.init(
             allowNull: true,
         },
         auth_url: {
+            type: DataTypes.STRING(255),
+            allowNull: true,
+        },
+        oauth_state: {
             type: DataTypes.STRING(255),
             allowNull: true,
         },

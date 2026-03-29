@@ -1,3 +1,6 @@
+import ConfigToken from '../config_tokens/config_tokens.model';
+import { configTokensAtributes } from './../config_tokens/config_tokens.types';
+import Integration from './integrations.model';
 export type integrationsType = 'CHANNEL' | 'SYSTEM'
 
 export interface integrationsAttributes {
@@ -8,3 +11,7 @@ export interface integrationsAttributes {
 }
 
 export type integrationsCreationAttributes = Omit<integrationsAttributes, 'id'>
+
+export interface FullIntegration extends Integration {
+  tokens: ConfigToken[]
+}
