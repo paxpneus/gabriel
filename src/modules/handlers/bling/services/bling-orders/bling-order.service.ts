@@ -57,11 +57,14 @@ export class BlingOrderService {
     // 3. Cria o pedido
     await ordersService.create(ordersPayload);
 
-    if (customer.document) {
+    if (customer.document && orderData.contato.tipoPessoa === 'J') {
     await this.cnpjQueue.add(
         { customer, cnaes: integration.cnaes },
         `cnpj-check-${customer.id}`
     )
+} else if (customer.document && orderData.contato.tipoPessoa === 'F') {
+      console.log(`[BlingOrderService] Cliente CPF ${customer.document}, pulando validação de CNAE`)
+
 }
   } catch (error: any) {
       console.error('[BlingOrderService] Erro ao processar pedido:', error.response?.data ?? error.message)
