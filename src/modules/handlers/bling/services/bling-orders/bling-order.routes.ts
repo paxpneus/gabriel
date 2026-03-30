@@ -5,7 +5,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { BlingOrderQueue } from './bling-order.queue';
 
 const router = Router()
-const blingOrderService = new BlingOrderService(blingApi)
 
 /**
  * POST /bling-orders/webhook
