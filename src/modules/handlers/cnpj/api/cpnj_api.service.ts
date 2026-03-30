@@ -41,20 +41,19 @@ const providerInstances: AxiosInstance[] = CNPJ_PROVIDERS.map(({ url }) =>
 )
 
 // Tenta cada provider em sequência até um responder com sucesso
-export const fetchCNPJ = async <T = unknown>(cnpj: string): Promise<NormalizedCNPJ> => {
+export const fetchCNPJ = async <T = unknown>(cnpj: number): Promise<NormalizedCNPJ> => {
   let lastError: unknown
-  const cleanCNPJ = cleanDocument(cnpj)
 
   for (let i = 0; i < CNPJ_PROVIDERS.length; i++) {
     const provider = CNPJ_PROVIDERS[i]
     const instance = providerInstances[i]
 
     try {
-      const { data } = await instance.get<T>(provider.buildPath(cleanCNPJ))
+      const { data } = await instance.get<T>(provider.buildPath(String(cnpj)))
       return provider.normalize(data)
     } catch (error: any) {
       if (error.response?.status === 404) {
-        console.warn(`[CNPJ] CNPJ ${cleanCNPJ} não encontrado no provider ${provider.api}`);
+        console.warn(`[CNPJ] CNPJ ${cnpj} não encontrado no provider ${provider.api}`);
       }
       lastError = error
     }
