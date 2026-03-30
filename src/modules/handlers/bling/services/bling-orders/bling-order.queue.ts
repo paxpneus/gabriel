@@ -11,7 +11,8 @@ export class BlingOrderQueue extends BaseQueueService<any> {
     }
 
     async process(job: Job<any, any, string>): Promise<void> {
-        console.log(`[QUEUE] Processando Pedido ${job.id}`)
-        await this.orderService.createOrderFromBling(job.data)
+        console.log(job.data)
+        console.log(`[QUEUE] Processando Pedido ${job.data.event} - ${job.data.data.id}`)
+        await this.orderService.processWebhook(job.data.event, job.data)
     }
 }

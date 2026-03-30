@@ -4,6 +4,7 @@ export interface orderAttributes {
     id: string,
     integration_id: string,
     customer_id: string,
+    id_order_system?: string,
     number_order_system: string,
     number_order_channel: string,
     actual_step?: string,

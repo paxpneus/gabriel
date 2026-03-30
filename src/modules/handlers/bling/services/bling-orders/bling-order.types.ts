@@ -1,4 +1,5 @@
 export interface blingOrderWebHookData {
+    data: {
     id: number,
     data: string,
     numero: number,
@@ -11,4 +12,5 @@ export interface blingOrderWebHookData {
         id: number,
         valor: number,
     }
+}
 }

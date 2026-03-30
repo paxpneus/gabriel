@@ -7,6 +7,7 @@ class Order extends Model<orderAttributes, orderCreationAttributes> implements o
     public id!: string;
     public integration_id!: string;
     public customer_id!: string;
+    public id_order_system?: string;
     public number_order_system!: string;
     public number_order_channel!: string;
     public actual_step!: string;
@@ -39,6 +40,10 @@ Order.init(
                 model: 'customers',
                 key: 'id'
             }
+        },
+        id_order_system: {
+            type: DataTypes.STRING(100),
+            allowNull: true,
         },
         number_order_system: {
             type: DataTypes.STRING(100),
