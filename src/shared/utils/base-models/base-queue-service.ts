@@ -54,4 +54,15 @@ export abstract class BaseQueueService<T> {
             backoff: {type: 'exponential', delay: 5000}
         })
     }
+
+    async addDelayed(data: T, jobId: string, delayMs: number) {
+    return this.queue.add(this.queueName, data, {
+        jobId,
+        delay: delayMs,
+        removeOnComplete: true,
+        removeOnFail: false,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 }
+    })
+}
 }
