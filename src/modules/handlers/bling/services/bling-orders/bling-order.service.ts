@@ -1,16 +1,19 @@
 import { AxiosInstance } from "axios";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import { blingOrderWebHookData } from "./bling-order.types";
-import ordersService from "../../../../sales/orders/orders.service";
+import ordersService, { OrderService } from "../../../../sales/orders/orders.service";
 import { orderCreationAttributes } from "../../../../sales/orders/orders.types";
 import {BlingCustomerService} from "../bling-customers/bling-customer.service";
+import { CNPJQueue } from "../../../cnpj/services/cnpj.queue";
 export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService
+  private cnpjQueue: CNPJQueue
 
-  constructor(blingApi: AxiosInstance) {
+  constructor(blingApi: AxiosInstance, cnpjQueue: CNPJQueue) {
     this.blingApi = blingApi;
     this.blingCustomerService = new BlingCustomerService(blingApi)
+    this.cnpjQueue = cnpjQueue
   }
 
   
@@ -53,6 +56,13 @@ export class BlingOrderService {
   
     // 3. Cria o pedido
     await ordersService.create(ordersPayload);
+
+    if (customer.document) {
+    await this.cnpjQueue.add(
+        { customer, cnaes: integration.cnaes },
+        `cnpj-check-${customer.id}`
+    )
+}
   } catch (error: any) {
       console.error('[BlingOrderService] Erro ao processar pedido:', error.response?.data ?? error.message)
         throw error
