@@ -7,7 +7,9 @@ export interface integrationsAttributes {
     id: string,
     name: string,
     type: integrationsType,
-    api_url: string
+    api_url: string,
+    cnaes: string[],
+    document: string,
 }
 
 export type integrationsCreationAttributes = Omit<integrationsAttributes, 'id'>
