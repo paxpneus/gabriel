@@ -8,6 +8,9 @@ export class CNPJService {
 
         const customerCnaes = await fetchCNPJ(customerCnpj)
 
+        console.log('CNAES DO CLIENTE', customerCnaes)
+        console.log('CNAES DA EMPRESA', allowedCnaes)
+
         return customerCnaes.cnaes.some(cnae => allowedCnaes.includes(cnae))
     }
 }
