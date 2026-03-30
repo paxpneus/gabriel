@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import BlingOrderService from './bling-order.service'
 import { blingApi, getBlingIntegration, handleBlingOAuthCallback } from '../../api/bling_api.service'
 import { v4 as uuidv4 } from 'uuid';
+import { BlingOrderQueue } from './bling-order.queue';
 
 const router = Router()
 const blingOrderService = new BlingOrderService(blingApi)
@@ -29,7 +30,9 @@ const blingOrderService = new BlingOrderService(blingApi)
  */
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
-    await blingOrderService.createOrderFromBling(req.body)
+    const blingOrderQueue: BlingOrderQueue = req.app.locals.BlingOrderQueue
+
+    await blingOrderQueue.add(req.body, `bling-order-${req.body.id}`)
     res.status(200).json({ received: true })
   } catch (error: any) {
     res.status(500).json({ error: error.message })
