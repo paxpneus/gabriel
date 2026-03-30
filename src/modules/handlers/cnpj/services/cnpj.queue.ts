@@ -4,6 +4,7 @@ import { BaseQueueService } from "../../../../shared/utils/base-models/base-queu
 import { Job } from "bullmq";
 import { AxiosInstance } from 'axios';
 import { isValidCNPJ, isValidCPF } from '../../../../shared/utils/validators/document';
+import { MLOrderQueue } from '../../mercado-livre/services/mercado-livre.queue';
 
 const ErrorValues = [
     {
@@ -20,11 +21,13 @@ const ErrorValues = [
 export class CNPJQueue extends BaseQueueService<any> {
   private CNPJService;
   private blingApi;
+  private mlOrderQueue: MLOrderQueue
 
-  constructor(cnpjService: CNPJService, blingApi: AxiosInstance) {
+  constructor(cnpjService: CNPJService, blingApi: AxiosInstance, mlOrderQueue: MLOrderQueue) {
     super("CNPJ_VERIFY_CNAE");
     this.CNPJService = cnpjService;
     this.blingApi = blingApi;
+    this.mlOrderQueue = mlOrderQueue
   }
 
     private async markOrderError(order: any, errorId: number): Promise<void> {
@@ -57,7 +60,12 @@ export class CNPJQueue extends BaseQueueService<any> {
 
         // CPF — pula validação de CNAE
         if (customer.type === 'F') {
-            console.log(`[CNPJQueue] CPF, seguindo para próxima fila`)
+            console.log(`[CNPJQueue] CPF, seguindo para próxima fila: Verificar data de coleta`)
+
+            await this.mlOrderQueue.add({
+                order: order, customer: customer
+            }, `ml-check-${order.id}`
+        )
             // await this.proximaFila.add(...)
             return
         }
@@ -66,7 +74,12 @@ export class CNPJQueue extends BaseQueueService<any> {
         const cnaeApproved = await this.CNPJService.checkCNAE(cnaes, document)
 
         if (cnaeApproved) {
-            console.log(`[CNPJQueue] CNAE aprovado, seguindo para próxima fila`)
+            console.log(`[CNPJQueue] CNAE aprovado, seguindo para próxima fila: Verificar data de coleta`)
+            
+            await this.mlOrderQueue.add({
+                order: order, customer: customer
+            }, `ml-check-${order.id}`
+        )
             // await this.proximaFila.add(...)
         } else {
             console.log(`[CNPJQueue] CNAE não atendido`)
