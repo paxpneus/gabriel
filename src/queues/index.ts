@@ -6,7 +6,7 @@ import { CNPJQueue } from "../modules/handlers/cnpj/services/cnpj.queue";
 import CNPJService from "../modules/handlers/cnpj/services/cnpj.service";
 
 export function initQueues(app: Express) {
-    const cnpjQueue = new CNPJQueue(new CNPJService())
+    const cnpjQueue = new CNPJQueue(new CNPJService(), blingApi)
     const blingOrderService = new BlingOrderService(blingApi, cnpjQueue)
     app.locals.BlingOrderQueue = new BlingOrderQueue(blingOrderService)
     app.locals.CNPJQueue = cnpjQueue
