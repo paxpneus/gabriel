@@ -30,8 +30,26 @@ const router = Router()
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
     const blingOrderQueue: BlingOrderQueue = req.app.locals.BlingOrderQueue
+    const event: string = req.body.event  // "order.created" | "order.updated" | "order.deleted"
+    const orderId = req.body.data?.id
 
-    await blingOrderQueue.add(req.body, `bling-order-${req.body.id}`)
+    if (!orderId) {
+      res.status(400).json({ error: 'Payload inválido: data.id ausente' })
+      return
+    }
+
+    if (!event || !event.startsWith('order.')) {
+      res.status(400).json({ error: 'Evento inválido ou não suportado' })
+      return
+    }
+
+    const action = event.split('.')[1] // "created" | "updated" | "deleted"
+
+    await blingOrderQueue.add(
+      { ...req.body, action },
+      `bling-order-${action}-${orderId}`
+    )
+
     res.status(200).json({ received: true })
   } catch (error: any) {
     res.status(500).json({ error: error.message })
