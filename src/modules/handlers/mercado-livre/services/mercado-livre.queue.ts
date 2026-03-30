@@ -3,7 +3,6 @@ import { BaseQueueService } from "../../../../shared/utils/base-models/base-queu
 import { MLOrderService } from "./mercado-livre.service";
 import { MLOrderJobData } from "./mercado-livre.types";
 import { AxiosInstance } from "axios";
-import { NFeQueue } from "../../bling/services/bling-nfe/nfe.queue";
 
 const ML_ORDER_ERRORS = {
   ORDER_NOT_FOUND: { id: 3, message: "Pedido não encontrado no Mercado Livre" },
@@ -12,13 +11,11 @@ const ML_ORDER_ERRORS = {
 export class MLOrderQueue extends BaseQueueService<MLOrderJobData> {
   private mlOrderService: MLOrderService;
   private blingApi: AxiosInstance;
-  private nfeQueue: NFeQueue
 
-  constructor(mlOrderService: MLOrderService, blingApi: AxiosInstance, nfeQueue: NFeQueue) {
+  constructor(mlOrderService: MLOrderService, blingApi: AxiosInstance) {
     super("ML_ORDER_FETCH"); // sem opções extras — segue o padrão da base
     this.mlOrderService = mlOrderService;
     this.blingApi = blingApi;
-    this.nfeQueue = nfeQueue
   }
 
   private async markOrderCancelled(order: any, message: string): Promise<void> {
@@ -60,11 +57,11 @@ export class MLOrderQueue extends BaseQueueService<MLOrderJobData> {
       `Delay: ${(delay / 1000 / 60 / 60).toFixed(1)}h`
     );
 
-    await this.nfeQueue.addDelayed(
-      {order_id: order.id, collection_date: String(mlData.collection_date)},
-      `nfe-generation-${order.id}`,
+    this.emit('ml.fetched', {
+      order_id: order.id,
+      collection_date: String(mlData.collection_date),
       delay
-    )
+    })
 
     // TODO: await this.reportQueue.addDelayed(
     //   { order, customer, ml_order_id: mlData.ml_order_id, collection_date: mlData.collection_date },

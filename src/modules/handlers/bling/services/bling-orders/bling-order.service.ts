@@ -11,15 +11,13 @@ import { executeWebhookAction } from "../../../../../shared/utils/normalizers/we
 export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService;
-  private cnpjQueue: CNPJQueue;
 
-  constructor(blingApi: AxiosInstance, cnpjQueue: CNPJQueue) {
+  constructor(blingApi: AxiosInstance) {
     this.blingApi = blingApi;
     this.blingCustomerService = new BlingCustomerService(blingApi);
-    this.cnpjQueue = cnpjQueue;
   }
 
-  async processWebhook(action: string, body: any): Promise<void> {
+  async processWebhook(action: string, body: any): Promise<{ customer: any; cnaes: any[]; order: any; } | null> {
     // Definimos o mapa de ações para este serviço específico
     const handlers = {
       'order.created': (data: any) => this.createOrderFromBling(data),
@@ -28,10 +26,10 @@ export class BlingOrderService {
     };
 
     // Chama a função global utilitária
-    await executeWebhookAction(action, body, handlers);
+    return await executeWebhookAction(action, body, handlers);
   }
 
-async updateOrderFromBling(body: blingOrderWebHookData): Promise<void> {
+async updateOrderFromBling(body: blingOrderWebHookData): Promise<null> {
   try {
     const integration = await getBlingIntegration("Bling")
     if (!integration) throw new Error("Bling Integration não encontrada no cache")
@@ -52,7 +50,7 @@ async updateOrderFromBling(body: blingOrderWebHookData): Promise<void> {
     if (!existingOrder) {
       console.log(`[BlingOrderService] Pedido ${orderData.numero} não encontrado para atualizar, criando...`)
       await this.createOrderFromBling(body)
-      return
+      return null;
     }
 
     // Atualiza o customer
@@ -75,13 +73,15 @@ async updateOrderFromBling(body: blingOrderWebHookData): Promise<void> {
       // await this.nfeQueue.add({ order_id: orderData.id, collection_date: '' }, `nfe-generation-${orderData.id}`)
     }
 
+    return null;
+
   } catch (error: any) {
     console.error("[BlingOrderService] Erro ao atualizar pedido:", error.response?.data ?? error.message)
     throw error
   }
 }
 
-async deleteOrderFromBling(body: any): Promise<void> {
+async deleteOrderFromBling(body: any): Promise<null> {
   try {
     const integration = await getBlingIntegration("Bling")
     if (!integration) throw new Error("Bling Integration não encontrada no cache")
@@ -96,11 +96,13 @@ async deleteOrderFromBling(body: any): Promise<void> {
 
     if (!existingOrder) {
       console.log(`[BlingOrderService] Pedido ${orderId} não encontrado para deletar. Pulando...`)
-      return
+      return null;
     }
 
     await ordersService.delete(existingOrder.id)
     console.log(`[BlingOrderService] Pedido ${orderId} removido com sucesso`)
+
+    return null;
 
   } catch (error: any) {
     console.error("[BlingOrderService] Erro ao deletar pedido:", error.response?.data ?? error.message)
@@ -110,7 +112,7 @@ async deleteOrderFromBling(body: any): Promise<void> {
 
   //Método principal para processar o webhook e criar o pedido
 
-  async createOrderFromBling(body: blingOrderWebHookData): Promise<void> {
+  async createOrderFromBling(body: blingOrderWebHookData): Promise<{customer: any, cnaes: any[], order: any} | null> {
     console.log(body.data.id)
     try {
       const { data } = await this.blingApi.get(`/pedidos/vendas/${body.data.id}`);
@@ -132,7 +134,7 @@ async deleteOrderFromBling(body: any): Promise<void> {
         console.log(
           `[BlingOrderService] Pedido ${orderData.numero} já cadastrado. Pulando...`,
         );
-        return;
+        return null;
       }
 
       // 1. Resolve o cliente (Busca ou Cria)
@@ -154,13 +156,10 @@ async deleteOrderFromBling(body: any): Promise<void> {
       
       if (orderData.situacao.id != 6) {
         console.log('Pedido com status diferente de "EM ABERTO", pulando etapas de automação apenas salvando no sistema.')
-        return
+        return null
       }
 
-        await this.cnpjQueue.add(
-          { customer, cnaes: integration.cnaes, order: orderData},
-          `document-check-${customer.id}`,
-        );
+       return {customer, cnaes: integration.cnaes, order: orderData}
     } catch (error: any) {
       console.error(
         "[BlingOrderService] Erro ao processar pedido:",
