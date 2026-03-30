@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express'
 import BlingOrderService from './bling-order.service'
 import { blingApi, getBlingIntegration, handleBlingOAuthCallback } from '../../api/bling_api.service'
+import { v4 as uuidv4 } from 'uuid';
+import { BlingOrderQueue } from './bling-order.queue';
 
 const router = Router()
 const blingOrderService = new BlingOrderService(blingApi)
@@ -28,12 +30,39 @@ const blingOrderService = new BlingOrderService(blingApi)
  */
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
-    await blingOrderService.createOrderFromBling(req.body)
+    const blingOrderQueue: BlingOrderQueue = req.app.locals.BlingOrderQueue
+
+    await blingOrderQueue.add(req.body, `bling-order-${req.body.id}`)
     res.status(200).json({ received: true })
   } catch (error: any) {
     res.status(500).json({ error: error.message })
   }
 })
+
+// Rota para primeiro contato com a bling, para registrar o refresh token e estabelecer a conexão com a api da bling
+router.get('/auth/bling', async (req: Request, res: Response) => {
+  const integration = await getBlingIntegration();
+  const configToken = integration.tokens;
+
+  // Gera um novo UUID para cada tentativa
+  const newState = uuidv4();
+
+  // Salva no banco IMEDIATAMENTE
+  await configToken.update({ oauth_state: newState });
+
+  // Monta a URL 
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: configToken.client_id,
+    state: newState,
+    redirect_uri: configToken.callback_url // O que está no banco deve ser igual ao do painel
+  });
+
+  const authUrl = `https://www.bling.com.br/Api/v3/oauth/authorize?${params.toString()}`;
+
+  // Redireciona o usuário para rota de auth do ouath da bling (mesma rota de convite que tem no painel da bling no aplicativo cadastrado)
+  res.redirect(authUrl);
+});
 
 // Rota Callback para colocar no campo de callback url na bling
 router.get('/callback', async (req: Request, res: Response) => {
@@ -50,5 +79,7 @@ router.get('/callback', async (req: Request, res: Response) => {
   await handleBlingOAuthCallback(code)
   res.status(200).json({ ok: true, message: 'Tokens salvos com sucesso' })
 })
+
+
 
 export default router

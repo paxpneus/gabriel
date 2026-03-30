@@ -3,7 +3,7 @@ import Redis from "ioredis";
 
 
 class RedisService {
-    private client: Redis
+    public client: Redis
 
     constructor(client: Redis) {
         this.client = client
@@ -36,4 +36,6 @@ class RedisService {
 
 }
 
-export default new RedisService(redisClient);
+export const redisService = new RedisService(redisClient)
+export const redisConnection = redisClient
+export default redisService;
