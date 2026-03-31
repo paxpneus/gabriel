@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000
 async function start(): Promise<void> {
     await sequelize.authenticate()
     console.log('------------------- DB: Banco Conectado! ------------------- ')
-    // await sequelize.sync({ alter: true })
+    await sequelize.sync({ alter: true })
 
     initQueues(app)
 

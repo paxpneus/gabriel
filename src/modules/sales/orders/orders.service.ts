@@ -1,3 +1,4 @@
+import { FindOptions } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import Customer from "../customers/customers.model";
 import Order from "./orders.model";
@@ -24,6 +25,16 @@ export class OrderService extends BaseService<Order, OrderRepository> {
         if (!orderData) throw new Error("Pedido não encontrado.")
 
         return orderData as unknown as Promise<FullOrder>
+        
+    } 
+
+      async getFullOrdersByQuery (options: FindOptions): Promise<FullOrder[]> {
+
+        const orderData = await this.repository.findAll(options)
+
+        if (!orderData) throw new Error("Pedido não encontrado.")
+
+        return orderData as unknown as Promise<FullOrder[]>
         
     } 
 

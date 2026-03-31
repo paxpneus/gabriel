@@ -9,7 +9,7 @@ export abstract class BaseQueueService<T> {
   protected queueEvents: QueueEvents;
   public queueName: string;
 
-  constructor(queueName: string, options: { concurrency?: number } = {}) {
+  constructor(queueName: string, options: { concurrency?: number, limiter?: {max: number, duration: number} } = {}) {
     this.queueName = queueName;
     this.queue = new Queue(this.queueName, { connection: redisConfig });
     this.queueEvents = new QueueEvents(this.queueName, {
@@ -19,7 +19,7 @@ export abstract class BaseQueueService<T> {
     this.worker = new Worker(this.queueName, this.process.bind(this), {
       connection: redisConnection,
       concurrency: options.concurrency ?? 2,
-      limiter: {
+      limiter: options.limiter ?? {
         max: 3,
         duration: 1000,
       },

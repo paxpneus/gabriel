@@ -15,6 +15,12 @@ export interface MLScrapingJobData {
 }
 
 export interface MLExcelRow {
-    order_number: string;
-    collection_date: Date;
+  order_number: string;
+  collection_date: Date;
+  sale_date: Date;
+  sku: string;
+  revenue_brl: number;
+  buyer: string;
+  business: string;
+  cpf: string;
 }
