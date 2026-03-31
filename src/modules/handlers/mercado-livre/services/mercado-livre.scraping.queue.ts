@@ -5,16 +5,16 @@ import { MLScrapingJobData, MLExcelRow } from './mercado-livre.types';
 
 import ordersService from '../../../sales/orders/orders.service';
 import { NFeQueue } from '../../bling/services/bling-nfe/nfe.queue';
-import { nextStepDelayedOnQueue } from '../../../../shared/types/queue/base-queue';
+import { nextRemoveOnQueue, nextStepDelayedOnQueue } from '../../../../shared/types/queue/base-queue';
 import { MLOrderService } from './mercado-livre.service';
 
 export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
     private scrapingService: MLScrapingService;
     private mlOrderService: MLOrderService;
-    private next: nextStepDelayedOnQueue;
+    private next: nextStepDelayedOnQueue | nextRemoveOnQueue;
     
 
-    constructor(scrapingService: MLScrapingService, mlOrderService: MLOrderService, next: nextStepDelayedOnQueue) {
+    constructor(scrapingService: MLScrapingService, mlOrderService: MLOrderService, next: nextStepDelayedOnQueue | nextRemoveOnQueue) {
         super('ML-SCRAPING', {concurrency: 1});
         this.scrapingService = scrapingService;
         this.mlOrderService = mlOrderService;
@@ -53,21 +53,17 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
 
         console.log(`[MLScrapingQueue] Pedido ${order.number_order_channel} — collection_date atualizada: ${newDate.toISOString()}`);
 
-        const oldJobId = `nfe-generation-${order.id_order_system}`
-        const existingNfeJob = await this.queue.getJob(oldJobId) // TODO: trocar por nfeQueue.getJob quando exposto na base
-        if (existingNfeJob) { 
-            await existingNfeJob.remove()
-            console.log(`[MLScrapingQueue] Job NFe antigo removido: ${oldJobId}`);
+        const jobId = `nfe-generation-${order.id_order_system}`;
 
-        }
+        await (this.next as nextRemoveOnQueue).removeJob(jobId);
 
         const oneDayBefore = new Date(newDate)
         oneDayBefore.setDate(oneDayBefore.getDate() - 1)
         const delay = Math.max(0, oneDayBefore.getTime() - Date.now());
 
-        await this.next.addDelayed(
+        await (this.next as nextStepDelayedOnQueue).addDelayed(
             {order_id: order.id_order_system, collection_date: String(newDate)},
-            oldJobId,
+            jobId,
             delay
         )
 

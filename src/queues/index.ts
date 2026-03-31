@@ -31,7 +31,8 @@ export function initQueues(app: Express) {
         new MLScrapingService(),
         new MLOrderService(),
         {
-            addDelayed: (data,jobId, delay) => nfeQueue.addDelayed(data, jobId, delay)
+            addDelayed: (data,jobId, delay) => nfeQueue.addDelayed(data, jobId, delay),
+            removeJob: (jobId) => nfeQueue.removeJob(jobId)
         }
     )
     
@@ -47,8 +48,8 @@ export function initQueues(app: Express) {
         add: (data, jobId) => cnpjQueue.add(data, jobId)
     })
 
-    mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 })
-
+    // mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 })
+    mlScrapingQueue.scheduleRepeat({ every: 30 * 1000 })
 
     app.locals.BlingOrderQueue = blingOrderQueue;
     app.locals.CNPJQueue       = cnpjQueue;
