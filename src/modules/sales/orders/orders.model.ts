@@ -12,6 +12,7 @@ class Order extends Model<orderAttributes, orderCreationAttributes> implements o
     public number_order_channel!: string;
     public actual_step!: string;
     public actual_situation!: string;
+    public collection_date?: Date;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -62,6 +63,10 @@ Order.init(
             type: DataTypes.STRING(50),
             allowNull: false,
             defaultValue: 'ACTIVE'
+        },
+        collection_date: {
+            type: DataTypes.DATE,
+            allowNull: true,
         }
     },
     {

@@ -9,14 +9,14 @@ export abstract class BaseQueueService<T> {
     protected queueEvents: QueueEvents;
     public queueName: string;
 
-    constructor(queueName: string) {
+    constructor(queueName: string, options: {concurrency?: number} = {}) {
         this.queueName = queueName
         this.queue = new Queue(this.queueName, { connection: redisConfig })
         this.queueEvents = new QueueEvents(this.queueName, { connection: redisConfig })
 
         this.worker = new Worker(this.queueName, this.process.bind(this), {
             connection: redisConnection,
-            concurrency: 2,
+            concurrency: options.concurrency ?? 2,
             limiter: {
                 max: 3,
                 duration: 1000
@@ -57,6 +57,18 @@ export abstract class BaseQueueService<T> {
     }
 
     async addDelayed(data: T, jobId: string, delayMs: number) {
+        
+     if (jobId) {
+            const existingJob = await this.queue.getJob(jobId)
+            if (existingJob) {
+                const state = await existingJob.getState()
+                if (state === 'failed') {
+                    await existingJob.remove()
+                console.log(`[QUEUE] Job ${jobId} com delay removido para reprocessamento`)
+                }
+            }
+        }
+
     return this.queue.add(this.queueName, data, {
         jobId,
         delay: delayMs,
@@ -65,5 +77,19 @@ export abstract class BaseQueueService<T> {
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 }
     })
+}
+
+async scheduleRepeat(options: {every: number}): Promise<void> {
+    await this.queue.add(
+        this.queueName,
+        {},
+        {
+            repeat: { every: options.every },
+            removeOnComplete: true,
+            removeOnFail: { count: 10 }
+        }
+    )
+    console.log(`[QUEUE] ${this.queueName} agendado para repetir a cada ${options.every / 1000}s`);
+
 }
 }
