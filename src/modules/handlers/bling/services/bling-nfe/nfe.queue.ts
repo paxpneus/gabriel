@@ -21,7 +21,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
   private blingApi: AxiosInstance;
   private validationService: NFeValidationService;
 
-  constructor(blingApi: AxiosInstance, validationService: NFeValidationService) {
+  constructor(validationService: NFeValidationService, blingApi: AxiosInstance) {
     super("NFE_EMISSION");
     this.blingApi = blingApi;
     this.validationService = validationService;

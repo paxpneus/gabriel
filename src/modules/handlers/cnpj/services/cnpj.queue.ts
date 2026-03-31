@@ -1,10 +1,8 @@
-import { blingApi } from './../../bling/api/bling_api.service';
 import { CNPJService } from "./cnpj.service";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { Job } from "bullmq";
 import { AxiosInstance } from 'axios';
-import { isValidCNPJ, isValidCPF } from '../../../../shared/utils/validators/document';
-import { MLOrderQueue } from '../../mercado-livre/services/mercado-livre.queue';
+import { nextStepOnQueue } from "../../../../shared/types/queue/base-queue";
 
 const ErrorValues = [
     {
@@ -21,13 +19,13 @@ const ErrorValues = [
 export class CNPJQueue extends BaseQueueService<any> {
   private CNPJService;
   private blingApi;
-  private mlOrderQueue: MLOrderQueue
+  private next: nextStepOnQueue
 
-  constructor(cnpjService: CNPJService, blingApi: AxiosInstance, mlOrderQueue: MLOrderQueue) {
+  constructor(cnpjService: CNPJService, blingApi: AxiosInstance, next: nextStepOnQueue) {
     super("CNPJ_VERIFY_CNAE");
     this.CNPJService = cnpjService;
     this.blingApi = blingApi;
-    this.mlOrderQueue = mlOrderQueue
+    this.next = next
   }
 
     private async markOrderError(order: any, errorId: number): Promise<void> {
@@ -62,11 +60,8 @@ export class CNPJQueue extends BaseQueueService<any> {
         if (customer.type === 'F') {
             console.log(`[CNPJQueue] CPF, seguindo para próxima fila: Verificar data de coleta`)
 
-            await this.mlOrderQueue.add({
-                order: order, customer: customer
-            }, `ml-check-${order.id}`
-        )
-            // await this.proximaFila.add(...)
+            this.next.add({order, customer}, `ml-check-${order.id}`)
+        
             return
         }
 
@@ -76,11 +71,7 @@ export class CNPJQueue extends BaseQueueService<any> {
         if (cnaeApproved) {
             console.log(`[CNPJQueue] CNAE aprovado, seguindo para próxima fila: Verificar data de coleta`)
             
-            await this.mlOrderQueue.add({
-                order: order, customer: customer
-            }, `ml-check-${order.id}`
-        )
-            // await this.proximaFila.add(...)
+             await this.next.add({ order, customer }, `ml-check-${order.id}`);
         } else {
             console.log(`[CNPJQueue] CNAE não atendido`)
             await this.markOrderError(order, 2)
