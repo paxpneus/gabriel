@@ -3,18 +3,21 @@ import { BaseQueueService } from "../../../../shared/utils/base-models/base-queu
 import { MLOrderService } from "./mercado-livre.service";
 import { MLOrderJobData } from "./mercado-livre.types";
 import { AxiosInstance } from "axios";
-import { nextStepDelayedOnQueue } from "../../../../shared/types/queue/base-queue";
+import { nextStepDelayedOnQueue, nextStepOnQueue } from "../../../../shared/types/queue/base-queue";
+import ordersService from "../../../sales/orders/orders.service";
+
+const MAX_ATTEMPTS = 6; 
 
 const ML_ORDER_ERRORS = {
-  ORDER_NOT_FOUND: { id: 3, message: "Pedido não encontrado no Mercado Livre" },
+    ORDER_NOT_FOUND: { id: 3, message: 'Pedido não encontrado no Mercado Livre após tentativas máximas' },
 };
 
 export class MLOrderQueue extends BaseQueueService<MLOrderJobData> {
   private mlOrderService: MLOrderService;
   private blingApi: AxiosInstance;
-  private next: nextStepDelayedOnQueue
+  private next: nextStepOnQueue | nextStepDelayedOnQueue
 
-  constructor(mlOrderService: MLOrderService, blingApi: AxiosInstance, next: nextStepDelayedOnQueue) {
+  constructor(mlOrderService: MLOrderService, blingApi: AxiosInstance, next: nextStepOnQueue | nextStepDelayedOnQueue) {
     super("ML_ORDER_FETCH"); // sem opções extras — segue o padrão da base
     this.mlOrderService = mlOrderService;
     this.blingApi = blingApi;
@@ -31,45 +34,49 @@ export class MLOrderQueue extends BaseQueueService<MLOrderJobData> {
 
   async process(job: Job<MLOrderJobData>): Promise<void> {
     const { order, customer } = job.data;
+    const attempt = job.data.attempt ?? 1;
+
+    console.log(`[MLOrderQueue] Pedido ${order.id} — tentativa ${attempt}/${MAX_ATTEMPTS}`);
+
 
     console.log(`[MLOrderQueue] Buscando dados do pedido ${order.id} no ML`);
 
-    let mlData;
-    try {
-      mlData = await this.mlOrderService.getOrderData(order);
-    } catch (error: any) {
-      const isNotFound = error?.response?.status === 404;
+    const collectionDate = await this.mlOrderService.getCollectionDate(order.numeroLoja)
 
-      if (isNotFound) {
+    if (!collectionDate) {
+      if (attempt >= MAX_ATTEMPTS) {
+        console.error(`[MLOrderQueue] Pedido ${order.id} — máximo de tentativas atingido`);
         await this.markOrderCancelled(order, ML_ORDER_ERRORS.ORDER_NOT_FOUND.message);
-        return; // não relança — sem retry para 404
+        return;
       }
+    
 
-      // API fora, timeout etc — relança e o BullMQ faz retry (3x com backoff, herdado da base)
-      console.error(`[MLOrderQueue] Falha ao buscar no ML, tentativa ${job.attemptsMade + 1}:`, error.message);
-      throw error;
-    }
+    console.log(`[MLOrderQueue] Data não encontrada, reagendando em 10min...`);
 
-    const oneDayBefore = new Date(mlData.collection_date);
-    oneDayBefore.setDate(oneDayBefore.getDate() - 1);
-    const delay = 60 * 1000;
 
-    console.log(
-      `[MLOrderQueue] Coleta: ${mlData.collection_date.toISOString()} | ` +
-      `Relatório agendado para: ${oneDayBefore.toISOString()} | ` +
-      `Delay: ${(delay / 1000 / 60 / 60).toFixed(1)}h`
-    );
 
-    await this.next.addDelayed(
-            { order_id: order.id, collection_date: String(mlData.collection_date) },
-            `nfe-generation-${order.id}`,
-            delay
+    await (this.next as nextStepOnQueue).add(
+            { order, customer, attempt: attempt + 1 },
+            `ml-check-${order.id}-attempt-${attempt + 1}`
         );
 
-    // TODO: await this.reportQueue.addDelayed(
-    //   { order, customer, ml_order_id: mlData.ml_order_id, collection_date: mlData.collection_date },
-    //   `report-${order.id}`,
-    //   delay
-    // );
+        return
+      }
+      // Achou — atualiza collection_date no banco
+
+      await ordersService.update(order.id, {collection_date: collectionDate})
+      console.log(`[MLOrderQueue] Pedido ${order.id} — collection_date: ${collectionDate.toISOString()}`);
+
+      const oneDayBefore = new Date(collectionDate);
+      oneDayBefore.setDate(oneDayBefore.getDate() - 1);
+      const delay = Math.max(0, oneDayBefore.getTime() - Date.now());
+
+      await (this.next as nextStepDelayedOnQueue).addDelayed(
+        {order_id: order.id, collection_date: String(collectionDate), },
+        `nfe-generation-${order.id}`,
+        delay
+      )
+
   }
+
 }

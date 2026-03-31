@@ -9,6 +9,7 @@ export interface orderAttributes {
     number_order_channel: string,
     actual_step?: string,
     actual_situation?: string,
+    collection_date?: Date,
 }
 
 export interface FullOrder extends orderAttributes {

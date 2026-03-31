@@ -16,12 +16,24 @@ import { MLOrderService } from "../modules/handlers/mercado-livre/services/merca
 
 import { NFeQueue } from "../modules/handlers/bling/services/bling-nfe/nfe.queue";
 import { NFeValidationService } from './../modules/handlers/bling/services/bling-nfe/nfe-validation.service';
+import { MLScrapingQueue } from "../modules/handlers/mercado-livre/services/mercado-livre.scraping.queue";
+import { MLScrapingService } from "../modules/handlers/mercado-livre/services/mercado-livre-scraping.service";
 
 
 export function initQueues(app: Express) {
 
     // Instâncias das filas
+
+
     const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi);
+
+    const mlScrapingQueue = new MLScrapingQueue(
+        new MLScrapingService(),
+        new MLOrderService(),
+        {
+            addDelayed: (data,jobId, delay) => nfeQueue.addDelayed(data, jobId, delay)
+        }
+    )
     
     const mlOrderQueue = new MLOrderQueue(new MLOrderService(), blingApi, {
         addDelayed: (data, jobId, delay) => nfeQueue.addDelayed(data, jobId, delay)
@@ -34,6 +46,8 @@ export function initQueues(app: Express) {
     const blingOrderQueue = new BlingOrderQueue(new BlingOrderService(blingApi), {
         add: (data, jobId) => cnpjQueue.add(data, jobId)
     })
+
+    mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 })
 
 
     app.locals.BlingOrderQueue = blingOrderQueue;
