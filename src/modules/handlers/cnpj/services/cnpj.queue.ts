@@ -2,6 +2,7 @@ import { CNPJService } from "./cnpj.service";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { Job } from "bullmq";
 import { AxiosInstance } from 'axios';
+import { nextStepOnQueue } from "../../../../shared/types/queue/base-queue";
 
 const ErrorValues = [
     {
@@ -18,11 +19,13 @@ const ErrorValues = [
 export class CNPJQueue extends BaseQueueService<any> {
   private CNPJService;
   private blingApi;
+  private next: nextStepOnQueue
 
-  constructor(cnpjService: CNPJService, blingApi: AxiosInstance) {
+  constructor(cnpjService: CNPJService, blingApi: AxiosInstance, next: nextStepOnQueue) {
     super("CNPJ_VERIFY_CNAE");
     this.CNPJService = cnpjService;
     this.blingApi = blingApi;
+    this.next = next
   }
 
     private async markOrderError(order: any, errorId: number): Promise<void> {
@@ -57,7 +60,7 @@ export class CNPJQueue extends BaseQueueService<any> {
         if (customer.type === 'F') {
             console.log(`[CNPJQueue] CPF, seguindo para próxima fila: Verificar data de coleta`)
 
-            this.emit('cnpj.approved', {order, customer})
+            this.next.add({order, customer}, `ml-check-${order.id}`)
         
             return
         }
@@ -68,7 +71,7 @@ export class CNPJQueue extends BaseQueueService<any> {
         if (cnaeApproved) {
             console.log(`[CNPJQueue] CNAE aprovado, seguindo para próxima fila: Verificar data de coleta`)
             
-            this.emit('cnpj.approved', {order, customer})
+             await this.next.add({ order, customer }, `ml-check-${order.id}`);
         } else {
             console.log(`[CNPJQueue] CNAE não atendido`)
             await this.markOrderError(order, 2)
