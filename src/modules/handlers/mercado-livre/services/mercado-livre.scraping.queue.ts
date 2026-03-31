@@ -7,6 +7,7 @@ import ordersService from '../../../sales/orders/orders.service';
 import { NFeQueue } from '../../bling/services/bling-nfe/nfe.queue';
 import { nextRemoveOnQueue, nextStepDelayedOnQueue } from '../../../../shared/types/queue/base-queue';
 import { MLOrderService } from './mercado-livre.service';
+import { blingApi } from '../../bling/api/bling_api.service';
 
 export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
     private scrapingService: MLScrapingService;
@@ -37,6 +38,7 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
     }
 
     private async syncOrder(row: MLExcelRow): Promise<void> {
+        const orderOnBling = blingApi
         const order = await ordersService.findOne({where: {number_order_channel: row.order_number}})
 
         if (!order) return;
