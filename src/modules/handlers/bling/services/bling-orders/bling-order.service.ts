@@ -62,6 +62,8 @@ async updateOrderFromBling(body: blingOrderWebHookData): Promise<null> {
       {
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
+        totalPrice: Number(orderData.total),
+        date: new Date(orderData.data)
       },
     )
 
@@ -149,6 +151,9 @@ async deleteOrderFromBling(body: any): Promise<null> {
         id_order_system: String(orderData.id),
         number_order_system: String(orderData.numero),
         number_order_channel: String(orderData.numeroLoja),
+        date: new Date(orderData.data),
+        totalPrice: Number(orderData.total)
+
       };
 
       // 3. Cria o pedido

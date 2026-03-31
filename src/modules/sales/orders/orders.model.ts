@@ -13,6 +13,8 @@ class Order extends Model<orderAttributes, orderCreationAttributes> implements o
     public actual_step!: string;
     public actual_situation!: string;
     public collection_date?: Date;
+    public date?: Date;
+    public totalPrice?: number;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -66,6 +68,14 @@ Order.init(
         },
         collection_date: {
             type: DataTypes.DATE,
+            allowNull: true,
+        },
+         date: {
+            type: DataTypes.DATE,
+            allowNull: true,
+        },
+         totalPrice: {
+            type: DataTypes.DECIMAL,
             allowNull: true,
         }
     },

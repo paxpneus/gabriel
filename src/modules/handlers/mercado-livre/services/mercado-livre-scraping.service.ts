@@ -8,6 +8,7 @@ import { chromium as chromiumExtra } from "playwright-extra";
 // @ts-ignore
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { MLExcelRow } from "./mercado-livre.types";
+import { parseBRL } from "../../../../shared/utils/normalizers/dotToPoint";
 
 chromiumExtra.use(StealthPlugin());
 
@@ -45,6 +46,23 @@ const MONTHS: Record<string, number> = {
   dezembro: 11,
 };
 
+const SALE_DATE_REGEX = /(\d{1,2}) de ([\w\u00C0-\u017F]+) de (\d{4})\s+(\d{1,2}):(\d{2})/i;
+
+function parseSaleDate(raw: string): Date | null {
+  const match = raw.match(SALE_DATE_REGEX);
+  if (!match) return null;
+
+  const day = parseInt(match[1], 10);
+  const month = MONTHS[match[2].toLowerCase()];
+  const year = parseInt(match[3], 10);
+  const hours = parseInt(match[4], 10);
+  const minutes = parseInt(match[5], 10);
+
+  if (month === undefined || isNaN(day) || isNaN(year)) return null;
+
+  return new Date(Date.UTC(year, month, day, hours, minutes));
+}
+
 export class MLScrapingService {
   // ─────────────────────────────────────────────────────────────────────────
   // Ponto de entrada público
@@ -52,13 +70,18 @@ export class MLScrapingService {
 
   async downloadAndParseExcel(): Promise<MLExcelRow[]> {
     if (this.isRunning) {
-        console.log('[MLScraping] Já existe uma execução em andamento — pulando');
-        return [];
+      console.log("[MLScraping] Já existe uma execução em andamento — pulando");
+      return [];
     }
     this.isRunning = true;
 
     fs.mkdirSync(SESSION_DIR, { recursive: true });
     fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+
+    const oldFiles = fs.readdirSync(DOWNLOAD_DIR).filter(f => f.endsWith('.xlsx'));
+    for (const file of oldFiles) {
+        fs.unlinkSync(path.join(DOWNLOAD_DIR, file));
+    }
 
     const context = await this.launchContext();
     const page = await context.newPage();
@@ -78,7 +101,6 @@ export class MLScrapingService {
 
       const filePath = await this.downloadExcelWithRetry(page);
       const rows = this.parseExcel(filePath);
-      fs.unlinkSync(filePath);
       return rows;
     } finally {
       await page.close();
@@ -165,11 +187,11 @@ export class MLScrapingService {
   private isAuthenticated(page: Page): boolean {
     const url = page.url();
     return (
-        url.includes('mercadolivre.com.br') &&
-        !url.includes('/lgz/') &&
-        !url.includes('/login')
+      url.includes("mercadolivre.com.br") &&
+      !url.includes("/lgz/") &&
+      !url.includes("/login")
     );
-}
+  }
 
   private async doGoogleLogin(
     context: BrowserContext,
@@ -245,31 +267,34 @@ export class MLScrapingService {
     while (Date.now() < deadline) {
       await page.waitForTimeout(5_000);
 
-        // for (const p of context.pages()) {
-        //     if (p !== page && !p.isClosed()) {
-        //         const url = p.url();
-        //         const isGooglePopup = url.includes('accounts.google.com') || url.includes('google.com')
-        //         if (!isGooglePopup) {
-        //             await p.close().catch(()=>{})
-        //         }
-        //         await p.close().catch(() => {});
-        //     }
-        // }
+      // for (const p of context.pages()) {
+      //     if (p !== page && !p.isClosed()) {
+      //         const url = p.url();
+      //         const isGooglePopup = url.includes('accounts.google.com') || url.includes('google.com')
+      //         if (!isGooglePopup) {
+      //             await p.close().catch(()=>{})
+      //         }
+      //         await p.close().catch(() => {});
+      //     }
+      // }
 
       const currentUrl = page.url();
       console.log(`[MLScraping] [LOCAL] URL atual: ${currentUrl}`);
 
       if (!this.isAuthenticated(page)) {
-            console.log('[MLScraping] [LOCAL] Ainda no fluxo de login, aguardando...');
-            continue;
-        }
+        console.log(
+          "[MLScraping] [LOCAL] Ainda no fluxo de login, aguardando...",
+        );
+        continue;
+      }
 
-      console.log('[MLScraping] [LOCAL] Autenticado! Verificando acesso à página de vendas...');
+      console.log(
+        "[MLScraping] [LOCAL] Autenticado! Verificando acesso à página de vendas...",
+      );
       await page.waitForTimeout(5_000);
       await page
         .goto(SALES_URL, { waitUntil: "domcontentloaded", timeout: 15_000 })
         .catch(() => {});
-
 
       if (!this.isLoginWall(page)) {
         console.log(
@@ -314,50 +339,66 @@ export class MLScrapingService {
     );
   }
 
-private async trySingleDownloadCycle(page: Page): Promise<string | null> {
-    for (let clickAttempt = 1; clickAttempt <= MAX_DOWNLOAD_ATTEMPTS; clickAttempt++) {
-        console.log(`[MLScraping] Clique ${clickAttempt}/${MAX_DOWNLOAD_ATTEMPTS} no botão de download`);
+  private async trySingleDownloadCycle(page: Page): Promise<string | null> {
+    for (
+      let clickAttempt = 1;
+      clickAttempt <= MAX_DOWNLOAD_ATTEMPTS;
+      clickAttempt++
+    ) {
+      console.log(
+        `[MLScraping] Clique ${clickAttempt}/${MAX_DOWNLOAD_ATTEMPTS} no botão de download`,
+      );
 
-        try {
-            // Primeiro clique — abre o componente de download
-            const downloadBtn = await page.waitForSelector(DOWNLOAD_BTN_SELECTOR, {
-                timeout: 15_000,
-                state: 'visible',
-            });
-            await downloadBtn.click();
-            console.log('[MLScraping] Componente de download aberto, aguardando link de baixar...');
+      try {
+        // Primeiro clique — abre o componente de download
+        const downloadBtn = await page.waitForSelector(DOWNLOAD_BTN_SELECTOR, {
+          timeout: 15_000,
+          state: "visible",
+        });
+        await downloadBtn.click();
+        console.log(
+          "[MLScraping] Componente de download aberto, aguardando link de baixar...",
+        );
 
-            // Segundo clique — linka no <a> que aparece dentro do componente
-            const downloadLink = await page.waitForSelector('a.process-notification-link[href="widget-download-excel"]', {
-                timeout: 60_000,
-                state: 'visible',
-            });
+        // Segundo clique — linka no <a> que aparece dentro do componente
+        const downloadLink = await page.waitForSelector(
+          'a.process-notification-link[href="widget-download-excel"]',
+          {
+            timeout: 60_000,
+            state: "visible",
+          },
+        );
 
-            const [download] = await Promise.all([
-                page.waitForEvent('download', { timeout: 60_000 }),
-                downloadLink.click(),
-            ]);
+        const [download] = await Promise.all([
+          page.waitForEvent("download", { timeout: 60_000 }),
+          downloadLink.click(),
+        ]);
 
-            const filePath = path.join(DOWNLOAD_DIR, `ml_export_${Date.now()}.xlsx`);
-            await download.saveAs(filePath);
+        const filePath = path.join(
+          DOWNLOAD_DIR,
+          `ml_export_${Date.now()}.xlsx`,
+        );
+        await download.saveAs(filePath);
 
-            console.log(`[MLScraping] Excel salvo em: ${filePath}`);
-            return filePath;
+        console.log(`[MLScraping] Excel salvo em: ${filePath}`);
+        return filePath;
+      } catch (err) {
+        console.warn(
+          `[MLScraping] Clique ${clickAttempt} falhou:`,
+          (err as Error).message,
+        );
 
-        } catch (err) {
-            console.warn(`[MLScraping] Clique ${clickAttempt} falhou:`, (err as Error).message);
-
-            if (clickAttempt === MAX_DOWNLOAD_ATTEMPTS) {
-                console.warn('[MLScraping] Ciclo de cliques esgotado — vai para F5');
-                return null;
-            }
-
-            await page.waitForTimeout(2_000);
+        if (clickAttempt === MAX_DOWNLOAD_ATTEMPTS) {
+          console.warn("[MLScraping] Ciclo de cliques esgotado — vai para F5");
+          return null;
         }
+
+        await page.waitForTimeout(2_000);
+      }
     }
 
     return null;
-}
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Parse do Excel
@@ -399,9 +440,24 @@ private async trySingleDownloadCycle(page: Page): Promise<string | null> {
         year += 1;
       }
 
+      const saleDate = parseSaleDate(String(row["Data da venda"] ?? "").trim());
+
+      if (!saleDate) {
+        console.warn(
+          `[MLScraping] Data da venda inválida para pedido ${orderNumber}: "${row["Data da venda"]}"`,
+        );
+        continue;
+      }
+
       results.push({
         order_number: String(orderNumber).trim(),
-        collection_date: new Date(year, month, day),
+        collection_date: new Date(Date.UTC(year, month, day)),
+        sale_date: saleDate,
+        sku: String(row["SKU"] ?? "").trim(),
+        revenue_brl: parseBRL(row["Receita por produtos (BRL)"]),
+        buyer: String(row["Comprador"] ?? "").trim(),
+        business: String(row["Negócio"] ?? "").trim(),
+        cpf: String(row["CPF"] ?? "").trim(),
       });
     }
 
