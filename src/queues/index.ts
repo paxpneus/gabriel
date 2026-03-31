@@ -22,25 +22,19 @@ export function initQueues(app: Express) {
 
     // Instâncias das filas
     const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi);
-    const mlOrderQueue = new MLOrderQueue(new MLOrderService(), blingApi);
-    const cnpjQueue = new CNPJQueue(new CNPJService(), blingApi)
-    const blingOrderQueue = new BlingOrderQueue(new BlingOrderService(blingApi))
+    
+    const mlOrderQueue = new MLOrderQueue(new MLOrderService(), blingApi, {
+        addDelayed: (data, jobId, delay) => nfeQueue.addDelayed(data, jobId, delay)
+    });
 
-    // Work flow das filas
-
-    // Cada service emite um evento node que entra na fila
-
-    blingOrderQueue.on('order.ready_for_cnpj', ({customer, cnaes, order}) => {
-        cnpjQueue.add({customer, cnaes, order}, `document-check-${customer.id}`)
+    const cnpjQueue = new CNPJQueue(new CNPJService(), blingApi, {
+        add: (data, jobId) => mlOrderQueue.add(data, jobId)
     })
 
-    cnpjQueue.on('cnpj.approved', ({order, customer}) => {
-        mlOrderQueue.add({order, customer}, `ml-check-${order.id}`)
+    const blingOrderQueue = new BlingOrderQueue(new BlingOrderService(blingApi), {
+        add: (data, jobId) => cnpjQueue.add(data, jobId)
     })
 
-    mlOrderQueue.on('ml.fetched', ({order_id, collection_date, delay}) => {
-        nfeQueue.addDelayed({ order_id, collection_date }, `nfe-generation-${order_id}`, delay)
-    })
 
     app.locals.BlingOrderQueue = blingOrderQueue;
     app.locals.CNPJQueue       = cnpjQueue;

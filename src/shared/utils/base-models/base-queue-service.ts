@@ -3,14 +3,13 @@ import { redisConfig } from './../../../config/redis';
 import { Queue, Worker, QueueEvents, Job } from "bullmq";
 import { redisConnection } from './base-redis';
 
-export abstract class BaseQueueService<T> extends EventEmitter {
+export abstract class BaseQueueService<T> {
     protected queue: Queue;
     protected worker: Worker;
     protected queueEvents: QueueEvents;
     public queueName: string;
 
     constructor(queueName: string) {
-        super();
         this.queueName = queueName
         this.queue = new Queue(this.queueName, { connection: redisConfig })
         this.queueEvents = new QueueEvents(this.queueName, { connection: redisConfig })
