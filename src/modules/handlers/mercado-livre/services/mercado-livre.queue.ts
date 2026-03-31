@@ -15,9 +15,9 @@ const ML_ORDER_ERRORS = {
 export class MLOrderQueue extends BaseQueueService<MLOrderJobData> {
   private mlOrderService: MLOrderService;
   private blingApi: AxiosInstance;
-  private next: nextStepOnQueue | nextStepDelayedOnQueue
+  private next: nextStepDelayedOnQueue
 
-  constructor(mlOrderService: MLOrderService, blingApi: AxiosInstance, next: nextStepOnQueue | nextStepDelayedOnQueue) {
+  constructor(mlOrderService: MLOrderService, blingApi: AxiosInstance, next: nextStepDelayedOnQueue) {
     super("ML_ORDER_FETCH"); // sem opções extras — segue o padrão da base
     this.mlOrderService = mlOrderService;
     this.blingApi = blingApi;
@@ -55,7 +55,7 @@ export class MLOrderQueue extends BaseQueueService<MLOrderJobData> {
 
 
 
-    await (this.next as nextStepOnQueue).add(
+    await this.add(
             { order, customer, attempt: attempt + 1 },
             `ml-check-${order.id}-attempt-${attempt + 1}`
         );
