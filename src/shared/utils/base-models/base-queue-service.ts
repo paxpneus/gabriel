@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import { redisConfig } from './../../../config/redis';
 import { Queue, Worker, QueueEvents, Job } from "bullmq";
 import { redisConnection } from './base-redis';
