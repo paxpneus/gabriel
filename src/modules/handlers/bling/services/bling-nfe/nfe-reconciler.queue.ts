@@ -29,7 +29,6 @@ export type NFeReconcilerJobData = Record<string, never>; // job sem payload, s�
  */
 export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   private blingApi: AxiosInstance;
-  private blingOrderService: BlingOrderService;
   private cnpjNext: nextStepOnQueue | getJob;
   private nfeNext: nextStepDelayedOnQueue | getJob;
 
@@ -37,11 +36,9 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     cnpjNext: nextStepOnQueue | getJob,
     nfeNext: nextStepDelayedOnQueue | getJob,
     blingApi: AxiosInstance,
-    blingOrderService: BlingOrderService,
   ) {
     super("NFE_RECONCILER", { concurrency: 1 });
     this.blingApi = blingApi;
-    this.blingOrderService = blingOrderService;
     this.cnpjNext = cnpjNext;
     this.nfeNext = nfeNext;
   }
@@ -52,7 +49,6 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     const results = await Promise.allSettled([
       this.reconcileWaitingNfe(),
       this.reconcileOpenOrders(),
-      this.reconcileBlingOrders(),
     ]);
 
     results.forEach((result, index) => {
@@ -60,7 +56,6 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
         const names = [
           "reconcileWaitingNfe",
           "reconcileOpenOrders",
-          "reconcileBlingOrders",
         ];
         console.error(
           `[NFeReconciler] ${names[index]} falhou:`,
@@ -174,90 +169,5 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     }
   }
 
-  private async reconcileBlingOrders(): Promise<void> {
-    const integration = await getBlingIntegration("Bling");
 
-    if (!integration) {
-      console.warn(
-        "[GlobalReconciler][BLING] Integration não encontrada. Pulando.",
-      );
-      return;
-    }
-
-    const channelResponse = await this.blingApi.get(`/canais-venda`, {
-      params: { tipos: ["MercadoLivre"], situacao: 1 },
-    });
-
-    const STORE_ID: number | undefined = channelResponse.data.data?.[0]?.id;
-
-    console.log("[DEBUG][BLING] STORE_ID:", STORE_ID);
-
-    if (!STORE_ID) {
-      console.warn(
-        "[GlobalReconciler][BLING] Canal MercadoLivre não encontrado.",
-      );
-      return;
-    }
-
-    const STATUS_EM_ABERTO = 6;
-    const PAGE_LIMIT = 100;
-
-    let page = 1;
-    let totalFound = 0;
-    let created = 0;
-
-    try {
-      while (true) {
-        const { data } = await this.blingApi.get(`/pedidos/vendas`, {
-          params: {
-            idLoja: STORE_ID,
-            "idsSituacoes[]": STATUS_EM_ABERTO,
-            pagina: page,
-            limite: PAGE_LIMIT,
-          },
-        });
-        console.log("[DEBUG][BLING] Pedidos retornados:", data.data?.length);
-
-        const orders: any[] = data.data ?? [];
-        if (orders.length === 0) break;
-        totalFound += orders.length;
-
-        for (const blingOrder of orders) {
-          const exists = await ordersService.findOne({
-            where: {
-              integration_id: integration.id,
-              number_order_system: String(blingOrder.numero),
-            },
-          });
-
-          if (exists) continue;
-
-          console.log(
-            `[GlobalReconciler][BLING] Pedido ${blingOrder.numero} não encontrado no banco. Criando...`,
-          );
-
-          try {
-            await this.blingOrderService.createOrderFromBling({
-              data: { id: blingOrder.id },
-            });
-            created++;
-          } catch (err: any) {
-            console.error(
-              `[GlobalReconciler][BLING] Erro ao criar pedido ${blingOrder.numero}:`,
-              err.response?.data ?? err.message,
-            );
-          }
-        }
-
-        // Bling retorna menos que o limite → última página
-        if (orders.length < PAGE_LIMIT) break;
-        page++;
-      }
-    } catch (err: any) {
-      console.error(
-        "[GlobalReconciler][BLING] Erro ao consultar pedidos:",
-        err.response?.data ?? err.message,
-      );
-    }
-  }
 }
