@@ -1,6 +1,10 @@
 import { Express } from "express";
 import { blingApi } from "../modules/handlers/bling/api/bling_api.service";
 
+import { createBullBoard } from '@bull-board/api';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { ExpressAdapter } from '@bull-board/express';
+
 import BlingOrderService from "../modules/handlers/bling/services/bling-orders/bling-order.service";
 import { BlingOrderQueue } from "../modules/handlers/bling/services/bling-orders/bling-order.queue";
 
@@ -18,6 +22,8 @@ import { MLScrapingService } from "../modules/handlers/mercado-livre/services/me
 import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mercado-livre-sync.queue";
 
 import { NFeReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
+
+export const serverAdapter = new ExpressAdapter();
 
 export function initQueues(app: Express) {
   // Instâncias das filas
@@ -62,5 +68,22 @@ export function initQueues(app: Express) {
   app.locals.CNPJQueue = cnpjQueue;
   app.locals.NfeQueue = nfeQueue;
 
+  serverAdapter.setBasePath('/admin/queues');
+
+  createBullBoard({
+    queues: [
+      new BullMQAdapter(nfeQueue.queue),
+      new BullMQAdapter(nfeReconcilerQueue.queue),
+      new BullMQAdapter(mlOrderSyncQueue.queue),
+      new BullMQAdapter(mlScrapingQueue.queue),
+      new BullMQAdapter(mlOrderQueue.queue),
+      new BullMQAdapter(cnpjQueue.queue),
+      new BullMQAdapter(blingOrderQueue.queue)
+    ],
+    serverAdapter 
+  })
+
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
 }
+
+
