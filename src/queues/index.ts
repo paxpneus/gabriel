@@ -21,12 +21,13 @@ import { MLScrapingQueue } from "../modules/handlers/mercado-livre/services/merc
 import { MLScrapingService } from "../modules/handlers/mercado-livre/services/mercado-livre-scraping.service";
 import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mercado-livre-sync.queue";
 
-import { NFeReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
+import { ReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
 
 export const serverAdapter = new ExpressAdapter();
 
 export function initQueues(app: Express) {
-  // Instâncias das filas
+
+  const blingOrderService = new BlingOrderService(blingApi);
 
   const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi);
 
@@ -37,10 +38,12 @@ export function initQueues(app: Express) {
     getJob: (jobId: string) => nfeQueue.getJob(jobId),
   };
 
-    const nfeReconcilerQueue = new NFeReconcilerQueue(nfeNext);
-
-
   const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi);
+
+  const mlSyncNext = {
+    add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId),
+    getJob: (jobId: string) => mlOrderSyncQueue.getJob(jobId),
+  };
 
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
@@ -56,12 +59,24 @@ export function initQueues(app: Express) {
     add: (data, jobId) => mlOrderQueue.add(data, jobId),
   });
 
-  const blingOrderQueue = new BlingOrderQueue(new BlingOrderService(blingApi), {
+  const cnpjNext = {
+    add: (data: any, jobId: string) => cnpjQueue.add(data, jobId),
+    getJob: (jobId: string) => cnpjQueue.getJob(jobId),
+  };
+
+  const blingOrderQueue = new BlingOrderQueue(blingOrderService, {
     add: (data, jobId) => cnpjQueue.add(data, jobId),
   });
 
-  // mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
-  nfeReconcilerQueue.scheduleRepeat({ every: 5 * 60* 1000 })
+  const reconcilerQueue = new ReconcilerQueue(
+    cnpjNext,
+    nfeNext,
+    blingApi,
+    blingOrderService,
+  );
+
+  // mlScrapingQueue.scheduleRepeat({ every: 1 * 60 * 1000 });
+  reconcilerQueue.scheduleRepeat({ every: 0.5 * 60 * 1000 });
   // mlScrapingQueue.scheduleRepeat({ every: 2 * 60 * 1000 })
 
   app.locals.BlingOrderQueue = blingOrderQueue;
@@ -73,17 +88,15 @@ export function initQueues(app: Express) {
   createBullBoard({
     queues: [
       new BullMQAdapter(nfeQueue.queue),
-      new BullMQAdapter(nfeReconcilerQueue.queue),
+      new BullMQAdapter(reconcilerQueue.queue),
       new BullMQAdapter(mlOrderSyncQueue.queue),
       new BullMQAdapter(mlScrapingQueue.queue),
       new BullMQAdapter(mlOrderQueue.queue),
       new BullMQAdapter(cnpjQueue.queue),
-      new BullMQAdapter(blingOrderQueue.queue)
+      new BullMQAdapter(blingOrderQueue.queue),
     ],
-    serverAdapter 
-  })
+    serverAdapter,
+  });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
 }
-
-

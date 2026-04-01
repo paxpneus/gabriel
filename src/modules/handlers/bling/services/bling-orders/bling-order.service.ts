@@ -142,7 +142,7 @@ export class BlingOrderService {
   //Método principal para processar o webhook e criar o pedido
 
   async createOrderFromBling(
-    body: blingOrderWebHookData,
+    body: blingOrderWebHookData | {data: {id: number | string}},
   ): Promise<{ customer: any; cnaes: any[]; order: any } | null> {
     console.log(body.data.id);
     try {
@@ -170,11 +170,18 @@ export class BlingOrderService {
         return null;
       }
 
-      const channel = await this.blingApi.get(`/canais-venda/${orderData.loja.id}`)
-      
-      if (!integration.allowed_channels?.includes(channel.data.tipo)) {
+      const channel = await this.blingApi.get(
+        `/canais-venda/${orderData.loja.id}`,
+      );
+      if (!integration.allowed_channels?.includes(channel.data.data.tipo)) {
+        console.log("[DEBUG] channel.data.tipo:", channel.data.tipo);
         console.log(
-          `[BlingOrderService] Pedido ${orderData.numero} não originado do canal de venda Mercado Livre. Pulando...`,
+          "[DEBUG] integration.allowed_channels:",
+          integration.allowed_channels,
+        );
+        console.log(
+          "[DEBUG] includes?",
+          integration.allowed_channels?.includes(channel.data.tipo),
         );
         return null;
       }
@@ -204,6 +211,7 @@ export class BlingOrderService {
         );
         return null;
       }
+
 
       return { customer, cnaes: integration.cnaes, order: orderData };
     } catch (error: any) {
