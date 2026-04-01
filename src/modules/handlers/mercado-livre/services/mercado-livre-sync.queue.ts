@@ -9,6 +9,8 @@ import {
 import Customer from "../../../sales/customers/customers.model";
 import { AxiosInstance } from "axios";
 import { FullOrder } from "../../../sales/orders/orders.types";
+import sequelize from "../../../../config/sequelize";
+import { Op } from "sequelize";
 
 /**
  * Job pode vir de duas origens:
@@ -36,17 +38,18 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   }
 
   async process(job: Job<MLOrderSyncJobData>): Promise<void> {
-
     if (job.data.order) {
-    const dbOrder = await ordersService.findOne({
-      where: { number_order_channel: String(job.data.order.numeroLoja) },
-    });
+      const dbOrder = await ordersService.findOne({
+        where: { number_order_channel: String(job.data.order.numeroLoja) },
+      });
 
-    if (dbOrder?.internal_status === "CANCELLED") {
-      console.log(`[MLOrderSyncQueue] Pedido ${job.data.order.numeroLoja} cancelado — ignorando`);
-      return;
+      if (dbOrder?.internal_status === "CANCELLED") {
+        console.log(
+          `[MLOrderSyncQueue] Pedido ${job.data.order.numeroLoja} cancelado — ignorando`,
+        );
+        return;
+      }
     }
-  }
 
     if (job.data.row) {
       // Origem: scraping — tem todos os dados do Excel para fazer o match
@@ -68,13 +71,52 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     const documentSelector =
       row.business === "Sim" ? { type: "J" } : { document: row.cpf };
 
+    const saleDate = new Date(row.sale_date);
+
     const orders = await ordersService.getFullOrdersByQuery({
-      where: { date: row.sale_date, totalPrice: row.revenue_brl },
+      where: {
+        date: {
+          [Op.between]: [
+            new Date(
+              Date.UTC(
+                saleDate.getUTCFullYear(),
+                saleDate.getUTCMonth(),
+                saleDate.getUTCDate(),
+                0,
+                0,
+                0,
+                0,
+              ),
+            ),
+            new Date(
+              Date.UTC(
+                saleDate.getUTCFullYear(),
+                saleDate.getUTCMonth(),
+                saleDate.getUTCDate(),
+                23,
+                59,
+                59,
+                999,
+              ),
+            ),
+          ],
+        },
+        totalPrice: row.revenue_brl,
+      },
       include: [
         {
           model: Customer,
           as: "customer",
-          where: { name: row.buyer, ...documentSelector },
+          where: {
+            [Op.and]: [
+              sequelize.where(
+                sequelize.fn("LOWER", sequelize.col("customer.name")),
+                "LIKE",
+                row.buyer.toLowerCase(),
+              ),
+              documentSelector,
+            ],
+          },
         },
       ],
     });
@@ -86,7 +128,11 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-    const matchedOrder = this.resolveMatch(orders, row.sale_date, row.order_number);
+    const matchedOrder = this.resolveMatch(
+      orders,
+      row.sale_date,
+      row.order_number,
+    );
     if (!matchedOrder) return;
 
     await this.applyCollectionDate(matchedOrder, row);
@@ -144,8 +190,12 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     );
     return orders.reduce((closest, current) => {
       const target = saleDate.getTime();
-      const currDiff = Math.abs(new Date(current.createdAt!).getTime() - target);
-      const closeDiff = Math.abs(new Date(closest.createdAt!).getTime() - target);
+      const currDiff = Math.abs(
+        new Date(current.createdAt!).getTime() - target,
+      );
+      const closeDiff = Math.abs(
+        new Date(closest.createdAt!).getTime() - target,
+      );
       return currDiff < closeDiff ? current : closest;
     });
   }
@@ -168,7 +218,11 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     }
 
     // Valida SKU na Bling antes de confirmar
-    const skuValid = await this.validateSkuOnBling(order.id_order_system, row.sku);
+    const { valid: skuValid, orderData } = await this.validateSkuOnBling(
+      order.id_order_system,
+      row.sku,
+    );
+
     if (!skuValid) {
       console.warn(
         `[MLOrderSyncQueue] SKU "${row.sku}" não encontrado no pedido Bling ${order.id_order_system}.`,
@@ -194,6 +248,12 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       number_order_channel: row.order_number,
       internal_status: "WAITING FOR NFE EMISSION",
     });
+
+//     const observacoesAtual = orderData.observacoesInternas ?? ''
+// await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+//   observacoesInternas: `${observacoesAtual}\nNº ML: ${row.order_number}`.trim()
+// })
+
 
     console.log(
       `[MLOrderSyncQueue] Pedido ${order.number_order_channel} → collection_date: ${newDate.toISOString()}`,
@@ -237,20 +297,23 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   private async validateSkuOnBling(
     idOrderSystem: string,
     sku: string,
-  ): Promise<boolean> {
+  ): Promise<{ valid: boolean; orderData: any | null }> {
     try {
       const { data } = await this.blingApi.get(
         `/pedidos/vendas/${idOrderSystem}`,
       );
       const codes: string[] = data.data.itens.map((i: any) => i.codigo);
-      return codes.some((code) => code === sku);
+      return {
+        valid: codes.some((code) => code === sku),
+        orderData: data.data,
+      };
     } catch (error: any) {
-      if (error.response?.status >= 500) throw error; // deixa o BullMQ fazer retry
+      if (error.response?.status >= 500 || error.response?.status === 429) throw error;
       console.error(
         `[MLOrderSyncQueue] Erro ao validar SKU no Bling (${idOrderSystem}):`,
         error.response?.data ?? error.message,
       );
-      return false;
+      return { valid: false, orderData: null };
     }
   }
 }

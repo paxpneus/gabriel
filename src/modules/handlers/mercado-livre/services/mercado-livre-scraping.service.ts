@@ -46,7 +46,8 @@ const MONTHS: Record<string, number> = {
   dezembro: 11,
 };
 
-const SALE_DATE_REGEX = /(\d{1,2}) de ([\w\u00C0-\u017F]+) de (\d{4})\s+(\d{1,2}):(\d{2})/i;
+const SALE_DATE_REGEX =
+  /(\d{1,2}) de ([\w\u00C0-\u017F]+) de (\d{4})\s+(\d{1,2}):(\d{2})/i;
 
 function parseSaleDate(raw: string): Date | null {
   const match = raw.match(SALE_DATE_REGEX);
@@ -78,9 +79,11 @@ export class MLScrapingService {
     fs.mkdirSync(SESSION_DIR, { recursive: true });
     fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
-    const oldFiles = fs.readdirSync(DOWNLOAD_DIR).filter(f => f.endsWith('.xlsx'));
+    const oldFiles = fs
+      .readdirSync(DOWNLOAD_DIR)
+      .filter((f) => f.endsWith(".xlsx"));
     for (const file of oldFiles) {
-        fs.unlinkSync(path.join(DOWNLOAD_DIR, file));
+      fs.unlinkSync(path.join(DOWNLOAD_DIR, file));
     }
 
     const context = await this.launchContext();
@@ -379,6 +382,19 @@ export class MLScrapingService {
           `ml_export_${Date.now()}.xlsx`,
         );
         await download.saveAs(filePath);
+
+        try {
+          const closeBtn = await page.waitForSelector(
+            "button.process-notification-header__close",
+            { timeout: 5_000, state: "visible" },
+          );
+          await closeBtn.click();
+          console.log("[MLScraping] Componente de download fechado");
+        } catch {
+          console.warn(
+            "[MLScraping] Não foi possível fechar o componente de download — seguindo",
+          );
+        }
 
         console.log(`[MLScraping] Excel salvo em: ${filePath}`);
         return filePath;
