@@ -9,10 +9,16 @@ export interface orderAttributes {
     number_order_channel: string,
     actual_step?: string,
     actual_situation?: string,
+    collection_date?: Date,
+    date?: Date,
+    totalPrice?: number,
+    createdAt?: Date,
+    nfe_emitted?: boolean,
+    internal_status?: string,
 }
 
 export interface FullOrder extends orderAttributes {
     customer: customerAttributes
 }
 
-export type orderCreationAttributes = Omit<orderAttributes, 'id'>
+export type orderCreationAttributes = Omit<orderAttributes, 'id' | 'createdAt'>
