@@ -170,6 +170,15 @@ export class BlingOrderService {
         return null;
       }
 
+      const channel = await this.blingApi.get(`/canais-venda/${orderData.loja.id}`)
+      
+      if (!integration.allowed_channels?.includes(channel.data.tipo)) {
+        console.log(
+          `[BlingOrderService] Pedido ${orderData.numero} não originado do canal de venda Mercado Livre. Pulando...`,
+        );
+        return null;
+      }
+
       // 1. Resolve o cliente (Busca ou Cria)
       const customer = await this.blingCustomerService.getOrCreateCustomer(
         orderData.contato,
