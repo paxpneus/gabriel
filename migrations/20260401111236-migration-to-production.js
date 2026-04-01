@@ -11,6 +11,7 @@ module.exports = {
       api_url: { type: Sequelize.STRING(255), allowNull: false },
       document: { type: Sequelize.STRING(11), allowNull: true },
       cnaes: { type: Sequelize.ARRAY(Sequelize.STRING), allowNull: true },
+      allowed_channels: {type: Sequelize.ARRAY(Sequelize.STRING), allowNull: true},
       created_at: { type: Sequelize.DATE, allowNull: false },
       updated_at: { type: Sequelize.DATE, allowNull: false }
     });
