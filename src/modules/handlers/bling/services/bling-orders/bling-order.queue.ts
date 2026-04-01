@@ -18,6 +18,7 @@ export class BlingOrderQueue extends BaseQueueService<any> {
         console.log('[1]. Data do job vindo webhook diretamente', job.data)
         console.log(`[1] [QUEUE] Processando Pedido ${job.data.event} - ${job.data.data.id}`)
         const result = await this.orderService.processWebhook(job.data.event, job.data)
+        
 
         if (result) {
             await this.next.add(result, `document-check-${result.customer.id}`);

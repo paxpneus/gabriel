@@ -13,6 +13,8 @@ export interface orderAttributes {
     date?: Date,
     totalPrice?: number,
     createdAt?: Date,
+    nfe_emitted?: boolean,
+    internal_status?: string,
 }
 
 export interface FullOrder extends orderAttributes {
