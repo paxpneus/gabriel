@@ -22,6 +22,7 @@ import { MLScrapingService } from "../modules/handlers/mercado-livre/services/me
 import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mercado-livre-sync.queue";
 
 import { ReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
+import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-orders/bling-reconciler.queue";
 
 export const serverAdapter = new ExpressAdapter();
 
@@ -72,11 +73,16 @@ export function initQueues(app: Express) {
     cnpjNext,
     nfeNext,
     blingApi,
-    blingOrderService,
   );
 
+  const blingReconcilerQueue = new BlingReconcilerQueue(
+    blingApi,
+    blingOrderService
+  )
+
   // mlScrapingQueue.scheduleRepeat({ every: 1 * 60 * 1000 });
-  reconcilerQueue.scheduleRepeat({ every: 0.5 * 60 * 1000 });
+  reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  blingReconcilerQueue.scheduleRepeat({ every: 12 * 60 * 60 * 1000 })
   // mlScrapingQueue.scheduleRepeat({ every: 2 * 60 * 1000 })
 
   app.locals.BlingOrderQueue = blingOrderQueue;
@@ -94,6 +100,7 @@ export function initQueues(app: Express) {
       new BullMQAdapter(mlOrderQueue.queue),
       new BullMQAdapter(cnpjQueue.queue),
       new BullMQAdapter(blingOrderQueue.queue),
+      new BullMQAdapter(blingReconcilerQueue.queue)
     ],
     serverAdapter,
   });
