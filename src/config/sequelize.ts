@@ -10,7 +10,7 @@ const sequelize = new Sequelize({
   database: process.env.DB_NAME,
   username: process.env.DB_USER,
   password: process.env.DB_PASS,
-  logging: process.env.NODE_ENV === 'development' ? console.log : false,
+  logging: process.env.NODE_ENV === 'development' ? false : false,
 })
 
 export default sequelize
