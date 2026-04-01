@@ -60,7 +60,9 @@ export class CNPJQueue extends BaseQueueService<any> {
         if (customer.type === 'F') {
             console.log(`[CNPJQueue] CPF, seguindo para próxima fila: Verificar data de coleta`)
 
-            this.next.add({order, customer}, `ml-check-${order.id}`)
+            // Atualiza para em andamento
+            // await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/15`)
+            await this.next.add({order, customer}, `ml-check-${order.id}`)
         
             return
         }
@@ -71,6 +73,8 @@ export class CNPJQueue extends BaseQueueService<any> {
         if (cnaeApproved) {
             console.log(`[CNPJQueue] CNAE aprovado, seguindo para próxima fila: Verificar data de coleta`)
             
+            // Atualiza para em andamento
+            // await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/15`)
              await this.next.add({ order, customer }, `ml-check-${order.id}`);
         } else {
             console.log(`[CNPJQueue] CNAE não atendido`)
