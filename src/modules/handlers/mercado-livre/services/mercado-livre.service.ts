@@ -1,22 +1,29 @@
-import { MLOrderData } from './mercado-livre.types';
-
+import { MLExcelRow, MLOrderData } from './mercado-livre.types';
+import { redisConnection } from '../../../../shared/utils/base-models/base-redis';
+const CACHE_TTL_SECONDS = 60 * 60 * 24;
+const CACHE_PREFIX = 'ml:collection_date:';
 export class MLOrderService {
 
-  // TODO: receber instância da API do ML quando estiver disponível
   constructor() {}
 
-  async getOrderData(order: any): Promise<MLOrderData> {
-    // TODO: substituir pela busca real no ML
-    // A busca será por cliente + data + outro campo (a definir)
-    // const result = await mlApi.get(...)
+  async updateCache(rows: MLExcelRow[]): Promise<void>{
+    const pipeline = redisConnection.pipeline();
 
-    // Simulação — retorna amanhã como data de coleta
-    const collectionDate = new Date();
-    collectionDate.setDate(collectionDate.getDate() + 1);
+    for (const row of rows) {
+      const key = `${CACHE_PREFIX}${row.order_number}`;
+      pipeline.set(key, row.collection_date.toISOString(), 'EX', CACHE_TTL_SECONDS)
+    }
 
-    return {
-      ml_order_id: "ML-SIMULADO-123",
-      collection_date: collectionDate,
-    };
+    await pipeline.exec();
+
+    console.log(`[MLOrderService] Cache Redis atualizado com ${rows.length} pedidos`);
+
   }
+
+  async getCollectionDate(orderNumber: string): Promise<Date | null> {
+    const value = await redisConnection.get(`${CACHE_PREFIX}${orderNumber}`);
+    return value ? new Date(value) : null
+  }
+
+ 
 }
