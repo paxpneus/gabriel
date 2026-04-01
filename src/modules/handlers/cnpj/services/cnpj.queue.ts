@@ -1,84 +1,105 @@
 import { CNPJService } from "./cnpj.service";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { Job } from "bullmq";
-import { AxiosInstance } from 'axios';
+import { AxiosInstance } from "axios";
 import { nextStepOnQueue } from "../../../../shared/types/queue/base-queue";
+import ordersService from "../../../sales/orders/orders.service";
 
 const ErrorValues = [
-    {
-        id: 1,
-        error: 'Documento não informado ou inválido '
-    },
-    {
-        id: 2,
-        error: 'CNAE não atendido pela empresa'
-    },
-   
-]
+  {
+    id: 1,
+    error: "Documento não informado ou inválido ",
+  },
+  {
+    id: 2,
+    error: "CNAE não atendido pela empresa",
+  },
+];
 
 export class CNPJQueue extends BaseQueueService<any> {
   private CNPJService;
   private blingApi;
-  private next: nextStepOnQueue
+  private next: nextStepOnQueue;
 
-  constructor(cnpjService: CNPJService, blingApi: AxiosInstance, next: nextStepOnQueue) {
+  constructor(
+    cnpjService: CNPJService,
+    blingApi: AxiosInstance,
+    next: nextStepOnQueue,
+  ) {
     super("CNPJ_VERIFY_CNAE");
     this.CNPJService = cnpjService;
     this.blingApi = blingApi;
-    this.next = next
+    this.next = next;
   }
 
-    private async markOrderError(order: any, errorId: number): Promise<void> {
-        const errorMessage = ErrorValues.find(e => e.id === errorId)?.error
+  private async markOrderError(order: any, errorId: number): Promise<void> {
+    const errorMessage = ErrorValues.find((e) => e.id === errorId)?.error;
 
-        // // Atualiza a observação
-        // await this.blingApi.put(`/pedidos/vendas/${order.id}`, {
-        //     observacoesInternas: `${order.observacoesInternas ?? ''}\nPedido Cancelado pelo Motivo: ${errorMessage}`.trim()
-        // })
+    // // Atualiza a observação
+    // await this.blingApi.put(`/pedidos/vendas/${order.id}`, {
+    //     observacoesInternas: `${order.observacoesInternas ?? ''}\nPedido Cancelado pelo Motivo: ${errorMessage}`.trim()
+    // })
 
-        // // Muda o status para Cancelado (ID 12)
-        // await this.blingApi.patch(`/pedidos/vendas/${order.id}/situacoes/12`)
-        console.log(`[CNPJQueue] Pedido ${order.id} marcado com erro: ${errorMessage}`)
+    // // Muda o status para Cancelado (ID 12)
+    // await this.blingApi.patch(`/pedidos/vendas/${order.id}/situacoes/12`)
+    const orderError = await ordersService.findOne({where: {
+        id_order_system: String(order.id)
+    }})
 
-        console.log(`[CNPJQueue] Pedido ${order.id} marcado com erro: ${errorMessage}`);
+    if (!orderError) {
+        throw new Error("Pedido não existe no banco de dados.")
     }
 
-   async process(job: Job<any, any, string>): Promise<void> {
-        console.log(`[QUEUE] Processando verificação de documento ${job.id}`)
+    await ordersService.update(orderError.id, {
+      // ← precisa ser o id do banco, não o id da Bling
+      internal_status: "CANCELLED",
+    });
 
-        const { customer, cnaes, order } = job.data
-        const document = Number(customer.document)
+    console.log(
+      `[CNPJQueue] Pedido ${order.id} marcado com erro: ${errorMessage}`,
+    );
+  }
 
-        // Documento inválido
-        if (!customer.document || isNaN(document)) {
-            console.log(`[CNPJQueue] Documento inválido ou não informado`)
-            await this.markOrderError(order, 1)
-            return
-        }
+  async process(job: Job<any, any, string>): Promise<void> {
+    console.log(`[QUEUE] Processando verificação de documento ${job.id}`);
 
-        // CPF — pula validação de CNAE
-        if (customer.type === 'F') {
-            console.log(`[CNPJQueue] CPF, seguindo para próxima fila: Verificar data de coleta`)
+    const { customer, cnaes, order } = job.data;
+    const document = Number(customer.document);
 
-            // Atualiza para em andamento
-            // await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/15`)
-            await this.next.add({order, customer}, `ml-check-${order.id}`)
-        
-            return
-        }
-
-        // CNPJ — valida CNAE
-        const cnaeApproved = await this.CNPJService.checkCNAE(cnaes, document)
-
-        if (cnaeApproved) {
-            console.log(`[CNPJQueue] CNAE aprovado, seguindo para próxima fila: Verificar data de coleta`)
-            
-            // Atualiza para em andamento
-            // await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/15`)
-             await this.next.add({ order, customer }, `ml-check-${order.id}`);
-        } else {
-            console.log(`[CNPJQueue] CNAE não atendido`)
-            await this.markOrderError(order, 2)
-        }
+    // Documento inválido
+    if (!customer.document || isNaN(document)) {
+      console.log(`[CNPJQueue] Documento inválido ou não informado`);
+      await this.markOrderError(order, 1);
+      return;
     }
+
+    // CPF — pula validação de CNAE
+    if (customer.type === "F") {
+      console.log(
+        `[CNPJQueue] CPF, seguindo para próxima fila: Verificar data de coleta`,
+      );
+
+      // Atualiza para em andamento
+      // await this.blingApi.patch(`/pedidos/vendas/${order.id_order_system}/situacoes/15`)
+      await this.next.add({ order, customer }, `ml-check-${order.id}`);
+
+      return;
+    }
+
+    // CNPJ — valida CNAE
+    const cnaeApproved = await this.CNPJService.checkCNAE(cnaes, document);
+
+    if (cnaeApproved) {
+      console.log(
+        `[CNPJQueue] CNAE aprovado, seguindo para próxima fila: Verificar data de coleta`,
+      );
+
+      // Atualiza para em andamento
+      // await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/15`)
+      await this.next.add({ order, customer }, `ml-check-${order.id}`);
+    } else {
+      console.log(`[CNPJQueue] CNAE não atendido`);
+      await this.markOrderError(order, 2);
+    }
+  }
 }
