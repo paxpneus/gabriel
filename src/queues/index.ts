@@ -55,7 +55,8 @@ export function initQueues(app: Express) {
   });
 
   mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
-  // mlScrapingQueue.scheduleRepeat({ every: 30 * 1000 })
+  nfeReconcilerQueue.scheduleRepeat({ every: 5 * 60* 1000 })
+  // mlScrapingQueue.scheduleRepeat({ every: 2 * 60 * 1000 })
 
   app.locals.BlingOrderQueue = blingOrderQueue;
   app.locals.CNPJQueue = cnpjQueue;

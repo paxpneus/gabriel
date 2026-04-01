@@ -55,9 +55,9 @@ export class BlingOrderService {
 
       if (!existingOrder) {
         console.log(
-          `[BlingOrderService] Pedido ${orderData.numero} não encontrado para atualizar, criando...`,
+          `[BlingOrderService] Pedido ${orderData.numero} não encontrado para atualizar, pulando...`,
         );
-        await this.createOrderFromBling(body);
+        // await this.createOrderFromBling(body);
         return null;
       }
 
@@ -82,6 +82,7 @@ export class BlingOrderService {
           `[BlingOrderService] Status 15 detectado, disparando NFe...`,
         );
         // await this.nfeQueue.add({ order_id: orderData.id, collection_date: '' }, `nfe-generation-${orderData.id}`)
+        return null;
       }
 
       if (orderData.situacao.id === 12) {
