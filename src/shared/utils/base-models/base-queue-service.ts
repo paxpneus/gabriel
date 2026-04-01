@@ -103,4 +103,8 @@ export abstract class BaseQueueService<T> {
       console.log(`[QUEUE] Job ${jobId} removido`);
     }
   }
+
+  async getJob(jobId: string) {
+  return this.queue.getJob(jobId);
+}
 }

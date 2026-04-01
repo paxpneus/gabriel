@@ -12,34 +12,38 @@ import { MLOrderService } from "../modules/handlers/mercado-livre/services/merca
 
 import { NFeQueue } from "../modules/handlers/bling/services/bling-nfe/nfe.queue";
 import { NFeValidationService } from "./../modules/handlers/bling/services/bling-nfe/nfe-validation.service";
+
 import { MLScrapingQueue } from "../modules/handlers/mercado-livre/services/mercado-livre.scraping.queue";
 import { MLScrapingService } from "../modules/handlers/mercado-livre/services/mercado-livre-scraping.service";
 import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mercado-livre-sync.queue";
+
+import { NFeReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
 
 export function initQueues(app: Express) {
   // Instâncias das filas
 
   const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi);
 
-  const mlOrderSyncQueue = new MLOrderSyncQueue(
-    {
-      addDelayed: (data, jobId, delay) =>
-        nfeQueue.addDelayed(data, jobId, delay),
-      removeJob: (jobId) => nfeQueue.removeJob(jobId),
-    },
-    blingApi,
-  );
+  const nfeNext = {
+    addDelayed: (data: any, jobId: string, delay: number) =>
+      nfeQueue.addDelayed(data, jobId, delay),
+    removeJob: (jobId: string) => nfeQueue.removeJob(jobId),
+    getJob: (jobId: string) => nfeQueue.getJob(jobId),
+  };
+
+    const nfeReconcilerQueue = new NFeReconcilerQueue(nfeNext);
+
+
+  const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi);
 
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
     new MLOrderService(),
-    {
-      add: (data, jobId) => mlOrderSyncQueue.add(data, jobId),
-    },
+    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
   );
 
-  const mlOrderQueue = new MLOrderQueue(new MLOrderService(), blingApi, {
-    addDelayed: (data, jobId, delay) => nfeQueue.addDelayed(data, jobId, delay),
+  const mlOrderQueue = new MLOrderQueue({
+    add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId),
   });
 
   const cnpjQueue = new CNPJQueue(new CNPJService(), blingApi, {
@@ -56,7 +60,6 @@ export function initQueues(app: Express) {
   app.locals.BlingOrderQueue = blingOrderQueue;
   app.locals.CNPJQueue = cnpjQueue;
   app.locals.NfeQueue = nfeQueue;
-  app.locals.MlOrderQueue = mlOrderQueue;
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
 }
