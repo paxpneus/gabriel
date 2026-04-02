@@ -19,7 +19,7 @@ const DOWNLOAD_DIR = path.resolve("./ml_downloads");
 const LOGIN_URL =
   "https://www.mercadolivre.com/jms/mlb/lgz/msl/login/H4sIAAAAAAAEAz2P0W7DMAhF_8XPVVpF6lLlcT9ikZikaDj2MIk3Vf334U7bGxzuvcDDcVpp8_qd0Y0u4AI7qzu5zKBLkugpGI9sqJDiXzs1CQhEVJTixkfLWTG8o5laksqOpoFd737hVA29Nhmj4vHLbBuwrzgdhG26AJd_h-DnjsU0NqDtAKbgX-vMviaDd9VcxvO51tpFlBlCYjoEuznFbhL3PFlgUa8C84cb2zV2TM5MMyil7fePt_52uQz9MFhxvfY39_wBUeUbRhABAAA/user";
 const SALES_URL =
-  "https://www.mercadolivre.com.br/vendas/omni/lista?filters=TAB_NEXT_DAYS&subFilters=&search=&limit=50&offset=0&startPeriod=";
+  "https://www.mercadolivre.com.br/vendas/omni/lista?filters=&subFilters=&search=&limit=300&offset=0&startPeriod=WITH_DATE_CLOSED_7D_OLD&pagingRequest=true&page=1&sort=DATE_CLOSED_DESC";
 
 const DOWNLOAD_BTN_SELECTOR =
   'button.report-link:has-text("Baixar arquivo Excel de vendas")';
@@ -270,17 +270,6 @@ export class MLScrapingService {
     while (Date.now() < deadline) {
       await page.waitForTimeout(5_000);
 
-      // for (const p of context.pages()) {
-      //     if (p !== page && !p.isClosed()) {
-      //         const url = p.url();
-      //         const isGooglePopup = url.includes('accounts.google.com') || url.includes('google.com')
-      //         if (!isGooglePopup) {
-      //             await p.close().catch(()=>{})
-      //         }
-      //         await p.close().catch(() => {});
-      //     }
-      // }
-
       const currentUrl = page.url();
       console.log(`[MLScraping] [LOCAL] URL atual: ${currentUrl}`);
 
@@ -433,29 +422,6 @@ export class MLScrapingService {
 
       if (!orderNumber || !status) continue;
 
-      const match = String(status).match(COLLECTION_DATE_REGEX);
-      if (!match) continue;
-
-      const day = parseInt(match[1], 10);
-      const monthName = match[2].toLowerCase();
-      const month = MONTHS[monthName];
-
-      if (month === undefined) {
-        console.warn(
-          `[MLScraping] Mês não reconhecido: "${match[2]}" — pedido ${orderNumber}`,
-        );
-        continue;
-      }
-
-      const now = new Date();
-      let year = now.getFullYear();
-      if (
-        month < now.getMonth() ||
-        (month === now.getMonth() && day < now.getDate())
-      ) {
-        year += 1;
-      }
-
       const saleDate = parseSaleDate(String(row["Data da venda"] ?? "").trim());
 
       if (!saleDate) {
@@ -465,9 +431,57 @@ export class MLScrapingService {
         continue;
       }
 
+      // ── Determina collection_date ──────────────────────────────────────
+      let collectionDate: Date;
+
+      const isReadyForPickup = String(status)
+        .toLowerCase()
+        .includes("pronto para coleta");
+
+      if (isReadyForPickup) {
+        // Pedidos prontos para coleta sem data prevista → amanhã (UTC)
+        const tomorrow = new Date();
+        collectionDate = new Date(
+          Date.UTC(
+            tomorrow.getUTCFullYear(),
+            tomorrow.getUTCMonth(),
+            tomorrow.getUTCDate() + 1,
+          ),
+        );
+        console.log(
+          `[MLScraping] Pedido ${orderNumber} "pronto para coleta" — collection_date definida para amanhã: ${collectionDate.toISOString()}`,
+        );
+      } else {
+        const match = String(status).match(COLLECTION_DATE_REGEX);
+        if (!match) continue;
+
+        const day = parseInt(match[1], 10);
+        const monthName = match[2].toLowerCase();
+        const month = MONTHS[monthName];
+
+        if (month === undefined) {
+          console.warn(
+            `[MLScraping] Mês não reconhecido: "${match[2]}" — pedido ${orderNumber}`,
+          );
+          continue;
+        }
+
+        const now = new Date();
+        let year = now.getFullYear();
+        if (
+          month < now.getMonth() ||
+          (month === now.getMonth() && day < now.getDate())
+        ) {
+          year += 1;
+        }
+
+        collectionDate = new Date(Date.UTC(year, month, day));
+      }
+      // ──────────────────────────────────────────────────────────────────
+
       results.push({
         order_number: String(orderNumber).trim(),
-        collection_date: new Date(Date.UTC(year, month, day)),
+        collection_date: collectionDate,
         sale_date: saleDate,
         sku: String(row["SKU"] ?? "").trim(),
         revenue_brl: parseBRL(row["Receita por produtos (BRL)"]),
