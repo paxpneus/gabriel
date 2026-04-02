@@ -101,7 +101,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
             ),
           ],
         },
-        totalPrice: row.revenue_brl,
       },
       include: [
         {
@@ -186,10 +185,11 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     if (orders.length === 1) return orders[0];
 
     console.warn(
-      `[MLOrderSyncQueue] Pedido ${orderNumber} — ${orders.length} candidatos. Match por horário.`,
+      `[MLOrderSyncQueue] Pedido ${orderNumber} — ${orders.length} candidatos. Match por horário. ${typeof saleDate}`,
     );
     return orders.reduce((closest, current) => {
-      const target = saleDate.getTime();
+      const target = new Date(saleDate).getTime(); // Ponto de atenção: TS nao reclamou de ser string
+  
       const currDiff = Math.abs(
         new Date(current.createdAt!).getTime() - target,
       );
