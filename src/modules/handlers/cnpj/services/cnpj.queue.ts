@@ -3,7 +3,7 @@ import { BaseQueueService } from "../../../../shared/utils/base-models/base-queu
 import { Job } from "bullmq";
 import { AxiosInstance } from "axios";
 import { nextStepOnQueue } from "../../../../shared/types/queue/base-queue";
-import ordersService from "../../../sales/orders/orders.service";
+import ordersService from "../../../sales/orders/order/orders.service";
 
 const ErrorValues = [
   {

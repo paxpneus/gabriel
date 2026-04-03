@@ -5,7 +5,7 @@ import { BaseQueueService } from "../../../../../shared/utils/base-models/base-q
 import { NFeValidationService } from "./nfe-validation.service";
 import { NFeJobData } from "./nfe.types";
 import { AxiosInstance } from "axios";
-import ordersService from "../../../../sales/orders/orders.service";
+import ordersService from "../../../../sales/orders/order/orders.service";
 
 const STATUS = {
   EM_ANDAMENTO: 6,

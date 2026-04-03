@@ -6,14 +6,14 @@ import {
   getJob,
   nextStepOnQueue,
 } from "../../../../../shared/types/queue/base-queue";
-import ordersService from "../../../../sales/orders/orders.service";
+import ordersService from "../../../../sales/orders/order/orders.service";
 import { Op } from "sequelize";
 import { setDelayBasedOnDate } from "../../../../../shared/utils/queues/setDelay";
 import { AxiosInstance } from "axios";
 import BlingOrderService from "../bling-orders/bling-order.service";
 import Customer from "../../../../sales/customers/customers.model";
 import { getBlingIntegration } from "../../api/bling_api.service";
-import { FullOrder } from "../../../../sales/orders/orders.types";
+import { FullOrder } from "../../../../sales/orders/order/orders.types";
 
 export type NFeReconcilerJobData = Record<string, never>; // job sem payload, só disparo periódico
 

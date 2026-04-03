@@ -1,14 +1,14 @@
 import { Job } from "bullmq";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { MLExcelRow } from "./mercado-livre.types";
-import ordersService from "../../../sales/orders/orders.service";
+import ordersService from "../../../sales/orders/order/orders.service";
 import {
   nextRemoveOnQueue,
   nextStepDelayedOnQueue,
 } from "../../../../shared/types/queue/base-queue";
 import Customer from "../../../sales/customers/customers.model";
 import { AxiosInstance } from "axios";
-import { FullOrder } from "../../../sales/orders/orders.types";
+import { FullOrder } from "../../../sales/orders/order/orders.types";
 import sequelize from "../../../../config/sequelize";
 import { Op } from "sequelize";
 

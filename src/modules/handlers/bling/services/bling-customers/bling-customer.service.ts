@@ -2,7 +2,7 @@ import { AxiosInstance } from "axios";
 import customersService from "../../../../sales/customers/customers.service";
 import { customerCreationAttributes } from "../../../../sales/customers/customers.types";
 import { cleanDocument } from "../../../../../shared/utils/normalizers/document";
-import Order from "../../../../sales/orders/orders.model";
+import Order from "../../../../sales/orders/order/orders.model";
 
 export class BlingCustomerService {
   public blingApi: AxiosInstance;

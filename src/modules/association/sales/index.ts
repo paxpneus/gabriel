@@ -1,9 +1,10 @@
 import Integration from "../../integrations/integrations/integrations.model";
 import ConfigToken from "../../integrations/config_tokens/config_tokens.model";
-import Order from "../../sales/orders/orders.model";
+import Order from "../../sales/orders/order/orders.model";
 import Customer from "../../sales/customers/customers.model";
-import OrderHistory from "../../sales/order_history/order_history.model";
+import OrderHistory from "../../sales/orders/order_history/order_history.model";
 import Step from "../../sales/steps/steps.model";
+import OrderItems from "../../sales/orders/order_items/order_items.model";
 
 
 // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -38,9 +39,14 @@ Step.belongsToMany(Order, {
 OrderHistory.belongsTo(Step, { foreignKey: 'step_id', as: 'step' });
 Step.hasMany(OrderHistory, { foreignKey: 'step_id', as: 'histories' });
 
+// OrderItems N:1 Orders (Itens do pedido e pedido)
+OrderItems.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
+Order.hasMany(OrderItems, { foreignKey: 'order_id', as: 'items' })
+
 export default {
     Customer,
     Order,
+    OrderItems,
     OrderHistory,
     Step
 };

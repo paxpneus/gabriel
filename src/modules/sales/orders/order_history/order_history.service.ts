@@ -1,4 +1,4 @@
-import BaseService from "../../../shared/utils/base-models/base-service";
+import BaseService from "../../../../shared/utils/base-models/base-service";
 import OrderHistory from "./order_history.model";
 import orderHistoryRepository, { OrderHistoryRepository } from "./order_history.repository";
 

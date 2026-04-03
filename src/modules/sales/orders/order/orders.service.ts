@@ -1,6 +1,6 @@
 import { FindOptions } from "sequelize";
-import BaseService from "../../../shared/utils/base-models/base-service";
-import Customer from "../customers/customers.model";
+import BaseService from "../../../../shared/utils/base-models/base-service";
+import Customer from "../../customers/customers.model";
 import Order from "./orders.model";
 import orderRepository, { OrderRepository } from "./orders.repository";
 import { FullOrder } from "./orders.types";
