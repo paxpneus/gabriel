@@ -16,6 +16,7 @@ class BaseController<T extends Model, Tservice extends BaseService<T> = BaseServ
         this.router.get('/', this.index)
         this.router.get('/:id', this.show)
         this.router.post('/', this.create)
+        this.router.post('/bulk', this.bulkCreate)
         this.router.put('/:id', this.update)
         this.router.delete('/:id', this.destroy)
     }
@@ -43,6 +44,15 @@ class BaseController<T extends Model, Tservice extends BaseService<T> = BaseServ
         try {
             const record = await this.service.create(req.body)
             return res.status(201).json(record)
+        } catch (error: any) {
+            return res.status(400).json({error: error.message})
+        }
+    }
+
+    bulkCreate = async (req: Request, res: Response): Promise<Response> => {
+        try {
+            const records = await this.service.bulkCreate(req.body)
+            return res.status(201).json(records)
         } catch (error: any) {
             return res.status(400).json({error: error.message})
         }

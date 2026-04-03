@@ -1,4 +1,4 @@
-import { Model, FindOptions, CreateOptions, UpdateOptions, DestroyOptions } from "sequelize";
+import { Model, FindOptions, CreateOptions, UpdateOptions, DestroyOptions, CreationAttributes, BulkCreateOptions } from "sequelize";
 import BaseRepository from "./base-repository";
 
 class BaseService<T extends Model, Trepo extends BaseRepository<T> = BaseRepository<T>> {
@@ -25,6 +25,13 @@ class BaseService<T extends Model, Trepo extends BaseRepository<T> = BaseReposit
     options?: CreateOptions
   ) {
     return this.repository.create(data, options)
+  }
+
+  bulkCreate(
+    datas: CreationAttributes<T>[],
+    options?: BulkCreateOptions<T>
+  ) {
+    return this.repository.bulkCreate(datas, options)
   }
 
   update(
