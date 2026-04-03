@@ -20,6 +20,7 @@ class Order
   public totalPrice?: number;
   public nfe_emitted?: boolean;
   public internal_status?: string;
+  public store_id?: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -48,6 +49,14 @@ Order.init(
         model: "customers",
         key: "id",
       },
+    },
+    store_id: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: "stores",
+        key: "id",
+      }
     },
     id_order_system: {
       type: DataTypes.STRING(100),

@@ -14,6 +14,7 @@ export interface orderAttributes {
     totalPrice?: number,
     nfe_emitted?: boolean,
     internal_status?: string,
+    store_id?: string;
     
     createdAt?: Date,
     updatedAt?: Date,
