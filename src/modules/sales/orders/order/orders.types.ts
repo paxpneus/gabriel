@@ -1,4 +1,4 @@
-import { customerAttributes } from "../customers/customers.types"
+import { customerAttributes } from "../../customers/customers.types"
 
 export interface orderAttributes {
     id: string,
@@ -12,13 +12,15 @@ export interface orderAttributes {
     collection_date?: Date,
     date?: Date,
     totalPrice?: number,
-    createdAt?: Date,
     nfe_emitted?: boolean,
     internal_status?: string,
+    
+    createdAt?: Date,
+    updatedAt?: Date,
 }
 
 export interface FullOrder extends orderAttributes {
     customer: customerAttributes
 }
 
-export type orderCreationAttributes = Omit<orderAttributes, 'id' | 'createdAt'>
+export type orderCreationAttributes = Omit<orderAttributes, 'id' | 'createdAt' | 'updateAt'>

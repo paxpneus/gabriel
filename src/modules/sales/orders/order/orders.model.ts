@@ -1,5 +1,5 @@
 import { Model, DataTypes } from "sequelize";
-import sequelize from "../../../config/sequelize";
+import sequelize from "../../../../config/sequelize";
 import { orderAttributes, orderCreationAttributes } from "./orders.types";
 import { v4 as uuidv4 } from "uuid";
 

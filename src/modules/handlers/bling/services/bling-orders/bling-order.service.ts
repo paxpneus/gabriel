@@ -3,8 +3,8 @@ import { getBlingIntegration } from "../../api/bling_api.service";
 import { blingOrderWebHookData } from "./bling-order.types";
 import ordersService, {
   OrderService,
-} from "../../../../sales/orders/orders.service";
-import { orderCreationAttributes } from "../../../../sales/orders/orders.types";
+} from "../../../../sales/orders/order/orders.service";
+import { orderCreationAttributes } from "../../../../sales/orders/order/orders.types";
 import { BlingCustomerService } from "../bling-customers/bling-customer.service";
 import { CNPJQueue } from "../../../cnpj/services/cnpj.queue";
 import { executeWebhookAction } from "../../../../../shared/utils/normalizers/webhook";

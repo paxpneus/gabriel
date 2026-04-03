@@ -3,7 +3,7 @@ import { BaseQueueService } from "../../../../../shared/utils/base-models/base-q
 import { AxiosInstance } from "axios";
 import BlingOrderService from "../bling-orders/bling-order.service";
 import { getBlingIntegration } from "../../api/bling_api.service";
-import ordersService from "../../../../sales/orders/orders.service";
+import ordersService from "../../../../sales/orders/order/orders.service";
 
 export class BlingReconcilerQueue extends BaseQueueService<Record<string, never>> {
   private blingApi: AxiosInstance;
