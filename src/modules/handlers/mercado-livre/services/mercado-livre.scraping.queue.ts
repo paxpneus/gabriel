@@ -24,8 +24,8 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
   }
 
   async process(job: Job<MLScrapingJobData>): Promise<void> {
-    const min = 10 * 60 * 1000;
-    const max = 12 * 60 * 1000;
+    const min = 1 * 60 * 1000;
+    const max = 3 * 60 * 1000;
     const sleep = Math.floor(Math.random() * (max - min + 1)) + min;
     console.log(
       `[MLScrapingQueue] Próxima execução em ${Math.round(sleep / 60000)} min`,
