@@ -59,7 +59,6 @@ export class CNPJQueue extends BaseQueueService<any> {
 
     const { customer, cnaes, orderSystem } = job.data;
     const document = Number(customer.document);
-    console.log('verift ordersystem', orderSystem)
 
     // Documento inválido
     if (!customer.document || isNaN(document)) {

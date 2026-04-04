@@ -73,8 +73,8 @@ export function initQueues(app: Express) {
     blingOrderNext,
   );
 
-  mlScrapingQueue.scheduleRepeat({ every: 1 * 60 * 1000 });
-  reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 1000 });
+  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
+  reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
   blingReconcilerQueue.scheduleRepeat({ every: 12 * 60 * 60 * 1000 });
   // mlScrapingQueue.scheduleRepeat({ every: 2 * 60 * 1000 })
 

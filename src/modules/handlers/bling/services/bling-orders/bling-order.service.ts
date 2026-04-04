@@ -246,9 +246,9 @@ export class BlingOrderService {
 
 
       return { customer, cnaes: integration.cnaes, orderSystem: {
-        ...createdOrder,
-        ...customer,
-        ...createdItems
+        ...createdOrder.dataValues,
+        customer,
+        items: createdItems
       } };
     } catch (error: any) {
       console.error(
