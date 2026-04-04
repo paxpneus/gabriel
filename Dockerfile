@@ -28,6 +28,7 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
 COPY .sequelizerc ./
+COPY src/config/database.js ./src/config/database.js
 
 # ─── Stage 3: API + Workers gerais (sem Playwright) ───────────────────────────
 FROM base-prod AS app
