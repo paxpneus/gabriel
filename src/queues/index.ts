@@ -24,7 +24,8 @@ import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-o
 
 export const serverAdapter = new ExpressAdapter();
 
-export function initQueues(app: Express) {
+// ─── Monta todas as instâncias de fila (compartilhado entre as duas funções) ──
+function buildQueues() {
   const blingOrderService = new BlingOrderService(blingApi);
 
   const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi);
@@ -37,11 +38,6 @@ export function initQueues(app: Express) {
   };
 
   const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi);
-
-  const mlSyncNext = {
-    add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId),
-    getJob: (jobId: string) => mlOrderSyncQueue.getJob(jobId),
-  };
 
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
@@ -73,10 +69,29 @@ export function initQueues(app: Express) {
     blingOrderNext,
   );
 
-  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
-  reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
-  blingReconcilerQueue.scheduleRepeat({ every: 12 * 60 * 60 * 1000 });
-  // mlScrapingQueue.scheduleRepeat({ every: 2 * 60 * 1000 })
+  return {
+    nfeQueue,
+    mlOrderSyncQueue,
+    mlScrapingQueue,
+    cnpjQueue,
+    blingOrderQueue,
+    reconcilerQueue,
+    blingReconcilerQueue,
+  };
+}
+
+// ─── Chamado pela API: registra filas no app.locals + BullBoard ───────────────
+// Não sobe Workers — só permite que as rotas enfileirem jobs via app.locals
+export function registerQueues(app: Express) {
+  const {
+    nfeQueue,
+    mlOrderSyncQueue,
+    mlScrapingQueue,
+    cnpjQueue,
+    blingOrderQueue,
+    reconcilerQueue,
+    blingReconcilerQueue,
+  } = buildQueues();
 
   app.locals.BlingOrderQueue = blingOrderQueue;
   app.locals.CNPJQueue = cnpjQueue;
@@ -96,6 +111,22 @@ export function initQueues(app: Express) {
     ],
     serverAdapter,
   });
+
+  console.log("------------------- QUEUE: Filas registradas na API! -------------------");
+}
+
+// ─── Chamado pelos workers: sobe os Workers e agenda repetições ───────────────
+// Não registra no app.locals — só processa jobs do Redis
+export function startWorkers() {
+  const {
+    mlScrapingQueue,
+    reconcilerQueue,
+    blingReconcilerQueue,
+  } = buildQueues();
+
+  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
+  reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  blingReconcilerQueue.scheduleRepeat({ every: 12 * 60 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
 }
