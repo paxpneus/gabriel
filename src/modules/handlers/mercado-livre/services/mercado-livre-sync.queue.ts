@@ -161,7 +161,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     if (orderSystem.collection_date) {
       // Scraping já rodou antes do webhook chegar — agenda NFe direto
       console.log(
-        `[MLOrderSyncQueue] Pedido ${orderSystem.id_order_channel} já tem collection_date. Agendando NFe direto.`,
+        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já tem collection_date. Agendando NFe direto.`,
       );
       await this.scheduleNfe(orderSystem.id_order_system!, orderSystem.collection_date, orderSystem);
       return;
@@ -169,7 +169,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
 
     // Sem collection_date — marca como aguardando e espera o próximo scraping
     console.log(
-      `[MLOrderSyncQueue] Pedido ${orderSystem.id_order_channel} sem collection_date. Marcando como WAITING CHANNEL VALIDATION.`,
+      `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} sem collection_date. Marcando como WAITING CHANNEL VALIDATION.`,
     );
     await ordersService.update(orderSystem.id, {
       internal_status: "WAITING CHANNEL VALIDATION",

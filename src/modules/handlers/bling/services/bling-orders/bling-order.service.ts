@@ -159,7 +159,7 @@ export class BlingOrderService {
 
       let store
       store = await this.storeService.findOne({
-        where: {id_store_system: orderData.loja.id}
+        where: {id_store_system: String(orderData.loja.id)}
       })
 
       if (!store) {
@@ -167,7 +167,7 @@ export class BlingOrderService {
 
 
         store = await this.storeService.create({
-             name: blingStore.data.data.descricao,
+             name: blingStore.data.data.tipo,
              id_store_system: blingStore.data.data.id
 
         })
@@ -228,7 +228,7 @@ export class BlingOrderService {
         return {
           name: i.descricao,
           order_id: createdOrder.id,
-          sku: i.codigo,
+          sku: String(i.codigo),
           unit: i.unidade,
           quantity: i.quantity,
           price: i.valor,

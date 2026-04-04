@@ -57,13 +57,14 @@ export class CNPJQueue extends BaseQueueService<any> {
   async process(job: Job<any, any, string>): Promise<void> {
     console.log(`[QUEUE] Processando verificação de documento ${job.id}`);
 
-    const { customer, cnaes, orderSystem, orderBling } = job.data;
+    const { customer, cnaes, orderSystem } = job.data;
     const document = Number(customer.document);
+    console.log('verift ordersystem', orderSystem)
 
     // Documento inválido
     if (!customer.document || isNaN(document)) {
       console.log(`[CNPJQueue] Documento inválido ou não informado`);
-      await this.markOrderError(orderBling, 1);
+      await this.markOrderError(orderSystem, 1);
       return;
     }
 
@@ -93,7 +94,7 @@ export class CNPJQueue extends BaseQueueService<any> {
       await this.next.add({ orderSystem, customer }, `ml-check-${orderSystem.id}`);
     } else {
       console.log(`[CNPJQueue] CNAE não atendido`);
-      await this.markOrderError(orderBling, 2);
+      await this.markOrderError(orderSystem, 2);
     }
   }
 }

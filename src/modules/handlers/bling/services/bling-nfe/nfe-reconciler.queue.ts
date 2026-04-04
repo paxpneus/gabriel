@@ -144,7 +144,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
         const integration = await getBlingIntegration("Bling");
         if (!integration) continue;
 
-        const jobId = `document-check-${order.customer_id}`;
+        const jobId = `document-check-${order.id_order_system}`;
         const existingJob = await (this.cnpjNext as getJob).getJob(jobId);
 
         if (existingJob) continue;
@@ -153,7 +153,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
           {
             customer: order.customer,
             cnaes: integration.cnaes,
-            order: order,
+            orderSystem: order,
           },
           jobId,
         );
