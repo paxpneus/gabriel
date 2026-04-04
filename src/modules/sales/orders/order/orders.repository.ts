@@ -1,4 +1,4 @@
-import BaseRepository from "../../../shared/utils/base-models/base-repository";
+import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import Order from "./orders.model";
 
 export class OrderRepository extends BaseRepository<Order> {

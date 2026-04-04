@@ -1,6 +1,10 @@
 import { Express } from "express";
 import { blingApi } from "../modules/handlers/bling/api/bling_api.service";
 
+import { createBullBoard } from '@bull-board/api';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { ExpressAdapter } from '@bull-board/express';
+
 import BlingOrderService from "../modules/handlers/bling/services/bling-orders/bling-order.service";
 import { BlingOrderQueue } from "../modules/handlers/bling/services/bling-orders/bling-order.queue";
 
@@ -17,10 +21,14 @@ import { MLScrapingQueue } from "../modules/handlers/mercado-livre/services/merc
 import { MLScrapingService } from "../modules/handlers/mercado-livre/services/mercado-livre-scraping.service";
 import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mercado-livre-sync.queue";
 
-import { NFeReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
+import { ReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
+import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-orders/bling-reconciler.queue";
+
+export const serverAdapter = new ExpressAdapter();
 
 export function initQueues(app: Express) {
-  // Instâncias das filas
+
+  const blingOrderService = new BlingOrderService(blingApi);
 
   const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi);
 
@@ -31,10 +39,12 @@ export function initQueues(app: Express) {
     getJob: (jobId: string) => nfeQueue.getJob(jobId),
   };
 
-    const nfeReconcilerQueue = new NFeReconcilerQueue(nfeNext);
-
-
   const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi);
+
+  const mlSyncNext = {
+    add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId),
+    getJob: (jobId: string) => mlOrderSyncQueue.getJob(jobId),
+  };
 
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
@@ -50,17 +60,50 @@ export function initQueues(app: Express) {
     add: (data, jobId) => mlOrderQueue.add(data, jobId),
   });
 
-  const blingOrderQueue = new BlingOrderQueue(new BlingOrderService(blingApi), {
+  const cnpjNext = {
+    add: (data: any, jobId: string) => cnpjQueue.add(data, jobId),
+    getJob: (jobId: string) => cnpjQueue.getJob(jobId),
+  };
+
+  const blingOrderQueue = new BlingOrderQueue(blingOrderService, {
     add: (data, jobId) => cnpjQueue.add(data, jobId),
   });
 
-  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
-  nfeReconcilerQueue.scheduleRepeat({ every: 5 * 60* 1000 })
+  const reconcilerQueue = new ReconcilerQueue(
+    cnpjNext,
+    nfeNext,
+    blingApi,
+  );
+
+  const blingReconcilerQueue = new BlingReconcilerQueue(
+    blingApi,
+    blingOrderService
+  )
+
+  // mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
+  reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  blingReconcilerQueue.scheduleRepeat({ every: 12 * 60 * 60 * 1000 })
   // mlScrapingQueue.scheduleRepeat({ every: 2 * 60 * 1000 })
 
   app.locals.BlingOrderQueue = blingOrderQueue;
   app.locals.CNPJQueue = cnpjQueue;
   app.locals.NfeQueue = nfeQueue;
+
+  serverAdapter.setBasePath('/admin/queues');
+
+  createBullBoard({
+    queues: [
+      new BullMQAdapter(nfeQueue.queue),
+      new BullMQAdapter(reconcilerQueue.queue),
+      new BullMQAdapter(mlOrderSyncQueue.queue),
+      new BullMQAdapter(mlScrapingQueue.queue),
+      new BullMQAdapter(mlOrderQueue.queue),
+      new BullMQAdapter(cnpjQueue.queue),
+      new BullMQAdapter(blingOrderQueue.queue),
+      new BullMQAdapter(blingReconcilerQueue.queue)
+    ],
+    serverAdapter,
+  });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
 }

@@ -4,7 +4,7 @@ import { Queue, Worker, QueueEvents, Job } from "bullmq";
 import { redisConnection } from "./base-redis";
 
 export abstract class BaseQueueService<T> {
-  protected queue: Queue;
+  public queue: Queue;
   protected worker: Worker;
   protected queueEvents: QueueEvents;
   public queueName: string;
@@ -18,6 +18,9 @@ export abstract class BaseQueueService<T> {
 
     this.worker = new Worker(this.queueName, this.process.bind(this), {
       connection: redisConnection,
+      lockDuration: 30000,
+      stalledInterval: 30000,
+      maxStalledCount: 1,
       concurrency: options.concurrency ?? 2,
       limiter: options.limiter ?? {
         max: 3,
@@ -51,9 +54,11 @@ export abstract class BaseQueueService<T> {
     return this.queue.add(this.queueName, data, {
       jobId,
       removeOnComplete: true,
-      removeOnFail: false,
-      attempts: 3,
-      backoff: { type: "exponential", delay: 5000 },
+      removeOnFail: {
+        age: 24 * 3600 * 7
+      },
+      attempts: 5,
+      backoff: { type: "exponential", delay: 30000 },
     });
   }
 
@@ -75,9 +80,11 @@ export abstract class BaseQueueService<T> {
       jobId,
       delay: delayMs,
       removeOnComplete: true,
-      removeOnFail: false,
-      attempts: 3,
-      backoff: { type: "exponential", delay: 5000 },
+      removeOnFail: {
+        age: 24 * 3600 * 7
+      },
+      attempts: 5,
+      backoff: { type: "exponential", delay: 30000 },
     });
   }
 
@@ -88,7 +95,11 @@ export abstract class BaseQueueService<T> {
       {
         repeat: { every: options.every },
         removeOnComplete: true,
-        removeOnFail: { count: 10 },
+        removeOnFail: {
+        age: 24 * 3600 * 7
+      },
+        attempts: 3,
+        backoff: { type: "exponential", delay: 10000 },
       },
     );
     console.log(

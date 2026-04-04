@@ -11,6 +11,7 @@ class Integration extends Model<integrationsAttributes, integrationsCreationAttr
     public api_url!: string;
     public cnaes!: string[];
     public document!: string;
+    public allowed_channels?: string[];
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -46,7 +47,11 @@ Integration.init(
         cnaes: {
             type: DataTypes.ARRAY(DataTypes.STRING),
             allowNull: true,
-        }
+        },
+        allowed_channels: {
+            type: DataTypes.ARRAY(DataTypes.STRING),
+            allowNull: true,
+        },
     },
     {
         sequelize,
