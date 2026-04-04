@@ -4,8 +4,8 @@ import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import { NormalizedCNPJ } from "./cnpj_api.types";
 const CNPJ_PROVIDERS = [
   {
-    api: 'openCNPJ',
-    url: 'https://api.opencnpj.org/',
+    api: "openCNPJ",
+    url: "https://api.opencnpj.org/",
     buildPath: (cnpj: string) => cnpj,
     normalize: (data: any): NormalizedCNPJ => ({
       cnpj: data.cnpj,
@@ -14,13 +14,13 @@ const CNPJ_PROVIDERS = [
       cnae_principal: String(data.cnae_principal),
       cnaes: [
         String(data.cnae_principal),
-        ...(data.cnaes_secundarios || []).map((c: any) => String(c))
-      ]
-    })
+        ...(data.cnaes_secundarios || []).map((c: any) => String(c)),
+      ],
+    }),
   },
   {
-    api: 'brasilAPI',
-    url: 'https://brasilapi.com.br/api/cnpj/v1/',
+    api: "brasilAPI",
+    url: "https://brasilapi.com.br/api/cnpj/v1/",
     buildPath: (cnpj: string) => cnpj,
     normalize: (data: any): NormalizedCNPJ => ({
       cnpj: data.cnpj,
@@ -29,35 +29,46 @@ const CNPJ_PROVIDERS = [
       cnae_principal: String(data.cnae_fiscal),
       cnaes: [
         String(data.cnae_fiscal),
-        ...(data.cnaes_secundarios || []).map((c: any) => String(c.codigo))
-      ]
-    })
+        ...(data.cnaes_secundarios || []).map((c: any) => String(c.codigo)),
+      ],
+    }),
   },
-]
+];
 
 // Cria uma instância por provider
 const providerInstances: AxiosInstance[] = CNPJ_PROVIDERS.map(({ url }) =>
-  createAxiosInstance({ baseURL: url })
-)
+  createAxiosInstance({ baseURL: url }),
+);
 
 // Tenta cada provider em sequência até um responder com sucesso
-export const fetchCNPJ = async <T = unknown>(cnpj: number): Promise<NormalizedCNPJ> => {
-  let lastError: unknown
+export const fetchCNPJ = async <T = unknown>(
+  cnpj: number,
+): Promise<NormalizedCNPJ> => {
+  let lastError: unknown;
 
   for (let i = 0; i < CNPJ_PROVIDERS.length; i++) {
-    const provider = CNPJ_PROVIDERS[i]
-    const instance = providerInstances[i]
+    const provider = CNPJ_PROVIDERS[i];
+    const instance = providerInstances[i];
 
     try {
-      const { data } = await instance.get<T>(provider.buildPath(String(cnpj)))
-      return provider.normalize(data)
+      const { data } = await instance.get<T>(provider.buildPath(String(cnpj)));
+      return provider.normalize(data);
     } catch (error: any) {
       if (error.response?.status === 404) {
-        console.warn(`[CNPJ] CNPJ ${cnpj} não encontrado no provider ${provider.api}`);
+        console.warn(
+          `[CNPJ] CNPJ ${cnpj} não encontrado no provider ${provider.api}`,
+        );
       }
-      lastError = error
+      const sleep = Math.floor(Math.random() * (3000 - 1000 + 1)) + 1000;
+      console.log(
+        `[CNPJ] Aguardando ${sleep}ms antes de tentar próximo provider...`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, sleep));
+      lastError = error;
     }
   }
 
-  throw new Error(`[CNPJ] Todos os providers falharam. Último erro: ${lastError}`)
-}
+  throw new Error(
+    `[CNPJ] Todos os providers falharam. Último erro: ${lastError}`,
+  );
+};

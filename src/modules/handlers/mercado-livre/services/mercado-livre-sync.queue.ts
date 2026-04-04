@@ -11,6 +11,8 @@ import { AxiosInstance } from "axios";
 import { FullOrder } from "../../../sales/orders/order/orders.types";
 import sequelize from "../../../../config/sequelize";
 import { Op } from "sequelize";
+import OrderItems from "../../../sales/orders/order_items/order_items.model";
+import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
 
 /**
  * Job pode vir de duas origens:
@@ -18,8 +20,8 @@ import { Op } from "sequelize";
  * 2. MLOrderQueue (webhook) — traz { order, customer } com dados do Bling/webhook
  */
 export type MLOrderSyncJobData =
-  | { row: MLExcelRow; order?: never; customer?: never }
-  | { order: any; customer: any; row?: never };
+  | { row: MLExcelRow; orderSystem?: never; customer?: never }
+  | { orderSystem: any; customer: any; row?: never };
 
 export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   private blingApi: AxiosInstance;
@@ -38,14 +40,11 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   }
 
   async process(job: Job<MLOrderSyncJobData>): Promise<void> {
-    if (job.data.order) {
-      const dbOrder = await ordersService.findOne({
-        where: { number_order_channel: String(job.data.order.numeroLoja) },
-      });
-
-      if (dbOrder?.internal_status === "CANCELLED") {
+    if (job.data.orderSystem) {
+    
+      if (job.data.orderSystem?.internal_status === "CANCELLED") {
         console.log(
-          `[MLOrderSyncQueue] Pedido ${job.data.order.numeroLoja} cancelado — ignorando`,
+          `[MLOrderSyncQueue] Pedido ${job.data.orderSystem.number_order_channel} cancelado — ignorando`,
         );
         return;
       }
@@ -56,7 +55,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       await this.syncFromExcel(job.data.row);
     } else {
       // Origem: webhook — tem order/customer do Bling, sem dados ML ainda
-      await this.syncFromWebhook(job.data.order, job.data.customer);
+      await this.syncFromWebhook(job.data.orderSystem, job.data.customer);
     }
   }
 
@@ -117,6 +116,11 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
             ],
           },
         },
+        {
+          model: OrderItems,
+          as: "items",
+          attributes: ['sku']
+        }
       ],
     });
 
@@ -145,32 +149,30 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
    * Se achar com collection_date já preenchida (scraping rodou antes): agenda NFe direto.
    * Se não tiver collection_date ainda: marca WAITING CHANNEL VALIDATION e aguarda próximo scraping.
    */
-  private async syncFromWebhook(order: any, customer: any): Promise<void> {
-    const dbOrder = await ordersService.findOne({
-      where: { number_order_channel: String(order.numeroLoja) },
-    });
+  private async syncFromWebhook(orderSystem: any, customer: any): Promise<void> {
 
-    if (!dbOrder) {
+
+    if (!orderSystem) {
       console.warn(
-        `[MLOrderSyncQueue] Pedido ${order.numeroLoja} não encontrado no banco via webhook. Ignorando.`,
+        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} não encontrado no banco via webhook. Ignorando.`,
       );
       return;
     }
 
-    if (dbOrder.collection_date) {
+    if (orderSystem.collection_date) {
       // Scraping já rodou antes do webhook chegar — agenda NFe direto
       console.log(
-        `[MLOrderSyncQueue] Pedido ${order.numeroLoja} já tem collection_date. Agendando NFe direto.`,
+        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já tem collection_date. Agendando NFe direto.`,
       );
-      await this.scheduleNfe(dbOrder.id_order_system!, dbOrder.collection_date);
+      await this.scheduleNfe(orderSystem.id_order_system!, orderSystem.collection_date, orderSystem);
       return;
     }
 
     // Sem collection_date — marca como aguardando e espera o próximo scraping
     console.log(
-      `[MLOrderSyncQueue] Pedido ${order.numeroLoja} sem collection_date. Marcando como WAITING CHANNEL VALIDATION.`,
+      `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} sem collection_date. Marcando como WAITING CHANNEL VALIDATION.`,
     );
-    await ordersService.update(dbOrder.id, {
+    await ordersService.update(orderSystem.id, {
       internal_status: "WAITING CHANNEL VALIDATION",
     });
   }
@@ -218,10 +220,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     }
 
     // Valida SKU na Bling antes de confirmar
-    const { valid: skuValid, orderData } = await this.validateSkuOnBling(
-      order.id_order_system,
-      row.sku,
-    );
+   const skuValid = order.items.some((item) => item.sku == row.sku)
 
     if (!skuValid) {
       console.warn(
@@ -267,53 +266,21 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
    * agendado para 1 dia antes da data de coleta.
    */
   private async scheduleNfe(
-    idOrderSystem: string,
-    collectionDate: Date,
-  ): Promise<void> {
-    const jobId = `nfe-generation-${idOrderSystem}`;
+  idOrderSystem: string,
+  collectionDate: Date,
+  orderSystem?: any
+): Promise<void> {
+  const jobId = `nfe-generation-${idOrderSystem}`;
 
-    // Remove job antigo para evitar duplicatas
-    await this.next.removeJob(jobId);
+  await this.next.removeJob(jobId);
 
-    const oneDayBefore = new Date(collectionDate);
-    oneDayBefore.setDate(oneDayBefore.getDate() - 1);
-    const delay = Math.max(0, oneDayBefore.getTime() - Date.now());
+  const delay = setDelayBasedOnDate(new Date(collectionDate));
 
-    await this.next.addDelayed(
-      { order_id: idOrderSystem, collection_date: String(collectionDate) },
-      jobId,
-      delay,
-    );
-
-    console.log(
-      `[MLOrderSyncQueue] NFe agendada para ${oneDayBefore.toISOString()} (pedido ${idOrderSystem})`,
-    );
-  }
-
-  /**
-   * Consulta a Bling para verificar se o SKU do Excel está presente no pedido.
-   * Retorna false em erros 4xx (pedido inválido), lança em erros 5xx (retry).
-   */
-  private async validateSkuOnBling(
-    idOrderSystem: string,
-    sku: string,
-  ): Promise<{ valid: boolean; orderData: any | null }> {
-    try {
-      const { data } = await this.blingApi.get(
-        `/pedidos/vendas/${idOrderSystem}`,
-      );
-      const codes: string[] = data.data.itens.map((i: any) => i.codigo);
-      return {
-        valid: codes.some((code) => code === sku),
-        orderData: data.data,
-      };
-    } catch (error: any) {
-      if (error.response?.status >= 500 || error.response?.status === 429) throw error;
-      console.error(
-        `[MLOrderSyncQueue] Erro ao validar SKU no Bling (${idOrderSystem}):`,
-        error.response?.data ?? error.message,
-      );
-      return { valid: false, orderData: null };
-    }
-  }
+  await this.next.addDelayed(
+    { order_id: idOrderSystem, collection_date: String(collectionDate), orderSystem },
+    jobId,
+    delay,
+  );
 }
+
+ }
