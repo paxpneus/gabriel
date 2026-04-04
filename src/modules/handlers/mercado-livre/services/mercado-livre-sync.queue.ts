@@ -12,6 +12,7 @@ import { FullOrder } from "../../../sales/orders/order/orders.types";
 import sequelize from "../../../../config/sequelize";
 import { Op } from "sequelize";
 import OrderItems from "../../../sales/orders/order_items/order_items.model";
+import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
 
 /**
  * Job pode vir de duas origens:
@@ -20,7 +21,7 @@ import OrderItems from "../../../sales/orders/order_items/order_items.model";
  */
 export type MLOrderSyncJobData =
   | { row: MLExcelRow; orderSystem?: never; customer?: never }
-  | { orderSystem: any; orderBling: any; customer: any; row?: never };
+  | { orderSystem: any; customer: any; row?: never };
 
 export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   private blingApi: AxiosInstance;
@@ -265,29 +266,21 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
    * agendado para 1 dia antes da data de coleta.
    */
   private async scheduleNfe(
-    idOrderSystem: string,
-    collectionDate: Date,
-    orderBling?: any,
-    orderSystem?: any
-  ): Promise<void> {
-    const jobId = `nfe-generation-${idOrderSystem}`;
+  idOrderSystem: string,
+  collectionDate: Date,
+  orderSystem?: any
+): Promise<void> {
+  const jobId = `nfe-generation-${idOrderSystem}`;
 
-    // Remove job antigo para evitar duplicatas
-    await this.next.removeJob(jobId);
+  await this.next.removeJob(jobId);
 
-    const oneDayBefore = new Date(collectionDate);
-    oneDayBefore.setDate(oneDayBefore.getDate() - 1);
-    const delay = Math.max(0, oneDayBefore.getTime() - Date.now());
+  const delay = setDelayBasedOnDate(new Date(collectionDate));
 
-    await this.next.addDelayed(
-      { order: idOrderSystem, collection_date: String(collectionDate), orderBling, orderSystem },
-      jobId,
-      delay,
-    );
-
-    console.log(
-      `[MLOrderSyncQueue] NFe agendada para ${oneDayBefore.toISOString()} (pedido ${idOrderSystem})`,
-    );
-  }
+  await this.next.addDelayed(
+    { order_id: idOrderSystem, collection_date: String(collectionDate), orderSystem },
+    jobId,
+    delay,
+  );
+}
 
  }
