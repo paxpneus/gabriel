@@ -1,14 +1,13 @@
 import 'dotenv/config'
-import express from 'express'
 import sequelize from './config/sequelize'
-import { initQueues } from './queues'
+import './modules/association/index'
+import { startWorkers } from './queues'
 
-const app = express() // necessário só para passar no initQueues
+async function start(): Promise<void> {
+    await sequelize.authenticate()
+    console.log('------------------- DB: Banco Conectado! ------------------- ')
 
-async function start() {
-  await sequelize.authenticate()
-  initQueues(app)
-  console.log('Workers ativos')
+    startWorkers()
 }
 
 start()
