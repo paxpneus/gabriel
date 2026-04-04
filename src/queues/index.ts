@@ -39,11 +39,6 @@ function buildQueues() {
 
   const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi);
 
-  const mlScrapingQueue = new MLScrapingQueue(
-    new MLScrapingService(),
-    new MLOrderService(),
-    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
-  );
 
   const cnpjQueue = new CNPJQueue(new CNPJService(), blingApi, {
     add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId),
@@ -72,7 +67,6 @@ function buildQueues() {
   return {
     nfeQueue,
     mlOrderSyncQueue,
-    mlScrapingQueue,
     cnpjQueue,
     blingOrderQueue,
     reconcilerQueue,
@@ -86,7 +80,6 @@ export function registerQueues(app: Express) {
   const {
     nfeQueue,
     mlOrderSyncQueue,
-    mlScrapingQueue,
     cnpjQueue,
     blingOrderQueue,
     reconcilerQueue,
@@ -104,7 +97,6 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(nfeQueue.queue),
       new BullMQAdapter(reconcilerQueue.queue),
       new BullMQAdapter(mlOrderSyncQueue.queue),
-      new BullMQAdapter(mlScrapingQueue.queue),
       new BullMQAdapter(cnpjQueue.queue),
       new BullMQAdapter(blingOrderQueue.queue),
       new BullMQAdapter(blingReconcilerQueue.queue),
