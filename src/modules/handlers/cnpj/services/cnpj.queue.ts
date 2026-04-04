@@ -36,21 +36,15 @@ export class CNPJQueue extends BaseQueueService<any> {
     const errorMessage = ErrorValues.find((e) => e.id === errorId)?.error;
 
     // // Atualiza a observação
-    // await this.blingApi.put(`/pedidos/vendas/${order.id}`, {
+    // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
     //     observacoesInternas: `${order.observacoesInternas ?? ''}\nPedido Cancelado pelo Motivo: ${errorMessage}`.trim()
     // })
 
     // // Muda o status para Cancelado (ID 12)
-    // await this.blingApi.patch(`/pedidos/vendas/${order.id}/situacoes/12`)
-    const orderError = await ordersService.findOne({where: {
-        id_order_system: String(order.id)
-    }})
+    // await this.blingApi.patch(`/pedidos/vendas/${order.id_order_system}/situacoes/12`)
 
-    if (!orderError) {
-        throw new Error("Pedido não existe no banco de dados.")
-    }
 
-    await ordersService.update(orderError.id, {
+    await ordersService.update(order.id, {
       // ← precisa ser o id do banco, não o id da Bling
       internal_status: "CANCELLED",
     });
@@ -63,13 +57,13 @@ export class CNPJQueue extends BaseQueueService<any> {
   async process(job: Job<any, any, string>): Promise<void> {
     console.log(`[QUEUE] Processando verificação de documento ${job.id}`);
 
-    const { customer, cnaes, order } = job.data;
+    const { customer, cnaes, orderSystem, orderBling } = job.data;
     const document = Number(customer.document);
 
     // Documento inválido
     if (!customer.document || isNaN(document)) {
       console.log(`[CNPJQueue] Documento inválido ou não informado`);
-      await this.markOrderError(order, 1);
+      await this.markOrderError(orderBling, 1);
       return;
     }
 
@@ -81,7 +75,7 @@ export class CNPJQueue extends BaseQueueService<any> {
 
       // Atualiza para em andamento
       // await this.blingApi.patch(`/pedidos/vendas/${order.id_order_system}/situacoes/15`)
-      await this.next.add({ order, customer }, `ml-check-${order.id}`);
+      await this.next.add({ orderSystem, customer }, `ml-check-${orderSystem.id}`);
 
       return;
     }
@@ -96,10 +90,10 @@ export class CNPJQueue extends BaseQueueService<any> {
 
       // Atualiza para em andamento
       // await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/15`)
-      await this.next.add({ order, customer }, `ml-check-${order.id}`);
+      await this.next.add({ orderSystem, customer }, `ml-check-${orderSystem.id}`);
     } else {
       console.log(`[CNPJQueue] CNAE não atendido`);
-      await this.markOrderError(order, 2);
+      await this.markOrderError(orderBling, 2);
     }
   }
 }

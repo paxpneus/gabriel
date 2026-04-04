@@ -14,6 +14,7 @@ import BlingOrderService from "../bling-orders/bling-order.service";
 import Customer from "../../../../sales/customers/customers.model";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import { FullOrder } from "../../../../sales/orders/order/orders.types";
+import OrderItems from "../../../../sales/orders/order_items/order_items.model";
 
 export type NFeReconcilerJobData = Record<string, never>; // job sem payload, só disparo periódico
 
@@ -126,6 +127,11 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
           as: "customer",
           attributes: ["id", "name", "type", "document"],
         },
+        {
+          model: OrderItems,
+          as: 'items',
+          attributes: ['sku']
+        }
       ],
     });
 
@@ -133,10 +139,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
     for (const order of orders) {
       try {
-        const { data } = await this.blingApi.get(
-          `/pedidos/vendas/${order.id_order_system}`,
-        );
-        const orderData = data.data;
+      
 
         const integration = await getBlingIntegration("Bling");
         if (!integration) continue;
@@ -150,7 +153,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
           {
             customer: order.customer,
             cnaes: integration.cnaes,
-            order: orderData,
+            order: order,
           },
           jobId,
         );

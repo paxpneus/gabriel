@@ -1,6 +1,7 @@
 import BaseService from "../../../shared/utils/base-models/base-service";
 import Store from "./stores.model";
 import storeRepository, { StoreRepository } from "./stores.repository";
+import { storeCreationAttributes } from "./stores.types";
 
 export class StoreService extends BaseService<Store, StoreRepository> {
     constructor() {
