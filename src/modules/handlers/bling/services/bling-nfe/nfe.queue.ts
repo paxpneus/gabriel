@@ -32,7 +32,9 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     validationService: NFeValidationService,
     blingApi: AxiosInstance,
   ) {
-    super("NFE_EMISSION");
+    super("NFE_EMISSION", {
+      concurrency: 1
+    });
     this.blingApi = blingApi;
     this.validationService = validationService;
   }

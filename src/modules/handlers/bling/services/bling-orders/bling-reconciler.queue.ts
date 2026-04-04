@@ -5,18 +5,22 @@ import BlingOrderService from "../bling-orders/bling-order.service";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import ordersService from "../../../../sales/orders/order/orders.service";
 
-export class BlingReconcilerQueue extends BaseQueueService<Record<string, never>> {
+export class BlingReconcilerQueue extends BaseQueueService<
+  Record<string, never>
+> {
   private blingApi: AxiosInstance;
-  private blingOrderService: BlingOrderService;
+  private blingOrderNext: { add: (data: any, jobId: string) => Promise<any> };
+  private blingOrderService: BlingOrderService
 
-  constructor(blingApi: AxiosInstance, blingOrderService: BlingOrderService) {
+  constructor(blingApi: AxiosInstance, blingOrderNext: { add: (data: any, jobId: string) => Promise<any> },) {
     super("BLING_RECONCILER", { concurrency: 1 });
     this.blingApi = blingApi;
-    this.blingOrderService = blingOrderService;
+    this.blingOrderNext = blingOrderNext;
+    this.blingOrderService = new BlingOrderService(blingApi)
   }
 
   async process(job: Job): Promise<void> {
-console.log("[BlingReconciler] Verificando pedidos abertos na Bling...");
+    console.log("[BlingReconciler] Verificando pedidos abertos na Bling...");
 
     const integration = await getBlingIntegration("Bling");
     if (!integration) {
@@ -54,21 +58,29 @@ console.log("[BlingReconciler] Verificando pedidos abertos na Bling...");
       });
 
       const orders: any[] = data.data ?? [];
-      console.log(`[BlingReconciler] Página ${page}: ${orders.length} pedido(s) desde ${dataInicialStr}`);
+      console.log(
+        `[BlingReconciler] Página ${page}: ${orders.length} pedido(s) desde ${dataInicialStr}`,
+      );
       if (orders.length === 0) break;
       totalFound += orders.length;
 
+      const numbers = orders.map((o: any) => String(o.numero));
+
+      const existingOrders = await ordersService.findAll({
+        where: {
+          integration_id: integration.id,
+          number_order_system: numbers,
+        },
+      });
+
+      const existingNumbers = new Set(existingOrders.map(o => o.number_order_system));
+
       for (const blingOrder of orders) {
-        const exists = await ordersService.findOne({
-          where: {
-            integration_id: integration.id,
-            number_order_system: String(blingOrder.numero),
-          },
-        });
+        if (existingNumbers.has(String(blingOrder.numero))) continue;
 
-        if (exists) continue;
-
-        console.log(`[BlingReconciler] Pedido ${blingOrder.numero} não encontrado. Criando...`);
+        console.log(
+          `[BlingReconciler] Pedido ${blingOrder.numero} não encontrado. Criando...`,
+        );
 
         try {
           await this.blingOrderService.createOrderFromBling({
@@ -82,13 +94,15 @@ console.log("[BlingReconciler] Verificando pedidos abertos na Bling...");
           );
         }
 
-        await new Promise(resolve => setTimeout(resolve, 400));
+        await new Promise((resolve) => setTimeout(resolve, 400));
       }
 
       if (orders.length < PAGE_LIMIT) break;
       page++;
     }
 
-    console.log(`[BlingReconciler] Concluído. ${totalFound} verificado(s), ${created} criado(s).`);
+    console.log(
+      `[BlingReconciler] Concluído. ${totalFound} verificado(s), ${created} criado(s).`,
+    );
   }
 }
