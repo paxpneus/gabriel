@@ -1,4 +1,4 @@
-import { Model, ModelStatic, FindOptions, CreateOptions, UpdateOptions, DestroyOptions } from 'sequelize'
+import { Model, ModelStatic, FindOptions, CreateOptions, UpdateOptions, DestroyOptions, CreationAttributes, BulkCreateOptions } from 'sequelize'
 
 class BaseRepository<T extends Model> {
   protected model: ModelStatic<T>
@@ -24,6 +24,13 @@ class BaseRepository<T extends Model> {
     options?: CreateOptions
   ): Promise<T> {
     return this.model.create(data as any, options)
+  }
+
+  bulkCreate(
+    datas: CreationAttributes<T>[],
+    options?: BulkCreateOptions<T>
+  ): Promise<T[]> {
+    return this.model.bulkCreate(datas, options)
   }
 
   async update(

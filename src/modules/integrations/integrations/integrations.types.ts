@@ -10,6 +10,7 @@ export interface integrationsAttributes {
     api_url: string,
     cnaes: string[],
     document: string,
+    allowed_channels?: string[],
 }
 
 export type integrationsCreationAttributes = Omit<integrationsAttributes, 'id'>

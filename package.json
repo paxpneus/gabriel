@@ -15,6 +15,8 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@bull-board/api": "^6.20.6",
+    "@bull-board/express": "^6.20.6",
     "axios": "^1.14.0",
     "bullmq": "^5.71.1",
     "dotenv": "^17.3.1",

@@ -3,8 +3,8 @@ import { getBlingIntegration } from "../../api/bling_api.service";
 import { blingOrderWebHookData } from "./bling-order.types";
 import ordersService, {
   OrderService,
-} from "../../../../sales/orders/orders.service";
-import { orderCreationAttributes } from "../../../../sales/orders/orders.types";
+} from "../../../../sales/orders/order/orders.service";
+import { orderCreationAttributes } from "../../../../sales/orders/order/orders.types";
 import { BlingCustomerService } from "../bling-customers/bling-customer.service";
 import { CNPJQueue } from "../../../cnpj/services/cnpj.queue";
 import { executeWebhookAction } from "../../../../../shared/utils/normalizers/webhook";
@@ -142,7 +142,7 @@ export class BlingOrderService {
   //Método principal para processar o webhook e criar o pedido
 
   async createOrderFromBling(
-    body: blingOrderWebHookData,
+    body: blingOrderWebHookData | {data: {id: number | string}},
   ): Promise<{ customer: any; cnaes: any[]; order: any } | null> {
     console.log(body.data.id);
     try {
@@ -166,6 +166,22 @@ export class BlingOrderService {
       if (existingOrder) {
         console.log(
           `[BlingOrderService] Pedido ${orderData.numero} já cadastrado. Pulando...`,
+        );
+        return null;
+      }
+
+      const channel = await this.blingApi.get(
+        `/canais-venda/${orderData.loja.id}`,
+      );
+      if (!integration.allowed_channels?.includes(channel.data.data.tipo)) {
+        console.log("[DEBUG] channel.data.tipo:", channel.data.tipo);
+        console.log(
+          "[DEBUG] integration.allowed_channels:",
+          integration.allowed_channels,
+        );
+        console.log(
+          "[DEBUG] includes?",
+          integration.allowed_channels?.includes(channel.data.tipo),
         );
         return null;
       }
@@ -195,6 +211,7 @@ export class BlingOrderService {
         );
         return null;
       }
+
 
       return { customer, cnaes: integration.cnaes, order: orderData };
     } catch (error: any) {

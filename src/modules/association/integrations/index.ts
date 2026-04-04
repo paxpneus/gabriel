@@ -1,6 +1,6 @@
 import Integration from "../../integrations/integrations/integrations.model";
 import ConfigToken from "../../integrations/config_tokens/config_tokens.model";
-import Order from "../../sales/orders/orders.model";
+import Order from "../../sales/orders/order/orders.model";
 
 // 1. INTEGRATIONS 1:1 CONFIG_TOKENS
 Integration.hasOne(ConfigToken, { foreignKey: 'integrations_id', as: 'tokens' });
