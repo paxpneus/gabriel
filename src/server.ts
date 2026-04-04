@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import app from './app'
 import sequelize from './config/sequelize'
-import '../src/modules/association/index'
+import './modules/association/index'
 
 const PORT = process.env.PORT || 3000
 
