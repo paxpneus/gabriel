@@ -81,7 +81,7 @@ module.exports = {
       },
       store_id: {
         type: Sequelize.UUID,
-        allowNull: false,
+        allowNull: true,
         references: { model: 'stores', key: 'id' }
       },
       id_order_system: { type: Sequelize.STRING(100), allowNull: true },
