@@ -27,7 +27,7 @@ const MAX_DOWNLOAD_ATTEMPTS = 3;
 
 // Headless: false localmente para depurar login/CAPTCHA, true no servidor
 const IS_HEADLESS =
-  process.env.NODE_ENV === "production" || process.env.ML_HEADLESS === "false";
+  process.env.NODE_ENV === "production" || process.env.ML_HEADLESS === "true";
 
 const COLLECTION_DATE_REGEX = /coleta do dia (\d{1,2}) de (\w+)/i;
 
