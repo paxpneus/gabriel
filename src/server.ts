@@ -4,7 +4,8 @@ import sequelize from './config/sequelize'
 import './modules/association/index'
 import { registerQueues } from './queues'
 
-const PORT = process.env.PORT || 3000
+const PORT = parseInt(process.env.PORT || '3000', 10);
+const HOST = '0.0.0.0'
 
 async function start(): Promise<void> {
     await sequelize.authenticate()
@@ -13,9 +14,8 @@ async function start(): Promise<void> {
 
     registerQueues(app)
 
-    app.listen(PORT, () => {
-        console.log(`------------------- SERVER: Rodando em http//localhost:${PORT} ------------------- `)
-    })
+    app.listen(PORT, HOST, () => {
+console.log(`Servidor rodando em http://187.50.246.187:${PORT}`);    })
 }
 
 start()

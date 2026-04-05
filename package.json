@@ -4,12 +4,12 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon",
+    "dev": "nodemon --exec ts-node src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "migrate": "sequelize-cli db:migrate",
     "migrate:undo": "sequelize-cli db:migrate:undo",
-    "start:worker": "node dist/worker.js"
+    "start:worker": "node src/worker"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +20,7 @@
     "@bull-board/express": "^6.20.6",
     "axios": "^1.14.0",
     "bullmq": "^5.71.1",
+    "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "ioredis": "^5.10.1",
@@ -33,6 +34,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
     "nodemon": "^3.1.14",
