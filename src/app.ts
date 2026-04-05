@@ -16,4 +16,6 @@ app.get('/health', (_, res) => res.json({status: 'ok'}))
 
 app.use('/api', router)
 
+app.use('/admin/queues', serverAdapter.getRouter())
+
 export default app
