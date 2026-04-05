@@ -117,7 +117,7 @@ services:
       NODE_ENV: production
       DB_HOST: postgres
       REDIS_HOST: redis
-      ML_HEADLESS: "true"
+      ML_HEADLESS: "false"
       PORT: 3002
     # Sessão e downloads persistidos para evitar login repetido
     volumes:

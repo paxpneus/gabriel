@@ -27,7 +27,7 @@ const MAX_DOWNLOAD_ATTEMPTS = 3;
 
 // Headless: false localmente para depurar login/CAPTCHA, true no servidor
 const IS_HEADLESS =
-  process.env.NODE_ENV === "production" || process.env.ML_HEADLESS === "true";
+  process.env.NODE_ENV === "production" || process.env.ML_HEADLESS === "false";
 
 const COLLECTION_DATE_REGEX = /coleta do dia (\d{1,2}) de (\w+)/i;
 
@@ -196,58 +196,44 @@ export class MLScrapingService {
     );
   }
 
-  private async doGoogleLogin(
+ private async doGoogleLogin(
     context: BrowserContext,
     page: Page,
-  ): Promise<boolean> {
+): Promise<boolean> {
     await page.goto(LOGIN_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 30_000,
-    });
+        waitUntil: 'domcontentloaded',
+        timeout: 30_000,
+    })
 
-    // Clica no botão "Fazer login com Google"
-    const googleBtn = await page.waitForSelector(
-      '[class*="nsm7Bb-HzV7m-LgbsSe"]',
-      { timeout: 15_000 },
-    );
-    await googleBtn.click();
+    // Aguarda o botão do Google aparecer e clica
+    await page.waitForSelector('text=Continuar com o Google', { timeout: 15_000 })
+    await page.click('text=Continuar com o Google')
 
-    // O popup do Google abre em nova aba
-    const popup = await context.waitForEvent("page", { timeout: 20_000 });
-    await popup.waitForLoadState("domcontentloaded");
+    // ML redireciona na mesma aba — aguarda chegar no domínio do Google
+    await page.waitForURL('**/accounts.google.com/**', { timeout: 20_000 })
 
-    // Seleciona a primeira conta listada
-    const firstAccount = await popup.waitForSelector('[jsname="MBVUVe"]', {
-      timeout: 15_000,
-    });
-    await firstAccount.click();
-
-    // Aguarda popup fechar e ML processar o login
-    await popup.waitForEvent("close", { timeout: 30_000 }).catch(() => {});
-    await page.waitForTimeout(4_000);
-
-    // Confirma se está logado
-    await page.goto(SALES_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 30_000,
-    });
-    await page.waitForTimeout(2_000);
-
-    if (this.isLoginWall(page)) {
-      if (!IS_HEADLESS) {
-        // Local: abre janela visível para o operador resolver e aguarda até 5 minutos
-        return this.waitForManualLoginLocal(context, page);
-      }
-
-      console.error(
-        "[MLScraping] Login automático falhou — possível CAPTCHA ou 2FA",
-      );
-      return false;
+    // Se aparecer seleção de conta, clica na primeira
+    try {
+        await page.waitForSelector('[data-identifier]', { timeout: 8_000 })
+        await page.click('[data-identifier]:first-child')
+    } catch {
+        console.log('[MLScraping] Sem seleção de conta — pode precisar de login manual')
     }
 
-    console.log("[MLScraping] Login via Google realizado com sucesso");
-    return true;
-  }
+    // Aguarda voltar para o ML
+    await page.waitForURL('**/mercadolivre.com.br/**', { timeout: 30_000 })
+    await page.waitForTimeout(3_000)
+
+    await page.goto(SALES_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+
+    if (this.isLoginWall(page)) {
+        console.error('[MLScraping] Login via Google falhou — CAPTCHA, 2FA ou sem conta salva')
+        return false
+    }
+
+    console.log('[MLScraping] Login via Google realizado com sucesso')
+    return true
+}
 
   /**
    * Apenas em ambiente local (headless: false).
