@@ -104,6 +104,9 @@ export function registerQueues(app: Express) {
     serverAdapter,
   });
 
+  app.use('/admin/queues', serverAdapter.getRouter())
+
+
   console.log("------------------- QUEUE: Filas registradas na API! -------------------");
 }
 
