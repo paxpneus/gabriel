@@ -33,7 +33,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     blingApi: AxiosInstance,
   ) {
     super("NFE_EMISSION", {
-      concurrency: 1
+      concurrency: 1,
     });
     this.blingApi = blingApi;
     this.validationService = validationService;
@@ -86,9 +86,20 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
       // await this.blingApi.post(`/pedidos/vendas/${order_id}/gerar-nfe`)
       console.log(`[NFeQueue] NFe emitida com sucesso para pedido ${order_id}`);
 
-      await ordersService.update(order.id, {
+      const internalOrder = await ordersService.findOne({
+        where: { id_order_system: String(order.id) },
+      });
+
+      if (!internalOrder) {
+        console.warn(
+          `[NFeQueue] Pedido ${order_id} não encontrado no banco. Pulando update.`,
+        );
+        return;
+      }
+
+      await ordersService.update(internalOrder.id, {
         nfe_emitted: true,
-        internal_status: "EMITTED", 
+        internal_status: "EMITTED",
       });
     } catch (error: any) {
       console.error(
