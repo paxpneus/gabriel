@@ -29,6 +29,9 @@ const router = Router()
  */
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
+    console.log('[Webhook] Headers:', JSON.stringify(req.headers))
+    console.log('[Webhook] Body:', JSON.stringify(req.body))
+
     const blingOrderQueue: BlingOrderQueue = req.app.locals.BlingOrderQueue
     const event: string = req.body.event  // "order.created" | "order.updated" | "order.deleted"
     const orderId = req.body.data?.id
