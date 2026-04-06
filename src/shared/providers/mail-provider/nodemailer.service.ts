@@ -1,3 +1,4 @@
+import { sendMailDto } from './nodemailer.types';
 import nodemailer, { Transporter } from "nodemailer";
 import SMTPTransport from "nodemailer/lib/smtp-transport";
 import dotenv from "dotenv";
@@ -18,6 +19,8 @@ class NodeMailerService {
     };
 
     this.transporter = nodemailer.createTransport(config);
+
+    this.checkMailerService()
   }
 
   async checkMailerService(): Promise<void> {
@@ -31,23 +34,25 @@ class NodeMailerService {
     }
   }
 
-  async send(to: string, subject?: string, text?: string, html?: string) {
+  async send(data: sendMailDto): Promise<SMTPTransport.SentMessageInfo> {
     try {
+
       const mail_info = await this.transporter.sendMail({
         from: process.env.MAILER_FROM,
-        to: to,
-        subject: subject,
-        text: text,
-        html: html,
+        to: data.to,
+        subject: data.subject || 'Sem Assunto',
+        text: data.text,
+        html: data.html,
       });
 
       console.log(
-        `[NODEMAILER - SERVICE 200] - Email enviado para ${to}, conteúdo: %s${mail_info.messageId}`,
+        `[NODEMAILER - SERVICE 200] - Email enviado para ${data.to}, ID: ${mail_info.messageId}`,
       );
 
-      console.log("Preview URL: %s", nodemailer.getTestMessageUrl(mail_info));
+      return mail_info
     } catch (error) {
       console.error("Error while sending mail:", error);
+      throw error;
     }
   }
 }
