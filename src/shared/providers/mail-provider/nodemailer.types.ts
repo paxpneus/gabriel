@@ -1,0 +1,1 @@
+export type sendMailDto = {to: string, subject?: string, text?: string, html?: string}
