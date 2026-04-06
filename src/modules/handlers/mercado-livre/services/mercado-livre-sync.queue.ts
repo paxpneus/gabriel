@@ -13,6 +13,7 @@ import sequelize from "../../../../config/sequelize";
 import { Op } from "sequelize";
 import OrderItems from "../../../sales/orders/order_items/order_items.model";
 import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
+import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 
 /**
  * Job pode vir de duas origens:
@@ -41,7 +42,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
 
   async process(job: Job<MLOrderSyncJobData>): Promise<void> {
     if (job.data.orderSystem) {
-    
       if (job.data.orderSystem?.internal_status === "CANCELLED") {
         console.log(
           `[MLOrderSyncQueue] Pedido ${job.data.orderSystem.number_order_channel} cancelado — ignorando`,
@@ -119,8 +119,8 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
         {
           model: OrderItems,
           as: "items",
-          attributes: ['sku']
-        }
+          attributes: ["sku"],
+        },
       ],
     });
 
@@ -149,9 +149,10 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
    * Se achar com collection_date já preenchida (scraping rodou antes): agenda NFe direto.
    * Se não tiver collection_date ainda: marca WAITING CHANNEL VALIDATION e aguarda próximo scraping.
    */
-  private async syncFromWebhook(orderSystem: any, customer: any): Promise<void> {
-
-
+  private async syncFromWebhook(
+    orderSystem: any,
+    customer: any,
+  ): Promise<void> {
     if (!orderSystem) {
       console.warn(
         `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} não encontrado no banco via webhook. Ignorando.`,
@@ -164,7 +165,11 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       console.log(
         `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já tem collection_date. Agendando NFe direto.`,
       );
-      await this.scheduleNfe(orderSystem.id_order_system!, orderSystem.collection_date, orderSystem);
+      await this.scheduleNfe(
+        orderSystem.id_order_system!,
+        orderSystem.collection_date,
+        orderSystem,
+      );
       return;
     }
 
@@ -191,7 +196,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     );
     return orders.reduce((closest, current) => {
       const target = new Date(saleDate).getTime(); // Ponto de atenção: TS nao reclamou de ser string
-  
+
       const currDiff = Math.abs(
         new Date(current.createdAt!).getTime() - target,
       );
@@ -220,12 +225,17 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     }
 
     // Valida SKU na Bling antes de confirmar
-   const skuValid = order.items.some((item) => item.sku == row.sku)
+    const skuValid = order.items.some((item) => item.sku == row.sku);
 
     if (!skuValid) {
       console.warn(
         `[MLOrderSyncQueue] SKU "${row.sku}" não encontrado no pedido Bling ${order.id_order_system}.`,
       );
+      alertService.sendAlert({
+        severity: "MEDIUM",
+        title: "ML Sync — SKU sem match",
+        message: `Pedido Bling ${order.id_order_system} não contém SKU "${row.sku}" vindo do ML. Requer revisão manual.`,
+      });
       return;
     }
 
@@ -248,11 +258,10 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       internal_status: "WAITING FOR NFE EMISSION",
     });
 
-//     const observacoesAtual = orderData.observacoesInternas ?? ''
-// await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-//   observacoesInternas: `${observacoesAtual}\nNº ML: ${row.order_number}`.trim()
-// })
-
+    //     const observacoesAtual = orderData.observacoesInternas ?? ''
+    // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+    //   observacoesInternas: `${observacoesAtual}\nNº ML: ${row.order_number}`.trim()
+    // })
 
     console.log(
       `[MLOrderSyncQueue] Pedido ${order.number_order_channel} → collection_date: ${newDate.toISOString()}`,
@@ -266,21 +275,24 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
    * agendado para 1 dia antes da data de coleta.
    */
   private async scheduleNfe(
-  idOrderSystem: string,
-  collectionDate: Date,
-  orderSystem?: any
-): Promise<void> {
-  const jobId = `nfe-generation-${idOrderSystem}`;
+    idOrderSystem: string,
+    collectionDate: Date,
+    orderSystem?: any,
+  ): Promise<void> {
+    const jobId = `nfe-generation-${idOrderSystem}`;
 
-  await this.next.removeJob(jobId);
+    await this.next.removeJob(jobId);
 
-  const delay = setDelayBasedOnDate(new Date(collectionDate));
+    const delay = setDelayBasedOnDate(new Date(collectionDate));
 
-  await this.next.addDelayed(
-    { order_id: idOrderSystem, collection_date: String(collectionDate), orderSystem },
-    jobId,
-    delay,
-  );
+    await this.next.addDelayed(
+      {
+        order_id: idOrderSystem,
+        collection_date: String(collectionDate),
+        orderSystem,
+      },
+      jobId,
+      delay,
+    );
+  }
 }
-
- }

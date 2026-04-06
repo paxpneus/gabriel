@@ -6,6 +6,7 @@ import { NFeValidationService } from "./nfe-validation.service";
 import { NFeJobData } from "./nfe.types";
 import { AxiosInstance } from "axios";
 import ordersService from "../../../../sales/orders/order/orders.service";
+import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 
 const STATUS = {
   EM_ANDAMENTO: 6,
@@ -106,8 +107,17 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         `[NFeQueue] Erro ao emitir NFe:`,
         error.response?.data ?? error.message,
       );
+      
       // Relança para o BullMQ fazer retry (3x com backoff, herdado da base)
       throw error;
     }
   }
+
+  protected onFailed(job: Job<NFeJobData>, error: Error): void {
+  alertService.sendAlert({
+    severity: "CRITICAL",
+    title: "NFe — falha após todos os retries",
+    message: `Pedido ${job.data.order_id} não teve NFe emitida. Requer intervenção manual. Erro: ${error.message}`,
+  });
+}
 }

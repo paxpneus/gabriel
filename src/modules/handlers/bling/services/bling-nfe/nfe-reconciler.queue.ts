@@ -15,6 +15,7 @@ import Customer from "../../../../sales/customers/customers.model";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import { FullOrder } from "../../../../sales/orders/order/orders.types";
 import OrderItems from "../../../../sales/orders/order_items/order_items.model";
+import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 
 export type NFeReconcilerJobData = Record<string, never>; // job sem payload, só disparo periódico
 
@@ -50,18 +51,21 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     const results = await Promise.allSettled([
       this.reconcileWaitingNfe(),
       this.reconcileOpenOrders(),
+      this.reconcileStuckOrders(),
     ]);
 
     results.forEach((result, index) => {
       if (result.status === "rejected") {
-        const names = [
-          "reconcileWaitingNfe",
-          "reconcileOpenOrders",
-        ];
+        const names = ["reconcileWaitingNfe", "reconcileOpenOrders", "reconcileStuckOrders"];
         console.error(
           `[NFeReconciler] ${names[index]} falhou:`,
           result.reason?.message ?? result.reason,
         );
+        alertService.sendAlert({
+          severity: "CRITICAL",
+          title: `Reconciler — ${names[index]} falhou`,
+          message: `O mecanismo de recuperação automática falhou: ${result.reason?.message ?? result.reason}`,
+        });
       }
     });
   }
@@ -129,9 +133,9 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
         },
         {
           model: OrderItems,
-          as: 'items',
-          attributes: ['sku']
-        }
+          as: "items",
+          attributes: ["sku"],
+        },
       ],
     });
 
@@ -139,8 +143,6 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
     for (const order of orders) {
       try {
-      
-
         const integration = await getBlingIntegration("Bling");
         if (!integration) continue;
 
@@ -171,6 +173,22 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
       }
     }
   }
+  
+  private async reconcileStuckOrders(): Promise<void> {
+  const stuckOrders = await ordersService.findAll({
+    where: {
+      internal_status: 'WAITING CHANNEL VALIDATION',
+      updatedAt: { [Op.lt]: new Date(Date.now() - 4 * 60 * 60 * 1000) }, // 4h
+    },
+  });
 
+  if (stuckOrders.length > 0) {
+    alertService.sendAlert({
+      severity: 'MEDIUM',
+      title: 'ML Sync — pedidos presos sem coleta',
+      message: `${stuckOrders.length} pedido(s) em WAITING CHANNEL VALIDATION há mais de 4h sem match no scraping.`,
+    });
+  }
+}
 
 }
