@@ -22,6 +22,10 @@ import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mer
 import { ReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
 import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-orders/bling-reconciler.queue";
 
+import { NodeMailerQueue } from "../shared/providers/mail-provider/nodemailer.queue";
+import { IMailNext } from "../shared/providers/mail-provider/nodemailer.types";
+import { AlertService } from "../shared/providers/mail-provider/nodemailer.alert";
+
 export const serverAdapter = new ExpressAdapter();
 
 // ─── Monta todas as instâncias de fila (compartilhado entre as duas funções) ──
@@ -64,6 +68,14 @@ function buildQueues() {
     blingOrderNext,
   );
 
+  const nodeMailerQueue = new NodeMailerQueue()
+
+  const mailNext: IMailNext = {
+    add: (data: any, jobId?: string) => nodeMailerQueue.add(data, jobId)
+  }
+
+  const alertService = new AlertService(mailNext)
+
   return {
     nfeQueue,
     mlOrderSyncQueue,
@@ -71,6 +83,8 @@ function buildQueues() {
     blingOrderQueue,
     reconcilerQueue,
     blingReconcilerQueue,
+    nodeMailerQueue,
+    alertService
   };
 }
 
@@ -93,12 +107,16 @@ export function registerQueues(app: Express) {
     blingOrderQueue,
     reconcilerQueue,
     blingReconcilerQueue,
+    nodeMailerQueue,
+    alertService
   } = buildQueues();
   const mlScrapingQueue = buildMLScrapingQueueRef(mlOrderSyncQueue)
 
   app.locals.BlingOrderQueue = blingOrderQueue;
   app.locals.CNPJQueue = cnpjQueue;
   app.locals.NfeQueue = nfeQueue;
+  app.locals.NodeMailerQueue = nodeMailerQueue;
+  app.locals.alertService = alertService
 
   serverAdapter.setBasePath("/admin/queues");
 
@@ -110,7 +128,8 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(cnpjQueue.queue),
       new BullMQAdapter(blingOrderQueue.queue),
       new BullMQAdapter(blingReconcilerQueue.queue),
-      new BullMQAdapter(mlScrapingQueue.queue)
+      new BullMQAdapter(mlScrapingQueue.queue),
+      new BullMQAdapter(nodeMailerQueue.queue)
     ],
     serverAdapter,
   });
@@ -124,7 +143,7 @@ export function registerQueues(app: Express) {
 // ─── Chamado pelos workers: sobe os Workers e agenda repetições ───────────────
 // Não registra no app.locals — só processa jobs do Redis
 export function startWorkers() {
-  const { reconcilerQueue, blingReconcilerQueue } = buildQueues();
+  const { reconcilerQueue, blingReconcilerQueue, nodeMailerQueue, alertService } = buildQueues();
 
 
   reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
