@@ -3,8 +3,19 @@ import { SEVERITY_EMOJI, buildHtml } from "./nodemailer.templates";
 import nodemailerService from "./nodemailer.service";
 
 const ALERT_TIMEOUT_MS = 5000;
+const DEBOUNCE_MS = 5 * 60 * 1000;
 
 export class AlertService {
+
+  private lastAlertTime: Map<string, number> = new Map();
+
+  private isDebounced(key: string): boolean {
+    const last = this.lastAlertTime.get(key);
+
+    if (last && Date.now() - last < DEBOUNCE_MS) return true;
+    this.lastAlertTime.set(key, Date.now());
+    return false
+  }
 
   private async doSend(payload: AlertPayload): Promise<void> {
     const emoji = SEVERITY_EMOJI[payload.severity];
@@ -16,6 +27,12 @@ export class AlertService {
   }
 
   sendAlert(payload: AlertPayload): void {
+    const dedupeKey = `${payload.severity}:${payload.title}`;
+    if (this.isDebounced(dedupeKey)) {
+      console.warn(`[AlertService] Alerta suprimido (debounce): ${payload.title}`);
+      return;
+    }
+
     const emoji = SEVERITY_EMOJI[payload.severity];
 
     console.error(
