@@ -3,19 +3,22 @@ import { redisConfig } from "./../../../config/redis";
 import { Queue, Worker, QueueEvents, Job } from "bullmq";
 import { redisConnection } from "./base-redis";
 
+export type baseQueueOptions =  { concurrency?: number, limiter?: {max: number, duration: number}, lockDuration?: number, workless?: boolean }
+
 export abstract class BaseQueueService<T> {
   public queue: Queue;
-  protected worker: Worker;
+  protected worker: Worker | undefined;
   protected queueEvents: QueueEvents;
   public queueName: string;
 
-  constructor(queueName: string, options: { concurrency?: number, limiter?: {max: number, duration: number}, lockDuration?: number } = {}) {
+  constructor(queueName: string, options: { concurrency?: number, limiter?: {max: number, duration: number}, lockDuration?: number, workless?: boolean } = {}) {
     this.queueName = queueName;
     this.queue = new Queue(this.queueName, { connection: redisConfig });
     this.queueEvents = new QueueEvents(this.queueName, {
       connection: redisConfig,
     });
 
+    if (!options.workless) {
     this.worker = new Worker(this.queueName, this.process.bind(this), {
       connection: redisConnection,
       lockDuration: options.lockDuration ?? 30000,
@@ -35,6 +38,7 @@ export abstract class BaseQueueService<T> {
     this.worker.on("completed", (job) => {
       console.log(`[QUEUE] Job ${job.id} concluído com sucesso`);
     });
+    }
   }
 
   abstract process(job: Job<T>): Promise<void>;

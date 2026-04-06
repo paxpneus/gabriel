@@ -74,6 +74,15 @@ function buildQueues() {
   };
 }
 
+function buildMLScrapingQueueRef(mlOrderSyncQueue: MLOrderSyncQueue) {
+  return new MLScrapingQueue(
+    new MLScrapingService(),
+    new MLOrderService(),
+    { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
+    { concurrency: 1, lockDuration: 15 * 60 * 1000, workless: true }, // só fila, sem worker
+  );
+}
+
 // ─── Chamado pela API: registra filas no app.locals + BullBoard ───────────────
 // Não sobe Workers — só permite que as rotas enfileirem jobs via app.locals
 export function registerQueues(app: Express) {
@@ -85,6 +94,7 @@ export function registerQueues(app: Express) {
     reconcilerQueue,
     blingReconcilerQueue,
   } = buildQueues();
+  const mlScrapingQueue = buildMLScrapingQueueRef(mlOrderSyncQueue)
 
   app.locals.BlingOrderQueue = blingOrderQueue;
   app.locals.CNPJQueue = cnpjQueue;
@@ -100,6 +110,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(cnpjQueue.queue),
       new BullMQAdapter(blingOrderQueue.queue),
       new BullMQAdapter(blingReconcilerQueue.queue),
+      new BullMQAdapter(mlScrapingQueue.queue)
     ],
     serverAdapter,
   });
@@ -117,7 +128,7 @@ export function startWorkers() {
 
 
   reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
-  blingReconcilerQueue.scheduleRepeat({ every: 12 * 60 * 60 * 1000 });
+  blingReconcilerQueue.scheduleRepeat({ every: 6 * 60 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
 }

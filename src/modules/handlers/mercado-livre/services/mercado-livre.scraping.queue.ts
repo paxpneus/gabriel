@@ -6,6 +6,7 @@ import { MLScrapingJobData } from "./mercado-livre.types";
 import { nextStepOnQueue } from "../../../../shared/types/queue/base-queue";
 import { MLOrderService } from "./mercado-livre.service";
 import { AxiosInstance } from "axios";
+import { baseQueueOptions } from "../../../../shared/utils/base-models/base-queue-service";
 
 export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
   private scrapingService: MLScrapingService;
@@ -16,8 +17,9 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
     scrapingService: MLScrapingService,
     mlOrderService: MLOrderService,
     next: nextStepOnQueue,
+    options?: baseQueueOptions,
   ) {
-    super("ML-SCRAPING", { concurrency: 1, lockDuration: 15 * 60 * 1000 });
+    super("ML-SCRAPING", options ?? { concurrency: 1, lockDuration: 15 * 60 * 1000 });
     this.scrapingService = scrapingService;
     this.mlOrderService = mlOrderService;
     this.next = next;
