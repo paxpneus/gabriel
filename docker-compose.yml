@@ -1,5 +1,21 @@
 services:
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./caddy/certs:/certs
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - backend
+    depends_on:
+      - api
+
   # ── 1. PostgreSQL ─────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
@@ -64,8 +80,8 @@ services:
       DB_HOST: postgres
       REDIS_HOST: redis
       PORT: 3000
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -141,7 +157,11 @@ volumes:
   redis_data:
   ml_session:
   ml_downloads:
+  caddy_data:
+  caddy_config:
 
 networks:
   backend:
     driver: bridge
+
+
