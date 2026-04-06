@@ -3,7 +3,12 @@ import { redisConfig } from "./../../../config/redis";
 import { Queue, Worker, QueueEvents, Job } from "bullmq";
 import { redisConnection } from "./base-redis";
 
-export type baseQueueOptions =  { concurrency?: number, limiter?: {max: number, duration: number}, lockDuration?: number, workless?: boolean }
+export type baseQueueOptions = {
+  concurrency?: number;
+  limiter?: { max: number; duration: number };
+  lockDuration?: number;
+  workless?: boolean;
+};
 
 export abstract class BaseQueueService<T> {
   public queue: Queue;
@@ -11,7 +16,15 @@ export abstract class BaseQueueService<T> {
   protected queueEvents: QueueEvents;
   public queueName: string;
 
-  constructor(queueName: string, options: { concurrency?: number, limiter?: {max: number, duration: number}, lockDuration?: number, workless?: boolean } = {}) {
+  constructor(
+    queueName: string,
+    options: {
+      concurrency?: number;
+      limiter?: { max: number; duration: number };
+      lockDuration?: number;
+      workless?: boolean;
+    } = {},
+  ) {
     this.queueName = queueName;
     this.queue = new Queue(this.queueName, { connection: redisConfig });
     this.queueEvents = new QueueEvents(this.queueName, {
@@ -19,25 +32,29 @@ export abstract class BaseQueueService<T> {
     });
 
     if (!options.workless) {
-    this.worker = new Worker(this.queueName, this.process.bind(this), {
-      connection: redisConnection,
-      lockDuration: options.lockDuration ?? 30000,
-      stalledInterval: 30000,
-      maxStalledCount: 1,
-      concurrency: options.concurrency ?? 2,
-      limiter: options.limiter ?? {
-        max: 3,
-        duration: 1000,
-      },
-    });
+      this.worker = new Worker(this.queueName, this.process.bind(this), {
+        connection: redisConnection,
+        lockDuration: options.lockDuration ?? 30000,
+        stalledInterval: 30000,
+        maxStalledCount: 1,
+        concurrency: options.concurrency ?? 2,
+        limiter: options.limiter ?? {
+          max: 3,
+          duration: 1000,
+        },
+      });
 
-    this.worker.on("failed", (job, err) => {
-      console.error(`[QUEUE] Job ${job?.id} falhou:`, err.message);
-    });
+      this.worker.on("failed", (job, err) => {
+        console.error(`[QUEUE] Job ${job?.id} falhou:`, err.message);
+      });
 
-    this.worker.on("completed", (job) => {
-      console.log(`[QUEUE] Job ${job.id} concluído com sucesso`);
-    });
+      this.worker.on("completed", (job, err) => {
+        console.log(`[QUEUE] Job ${job.id} concluído com sucesso`);
+
+        if (job && job.attemptsMade >= (job.opts.attempts ?? 5)) {
+          this.onFailed(job, err);
+        }
+      });
     }
   }
 
@@ -59,7 +76,7 @@ export abstract class BaseQueueService<T> {
       jobId,
       removeOnComplete: true,
       removeOnFail: {
-        age: 24 * 3600 * 7
+        age: 24 * 3600 * 7,
       },
       attempts: 5,
       backoff: { type: "exponential", delay: 30000 },
@@ -85,7 +102,7 @@ export abstract class BaseQueueService<T> {
       delay: delayMs,
       removeOnComplete: true,
       removeOnFail: {
-        age: 24 * 3600 * 7
+        age: 24 * 3600 * 7,
       },
       attempts: 5,
       backoff: { type: "exponential", delay: 30000 },
@@ -100,8 +117,8 @@ export abstract class BaseQueueService<T> {
         repeat: { every: options.every },
         removeOnComplete: true,
         removeOnFail: {
-        age: 24 * 3600 * 7
-      },
+          age: 24 * 3600 * 7,
+        },
         attempts: 3,
         backoff: { type: "exponential", delay: 10000 },
       },
@@ -120,6 +137,8 @@ export abstract class BaseQueueService<T> {
   }
 
   async getJob(jobId: string) {
-  return this.queue.getJob(jobId);
-}
+    return this.queue.getJob(jobId);
+  }
+
+  protected onFailed(job: Job<T>, error: Error): void {}
 }

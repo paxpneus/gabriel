@@ -7,6 +7,7 @@ import {
 } from "../../api/bling_api.service";
 import { v4 as uuidv4 } from "uuid";
 import { BlingOrderQueue } from "./bling-order.queue";
+import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 
 const router = Router();
 
@@ -59,6 +60,11 @@ router.post("/webhook", async (req: Request, res: Response) => {
 
     res.status(200).json({ received: true });
   } catch (error: any) {
+    alertService.sendAlert({
+    severity: 'HIGH',
+    title: 'Webhook Bling — erro inesperado',
+    message: `Erro ao enfileirar evento "${req.body?.event}" do pedido ${req.body?.data?.id}. Erro: ${error.message}`,
+    })
     res.status(500).json({ error: error.message });
   }
 });

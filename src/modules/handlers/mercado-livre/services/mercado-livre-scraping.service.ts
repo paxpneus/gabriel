@@ -9,6 +9,7 @@ import { chromium as chromiumExtra } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { MLExcelRow } from "./mercado-livre.types";
 import { parseBRL } from "../../../../shared/utils/normalizers/dotToPoint";
+import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 
 chromiumExtra.use(StealthPlugin());
 
@@ -93,13 +94,13 @@ export class MLScrapingService {
       const loggedIn = await this.ensureLoggedIn(context, page);
 
       if (!loggedIn) {
-        // TODO: parar fila, deixar jobs em waiting, mandar email pro Gabriel
-        console.log(
-          "[MLScraping] TODO — login manual necessário: pausar fila + enviar email",
-        );
-        throw new Error(
-          "[MLScraping] Login manual necessário — verificação humana detectada",
-        );
+        alertService.sendAlert({
+          severity: "CRITICAL",
+          title: "ML Scraping — login manual necessário",
+          message:
+            "Verificação humana detectada. Scraping pausado até intervenção.",
+        });
+        throw new Error("[MLScraping] Login manual necessário");
       }
 
       const filePath = await this.downloadExcelWithRetry(page);
@@ -196,44 +197,53 @@ export class MLScrapingService {
     );
   }
 
- private async doGoogleLogin(
+  private async doGoogleLogin(
     context: BrowserContext,
     page: Page,
-): Promise<boolean> {
+  ): Promise<boolean> {
     await page.goto(LOGIN_URL, {
-        waitUntil: 'domcontentloaded',
-        timeout: 30_000,
-    })
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
 
     // Aguarda o botão do Google aparecer e clica
-    await page.waitForSelector('text=Continuar com o Google', { timeout: 15_000 })
-    await page.click('text=Continuar com o Google')
+    await page.waitForSelector("text=Continuar com o Google", {
+      timeout: 15_000,
+    });
+    await page.click("text=Continuar com o Google");
 
     // ML redireciona na mesma aba — aguarda chegar no domínio do Google
-    await page.waitForURL('**/accounts.google.com/**', { timeout: 20_000 })
+    await page.waitForURL("**/accounts.google.com/**", { timeout: 20_000 });
 
     // Se aparecer seleção de conta, clica na primeira
     try {
-        await page.waitForSelector('[data-identifier]', { timeout: 8_000 })
-        await page.click('[data-identifier]:first-child')
+      await page.waitForSelector("[data-identifier]", { timeout: 8_000 });
+      await page.click("[data-identifier]:first-child");
     } catch {
-        console.log('[MLScraping] Sem seleção de conta — pode precisar de login manual')
+      console.log(
+        "[MLScraping] Sem seleção de conta — pode precisar de login manual",
+      );
     }
 
     // Aguarda voltar para o ML
-    await page.waitForURL('**/mercadolivre.com.br/**', { timeout: 30_000 })
-    await page.waitForTimeout(3_000)
+    await page.waitForURL("**/mercadolivre.com.br/**", { timeout: 30_000 });
+    await page.waitForTimeout(3_000);
 
-    await page.goto(SALES_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    await page.goto(SALES_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
 
     if (this.isLoginWall(page)) {
-        console.error('[MLScraping] Login via Google falhou — CAPTCHA, 2FA ou sem conta salva')
-        return false
+      console.error(
+        "[MLScraping] Login via Google falhou — CAPTCHA, 2FA ou sem conta salva",
+      );
+      return false;
     }
 
-    console.log('[MLScraping] Login via Google realizado com sucesso')
-    return true
-}
+    console.log("[MLScraping] Login via Google realizado com sucesso");
+    return true;
+  }
 
   /**
    * Apenas em ambiente local (headless: false).
