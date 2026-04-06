@@ -113,18 +113,25 @@ export function registerQueues(app: Express) {
 // ─── Chamado pelos workers: sobe os Workers e agenda repetições ───────────────
 // Não registra no app.locals — só processa jobs do Redis
 export function startWorkers() {
-  const { reconcilerQueue, blingReconcilerQueue, mlOrderSyncQueue } = buildQueues();
+  const { reconcilerQueue, blingReconcilerQueue } = buildQueues();
 
-  // Instancia o scraping AQUI, fora do buildQueues
-  const mlScrapingQueue = new MLScrapingQueue(
-    new MLScrapingService(),
-    new MLOrderService(),
-    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
-  );
 
-  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
   reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
   blingReconcilerQueue.scheduleRepeat({ every: 12 * 60 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
+}
+
+export function startScrapingWorker() {
+  const { mlOrderSyncQueue } = buildQueues()
+
+  const mlScrapingQueue = new MLScrapingQueue(
+    new MLScrapingService(),
+    new MLOrderService(),
+    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
+  )
+
+  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 })
+
+  console.log('------------------- QUEUE: Scraping Worker Ativo! -------------------')
 }

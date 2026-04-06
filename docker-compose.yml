@@ -127,7 +127,7 @@ services:
       context: .
       target: worker-scraping
     restart: unless-stopped
-    command: ["node", "dist/worker.js"]
+    command: ["node", "dist/worker-scraping.js"]
     env_file: .env
     environment:
       NODE_ENV: production
