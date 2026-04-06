@@ -261,6 +261,13 @@ export class MLScrapingService {
       "[MLScraping] [LOCAL] Você tem 10 minutos para completar o login no browser.",
     );
 
+     alertService.sendAlert({
+          severity: "CRITICAL",
+          title: "ML Scraping — login manual necessário",
+          message:
+            "Verificação humana detectada. Scraping pausado até intervenção.",
+        });
+
     const deadline = Date.now() + 10 * 60 * 1_000;
 
     while (Date.now() < deadline) {
