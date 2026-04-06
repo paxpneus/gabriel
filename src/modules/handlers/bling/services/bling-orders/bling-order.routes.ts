@@ -1,10 +1,14 @@
-import { Router, Request, Response } from 'express'
-import BlingOrderService from './bling-order.service'
-import { blingApi, getBlingIntegration, handleBlingOAuthCallback } from '../../api/bling_api.service'
-import { v4 as uuidv4 } from 'uuid';
-import { BlingOrderQueue } from './bling-order.queue';
+import { Router, Request, Response } from "express";
+import BlingOrderService from "./bling-order.service";
+import {
+  blingApi,
+  getBlingIntegration,
+  handleBlingOAuthCallback,
+} from "../../api/bling_api.service";
+import { v4 as uuidv4 } from "uuid";
+import { BlingOrderQueue } from "./bling-order.queue";
 
-const router = Router()
+const router = Router();
 
 /**
  * POST /bling-orders/webhook
@@ -27,40 +31,40 @@ const router = Router()
  *   }
  * }
  */
-router.post('/webhook', async (req: Request, res: Response) => {
+router.post("/webhook", async (req: Request, res: Response) => {
   try {
-    console.log('[Webhook] Headers:', JSON.stringify(req.headers))
-    console.log('[Webhook] Body:', JSON.stringify(req.body))
+    console.log("[Webhook] Headers:", JSON.stringify(req.headers));
+    console.log("[Webhook] Body:", JSON.stringify(req.body));
 
-    const blingOrderQueue: BlingOrderQueue = req.app.locals.BlingOrderQueue
-    const event: string = req.body.event  // "order.created" | "order.updated" | "order.deleted"
-    const orderId = req.body.data?.id
+    const blingOrderQueue: BlingOrderQueue = req.app.locals.BlingOrderQueue;
+    const event: string = req.body.event; // "order.created" | "order.updated" | "order.deleted"
+    const orderId = req.body.data?.id;
 
     if (!orderId) {
-      res.status(400).json({ error: 'Payload inválido: data.id ausente' })
-      return
+      res.status(200).json({ ignored: true });
+      return;
     }
 
-    if (!event || !event.startsWith('order.')) {
-      res.status(400).json({ error: 'Evento inválido ou não suportado' })
-      return
+    if (!event || !event.startsWith("order.")) {
+      res.status(200).json({ ignored: true });
+      return;
     }
 
-    const action = event.split('.')[1] // "created" | "updated" | "deleted"
+    const action = event.split(".")[1]; // "created" | "updated" | "deleted"
 
     await blingOrderQueue.add(
       { ...req.body, action },
-      `bling-order-${action}-${orderId}`
-    )
+      `bling-order-${action}-${orderId}`,
+    );
 
-    res.status(200).json({ received: true })
+    res.status(200).json({ received: true });
   } catch (error: any) {
-    res.status(500).json({ error: error.message })
+    res.status(500).json({ error: error.message });
   }
-})
+});
 
 // Rota para primeiro contato com a bling, para registrar o refresh token e estabelecer a conexão com a api da bling
-router.get('/auth/bling', async (req: Request, res: Response) => {
+router.get("/auth/bling", async (req: Request, res: Response) => {
   const integration = await getBlingIntegration();
   const configToken = integration.tokens;
 
@@ -70,12 +74,12 @@ router.get('/auth/bling', async (req: Request, res: Response) => {
   // Salva no banco IMEDIATAMENTE
   await configToken.update({ oauth_state: newState });
 
-  // Monta a URL 
+  // Monta a URL
   const params = new URLSearchParams({
-    response_type: 'code',
+    response_type: "code",
     client_id: configToken.client_id,
     state: newState,
-    redirect_uri: configToken.callback_url // O que está no banco deve ser igual ao do painel
+    redirect_uri: configToken.callback_url, // O que está no banco deve ser igual ao do painel
   });
 
   const authUrl = `https://www.bling.com.br/Api/v3/oauth/authorize?${params.toString()}`;
@@ -85,21 +89,19 @@ router.get('/auth/bling', async (req: Request, res: Response) => {
 });
 
 // Rota Callback para colocar no campo de callback url na bling
-router.get('/callback', async (req: Request, res: Response) => {
-  const { code, state } = req.query as Record<string, string>
+router.get("/callback", async (req: Request, res: Response) => {
+  const { code, state } = req.query as Record<string, string>;
 
-  const integration = await getBlingIntegration()
-  const configToken = integration.tokens
+  const integration = await getBlingIntegration();
+  const configToken = integration.tokens;
 
   if (state !== configToken.oauth_state) {
-    res.status(400).json({ error: 'State inválido' })
-    return
+    res.status(400).json({ error: "State inválido" });
+    return;
   }
 
-  await handleBlingOAuthCallback(code)
-  res.status(200).json({ ok: true, message: 'Tokens salvos com sucesso' })
-})
+  await handleBlingOAuthCallback(code);
+  res.status(200).json({ ok: true, message: "Tokens salvos com sucesso" });
+});
 
-
-
-export default router
+export default router;
