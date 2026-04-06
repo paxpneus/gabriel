@@ -80,4 +80,4 @@ RUN npx playwright install chromium
 
 RUN mkdir -p /app/ml_session /app/ml_downloads
 
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/worker-scraping.js"]
