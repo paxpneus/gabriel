@@ -13,7 +13,7 @@ class RedisService {
   }
 
   async get<T>(key: string): Promise<T | null> {
-    const data = await this.client.get(JSON.stringify(key));
+    const data = await this.client.get(key);
 
     if (data == null) return null;
 
