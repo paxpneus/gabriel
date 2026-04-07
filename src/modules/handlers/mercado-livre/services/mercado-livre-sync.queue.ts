@@ -42,6 +42,15 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   }
 
   async process(job: Job<MLOrderSyncJobData>): Promise<void> {
+    const lockKey = `lock:sync:order:${job.data.row?.order_number || job.data.orderSystem?.id}`;
+    const locked = await redisService.set(lockKey, "processing", { mode: 'EX', duration: 30, condition: 'NX' });
+
+    if (!locked) {
+      throw new Error("Lock ativo: outro worker processando este pedido.");
+    }
+
+    try {
+
     if (job.data.orderSystem) {
       if (job.data.orderSystem?.internal_status === "CANCELLED") {
         console.log(
@@ -58,6 +67,9 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       // Origem: webhook — tem order/customer do Bling, sem dados ML ainda
       await this.syncFromWebhook(job.data.orderSystem, job.data.customer);
     }
+  } finally {
+    await redisService.delete(lockKey)
+  }
   }
 
   // ─── Fluxo vindo do scraping ────────────────────────────────────────────
@@ -74,7 +86,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     const dateKey = saleDate.toISOString().split('T')[0]
     const cacheKey = `orders-day-cache:${dateKey}`
 
-    let orders
+    let orders: FullOrder[] = [];
 
     const ordersCached = await redisService.get<FullOrder[]>(cacheKey)
 
