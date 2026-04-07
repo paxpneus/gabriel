@@ -142,7 +142,7 @@ export function startScrapingWorker() {
     { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
   )
 
-  mlScrapingQueue.scheduleRepeat({ every: 0.5 * 60 * 1000 })
+  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 })
 
   console.log('------------------- QUEUE: Scraping Worker Ativo! -------------------')
 }
