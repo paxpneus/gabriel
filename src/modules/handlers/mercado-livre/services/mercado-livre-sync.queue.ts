@@ -14,6 +14,7 @@ import { Op } from "sequelize";
 import OrderItems from "../../../sales/orders/order_items/order_items.model";
 import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
+import redisService from "../../../../shared/utils/base-models/base-redis";
 
 /**
  * Job pode vir de duas origens:
@@ -67,12 +68,22 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
    * Se não achar: loga e segue (pedido pode ainda não ter chegado pelo webhook).
    */
   private async syncFromExcel(row: MLExcelRow): Promise<void> {
-    const documentSelector =
-      row.business === "Sim" ? { type: "J" } : { document: row.cpf };
+    
 
     const saleDate = new Date(row.sale_date);
+    const dateKey = saleDate.toISOString().split('T')[0]
+    const cacheKey = `orders-day-cache:${dateKey}`
 
-    const orders = await ordersService.getFullOrdersByQuery({
+    let orders
+
+    const ordersCached = await redisService.get<FullOrder[]>(cacheKey)
+
+    if (ordersCached) {
+      orders = ordersCached.filter(o => 
+      o.customer.name.toLowerCase() === row.buyer.toLowerCase()
+    );
+    } else {
+      const allOrdersFromDay = await ordersService.getFullOrdersByQuery({
       where: {
         date: {
           [Op.between]: [
@@ -105,16 +116,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
         {
           model: Customer,
           as: "customer",
-          where: {
-            [Op.and]: [
-              sequelize.where(
-                sequelize.fn("LOWER", sequelize.col("customer.name")),
-                "LIKE",
-                row.buyer.toLowerCase(),
-              ),
-              documentSelector,
-            ],
-          },
         },
         {
           model: OrderItems,
@@ -123,6 +124,13 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
         },
       ],
     });
+
+    await redisService.set(cacheKey, allOrdersFromDay, {mode: 'EX', duration: 300})
+
+    orders = allOrdersFromDay.filter(o => 
+      o.customer.name.toLowerCase() === row.buyer.toLowerCase()
+    );
+    }
 
     if (!orders || orders.length === 0) {
       console.log(
