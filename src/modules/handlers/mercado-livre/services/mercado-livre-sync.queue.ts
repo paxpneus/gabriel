@@ -61,34 +61,27 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       if (cachedOrders) {
         orders = cachedOrders
       } else {
-        const allOrders = await ordersService.getFullOrdersByQuery({
-          where: {
-        date: {
-          [Op.between]: [
-            new Date(
-              Date.UTC(
-                todaysDate.getUTCFullYear(),
-                todaysDate.getUTCMonth(),
-                todaysDate.getUTCDate(),
-                0,
-                0,
-                0,
-                0,
-              ),
-            ),
-            new Date(
-              Date.UTC(
-                todaysDate.getUTCFullYear(),
-                todaysDate.getUTCMonth(),
-                todaysDate.getUTCDate() - 10,
-                23,
-                59,
-                59,
-                999,
-              ),
-            ),
-          ],
-        },
+        const sevenDaysAgo = new Date(todaysDate);
+sevenDaysAgo.setUTCDate(todaysDate.getUTCDate() - 7);
+
+const allOrders = await ordersService.getFullOrdersByQuery({
+  where: {
+    date: {
+      [Op.between]: [
+        new Date(Date.UTC(
+          sevenDaysAgo.getUTCFullYear(),
+          sevenDaysAgo.getUTCMonth(),
+          sevenDaysAgo.getUTCDate(),
+          0, 0, 0, 0
+        )),
+        new Date(Date.UTC(
+          todaysDate.getUTCFullYear(),
+          todaysDate.getUTCMonth(),
+          todaysDate.getUTCDate(),
+          23, 59, 59, 999
+        )),
+      ],
+    },
       },
       include: [
         {
@@ -122,23 +115,44 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
    * Se não achar: loga e segue (pedido pode ainda não ter chegado pelo webhook).
    */
   private async syncFromExcel(row: MLExcelRow, ordersSystem: FullOrder[]): Promise<void> {
-   
-    if (!ordersSystem || ordersSystem.length === 0) {
-      console.log(
-        `[MLOrderSyncQueue] Pedido ML ${row.order_number} não encontrado no banco. Aguardando webhook.`,
-      );
-      return;
-    }
+  const saleDate = new Date(row.sale_date);
 
-    const matchedOrder = this.resolveMatch(
-      ordersSystem,
-      row.sale_date,
-      row.order_number,
-    );
-    if (!matchedOrder) return;
+  const filtered = ordersSystem.filter(order => {
+    if (!order.date) return false;
+    const orderDate = new Date(order.date);
+    const sameDay =
+      orderDate.getUTCFullYear() === saleDate.getUTCFullYear() &&
+      orderDate.getUTCMonth() === saleDate.getUTCMonth() &&
+      orderDate.getUTCDate() === saleDate.getUTCDate();
 
-    await this.applyCollectionDate(matchedOrder, row);
+    const nameMatch = order.customer?.name?.toLowerCase().includes(row.buyer.toLowerCase());
+
+    return sameDay && nameMatch;
+  });
+
+  if (!filtered.length) {
+    console.log(`[MLOrderSyncQueue] Pedido ML ${row.order_number} não encontrado. Aguardando webhook.`);
+    return;
   }
+
+  const matchedOrder = this.resolveMatch(filtered, row.sale_date, row.order_number);
+  if (!matchedOrder) return;
+
+  await this.applyCollectionDate(matchedOrder, row);
+
+  // ── Irmãos: mesmo cliente, mesmo SKU, createdAt próximo ──────────────
+  const siblings = this.findSiblingOrders(matchedOrder, row.sku, ordersSystem);
+
+  if (siblings.length) {
+    console.log(
+      `[MLOrderSyncQueue] Pedido ${row.order_number} — ${siblings.length} irmão(s) encontrado(s). Aplicando mesma collection_date.`,
+    );
+    for (const sibling of siblings) {
+      await this.applyCollectionDate(sibling, row, true);
+    }
+  }
+}
+
 
   // ─── Fluxo vindo do webhook ─────────────────────────────────────────────
 
@@ -215,6 +229,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   private async applyCollectionDate(
     order: FullOrder,
     row: MLExcelRow,
+    isSibling: boolean = false 
   ): Promise<void> {
     if (!order.id_order_system) {
       console.warn(
@@ -257,10 +272,19 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       internal_status: "WAITING FOR NFE EMISSION",
     });
 
-    //     const observacoesAtual = orderData.observacoesInternas ?? ''
+    if (isSibling) {
+      //     const observacoesAtual = orderData.observacoesInternas ?? ''
+    // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+    //   observacoesInternas: `${observacoesAtual}\nNº Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim()
+    // })
+    } else {
+      //     const observacoesAtual = orderData.observacoesInternas ?? ''
     // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
     //   observacoesInternas: `${observacoesAtual}\nNº ML: ${row.order_number}`.trim()
     // })
+    }
+
+   
 
     console.log(
       `[MLOrderSyncQueue] Pedido ${order.number_order_channel} → collection_date: ${newDate.toISOString()}`,
@@ -282,7 +306,16 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
 
     await this.next.removeJob(jobId);
 
-    const delay = setDelayBasedOnDate(new Date(collectionDate));
+    const isTomorrow = this.isNextDay(collectionDate);
+    const delay = isTomorrow ? 0 : setDelayBasedOnDate(new Date(collectionDate));
+
+
+    if (isTomorrow) {
+    console.log(
+      `[MLOrderSyncQueue] Coleta amanhã — NFe agendada imediatamente para pedido ${idOrderSystem}`,
+    );
+  }
+
 
     await this.next.addDelayed(
       {
@@ -294,4 +327,40 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       delay,
     );
   }
+
+  private isNextDay(date: Date): boolean {
+  const tomorrow = new Date();
+  const tomorrowUTC = Date.UTC(
+    tomorrow.getUTCFullYear(),
+    tomorrow.getUTCMonth(),
+    tomorrow.getUTCDate() + 1,
+  );
+  const dateUTC = Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+  );
+  return dateUTC === tomorrowUTC;
+}
+
+private readonly SIBLING_WINDOW_MS = 10 * 60 * 1_000; 
+
+private findSiblingOrders(
+  matched: FullOrder,
+  sku: string,
+  allOrders: FullOrder[],
+): FullOrder[] {
+  const matchedTime = new Date(matched.createdAt!).getTime();
+  const matchedName = matched.customer?.name?.toLowerCase() ?? "";
+
+  return allOrders.filter(order => {
+    if (order.id === matched.id) return false;
+
+    const sameName = order.customer?.name?.toLowerCase() === matchedName;
+    const hasSku = order.items.some(item => item.sku === sku);
+    const timeDiff = Math.abs(new Date(order.createdAt!).getTime() - matchedTime);
+
+    return sameName && hasSku && timeDiff <= this.SIBLING_WINDOW_MS;
+  });
+}
 }

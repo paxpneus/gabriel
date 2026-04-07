@@ -128,7 +128,7 @@ export function startWorkers() {
 
 
   reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
-  blingReconcilerQueue.scheduleRepeat({ every: 6 * 60 * 60 * 1000 });
+  blingReconcilerQueue.scheduleRepeat({ every: 1 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
 }
