@@ -32,6 +32,8 @@ const IS_HEADLESS =
 
 const COLLECTION_DATE_REGEX = /coleta do dia (\d{1,2}) de (\w+)/i;
 
+const TOMORROW_DELIVERY_REGEX = /para entregar na coleta de amanhã/i;
+
 const MONTHS: Record<string, number> = {
   janeiro: 0,
   fevereiro: 1,
@@ -441,7 +443,9 @@ export class MLScrapingService {
         .toLowerCase()
         .includes("pronto para coleta");
 
-      if (isReadyForPickup) {
+      const isTomorrowDelivery = TOMORROW_DELIVERY_REGEX.test(String(status));
+
+      if (isReadyForPickup || isTomorrowDelivery) {
         // Pedidos prontos para coleta sem data prevista → amanhã (UTC)
         const tomorrow = new Date();
         collectionDate = new Date(
