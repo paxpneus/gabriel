@@ -4,19 +4,23 @@ import { AxiosInstance } from "axios";
 import BlingOrderService from "../bling-orders/bling-order.service";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import ordersService from "../../../../sales/orders/order/orders.service";
+import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 
 export class BlingReconcilerQueue extends BaseQueueService<
   Record<string, never>
 > {
   private blingApi: AxiosInstance;
   private blingOrderNext: { add: (data: any, jobId: string) => Promise<any> };
-  private blingOrderService: BlingOrderService
+  private blingOrderService: BlingOrderService;
 
-  constructor(blingApi: AxiosInstance, blingOrderNext: { add: (data: any, jobId: string) => Promise<any> },) {
+  constructor(
+    blingApi: AxiosInstance,
+    blingOrderNext: { add: (data: any, jobId: string) => Promise<any> },
+  ) {
     super("BLING_RECONCILER", { concurrency: 1 });
     this.blingApi = blingApi;
     this.blingOrderNext = blingOrderNext;
-    this.blingOrderService = new BlingOrderService(blingApi)
+    this.blingOrderService = new BlingOrderService(blingApi);
   }
 
   async process(job: Job): Promise<void> {
@@ -45,6 +49,8 @@ export class BlingReconcilerQueue extends BaseQueueService<
     let page = 1;
     let totalFound = 0;
     let created = 0;
+    let failedCount = 0;
+
 
     while (true) {
       const { data } = await this.blingApi.get(`/pedidos/vendas`, {
@@ -73,7 +79,9 @@ export class BlingReconcilerQueue extends BaseQueueService<
         },
       });
 
-      const existingNumbers = new Set(existingOrders.map(o => o.number_order_system));
+      const existingNumbers = new Set(
+        existingOrders.map((o) => o.number_order_system),
+      );
 
       for (const blingOrder of orders) {
         if (existingNumbers.has(String(blingOrder.numero))) continue;
@@ -88,6 +96,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
           });
           created++;
         } catch (err: any) {
+          failedCount++
           console.error(
             `[BlingReconciler] Erro ao criar pedido ${blingOrder.numero}:`,
             err.response?.data ?? err.message,
@@ -100,6 +109,14 @@ export class BlingReconcilerQueue extends BaseQueueService<
       if (orders.length < PAGE_LIMIT) break;
       page++;
     }
+
+    if (failedCount > 0) {
+          alertService.sendAlert({
+            severity: "HIGH",
+            title: "BlingReconciler — pedidos não sincronizados",
+            message: `${failedCount} pedido(s) falharam durante a sincronização. Verificar logs do BlingReconciler.`,
+          });
+        }
 
     console.log(
       `[BlingReconciler] Concluído. ${totalFound} verificado(s), ${created} criado(s).`,
