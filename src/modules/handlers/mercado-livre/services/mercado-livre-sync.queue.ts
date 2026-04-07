@@ -10,10 +10,11 @@ import Customer from "../../../sales/customers/customers.model";
 import { AxiosInstance } from "axios";
 import { FullOrder } from "../../../sales/orders/order/orders.types";
 import sequelize from "../../../../config/sequelize";
-import { Op } from "sequelize";
+import { Model, Op } from "sequelize";
 import OrderItems from "../../../sales/orders/order_items/order_items.model";
 import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
+import redisService from "../../../../shared/utils/base-models/base-redis";
 
 /**
  * Job pode vir de duas origens:
@@ -51,8 +52,19 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     }
 
     if (job.data.row) {
+      const cachedOrders = await redisService.get<FullOrder[]>(
+        `orders_seven_days_ago`,
+      );
+
+      if (!cachedOrders) {
+        console.error("[MISS CACHE] Cache não encontrado na MLOrderSyncQueue");
+        return;
+      }
+
+      console.log("[HIT CACHE] ---------");
+
       // Origem: scraping — tem todos os dados do Excel para fazer o match
-      await this.syncFromExcel(job.data.row);
+      await this.syncFromExcel(job.data.row, cachedOrders);
     } else {
       // Origem: webhook — tem order/customer do Bling, sem dados ML ainda
       await this.syncFromWebhook(job.data.orderSystem, job.data.customer);
@@ -66,79 +78,58 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
    * Se achar: atualiza collection_date e agenda NFe.
    * Se não achar: loga e segue (pedido pode ainda não ter chegado pelo webhook).
    */
-  private async syncFromExcel(row: MLExcelRow): Promise<void> {
-    const documentSelector =
-      row.business === "Sim" ? { type: "J" } : { document: row.cpf };
-
+  private async syncFromExcel(
+    row: MLExcelRow,
+    ordersSystem: FullOrder[],
+  ): Promise<void> {
     const saleDate = new Date(row.sale_date);
 
-    const orders = await ordersService.getFullOrdersByQuery({
-      where: {
-        date: {
-          [Op.between]: [
-            new Date(
-              Date.UTC(
-                saleDate.getUTCFullYear(),
-                saleDate.getUTCMonth(),
-                saleDate.getUTCDate(),
-                0,
-                0,
-                0,
-                0,
-              ),
-            ),
-            new Date(
-              Date.UTC(
-                saleDate.getUTCFullYear(),
-                saleDate.getUTCMonth(),
-                saleDate.getUTCDate(),
-                23,
-                59,
-                59,
-                999,
-              ),
-            ),
-          ],
-        },
-      },
-      include: [
-        {
-          model: Customer,
-          as: "customer",
-          where: {
-            [Op.and]: [
-              sequelize.where(
-                sequelize.fn("LOWER", sequelize.col("customer.name")),
-                "LIKE",
-                row.buyer.toLowerCase(),
-              ),
-              documentSelector,
-            ],
-          },
-        },
-        {
-          model: OrderItems,
-          as: "items",
-          attributes: ["sku"],
-        },
-      ],
+    const filtered = ordersSystem.filter((order) => {
+      if (!order.date) return false;
+      const orderDate = new Date(order.date);
+      const sameDay =
+        orderDate.getUTCFullYear() === saleDate.getUTCFullYear() &&
+        orderDate.getUTCMonth() === saleDate.getUTCMonth() &&
+        orderDate.getUTCDate() === saleDate.getUTCDate();
+
+      const nameMatch = order.customer?.name
+        ?.toLowerCase()
+        .includes(row.buyer.toLowerCase());
+
+      return sameDay && nameMatch;
     });
 
-    if (!orders || orders.length === 0) {
+    if (!filtered.length) {
       console.log(
-        `[MLOrderSyncQueue] Pedido ML ${row.order_number} não encontrado no banco. Aguardando webhook.`,
+        `[MLOrderSyncQueue] Pedido ML ${row.order_number} não encontrado. Aguardando webhook.`,
       );
       return;
     }
 
     const matchedOrder = this.resolveMatch(
-      orders,
+      filtered,
       row.sale_date,
       row.order_number,
     );
     if (!matchedOrder) return;
 
     await this.applyCollectionDate(matchedOrder, row);
+
+    // ── Irmãos: mesmo cliente, mesmo SKU, createdAt próximo ──────────────
+    const siblings = this.findSiblingOrders(
+      matchedOrder,
+      row.sku,
+      ordersSystem,
+    );
+
+    if (siblings.length) {
+      console.log(
+        `[MLOrderSyncQueue] Pedido ${row.order_number} — ${siblings.length} irmão(s) encontrado(s). Aplicando mesma collection_date.`,
+      );
+      for (const sibling of siblings) {
+        await this.applyCollectionDate(sibling, row, true);
+      }
+    }
   }
 
   // ─── Fluxo vindo do webhook ─────────────────────────────────────────────
@@ -216,6 +207,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   private async applyCollectionDate(
     order: FullOrder,
     row: MLExcelRow,
+    isSibling: boolean = false,
   ): Promise<void> {
     if (!order.id_order_system) {
       console.warn(
@@ -258,10 +250,17 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       internal_status: "WAITING FOR NFE EMISSION",
     });
 
-    //     const observacoesAtual = orderData.observacoesInternas ?? ''
-    // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-    //   observacoesInternas: `${observacoesAtual}\nNº ML: ${row.order_number}`.trim()
-    // })
+    if (isSibling) {
+      //     const observacoesAtual = orderData.observacoesInternas ?? ''
+      // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+      //   observacoesInternas: `${observacoesAtual}\nNº Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim()
+      // })
+    } else {
+      //     const observacoesAtual = orderData.observacoesInternas ?? ''
+      // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+      //   observacoesInternas: `${observacoesAtual}\nNº ML: ${row.order_number}`.trim()
+      // })
+    }
 
     console.log(
       `[MLOrderSyncQueue] Pedido ${order.number_order_channel} → collection_date: ${newDate.toISOString()}`,
@@ -283,7 +282,16 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
 
     await this.next.removeJob(jobId);
 
-    const delay = setDelayBasedOnDate(new Date(collectionDate));
+    const isTomorrow = this.isNextDay(collectionDate);
+    const delay = isTomorrow
+      ? 0
+      : setDelayBasedOnDate(new Date(collectionDate));
+
+    if (isTomorrow) {
+      console.log(
+        `[MLOrderSyncQueue] Coleta amanhã — NFe agendada imediatamente para pedido ${idOrderSystem}`,
+      );
+    }
 
     await this.next.addDelayed(
       {
@@ -294,5 +302,43 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       jobId,
       delay,
     );
+  }
+
+  private isNextDay(date: Date): boolean {
+    const tomorrow = new Date();
+    const tomorrowUTC = Date.UTC(
+      tomorrow.getUTCFullYear(),
+      tomorrow.getUTCMonth(),
+      tomorrow.getUTCDate() + 1,
+    );
+    const dateUTC = Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+    );
+    return dateUTC === tomorrowUTC;
+  }
+
+  private readonly SIBLING_WINDOW_MS = 10 * 60 * 1_000;
+
+  private findSiblingOrders(
+    matched: FullOrder,
+    sku: string,
+    allOrders: FullOrder[],
+  ): FullOrder[] {
+    const matchedTime = new Date(matched.createdAt!).getTime();
+    const matchedName = matched.customer?.name?.toLowerCase() ?? "";
+
+    return allOrders.filter((order) => {
+      if (order.id === matched.id) return false;
+
+      const sameName = order.customer?.name?.toLowerCase() === matchedName;
+      const hasSku = order.items.some((item) => item.sku === sku);
+      const timeDiff = Math.abs(
+        new Date(order.createdAt!).getTime() - matchedTime,
+      );
+
+      return sameName && hasSku && timeDiff <= this.SIBLING_WINDOW_MS;
+    });
   }
 }
