@@ -11,6 +11,10 @@ export class BlingOrderQueue extends BaseQueueService<any> {
     constructor(orderService: BlingOrderService, next: nextStepOnQueue) {
         super('BLING_ORDER_INGESTION', {
             concurrency: 1,
+            limiter: {
+                max: 1,
+                duration: 3000
+            }
         })
         this.orderService = orderService
         this.next = next

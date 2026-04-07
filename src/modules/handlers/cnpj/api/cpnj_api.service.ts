@@ -41,9 +41,13 @@ const providerInstances: AxiosInstance[] = CNPJ_PROVIDERS.map(({ url }) =>
 );
 
 // Tenta cada provider em sequência até um responder com sucesso
-export const fetchCNPJ = async <T = unknown>(
-  cnpj: number,
-): Promise<NormalizedCNPJ> => {
+export const fetchCNPJ = async (cnpj: string | number): Promise<NormalizedCNPJ> => {
+  const cleanedCNPJ = String(cnpj).replace(/\D/g, "").padStart(14, "0");
+
+  if (cleanedCNPJ.length !== 14) {
+    throw new Error(`[CNPJ] CNPJ inválido: ${cnpj}`);
+  }
+
   let lastError: unknown;
 
   for (let i = 0; i < CNPJ_PROVIDERS.length; i++) {
@@ -51,24 +55,21 @@ export const fetchCNPJ = async <T = unknown>(
     const instance = providerInstances[i];
 
     try {
-      const { data } = await instance.get<T>(provider.buildPath(String(cnpj)));
+      const { data } = await instance.get(provider.buildPath(cleanedCNPJ));
       return provider.normalize(data);
     } catch (error: any) {
       if (error.response?.status === 404) {
-        console.warn(
-          `[CNPJ] CNPJ ${cnpj} não encontrado no provider ${provider.api}`,
-        );
+        console.warn(`[CNPJ] CNPJ ${cleanedCNPJ} não encontrado no provider ${provider.api}`);
+        throw new Error(`[CNPJ] CNPJ ${cleanedCNPJ} não encontrado em nenhum provider`);
       }
-      const sleep = Math.floor(Math.random() * (3000 - 1000 + 1)) + 1000;
-      console.log(
-        `[CNPJ] Aguardando ${sleep}ms antes de tentar próximo provider...`,
-      );
+
+      console.warn(`[CNPJ] Provider ${provider.api} falhou:`, error.response?.status, error.message);
+      const sleep = Math.floor(Math.random() * 2000) + 1000;
+      console.log(`[CNPJ] Aguardando ${sleep}ms antes de tentar próximo provider...`);
       await new Promise((resolve) => setTimeout(resolve, sleep));
       lastError = error;
     }
   }
 
-  throw new Error(
-    `[CNPJ] Todos os providers falharam. Último erro: ${lastError}`,
-  );
+  throw new Error(`[CNPJ] Todos os providers falharam. Último erro: ${lastError}`);
 };

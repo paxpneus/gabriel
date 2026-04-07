@@ -91,9 +91,16 @@ export class BlingReconcilerQueue extends BaseQueueService<
         );
 
         try {
-          await this.blingOrderService.createOrderFromBling({
-            data: { id: blingOrder.id },
-          });
+
+          
+          await this.blingOrderNext.add(
+            {
+              event: "order.created",
+              action: "created",
+              data: { id: blingOrder.id }
+            },
+            `bling-order-created-${blingOrder.id}`
+          );
           created++;
         } catch (err: any) {
           failedCount++
