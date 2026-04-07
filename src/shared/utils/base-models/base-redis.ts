@@ -60,7 +60,6 @@ class RedisService {
       args.push(options.specialMethod);
     }
 
-    // Usa o call para enviar os argumentos dinamicamente
     const data = await this.client.set(...args);
 
     return this.handleResponse<T>(data);
