@@ -3,3 +3,4 @@ ml_session/
 ml_downloads/
 caddy/
 dist
+.env
