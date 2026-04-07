@@ -20,7 +20,6 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
-    env_file: .env
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
@@ -50,17 +49,19 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── 3. Migrate (roda uma vez e sai) ───────────────────────────────────────
+  # ── 3. Migrate ────────────────────────────────────────────────────────────
   migrate:
     build:
       context: .
       target: app
-    env_file: .env
+    command: npx sequelize-cli db:migrate
     environment:
       NODE_ENV: production
       DB_HOST: postgres
-      REDIS_HOST: redis
-    command: npx sequelize-cli db:migrate
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,20 +69,32 @@ services:
       - backend
     restart: "no"
 
-  # ── 4. API (Express + BullBoard + filas/webhooks) ─────────────────────────
+  # ── 4. API ────────────────────────────────────────────────────────────────
   api:
     build:
       context: .
       target: app
     restart: unless-stopped
-    env_file: .env
-    environment:
-      NODE_ENV: production
-      DB_HOST: postgres
-      REDIS_HOST: redis
-      PORT: 3000
     expose:
       - "3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      MAILER_HOST: ${MAILER_HOST}
+      MAILER_PORT: ${MAILER_PORT}
+      MAILER_SECURE: ${MAILER_SECURE}
+      MAILER_USER: ${MAILER_USER}
+      MAILER_PASS: ${MAILER_PASS}
+      MAILER_FROM: ${MAILER_FROM}
+      MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,20 +110,31 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── 5. Workers gerais (BlingOrder, CNPJ, NfE, MLSync, Reconcilers) ────────
+  # ── 5. Workers gerais ─────────────────────────────────────────────────────
   workers:
     build:
       context: .
       target: app
     restart: unless-stopped
     command: ["node", "dist/worker.js"]
-    env_file: .env
     environment:
       NODE_ENV: production
-      DB_HOST: postgres
-      REDIS_HOST: redis
-      # Não expõe porta — só processa filas
       PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      MAILER_HOST: ${MAILER_HOST}
+      MAILER_PORT: ${MAILER_PORT}
+      MAILER_SECURE: ${MAILER_SECURE}
+      MAILER_USER: ${MAILER_USER}
+      MAILER_PASS: ${MAILER_PASS}
+      MAILER_FROM: ${MAILER_FROM}
+      MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -121,25 +145,28 @@ services:
     networks:
       - backend
 
-  # ── 6. Worker de Scraping Mercado Livre (Playwright + Chromium) ───────────
+  # ── 6. Worker Scraping ────────────────────────────────────────────────────
   worker-scraping:
     build:
       context: .
       target: worker-scraping
     restart: unless-stopped
     command: ["node", "dist/worker-scraping.js"]
-    env_file: .env
     environment:
       NODE_ENV: production
-      DB_HOST: postgres
-      REDIS_HOST: redis
-      ML_HEADLESS: "false"
       PORT: 3002
-    # Sessão e downloads persistidos para evitar login repetido
+      ML_HEADLESS: "false"
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
     volumes:
       - ml_session:/app/ml_session
       - ml_downloads:/app/ml_downloads
-    # Sandbox do Chromium precisa deste cap
     cap_add:
       - SYS_ADMIN
     depends_on:
@@ -163,5 +190,3 @@ volumes:
 networks:
   backend:
     driver: bridge
-
-
