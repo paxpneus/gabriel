@@ -1,7 +1,5 @@
 import { Router, Request, Response } from "express";
-import BlingOrderService from "./bling-order.service";
 import {
-  blingApi,
   getBlingIntegration,
   handleBlingOAuthCallback,
 } from "../../api/bling_api.service";
@@ -20,6 +18,7 @@ const router = Router();
  *
  * Payload esperado (shape do Bling):
  * {
+ *   "event": "order.created | updated | deleted"
  *   "data": {
  *     "id": 123456,              <- id do pedido na Bling
  *     "numero": "000123",        <- número do pedido no sistema

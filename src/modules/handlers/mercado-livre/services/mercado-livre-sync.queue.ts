@@ -14,6 +14,7 @@ import { Op } from "sequelize";
 import OrderItems from "../../../sales/orders/order_items/order_items.model";
 import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
+import redisService from "../../../../shared/utils/base-models/base-redis";
 
 /**
  * Job pode vir de duas origens:
@@ -51,36 +52,24 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     }
 
     if (job.data.row) {
-      // Origem: scraping — tem todos os dados do Excel para fazer o match
-      await this.syncFromExcel(job.data.row);
-    } else {
-      // Origem: webhook — tem order/customer do Bling, sem dados ML ainda
-      await this.syncFromWebhook(job.data.orderSystem, job.data.customer);
-    }
-  }
 
-  // ─── Fluxo vindo do scraping ────────────────────────────────────────────
+      let orders: FullOrder[] = [];
+      const todaysDate = new Date();
 
-  /**
-   * Tenta fazer match do row do Excel com um pedido no banco.
-   * Se achar: atualiza collection_date e agenda NFe.
-   * Se não achar: loga e segue (pedido pode ainda não ter chegado pelo webhook).
-   */
-  private async syncFromExcel(row: MLExcelRow): Promise<void> {
-    const documentSelector =
-      row.business === "Sim" ? { type: "J" } : { document: row.cpf };
+      const cachedOrders = await redisService.get<FullOrder[]>(`orders_seven_days_ago`)
 
-    const saleDate = new Date(row.sale_date);
-
-    const orders = await ordersService.getFullOrdersByQuery({
-      where: {
+      if (cachedOrders) {
+        orders = cachedOrders
+      } else {
+        const allOrders = await ordersService.getFullOrdersByQuery({
+          where: {
         date: {
           [Op.between]: [
             new Date(
               Date.UTC(
-                saleDate.getUTCFullYear(),
-                saleDate.getUTCMonth(),
-                saleDate.getUTCDate(),
+                todaysDate.getUTCFullYear(),
+                todaysDate.getUTCMonth(),
+                todaysDate.getUTCDate(),
                 0,
                 0,
                 0,
@@ -89,9 +78,9 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
             ),
             new Date(
               Date.UTC(
-                saleDate.getUTCFullYear(),
-                saleDate.getUTCMonth(),
-                saleDate.getUTCDate(),
+                todaysDate.getUTCFullYear(),
+                todaysDate.getUTCMonth(),
+                todaysDate.getUTCDate() - 10,
                 23,
                 59,
                 59,
@@ -105,26 +94,36 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
         {
           model: Customer,
           as: "customer",
-          where: {
-            [Op.and]: [
-              sequelize.where(
-                sequelize.fn("LOWER", sequelize.col("customer.name")),
-                "LIKE",
-                row.buyer.toLowerCase(),
-              ),
-              documentSelector,
-            ],
-          },
         },
         {
           model: OrderItems,
           as: "items",
           attributes: ["sku"],
         },
-      ],
-    });
+      ]
+        })
 
-    if (!orders || orders.length === 0) {
+        orders = allOrders
+        await redisService.set(`orders_seven_days_ago`, allOrders, {mode: 'EX', duration: 300})
+      }
+      // Origem: scraping — tem todos os dados do Excel para fazer o match
+      await this.syncFromExcel(job.data.row, orders);
+    } else {
+      // Origem: webhook — tem order/customer do Bling, sem dados ML ainda
+      await this.syncFromWebhook(job.data.orderSystem, job.data.customer);
+    }
+  }
+
+  // ─── Fluxo vindo do scraping ────────────────────────────────────────────
+
+  /**
+   * Tenta fazer match do row do Excel com um pedido no banco.
+   * Se achar: atualiza collection_date e agenda NFe.
+   * Se não achar: loga e segue (pedido pode ainda não ter chegado pelo webhook).
+   */
+  private async syncFromExcel(row: MLExcelRow, ordersSystem: FullOrder[]): Promise<void> {
+   
+    if (!ordersSystem || ordersSystem.length === 0) {
       console.log(
         `[MLOrderSyncQueue] Pedido ML ${row.order_number} não encontrado no banco. Aguardando webhook.`,
       );
@@ -132,7 +131,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     }
 
     const matchedOrder = this.resolveMatch(
-      orders,
+      ordersSystem,
       row.sale_date,
       row.order_number,
     );
