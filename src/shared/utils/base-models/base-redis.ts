@@ -24,7 +24,7 @@ class RedisService {
     }
   }
 
-  async set<T>(
+ async set<T>(
     key: string,
     value: unknown,
     options?: {
@@ -34,21 +34,34 @@ class RedisService {
       specialMethod?: RedisSpecialMethods;
     },
   ): Promise<T | null> {
-    const stringValue = JSON.stringify(value);
+    const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
 
-    if (!options?.mode) {
+    // Se não tem opções, faz o set simples
+    if (!options) {
       const result = await this.client.set(key, stringValue);
       return this.handleResponse<T>(result);
     }
 
-    const data = await this.client.set(
-      key,
-      stringValue,
-      options.mode as any,
-      options.duration || 0,
-      (options.condition || "") as any,
-      (options.specialMethod || "") as any,
-    );
+    // Monta o array de argumentos para o Redis
+    const args: [string, string | number, ...any[]] = [key, stringValue];
+
+    if (options.mode) {
+      args.push(options.mode);
+      if (options.duration !== undefined) {
+        args.push(options.duration);
+      }
+    }
+
+    if (options.condition) {
+      args.push(options.condition);
+    }
+
+    if (options.specialMethod) {
+      args.push(options.specialMethod);
+    }
+
+    // Usa o call para enviar os argumentos dinamicamente
+    const data = await this.client.set(...args);
 
     return this.handleResponse<T>(data);
   }

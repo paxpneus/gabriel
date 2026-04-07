@@ -14,7 +14,6 @@ import { Op } from "sequelize";
 import OrderItems from "../../../sales/orders/order_items/order_items.model";
 import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
-import redisService from "../../../../shared/utils/base-models/base-redis";
 
 /**
  * Job pode vir de duas origens:
@@ -42,15 +41,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   }
 
   async process(job: Job<MLOrderSyncJobData>): Promise<void> {
-    const lockKey = `lock:sync:order:${job.data.row?.order_number || job.data.orderSystem?.id}`;
-    const locked = await redisService.set(lockKey, "processing", { mode: 'EX', duration: 30, condition: 'NX' });
-
-    if (!locked) {
-      throw new Error("Lock ativo: outro worker processando este pedido.");
-    }
-
-    try {
-
     if (job.data.orderSystem) {
       if (job.data.orderSystem?.internal_status === "CANCELLED") {
         console.log(
@@ -67,9 +57,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       // Origem: webhook — tem order/customer do Bling, sem dados ML ainda
       await this.syncFromWebhook(job.data.orderSystem, job.data.customer);
     }
-  } finally {
-    await redisService.delete(lockKey)
-  }
   }
 
   // ─── Fluxo vindo do scraping ────────────────────────────────────────────
@@ -80,22 +67,12 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
    * Se não achar: loga e segue (pedido pode ainda não ter chegado pelo webhook).
    */
   private async syncFromExcel(row: MLExcelRow): Promise<void> {
-    
+    const documentSelector =
+      row.business === "Sim" ? { type: "J" } : { document: row.cpf };
 
     const saleDate = new Date(row.sale_date);
-    const dateKey = saleDate.toISOString().split('T')[0]
-    const cacheKey = `orders-day-cache:${dateKey}`
 
-    let orders: FullOrder[] = [];
-
-    const ordersCached = await redisService.get<FullOrder[]>(cacheKey)
-
-    if (ordersCached) {
-      orders = ordersCached.filter(o => 
-      o.customer.name.toLowerCase() === row.buyer.toLowerCase()
-    );
-    } else {
-      const allOrdersFromDay = await ordersService.getFullOrdersByQuery({
+    const orders = await ordersService.getFullOrdersByQuery({
       where: {
         date: {
           [Op.between]: [
@@ -128,6 +105,16 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
         {
           model: Customer,
           as: "customer",
+          where: {
+            [Op.and]: [
+              sequelize.where(
+                sequelize.fn("LOWER", sequelize.col("customer.name")),
+                "LIKE",
+                row.buyer.toLowerCase(),
+              ),
+              documentSelector,
+            ],
+          },
         },
         {
           model: OrderItems,
@@ -136,13 +123,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
         },
       ],
     });
-
-    await redisService.set(cacheKey, allOrdersFromDay, {mode: 'EX', duration: 300})
-
-    orders = allOrdersFromDay.filter(o => 
-      o.customer.name.toLowerCase() === row.buyer.toLowerCase()
-    );
-    }
 
     if (!orders || orders.length === 0) {
       console.log(
