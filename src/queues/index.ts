@@ -110,7 +110,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(cnpjQueue.queue),
       new BullMQAdapter(blingOrderQueue.queue),
       new BullMQAdapter(blingReconcilerQueue.queue),
-      new BullMQAdapter(mlScrapingQueue.queue)
+      new BullMQAdapter(mlScrapingQueue.queue),
     ],
     serverAdapter,
   });
@@ -142,7 +142,7 @@ export function startScrapingWorker() {
     { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
   )
 
-  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 })
+  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 })
 
   console.log('------------------- QUEUE: Scraping Worker Ativo! -------------------')
 }
