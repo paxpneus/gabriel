@@ -49,8 +49,11 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     orderId: number,
     message: string,
   ): Promise<void> {
+    const { data } = await this.blingApi.get(`/pedidos/vendas/${orderId}`);
+
     await this.blingApi.put(`/pedidos/vendas/${orderId}`, {
-      observacoesInternas: `Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`
+      ...data.data,
+      observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`
     })
     await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`, {
       id: STATUS.AGUARDANDO_VERIFICACAO_HUMANA
