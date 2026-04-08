@@ -301,7 +301,9 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       jobId,
       delay,
     );
-    await this.blingApi.patch(`/pedidos/vendas/${idOrderSystem}/situacoes/748748`)
+    await this.blingApi.patch(`/pedidos/vendas/${idOrderSystem}/situacoes/748748`, {
+      id: 748748
+    })
     
   }
 
