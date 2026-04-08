@@ -9,20 +9,21 @@ import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 
 const STATUS = {
-  EM_ANDAMENTO: 6,
+  NFE_AGENDADA: 748748,
   CANCELADO: 12,
+  AGUARDANDO_VERIFICACAO_HUMANA: 748772
 };
 
 const NFE_ERRORS = {
   WRONG_STATUS: {
     id: 4,
-    message: "Pedido não está em andamento ao tentar emitir NFe",
+    message: "Pedido não está em NFE Agendada ao tentar gerar NFe",
   },
   MISSING_FIELDS: {
     id: 5,
-    message: "Campos obrigatórios ausentes para emissão de NFe",
+    message: "Campos obrigatórios ausentes para geração de NFe",
   },
-  EMISSION_FAILED: { id: 6, message: "Falha ao emitir NFe na Bling" },
+  EMISSION_FAILED: { id: 6, message: "Falha ao gerar NFe na Bling" },
 };
 
 export class NFeQueue extends BaseQueueService<NFeJobData> {
@@ -35,6 +36,10 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
   ) {
     super("NFE_EMISSION", {
       concurrency: 1,
+      limiter: {
+        max: 1,
+        duration: 3000
+      }
     });
     this.blingApi = blingApi;
     this.validationService = validationService;
@@ -44,11 +49,11 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     orderId: number,
     message: string,
   ): Promise<void> {
-    // await this.blingApi.put(`/pedidos/vendas/${orderId}`, {
-    //   observacoesInternas: `Pedido Cancelado: ${message}`
-    // })
-    // await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/${STATUS.CANCELADO}`)
-    console.log(`[NFeQueue] Pedido ${orderId} cancelado: ${message}`);
+    await this.blingApi.put(`/pedidos/vendas/${orderId}`, {
+      observacoesInternas: `Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`
+    })
+    await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`)
+    console.log(`[NFeQueue] Pedido ${orderId} Marcado como Aguardando verificação humana: ${message}`);
   }
 
   async process(job: Job<NFeJobData>): Promise<void> {
@@ -60,10 +65,10 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     const { data } = await this.blingApi.get(`/pedidos/vendas/${order_id}`);
     const order = data.data;
 
-    // 2. Verifica se ainda está em andamento (status 15)
-    if (order.situacao?.id !== STATUS.EM_ANDAMENTO) {
+    // 2. Verifica se ainda está em nfe agendada (status 748748)
+    if (order.situacao?.id !== STATUS.NFE_AGENDADA) {
       console.log(
-        `[NFeQueue] Pedido ${order_id} com status ${order.situacao?.id}, esperado ${STATUS.EM_ANDAMENTO}. Abortando.`,
+        `[NFeQueue] Pedido ${order_id} com status ${order.situacao?.id}, esperado ${STATUS.NFE_AGENDADA}. Abortando.`,
       );
       await this.markOrderCancelled(order_id, NFE_ERRORS.WRONG_STATUS.message);
       return;
@@ -84,7 +89,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
     // 4. Emite a NFe
     try {
-      // await this.blingApi.post(`/pedidos/vendas/${order_id}/gerar-nfe`)
+      await this.blingApi.post(`/pedidos/vendas/${order_id}/gerar-nfe`)
       console.log(`[NFeQueue] NFe emitida com sucesso para pedido ${order_id}`);
 
       const internalOrder = await ordersService.findOne({

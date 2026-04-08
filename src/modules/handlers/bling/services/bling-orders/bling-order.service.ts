@@ -89,7 +89,7 @@ export class BlingOrderService {
       // Se status virou 15, dispara NFe
       if (orderData.situacao.id === 15) {
         console.log(
-          `[BlingOrderService] Status 15 detectado, disparando NFe...`,
+          `[BlingOrderService] Status 15 detectado, ignorando`,
         );
         // await this.nfeQueue.add({ order_id: orderData.id, collection_date: '' }, `nfe-generation-${orderData.id}`)
         return null;
@@ -203,6 +203,7 @@ export class BlingOrderService {
     
 
       if (!integration.allowed_channels?.includes(store.name)) {
+        console.log("[BLING ORDER] Pedido não originado do mercado livre, ignorando...")
         console.log("[DEBUG] channel.data.tipo:", store.name);
         console.log(
           "[DEBUG] integration.allowed_channels:",
