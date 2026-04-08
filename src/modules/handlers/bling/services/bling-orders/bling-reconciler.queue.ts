@@ -97,7 +97,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
             {
               event: "order.created",
               action: "created",
-              data: { id: blingOrder.id }
+              data: {  id: blingOrder.id, numero: blingOrder.numero }
             },
             `bling-order-created-${blingOrder.id}`
           );
