@@ -40,10 +40,11 @@ export class CNPJQueue extends BaseQueueService<any> {
 
   private async markOrderError(order: any, errorId: number): Promise<void> {
     const errorMessage = ErrorValues.find((e) => e.id === errorId)?.error;
-
+    const { data } = await this.blingApi.get(`/pedidos/vendas/${order.id_order_system}`)
     // // Atualiza a observação
     await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-        observacoesInternas: `Pedido Cancelado pelo Motivo: ${errorMessage}`.trim()
+        ...data.data,
+        observacoesInternas: `${data.data.observacoesInternas} \n Pedido Cancelado pelo Motivo: ${errorMessage}`.trim()
     })
 
     // // Muda o status para Cancelado (ID 12)
@@ -85,6 +86,11 @@ export class CNPJQueue extends BaseQueueService<any> {
         const blingAnswer = await this.blingApi.patch(`/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`, {
           id: 748743
         })
+
+        await ordersService.update(orderSystem.id, {
+      // ← precisa ser o id do banco, não o id da Bling
+      internal_status: "WAITING FOR NFE EMISSION",
+      });
         //@ts-ignore
         console.log('error bling cpf', blingAnswer?.response?.data)
 
@@ -106,8 +112,14 @@ export class CNPJQueue extends BaseQueueService<any> {
 
         // Atualiza para em aguardando agendamento de nfe
         const apllybling = await this.blingApi.patch(`/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`)
-        //@ts-ignore
-        console.log("CANE APROVADO BORA PRA FRENTE BLING", apllybling.response.data)
+        
+        await ordersService.update(orderSystem.id, {
+      // ← precisa ser o id do banco, não o id da Bling
+      internal_status: "WAITING FOR NFE EMISSION",
+      });
+      
+      //@ts-ignore
+        console.log("CANE APROVADO", apllybling.response.data)
         await this.next.add(
           { orderSystem, customer },
           `ml-check-${orderSystem.id}`,

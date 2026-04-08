@@ -250,13 +250,16 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       internal_status: "WAITING FOR NFE EMISSION",
     });
 
+    const { data } = await this.blingApi.get(`/pedidos/vendas/${order.id_order_system}`)
     if (isSibling) {
       await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-        observacoesInternas: `Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim()
+        ...data.data,
+        observacoesInternas: `${data.data.observacoesInternas} \n Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim()
       })
     } else {
       await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-        observacoesInternas: `ML: ${row.order_number}`.trim()
+        ...data.data,
+        observacoesInternas: `${data.data.observacoesInternas} \n ML: ${row.order_number}`.trim()
       })
     }
 
