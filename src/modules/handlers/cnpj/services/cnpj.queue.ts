@@ -47,7 +47,9 @@ export class CNPJQueue extends BaseQueueService<any> {
     })
 
     // // Muda o status para Cancelado (ID 12)
-    await this.blingApi.patch(`/pedidos/vendas/${order.id_order_system}/situacoes/12`)
+    await this.blingApi.patch(`/pedidos/vendas/${order.id_order_system}/situacoes/12`, {
+      id: 12
+    })
 
     await ordersService.update(order.id, {
       // ← precisa ser o id do banco, não o id da Bling
@@ -80,7 +82,12 @@ export class CNPJQueue extends BaseQueueService<any> {
         );
 
         // Atualiza para aguardando agendamento de nfe
-        await this.blingApi.patch(`/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`)
+        const blingAnswer = await this.blingApi.patch(`/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`, {
+          id: 748743
+        })
+        //@ts-ignore
+        console.log('error bling cpf', blingAnswer?.response?.data)
+
         await this.next.add(
           { orderSystem, customer },
           `ml-check-${orderSystem.id}`,
@@ -92,13 +99,15 @@ export class CNPJQueue extends BaseQueueService<any> {
       // CNPJ — valida CNAE
       const cnaeApproved = await this.CNPJService.checkCNAE(cnaes, document);
 
-      if (cnaeApproved) {
+      if (!cnaeApproved) {
         console.log(
           `[CNPJQueue] CNAE aprovado, seguindo para próxima fila: Verificar data de coleta`,
         );
 
         // Atualiza para em aguardando agendamento de nfe
-        await this.blingApi.patch(`/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`)
+        const apllybling = await this.blingApi.patch(`/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`)
+        //@ts-ignore
+        console.log("CANE APROVADO BORA PRA FRENTE BLING", apllybling.response.data)
         await this.next.add(
           { orderSystem, customer },
           `ml-check-${orderSystem.id}`,
@@ -108,6 +117,7 @@ export class CNPJQueue extends BaseQueueService<any> {
         await this.markOrderError(orderSystem, 2);
       }
     } catch (error: any) {
+      console.log('Erro do cnpj', error)
       alertService.sendAlert({
         severity: "HIGH",
         title: "CNPJ API — todos os providers falharam",

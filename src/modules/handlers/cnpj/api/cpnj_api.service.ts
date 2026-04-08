@@ -43,6 +43,7 @@ const providerInstances: AxiosInstance[] = CNPJ_PROVIDERS.map(({ url }) =>
 // Tenta cada provider em sequência até um responder com sucesso
 export const fetchCNPJ = async (cnpj: string | number): Promise<NormalizedCNPJ> => {
   const cleanedCNPJ = String(cnpj).replace(/\D/g, "").padStart(14, "0");
+  console.log("CNPJ PARA VERIFICAR", cleanedCNPJ)
 
   if (cleanedCNPJ.length !== 14) {
     throw new Error(`[CNPJ] CNPJ inválido: ${cnpj}`);
