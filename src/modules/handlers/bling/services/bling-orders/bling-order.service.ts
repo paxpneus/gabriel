@@ -43,6 +43,11 @@ export class BlingOrderService {
       if (!integration)
         throw new Error("Bling Integration não encontrada no cache");
 
+      if (body.data.situacao.id === 6) {
+        console.log(`[BLING ORDER SERVICE] Pedido: ${body.data.numero} com status em aberto, ignorando atualização`)
+        return null;
+      }
+
       // Busca o pedido completo na Bling
       const { data } = await this.blingApi.get(
         `/pedidos/vendas/${body.data.id}`,
@@ -147,15 +152,33 @@ export class BlingOrderService {
   //Método principal para processar o webhook e criar o pedido
 
   async createOrderFromBling(
-    body: blingOrderWebHookData | {data: {id: number | string}},
+    body: blingOrderWebHookData | {data: {id: number | string, numero?: string | number}},
   ): Promise<{ customer: any; cnaes: any[], orderSystem: any } | null> {
     console.log(body.data.id);
     try {
+
+       const integration = await getBlingIntegration("Bling");
+
+        const existingOrder = await ordersService.findOne({
+        where: {
+          integration_id: integration.id,
+          number_order_system: String(body.data.numero),
+        },
+      });
+
+      if (existingOrder) {
+        console.log(
+          `[BlingOrderService] Pedido ${body.data.numero} já cadastrado. Pulando...`,
+        );
+        return await this.updateOrderFromBling(body as any);
+      }
+
+
       const { data } = await this.blingApi.get(
         `/pedidos/vendas/${body.data.id}`,
       );
       const orderData = data.data;
-      const integration = await getBlingIntegration("Bling");
+     
 
       let store
       store = await this.storeService.findOne({
@@ -177,19 +200,7 @@ export class BlingOrderService {
         throw new Error("Bling Integration não encontrada no cache");
       }
 
-      const existingOrder = await ordersService.findOne({
-        where: {
-          integration_id: integration.id,
-          number_order_system: String(orderData.numero),
-        },
-      });
-
-      if (existingOrder) {
-        console.log(
-          `[BlingOrderService] Pedido ${orderData.numero} já cadastrado. Pulando...`,
-        );
-        return null;
-      }
+    
 
       if (!integration.allowed_channels?.includes(store.name)) {
         console.log("[DEBUG] channel.data.tipo:", store.name);
