@@ -34,8 +34,8 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     blingApi: AxiosInstance,
   ) {
     super("ML-ORDER-SYNC", {
-      concurrency: 3,
-      limiter: { max: 5, duration: 2000 },
+      concurrency: 1,
+      limiter: { max: 1, duration: 3000 },
     });
     this.blingApi = blingApi;
     this.next = next;
@@ -251,15 +251,13 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     });
 
     if (isSibling) {
-      //     const observacoesAtual = orderData.observacoesInternas ?? ''
-      // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-      //   observacoesInternas: `${observacoesAtual}\nNº Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim()
-      // })
+      await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+        observacoesInternas: `Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim()
+      })
     } else {
-      //     const observacoesAtual = orderData.observacoesInternas ?? ''
-      // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-      //   observacoesInternas: `${observacoesAtual}\nNº ML: ${row.order_number}`.trim()
-      // })
+      await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+        observacoesInternas: `ML: ${row.order_number}`.trim()
+      })
     }
 
     console.log(
@@ -267,6 +265,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     );
 
     await this.scheduleNfe(order.id_order_system, newDate);
+    
   }
 
   /**
@@ -302,6 +301,8 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       jobId,
       delay,
     );
+    await this.blingApi.patch(`/pedidos/vendas/${idOrderSystem}/situacoes/748748`)
+    
   }
 
   private isNextDay(date: Date): boolean {

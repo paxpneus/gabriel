@@ -27,7 +27,12 @@ export class CNPJQueue extends BaseQueueService<any> {
     blingApi: AxiosInstance,
     next: nextStepOnQueue,
   ) {
-    super("CNPJ_VERIFY_CNAE");
+    super("CNPJ_VERIFY_CNAE", {
+      limiter: {
+        max: 1,
+        duration: 3000
+      }
+    });
     this.CNPJService = cnpjService;
     this.blingApi = blingApi;
     this.next = next;
@@ -37,12 +42,12 @@ export class CNPJQueue extends BaseQueueService<any> {
     const errorMessage = ErrorValues.find((e) => e.id === errorId)?.error;
 
     // // Atualiza a observação
-    // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-    //     observacoesInternas: `${order.observacoesInternas ?? ''}\nPedido Cancelado pelo Motivo: ${errorMessage}`.trim()
-    // })
+    await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+        observacoesInternas: `Pedido Cancelado pelo Motivo: ${errorMessage}`.trim()
+    })
 
     // // Muda o status para Cancelado (ID 12)
-    // await this.blingApi.patch(`/pedidos/vendas/${order.id_order_system}/situacoes/12`)
+    await this.blingApi.patch(`/pedidos/vendas/${order.id_order_system}/situacoes/12`)
 
     await ordersService.update(order.id, {
       // ← precisa ser o id do banco, não o id da Bling
@@ -74,8 +79,8 @@ export class CNPJQueue extends BaseQueueService<any> {
           `[CNPJQueue] CPF, seguindo para próxima fila: Verificar data de coleta`,
         );
 
-        // Atualiza para em andamento
-        // await this.blingApi.patch(`/pedidos/vendas/${order.id_order_system}/situacoes/15`)
+        // Atualiza para aguardando agendamento de nfe
+        await this.blingApi.patch(`/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`)
         await this.next.add(
           { orderSystem, customer },
           `ml-check-${orderSystem.id}`,
@@ -92,8 +97,8 @@ export class CNPJQueue extends BaseQueueService<any> {
           `[CNPJQueue] CNAE aprovado, seguindo para próxima fila: Verificar data de coleta`,
         );
 
-        // Atualiza para em andamento
-        // await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/15`)
+        // Atualiza para em aguardando agendamento de nfe
+        await this.blingApi.patch(`/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`)
         await this.next.add(
           { orderSystem, customer },
           `ml-check-${orderSystem.id}`,
