@@ -4,7 +4,7 @@ export class CNPJService {
 
     constructor(){}
 
-    public async checkCNAE(allowedCnaes: string[], customerCnpj: number): Promise<Boolean> {
+    public async checkCNAE(allowedCnaes: string[], customerCnpj: string): Promise<Boolean> {
 
         const customerCnaes = await fetchCNPJ(customerCnpj)
 

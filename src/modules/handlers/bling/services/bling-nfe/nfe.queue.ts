@@ -60,6 +60,13 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`, {
       id: STATUS.AGUARDANDO_VERIFICACAO_HUMANA
     })
+    const orderSystem = await ordersService.findOne({
+      where: {
+        id_order_system: orderId
+      }
+    })
+    if (!orderSystem) return;
+    await ordersService.update(orderSystem.id, { internal_status: "CANCELLED" });
     console.log(`[NFeQueue] Pedido ${orderId} Marcado como Aguardando verificação humana: ${message}`);
   }
 
@@ -126,6 +133,9 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
   }
 
   protected onFailed(job: Job<NFeJobData>, error: Error): void {
+    const { order_id } = job.data
+    this.markOrderCancelled(order_id, `${NFE_ERRORS.EMISSION_FAILED}`)
+
   alertService.sendAlert({
     severity: "CRITICAL",
     title: "NFe — falha após todos os retries",
