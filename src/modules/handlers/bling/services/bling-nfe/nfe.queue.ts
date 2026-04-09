@@ -11,7 +11,7 @@ import { alertService } from "../../../../../shared/providers/mail-provider/node
 const STATUS = {
   NFE_AGENDADA: 748748,
   CANCELADO: 12,
-  AGUARDANDO_VERIFICACAO_HUMANA: 748772
+  AGUARDANDO_VERIFICACAO_HUMANA: 748772,
 };
 
 const NFE_ERRORS = {
@@ -33,15 +33,15 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
   constructor(
     validationService: NFeValidationService,
     blingApi: AxiosInstance,
-    options: { workless?: boolean } = {}
+    options: { workless?: boolean } = {},
   ) {
     super("NFE_EMISSION", {
       concurrency: 1,
       limiter: {
         max: 1,
-        duration: 3000
+        duration: 3000,
       },
-      workless: options.workless
+      workless: options.workless,
     });
     this.blingApi = blingApi;
     this.validationService = validationService;
@@ -55,19 +55,26 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
     await this.blingApi.put(`/pedidos/vendas/${orderId}`, {
       ...data.data,
-      observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`
-    })
-    await this.blingApi.patch(`/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`, {
-      id: STATUS.AGUARDANDO_VERIFICACAO_HUMANA
-    })
+      observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`,
+    });
+    await this.blingApi.patch(
+      `/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`,
+      {
+        id: STATUS.AGUARDANDO_VERIFICACAO_HUMANA,
+      },
+    );
     const orderSystem = await ordersService.findOne({
       where: {
-        id_order_system: orderId
-      }
-    })
+        id_order_system: orderId,
+      },
+    });
     if (!orderSystem) return;
-    await ordersService.update(orderSystem.id, { internal_status: "CANCELLED" });
-    console.log(`[NFeQueue] Pedido ${orderId} Marcado como Aguardando verificação humana: ${message}`);
+    await ordersService.update(orderSystem.id, {
+      internal_status: "CANCELLED",
+    });
+    console.log(
+      `[NFeQueue] Pedido ${orderId} Marcado como Aguardando verificação humana: ${message}`,
+    );
   }
 
   async process(job: Job<NFeJobData>): Promise<void> {
@@ -81,9 +88,23 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
     // 2. Verifica se ainda está em nfe agendada (status 748748)
     if (order.situacao?.id !== STATUS.NFE_AGENDADA) {
-      console.log(
-        `[NFeQueue] Pedido ${order_id} com status ${order.situacao?.id}, esperado ${STATUS.NFE_AGENDADA}. Abortando.`,
-      );
+      // Status 9 = NFe já emitida — considerar sucesso silencioso
+      if (order.situacao?.id === 9) {
+        console.log(
+          `[NFeQueue] Pedido ${order_id} já com NFe emitida (status 9). Atualizando banco.`,
+        );
+        const internalOrder = await ordersService.findOne({
+          where: { id_order_system: String(order_id) },
+        });
+        if (internalOrder) {
+          await ordersService.update(internalOrder.id, {
+            nfe_emitted: true,
+            internal_status: "EMITTED",
+          });
+        }
+        return; // ← sai sem erro, sem markOrderCancelled
+      }
+
       await this.markOrderCancelled(order_id, NFE_ERRORS.WRONG_STATUS.message);
       return;
     }
@@ -103,7 +124,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
     // 4. Emite a NFe
     try {
-      await this.blingApi.post(`/pedidos/vendas/${order_id}/gerar-nfe`)
+      await this.blingApi.post(`/pedidos/vendas/${order_id}/gerar-nfe`);
       console.log(`[NFeQueue] NFe emitida com sucesso para pedido ${order_id}`);
 
       const internalOrder = await ordersService.findOne({
@@ -126,20 +147,20 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         `[NFeQueue] Erro ao emitir NFe:`,
         error.response?.data ?? error.message,
       );
-      
+
       // Relança para o BullMQ fazer retry (3x com backoff, herdado da base)
       throw error;
     }
   }
 
   protected onFailed(job: Job<NFeJobData>, error: Error): void {
-    const { order_id } = job.data
-    this.markOrderCancelled(order_id, `${NFE_ERRORS.EMISSION_FAILED}`)
+    const { order_id } = job.data;
+    this.markOrderCancelled(order_id, `${NFE_ERRORS.EMISSION_FAILED}`);
 
-  alertService.sendAlert({
-    severity: "CRITICAL",
-    title: "NFe — falha após todos os retries",
-    message: `Pedido ${job.data.order_id} não teve NFe emitida. Requer intervenção manual. Erro: ${error.message}`,
-  });
-}
+    alertService.sendAlert({
+      severity: "CRITICAL",
+      title: "NFe — falha após todos os retries",
+      message: `Pedido ${job.data.order_id} não teve NFe emitida. Requer intervenção manual. Erro: ${error.message}`,
+    });
+  }
 }
