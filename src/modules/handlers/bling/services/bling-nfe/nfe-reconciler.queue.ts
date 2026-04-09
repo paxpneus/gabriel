@@ -38,7 +38,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     cnpjNext: nextStepOnQueue | getJob,
     nfeNext: nextStepDelayedOnQueue | getJob,
     blingApi: AxiosInstance,
-    options: { workless?: boolean } = {}
+    options: { workless?: boolean } = {},
   ) {
     super("NFE_RECONCILER", { concurrency: 1, workless: options.workless });
     this.blingApi = blingApi;
@@ -57,7 +57,11 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
     results.forEach((result, index) => {
       if (result.status === "rejected") {
-        const names = ["reconcileWaitingNfe", "reconcileOpenOrders", "reconcileStuckOrders"];
+        const names = [
+          "reconcileWaitingNfe",
+          "reconcileOpenOrders",
+          "reconcileStuckOrders",
+        ];
         console.error(
           `[NFeReconciler] ${names[index]} falhou:`,
           result.reason?.message ?? result.reason,
@@ -120,6 +124,9 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   // Pedidos que chegaram no sistema e pararam seu processo antes de entrar na pipeline
 
   private async reconcileOpenOrders(): Promise<void> {
+    const integration = await getBlingIntegration("Bling");
+    if (!integration) return;
+
     const orders = await ordersService.getFullOrdersByQuery({
       where: {
         internal_status: "OPEN",
@@ -144,9 +151,6 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
     for (const order of orders) {
       try {
-        const integration = await getBlingIntegration("Bling");
-        if (!integration) continue;
-
         const jobId = `document-check-${order.id_order_system}`;
         const existingJob = await (this.cnpjNext as getJob).getJob(jobId);
 
@@ -174,22 +178,54 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
       }
     }
   }
-  
-  private async reconcileStuckOrders(): Promise<void> {
-  const stuckOrders = await ordersService.findAll({
-    where: {
-      internal_status: 'WAITING CHANNEL VALIDATION',
-      updatedAt: { [Op.lt]: new Date(Date.now() - 4 * 60 * 60 * 1000) }, // 4h
-    },
-  });
 
-  if (stuckOrders.length > 0) {
+  private async reconcileStuckOrders(): Promise<void> {
+    const stuckOrders = await ordersService.findAll({
+      where: {
+        internal_status: "WAITING CHANNEL VALIDATION",
+        updatedAt: { [Op.lt]: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+      },
+    });
+
+    if (stuckOrders.length === 0) return;
+
+    for (const order of stuckOrders) {
+      try {
+        const { data } = await this.blingApi.get(
+          `/pedidos/vendas/${order.id_order_system}`,
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+          ...data.data,
+          observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana: pedido preso em WAITING CHANNEL VALIDATION sem coleta agendada.`,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+
+        await this.blingApi.patch(
+          `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
+          { id: 748772 },
+        );
+
+        await ordersService.update(order.id, { internal_status: "CANCELLED" });
+
+        console.log(
+          `[NFeReconciler] Pedido ${order.id_order_system} marcado como verificação humana.`,
+        );
+      } catch (error: any) {
+        console.error(
+          `[NFeReconciler] Erro ao processar pedido preso ${order.id_order_system}:`,
+          error.response?.data ?? error.message,
+        );
+      }
+    }
+
     alertService.sendAlert({
-      severity: 'MEDIUM',
-      title: 'ML Sync — pedidos presos sem coleta',
-      message: `${stuckOrders.length} pedido(s) em WAITING CHANNEL VALIDATION há mais de 4h sem match no scraping.`,
+      severity: "MEDIUM",
+      title: "ML Sync — pedidos presos sem coleta",
+      message: `${stuckOrders.length} pedido(s) em WAITING CHANNEL VALIDATION há mais de 2h sem match no scraping.`,
     });
   }
-}
-
 }

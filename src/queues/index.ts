@@ -144,6 +144,7 @@ export function startWorkers() {
   } = buildQueues(false); // workless: false → Worker ativo em cada fila
 
   reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  //TESTE
   blingReconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
