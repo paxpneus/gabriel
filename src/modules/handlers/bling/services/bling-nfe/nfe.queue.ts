@@ -33,13 +33,15 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
   constructor(
     validationService: NFeValidationService,
     blingApi: AxiosInstance,
+    options: { workless?: boolean } = {}
   ) {
     super("NFE_EMISSION", {
       concurrency: 1,
       limiter: {
         max: 1,
         duration: 3000
-      }
+      },
+      workless: options.workless
     });
     this.blingApi = blingApi;
     this.validationService = validationService;

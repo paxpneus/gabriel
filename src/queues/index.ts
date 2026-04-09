@@ -11,7 +11,7 @@ import { BlingOrderQueue } from "../modules/handlers/bling/services/bling-orders
 import { CNPJQueue } from "../modules/handlers/cnpj/services/cnpj.queue";
 import CNPJService from "../modules/handlers/cnpj/services/cnpj.service";
 
-import { NFeQueue } from "../modules/handlers/bling/services/bling-nfe/nfe.queue";
+import { NFeQueue } from "./../modules/handlers/bling/services/bling-nfe/nfe.queue";
 import { NFeValidationService } from "./../modules/handlers/bling/services/bling-nfe/nfe-validation.service";
 
 import { MLScrapingQueue } from "../modules/handlers/mercado-livre/services/mercado-livre.scraping.queue";
@@ -24,11 +24,23 @@ import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-o
 
 export const serverAdapter = new ExpressAdapter();
 
-// ─── Monta todas as instâncias de fila (compartilhado entre as duas funções) ──
-function buildQueues() {
+/**
+ * buildQueues(workless)
+ *
+ * workless = true  → só instancia Queue (produtor). Usado pelo container `api`.
+ * workless = false → instancia Queue + Worker (consumidor). Usado pelo container `workers`.
+ *
+ * Isso evita ter dois Workers ativos consumindo a mesma fila ao mesmo tempo
+ * (que é o que causava os 429 na Bling mesmo com limiter configurado).
+ */
+function buildQueues(workless: boolean) {
   const blingOrderService = new BlingOrderService(blingApi);
 
-  const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi);
+  const nfeQueue = new NFeQueue(
+    new NFeValidationService(),
+    blingApi,
+    { workless },
+  );
 
   const nfeNext = {
     addDelayed: (data: any, jobId: string, delay: number) =>
@@ -37,31 +49,32 @@ function buildQueues() {
     getJob: (jobId: string) => nfeQueue.getJob(jobId),
   };
 
-  const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi);
+  const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi, { workless });
 
-
-  const cnpjQueue = new CNPJQueue(new CNPJService(), blingApi, {
-    add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId),
-  });
+  const cnpjQueue = new CNPJQueue(
+    new CNPJService(),
+    blingApi,
+    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
+    { workless },
+  );
 
   const cnpjNext = {
     add: (data: any, jobId: string) => cnpjQueue.add(data, jobId),
     getJob: (jobId: string) => cnpjQueue.getJob(jobId),
   };
 
-  const blingOrderQueue = new BlingOrderQueue(blingOrderService, {
-    add: (data, jobId) => cnpjQueue.add(data, jobId),
-  });
+  const blingOrderQueue = new BlingOrderQueue(
+    blingOrderService,
+    { add: (data, jobId) => cnpjQueue.add(data, jobId) },
+    { workless },
+  );
 
-  const reconcilerQueue = new ReconcilerQueue(cnpjNext, nfeNext, blingApi);
-
-  const blingOrderNext = {
-    add: (data: any, jobId: string) => blingOrderQueue.add(data, jobId),
-  };
+  const reconcilerQueue = new ReconcilerQueue(cnpjNext, nfeNext, blingApi, { workless });
 
   const blingReconcilerQueue = new BlingReconcilerQueue(
     blingApi,
-    blingOrderNext,
+    { add: (data: any, jobId: string) => blingOrderQueue.add(data, jobId) },
+    { workless },
   );
 
   return {
@@ -74,17 +87,7 @@ function buildQueues() {
   };
 }
 
-function buildMLScrapingQueueRef(mlOrderSyncQueue: MLOrderSyncQueue) {
-  return new MLScrapingQueue(
-    new MLScrapingService(),
-    new MLOrderService(),
-    { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
-    { concurrency: 1, lockDuration: 15 * 60 * 1000, workless: true }, // só fila, sem worker
-  );
-}
-
-// ─── Chamado pela API: registra filas no app.locals + BullBoard ───────────────
-// Não sobe Workers — só permite que as rotas enfileirem jobs via app.locals
+// ─── Chamado pela API: registra filas + BullBoard, SEM subir Workers ──────────
 export function registerQueues(app: Express) {
   const {
     nfeQueue,
@@ -93,8 +96,15 @@ export function registerQueues(app: Express) {
     blingOrderQueue,
     reconcilerQueue,
     blingReconcilerQueue,
-  } = buildQueues();
-  const mlScrapingQueue = buildMLScrapingQueueRef(mlOrderSyncQueue)
+  } = buildQueues(true); // workless: true → zero Workers na API
+
+  // Scraping só para o BullBoard enxergar a fila, sem Worker
+  const mlScrapingQueue = new MLScrapingQueue(
+    new MLScrapingService(),
+    new MLOrderService(),
+    { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
+    { concurrency: 1, lockDuration: 15 * 60 * 1000, workless: true },
+  );
 
   app.locals.BlingOrderQueue = blingOrderQueue;
   app.locals.CNPJQueue = cnpjQueue;
@@ -115,34 +125,46 @@ export function registerQueues(app: Express) {
     serverAdapter,
   });
 
-  app.use('/admin/queues', serverAdapter.getRouter())
+  app.use('/admin/queues', serverAdapter.getRouter());
 
-
-  console.log("------------------- QUEUE: Filas registradas na API! -------------------");
+  console.log("------------------- QUEUE: Filas registradas na API (sem Workers)! -------------------");
 }
 
-// ─── Chamado pelos workers: sobe os Workers e agenda repetições ───────────────
-// Não registra no app.locals — só processa jobs do Redis
+// ─── Chamado pelo container workers: sobe Workers + agenda repetições ─────────
 export function startWorkers() {
-  const { reconcilerQueue, blingReconcilerQueue } = buildQueues();
-
+  // Mantém referência de TODAS as filas — sem isso o GC coleta as instâncias
+  // e os Workers morrem silenciosamente logo após o start.
+  const {
+    nfeQueue,
+    mlOrderSyncQueue,
+    cnpjQueue,
+    blingOrderQueue,
+    reconcilerQueue,
+    blingReconcilerQueue,
+  } = buildQueues(false); // workless: false → Worker ativo em cada fila
 
   reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
   blingReconcilerQueue.scheduleRepeat({ every: 1 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
+  console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
+  console.log("  → BLING_ORDER_INGESTION, NFE_RECONCILER, BLING_RECONCILER");
 }
 
+// ─── Chamado pelo container worker-scraping ───────────────────────────────────
 export function startScrapingWorker() {
-  const { mlOrderSyncQueue } = buildQueues()
+  // mlOrderSyncQueue aqui só como produtor (workless: true)
+  // quem consome ML-ORDER-SYNC é o container workers via startWorkers()
+  const { mlOrderSyncQueue } = buildQueues(true);
 
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
     new MLOrderService(),
     { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
-  )
+    { workless: false }, // scraping tem seu próprio Worker aqui
+  );
 
-  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 })
+  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
 
-  console.log('------------------- QUEUE: Scraping Worker Ativo! -------------------')
+  console.log('------------------- QUEUE: Scraping Worker Ativo! -------------------');
 }

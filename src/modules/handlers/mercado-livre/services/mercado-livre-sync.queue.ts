@@ -32,10 +32,12 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   constructor(
     next: nextStepDelayedOnQueue & nextRemoveOnQueue,
     blingApi: AxiosInstance,
+     options: { workless?: boolean } = {}
   ) {
     super("ML-ORDER-SYNC", {
       concurrency: 1,
       limiter: { max: 1, duration: 3000 },
+      workless: options.workless
     });
     this.blingApi = blingApi;
     this.next = next;
@@ -271,7 +273,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       `[MLOrderSyncQueue] Pedido ${order.number_order_channel} → collection_date: ${newDate.toISOString()}`,
     );
 
-    await this.scheduleNfe(order.id_order_system, newDate);
+    await this.scheduleNfe(order.id_order_system, newDate, order);
   }
 
   /**
