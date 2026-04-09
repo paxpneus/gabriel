@@ -105,7 +105,7 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
       order instanceof Model ? order.get({ plain: true }) : order,
     );
 
-    await redisService.set(`orders_seven_days_ago`, plainOrders, {mode: 'EX', duration: 500})
+    await redisService.set(`orders_seven_days_ago`, plainOrders, {mode: 'EX', duration: 60 * 30})
 
     for (const row of sortedRows) {
       await this.next.add({ row }, `ml-sync-${row.order_number}`);
