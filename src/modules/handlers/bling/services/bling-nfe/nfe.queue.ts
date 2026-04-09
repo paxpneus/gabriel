@@ -164,14 +164,30 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         internal_status: "EMITTED",
       });
     } catch (error: any) {
-      console.error(
-        `[NFeQueue] Erro ao emitir NFe:`,
-        JSON.stringify(error.response?.data) ?? error.message,
-      );
+  const fields = error.response?.data?.error?.fields ?? [];
+  const noStock = fields.some((f: any) => f.code === 74);
 
-      // Relança para o BullMQ fazer retry (3x com backoff, herdado da base)
-      throw error;
-    }
+  console.error(
+    `[NFeQueue] Erro ao emitir NFe para pedido ${order_id}:`,
+    JSON.stringify(error.response?.data) ?? error.message,
+  );
+
+  if (noStock) {
+    await this.markOrderCancelled(
+    order_id,
+    "Item(s) sem estoque disponível na Bling. Requer reposição manual."
+  );
+    alertService.sendAlert({
+      severity: "HIGH",
+      title: "NFe — Sem estoque",
+      message: `Pedido ${order_id} não pode emitir NFe: item sem estoque disponível na Bling. Requer reposição manual.`,
+    });
+    
+    return;
+  }
+
+  throw error; 
+}
   }
 
   protected onFailed(job: Job<NFeJobData>, error: Error): void {
