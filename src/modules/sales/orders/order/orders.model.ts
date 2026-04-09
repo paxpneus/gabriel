@@ -21,6 +21,7 @@ class Order
   public nfe_emitted?: boolean;
   public internal_status?: string;
   public store_id?: string;
+  public waiting_acceptance?: boolean;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -93,6 +94,11 @@ Order.init(
       allowNull: true,
     },
     nfe_emitted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: true,
+      defaultValue: false,
+    },
+    waiting_acceptance: {
       type: DataTypes.BOOLEAN,
       allowNull: true,
       defaultValue: false,

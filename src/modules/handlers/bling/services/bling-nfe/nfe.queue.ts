@@ -105,6 +105,22 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         return; // ← sai sem erro, sem markOrderCancelled
       }
 
+      if (order.situacao?.id === STATUS.CANCELADO) {
+        console.log(
+          `[NFeQueue] Pedido ${order_id} cancelado (status 12). Atualizando banco.`,
+        );
+        const internalOrder = await ordersService.findOne({
+          where: { id_order_system: String(order_id) },
+        });
+        if (internalOrder) {
+          await ordersService.update(internalOrder.id, {
+            nfe_emitted: false,
+            internal_status: "CANCELLED",
+          });
+        }
+        return; // ← sai sem erro, sem markOrderCancelled
+      }
+
       await this.markOrderCancelled(order_id, NFE_ERRORS.WRONG_STATUS.message);
       return;
     }

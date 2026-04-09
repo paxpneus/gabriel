@@ -200,7 +200,7 @@ export class BlingOrderService {
         throw new Error("Bling Integration não encontrada no cache");
       }
 
-    
+    //TESTE
 
       if (!integration.allowed_channels?.includes(store.name)) {
         console.log("[BLING ORDER] Pedido não originado do mercado livre, ignorando...")

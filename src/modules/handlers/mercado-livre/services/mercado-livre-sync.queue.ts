@@ -153,6 +153,25 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
+
+    //TESTE
+    // if (!orderSystem.collection_date) {
+    //   const {data} = await this.blingApi.get(`/pedidos/vendas/${orderSystem.id_order_system}`)
+    //   const orderUpdated = ordersService.update(orderSystem.id, {
+    //     collection_date: new Date(data.data.dataPrevista)
+    //   })
+
+    //   //@ts-ignore
+    //   await this.scheduleNfe(
+    //     //@ts-ignore
+    //     orderUpdated.id_order_system!,
+    //     //@ts-ignore
+    //     orderUpdated.collection_date,
+    //     orderUpdated,
+    //   );
+    //   return;
+    // }
+
     if (orderSystem.collection_date) {
       // Scraping já rodou antes do webhook chegar — agenda NFe direto
       console.log(
