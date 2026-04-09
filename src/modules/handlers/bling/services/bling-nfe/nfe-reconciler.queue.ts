@@ -38,8 +38,9 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     cnpjNext: nextStepOnQueue | getJob,
     nfeNext: nextStepDelayedOnQueue | getJob,
     blingApi: AxiosInstance,
+    options: { workless?: boolean } = {}
   ) {
-    super("NFE_RECONCILER", { concurrency: 1 });
+    super("NFE_RECONCILER", { concurrency: 1, workless: options.workless });
     this.blingApi = blingApi;
     this.cnpjNext = cnpjNext;
     this.nfeNext = nfeNext;

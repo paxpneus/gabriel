@@ -16,8 +16,9 @@ export class BlingReconcilerQueue extends BaseQueueService<
   constructor(
     blingApi: AxiosInstance,
     blingOrderNext: { add: (data: any, jobId: string) => Promise<any> },
+     options: { workless?: boolean } = {}
   ) {
-    super("BLING_RECONCILER", { concurrency: 1 });
+    super("BLING_RECONCILER", { concurrency: 1, workless: options.workless });
     this.blingApi = blingApi;
     this.blingOrderNext = blingOrderNext;
     this.blingOrderService = new BlingOrderService(blingApi);
