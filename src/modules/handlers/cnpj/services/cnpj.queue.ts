@@ -80,10 +80,10 @@ export class CNPJQueue extends BaseQueueService<any> {
     console.log(`[QUEUE] Processando verificação de documento ${job.id}`);
 
     const { customer, cnaes, orderSystem } = job.data;
-    const document = Number(customer.document);
+    const document = String(customer.document);
 
     // 1. Documento inválido
-    if (!customer.document || isNaN(document)) {
+    if (!customer.document) {
       console.log(`[CNPJQueue] Documento inválido ou não informado`);
       await this.markOrderError(orderSystem, 1);
       return;

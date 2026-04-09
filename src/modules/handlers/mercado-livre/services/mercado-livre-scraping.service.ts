@@ -263,12 +263,12 @@ export class MLScrapingService {
       "[MLScraping] [LOCAL] Você tem 10 minutos para completar o login no browser.",
     );
 
-     alertService.sendAlert({
-          severity: "CRITICAL",
-          title: "ML Scraping — login manual necessário",
-          message:
-            "Verificação humana detectada. Scraping pausado até intervenção.",
-        });
+    alertService.sendAlert({
+      severity: "CRITICAL",
+      title: "ML Scraping — login manual necessário",
+      message:
+        "Verificação humana detectada. Scraping pausado até intervenção.",
+    });
 
     const deadline = Date.now() + 10 * 60 * 1_000;
 
@@ -443,9 +443,13 @@ export class MLScrapingService {
         .toLowerCase()
         .includes("pronto para coleta");
 
+      const isNFeAlreadyEmitted = String(status)
+        .toLowerCase()
+        .includes("informe a nf-e já emitida");
+
       const isTomorrowDelivery = TOMORROW_DELIVERY_REGEX.test(String(status));
 
-      if (isReadyForPickup || isTomorrowDelivery) {
+      if (isReadyForPickup || isTomorrowDelivery || isNFeAlreadyEmitted) {
         // Pedidos prontos para coleta sem data prevista → amanhã (UTC)
         const tomorrow = new Date();
         collectionDate = new Date(
