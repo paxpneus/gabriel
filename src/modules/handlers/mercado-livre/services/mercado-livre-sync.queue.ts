@@ -268,7 +268,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     await ordersService.update(order.id, {
       collection_date: newDate,
       number_order_channel: row.order_number,
-      internal_status: "WAITING FOR NFE EMISSION",
     });
 
     const { data } = await this.blingApi.get(
@@ -309,15 +308,29 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     await this.next.removeJob(jobId);
 
     const isTomorrow = this.isNextDay(collectionDate);
+
+    const MIN_DELAY_MS = 30_000;
+
     const delay = isTomorrow
-      ? 0
-      : setDelayBasedOnDate(new Date(collectionDate));
+      ? MIN_DELAY_MS
+      : Math.max(setDelayBasedOnDate(new Date(collectionDate)), MIN_DELAY_MS);
 
     if (isTomorrow) {
       console.log(
         `[MLOrderSyncQueue] Coleta amanhã — NFe agendada imediatamente para pedido ${idOrderSystem}`,
       );
     }
+
+     await this.blingApi.patch(
+      `/pedidos/vendas/${idOrderSystem}/situacoes/748748`,
+      {
+        id: 748748,
+      },
+    );
+
+     await ordersService.update(orderSystem.id, {
+      internal_status: "WAITING FOR NFE EMISSION",
+    });
 
     await this.next.addDelayed(
       {
@@ -328,16 +341,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       jobId,
       delay,
     );
-    await this.blingApi.patch(
-      `/pedidos/vendas/${idOrderSystem}/situacoes/748748`,
-      {
-        id: 748748,
-      },
-    );
-
-    await ordersService.update(orderSystem.id, {
-      internal_status: "WAITING FOR NFE EMISSION",
-    });
+   
   }
 
   private isNextDay(date: Date): boolean {
@@ -377,4 +381,13 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return sameName && hasSku && timeDiff <= this.SIBLING_WINDOW_MS;
     });
   }
+
+  private isToday(date: Date): boolean {
+  const now = new Date();
+  return (
+    date.getUTCFullYear() === now.getUTCFullYear() &&
+    date.getUTCMonth()    === now.getUTCMonth()    &&
+    date.getUTCDate()     === now.getUTCDate()
+  );
+}
 }

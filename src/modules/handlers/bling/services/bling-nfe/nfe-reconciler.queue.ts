@@ -199,7 +199,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
         await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
           ...data.data,
-          observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana: pedido preso em WAITING CHANNEL VALIDATION sem coleta agendada.`,
+          observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana: Pedido parado em aguardando agendamento de nfe, pelo motivo de não conseguir encontrar o pedido na planilha do mercado livre`,
         });
 
         await new Promise((resolve) => setTimeout(resolve, 3000));

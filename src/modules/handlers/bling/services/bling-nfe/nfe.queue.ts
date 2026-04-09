@@ -17,7 +17,7 @@ const STATUS = {
 const NFE_ERRORS = {
   WRONG_STATUS: {
     id: 4,
-    message: "Pedido não está em NFE Agendada ao tentar gerar NFe",
+    message: "Pedido não estava no status NFE Agendada ao tentar gerar NFe",
   },
   MISSING_FIELDS: {
     id: 5,
