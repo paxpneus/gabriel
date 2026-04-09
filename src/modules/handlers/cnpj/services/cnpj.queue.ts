@@ -43,8 +43,8 @@ export class CNPJQueue extends BaseQueueService<any> {
     });
 
     await this.blingApi.patch(
-      `/pedidos/vendas/${order.id_order_system}/situacoes/12`,
-      { id: 12 },
+      `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
+      { id: 748772 },
     );
 
     await ordersService.update(order.id, { internal_status: "CANCELLED" });
