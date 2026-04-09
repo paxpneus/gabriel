@@ -53,10 +53,15 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
   ): Promise<void> {
     const { data } = await this.blingApi.get(`/pedidos/vendas/${orderId}`);
 
+     await new Promise(r => setTimeout(r, 1000));
+
     await this.blingApi.put(`/pedidos/vendas/${orderId}`, {
       ...data.data,
       observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`,
     });
+
+     await new Promise(r => setTimeout(r, 3000));
+     
     await this.blingApi.patch(
       `/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`,
       {
@@ -161,7 +166,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     } catch (error: any) {
       console.error(
         `[NFeQueue] Erro ao emitir NFe:`,
-        error.response?.data ?? error.message,
+        JSON.stringify(error.response?.data) ?? error.message,
       );
 
       // Relança para o BullMQ fazer retry (3x com backoff, herdado da base)
