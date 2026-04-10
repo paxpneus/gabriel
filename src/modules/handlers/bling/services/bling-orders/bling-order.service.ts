@@ -11,6 +11,7 @@ import { CNPJQueue } from "../../../cnpj/services/cnpj.queue";
 import { executeWebhookAction } from "../../../../../shared/utils/normalizers/webhook";
 import { orderItemsCreationAttributes } from "../../../../sales/orders/order_items/order_items.types";
 import { StoreService } from '../../../../sales/stores/stores.service';
+import { mapOrder } from '../../../../../shared/utils/normalizers/bling/status-mapper';
 export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService;
@@ -74,36 +75,20 @@ export class BlingOrderService {
       // Atualiza o customer
       await this.blingCustomerService.updateCustomer(orderData.contato);
 
+      const internalStatus = mapOrder(orderData.situacao.id)
       // Atualiza o pedido
       await ordersService.update(existingOrder.id, {
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
         totalPrice: Number(orderData.total),
         date: new Date(orderData.data),
+        internal_status: internalStatus
       });
 
       console.log(
         `[BlingOrderService] Pedido ${orderData.numero} atualizado com sucesso`,
       );
 
-      // Se status virou 15, dispara NFe
-      if (orderData.situacao.id === 15) {
-        console.log(
-          `[BlingOrderService] Status 15 detectado, ignorando`,
-        );
-        // await this.nfeQueue.add({ order_id: orderData.id, collection_date: '' }, `nfe-generation-${orderData.id}`)
-        return null;
-      }
-
-      if (orderData.situacao.id === 12) {
-        console.log(`[BlingOrderService] Status 12 detectado, cancelando jobs`);
-
-        await ordersService.update(existingOrder.id, {
-          internal_status: "CANCELLED",
-        });
-
-        return null;
-      }
 
       return null;
     } catch (error: any) {
