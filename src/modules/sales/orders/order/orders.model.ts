@@ -109,13 +109,14 @@ Order.init(
         'WAITING CHANNEL VALIDATION', 
         'WAITING FOR NFE EMISSION',
         'CANCELLED',
-        'EMITTED'
+        'EMITTED',
+        'UNKNOWN'
     ),
     allowNull: false,
     defaultValue: 'OPEN',
     validate: {
         isIn: {
-            args: [['OPEN', 'WAITING CHANNEL VALIDATION', 'WAITING FOR NFE EMISSION', 'CANCELLED', 'EMITTED']],
+            args: [['OPEN', 'WAITING CHANNEL VALIDATION', 'WAITING FOR NFE EMISSION', 'CANCELLED', 'EMITTED', 'UNKNOWN']],
             msg: "O status fornecido não é permitido."
         }
     }
