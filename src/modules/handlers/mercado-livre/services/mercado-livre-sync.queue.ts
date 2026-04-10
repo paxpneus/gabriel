@@ -16,6 +16,7 @@ import OrderItems from "../../../sales/orders/order_items/order_items.model";
 import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import redisService from "../../../../shared/utils/base-models/base-redis";
+import integrationsService from "../../../integrations/integrations/integrations.service";
 
 /**
  * Job pode vir de duas origens:
@@ -305,6 +306,10 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   ): Promise<void> {
     const jobId = `nfe-generation-${idOrderSystem}`;
 
+    const integration = await integrationsService.getFullIntegration({
+      where: {name: 'Bling'}
+    })
+
     if (orderSystem.internal_status == 'EMITTED') {
        console.log(
       `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já em status final (${orderSystem.internal_status}). Ignorando.`,
@@ -321,6 +326,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       // Cenário 1: chegou hoje, ainda sem job → trava para aceite manual
       const alreadyScheduled = await this.next.getJob(jobId);
 
+      if (integration.lock_today_orders) {
       if (!alreadyScheduled) {
         console.log(
           `[MLOrderSyncQueue] Coleta HOJE e sem job agendado — travando pedido ${idOrderSystem} (waiting_acceptance)`,
@@ -338,6 +344,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
           `[MLOrderSyncQueue] Coleta HOJE mas waiting_acceptance ainda true — aguardando liberação manual para pedido ${idOrderSystem}`,
         );
         return;
+      }
       }
 
       console.log(
