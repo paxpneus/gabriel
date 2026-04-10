@@ -305,6 +305,13 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   ): Promise<void> {
     const jobId = `nfe-generation-${idOrderSystem}`;
 
+    if (orderSystem.internal_status == 'EMITTED') {
+       console.log(
+      `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já em status final (${orderSystem.internal_status}). Ignorando.`,
+    );
+    return;
+    }
+
     const collectionIsToday = this.isToday(new Date(collectionDate));
     const createdToday = orderSystem.date
       ? this.isToday(new Date(orderSystem.date))
