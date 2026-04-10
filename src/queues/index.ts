@@ -145,7 +145,7 @@ export function startWorkers() {
 
   reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
   //TESTE
-  // blingReconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  blingReconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
   console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
