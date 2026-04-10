@@ -83,6 +83,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
         internal_status: "WAITING FOR NFE EMISSION",
         nfe_emitted: false,
         collection_date: { [Op.not]: null },
+        waiting_acceptance: false,
       },
     });
 
@@ -94,6 +95,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
     for (const order of orders) {
       if (!order.id_order_system || !order.collection_date) continue;
+      // Pula pedidos ainda aguardando aceite manual
 
       const jobId = `nfe-generation-${order.id_order_system}`;
       const existingJob = await (this.nfeNext as getJob).getJob(jobId);

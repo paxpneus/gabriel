@@ -43,6 +43,13 @@ class BaseRepository<T extends Model> {
     return record.update(data as any, options)
   }
 
+  async bulkUpdate(
+    data: Partial<T['_creationAttributes']>,
+    options: UpdateOptions
+  ): Promise<[number]> {
+    return this.model.update(data as any, options) as Promise<[number]>
+  }
+
   async delete(
     id: string,
     options?: DestroyOptions
