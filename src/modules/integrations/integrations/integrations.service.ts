@@ -48,5 +48,33 @@ export class IntegrationService extends BaseService<
     );
     return integrationData as unknown as Promise<FullIntegration>;;
   }
+  
+
+  async markLockOrdersToday(name: string): Promise<boolean | void> {
+    try {
+      
+    const integration = await this.repository.findOne({
+      where: {
+        name,
+        type: 'SYSTEM'
+      }
+    })
+
+    if (!integration) {
+      console.log('Integração não encontrada')
+      return;
+    }
+
+    await this.repository.update(integration.id, {
+      lock_today_orders: !integration.lock_today_orders
+    })
+
+    return !integration.lock_today_orders
+    } catch (error: any) {
+      console.log("Erro ao mudar trava de pedidos")
+      throw error;
+    }
+
+  }
 }
 export default new IntegrationService();
