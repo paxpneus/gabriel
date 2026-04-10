@@ -458,7 +458,7 @@ export class MLScrapingService {
           Date.UTC(
             tomorrow.getUTCFullYear(),
             tomorrow.getUTCMonth(),
-            tomorrow.getUTCDate() + 1,
+            tomorrow.getUTCDate(),
           ),
         );
         console.log(
