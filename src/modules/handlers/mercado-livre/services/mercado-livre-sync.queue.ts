@@ -5,6 +5,7 @@ import ordersService from "../../../sales/orders/order/orders.service";
 import {
   nextRemoveOnQueue,
   nextStepDelayedOnQueue,
+  getJob,
 } from "../../../../shared/types/queue/base-queue";
 import Customer from "../../../sales/customers/customers.model";
 import { AxiosInstance } from "axios";
@@ -27,17 +28,17 @@ export type MLOrderSyncJobData =
 
 export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   private blingApi: AxiosInstance;
-  private next: nextStepDelayedOnQueue & nextRemoveOnQueue;
+  private next: nextStepDelayedOnQueue & nextRemoveOnQueue & getJob;
 
   constructor(
-    next: nextStepDelayedOnQueue & nextRemoveOnQueue,
+    next: nextStepDelayedOnQueue & nextRemoveOnQueue & getJob,
     blingApi: AxiosInstance,
-     options: { workless?: boolean } = {}
+    options: { workless?: boolean } = {},
   ) {
     super("ML-ORDER-SYNC", {
       concurrency: 1,
       limiter: { max: 1, duration: 3000 },
-      workless: options.workless
+      workless: options.workless,
     });
     this.blingApi = blingApi;
     this.next = next;
@@ -152,7 +153,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       );
       return;
     }
-
 
     //TESTE
     // if (!orderSystem.collection_date) {
@@ -305,6 +305,39 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   ): Promise<void> {
     const jobId = `nfe-generation-${idOrderSystem}`;
 
+    const collectionIsToday = this.isToday(new Date(collectionDate));
+    const createdToday = orderSystem.date
+      ? this.isToday(new Date(orderSystem.date))
+      : false;
+
+    if (collectionIsToday && createdToday) {
+      // Cenário 1: chegou hoje, ainda sem job → trava para aceite manual
+      const alreadyScheduled = await this.next.getJob(jobId);
+
+      if (!alreadyScheduled) {
+        console.log(
+          `[MLOrderSyncQueue] Coleta HOJE e sem job agendado — travando pedido ${idOrderSystem} (waiting_acceptance)`,
+        );
+
+        await ordersService.update(orderSystem.id, {
+          internal_status: "WAITING FOR NFE EMISSION",
+          waiting_acceptance: true,
+        });
+        return;
+      }
+
+      if (orderSystem?.waiting_acceptance) {
+        console.log(
+          `[MLOrderSyncQueue] Coleta HOJE mas waiting_acceptance ainda true — aguardando liberação manual para pedido ${idOrderSystem}`,
+        );
+        return;
+      }
+
+      console.log(
+        `[MLOrderSyncQueue] Coleta HOJE e waiting_acceptance liberado — emitindo NFe para pedido ${idOrderSystem}`,
+      );
+    }
+
     await this.next.removeJob(jobId);
 
     const isTomorrow = this.isNextDay(collectionDate);
@@ -321,14 +354,14 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       );
     }
 
-     await this.blingApi.patch(
+    await this.blingApi.patch(
       `/pedidos/vendas/${idOrderSystem}/situacoes/748748`,
       {
         id: 748748,
       },
     );
 
-     await ordersService.update(orderSystem.id, {
+    await ordersService.update(orderSystem.id, {
       internal_status: "WAITING FOR NFE EMISSION",
     });
 
@@ -341,7 +374,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       jobId,
       delay,
     );
-   
   }
 
   private isNextDay(date: Date): boolean {
@@ -383,11 +415,11 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   }
 
   private isToday(date: Date): boolean {
-  const now = new Date();
-  return (
-    date.getUTCFullYear() === now.getUTCFullYear() &&
-    date.getUTCMonth()    === now.getUTCMonth()    &&
-    date.getUTCDate()     === now.getUTCDate()
-  );
-}
+    const now = new Date();
+    return (
+      date.getUTCFullYear() === now.getUTCFullYear() &&
+      date.getUTCMonth() === now.getUTCMonth() &&
+      date.getUTCDate() === now.getUTCDate()
+    );
+  }
 }
