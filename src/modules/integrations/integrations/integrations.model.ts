@@ -12,6 +12,7 @@ class Integration extends Model<integrationsAttributes, integrationsCreationAttr
     public cnaes!: string[];
     public document!: string;
     public allowed_channels?: string[];
+    public lock_today_orders?: boolean;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -32,6 +33,11 @@ Integration.init(
         type: {
             type: DataTypes.ENUM('CHANNEL', 'SYSTEM'),
             allowNull: false,
+        },
+        lock_today_orders: {
+            type: DataTypes.BOOLEAN,
+            allowNull: true,
+            defaultValue: false,
         },
         api_url: {
             type: DataTypes.STRING(255),

@@ -1,4 +1,7 @@
 ml.paxpneus.com.br {
-    tls /certs/cert.pem /certs/key.pem
-    reverse_proxy api:3000
+    reverse_proxy api:3000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up Host {host}
+    }
 }

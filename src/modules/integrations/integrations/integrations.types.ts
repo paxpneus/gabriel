@@ -11,6 +11,7 @@ export interface integrationsAttributes {
     cnaes: string[],
     document: string,
     allowed_channels?: string[],
+    lock_today_orders?: boolean;
 }
 
 export type integrationsCreationAttributes = Omit<integrationsAttributes, 'id'>
