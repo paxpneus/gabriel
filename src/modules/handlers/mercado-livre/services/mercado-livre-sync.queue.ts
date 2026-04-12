@@ -307,44 +307,60 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     const jobId = `nfe-generation-${idOrderSystem}`;
 
     const integration = await integrationsService.getFullIntegration({
-      where: {name: 'Bling'}
-    })
+      where: { name: "Bling" },
+    });
 
-    if (orderSystem.internal_status == 'EMITTED') {
-       console.log(
-      `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já em status final (${orderSystem.internal_status}). Ignorando.`,
-    );
-    return;
+    if (orderSystem.internal_status == "EMITTED") {
+      console.log(
+        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já em status final (${orderSystem.internal_status}). Ignorando.`,
+      );
+      return;
     }
 
-    const collectionIsToday = this.isToday(new Date(collectionDate));
-    const createdToday = orderSystem.createdAt
-      ? this.isToday(new Date(orderSystem.createdAt))
-      : false;
+    const now = new Date();
 
-    if (collectionIsToday && createdToday) {
+    const startOfDay = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        0,
+        0,
+        0,
+        0,
+      ),
+    ).getTime();
+
+    const createdAt = new Date(orderSystem.createdAt).getTime();
+    const collectionMs = new Date(collectionDate).getTime();
+
+    const createdToday = createdAt >= startOfDay;
+
+    const collectionIsTodayOrFuture = collectionMs >= startOfDay;
+
+    if (createdToday && collectionIsTodayOrFuture) {
       // Cenário 1: chegou hoje, ainda sem job → trava para aceite manual
       const alreadyScheduled = await this.next.getJob(jobId);
 
       if (integration.lock_today_orders) {
-      if (!alreadyScheduled) {
-        console.log(
-          `[MLOrderSyncQueue] Coleta HOJE e sem job agendado — travando pedido ${idOrderSystem} (waiting_acceptance)`,
-        );
+        if (!alreadyScheduled) {
+          console.log(
+            `[MLOrderSyncQueue] Coleta HOJE e sem job agendado — travando pedido ${idOrderSystem} (waiting_acceptance)`,
+          );
 
-        await ordersService.update(orderSystem.id, {
-          internal_status: "WAITING FOR NFE EMISSION",
-          waiting_acceptance: true,
-        });
-        return;
-      }
+          await ordersService.update(orderSystem.id, {
+            internal_status: "WAITING FOR NFE EMISSION",
+            waiting_acceptance: true,
+          });
+          return;
+        }
 
-      if (orderSystem?.waiting_acceptance) {
-        console.log(
-          `[MLOrderSyncQueue] Coleta HOJE mas waiting_acceptance ainda true — aguardando liberação manual para pedido ${idOrderSystem}`,
-        );
-        return;
-      }
+        if (orderSystem?.waiting_acceptance) {
+          console.log(
+            `[MLOrderSyncQueue] Coleta HOJE mas waiting_acceptance ainda true — aguardando liberação manual para pedido ${idOrderSystem}`,
+          );
+          return;
+        }
       }
 
       console.log(
