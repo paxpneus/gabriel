@@ -318,8 +318,8 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     }
 
     const collectionIsToday = this.isToday(new Date(collectionDate));
-    const createdToday = orderSystem.date
-      ? this.isToday(new Date(orderSystem.date))
+    const createdToday = orderSystem.createdAt
+      ? this.isToday(new Date(orderSystem.createdAt))
       : false;
 
     if (collectionIsToday && createdToday) {
