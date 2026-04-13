@@ -1,6 +1,6 @@
 import { Model, DataTypes } from 'sequelize';
-import sequelize from '../../../config/sequelize';
-import { RoleAttributes, RoleCreationAttributes } from './user.types';
+import sequelize from '../../../../config/sequelize';
+import { RoleAttributes, RoleCreationAttributes } from './role.types';
 import { v4 as uuidv4 } from 'uuid';
 
 class Role extends Model<RoleAttributes, RoleCreationAttributes> implements RoleAttributes {

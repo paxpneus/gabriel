@@ -6,8 +6,8 @@
  */
 
 import UnitBusiness from '../modules/warehouse/unit-business/unit-business.model';
-import User from '../modules/warehouse/users/user.model';
-import Role from '../modules/warehouse/users/role.model';
+import User from '../modules/warehouse/users/users/user.model';
+import Role from '../modules/warehouse/users/roles/role.model';
 import Transporter from '../modules/warehouse/transporter/transporter.model';
 import ExpeditionBatch from '../modules/warehouse/expedition/batch/batch.model';
 import ExpeditionBatchItems from '../modules/warehouse/expedition/batch-items/batch-items.model';

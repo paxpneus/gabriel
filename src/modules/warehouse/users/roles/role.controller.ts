@@ -1,4 +1,4 @@
-import BaseController from '../../../shared/utils/base-models/base-controller';
+import BaseController from '../../../../shared/utils/base-models/base-controller';
 import Role from './role.model';
 import RoleService from './role.service';
 
