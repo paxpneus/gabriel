@@ -1,4 +1,4 @@
-import BaseService from '../../../shared/utils/base-models/base-service';
+import BaseService from '../../../../shared/utils/base-models/base-service';
 import Role from './role.model';
 import roleRepository, { RoleRepository } from './role.repository';
 

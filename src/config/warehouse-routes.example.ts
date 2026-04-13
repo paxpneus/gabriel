@@ -8,8 +8,8 @@ import { Router } from 'express';
 
 // Warehouse Routes
 import unitBusinessRoutes from '../modules/warehouse/unit-business/unit-business.routes';
-import userRoutes from '../modules/warehouse/users/user.routes';
-import roleRoutes from '../modules/warehouse/users/role.routes';
+import userRoutes from '../modules/warehouse/users/users/user.routes';
+import roleRoutes from '../modules/warehouse/users/roles/role.routes';
 import transporterRoutes from '../modules/warehouse/transporter/transporter.routes';
 import batchRoutes from '../modules/warehouse/expedition/batch/batch.routes';
 import batchItemsRoutes from '../modules/warehouse/expedition/batch-items/batch-items.routes';

@@ -1,5 +1,5 @@
 import { Model, DataTypes } from 'sequelize';
-import sequelize from '../../../config/sequelize';
+import sequelize from '../../../../config/sequelize';
 import { UserAttributes, UserCreationAttributes } from './user.types';
 import bcrypt from 'bcrypt'
 import { v4 as uuidv4 } from 'uuid';
