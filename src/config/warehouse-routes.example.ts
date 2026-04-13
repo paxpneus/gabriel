@@ -9,8 +9,15 @@ import { Router } from 'express';
 // Warehouse Routes
 import unitBusinessRoutes from '../modules/warehouse/unit-business/unit-business.routes';
 import userRoutes from '../modules/warehouse/users/user.routes';
+import roleRoutes from '../modules/warehouse/users/role.routes';
+import transporterRoutes from '../modules/warehouse/transporter/transporter.routes';
 import batchRoutes from '../modules/warehouse/expedition/batch/batch.routes';
+import batchItemsRoutes from '../modules/warehouse/expedition/batch-items/batch-items.routes';
+import batchInvoicesRoutes from '../modules/warehouse/expedition/batch-invoices/batch-invoices.routes';
+import scanLogsRoutes from '../modules/warehouse/expedition/scan-logs/scan-logs.routes';
 import invoiceRoutes from '../modules/warehouse/entrance/invoice/invoice.routes';
+import invoiceItemsRoutes from '../modules/warehouse/entrance/invoice-items/invoice-items.routes';
+import entranceScanLogsRoutes from '../modules/warehouse/entrance/entrance-scan-logs/entrance-scan-logs.routes';
 
 // Inventory Routes
 import productRoutes from '../modules/inventory/products/product.routes';
@@ -25,8 +32,15 @@ const router = Router();
 // Warehouse Endpoints
 router.use('/warehouse/unit-businesses', unitBusinessRoutes);
 router.use('/warehouse/users', userRoutes);
+router.use('/warehouse/roles', roleRoutes);
+router.use('/warehouse/transporters', transporterRoutes);
 router.use('/warehouse/expedition/batches', batchRoutes);
+router.use('/warehouse/expedition/batch-items', batchItemsRoutes);
+router.use('/warehouse/expedition/batch-invoices', batchInvoicesRoutes);
+router.use('/warehouse/expedition/scan-logs', scanLogsRoutes);
 router.use('/warehouse/entrance/invoices', invoiceRoutes);
+router.use('/warehouse/entrance/invoice-items', invoiceItemsRoutes);
+router.use('/warehouse/entrance/scan-logs', entranceScanLogsRoutes);
 
 // Inventory Endpoints
 router.use('/inventory/products', productRoutes);
