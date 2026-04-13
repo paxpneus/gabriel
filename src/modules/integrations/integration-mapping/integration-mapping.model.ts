@@ -1,9 +1,19 @@
-import { Model, DataTypes } from 'sequelize';
-import sequelize from '../../../config/sequelize';
-import { IntegrationMappingAttributes, IntegrationMappingCreationAttributes, EntityType } from './integration-mapping.types';
-import { v4 as uuidv4 } from 'uuid';
+import { Model, DataTypes } from "sequelize";
+import sequelize from "../../../config/sequelize";
+import {
+  IntegrationMappingAttributes,
+  IntegrationMappingCreationAttributes,
+  EntityType,
+} from "./integration-mapping.types";
+import { v4 as uuidv4 } from "uuid";
 
-class IntegrationMapping extends Model<IntegrationMappingAttributes, IntegrationMappingCreationAttributes> implements IntegrationMappingAttributes {
+class IntegrationMapping
+  extends Model<
+    IntegrationMappingAttributes,
+    IntegrationMappingCreationAttributes
+  >
+  implements IntegrationMappingAttributes
+{
   public id!: string;
   public entity_type!: EntityType;
   public internal_id!: string;
@@ -24,7 +34,7 @@ IntegrationMapping.init(
       allowNull: false,
     },
     entity_type: {
-      type: DataTypes.ENUM('PRODUCT', 'INVOICE'),
+      type: DataTypes.ENUM("PRODUCT", "INVOICE"),
       allowNull: false,
     },
     internal_id: {
@@ -32,8 +42,11 @@ IntegrationMapping.init(
       allowNull: false,
     },
     integration_id: {
-      type: DataTypes.STRING(100),
-      allowNull: false,
+      type: DataTypes.UUID,
+      references: {
+        model: "integrations",
+        key: "id",
+      },
     },
     external_id: {
       type: DataTypes.STRING(100),
@@ -43,23 +56,28 @@ IntegrationMapping.init(
       type: DataTypes.UUID,
       allowNull: false,
       references: {
-        model: 'unit_businesses',
-        key: 'id',
+        model: "unit_businesses",
+        key: "id",
       },
     },
   },
   {
     sequelize,
-    tableName: 'integration_mappings',
+    tableName: "integration_mappings",
     timestamps: true,
     underscored: true,
     indexes: [
       {
         unique: true,
-        fields: ['entity_type', 'internal_id', 'integration_id', 'unit_business_id'],
+        fields: [
+          "entity_type",
+          "internal_id",
+          "integration_id",
+          "unit_business_id",
+        ],
       },
     ],
-  }
+  },
 );
 
 export default IntegrationMapping;

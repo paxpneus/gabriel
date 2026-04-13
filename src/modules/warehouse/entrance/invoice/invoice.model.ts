@@ -1,9 +1,12 @@
-import { Model, DataTypes } from 'sequelize';
-import sequelize from '../../../../config/sequelize';
-import { InvoiceAttributes, InvoiceCreationAttributes } from './invoice.types';
-import { v4 as uuidv4 } from 'uuid';
+import { Model, DataTypes } from "sequelize";
+import sequelize from "../../../../config/sequelize";
+import { InvoiceAttributes, InvoiceCreationAttributes } from "./invoice.types";
+import { v4 as uuidv4 } from "uuid";
 
-class Invoice extends Model<InvoiceAttributes, InvoiceCreationAttributes> implements InvoiceAttributes {
+class Invoice
+  extends Model<InvoiceAttributes, InvoiceCreationAttributes>
+  implements InvoiceAttributes
+{
   public id!: string;
   public customer_name!: string;
   public customer_document!: string;
@@ -17,8 +20,8 @@ class Invoice extends Model<InvoiceAttributes, InvoiceCreationAttributes> implem
   public integrations_id?: string;
   public id_system?: string;
   public transporter_id?: string;
-  public type!: 'INCOMING' | 'OUTGOING'; 
-  public status!: 'OPEN' | 'PENDING'  | 'FINISHED'; 
+  public type!: "INCOMING" | "OUTGOING";
+  public status!: "OPEN" | "PENDING" | "FINISHED";
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -52,8 +55,8 @@ Invoice.init(
       type: DataTypes.UUID,
       allowNull: false,
       references: {
-        model: 'unit_businesses',
-        key: 'id',
+        model: "unit_businesses",
+        key: "id",
       },
     },
     sender_cnpj: {
@@ -73,30 +76,38 @@ Invoice.init(
       allowNull: false,
     },
     integrations_id: {
-      type: DataTypes.STRING(100),
+      type: DataTypes.UUID,
+      references: {
+                model: 'integrations',
+                key: 'id'
+            }
     },
     id_system: {
       type: DataTypes.STRING(100),
     },
     transporter_id: {
       type: DataTypes.UUID,
+      references: {
+        model: "transporters",
+        key: "id",
+      },
     },
     type: {
-      type: DataTypes.ENUM('INCOMING', 'OUTGOING'),
+      type: DataTypes.ENUM("INCOMING", "OUTGOING"),
       allowNull: false,
     },
     status: {
-      type: DataTypes.ENUM( 'OPEN', 'PENDING', 'FINISHED'),
-      defaultValue: 'PENDING',
+      type: DataTypes.ENUM("OPEN", "PENDING", "FINISHED"),
+      defaultValue: "PENDING",
       allowNull: false,
     },
   },
   {
     sequelize,
-    tableName: 'invoices',
+    tableName: "invoices",
     timestamps: true,
     underscored: true,
-  }
+  },
 );
 
 export default Invoice;

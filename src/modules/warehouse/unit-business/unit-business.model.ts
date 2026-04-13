@@ -1,9 +1,15 @@
-import { Model, DataTypes } from 'sequelize';
-import sequelize from '../../../config/sequelize';
-import { UnitBusinessAttributes, UnitBusinessCreationAttributes } from './unit-business.types';
-import { v4 as uuidv4 } from 'uuid';
+import { Model, DataTypes } from "sequelize";
+import sequelize from "../../../config/sequelize";
+import {
+  UnitBusinessAttributes,
+  UnitBusinessCreationAttributes,
+} from "./unit-business.types";
+import { v4 as uuidv4 } from "uuid";
 
-class UnitBusiness extends Model<UnitBusinessAttributes, UnitBusinessCreationAttributes> implements UnitBusinessAttributes {
+class UnitBusiness
+  extends Model<UnitBusinessAttributes, UnitBusinessCreationAttributes>
+  implements UnitBusinessAttributes
+{
   public id!: string;
   public number!: string;
   public name!: string;
@@ -38,7 +44,13 @@ UnitBusiness.init(
       unique: true,
     },
     integrations_id: {
-      type: DataTypes.STRING(100),
+      type: DataTypes.UUID,
+      references: {
+        model: "integrations",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
     },
     head_office: {
       type: DataTypes.BOOLEAN,
@@ -47,10 +59,10 @@ UnitBusiness.init(
   },
   {
     sequelize,
-    tableName: 'unit_businesses',
+    tableName: "unit_businesses",
     timestamps: true,
     underscored: true,
-  }
+  },
 );
 
 export default UnitBusiness;

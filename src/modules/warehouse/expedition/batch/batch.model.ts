@@ -34,7 +34,11 @@ ExpeditionBatch.init(
       defaultValue: 'OPEN',
     },
     integrations_id: {
-      type: DataTypes.STRING(100),
+      type: DataTypes.UUID,
+      references: {
+                model: 'integrations',
+                key: 'id'
+            }
     },
     id_system: {
       type: DataTypes.STRING(100),
