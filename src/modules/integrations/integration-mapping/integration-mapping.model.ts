@@ -17,7 +17,7 @@ class IntegrationMapping
   public id!: string;
   public entity_type!: EntityType;
   public internal_id!: string;
-  public integration_id!: string;
+  public integrations_id!: string;
   public external_id!: string;
   public unit_business_id!: string;
 
@@ -41,7 +41,7 @@ IntegrationMapping.init(
       type: DataTypes.STRING(100),
       allowNull: false,
     },
-    integration_id: {
+    integrations_id: {
       type: DataTypes.UUID,
       references: {
         model: "integrations",
@@ -72,7 +72,7 @@ IntegrationMapping.init(
         fields: [
           "entity_type",
           "internal_id",
-          "integration_id",
+          "integrations_id",
           "unit_business_id",
         ],
       },

@@ -4,6 +4,8 @@ module.exports = {
     up: async (queryInterface, Sequelize) => {
         const transaction = await queryInterface.sequelize.transaction();
         try {
+
+            await queryInterface.renameColumn('orders', 'integration_id', 'integrations_id', { transaction })
             // Create ROLES table
             await queryInterface.createTable(
                 'roles',
@@ -63,7 +65,7 @@ module.exports = {
                         unique: true,
                     },
                     integrations_id: {
-                         type: DataTypes.UUID,
+                        type: Sequelize.UUID,
                         references: {
                             model: 'integrations',
                             key: 'id'
@@ -398,7 +400,7 @@ module.exports = {
                         onDelete: 'SET NULL',
                     },
                     integrations_id: {
-                        type: DataTypes.UUID,
+                        type: Sequelize.UUID,
                         references: {
                             model: 'integrations',
                             key: 'id'
@@ -561,7 +563,7 @@ module.exports = {
                         defaultValue: 'OPEN',
                     },
                     integrations_id: {
-                        type: DataTypes.UUID,
+                        type: Sequelize.UUID,
                         references: {
                             model: 'integrations',
                             key: 'id'
@@ -777,8 +779,8 @@ module.exports = {
                         type: Sequelize.STRING(100),
                         allowNull: false,
                     },
-                    integration_id: {
-                        type: DataTypes.UUID,
+                    integrations_id: {
+                        type: Sequelize.UUID,
                         references: {
                             model: 'integrations',
                             key: 'id'
@@ -816,9 +818,9 @@ module.exports = {
 
             // Add unique index for integration mappings
             await queryInterface.addConstraint('integration_mappings', {
-                fields: ['entity_type', 'internal_id', 'integration_id', 'unit_business_id'],
+                fields: ['entity_type', 'internal_id', 'integrations_id', 'unit_business_id'],
                 type: 'unique',
-                name: 'integration_mappings_entity_type_internal_id_integration_id_unit_business_id_unique',
+                name: 'integration_mappings_entity_type_internal_id_integrations_id_unit_business_id_unique',
                 transaction,
             });
 
@@ -827,11 +829,14 @@ module.exports = {
             await transaction.rollback();
             throw error;
         }
+        
     },
+    
 
     down: async (queryInterface, Sequelize) => {
         const transaction = await queryInterface.sequelize.transaction();
         try {
+            await queryInterface.renameColumn('orders', 'integrations_id', 'integration_id', { transaction });
             // Drop tables in reverse order of creation
             await queryInterface.dropTable('integration_mappings', { transaction });
             await queryInterface.dropTable('expedition_scan_logs', { transaction });

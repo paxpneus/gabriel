@@ -9,7 +9,7 @@ import Store from "../../sales/stores/stores.model";
 
 // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
 
-Order.belongsTo(Integration, { foreignKey: 'integration_id', as: 'integration' });
+Order.belongsTo(Integration, { foreignKey: 'integrations_id', as: 'integration' });
 
 // 3. CUSTOMER (CLIENTE) 1:N ORDERS (PEDIDOS)
 Customer.hasMany(Order, { foreignKey: 'customer_id', as: 'orders' });

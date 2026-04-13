@@ -4,7 +4,7 @@ export interface IntegrationMappingAttributes {
   id: string;
   entity_type: EntityType;
   internal_id: string;
-  integration_id: string;
+  integrations_id: string;
   external_id: string;
   unit_business_id: string;
   createdAt?: Date;

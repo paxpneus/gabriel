@@ -59,7 +59,7 @@ export class BlingOrderService {
       // Busca o pedido no banco
       const existingOrder = await ordersService.findOne({
         where: {
-          integration_id: integration.id,
+          integrations_id: integration.id,
           number_order_system: String(orderData.numero),
         },
       });
@@ -146,7 +146,7 @@ export class BlingOrderService {
 
         const existingOrder = await ordersService.findOne({
         where: {
-          integration_id: integration.id,
+          integrations_id: integration.id,
           number_order_system: String(body.data.numero),
         },
       });
@@ -208,7 +208,7 @@ export class BlingOrderService {
 
       // 2. Prepara o payload do pedido
       const ordersPayload: orderCreationAttributes = {
-        integration_id: integration.id,
+        integrations_id: integration.id,
         customer_id: customer.id,
         id_order_system: String(orderData.id),
         number_order_system: String(orderData.numero),
