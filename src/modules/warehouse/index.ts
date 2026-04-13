@@ -2,6 +2,7 @@
 export { default as UnitBusiness } from './unit-business/unit-business.model';
 export { default as User } from './users/user.model';
 export { default as Role } from './users/role.model';
+export { default as Transporter } from './transporter/transporter.model';
 
 // Expedition Models
 export { default as ExpeditionBatch } from './expedition/batch/batch.model';

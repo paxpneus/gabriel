@@ -8,6 +8,7 @@
 import UnitBusiness from '../modules/warehouse/unit-business/unit-business.model';
 import User from '../modules/warehouse/users/user.model';
 import Role from '../modules/warehouse/users/role.model';
+import Transporter from '../modules/warehouse/transporter/transporter.model';
 import ExpeditionBatch from '../modules/warehouse/expedition/batch/batch.model';
 import ExpeditionBatchItems from '../modules/warehouse/expedition/batch-items/batch-items.model';
 import ExpeditionBatchInvoice from '../modules/warehouse/expedition/batch-invoices/batch-invoices.model';
@@ -71,6 +72,18 @@ export function setupAssociations() {
   IntegrationMapping.belongsTo(UnitBusiness, {
     foreignKey: 'unit_business_id',
     as: 'unitBusiness',
+  });
+
+  // ===== TRANSPORTER =====
+
+  // Transporter -> Invoices
+  Transporter.hasMany(Invoice, {
+    foreignKey: 'transporter_id',
+    as: 'invoices',
+  });
+  Invoice.belongsTo(Transporter, {
+    foreignKey: 'transporter_id',
+    as: 'transporter',
   });
 
   // ===== ROLES & USERS =====
@@ -158,6 +171,16 @@ export function setupAssociations() {
   ExpeditionScanLog.belongsTo(ExpeditionBatchItems, {
     foreignKey: 'expedition_batch_items_id',
     as: 'batchItem',
+  });
+
+  // Batch Invoices -> Scan Logs
+  ExpeditionBatchInvoice.hasMany(ExpeditionScanLog, {
+    foreignKey: 'expedition_batch_invoices_id',
+    as: 'scanLogs',
+  });
+  ExpeditionScanLog.belongsTo(ExpeditionBatchInvoice, {
+    foreignKey: 'expedition_batch_invoices_id',
+    as: 'batchInvoice',
   });
 
   // ===== EXPEDITION SCAN LOGS =====
