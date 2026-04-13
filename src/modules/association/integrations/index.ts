@@ -7,7 +7,7 @@ Integration.hasOne(ConfigToken, { foreignKey: 'integrations_id', as: 'tokens' })
 ConfigToken.belongsTo(Integration, { foreignKey: 'integrations_id', as: 'integration' });
 
 // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) INTEGRATION SIDE
-Integration.hasMany(Order, { foreignKey: 'integration_id', as: 'orders' });
+Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
 
 export default {
     Integration,

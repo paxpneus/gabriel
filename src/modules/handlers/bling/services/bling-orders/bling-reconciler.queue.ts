@@ -75,7 +75,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
 
       const existingOrders = await ordersService.findAll({
         where: {
-          integration_id: integration.id,
+          integrations_id: integration.id,
           number_order_system: numbers,
         },
       });
