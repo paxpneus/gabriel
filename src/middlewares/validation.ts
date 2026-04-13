@@ -69,3 +69,5 @@ export const validateId = (schema: ZodSchema) => validateData(schema, 'params');
  * Middleware para validação de query parameters
  */
 export const validateQuery = (schema: ZodSchema) => validateData(schema, 'query');
+
+export const validateLoginSchema = (schema: ZodSchema) => validateData(schema, 'body')
