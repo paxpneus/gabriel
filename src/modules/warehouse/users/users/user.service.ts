@@ -1,8 +1,11 @@
 import BaseService from '../../../../shared/utils/base-models/base-service';
 import User from './user.model';
 import userRepository, { UserRepository } from './user.repository';
-import { UserCreationAttributes } from './user.types';
-import { CreateUserSchema, UpdateUserSchema, CreateUserInput, UpdateUserInput } from '../../../../shared/schemas';
+import { CreateUserInput, UpdateUserInput } from '../../../../shared/schemas';
+import bcrypt from 'bcrypt'
+import 'dotenv/config'
+import jwt from 'jsonwebtoken';
+const SECRET = process.env.JWT_SECRET!;
 
 export class UserService extends BaseService<User, UserRepository> {
   constructor() {
@@ -50,6 +53,25 @@ export class UserService extends BaseService<User, UserRepository> {
 
       return await this.repository.update(userId, userDto);
     
+  }
+
+  async login(email: string, password: string) {
+    const user = await this.repository.findOne({
+      where: { email }
+    })
+
+    if (!user) throw new Error('Usuário não encontrado')
+
+    const incorrectPassword = await bcrypt.compare(password, user.password)
+    if (!incorrectPassword) throw new Error('Senha Incorreta')
+
+      const token = jwt.sign(
+        {id: user.id, role: user.role_id},
+        SECRET,
+        {expiresIn: '8h'}
+      )
+
+      return {token, user}
   }
 }
 
