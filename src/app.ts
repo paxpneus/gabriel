@@ -2,6 +2,7 @@ import express from 'express'
 import router from './config/routes'
 import 'dotenv/config'
 import cors from 'cors'
+import cookieParser from 'cookie-parser'
 
 const app = express()
 
@@ -9,11 +10,12 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 app.use(express.urlencoded({extended: true}))
-
+app.use(cookieParser());
 
 app.get('/health', (_, res) => res.json({status: 'ok'}))
 
 app.use('/api', router)
+
 
 
 export default app

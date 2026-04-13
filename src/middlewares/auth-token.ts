@@ -11,12 +11,11 @@ interface AuthRequest extends Request {
 }
 
 export function authenticate(req: AuthRequest, res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Token não fornecido' });
-  }
+  const token = req.cookies?.token
 
-  const token = header.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'Não autenticado' });
+  }
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET!) as { id: string, role: string };
