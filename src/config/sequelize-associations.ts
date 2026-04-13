@@ -20,6 +20,7 @@ import Product from '../modules/inventory/products/product.model';
 import Stock from '../modules/inventory/stock/stock.model';
 import SupplierMapping from '../modules/inventory/supplier-mapping/supplier-mapping.model';
 import IntegrationMapping from '../modules/integrations/integration-mapping/integration-mapping.model';
+import Integration from '../modules/integrations/integrations/integrations.model';
 
 export function setupAssociations() {
   // ===== WAREHOUSE - UNIT BUSINESS =====
@@ -71,6 +72,16 @@ export function setupAssociations() {
   });
   IntegrationMapping.belongsTo(UnitBusiness, {
     foreignKey: 'unit_business_id',
+    as: 'unitBusiness',
+  });
+
+  // Unit Business -> Integrations
+  UnitBusiness.belongsTo(Integration, {
+    foreignKey: 'integrations_id',
+    as: 'integration',
+  });
+  Integration.hasMany(UnitBusiness, {
+    foreignKey: 'integrations_id',
     as: 'unitBusiness',
   });
 
@@ -161,6 +172,16 @@ export function setupAssociations() {
     as: 'batch',
   });
 
+  // Expedition Batch -> Integration
+  ExpeditionBatch.belongsTo(Integration, {
+    foreignKey: 'integrations_id',
+    as: 'integration',
+  });
+  Integration.hasMany(ExpeditionBatch, {
+    foreignKey: 'integrations_id',
+    as: 'expeditionBatches',
+  });
+
   // ===== EXPEDITION BATCH ITEMS =====
   
   // Batch Items -> Scan Logs
@@ -207,6 +228,16 @@ export function setupAssociations() {
     as: 'invoice',
   });
 
+  // Invoice -> Integration
+  Invoice.belongsTo(Integration, {
+    foreignKey: 'integrations_id',
+    as: 'integration',
+  });
+  Integration.hasMany(Invoice, {
+    foreignKey: 'integrations_id',
+    as: 'invoices',
+  });
+
   // Invoice -> Invoice Items
   Invoice.hasMany(InvoiceItems, {
     foreignKey: 'invoice_id',
@@ -239,5 +270,17 @@ export function setupAssociations() {
   EntranceScanLog.belongsTo(User, {
     foreignKey: 'user_id',
     as: 'user',
+  });
+
+  // ===== INTEGRATIONS =====
+
+  // Integration Mapping -> Integration
+  IntegrationMapping.belongsTo(Integration, {
+    foreignKey: 'integrations_id',
+    as: 'integration',
+  });
+  Integration.hasMany(IntegrationMapping, {
+    foreignKey: 'integrations_id',
+    as: 'mappings',
   });
 }
