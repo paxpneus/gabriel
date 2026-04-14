@@ -18,6 +18,22 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 }))
+
+app.use('/api/bling-orders/webhook', (req, _res, next) => {
+  express.raw({ type: 'application/json' })(req, _res, (err) => {
+    if (err) return next(err);
+    (req as any).rawBody = req.body instanceof Buffer
+      ? req.body.toString('utf8')
+      : JSON.stringify(req.body);
+    try {
+      req.body = JSON.parse((req as any).rawBody);
+    } catch {
+      req.body = {};
+    }
+    next();
+  });
+});
+
 app.use(express.json())
 app.use(express.urlencoded({extended: true}))
 app.use(cookieParser());
