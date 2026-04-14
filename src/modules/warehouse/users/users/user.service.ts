@@ -5,12 +5,39 @@ import { CreateUserInput, UpdateUserInput } from '../../../../shared/schemas';
 import bcrypt from 'bcrypt'
 import 'dotenv/config'
 import jwt from 'jsonwebtoken';
+import Role from '../roles/role.model';
 const SECRET = process.env.JWT_SECRET!;
+import { QueryConfig } from '../../../../shared/query/query.types';
 
 export class UserService extends BaseService<User, UserRepository> {
   constructor() {
     super(userRepository);
+
+     this.queryConfig = {
+      defaults: {
+        perPage: 20,
+        sortBy: 'createdAt',
+        sortDir: 'DESC',
+      },
+      searchFields: [
+        'name',
+        'email',
+      ],
+      filterableFields: [
+        'role',
+        'status',
+        'unit_business_id',
+      ],
+      sortableFields: [
+        'name',
+        'email',
+        'createdAt',
+        'updatedAt',
+      ],
+    }
   }
+
+ 
 
   async createUserWithValidation(userDto: CreateUserInput): Promise<User> {
     
@@ -57,7 +84,14 @@ export class UserService extends BaseService<User, UserRepository> {
 
   async login(email: string, password: string) {
     const user = await this.repository.findOne({
-      where: { email }
+      where: { email },
+      include: [
+        {
+          model: Role,
+          as: 'role',
+          
+        }
+      ]
     })
 
     if (!user) throw new Error('Usuário não encontrado')
