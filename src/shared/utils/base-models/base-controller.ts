@@ -1,7 +1,7 @@
 import { Request, Response, Router, RequestHandler } from "express";
 import { Model } from "sequelize";
 import BaseService from "./base-service";
-
+import { QueryParams } from "../../query/query.types";
 class BaseController<
   T extends Model,
   Tservice extends BaseService<T> = BaseService<T>,
@@ -22,6 +22,21 @@ class BaseController<
     >
   > {
     return {};
+  }
+
+    protected extractQueryParams(req: Request): QueryParams {
+    const q = req.query as Record<string, any>
+    return {
+      page:       q.page,
+      perPage:    q.perPage,
+      sortBy:     q.sortBy,
+      sortDir:    q.sortDir,
+      search:     q.search,
+      filters:    q.filters,
+      dateFrom:   q.dateFrom,
+      dateTo:     q.dateTo,
+      dateField:  q.dateField,
+    }
   }
 
   private registerBaseRoutes(): void {
@@ -47,14 +62,16 @@ class BaseController<
     );
   }
 
-  index = async (req: Request, res: Response): Promise<Response> => {
+    index = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const records = await this.service.findAll();
-      return res.json(records);
+      const params = this.extractQueryParams(req)
+      const result = await this.service.paginate(params)
+      return res.json(result)
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: error.message })
     }
-  };
+  }
+ 
 
   show = async (req: Request, res: Response): Promise<Response> => {
     try {

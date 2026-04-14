@@ -1,4 +1,7 @@
 import { Model, ModelStatic, FindOptions, CreateOptions, UpdateOptions, DestroyOptions, CreationAttributes, BulkCreateOptions } from 'sequelize'
+import { QueryParser } from './../../query/query.parser';
+import type { QueryParams, QueryConfig, PaginatedResult, ResolvedQuery } from './../../query/query.types';
+
 
 class BaseRepository<T extends Model> {
   protected model: ModelStatic<T>
@@ -9,6 +12,27 @@ class BaseRepository<T extends Model> {
 
   findAll(options?: FindOptions): Promise<T[]> {
     return this.model.findAll(options)
+  }
+
+   async findPaginated(
+    params: QueryParams,
+    config: QueryConfig = {},
+    extraOptions: Omit<FindOptions, 'where' | 'limit' | 'offset' | 'order'> = {}
+  ): Promise<PaginatedResult<T>> {
+    const resolved = QueryParser.parse(params, config)
+ 
+    const { rows, count } = await this.model.findAndCountAll({
+      ...extraOptions,
+      where: resolved.where,
+      limit: resolved.limit,
+      offset: resolved.offset,
+      order: resolved.order,
+    })
+ 
+    return {
+      data: rows,
+      meta: QueryParser.buildMeta(count, resolved.page, resolved.perPage),
+    }
   }
 
   findOne(options?: FindOptions): Promise<T | null> {
