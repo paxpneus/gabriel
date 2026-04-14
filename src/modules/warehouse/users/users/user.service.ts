@@ -8,6 +8,7 @@ import jwt from 'jsonwebtoken';
 import Role from '../roles/role.model';
 const SECRET = process.env.JWT_SECRET!;
 import { QueryConfig } from '../../../../shared/query/query.types';
+import { cleanDocument } from '../../../../shared/utils/normalizers/document';
 
 export class UserService extends BaseService<User, UserRepository> {
   constructor() {
@@ -51,6 +52,8 @@ export class UserService extends BaseService<User, UserRepository> {
       if (cpfExists) {
         throw new Error('Usuário com este CPF já existe');
       }
+
+      userDto.cpf = cleanDocument(userDto.cpf)
 
       return await this.repository.create(userDto);
     

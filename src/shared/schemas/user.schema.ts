@@ -62,7 +62,8 @@ export const UpdateUserSchema = z.object({
     .string()
     .regex(cpfRegex, 'CPF deve conter exatamente 11 dígitos')
     .trim()
-    .optional(),
+    .optional()
+    .refine(v => isValidCPF(v!), 'CPF inválido'),
 
   email: z
     .string()
