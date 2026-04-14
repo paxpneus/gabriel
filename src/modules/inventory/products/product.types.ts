@@ -3,6 +3,7 @@ export interface ProductAttributes {
   name: string;
   sku: string;
   ean: string;
+  id_system: string;
   createdAt?: Date;
   updatedAt?: Date;
 }

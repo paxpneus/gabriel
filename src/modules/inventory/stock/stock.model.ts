@@ -42,7 +42,7 @@ Stock.init(
     indexes: [
       {
         unique: true,
-        fields: ['unit_business_id', 'product_id'],
+        fields: [ 'product_id'],
       },
     ],
   }

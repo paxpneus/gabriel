@@ -3,7 +3,7 @@ import { AxiosInstance } from 'axios';
 import { BaseQueueService } from '../../../../../../shared/utils/base-models/base-queue-service';
 import { ApiFetchRequest, WebhookQueuePayload } from '../bling-webhook.types';
 import { blingApi } from '../../../api/bling_api.service';
-import { Product } from '../../../../../inventory';
+import { Product, Supplier } from '../../../../../inventory';
 import { SupplierMapping } from '../../../../../inventory';
 import { alertService } from '../../../../../../shared/providers/mail-provider/nodemailer.alert';
 import { Invoice, InvoiceItems } from '../../../../../warehouse';
@@ -58,7 +58,8 @@ interface BlingApiInvoice {
 }
 
 interface BlingApiInvoiceItem {
-  produto: { id: number; codigo?: string };
+    id: number; 
+    codigo?: string 
   quantidade: number;
 }
 
@@ -131,6 +132,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     await Product.upsert({
       name: blingProduct.nome,
+      id_system: String(blingProduct.id),
       sku: blingProduct.codigo,
       ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
     });
@@ -144,39 +146,89 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
    * Busca o produto-fornecedor na Bling para obter o CNPJ do fornecedor
    * e atualiza o SupplierMapping.
    */
-  private async fetchAndUpsertProductSupplier(apiFetch: ApiFetchRequest): Promise<void> {
-    const { data } = await this.api.get<{ data: BlingApiProductSupplier }>(
-      `/produtos/fornecedores/${apiFetch.blingId}`,
-    );
+ private async fetchAndUpsertProductSupplier(apiFetch: ApiFetchRequest): Promise<void> {
+  const { data } = await this.api.get<{ data: BlingApiProductSupplier }>(
+    `/produtos/fornecedores/${apiFetch.blingId}`,
+  );
 
-    const ps = data.data;
+  const ps = data.data;
 
-    const product = await Product.findOne({
-      where: { sku: String(ps.produto.id) },
-    });
+  const product = await Product.findOne({
+    where: { sku: String(ps.codigo) },
+  });
 
-    if (!product) {
-      throw new Error(
-        `[BLING_API_FETCH] Produto blingId=${ps.produto.id} não encontrado para supplier mapping. Retry.`,
-      );
-    }
-
-    const cnpj = ps.fornecedor?.cnpj ?? ps.fornecedor?.cpf ?? '';
-
-    if (!cnpj) {
-      console.warn(`[BLING_API_FETCH] Fornecedor ${ps.fornecedor?.id} sem CNPJ/CPF. Upsert com placeholder.`);
-    }
-
-    await SupplierMapping.upsert({
-      product_id: product.id,
-      supplier_cnpj: cnpj || `NO-DOC-${ps.fornecedor?.id}`,
-      supplier_product_code: ps.codigo ?? '',
-    });
-
-    console.log(
-      `[BLING_API_FETCH] SupplierMapping atualizado: productId=${product.id}, cnpj=${cnpj}`,
+  if (!product) {
+    throw new Error(
+      `[BLING_API_FETCH] Produto blingId=${ps.produto.id} não encontrado para supplier mapping. Retry.`,
     );
   }
+
+  let cnpj = ps.fornecedor?.cnpj ?? ps.fornecedor?.cpf ?? '';
+  const supplierId = ps.fornecedor?.id ? String(ps.fornecedor.id) : null;
+
+  // 🔥 NOVO: busca no banco primeiro
+  if (!cnpj && supplierId) {
+    const supplierDb = await Supplier.findOne({
+      where: { id_system: supplierId },
+    });
+
+    if (supplierDb) {
+      cnpj = supplierDb.document;
+
+      console.log(
+        `[BLING_API_FETCH] CNPJ encontrado no banco: supplierId=${supplierId}`,
+      );
+    }
+  }
+
+  if (!cnpj && supplierId) {
+    try {
+      const { data: contatoRes } = await this.api.get<{ data: any }>(
+        `/contatos/${supplierId}`,
+      );
+
+      const contato = contatoRes.data;
+
+      cnpj = contato?.numeroDocumento
+
+      if (cnpj) {
+        await Supplier.upsert({
+          id_system: supplierId,
+          name: contato?.nome ?? 'SEM NOME',
+          document: cnpj,
+          fantasy_name: contato?.fantasia ?? null,
+          city: contato?.endereco?.municipio ?? '',
+          uf: contato?.endereco?.uf ?? '',
+          code: contato?.codigo ?? null,
+        });
+
+        console.log(
+          `[BLING_API_FETCH] Supplier salvo no banco: supplierId=${supplierId}`,
+        );
+      }
+    } catch (error) {
+      console.warn(
+        `[BLING_API_FETCH] Falha ao buscar contato ${supplierId}`,
+      );
+    }
+  }
+
+  if (!cnpj) {
+    console.warn(
+      `[BLING_API_FETCH] Fornecedor ${supplierId} sem CNPJ/CPF. Usando placeholder.`,
+    );
+  }
+
+  await SupplierMapping.upsert({
+    product_id: product.id,
+    supplier_cnpj: cnpj || `NO-DOC-${supplierId}`,
+    supplier_product_code: ps.codigo ?? '',
+  });
+
+  console.log(
+    `[BLING_API_FETCH] SupplierMapping atualizado: productId=${product.id}, cnpj=${cnpj}`,
+  );
+}
 
   /**
    * Busca a nota fiscal completa na Bling e persiste Invoice + InvoiceItems.
@@ -239,12 +291,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     for (const item of nf.itens) {
       const product = await Product.findOne({
-        where: { sku: item.produto?.codigo ?? String(item.produto?.id) },
+        where: { sku: item?.codigo ?? String(item.id) },
       });
 
       if (!product) {
         console.warn(
-          `[BLING_API_FETCH] Produto sku=${item.produto?.codigo} não encontrado para InvoiceItem. Pulando.`,
+          `[BLING_API_FETCH] Produto sku=${item.codigo} não encontrado para InvoiceItem. Pulando.`,
         );
         continue;
       }

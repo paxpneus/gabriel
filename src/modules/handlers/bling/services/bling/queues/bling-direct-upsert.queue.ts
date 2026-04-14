@@ -71,6 +71,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     await Product.upsert({
       name: data.name,
       sku: data.sku,
+      id_system: String(data.blingId),
       // EAN é required — placeholder até ApiFetch completar
       ean: data.ean ?? `PENDING-${data.blingId}`,
     });

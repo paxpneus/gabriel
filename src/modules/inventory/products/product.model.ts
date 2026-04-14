@@ -8,6 +8,7 @@ class Product extends Model<ProductAttributes, ProductCreationAttributes> implem
   public name!: string;
   public sku!: string;
   public ean!: string;
+  public id_system!: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -20,6 +21,10 @@ Product.init(
       defaultValue: uuidv4,
       primaryKey: true,
       allowNull: false,
+    },
+    id_system: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
     },
     name: {
       type: DataTypes.STRING(255),
