@@ -4,6 +4,7 @@ export interface UnitBusinessAttributes {
   name: string;
   cnpj: string;
   integrations_id?: string;
+  id_system: string;
   head_office: boolean;
   createdAt?: Date;
   updatedAt?: Date;

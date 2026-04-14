@@ -14,6 +14,7 @@ class UnitBusiness
   public number!: string;
   public name!: string;
   public cnpj!: string;
+  public id_system!: string;
   public integrations_id?: string;
   public head_office!: boolean;
 
@@ -28,6 +29,10 @@ UnitBusiness.init(
       defaultValue: uuidv4,
       primaryKey: true,
       allowNull: false,
+    },
+    id_system: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
     },
     number: {
       type: DataTypes.STRING(50),
