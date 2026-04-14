@@ -6,7 +6,7 @@ import { blingApi } from '../../../api/bling_api.service';
 import { Product, Supplier } from '../../../../../inventory';
 import { SupplierMapping } from '../../../../../inventory';
 import { alertService } from '../../../../../../shared/providers/mail-provider/nodemailer.alert';
-import { Invoice, InvoiceItems } from '../../../../../warehouse';
+import { Invoice, InvoiceItems, UnitBusiness } from '../../../../../warehouse';
 
 export interface ApiFetchJobPayload extends WebhookQueuePayload {
   apiFetch: ApiFetchRequest;
@@ -268,6 +268,15 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const customerName = nf.contato?.nome ?? nf.destinatario?.nome ?? '';
     const key = nf.chaveAcesso ?? `PENDING-KEY-${nf.id}`;
 
+    const unit_business = await UnitBusiness.findOne({
+      where: {id_system: nf?.loja?.id}
+    })
+
+    if (!unit_business) {
+      console.log('[ERRO NO MAPEAMENTO DE NFE] - Loja não encontrada')
+      throw new Error('[ERRO NO MAPEAMENTO DE NFE] - Loja não encontrada')
+    }
+
     const [invoice] = await Invoice.upsert({
       id_system: String(nf.id),
       customer_name: customerName,
@@ -279,6 +288,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       sender_name: senderName,
       receiver_cnpj: receiverCnpj,
       receiver_name: receiverName,
+      unit_business_id: unit_business.id
       // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
       // transporter_id: idem
     });
