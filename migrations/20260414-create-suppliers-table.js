@@ -104,7 +104,7 @@ module.exports = {
       // rollback STOCK (recria coluna)
       await queryInterface.addColumn(
         'stocks',
-        'unit_id',
+        'unit_business_id',
         {
           type: Sequelize.UUID,
           allowNull: true,
