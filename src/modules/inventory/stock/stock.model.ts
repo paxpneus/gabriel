@@ -5,7 +5,6 @@ import { v4 as uuidv4 } from 'uuid';
 
 class Stock extends Model<StockAttributes, StockCreationAttributes> implements StockAttributes {
   public id?: string;
-  public unit_business_id!: string;
   public product_id!: string;
   public quantity!: number;
 
@@ -21,14 +20,7 @@ Stock.init(
       primaryKey: true,
       allowNull: false,
     },
-    unit_business_id: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: 'unit_businesses',
-        key: 'id',
-      },
-    },
+  
     product_id: {
       type: DataTypes.UUID,
       allowNull: false,

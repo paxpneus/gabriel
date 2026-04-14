@@ -21,7 +21,7 @@ class Invoice
   public id_system?: string;
   public transporter_id?: string;
   public type!: "INCOMING" | "OUTGOING";
-  public status!: "OPEN" | "PENDING" | "FINISHED";
+  public status!: "OPEN" | "PENDING" | "FINISHED" | "CANCELLED";
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -97,7 +97,7 @@ Invoice.init(
       allowNull: false,
     },
     status: {
-      type: DataTypes.ENUM("OPEN", "PENDING", "FINISHED"),
+      type: DataTypes.ENUM("OPEN", "PENDING", "FINISHED", "CANCELLED"),
       defaultValue: "PENDING",
       allowNull: false,
     },
