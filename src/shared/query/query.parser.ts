@@ -1,14 +1,14 @@
 // src/shared/query/query.parser.ts
 
-import { Op, WhereOptions, OrderItem } from 'sequelize'
-import type { QueryParams, ResolvedQuery, QueryConfig } from './query.types'
+import { Op, WhereOptions, OrderItem } from "sequelize";
+import type { QueryParams, ResolvedQuery, QueryConfig } from "./query.types";
 
 const DEFAULTS = {
   page: 1,
   perPage: 20,
-  sortBy: 'createdAt',
-  sortDir: 'DESC' as const,
-}
+  sortBy: "createdAt",
+  sortDir: "DESC" as const,
+};
 
 export class QueryParser {
   /**
@@ -18,84 +18,101 @@ export class QueryParser {
    * @param config  - configuração da entidade (campos permitidos, defaults)
    */
   static parse(params: QueryParams, config: QueryConfig = {}): ResolvedQuery {
-    const defaults = { ...DEFAULTS, ...config.defaults }
+    const defaults = { ...DEFAULTS, ...config.defaults };
 
     // ── Paginação ──────────────────────────────────────────────────────────
-    const page    = Math.max(1, Number(params.page)    || defaults.page)
-    const perPage = Math.max(1, Number(params.perPage) || defaults.perPage)
-    const offset  = (page - 1) * perPage
+    const page = Math.max(1, Number(params.page) || defaults.page);
+    const perPage = Math.max(1, Number(params.perPage) || defaults.perPage);
+    const offset = (page - 1) * perPage;
 
     // ── Ordenação ──────────────────────────────────────────────────────────
-    const requestedSort = params.sortBy ?? defaults.sortBy
+    const requestedSort = params.sortBy ?? defaults.sortBy;
     const sortBy = config.sortableFields?.length
-      ? config.sortableFields.includes(requestedSort) ? requestedSort : defaults.sortBy
-      : requestedSort  // sem whitelist → aceita qualquer campo
+      ? config.sortableFields.includes(requestedSort)
+        ? requestedSort
+        : defaults.sortBy
+      : requestedSort; // sem whitelist → aceita qualquer campo
 
-    const sortDir = (['ASC', 'DESC'].includes((params.sortDir ?? '').toUpperCase())
-      ? params.sortDir!.toUpperCase()
-      : defaults.sortDir) as 'ASC' | 'DESC'
+    const sortDir = (
+      ["ASC", "DESC"].includes((params.sortDir ?? "").toUpperCase())
+        ? params.sortDir!.toUpperCase()
+        : defaults.sortDir
+    ) as "ASC" | "DESC";
 
-    const order: OrderItem[] = [[sortBy, sortDir]]
+    const order: OrderItem[] = [[sortBy, sortDir]];
 
     // ── Where ──────────────────────────────────────────────────────────────
-    const conditions: WhereOptions[] = []
+    const conditions: WhereOptions[] = [];
+
+    const where: any = {};
 
     // 1. Filtros por campo exato (filters[key]=value ou filters[key][]=v1&filters[key][]=v2)
     if (params.filters) {
       for (const [field, value] of Object.entries(params.filters)) {
-        // Whitelist guard
-        if (config.filterableFields?.length && !config.filterableFields.includes(field)) continue
-        if (!value || (Array.isArray(value) && value.length === 0)) continue
+        if (
+          config.filterableFields?.length &&
+          !config.filterableFields.includes(field)
+        )
+          continue;
 
-        if (Array.isArray(value)) {
-          conditions.push({ [field]: { [Op.in]: value } } as WhereOptions)
-        } else {
-          conditions.push({ [field]: value } as WhereOptions)
+        if (value === undefined || value === null || value === "") continue;
+
+        if (Array.isArray(value) && value.length === 0) continue;
+
+        let normalizedValue: any = value;
+
+        // boolean string fix
+        if (value === "true") normalizedValue = true;
+        if (value === "false") normalizedValue = false;
+
+        // number fix
+        if (!isNaN(Number(value)) && value !== "") {
+          normalizedValue = Number(value);
         }
+
+        where[field] = normalizedValue;
       }
     }
 
     // 2. Date range
+
     if (params.dateFrom || params.dateTo) {
-      const dateField = params.dateField ?? 'createdAt'
-      const rangeCondition: Record<symbol, Date> = {}
+      const dateField = params.dateField ?? "createdAt";
 
-      if (params.dateFrom) rangeCondition[Op.gte] = new Date(params.dateFrom)
-      if (params.dateTo) {
-        // Inclui o dia inteiro do dateTo
-        const to = new Date(params.dateTo)
-        to.setHours(23, 59, 59, 999)
-        rangeCondition[Op.lte] = to
-      }
-
-      conditions.push({ [dateField]: rangeCondition } as WhereOptions)
+      where[dateField] = {
+        ...(where[dateField] || {}),
+        ...(params.dateFrom ? { [Op.gte]: new Date(params.dateFrom) } : {}),
+        ...(params.dateTo
+          ? {
+              [Op.lte]: new Date(
+                new Date(params.dateTo).setHours(23, 59, 59, 999),
+              ),
+            }
+          : {}),
+      };
     }
 
     // 3. Search global (ILIKE nos campos configurados)
     if (params.search?.trim()) {
-  if (!config.searchFields?.length) {
-    conditions.push({ id: null } as WhereOptions)
-  } else {
-    const term = `%${params.search.trim()}%`
-    const orConditions = config.searchFields.map(field => ({
-      [field]: { [Op.iLike]: term },
-    }))
-    conditions.push({ [Op.or]: orConditions } as WhereOptions)
-  }
-}
+      if (!config.searchFields?.length) {
+        where.id = null;
+      } else {
+        const term = `%${params.search.trim()}%`;
 
-    const where: WhereOptions = conditions.length > 1
-      ? { [Op.and]: conditions }
-      : conditions[0] ?? {}
+        where[Op.or] = config.searchFields.map((field) => ({
+          [field]: { [Op.iLike]: term },
+        }));
+      }
+    }
 
-    return { limit: perPage, offset, order, where, page, perPage }
+    return { limit: perPage, offset, order, where, page, perPage };
   }
 
   /**
    * Monta o meta de paginação a partir do total retornado pelo count.
    */
   static buildMeta(total: number, page: number, perPage: number) {
-    const totalPages = Math.ceil(total / perPage) || 1
+    const totalPages = Math.ceil(total / perPage) || 1;
     return {
       total,
       page,
@@ -103,6 +120,6 @@ export class QueryParser {
       totalPages,
       hasNext: page < totalPages,
       hasPrev: page > 1,
-    }
+    };
   }
 }

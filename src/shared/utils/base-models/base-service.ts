@@ -13,6 +13,7 @@ import {
   QueryConfig,
   PaginatedResult,
 } from "./../../query/query.types";
+import { QueryParser } from "../../query/query.parser";
 
 class BaseService<
   T extends Model,
@@ -32,6 +33,31 @@ class BaseService<
     this.repository = repository;
   }
 
+  protected normalizeFilters(params: QueryParams): QueryParams {
+    if (!params.filters) return params;
+
+    const normalized: Record<string, any> = {};
+
+    for (const [key, value] of Object.entries(params.filters)) {
+      if (value === undefined || value === null) continue;
+
+      if (value === "true") {
+  normalized[key] = true;
+} else if (value === "false") {
+  normalized[key] = false;
+} else if (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value))) {
+  normalized[key] = Number(value);
+} else {
+  normalized[key] = value;
+}
+    }
+
+    return {
+      ...params,
+      filters: normalized,
+    };
+  }
+
   findAll(options?: FindOptions) {
     return this.repository.findAll(options);
   }
@@ -40,11 +66,13 @@ class BaseService<
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<T>> {
+    console.log("RAW PARAMS:", params);
+console.log("FILTERS:", params.filters);
     return this.repository.findPaginated(
-      params,
-      this.queryConfig,
-      extraOptions,
-    );
+    params, 
+    this.queryConfig,
+    extraOptions,
+  );
   }
 
   findById(id: string, options?: FindOptions) {
