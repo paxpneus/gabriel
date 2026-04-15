@@ -68,8 +68,8 @@ router.post('/webhook', async (req: Request, res: Response) => {
       signatureHeader,
       {
         blingOrderQueue: req.app.locals.BlingOrderQueue,
-        blingDirectUpsertQueue: req.app.locals.BlingDirectUpsertQueue, // TODO FILA — registrar no app.locals
-        blingApiFetchQueue: req.app.locals.BlingApiFetchQueue,         // TODO FILA — registrar no app.locals
+        blingDirectUpsertQueue: req.app.locals.BlingDirectUpsertQueue, 
+        blingApiFetchQueue: req.app.locals.BlingApiFetchQueue,         
         clientSecret,
       },
     );

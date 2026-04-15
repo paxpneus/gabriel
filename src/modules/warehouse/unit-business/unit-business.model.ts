@@ -36,7 +36,7 @@ UnitBusiness.init(
     },
     number: {
       type: DataTypes.STRING(50),
-      allowNull: false,
+      allowNull: true,
       unique: true,
     },
     name: {
@@ -45,7 +45,7 @@ UnitBusiness.init(
     },
     cnpj: {
       type: DataTypes.STRING(14),
-      allowNull: false,
+      allowNull: true,
       unique: true,
     },
     integrations_id: {

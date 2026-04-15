@@ -36,7 +36,7 @@ Product.init(
       unique: true,
     },
     ean: {
-      type: DataTypes.STRING(13),
+      type: DataTypes.STRING(20),
       allowNull: false,
       unique: true,
     },
