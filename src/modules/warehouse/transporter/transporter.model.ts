@@ -9,6 +9,7 @@ class Transporter extends Model<TransporterAttributes, TransporterCreationAttrib
   public cnpj!: string;
   public city!: string;
   public uf!: string;
+  public id_system!: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -21,6 +22,9 @@ Transporter.init(
       defaultValue: uuidv4,
       primaryKey: true,
       allowNull: false,
+    },
+     id_system: {
+      type: DataTypes.STRING(100),
     },
     name: {
       type: DataTypes.STRING(255),

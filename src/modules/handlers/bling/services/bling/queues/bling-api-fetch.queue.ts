@@ -7,6 +7,34 @@ import { Product, Supplier } from "../../../../../inventory";
 import { SupplierMapping } from "../../../../../inventory";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { Invoice, InvoiceItems, UnitBusiness } from "../../../../../warehouse";
+import parser from "../../../../../../shared/utils/xml/xml-parser";
+import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
+
+export function extractPartiesFromXml(xml: string) {
+  const parsed = parser.parse(xml);
+
+  const nfe =
+    parsed?.nfeProc?.NFe?.infNFe ||
+    parsed?.procNFe?.NFe?.infNFe ||
+    parsed?.NFe?.infNFe;
+
+  const emit = nfe?.emit ?? {};
+  const dest = nfe?.dest ?? {};
+
+  const senderCnpj = emit?.CNPJ ?? "";
+  const senderName = emit?.xNome ?? "";
+
+  const receiverCnpj = dest?.CNPJ || dest?.CPF || dest?.cnpj || dest?.cpf || "";
+
+  const receiverName = dest?.xNome ?? "";
+
+  return {
+    senderCnpj,
+    senderName,
+    receiverCnpj,
+    receiverName,
+  };
+}
 
 export interface ApiFetchJobPayload extends WebhookQueuePayload {
   apiFetch: ApiFetchRequest;
@@ -55,6 +83,8 @@ interface BlingApiInvoice {
   // Emitente / destinatário para CNPJ sender/receiver
   emitente?: { cnpj?: string; nome?: string };
   destinatario?: { cnpj?: string; cpf?: string; nome?: string };
+  xml?: string;
+  linkPDF?: string;
 }
 
 interface BlingApiInvoiceItem {
@@ -289,10 +319,25 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         ? "OPEN" // Bling cancelada → mantemos como OPEN para revisão manual
         : ((partial.status as "OPEN" | "PENDING" | "FINISHED") ?? "PENDING");
 
-    const senderCnpj = nf.emitente?.cnpj ?? "";
-    const senderName = nf.emitente?.nome ?? "";
-    const receiverCnpj = nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "";
-    const receiverName = nf.destinatario?.nome ?? "";
+    let senderCnpj = nf.emitente?.cnpj ?? "";
+    let senderName = nf.emitente?.nome ?? "";
+    let receiverCnpj = nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "";
+    let receiverName = nf.destinatario?.nome ?? "";
+
+    if (nf.xml) {
+      try {
+        const xmlData = await fetch(nf.xml).then((r) => r.text());
+        const extracted = extractPartiesFromXml(xmlData);
+
+        senderCnpj = cleanDocument(extracted.senderCnpj || senderCnpj);
+        senderName = extracted.senderName || senderName;
+        receiverCnpj = cleanDocument(extracted.receiverCnpj || receiverCnpj);
+        receiverName = extracted.receiverName || receiverName;
+      } catch (err) {
+        console.warn("[XML PARSE ERROR]", err);
+      }
+    }
+
     const customerDoc = nf.contato
       ? (nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "")
       : "";
@@ -320,7 +365,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       receiver_cnpj: receiverCnpj,
       receiver_name: receiverName,
       unit_business_id: unit_business.id,
-      
+      danfe_path: nf.linkPDF,
+      xml_path: nf.xml,
       // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
       // transporter_id: idem
     });
@@ -355,7 +401,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     console.log(
-      `[BLING_API_FETCH] ${nf.itens.length} item(ns) upsertado(s) para invoice ${nf.id}`,
+      `[BLING_API_FETCH] ${nf.itens?.length} item(ns) upsertado(s) para invoice ${nf.id}`,
     );
   }
 
