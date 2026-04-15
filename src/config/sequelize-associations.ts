@@ -111,16 +111,6 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
     as: 'unitBusiness',
   });
 
-  // Unit Business -> Stock
-  UnitBusiness.hasMany(Stock, {
-    foreignKey: 'unit_business_id',
-    as: 'stocks',
-  });
-  Stock.belongsTo(UnitBusiness, {
-    foreignKey: 'unit_business_id',
-    as: 'unitBusiness',
-  });
-
   // Unit Business -> Integration Mappings
   UnitBusiness.hasMany(IntegrationMapping, {
     foreignKey: 'unit_business_id',

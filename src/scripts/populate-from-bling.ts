@@ -2,25 +2,23 @@
  * bling-migration.script.ts
  *
  * Script de migração inicial: busca todos os dados da Bling e enfileira
- * nas filas existentes (BlingDirectUpsertQueue e BlingApiFetchQueue),
- * respeitando o rate limit da API Bling (3 req/s).
+ * nas filas existentes (BlingDirectUpsertQueue e BlingApiFetchQueue).
  *
- * Recursos migrados (todos filtrados pelos últimos 30 dias):
- *   1. Produtos
- *   2. Fornecedores (Contatos com tipo fornecedor)
- *   3. Produto-Fornecedor (mapeamentos)
- *   4. Estoques
- *   5. Transportadoras
- *   6. Notas Fiscais NF-e
- *   7. Notas Fiscais NFC-e
+ * ⚠️  ORDEM GARANTIDA — cada etapa espera as filas esvaziarem antes de avançar:
+ *   1. Produtos          (DirectUpsert + ApiFetch)
+ *   2. Fornecedores      (ApiFetch)
+ *   3. Produto-Fornecedor (DirectUpsert + ApiFetch) — precisa de produto pronto
+ *   4. Estoques          (DirectUpsert)             — precisa de produto pronto
+ *   5. Notas Fiscais NF-e  (ApiFetch)
+ *   6. Notas Fiscais NFC-e (ApiFetch)
  *
  * Uso:
  *   npx ts-node bling-migration.script.ts
- *   # ou com variáveis de ambiente customizadas:
  *   DRY_RUN=true npx ts-node bling-migration.script.ts
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { Queue } from 'bullmq';
 import { blingApi } from '../modules/handlers/bling/api/bling_api.service';
 import { ApiFetchJobPayload } from '../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue';
 import type { DirectUpsertJobPayload } from '../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
@@ -30,69 +28,95 @@ import { UnitBusiness } from '../modules/warehouse';
 import { setupAssociations } from '../config/sequelize-associations';
 import sequelize from '../config/sequelize';
 
-async function mainRe() {
-  await sequelize.authenticate();
+// ─── Bootstrap do banco ───────────────────────────────────────────────────────
 
+async function bootstrap() {
+  await sequelize.authenticate();
   setupAssociations();
 }
-
-mainRe()
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
 const DRY_RUN = process.env.DRY_RUN === 'true';
 
-/** Quantos dias atrás buscar TODOS os recursos */
+/** Quantos dias atrás buscar todos os recursos */
 const DAYS_BACK = 30;
 
 /** Pausa entre páginas para respeitar o rate limit da Bling (ms) */
-const PAGE_DELAY_MS = 3000;
+const PAGE_DELAY_MS = 350; // ~3 req/s
 
-/** Limite máximo de registros enfileirados por entidade (0 = sem limite) */
-const MAX_PER_ENTITY = 30;
+/** Limite máximo de registros por entidade (0 = sem limite) */
+const MAX_PER_ENTITY = Number(process.env.MAX_PER_ENTITY ?? 0);
 
-// ─── Data de corte (reutilizada por todos os recursos) ───────────────────────
+/**
+ * Intervalo de polling para verificar se as filas esvaziaram (ms).
+ * Aumentar se o Redis estiver sobrecarregado.
+ */
+const QUEUE_POLL_MS = 5_000;
+
+// ─── Data de corte ────────────────────────────────────────────────────────────
 
 const cutoffDate = new Date();
 cutoffDate.setDate(cutoffDate.getDate() - DAYS_BACK);
+const DATA_INICIAL = cutoffDate.toISOString().split('T')[0]; // YYYY-MM-DD
 
-/** "YYYY-MM-DD" — formato aceito pela Bling v3 */
-const DATA_INICIAL = cutoffDate.toISOString().split('T')[0];
+// ─── Instâncias das filas (workless = só enfileira, não processa aqui) ────────
 
-console.log(`📅 Filtrando recursos a partir de: ${DATA_INICIAL}`);
+const directUpsertQueue = new BlingDirectUpsertQueue({ workless: true });
+const apiFetchQueue     = new BlingApiFetchQueue({ workless: true });
 
-// ─── Mapa de UnitBusiness ────────────────────────────────────────────────────
+// ─── Mapa loja Bling → UnitBusiness UUID ──────────────────────────────────────
 
 type UnitBusinessMap = Record<string, string>;
-// id_system -> unit_business.id
-
 let unitBusinessMap: UnitBusinessMap = {};
 
 async function loadUnitBusinessMap() {
-  const units = await UnitBusiness.findAll({
-    attributes: ['id', 'id_system'],
-  });
-
-  unitBusinessMap = Object.fromEntries(
-    units.map((u) => [u.id_system, u.id]),
-  );
+  const units = await UnitBusiness.findAll({ attributes: ['id', 'id_system'] });
+  unitBusinessMap = Object.fromEntries(units.map((u) => [u.id_system, u.id]));
+  console.log(`  → ${units.length} UnitBusiness(es) carregado(s)`);
 }
 
-// ─── Instâncias das filas ─────────────────────────────────────────────────────
-
-// workless=true → as filas apenas enfileiram, sem processar localmente
-const directUpsertQueue = new BlingDirectUpsertQueue({ workless: true });
-const apiFetchQueue = new BlingApiFetchQueue({ workless: true });
+function resolveCompanyId(blingStoreId?: string | number): string {
+  if (!blingStoreId) throw new Error('Bling store id não informado');
+  const companyId = unitBusinessMap[String(blingStoreId)];
+  if (!companyId) throw new Error(`UnitBusiness não encontrado para loja ${blingStoreId}`);
+  return companyId;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function makeEventId(resource: string, id: number | string) {
+  return `migration-${resource}-${id}-${uuidv4()}`;
+}
+
+function basePayload(resource: string, blingId: number, companyId = '') {
+  return {
+    eventId:   makeEventId(resource, blingId),
+    resource:  resource as any,
+    action:    'created' as const,
+    companyId,
+    date:      new Date().toISOString(),
+    rawData:   {},
+  };
+}
+
+async function enqueueDirectUpsert(payload: DirectUpsertJobPayload, jobId: string) {
+  if (DRY_RUN) { console.log(`[DRY_RUN] DirectUpsert: ${jobId}`); return; }
+  await directUpsertQueue.add(payload, jobId);
+}
+
+async function enqueueApiFetch(payload: ApiFetchJobPayload, jobId: string) {
+  if (DRY_RUN) { console.log(`[DRY_RUN] ApiFetch: ${jobId}`); return; }
+  await apiFetchQueue.add(payload, jobId);
 }
 
 /**
  * Itera todas as páginas de um endpoint paginado da Bling.
- * A Bling usa `pagina` (base 1) e `limite` (máx 100).
+ * Bling usa `pagina` (base 1) e `limite` (máx 100).
  */
 async function* paginateBling<T>(
   endpoint: string,
@@ -111,70 +135,61 @@ async function* paginateBling<T>(
 
     yield items;
 
-    if (items.length < limitPerPage) break; // última página
+    if (items.length < limitPerPage) break;
     page++;
     await sleep(PAGE_DELAY_MS);
   }
 }
 
-function makeEventId(resource: string, id: number | string) {
-  return `migration-${resource}-${id}-${uuidv4()}`;
-}
+// ─── Aguardar filas esvaziarem ────────────────────────────────────────────────
 
-function resolveCompanyId(blingStoreId?: string | number): string {
-  if (!blingStoreId) {
-    throw new Error('Bling store id não informado');
-  }
-
-  const companyId = unitBusinessMap[String(blingStoreId)];
-
-  if (!companyId) {
-    throw new Error(`UnitBusiness não encontrado para loja ${blingStoreId}`);
-  }
-
-  return companyId;
-}
-
-function basePayload(resource: string, blingId: number, companyId?: string) {
-  return {
-    eventId: makeEventId(resource, blingId),
-    resource: resource as any,
-    action: 'created' as const,
-    companyId: companyId ?? '',
-    date: new Date().toISOString(),
-    rawData: {},
-  };
-}
-
-async function enqueueDirectUpsert(
-  payload: DirectUpsertJobPayload,
-  jobId: string,
-) {
+/**
+ * Bloqueia até que AMBAS as filas estejam com 0 jobs ativos + aguardando.
+ * Garante que os workers terminaram de processar antes de passar para a
+ * próxima etapa (evita erros de "produto não encontrado" etc.).
+ */
+async function waitForQueuesToDrain(label: string) {
   if (DRY_RUN) {
-    console.log(`[DRY_RUN] DirectUpsert: ${jobId}`);
+    console.log(`[DRY_RUN] Pulando espera de fila após: ${label}`);
     return;
   }
-  await directUpsertQueue.add(payload, jobId);
-}
 
-async function enqueueApiFetch(
-  payload: ApiFetchJobPayload,
-  jobId: string,
-) {
-  if (DRY_RUN) {
-    console.log(`[DRY_RUN] ApiFetch: ${jobId}`);
-    return;
+  console.log(`\n⏳ Aguardando filas esvaziarem após "${label}"...`);
+
+  // Acessa as instâncias BullMQ internas das filas
+  const queues: Queue[] = [
+    (directUpsertQueue as any).queue,
+    (apiFetchQueue as any).queue,
+  ];
+
+  while (true) {
+    const counts = await Promise.all(
+      queues.map((q) => q.getJobCounts('active', 'waiting', 'delayed')),
+    );
+
+    const totalPending = counts.reduce(
+      (sum, c) => sum + (c.active ?? 0) + (c.waiting ?? 0) + (c.delayed ?? 0),
+      0,
+    );
+
+    if (totalPending === 0) break;
+
+    console.log(`  ↻ Jobs pendentes: ${totalPending} — checando novamente em ${QUEUE_POLL_MS / 1000}s...`);
+    await sleep(QUEUE_POLL_MS);
   }
-  await apiFetchQueue.add(payload, jobId);
+
+  console.log(`  ✅ Filas vazias. Avançando...\n`);
 }
 
 // ─── 1. Produtos ──────────────────────────────────────────────────────────────
 
 async function migrateProducts() {
-  console.log('\n📦 Migrando produtos...');
+  console.log('─'.repeat(55));
+  console.log('📦  ETAPA 1 — Produtos');
+  console.log('─'.repeat(55));
+
   let count = 0;
 
-  // dataAlteracaoInicial filtra produtos criados/alterados desde a data de corte
   for await (const page of paginateBling<{ id: number; nome: string; codigo: string }>(
     '/produtos',
     { dataAlteracaoInicial: DATA_INICIAL },
@@ -183,7 +198,7 @@ async function migrateProducts() {
       const blingId = product.id;
       const jobBase = basePayload('product', blingId);
 
-      // 1a) DirectUpsert: cria o produto com placeholder de EAN
+      // DirectUpsert: cria o produto com placeholder de EAN
       await enqueueDirectUpsert(
         {
           ...jobBase,
@@ -192,22 +207,22 @@ async function migrateProducts() {
             data: {
               blingId,
               name: product.nome ?? '',
-              sku: product.codigo ?? '',
-              ean: `PENDING-${blingId}`,
+              sku:  product.codigo ?? '',
+              ean:  `PENDING-${blingId}`,
             },
           },
         },
         `migration-product-upsert-${blingId}`,
       );
 
-      // 1b) ApiFetch: complementa com EAN real
+      // ApiFetch: complementa com EAN real
       await enqueueApiFetch(
         {
           ...jobBase,
           apiFetch: {
             resource: 'product',
             blingId,
-            action: 'created',
+            action:    'created',
             companyId: '',
           },
         },
@@ -218,82 +233,95 @@ async function migrateProducts() {
       if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
-    console.log(`  → ${count} produtos enfileirados até agora...`);
+    console.log(`  → ${count} produto(s) enfileirado(s)...`);
     if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
   }
 
-  console.log(`✅ Produtos: ${count} total`);
+  console.log(`\n  📦 Produtos enfileirados: ${count}`);
+
+  // ⚠️  Aguarda antes de continuar — fornecedores não dependem de produto,
+  //    mas produto-fornecedor e estoque sim.
+  await waitForQueuesToDrain('Produtos');
 }
 
-// ─── 2. Fornecedores (Contatos tipo Fornecedor) ───────────────────────────────
+// ─── 2. Fornecedores ──────────────────────────────────────────────────────────
 
 async function migrateSuppliers() {
-  console.log('\n🏭 Migrando fornecedores...');
+  console.log('─'.repeat(55));
+  console.log('🏭  ETAPA 2 — Fornecedores');
+  console.log('─'.repeat(55));
+
   let count = 0;
 
-  // dataAlteracaoInicial filtra contatos criados/alterados desde a data de corte
-  for await (const page of paginateBling<{
-    id: number;
-    nome: string;
-    numeroDocumento?: string;
-    fantasia?: string;
-    endereco?: { municipio?: string; uf?: string };
-    codigo?: string;
-  }>('/contatos', { tipoContato: 1, dataAlteracaoInicial: DATA_INICIAL })) {
+  for await (const page of paginateBling<{ id: number; nome: string }>(
+    '/contatos',
+    { tipoContato: 1, dataAlteracaoInicial: DATA_INICIAL },
+  )) {
     for (const supplier of page) {
       const blingId = supplier.id;
-      const jobBase = basePayload('product_supplier', blingId);
+      const jobBase = basePayload('supplier', blingId);
 
-      await enqueueApiFetch(
+      // DirectUpsert: Salva supplier direto com dados do /contatos
+      await enqueueDirectUpsert(
         {
           ...jobBase,
-          apiFetch: {
-            resource: 'product_supplier' as any,
-            blingId,
-            action: 'created',
-            companyId: '',
-            partialData: { supplierOnly: true } as any,
+          directUpsert: {
+            table: 'suppliers',
+            data: {
+              id_system: String(blingId),
+              name: supplier.nome,
+              document: `PENDING-${blingId}`, // CNPJ será preenchido em ApiFetch
+              fantasy_name: null,
+              city: '',
+              uf: '',
+            },
           },
         },
-        `migration-supplier-fetch-${blingId}`,
+        `migration-supplier-upsert-${blingId}`,
       );
 
       count++;
       if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
-    console.log(`  → ${count} fornecedores enfileirados até agora...`);
+    console.log(`  → ${count} fornecedor(es) enfileirado(s)...`);
     if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
   }
 
-  console.log(`✅ Fornecedores: ${count} total`);
+  console.log(`\n  🏭 Fornecedores enfileirados: ${count}`);
+
+  // ⚠️  Aguarda — produto-fornecedor precisa de supplier no banco
+  await waitForQueuesToDrain('Fornecedores');
 }
 
 // ─── 3. Produto-Fornecedor ────────────────────────────────────────────────────
 
 async function migrateProductSuppliers() {
-  console.log('\n🔗 Migrando produto-fornecedores...');
+  console.log('─'.repeat(55));
+  console.log('🔗  ETAPA 3 — Produto-Fornecedor');
+  console.log('─'.repeat(55));
+
   let count = 0;
 
-  // dataAlteracaoInicial para filtrar mapeamentos recentes
   for await (const page of paginateBling<{
     id: number;
     codigo?: string;
     produto: { id: number };
-    fornecedor: { id: number; cnpj?: string; cpf?: string; nome?: string };
+    fornecedor: { id: number };
   }>('/produtos/fornecedores', { dataAlteracaoInicial: DATA_INICIAL })) {
     for (const ps of page) {
       const blingId = ps.id;
       const jobBase = basePayload('product_supplier', blingId);
 
+      // DirectUpsert: placeholder enquanto ApiFetch resolve CNPJ
       await enqueueDirectUpsert(
         {
           ...jobBase,
           directUpsert: {
             table: 'product_supplier_maps',
             data: {
-              productBlingId: ps.produto.id,
-              supplierBlingId: ps.fornecedor.id,
+              productBlingId:        ps.produto.id,
+              supplierBlingId:       ps.fornecedor.id,
               supplier_product_code: ps.codigo ?? '',
             },
           },
@@ -301,13 +329,14 @@ async function migrateProductSuppliers() {
         `migration-ps-upsert-${blingId}`,
       );
 
+      // ApiFetch: resolve CNPJ real e atualiza o mapeamento
       await enqueueApiFetch(
         {
           ...jobBase,
           apiFetch: {
-            resource: 'product_supplier',
+            resource:  'product_supplier',
             blingId,
-            action: 'created',
+            action:    'created',
             companyId: '',
           },
         },
@@ -318,60 +347,54 @@ async function migrateProductSuppliers() {
       if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
-    console.log(`  → ${count} mapeamentos enfileirados até agora...`);
+    console.log(`  → ${count} mapeamento(s) enfileirado(s)...`);
     if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
   }
 
-  console.log(`✅ Produto-Fornecedores: ${count} total`);
+  console.log(`\n  🔗 Produto-Fornecedores enfileirados: ${count}`);
+
+  // ⚠️  Aguarda — estoques precisam do produto já salvo no banco
+  await waitForQueuesToDrain('Produto-Fornecedor');
 }
 
 // ─── 4. Estoques ──────────────────────────────────────────────────────────────
 
-/**
- * Coleta os blingIds dos produtos (filtrados pelo período) e consulta
- * /estoques/saldos em batches de até 100 ids por requisição.
- */
 async function migrateStocks() {
-  console.log('\n📊 Migrando estoques...');
+  console.log('─'.repeat(55));
+  console.log('📊  ETAPA 4 — Estoques');
+  console.log('─'.repeat(55));
 
-  // 4a) Coleta todos os blingIds do período sem limite de entidade
+  // Coleta todos os blingIds do período
   const allBlingIds: number[] = [];
 
   for await (const page of paginateBling<{ id: number }>(
     '/produtos',
     { dataAlteracaoInicial: DATA_INICIAL },
   )) {
-    for (const p of page) {
-      allBlingIds.push(p.id);
-    }
+    for (const p of page) allBlingIds.push(p.id);
   }
 
-  console.log(`  → ${allBlingIds.length} produto(s) encontrado(s) para consulta de estoque`);
+  console.log(`  → ${allBlingIds.length} produto(s) para consulta de estoque`);
 
   if (!allBlingIds.length) {
-    console.log('✅ Estoques: nenhum produto para consultar');
+    console.log('  ✅ Nenhum produto — etapa ignorada\n');
     return;
   }
 
-  // 4b) /estoques/saldos em batches de 100 ids
   const BATCH_SIZE = 100;
   let count = 0;
 
   for (let i = 0; i < allBlingIds.length; i += BATCH_SIZE) {
     const batch = allBlingIds.slice(i, i + BATCH_SIZE);
 
-    // URLSearchParams com array: idsProdutos[]=id1&idsProdutos[]=id2...
     const params = new URLSearchParams();
-    for (const id of batch) {
-      params.append('idsProdutos[]', String(id));
-    }
+    for (const id of batch) params.append('idsProdutos[]', String(id));
     params.append('filtroSaldoEstoque', '1');
 
     const { data } = await blingApi.get<{
       data: Array<{
-        produto: { id: number; codigo: string };
+        produto: { id: number };
         saldoFisicoTotal: number;
-        depositos?: Array<{ id: number; saldoFisico: number; saldoVirtual: number }>;
       }>;
     }>(`/estoques/saldos?${params.toString()}`);
 
@@ -388,7 +411,7 @@ async function migrateStocks() {
             table: 'stocks',
             data: {
               productBlingId: blingId,
-              quantity: stock.saldoFisicoTotal ?? 0,
+              quantity:       stock.saldoFisicoTotal ?? 0,
             },
           },
         },
@@ -399,115 +422,20 @@ async function migrateStocks() {
       if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
-    console.log(`  → ${count} estoques enfileirados até agora...`);
+    console.log(`  → ${count} estoque(s) enfileirado(s)...`);
     if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
 
     await sleep(PAGE_DELAY_MS);
   }
 
-  console.log(`✅ Estoques: ${count} total`);
+  console.log(`\n  📊 Estoques enfileirados: ${count}`);
+
+  // ⚠️  Aguarda antes de notas fiscais (boa prática; NF não depende de estoque
+  //    mas queremos logs limpos por etapa)
+  await waitForQueuesToDrain('Estoques');
 }
 
-// ─── 5. Transportadoras ───────────────────────────────────────────────────────
-
-async function migrateTransporters() {
-  console.log('\n🚚 Migrando transportadoras...');
-  let count = 0;
-
-  for await (const page of paginateBling<{
-    id: number;
-    nome: string;
-    numeroDocumento?: string;
-    fantasia?: string;
-    endereco?: { municipio?: string; uf?: string };
-    codigo?: string;
-  }>('/contatos', { tipoContato: 9, dataAlteracaoInicial: DATA_INICIAL })) {
-    for (const transporter of page) {
-      const blingId = transporter.id;
-      const jobBase = basePayload('product_supplier', blingId);
-
-      await enqueueApiFetch(
-        {
-          ...jobBase,
-          apiFetch: {
-            resource: 'product_supplier' as any,
-            blingId,
-            action: 'created',
-            companyId: '',
-            partialData: { transporterOnly: true } as any,
-          },
-        },
-        `migration-transporter-fetch-${blingId}`,
-      );
-
-      count++;
-      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
-    }
-
-    console.log(`  → ${count} transportadoras enfileiradas até agora...`);
-    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
-  }
-
-  console.log(`✅ Transportadoras: ${count} total`);
-}
-
-// ─── 6 & 7. Notas Fiscais (NF-e e NFC-e) ─────────────────────────────────────
-
-async function migrateInvoices(type: 'NF-e' | 'NFC-e') {
-  const resource = type === 'NF-e' ? 'invoice' : 'consumer_invoice';
-  const endpoint = type === 'NF-e' ? '/nfe' : '/nfce';
-
-  console.log(`\n🧾 Migrando ${type}...`);
-  let count = 0;
-
-  for await (const page of paginateBling<{
-    id: number;
-    numero?: string;
-    situacao?: number;
-    tipo?: number;
-    dataEmissao?: string;
-    loja?: { id: number };
-  }>(endpoint, { dataInicial: DATA_INICIAL })) {
-    for (const invoice of page) {
-      const blingId = invoice.id;
-
-      if (!invoice.loja?.id) {
-        console.warn(`Invoice ${blingId} sem loja — ignorando`);
-        continue;
-      }
-
-      const companyId = resolveCompanyId(invoice.loja.id);
-      const jobBase = basePayload(resource, blingId, companyId);
-
-      await enqueueApiFetch(
-        {
-          ...jobBase,
-          apiFetch: {
-            resource: resource as any,
-            blingId,
-            action: 'created',
-            companyId,
-            partialData: {
-              blingId,
-              id_system: String(blingId),
-              status: mapSituacao(invoice.situacao),
-              type: invoice.tipo === 1 ? 'INCOMING' : 'OUTGOING',
-            },
-          },
-        },
-        `migration-${resource}-fetch-${blingId}`,
-      );
-
-      count++;
-      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
-    }
-
-    console.log(`  → ${count} ${type} enfileiradas até agora...`);
-    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
-  }
-
-  console.log(`✅ ${type}: ${count} total`);
-}
+// ─── 5 & 6. Notas Fiscais ─────────────────────────────────────────────────────
 
 function mapSituacao(situacao?: number): 'OPEN' | 'PENDING' | 'FINISHED' | 'CANCELLED' {
   switch (situacao) {
@@ -519,39 +447,113 @@ function mapSituacao(situacao?: number): 'OPEN' | 'PENDING' | 'FINISHED' | 'CANC
   }
 }
 
+async function migrateInvoices(type: 'NF-e' | 'NFC-e') {
+  const resource = type === 'NF-e' ? 'invoice' : 'consumer_invoice';
+  const endpoint = type === 'NF-e' ? '/nfe' : '/nfce';
+  const etapa    = type === 'NF-e' ? 5 : 6;
+  const icon     = '🧾';
+
+  console.log('─'.repeat(55));
+  console.log(`${icon}  ETAPA ${etapa} — Notas Fiscais ${type}`);
+  console.log('─'.repeat(55));
+
+  let count = 0;
+  let skipped = 0;
+
+  for await (const page of paginateBling<{
+    id: number;
+    numero?: string;
+    situacao?: number;
+    tipo?: number;
+    loja?: { id: number };
+  }>(endpoint, { dataInicial: DATA_INICIAL })) {
+    for (const invoice of page) {
+      const blingId = invoice.id;
+
+      if (!invoice.loja?.id) {
+        console.warn(`  ⚠️  Invoice ${blingId} sem loja — ignorada`);
+        skipped++;
+        continue;
+      }
+
+      let companyId: string;
+      try {
+        companyId = resolveCompanyId(invoice.loja.id);
+      } catch (e: any) {
+        console.warn(`  ⚠️  ${e.message} — invoice ${blingId} ignorada`);
+        skipped++;
+        continue;
+      }
+
+      const jobBase = basePayload(resource, blingId, companyId);
+
+      await enqueueApiFetch(
+        {
+          ...jobBase,
+          apiFetch: {
+            resource:    resource as any,
+            blingId,
+            action:      'created',
+            companyId,
+            partialData: {
+              blingId,
+              id_system: String(blingId),
+              status:    mapSituacao(invoice.situacao),
+              type:      invoice.tipo === 1 ? 'INCOMING' : 'OUTGOING',
+            },
+          },
+        },
+        `migration-${resource}-fetch-${blingId}`,
+      );
+
+      count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+    }
+
+    console.log(`  → ${count} nota(s) enfileirada(s)...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+  }
+
+  console.log(`\n  ${icon} ${type} enfileiradas: ${count} | ignoradas: ${skipped}`);
+
+  await waitForQueuesToDrain(`Notas Fiscais ${type}`);
+}
+
 // ─── Runner principal ─────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('═══════════════════════════════════════════════════');
+  console.log('═'.repeat(55));
   console.log('  🚀 Bling → Filas — Script de Migração Inicial');
   console.log(`  📅 Período: últimos ${DAYS_BACK} dias (desde ${DATA_INICIAL})`);
-  console.log('═══════════════════════════════════════════════════');
+  console.log('═'.repeat(55));
 
   if (DRY_RUN) {
-    console.log('⚠️  MODO DRY_RUN: nenhum job será realmente enfileirado.\n');
+    console.log('⚠️  MODO DRY_RUN ativo — nenhum job será enfileirado.\n');
   }
+
+  await bootstrap();
+
+  await loadUnitBusinessMap();
 
   const start = Date.now();
 
   try {
-    await loadUnitBusinessMap();
-
-    await migrateProducts();
-    await migrateSuppliers();
-    await migrateProductSuppliers();
-    await migrateStocks();
-    await migrateTransporters();
-    await migrateInvoices('NF-e');
-    await migrateInvoices('NFC-e');
+    // Ordem garantida + espera entre cada etapa
+    await migrateProducts();          // 1 — sem dependências
+    await migrateSuppliers();         // 2 — sem dependências
+    await migrateProductSuppliers();  // 3 — depende de produto + fornecedor
+    await migrateStocks();            // 4 — depende de produto
+    await migrateInvoices('NF-e');    // 5 — depende de UnitBusiness
+    await migrateInvoices('NFC-e');   // 6 — depende de UnitBusiness
   } catch (err: any) {
     console.error('\n❌ Erro durante a migração:', err.message);
     process.exit(1);
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-  console.log('\n═══════════════════════════════════════════════════');
+  console.log('═'.repeat(55));
   console.log(`  ✅ Migração concluída em ${elapsed}s`);
-  console.log('═══════════════════════════════════════════════════');
+  console.log('═'.repeat(55));
 
   process.exit(0);
 }

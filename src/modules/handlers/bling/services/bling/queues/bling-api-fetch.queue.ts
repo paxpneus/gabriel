@@ -141,12 +141,15 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       return;
     }
 
-    await Product.upsert({
-      name: blingProduct.nome,
-      id_system: String(blingProduct.id),
-      sku: blingProduct.codigo,
-      ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
-    });
+    await Product.upsert(
+      {
+        name: blingProduct.nome,
+        id_system: String(blingProduct.id),
+        sku: blingProduct.codigo,
+        ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
+      },
+      { conflictFields: ["id_system"] },
+    );
 
     console.log(
       `[BLING_API_FETCH] Produto ${blingProduct.codigo} complementado com EAN=${blingProduct.gtin ?? "N/A"}`,
@@ -166,14 +169,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const ps = data.data;
 
+    // Validação: produto deve estar presente
+    if (!ps?.produto?.id) {
+      throw new Error(
+        `[BLING_API_FETCH] Produto-fornecedor ${apiFetch.blingId} sem produto.id na resposta da API. Retry.`,
+      );
+    }
+
     const product = await Product.findOne({
-      where: { sku: String(ps.codigo) },
+      where: { id_system: String(ps.produto.id) },
     });
 
     if (!product) {
-      throw new Error(
-        `[BLING_API_FETCH] Produto blingId=${ps.produto.id} não encontrado para supplier mapping. Retry.`,
+      console.warn(
+        `[BLING_API_FETCH] Produto blingId=${ps.produto.id} não encontrado para supplier mapping. Ignorado.`,
       );
+      return;
     }
 
     let cnpj = ps.fornecedor?.cnpj ?? ps.fornecedor?.cpf ?? "";
@@ -224,7 +235,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           console.warn(
             `[BLING_API_FETCH] Contato ${supplierId} não existe na Bling. Erro: ${error}`,
           );
-          return; 
+          return;
         }
 
         throw error;
@@ -289,7 +300,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const key = nf.chaveAcesso ?? `PENDING-KEY-${nf.id}`;
 
     const unit_business = await UnitBusiness.findOne({
-      where: { id_system: nf?.loja?.id },
+      where: { id_system: String(nf?.loja?.id) },
     });
 
     if (!unit_business) {
@@ -309,6 +320,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       receiver_cnpj: receiverCnpj,
       receiver_name: receiverName,
       unit_business_id: unit_business.id,
+      
       // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
       // transporter_id: idem
     });

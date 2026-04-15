@@ -5,6 +5,7 @@ import cors from 'cors'
 import cookieParser from 'cookie-parser'
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') ?? []
 const app = express()
+import crypto from 'crypto'
 
 
 app.use(cors({
@@ -19,20 +20,29 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 }))
 
-app.use('/api/bling-orders/webhook', (req, _res, next) => {
-  express.raw({ type: 'application/json' })(req, _res, (err) => {
-    if (err) return next(err);
-    (req as any).rawBody = req.body instanceof Buffer
-      ? req.body.toString('utf8')
-      : JSON.stringify(req.body);
-    try {
-      req.body = JSON.parse((req as any).rawBody);
-    } catch {
-      req.body = {};
-    }
-    next();
-  });
-});
+// app.use('/api/bling-orders/webhook', express.raw({ type: 'application/json' }))
+
+// app.post('/api/bling-orders/webhook', (req, res) => {
+//   const rawBody = req.body.toString('utf8')
+
+//   const signature = req.headers['x-signature'] as string
+
+//   const expected = crypto
+//     .createHmac('sha256', process.env.WEBHOOK_SECRET!)
+//     .update(rawBody)
+//     .digest('hex')
+
+//   if (expected !== signature) {
+//     console.log('❌ HMAC inválido')
+//     return res.sendStatus(401)
+//   }
+
+//   const parsed = JSON.parse(rawBody)
+
+//   console.log('✅ webhook válido:', parsed)
+
+//   res.sendStatus(200)
+// })
 
 app.use(express.json())
 app.use(express.urlencoded({extended: true}))

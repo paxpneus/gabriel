@@ -129,6 +129,7 @@ export interface MappedWebhookResult {
 export type DirectUpsertPayload =
   | { table: 'products'; data: MappedProduct }
   | { table: 'stocks'; data: MappedStock }
+  | { table: 'suppliers'; data: MappedSupplier }
   | { table: 'product_supplier_maps'; data: MappedSupplierMapping }
   | { table: 'delete'; resource: BlingResource; blingId: number };
 
@@ -179,4 +180,14 @@ export interface MappedSupplierMapping {
   productBlingId: number;
   supplierBlingId: number;
   supplier_product_code: string;
+}
+
+export interface MappedSupplier {
+  id_system: string;
+  name: string;
+  document: string;
+  fantasy_name?: string | null;
+  city: string;
+  uf: string;
+  codigo?: string;
 }

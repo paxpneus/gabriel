@@ -4,6 +4,7 @@ export interface InvoiceAttributes {
   customer_document: string;
   key: string;
   xml_path?: string;
+  danfe_path?: string;
   unit_business_id: string;
   sender_cnpj: string;
   sender_name: string;
@@ -16,6 +17,8 @@ export interface InvoiceAttributes {
   updatedAt?: Date;
   type: string;
   status: string;
+  batch_generated?: boolean;
+  printed_label?: boolean;
 }
 
 export interface InvoiceCreationAttributes extends Omit<InvoiceAttributes, 'id' | 'createdAt' | 'updatedAt'> {}

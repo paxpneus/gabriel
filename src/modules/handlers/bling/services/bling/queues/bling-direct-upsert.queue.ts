@@ -4,6 +4,7 @@ import { BaseQueueService } from '../../../../../../shared/utils/base-models/bas
 import { Product } from '../../../../../inventory';
 import { Stock } from '../../../../../inventory/index';
 import { SupplierMapping } from '../../../../../inventory';
+import { Supplier } from '../../../../../inventory';
 import { alertService } from '../../../../../../shared/providers/mail-provider/nodemailer.alert';
 import { Invoice } from '../../../../../warehouse';
 
@@ -42,6 +43,10 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
           await this.upsertSupplierMapping(directUpsert.data);
           break;
 
+        case 'suppliers':
+          await this.upsertSupplier(directUpsert.data);
+          break;
+
         case 'delete':
           await this.handleDelete(directUpsert.resource, directUpsert.blingId);
           break;
@@ -74,7 +79,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       id_system: String(data.blingId),
       // EAN é required — placeholder até ApiFetch completar
       ean: data.ean ?? `PENDING-${data.blingId}`,
-    });
+    }, {conflictFields: ['id_system']});
 
     console.log(`[BLING_DIRECT_UPSERT] Produto upsertado: sku=${data.sku}`);
   }
@@ -97,6 +102,8 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     await Stock.upsert({
       product_id: product.id,
       quantity: data.quantity,
+    }, {
+      conflictFields: ['product_id'],
     });
 
     console.log(
@@ -114,9 +121,10 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     });
 
     if (!product) {
-      throw new Error(
-        `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado para supplier mapping. Retry agendado.`,
+      console.warn(
+        `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado para supplier mapping. Ignorado.`,
       );
+      return;
     }
 
     await SupplierMapping.upsert({
@@ -127,6 +135,24 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
     console.log(
       `[BLING_DIRECT_UPSERT] SupplierMapping upsertado: productId=${product.id}`,
+    );
+  }
+
+  private async upsertSupplier(
+    data: Extract<DirectUpsertPayload, { table: 'suppliers' }>['data'],
+  ): Promise<void> {
+    await Supplier.upsert({
+      id_system: data.id_system,
+      name: data.name,
+      document: data.document,
+      fantasy_name: data.fantasy_name,
+      city: data.city,
+      uf: data.uf,
+      code: data.codigo!,
+    });
+
+    console.log(
+      `[BLING_DIRECT_UPSERT] Supplier upsertado: id_system=${data.id_system}`,
     );
   }
 

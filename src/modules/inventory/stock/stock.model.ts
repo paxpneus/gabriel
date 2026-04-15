@@ -24,6 +24,7 @@ Stock.init(
     product_id: {
       type: DataTypes.UUID,
       allowNull: false,
+      unique: true,
       references: {
         model: 'products',
         key: 'id',

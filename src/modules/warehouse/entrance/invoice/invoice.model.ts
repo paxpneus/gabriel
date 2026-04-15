@@ -12,6 +12,7 @@ class Invoice
   public customer_document!: string;
   public key!: string;
   public xml_path?: string;
+  public danfe_path?: string;
   public unit_business_id!: string;
   public sender_cnpj!: string;
   public sender_name!: string;
@@ -22,6 +23,8 @@ class Invoice
   public transporter_id?: string;
   public type!: "INCOMING" | "OUTGOING";
   public status!: "OPEN" | "PENDING" | "FINISHED" | "CANCELLED";
+  public batch_generated!: boolean;
+  public printed_label!: boolean;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -49,6 +52,9 @@ Invoice.init(
       unique: true,
     },
     xml_path: {
+      type: DataTypes.TEXT,
+    },
+    danfe_path: {
       type: DataTypes.TEXT,
     },
     unit_business_id: {
@@ -100,6 +106,14 @@ Invoice.init(
       type: DataTypes.ENUM("OPEN", "PENDING", "FINISHED", "CANCELLED"),
       defaultValue: "PENDING",
       allowNull: false,
+    },
+    batch_generated: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    printed_label: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
     },
   },
   {

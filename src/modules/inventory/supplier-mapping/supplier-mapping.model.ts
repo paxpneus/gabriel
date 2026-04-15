@@ -2,6 +2,7 @@ import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../../config/sequelize';
 import { SupplierMappingAttributes, SupplierMappingCreationAttributes } from './supplier-mapping.types';
 import { v4 as uuidv4 } from 'uuid';
+import { cleanDocument } from '../../../shared/utils/normalizers/document';
 
 class SupplierMapping extends Model<SupplierMappingAttributes, SupplierMappingCreationAttributes> implements SupplierMappingAttributes {
   public id!: string;
@@ -49,6 +50,20 @@ SupplierMapping.init(
         fields: ['product_id', 'supplier_cnpj'],
       },
     ],
+    hooks: {
+      beforeCreate: (instance: any) => {
+        if (instance.supplier_cnpj) {
+          instance.supplier_cnpj = cleanDocument(instance.supplier_cnpj)
+        }
+      },
+
+      beforeUpdate: (instance: any) => {
+        if (instance.supplier_cnpj) {
+          instance.supplier_cnpj = cleanDocument(instance.supplier_cnpj)
+        }
+      },
+    
+    }
   }
 );
 
