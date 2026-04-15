@@ -28,7 +28,7 @@ export class ExpeditionBatchController extends BaseController<ExpeditionBatch, t
         return res.status(400).json({ error: 'Informe ao menos uma nota fiscal (invoiceIds).' });
       }
 
-      const batches = await ExpeditionBatchService.generateBatchesFromInvoices(invoiceIds);
+      const batches = await ExpeditionBatchService.generateBatchFromInvoices(invoiceIds);
       return res.status(201).json(batches);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

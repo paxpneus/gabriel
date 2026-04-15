@@ -145,7 +145,7 @@ function mapInvoice(
       partialData: {
         blingId: data.id,
         id_system: String(data.id),
-        type: mapInvoiceType(data.tipo),
+        type: 'OUTGOING',
         status: mapInvoiceSituacao(data.situacao),
       },
     },

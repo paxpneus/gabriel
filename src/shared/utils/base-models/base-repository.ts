@@ -21,6 +21,8 @@ class BaseRepository<T extends Model> {
   ): Promise<PaginatedResult<T>> {
     const resolved = QueryParser.parse(params, config)
  
+    console.log('resolved', resolved)
+
     const { rows, count } = await this.model.findAndCountAll({
       ...extraOptions,
       where: resolved.where,
@@ -28,7 +30,7 @@ class BaseRepository<T extends Model> {
       offset: resolved.offset,
       order: resolved.order,
     })
- 
+    
     return {
       data: rows,
       meta: QueryParser.buildMeta(count, resolved.page, resolved.perPage),
