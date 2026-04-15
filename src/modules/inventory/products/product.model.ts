@@ -32,13 +32,11 @@ Product.init(
     },
     sku: {
       type: DataTypes.STRING(100),
-      allowNull: false,
-      unique: true,
+      allowNull: true,
     },
     ean: {
       type: DataTypes.STRING(20),
-      allowNull: false,
-      unique: true,
+      allowNull: true,
     },
   },
   {

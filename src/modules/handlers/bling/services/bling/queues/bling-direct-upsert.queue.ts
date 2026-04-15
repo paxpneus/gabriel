@@ -50,7 +50,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
           console.warn(`[BLING_DIRECT_UPSERT] Tabela desconhecida no payload`, directUpsert);
       }
     } catch (error: any) {
-      console.error(`[BLING_DIRECT_UPSERT] Erro ao processar job ${job.id}:`, error.message);
+      console.error(`[BLING_DIRECT_UPSERT] Erro ao processar job ${job.id}:`, error);
       throw error; // relança para BullMQ registrar falha e fazer retry
     }
   }
@@ -82,10 +82,10 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
   private async upsertStock(
     data: Extract<DirectUpsertPayload, { table: 'stocks' }>['data'],
   ): Promise<void> {
-    // Resolve product_id UUID a partir do blingId (sku = blingId como string é o fallback).
+    // Resolve product_id UUID a partir do blingId usando id_system.
     // Se o produto ainda não existir, o retry do BullMQ dará tempo para o job de produto ser processado.
     const product = await Product.findOne({
-      where: { sku: String(data.productBlingId) },
+      where: { id_system: String(data.productBlingId) },
     });
 
     if (!product) {
@@ -110,7 +110,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     // supplier_cnpj virá do worker ApiFetch após buscar o fornecedor na Bling.
     // Aqui persiste com placeholder; ApiFetch fará update posterior.
     const product = await Product.findOne({
-      where: { sku: String(data.productBlingId) },
+      where: { id_system: String(data.productBlingId) },
     });
 
     if (!product) {
