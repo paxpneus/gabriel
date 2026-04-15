@@ -7,7 +7,7 @@ async function start(): Promise<void> {
     await sequelize.authenticate()
     console.log('------------------- DB: Banco Conectado! ------------------- ')
 
-    // startWorkers()
+    startWorkers()
 }
 
 start()
