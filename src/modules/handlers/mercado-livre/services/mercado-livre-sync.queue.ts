@@ -238,6 +238,13 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
+     if (order.internal_status === 'EMITTED') {
+    console.log(
+      `[MLOrderSyncQueue] Pedido ${order.number_order_channel} já emitido — ignorando scraping.`,
+    );
+    return;
+  }
+
     // Valida SKU na Bling antes de confirmar
     const skuValid = order.items.some((item) => item.sku == row.sku);
 
