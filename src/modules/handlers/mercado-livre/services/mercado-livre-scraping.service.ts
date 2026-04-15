@@ -451,7 +451,7 @@ export class MLScrapingService {
 
       const isTomorrowDelivery = TOMORROW_DELIVERY_REGEX.test(String(status));
 
-      if (isReadyForPickup || isTomorrowDelivery || isNFeAlreadyEmitted) {
+      if (isReadyForPickup || isNFeAlreadyEmitted) {
         // Pedidos prontos para coleta sem data prevista → amanhã (UTC)
         const tomorrow = new Date();
         collectionDate = new Date(
@@ -462,7 +462,20 @@ export class MLScrapingService {
           ),
         );
         console.log(
-          `[MLScraping] Pedido ${orderNumber} "pronto para coleta" — collection_date definida para amanhã: ${collectionDate.toISOString()}`,
+          `[MLScraping] Pedido ${orderNumber} "pronto para coleta" — collection_date definida para hoje: ${collectionDate.toISOString()}`,
+        );
+      } else if (isTomorrowDelivery) {
+        const tomorrow = new Date();
+        tomorrow.setUTCDate(tomorrow.getUTCDate() + 1); 
+        collectionDate = new Date(
+          Date.UTC(
+            tomorrow.getUTCFullYear(),
+            tomorrow.getUTCMonth(),
+            tomorrow.getUTCDate(),
+          ),
+        );
+        console.log(
+          `[MLScraping] Pedido ${orderNumber} "para entregar na coleta de amanhã" — collection_date definida para amanhã: ${collectionDate.toISOString()}`,
         );
       } else {
         const match = String(status).match(COLLECTION_DATE_REGEX);
