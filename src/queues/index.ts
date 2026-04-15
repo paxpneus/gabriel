@@ -22,6 +22,9 @@ import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mer
 import { ReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
 import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-orders/bling-reconciler.queue";
 
+import { BlingDirectUpsertQueue } from "./../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue";
+import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
+
 export const serverAdapter = new ExpressAdapter();
 
 /**
@@ -36,11 +39,9 @@ export const serverAdapter = new ExpressAdapter();
 function buildQueues(workless: boolean) {
   const blingOrderService = new BlingOrderService(blingApi);
 
-  const nfeQueue = new NFeQueue(
-    new NFeValidationService(),
-    blingApi,
-    { workless },
-  );
+  const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi, {
+    workless,
+  });
 
   const nfeNext = {
     addDelayed: (data: any, jobId: string, delay: number) =>
@@ -49,7 +50,9 @@ function buildQueues(workless: boolean) {
     getJob: (jobId: string) => nfeQueue.getJob(jobId),
   };
 
-  const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi, { workless });
+  const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi, {
+    workless,
+  });
 
   const cnpjQueue = new CNPJQueue(
     new CNPJService(),
@@ -69,13 +72,18 @@ function buildQueues(workless: boolean) {
     { workless },
   );
 
-  const reconcilerQueue = new ReconcilerQueue(cnpjNext, nfeNext, blingApi, { workless });
+  const reconcilerQueue = new ReconcilerQueue(cnpjNext, nfeNext, blingApi, {
+    workless,
+  });
 
   const blingReconcilerQueue = new BlingReconcilerQueue(
     blingApi,
     { add: (data: any, jobId: string) => blingOrderQueue.add(data, jobId) },
     { workless },
   );
+
+  const blingDirectUpsertQueue = new BlingDirectUpsertQueue({ workless });
+  const blingApiFetchQueue = new BlingApiFetchQueue({ workless });
 
   return {
     nfeQueue,
@@ -84,6 +92,8 @@ function buildQueues(workless: boolean) {
     blingOrderQueue,
     reconcilerQueue,
     blingReconcilerQueue,
+    blingDirectUpsertQueue,
+    blingApiFetchQueue,
   };
 }
 
@@ -96,6 +106,8 @@ export function registerQueues(app: Express) {
     blingOrderQueue,
     reconcilerQueue,
     blingReconcilerQueue,
+    blingDirectUpsertQueue,
+    blingApiFetchQueue,
   } = buildQueues(true); // workless: true → zero Workers na API
 
   // Scraping só para o BullBoard enxergar a fila, sem Worker
@@ -110,6 +122,9 @@ export function registerQueues(app: Express) {
   app.locals.CNPJQueue = cnpjQueue;
   app.locals.NfeQueue = nfeQueue;
 
+  app.locals.BlingDirectUpsertQueue = blingDirectUpsertQueue;
+  app.locals.BlingApiFetchQueue = blingApiFetchQueue;
+
   serverAdapter.setBasePath("/admin/queues");
 
   createBullBoard({
@@ -121,13 +136,17 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(blingOrderQueue.queue),
       new BullMQAdapter(blingReconcilerQueue.queue),
       new BullMQAdapter(mlScrapingQueue.queue),
+      new BullMQAdapter(blingDirectUpsertQueue.queue),
+      new BullMQAdapter(blingApiFetchQueue.queue),
     ],
     serverAdapter,
   });
 
-  app.use('/admin/queues', serverAdapter.getRouter());
+  app.use("/admin/queues", serverAdapter.getRouter());
 
-  console.log("------------------- QUEUE: Filas registradas na API (sem Workers)! -------------------");
+  console.log(
+    "------------------- QUEUE: Filas registradas na API (sem Workers)! -------------------",
+  );
 }
 
 // ─── Chamado pelo container workers: sobe Workers + agenda repetições ─────────
@@ -135,17 +154,19 @@ export function startWorkers() {
   // Mantém referência de TODAS as filas — sem isso o GC coleta as instâncias
   // e os Workers morrem silenciosamente logo após o start.
   const {
-    nfeQueue,
-    mlOrderSyncQueue,
-    cnpjQueue,
-    blingOrderQueue,
-    reconcilerQueue,
-    blingReconcilerQueue,
+    // nfeQueue,
+    // mlOrderSyncQueue,
+    // cnpjQueue,
+    // blingOrderQueue,
+    // reconcilerQueue,
+    // blingReconcilerQueue,
+    blingApiFetchQueue,
+    blingDirectUpsertQueue
   } = buildQueues(false); // workless: false → Worker ativo em cada fila
 
-  reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  // reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
   //TESTE
-  blingReconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  // blingReconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
   console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
@@ -165,7 +186,9 @@ export function startScrapingWorker() {
     { workless: false }, // scraping tem seu próprio Worker aqui
   );
 
-  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
+  // mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
 
-  console.log('------------------- QUEUE: Scraping Worker Ativo! -------------------');
+  console.log(
+    "------------------- QUEUE: Scraping Worker Ativo! -------------------",
+  );
 }

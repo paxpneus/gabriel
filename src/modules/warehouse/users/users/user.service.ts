@@ -7,8 +7,10 @@ import 'dotenv/config'
 import jwt from 'jsonwebtoken';
 import Role from '../roles/role.model';
 const SECRET = process.env.JWT_SECRET!;
-import { QueryConfig } from '../../../../shared/query/query.types';
+import { PaginatedResult, QueryConfig, QueryParams } from '../../../../shared/query/query.types';
 import { cleanDocument } from '../../../../shared/utils/normalizers/document';
+import UnitBusiness from '../../unit-business/unit-business.model';
+import { FindOptions } from 'sequelize';
 
 export class UserService extends BaseService<User, UserRepository> {
   constructor() {
@@ -37,6 +39,26 @@ export class UserService extends BaseService<User, UserRepository> {
       ],
     }
   }
+
+
+  async paginate(
+  params: QueryParams,
+  extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">
+): Promise<PaginatedResult<User>> {
+  return super.paginate(params, {
+    ...extraOptions,
+    include: [
+      {
+        model: Role,
+        as: 'role',
+      },
+      {
+        model: UnitBusiness,
+        as: 'unitBusiness',
+      },
+    ],
+  });
+}
 
  
 

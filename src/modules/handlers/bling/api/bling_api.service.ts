@@ -90,8 +90,7 @@ const doRefreshToken = async (): Promise<string> => {
 
 // Instancia do axios para bling
 export const blingApi: AxiosInstance = createAxiosInstance({
-  // baseURL: "https://www.bling.com.br/Api/v3",
-  baseURL: 'http',
+  baseURL: "https://www.bling.com.br/Api/v3",
 
   // Interceptor de request: injeta o token atual
   onRequest: async (config) => {
