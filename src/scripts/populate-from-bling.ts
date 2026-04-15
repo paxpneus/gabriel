@@ -27,6 +27,16 @@ import type { DirectUpsertJobPayload } from '../modules/handlers/bling/services/
 import { BlingDirectUpsertQueue } from '../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
 import { BlingApiFetchQueue } from '../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue';
 import { UnitBusiness } from '../modules/warehouse';
+import { setupAssociations } from '../config/sequelize-associations';
+import sequelize from '../config/sequelize';
+
+async function mainRe() {
+  await sequelize.authenticate();
+
+  setupAssociations();
+}
+
+mainRe()
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
@@ -37,6 +47,9 @@ const DAYS_BACK = 30;
 
 /** Pausa entre páginas para respeitar o rate limit da Bling (ms) */
 const PAGE_DELAY_MS = 3000;
+
+/** Limite máximo de registros enfileirados por entidade (0 = sem limite) */
+const MAX_PER_ENTITY = 30;
 
 // ─── Data de corte (reutilizada por todos os recursos) ───────────────────────
 
@@ -202,9 +215,11 @@ async function migrateProducts() {
       );
 
       count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
     console.log(`  → ${count} produtos enfileirados até agora...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
   }
 
   console.log(`✅ Produtos: ${count} total`);
@@ -244,9 +259,11 @@ async function migrateSuppliers() {
       );
 
       count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
     console.log(`  → ${count} fornecedores enfileirados até agora...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
   }
 
   console.log(`✅ Fornecedores: ${count} total`);
@@ -298,9 +315,11 @@ async function migrateProductSuppliers() {
       );
 
       count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
     console.log(`  → ${count} mapeamentos enfileirados até agora...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
   }
 
   console.log(`✅ Produto-Fornecedores: ${count} total`);
@@ -308,36 +327,59 @@ async function migrateProductSuppliers() {
 
 // ─── 4. Estoques ──────────────────────────────────────────────────────────────
 
+/**
+ * Coleta os blingIds dos produtos (filtrados pelo período) e consulta
+ * /estoques/saldos em batches de até 100 ids por requisição.
+ */
 async function migrateStocks() {
   console.log('\n📊 Migrando estoques...');
+
+  // 4a) Coleta todos os blingIds do período sem limite de entidade
+  const allBlingIds: number[] = [];
+
+  for await (const page of paginateBling<{ id: number }>(
+    '/produtos',
+    { dataAlteracaoInicial: DATA_INICIAL },
+  )) {
+    for (const p of page) {
+      allBlingIds.push(p.id);
+    }
+  }
+
+  console.log(`  → ${allBlingIds.length} produto(s) encontrado(s) para consulta de estoque`);
+
+  if (!allBlingIds.length) {
+    console.log('✅ Estoques: nenhum produto para consultar');
+    return;
+  }
+
+  // 4b) /estoques/saldos em batches de 100 ids
+  const BATCH_SIZE = 100;
   let count = 0;
 
-  // Estoques não possuem filtro de data na Bling v3 — buscamos todos,
-  // mas filtramos client-side por dataUltimaMovimentacao se disponível.
-  for await (const page of paginateBling<{
-    produto: { id: number };
-    saldoFisicoTotal: number;
-    depositos?: Array<{ saldoFisico: number }>;
-    loja?: { id: number };
-    dataUltimaMovimentacao?: string; // "YYYY-MM-DD" (se a Bling retornar)
-  }>('/estoques')) {
-    for (const stock of page) {
-      // Filtro client-side de data (quando a Bling retornar o campo)
-      if (
-        stock.dataUltimaMovimentacao &&
-        stock.dataUltimaMovimentacao < DATA_INICIAL
-      ) {
-        continue;
-      }
+  for (let i = 0; i < allBlingIds.length; i += BATCH_SIZE) {
+    const batch = allBlingIds.slice(i, i + BATCH_SIZE);
 
-      if (!stock.loja?.id) {
-        console.warn(`Stock produto ${stock.produto.id} sem loja — ignorando`);
-        continue;
-      }
+    // URLSearchParams com array: idsProdutos[]=id1&idsProdutos[]=id2...
+    const params = new URLSearchParams();
+    for (const id of batch) {
+      params.append('idsProdutos[]', String(id));
+    }
+    params.append('filtroSaldoEstoque', '1');
 
+    const { data } = await blingApi.get<{
+      data: Array<{
+        produto: { id: number; codigo: string };
+        saldoFisicoTotal: number;
+        depositos?: Array<{ id: number; saldoFisico: number; saldoVirtual: number }>;
+      }>;
+    }>(`/estoques/saldos?${params.toString()}`);
+
+    const saldos = data?.data ?? [];
+
+    for (const stock of saldos) {
       const blingId = stock.produto.id;
-      const companyId = resolveCompanyId(stock.loja.id);
-      const jobBase = basePayload('stock', blingId, companyId);
+      const jobBase = basePayload('stock', blingId);
 
       await enqueueDirectUpsert(
         {
@@ -354,9 +396,13 @@ async function migrateStocks() {
       );
 
       count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
     console.log(`  → ${count} estoques enfileirados até agora...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+
+    await sleep(PAGE_DELAY_MS);
   }
 
   console.log(`✅ Estoques: ${count} total`);
@@ -395,9 +441,11 @@ async function migrateTransporters() {
       );
 
       count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
     console.log(`  → ${count} transportadoras enfileiradas até agora...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
   }
 
   console.log(`✅ Transportadoras: ${count} total`);
@@ -451,9 +499,11 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e') {
       );
 
       count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
     }
 
     console.log(`  → ${count} ${type} enfileiradas até agora...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
   }
 
   console.log(`✅ ${type}: ${count} total`);

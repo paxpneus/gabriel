@@ -1,6 +1,5 @@
 import 'dotenv/config'
 import sequelize from './config/sequelize'
-import './modules/association/index'
 import { startScrapingWorker } from './queues'
 
 async function start(): Promise<void> {

@@ -1,7 +1,6 @@
 import 'dotenv/config'
 import app from './app'
 import sequelize from './config/sequelize'
-import './modules/association/index'
 import { registerQueues } from './queues'
 import { setupAssociations } from './config/sequelize-associations'
 import { startBlingWorkers } from './queues/test-workers'
