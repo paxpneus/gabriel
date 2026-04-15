@@ -72,8 +72,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     super('BLING_API_FETCH', {
       concurrency: 1,       // respeita rate limit Bling
       limiter: {
-        max: 3,             // máximo 3 req/s conforme limite Bling
-        duration: 1000,
+        max: 1,             // máximo 3 req/s conforme limite Bling
+        duration: 3000,
       },
       workless: options.workless,
     });
