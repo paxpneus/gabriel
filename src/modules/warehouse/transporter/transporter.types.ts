@@ -4,6 +4,7 @@ export interface TransporterAttributes {
   cnpj: string;
   city: string;
   uf: string;
+  id_system: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
