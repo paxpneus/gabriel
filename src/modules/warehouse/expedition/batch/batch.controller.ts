@@ -14,6 +14,8 @@ export class ExpeditionBatchController extends BaseController<ExpeditionBatch, t
     this.router.post('/generate-from-invoices', (req, res) =>
       this.generateBatchesFromInvoices(req, res)
     );
+
+    this.router.get('/by-invoices/get', this.getBatchesByInvoice)
   }
 
   /**
@@ -34,6 +36,29 @@ export class ExpeditionBatchController extends BaseController<ExpeditionBatch, t
       return res.status(500).json({ error: error.message });
     }
   };
+
+  getBatchesByInvoice = async (req: Request, res: Response): Promise<Response> => {
+    try {
+    let ids: string[] = [];
+ 
+    if (Array.isArray(req.query.invoiceIds)) {
+      ids = req.query.invoiceIds as string[];
+    } else if (typeof req.query.invoiceIds === 'string') {
+      ids = req.query.invoiceIds.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+ 
+    if (!ids.length) {
+      return res.status(400).json({ error: 'Nenhum invoiceId informado.' });
+    }
+ 
+    const batches = await this.service.getBatchesByInvoiceIds(ids);
+    return res.json(batches);
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+  };
+
+  
 }
 
 export default new ExpeditionBatchController();

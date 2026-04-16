@@ -19,6 +19,8 @@ export interface InvoiceAttributes {
   status: string;
   batch_generated?: boolean;
   printed_label?: boolean;
+  emitted_at?: Date;
+  number_system?: string;
 }
 
 export interface InvoiceCreationAttributes extends Omit<InvoiceAttributes, 'id' | 'createdAt' | 'updatedAt'> {}

@@ -367,6 +367,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       unit_business_id: unit_business.id,
       danfe_path: nf.linkPDF,
       xml_path: nf.xml,
+      emitted_at: new Date(nf.dataEmissao!),
+      number_system: String(nf.numero)
       // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
       // transporter_id: idem
     });

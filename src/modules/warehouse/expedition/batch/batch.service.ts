@@ -196,6 +196,49 @@ export class ExpeditionBatchService extends BaseService<
       })) as ExpeditionBatch;
     });
   }
+
+  async getBatchesByInvoiceIds(invoiceIds: string[]): Promise<ExpeditionBatch[]> {
+  if (!invoiceIds.length) return [];
+ 
+  // Busca os registros de vínculo invoice → batch
+  const batchInvoices = await ExpeditionBatchInvoice.findAll({
+    where: { invoice_id: invoiceIds },
+  });
+ 
+  if (!batchInvoices.length) {
+    throw new Error(
+      `Nenhum lote encontrado para as notas: ${invoiceIds.join(", ")}`,
+    );
+  }
+ 
+  // Deduplica os IDs de lote — N notas podem pertencer ao mesmo lote
+  const batchIds = [...new Set(batchInvoices.map((bi) => bi.expedition_batch_id))];
+ 
+  const batches = await ExpeditionBatch.findAll({
+    where: { id: batchIds },
+    include: [
+      {
+        model: ExpeditionBatchItems,
+        as: "items",
+        separate: true,
+        include: [
+          {
+            model: Product,
+            as: "product",
+            include: [{ model: Stock, as: "stocks" }],
+          },
+        ],
+      },
+      {
+        model: ExpeditionBatchInvoice,
+        as: "batchInvoices",
+        separate: true,
+      },
+    ],
+  });
+ 
+  return batches;
+}
 }
 
 export default new ExpeditionBatchService();
