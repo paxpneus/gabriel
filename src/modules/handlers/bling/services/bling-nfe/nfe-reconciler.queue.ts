@@ -201,17 +201,17 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-          ...data.data,
-          observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana: Pedido parado em aguardando agendamento de nfe, pelo motivo de não conseguir encontrar o pedido na planilha do mercado livre`,
-        });
+        // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+        //   ...data.data,
+        //   observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana: Pedido parado em aguardando agendamento de nfe, pelo motivo de não conseguir encontrar o pedido na planilha do mercado livre`,
+        // });
 
         await new Promise((resolve) => setTimeout(resolve, 3000));
 
-        await this.blingApi.patch(
-          `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
-          { id: 748772 },
-        );
+        // await this.blingApi.patch(
+        //   `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
+        //   { id: 748772 },
+        // );
 
         await ordersService.update(order.id, { internal_status: "CANCELLED" });
 
