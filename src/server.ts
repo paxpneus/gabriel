@@ -13,11 +13,14 @@ async function start(): Promise<void> {
     console.log('------------------- DB: Banco Conectado! ------------------- ')
     // await sequelize.sync({ alter: true })
 
+
+    setupAssociations()
+
+    
     registerQueues(app)
 
     startBlingWorkers()
 
-    setupAssociations()
 
     app.listen(PORT, HOST, () => {
 console.log(`Servidor rodando em http://187.50.246.187:${PORT}`);    })
