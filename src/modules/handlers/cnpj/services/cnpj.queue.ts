@@ -36,16 +36,16 @@ export class CNPJQueue extends BaseQueueService<any> {
     const errorMessage = ErrorValues.find((e) => e.id === errorId)?.error;
     const { data } = await this.blingApi.get(`/pedidos/vendas/${order.id_order_system}`);
 
-    // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-    //   ...data.data,
-    //   observacoesInternas:
-    //     `${data.data.observacoesInternas} \n Pedido Cancelado pelo Motivo: ${errorMessage}`.trim(),
-    // });
+    await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+      ...data.data,
+      observacoesInternas:
+        `${data.data.observacoesInternas} \n Pedido Cancelado pelo Motivo: ${errorMessage}`.trim(),
+    });
 
-    // await this.blingApi.patch(
-    //   `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
-    //   { id: 748772 },
-    // );
+    await this.blingApi.patch(
+      `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
+      { id: 748772 },
+    );
 
     await ordersService.update(order.id, { internal_status: "CANCELLED" });
     console.log(`[CNPJQueue] Pedido ${order.id} marcado com erro: ${errorMessage}`);
@@ -59,10 +59,10 @@ export class CNPJQueue extends BaseQueueService<any> {
    */
   private async applyWaitingNfeStatus(orderSystem: any): Promise<boolean> {
     try {
-      // await this.blingApi.patch(
-      //   `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`,
-      //   { id: 748743 },
-      // );
+      await this.blingApi.patch(
+        `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`,
+        { id: 748743 },
+      );
       return true;
     } catch (err: any) {
       if (err.response?.status === 400) {
