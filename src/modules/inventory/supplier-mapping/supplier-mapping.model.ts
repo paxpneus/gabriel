@@ -31,8 +31,8 @@ SupplierMapping.init(
       },
     },
     supplier_cnpj: {
-      type: DataTypes.STRING(14),
-      allowNull: false,
+      type: DataTypes.STRING(30),
+      allowNull: true,
     },
     supplier_product_code: {
       type: DataTypes.STRING(100),
