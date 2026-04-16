@@ -40,7 +40,7 @@ export class ExpeditionBatchService extends BaseService<
       const semItens = invoices.filter((i) => !(i as any).items?.length);
       if (semItens.length) {
         throw new Error(
-          `As seguintes notas não possuem itens: ${semItens.map((i) => i.id).join(", ")}`,
+          `As seguintes notas não possuem itens: ${semItens.map((i) => i.number_system).join(", ")}`,
         );
       }
 
@@ -53,7 +53,7 @@ export class ExpeditionBatchService extends BaseService<
 
       if (alreadyBatched.length > 0 && notBatched.length > 0) {
         const alreadyBatchedNumbers = alreadyBatched
-          .map((i) => i.id)
+          .map((i) => i.number_system)
           .join(", ");
         throw new Error(
           `Não é permitido misturar notas já processadas com novas. ` +
@@ -68,7 +68,7 @@ export class ExpeditionBatchService extends BaseService<
         });
 
         if (!batchInvoice) {
-          throw new Error("Batch não encontrado para invoices já processadas");
+          throw new Error("Lote não encontrado para notas já processadas");
         }
 
         return (await ExpeditionBatch.findByPk(
@@ -190,6 +190,13 @@ export class ExpeditionBatchService extends BaseService<
             model: ExpeditionBatchInvoice,
             as: "batchInvoices",
             separate: true,
+            include: [
+              {
+                model: Invoice,
+                as: 'invoice',
+                attributes: ['number_system']
+              }
+            ]
           },
         ],
         transaction: t,
@@ -204,10 +211,15 @@ export class ExpeditionBatchService extends BaseService<
   const batchInvoices = await ExpeditionBatchInvoice.findAll({
     where: { invoice_id: invoiceIds },
   });
+
+  const notFoundNotes = await Invoice.findAll({
+    where: { id: invoiceIds},
+    attributes: ['number_system']
+  })
  
   if (!batchInvoices.length) {
     throw new Error(
-      `Nenhum lote encontrado para as notas: ${invoiceIds.join(", ")}`,
+      `Nenhum lote encontrado para as notas: ${notFoundNotes.join(", ")}`,
     );
   }
  
@@ -233,6 +245,13 @@ export class ExpeditionBatchService extends BaseService<
         model: ExpeditionBatchInvoice,
         as: "batchInvoices",
         separate: true,
+        include: [
+          {
+            model: Invoice,
+            as: 'invoice',
+            attributes: ['number_system']
+          }
+        ]
       },
     ],
   });
