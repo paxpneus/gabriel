@@ -35,6 +35,7 @@ UnitBusiness.init(
     id_system: {
       type: DataTypes.STRING(100),
       allowNull: true,
+      unique: true,
     },
     number: {
       type: DataTypes.STRING(50),
