@@ -282,17 +282,17 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       `/pedidos/vendas/${order.id_order_system}`,
     );
     if (isSibling) {
-      await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-        ...data.data,
-        observacoesInternas:
-          `${data.data.observacoesInternas} \n Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim(),
-      });
+      // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+      //   ...data.data,
+      //   observacoesInternas:
+      //     `${data.data.observacoesInternas} \n Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim(),
+      // });
     } else {
-      await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
-        ...data.data,
-        observacoesInternas:
-          `${data.data.observacoesInternas} \n ML: ${row.order_number}`.trim(),
-      });
+      // await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+      //   ...data.data,
+      //   observacoesInternas:
+      //     `${data.data.observacoesInternas} \n ML: ${row.order_number}`.trim(),
+      // });
     }
 
     console.log(
@@ -391,12 +391,12 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       );
     }
 
-    await this.blingApi.patch(
-      `/pedidos/vendas/${idOrderSystem}/situacoes/748748`,
-      {
-        id: 748748,
-      },
-    );
+    // await this.blingApi.patch(
+    //   `/pedidos/vendas/${idOrderSystem}/situacoes/748748`,
+    //   {
+    //     id: 748748,
+    //   },
+    // );
 
     await ordersService.update(orderSystem.id, {
       internal_status: "WAITING FOR NFE EMISSION",
