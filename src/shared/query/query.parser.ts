@@ -59,6 +59,39 @@ export class QueryParser {
 
         if (Array.isArray(value) && value.length === 0) continue;
 
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          ("start" in value || "end" in value)
+        ) {
+          const { start, end } = value as any;
+
+          where[field] = {
+            ...(start ? { [Op.gte]: new Date(start) } : {}),
+            ...(end
+              ? {
+                  [Op.lte]: new Date(new Date(end).setHours(23, 59, 59, 999)),
+                }
+              : {}),
+          };
+
+          continue;
+        }
+
+        const dateFields = ["emitted_at", "createdAt", "updatedAt"];
+
+        if (
+          dateFields.includes(field) &&
+          typeof value === "string" &&
+          /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ) {
+          where[field] = {
+            [Op.gte]: new Date(value + "T00:00:00"),
+            [Op.lte]: new Date(value + "T23:59:59.999"),
+          };
+          continue;
+        }
+
         let normalizedValue: any = value;
 
         // boolean string fix

@@ -13,13 +13,14 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     this.queryConfig = {
       defaults: {
         perPage: 20,
-        sortBy: 'createdAt',
+        sortBy: 'emitted_at',
         sortDir: 'DESC',
       },
       // Campos para busca textual (LIKE)
       searchFields: [
         'customer_name',
         'sender_name',
+        'number_system'
       ],
       // Campos permitidos para filtros exatos (WHERE field = value)
       // ADICIONADO: 'type' e 'customer_name' aqui
@@ -29,11 +30,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         'transporter_id',
         'batch_generated',
         'printed_label',
+        'emitted_at',
         'status',
       ],
       sortableFields: [
         'customer_name',
         'createdAt',
+        'emitted_at',
         'batch_generated',
         'printed_label',
         'type',
