@@ -1,50 +1,105 @@
-import { Model, FindOptions, CreateOptions, UpdateOptions, DestroyOptions, CreationAttributes, BulkCreateOptions } from "sequelize";
+import {
+  Model,
+  FindOptions,
+  CreateOptions,
+  UpdateOptions,
+  DestroyOptions,
+  CreationAttributes,
+  BulkCreateOptions,
+} from "sequelize";
 import BaseRepository from "./base-repository";
+import {
+  QueryParams,
+  QueryConfig,
+  PaginatedResult,
+} from "./../../query/query.types";
+import { QueryParser } from "../../query/query.parser";
 
-class BaseService<T extends Model, Trepo extends BaseRepository<T> = BaseRepository<T>> {
-  protected repository: Trepo
+class BaseService<
+  T extends Model,
+  Trepo extends BaseRepository<T> = BaseRepository<T>,
+> {
+  protected repository: Trepo;
+
+  protected queryConfig: QueryConfig = {
+    defaults: {
+      perPage: 20,
+      sortBy: "createdAt",
+      sortDir: "DESC",
+    },
+  };
 
   constructor(repository: Trepo) {
-    this.repository = repository
+    this.repository = repository;
+  }
+
+  protected normalizeFilters(params: QueryParams): QueryParams {
+    if (!params.filters) return params;
+
+    const normalized: Record<string, any> = {};
+
+    for (const [key, value] of Object.entries(params.filters)) {
+      if (value === undefined || value === null) continue;
+
+      if (value === "true") {
+  normalized[key] = true;
+} else if (value === "false") {
+  normalized[key] = false;
+} else if (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value))) {
+  normalized[key] = Number(value);
+} else {
+  normalized[key] = value;
+}
+    }
+
+    return {
+      ...params,
+      filters: normalized,
+    };
   }
 
   findAll(options?: FindOptions) {
-    return this.repository.findAll(options)
+    return this.repository.findAll(options);
+  }
+
+  paginate(
+    params: QueryParams,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<PaginatedResult<T>> {
+    return this.repository.findPaginated(
+    params, 
+    this.queryConfig,
+    extraOptions,
+  );
   }
 
   findById(id: string, options?: FindOptions) {
-    return this.repository.findById(id, options)
+    return this.repository.findById(id, options);
   }
 
   findOne(options?: FindOptions) {
-    return this.repository.findOne(options)
+    return this.repository.findOne(options);
   }
 
-  create(
-    data: Partial<T ['_creationAttributes']>,
-    options?: CreateOptions
-  ) {
-    return this.repository.create(data, options)
+  create(data: Partial<T["_creationAttributes"]>, options?: CreateOptions) {
+    return this.repository.create(data, options);
   }
 
-  bulkCreate(
-    datas: CreationAttributes<T>[],
-    options?: BulkCreateOptions<T>
-  ) {
-    return this.repository.bulkCreate(datas, options)
+  bulkCreate(datas: CreationAttributes<T>[], options?: BulkCreateOptions<T>) {
+    return this.repository.bulkCreate(datas, options);
   }
 
   update(
     id: string,
-    data: Partial<T['_creationAttributes']>,
-    options?: UpdateOptions
+    data: Partial<T["_creationAttributes"]>,
+    options?: UpdateOptions,
   ) {
-    return this.repository.update(id, data, options)
+    return this.repository.update(id, data, options);
   }
 
   delete(id: string, options?: DestroyOptions) {
-    return this.repository.delete(id, options)
+    return this.repository.delete(id, options);
   }
 }
 
-export default BaseService
+export default BaseService;

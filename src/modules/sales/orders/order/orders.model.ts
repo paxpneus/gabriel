@@ -8,7 +8,7 @@ class Order
   implements orderAttributes
 {
   public id!: string;
-  public integration_id!: string;
+  public integrations_id!: string;
   public customer_id!: string;
   public id_order_system?: string;
   public number_order_system!: string;
@@ -35,7 +35,7 @@ Order.init(
       primaryKey: true,
       allowNull: false,
     },
-    integration_id: {
+    integrations_id: {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
