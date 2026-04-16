@@ -21,7 +21,6 @@ class BaseRepository<T extends Model> {
   ): Promise<PaginatedResult<T>> {
     const resolved = QueryParser.parse(params, config)
  
-    console.log('resolved', resolved)
 
     const { rows, count } = await this.model.findAndCountAll({
       ...extraOptions,

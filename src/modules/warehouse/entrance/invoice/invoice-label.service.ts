@@ -52,9 +52,23 @@ export class LabelService {
     const result: LabelData[] = [];
 
     for (const invoice of invoices) {
-      const parsed = await this.extractFromXml(invoice);
-      result.push(parsed);
-    }
+  try {
+    const parsed = await this.extractFromXml(invoice);
+
+    await invoice.update({
+      printed_label: true,
+    });
+
+    result.push(parsed);
+  } catch (err) {
+    console.error(`Erro ao gerar etiqueta da invoice ${invoice.id}`, err);
+
+    // opcional: marcar erro
+    await invoice.update({
+      label_error: true,
+    });
+  }
+}
 
     return result;
   }

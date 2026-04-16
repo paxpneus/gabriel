@@ -66,8 +66,6 @@ class BaseService<
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<T>> {
-    console.log("RAW PARAMS:", params);
-console.log("FILTERS:", params.filters);
     return this.repository.findPaginated(
     params, 
     this.queryConfig,

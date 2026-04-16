@@ -252,10 +252,18 @@ async function migrateSuppliers() {
   console.log('─'.repeat(55));
 
   let count = 0;
+  const idsParaFiltrar = [
+  17977550190, 17950521052, 17950116368, 
+  17700189867, 16837235915, 16821258764
+];
 
   for await (const page of paginateBling<{ id: number; nome: string }>(
-    '/contatos',
-    { tipoContato: 1, dataAlteracaoInicial: DATA_INICIAL },
+  '/contatos',
+  { 
+    tipoContato: 1, // 1 costuma ser Fornecedor no Bling V3
+    idsContatos: idsParaFiltrar as any,
+    dataAlteracaoInicial: DATA_INICIAL 
+  },
   )) {
     for (const supplier of page) {
       const blingId = supplier.id;
@@ -499,7 +507,7 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e') {
               blingId,
               id_system: String(blingId),
               status:    mapSituacao(invoice.situacao),
-              type:      invoice.tipo === 1 ? 'INCOMING' : 'OUTGOING',
+              type:      'OUTGOING',
             },
           },
         },
