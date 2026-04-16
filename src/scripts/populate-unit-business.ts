@@ -11,8 +11,9 @@
 import { setupAssociations } from '../config/sequelize-associations';
 import sequelize from '../config/sequelize';
 import { UnitBusiness } from '../modules/warehouse';
+import { getBlingIntegration } from '../modules/handlers/bling/api/bling_api.service';
 
-const INTEGRATIONS_ID = 'af41c051-ac74-4da0-ad08-c5fe5c7ff8a6';
+
 
 const LOJAS: Array<{
   id_system: string;
@@ -53,6 +54,12 @@ async function main() {
 
   await sequelize.authenticate();
   setupAssociations();
+
+  const integration = await getBlingIntegration('Bling');
+  if (!integration?.id) {
+    throw new Error('Integração Bling não encontrada no banco.');
+  }
+  const INTEGRATIONS_ID = integration.id;
 
   let created = 0;
   let updated = 0;
