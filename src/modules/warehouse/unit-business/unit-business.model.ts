@@ -17,6 +17,8 @@ class UnitBusiness
   public id_system!: string;
   public integrations_id?: string;
   public head_office!: boolean;
+  public certifcate_password?: string;
+  public certificate_path?: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -60,6 +62,13 @@ UnitBusiness.init(
     head_office: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
+    },
+    certificate_password: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    certificate_path: {
+      type: DataTypes.TEXT,
     },
   },
   {

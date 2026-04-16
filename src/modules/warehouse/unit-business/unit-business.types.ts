@@ -6,6 +6,8 @@ export interface UnitBusinessAttributes {
   integrations_id?: string;
   id_system: string;
   head_office: boolean;
+  certificate_path?: string;
+  certificate_password?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }

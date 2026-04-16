@@ -25,6 +25,8 @@ class Invoice
   public status!: "OPEN" | "PENDING" | "FINISHED" | "CANCELLED";
   public batch_generated!: boolean;
   public printed_label!: boolean;
+  public emitted_at?: Date;
+  public number_system?: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -115,6 +117,14 @@ Invoice.init(
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
+    emitted_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    number_system: {
+      type: DataTypes.STRING(100),
+      allowNull: true
+    }
   },
   {
     sequelize,
