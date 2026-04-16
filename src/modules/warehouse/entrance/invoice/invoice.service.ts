@@ -1,10 +1,15 @@
-import { FindOptions } from 'sequelize';
-import { PaginatedResult, QueryParams } from '../../../../shared/query/query.types';
-import BaseService from '../../../../shared/utils/base-models/base-service';
-import Invoice from './invoice.model';
-import invoiceRepository, { InvoiceRepository } from './invoice.repository';
-import UnitBusiness from '../../unit-business/unit-business.model';
-import Transporter from '../../transporter/transporter.model';
+import { FindOptions } from "sequelize";
+import {
+  PaginatedResult,
+  QueryParams,
+} from "../../../../shared/query/query.types";
+import BaseService from "../../../../shared/utils/base-models/base-service";
+import Invoice from "./invoice.model";
+import invoiceRepository, { InvoiceRepository } from "./invoice.repository";
+import UnitBusiness from "../../unit-business/unit-business.model";
+import Transporter from "../../transporter/transporter.model";
+import ExpeditionBatch from "../../expedition/batch/batch.model";
+import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
 
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
@@ -13,54 +18,61 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     this.queryConfig = {
       defaults: {
         perPage: 20,
-        sortBy: 'emitted_at',
-        sortDir: 'DESC',
+        sortBy: "emitted_at",
+        sortDir: "DESC",
       },
       // Campos para busca textual (LIKE)
-      searchFields: [
-        'customer_name',
-        'sender_name',
-        'number_system'
-      ],
+      searchFields: ["customer_name", "sender_name", "number_system"],
       // Campos permitidos para filtros exatos (WHERE field = value)
       // ADICIONADO: 'type' e 'customer_name' aqui
       filterableFields: [
-        'type',          
-        'unit_business_id',
-        'transporter_id',
-        'batch_generated',
-        'printed_label',
-        'emitted_at',
-        'status',
+        "type",
+        "unit_business_id",
+        "transporter_id",
+        "batch_generated",
+        "printed_label",
+        "emitted_at",
+        "status",
       ],
       sortableFields: [
-        'customer_name',
-        'createdAt',
-        'emitted_at',
-        'batch_generated',
-        'printed_label',
-        'type',
+        "customer_name",
+        "createdAt",
+        "emitted_at",
+        "batch_generated",
+        "printed_label",
+        "type",
       ],
     };
   }
 
   async paginate(
     params: QueryParams,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<Invoice>> {
-    
     return super.paginate(params, {
       ...extraOptions,
       include: [
         {
+          model: ExpeditionBatchInvoice,
+          as: "batchInvoice",
+          attributes: ['id'],
+          include: [
+            {
+              model: ExpeditionBatch,
+              as: "batch",
+              attributes: ['number']
+            },
+          ],
+        },
+        {
           model: UnitBusiness,
-          as: 'unitBusiness'
+          as: "unitBusiness",
         },
         {
           model: Transporter,
-          as: 'transporter'
-        }
-      ]
+          as: "transporter",
+        },
+      ],
     });
   }
 }
