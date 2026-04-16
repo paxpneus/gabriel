@@ -265,14 +265,15 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
   // ===== INVOICES =====
   
   // Invoice -> Batch Invoices
-  Invoice.hasMany(ExpeditionBatchInvoice, {
-    foreignKey: 'invoice_id',
-    as: 'batchInvoices',
-  });
-  ExpeditionBatchInvoice.belongsTo(Invoice, {
-    foreignKey: 'invoice_id',
-    as: 'invoice',
-  });
+  Invoice.hasOne(ExpeditionBatchInvoice, {
+  foreignKey: 'invoice_id',
+  as: 'batchInvoice',
+});
+
+ExpeditionBatchInvoice.belongsTo(Invoice, {
+  foreignKey: 'invoice_id',
+  as: 'invoice',
+});
 
   // Invoice -> Integration
   Invoice.belongsTo(Integration, {
