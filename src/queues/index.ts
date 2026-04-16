@@ -154,19 +154,19 @@ export function startWorkers() {
   // Mantém referência de TODAS as filas — sem isso o GC coleta as instâncias
   // e os Workers morrem silenciosamente logo após o start.
   const {
-    // nfeQueue,
-    // mlOrderSyncQueue,
-    // cnpjQueue,
-    // blingOrderQueue,
-    // reconcilerQueue,
-    // blingReconcilerQueue,
+    nfeQueue,
+    mlOrderSyncQueue,
+    cnpjQueue,
+    blingOrderQueue,
+    reconcilerQueue,
+    blingReconcilerQueue,
     blingApiFetchQueue,
     blingDirectUpsertQueue
   } = buildQueues(false); // workless: false → Worker ativo em cada fila
 
-  // reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
   //TESTE
-  // blingReconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  blingReconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
   console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
@@ -186,7 +186,7 @@ export function startScrapingWorker() {
     { workless: false }, // scraping tem seu próprio Worker aqui
   );
 
-  // mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
+  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
 
   console.log(
     "------------------- QUEUE: Scraping Worker Ativo! -------------------",
