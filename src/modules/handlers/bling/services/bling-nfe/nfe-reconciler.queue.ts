@@ -187,7 +187,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     const stuckOrders = await ordersService.findAll({
       where: {
         internal_status: "WAITING CHANNEL VALIDATION",
-        updatedAt: { [Op.lt]: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+        updatedAt: { [Op.lt]: new Date(Date.now() - 0.5 * 60 * 60 * 1000) },
       },
     });
 
