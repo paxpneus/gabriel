@@ -10,7 +10,6 @@ class Invoice
   public id!: string;
   public customer_name!: string;
   public customer_document!: string;
-  public key!: string;
   public xml_path?: string;
   public danfe_path?: string;
   public unit_business_id!: string;
@@ -48,11 +47,7 @@ Invoice.init(
       type: DataTypes.STRING(14),
       allowNull: false,
     },
-    key: {
-      type: DataTypes.STRING(44),
-      allowNull: false,
-      unique: true,
-    },
+    
     xml_path: {
       type: DataTypes.TEXT,
     },

@@ -12,6 +12,8 @@ import { Product, Stock } from "../../../inventory";
 import ExpeditionScanLog from "../scan-logs/scan-logs.model";
 import { ExpeditionBatchFull } from "./batch.types";
 import { InvoiceItemsAttributes } from "../../entrance/invoice-items/invoice-items.types";
+import { extractChaveFromXml } from "../../../../shared/utils/xml/xml-parser";
+import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -278,9 +280,18 @@ export class ExpeditionBatchService extends BaseService<
         0,
       );
 
+      let chaveAcesso = ''
+   
+      const rawXml = s.invoice.xml_path ?? ''
+      const xml = isEncrypted(rawXml) ? decryptXml(rawXml) : rawXml
+      chaveAcesso = extractChaveFromXml(xml)
+      const { xml_path, ...invoiceSemXml } = s.invoice as any
+
+
       return {
         ...s,
         ...s.invoice,
+        key: chaveAcesso,
         invoiceVolume,
       };
     });

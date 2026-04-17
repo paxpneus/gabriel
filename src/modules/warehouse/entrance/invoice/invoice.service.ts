@@ -10,7 +10,6 @@ import UnitBusiness from "../../unit-business/unit-business.model";
 import Transporter from "../../transporter/transporter.model";
 import ExpeditionBatch from "../../expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
-
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -75,6 +74,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       ],
     });
   }
+
+ 
 }
 
 export default new InvoiceService();

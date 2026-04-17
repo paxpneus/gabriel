@@ -348,7 +348,7 @@ async function main() {
   const start = Date.now();
 
   try {
-    await migrateStocks();            // 4 — presume produtos já no banco
+    // await migrateStocks();            // 4 — presume produtos já no banco
     await migrateInvoices('NF-e');    // 5 — depende de UnitBusiness
     await migrateInvoices('NFC-e');   // 6 — depende de UnitBusiness
   } catch (err: any) {

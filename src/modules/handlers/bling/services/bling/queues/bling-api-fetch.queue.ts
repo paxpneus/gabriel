@@ -2,13 +2,14 @@ import { Job } from "bullmq";
 import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
 import { ApiFetchRequest, WebhookQueuePayload } from "../bling-webhook.types";
-import { blingApi } from "../../../api/bling_api.service";
+import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
 import { Product, Supplier } from "../../../../../inventory";
 import { SupplierMapping } from "../../../../../inventory";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { Invoice, InvoiceItems, UnitBusiness } from "../../../../../warehouse";
 import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
+import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 
 export function extractPartiesFromXml(xml: string) {
   const parsed = parser.parse(xml);
@@ -323,11 +324,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     let senderName = nf.emitente?.nome ?? "";
     let receiverCnpj = nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "";
     let receiverName = nf.destinatario?.nome ?? "";
+    let xmlContent: string | null = null;
 
     if (nf.xml) {
       try {
-        const xmlData = await fetch(nf.xml).then((r) => r.text());
-        const extracted = extractPartiesFromXml(xmlData);
+        xmlContent = await fetch(nf.xml).then((r) => r.text());
+    const extracted = extractPartiesFromXml(xmlContent!);
 
         senderCnpj = cleanDocument(extracted.senderCnpj || senderCnpj);
         senderName = extracted.senderName || senderName;
@@ -353,11 +355,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       throw new Error("[ERRO NO MAPEAMENTO DE NFE] - Loja não encontrada");
     }
 
+    const integration = await getBlingIntegration('Bling')
+
     const [invoice] = await Invoice.upsert({
       id_system: String(nf.id),
       customer_name: customerName,
       customer_document: customerDoc,
-      key,
       // type: invoiceType,
       type: 'OUTGOING',
       status: invoiceStatus,
@@ -366,10 +369,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       receiver_cnpj: receiverCnpj,
       receiver_name: receiverName,
       unit_business_id: unit_business.id,
-      danfe_path: nf.linkPDF,
-      xml_path: nf.xml,
+      danfe_path: '',
+      xml_path: encryptXml(xmlContent!),
       emitted_at: new Date(nf.dataEmissao!),
-      number_system: String(nf.numero)
+      number_system: String(nf.numero),
+      integrations_id: integration.id,
       // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
       // transporter_id: idem
     });
