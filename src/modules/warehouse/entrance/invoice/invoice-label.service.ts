@@ -4,6 +4,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { Op } from "sequelize";
 import Invoice from "./invoice.model";
+import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
 
 // Importe seus modelos e a instância do sequelize se necessário
 // import { Invoice } from '../../database/models/Invoice';
@@ -75,40 +76,17 @@ export class LabelService {
 }
 
   private async extractFromXml(invoice: any): Promise<LabelData> {
-  const xmlPath: string = invoice.xml_path ?? '';
+  let xmlPath: string = invoice.xml_path ?? '';
 
-  if (!xmlPath) {
-    console.warn(`Invoice ${invoice.id}: sem xml_path — usando fallback`);
-    return this.buildFromInvoiceFields(invoice);
+
+   if (isEncrypted(xmlPath)) {
+ 
+      xmlPath = decryptXml(xmlPath)
+    
   }
-
-  // É uma URL HTTP — faz fetch
-  if (xmlPath.startsWith('http')) {
-    try {
-      const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-
-      const res = await fetch(xmlPath, {signal: controller.signal});
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      return await this.parseNFeXml(invoice.id, text);
-    } catch (err) {
-      console.error(`Erro ao baixar XML via URL (${invoice.id}):`, err);
-      return this.buildFromInvoiceFields(invoice);
-    }
-  }
-
-  // É um path no disco
-  try {
-    const fullPath = path.isAbsolute(xmlPath)
-      ? xmlPath
-      : path.join(process.cwd(), xmlPath);
-    const text = await fs.readFile(fullPath, 'utf-8');
-    return await this.parseNFeXml(invoice.id, text);
-  } catch (err) {
-    console.error(`Erro ao ler arquivo ${xmlPath}:`, err);
-    return this.buildFromInvoiceFields(invoice);
-  }
+  
+    return await this.parseNFeXml(invoice.id, xmlPath);
+  
 }
 
   private async parseNFeXml(
@@ -210,38 +188,6 @@ export class LabelService {
 
     return { invoiceId, numero, volumes, cnpjEmit };
   }
-
-  private buildFromInvoiceFields(invoice: any): LabelData {
-  const volumeTotal = Math.max(1, invoice.volume_quantity ?? 1);
-  const cnpjEmit = String(invoice.sender_cnpj || '').replace(/\D/g, '');
-
-  const volumes = this.buildVolumes({
-    invoiceId:    invoice.id,
-    numero:       String(invoice.number_system ?? ''),
-    serie:        String(invoice.serie ?? ''),
-    chaveAcesso:  String(invoice.key ?? '').replace(/\D/g, ''),
-    valorNota:    parseFloat(String(invoice.total_value ?? 0)),
-    dataEmissao:  String(invoice.emitted_at ?? '').substring(0, 10),
-    destNome:     String(invoice.customer_name ?? ''),
-    destEndereco: String(invoice.customer_address ?? ''),
-    destNumero:   String(invoice.customer_address_number ?? ''),
-    destMunicipio:String(invoice.customer_city ?? ''),
-    destUF:       String(invoice.customer_state ?? ''),
-    destCEP:      String(invoice.customer_zip ?? '').replace(/\D/g, ''),
-    produtos:     invoice.description ? [invoice.description] : [],
-    ean:          String(invoice.ean ?? ''),
-    transportador:invoice.transporter?.name ?? '',
-    volumeTotal,
-    cnpjEmit,
-  });
-
-  return {
-    invoiceId: invoice.id,
-    cnpjEmit,
-    numero: volumes[0]?.numero ?? '',
-    volumes,
-  };
-}
 
   private buildVolumes(params: any): LabelVolume[] {
     const volumes: LabelVolume[] = [];

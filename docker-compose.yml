@@ -96,6 +96,7 @@ services:
       MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       JWT_SECRET: ${JWT_SECRET}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -138,6 +139,7 @@ services:
       MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       JWT_SECRET: ${JWT_SECRET}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
     depends_on:
       postgres:
         condition: service_healthy

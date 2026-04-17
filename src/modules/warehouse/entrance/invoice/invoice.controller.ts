@@ -4,6 +4,11 @@ import Invoice from './invoice.model';
 import InvoiceService from './invoice.service';
 import { Request, Response } from 'express';
 import { authenticate } from '../../../../middlewares/auth-token';
+import { gerarPDF } from '@alexssmusica/node-pdf-nfe';
+import archiver from 'archiver';
+import { decryptXml, isEncrypted } from '../../../../shared/utils/xml/xml-cipher';
+import { PassThrough } from 'stream'
+import { PDFDocument } from 'pdf-lib'
 
 export class InvoiceController extends BaseController<Invoice, typeof InvoiceService> {
 
@@ -15,6 +20,7 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
     this.labelService = new LabelService()
 
     this.router.get('/labels/data', this.getLabelData)
+    this.router.get('/danfe/data', this.getDanfeBatch)
   }
 
   protected middlewaresFor() {
@@ -27,7 +33,8 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
         show: [authenticate],
         destroy: [authenticate],
         login: [authenticate],
-        getLabelData: [authenticate]
+        getLabelData: [authenticate],
+        getDanfeBatch: [authenticate]
       };
     }
 
@@ -46,6 +53,73 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
     return res.json({data})
   } catch (err: any) {
       return res.status(500).json({ error: err.message })
+    }
+  }
+
+  getDanfeBatch = async (req: Request, res: Response): Promise<void> => {
+    try {
+      let ids: string[] = []
+      if (Array.isArray(req.query.invoiceIds)) {
+        ids = req.query.invoiceIds as string[]
+      } else if (typeof req.query.invoiceIds === 'string') {
+        ids = req.query.invoiceIds.split(',').map(s => s.trim()).filter(Boolean)
+      }
+
+      if (!ids.length) {
+        res.status(400).json({ error: 'Nenhum ID informado' })
+        return
+      }
+
+      const invoices = await Invoice.findAll({ where: { id: ids } })
+
+      if (!invoices.length) {
+        res.status(404).json({ error: 'Nenhuma nota encontrada' })
+        return
+      }
+
+      const mergedPdf = await PDFDocument.create()
+
+      for (const invoice of invoices) {
+        let xml = (invoice as any).xml_path
+
+        if (!xml || xml.startsWith('http')) {
+          console.warn(`Invoice ${invoice.id}: XML não disponível, pulando.`)
+          continue
+        }
+
+        if (isEncrypted(xml)) xml = decryptXml(xml)
+
+        try {
+          const doc = await gerarPDF(xml, { cancelada: false })
+
+          const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
+            const pass = new PassThrough()
+            const chunks: Buffer[] = []
+            pass.on('data', (chunk: Buffer) => chunks.push(chunk))
+            pass.on('end', () => resolve(Buffer.concat(chunks)))
+            pass.on('error', reject)
+            doc.pipe(pass)
+          })
+
+          const invoicePdf = await PDFDocument.load(pdfBuffer)
+          const pages = await mergedPdf.copyPages(invoicePdf, invoicePdf.getPageIndices())
+          pages.forEach(p => mergedPdf.addPage(p))
+
+          console.log(`[DANFE] invoice=${invoice.id} adicionada ao PDF mesclado`)
+        } catch (err: any) {
+          console.error(`[DANFE] Erro invoice ${invoice.id}:`, err.message)
+        }
+      }
+
+      const mergedBytes = await mergedPdf.save()
+
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', `inline; filename="danfes-${Date.now()}.pdf"`)
+      res.send(Buffer.from(mergedBytes))
+    } catch (err: any) {
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message })
+      }
     }
   }
 }
