@@ -94,6 +94,7 @@ services:
       MAILER_PASS: ${MAILER_PASS}
       MAILER_FROM: ${MAILER_FROM}
       MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,6 +135,7 @@ services:
       MAILER_PASS: ${MAILER_PASS}
       MAILER_FROM: ${MAILER_FROM}
       MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
     depends_on:
       postgres:
         condition: service_healthy
