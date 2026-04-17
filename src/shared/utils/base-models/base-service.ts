@@ -6,6 +6,7 @@ import {
   DestroyOptions,
   CreationAttributes,
   BulkCreateOptions,
+  Op,
 } from "sequelize";
 import BaseRepository from "./base-repository";
 import {
@@ -40,6 +41,11 @@ class BaseService<
 
     for (const [key, value] of Object.entries(params.filters)) {
       if (value === undefined || value === null) continue;
+
+      if (Array.isArray(value)) {
+    normalized[key] = { [Op.in]: value };
+    continue;
+  }
 
       if (value === "true") {
   normalized[key] = true;
