@@ -3,6 +3,7 @@ import BaseController from '../../../../shared/utils/base-models/base-controller
 import Invoice from './invoice.model';
 import InvoiceService from './invoice.service';
 import { Request, Response } from 'express';
+import { authenticate } from '../../../../middlewares/auth-token';
 
 export class InvoiceController extends BaseController<Invoice, typeof InvoiceService> {
 
@@ -15,6 +16,20 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
 
     this.router.get('/labels/data', this.getLabelData)
   }
+
+  protected middlewaresFor() {
+      return {
+        index: [authenticate],
+        create: [authenticate],
+        update: [
+          authenticate
+        ],
+        show: [authenticate],
+        destroy: [authenticate],
+        login: [authenticate],
+        getLabelData: [authenticate]
+      };
+    }
 
   getLabelData = async (req: Request, res: Response): Promise<Response> => {
     try {

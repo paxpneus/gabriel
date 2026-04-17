@@ -25,32 +25,17 @@ export class UserController extends BaseController<User, typeof UserService> {
     this.router.post(`/logout`, this.logout);
   }
 
-  // protected middlewaresFor() {
-  //   return {
-  //     index: [authenticate],
-  //     create: [validateCreate(CreateUserSchema)],
-  //     update: [
-  //       authenticate,
-  //       validateId(UserIdSchema),
-  //       validateUpdate(UpdateUserSchema),
-  //     ],
-  //     show: [authenticate, validateId(UserIdSchema)],
-  //     destroy: [authenticate, validateId(UserIdSchema)],
-  //     login: [validateLoginSchema(LoginSchema)],
-  //   };
-  // }
-
    protected middlewaresFor() {
     return {
-      index: [],
-      create: [validateCreate(CreateUserSchema)],
+      index: [authenticate],
+      create: [authenticate, validateCreate(CreateUserSchema)],
       update: [
-        
+        authenticate,
         validateId(UserIdSchema),
         validateUpdate(UpdateUserSchema),
       ],
-      show: [validateId(UserIdSchema)],
-      destroy: [validateId(UserIdSchema)],
+      show: [authenticate, validateId(UserIdSchema)],
+      destroy: [authenticate, validateId(UserIdSchema)],
       login: [validateLoginSchema(LoginSchema)],
     };
   }
