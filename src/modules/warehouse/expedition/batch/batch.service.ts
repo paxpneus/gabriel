@@ -21,6 +21,27 @@ export class ExpeditionBatchService extends BaseService<
 > {
   constructor() {
     super(expeditionBatchRepository);
+
+    this.queryConfig = {
+      defaults: {
+        perPage: 20,
+        sortBy: 'createdAt',
+        sortDir: 'DESC',
+      },
+      searchFields: [
+        'number',
+      ],
+      filterableFields: [
+        'status',
+        'integrations_id',
+        'unit_business_id'
+      ],
+      sortableFields: [
+        'number',
+        'createdAt',
+        'updatedAt',
+      ],
+    }
   }
 
   async generateBatchFromInvoices(
@@ -74,31 +95,7 @@ export class ExpeditionBatchService extends BaseService<
           throw new Error("Lote não encontrado para notas já processadas");
         }
 
-        return (await ExpeditionBatch.findByPk(
-          batchInvoice.expedition_batch_id,
-          {
-            include: [
-              {
-                model: ExpeditionBatchItems,
-                as: "items",
-                separate: true,
-                include: [
-                  {
-                    model: Product,
-                    as: "product",
-                    include: [{ model: Stock, as: "stocks" }],
-                  },
-                ],
-              },
-              {
-                model: ExpeditionBatchInvoice,
-                as: "batchInvoices",
-                separate: true,
-              },
-            ],
-            transaction: t,
-          },
-        )) as ExpeditionBatch;
+        return (await this.repository.getFullBatch(batchInvoice.expedition_batch_id)) as ExpeditionBatch;
       }
 
       const batchNumber = `LOTE-${Date.now()}-${Math.random()
@@ -175,35 +172,7 @@ export class ExpeditionBatchService extends BaseService<
 
       await batch.update({ total_volumes: totalVolumes }, { transaction: t });
 
-      return (await ExpeditionBatch.findByPk(batch.id, {
-        include: [
-          {
-            model: ExpeditionBatchItems,
-            as: "items",
-            separate: true,
-            include: [
-              {
-                model: Product,
-                as: "product",
-                include: [{ model: Stock, as: "stocks" }],
-              },
-            ],
-          },
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoices",
-            separate: true,
-            include: [
-              {
-                model: Invoice,
-                as: "invoice",
-                attributes: ["number_system"],
-              },
-            ],
-          },
-        ],
-        transaction: t,
-      })) as ExpeditionBatch;
+      return (await this.repository.getFullBatch(batch.id)) as ExpeditionBatch;
     });
   }
 
