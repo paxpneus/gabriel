@@ -4,7 +4,6 @@ import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/que
 export function startBlingWorkers() {
   console.log("🚀 Iniciando Bling workers isolados...");
 
-  // ✅ SOMENTE esses dois têm worker ativo
   const blingDirectUpsertQueue = new BlingDirectUpsertQueue({
     workless: false,
   });
@@ -17,7 +16,6 @@ export function startBlingWorkers() {
   console.log("  → BlingDirectUpsertQueue");
   console.log("  → BlingApiFetchQueue");
 
-  // ⚠️ mantém referência viva (evita GC matar worker)
   return {
     blingDirectUpsertQueue,
     blingApiFetchQueue,
