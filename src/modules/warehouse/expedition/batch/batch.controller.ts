@@ -32,12 +32,11 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoiceIds } = req.params;
-
+      const { invoiceIds } = req.body;
       if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
         return res
           .status(400)
-          .json({ error: "Informe ao menos uma nota fiscal (invoiceIds)." });
+          .json({ error: "Informe ao menos uma nota fiscal" });
       }
 
       const batches =
