@@ -9,6 +9,9 @@ import InvoiceItems from "../../entrance/invoice-items/invoice-items.model";
 import Invoice from "../../entrance/invoice/invoice.model";
 import sequelize from "../../../../config/sequelize";
 import { Product, Stock } from "../../../inventory";
+import ExpeditionScanLog from "../scan-logs/scan-logs.model";
+import { ExpeditionBatchFull } from "./batch.types";
+import { InvoiceItemsAttributes } from "../../entrance/invoice-items/invoice-items.types";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -32,9 +35,7 @@ export class ExpeditionBatchService extends BaseService<
       if (invoices.length !== invoiceIds.length) {
         const foundIds = invoices.map((i) => i.id);
         const missing = invoiceIds.filter((id) => !foundIds.includes(id));
-        throw new Error(
-          `Notas sem itens: ${missing.join(", ")}`,
-        );
+        throw new Error(`Notas sem itens: ${missing.join(", ")}`);
       }
 
       const semItens = invoices.filter((i) => !(i as any).items?.length);
@@ -193,10 +194,10 @@ export class ExpeditionBatchService extends BaseService<
             include: [
               {
                 model: Invoice,
-                as: 'invoice',
-                attributes: ['number_system']
-              }
-            ]
+                as: "invoice",
+                attributes: ["number_system"],
+              },
+            ],
           },
         ],
         transaction: t,
@@ -204,60 +205,94 @@ export class ExpeditionBatchService extends BaseService<
     });
   }
 
-  async getBatchesByInvoiceIds(invoiceIds: string[]): Promise<ExpeditionBatch[]> {
-  if (!invoiceIds.length) return [];
- 
-  // Busca os registros de vínculo invoice → batch
-  const batchInvoices = await ExpeditionBatchInvoice.findAll({
-    where: { invoice_id: invoiceIds },
-  });
+  async getBatchesByInvoiceIds(
+    invoiceIds: string[],
+  ): Promise<ExpeditionBatch[]> {
+    if (!invoiceIds.length) return [];
 
-  const notFoundNotes = await Invoice.findAll({
-    where: { id: invoiceIds},
-    attributes: ['number_system']
-  })
- 
-  if (!batchInvoices.length) {
-    throw new Error(
-      `Nenhum lote encontrado para as notas: ${notFoundNotes.join(", ")}`,
-    );
+    // Busca os registros de vínculo invoice → batch
+    const batchInvoices = await ExpeditionBatchInvoice.findAll({
+      where: { invoice_id: invoiceIds },
+    });
+
+    const notFoundNotes = await Invoice.findAll({
+      where: { id: invoiceIds },
+      attributes: ["number_system"],
+    });
+
+    if (!batchInvoices.length) {
+      throw new Error(
+        `Nenhum lote encontrado para as notas: ${notFoundNotes.join(", ")}`,
+      );
+    }
+
+    // Deduplica os IDs de lote — N notas podem pertencer ao mesmo lote
+    const batchIds = [
+      ...new Set(batchInvoices.map((bi) => bi.expedition_batch_id)),
+    ];
+
+    const batches = await ExpeditionBatch.findAll({
+      where: { id: batchIds },
+      include: [
+        {
+          model: ExpeditionBatchItems,
+          as: "items",
+          separate: true,
+          include: [
+            {
+              model: Product,
+              as: "product",
+              include: [{ model: Stock, as: "stocks" }],
+            },
+          ],
+        },
+        {
+          model: ExpeditionBatchInvoice,
+          as: "batchInvoices",
+          separate: true,
+          include: [
+            {
+              model: Invoice,
+              as: "invoice",
+              attributes: ["number_system"],
+            },
+          ],
+        },
+      ],
+    });
+
+    return batches;
   }
- 
-  // Deduplica os IDs de lote — N notas podem pertencer ao mesmo lote
-  const batchIds = [...new Set(batchInvoices.map((bi) => bi.expedition_batch_id))];
- 
-  const batches = await ExpeditionBatch.findAll({
-    where: { id: batchIds },
-    include: [
-      {
-        model: ExpeditionBatchItems,
-        as: "items",
-        separate: true,
-        include: [
-          {
-            model: Product,
-            as: "product",
-            include: [{ model: Stock, as: "stocks" }],
-          },
-        ],
-      },
-      {
-        model: ExpeditionBatchInvoice,
-        as: "batchInvoices",
-        separate: true,
-        include: [
-          {
-            model: Invoice,
-            as: 'invoice',
-            attributes: ['number_system']
-          }
-        ]
-      },
-    ],
-  });
- 
-  return batches;
-}
+
+  async findByIdFullBatch(batchId?: string, number?: string): Promise<ExpeditionBatchFull> {
+    const fullBatch = await this.repository.getFullBatch(batchId ?? '', number ?? '')
+    if (!fullBatch) throw new Error("Lote não encontrado");
+
+    const batchWithTotalVolumes = fullBatch.batchInvoices!.map((s) => {
+      const invoiceVolume = s.invoice.items.reduce(
+        (acc: number, item: InvoiceItemsAttributes) => {
+          acc += item.quantity_expected;
+
+          return acc;
+        },
+        0,
+      );
+
+      return {
+        ...s,
+        ...s.invoice,
+        invoiceVolume,
+      };
+    });
+
+    const enrichedData = {
+      ...fullBatch,
+      batchWithTotalVolumes
+    }
+
+  
+    return enrichedData;
+  }
 }
 
 export default new ExpeditionBatchService();

@@ -2,6 +2,9 @@ import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../../../config/sequelize';
 import { ExpeditionBatchAttributes, ExpeditionBatchCreationAttributes } from './batch.types';
 import { v4 as uuidv4 } from 'uuid';
+import ExpeditionBatchInvoice from '../batch-invoices/batch-invoices.model';
+import ExpeditionBatchItems from '../batch-items/batch-items.model';
+import ExpeditionScanLog from '../scan-logs/scan-logs.model';
 
 class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCreationAttributes> implements ExpeditionBatchAttributes {
   public id!: string;
@@ -11,7 +14,6 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public id_system?: string;
   public unit_business_id!: string;
   public total_volumes!: number;
-
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
