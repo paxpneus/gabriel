@@ -75,6 +75,8 @@ export class LabelService {
   return result;
 }
 
+
+
   private async extractFromXml(invoice: any): Promise<LabelData> {
   let xmlPath: string = invoice.xml_path ?? '';
 
