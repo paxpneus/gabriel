@@ -41,37 +41,38 @@ export class LabelService {
    * Busca os dados para etiquetas utilizando Sequelize
    */
   async getLabelData(invoiceIds: string[]): Promise<LabelData[]> {
-    // No Sequelize TS, Invoice.findAll retorna instâncias do modelo
-    const invoices = await (Invoice as any).findAll({
-      where: {
-        id: { [Op.in]: invoiceIds },
-      },
-      include: ["transporter", "unitBusiness"],
-    });
+  const invoices = await (Invoice as any).findAll({
+    where: { id: { [Op.in]: invoiceIds } },
+    include: ["transporter", "unitBusiness"],
+  });
 
-    const result: LabelData[] = [];
+  const CONCURRENCY = 10;
+  const result: LabelData[] = [];
 
-    for (const invoice of invoices) {
-  try {
-    const parsed = await this.extractFromXml(invoice);
+  for (let i = 0; i < invoices.length; i += CONCURRENCY) {
+    const batch = invoices.slice(i, i + CONCURRENCY);
 
-    await invoice.update({
-      printed_label: true,
-    });
+    const batchResults = await Promise.allSettled(
+      batch.map(async (invoice: any) => {
+        try {
+          const parsed = await this.extractFromXml(invoice);
+          await invoice.update({ printed_label: true });
+          return parsed;
+        } catch (err) {
+          console.error(`Erro ao gerar etiqueta da invoice ${invoice.id}`, err);
+          await invoice.update({ label_error: true });
+          return null;
+        }
+      })
+    );
 
-    result.push(parsed);
-  } catch (err) {
-    console.error(`Erro ao gerar etiqueta da invoice ${invoice.id}`, err);
-
-    // opcional: marcar erro
-    await invoice.update({
-      label_error: true,
-    });
+    for (const r of batchResults) {
+      if (r.status === 'fulfilled' && r.value) result.push(r.value);
+    }
   }
+
+  return result;
 }
-
-    return result;
-  }
 
   private async extractFromXml(invoice: any): Promise<LabelData> {
   const xmlPath: string = invoice.xml_path ?? '';
@@ -84,7 +85,10 @@ export class LabelService {
   // É uma URL HTTP — faz fetch
   if (xmlPath.startsWith('http')) {
     try {
-      const res = await fetch(xmlPath);
+      const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+
+      const res = await fetch(xmlPath, {signal: controller.signal});
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
       return await this.parseNFeXml(invoice.id, text);
