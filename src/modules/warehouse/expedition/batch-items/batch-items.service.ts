@@ -48,6 +48,7 @@ export class ExpeditionBatchItemsService extends BaseService<
       invoice_id: invoiceId,
       product_id: productId,
     },
+    
     transaction,
   });
 }

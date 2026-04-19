@@ -15,6 +15,7 @@ import ExpeditionScanLog from "./scan-logs.model";
 import expeditionScanLogRepository, {
   ExpeditionScanLogRepository,
 } from "./scan-logs.repository";
+import InvoiceItems from "../../entrance/invoice-items/invoice-items.model";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
@@ -114,12 +115,12 @@ export class ExpeditionScanLogService extends BaseService<
       if (!productRead) throw Error("Produto não encontrado");
 
       const productReadLocked = (await ExpeditionBatchItems.findOne({
-        where: { id: productRead.id }, 
+        where: { id: productRead.id },
         transaction: t,
         lock: t.LOCK.UPDATE,
       })) as ExpeditionBaatchItemFull;
 
-      productReadLocked.product = productRead.product; 
+      productReadLocked.product = productRead.product;
 
       if (productReadLocked.quantity_scanned >= productReadLocked.quantity) {
         throw Error("Produto já totalmente bipado");
@@ -154,6 +155,29 @@ export class ExpeditionScanLogService extends BaseService<
         productRead.product_id,
         t,
       );
+
+      const invoiceId = invoiceRead?.batchInvoices?.[0]?.invoice?.id!;
+
+      const invoiceItem = await InvoiceItems.findOne({
+  where: { invoice_id: invoiceId },
+  attributes: ['quantity_expected', 'quantity_received'],
+  transaction: t,
+})
+
+const allDone = await InvoiceItems.count({
+  where: {
+    invoice_id: invoiceId,
+    quantity_received: { [Op.lt]: sequelize.col('quantity_expected') }
+  },
+  transaction: t,
+})
+
+if (allDone === 0) {
+  await Invoice.update(
+    { status: 'FINISHED' },
+    { where: { id: invoiceId }, transaction: t }
+  )
+}
     });
   }
 }

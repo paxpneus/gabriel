@@ -127,6 +127,7 @@ Invoice.init(
     tableName: "invoices",
     timestamps: true,
     underscored: true,
+    
   },
 );
 
