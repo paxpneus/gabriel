@@ -17,7 +17,7 @@ async function start(): Promise<void> {
     setupAssociations()
 
     
-    // registerQueues(app)
+    registerQueues(app)
 
     startBlingWorkers()
 

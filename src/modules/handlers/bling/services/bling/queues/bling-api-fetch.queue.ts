@@ -376,7 +376,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       integrations_id: integration.id,
       // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
       // transporter_id: idem
-    });
+    }, { conflictFields: ['id_system']});
 
     console.log(
       `[BLING_API_FETCH] Invoice upsertada: id_system=${nf.id}, key=${key}`,

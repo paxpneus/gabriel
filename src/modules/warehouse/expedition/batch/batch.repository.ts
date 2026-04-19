@@ -1,5 +1,5 @@
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
-import { Product } from "../../../inventory";
+import { Product, Stock } from "../../../inventory";
 import InvoiceItems from "../../entrance/invoice-items/invoice-items.model";
 import Invoice from "../../entrance/invoice/invoice.model";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
@@ -39,6 +39,13 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
           {
             model: ExpeditionBatchItems,
             as: "items",
+            include: [
+              {
+                model: Product,
+                as: 'product',
+                include: [{ model: Stock, as: 'stocks' }]
+              }
+            ]
           },
         ],
       });
