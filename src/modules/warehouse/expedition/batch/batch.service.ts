@@ -47,7 +47,9 @@ export class ExpeditionBatchService extends BaseService<
   async generateBatchFromInvoices(
     invoiceIds: string[],
   ): Promise<ExpeditionBatch> {
-    return await sequelize.transaction(async (t) => {
+      let batchId: string;
+
+    await sequelize.transaction(async (t) => {
       const invoices = await Invoice.findAll({
         where: { id: invoiceIds },
         include: [{ model: InvoiceItems, as: "items", required: true }],
@@ -172,8 +174,11 @@ export class ExpeditionBatchService extends BaseService<
 
       await batch.update({ total_volumes: totalVolumes }, { transaction: t });
 
-      return (await this.repository.getFullBatch(batch.id)) as ExpeditionBatch;
+      batchId = batch.id
+
     });
+      return (await this.repository.getFullBatch(batchId!)) as ExpeditionBatch;
+
   }
 
   async getBatchesByInvoiceIds(

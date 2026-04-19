@@ -1,3 +1,5 @@
+
+
 export interface ExpeditionBatchInvoiceAttributes {
   id: string;
   expedition_batch_id: string;
@@ -5,5 +7,7 @@ export interface ExpeditionBatchInvoiceAttributes {
   createdAt?: Date;
   updatedAt?: Date;
 }
+
+
 
 export interface ExpeditionBatchInvoiceCreationAttributes extends Omit<ExpeditionBatchInvoiceAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
