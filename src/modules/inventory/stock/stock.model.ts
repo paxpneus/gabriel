@@ -7,7 +7,7 @@ class Stock extends Model<StockAttributes, StockCreationAttributes> implements S
   public id?: string;
   public product_id!: string;
   public quantity!: number;
-
+  public unit_business_id!: string;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -30,6 +30,16 @@ Stock.init(
         key: 'id',
       },
     },
+    unit_business_id: {
+       type: DataTypes.UUID,
+      allowNull: false,
+      unique: true,
+      references: {
+        model: 'unit_businesses',
+        key: 'id',
+      },
+    },
+  
     quantity: {
       type: DataTypes.INTEGER,
       defaultValue: 0,

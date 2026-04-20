@@ -228,6 +228,18 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
     as: 'expeditionBatches',
   });
 
+  // Expedition Batch -> Transporter
+
+  ExpeditionBatch.belongsTo(Transporter, {
+    foreignKey: 'transporters_id',
+    as: 'transporter'
+  })
+
+  Transporter.hasMany(ExpeditionBatch, {
+    foreignKey: 'transporters_id',
+    as: 'expeditionBatches'
+  })
+
   // ===== EXPEDITION BATCH ITEMS =====
   
   // Batch Items -> Scan Logs
@@ -295,6 +307,10 @@ ExpeditionBatchInvoice.belongsTo(Invoice, {
     as: 'invoice',
   });
 
+  // Invoice -> Store
+Invoice.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
+Store.hasMany(Invoice, { foreignKey: 'store_id', as: 'invoices' });
+
   // ===== INVOICE ITEMS =====
   
   // Invoice Items -> Entrance Scan Logs
@@ -331,3 +347,9 @@ ExpeditionBatchInvoice.belongsTo(Invoice, {
     as: 'mappings',
   });
 }
+
+// ===== STOCKS =====
+
+// Stock -> UnitBusiness
+Stock.belongsTo(UnitBusiness, { foreignKey: 'unit_business_id', as: 'unitBusiness' });
+UnitBusiness.hasMany(Stock, { foreignKey: 'unit_business_id', as: 'stocks' });

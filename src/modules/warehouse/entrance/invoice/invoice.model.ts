@@ -13,6 +13,7 @@ class Invoice
   public xml_path?: string;
   public danfe_path?: string;
   public unit_business_id!: string;
+  public store_id!: string;
   public sender_cnpj!: string;
   public sender_name!: string;
   public receiver_cnpj!: string;
@@ -60,6 +61,15 @@ Invoice.init(
       references: {
         model: "unit_businesses",
         key: "id",
+      },
+    },
+    store_id: {
+       type: DataTypes.UUID,
+      allowNull: false,
+      unique: true,
+      references: {
+        model: 'stores',
+        key: 'id',
       },
     },
     sender_cnpj: {

@@ -6,7 +6,7 @@ import { Stock } from '../../../../../inventory/index';
 import { SupplierMapping } from '../../../../../inventory';
 import { Supplier } from '../../../../../inventory';
 import { alertService } from '../../../../../../shared/providers/mail-provider/nodemailer.alert';
-import { Invoice } from '../../../../../warehouse';
+import { Invoice, UnitBusiness } from '../../../../../warehouse';
 
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
@@ -84,32 +84,36 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     console.log(`[BLING_DIRECT_UPSERT] Produto upsertado: sku=${data.sku}`);
   }
 
-  private async upsertStock(
-    data: Extract<DirectUpsertPayload, { table: 'stocks' }>['data'],
-  ): Promise<void> {
-    // Resolve product_id UUID a partir do blingId usando id_system.
-    // Se o produto ainda não existir, o retry do BullMQ dará tempo para o job de produto ser processado.
-    const product = await Product.findOne({
-      where: { id_system: String(data.productBlingId) },
-    });
+ private async upsertStock(
+  data: Extract<DirectUpsertPayload, { table: 'stocks' }>['data'],
+): Promise<void> {
+  const product = await Product.findOne({
+    where: { id_system: String(data.productBlingId) },
+  });
 
-    if (!product) {
-      throw new Error(
-        `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado. Retry agendado.`,
-      );
-    }
-
-    await Stock.upsert({
-      product_id: product.id,
-      quantity: data.quantity,
-    }, {
-      conflictFields: ['product_id'],
-    });
-
-    console.log(
-      `[BLING_DIRECT_UPSERT] Estoque upsertado: productId=${product.id}, qty=${data.quantity}`,
+  if (!product) {
+    throw new Error(
+      `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado. Retry agendado.`,
     );
   }
+
+  // Todo estoque vindo da Bling pertence ao CD Minas Gerais
+  const unitBusiness = await UnitBusiness.findOne({
+    where: { cnpj: '02316749002111' },
+  });
+
+  if (!unitBusiness) {
+    throw new Error('[BLING_DIRECT_UPSERT] UnitBusiness CD Minas Gerais não encontrado.');
+  }
+
+  await Stock.upsert({
+    product_id: product.id,
+    quantity: data.quantity,
+    unit_business_id: unitBusiness.id,
+  }, {
+    conflictFields: ['product_id'],
+  });
+}
 
   private async upsertSupplierMapping(
     data: Extract<DirectUpsertPayload, { table: 'product_supplier_maps' }>['data'],
