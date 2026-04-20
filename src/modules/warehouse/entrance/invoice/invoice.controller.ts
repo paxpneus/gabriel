@@ -9,6 +9,8 @@ import archiver from 'archiver';
 import { decryptXml, isEncrypted } from '../../../../shared/utils/xml/xml-cipher';
 import { PassThrough } from 'stream'
 import { PDFDocument } from 'pdf-lib'
+import { Op } from 'sequelize';
+import { InvoiceAttributes } from './invoice.types';
 
 export class InvoiceController extends BaseController<Invoice, typeof InvoiceService> {
 
@@ -21,7 +23,12 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
 
     this.router.get('/labels/data', this.getLabelData)
     this.router.get('/danfe/data', this.getDanfeBatch)
+  this.router.post("/bulk/open", this.updateInvoicesOpen)
+
   }
+
+  protected registerCustomRoutes(): void {
+}
 
   protected middlewaresFor() {
       return {
@@ -122,6 +129,22 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
       }
     }
   }
+
+   updateInvoicesOpen = async (req: Request, res: Response): Promise<void> => {
+    console.log(req.body)
+  try { 
+    const  ids  = req.body
+    await Invoice.update({ status: 'PENDING' }, {
+      where: { 
+        id: { [Op.in]: ids },
+        status: 'OPEN'
+      }
+    })
+    res.json({ success: true })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+}
 }
 
 export default new InvoiceController();

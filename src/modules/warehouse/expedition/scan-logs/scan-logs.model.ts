@@ -10,6 +10,7 @@ class ExpeditionScanLog extends Model<ExpeditionScanLogAttributes, ExpeditionSca
   public vol_number!: string;
   public user_id!: string;
   public expedition_batch_invoices_id!: string;
+  public expedition_batch_id!: string
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -22,6 +23,14 @@ ExpeditionScanLog.init(
       defaultValue: uuidv4,
       primaryKey: true,
       allowNull: false,
+    },
+    expedition_batch_id: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: 'expedition_batches',
+        key: 'id',
+      },
     },
     expedition_batch_items_id: {
       type: DataTypes.UUID,
@@ -42,6 +51,7 @@ ExpeditionScanLog.init(
     label_full_code: {
       type: DataTypes.STRING(255),
       allowNull: false,
+      unique: true
     },
     vol_number: {
       type: DataTypes.STRING(6),

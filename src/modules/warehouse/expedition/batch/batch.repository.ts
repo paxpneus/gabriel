@@ -1,7 +1,8 @@
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
-import { Product } from "../../../inventory";
+import { Product, Stock } from "../../../inventory";
 import InvoiceItems from "../../entrance/invoice-items/invoice-items.model";
 import Invoice from "../../entrance/invoice/invoice.model";
+import UnitBusiness from "../../unit-business/unit-business.model";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import ExpeditionBatch from "./batch.model";
@@ -21,6 +22,10 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
       data = await this.findById(batchId, {
         include: [
           {
+            model: UnitBusiness,
+            as: 'unitBusiness',
+          },
+          {
             model: ExpeditionBatchInvoice,
             as: "batchInvoices",
             include: [
@@ -39,6 +44,13 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
           {
             model: ExpeditionBatchItems,
             as: "items",
+            include: [
+              {
+                model: Product,
+                as: 'product',
+                include: [{ model: Stock, as: 'stocks' }]
+              }
+            ]
           },
         ],
       });
@@ -46,6 +58,10 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
       data = await this.findOne({
         where: { number: number },
         include: [
+            {
+            model: UnitBusiness,
+            as: 'unitBusiness',
+          },
           {
             model: ExpeditionBatchInvoice,
             as: "batchInvoices",
