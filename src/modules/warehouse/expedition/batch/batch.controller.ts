@@ -32,7 +32,7 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoiceIds } = req.body;
+      const { invoiceIds, unitBusinessId } = req.body;
       if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
         return res
           .status(400)
@@ -40,7 +40,7 @@ export class ExpeditionBatchController extends BaseController<
       }
 
       const batches =
-        await ExpeditionBatchService.generateBatchFromInvoices(invoiceIds);
+        await ExpeditionBatchService.generateBatchFromInvoices(invoiceIds, unitBusinessId);
       return res.status(201).json(batches);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
