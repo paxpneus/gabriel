@@ -12,6 +12,7 @@ export interface ExpeditionBatchAttributes {
   createdAt?: Date;
   updatedAt?: Date;
   batchInvoices?: any;
+  total_volumes_received?: number
 
 }
 

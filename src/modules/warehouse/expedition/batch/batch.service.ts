@@ -111,6 +111,7 @@ export class ExpeditionBatchService extends BaseService<
           status: "OPEN",
           unit_business_id: unitBusinessId,
           total_volumes: 0,
+          total_volumes_received: 0,
           integrations_id: invoices[0].integrations_id,
         },
         { transaction: t },

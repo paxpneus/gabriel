@@ -36,7 +36,7 @@ export class ExpeditionBatchItemsService extends BaseService<
 
   if (!expeditionItem) throw Error("Item do lote não encontrado!");
 
-  await ExpeditionBatch.increment("total_volumes", {
+  await ExpeditionBatch.increment("total_volumes_received", {
     by: 1,
     where: { id: expeditionItem.expedition_batch_id },
     transaction,

@@ -14,6 +14,7 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public id_system?: string;
   public unit_business_id!: string;
   public total_volumes!: number;
+  public total_volumes_received!: number
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -57,6 +58,10 @@ ExpeditionBatch.init(
       type: DataTypes.INTEGER,
       defaultValue: 0,
     },
+    total_volumes_received: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+    }
   },
   {
     sequelize,
