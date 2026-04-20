@@ -45,7 +45,7 @@ export class ExpeditionBatchService extends BaseService<
   }
 
   async generateBatchFromInvoices(
-    invoiceIds: string[], unitBusinessId: string,
+    invoiceIds: string[], unitBusinessId: string, type: string
   ): Promise<ExpeditionBatch> {
       let batchId: string;
 
@@ -113,6 +113,8 @@ export class ExpeditionBatchService extends BaseService<
           total_volumes: 0,
           total_volumes_received: 0,
           integrations_id: invoices[0].integrations_id,
+          type: type,
+          transporters_id: invoices[0].transporter_id ?? ''
         },
         { transaction: t },
       );

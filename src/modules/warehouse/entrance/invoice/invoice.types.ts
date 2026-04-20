@@ -5,6 +5,7 @@ export interface InvoiceAttributes {
   xml_path?: string;
   danfe_path?: string;
   unit_business_id: string;
+  store_id: string
   sender_cnpj: string;
   sender_name: string;
   receiver_cnpj: string;

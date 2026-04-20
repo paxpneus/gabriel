@@ -103,7 +103,8 @@ function mapStock(
         data: {
           productBlingId: data.produto.id,
           quantity: data.saldoFisicoTotal ?? 0,
-        },
+          unit_business_id: "RESOLVE_NO_WORKER",
+        }
       },
     };
   }
@@ -116,7 +117,7 @@ function mapStock(
         productBlingId: data.produto.id,
         // saldo físico total do depósito; unit_business_id será resolvido
         // pelo worker via depósito → empresa → unit_business
-        quantity: data.deposito?.saldoFisico ?? data.saldoFisicoTotal ?? 0,
+        quantity: data.deposito?.saldoFisico ?? data.saldoFisicoTotal ?? 0,unit_business_id: "RESOLVE_NO_WORKER",
       },
     },
   };

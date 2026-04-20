@@ -2,6 +2,7 @@ export interface StockAttributes {
   id?: string;
   product_id: string;
   quantity: number;
+  unit_business_id: string;
   createdAt?: Date;
   updatedAt?: Date;
 }

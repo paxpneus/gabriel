@@ -15,6 +15,8 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public unit_business_id!: string;
   public total_volumes!: number;
   public total_volumes_received!: number
+  public type!: string
+  public transporters_id!: string 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -46,6 +48,14 @@ ExpeditionBatch.init(
     id_system: {
       type: DataTypes.STRING(100),
     },
+    transporters_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: 'transporters',
+        key: 'id'
+      }
+    },
     unit_business_id: {
       type: DataTypes.UUID,
       allowNull: false,
@@ -61,6 +71,11 @@ ExpeditionBatch.init(
     total_volumes_received: {
       type: DataTypes.INTEGER,
       defaultValue: 0,
+    },
+    type: {
+      type: DataTypes.ENUM("INCOMING", "OUTGOING"),
+      allowNull: false,
+      defaultValue: 'OUTGOING'
     }
   },
   {

@@ -158,6 +158,7 @@ export interface MappedStock {
   productBlingId: number;
   /** saldoFisicoTotal do deposito */
   quantity: number;
+  unit_business_id: string;
 }
 
 export interface MappedInvoice {
@@ -174,6 +175,7 @@ export interface MappedInvoice {
   sender_name?: string;
   receiver_cnpj?: string;
   receiver_name?: string;
+  store_id?: string;
 }
 
 export interface MappedSupplierMapping {

@@ -10,6 +10,7 @@ import { Invoice, InvoiceItems, UnitBusiness } from "../../../../../warehouse";
 import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
+import Store from "../../../../../sales/stores/stores.model";
 
 export function extractPartiesFromXml(xml: string) {
   const parsed = parser.parse(xml);
@@ -347,8 +348,18 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const key = nf.chaveAcesso ?? `PENDING-KEY-${nf.id}`;
 
     const unit_business = await UnitBusiness.findOne({
-      where: { id_system: String(nf?.loja?.id) },
+      where: { cnpj: '02316749002111' },
     });
+
+    let store_id = await Store.findOne({
+      where: {id_store_system: String(nf?.loja?.id)}
+    })
+  
+    if (!store_id) {
+      store_id = await Store.findOne({
+        where: {name: 'Outros'}
+      })
+    }
 
     if (!unit_business) {
       console.log("[ERRO NO MAPEAMENTO DE NFE] - Loja não encontrada");
@@ -374,6 +385,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       emitted_at: new Date(nf.dataEmissao!),
       number_system: String(nf.numero),
       integrations_id: integration.id,
+      store_id: store_id!.id
       // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
       // transporter_id: idem
     }, { conflictFields: ['id_system']});
