@@ -159,25 +159,45 @@ export class ExpeditionScanLogService extends BaseService<
       const invoiceId = invoiceRead?.batchInvoices?.[0]?.invoice?.id!;
 
       const invoiceItem = await InvoiceItems.findOne({
-  where: { invoice_id: invoiceId },
-  attributes: ['quantity_expected', 'quantity_received'],
-  transaction: t,
-})
+        where: { invoice_id: invoiceId },
+        attributes: ["quantity_expected", "quantity_received"],
+        transaction: t,
+      });
 
-const allDone = await InvoiceItems.count({
-  where: {
-    invoice_id: invoiceId,
-    quantity_received: { [Op.lt]: sequelize.col('quantity_expected') }
-  },
-  transaction: t,
-})
+      const allDone = await InvoiceItems.count({
+        where: {
+          invoice_id: invoiceId,
+          quantity_received: { [Op.lt]: sequelize.col("quantity_expected") },
+        },
+        transaction: t,
+      });
 
-if (allDone === 0) {
-  await Invoice.update(
-    { status: 'FINISHED' },
-    { where: { id: invoiceId }, transaction: t }
-  )
-}
+      if (allDone === 0) {
+        await Invoice.update(
+          { status: "FINISHED" },
+          { where: { id: invoiceId }, transaction: t },
+        );
+      }
+
+      const pendingInvoices = await Invoice.count({
+        include: [
+          {
+            model: ExpeditionBatchInvoice,
+            as: "batchInvoice",
+            where: { expedition_batch_id: batchid },
+            required: true,
+          },
+        ],
+        where: { status: { [Op.ne]: "FINISHED" } },
+        transaction: t,
+      });
+
+      if (pendingInvoices === 0) {
+        await ExpeditionBatch.update(
+          { status: "FINISHED" },
+          { where: { id: batchid }, transaction: t },
+        );
+      }
     });
   }
 }
