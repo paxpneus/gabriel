@@ -58,6 +58,15 @@ InvoiceItems.init(
     tableName: 'invoice_items',
     timestamps: true,
     underscored: true,
+    hooks: {
+
+      beforeUpdate: (instance: any) => {
+        if (instance.quantity_received == instance.quantity_expected) {
+          instance.status = 'FINISHED'
+        }
+      },
+    
+    }
   }
 );
 

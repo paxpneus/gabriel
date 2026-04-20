@@ -87,6 +87,7 @@ Invoice.init(
     },
     id_system: {
       type: DataTypes.STRING(100),
+      unique: true,
     },
     transporter_id: {
       type: DataTypes.UUID,
@@ -126,6 +127,7 @@ Invoice.init(
     tableName: "invoices",
     timestamps: true,
     underscored: true,
+    
   },
 );
 
