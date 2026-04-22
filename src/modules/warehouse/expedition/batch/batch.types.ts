@@ -12,7 +12,7 @@ export interface ExpeditionBatchAttributes {
   type?: string;
   batchInvoices?: any;
   total_volumes_received?: number;
-  transporters_id: string;
+  transporters_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }

@@ -76,7 +76,7 @@ async function main() {
     // Sede não tem id_system na Bling — upsert pelo cnpj
     if (!loja.id_system) {
       const [, wasCreated] = await UnitBusiness.upsert(
-        { ...payload, id_system: '' },
+        { ...payload, id_system: null },
         { conflictFields: ['cnpj'] as any },
       );
       wasCreated ? created++ : updated++;

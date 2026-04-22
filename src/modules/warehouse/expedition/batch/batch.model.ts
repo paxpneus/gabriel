@@ -16,7 +16,7 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public total_volumes!: number;
   public total_volumes_received!: number
   public type!: string
-  public transporters_id!: string 
+  public transporters_id!: string | null; 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }

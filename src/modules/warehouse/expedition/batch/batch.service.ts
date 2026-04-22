@@ -114,7 +114,7 @@ export class ExpeditionBatchService extends BaseService<
           total_volumes_received: 0,
           integrations_id: invoices[0].integrations_id,
           type: type,
-          transporters_id: invoices[0].transporter_id ?? ''
+          transporters_id: invoices[0].transporter_id || null
         },
         { transaction: t },
       );
