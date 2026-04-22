@@ -76,7 +76,7 @@ interface BlingApiInvoice {
   contato?: {
     id: number;
     nome?: string;
-    numeroDocumento?: string;
+    numeroDocumento?: number;
   };
   loja?: { id: number };
   naturezaOperacao?: { id: number };
@@ -375,7 +375,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const transporter = await Transporter.findOne({
       where: {
-        cnpj: nf.transporte.transportador.numeroDocumento
+        cnpj: cleanDocument(String(nf.transporte.transportador.numeroDocumento))
       }
     })
 
