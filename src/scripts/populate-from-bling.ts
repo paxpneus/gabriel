@@ -417,6 +417,7 @@ async function migrateStocks() {
             data: {
               productBlingId: blingId,
               quantity:       stock.saldoFisicoTotal ?? 0,
+              unit_business_id: 'RESOLVE_NO_WORKER',
             },
           },
         },
