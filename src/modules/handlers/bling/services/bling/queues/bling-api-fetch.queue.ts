@@ -397,7 +397,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       number_system: String(nf.numero),
       integrations_id: integration.id,
       store_id: store_id!.id ?? null,
-      transporter_id: ''
+      transporter_id: transporter?.id ?? ''
       // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
       // transporter_id: idem
     }, { conflictFields: ['id_system']});
