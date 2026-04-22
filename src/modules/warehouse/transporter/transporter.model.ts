@@ -2,6 +2,7 @@ import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../../config/sequelize';
 import { TransporterAttributes, TransporterCreationAttributes } from './transporter.types';
 import { v4 as uuidv4 } from 'uuid';
+import { normalizeDocument } from '../../../shared/utils/normalizers/document';
 
 class Transporter extends Model<TransporterAttributes, TransporterCreationAttributes> implements TransporterAttributes {
   public id!: string;
@@ -31,7 +32,7 @@ Transporter.init(
       allowNull: false,
     },
     cnpj: {
-      type: DataTypes.STRING(14),
+      type: DataTypes.STRING(18),
       allowNull: false,
       unique: true,
     },
@@ -51,5 +52,8 @@ Transporter.init(
     underscored: true,
   }
 );
+
+Transporter.beforeCreate((transporter) => normalizeDocument(transporter))
+Transporter.beforeUpdate((transporter) => normalizeDocument(transporter))
 
 export default Transporter;

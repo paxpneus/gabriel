@@ -11,6 +11,7 @@ import Transporter from "../../transporter/transporter.model";
 import ExpeditionBatch from "../../expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
 import { InvoiceAttributes } from "./invoice.types";
+import Store from "../../../sales/stores/stores.model";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -67,6 +68,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         {
           model: UnitBusiness,
           as: "unitBusiness",
+        },
+        {
+          model: Store,
+          as: "store",
         },
         {
           model: Transporter,

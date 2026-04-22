@@ -392,7 +392,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       receiver_name: receiverName,
       unit_business_id: unit_business.id,
       danfe_path: '',
-      xml_path: encryptXml(xmlContent!),
+      xml_path: xmlContent ? encryptXml(xmlContent!) : null,
       emitted_at: new Date(nf.dataEmissao!),
       number_system: String(nf.numero),
       integrations_id: integration.id,

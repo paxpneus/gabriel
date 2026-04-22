@@ -3,6 +3,7 @@ import sequelize from '../../../../config/sequelize';
 import { UserAttributes, UserCreationAttributes } from './user.types';
 import bcrypt from 'bcrypt'
 import { v4 as uuidv4 } from 'uuid';
+import { normalizeDocument } from '../../../../shared/utils/normalizers/document';
 
 class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
   public id!: string;
@@ -30,7 +31,7 @@ User.init(
       allowNull: false,
     },
     cpf: {
-      type: DataTypes.STRING(11),
+      type: DataTypes.STRING(14),
       allowNull: false,
       unique: true,
     },
@@ -81,5 +82,8 @@ User.init(
     },
   }
 );
+
+User.beforeCreate((user) => normalizeDocument(user))
+User.beforeUpdate((user) => normalizeDocument(user))
 
 export default User;

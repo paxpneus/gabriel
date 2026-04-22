@@ -5,6 +5,7 @@ import {
   UnitBusinessCreationAttributes,
 } from "./unit-business.types";
 import { v4 as uuidv4 } from "uuid";
+import { normalizeDocument } from "../../../shared/utils/normalizers/document";
 
 class UnitBusiness
   extends Model<UnitBusinessAttributes, UnitBusinessCreationAttributes>
@@ -47,7 +48,7 @@ UnitBusiness.init(
       allowNull: false,
     },
     cnpj: {
-      type: DataTypes.STRING(14),
+      type: DataTypes.STRING(18),
       allowNull: true,
       unique: true,
     },
@@ -79,5 +80,8 @@ UnitBusiness.init(
     underscored: true,
   },
 );
+
+UnitBusiness.beforeCreate((unitBusiness) => normalizeDocument(unitBusiness))
+UnitBusiness.beforeUpdate((unitBusiness) => normalizeDocument(unitBusiness))
 
 export default UnitBusiness;
