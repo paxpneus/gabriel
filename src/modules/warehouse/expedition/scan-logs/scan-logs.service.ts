@@ -60,7 +60,7 @@ export class ExpeditionScanLogService extends BaseService<
       }
 
       const nffromlabel = labelcode.substring(14, 22);
-      const eanfromlabel = labelcode.substring(22, 35);
+      const eanfromlabel = labelcode.substring(23, 35);
       const labelRead = labelcode;
       const volRead = labelcode.substring(35, 41);
 

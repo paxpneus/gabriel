@@ -67,6 +67,10 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
             model: UnitBusiness,
             as: 'unitBusiness',
           },
+           {
+            model: Transporter,
+            as: 'transporter',
+          },
           {
             model: ExpeditionBatchInvoice,
             as: "batchInvoices",
