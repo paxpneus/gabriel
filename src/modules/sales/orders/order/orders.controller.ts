@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import BaseController from "../../../../shared/utils/base-models/base-controller";
 import orderService, { OrderService } from "./orders.service";
 import Order from "./orders.model";
+import { authenticate } from "../../../../middlewares/auth-token";
 
 class OrderController extends BaseController<Order, OrderService> {
   constructor() {
@@ -12,6 +13,19 @@ class OrderController extends BaseController<Order, OrderService> {
       this.releaseWaitingAcceptanceForToday,
     );
   }
+
+    protected middlewaresFor() {
+        return {
+          index: [authenticate],
+          create: [authenticate],
+          update: [
+            authenticate
+          ],
+          show: [authenticate],
+          destroy: [authenticate],
+        };
+      }
+  
 
   releaseWaitingAcceptanceForToday = async (
     req: Request,

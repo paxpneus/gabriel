@@ -1,3 +1,4 @@
+import { authenticate } from "../../../middlewares/auth-token";
 import BaseController from "../../../shared/utils/base-models/base-controller";
 import Integration from "./integrations.model";
 import integrationService, { IntegrationService } from "./integrations.service";
@@ -13,6 +14,19 @@ class IntegrationController extends BaseController<
         `/mark-lock-orders`, this.markLockOrdersToday
     )
   }
+
+    protected middlewaresFor() {
+        return {
+          index: [authenticate],
+          create: [authenticate],
+          update: [
+            authenticate
+          ],
+          show: [authenticate],
+          destroy: [authenticate],
+          
+        };
+      }
 
   markLockOrdersToday = async (
     req: Request,
