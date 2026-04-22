@@ -6,7 +6,7 @@ import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
 import { Product, Supplier } from "../../../../../inventory";
 import { SupplierMapping } from "../../../../../inventory";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
-import { Invoice, InvoiceItems, UnitBusiness } from "../../../../../warehouse";
+import { Invoice, InvoiceItems, UnitBusiness, Transporter } from "../../../../../warehouse";
 import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
@@ -80,7 +80,12 @@ interface BlingApiInvoice {
   };
   loja?: { id: number };
   naturezaOperacao?: { id: number };
-  transportador?: { id: number };
+  transporte: {
+    transportador: {
+      numeroDocumento: string;
+      nome: string;
+    }
+  }
   itens?: BlingApiInvoiceItem[];
   // Emitente / destinatário para CNPJ sender/receiver
   emitente?: { cnpj?: string; nome?: string };
@@ -368,6 +373,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const integration = await getBlingIntegration('Bling')
 
+    const transporter = await Transporter.findOne({
+      where: {
+        cnpj: nf.transporte.transportador.numeroDocumento
+      }
+    })
+
     const [invoice] = await Invoice.upsert({
       id_system: String(nf.id),
       customer_name: customerName,
@@ -385,7 +396,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       emitted_at: new Date(nf.dataEmissao!),
       number_system: String(nf.numero),
       integrations_id: integration.id,
-      store_id: store_id!.id ?? null
+      store_id: store_id!.id ?? null,
+      transporter_id: ''
       // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
       // transporter_id: idem
     }, { conflictFields: ['id_system']});
