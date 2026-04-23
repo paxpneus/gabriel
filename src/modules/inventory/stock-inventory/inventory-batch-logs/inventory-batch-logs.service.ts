@@ -19,112 +19,118 @@ export class InventoryBatchLogsService extends BaseService<
   }
 
   async scanProduct(
-    unitBusinessId: string,
-    productcode: string,
-    inventoryBatchId: string,
-    userId: string,
-  ) {
-    return await sequelize.transaction(async (t) => {
-      if (!unitBusinessId) {
-        throw new Error(`Loja do usuário não encontrada`);
-      }
+  unitBusinessId: string,
+  productcode: string,
+  inventoryBatchId: string,
+  userId: string,
+) {
+  return await sequelize.transaction(async (t) => {
+    if (!unitBusinessId) {
+      throw new Error(`Loja do usuário não encontrada`);
+    }
 
-      if (!productcode) {
-        throw new Error(`Código do produto não informado`);
-      }
+    if (!productcode) {
+      throw new Error(`Código do produto não informado`);
+    }
 
-      if (!inventoryBatchId) {
-        throw new Error(`Lote de Inventário não informado [ERRO DO SISTEMA]`);
-      }
+    if (!inventoryBatchId) {
+      throw new Error(`Lote de Inventário não informado [ERRO DO SISTEMA]`);
+    }
 
-      const inventoryBatch = await InventoryBatch.findByPk(inventoryBatchId, {
-        transaction: t,
-      });
+    const inventoryBatch = await InventoryBatch.findByPk(inventoryBatchId, {
+      transaction: t,
+    });
 
-      if (!inventoryBatch) {
-        throw new Error(`Lote de Inventário não encontrado`);
-      }
+    if (!inventoryBatch) {
+      throw new Error(`Lote de Inventário não encontrado`);
+    }
 
-      const productFound = (await Product.findOne({
-        where: {
-          ean: productcode,
-        },
-        include: [
-          {
-            model: Stock,
-            as: "stock",
-            where: {
-              unit_business_id: unitBusinessId,
-            },
+    const productFound = (await Product.findOne({
+      where: {
+        ean: productcode,
+      },
+      include: [
+        {
+          model: Stock,
+          as: "stock",
+          where: {
+            unit_business_id: unitBusinessId,
           },
-        ],
-      })) as ProductWithStock;
-
-      if (!productFound) {
-        throw new Error(
-          `Produto não encontrado no estoque da loja ou produto sem estoque`,
-        );
-      }
-
-      let inventoryBatchItem = await InventoryBatchItems.findOne({
-        where: {
-          ean: productcode,
-          inventory_batch_id: inventoryBatchId,
-          stock_id: productFound.stock.id,
         },
-      });
+      ],
+      transaction: t,
+    })) as ProductWithStock;
 
-      if (!inventoryBatchItem) {
-        inventoryBatchItem = await InventoryBatchItems.create({
+    if (!productFound || !productFound.stock) {
+      throw new Error(
+        `Produto não encontrado no estoque da loja ou produto sem estoque`,
+      );
+    }
+
+    let inventoryBatchItem = await InventoryBatchItems.findOne({
+      where: {
+        ean: productcode,
+        inventory_batch_id: inventoryBatchId,
+        stock_id: productFound.stock.id,
+      },
+      transaction: t,
+    });
+
+    if (!inventoryBatchItem) {
+      inventoryBatchItem = await InventoryBatchItems.create(
+        {
           product_id: productFound.id,
           inventory_batch_id: inventoryBatchId,
           ean: productFound.ean,
           sku: productFound.sku,
           quantity_stock: productFound.stock.quantity,
-          quantity_read: 1,
-          divergency: productFound.stock.quantity - 1,
+          quantity_read: 0,
+          divergency: productFound.stock.quantity,
           stock_id: productFound.stock.id!,
           status: "PENDING",
-        });
+        },
+        { transaction: t },
+      );
 
-        await InventoryBatch.increment("total_quantity_stock", {
-          by: productFound.stock.quantity,
-          where: { id: inventoryBatchId },
-          transaction: t,
-        });
-      }
+      await InventoryBatch.increment("total_quantity_stock", {
+        by: productFound.stock.quantity,
+        where: { id: inventoryBatchId },
+        transaction: t,
+      });
+    }
 
-      const productRead = await InventoryBatchLogs.create({
+    await InventoryBatchLogs.create(
+      {
         user_id: userId,
         quantity_read: 1,
         label_code: productcode,
         inventory_batch_item_id: inventoryBatchItem.id,
         date: new Date(),
-      });
+      },
+      { transaction: t },
+    );
 
-      if (inventoryBatchItem) {
-        await InventoryBatchItems.increment("quantity_read", {
-          by: 1,
-          where: { id: inventoryBatchItem.id },
-          transaction: t,
-        });
-
-        await InventoryBatchItems.increment("divergency", {
-          by: -1,
-          where: { id: inventoryBatchItem.id },
-          transaction: t,
-        });
-      }
-
-      await InventoryBatch.increment("total_quantity_read", {
-        by: 1,
-        where: { id: inventoryBatchId },
-        transaction: t,
-      });
-
-      return true;
+    await InventoryBatchItems.increment("quantity_read", {
+      by: 1,
+      where: { id: inventoryBatchItem.id },
+      transaction: t,
     });
-  }
+
+    await InventoryBatchItems.increment("divergency", {
+      by: -1,
+      where: { id: inventoryBatchItem.id },
+      transaction: t,
+    });
+
+    await InventoryBatch.increment("total_quantity_read", {
+      by: 1,
+      where: { id: inventoryBatchId },
+      transaction: t,
+    });
+
+    return true;
+  });
+}
 }
 
 export default new InventoryBatchLogsService();
