@@ -5,6 +5,8 @@ import * as path from "path";
 import { Op } from "sequelize";
 import Invoice from "./invoice.model";
 import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
+import Transporter from "../../transporter/transporter.model";
+import {  InvoiceWithTransporter } from "./invoice.types";
 
 // Importe seus modelos e a instância do sequelize se necessário
 // import { Invoice } from '../../database/models/Invoice';
@@ -100,6 +102,14 @@ export class LabelService {
       ignoreAttrs: false,
     });
 
+    const invoiceFallBack = await Invoice.findByPk(invoiceId, {
+      include: [
+        {
+          model: Transporter,
+          as: 'transporter'
+        }
+      ]
+    }) as InvoiceWithTransporter | null;
     // Suporta nfeProc/NFe/infNFe ou direto
     const nfe = parsed.nfeProc?.NFe ?? parsed["nfeProc:NFe"]?.NFe ?? parsed.NFe;
 
@@ -163,7 +173,7 @@ export class LabelService {
     // ── Transporte ───────────────────────────────────────────────────────────
     const transp = infNFe.transp ?? {};
     const transportador = String(
-      transp.transporta?.xNome ?? transp.transporta?.CNPJ ?? "",
+      transp.transporta?.xNome ?? invoiceFallBack?.transporter?.name ?? "",
     );
 
     const volumeTotal = Math.max(1, Math.round(somaQtd));

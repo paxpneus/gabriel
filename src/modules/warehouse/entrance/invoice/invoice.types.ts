@@ -1,3 +1,6 @@
+import Transporter from "../../transporter/transporter.model";
+import Invoice from "./invoice.model";
+
 export interface InvoiceAttributes {
   id: string;
   customer_name: string;
@@ -24,3 +27,7 @@ export interface InvoiceAttributes {
 }
 
 export interface InvoiceCreationAttributes extends Omit<InvoiceAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+
+export type InvoiceWithTransporter = Invoice & {
+  transporter: Transporter;
+};
