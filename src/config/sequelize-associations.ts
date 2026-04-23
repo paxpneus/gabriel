@@ -28,6 +28,9 @@ import OrderHistory from '../modules/sales/orders/order_history/order_history.mo
 import Store from '../modules/sales/stores/stores.model';
 import OrderItems from '../modules/sales/orders/order_items/order_items.model';
 import Step from '../modules/sales/steps/steps.model';
+import InventoryBatch from '../modules/inventory/stock-inventory/inventory-batch/inventory-batch.model';
+import InventoryBatchItems from '../modules/inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model';
+import InventoryBatchLogs from '../modules/inventory/stock-inventory/inventory-batch-logs/inventory-batch-logs.model';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -353,3 +356,32 @@ Store.hasMany(Invoice, { foreignKey: 'store_id', as: 'invoices' });
 // Stock -> UnitBusiness
 Stock.belongsTo(UnitBusiness, { foreignKey: 'unit_business_id', as: 'unitBusiness' });
 UnitBusiness.hasMany(Stock, { foreignKey: 'unit_business_id', as: 'stocks' });
+
+
+// ===== STOCK INVENTORY =====
+
+  // UnitBusiness -> InventoryBatch
+  UnitBusiness.hasMany(InventoryBatch, { foreignKey: 'unit_business_id', as: 'inventoryBatches' });
+  InventoryBatch.belongsTo(UnitBusiness, { foreignKey: 'unit_business_id', as: 'unitBusiness' });
+
+  // InventoryBatch -> InventoryBatchItems
+  InventoryBatch.hasMany(InventoryBatchItems, { foreignKey: 'inventory_batch_id', as: 'items' });
+  InventoryBatchItems.belongsTo(InventoryBatch, { foreignKey: 'inventory_batch_id', as: 'batch' });
+
+  // InventoryBatchItems -> InventoryBatchLogs
+  InventoryBatchItems.hasMany(InventoryBatchLogs, { foreignKey: 'inventory_batch_item_id', as: 'logs' });
+  InventoryBatchLogs.belongsTo(InventoryBatchItems, { foreignKey: 'inventory_batch_item_id', as: 'item' });
+
+  // Relacionamentos com Entidades Externas:
+  
+  // Items -> Product
+  Product.hasMany(InventoryBatchItems, { foreignKey: 'product_id', as: 'inventoryItems' });
+  InventoryBatchItems.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
+  // Items -> Stock
+  Stock.hasMany(InventoryBatchItems, { foreignKey: 'stock_id', as: 'inventoryItems' });
+  InventoryBatchItems.belongsTo(Stock, { foreignKey: 'stock_id', as: 'stock' });
+
+  // Logs -> User (Quem realizou a leitura)
+  User.hasMany(InventoryBatchLogs, { foreignKey: 'user_id', as: 'inventoryLogs' });
+  InventoryBatchLogs.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
