@@ -8,7 +8,7 @@ export interface QueryParams {
   sortBy?:    string
   sortDir?:   string
   search?:    string
-  filters?:   Record<string, string | string[] | undefined>
+  filters?:   Record<string, string | string[] | undefined >
   dateFrom?:  string
   dateTo?:    string
   dateField?: string

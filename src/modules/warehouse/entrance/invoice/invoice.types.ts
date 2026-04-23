@@ -12,7 +12,7 @@ export interface InvoiceAttributes {
   receiver_name: string;
   integrations_id?: string;
   id_system?: string;
-  transporter_id?: string;
+  transporter_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   type: string;
