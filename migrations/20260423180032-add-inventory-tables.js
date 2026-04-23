@@ -23,11 +23,13 @@ module.exports = {
           },
           total_quantity_stock: {
             type: Sequelize.DECIMAL(10, 2),
-            allowNull: false,
+            defaultValue: 0,
+            allowNull: true,
           },
           total_quantity_read: {
             type: Sequelize.DECIMAL(10, 2),
-            allowNull: false,
+            defaultValue: 0,
+            allowNull: true,
           },
           number: {
             type: Sequelize.STRING,
