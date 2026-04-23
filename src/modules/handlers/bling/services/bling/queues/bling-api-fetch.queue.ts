@@ -6,7 +6,12 @@ import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
 import { Product, Supplier } from "../../../../../inventory";
 import { SupplierMapping } from "../../../../../inventory";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
-import { Invoice, InvoiceItems, UnitBusiness, Transporter } from "../../../../../warehouse";
+import {
+  Invoice,
+  InvoiceItems,
+  UnitBusiness,
+  Transporter,
+} from "../../../../../warehouse";
 import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
@@ -84,8 +89,8 @@ interface BlingApiInvoice {
     transportador: {
       numeroDocumento: string;
       nome: string;
-    }
-  }
+    };
+  };
   itens?: BlingApiInvoiceItem[];
   // Emitente / destinatário para CNPJ sender/receiver
   emitente?: { cnpj?: string; nome?: string };
@@ -334,13 +339,15 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     if (nf.xml) {
       try {
-        xmlContent = await fetch(nf.xml).then((r) => r.text());
-    const extracted = extractPartiesFromXml(xmlContent!);
-
-        senderCnpj = cleanDocument(extracted.senderCnpj || senderCnpj);
-        senderName = extracted.senderName || senderName;
-        receiverCnpj = cleanDocument(extracted.receiverCnpj || receiverCnpj);
-        receiverName = extracted.receiverName || receiverName;
+        const text = await fetch(nf.xml).then((r) => r.text());
+        if (text && text.trim().length > 0) {
+          xmlContent = text; // só atribui se vier conteúdo real
+          const extracted = extractPartiesFromXml(xmlContent);
+          senderCnpj = cleanDocument(extracted.senderCnpj || senderCnpj);
+          senderName = extracted.senderName || senderName;
+          receiverCnpj = cleanDocument(extracted.receiverCnpj || receiverCnpj);
+          receiverName = extracted.receiverName || receiverName;
+        }
       } catch (err) {
         console.warn("[XML PARSE ERROR]", err);
       }
@@ -353,17 +360,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const key = nf.chaveAcesso ?? `PENDING-KEY-${nf.id}`;
 
     const unit_business = await UnitBusiness.findOne({
-      where: { cnpj: '02316749002111' },
+      where: { cnpj: "02316749002111" },
     });
 
     let store_id = await Store.findOne({
-      where: {id_store_system: String(nf?.loja?.id)}
-    })
-  
+      where: { id_store_system: String(nf?.loja?.id) },
+    });
+
     if (!store_id) {
       store_id = await Store.findOne({
-        where: {name: 'Outros'}
-      })
+        where: { name: "Outros" },
+      });
     }
 
     if (!unit_business) {
@@ -371,36 +378,41 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       throw new Error("[ERRO NO MAPEAMENTO DE NFE] - Loja não encontrada");
     }
 
-    const integration = await getBlingIntegration('Bling')
+    const integration = await getBlingIntegration("Bling");
 
     const transporter = await Transporter.findOne({
       where: {
-        cnpj: cleanDocument(String(nf.transporte.transportador.numeroDocumento))
-      }
-    })
+        cnpj: cleanDocument(
+          String(nf.transporte.transportador.numeroDocumento),
+        ),
+      },
+    });
 
-    const [invoice] = await Invoice.upsert({
-      id_system: String(nf.id),
-      customer_name: customerName,
-      customer_document: customerDoc,
-      // type: invoiceType,
-      type: 'OUTGOING',
-      status: invoiceStatus,
-      sender_cnpj: senderCnpj,
-      sender_name: senderName,
-      receiver_cnpj: receiverCnpj,
-      receiver_name: receiverName,
-      unit_business_id: unit_business.id,
-      danfe_path: '',
-      xml_path: xmlContent ? encryptXml(xmlContent!) : null,
-      emitted_at: new Date(nf.dataEmissao!),
-      number_system: String(nf.numero),
-      integrations_id: integration.id,
-      store_id: store_id!.id ?? null,
-      transporter_id: transporter?.id ?? ''
-      // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
-      // transporter_id: idem
-    }, { conflictFields: ['id_system']});
+    const [invoice] = await Invoice.upsert(
+      {
+        id_system: String(nf.id),
+        customer_name: customerName,
+        customer_document: customerDoc,
+        // type: invoiceType,
+        type: "OUTGOING",
+        status: invoiceStatus,
+        sender_cnpj: senderCnpj,
+        sender_name: senderName,
+        receiver_cnpj: receiverCnpj,
+        receiver_name: receiverName,
+        unit_business_id: unit_business.id,
+        danfe_path: "",
+        xml_path: xmlContent ? encryptXml(xmlContent!) : null,
+        emitted_at: new Date(nf.dataEmissao!),
+        number_system: String(nf.numero),
+        integrations_id: integration.id,
+        store_id: store_id!.id ?? null,
+        transporter_id: transporter?.id ?? null,
+        // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
+        // transporter_id: idem
+      },
+      { conflictFields: ["id_system"] },
+    );
 
     console.log(
       `[BLING_API_FETCH] Invoice upsertada: id_system=${nf.id}, key=${key}`,
