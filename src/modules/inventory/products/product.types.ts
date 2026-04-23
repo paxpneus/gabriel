@@ -1,3 +1,6 @@
+import Stock from "../stock/stock.model";
+import Product from "./product.model";
+
 export interface ProductAttributes {
   id: string;
   name: string;
@@ -9,3 +12,7 @@ export interface ProductAttributes {
 }
 
 export interface ProductCreationAttributes extends Omit<ProductAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+
+export interface ProductWithStock extends Product {
+  stock: Stock
+}

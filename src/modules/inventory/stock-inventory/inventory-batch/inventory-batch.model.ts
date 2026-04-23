@@ -27,8 +27,8 @@ InventoryBatch.init(
       allowNull: false,
     },
     date: { type: DataTypes.DATE, allowNull: false },
-    total_quantity_stock: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
-    total_quantity_read: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+    total_quantity_stock: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    total_quantity_read: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     number: { type: DataTypes.STRING, allowNull: false },
     unit_business_id: {
       type: DataTypes.UUID,
