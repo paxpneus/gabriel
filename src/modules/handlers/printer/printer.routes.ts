@@ -4,6 +4,7 @@ import ipp from 'ipp'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import printerController from './printer.controller'
 
 const router = Router()
 
@@ -53,4 +54,4 @@ router.post('/print', async (req, res) => {
   }
 })
 
-export default router
+export default printerController.router;
