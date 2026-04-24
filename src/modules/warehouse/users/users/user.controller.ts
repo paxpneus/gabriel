@@ -23,6 +23,8 @@ export class UserController extends BaseController<User, typeof UserService> {
     this.router.post(`/login`, this.login);
 
     this.router.post(`/logout`, this.logout);
+
+    this.router.get('/me/get', this.getMe)
   }
 
    protected middlewaresFor() {
@@ -37,6 +39,7 @@ export class UserController extends BaseController<User, typeof UserService> {
       show: [authenticate, validateId(UserIdSchema)],
       destroy: [authenticate, validateId(UserIdSchema)],
       login: [validateLoginSchema(LoginSchema)],
+      getMe: [authenticate]
     };
   }
 
@@ -67,6 +70,24 @@ export class UserController extends BaseController<User, typeof UserService> {
       const { email, password } = req.body;
 
       const { token, user } = await this.service.login(email, password);
+
+      res.cookie("token", token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 8 * 60 * 60 * 1000,
+      });
+      return res.json({ user });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+   getMe = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const token = req.cookies.token
+
+      const { user } = await this.service.getMe(token as string);
 
       res.cookie("token", token, {
         httpOnly: true,
