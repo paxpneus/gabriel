@@ -11,6 +11,7 @@ import { PaginatedResult, QueryConfig, QueryParams } from '../../../../shared/qu
 import { cleanDocument } from '../../../../shared/utils/normalizers/document';
 import UnitBusiness from '../../unit-business/unit-business.model';
 import { FindOptions } from 'sequelize';
+import redisService from '../../../../shared/utils/base-models/base-redis';
 
 export class UserService extends BaseService<User, UserRepository> {
   constructor() {
@@ -132,6 +133,43 @@ export class UserService extends BaseService<User, UserRepository> {
 
       return {token, user}
   }
+
+  async getMe(token: string) {
+  if (!token) throw new Error('Token não informado')
+
+
+  const decoded = jwt.verify(token, SECRET) as {
+    id: string
+    role: string
+  }
+  let user;
+
+    const cachedUser = await redisService.get(`user:${decoded.id}`)
+    if (cachedUser) {
+      user = cachedUser
+      return {user}
+    }
+
+  user = await this.repository.findOne({
+    where: { id: decoded.id },
+    include: [
+      {
+        model: Role,
+        as: 'role',
+      },
+      {
+        model: UnitBusiness,
+        as: 'unitBusiness',
+      }
+    ]
+  })
+      await redisService.set(`user:${decoded.id}`, user)
+
+
+  if (!user) throw new Error('Usuário não encontrado')
+
+  return {user}
+}
 }
 
 export default new UserService();
