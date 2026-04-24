@@ -62,11 +62,14 @@ export class InventoryBatchService extends BaseService<
 
   async findByIdFullBatch(
     batchId?: string,
-    number?: string
+    number?: string,
+    userId?: string
   ): Promise<InventoryBatch> {
     const whereClause: any = {};
+    const scanLogClause: any = {};
     if (batchId) whereClause.id = batchId;
     if (number) whereClause.number = number;
+    if (userId) scanLogClause.user_id = userId
 
     const batch = await InventoryBatch.findOne({
       where: whereClause,

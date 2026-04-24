@@ -2,12 +2,25 @@ import { Request, Response } from "express";
 import BaseController from "../../../../shared/utils/base-models/base-controller";
 import InventoryBatch from "./inventory-batch.model";
 import inventoryBatchService, { InventoryBatchService } from "./inventory-batch.service";
+import { authenticate } from "../../../../middlewares/auth-token";
 
 class InventoryBatchController extends BaseController<InventoryBatch, InventoryBatchService> {
   constructor() {
     super(inventoryBatchService);
     this.registerCustomRoutes();
   }
+
+    protected middlewaresFor() {
+        return {
+          index: [authenticate],
+          create: [authenticate],
+          update: [
+            authenticate,
+          ],
+          show: [authenticate],
+          destroy: [authenticate],
+        };
+      }
 
   private registerCustomRoutes(): void {
     this.router.post("/create", (req, res) => this.createInventoryBatch(req, res));
@@ -32,7 +45,7 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
 
   getFullBatch = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { batchId, number } = req.query;
+      const { batchId, number, userId } = req.query;
 
       if (!batchId && !number) {
         return res.status(400).json({ error: "Informe batchId ou number" });
@@ -41,6 +54,7 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
       const batch = await this.service.findByIdFullBatch(
         batchId as string | undefined,
         number as string | undefined,
+        userId as string | undefined
       );
 
       return res.json(batch);
@@ -48,6 +62,8 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
       return res.status(400).json({ error: error.message });
     }
   };
+
+
 }
 
 export default new InventoryBatchController();
