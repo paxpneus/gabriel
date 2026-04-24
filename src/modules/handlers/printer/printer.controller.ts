@@ -7,7 +7,10 @@ export class PrinterConfigController extends BaseController<PrinterConfig, typeo
   constructor() {
     super(PrinterConfigService)
     this.registerCustomRoutes()
+    
   }
+
+  
 
   private registerCustomRoutes() {
     this.router.get('/active', (req, res) => this.getActive(req, res))
