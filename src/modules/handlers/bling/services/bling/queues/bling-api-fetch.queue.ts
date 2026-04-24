@@ -324,7 +324,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Resolve tipo e status a partir dos dados completos da API ───────────
 
     const invoiceType: "INCOMING" | "OUTGOING" =
-      nf.tipo === 1 ? "INCOMING" : "OUTGOING";
+  nf.tipo === 0 ? "INCOMING" : "OUTGOING";
 
     const invoiceStatus: "OPEN" | "PENDING" | "FINISHED" =
       partial.status === "CANCELLED"
@@ -393,8 +393,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         id_system: String(nf.id),
         customer_name: customerName,
         customer_document: customerDoc,
-        // type: invoiceType,
-        type: "OUTGOING",
+        type: invoiceType,
         status: invoiceStatus,
         sender_cnpj: senderCnpj,
         sender_name: senderName,

@@ -453,7 +453,7 @@ function mapSituacao(situacao?: number): 'OPEN' | 'PENDING' | 'FINISHED' | 'CANC
   }
 }
 
-async function migrateInvoices(type: 'NF-e' | 'NFC-e') {
+async function migrateInvoices(type: 'NF-e' | 'NFC-e', invoiceDirection: 0 | 1) {
   const resource = type === 'NF-e' ? 'invoice' : 'consumer_invoice';
   const endpoint = type === 'NF-e' ? '/nfe' : '/nfce';
   const etapa    = type === 'NF-e' ? 5 : 6;
@@ -472,7 +472,7 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e') {
     situacao?: number;
     tipo?: number;
     loja?: { id: number };
-  }>(endpoint, { dataInicial: DATA_INICIAL })) {
+  }>(endpoint, { dataInicial: DATA_INICIAL, tipo: invoiceDirection, })) {
     for (const invoice of page) {
       const blingId = invoice.id;
 
@@ -505,7 +505,6 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e') {
               blingId,
               id_system: String(blingId),
               status:    mapSituacao(invoice.situacao),
-              type:      'OUTGOING',
             },
           },
         },
@@ -549,8 +548,8 @@ async function main() {
     await migrateSuppliers();         // 2 — sem dependências
     await migrateProductSuppliers();  // 3 — depende de produto + fornecedor
     await migrateStocks();            // 4 — depende de produto
-    await migrateInvoices('NF-e');    // 5 — depende de UnitBusiness
-    await migrateInvoices('NFC-e');   // 6 — depende de UnitBusiness
+    await migrateInvoices('NF-e', 1);    // 5 — depende de UnitBusiness
+    await migrateInvoices('NF-e', 0);   // 6 — depende de UnitBusiness
   } catch (err: any) {
     console.error('\n❌ Erro durante a migração:', err.message);
     process.exit(1);
