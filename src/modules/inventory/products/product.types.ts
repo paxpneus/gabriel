@@ -14,5 +14,5 @@ export interface ProductAttributes {
 export interface ProductCreationAttributes extends Omit<ProductAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
 
 export interface ProductWithStock extends Product {
-  stock: Stock
+  stocks: Stock[]
 }

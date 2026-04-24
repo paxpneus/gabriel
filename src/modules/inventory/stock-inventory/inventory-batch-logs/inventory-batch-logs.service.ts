@@ -52,7 +52,7 @@ export class InventoryBatchLogsService extends BaseService<
       include: [
         {
           model: Stock,
-          as: "stock",
+          as: "stocks",
           where: {
             unit_business_id: unitBusinessId,
           },
@@ -61,17 +61,17 @@ export class InventoryBatchLogsService extends BaseService<
       transaction: t,
     })) as ProductWithStock;
 
-    if (!productFound || !productFound.stock) {
-      throw new Error(
-        `Produto não encontrado no estoque da loja ou produto sem estoque`,
-      );
-    }
+    console.log(productFound)
+
+    if (!productFound || !productFound.stocks || productFound.stocks.length === 0) {
+  throw new Error(`Produto não encontrado no estoque da loja ou produto sem estoque`);
+}
 
     let inventoryBatchItem = await InventoryBatchItems.findOne({
       where: {
         ean: productcode,
         inventory_batch_id: inventoryBatchId,
-        stock_id: productFound.stock.id,
+        stock_id: productFound.stocks[0].id,
       },
       transaction: t,
     });
@@ -83,17 +83,17 @@ export class InventoryBatchLogsService extends BaseService<
           inventory_batch_id: inventoryBatchId,
           ean: productFound.ean,
           sku: productFound.sku,
-          quantity_stock: productFound.stock.quantity,
+          quantity_stock: productFound.stocks[0].quantity,
           quantity_read: 0,
-          divergency: productFound.stock.quantity,
-          stock_id: productFound.stock.id!,
+          divergency: productFound.stocks[0].quantity,
+          stock_id: productFound.stocks[0].id!,
           status: "PENDING",
         },
         { transaction: t },
       );
 
       await InventoryBatch.increment("total_quantity_stock", {
-        by: productFound.stock.quantity,
+        by: productFound.stocks[0].quantity,
         where: { id: inventoryBatchId },
         transaction: t,
       });
