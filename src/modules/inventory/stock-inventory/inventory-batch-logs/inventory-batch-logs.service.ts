@@ -121,6 +121,10 @@ export class InventoryBatchLogsService extends BaseService<
           },
           { transaction: t },
         );
+        await InventoryBatchItems.update(
+          { status: "PENDING" },
+          { where: { id: inventoryBatchItem.id }, transaction: t },
+        );
       }
 
       const newUserRead = previousUserRead + 1;
@@ -159,15 +163,26 @@ export class InventoryBatchLogsService extends BaseService<
         });
       }
 
-      if (inventoryBatchItem.quantity_stock === newItemQuantityRead) {
-        await InventoryBatchItems.update({
-          status: 'FINISHED',
-        },
-      {
+      const scanLogs = await InventoryBatchLogs.findAll({
         where: {
-          id: inventoryBatchItem.id
-        }
-      })
+          inventory_batch_item_id: inventoryBatchItem.id,
+        },
+        transaction: t,
+      });
+
+      const updatedItem = await InventoryBatchItems.findByPk(
+        inventoryBatchItem.id,
+        {
+          transaction: t,
+        },
+      );
+
+      const allRead = scanLogs.every(
+        (s) => Number(s.quantity_read) >= Number(updatedItem!.quantity_stock),
+      );
+
+      if (allRead) {
+        await updatedItem!.update({ status: "FINISHED" }, { transaction: t });
       }
 
       return true;
