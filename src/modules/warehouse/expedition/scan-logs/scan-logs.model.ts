@@ -51,7 +51,6 @@ ExpeditionScanLog.init(
     label_full_code: {
       type: DataTypes.STRING(255),
       allowNull: false,
-      unique: true
     },
     vol_number: {
       type: DataTypes.STRING(6),

@@ -5,6 +5,7 @@ import expeditionBatchInvoiceRepository, { ExpeditionBatchInvoiceRepository } fr
 export class ExpeditionBatchInvoiceService extends BaseService<ExpeditionBatchInvoice, ExpeditionBatchInvoiceRepository> {
   constructor() {
     super(expeditionBatchInvoiceRepository);
+      
   }
 }
 
