@@ -12,6 +12,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
 
   protected registerCustomRoutes(): void {
   this.router.post("/scan/product", (req, res) => this.scanProduct(req, res))
+
+  this.router.post("/scan/product/incoming", (req, res) => this.scanProductIncoming(req, res))
 }
 
   protected middlewaresFor() {
@@ -23,7 +25,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
         ],
         show: [authenticate],
         destroy: [authenticate],
-        scanProduct: [authenticate]
+        scanProduct: [authenticate],
+        scanProductIncoming: [authenticate]
       };
     }
 
@@ -32,6 +35,18 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
       const {labelcode, productcode, batchId, userId} = req.body
 
       await this.service.scanProduct(labelcode, productcode, batchId, userId)
+
+    return res.status(201).json({ message: "Produto escaneado com sucesso" });
+    } catch (error: any) {
+      return res.status(400).json({error: error.message})
+    }
+  }
+
+    scanProductIncoming = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const {labelcode, batchId, userId} = req.body
+
+      await this.service.scanProductIncoming(labelcode, batchId, userId)
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
     } catch (error: any) {

@@ -34,10 +34,8 @@ export class ExpeditionScanLogService extends BaseService<
         sortBy: "created_at",
         sortDir: "DESC",
       },
-      // Campos para busca textual (LIKE)
       searchFields: ["label_full_code"],
-      // Campos permitidos para filtros exatos (WHERE field = value)
-      // ADICIONADO: 'type' e 'customer_name' aqui
+      
       filterableFields: [
         "expedition_batch_id",
         "expedition_batch_items_id",

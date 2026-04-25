@@ -33,6 +33,7 @@ export class ExpeditionBatchService extends BaseService<
       ],
       filterableFields: [
         'status',
+        'type',
         'integrations_id',
         'unit_business_id'
       ],
