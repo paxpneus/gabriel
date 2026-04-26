@@ -27,6 +27,7 @@ class Invoice
   public printed_label!: boolean;
   public emitted_at?: Date;
   public number_system?: string;
+  public xml_key?: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -52,6 +53,10 @@ Invoice.init(
     xml_path: {
       type: DataTypes.TEXT,
     },
+    xml_key: {
+  type: DataTypes.STRING(255),
+  allowNull: true,
+},
     danfe_path: {
       type: DataTypes.TEXT,
     },

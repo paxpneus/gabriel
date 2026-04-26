@@ -331,6 +331,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         ? "OPEN" // Bling cancelada → mantemos como OPEN para revisão manual
         : ((partial.status as "OPEN" | "PENDING" | "FINISHED") ?? "PENDING");
 
+      const encryptedKey = nf.chaveAcesso ? nf.chaveAcesso : null
+
+
     let senderCnpj = nf.emitente?.cnpj ?? "";
     let senderName = nf.emitente?.nome ?? "";
     let receiverCnpj = nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "";
@@ -402,6 +405,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         unit_business_id: unit_business.id,
         danfe_path: "",
         xml_path: xmlContent ? encryptXml(xmlContent!) : null,
+        xml_key: encryptedKey,
         emitted_at: new Date(nf.dataEmissao!),
         number_system: String(nf.numero),
         integrations_id: integration.id,

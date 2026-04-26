@@ -278,7 +278,7 @@ export class ExpeditionScanLogService extends BaseService<
             t,
           ),
           label_full_code: labelcode,
-          vol_number: "000000", // fornecedor não tem vol_number estruturado
+          vol_number: "000000", 
           user_id: userId,
         },
         { transaction: t },
@@ -289,6 +289,12 @@ export class ExpeditionScanLogService extends BaseService<
         where: { id: batchItem.id },
         transaction: t,
       });
+
+      await ExpeditionBatch.increment("total_volumes_received", {
+        by: 1,
+        where: {id: batchid},
+        transaction: t,
+      })
 
       // ── 6. Atualiza quantity_received no InvoiceItem ───────────────────────
       //    Busca o InvoiceItem da NF de entrada correspondente ao produto

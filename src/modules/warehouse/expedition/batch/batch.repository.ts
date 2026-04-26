@@ -113,6 +113,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
 
     return data.get({plain: true});
   }
+
 }
 
 export default new ExpeditionBatchRepository();

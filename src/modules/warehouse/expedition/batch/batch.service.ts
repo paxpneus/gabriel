@@ -14,6 +14,9 @@ import { ExpeditionBatchFull } from "./batch.types";
 import { InvoiceItemsAttributes } from "../../entrance/invoice-items/invoice-items.types";
 import { extractChaveFromXml } from "../../../../shared/utils/xml/xml-parser";
 import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
+import { PaginatedResult, QueryParams } from "../../../../shared/query/query.types";
+import { FindOptions } from "sequelize";
+import UnitBusiness from "../../unit-business/unit-business.model";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -185,6 +188,115 @@ export class ExpeditionBatchService extends BaseService<
 
   }
 
+  async addInvoiceToBatch(
+  chaveAcesso: string,
+  unitBusinessId: string,
+  type: string,
+  batchId?: string,
+): Promise<ExpeditionBatch> {
+  let resultBatchId: string;
+
+  await sequelize.transaction(async (t) => {
+
+
+    const invoice = await Invoice.findOne({
+  where: { xml_key: chaveAcesso.replace(/\s/g, '') },
+  include: [{ model: InvoiceItems, as: "items", required: true }],
+  transaction: t,
+});
+
+console.log(invoice, chaveAcesso.trim())
+
+    if (!invoice) throw new Error("Nota não encontrada para a chave de acesso informada");
+    if (!(invoice as any).items?.length) throw new Error("Nota não possui itens");
+
+    const alreadyInBatch = await ExpeditionBatchInvoice.findOne({
+      where: { invoice_id: invoice.id },
+      transaction: t,
+    });
+
+    if (alreadyInBatch) {
+      if (alreadyInBatch.expedition_batch_id === batchId) {
+        resultBatchId = batchId!;
+        return;
+      }
+      throw new Error(`Nota ${invoice.number_system} já pertence a outro lote`);
+    }
+
+    let batch: ExpeditionBatch;
+
+    if (batchId) {
+      const found = await ExpeditionBatch.findByPk(batchId, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!found) throw new Error("Lote não encontrado");
+      if (found.status === "FINISHED") throw new Error("Lote já finalizado");
+      batch = found;
+    } else {
+      const batchNumber = `LOTE-${Date.now()}-${Math.random()
+        .toString(36)
+        .substring(2, 6)
+        .toUpperCase()}`;
+
+      batch = await ExpeditionBatch.create(
+        {
+          number: batchNumber,
+          status: "OPEN",
+          unit_business_id: unitBusinessId,
+          total_volumes: 0,
+          total_volumes_received: 0,
+          integrations_id: invoice.integrations_id,
+          type,
+          transporters_id: invoice.transporter_id || null,
+        },
+        { transaction: t },
+      );
+    }
+
+    await ExpeditionBatchInvoice.create(
+      { expedition_batch_id: batch.id, invoice_id: invoice.id },
+      { transaction: t },
+    );
+
+    const items = (invoice as any).items ?? [];
+
+    for (const item of items) {
+      const existing = await ExpeditionBatchItems.findOne({
+        where: { expedition_batch_id: batch.id, product_id: item.product_id },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (existing) {
+        await existing.increment("quantity", { by: item.quantity_expected, transaction: t });
+      } else {
+        await ExpeditionBatchItems.create(
+          {
+            expedition_batch_id: batch.id,
+            product_id: item.product_id,
+            quantity: item.quantity_expected,
+            quantity_scanned: 0,
+          },
+          { transaction: t },
+        );
+      }
+    }
+
+    const addedVolumes = items.reduce(
+      (acc: number, i: any) => acc + i.quantity_expected, 0
+    );
+
+    await batch.increment("total_volumes", { by: addedVolumes, transaction: t });
+
+    await Invoice.update(
+      { batch_generated: true },
+      { where: { id: invoice.id }, transaction: t },
+    );
+
+    resultBatchId = batch.id;
+  });
+
+  return (await this.repository.getFullBatch(resultBatchId!)) as ExpeditionBatch;
+}
+
   async getBatchesByInvoiceIds(
     invoiceIds: string[],
   ): Promise<ExpeditionBatch[]> {
@@ -269,7 +381,7 @@ export class ExpeditionBatchService extends BaseService<
       return {
         ...s,
         ...s.invoice,
-        key: chaveAcesso,
+        key: chaveAcesso.replace(/\s/g, ''),
         invoiceVolume,
       };
     });
@@ -281,6 +393,22 @@ export class ExpeditionBatchService extends BaseService<
 
   
     return enrichedData;
+  }
+
+   async paginate(
+    params: QueryParams,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<PaginatedResult<ExpeditionBatch>> {
+    return super.paginate(params, {
+      ...extraOptions,
+      include: [
+       
+        {
+          model: UnitBusiness,
+          as: "unitBusiness",
+        },
+      ],
+    });
   }
 }
 

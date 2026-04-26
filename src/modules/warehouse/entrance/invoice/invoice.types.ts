@@ -6,6 +6,7 @@ export interface InvoiceAttributes {
   customer_name: string;
   customer_document: string;
   xml_path?: string | null;
+  xml_key?: string | null;
   danfe_path?: string;
   unit_business_id: string;
   store_id: string
