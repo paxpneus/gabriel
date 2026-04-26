@@ -21,6 +21,8 @@ export class ExpeditionBatchController extends BaseController<
     this.router.get("/by-invoices/get", this.getBatchesByInvoice);
 
     this.router.get("/full/get", this.getFullBatch)
+
+    this.router.post("/add-invoice", (req, res) => this.addInvoiceToBatch(req, res))
   }
 
   /**
@@ -41,6 +43,21 @@ export class ExpeditionBatchController extends BaseController<
 
       const batches =
         await ExpeditionBatchService.generateBatchFromInvoices(invoiceIds, unitBusinessId, type);
+      return res.status(201).json(batches);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+    addInvoiceToBatch = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const { invoiceKey, unitBusinessId , type, batchId } = req.body;
+    
+      const batches =
+        await ExpeditionBatchService.addInvoiceToBatch(invoiceKey, unitBusinessId, type, batchId);
       return res.status(201).json(batches);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
