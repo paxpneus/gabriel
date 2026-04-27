@@ -29,9 +29,9 @@ class InventoryBatchLogsController extends BaseController<InventoryBatchLogs, In
 
               scanProduct = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const {unitBusinessId, productCode, inventoryBatchId, userId} = req.body
+      const {unitBusinessId, productCode, inventoryBatchId, userId, quantity} = req.body
 
-      await this.service.scanProduct(unitBusinessId, productCode, inventoryBatchId, userId)
+      await this.service.scanProduct(unitBusinessId, productCode, inventoryBatchId, userId, quantity)
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
     } catch (error: any) {
