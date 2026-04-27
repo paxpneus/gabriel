@@ -17,6 +17,10 @@ import { cleanDocument } from "../../../../../../shared/utils/normalizers/docume
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
 
+const BLING_UNIT_BUSINESS_ID = '361b5640-ec04-4b3f-8191-fe3ac5f134c4';
+const BLING_UNIT_BUSINESS_CNPJ = '02316749002111';
+
+
 export function extractPartiesFromXml(xml: string) {
   const parsed = parser.parse(xml);
 
@@ -362,9 +366,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const customerName = nf.contato?.nome ?? nf.destinatario?.nome ?? "";
     const key = nf.chaveAcesso ?? `PENDING-KEY-${nf.id}`;
 
-    const unit_business = await UnitBusiness.findOne({
-      where: { cnpj: "02316749002111" },
-    });
+    const unit_business = await UnitBusiness.findByPk(BLING_UNIT_BUSINESS_ID);
+
+if (!unit_business) {
+  throw new Error(`[ERRO NO MAPEAMENTO DE NFE] - UnitBusiness padrão Bling não encontrada | id=${BLING_UNIT_BUSINESS_ID}`);
+}
 
     let store_id = await Store.findOne({
       where: { id_store_system: String(nf?.loja?.id) },
@@ -374,11 +380,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       store_id = await Store.findOne({
         where: { name: "Outros" },
       });
-    }
-
-    if (!unit_business) {
-      console.log("[ERRO NO MAPEAMENTO DE NFE] - Loja não encontrada");
-      throw new Error("[ERRO NO MAPEAMENTO DE NFE] - Loja não encontrada");
     }
 
     const integration = await getBlingIntegration("Bling");
