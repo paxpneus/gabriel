@@ -26,6 +26,8 @@ class Invoice
   public batch_generated!: boolean;
   public printed_label!: boolean;
   public emitted_at?: Date;
+  public received_at?: Date;
+  public expected_receiving?: Date;
   public number_system?: string;
   public xml_key?: string;
 
@@ -49,14 +51,14 @@ Invoice.init(
       type: DataTypes.STRING(14),
       allowNull: false,
     },
-    
+
     xml_path: {
       type: DataTypes.TEXT,
     },
     xml_key: {
-  type: DataTypes.STRING(255),
-  allowNull: true,
-},
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
     danfe_path: {
       type: DataTypes.TEXT,
     },
@@ -69,12 +71,12 @@ Invoice.init(
       },
     },
     store_id: {
-       type: DataTypes.UUID,
+      type: DataTypes.UUID,
       allowNull: false,
       unique: true,
       references: {
-        model: 'stores',
-        key: 'id',
+        model: "stores",
+        key: "id",
       },
     },
     sender_cnpj: {
@@ -96,9 +98,9 @@ Invoice.init(
     integrations_id: {
       type: DataTypes.UUID,
       references: {
-                model: 'integrations',
-                key: 'id'
-            }
+        model: "integrations",
+        key: "id",
+      },
     },
     id_system: {
       type: DataTypes.STRING(100),
@@ -116,7 +118,16 @@ Invoice.init(
       allowNull: false,
     },
     status: {
-      type: DataTypes.ENUM("OPEN", "PENDING", "FINISHED", "CANCELLED"),
+      type: DataTypes.ENUM(
+        "OPEN",
+        "PENDING",
+        "FINISHED",
+        "FREE_TO_SCHEDULE",
+        "WAITING_SCHEDULE_SALES",
+        "SCHEDULED",
+        "LATE",
+        "CANCELLED",
+      ),
       defaultValue: "PENDING",
       allowNull: false,
     },
@@ -132,17 +143,24 @@ Invoice.init(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    received_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    expected_receiving: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     number_system: {
       type: DataTypes.STRING(100),
-      allowNull: true
-    }
+      allowNull: true,
+    },
   },
   {
     sequelize,
     tableName: "invoices",
     timestamps: true,
     underscored: true,
-    
   },
 );
 
