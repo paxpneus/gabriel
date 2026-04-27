@@ -24,6 +24,7 @@ export class InventoryBatchLogsService extends BaseService<
     productcode: string,
     inventoryBatchId: string,
     userId: string,
+    quantity: number
   ) {
     return await sequelize.transaction(async (t) => {
       if (!unitBusinessId) throw new Error("Loja do usuário não encontrada");
@@ -31,14 +32,12 @@ export class InventoryBatchLogsService extends BaseService<
       if (!inventoryBatchId)
         throw new Error("Lote de Inventário não informado [ERRO DO SISTEMA]");
 
-      // 1. Valida o lote
       const inventoryBatch = await InventoryBatch.findByPk(inventoryBatchId, {
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
       if (!inventoryBatch) throw new Error("Lote de Inventário não encontrado");
 
-      // 2. Busca o produto com estoque da unidade
       const productFound = (await Product.findOne({
         where: { ean: productcode },
         include: [
@@ -57,7 +56,6 @@ export class InventoryBatchLogsService extends BaseService<
 
       const stock = productFound.stocks[0];
 
-      // 3. Busca ou cria o inventory_batch_item (1 por produto × lote)
       let inventoryBatchItem = await InventoryBatchItems.findOne({
         where: {
           ean: productcode,
@@ -81,10 +79,9 @@ export class InventoryBatchLogsService extends BaseService<
             stock_id: stock.id!,
             status: "PENDING",
           },
-          { transaction: t },
+          { transaction: t }
         );
 
-        // Incrementa total_quantity_stock do lote apenas na primeira vez que o produto aparece
         await InventoryBatch.increment("total_quantity_stock", {
           by: stock.quantity,
           where: { id: inventoryBatchId },
@@ -92,9 +89,6 @@ export class InventoryBatchLogsService extends BaseService<
         });
       }
 
-      // 4. Upsert no log — 1 registro por (usuário × item)
-      //    Se já existe: incrementa quantity_read
-      //    Se não existe: cria com quantity_read = 1
       const existingLog = await InventoryBatchLogs.findOne({
         where: {
           user_id: userId,
@@ -109,25 +103,25 @@ export class InventoryBatchLogsService extends BaseService<
         : 0;
 
       if (existingLog) {
-        await existingLog.increment("quantity_read", { by: 1, transaction: t });
+        await existingLog.increment("quantity_read", { by: quantity, transaction: t });
       } else {
         await InventoryBatchLogs.create(
           {
             user_id: userId,
-            quantity_read: 1,
+            quantity_read: quantity,
             label_code: productcode,
             inventory_batch_item_id: inventoryBatchItem.id,
             date: new Date(),
           },
-          { transaction: t },
+          { transaction: t }
         );
         await InventoryBatchItems.update(
           { status: "PENDING" },
-          { where: { id: inventoryBatchItem.id }, transaction: t },
+          { where: { id: inventoryBatchItem.id }, transaction: t }
         );
       }
 
-      const newUserRead = previousUserRead + 1;
+      const newUserRead = previousUserRead + quantity;
 
       const maxOtherLog = await InventoryBatchLogs.findOne({
         where: {
@@ -152,9 +146,9 @@ export class InventoryBatchLogsService extends BaseService<
         {
           where: { id: inventoryBatchItem.id },
           transaction: t,
-        },
+        }
       );
-      // 6. Atualiza total geral do lote
+
       if (itemDelta > 0) {
         await InventoryBatch.increment("total_quantity_read", {
           by: itemDelta,
@@ -172,13 +166,11 @@ export class InventoryBatchLogsService extends BaseService<
 
       const updatedItem = await InventoryBatchItems.findByPk(
         inventoryBatchItem.id,
-        {
-          transaction: t,
-        },
+        { transaction: t }
       );
 
       const allRead = scanLogs.every(
-        (s) => Number(s.quantity_read) >= Number(updatedItem!.quantity_stock),
+        (s) => Number(s.quantity_read) >= Number(updatedItem!.quantity_stock)
       );
 
       if (allRead) {
