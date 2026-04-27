@@ -17,6 +17,7 @@ import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher
 import { PaginatedResult, QueryParams } from "../../../../shared/query/query.types";
 import { FindOptions } from "sequelize";
 import UnitBusiness from "../../unit-business/unit-business.model";
+import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -109,9 +110,16 @@ export class ExpeditionBatchService extends BaseService<
         .substring(2, 6)
         .toUpperCase()}`;
 
+        const batchType = type == 'OUTGOING' ? 'EXPEDITION' : 'ENTRANCE'
+        const unitBusiness = await UnitBusiness.findOne({
+          where: {
+            id: unitBusinessId
+          }
+        })
+
       const batch = await ExpeditionBatch.create(
         {
-          number: batchNumber,
+          number: await setBatchNumber(type, unitBusiness?.number!, unitBusinessId),
           status: "OPEN",
           unit_business_id: unitBusinessId,
           total_volumes: 0,

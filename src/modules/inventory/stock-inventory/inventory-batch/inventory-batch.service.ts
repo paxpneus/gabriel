@@ -8,6 +8,8 @@ import InventoryBatchLogs from "../inventory-batch-logs/inventory-batch-logs.mod
 import sequelize from "../../../../config/sequelize";
 import { Product } from "../../../inventory";
 import User from "../../../warehouse/users/users/user.model";
+import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
+import { UnitBusiness } from "../../../warehouse";
 
 export class InventoryBatchService extends BaseService<
   InventoryBatch,
@@ -28,14 +30,16 @@ export class InventoryBatchService extends BaseService<
     let batchId: string;
 
     await sequelize.transaction(async (t) => {
-      const batchNumber = `INV-${Date.now()}-${Math.random()
-        .toString(36)
-        .substring(2, 6)
-        .toUpperCase()}`;
+
+        const unitBusiness = await UnitBusiness.findOne({
+          where: {
+            id: unitBusinessId
+          }
+        })
 
       const batch = await InventoryBatch.create(
         {
-          number: batchNumber,
+          number: await setBatchNumber('INVENTORY', unitBusiness?.id!, unitBusinessId),
           date: new Date(),
           total_quantity_stock: 0,
           total_quantity_read: 0,

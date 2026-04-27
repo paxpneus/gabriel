@@ -60,6 +60,8 @@ const cutoffDate = new Date();
 cutoffDate.setDate(cutoffDate.getDate() - DAYS_BACK);
 const DATA_INICIAL = cutoffDate.toISOString().split('T')[0]; // YYYY-MM-DD
 
+// ─── UnitBusiness padrão Bling ────────────────────────────────────────────────
+
 // ─── Instâncias das filas (workless = só enfileira, não processa aqui) ────────
 
 const directUpsertQueue = new BlingDirectUpsertQueue({ workless: true });
@@ -482,16 +484,8 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e', invoiceDirection: 0 | 1) 
         continue;
       }
 
-      let companyId: string;
-      try {
-        companyId = resolveCompanyId(invoice.loja.id);
-      } catch (e: any) {
-        console.warn(`  ⚠️  ${e.message} — invoice ${blingId} ignorada`);
-        skipped++;
-        continue;
-      }
-
-      const jobBase = basePayload(resource, blingId, companyId);
+      
+       const jobBase = basePayload(resource, blingId);
 
       await enqueueApiFetch(
         {
@@ -500,7 +494,7 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e', invoiceDirection: 0 | 1) 
             resource:    resource as any,
             blingId,
             action:      'created',
-            companyId,
+            companyId: '',
             partialData: {
               blingId,
               id_system: String(blingId),
