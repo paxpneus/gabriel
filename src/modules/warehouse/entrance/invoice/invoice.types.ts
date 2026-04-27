@@ -25,6 +25,8 @@ export interface InvoiceAttributes {
   printed_label?: boolean;
   emitted_at?: Date;
   number_system?: string;
+  received_at?: Date;
+  expected_receiving?: Date;
 }
 
 export interface InvoiceCreationAttributes extends Omit<InvoiceAttributes, 'id' | 'createdAt' | 'updatedAt'> {}

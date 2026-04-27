@@ -63,27 +63,36 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
   // ─── Handlers por tabela ──────────────────────────────────────────────────
 
   private async upsertProduct(
-    data: Extract<DirectUpsertPayload, { table: 'products' }>['data'],
-  ): Promise<void> {
-    // O webhook de produto não traz EAN.
-    // O worker ApiFetch irá complementar com o EAN real após buscar na Bling.
-    // Usamos sku como chave natural de upsert.
-    if (!data.sku) {
-      console.warn('[BLING_DIRECT_UPSERT] Produto sem SKU, ignorando upsert parcial', data);
-      return;
-    }
+  data: Extract<DirectUpsertPayload, { table: 'products' }>['data'],
+): Promise<void> {
+  if (!data.sku) {
+    console.warn('[BLING_DIRECT_UPSERT] Produto sem SKU, ignorando upsert parcial', data);
+    return;
+  }
 
-    await Product.upsert({
+  const [product, created] = await Product.findOrCreate({
+    where: { id_system: String(data.blingId) },
+    defaults: {
       name: data.name,
       sku: data.sku,
       id_system: String(data.blingId),
-      // EAN é required — placeholder até ApiFetch completar
-      ean: data.ean ?? `PENDING-${data.blingId}`,
-    }, {conflictFields: ['id_system']});
+      ean: `PENDING-${data.blingId}`,
+    },
+  });
 
-    console.log(`[BLING_DIRECT_UPSERT] Produto upsertado: sku=${data.sku}`);
+  if (!created) {
+    // só atualiza os campos que vieram — nunca sobrescreve com PENDING
+    const fieldsToUpdate: Record<string, any> = {};
+    if (data.name) fieldsToUpdate.name = data.name;
+    if (data.sku)  fieldsToUpdate.sku  = data.sku;
+
+    if (Object.keys(fieldsToUpdate).length > 0) {
+      await product.update(fieldsToUpdate);
+    }
   }
 
+  console.log(`[BLING_DIRECT_UPSERT] Produto ${created ? 'criado' : 'atualizado parcialmente'}: sku=${data.sku}`);
+}
  private async upsertStock(
   data: Extract<DirectUpsertPayload, { table: 'stocks' }>['data'],
 ): Promise<void> {
@@ -116,31 +125,41 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 }
 
   private async upsertSupplierMapping(
-    data: Extract<DirectUpsertPayload, { table: 'product_supplier_maps' }>['data'],
-  ): Promise<void> {
-    // supplier_cnpj virá do worker ApiFetch após buscar o fornecedor na Bling.
-    // Aqui persiste com placeholder; ApiFetch fará update posterior.
-    const product = await Product.findOne({
-      where: { id_system: String(data.productBlingId) },
-    });
+  data: Extract<DirectUpsertPayload, { table: 'product_supplier_maps' }>['data'],
+): Promise<void> {
+  const product = await Product.findOne({
+    where: { id_system: String(data.productBlingId) },
+  });
 
-    if (!product) {
-      console.warn(
-        `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado para supplier mapping. Ignorado.`,
-      );
-      return;
+  if (!product) {
+    console.warn(
+      `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado para supplier mapping. Ignorado.`,
+    );
+    return;
+  }
+
+  const existing = await SupplierMapping.findOne({
+    where: { product_id: product.id },
+  });
+
+  if (existing) {
+    // só atualiza supplier_product_code se vier — nunca toca o cnpj
+    const fieldsToUpdate: Record<string, any> = {};
+    if (data.supplier_product_code) fieldsToUpdate.supplier_product_code = data.supplier_product_code;
+
+    if (Object.keys(fieldsToUpdate).length > 0) {
+      await existing.update(fieldsToUpdate);
     }
-
-    await SupplierMapping.upsert({
+  } else {
+    await SupplierMapping.create({
       product_id: product.id,
-      supplier_cnpj: `PENDING-${data.supplierBlingId}`, // ApiFetch irá atualizar
+      supplier_cnpj: `PENDING-${data.supplierBlingId}`,
       supplier_product_code: data.supplier_product_code,
     });
-
-    console.log(
-      `[BLING_DIRECT_UPSERT] SupplierMapping upsertado: productId=${product.id}`,
-    );
   }
+
+  console.log(`[BLING_DIRECT_UPSERT] SupplierMapping ${existing ? 'atualizado parcialmente' : 'criado'}: productId=${product.id}`);
+}
 
   private async upsertSupplier(
     data: Extract<DirectUpsertPayload, { table: 'suppliers' }>['data'],

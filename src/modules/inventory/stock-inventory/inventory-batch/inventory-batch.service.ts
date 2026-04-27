@@ -39,7 +39,7 @@ export class InventoryBatchService extends BaseService<
 
       const batch = await InventoryBatch.create(
         {
-          number: await setBatchNumber('INVENTORY', unitBusiness?.id!, unitBusinessId),
+          number: await setBatchNumber('INVENTORY', unitBusiness?.number!, unitBusinessId),
           date: new Date(),
           total_quantity_stock: 0,
           total_quantity_read: 0,
