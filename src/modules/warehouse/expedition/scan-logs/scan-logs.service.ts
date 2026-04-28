@@ -35,7 +35,7 @@ export class ExpeditionScanLogService extends BaseService<
         sortDir: "DESC",
       },
       searchFields: ["label_full_code"],
-      
+
       filterableFields: [
         "expedition_batch_id",
         "expedition_batch_items_id",
@@ -104,7 +104,9 @@ export class ExpeditionScanLogService extends BaseService<
           {
             model: Product,
             as: "product",
-            where: { sku: productcode },
+            where: {
+              [Op.or]: [{ ean: productcode }, { eanTribut: productcode }],
+            },
           },
         ],
         transaction: t,
@@ -199,7 +201,7 @@ export class ExpeditionScanLogService extends BaseService<
     });
   }
 
-    async scanProductIncoming(
+  async scanProductIncoming(
     labelcode: string,
     batchid: string,
     userId: string,
@@ -250,7 +252,7 @@ export class ExpeditionScanLogService extends BaseService<
       if (!batchItem) {
         throw new Error(
           `Produto não encontrado nos itens do lote. ` +
-          `Verifique se a nota fiscal de entrada contém este produto.`,
+            `Verifique se a nota fiscal de entrada contém este produto.`,
         );
       }
 
@@ -278,7 +280,7 @@ export class ExpeditionScanLogService extends BaseService<
             t,
           ),
           label_full_code: labelcode,
-          vol_number: "000000", 
+          vol_number: "000000",
           user_id: userId,
         },
         { transaction: t },
@@ -292,13 +294,13 @@ export class ExpeditionScanLogService extends BaseService<
 
       await ExpeditionBatch.increment("total_volumes_received", {
         by: 1,
-        where: {id: batchid},
+        where: { id: batchid },
         transaction: t,
-      })
+      });
 
       // ── 6. Atualiza quantity_received no InvoiceItem ───────────────────────
       //    Busca o InvoiceItem da NF de entrada correspondente ao produto
-      const batchInvoice = await ExpeditionBatchInvoice.findOne({
+      const batchInvoice = (await ExpeditionBatchInvoice.findOne({
         where: { expedition_batch_id: batchid },
         include: [
           {
@@ -317,7 +319,7 @@ export class ExpeditionScanLogService extends BaseService<
           },
         ],
         transaction: t,
-      }) as any;
+      })) as any;
 
       if (!batchInvoice?.invoice?.items?.[0]) {
         throw new Error("Item da nota fiscal não encontrado para este produto");
@@ -416,7 +418,6 @@ export class ExpeditionScanLogService extends BaseService<
 
     return batchInvoice.id;
   }
-
 }
 
 export default new ExpeditionScanLogService();
