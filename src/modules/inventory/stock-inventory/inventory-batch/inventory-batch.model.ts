@@ -17,6 +17,8 @@ class InventoryBatch
   public total_quantity_read!: number;
   public number!: string;
   public unit_business_id!: string;
+  public type!: string;
+  public BatchIdForDivergency?: string
 
 }
 
@@ -31,6 +33,18 @@ InventoryBatch.init(
      status: {
       type: DataTypes.ENUM("FINISHED", "PENDING", "OPEN"),
       defaultValue: "OPEN",
+    },
+    BatchIdForDivergency: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "inventory_batches",
+        key: "id",
+      },
+    },
+    type: {
+      type: DataTypes.ENUM("REGULAR", "DIVERGENCY"),
+      defaultValue: "REGULAR",
     },
     date: { type: DataTypes.DATE, allowNull: false },
     total_quantity_stock: { type: DataTypes.DECIMAL(10, 2), allowNull: true },

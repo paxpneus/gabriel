@@ -6,6 +6,8 @@ export interface InventoryBatchAttributes {
     total_quantity_read: number;
     number: string;
     unit_business_id: string;
+    type: string;
+    BatchIdForDivergency?: string;
 }
 
 export type InventoryBatchCreationAttributes = Omit<InventoryBatchAttributes, 'id'>;
