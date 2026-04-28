@@ -224,33 +224,21 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
-      // ── 2. Resolve produto via SupplierMapping ─────────────────────────────
-      //    Busca todos os mappings com aquele supplier_product_code e filtra
-      //    pelo sender_cnpj das invoices do lote — evita conflito quando o
-      //    mesmo código de produto existe em múltiplos fornecedores
-      const supplierMapping = await SupplierMapping.findOne({
-        where: { supplier_product_code: labelcode },
-        include: [
-          {
-            model: Product,
-            as: "product",
-            required: true,
-          },
-        ],
-        transaction: t,
-      });
+      const productFound = await Product.findOne({
+        where: {
+              [Op.or]: [{ ean: labelcode }, { ean_tribut: labelcode }],
+            },
+      })
 
-      if (!supplierMapping) {
-        throw new Error(
-          `Código "${labelcode}" não encontrado no mapeamento de fornecedores`,
-        );
+      if (!productFound) {
+        throw new Error("Produto não encontrado!");
       }
 
       // ── 3. Busca o BatchItem do produto neste lote ─────────────────────────
       const batchItem = await ExpeditionBatchItems.findOne({
         where: {
           expedition_batch_id: batchid,
-          product_id: supplierMapping.product_id,
+          product_id: productFound.id,
         },
         transaction: t,
         lock: t.LOCK.UPDATE,
@@ -283,7 +271,7 @@ export class ExpeditionScanLogService extends BaseService<
           // primeira batchInvoice do lote que contenha este produto
           expedition_batch_invoices_id: await this.resolveInvoiceForItem(
             batchid,
-            supplierMapping.product_id,
+            productFound.id,
             t,
           ),
           label_full_code: labelcode,
@@ -318,7 +306,7 @@ export class ExpeditionScanLogService extends BaseService<
               {
                 model: InvoiceItems,
                 as: "items",
-                where: { product_id: supplierMapping.product_id },
+                where: { product_id: productFound.id },
                 required: true,
               },
             ],
@@ -372,10 +360,10 @@ export class ExpeditionScanLogService extends BaseService<
       });
 
       if (pendingInvoices === 0) {
-        await ExpeditionBatch.update(
-          { status: "FINISHED" },
-          { where: { id: batchid }, transaction: t },
-        );
+        // await ExpeditionBatch.update(
+        //   { status: "FINISHED" },
+        //   { where: { id: batchid }, transaction: t },
+        // );
 
         // TODO: gerar NF-e na Bling a partir do XML das invoices do lote
         //       - descriptografar xml_path de cada invoice
