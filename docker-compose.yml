@@ -97,6 +97,7 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       JWT_SECRET: ${JWT_SECRET}
       XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+      BLING_UNIT_BUSINESS_ID: ${BLING_UNIT_BUSINESS_ID}
     depends_on:
       postgres:
         condition: service_healthy
@@ -140,6 +141,7 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
       JWT_SECRET: ${JWT_SECRET}
       XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+      BLING_UNIT_BUSINESS_ID: ${BLING_UNIT_BUSINESS_ID}
     depends_on:
       postgres:
         condition: service_healthy
