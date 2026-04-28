@@ -11,11 +11,13 @@ class InventoryBatch
   implements InventoryBatchAttributes
 {
   public id!: string;
+  public status!: string;
   public date!: Date;
   public total_quantity_stock!: number;
   public total_quantity_read!: number;
   public number!: string;
   public unit_business_id!: string;
+
 }
 
 InventoryBatch.init(
@@ -25,6 +27,10 @@ InventoryBatch.init(
       defaultValue: uuidv4,
       primaryKey: true,
       allowNull: false,
+    },
+     status: {
+      type: DataTypes.ENUM("FINISHED", "PENDING", "OPEN"),
+      defaultValue: "OPEN",
     },
     date: { type: DataTypes.DATE, allowNull: false },
     total_quantity_stock: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
