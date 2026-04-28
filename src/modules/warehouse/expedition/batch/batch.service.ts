@@ -119,7 +119,7 @@ export class ExpeditionBatchService extends BaseService<
 
       const batch = await ExpeditionBatch.create(
         {
-          number: await setBatchNumber(type, unitBusiness?.number!, unitBusinessId),
+          number: await setBatchNumber(batchType, unitBusiness?.number!, unitBusinessId),
           status: "OPEN",
           unit_business_id: unitBusinessId,
           total_volumes: 0,
@@ -248,7 +248,7 @@ console.log(invoice, chaveAcesso.trim())
 
       batch = await ExpeditionBatch.create(
         {
-          number: await setBatchNumber(type, unitBusiness?.number!, unitBusinessId),
+          number: await setBatchNumber('ENTRANCE', unitBusiness?.number!, unitBusinessId),
           status: "OPEN",
           unit_business_id: unitBusinessId,
           total_volumes: 0,
