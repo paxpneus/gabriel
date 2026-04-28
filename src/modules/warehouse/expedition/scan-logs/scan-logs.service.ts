@@ -58,7 +58,7 @@ export class ExpeditionScanLogService extends BaseService<
       }
 
       const nffromlabel = labelcode.substring(14, 22);
-      const eanfromlabel = labelcode.substring(23, 35);
+      const eanfromlabel = labelcode.substring(22, 35);
       const labelRead = labelcode;
       const volRead = labelcode.substring(35, 41);
 
@@ -96,6 +96,8 @@ export class ExpeditionScanLogService extends BaseService<
         transaction: t,
       })) as ExpeditionBatchFull;
 
+      console.log(invoiceRead, productcode, eanfromlabel);
+
       if (!invoiceRead) throw Error("Nota não encontrada no lote");
 
       const productRead = (await ExpeditionBatchItems.findOne({
@@ -105,7 +107,7 @@ export class ExpeditionScanLogService extends BaseService<
             model: Product,
             as: "product",
             where: {
-              [Op.or]: [{ ean: productcode }, { eanTribut: productcode }],
+              [Op.or]: [{ ean: productcode }, { ean_tribut: productcode }],
             },
           },
         ],
@@ -126,7 +128,10 @@ export class ExpeditionScanLogService extends BaseService<
         throw Error("Produto já totalmente bipado");
       }
 
-      if (productRead.product.ean != eanfromlabel) {
+      if (
+        productRead.product.ean != eanfromlabel &&
+        productRead.product.ean_tribut != eanfromlabel
+      ) {
         throw Error("Etiqueta não pertencente ao produto lido!");
       }
 
@@ -164,15 +169,17 @@ export class ExpeditionScanLogService extends BaseService<
         transaction: t,
       });
 
-      const allDone = await InvoiceItems.count({
+      const pendingItem = await InvoiceItems.findOne({
         where: {
           invoice_id: invoiceId,
-          quantity_received: { [Op.lt]: sequelize.col("quantity_expected") },
+          [Op.and]: sequelize.literal(
+            '"quantity_received" < "quantity_expected"',
+          ),
         },
         transaction: t,
       });
 
-      if (allDone === 0) {
+      if (!pendingItem) {
         await Invoice.update(
           { status: "FINISHED" },
           { where: { id: invoiceId }, transaction: t },
