@@ -7,7 +7,7 @@ export interface ProductAttributes {
   sku: string;
   ean: string;
    ean_tribut: string;
-  id_system: string;
+  id_system?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }

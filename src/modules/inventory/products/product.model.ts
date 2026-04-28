@@ -8,7 +8,7 @@ class Product extends Model<ProductAttributes, ProductCreationAttributes> implem
   public name!: string;
   public sku!: string;
   public ean!: string;
-  public id_system!: string;
+  public id_system?: string;
   public ean_tribut!: string;
 
   public readonly createdAt!: Date;
