@@ -239,14 +239,16 @@ console.log(invoice, chaveAcesso.trim())
       if (found.status === "FINISHED") throw new Error("Lote já finalizado");
       batch = found;
     } else {
-      const batchNumber = `LOTE-${Date.now()}-${Math.random()
-        .toString(36)
-        .substring(2, 6)
-        .toUpperCase()}`;
+
+        const unitBusiness = await UnitBusiness.findOne({
+          where: {
+            id: unitBusinessId
+          }
+        })
 
       batch = await ExpeditionBatch.create(
         {
-          number: batchNumber,
+          number: await setBatchNumber(type, unitBusiness?.number!, unitBusinessId),
           status: "OPEN",
           unit_business_id: unitBusinessId,
           total_volumes: 0,
