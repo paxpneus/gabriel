@@ -11,6 +11,9 @@ import {
   InvoiceItems,
   UnitBusiness,
   Transporter,
+  ExpeditionBatch,
+  ExpeditionBatchItems,
+  ExpeditionBatchInvoice,
 } from "../../../../../warehouse";
 import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
@@ -448,11 +451,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // ─── Itens da nota ────────────────────────────────────────────────────────
 
+    // ─── Itens da nota ────────────────────────────────────────────────────────────
+
     if (!nf.itens?.length) return;
 
     for (const item of nf.itens) {
       let product = null;
-
       const sku = item.codigo?.trim();
 
       if (sku) {
@@ -461,9 +465,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
       if (!product && item.gtin) {
         product = await Product.findOne({
-          where: {
-                        [Op.or]: [{ ean: item.gtin }, { ean_tribut: item.gtin }],
-                      },
+          where: { [Op.or]: [{ ean: item.gtin }, { ean_tribut: item.gtin }] },
         });
       }
 
@@ -473,25 +475,76 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         );
         continue;
       }
-      if (!product) {
-        console.warn(
-          `[BLING_API_FETCH] Produto sku=${item.codigo} não encontrado para InvoiceItem. Pulando.`,
-        );
-        continue;
-      }
 
-      await InvoiceItems.upsert({
-        product_id: product.id,
-        invoice_id: invoice.id,
-        quantity_expected: item.quantidade ?? 0,
-        quantity_received: 0,
-        status: "PENDING",
-      });
+      // ✅ conflictFields dentro do upsert
+      await InvoiceItems.upsert(
+        {
+          product_id: product.id,
+          invoice_id: invoice.id,
+          quantity_expected: item.quantidade ?? 0,
+          quantity_received: 0,
+          status: "PENDING",
+        },
+        { conflictFields: ["invoice_id", "product_id"] },
+      );
     }
 
     console.log(
       `[BLING_API_FETCH] ${nf.itens?.length} item(ns) upsertado(s) para invoice ${nf.id}`,
     );
+
+    // ─── Sincroniza batch se a invoice já pertencer a um ─────────────────────────
+
+    const batchInvoice = await ExpeditionBatchInvoice.findOne({
+      where: { invoice_id: invoice.id },
+    });
+
+    if (batchInvoice) {
+  let volumesAdded = 0;
+
+  for (const item of nf.itens) {
+    const sku = item.codigo?.trim();
+    let product = sku ? await Product.findOne({ where: { sku } }) : null;
+
+    if (!product && item.gtin) {
+      product = await Product.findOne({
+        where: { [Op.or]: [{ ean: item.gtin }, { ean_tribut: item.gtin }] },
+      });
+    }
+
+    if (!product) continue;
+
+    const existingBatchItem = await ExpeditionBatchItems.findOne({
+      where: {
+        expedition_batch_id: batchInvoice.expedition_batch_id,
+        product_id: product.id,
+      },
+    });
+
+    if (existingBatchItem) continue; // já existe → não toca
+
+    await ExpeditionBatchItems.create({
+      expedition_batch_id: batchInvoice.expedition_batch_id,
+      product_id: product.id,
+      quantity: item.quantidade ?? 0,
+      quantity_scanned: 0,
+    });
+
+    volumesAdded += item.quantidade ?? 0;
+  }
+
+  if (volumesAdded > 0) {
+    await ExpeditionBatch.increment("total_volumes", {
+      by: volumesAdded,
+      where: { id: batchInvoice.expedition_batch_id },
+    });
+
+    console.log(
+      `[BLING_API_FETCH] Batch ${batchInvoice.expedition_batch_id} sincronizado | +${volumesAdded} volumes novos`,
+    );
+  }
+}
+
   }
 
   protected override onFailed(
