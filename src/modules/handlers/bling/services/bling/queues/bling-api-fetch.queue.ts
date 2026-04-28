@@ -16,6 +16,7 @@ import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
+import { Op } from "sequelize";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -115,6 +116,7 @@ interface BlingApiInvoiceItem {
   id: number;
   codigo?: string;
   quantidade: number;
+  gtin: string | number;
 }
 
 // ─── Queue ────────────────────────────────────────────────────────────────────
@@ -449,10 +451,28 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     if (!nf.itens?.length) return;
 
     for (const item of nf.itens) {
-      const product = await Product.findOne({
-        where: { sku: item?.codigo ?? String(item.id) },
-      });
+      let product = null;
 
+      const sku = item.codigo?.trim();
+
+      if (sku) {
+        product = await Product.findOne({ where: { sku } });
+      }
+
+      if (!product && item.gtin) {
+        product = await Product.findOne({
+          where: {
+                        [Op.or]: [{ ean: item.gtin }, { ean_tribut: item.gtin }],
+                      },
+        });
+      }
+
+      if (!product) {
+        console.warn(
+          `[BLING_API_FETCH] Produto não encontrado (sku=${sku}, gtin=${item.gtin})`,
+        );
+        continue;
+      }
       if (!product) {
         console.warn(
           `[BLING_API_FETCH] Produto sku=${item.codigo} não encontrado para InvoiceItem. Pulando.`,
