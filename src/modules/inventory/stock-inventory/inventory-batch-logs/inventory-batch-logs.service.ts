@@ -62,7 +62,7 @@ export class InventoryBatchLogsService extends BaseService<
 
       const productFound = (await Product.findOne({
         where: {
-          [Op.or]: [{ ean: productcode }, { eanTribut: productcode }],
+          [Op.or]: [{ ean: productcode }, { ean_tribut: productcode }],
         },
         include: [
           {

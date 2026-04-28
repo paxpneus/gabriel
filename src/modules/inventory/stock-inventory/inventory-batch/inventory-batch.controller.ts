@@ -20,6 +20,7 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
           show: [authenticate],
           destroy: [authenticate],
           createInventoryBatch: [authenticate],
+          createInventoryBatchDivergency: [authenticate],
           finishBatch: [authenticate],
           getFullBatch: [authenticate],
         };
@@ -31,6 +32,8 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
     this.router.get("/full/get", (req, res) => this.getFullBatch(req, res));
 
     this.router.post("/finish/post", (req, res) => this.finishBatch(req, res))
+
+    this.router.post("/create/divergency", (req, res) => this.createInventoryBatchDivergency(req, res))
   }
 
   createInventoryBatch = async (req: Request, res: Response): Promise<Response> => {
@@ -42,6 +45,21 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
       }
 
       const batch = await this.service.createInventoryBatch(unitBusinessId);
+      return res.status(201).json(batch);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+  
+   createInventoryBatchDivergency = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { parentBatchId } = req.body;
+
+      if (!parentBatchId) {
+        return res.status(400).json({ error: "Informe o lote de inventário" });
+      }
+
+      const batch = await this.service.createDivergencyBatch(parentBatchId);
       return res.status(201).json(batch);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

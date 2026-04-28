@@ -194,7 +194,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         id_system: String(blingProduct.id),
         sku: blingProduct.codigo,
         ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
-        eanTribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`
+        ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`
       },
       { conflictFields: ["id_system"] },
     );

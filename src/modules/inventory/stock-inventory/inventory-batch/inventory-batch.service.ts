@@ -11,7 +11,10 @@ import User from "../../../warehouse/users/users/user.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import { UnitBusiness } from "../../../warehouse";
 import { FindOptions } from "sequelize";
-import { PaginatedResult, QueryParams } from "../../../../shared/query/query.types";
+import {
+  PaginatedResult,
+  QueryParams,
+} from "../../../../shared/query/query.types";
 
 export class InventoryBatchService extends BaseService<
   InventoryBatch,
@@ -23,7 +26,7 @@ export class InventoryBatchService extends BaseService<
     this.queryConfig = {
       defaults: { perPage: 20, sortBy: "createdAt", sortDir: "DESC" },
       searchFields: ["number"],
-      filterableFields: ["unit_business_id"],
+      filterableFields: ["unit_business_id", "type", "BatchIdForDivergency"],
       sortableFields: ["number", "createdAt", "updatedAt"],
     };
   }
@@ -38,7 +41,11 @@ export class InventoryBatchService extends BaseService<
 
       const batch = await InventoryBatch.create(
         {
-          number: await setBatchNumber("INVENTORY", unitBusiness?.number!, unitBusinessId),
+          number: await setBatchNumber(
+            "INVENTORY",
+            unitBusiness?.number!,
+            unitBusinessId,
+          ),
           date: new Date(),
           total_quantity_stock: 0,
           total_quantity_read: 0,
@@ -46,7 +53,7 @@ export class InventoryBatchService extends BaseService<
           status: "OPEN",
           type: "REGULAR",
         },
-        { transaction: t }
+        { transaction: t },
       );
 
       batchId = batch.id;
@@ -55,7 +62,116 @@ export class InventoryBatchService extends BaseService<
     return (await this.findByIdFullBatch(batchId!)) as InventoryBatch;
   }
 
-  async finishBatch(batchId: string): Promise<{ success: boolean; message: string }> {
+  async createDivergencyBatch(parentBatchId: string): Promise<InventoryBatch> {
+    let newBatchId: string;
+
+    await sequelize.transaction(async (t) => {
+      const parentBatch = await InventoryBatch.findByPk(parentBatchId, {
+        transaction: t,
+      });
+
+      if (!parentBatch) throw new Error("Lote pai não encontrado");
+      if (parentBatch.type !== "REGULAR")
+        throw new Error("Lote pai deve ser do tipo NORMAL");
+      if (parentBatch.status !== "FINISHED")
+        throw new Error(
+          "Lote pai deve estar finalizado para gerar divergência",
+        );
+
+      const unitBusiness = await UnitBusiness.findOne({
+        where: { id: parentBatch.unit_business_id },
+      });
+
+      if (!unitBusiness) throw new Error("UnitBusiness não encontrada");
+
+      // 2. Busca todos os items do lote pai com seus logs
+      const parentItems = await InventoryBatchItems.findAll({
+        where: { inventory_batch_id: parentBatchId },
+        include: [
+          {
+            model: InventoryBatchLogs,
+            as: "logs",
+          },
+        ],
+        transaction: t,
+      });
+
+      // 3. Filtra somente os itens onde os usuários divergiram entre si
+      const divergentItems = parentItems.filter((item) => {
+        const logs = (item as any).logs ?? [];
+
+        // precisa ter pelo menos 2 logs (2 usuários) para haver divergência entre eles
+        if (logs.length < 2) return false;
+
+        const quantities = logs.map((l: any) => Number(l.quantity_read));
+        const min = Math.min(...quantities);
+        const max = Math.max(...quantities);
+
+        return max !== min;
+      });
+
+      if (!divergentItems.length) {
+        throw new Error(
+          "Nenhuma divergência encontrada entre os usuários neste lote",
+        );
+      }
+
+      // 4. Cria o novo lote de divergência
+      const newBatch = await InventoryBatch.create(
+        {
+          number: await setBatchNumber(
+            "DIVERGENCY",
+            unitBusiness.number!,
+            parentBatch.unit_business_id,
+          ),
+          date: new Date(),
+          total_quantity_stock: 0,
+          total_quantity_read: 0,
+          unit_business_id: parentBatch.unit_business_id,
+          status: "OPEN",
+          type: "DIVERGENCY",
+          BatchIdForDivergency: parentBatchId,
+        },
+        { transaction: t },
+      );
+
+      newBatchId = newBatch.id;
+
+      // 5. Cria os batch items do lote de divergência
+      // quantity_stock = maior leitura entre os usuários (referência para recontar)
+      let totalStock = 0;
+
+      for (const item of divergentItems) {
+        await InventoryBatchItems.create(
+          {
+            product_id: item.product_id,
+            inventory_batch_id: newBatch.id,
+            ean: item.ean,
+            sku: item.sku,
+            quantity_stock: item.quantity_stock,
+            quantity_read: 0,
+            divergency: item.quantity_stock,
+            stock_id: item.stock_id,
+            status: "OPEN",
+          },
+          { transaction: t },
+        );
+
+        totalStock += Number(item.quantity_stock);
+      }
+
+      await newBatch.update(
+        { total_quantity_stock: totalStock },
+        { transaction: t },
+      );
+    });
+
+    return (await this.findByIdFullBatch(newBatchId!)) as InventoryBatch;
+  }
+
+  async finishBatch(
+    batchId: string,
+  ): Promise<{ success: boolean; message: string }> {
     return await sequelize.transaction(async (t) => {
       const batch = await InventoryBatch.findByPk(batchId, {
         transaction: t,
@@ -63,7 +179,8 @@ export class InventoryBatchService extends BaseService<
       });
 
       if (!batch) throw new Error("Lote de inventário não encontrado");
-      if (batch.status === "FINISHED") throw new Error("Lote já foi finalizado");
+      if (batch.status === "FINISHED")
+        throw new Error("Lote já foi finalizado");
 
       const items = await InventoryBatchItems.findAll({
         where: { inventory_batch_id: batchId },
@@ -78,7 +195,7 @@ export class InventoryBatchService extends BaseService<
 
       if (pendingItems.length > 0) {
         throw new Error(
-          `Não é possível concluir: ${pendingItems.length} produto(s) ainda não foram conferidos por todos os usuários`
+          `Não é possível concluir: ${pendingItems.length} produto(s) ainda não foram conferidos por todos os usuários`,
         );
       }
 
@@ -173,7 +290,7 @@ export class InventoryBatchService extends BaseService<
     return batch;
   }
 
-    async paginate(
+  async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<InventoryBatch>> {
@@ -183,9 +300,9 @@ export class InventoryBatchService extends BaseService<
         {
           model: UnitBusiness,
           as: "unitBusiness",
-        }
-      ]
-    })
+        },
+      ],
+    });
   }
 }
 

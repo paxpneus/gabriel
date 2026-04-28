@@ -6,7 +6,7 @@ export interface ProductAttributes {
   name: string;
   sku: string;
   ean: string;
-   eanTribut: string;
+   ean_tribut: string;
   id_system: string;
   createdAt?: Date;
   updatedAt?: Date;

@@ -44,12 +44,7 @@ SupplierMapping.init(
     tableName: 'product_supplier_maps',
     timestamps: true,
     underscored: true,
-    indexes: [
-      {
-        unique: true,
-        fields: ['product_id', 'supplier_cnpj'],
-      },
-    ],
+    
     hooks: {
       beforeCreate: (instance: any) => {
         if (instance.supplier_cnpj) {
