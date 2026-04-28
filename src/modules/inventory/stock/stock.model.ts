@@ -50,12 +50,7 @@ Stock.init(
     tableName: 'stocks',
     timestamps: true,
     underscored: true,
-    indexes: [
-      {
-        unique: true,
-        fields: [ 'product_id'],
-      },
-    ],
+ 
   }
 );
 

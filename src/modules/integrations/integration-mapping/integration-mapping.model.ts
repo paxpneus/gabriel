@@ -66,17 +66,7 @@ IntegrationMapping.init(
     tableName: "integration_mappings",
     timestamps: true,
     underscored: true,
-    indexes: [
-      {
-        unique: true,
-        fields: [
-          "entity_type",
-          "internal_id",
-          "integrations_id",
-          "unit_business_id",
-        ],
-      },
-    ],
+   
   },
 );
 
