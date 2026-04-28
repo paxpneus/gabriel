@@ -44,6 +44,7 @@ export class InventoryBatchService extends BaseService<
           total_quantity_read: 0,
           unit_business_id: unitBusinessId,
           status: "OPEN",
+          type: "REGULAR",
         },
         { transaction: t }
       );

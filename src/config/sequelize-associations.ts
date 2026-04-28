@@ -372,6 +372,20 @@ UnitBusiness.hasMany(Stock, { foreignKey: 'unit_business_id', as: 'stocks' });
   InventoryBatchItems.hasMany(InventoryBatchLogs, { foreignKey: 'inventory_batch_item_id', as: 'logs' });
   InventoryBatchLogs.belongsTo(InventoryBatchItems, { foreignKey: 'inventory_batch_item_id', as: 'item' });
 
+// ===== INVENTORY BATCH SELF RELATION (DIVERGENCY) =====
+
+// Um batch ORIGINAL tem vários batches de divergência
+InventoryBatch.hasMany(InventoryBatch, {
+  foreignKey: 'batch_id_for_divergency',
+  as: 'divergencies',
+});
+
+// Um batch de divergência pertence a um batch ORIGINAL
+InventoryBatch.belongsTo(InventoryBatch, {
+  foreignKey: 'batch_id_for_divergency',
+  as: 'originalBatch',
+});
+
   // Relacionamentos com Entidades Externas:
   
   // Items -> Product
