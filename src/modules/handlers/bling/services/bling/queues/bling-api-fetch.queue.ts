@@ -17,9 +17,8 @@ import { cleanDocument } from "../../../../../../shared/utils/normalizers/docume
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
 
-const BLING_UNIT_BUSINESS_ID = '361b5640-ec04-4b3f-8191-fe3ac5f134c4';
-const BLING_UNIT_BUSINESS_CNPJ = '02316749002111';
-
+const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
+const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
 
 export function extractPartiesFromXml(xml: string) {
   const parsed = parser.parse(xml);
@@ -31,6 +30,7 @@ export function extractPartiesFromXml(xml: string) {
 
   const emit = nfe?.emit ?? {};
   const dest = nfe?.dest ?? {};
+  const transp = nfe?.transp ?? {};
 
   const senderCnpj = emit?.CNPJ ?? "";
   const senderName = emit?.xNome ?? "";
@@ -39,11 +39,18 @@ export function extractPartiesFromXml(xml: string) {
 
   const receiverName = dest?.xNome ?? "";
 
+  const transporter = transp?.transporta ?? {};
+
+  const transporterName = transporter?.xNome ?? "";
+  const transporterDocument = transporter?.CNPJ ?? transporter?.CPF ?? "";
+
   return {
     senderCnpj,
     senderName,
     receiverCnpj,
     receiverName,
+    transporterName,
+    transporterDocument,
   };
 }
 
@@ -194,7 +201,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         id_system: String(blingProduct.id),
         sku: blingProduct.codigo,
         ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
-        ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`
+        ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
       },
       { conflictFields: ["id_system"] },
     );
@@ -209,105 +216,109 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
    * e atualiza o SupplierMapping.
    */
 
-private async fetchAndUpsertProductSupplier(
-  apiFetch: ApiFetchRequest,
-): Promise<void> {
-  const { data } = await this.api.get<{ data: BlingApiProductSupplier }>(
-    `/produtos/fornecedores/${apiFetch.blingId}`,
-  );
-
-  const ps = data.data;
-
-  if (!ps?.produto?.id) {
-    throw new Error(
-      `[BLING_API_FETCH] Produto-fornecedor ${apiFetch.blingId} sem produto.id. Retry.`,
+  private async fetchAndUpsertProductSupplier(
+    apiFetch: ApiFetchRequest,
+  ): Promise<void> {
+    const { data } = await this.api.get<{ data: BlingApiProductSupplier }>(
+      `/produtos/fornecedores/${apiFetch.blingId}`,
     );
-  }
 
-  const product = await Product.findOne({
-    where: { id_system: String(ps.produto.id) },
-  });
+    const ps = data.data;
 
-  if (!product) {
-    console.warn(
-      `[BLING_API_FETCH] Produto blingId=${ps.produto.id} não encontrado. Ignorado.`,
-    );
-    return;
-  }
-
-  let cnpj = ps.fornecedor?.cnpj ?? ps.fornecedor?.cpf ?? '';
-  const supplierId = ps.fornecedor?.id ? String(ps.fornecedor.id) : null;
-
-  // 1. Tenta resolver CNPJ pelo banco
-  if (!cnpj && supplierId) {
-    const supplierDb = await Supplier.findOne({ where: { id_system: supplierId } });
-    if (supplierDb?.document && !supplierDb.document.startsWith('PENDING-')) {
-      cnpj = supplierDb.document;
-    }
-  }
-
-  // 2. Tenta resolver CNPJ pela API Bling
-  if (!cnpj && supplierId) {
-    try {
-      const { data: contatoRes } = await this.api.get<{ data: any }>(
-        `/contatos/${supplierId}`,
+    if (!ps?.produto?.id) {
+      throw new Error(
+        `[BLING_API_FETCH] Produto-fornecedor ${apiFetch.blingId} sem produto.id. Retry.`,
       );
-      const contato = contatoRes.data;
-      cnpj = contato?.numeroDocumento ?? '';
-
-      if (cnpj) {
-        await Supplier.upsert({
-          id_system: supplierId,
-          name: contato?.nome ?? 'SEM NOME',
-          document: cnpj,
-          fantasy_name: contato?.fantasia ?? null,
-          city: contato?.endereco?.municipio ?? '',
-          uf: contato?.endereco?.uf ?? '',
-          code: contato?.codigo ?? null,
-        });
-      }
-    } catch (error: any) {
-      if (error?.response?.status === 404) {
-        console.warn(`[BLING_API_FETCH] Contato ${supplierId} não existe na Bling.`);
-        return; // sem CNPJ e sem contato → não há o que salvar
-      }
-      throw error;
     }
-  }
 
-  // 3. Sem CNPJ resolvível → aborta sem criar registro duplicado
-  if (!cnpj) {
-    console.warn(
-      `[BLING_API_FETCH] Fornecedor ${supplierId} sem CNPJ/CPF resolvível. SupplierMapping não atualizado.`,
+    const product = await Product.findOne({
+      where: { id_system: String(ps.produto.id) },
+    });
+
+    if (!product) {
+      console.warn(
+        `[BLING_API_FETCH] Produto blingId=${ps.produto.id} não encontrado. Ignorado.`,
+      );
+      return;
+    }
+
+    let cnpj = ps.fornecedor?.cnpj ?? ps.fornecedor?.cpf ?? "";
+    const supplierId = ps.fornecedor?.id ? String(ps.fornecedor.id) : null;
+
+    // 1. Tenta resolver CNPJ pelo banco
+    if (!cnpj && supplierId) {
+      const supplierDb = await Supplier.findOne({
+        where: { id_system: supplierId },
+      });
+      if (supplierDb?.document && !supplierDb.document.startsWith("PENDING-")) {
+        cnpj = supplierDb.document;
+      }
+    }
+
+    // 2. Tenta resolver CNPJ pela API Bling
+    if (!cnpj && supplierId) {
+      try {
+        const { data: contatoRes } = await this.api.get<{ data: any }>(
+          `/contatos/${supplierId}`,
+        );
+        const contato = contatoRes.data;
+        cnpj = contato?.numeroDocumento ?? "";
+
+        if (cnpj) {
+          await Supplier.upsert({
+            id_system: supplierId,
+            name: contato?.nome ?? "SEM NOME",
+            document: cnpj,
+            fantasy_name: contato?.fantasia ?? null,
+            city: contato?.endereco?.municipio ?? "",
+            uf: contato?.endereco?.uf ?? "",
+            code: contato?.codigo ?? null,
+          });
+        }
+      } catch (error: any) {
+        if (error?.response?.status === 404) {
+          console.warn(
+            `[BLING_API_FETCH] Contato ${supplierId} não existe na Bling.`,
+          );
+          return; // sem CNPJ e sem contato → não há o que salvar
+        }
+        throw error;
+      }
+    }
+
+    // 3. Sem CNPJ resolvível → aborta sem criar registro duplicado
+    if (!cnpj) {
+      console.warn(
+        `[BLING_API_FETCH] Fornecedor ${supplierId} sem CNPJ/CPF resolvível. SupplierMapping não atualizado.`,
+      );
+      return; // ← era aqui que entrava NO-DOC-null e causava o conflito
+    }
+
+    const cleanCnpj = cleanDocument(cnpj); // garante formatação consistente
+
+    // 4. Atualiza o registro existente (criado pelo DirectUpsert com PENDING-)
+    //    ou cria se por algum motivo não existir ainda
+    const existing = await SupplierMapping.findOne({
+      where: { product_id: product.id },
+    });
+
+    if (existing) {
+      await existing.update({
+        supplier_cnpj: cleanCnpj,
+        supplier_product_code: ps.codigo ?? existing.supplier_product_code,
+      });
+    } else {
+      await SupplierMapping.create({
+        product_id: product.id,
+        supplier_cnpj: cleanCnpj,
+        supplier_product_code: ps.codigo ?? "",
+      });
+    }
+
+    console.log(
+      `[BLING_API_FETCH] SupplierMapping ${existing ? "atualizado" : "criado"}: productId=${product.id}, cnpj=${cleanCnpj}`,
     );
-    return; // ← era aqui que entrava NO-DOC-null e causava o conflito
   }
-
-  const cleanCnpj = cleanDocument(cnpj); // garante formatação consistente
-
-  // 4. Atualiza o registro existente (criado pelo DirectUpsert com PENDING-)
-  //    ou cria se por algum motivo não existir ainda
-  const existing = await SupplierMapping.findOne({
-    where: { product_id: product.id },
-  });
-
-  if (existing) {
-    await existing.update({
-      supplier_cnpj: cleanCnpj,
-      supplier_product_code: ps.codigo ?? existing.supplier_product_code,
-    });
-  } else {
-    await SupplierMapping.create({
-      product_id: product.id,
-      supplier_cnpj: cleanCnpj,
-      supplier_product_code: ps.codigo ?? '',
-    });
-  }
-
-  console.log(
-    `[BLING_API_FETCH] SupplierMapping ${existing ? 'atualizado' : 'criado'}: productId=${product.id}, cnpj=${cleanCnpj}`,
-  );
-}
 
   /**
    * Busca a nota fiscal completa na Bling e persiste Invoice + InvoiceItems.
@@ -332,21 +343,22 @@ private async fetchAndUpsertProductSupplier(
     // ─── Resolve tipo e status a partir dos dados completos da API ───────────
 
     const invoiceType: "INCOMING" | "OUTGOING" =
-  nf.tipo === 0 ? "INCOMING" : "OUTGOING";
+      nf.tipo === 0 ? "INCOMING" : "OUTGOING";
 
     const invoiceStatus: "OPEN" | "PENDING" | "FINISHED" =
       partial.status === "CANCELLED"
         ? "OPEN" // Bling cancelada → mantemos como OPEN para revisão manual
         : ((partial.status as "OPEN" | "PENDING" | "FINISHED") ?? "PENDING");
 
-      const encryptedKey = nf.chaveAcesso ? nf.chaveAcesso : null
-
+    const encryptedKey = nf.chaveAcesso ? nf.chaveAcesso : null;
 
     let senderCnpj = nf.emitente?.cnpj ?? "";
     let senderName = nf.emitente?.nome ?? "";
     let receiverCnpj = nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "";
     let receiverName = nf.destinatario?.nome ?? "";
     let xmlContent: string | null = null;
+    let transporter_name: string | null = null;
+    let transporter_document: string | null = null;
 
     if (nf.xml) {
       try {
@@ -358,6 +370,8 @@ private async fetchAndUpsertProductSupplier(
           senderName = extracted.senderName || senderName;
           receiverCnpj = cleanDocument(extracted.receiverCnpj || receiverCnpj);
           receiverName = extracted.receiverName || receiverName;
+          transporter_name = extracted.transporterName;
+          transporter_document = extracted.transporterDocument;
         }
       } catch (err) {
         console.warn("[XML PARSE ERROR]", err);
@@ -372,9 +386,11 @@ private async fetchAndUpsertProductSupplier(
 
     const unit_business = await UnitBusiness.findByPk(BLING_UNIT_BUSINESS_ID);
 
-if (!unit_business) {
-  throw new Error(`[ERRO NO MAPEAMENTO DE NFE] - UnitBusiness padrão Bling não encontrada | id=${BLING_UNIT_BUSINESS_ID}`);
-}
+    if (!unit_business) {
+      throw new Error(
+        `[ERRO NO MAPEAMENTO DE NFE] - UnitBusiness padrão Bling não encontrada | id=${BLING_UNIT_BUSINESS_ID}`,
+      );
+    }
 
     let store_id = await Store.findOne({
       where: { id_store_system: String(nf?.loja?.id) },
@@ -416,6 +432,8 @@ if (!unit_business) {
         integrations_id: integration.id,
         store_id: store_id!.id ?? null,
         transporter_id: transporter?.id ?? null,
+        transporter_document: transporter_document ?? null,
+        transporter_name: transporter_name ?? null,
         // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
         // transporter_id: idem
       },

@@ -27,6 +27,8 @@ export interface InvoiceAttributes {
   number_system?: string;
   received_at?: Date;
   expected_receiving?: Date;
+  transporter_name?: string | null;
+  transporter_document?: string | null;
 }
 
 export interface InvoiceCreationAttributes extends Omit<InvoiceAttributes, 'id' | 'createdAt' | 'updatedAt'> {}

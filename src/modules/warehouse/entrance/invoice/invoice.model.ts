@@ -30,6 +30,8 @@ class Invoice
   public expected_receiving?: Date;
   public number_system?: string;
   public xml_key?: string;
+  public transporter_name?: string
+  public transporter_document?: string
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -112,6 +114,14 @@ Invoice.init(
         model: "transporters",
         key: "id",
       },
+    },
+    transporter_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true
+    },
+    transporter_document: {
+      type: DataTypes.STRING(20),
+      allowNull: true
     },
     type: {
       type: DataTypes.ENUM("INCOMING", "OUTGOING"),
