@@ -24,15 +24,16 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
         include: [
           {
             model: UnitBusiness,
-            as: 'unitBusiness',
+            as: "unitBusiness",
           },
           {
             model: Transporter,
-            as: 'transporter',
+            as: "transporter",
           },
           {
             model: ExpeditionBatchInvoice,
             as: "batchInvoices",
+            separate: true,
             include: [
               {
                 model: Invoice,
@@ -41,6 +42,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                   {
                     model: InvoiceItems,
                     as: "items",
+                    separate: true,
                   },
                 ],
               },
@@ -52,10 +54,10 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
             include: [
               {
                 model: Product,
-                as: 'product',
-                include: [{ model: Stock, as: 'stocks' }]
-              }
-            ]
+                as: "product",
+                include: [{ model: Stock, as: "stocks" }],
+              },
+            ],
           },
         ],
       });
@@ -63,13 +65,13 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
       data = await this.findOne({
         where: { number: number },
         include: [
-            {
+          {
             model: UnitBusiness,
-            as: 'unitBusiness',
+            as: "unitBusiness",
           },
-           {
+          {
             model: Transporter,
-            as: 'transporter',
+            as: "transporter",
           },
           {
             model: ExpeditionBatchInvoice,
@@ -85,9 +87,9 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                     include: [
                       {
                         model: Product,
-                        as: 'product'
-                      }
-                    ]
+                        as: "product",
+                      },
+                    ],
                   },
                 ],
               },
@@ -99,9 +101,9 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
             include: [
               {
                 model: Product,
-                as: 'product'
-              }
-            ]
+                as: "product",
+              },
+            ],
           },
         ],
       });
@@ -111,9 +113,8 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
       throw new Error(`Lote não encontrado`);
     }
 
-    return data.get({plain: true});
+    return data.get({ plain: true });
   }
-
 }
 
 export default new ExpeditionBatchRepository();
