@@ -38,6 +38,24 @@ export class InventoryBatchLogsService extends BaseService<
       });
       if (!inventoryBatch) throw new Error("Lote de Inventário não encontrado");
 
+      const existingUserIds = await InventoryBatchLogs.findAll({
+        attributes: ["user_id"],
+        where: { inventory_batch_item_id: { [Op.in]: sequelize.literal(
+          `(SELECT id FROM inventory_batch_items WHERE inventory_batch_id = '${inventoryBatchId}')`
+        )}},
+        group: ["user_id"],
+        transaction: t,
+      });
+
+      const uniqueUserIds = existingUserIds.map((l) => l.user_id);
+      const isNewUser = !uniqueUserIds.includes(userId);
+
+      if (isNewUser && uniqueUserIds.length >= 2) {
+        throw new Error(
+          "Este lote já possui 2 usuários em conferência. Não é permitido adicionar mais conferentes."
+        );
+      }
+
       const productFound = (await Product.findOne({
         where: { ean: productcode },
         include: [
