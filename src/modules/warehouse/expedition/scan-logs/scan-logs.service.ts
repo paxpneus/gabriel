@@ -212,6 +212,7 @@ export class ExpeditionScanLogService extends BaseService<
     labelcode: string,
     batchid: string,
     userId: string,
+    quantity: number = 1,
   ) {
     return await sequelize.transaction(async (t) => {
       // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
@@ -226,9 +227,9 @@ export class ExpeditionScanLogService extends BaseService<
 
       const productFound = await Product.findOne({
         where: {
-              [Op.or]: [{ ean: labelcode }, { ean_tribut: labelcode }],
-            },
-      })
+          [Op.or]: [{ ean: labelcode }, { ean_tribut: labelcode }],
+        },
+      });
 
       if (!productFound) {
         throw new Error("Produto não encontrado!");
@@ -251,44 +252,35 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      // ── 4. Valida quantidade ───────────────────────────────────────────────
-      if (batchItem.quantity_scanned >= batchItem.quantity) {
-        throw new Error(
-          `Quantidade máxima já recebida para este produto (${batchItem.quantity} unidades)`,
-        );
-      }
-
       // ── 5. Cria ScanLog e incrementa quantity_scanned no BatchItem ─────────
       //    Nota: label_full_code aqui é o código do fornecedor, não tem
       //    unicidade global — a mesma etiqueta pode chegar em lotes diferentes.
       //    A unicidade é garantida por (label_full_code, expedition_batch_id).
       //    TODO: avaliar adicionar unique constraint composto na migration
-      await ExpeditionScanLog.create(
-        {
-          expedition_batch_id: batchid,
-          expedition_batch_items_id: batchItem.id,
-          // INCOMING não tem nota vinculada por volume individual — usa a
-          // primeira batchInvoice do lote que contenha este produto
-          expedition_batch_invoices_id: await this.resolveInvoiceForItem(
-            batchid,
-            productFound.id,
-            t,
-          ),
-          label_full_code: labelcode,
-          vol_number: "000000",
-          user_id: userId,
-        },
-        { transaction: t },
-      );
+
+      const batchBody = {
+        expedition_batch_id: batchid,
+        expedition_batch_items_id: batchItem.id,
+        expedition_batch_invoices_id: await this.resolveInvoiceForItem(
+          batchid,
+          productFound.id,
+          t,
+        ),
+        label_full_code: labelcode,
+        vol_number: "000000",
+        user_id: userId,
+      };
+      const records = new Array(quantity).fill(batchBody);
+      await ExpeditionScanLog.bulkCreate(records, { transaction: t });
 
       await ExpeditionBatchItems.increment("quantity_scanned", {
-        by: 1,
+        by: quantity,
         where: { id: batchItem.id },
         transaction: t,
       });
 
       await ExpeditionBatch.increment("total_volumes_received", {
-        by: 1,
+        by: quantity,
         where: { id: batchid },
         transaction: t,
       });
@@ -324,7 +316,7 @@ export class ExpeditionScanLogService extends BaseService<
       const invoiceId = batchInvoice.invoice.id;
 
       await InvoiceItems.increment("quantity_received", {
-        by: 1,
+        by: quantity,
         where: { id: invoiceItem.id },
         transaction: t,
       });
@@ -364,7 +356,6 @@ export class ExpeditionScanLogService extends BaseService<
         //   { status: "FINISHED" },
         //   { where: { id: batchid }, transaction: t },
         // );
-
         // TODO: gerar NF-e na Bling a partir do XML das invoices do lote
         //       - descriptografar xml_path de cada invoice
         //       - parsear XML e montar corpo da requisição
