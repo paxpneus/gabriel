@@ -204,6 +204,114 @@ export class InventoryBatchLogsService extends BaseService<
         await updatedItem!.update({ status: "FINISHED" }, { transaction: t });
       }
 
+      if (
+        inventoryBatch.type === "DIVERGENCY" &&
+        inventoryBatch.BatchIdForDivergency
+      ) {
+        
+         if (updatedItem?.status === 'FINISHED') {
+        const parentBatchItem = await InventoryBatchItems.findOne({
+          where: {
+            ean: productcode,
+            inventory_batch_id: inventoryBatch.BatchIdForDivergency,
+            stock_id: stock.id,
+          },
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+
+        if (parentBatchItem) {
+          const existingParentLog = await InventoryBatchLogs.findOne({
+            where: {
+              user_id: userId,
+              inventory_batch_item_id: parentBatchItem.id,
+            },
+            transaction: t,
+            lock: t.LOCK.UPDATE,
+          });
+
+          const previousParentUserRead = existingParentLog
+            ? Number(existingParentLog.quantity_read)
+            : 0;
+
+          if (existingParentLog) {
+            await existingParentLog.update(
+              { quantity_read: newUserRead },
+              { transaction: t },
+            );
+          } else {
+            await InventoryBatchLogs.create(
+              {
+                user_id: userId,
+                quantity_read: newUserRead,
+                label_code: productcode,
+                inventory_batch_item_id: parentBatchItem.id,
+                date: new Date(),
+              },
+              { transaction: t },
+            );
+          }
+
+          const maxOtherParentLog = await InventoryBatchLogs.findOne({
+            where: {
+              inventory_batch_item_id: parentBatchItem.id,
+              user_id: { [Op.ne]: userId },
+            },
+            order: [["quantity_read", "DESC"]],
+            transaction: t,
+          });
+
+          const maxOtherParentRead = maxOtherParentLog
+            ? Number(maxOtherParentLog.quantity_read)
+            : 0;
+
+          const newParentItemRead = Math.max(newUserRead, maxOtherParentRead);
+          const previousParentItemRead = Number(parentBatchItem.quantity_read);
+          const parentDelta = newParentItemRead - previousParentItemRead;
+
+          await InventoryBatchItems.update(
+            {
+              quantity_read: newParentItemRead,
+              divergency:
+                Number(parentBatchItem.quantity_stock) - newParentItemRead,
+            },
+            { where: { id: parentBatchItem.id }, transaction: t },
+          );
+
+          if (parentDelta !== 0) {
+            await InventoryBatch.increment("total_quantity_read", {
+              by: parentDelta,
+              where: { id: inventoryBatch.BatchIdForDivergency },
+              transaction: t,
+            });
+          }
+
+          const parentLogs = await InventoryBatchLogs.findAll({
+            where: { inventory_batch_item_id: parentBatchItem.id },
+            transaction: t,
+          });
+
+          const updatedParentItem = await InventoryBatchItems.findByPk(
+            parentBatchItem.id,
+            { transaction: t },
+          );
+
+          const parentAllRead = parentLogs.every(
+            (l) =>
+              Number(l.quantity_read) >=
+              Number(updatedParentItem!.quantity_stock),
+          );
+
+          if (parentAllRead) {
+            await updatedParentItem!.update(
+              { status: "FINISHED" },
+              { transaction: t },
+            );
+          }
+        }
+        }
+      }
+
       return true;
     });
   }
