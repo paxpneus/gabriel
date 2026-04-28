@@ -9,6 +9,7 @@ class Product extends Model<ProductAttributes, ProductCreationAttributes> implem
   public sku!: string;
   public ean!: string;
   public id_system!: string;
+  public eanTribut!: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -35,6 +36,10 @@ Product.init(
       allowNull: true,
     },
     ean: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+    },
+    eanTribut: {
       type: DataTypes.STRING(20),
       allowNull: true,
     },

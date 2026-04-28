@@ -77,6 +77,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       sku: data.sku,
       id_system: String(data.blingId),
       ean: `PENDING-${data.blingId}`,
+      eanTribut: `PENDING-TRIBUT-${data.blingId}`,
     },
   });
 

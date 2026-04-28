@@ -24,7 +24,7 @@ export class InventoryBatchLogsService extends BaseService<
     productcode: string,
     inventoryBatchId: string,
     userId: string,
-    quantity: number
+    quantity: number,
   ) {
     return await sequelize.transaction(async (t) => {
       if (!unitBusinessId) throw new Error("Loja do usuário não encontrada");
@@ -40,9 +40,13 @@ export class InventoryBatchLogsService extends BaseService<
 
       const existingUserIds = await InventoryBatchLogs.findAll({
         attributes: ["user_id"],
-        where: { inventory_batch_item_id: { [Op.in]: sequelize.literal(
-          `(SELECT id FROM inventory_batch_items WHERE inventory_batch_id = '${inventoryBatchId}')`
-        )}},
+        where: {
+          inventory_batch_item_id: {
+            [Op.in]: sequelize.literal(
+              `(SELECT id FROM inventory_batch_items WHERE inventory_batch_id = '${inventoryBatchId}')`,
+            ),
+          },
+        },
         group: ["user_id"],
         transaction: t,
       });
@@ -52,12 +56,14 @@ export class InventoryBatchLogsService extends BaseService<
 
       if (isNewUser && uniqueUserIds.length >= 2) {
         throw new Error(
-          "Este lote já possui 2 usuários em conferência. Não é permitido adicionar mais conferentes."
+          "Este lote já possui 2 usuários em conferência. Não é permitido adicionar mais conferentes.",
         );
       }
 
       const productFound = (await Product.findOne({
-        where: { ean: productcode },
+        where: {
+          [Op.or]: [{ ean: productcode }, { eanTribut: productcode }],
+        },
         include: [
           {
             model: Stock,
@@ -97,7 +103,7 @@ export class InventoryBatchLogsService extends BaseService<
             stock_id: stock.id!,
             status: "PENDING",
           },
-          { transaction: t }
+          { transaction: t },
         );
 
         await InventoryBatch.increment("total_quantity_stock", {
@@ -121,7 +127,10 @@ export class InventoryBatchLogsService extends BaseService<
         : 0;
 
       if (existingLog) {
-        await existingLog.increment("quantity_read", { by: quantity, transaction: t });
+        await existingLog.increment("quantity_read", {
+          by: quantity,
+          transaction: t,
+        });
       } else {
         await InventoryBatchLogs.create(
           {
@@ -131,11 +140,11 @@ export class InventoryBatchLogsService extends BaseService<
             inventory_batch_item_id: inventoryBatchItem.id,
             date: new Date(),
           },
-          { transaction: t }
+          { transaction: t },
         );
         await InventoryBatchItems.update(
           { status: "PENDING" },
-          { where: { id: inventoryBatchItem.id }, transaction: t }
+          { where: { id: inventoryBatchItem.id }, transaction: t },
         );
       }
 
@@ -164,7 +173,7 @@ export class InventoryBatchLogsService extends BaseService<
         {
           where: { id: inventoryBatchItem.id },
           transaction: t,
-        }
+        },
       );
 
       if (itemDelta > 0) {
@@ -184,11 +193,11 @@ export class InventoryBatchLogsService extends BaseService<
 
       const updatedItem = await InventoryBatchItems.findByPk(
         inventoryBatchItem.id,
-        { transaction: t }
+        { transaction: t },
       );
 
       const allRead = scanLogs.every(
-        (s) => Number(s.quantity_read) >= Number(updatedItem!.quantity_stock)
+        (s) => Number(s.quantity_read) >= Number(updatedItem!.quantity_stock),
       );
 
       if (allRead) {
