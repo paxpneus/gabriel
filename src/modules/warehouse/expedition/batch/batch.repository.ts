@@ -51,6 +51,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
           {
             model: ExpeditionBatchItems,
             as: "items",
+            separate: true,
             include: [
               {
                 model: Product,
@@ -76,6 +77,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
           {
             model: ExpeditionBatchInvoice,
             as: "batchInvoices",
+            separate: true,
             include: [
               {
                 model: Invoice,
@@ -83,6 +85,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                 include: [
                   {
                     model: InvoiceItems,
+                    separate: true,
                     as: "items",
                     include: [
                       {
@@ -98,6 +101,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
           {
             model: ExpeditionBatchItems,
             as: "items",
+            separate: true,
             include: [
               {
                 model: Product,

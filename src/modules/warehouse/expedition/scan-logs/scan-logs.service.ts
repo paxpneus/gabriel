@@ -225,17 +225,16 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
+      // ── 2. Busca o produto pelo EAN ────────────────────────────────────────
       const productFound = await Product.findOne({
         where: {
           [Op.or]: [{ ean: labelcode }, { ean_tribut: labelcode }],
         },
       });
 
-      if (!productFound) {
-        throw new Error("Produto não encontrado!");
-      }
+      if (!productFound) throw new Error("Produto não encontrado!");
 
-      // ── 3. Busca o BatchItem do produto neste lote ─────────────────────────
+      // ── 3. Busca o BatchItem do produto neste lote (com lock) ──────────────
       const batchItem = await ExpeditionBatchItems.findOne({
         where: {
           expedition_batch_id: batchid,
@@ -252,42 +251,11 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      // ── 5. Cria ScanLog e incrementa quantity_scanned no BatchItem ─────────
-      //    Nota: label_full_code aqui é o código do fornecedor, não tem
-      //    unicidade global — a mesma etiqueta pode chegar em lotes diferentes.
-      //    A unicidade é garantida por (label_full_code, expedition_batch_id).
-      //    TODO: avaliar adicionar unique constraint composto na migration
-
-      const batchBody = {
-        expedition_batch_id: batchid,
-        expedition_batch_items_id: batchItem.id,
-        expedition_batch_invoices_id: await this.resolveInvoiceForItem(
-          batchid,
-          productFound.id,
-          t,
-        ),
-        label_full_code: labelcode,
-        vol_number: "000000",
-        user_id: userId,
-      };
-      const records = new Array(quantity).fill(batchBody);
-      await ExpeditionScanLog.bulkCreate(records, { transaction: t });
-
-      await ExpeditionBatchItems.increment("quantity_scanned", {
-        by: quantity,
-        where: { id: batchItem.id },
-        transaction: t,
-      });
-
-      await ExpeditionBatch.increment("total_volumes_received", {
-        by: quantity,
-        where: { id: batchid },
-        transaction: t,
-      });
-
-      // ── 6. Atualiza quantity_received no InvoiceItem ───────────────────────
-      //    Busca o InvoiceItem da NF de entrada correspondente ao produto
-      const batchInvoice = (await ExpeditionBatchInvoice.findOne({
+      // ── 5. Resolve qual InvoiceItem incrementar (preenche uma NF por vez) ──
+      //    Busca todas as batchInvoices do lote que contêm este produto,
+      //    ordenadas por createdAt para garantir ordem consistente,
+      //    e pega a primeira que ainda tem quantity_received < quantity_expected
+      const batchInvoices = (await ExpeditionBatchInvoice.findAll({
         where: { expedition_batch_id: batchid },
         include: [
           {
@@ -305,37 +273,119 @@ export class ExpeditionScanLogService extends BaseService<
             required: true,
           },
         ],
+        order: [["createdAt", "ASC"]],
         transaction: t,
-      })) as any;
+      })) as any[];
 
-      if (!batchInvoice?.invoice?.items?.[0]) {
-        throw new Error("Item da nota fiscal não encontrado para este produto");
-      }
-
-      const invoiceItem = batchInvoice.invoice.items[0];
-      const invoiceId = batchInvoice.invoice.id;
-
-      await InvoiceItems.increment("quantity_received", {
-        by: quantity,
-        where: { id: invoiceItem.id },
-        transaction: t,
-      });
-
-      // ── 7. Verifica se todos os itens da NF foram recebidos ────────────────
-      const pendingInvoiceItems = await InvoiceItems.count({
-        where: {
-          invoice_id: invoiceId,
-          quantity_received: { [Op.lt]: sequelize.col("quantity_expected") },
-        },
-        transaction: t,
-      });
-
-      if (pendingInvoiceItems === 0) {
-        await Invoice.update(
-          { status: "FINISHED" },
-          { where: { id: invoiceId }, transaction: t },
+      if (!batchInvoices.length) {
+        throw new Error(
+          "Nenhuma nota fiscal encontrada para este produto no lote",
         );
       }
+
+      let remaining = quantity;
+      const scanLogs: any[] = [];
+
+      for (const batchInvoice of batchInvoices) {
+        if (remaining <= 0) break;
+
+        const invoiceItem = batchInvoice.invoice.items[0];
+        const invoiceId = batchInvoice.invoice.id;
+
+        // Lê o valor atual direto do banco com lock
+        const fresh = await InvoiceItems.findByPk(invoiceItem.id, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+
+        if (!fresh) continue;
+
+        const space = fresh.quantity_expected - fresh.quantity_received;
+        if (space <= 0) continue; // NF já cheia, vai pra próxima
+
+        const toIncrement = Math.min(remaining, space);
+
+        await InvoiceItems.increment("quantity_received", {
+          by: toIncrement,
+          where: { id: fresh.id },
+          transaction: t,
+        });
+
+        for (let j = 0; j < toIncrement; j++) {
+          scanLogs.push({
+            expedition_batch_id: batchid,
+            expedition_batch_items_id: batchItem.id,
+            expedition_batch_invoices_id: batchInvoice.id,
+            label_full_code: labelcode,
+            vol_number: "000000",
+            user_id: userId,
+          });
+        }
+
+        remaining -= toIncrement;
+
+        // Checa se esta NF fechou
+        const stillPending = await InvoiceItems.count({
+          where: {
+            invoice_id: invoiceId,
+            quantity_received: { [Op.lt]: sequelize.col("quantity_expected") },
+          },
+          transaction: t,
+        });
+
+        if (stillPending === 0) {
+          await Invoice.update(
+            { status: "FINISHED" },
+            { where: { id: invoiceId }, transaction: t },
+          );
+        }
+      }
+
+      // Over-receiving: se sobrou, joga na última NF
+      if (remaining > 0) {
+        const lastInvoice = batchInvoices[batchInvoices.length - 1];
+        const lastItem = lastInvoice.invoice.items[0];
+
+        await InvoiceItems.increment("quantity_received", {
+          by: remaining,
+          where: { id: lastItem.id },
+          transaction: t,
+        });
+
+        for (let j = 0; j < remaining; j++) {
+          scanLogs.push({
+            expedition_batch_id: batchid,
+            expedition_batch_items_id: batchItem.id,
+            expedition_batch_invoices_id: lastInvoice.id,
+            label_full_code: labelcode,
+            vol_number: "000000",
+            user_id: userId,
+          });
+        }
+      }
+
+      if (remaining > 0) {
+        throw new Error(
+          `Quantidade excede o total esperado nas notas fiscais para este produto. ` +
+            `Sobra não alocada: ${remaining}`,
+        );
+      }
+
+      // ── 6. Cria todos os ScanLogs de uma vez ──────────────────────────────
+      await ExpeditionScanLog.bulkCreate(scanLogs, { transaction: t });
+
+      // ── 7. Incrementa BatchItem e total do lote ────────────────────────────
+      await ExpeditionBatchItems.increment("quantity_scanned", {
+        by: quantity,
+        where: { id: batchItem.id },
+        transaction: t,
+      });
+
+      await ExpeditionBatch.increment("total_volumes_received", {
+        by: quantity,
+        where: { id: batchid },
+        transaction: t,
+      });
 
       // ── 8. Verifica se todas as NFs do lote foram finalizadas ──────────────
       const pendingInvoices = await Invoice.count({
@@ -352,15 +402,7 @@ export class ExpeditionScanLogService extends BaseService<
       });
 
       if (pendingInvoices === 0) {
-        // await ExpeditionBatch.update(
-        //   { status: "FINISHED" },
-        //   { where: { id: batchid }, transaction: t },
-        // );
-        // TODO: gerar NF-e na Bling a partir do XML das invoices do lote
-        //       - descriptografar xml_path de cada invoice
-        //       - parsear XML e montar corpo da requisição
-        //       - POST /nfe na API Bling da unit_business receptora
-        //       - atualizar Invoice.batch_generated = true
+        // TODO: gerar NF-e na Bling
       }
 
       return true;
