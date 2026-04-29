@@ -82,7 +82,7 @@ export class InventoryBatchLogsService extends BaseService<
 
       let inventoryBatchItem = await InventoryBatchItems.findOne({
         where: {
-         product_id: productFound.id,
+          product_id: productFound.id,
           inventory_batch_id: inventoryBatchId,
           stock_id: stock.id,
         },
@@ -387,7 +387,12 @@ export class InventoryBatchLogsService extends BaseService<
         }
       }
 
-      return true;
+      return {
+        product_id: productFound.id,
+        product_name: productFound.name,
+        ean: productFound.ean,
+        ean_tribut: productFound.ean_tribut,
+      };
     });
   }
 

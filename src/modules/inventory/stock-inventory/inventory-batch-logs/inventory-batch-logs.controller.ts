@@ -42,7 +42,7 @@ class InventoryBatchLogsController extends BaseController<
         quantity,
       } = req.body;
 
-      await this.service.scanProduct(
+      const response = await this.service.scanProduct(
         unitBusinessId,
         productCode,
         inventoryBatchId,
@@ -50,7 +50,7 @@ class InventoryBatchLogsController extends BaseController<
         quantity,
       );
 
-      return res.status(201).json({ message: "Produto escaneado com sucesso" });
+      return res.status(201).json(response);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
