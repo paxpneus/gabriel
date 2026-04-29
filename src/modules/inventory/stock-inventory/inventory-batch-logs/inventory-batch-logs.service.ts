@@ -200,16 +200,50 @@ export class InventoryBatchLogsService extends BaseService<
         (s) => Number(s.quantity_read) >= Number(updatedItem!.quantity_stock),
       );
 
-      if (allRead) {
-        await updatedItem!.update({ status: "FINISHED" }, { transaction: t });
+      const userDivergency =
+        scanLogs.length === 2
+          ? Math.abs(
+              Number(scanLogs[0].quantity_read) -
+                Number(scanLogs[1].quantity_read),
+            )
+          : 0;
+
+      const hasUserDivergency = userDivergency > 0;
+
+      const anyUserReadEnough = scanLogs.some(
+        (s) => Number(s.quantity_read) >= Number(updatedItem!.quantity_stock),
+      );
+
+      const newStatus =
+        !hasUserDivergency && anyUserReadEnough ? "FINISHED" : "PENDING";
+
+      if (newStatus) {
+        await updatedItem!.update({ status: newStatus }, { transaction: t });
+      }
+
+      if (newStatus === "FINISHED") {
+        const allBatchItems = await InventoryBatchItems.findAll({
+          where: { inventory_batch_id: inventoryBatchId },
+          transaction: t,
+        });
+
+        const allItemsFinished = allBatchItems.every(
+          (i) => i.status === "FINISHED",
+        );
+
+        if (allItemsFinished) {
+          await InventoryBatch.update(
+            { status: "FINISHED" },
+            { where: { id: inventoryBatchId }, transaction: t },
+          );
+        }
       }
 
       if (
         inventoryBatch.type === "DIVERGENCY" &&
-        inventoryBatch.BatchIdForDivergency
+        inventoryBatch.BatchIdForDivergency &&
+        newStatus === "FINISHED"
       ) {
-        
-         if (updatedItem?.status === 'FINISHED') {
         const parentBatchItem = await InventoryBatchItems.findOne({
           where: {
             ean: productcode,
@@ -302,13 +336,162 @@ export class InventoryBatchLogsService extends BaseService<
               Number(updatedParentItem!.quantity_stock),
           );
 
-          if (parentAllRead) {
-            await updatedParentItem!.update(
-              { status: "FINISHED" },
-              { transaction: t },
+          const parentUserDivergency =
+            parentLogs.length === 2
+              ? Math.abs(
+                  Number(parentLogs[0].quantity_read) -
+                    Number(parentLogs[1].quantity_read),
+                )
+              : 0;
+
+          const parentHasUserDivergency = parentUserDivergency > 0;
+
+          const parentAnyUserReadEnough = parentLogs.some(
+            (l) =>
+              Number(l.quantity_read) >=
+              Number(updatedParentItem!.quantity_stock),
+          );
+
+          const parentNewStatus =
+            !parentHasUserDivergency && parentAnyUserReadEnough
+              ? "FINISHED"
+              : "PENDING";
+
+          await updatedParentItem!.update(
+            { status: parentNewStatus },
+            { transaction: t },
+          );
+
+          if (parentNewStatus === "FINISHED") {
+            const allParentItems = await InventoryBatchItems.findAll({
+              where: {
+                inventory_batch_id: inventoryBatch.BatchIdForDivergency!,
+              },
+              transaction: t,
+            });
+
+            const allParentItemsFinished = allParentItems.every(
+              (i) => i.status === "FINISHED",
             );
+
+            if (allParentItemsFinished) {
+              await InventoryBatch.update(
+                { status: "FINISHED" },
+                {
+                  where: { id: inventoryBatch.BatchIdForDivergency },
+                  transaction: t,
+                },
+              );
+            }
           }
         }
+      }
+
+      return true;
+    });
+  }
+
+  async updateLogQuantity(
+    logId: string,
+    userId: string,
+    newQuantity: number,
+  ): Promise<boolean> {
+    return await sequelize.transaction(async (t) => {
+      const log = await InventoryBatchLogs.findByPk(logId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!log) throw new Error("Log não encontrado");
+      if (log.user_id !== userId)
+        throw new Error("Sem permissão para editar este log");
+
+      await log.update({ quantity_read: newQuantity }, { transaction: t });
+
+      const inventoryBatchItem = await InventoryBatchItems.findByPk(
+        log.inventory_batch_item_id,
+        { transaction: t, lock: t.LOCK.UPDATE },
+      );
+
+      if (!inventoryBatchItem) throw new Error("Item do lote não encontrado");
+
+      const inventoryBatch = await InventoryBatch.findByPk(
+        inventoryBatchItem.inventory_batch_id,
+        { transaction: t, lock: t.LOCK.UPDATE },
+      );
+
+      if (!inventoryBatch) throw new Error("Lote não encontrado");
+
+      // Recalcula quantity_read do item como o max entre todos os logs
+      const allLogs = await InventoryBatchLogs.findAll({
+        where: { inventory_batch_item_id: inventoryBatchItem.id },
+        transaction: t,
+      });
+
+      const previousItemRead = Number(inventoryBatchItem.quantity_read);
+      const newItemRead = Math.max(
+        ...allLogs.map((l) => Number(l.quantity_read)),
+      );
+      const itemDelta = newItemRead - previousItemRead;
+
+      await inventoryBatchItem.update(
+        {
+          quantity_read: newItemRead,
+          divergency: Number(inventoryBatchItem.quantity_stock) - newItemRead,
+        },
+        { transaction: t },
+      );
+
+      if (itemDelta !== 0) {
+        await InventoryBatch.increment("total_quantity_read", {
+          by: itemDelta,
+          where: { id: inventoryBatch.id },
+          transaction: t,
+        });
+      }
+
+      // ─── Recalcula status do item ─────────────────────────────────────────────
+
+      const hasTwoUsers = allLogs.length >= 2;
+
+      const userDivergency = hasTwoUsers
+        ? Math.abs(
+            Number(allLogs[0].quantity_read) - Number(allLogs[1].quantity_read),
+          )
+        : null;
+
+      const hasUserDivergency = userDivergency !== null && userDivergency > 0;
+
+      const anyUserReadEnough = allLogs.some(
+        (l) =>
+          Number(l.quantity_read) >= Number(inventoryBatchItem.quantity_stock),
+      );
+
+      const newStatus =
+        !hasUserDivergency && anyUserReadEnough ? "FINISHED" : "PENDING";
+
+      await inventoryBatchItem.update(
+        { status: newStatus },
+        { transaction: t },
+      );
+
+      // ─── Recalcula status do batch ────────────────────────────────────────────
+
+      if (newStatus === "FINISHED") {
+        const allBatchItems = await InventoryBatchItems.findAll({
+          where: { inventory_batch_id: inventoryBatch.id },
+          transaction: t,
+        });
+
+        const allItemsFinished = allBatchItems.every(
+          (i) => i.status === "FINISHED",
+        );
+
+        if (allItemsFinished) {
+          await InventoryBatch.update(
+            { status: "FINISHED" },
+            { where: { id: inventoryBatch.id }, transaction: t },
+          );
         }
       }
 
