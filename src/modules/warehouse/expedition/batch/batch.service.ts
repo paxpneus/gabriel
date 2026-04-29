@@ -13,8 +13,14 @@ import ExpeditionScanLog from "../scan-logs/scan-logs.model";
 import { ExpeditionBatchFull } from "./batch.types";
 import { InvoiceItemsAttributes } from "../../entrance/invoice-items/invoice-items.types";
 import { extractChaveFromXml } from "../../../../shared/utils/xml/xml-parser";
-import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
-import { PaginatedResult, QueryParams } from "../../../../shared/query/query.types";
+import {
+  decryptXml,
+  isEncrypted,
+} from "../../../../shared/utils/xml/xml-cipher";
+import {
+  PaginatedResult,
+  QueryParams,
+} from "../../../../shared/query/query.types";
 import { FindOptions } from "sequelize";
 import UnitBusiness from "../../unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
@@ -29,30 +35,26 @@ export class ExpeditionBatchService extends BaseService<
     this.queryConfig = {
       defaults: {
         perPage: 20,
-        sortBy: 'createdAt',
-        sortDir: 'DESC',
+        sortBy: "createdAt",
+        sortDir: "DESC",
       },
-      searchFields: [
-        'number',
-      ],
+      searchFields: ["number"],
       filterableFields: [
-        'status',
-        'type',
-        'integrations_id',
-        'unit_business_id'
+        "status",
+        "type",
+        "integrations_id",
+        "unit_business_id",
       ],
-      sortableFields: [
-        'number',
-        'createdAt',
-        'updatedAt',
-      ],
-    }
+      sortableFields: ["number", "createdAt", "updatedAt"],
+    };
   }
 
   async generateBatchFromInvoices(
-    invoiceIds: string[], unitBusinessId: string, type: string
+    invoiceIds: string[],
+    unitBusinessId: string,
+    type: string,
   ): Promise<ExpeditionBatch> {
-      let batchId: string;
+    let batchId: string;
 
     await sequelize.transaction(async (t) => {
       const invoices = await Invoice.findAll({
@@ -102,7 +104,9 @@ export class ExpeditionBatchService extends BaseService<
           throw new Error("Lote não encontrado para notas já processadas");
         }
 
-        return (await this.repository.getFullBatch(batchInvoice.expedition_batch_id)) as ExpeditionBatch;
+        return (await this.repository.getFullBatch(
+          batchInvoice.expedition_batch_id,
+        )) as ExpeditionBatch;
       }
 
       const batchNumber = `LOTE-${Date.now()}-${Math.random()
@@ -110,23 +114,27 @@ export class ExpeditionBatchService extends BaseService<
         .substring(2, 6)
         .toUpperCase()}`;
 
-        const batchType = type == 'OUTGOING' ? 'EXPEDITION' : 'ENTRANCE'
-        const unitBusiness = await UnitBusiness.findOne({
-          where: {
-            id: unitBusinessId
-          }
-        })
+      const batchType = type == "OUTGOING" ? "EXPEDITION" : "ENTRANCE";
+      const unitBusiness = await UnitBusiness.findOne({
+        where: {
+          id: unitBusinessId,
+        },
+      });
 
       const batch = await ExpeditionBatch.create(
         {
-          number: await setBatchNumber(batchType, unitBusiness?.number!, unitBusinessId),
+          number: await setBatchNumber(
+            batchType,
+            unitBusiness?.number!,
+            unitBusinessId,
+          ),
           status: "OPEN",
           unit_business_id: unitBusinessId,
           total_volumes: 0,
           total_volumes_received: 0,
           integrations_id: invoices[0].integrations_id,
           type: type,
-          transporters_id: invoices[0].transporter_id || null
+          transporters_id: invoices[0].transporter_id || null,
         },
         { transaction: t },
       );
@@ -189,123 +197,138 @@ export class ExpeditionBatchService extends BaseService<
 
       await batch.update({ total_volumes: totalVolumes }, { transaction: t });
 
-      batchId = batch.id
-
+      batchId = batch.id;
     });
-      return (await this.repository.getFullBatch(batchId!)) as ExpeditionBatch;
-
+    return (await this.repository.getFullBatch(batchId!)) as ExpeditionBatch;
   }
 
   async addInvoiceToBatch(
-  chaveAcesso: string,
-  unitBusinessId: string,
-  type: string,
-  batchId?: string,
-): Promise<ExpeditionBatch> {
-  let resultBatchId: string;
+    chaveAcesso: string,
+    unitBusinessId: string,
+    type: string,
+    batchId?: string,
+  ): Promise<ExpeditionBatch> {
+    let resultBatchId: string;
 
-  await sequelize.transaction(async (t) => {
-
-
-    const invoice = await Invoice.findOne({
-  where: { xml_key: chaveAcesso.replace(/\s/g, '') },
-  include: [{ model: InvoiceItems, as: "items", required: true }],
-  transaction: t,
-});
-
-console.log(invoice, chaveAcesso.trim())
-
-    if (!invoice) throw new Error("Nota não encontrada para a chave de acesso informada");
-    if (!(invoice as any).items?.length) throw new Error("Nota não possui itens");
-
-    const alreadyInBatch = await ExpeditionBatchInvoice.findOne({
-      where: { invoice_id: invoice.id },
-      transaction: t,
-    });
-
-    if (alreadyInBatch) {
-      if (alreadyInBatch.expedition_batch_id === batchId) {
-        resultBatchId = batchId!;
-        return;
-      }
-      throw new Error(`Nota ${invoice.number_system} já pertence a outro lote`);
-    }
-
-    let batch: ExpeditionBatch;
-
-    if (batchId) {
-      const found = await ExpeditionBatch.findByPk(batchId, { transaction: t, lock: t.LOCK.UPDATE });
-      if (!found) throw new Error("Lote não encontrado");
-      if (found.status === "FINISHED") throw new Error("Lote já finalizado");
-      batch = found;
-    } else {
-
-        const unitBusiness = await UnitBusiness.findOne({
-          where: {
-            id: unitBusinessId
-          }
-        })
-
-      batch = await ExpeditionBatch.create(
-        {
-          number: await setBatchNumber('ENTRANCE', unitBusiness?.number!, unitBusinessId),
-          status: "OPEN",
-          unit_business_id: unitBusinessId,
-          total_volumes: 0,
-          total_volumes_received: 0,
-          integrations_id: invoice.integrations_id,
-          type,
-          transporters_id: invoice.transporter_id || null,
-        },
-        { transaction: t },
-      );
-    }
-
-    await ExpeditionBatchInvoice.create(
-      { expedition_batch_id: batch.id, invoice_id: invoice.id },
-      { transaction: t },
-    );
-
-    const items = (invoice as any).items ?? [];
-
-    for (const item of items) {
-      const existing = await ExpeditionBatchItems.findOne({
-        where: { expedition_batch_id: batch.id, product_id: item.product_id },
+    await sequelize.transaction(async (t) => {
+      const invoice = await Invoice.findOne({
+        where: { xml_key: chaveAcesso.replace(/\s/g, "") },
+        include: [{ model: InvoiceItems, as: "items", required: true }],
         transaction: t,
-        lock: t.LOCK.UPDATE,
       });
 
-      if (existing) {
-        await existing.increment("quantity", { by: item.quantity_expected, transaction: t });
+      console.log(invoice, chaveAcesso.trim());
+
+      if (!invoice)
+        throw new Error("Nota não encontrada para a chave de acesso informada");
+      if (!(invoice as any).items?.length)
+        throw new Error("Nota não possui itens");
+
+      const alreadyInBatch = await ExpeditionBatchInvoice.findOne({
+        where: { invoice_id: invoice.id },
+        transaction: t,
+      });
+
+      if (alreadyInBatch) {
+        if (alreadyInBatch.expedition_batch_id === batchId) {
+          resultBatchId = batchId!;
+          return;
+        }
+        throw new Error(
+          `Nota ${invoice.number_system} já pertence a outro lote`,
+        );
+      }
+
+      let batch: ExpeditionBatch;
+
+      if (batchId) {
+        const found = await ExpeditionBatch.findByPk(batchId, {
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (!found) throw new Error("Lote não encontrado");
+        if (found.status === "FINISHED") throw new Error("Lote já finalizado");
+        batch = found;
       } else {
-        await ExpeditionBatchItems.create(
+        const unitBusiness = await UnitBusiness.findOne({
+          where: {
+            id: unitBusinessId,
+          },
+        });
+
+        batch = await ExpeditionBatch.create(
           {
-            expedition_batch_id: batch.id,
-            product_id: item.product_id,
-            quantity: item.quantity_expected,
-            quantity_scanned: 0,
+            number: await setBatchNumber(
+              "ENTRANCE",
+              unitBusiness?.number!,
+              unitBusinessId,
+            ),
+            status: "OPEN",
+            unit_business_id: unitBusinessId,
+            total_volumes: 0,
+            total_volumes_received: 0,
+            integrations_id: invoice.integrations_id,
+            type,
+            transporters_id: invoice.transporter_id || null,
           },
           { transaction: t },
         );
       }
-    }
 
-    const addedVolumes = items.reduce(
-      (acc: number, i: any) => acc + i.quantity_expected, 0
-    );
+      await ExpeditionBatchInvoice.create(
+        { expedition_batch_id: batch.id, invoice_id: invoice.id },
+        { transaction: t },
+      );
 
-    await batch.increment("total_volumes", { by: addedVolumes, transaction: t });
+      const items = (invoice as any).items ?? [];
 
-    await Invoice.update(
-      { batch_generated: true },
-      { where: { id: invoice.id }, transaction: t },
-    );
+      for (const item of items) {
+        const existing = await ExpeditionBatchItems.findOne({
+          where: { expedition_batch_id: batch.id, product_id: item.product_id },
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
 
-    resultBatchId = batch.id;
-  });
+        if (existing) {
+          await existing.increment("quantity", {
+            by: item.quantity_expected,
+            transaction: t,
+          });
+        } else {
+          await ExpeditionBatchItems.create(
+            {
+              expedition_batch_id: batch.id,
+              product_id: item.product_id,
+              quantity: item.quantity_expected,
+              quantity_scanned: 0,
+            },
+            { transaction: t },
+          );
+        }
+      }
 
-  return (await this.repository.getFullBatch(resultBatchId!)) as ExpeditionBatch;
-}
+      const addedVolumes = items.reduce(
+        (acc: number, i: any) => acc + i.quantity_expected,
+        0,
+      );
+
+      await batch.increment("total_volumes", {
+        by: addedVolumes,
+        transaction: t,
+      });
+
+      await Invoice.update(
+        { batch_generated: true },
+        { where: { id: invoice.id }, transaction: t },
+      );
+
+      resultBatchId = batch.id;
+    });
+
+    return (await this.repository.getFullBatch(
+      resultBatchId!,
+    )) as ExpeditionBatch;
+  }
 
   async getBatchesByInvoiceIds(
     invoiceIds: string[],
@@ -366,8 +389,14 @@ console.log(invoice, chaveAcesso.trim())
     return batches;
   }
 
-  async findByIdFullBatch(batchId?: string, number?: string): Promise<ExpeditionBatchFull> {
-    const fullBatch = await this.repository.getFullBatch(batchId ?? '', number ?? '')
+  async findByIdFullBatch(
+    batchId?: string,
+    number?: string,
+  ): Promise<ExpeditionBatchFull> {
+    const fullBatch = await this.repository.getFullBatch(
+      batchId ?? "",
+      number ?? "",
+    );
     if (!fullBatch) throw new Error("Lote não encontrado");
 
     const batchWithTotalVolumes = fullBatch.batchInvoices!.map((s) => {
@@ -380,39 +409,38 @@ console.log(invoice, chaveAcesso.trim())
         0,
       );
 
-      let chaveAcesso = ''
-   
-      const rawXml = s.invoice.xml_path ?? ''
-      const xml = isEncrypted(rawXml) ? decryptXml(rawXml) : rawXml
-      chaveAcesso = extractChaveFromXml(xml)
-      const { xml_path, ...invoiceSemXml } = s.invoice as any
+      let chaveAcesso = "";
 
+      const rawXml = s.invoice.xml_path ?? "";
+      const xml = isEncrypted(rawXml) ? decryptXml(rawXml) : rawXml;
+      chaveAcesso = extractChaveFromXml(xml);
+      const { xml_path, ...invoiceSemXml } = s.invoice as any;
 
       return {
         ...s,
-        ...s.invoice,
-        key: chaveAcesso.replace(/\s/g, ''),
-        invoiceVolume,
+        invoice: {
+          ...s.invoice,
+          key: chaveAcesso.replace(/\s/g, ""),
+          invoiceVolume,
+        },
       };
     });
 
     const enrichedData = {
       ...fullBatch,
-      batchWithTotalVolumes
-    }
+      batchWithTotalVolumes,
+    };
 
-  
     return enrichedData;
   }
 
-   async paginate(
+  async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<ExpeditionBatch>> {
     return super.paginate(params, {
       ...extraOptions,
       include: [
-       
         {
           model: UnitBusiness,
           as: "unitBusiness",
