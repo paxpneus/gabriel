@@ -14,6 +14,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
   this.router.post("/scan/product", (req, res) => this.scanProduct(req, res))
 
   this.router.post("/scan/product/incoming", (req, res) => this.scanProductIncoming(req, res))
+
+  this.router.post("/bulk-remove-logs", (req, res) => this.bulkRemoveScanLogsOutgoing(req, res))
 }
 
   protected middlewaresFor() {
@@ -26,7 +28,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
         show: [authenticate],
         destroy: [authenticate],
         scanProduct: [authenticate],
-        scanProductIncoming: [authenticate]
+        scanProductIncoming: [authenticate],
+        bulkRemoveScanLogsOutgoing: [authenticate]
       };
     }
 
@@ -37,6 +40,18 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
       await this.service.scanProduct(labelcode, productcode, batchId, userId)
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
+    } catch (error: any) {
+      return res.status(400).json({error: error.message})
+    }
+  }
+
+    bulkRemoveScanLogsOutgoing = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const {batchId, items} = req.body
+
+      await this.service.bulkRemoveScanLogsOutgoing(batchId, items)
+
+    return res.status(201).json({ message: "Produtos removidos com sucesso!" });
     } catch (error: any) {
       return res.status(400).json({error: error.message})
     }

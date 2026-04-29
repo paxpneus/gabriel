@@ -140,7 +140,7 @@ export class ExpeditionScanLogService extends BaseService<
           {
             expedition_batch_items_id: productRead.id,
             expedition_batch_invoices_id: invoiceRead?.batchInvoices?.[0].id,
-            expedition_batch_id: invoiceRead.id,
+            expedition_batch_id: batchid,
             label_full_code: labelRead,
             vol_number: volRead,
             user_id: userId,
@@ -403,6 +403,169 @@ export class ExpeditionScanLogService extends BaseService<
     }
 
     return batchInvoice.id;
+  }
+
+  async bulkRemoveScanLogsOutgoing(
+    batchid: string,
+    items: Array<{
+      labelcode: string;
+      productcode: string;
+      quantity: number;
+      batchInvoiceId?: string;
+    }>,
+  ) {
+    return await sequelize.transaction(async (t) => {
+      // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
+      const batch = await ExpeditionBatch.findByPk(batchid, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!batch) throw new Error("Lote não encontrado");
+      if (batch.type === "INCOMING") throw new Error("Lote não é de saída");
+
+      for (const item of items) {
+        // ── 2. Busca o produto pelo productcode (igual ao scanProduct) ─────
+        const productRead = (await ExpeditionBatchItems.findOne({
+          where: { expedition_batch_id: batchid },
+          include: [
+            {
+              model: Product,
+              as: "product",
+              where: {
+                [Op.or]: [
+                  { ean: item.productcode },
+                  { ean_tribut: item.productcode },
+                ],
+              },
+            },
+          ],
+          transaction: t,
+        })) as ExpeditionBaatchItemFull;
+
+        if (!productRead)
+          throw new Error(`Produto não encontrado: ${item.productcode}`);
+
+        // ── 3. Bloqueia o BatchItem ────────────────────────────────────────
+        const batchItemLocked = (await ExpeditionBatchItems.findOne({
+          where: { id: productRead.id },
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        })) as ExpeditionBaatchItemFull;
+
+        if (batchItemLocked.quantity_scanned < item.quantity) {
+          throw new Error(
+            `Quantidade a remover (${item.quantity}) maior que volumes já bipados (${batchItemLocked.quantity_scanned}) para ${item.productcode}`,
+          );
+        }
+
+        // ── 4. Busca os logs a deletar — ordem decrescente por vol_number ──
+        //    Cada etiqueta de saída é única (41 chars), então filtramos apenas
+        //    por batch_items_id + batch_id e ordenamos desc por vol_number
+        //    para remover do maior volume para o menor (4 → 3 → 2...)
+        const logsToDelete = await ExpeditionScanLog.findAll({
+          where: {
+            expedition_batch_id: batchid,
+            expedition_batch_items_id: productRead.id,
+            ...(item.batchInvoiceId
+              ? { expedition_batch_invoices_id: item.batchInvoiceId }
+              : {}),
+          },
+          attributes: ["id", "vol_number", "expedition_batch_invoices_id"],
+          order: [["vol_number", "DESC"]],
+          limit: item.quantity,
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+
+        if (logsToDelete.length < item.quantity) {
+          throw new Error(
+            `Registros encontrados (${logsToDelete.length}) insuficientes para remover ${item.quantity} volume(s) de ${item.productcode}`,
+          );
+        }
+
+        await ExpeditionScanLog.destroy({
+          where: { id: logsToDelete.map((l) => l.id) },
+          transaction: t,
+        });
+
+        // ── 5. Decrementa quantity_scanned no BatchItem ────────────────────
+        await ExpeditionBatchItems.decrement("quantity_scanned", {
+          by: item.quantity,
+          where: { id: productRead.id },
+          transaction: t,
+        });
+
+        // ── 6. Reavalia status de cada NF afetada ──────────────────────────
+        //    Agrupa os logs deletados por batchInvoice para reavaliar cada NF
+        const affectedInvoiceIds = [
+          ...new Set(logsToDelete.map((l) => l.expedition_batch_invoices_id)),
+        ];
+
+        for (const batchInvoiceId of affectedInvoiceIds) {
+          const countRemoved = logsToDelete.filter(
+            (l) => l.expedition_batch_invoices_id === batchInvoiceId,
+          ).length;
+
+          const batchInvoice = (await ExpeditionBatchInvoice.findByPk(
+            batchInvoiceId,
+            {
+              include: [{ model: Invoice, as: "invoice" }],
+              transaction: t,
+            },
+          )) as any;
+
+          if (!batchInvoice?.invoice) continue;
+
+          const invoiceId = batchInvoice.invoice.id;
+
+          await InvoiceItems.decrement("quantity_received", {
+            by: countRemoved,
+            where: {
+              invoice_id: invoiceId,
+              product_id: productRead.product_id,
+            },
+            transaction: t,
+          });
+
+          const pendingItem = await InvoiceItems.findOne({
+            where: {
+              invoice_id: invoiceId,
+              [Op.and]: sequelize.literal(
+                '"quantity_received" < "quantity_expected"',
+              ),
+            },
+            transaction: t,
+          });
+
+          await Invoice.update(
+            { status: pendingItem ? "PENDING" : "FINISHED" },
+            { where: { id: invoiceId }, transaction: t },
+          );
+        }
+      }
+
+      // ── 7. Reavalia status do lote ─────────────────────────────────────────
+      const pendingInvoices = await Invoice.count({
+        include: [
+          {
+            model: ExpeditionBatchInvoice,
+            as: "batchInvoice",
+            where: { expedition_batch_id: batchid },
+            required: true,
+          },
+        ],
+        where: { status: { [Op.ne]: "FINISHED" } },
+        transaction: t,
+      });
+
+      await ExpeditionBatch.update(
+        { status: pendingInvoices === 0 ? "FINISHED" : "PENDING" },
+        { where: { id: batchid }, transaction: t },
+      );
+
+      return true;
+    });
   }
 }
 
