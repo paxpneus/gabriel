@@ -364,13 +364,6 @@ export class ExpeditionScanLogService extends BaseService<
         }
       }
 
-      if (remaining > 0) {
-        throw new Error(
-          `Quantidade excede o total esperado nas notas fiscais para este produto. ` +
-            `Sobra não alocada: ${remaining}`,
-        );
-      }
-
       // ── 6. Cria todos os ScanLogs de uma vez ──────────────────────────────
       await ExpeditionScanLog.bulkCreate(scanLogs, { transaction: t });
 
