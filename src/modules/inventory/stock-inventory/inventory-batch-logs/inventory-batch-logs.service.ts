@@ -82,7 +82,7 @@ export class InventoryBatchLogsService extends BaseService<
 
       let inventoryBatchItem = await InventoryBatchItems.findOne({
         where: {
-          ean: productcode,
+         product_id: productFound.id,
           inventory_batch_id: inventoryBatchId,
           stock_id: stock.id,
         },
