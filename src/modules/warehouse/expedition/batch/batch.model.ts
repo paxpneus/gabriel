@@ -9,6 +9,7 @@ import ExpeditionScanLog from '../scan-logs/scan-logs.model';
 class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCreationAttributes> implements ExpeditionBatchAttributes {
   public id!: string;
   public number!: string;
+  public justification!: string;
   public status!: 'OPEN' | 'PENDING' | 'FINISHED';
   public integrations_id?: string;
   public id_system?: string;
@@ -33,6 +34,10 @@ ExpeditionBatch.init(
       type: DataTypes.STRING(50),
       allowNull: false,
       unique: true,
+    },
+    justification: {
+       type: DataTypes.TEXT,
+      allowNull: true,
     },
     status: {
       type: DataTypes.ENUM('OPEN', 'PENDING', 'FINISHED'),

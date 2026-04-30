@@ -16,6 +16,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
   this.router.post("/scan/product/incoming", (req, res) => this.scanProductIncoming(req, res))
 
   this.router.post("/bulk-remove-logs", (req, res) => this.bulkRemoveScanLogsOutgoing(req, res))
+
+   this.router.post("/bulk-remove-logs-incoming", (req, res) => this.bulkRemoveScanLogsIncoming(req, res))
 }
 
   protected middlewaresFor() {
@@ -29,7 +31,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
         destroy: [authenticate],
         scanProduct: [authenticate],
         scanProductIncoming: [authenticate],
-        bulkRemoveScanLogsOutgoing: [authenticate]
+        bulkRemoveScanLogsOutgoing: [authenticate],
+        bulkRemoveScanLogsIncoming: [authenticate]
       };
     }
 
@@ -50,6 +53,18 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
       const {batchId, items} = req.body
 
       await this.service.bulkRemoveScanLogsOutgoing(batchId, items)
+
+    return res.status(201).json({ message: "Produtos removidos com sucesso!" });
+    } catch (error: any) {
+      return res.status(400).json({error: error.message})
+    }
+  }
+
+    bulkRemoveScanLogsIncoming = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const {batchId, items} = req.body
+
+      await this.service.bulkRemoveScanLogsIncoming(batchId, items)
 
     return res.status(201).json({ message: "Produtos removidos com sucesso!" });
     } catch (error: any) {

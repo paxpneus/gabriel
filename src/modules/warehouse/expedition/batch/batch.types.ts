@@ -4,6 +4,7 @@ import { ExpeditionBatchInvoiceAttributes } from "./../batch-invoices/batch-invo
 export interface ExpeditionBatchAttributes {
   id: string;
   number: string;
+  justification?: string;
   status: "OPEN" | "PENDING" | "FINISHED";
   integrations_id?: string;
   id_system?: string;
