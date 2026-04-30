@@ -38,6 +38,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Invoice,
                 as: "invoice",
+                attributes: {exclude: ['xml_path']},
                 include: [
                   {
                     model: InvoiceItems,
@@ -82,6 +83,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Invoice,
                 as: "invoice",
+                attributes: {exclude: ['xml_path']},
                 include: [
                   {
                     model: InvoiceItems,
