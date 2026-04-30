@@ -1,4 +1,6 @@
+import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import Transporter from "../../transporter/transporter.model";
+import InvoiceItems from "../invoice-items/invoice-items.model";
 import Invoice from "./invoice.model";
 
 export interface InvoiceAttributes {
@@ -29,6 +31,11 @@ export interface InvoiceAttributes {
   expected_receiving?: Date;
   transporter_name?: string | null;
   transporter_document?: string | null;
+}
+
+export interface FullInvoice extends InvoiceAttributes {
+  unmappedProducts: UnmappedInvoiceProduct[]
+  items: InvoiceItems[]
 }
 
 export interface InvoiceCreationAttributes extends Omit<InvoiceAttributes, 'id' | 'createdAt' | 'updatedAt'> {}

@@ -23,6 +23,7 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
 
     this.router.get('/labels/data', this.getLabelData)
     this.router.get('/danfe/data', this.getDanfeBatch)
+    this.router.get('/full/:id', this.getFullInvoice)
   this.router.post("/bulk/open", this.updateInvoicesOpen)
 
   }
@@ -38,12 +39,25 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
           authenticate
         ],
         show: [authenticate],
+        getFullInvoice: [authenticate],
         destroy: [authenticate],
         login: [authenticate],
         getLabelData: [authenticate],
         getDanfeBatch: [authenticate]
       };
     }
+
+     getFullInvoice = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const {id} = req.params
+      console.log(id, req.params)
+    const data = await this.service.findByIdFull(id as string)
+
+    return res.json({data})
+  } catch (err: any) {
+      return res.status(500).json({ error: err.message })
+    }
+  }
 
   getLabelData = async (req: Request, res: Response): Promise<Response> => {
     try {

@@ -17,6 +17,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     super(invoiceRepository);
 
     this.queryConfig = {
+      stringFields: ["receiver_cnpj", "sender_cnpj", "customer_document"],
       defaults: {
         perPage: 20,
         sortBy: "emitted_at",
@@ -50,6 +51,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     };
   }
 
+  
+  async findByIdFull(id: string, options?: FindOptions) {
+    return await this.repository.getFullInvoice(id)
+  }
+
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
@@ -60,12 +66,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         {
           model: ExpeditionBatchInvoice,
           as: "batchInvoice",
-          attributes: ['id'],
+          attributes: ["id"],
           include: [
             {
               model: ExpeditionBatch,
               as: "batch",
-              attributes: ['number']
+              attributes: ["number"],
             },
           ],
         },
@@ -86,13 +92,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   }
 
   async updateInvoicesOpen(ids: string[], data: Partial<InvoiceAttributes>) {
-    
-  return await Invoice.update(data, {
-    where: { id: ids, status: 'OPEN' }
-  })
-}
-
- 
+    return await Invoice.update(data, {
+      where: { id: ids, status: "OPEN" },
+    });
+  }
 }
 
 export default new InvoiceService();

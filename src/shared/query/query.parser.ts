@@ -99,7 +99,11 @@ export class QueryParser {
         if (value === "false") normalizedValue = false;
 
         // number fix
-        if (!isNaN(Number(value)) && value !== "") {
+        if (
+          !config.stringFields?.includes(field) &&
+          !isNaN(Number(value)) &&
+          value !== ""
+        ) {
           normalizedValue = Number(value);
         }
 

@@ -31,6 +31,7 @@ import Step from '../modules/sales/steps/steps.model';
 import InventoryBatch from '../modules/inventory/stock-inventory/inventory-batch/inventory-batch.model';
 import InventoryBatchItems from '../modules/inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model';
 import InventoryBatchLogs from '../modules/inventory/stock-inventory/inventory-batch-logs/inventory-batch-logs.model';
+import UnmappedInvoiceProduct from '../modules/inventory/unmapped-invoice-product/unmapped-invoice-product.model';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -399,3 +400,14 @@ InventoryBatch.belongsTo(InventoryBatch, {
   // Logs -> User (Quem realizou a leitura)
   User.hasMany(InventoryBatchLogs, { foreignKey: 'user_id', as: 'inventoryLogs' });
   InventoryBatchLogs.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
+  // ─── Adicionar dentro de setupAssociations(), junto ao bloco ===== INVOICES ===
+// Invoice -> Unmapped Invoice Products
+Invoice.hasMany(UnmappedInvoiceProduct, {
+  foreignKey: 'invoice_id',
+  as: 'unmappedProducts',
+});
+UnmappedInvoiceProduct.belongsTo(Invoice, {
+  foreignKey: 'invoice_id',
+  as: 'invoice',
+});
