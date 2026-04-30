@@ -84,6 +84,7 @@ export class ExpeditionScanLogService extends BaseService<
               {
                 model: Invoice,
                 as: "invoice",
+                attributes: {exclude: ['xml_path']},
                 where: {
                   number_system: {
                     [Op.iLike]: `%${nffromlabel.replace(/^0+/, "")}`,

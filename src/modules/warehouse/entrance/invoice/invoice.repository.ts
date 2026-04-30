@@ -13,6 +13,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
   async getFullInvoice(invoiceId: string): Promise<FullInvoice> {
     const data = await this.findById(invoiceId, {
+      attributes: {exclude: ['xml_path']},
       include: [
         {
           model: InvoiceItems,

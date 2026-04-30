@@ -509,7 +509,6 @@ if (!existing) {
           product_id: product.id,
           invoice_id: invoice.id,
           quantity_expected: item.quantidade ?? 0,
-          quantity_received: 0,
           status: "PENDING",
         },
         { conflictFields: ["invoice_id", "product_id"] },
