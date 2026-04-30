@@ -20,6 +20,7 @@ import { cleanDocument } from "../../../../../../shared/utils/normalizers/docume
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
 import { Op } from "sequelize";
+import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -357,9 +358,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const encryptedKey = nf.chaveAcesso ? nf.chaveAcesso : null;
 
-    let senderCnpj = nf.emitente?.cnpj ?? "";
+    let senderCnpj = String(nf.emitente?.cnpj ?? "");
     let senderName = nf.emitente?.nome ?? "";
-    let receiverCnpj = nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "";
+    let receiverCnpj = String(nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "");
     let receiverName = nf.destinatario?.nome ?? "";
     let xmlContent: string | null = null;
     let transporter_name: string | null = null;
@@ -470,11 +471,37 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
 
       if (!product) {
-        console.warn(
-          `[BLING_API_FETCH] Produto não encontrado (sku=${sku}, gtin=${item.gtin})`,
-        );
-        continue;
-      }
+    const reason = !sku && !item.gtin
+      ? 'SKU e EAN ausentes no XML'
+      : !sku
+        ? 'SKU ausente —  apenas EAN salvo'
+        : !item.gtin
+          ? 'EAN ausente — apenas SKU salvo'
+          : 'SKU e EAN presentes mas sem produto correspondente no banco';
+ 
+    const existing = await UnmappedInvoiceProduct.findOne({
+  where: {
+    invoice_id: invoice.id,
+    ean: item.gtin ? String(item.gtin) : null,
+    sku: sku ?? null,
+  },
+});
+
+if (!existing) {
+  await UnmappedInvoiceProduct.create({
+    invoice_id: invoice.id,
+    ean: item.gtin ? String(item.gtin) : null,
+    sku: sku ?? null,
+    product_name: (item as any).descricao ?? null,
+    reason,
+    status: 'UNMAPPED',
+  });
+}
+    console.warn(
+      `[BLING_API_FETCH] Produto não mapeado registrado | invoice=${invoice.id} | sku=${sku} | ean=${item.gtin} | motivo=${reason}`,
+    );
+    continue;
+  }
 
       // ✅ conflictFields dentro do upsert
       await InvoiceItems.upsert(

@@ -18,6 +18,7 @@ export interface QueryConfig {
   searchFields?:     string[]
   filterableFields?: string[]
   sortableFields?:   string[]
+  stringFields?: string[]
   defaults?: {
     page?:    number
     perPage?: number
