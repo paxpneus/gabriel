@@ -93,6 +93,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                       {
                         model: Product,
                         as: "product",
+                       
                       },
                     ],
                   },
@@ -108,6 +109,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Product,
                 as: "product",
+                 include: [{ model: Stock, as: "stocks" }],
               },
             ],
           },

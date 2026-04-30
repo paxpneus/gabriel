@@ -98,14 +98,25 @@ class BaseService<
   update(
     id: string,
     data: Partial<T["_creationAttributes"]>,
-    options?: UpdateOptions,
+    options?: Partial<UpdateOptions>,
   ) {
     return this.repository.update(id, data, options);
   }
 
+bulkUpdate(
+  data: Partial<T["_creationAttributes"]>,
+  options: UpdateOptions
+) {
+  return this.repository.bulkUpdate(data, options)
+}
+
   delete(id: string, options?: DestroyOptions) {
     return this.repository.delete(id, options);
   }
+
+  bulkDelete(options: DestroyOptions) {
+  return this.repository.bulkDelete(options)
+}
 }
 
 export default BaseService;

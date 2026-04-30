@@ -403,44 +403,6 @@ export class ExpeditionScanLogService extends BaseService<
     });
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Helper — resolve qual ExpeditionBatchInvoice usar para o ScanLog
-  // Busca a primeira batchInvoice do lote cuja invoice contenha o produto
-  // ─────────────────────────────────────────────────────────────────────────────
-  private async resolveInvoiceForItem(
-    batchid: string,
-    productId: string,
-    t: Transaction,
-  ): Promise<string> {
-    const batchInvoice = await ExpeditionBatchInvoice.findOne({
-      where: { expedition_batch_id: batchid },
-      include: [
-        {
-          model: Invoice,
-          as: "invoice",
-          include: [
-            {
-              model: InvoiceItems,
-              as: "items",
-              where: { product_id: productId },
-              required: true,
-            },
-          ],
-          required: true,
-        },
-      ],
-      transaction: t,
-    });
-
-    if (!batchInvoice) {
-      throw new Error(
-        "Não foi possível vincular o scan a uma nota fiscal do lote",
-      );
-    }
-
-    return batchInvoice.id;
-  }
-
   async bulkRemoveScanLogsOutgoing(
     batchid: string,
     items: Array<{

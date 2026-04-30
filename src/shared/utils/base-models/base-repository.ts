@@ -61,7 +61,7 @@ class BaseRepository<T extends Model> {
   async update(
     id: string,
     data: Partial<T['_creationAttributes']>,
-    options?: UpdateOptions
+    options?: Partial<UpdateOptions>
   ): Promise<T | null> {
     const record = await this.model.findByPk(id, options)
     if (!record) return null
@@ -84,6 +84,10 @@ class BaseRepository<T extends Model> {
     await record.destroy(options)
     return true
   }
+
+  async bulkDelete(options: DestroyOptions): Promise<number> {
+  return this.model.destroy(options)
+}
 }
 
 export default BaseRepository
