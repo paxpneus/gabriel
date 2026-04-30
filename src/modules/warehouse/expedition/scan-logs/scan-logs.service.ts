@@ -565,6 +565,149 @@ export class ExpeditionScanLogService extends BaseService<
       return true;
     });
   }
+
+  async bulkRemoveScanLogsIncoming(
+  batchid: string,
+  items: Array<{
+    productId: string
+    quantity: number
+    batchInvoiceId?: string
+  }>,
+) {
+  return await sequelize.transaction(async (t) => {
+    const batch = await ExpeditionBatch.findByPk(batchid, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    })
+
+    if (!batch) throw new Error('Lote não encontrado')
+    if (batch.type !== 'INCOMING') throw new Error('Lote não é de entrada')
+
+    for (const item of items) {
+      // ── 1. Bloqueia o BatchItem ──────────────────────────────────────────
+      const batchItem = await ExpeditionBatchItems.findOne({
+        where: {
+          expedition_batch_id: batchid,
+          product_id: item.productId,
+        },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      })
+
+      if (!batchItem) throw new Error(`BatchItem não encontrado para produto ${item.productId}`)
+
+      if (batchItem.quantity_scanned < item.quantity) {
+        throw new Error(
+          `Quantidade a remover (${item.quantity}) maior que volumes já bipados (${batchItem.quantity_scanned})`
+        )
+      }
+
+      // ── 2. Busca os logs a deletar ────────────────────────────────────────
+      // Em incoming, label_full_code é o próprio EAN e vol_number é '000000'
+      // então filtramos por batch_items_id e ordenamos por createdAt DESC
+      const logsToDelete = await ExpeditionScanLog.findAll({
+        where: {
+          expedition_batch_id: batchid,
+          expedition_batch_items_id: batchItem.id,
+          ...(item.batchInvoiceId
+            ? { expedition_batch_invoices_id: item.batchInvoiceId }
+            : {}),
+        },
+        order: [['createdAt', 'DESC']],
+        limit: item.quantity,
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      })
+
+      if (logsToDelete.length < item.quantity) {
+        throw new Error(
+          `Registros encontrados (${logsToDelete.length}) insuficientes para remover ${item.quantity} volume(s)`
+        )
+      }
+
+      await ExpeditionScanLog.destroy({
+        where: { id: logsToDelete.map((l) => l.id) },
+        transaction: t,
+      })
+
+      // ── 3. Decrementa BatchItem e total do lote ───────────────────────────
+      await ExpeditionBatchItems.decrement('quantity_scanned', {
+        by: item.quantity,
+        where: { id: batchItem.id },
+        transaction: t,
+      })
+
+      await ExpeditionBatch.decrement('total_volumes_received', {
+        by: item.quantity,
+        where: { id: batchid },
+        transaction: t,
+      })
+
+      // ── 4. Reavalia status de cada NF afetada ─────────────────────────────
+      const affectedInvoiceIds = [
+        ...new Set(logsToDelete.map((l) => l.expedition_batch_invoices_id)),
+      ]
+
+      for (const batchInvoiceId of affectedInvoiceIds) {
+        const countRemoved = logsToDelete.filter(
+          (l) => l.expedition_batch_invoices_id === batchInvoiceId
+        ).length
+
+        const batchInvoice = (await ExpeditionBatchInvoice.findByPk(batchInvoiceId, {
+          include: [{ model: Invoice, as: 'invoice' }],
+          transaction: t,
+        })) as any
+
+        if (!batchInvoice?.invoice) continue
+
+        const invoiceId = batchInvoice.invoice.id
+
+        await InvoiceItems.decrement('quantity_received', {
+          by: countRemoved,
+          where: {
+            invoice_id: invoiceId,
+            product_id: item.productId,
+          },
+          transaction: t,
+        })
+
+        const pendingItem = await InvoiceItems.findOne({
+          where: {
+            invoice_id: invoiceId,
+            [Op.and]: sequelize.literal('"quantity_received" < "quantity_expected"'),
+          },
+          transaction: t,
+        })
+
+        await Invoice.update(
+          { status: pendingItem ? 'PENDING' : 'FINISHED' },
+          { where: { id: invoiceId }, transaction: t }
+        )
+      }
+    }
+
+    // ── 5. Reavalia status do lote ─────────────────────────────────────────
+    const pendingInvoices = await Invoice.count({
+      include: [
+        {
+          model: ExpeditionBatchInvoice,
+          as: 'batchInvoice',
+          where: { expedition_batch_id: batchid },
+          required: true,
+        },
+      ],
+      where: { status: { [Op.ne]: 'FINISHED' } },
+      transaction: t,
+    })
+
+    await ExpeditionBatch.update(
+      { status: pendingInvoices === 0 ? 'FINISHED' : 'PENDING' },
+      { where: { id: batchid }, transaction: t }
+    )
+
+    return true
+  })
+}
 }
 
 export default new ExpeditionScanLogService();

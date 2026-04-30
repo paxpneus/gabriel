@@ -1,6 +1,7 @@
 export interface InventoryBatchAttributes {
     id: string;
     status: string;
+    justification?: string;
     date: Date;
     total_quantity_stock: number;
     total_quantity_read: number;

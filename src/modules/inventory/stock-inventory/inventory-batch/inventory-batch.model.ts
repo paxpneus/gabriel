@@ -12,6 +12,7 @@ class InventoryBatch
 {
   public id!: string;
   public status!: string;
+  public justification!: string;
   public date!: Date;
   public total_quantity_stock!: number;
   public total_quantity_read!: number;
@@ -33,6 +34,10 @@ InventoryBatch.init(
      status: {
       type: DataTypes.ENUM("FINISHED", "PENDING", "OPEN"),
       defaultValue: "OPEN",
+    },
+    justification: {
+       type: DataTypes.TEXT,
+      allowNull: true,
     },
     BatchIdForDivergency: {
       type: DataTypes.UUID,
