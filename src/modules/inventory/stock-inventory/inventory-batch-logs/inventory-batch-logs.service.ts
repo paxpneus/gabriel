@@ -221,23 +221,19 @@ export class InventoryBatchLogsService extends BaseService<
         await updatedItem!.update({ status: newStatus }, { transaction: t });
       }
 
-      if (newStatus === "FINISHED") {
-        const allBatchItems = await InventoryBatchItems.findAll({
-          where: { inventory_batch_id: inventoryBatchId },
-          transaction: t,
-        });
+      const allBatchItems = await InventoryBatchItems.findAll({
+        where: { inventory_batch_id: inventoryBatchId },
+        transaction: t,
+      });
 
-        const allItemsFinished = allBatchItems.every(
-          (i) => i.status === "FINISHED",
-        );
+      const allItemsFinished = allBatchItems.every(
+        (i) => i.status === "FINISHED",
+      );
 
-        if (allItemsFinished) {
-          await InventoryBatch.update(
-            { status: "FINISHED" },
-            { where: { id: inventoryBatchId }, transaction: t },
-          );
-        }
-      }
+      await InventoryBatch.update(
+        { status: allItemsFinished ? "FINISHED" : "PENDING" },
+        { where: { id: inventoryBatchId }, transaction: t },
+      );
 
       if (
         inventoryBatch.type === "DIVERGENCY" &&
@@ -377,6 +373,14 @@ export class InventoryBatchLogsService extends BaseService<
             if (allParentItemsFinished) {
               await InventoryBatch.update(
                 { status: "FINISHED" },
+                {
+                  where: { id: inventoryBatch.BatchIdForDivergency },
+                  transaction: t,
+                },
+              );
+            } else {
+              await InventoryBatch.update(
+                { status: "PENDING" },
                 {
                   where: { id: inventoryBatch.BatchIdForDivergency },
                   transaction: t,
