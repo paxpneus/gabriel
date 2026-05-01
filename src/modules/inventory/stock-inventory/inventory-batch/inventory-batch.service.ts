@@ -73,12 +73,7 @@ export class InventoryBatchService extends BaseService<
       if (!parentBatch) throw new Error("Lote pai não encontrado");
       if (parentBatch.type !== "REGULAR")
         throw new Error("Lote pai deve ser do tipo NORMAL");
-      if (parentBatch.total_quantity_read < parentBatch.total_quantity_stock) {
-        console.log(parentBatch.total_quantity_read >= parentBatch.total_quantity_stock)
-        throw new Error(
-          "Lote de inventário deve estar totalmente lido para criar um lote de divergência!",
-        );
-      }
+      
 
       const unitBusiness = await UnitBusiness.findOne({
         where: { id: parentBatch.unit_business_id },
