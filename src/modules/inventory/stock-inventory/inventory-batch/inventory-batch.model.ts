@@ -32,7 +32,7 @@ InventoryBatch.init(
       allowNull: false,
     },
      status: {
-      type: DataTypes.ENUM("FINISHED", "PENDING", "OPEN"),
+      type: DataTypes.ENUM("FINISHED", "PENDING", "OPEN", "CANCELLED"),
       defaultValue: "OPEN",
     },
     justification: {

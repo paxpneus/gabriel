@@ -1,3 +1,6 @@
+import Product from "../../products/product.model";
+import { ProductWithStock } from "../../products/product.types";
+
 export type ItemStatus = 'FINISHED' | 'PENDING' | 'OPEN';
 
 export interface InventoryBatchItemsAttributes {
@@ -11,6 +14,9 @@ export interface InventoryBatchItemsAttributes {
     status: ItemStatus;
     stock_id: string;
     inventory_batch_id: string
+}
+export interface inventoryBatchItemFull extends InventoryBatchItemsAttributes {
+    product: ProductWithStock
 }
 
 export type InventoryBatchItemsCreationAttributes = Omit<InventoryBatchItemsAttributes, 'id'>;
