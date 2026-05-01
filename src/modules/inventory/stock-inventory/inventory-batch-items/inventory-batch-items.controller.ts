@@ -13,6 +13,7 @@ class InventoryBatchItemsController extends BaseController<
 > {
   constructor() {
     super(inventoryBatchItemsService);
+    this.registerCustomRoutes()
   }
 
   protected middlewaresFor() {
@@ -26,7 +27,6 @@ class InventoryBatchItemsController extends BaseController<
   }
 
     private registerCustomRoutes(): void {
-    this.router.delete("/remove-item/")
 
     this.router.delete("/remove-item/:id/batch/:batchId", (req, res) => this.removeItem(req, res))
   }
