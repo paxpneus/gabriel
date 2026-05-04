@@ -14,7 +14,7 @@ export function startBlingWorkers() {
   console.log("✅ Workers ativos:");
   console.log("  → BlingDirectUpsertQueue");
   console.log("  → BlingApiFetchQueue");
-  console.log("  → BlingTokenRefreshQueue (refresh a cada 5h)");
+  console.log("  → BlingTokenRefreshQueue (refresh a cada 1h)");
 
   return {
     blingDirectUpsertQueue,

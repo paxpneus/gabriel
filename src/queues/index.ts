@@ -24,6 +24,7 @@ import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-o
 
 import { BlingDirectUpsertQueue } from "./../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue";
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
+import { BlingTokenRefreshQueue } from './../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue';
 
 export const serverAdapter = new ExpressAdapter();
 
@@ -84,6 +85,7 @@ function buildQueues(workless: boolean) {
 
   const blingDirectUpsertQueue = new BlingDirectUpsertQueue({ workless });
   const blingApiFetchQueue = new BlingApiFetchQueue({ workless });
+  const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless })
 
   return {
     nfeQueue,
@@ -94,6 +96,7 @@ function buildQueues(workless: boolean) {
     blingReconcilerQueue,
     blingDirectUpsertQueue,
     blingApiFetchQueue,
+    blingTokenRefreshQueue
   };
 }
 
@@ -108,6 +111,7 @@ export function registerQueues(app: Express) {
     blingReconcilerQueue,
     blingDirectUpsertQueue,
     blingApiFetchQueue,
+    blingTokenRefreshQueue,
   } = buildQueues(true); // workless: true → zero Workers na API
 
   // Scraping só para o BullBoard enxergar a fila, sem Worker
@@ -124,6 +128,7 @@ export function registerQueues(app: Express) {
 
   app.locals.BlingDirectUpsertQueue = blingDirectUpsertQueue;
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
+  app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
 
   serverAdapter.setBasePath("/admin/queues");
 
@@ -138,6 +143,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(mlScrapingQueue.queue),
       new BullMQAdapter(blingDirectUpsertQueue.queue),
       new BullMQAdapter(blingApiFetchQueue.queue),
+      new BullMQAdapter(blingTokenRefreshQueue.queue)
     ],
     serverAdapter,
   });
@@ -160,8 +166,6 @@ export function startWorkers() {
     blingOrderQueue,
     reconcilerQueue,
     blingReconcilerQueue,
-    blingApiFetchQueue,
-    blingDirectUpsertQueue
   } = buildQueues(false); // workless: false → Worker ativo em cada fila
 
   // reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
