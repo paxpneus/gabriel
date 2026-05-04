@@ -12,7 +12,7 @@ export class UnmappedInvoiceProductService extends BaseService<UnmappedInvoicePr
     this.queryConfig = {
       defaults: { perPage: 50, sortBy: "createdAt", sortDir: "DESC" },
       searchFields: ["product_name", "ean", "sku"],
-      filterableFields: ["status"],
+      filterableFields: ["status", "invoice_id"],
       sortableFields: ["product_name", "ean", "sku"],
     };
   }
