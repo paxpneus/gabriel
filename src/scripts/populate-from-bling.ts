@@ -538,9 +538,9 @@ async function main() {
 
   try {
     // Ordem garantida + espera entre cada etapa
-    await migrateProducts();          // 1 — sem dependências
+    // await migrateProducts();          // 1 — sem dependências
     await migrateSuppliers();         // 2 — sem dependências
-    await migrateProductSuppliers();  // 3 — depende de produto + fornecedor
+    // await migrateProductSuppliers();  // 3 — depende de produto + fornecedor
     await migrateStocks();            // 4 — depende de produto
     await migrateInvoices('NF-e', 1);    // 5 — depende de UnitBusiness
     await migrateInvoices('NF-e', 0);   // 6 — depende de UnitBusiness

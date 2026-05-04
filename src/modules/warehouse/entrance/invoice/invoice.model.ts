@@ -22,7 +22,7 @@ class Invoice
   public id_system?: string;
   public transporter_id?: string;
   public type!: "INCOMING" | "OUTGOING";
-  public status!: "OPEN" | "PENDING" | "FINISHED" | "CANCELLED";
+  public status!: "OPEN" | "PENDING" | "FINISHED" | "CANCELLED" | "FREE_TO_SCHEDULE" | "WAITING_SCHEDULE_SALES" | "SCHEDULED" | "LATE";
   public batch_generated!: boolean;
   public printed_label!: boolean;
   public emitted_at?: Date;
@@ -30,8 +30,9 @@ class Invoice
   public expected_receiving?: Date;
   public number_system?: string;
   public xml_key?: string;
-  public transporter_name?: string
-  public transporter_document?: string
+  public transporter_name?: string;
+  public transporter_document?: string;
+  public total_read!: number;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -117,11 +118,11 @@ Invoice.init(
     },
     transporter_name: {
       type: DataTypes.STRING(255),
-      allowNull: true
+      allowNull: true,
     },
     transporter_document: {
       type: DataTypes.STRING(20),
-      allowNull: true
+      allowNull: true,
     },
     type: {
       type: DataTypes.ENUM("INCOMING", "OUTGOING"),
@@ -163,6 +164,10 @@ Invoice.init(
     },
     number_system: {
       type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    total_read: {
+      type: DataTypes.VIRTUAL,
       allowNull: true,
     },
   },
