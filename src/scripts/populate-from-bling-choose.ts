@@ -300,7 +300,6 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e', invoiceDirection: 0 | 1) 
     for (const invoice of page) {
       const blingId = invoice.id;
 
-      if (!invoice.loja?.id) { console.warn(`  ⚠️  Invoice ${blingId} sem loja — ignorada`); skipped++; continue; }
 
       const jobBase = basePayload(resource, blingId);
       await enqueueApiFetch(
