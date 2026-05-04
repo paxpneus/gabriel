@@ -47,7 +47,7 @@ const getBlingToken = async (): Promise<ConfigToken> => {
 };
 
 // Renova um token que já existe
-const doRefreshToken = async (): Promise<string> => {
+export const doRefreshToken = async (): Promise<string> => {
   const integration = await getBlingIntegration();
 
   const configToken = integration.tokens;
