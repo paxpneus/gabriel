@@ -489,7 +489,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           where: {
             invoice_id: invoice.id,
             ean: item.gtin ? String(item.gtin) : null,
-            sku: sku ?? null,
           },
         });
 
@@ -538,10 +537,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         });
       }
     }
-
-    console.log(
-      `[BLING_API_FETCH] ${nf.itens?.length} item(ns) upsertado(s) para invoice ${nf.id}`,
-    );
 
     console.log(
       `[BLING_API_FETCH] ${nf.itens?.length} item(ns) upsertado(s) para invoice ${nf.id}`,
