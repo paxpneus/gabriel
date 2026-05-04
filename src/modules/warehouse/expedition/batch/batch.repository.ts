@@ -38,12 +38,18 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Invoice,
                 as: "invoice",
-                attributes: {exclude: ['xml_path']},
+                attributes: { exclude: ["xml_path"] },
                 include: [
                   {
                     model: InvoiceItems,
                     as: "items",
                     separate: true,
+                    include: [
+                      {
+                        model: Product,
+                        as: "product",
+                      },
+                    ],
                   },
                 ],
               },
@@ -83,7 +89,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Invoice,
                 as: "invoice",
-                attributes: {exclude: ['xml_path']},
+                attributes: { exclude: ["xml_path"] },
                 include: [
                   {
                     model: InvoiceItems,
@@ -93,7 +99,6 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                       {
                         model: Product,
                         as: "product",
-                       
                       },
                     ],
                   },
@@ -109,7 +114,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Product,
                 as: "product",
-                 include: [{ model: Stock, as: "stocks" }],
+                include: [{ model: Stock, as: "stocks" }],
               },
             ],
           },

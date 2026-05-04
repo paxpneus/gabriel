@@ -25,6 +25,12 @@ export class InvoiceItemsService extends BaseService<
         throw new Error("Produto não encontrado!");
       }
 
+      const unMappedProcut = await UnmappedInvoiceProduct.findByPk(unMappedProductId, {transaction: t})
+
+      if (unMappedProcut && unMappedProcut.quantity != invoiceItemDto.quantity_expected) {
+        throw new Error("Quantidade do item divergente da quantidade da nota")
+      }
+
       const invoiceItem = await this.create(invoiceItemDto, {
         transaction: t,
       });

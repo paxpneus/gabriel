@@ -17,6 +17,7 @@ class UnmappedInvoiceProduct
   public product_name!: string | null;
   public reason!: string;
   public status!: string;
+  public quantity!: number;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -37,6 +38,11 @@ UnmappedInvoiceProduct.init(
         model: 'invoices',
         key: 'id',
       },
+    },
+    quantity: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 0
     },
     ean: {
       type: DataTypes.STRING(50),
