@@ -47,6 +47,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "batch_generated",
         "printed_label",
         "type",
+        "status"
       ],
     };
   }

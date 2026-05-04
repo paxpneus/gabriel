@@ -32,7 +32,7 @@ UnmappedInvoiceProduct.init(
     },
     invoice_id: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
       references: {
         model: 'invoices',
         key: 'id',
