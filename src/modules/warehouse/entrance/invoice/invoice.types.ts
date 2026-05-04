@@ -32,6 +32,7 @@ export interface InvoiceAttributes {
   transporter_name?: string | null;
   transporter_document?: string | null;
   total_read?: number;
+  total_expected?: number;
 }
 
 export interface FullInvoice extends InvoiceAttributes {

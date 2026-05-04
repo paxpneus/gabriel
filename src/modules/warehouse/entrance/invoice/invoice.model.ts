@@ -33,6 +33,7 @@ class Invoice
   public transporter_name?: string;
   public transporter_document?: string;
   public total_read!: number;
+  public total_expected!: number;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -170,6 +171,10 @@ Invoice.init(
       type: DataTypes.VIRTUAL,
       allowNull: true,
     },
+    total_expected: {
+  type: DataTypes.VIRTUAL,
+  allowNull: true,
+},
   },
   {
     sequelize,
