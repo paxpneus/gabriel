@@ -10,3 +10,4 @@ export interface InvoiceItemsAttributes {
 }
 
 export interface InvoiceItemsCreationAttributes extends Omit<InvoiceItemsAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+

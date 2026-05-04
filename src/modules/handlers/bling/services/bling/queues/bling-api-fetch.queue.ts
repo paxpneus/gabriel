@@ -360,7 +360,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     let senderCnpj = String(nf.emitente?.cnpj ?? "");
     let senderName = nf.emitente?.nome ?? "";
-    let receiverCnpj = String(nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "");
+    let receiverCnpj = String(
+      nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "",
+    );
     let receiverName = nf.destinatario?.nome ?? "";
     let xmlContent: string | null = null;
     let transporter_name: string | null = null;
@@ -471,48 +473,58 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
 
       if (!product) {
-    const reason = !sku && !item.gtin
-      ? 'SKU e EAN ausentes no XML'
-      : !sku
-        ? 'SKU ausente —  apenas EAN salvo'
-        : !item.gtin
-          ? 'EAN ausente — apenas SKU salvo'
-          : 'SKU e EAN presentes mas sem produto correspondente no banco';
- 
-    const existing = await UnmappedInvoiceProduct.findOne({
-  where: {
-    invoice_id: invoice.id,
-    ean: item.gtin ? String(item.gtin) : null,
-    sku: sku ?? null,
-  },
-});
+        const reason =
+          !sku && !item.gtin
+            ? "SKU e EAN ausentes no XML"
+            : !sku
+              ? "SKU ausente —  apenas EAN salvo"
+              : !item.gtin
+                ? "EAN ausente — apenas SKU salvo"
+                : "SKU e EAN presentes mas sem produto correspondente no banco";
 
-if (!existing) {
-  await UnmappedInvoiceProduct.create({
-    invoice_id: invoice.id,
-    ean: item.gtin ? String(item.gtin) : null,
-    sku: sku ?? null,
-    product_name: (item as any).descricao ?? null,
-    reason,
-    status: 'UNMAPPED',
-  });
-}
-    console.warn(
-      `[BLING_API_FETCH] Produto não mapeado registrado | invoice=${invoice.id} | sku=${sku} | ean=${item.gtin} | motivo=${reason}`,
-    );
-    continue;
-  }
+        const existing = await UnmappedInvoiceProduct.findOne({
+          where: {
+            invoice_id: invoice.id,
+            ean: item.gtin ? String(item.gtin) : null,
+            sku: sku ?? null,
+          },
+        });
 
-      // ✅ conflictFields dentro do upsert
-      await InvoiceItems.upsert(
-        {
+        if (!existing) {
+          await UnmappedInvoiceProduct.create({
+            invoice_id: invoice.id,
+            ean: item.gtin ? String(item.gtin) : null,
+            sku: sku ?? null,
+            product_name: (item as any).descricao ?? null,
+            reason,
+            status: "UNMAPPED",
+          });
+        }
+        console.warn(
+          `[BLING_API_FETCH] Produto não mapeado registrado | invoice=${invoice.id} | sku=${sku} | ean=${item.gtin} | motivo=${reason}`,
+        );
+        continue;
+      }
+
+      const existingItem = await InvoiceItems.findOne({
+        where: {
+          invoice_id: invoice.id,
+          product_id: product.id,
+        },
+      });
+
+      if (existingItem) {
+        await existingItem.increment("quantity_expected", {
+          by: item.quantidade ?? 0,
+        });
+      } else {
+        await InvoiceItems.create({
           product_id: product.id,
           invoice_id: invoice.id,
           quantity_expected: item.quantidade ?? 0,
           status: "PENDING",
-        },
-        { conflictFields: ["invoice_id", "product_id"] },
-      );
+        });
+      }
     }
 
     console.log(
@@ -526,51 +538,50 @@ if (!existing) {
     });
 
     if (batchInvoice) {
-  let volumesAdded = 0;
+      let volumesAdded = 0;
 
-  for (const item of nf.itens) {
-    const sku = item.codigo?.trim();
-    let product = sku ? await Product.findOne({ where: { sku } }) : null;
+      for (const item of nf.itens) {
+        const sku = item.codigo?.trim();
+        let product = sku ? await Product.findOne({ where: { sku } }) : null;
 
-    if (!product && item.gtin) {
-      product = await Product.findOne({
-        where: { [Op.or]: [{ ean: item.gtin }, { ean_tribut: item.gtin }] },
-      });
+        if (!product && item.gtin) {
+          product = await Product.findOne({
+            where: { [Op.or]: [{ ean: item.gtin }, { ean_tribut: item.gtin }] },
+          });
+        }
+
+        if (!product) continue;
+
+        const existingBatchItem = await ExpeditionBatchItems.findOne({
+          where: {
+            expedition_batch_id: batchInvoice.expedition_batch_id,
+            product_id: product.id,
+          },
+        });
+
+        if (existingBatchItem) continue; // já existe → não toca
+
+        await ExpeditionBatchItems.create({
+          expedition_batch_id: batchInvoice.expedition_batch_id,
+          product_id: product.id,
+          quantity: item.quantidade ?? 0,
+          quantity_scanned: 0,
+        });
+
+        volumesAdded += item.quantidade ?? 0;
+      }
+
+      if (volumesAdded > 0) {
+        await ExpeditionBatch.increment("total_volumes", {
+          by: volumesAdded,
+          where: { id: batchInvoice.expedition_batch_id },
+        });
+
+        console.log(
+          `[BLING_API_FETCH] Batch ${batchInvoice.expedition_batch_id} sincronizado | +${volumesAdded} volumes novos`,
+        );
+      }
     }
-
-    if (!product) continue;
-
-    const existingBatchItem = await ExpeditionBatchItems.findOne({
-      where: {
-        expedition_batch_id: batchInvoice.expedition_batch_id,
-        product_id: product.id,
-      },
-    });
-
-    if (existingBatchItem) continue; // já existe → não toca
-
-    await ExpeditionBatchItems.create({
-      expedition_batch_id: batchInvoice.expedition_batch_id,
-      product_id: product.id,
-      quantity: item.quantidade ?? 0,
-      quantity_scanned: 0,
-    });
-
-    volumesAdded += item.quantidade ?? 0;
-  }
-
-  if (volumesAdded > 0) {
-    await ExpeditionBatch.increment("total_volumes", {
-      by: volumesAdded,
-      where: { id: batchInvoice.expedition_batch_id },
-    });
-
-    console.log(
-      `[BLING_API_FETCH] Batch ${batchInvoice.expedition_batch_id} sincronizado | +${volumesAdded} volumes novos`,
-    );
-  }
-}
-
   }
 
   protected override onFailed(
