@@ -458,6 +458,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     if (!nf.itens?.length) return;
 
+    // ─── 1. Primeiro loop: resolve produtos e acumula quantidades ─────────────
+    const quantityByProduct = new Map<string, number>();
+
     for (const item of nf.itens) {
       let product = null;
       const sku = item.codigo?.trim();
@@ -477,7 +480,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           !sku && !item.gtin
             ? "SKU e EAN ausentes no XML"
             : !sku
-              ? "SKU ausente —  apenas EAN salvo"
+              ? "SKU ausente — apenas EAN salvo"
               : !item.gtin
                 ? "EAN ausente — apenas SKU salvo"
                 : "SKU e EAN presentes mas sem produto correspondente no banco";
@@ -500,33 +503,45 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             reason,
             status: "UNMAPPED",
           });
+        } else {
+          await existing.update({ quantity: item.quantidade ?? 0 });
         }
+
         console.warn(
-          `[BLING_API_FETCH] Produto não mapeado registrado | invoice=${invoice.id} | sku=${sku} | ean=${item.gtin} | motivo=${reason}`,
+          `[BLING_API_FETCH] Produto não mapeado | invoice=${invoice.id} | sku=${sku} | ean=${item.gtin} | motivo=${reason}`,
         );
         continue;
       }
 
+      // Acumula — garante soma correta se vier duplicado no XML
+      const current = quantityByProduct.get(String(product.id)) ?? 0;
+      quantityByProduct.set(
+        String(product.id),
+        current + (item.quantidade ?? 0),
+      );
+    }
+
+    // ─── 2. Segundo loop: persiste InvoiceItems já consolidados ──────────────
+    for (const [productId, quantity] of quantityByProduct) {
       const existingItem = await InvoiceItems.findOne({
-        where: {
-          invoice_id: invoice.id,
-          product_id: product.id,
-        },
+        where: { invoice_id: invoice.id, product_id: productId },
       });
 
       if (existingItem) {
-        await existingItem.increment("quantity_expected", {
-          by: item.quantidade ?? 0,
-        });
+        await existingItem.update({ quantity_expected: quantity });
       } else {
         await InvoiceItems.create({
-          product_id: product.id,
+          product_id: productId,
           invoice_id: invoice.id,
-          quantity_expected: item.quantidade ?? 0,
+          quantity_expected: quantity,
           status: "PENDING",
         });
       }
     }
+
+    console.log(
+      `[BLING_API_FETCH] ${nf.itens?.length} item(ns) upsertado(s) para invoice ${nf.id}`,
+    );
 
     console.log(
       `[BLING_API_FETCH] ${nf.itens?.length} item(ns) upsertado(s) para invoice ${nf.id}`,
