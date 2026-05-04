@@ -8,6 +8,7 @@ export interface UnmappedInvoiceProductAttributes {
   createdAt?: Date;
   updatedAt?: Date;
   status: string;
+  quantity?: number
 }
 
 export interface UnmappedInvoiceProductCreationAttributes

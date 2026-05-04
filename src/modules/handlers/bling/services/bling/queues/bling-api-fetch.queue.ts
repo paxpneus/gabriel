@@ -496,6 +496,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             ean: item.gtin ? String(item.gtin) : null,
             sku: sku ?? null,
             product_name: (item as any).descricao ?? null,
+            quantity: item.quantidade ?? 0,
             reason,
             status: "UNMAPPED",
           });
