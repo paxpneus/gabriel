@@ -26,8 +26,8 @@ export class InventoryBatchService extends BaseService<
     this.queryConfig = {
       defaults: { perPage: 20, sortBy: "createdAt", sortDir: "DESC" },
       searchFields: ["number"],
-      filterableFields: ["unit_business_id", "type", "BatchIdForDivergency"],
-      sortableFields: ["number", "createdAt", "updatedAt"],
+      filterableFields: ["unit_business_id", "status", "type", "BatchIdForDivergency"],
+      sortableFields: ["number", "createdAt", "status", "updatedAt"],
     };
   }
 
