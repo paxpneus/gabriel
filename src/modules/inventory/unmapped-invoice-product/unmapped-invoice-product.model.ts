@@ -18,6 +18,7 @@ class UnmappedInvoiceProduct
   public reason!: string;
   public status!: string;
   public quantity!: number;
+  public image_path!: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -68,6 +69,10 @@ UnmappedInvoiceProduct.init(
       type: DataTypes.STRING(255),
       allowNull: false,
     },
+    image_path: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    }
   },
   {
     sequelize,

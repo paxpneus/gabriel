@@ -1,11 +1,27 @@
-import { FindOptions } from 'sequelize';
-import { PaginatedResult, QueryParams } from '../../../shared/query/query.types';
-import BaseService from '../../../shared/utils/base-models/base-service';
-import UnmappedInvoiceProduct from './unmapped-invoice-product.model';
-import unmappedInvoiceProductRepository, {UnmappedInvoiceProductRepository} from './unmapped-invoice-product.repository';
-import { Invoice } from '../../warehouse';
-import sequelize from '../../../config/sequelize';
-export class UnmappedInvoiceProductService extends BaseService<UnmappedInvoiceProduct, UnmappedInvoiceProductRepository> {
+import { FindOptions, Op } from "sequelize";
+import {
+  PaginatedResult,
+  QueryParams,
+} from "../../../shared/query/query.types";
+import BaseService from "../../../shared/utils/base-models/base-service";
+import UnmappedInvoiceProduct from "./unmapped-invoice-product.model";
+import unmappedInvoiceProductRepository, {
+  UnmappedInvoiceProductRepository,
+} from "./unmapped-invoice-product.repository";
+import { Invoice } from "../../warehouse";
+import sequelize from "../../../config/sequelize";
+import {
+  UnmappedInvoiceProductAttributes,
+  UnmappedInvoiceProductCreationAttributes,
+} from "./unmapped-invoice-product.types";
+import uploaderService, {
+  UploaderService,
+  UploadInput,
+} from "../../handlers/uploader/services/uploader.service";
+export class UnmappedInvoiceProductService extends BaseService<
+  UnmappedInvoiceProduct,
+  UnmappedInvoiceProductRepository
+> {
   constructor() {
     super(unmappedInvoiceProductRepository);
 
@@ -17,49 +33,95 @@ export class UnmappedInvoiceProductService extends BaseService<UnmappedInvoicePr
     };
   }
 
-    async paginate(
-      params: QueryParams,
-      extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-    ): Promise<PaginatedResult<UnmappedInvoiceProduct>> {
-      return super.paginate(params, {
-        ...extraOptions,
-        include: [
-          {
-            model: Invoice,
-            as: "invoice",
-            attributes: ['number_system', 'id']
-          },
-        ],
-      });
+  async paginate(
+    params: QueryParams,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<PaginatedResult<UnmappedInvoiceProduct>> {
+    return super.paginate(params, {
+      ...extraOptions,
+      include: [
+        {
+          model: Invoice,
+          as: "invoice",
+          attributes: ["number_system", "id"],
+        },
+      ],
+    });
+  }
+
+  async createUnmappedFromReadingEan(
+    unmappedPayloadDto: UnmappedInvoiceProductCreationAttributes,
+    image: UploadInput,
+  ): Promise<UnmappedInvoiceProductAttributes> {
+    let id: string;
+    let imagePath: string;
+
+    try {
+      imagePath = await uploaderService.upload(image);
+    } catch (error) {
+      throw new Error(`Erro ao fazer upload de imagem: ${error}`);
     }
-  
-    async markMapped(ids: string[]): Promise<void> {
-        return await sequelize.transaction(async (t) => {
+    try {
+    await sequelize.transaction(async (t) => {
+      const alreadyExists = await this.repository.findOne({
+        where: {
+          ean: unmappedPayloadDto.ean,
+          invoice_id: { [Op.eq]: null },
+        },
+        transaction: t,
+      });
+
+      if (alreadyExists) {
+        throw new Error(
+          "Produto não mapeado já registrado para ajuste no ERP!",
+        );
+      }
+
+      const payload = {
+        ...unmappedPayloadDto,
+        reason:
+          "EAN não encontrado no sistema, verificar ERP para ajustar cadastro!",
+        image_path: imagePath,
+      };
+      const createdUnmapped = await this.repository.create(payload, {
+        transaction: t,
+      });
+
+      id = createdUnmapped.id;
+    });
+  } catch (error) {
+     await uploaderService.delete?.(imagePath);
+    throw error;
+  }
+    return (await this.findById(id!))!;
+  }
+
+  async markMapped(ids: string[]): Promise<void> {
+    return await sequelize.transaction(async (t) => {
       const unmapped = await this.findAll({
         where: {
-          id: ids
+          id: ids,
         },
-        transaction: t
-      })
-      
+        transaction: t,
+      });
+
       if (!unmapped.length) {
         throw new Error("Produto(s) não mapeado(s) não encontrado(s)");
       }
 
       await this.bulkUpdate(
         {
-          status: 'MAPPED'
+          status: "MAPPED",
         },
         {
           where: {
-            id: ids
+            id: ids,
           },
-          transaction: t
-        }
-      )
-    })  
-      }
-  
+          transaction: t,
+        },
+      );
+    });
+  }
 }
 
 export default new UnmappedInvoiceProductService();
