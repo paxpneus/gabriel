@@ -1,4 +1,4 @@
-import { FindOptions, Sequelize } from "sequelize";
+import { FindOptions, Op, Sequelize } from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -52,6 +52,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "type",
         "status"
       ],
+      customFields: {
+        batchStatus: (value) => ({
+          '$batchInvoice.batch.status$': Array.isArray(value) ? { [Op.in]: value} : value
+        })  
+      }
     };
   }
 
@@ -64,42 +69,40 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   params: QueryParams,
   extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
 ): Promise<PaginatedResult<Invoice>> {
+    const hasBatchFilter = !!params.filters?.batchStatus
+
   return super.paginate(params, {
     ...extraOptions,
+    subQuery: false,
     include: [
       {
         model: ExpeditionBatchInvoice,
         as: "batchInvoice",
+        required: hasBatchFilter,
         attributes: ["id"],
         include: [
           {
             model: ExpeditionBatch,
             as: "batch",
-            attributes: ["number"],
+            required: hasBatchFilter,
+            attributes: ["number", "status"],
           },
         ],
       },
       {
         model: UnitBusiness,
         as: "unitBusiness",
+        attributes: ['number', 'name']
       },
       {
         model: Store,
         as: "store",
+        attributes: ['name']
       },
       {
         model: Transporter,
         as: "transporter",
-      },
-      {
-        model: InvoiceItems,
-        as: "items",
-        attributes: [
-          "id",
-          "quantity_expected",
-          "quantity_received",
-          "status",
-        ],
+        attributes: ['name']
       },
     ],
     attributes: {

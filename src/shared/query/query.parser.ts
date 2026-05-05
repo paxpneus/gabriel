@@ -49,6 +49,17 @@ export class QueryParser {
     // 1. Filtros por campo exato (filters[key]=value ou filters[key][]=v1&filters[key][]=v2)
     if (params.filters) {
       for (const [field, value] of Object.entries(params.filters)) {
+
+          if (config.customFields?.[field]) {
+          if (value && !(Array.isArray(value) && value.length === 0)) {
+            const resolved = config.customFields[field](
+              value as string | string[],
+            );
+            Object.assign(where, resolved);
+          }
+          continue;
+        }
+        
         if (
           config.filterableFields?.length &&
           !config.filterableFields.includes(field)
