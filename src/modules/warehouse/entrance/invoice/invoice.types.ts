@@ -27,8 +27,8 @@ export interface InvoiceAttributes {
   printed_label?: boolean;
   emitted_at?: Date;
   number_system?: string;
-  received_at?: Date;
-  expected_receiving?: Date;
+  received_at?: string;
+  expected_receiving?: string;
   transporter_name?: string | null;
   transporter_document?: string | null;
   total_read?: number;

@@ -318,7 +318,11 @@ export class ExpeditionBatchService extends BaseService<
       });
 
       await Invoice.update(
-        { batch_generated: true },
+        {
+          batch_generated: true,
+          status: 'OPEN',
+          received_at: new Date().toLocaleDateString('en-CA'),
+        },
         { where: { id: invoice.id }, transaction: t },
       );
 
