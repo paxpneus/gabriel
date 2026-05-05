@@ -1,6 +1,7 @@
 import { BlingDirectUpsertQueue } from "../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue";
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { BlingTokenRefreshQueue } from "../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
+import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 
 export function startBlingWorkers() {
   console.log("🚀 Iniciando Bling workers isolados...");
@@ -8,8 +9,11 @@ export function startBlingWorkers() {
   const blingDirectUpsertQueue = new BlingDirectUpsertQueue({ workless: false });
   const blingApiFetchQueue = new BlingApiFetchQueue({ workless: false });
   const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless: false });
+  const blingDailyReconciler = new BlingMigrationQueue({ workless: false})
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
+
 
   console.log("✅ Workers ativos:");
   console.log("  → BlingDirectUpsertQueue");
