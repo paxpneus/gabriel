@@ -26,8 +26,8 @@ class Invoice
   public batch_generated!: boolean;
   public printed_label!: boolean;
   public emitted_at?: Date;
-  public received_at?: Date;
-  public expected_receiving?: Date;
+  public received_at?: string;
+  public expected_receiving?: string;
   public number_system?: string;
   public xml_key?: string;
   public transporter_name?: string;
@@ -156,13 +156,13 @@ Invoice.init(
       allowNull: true,
     },
     received_at: {
-      type: DataTypes.DATE,
+      type: DataTypes.DATEONLY, 
       allowNull: true,
     },
     expected_receiving: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
+  type: DataTypes.DATEONLY, 
+  allowNull: true,
+},
     number_system: {
       type: DataTypes.STRING(100),
       allowNull: true,

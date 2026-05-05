@@ -351,10 +351,18 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const invoiceType: "INCOMING" | "OUTGOING" =
       nf.tipo === 0 ? "INCOMING" : "OUTGOING";
 
+      const existingInvoice = await Invoice.findOne({
+  where: { id_system: String(nf.id) },
+  attributes: ['status'],
+});
+
     const invoiceStatus: "OPEN" | "PENDING" | "FINISHED" =
       partial.status === "CANCELLED"
         ? "OPEN" // Bling cancelada → mantemos como OPEN para revisão manual
         : ((partial.status as "OPEN" | "PENDING" | "FINISHED") ?? "PENDING");
+
+        const incomingStatus = existingInvoice?.status ?? 'WAITING_SCHEDULE_SALES'
+
 
     const encryptedKey = nf.chaveAcesso ? nf.chaveAcesso : null;
 
@@ -426,7 +434,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         customer_name: customerName,
         customer_document: customerDoc,
         type: invoiceType,
-        status: invoiceStatus,
+        status: invoiceType === 'OUTGOING' ? invoiceStatus : incomingStatus,
         sender_cnpj: senderCnpj,
         sender_name: senderName,
         receiver_cnpj: receiverCnpj,

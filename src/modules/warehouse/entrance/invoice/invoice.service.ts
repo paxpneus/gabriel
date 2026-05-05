@@ -45,6 +45,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "customer_name",
         "createdAt",
         "emitted_at",
+        "received_at",
+        "expected_receiving",
         "batch_generated",
         "printed_label",
         "type",
@@ -127,6 +129,22 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     return await Invoice.update(data, {
       where: { id: ids, status: "OPEN" },
     });
+  }
+
+  async scheduleInvoice(id: string, expectedDate: string) {
+    const invoice = await this.findById(id)
+    if (!invoice) {
+      throw new Error("Nota fiscal não encontrada")
+    }
+
+    if (['LATE', 'FINISHED', 'CANCELLED'].includes(invoice.status)) {
+      throw new Error("Status não permitido para alterar data prevista de entrega")
+    }
+
+    await invoice.update({
+      status: 'SCHEDULED',
+      expected_receiving: expectedDate
+    })
   }
 }
 

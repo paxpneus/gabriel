@@ -25,6 +25,7 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
     this.router.get('/danfe/data', this.getDanfeBatch)
     this.router.get('/full/:id', this.getFullInvoice)
   this.router.post("/bulk/open", this.updateInvoicesOpen)
+  this.router.put("/schedule/invoice/:id", this.scheduleInvoice)
 
   }
 
@@ -43,7 +44,8 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
         destroy: [authenticate],
         login: [authenticate],
         getLabelData: [authenticate],
-        getDanfeBatch: [authenticate]
+        getDanfeBatch: [authenticate],
+        scheduleInvoice: [authenticate]
       };
     }
 
@@ -154,6 +156,18 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
         status: 'OPEN'
       }
     })
+    res.json({ success: true })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
+scheduleInvoice = async (req: Request, res: Response): Promise<void> => {
+  try { 
+    const  { expectedDate}  = req.body
+    const {id} = req.params
+    
+    await this.service.scheduleInvoice(id as string, expectedDate)
     res.json({ success: true })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
