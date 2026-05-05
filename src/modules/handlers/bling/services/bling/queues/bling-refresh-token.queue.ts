@@ -1,7 +1,9 @@
 import { Job } from "bullmq";
+import { Op } from "sequelize";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
 import { doRefreshToken } from "../../../api/bling_api.service";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
+import { Invoice } from "../../../../../warehouse";
 
 export class BlingTokenRefreshQueue extends BaseQueueService<void> {
 
@@ -25,6 +27,27 @@ export class BlingTokenRefreshQueue extends BaseQueueService<void> {
                 message: `Erro ao renovar token automaticamente: ${err}`,
             })
             throw err
+        }
+
+        try {
+            const today = new Date().toISOString().split('T')[0]; 
+
+            const [updated] = await Invoice.update(
+                { status: 'LATE' },
+                {
+                    where: {
+                        type: 'INCOMING',
+                        status: { [Op.notIn]: ['FINISHED', 'CANCELLED', 'LATE', 'OPEN', 'PENDING'] },
+                        expected_receiving: { [Op.lt]: today },
+                    },
+                }
+            );
+
+            if (updated > 0) {
+                console.log(`[BlingTokenRefreshQueue] ${updated} invoice(s) marcada(s) como LATE`)
+            }
+        } catch (err) {
+            console.error(`[BlingTokenRefreshQueue] Erro ao marcar invoices como LATE:`, err)
         }
     }
 }
