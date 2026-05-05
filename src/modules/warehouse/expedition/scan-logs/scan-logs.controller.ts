@@ -15,6 +15,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
 
   this.router.post("/scan/product/incoming", (req, res) => this.scanProductIncoming(req, res))
 
+  this.router.post("/scan/product/incoming/by-invoice", (req, res) => this.scanProductIncomingByInvoice(req, res))
+
   this.router.post("/bulk-remove-logs", (req, res) => this.bulkRemoveScanLogsOutgoing(req, res))
 
    this.router.post("/bulk-remove-logs-incoming", (req, res) => this.bulkRemoveScanLogsIncoming(req, res))
@@ -77,6 +79,18 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
       const {labelcode, batchId, userId, quantity} = req.body
 
       await this.service.scanProductIncoming(labelcode, batchId, userId, quantity)
+
+    return res.status(201).json({ message: "Produto escaneado com sucesso" });
+    } catch (error: any) {
+      return res.status(400).json({error: error.message})
+    }
+  }
+
+  scanProductIncomingByInvoice = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const {labelcode, batchId, invoiceId, userId, quantity} = req.body
+
+      await this.service.scanProductIncomingByInvoice(labelcode, batchId, invoiceId, userId, quantity)
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
     } catch (error: any) {

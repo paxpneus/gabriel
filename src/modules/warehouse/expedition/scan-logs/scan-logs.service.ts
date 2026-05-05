@@ -403,6 +403,162 @@ export class ExpeditionScanLogService extends BaseService<
     });
   }
 
+  async scanProductIncomingByInvoice(
+  labelcode: string,
+  batchid: string,
+  invoiceId: string,
+  userId: string,
+  quantity: number = 1,
+) {
+  return await sequelize.transaction(async (t) => {
+    // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
+    const batch = await ExpeditionBatch.findByPk(batchid, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!batch) throw new Error("Lote não encontrado");
+    if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
+    if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
+
+    // ── 2. Busca o produto pelo EAN ────────────────────────────────────────
+    const productFound = await Product.findOne({
+      where: {
+        [Op.or]: [{ ean: labelcode }, { ean_tribut: labelcode }],
+      },
+    });
+
+    if (!productFound) throw new Error("Produto não encontrado!");
+
+    // ── 3. Busca o BatchItem do produto neste lote (com lock) ──────────────
+    const batchItem = await ExpeditionBatchItems.findOne({
+      where: {
+        expedition_batch_id: batchid,
+        product_id: productFound.id,
+      },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!batchItem) {
+      throw new Error(
+        `Produto não encontrado nos itens do lote. ` +
+          `Verifique se a nota fiscal de entrada contém este produto.`,
+      );
+    }
+
+    // ── 4. Busca a batchInvoice vinculada ao invoiceId informado ───────────
+    const batchInvoice = (await ExpeditionBatchInvoice.findOne({
+      where: { expedition_batch_id: batchid },
+      include: [
+        {
+          model: Invoice,
+          as: "invoice",
+          where: { id: invoiceId, type: "INCOMING" },
+          include: [
+            {
+              model: InvoiceItems,
+              as: "items",
+              where: { product_id: productFound.id },
+              required: true,
+            },
+          ],
+          required: true,
+        },
+      ],
+      transaction: t,
+    })) as any;
+
+    if (!batchInvoice) {
+      throw new Error(
+        "Nota fiscal não encontrada no lote ou não contém este produto",
+      );
+    }
+
+    const invoiceItem = batchInvoice.invoice.items[0];
+
+    // ── 5. Lê o InvoiceItem com lock e incrementa ──────────────────────────
+    const fresh = await InvoiceItems.findByPk(invoiceItem.id, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!fresh) throw new Error("Item da nota não encontrado");
+
+    const toIncrement = quantity;
+
+    await InvoiceItems.increment("quantity_received", {
+      by: toIncrement,
+      where: { id: fresh.id },
+      transaction: t,
+    });
+
+    // ── 6. Cria os ScanLogs ────────────────────────────────────────────────
+    const scanLogs = Array.from({ length: toIncrement }, () => ({
+      expedition_batch_id: batchid,
+      expedition_batch_items_id: batchItem.id,
+      expedition_batch_invoices_id: batchInvoice.id,
+      label_full_code: labelcode,
+      vol_number: "000000",
+      user_id: userId,
+    }));
+
+    await ExpeditionScanLog.bulkCreate(scanLogs, { transaction: t });
+
+    // ── 7. Incrementa BatchItem e total do lote ────────────────────────────
+    await ExpeditionBatchItems.increment("quantity_scanned", {
+      by: toIncrement,
+      where: { id: batchItem.id },
+      transaction: t,
+    });
+
+    await ExpeditionBatch.increment("total_volumes_received", {
+      by: toIncrement,
+      where: { id: batchid },
+      transaction: t,
+    });
+
+    // ── 8. Verifica se esta NF fechou ──────────────────────────────────────
+    const stillPending = await InvoiceItems.count({
+      where: {
+        invoice_id: invoiceId,
+        quantity_received: { [Op.lt]: sequelize.col("quantity_expected") },
+      },
+      transaction: t,
+    });
+
+    if (stillPending === 0) {
+      await Invoice.update(
+        { status: "FINISHED" },
+        { where: { id: invoiceId }, transaction: t },
+      );
+    }
+
+    // ── 9. Verifica se todas as NFs do lote foram finalizadas ──────────────
+    const pendingInvoices = await Invoice.count({
+      include: [
+        {
+          model: ExpeditionBatchInvoice,
+          as: "batchInvoice",
+          where: { expedition_batch_id: batchid },
+          required: true,
+        },
+      ],
+      where: { status: { [Op.ne]: "FINISHED" } },
+      transaction: t,
+    });
+
+    if (pendingInvoices === 0) {
+      await ExpeditionBatch.update(
+        { status: "FINISHED" },
+        { where: { id: batchid }, transaction: t },
+      );
+    }
+
+    return true;
+  });
+}
+
   async bulkRemoveScanLogsOutgoing(
     batchid: string,
     items: Array<{
@@ -722,6 +878,8 @@ export class ExpeditionScanLogService extends BaseService<
       return true;
     });
   }
+
+  
 }
 
 export default new ExpeditionScanLogService();
