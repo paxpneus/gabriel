@@ -393,6 +393,44 @@ export class ExpeditionBatchService extends BaseService<
     return batches;
   }
 
+   async getBatches(
+    batchesIds: string[],
+  ): Promise<ExpeditionBatch[]> {
+    if (!batchesIds.length) return [];
+
+    const batches = await ExpeditionBatch.findAll({
+      where: { id: batchesIds },
+      include: [
+        {
+          model: ExpeditionBatchItems,
+          as: "items",
+          separate: true,
+          include: [
+            {
+              model: Product,
+              as: "product",
+              include: [{ model: Stock, as: "stocks" }],
+            },
+          ],
+        },
+        {
+          model: ExpeditionBatchInvoice,
+          as: "batchInvoices",
+          separate: true,
+          include: [
+            {
+              model: Invoice,
+              as: "invoice",
+              attributes: ["number_system"],
+            },
+          ],
+        },
+      ],
+    });
+
+    return batches;
+  }
+
   async findByIdFullBatch(
     batchId?: string,
     number?: string,
