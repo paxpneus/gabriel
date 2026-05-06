@@ -98,6 +98,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
       BLING_UNIT_BUSINESS_ID: ${BLING_UNIT_BUSINESS_ID}
+      UPLOADER_EMAIL: ${UPLOADER_EMAIL}
+      UPLOADER_PASSWORD: ${UPLOADER_PASSWORD}
+      UPLOADER_URL: ${UPLOADER_URL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -142,6 +145,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
       BLING_UNIT_BUSINESS_ID: ${BLING_UNIT_BUSINESS_ID}
+      UPLOADER_EMAIL: ${UPLOADER_EMAIL}
+      UPLOADER_PASSWORD: ${UPLOADER_PASSWORD}
+      UPLOADER_URL: ${UPLOADER_URL}
     depends_on:
       postgres:
         condition: service_healthy
