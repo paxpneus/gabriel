@@ -1,9 +1,29 @@
 import BaseRepository from '../../../shared/utils/base-models/base-repository';
+import { Invoice } from '../../warehouse';
 import UnmappedInvoiceProduct from './unmapped-invoice-product.model';
+import { UnmappedInvoiceProductAttributes } from './unmapped-invoice-product.types';
 
 export class UnmappedInvoiceProductRepository extends BaseRepository<UnmappedInvoiceProduct> {
   constructor() {
     super(UnmappedInvoiceProduct);
+  }
+
+  async getFullById(id: string): Promise<UnmappedInvoiceProduct>{
+    const unMapped = await this.findById(id, {
+      include: [
+        {
+          model: Invoice,
+          as: 'invoice',
+          attributes: ['number_system', 'id']
+        }
+      ]
+    })
+
+    if (!unMapped) {
+      throw new Error("Produto não mapeado não encontrado!")
+    }
+
+    return unMapped
   }
 }
 

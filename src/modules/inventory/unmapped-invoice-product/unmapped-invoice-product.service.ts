@@ -1,4 +1,4 @@
-import { FindOptions, Op } from "sequelize";
+import { DestroyOptions, FindOptions, Op } from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -13,6 +13,7 @@ import sequelize from "../../../config/sequelize";
 import {
   UnmappedInvoiceProductAttributes,
   UnmappedInvoiceProductCreationAttributes,
+  UnmappedInvoiceProductWithImagePreview,
 } from "./unmapped-invoice-product.types";
 import uploaderService, {
   UploaderService,
@@ -50,11 +51,15 @@ export class UnmappedInvoiceProductService extends BaseService<
   }
 
   async createUnmappedFromReadingEan(
-    unmappedPayloadDto: UnmappedInvoiceProductCreationAttributes,
+    ean: string,
     image: UploadInput,
   ): Promise<UnmappedInvoiceProductAttributes> {
     let id: string;
     let imagePath: string;
+    console.log(ean
+
+      
+    )
 
     try {
       imagePath = await uploaderService.upload(image);
@@ -65,7 +70,7 @@ export class UnmappedInvoiceProductService extends BaseService<
     await sequelize.transaction(async (t) => {
       const alreadyExists = await this.repository.findOne({
         where: {
-          ean: unmappedPayloadDto.ean,
+          ean,
           invoice_id: { [Op.eq]: null },
         },
         transaction: t,
@@ -78,7 +83,7 @@ export class UnmappedInvoiceProductService extends BaseService<
       }
 
       const payload = {
-        ...unmappedPayloadDto,
+        ean,
         reason:
           "EAN não encontrado no sistema, verificar ERP para ajustar cadastro!",
         image_path: imagePath,
@@ -121,6 +126,18 @@ export class UnmappedInvoiceProductService extends BaseService<
         },
       );
     });
+  }
+
+  async getFullById(id: string): Promise<UnmappedInvoiceProduct> {
+    const unmapped = await this.repository.getFullById(id)
+    
+    return unmapped
+  }
+
+  async delete(id: string, options?: DestroyOptions) {
+    const unMapped = await this.repository.findById(id)
+    await uploaderService.delete?.(unMapped!.image_path);
+    return this.repository.delete(id, options);
   }
 }
 

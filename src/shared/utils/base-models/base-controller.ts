@@ -15,63 +15,59 @@ class BaseController<
     this.registerBaseRoutes();
   }
 
-  protected middlewaresFor(): Partial<
-    Record<
-      "index" | "show" | "create" | "bulkCreate" | "update" | "destroy",
-      RequestHandler[]
-    >
-  > {
+  protected middlewaresFor(): Record<string, RequestHandler[]> {
     return {};
   }
 
-    protected extractQueryParams(req: Request): QueryParams {
-    const q = req.query as Record<string, any>
+  protected mw(key: string): RequestHandler[] {
+    return this.middlewaresFor()[key] ?? [];
+  }
+
+  protected extractQueryParams(req: Request): QueryParams {
+    const q = req.query as Record<string, any>;
     return {
-      page:       q.page,
-      perPage:    q.perPage,
-      sortBy:     q.sortBy,
-      sortDir:    q.sortDir,
-      search:     q.search,
-      filters:    q.filters,
-      dateFrom:   q.dateFrom,
-      dateTo:     q.dateTo,
-      dateField:  q.dateField,
-    }
+      page: q.page,
+      perPage: q.perPage,
+      sortBy: q.sortBy,
+      sortDir: q.sortDir,
+      search: q.search,
+      filters: q.filters,
+      dateFrom: q.dateFrom,
+      dateTo: q.dateTo,
+      dateField: q.dateField,
+    };
   }
 
   private registerBaseRoutes(): void {
-    const mw = this.middlewaresFor();
-
-    this.router.get("/", ...(mw.index ?? []), (req, res) =>
+    this.router.get("/", ...this.mw("index"), (req, res) =>
       this.index(req, res),
     );
-    this.router.get("/:id", ...(mw.show ?? []), (req, res) =>
+    this.router.get("/:id", ...this.mw("show"), (req, res) =>
       this.show(req, res),
     );
-    this.router.post("/", ...(mw.create ?? []), (req, res) =>
+    this.router.post("/", ...this.mw("create"), (req, res) =>
       this.create(req, res),
     );
-    this.router.post("/bulk", ...(mw.bulkCreate ?? []), (req, res) =>
+    this.router.post("/bulk", ...this.mw("bulkCreate"), (req, res) =>
       this.bulkCreate(req, res),
     );
-    this.router.put("/:id", ...(mw.update ?? []), (req, res) =>
+    this.router.put("/:id", ...this.mw("update"), (req, res) =>
       this.update(req, res),
     );
-    this.router.delete("/:id", ...(mw.destroy ?? []), (req, res) =>
+    this.router.delete("/:id", ...this.mw("destroy"), (req, res) =>
       this.destroy(req, res),
     );
   }
 
-    index = async (req: Request, res: Response): Promise<Response> => {
+  index = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const params = this.extractQueryParams(req)
-      const result = await this.service.paginate(params)
-      return res.json(result)
+      const params = this.extractQueryParams(req);
+      const result = await this.service.paginate(params);
+      return res.json(result);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message })
+      return res.status(500).json({ error: error.message });
     }
-  }
- 
+  };
 
   show = async (req: Request, res: Response): Promise<Response> => {
     try {

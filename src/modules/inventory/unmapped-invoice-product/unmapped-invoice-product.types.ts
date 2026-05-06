@@ -14,3 +14,7 @@ export interface UnmappedInvoiceProductAttributes {
 
 export interface UnmappedInvoiceProductCreationAttributes
   extends Omit<UnmappedInvoiceProductAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+
+export interface UnmappedInvoiceProductWithImagePreview extends UnmappedInvoiceProductAttributes {
+  imagePreview: string
+}
