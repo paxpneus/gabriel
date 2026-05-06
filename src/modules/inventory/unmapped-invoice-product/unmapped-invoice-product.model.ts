@@ -62,7 +62,7 @@ UnmappedInvoiceProduct.init(
         "UNMAPPED",
         "MAPPED",
       ),
-      defaultValue: "PENDING",
+      defaultValue: "UNMAPPED",
       allowNull: false,
     },
     reason: {

@@ -18,9 +18,8 @@ export class BlingMigrationQueue extends BaseQueueService<void> {
     console.log(`[BlingMigrationQueue] Rodando script de migração... jobId=${job.id}`);
 
     try {
-      const { stdout, stderr } = await execFileAsync("npx", [
-        "ts-node",
-        "src/scripts/populate-from-bling.ts",
+      const { stdout, stderr } = await execFileAsync("node", [
+        "dist/scripts/populate-from-bling.js",
       ]);
 
       if (stdout) console.log(stdout);
