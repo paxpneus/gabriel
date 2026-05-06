@@ -19,6 +19,7 @@ export class ExpeditionBatchController extends BaseController<
     );
 
     this.router.get("/by-invoices/get", this.getBatchesByInvoice);
+    this.router.get("/by-ids/get", this.getBatches)
 
     this.router.get("/full/get", this.getFullBatch)
 
@@ -85,6 +86,33 @@ export class ExpeditionBatchController extends BaseController<
       }
 
       const batches = await this.service.getBatchesByInvoiceIds(ids);
+      return res.json(batches);
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
+    }
+  };
+
+  getBatches = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      let ids: string[] = [];
+
+      if (Array.isArray(req.query.batchesIds)) {
+        ids = req.query.batchesIds as string[];
+      } else if (typeof req.query.batchesIds === "string") {
+        ids = req.query.batchesIds
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+
+      if (!ids.length) {
+        return res.status(400).json({ error: "Nenhum lote informado." });
+      }
+
+      const batches = await this.service.getBatches(ids);
       return res.json(batches);
     } catch (err: any) {
       return res.status(400).json({ error: err.message });
