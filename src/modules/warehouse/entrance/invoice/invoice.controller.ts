@@ -4,6 +4,7 @@ import Invoice from './invoice.model';
 import InvoiceService from './invoice.service';
 import { Request, Response } from 'express';
 import { authenticate } from '../../../../middlewares/auth-token';
+import { userPermissions } from '../../../../middlewares/user-permissions';
 import { gerarPDF } from '@alexssmusica/node-pdf-nfe';
 import archiver from 'archiver';
 import { decryptXml, isEncrypted } from '../../../../shared/utils/xml/xml-cipher';
@@ -21,33 +22,54 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
 
     this.labelService = new LabelService()
 
-    this.router.get('/labels/data', this.getLabelData)
-    this.router.get('/danfe/data', this.getDanfeBatch)
-    this.router.get('/full/:id', this.getFullInvoice)
-  this.router.post("/bulk/open", this.updateInvoicesOpen)
-  this.router.put("/schedule/invoice/:id", this.scheduleInvoice)
-
+    this.router.get(
+      '/labels/data',
+      ...this.mw('getLabelData'),
+      this.getLabelData,
+    )
+    this.router.get(
+      '/danfe/data',
+      ...this.mw('getDanfeBatch'),
+      this.getDanfeBatch,
+    )
+    this.router.get(
+      '/full/:id',
+      ...this.mw('getFullInvoice'),
+      this.getFullInvoice,
+    )
+    this.router.post(
+      '/bulk/open',
+      ...this.mw('updateInvoicesOpen'),
+      this.updateInvoicesOpen,
+    )
+    this.router.put(
+      '/schedule/invoice/:id',
+      ...this.mw('scheduleInvoice'),
+      this.scheduleInvoice,
+    )
   }
 
   protected registerCustomRoutes(): void {
 }
 
   protected middlewaresFor() {
-      return {
-        index: [authenticate],
-        create: [authenticate],
-        update: [
-          authenticate
-        ],
-        show: [authenticate],
-        getFullInvoice: [authenticate],
-        destroy: [authenticate],
-        login: [authenticate],
-        getLabelData: [authenticate],
-        getDanfeBatch: [authenticate],
-        scheduleInvoice: [authenticate]
-      };
-    }
+    return {
+      index: [authenticate, userPermissions],
+      create: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
+      show: [authenticate, userPermissions],
+
+      getFullInvoice: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
+      login: [authenticate, userPermissions],
+
+      getLabelData: [authenticate, userPermissions],
+      getDanfeBatch: [authenticate, userPermissions],
+
+      updateInvoicesOpen: [authenticate, userPermissions],
+      scheduleInvoice: [authenticate, userPermissions],
+    };
+  }
 
      getFullInvoice = async (req: Request, res: Response): Promise<Response> => {
     try {

@@ -1,4 +1,5 @@
 import { authenticate } from "../../../middlewares/auth-token";
+import { userPermissions } from "../../../middlewares/user-permissions";
 import BaseController from "../../../shared/utils/base-models/base-controller";
 import UnmappedInvoiceProduct from "./unmapped-invoice-product.model";
 import UnmappedInvoiceProductService from "./unmapped-invoice-product.service";
@@ -33,16 +34,20 @@ export class UnmappedInvoiceProductController extends BaseController<
 
   protected middlewaresFor() {
     return {
-      index: [authenticate],
-      create: [authenticate],
-      update: [authenticate],
-      show: [authenticate],
-      destroy: [authenticate],
-      login: [authenticate],
-      getFullById: [authenticate],
-      markMapped: [authenticate],
-      getImage: [authenticate],
-      createUnmappedFromReadingEan: [authenticate, upload.single("image")],
+      index: [authenticate, userPermissions],
+      create: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
+      show: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
+      login: [authenticate, userPermissions],
+      getFullById: [authenticate, userPermissions],
+      markMapped: [authenticate, userPermissions],
+      getImage: [authenticate, userPermissions],
+      createUnmappedFromReadingEan: [
+        authenticate,
+        userPermissions,
+        upload.single("image"),
+      ],
     };
   }
 

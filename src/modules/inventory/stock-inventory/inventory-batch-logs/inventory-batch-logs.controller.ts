@@ -1,4 +1,5 @@
 import { authenticate } from "../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../middlewares/user-permissions";
 import BaseController from "../../../../shared/utils/base-models/base-controller";
 import InventoryBatchLogs from "./inventory-batch-logs.model";
 import inventoryBatchLogsService, {
@@ -16,19 +17,27 @@ class InventoryBatchLogsController extends BaseController<
   }
 
   protected registerCustomRoutes(): void {
-    this.router.post("/scan/product", (req, res) => this.scanProduct(req, res));
-    this.router.put("/update/quantity", (req, res) => this.updateLogQuantity(req, res))
+    this.router.post(
+      "/scan/product",
+      ...this.mw("scanProduct"),
+      (req, res) => this.scanProduct(req, res),
+    );
+    this.router.put(
+      "/update/quantity",
+      ...this.mw("updateLogQuantity"),
+      (req, res) => this.updateLogQuantity(req, res),
+    );
   }
 
   protected middlewaresFor() {
     return {
-      index: [authenticate],
-      create: [authenticate],
-      update: [authenticate],
-      show: [authenticate],
-      destroy: [authenticate],
-      scanProduct: [authenticate],
-      updateLogQuantity: [authenticate]
+      index: [authenticate, userPermissions],
+      create: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
+      show: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
+      scanProduct: [authenticate, userPermissions],
+      updateLogQuantity: [authenticate, userPermissions],
     };
   }
 
