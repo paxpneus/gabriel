@@ -85,6 +85,9 @@ export class UserService extends BaseService<User, UserRepository> {
 
   async updateUserWithValidation(userId: string, userDto: UpdateUserInput): Promise<User | null> {
 
+      const userCached = await redisService.get(`user:${userId}`)
+      if (userCached) await redisService.delete(`user:${userId}`)
+
 
       if (userDto.email) {
         const existingUser = await this.repository.findOne({ 
