@@ -19,7 +19,10 @@ class InventoryBatch
   public number!: string;
   public unit_business_id!: string;
   public type!: string;
+  public mode!: string;
   public BatchIdForDivergency?: string
+  public total_price?: number
+  
 
 }
 
@@ -51,6 +54,10 @@ InventoryBatch.init(
       type: DataTypes.ENUM("REGULAR", "DIVERGENCY"),
       defaultValue: "REGULAR",
     },
+    mode: {
+      type: DataTypes.ENUM("FIXED", "CYCLIC"),
+      defaultValue: "CYCLIC",
+    },
     date: { type: DataTypes.DATE, allowNull: false },
     total_quantity_stock: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     total_quantity_read: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
@@ -62,6 +69,11 @@ InventoryBatch.init(
         model: "unit_businesses",
         key: "id",
       },
+    },
+    total_price: {
+      type: DataTypes.FLOAT,
+      allowNull: true,
+      defaultValue: 0
     },
   },
   {

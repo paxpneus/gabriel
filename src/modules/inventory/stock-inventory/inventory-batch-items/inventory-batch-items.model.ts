@@ -24,6 +24,7 @@ class InventoryBatchItems
   public status!: ItemStatus;
   public stock_id!: string;
   public inventory_batch_id!: string;
+  public price?: number;
 }
 
 InventoryBatchItems.init(
@@ -62,6 +63,11 @@ InventoryBatchItems.init(
         key: "id",
       },
     },
+    price: {
+      type: DataTypes.FLOAT,
+      allowNull: true,
+      defaultValue: 0
+    }
   },
   {
     sequelize,

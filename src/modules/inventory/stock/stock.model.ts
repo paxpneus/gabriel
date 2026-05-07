@@ -4,10 +4,11 @@ import { StockAttributes, StockCreationAttributes } from './stock.types';
 import { v4 as uuidv4 } from 'uuid';
 
 class Stock extends Model<StockAttributes, StockCreationAttributes> implements StockAttributes {
-  public id?: string;
+  public id!: string;
   public product_id!: string;
   public quantity!: number;
   public unit_business_id!: string;
+  public total_price?: number
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -38,6 +39,11 @@ Stock.init(
         model: 'unit_businesses',
         key: 'id',
       },
+    },
+       total_price: {
+      type: DataTypes.FLOAT,
+      allowNull: true,
+      defaultValue: 0
     },
   
     quantity: {

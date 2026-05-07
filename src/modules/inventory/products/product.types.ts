@@ -8,6 +8,8 @@ export interface ProductAttributes {
   ean: string;
    ean_tribut: string;
   id_system?: string;
+  price?: number;
+  type?: string
   createdAt?: Date;
   updatedAt?: Date;
 }

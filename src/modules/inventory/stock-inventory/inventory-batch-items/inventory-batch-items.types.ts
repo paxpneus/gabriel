@@ -14,6 +14,7 @@ export interface InventoryBatchItemsAttributes {
     status: ItemStatus;
     stock_id: string;
     inventory_batch_id: string
+    price?: number;
 }
 export interface inventoryBatchItemFull extends InventoryBatchItemsAttributes {
     product: ProductWithStock

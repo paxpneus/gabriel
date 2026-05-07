@@ -38,13 +38,13 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
 
   createInventoryBatch = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { unitBusinessId } = req.body;
+      const { unitBusinessId, mode } = req.body;
 
       if (!unitBusinessId) {
         return res.status(400).json({ error: "Informe o unitBusinessId" });
       }
 
-      const batch = await this.service.createInventoryBatch(unitBusinessId);
+      const batch = await this.service.createInventoryBatch(unitBusinessId, mode);
       return res.status(201).json(batch);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
