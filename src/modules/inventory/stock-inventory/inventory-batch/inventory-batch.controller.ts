@@ -3,6 +3,7 @@ import BaseController from "../../../../shared/utils/base-models/base-controller
 import InventoryBatch from "./inventory-batch.model";
 import inventoryBatchService, { InventoryBatchService } from "./inventory-batch.service";
 import { authenticate } from "../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../middlewares/user-permissions";
 
 class InventoryBatchController extends BaseController<InventoryBatch, InventoryBatchService> {
   constructor() {
@@ -10,33 +11,51 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
     this.registerCustomRoutes();
   }
 
-    protected middlewaresFor() {
-        return {
-          index: [authenticate],
-          create: [authenticate],
-          update: [
-            authenticate,
-          ],
-          show: [authenticate],
-          destroy: [authenticate],
-          createInventoryBatch: [authenticate],
-          createInventoryBatchDivergency: [authenticate],
-          finishBatch: [authenticate],
-          getFullBatch: [authenticate],
-        };
-      }
+  protected middlewaresFor() {
+    return {
+      index: [authenticate, userPermissions],
+      create: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
+      show: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
 
-  private registerCustomRoutes(): void {
-    this.router.post("/create", (req, res) => this.createInventoryBatch(req, res));
-
-    this.router.get("/full/get", (req, res) => this.getFullBatch(req, res));
-
-    this.router.post("/finish/post", (req, res) => this.finishBatch(req, res))
-
-    this.router.post("/create/divergency", (req, res) => this.createInventoryBatchDivergency(req, res))
+      createInventoryBatch: [authenticate, userPermissions],
+      createInventoryBatchDivergency: [authenticate, userPermissions],
+      finishBatch: [authenticate, userPermissions],
+      getFullBatch: [authenticate, userPermissions],
+    };
   }
 
-  createInventoryBatch = async (req: Request, res: Response): Promise<Response> => {
+  private registerCustomRoutes(): void {
+    this.router.post(
+      "/create",
+      ...this.mw("createInventoryBatch"),
+      (req, res) => this.createInventoryBatch(req, res),
+    );
+
+    this.router.get(
+      "/full/get",
+      ...this.mw("getFullBatch"),
+      (req, res) => this.getFullBatch(req, res),
+    );
+
+    this.router.post(
+      "/finish/post",
+      ...this.mw("finishBatch"),
+      (req, res) => this.finishBatch(req, res),
+    );
+
+    this.router.post(
+      "/create/divergency",
+      ...this.mw("createInventoryBatchDivergency"),
+      (req, res) => this.createInventoryBatchDivergency(req, res),
+    );
+  }
+
+  createInventoryBatch = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
     try {
       const { unitBusinessId, mode } = req.body;
 
@@ -44,19 +63,27 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
         return res.status(400).json({ error: "Informe o unitBusinessId" });
       }
 
-      const batch = await this.service.createInventoryBatch(unitBusinessId, mode);
+      const batch = await this.service.createInventoryBatch(
+        unitBusinessId,
+        mode,
+      );
       return res.status(201).json(batch);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
   };
-  
-   createInventoryBatchDivergency = async (req: Request, res: Response): Promise<Response> => {
+
+  createInventoryBatchDivergency = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
     try {
       const { parentBatchId } = req.body;
 
       if (!parentBatchId) {
-        return res.status(400).json({ error: "Informe o lote de inventário" });
+        return res
+          .status(400)
+          .json({ error: "Informe o lote de inventário" });
       }
 
       const batch = await this.service.createDivergencyBatch(parentBatchId);
@@ -66,7 +93,7 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
     }
   };
 
-   finishBatch = async (req: Request, res: Response): Promise<Response> => {
+  finishBatch = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { batchId } = req.body;
 
@@ -92,7 +119,7 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
       const batch = await this.service.findByIdFullBatch(
         batchId as string | undefined,
         number as string | undefined,
-        userId as string | undefined
+        userId as string | undefined,
       );
 
       return res.json(batch);
@@ -100,8 +127,6 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
       return res.status(400).json({ error: error.message });
     }
   };
-
-
 }
 
 export default new InventoryBatchController();

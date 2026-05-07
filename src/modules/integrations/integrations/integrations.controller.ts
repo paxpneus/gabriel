@@ -1,4 +1,5 @@
 import { authenticate } from "../../../middlewares/auth-token";
+import { userPermissions } from "../../../middlewares/user-permissions";
 import BaseController from "../../../shared/utils/base-models/base-controller";
 import Integration from "./integrations.model";
 import integrationService, { IntegrationService } from "./integrations.service";
@@ -11,22 +12,23 @@ class IntegrationController extends BaseController<
     super(integrationService);
 
     this.router.post(
-        `/mark-lock-orders`, this.markLockOrdersToday
-    )
+      `/mark-lock-orders`,
+      ...this.mw("markLockOrdersToday"),
+      this.markLockOrdersToday,
+    );
   }
 
-    protected middlewaresFor() {
-        return {
-          index: [authenticate],
-          create: [authenticate],
-          update: [
-            authenticate
-          ],
-          show: [authenticate],
-          destroy: [authenticate],
-          
-        };
-      }
+  protected middlewaresFor() {
+    return {
+      index: [authenticate, userPermissions],
+      create: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
+      show: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
+
+      markLockOrdersToday: [authenticate, userPermissions],
+    };
+  }
 
   markLockOrdersToday = async (
     req: Request,
@@ -36,7 +38,9 @@ class IntegrationController extends BaseController<
       const { name } = req.body;
       const lockresponse = await this.service.markLockOrdersToday(name);
       return res.json({
-        message: `Trava de pedidos na integração ${lockresponse == true ? 'Habilitado' : 'Desabilitado'} `,
+        message: `Trava de pedidos na integração ${
+          lockresponse == true ? "Habilitado" : "Desabilitado"
+        } `,
       });
     } catch (error: any) {
       return res.status(500).json({

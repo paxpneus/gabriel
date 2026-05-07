@@ -8,6 +8,7 @@ type Scopes =
   | 'Inventário'
   | 'Lotes'
   | 'Usuários'
+  | 'Fornecedores'
   | 'Perfis'
   | 'Unidades de Negócio'
   | 'Transportadoras'
@@ -90,6 +91,12 @@ export const ROLE_PERMISSIONS: Roles[] = [
     children: [
       { entity: 'roles', label: 'Perfis' },
     ],
+  },
+  {
+    scope: 'Fornecedores',
+    entity: 'suppliers',
+    permissions: all,
+    
   },
   {
     scope: 'Unidades de Negócio',

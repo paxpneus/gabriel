@@ -15,15 +15,15 @@ export class RoleController extends BaseController<Role, typeof RoleService> {
 
   protected middlewaresFor() {
       return {
-        index: [authenticate],
+        index: [authenticate, userPermissions],
         create: [authenticate, userPermissions],
-        update: [authenticate],
-        show: [authenticate],
-        destroy: [authenticate],
-        login: [authenticate],
-        getFullById: [authenticate],
-        markMapped: [authenticate],
-        getImage: [authenticate],
+        update: [authenticate, userPermissions],
+        show: [authenticate, userPermissions],
+        destroy: [authenticate, userPermissions],
+        login: [authenticate, userPermissions],
+        getFullById: [authenticate, userPermissions],
+        markMapped: [authenticate, userPermissions],
+        getBaseRoles: [authenticate, userPermissions],
       };
     }
 

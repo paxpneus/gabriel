@@ -1,4 +1,5 @@
 import { authenticate } from "../../../middlewares/auth-token";
+import { userPermissions } from "../../../middlewares/user-permissions";
 import BaseController from "../../../shared/utils/base-models/base-controller";
 import ConfigToken from "./config_tokens.model";
 import configTokenService, { ConfigTokenService } from "./config_tokens.service";
@@ -7,15 +8,15 @@ class ConfigTokenController extends BaseController<ConfigToken, ConfigTokenServi
 
       protected middlewaresFor() {
           return {
-            index: [authenticate],
-            create: [authenticate],
+            index: [authenticate, userPermissions],
+            create: [authenticate, userPermissions],
             update: [
-              authenticate
+              authenticate,
+              userPermissions
             ],
-            show: [authenticate],
-            destroy: [authenticate],
+            show: [authenticate, userPermissions],
+            destroy: [authenticate, userPermissions],
           };
         }
 }
 export default new ConfigTokenController();
-
