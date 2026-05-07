@@ -130,7 +130,7 @@ export class ExpeditionScanLogService extends BaseService<
       }
 
       if (
-        productRead.product.ean != eanfromlabel &&
+        productRead.product.ean != eanfromlabel ||
         productRead.product.ean_tribut != eanfromlabel
       ) {
         throw Error("Etiqueta não pertencente ao produto lido!");
