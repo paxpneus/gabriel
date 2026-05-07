@@ -3,6 +3,7 @@ export interface StockAttributes {
   product_id: string;
   quantity: number;
   unit_business_id: string;
+  total_price?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }

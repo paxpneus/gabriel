@@ -13,6 +13,7 @@ import { Invoice, UnitBusiness } from "../../../../../warehouse";
 import { blingApi } from "../../../api/bling_api.service";
 import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
+import { Op } from "sequelize";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
@@ -184,6 +185,10 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     // 2. Busca todos os InventoryBatches que possuem um batch item com este produto
     console.log(`[DEBUG] Buscando batches para product_id=${product.id}`);
     const affectedBatches = await InventoryBatch.findAll({
+      where: {
+        mode: "CYCLIC",
+        status: { [Op.in]: ["OPEN", "PENDING"] },
+      },
       include: [
         {
           model: InventoryBatchItems,
@@ -194,7 +199,6 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       ],
     });
     console.log(`[DEBUG] Batches encontrados: ${affectedBatches.length}`);
-
 
     for (const batch of affectedBatches) {
       // 3. Atualiza quantity_stock apenas dos batch items deste lote que têm o produto
@@ -209,14 +213,10 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       );
 
       // 4. Recalcula total_quantity_stock do batch como soma dos quantity_stock de todos os seus itens
-      const allItems = await InventoryBatchItems.findAll({
-        where: { inventory_batch_id: batch.id },
-      });
-
-      const newTotalQuantityStock = allItems.reduce(
-        (sum, item) => sum + Number(item.quantity_stock),
-        0,
-      );
+      const newTotalQuantityStock =
+        (await InventoryBatchItems.sum("quantity_stock", {
+          where: { inventory_batch_id: batch.id },
+        })) ?? 0;
 
       await batch.update({ total_quantity_stock: newTotalQuantityStock });
 

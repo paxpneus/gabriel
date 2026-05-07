@@ -10,6 +10,8 @@ class Product extends Model<ProductAttributes, ProductCreationAttributes> implem
   public ean!: string;
   public id_system?: string;
   public ean_tribut!: string;
+  public price?: number
+  public type?: string
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -42,6 +44,15 @@ Product.init(
     ean_tribut: {
       type: DataTypes.STRING(20),
       allowNull: true,
+    },
+    price: {
+      type: DataTypes.FLOAT,
+      allowNull: true,
+      defaultValue: 0
+    },
+     type: {
+      type: DataTypes.ENUM("UNIT", "KIT"),
+      defaultValue: "UNIT",
     },
   },
   {

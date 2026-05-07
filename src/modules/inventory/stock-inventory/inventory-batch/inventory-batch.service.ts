@@ -6,7 +6,7 @@ import inventoryBatchRepository, {
 import InventoryBatchItems from "../inventory-batch-items/inventory-batch-items.model";
 import InventoryBatchLogs from "../inventory-batch-logs/inventory-batch-logs.model";
 import sequelize from "../../../../config/sequelize";
-import { Product } from "../../../inventory";
+import { Product, Stock } from "../../../inventory";
 import User from "../../../warehouse/users/users/user.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import { UnitBusiness } from "../../../warehouse";
@@ -15,6 +15,8 @@ import {
   PaginatedResult,
   QueryParams,
 } from "../../../../shared/query/query.types";
+import { ProductWithStock } from "../../products/product.types";
+import { InventoryBatchItemsCreationAttributes } from "../inventory-batch-items/inventory-batch-items.types";
 
 export class InventoryBatchService extends BaseService<
   InventoryBatch,
@@ -26,12 +28,21 @@ export class InventoryBatchService extends BaseService<
     this.queryConfig = {
       defaults: { perPage: 20, sortBy: "createdAt", sortDir: "DESC" },
       searchFields: ["number"],
-      filterableFields: ["unit_business_id", "status", "type", "BatchIdForDivergency"],
+      filterableFields: [
+        "unit_business_id",
+        "status",
+        "type",
+        "BatchIdForDivergency",
+        "mode"
+      ],
       sortableFields: ["number", "createdAt", "status", "updatedAt"],
     };
   }
 
-  async createInventoryBatch(unitBusinessId: string): Promise<InventoryBatch> {
+  async createInventoryBatch(
+    unitBusinessId: string,
+    mode: string,
+  ): Promise<InventoryBatch> {
     let batchId: string;
 
     await sequelize.transaction(async (t) => {
@@ -52,11 +63,71 @@ export class InventoryBatchService extends BaseService<
           unit_business_id: unitBusinessId,
           status: "OPEN",
           type: "REGULAR",
+          mode,
         },
         { transaction: t },
       );
 
       batchId = batch.id;
+
+      if (mode == "FIXED") {
+        let totalPrice: number;
+        let totalQuantity: number;
+
+        // Pega todos produtos que tem estoque na unidade escolhida
+        const products = (await Product.findAll({
+          where: {
+            type: 'UNIT'
+          },
+          include: [
+            {
+              model: Stock,
+              as: "stocks",
+              required: true,
+              where: {
+                unit_business_id: unitBusinessId,
+              },
+            },
+          ],
+        })) as ProductWithStock[];
+
+        const payloadBatchItem: InventoryBatchItemsCreationAttributes[] =
+          products.map((p) => {
+            const stock = p.stocks[0];
+
+            if (!stock) {
+              throw new Error(`Produto ${p.id} sem estoque`);
+            }
+
+            return {
+              product_id: p.id,
+              inventory_batch_id: batch.id,
+              ean: p.ean_tribut ?? p.ean,
+              sku: p.sku ?? "",
+              quantity_stock: stock.quantity,
+              status: "OPEN",
+              stock_id: stock.id,
+              price: stock.total_price,
+              divergency: 0,
+              quantity_read: 0,
+            };
+          });
+
+        totalQuantity = payloadBatchItem.reduce((acc, item) => {
+          return acc + item.quantity_stock;
+        }, 0);
+
+        totalPrice = payloadBatchItem.reduce((acc, item) => {
+          return acc + (item.price ?? 0);
+        }, 0);
+
+        await InventoryBatchItems.bulkCreate(payloadBatchItem, { transaction: t });
+
+        await batch.update({
+          total_price: totalPrice,
+          total_quantity_stock: totalQuantity
+        }, {transaction: t})
+      }
     });
 
     return (await this.findByIdFullBatch(batchId!)) as InventoryBatch;
@@ -73,7 +144,6 @@ export class InventoryBatchService extends BaseService<
       if (!parentBatch) throw new Error("Lote pai não encontrado");
       if (parentBatch.type !== "REGULAR")
         throw new Error("Lote pai deve ser do tipo NORMAL");
-      
 
       const unitBusiness = await UnitBusiness.findOne({
         where: { id: parentBatch.unit_business_id },
@@ -127,6 +197,7 @@ export class InventoryBatchService extends BaseService<
           unit_business_id: parentBatch.unit_business_id,
           status: "OPEN",
           type: "DIVERGENCY",
+          mode: parentBatch.mode,
           BatchIdForDivergency: parentBatchId,
         },
         { transaction: t },
@@ -222,7 +293,7 @@ export class InventoryBatchService extends BaseService<
               {
                 model: Product,
                 as: "product",
-                attributes: ["id", "name", "ean", "sku"],
+                attributes: ["id", "name", "ean", "sku", 'type'],
               },
               {
                 model: InventoryBatchLogs,
