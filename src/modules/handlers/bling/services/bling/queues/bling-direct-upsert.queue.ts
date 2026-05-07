@@ -11,12 +11,14 @@ import { Supplier } from "../../../../../inventory";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { Invoice, UnitBusiness } from "../../../../../warehouse";
 import { blingApi } from "../../../api/bling_api.service";
+import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
+import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
 
 export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayload> {
-  private api = blingApi
+  private api = blingApi;
 
   constructor(options: { workless?: boolean } = {}) {
     super("BLING_DIRECT_UPSERT", {
@@ -169,13 +171,62 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       );
     }
 
-    await Stock.upsert(
+    // 1. Atualiza o stock do produto
+    const [stock] = await Stock.upsert(
       {
         product_id: product.id,
         quantity: data.quantity,
         unit_business_id: unitBusiness.id,
       },
       { conflictFields: ["product_id"] },
+    );
+
+    // 2. Busca todos os InventoryBatches que possuem um batch item com este produto
+    console.log(`[DEBUG] Buscando batches para product_id=${product.id}`);
+    const affectedBatches = await InventoryBatch.findAll({
+      include: [
+        {
+          model: InventoryBatchItems,
+          as: "items",
+          where: { product_id: product.id },
+          required: true,
+        },
+      ],
+    });
+    console.log(`[DEBUG] Batches encontrados: ${affectedBatches.length}`);
+
+
+    for (const batch of affectedBatches) {
+      // 3. Atualiza quantity_stock apenas dos batch items deste lote que têm o produto
+      await InventoryBatchItems.update(
+        { quantity_stock: data.quantity },
+        {
+          where: {
+            inventory_batch_id: batch.id,
+            product_id: product.id,
+          },
+        },
+      );
+
+      // 4. Recalcula total_quantity_stock do batch como soma dos quantity_stock de todos os seus itens
+      const allItems = await InventoryBatchItems.findAll({
+        where: { inventory_batch_id: batch.id },
+      });
+
+      const newTotalQuantityStock = allItems.reduce(
+        (sum, item) => sum + Number(item.quantity_stock),
+        0,
+      );
+
+      await batch.update({ total_quantity_stock: newTotalQuantityStock });
+
+      console.log(
+        `[BLING_DIRECT_UPSERT] InventoryBatch ${batch.id} atualizado | total_quantity_stock=${newTotalQuantityStock}`,
+      );
+    }
+
+    console.log(
+      `[BLING_DIRECT_UPSERT] Stock upsertado: productId=${product.id}, quantity=${data.quantity} | ${affectedBatches.length} batch(es) sincronizado(s)`,
     );
   }
 
