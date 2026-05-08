@@ -40,7 +40,7 @@ async function bootstrap() {
 const DRY_RUN = process.env.DRY_RUN === 'true';
 
 /** Quantos dias atrás buscar todos os recursos */
-const DAYS_BACK = 30;
+const DAYS_BACK = 10;
 
 /** Pausa entre páginas para respeitar o rate limit da Bling (ms) */
 const PAGE_DELAY_MS = 350; // ~3 req/s
