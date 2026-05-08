@@ -15,6 +15,7 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
   userId: string,
   batchType: string,
   t: Transaction,
+  options?: { skipInitialDivergency?: boolean },
 ): Promise<{ newStatus: string; newUserRead: number }> {
   const allLogs = await InventoryBatchLogs.findAll({
     where: { inventory_batch_item_id: itemId },
@@ -58,7 +59,10 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
       divergency: Number(item.quantity_stock) - newItemQuantityRead,
       price: newItemQuantityRead * item.product!.price!,
       status: newStatus,
-      ...(batchType === "REGULAR" && { initial_divergency: userDivergency }),
+       ...(batchType === "REGULAR" &&
+        !options?.skipInitialDivergency && {   
+          initial_divergency: userDivergency,
+        }),
     },
     { transaction: t },
   );
@@ -129,6 +133,7 @@ async syncDivergencyParent(
     userId,
     "REGULAR",
     t,
+    { skipInitialDivergency: true },
   );
 }
 }
