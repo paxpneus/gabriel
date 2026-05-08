@@ -13,6 +13,7 @@ type Scopes =
   | 'Unidades de Negócio'
   | 'Transportadoras'
   | 'Integrações'
+  | 'Impressoras'
 
 interface ChildEntity {
   entity: string
@@ -115,6 +116,11 @@ export const ROLE_PERMISSIONS: Roles[] = [
     children: [
       { entity: 'config_tokens', label: 'Tokens de Configuração' },
     ],
+  },
+  {
+    scope: 'Impressoras',
+    entity: 'printer_configs',
+    permissions: all,
   },
 ]
 

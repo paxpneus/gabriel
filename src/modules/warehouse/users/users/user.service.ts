@@ -150,7 +150,7 @@ export class UserService extends BaseService<User, UserRepository> {
     const cachedUser = await redisService.get(`user:${decoded.id}`)
     if (cachedUser) {
       user = cachedUser
-      return {user}
+      return user
     }
 
   user = await this.repository.findOne({
@@ -166,12 +166,13 @@ export class UserService extends BaseService<User, UserRepository> {
       }
     ]
   })
-      await redisService.set(`user:${decoded.id}`, user)
 
 
   if (!user) throw new Error('Usuário não encontrado')
 
-  return {user}
+  await redisService.set(`user:${decoded.id}`, user);
+
+return user ;
 }
 }
 

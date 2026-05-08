@@ -1,4 +1,5 @@
 import { authenticate } from '../../../middlewares/auth-token';
+import { userPermissions } from '../../../middlewares/user-permissions';
 import BaseController from '../../../shared/utils/base-models/base-controller';
 import Transporter from './transporter.model';
 import TransporterService from './transporter.service';
@@ -10,14 +11,14 @@ export class TransporterController extends BaseController<Transporter, typeof Tr
 
   protected middlewaresFor() {
         return {
-          index: [authenticate],
-          create: [authenticate],
+          index: [authenticate, userPermissions],
+          create: [authenticate, userPermissions],
           update: [
-            authenticate
+            authenticate, userPermissions
           ],
-          show: [authenticate],
-          destroy: [authenticate],
-          login: [authenticate],
+          show: [authenticate, userPermissions],
+          destroy: [authenticate, userPermissions],
+          login: [authenticate, userPermissions],
         };
       }
 }

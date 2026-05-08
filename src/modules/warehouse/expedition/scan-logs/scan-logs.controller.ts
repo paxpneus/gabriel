@@ -1,4 +1,5 @@
 import { authenticate } from '../../../../middlewares/auth-token';
+import { userPermissions } from '../../../../middlewares/user-permissions';
 import BaseController from '../../../../shared/utils/base-models/base-controller';
 import ExpeditionScanLog from './scan-logs.model';
 import ExpeditionScanLogService from './scan-logs.service';
@@ -11,30 +12,31 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
   }
 
   protected registerCustomRoutes(): void {
-  this.router.post("/scan/product", (req, res) => this.scanProduct(req, res))
+  this.router.post("/scan/product", ...this.mw("scanProduct"), (req, res) => this.scanProduct(req, res))
 
-  this.router.post("/scan/product/incoming", (req, res) => this.scanProductIncoming(req, res))
+  this.router.post("/scan/product/incoming", ...this.mw("scanProductIncoming"), (req, res) => this.scanProductIncoming(req, res))
 
-  this.router.post("/scan/product/incoming/by-invoice", (req, res) => this.scanProductIncomingByInvoice(req, res))
+  this.router.post("/scan/product/incoming/by-invoice", ...this.mw("scanProductIncomingByInvoice"), (req, res) => this.scanProductIncomingByInvoice(req, res))
 
-  this.router.post("/bulk-remove-logs", (req, res) => this.bulkRemoveScanLogsOutgoing(req, res))
+  this.router.post("/bulk-remove-logs", ...this.mw("bulkRemoveScanLogsOutgoing"), (req, res) => this.bulkRemoveScanLogsOutgoing(req, res))
 
-   this.router.post("/bulk-remove-logs-incoming", (req, res) => this.bulkRemoveScanLogsIncoming(req, res))
+   this.router.post("/bulk-remove-logs-incoming", ...this.mw("bulkRemoveScanLogsIncoming"), (req, res) => this.bulkRemoveScanLogsIncoming(req, res))
 }
 
   protected middlewaresFor() {
       return {
-        index: [authenticate],
-        create: [authenticate],
+        index: [authenticate, userPermissions],
+        create: [authenticate, userPermissions],
         update: [
           authenticate,
+          userPermissions
         ],
-        show: [authenticate],
-        destroy: [authenticate],
-        scanProduct: [authenticate],
-        scanProductIncoming: [authenticate],
-        bulkRemoveScanLogsOutgoing: [authenticate],
-        bulkRemoveScanLogsIncoming: [authenticate]
+        show: [authenticate, userPermissions],
+        destroy: [authenticate, userPermissions],
+        scanProduct: [authenticate, userPermissions],
+        scanProductIncoming: [authenticate, userPermissions],
+        bulkRemoveScanLogsOutgoing: [authenticate, userPermissions],
+        bulkRemoveScanLogsIncoming: [authenticate, userPermissions]
       };
     }
 
