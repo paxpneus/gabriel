@@ -69,6 +69,26 @@ class RedisService {
     await this.client.del(key);
   }
 
+  async deleteByPattern(pattern: string): Promise<void> {
+  let cursor = '0';
+
+  do {
+    const [nextCursor, keys] = await this.client.scan(
+      cursor,
+      'MATCH',
+      pattern,
+      'COUNT',
+      100
+    );
+
+    cursor = nextCursor;
+
+    if (keys.length) {
+      await this.client.del(...keys);
+    }
+  } while (cursor !== '0');
+}
+
   private handleResponse<T>(data: string | null): T | null {
   if (data === null) return null;
   if (data === "OK") return data as unknown as T;
@@ -79,6 +99,7 @@ class RedisService {
     return data as unknown as T;
   }
 }
+
 }
 
 export const redisService = new RedisService(redisClient);

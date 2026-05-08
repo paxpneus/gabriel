@@ -15,29 +15,31 @@ import {
 } from "../../../../shared/schemas";
 import { Request, Response } from "express";
 import { authenticate } from "../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../middlewares/user-permissions";
 
 export class UserController extends BaseController<User, typeof UserService> {
   constructor() {
     super(UserService);
 
-    this.router.post(`/login`, this.login);
+    this.router.post(`/login`, ...this.mw("login"), this.login);
 
     this.router.post(`/logout`, this.logout);
 
-    this.router.get('/me/get', this.getMe)
+    this.router.get('/me/get', ...this.mw('getMe'), this.getMe)
   }
 
    protected middlewaresFor() {
     return {
-      index: [authenticate],
-      create: [authenticate, validateCreate(CreateUserSchema)],
+      index: [authenticate, userPermissions],
+      create: [authenticate, validateCreate(CreateUserSchema), userPermissions],
       update: [
         authenticate,
         validateId(UserIdSchema),
         validateUpdate(UpdateUserSchema),
+        userPermissions
       ],
-      show: [authenticate, validateId(UserIdSchema)],
-      destroy: [authenticate, validateId(UserIdSchema)],
+      show: [authenticate, validateId(UserIdSchema), userPermissions],
+      destroy: [authenticate, validateId(UserIdSchema), userPermissions],
       login: [validateLoginSchema(LoginSchema)],
       getMe: [authenticate]
     };
@@ -87,7 +89,7 @@ export class UserController extends BaseController<User, typeof UserService> {
     try {
       const token = req.cookies.token
 
-      const { user } = await this.service.getMe(token as string);
+      const  user = await this.service.getMe(token as string);
 
       res.cookie("token", token, {
         httpOnly: true,

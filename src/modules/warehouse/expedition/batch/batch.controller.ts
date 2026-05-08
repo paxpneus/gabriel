@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import BaseController from "../../../../shared/utils/base-models/base-controller";
 import ExpeditionBatch from "./batch.model";
 import ExpeditionBatchService from "./batch.service";
+import { authenticate } from "../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../middlewares/user-permissions";
 
 export class ExpeditionBatchController extends BaseController<
   ExpeditionBatch,
@@ -12,18 +14,33 @@ export class ExpeditionBatchController extends BaseController<
     this.registerCustomRoutes();
   }
 
+  protected middlewaresFor() {
+      return {
+        index: [authenticate, userPermissions],
+        create: [authenticate, userPermissions],
+        update: [authenticate, userPermissions],
+        show: [authenticate, userPermissions],
+        destroy: [authenticate, userPermissions],
+        generateBatchesFromInvoices: [authenticate, userPermissions],
+        getBatchesByInvoice: [authenticate, userPermissions],
+        getBatches: [authenticate, userPermissions],
+        getFullBatch: [authenticate, userPermissions],
+        addInvoiceToBatch: [authenticate, userPermissions]
+      };
+    }
+
   private registerCustomRoutes(): void {
     // POST /expedition-batches/generate-from-invoices
-    this.router.post("/generate-from-invoices", (req, res) =>
+    this.router.post("/generate-from-invoices",  ...this.mw("generateBatchesFromInvoices"), (req, res) =>
       this.generateBatchesFromInvoices(req, res),
     );
 
-    this.router.get("/by-invoices/get", this.getBatchesByInvoice);
-    this.router.get("/by-ids/get", this.getBatches)
+    this.router.get("/by-invoices/get", ...this.mw("getBatchesByInvoice"), this.getBatchesByInvoice);
+    this.router.get("/by-ids/get", ...this.mw("getBatches"), this.getBatches)
 
-    this.router.get("/full/get", this.getFullBatch)
+    this.router.get("/full/get", ...this.mw("getFullBatch"), this.getFullBatch)
 
-    this.router.post("/add-invoice", (req, res) => this.addInvoiceToBatch(req, res))
+    this.router.post("/add-invoice", ...this.mw("addInvoiceToBatch"), (req, res) => this.addInvoiceToBatch(req, res))
   }
 
   /**

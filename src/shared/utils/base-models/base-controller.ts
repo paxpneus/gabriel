@@ -1,5 +1,5 @@
 import { Request, Response, Router, RequestHandler } from "express";
-import { Model } from "sequelize";
+import { Model, Op } from "sequelize";
 import BaseService from "./base-service";
 import { QueryParams } from "../../query/query.types";
 class BaseController<
@@ -54,9 +54,13 @@ class BaseController<
     this.router.put("/:id", ...this.mw("update"), (req, res) =>
       this.update(req, res),
     );
+     this.router.delete("/bulk", ...this.mw("bulkDestroy"), (req, res) =>
+  this.bulkDestroy(req, res),
+);
     this.router.delete("/:id", ...this.mw("destroy"), (req, res) =>
       this.destroy(req, res),
     );
+   
   }
 
   index = async (req: Request, res: Response): Promise<Response> => {
@@ -119,6 +123,24 @@ class BaseController<
       return res.status(500).json({ error: error.message });
     }
   };
+
+  bulkDestroy = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const { ids } = req.body as { ids: string[] };
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "Informe um array de ids válido." });
+    }
+
+    const deleted = await this.service.bulkDelete({
+      where: { id: { [Op.in]: ids } },
+    });
+
+    return res.json({ deleted });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+};
 }
 
 export default BaseController;
