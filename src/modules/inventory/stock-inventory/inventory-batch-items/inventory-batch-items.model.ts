@@ -25,6 +25,7 @@ class InventoryBatchItems
   public stock_id!: string;
   public inventory_batch_id!: string;
   public price?: number;
+  public initial_divergency?: number
 }
 
 InventoryBatchItems.init(
@@ -51,6 +52,11 @@ InventoryBatchItems.init(
     quantity_stock: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
     quantity_read: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
     divergency: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+    initial_divergency: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      defaultValue: null,
+    },
     status: {
       type: DataTypes.ENUM("FINISHED", "PENDING", "OPEN"),
       defaultValue: "OPEN",
@@ -66,8 +72,8 @@ InventoryBatchItems.init(
     price: {
       type: DataTypes.FLOAT,
       allowNull: true,
-      defaultValue: 0
-    }
+      defaultValue: 0,
+    },
   },
   {
     sequelize,

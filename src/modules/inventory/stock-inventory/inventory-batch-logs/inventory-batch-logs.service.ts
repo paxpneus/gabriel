@@ -100,6 +100,7 @@ export class InventoryBatchLogsService extends BaseService<
             quantity_stock: stock.quantity,
             quantity_read: 0,
             divergency: stock.quantity,
+            initial_divergency: stock.quantity,
             stock_id: stock.id!,
             status: "PENDING",
           },
@@ -164,18 +165,6 @@ export class InventoryBatchLogsService extends BaseService<
       const previousItemQuantityRead = Number(inventoryBatchItem.quantity_read);
       const itemDelta = newItemQuantityRead - previousItemQuantityRead;
 
-      await InventoryBatchItems.update(
-        {
-          quantity_read: newItemQuantityRead,
-          divergency:
-            Number(inventoryBatchItem.quantity_stock) - newItemQuantityRead,
-        },
-        {
-          where: { id: inventoryBatchItem.id },
-          transaction: t,
-        },
-      );
-
       if (itemDelta > 0) {
         await InventoryBatch.increment("total_quantity_read", {
           by: itemDelta,
@@ -207,6 +196,21 @@ export class InventoryBatchLogsService extends BaseService<
                 Number(scanLogs[1].quantity_read),
             )
           : 0;
+
+      await InventoryBatchItems.update(
+        {
+          quantity_read: newItemQuantityRead,
+          divergency:
+            Number(inventoryBatchItem.quantity_stock) - newItemQuantityRead,
+          ...(inventoryBatch.type === "REGULAR" && {
+            initial_divergency: userDivergency,
+          }),
+        },
+        {
+          where: { id: inventoryBatchItem.id },
+          transaction: t,
+        },
+      );
 
       const hasUserDivergency = userDivergency > 0;
 
@@ -443,14 +447,6 @@ export class InventoryBatchLogsService extends BaseService<
       );
       const itemDelta = newItemRead - previousItemRead;
 
-      await inventoryBatchItem.update(
-        {
-          quantity_read: newItemRead,
-          divergency: Number(inventoryBatchItem.quantity_stock) - newItemRead,
-        },
-        { transaction: t },
-      );
-
       if (itemDelta !== 0) {
         await InventoryBatch.increment("total_quantity_read", {
           by: itemDelta,
@@ -468,6 +464,18 @@ export class InventoryBatchLogsService extends BaseService<
             Number(allLogs[0].quantity_read) - Number(allLogs[1].quantity_read),
           )
         : null;
+
+         await inventoryBatchItem.update(
+        {
+          quantity_read: newItemRead,
+          divergency: Number(inventoryBatchItem.quantity_stock) - newItemRead,
+          ...(inventoryBatch.type === "REGULAR" && {
+            initial_divergency:
+              userDivergency ?? 0,
+          }),
+        },
+        { transaction: t },
+      );
 
       const hasUserDivergency = userDivergency !== null && userDivergency > 0;
 
