@@ -33,7 +33,7 @@ export class InventoryBatchService extends BaseService<
         "status",
         "type",
         "BatchIdForDivergency",
-        "mode"
+        "mode",
       ],
       sortableFields: ["number", "createdAt", "status", "updatedAt"],
     };
@@ -77,7 +77,7 @@ export class InventoryBatchService extends BaseService<
         // Pega todos produtos que tem estoque na unidade escolhida
         const products = (await Product.findAll({
           where: {
-            type: 'UNIT'
+            type: "UNIT",
           },
           include: [
             {
@@ -122,12 +122,17 @@ export class InventoryBatchService extends BaseService<
           return acc + (item.price ?? 0);
         }, 0);
 
-        await InventoryBatchItems.bulkCreate(payloadBatchItem, { transaction: t });
+        await InventoryBatchItems.bulkCreate(payloadBatchItem, {
+          transaction: t,
+        });
 
-        await batch.update({
-          total_price: totalPrice,
-          total_quantity_stock: totalQuantity
-        }, {transaction: t})
+        await batch.update(
+          {
+            total_price: totalPrice,
+            total_quantity_stock: totalQuantity,
+          },
+          { transaction: t },
+        );
       }
     });
 
@@ -294,7 +299,11 @@ export class InventoryBatchService extends BaseService<
               {
                 model: Product,
                 as: "product",
-                attributes: ["id", "name", "ean", "sku", 'type'],
+                attributes: ["id", "name", "ean", "sku", "type", "price"],
+              },
+              {
+                model: Stock,
+                as: "stock",
               },
               {
                 model: InventoryBatchLogs,
@@ -336,7 +345,11 @@ export class InventoryBatchService extends BaseService<
             {
               model: Product,
               as: "product",
-              attributes: ["id", "name", "ean", "sku"],
+              attributes: ["id", "name", "ean", "sku", "price"],
+            },
+            {
+              model: Stock,
+              as: "stock",
             },
             {
               model: InventoryBatchLogs,

@@ -6,6 +6,7 @@ import {
   ItemStatus,
 } from "./inventory-batch-items.types";
 import { v4 as uuidv4 } from "uuid";
+import Product from "../../products/product.model";
 
 class InventoryBatchItems
   extends Model<
@@ -26,6 +27,8 @@ class InventoryBatchItems
   public inventory_batch_id!: string;
   public price?: number;
   public initial_divergency?: number
+
+   public product?: Product;
 }
 
 InventoryBatchItems.init(

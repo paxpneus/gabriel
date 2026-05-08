@@ -23,6 +23,8 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
       createInventoryBatchDivergency: [authenticate, userPermissions],
       finishBatch: [authenticate, userPermissions],
       getFullBatch: [authenticate, userPermissions],
+      getFinancialInventoryBatch: [authenticate, userPermissions],
+      getMultiplierScan: [authenticate, userPermissions]
     };
   }
 
@@ -50,6 +52,10 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
       ...this.mw("createInventoryBatchDivergency"),
       (req, res) => this.createInventoryBatchDivergency(req, res),
     );
+
+    this.router.get("/financial-batch-info/get", ...this.mw("getFinancialInventoryBatch"), (req, res) => this.getFinancialInventoryBatch(req, res))
+    
+     this.router.get("/multiplier-scan/get", ...this.mw("getMultiplierScan"), (req, res) => this.getMultiplierScan(req, res))
   }
 
   createInventoryBatch = async (
@@ -127,6 +133,14 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
       return res.status(400).json({ error: error.message });
     }
   };
+
+  getFinancialInventoryBatch(req: Request, res: Response) {
+    return res.json(true);
+  }
+
+  getMultiplierScan(req: Request, res: Response) {
+    return res.json(true);
+  }
 }
 
 export default new InventoryBatchController();
