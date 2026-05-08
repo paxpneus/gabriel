@@ -30,55 +30,7 @@ export class InventoryBatchItemsService extends BaseService<
         await inventoryBatchService.findByIdFullBatch(batchId);
       if (!inventoryBatch) throw new Error("Lote não encontrado");
 
-      const batchItem = (await this.findById(id, {
-        include: [
-          {
-            model: Product,
-            as: "product",
-            include: [
-              {
-                model: Stock,
-                as: "stocks",
-                where: { unit_business_id: inventoryBatch.unit_business_id },
-              },
-            ],
-          },
-        ],
-        transaction: t,
-      })) as unknown as inventoryBatchItemFull;
-
-      if (!batchItem) throw new Error("Item não encontrado");
-
-      // ── 1. O quantity_read atual do item JÁ É o max entre os usuários ────────
-      //    (mantido em sincronia pelo scanProduct e updateLogQuantity)
-      //    então basta usar diretamente para decrementar o batch
-      const currentItemRead = Number(batchItem.quantity_read);
-
-      if (currentItemRead > 0) {
-        await InventoryBatch.decrement("total_quantity_read", {
-          by: currentItemRead,
-          where: { id: batchItem.inventory_batch_id },
-          transaction: t,
-        });
-      }
-
-      // ── 2. Decrementa total_quantity_stock ────────────────────────────────────
-      const stockQty = batchItem.product?.stocks?.[0]?.quantity ?? 0;
-      if (stockQty > 0) {
-        await InventoryBatch.decrement("total_quantity_stock", {
-          by: stockQty,
-          where: { id: batchItem.inventory_batch_id },
-          transaction: t,
-        });
-      }
-
-      // ── 3. Remove logs e item ─────────────────────────────────────────────────
-      await InventoryBatchLogs.destroy({
-        where: { inventory_batch_item_id: batchItem.id },
-        transaction: t,
-      });
-
-      await this.delete(id, { transaction: t });
+     this.repository.removeItem(id, batchId)
     });
   }
 }

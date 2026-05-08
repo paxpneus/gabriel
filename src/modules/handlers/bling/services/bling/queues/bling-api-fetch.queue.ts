@@ -71,6 +71,7 @@ interface BlingApiProduct {
   codigo: string;
   gtin?: string; // EAN
   gtinEmbalagem?: string;
+  preco: number;
   formato?: string
 }
 
@@ -209,6 +210,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         sku: blingProduct.codigo,
         ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
         ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
+        price: blingProduct.preco,
         type: blingProduct.formato === 'E' ? 'KIT' : 'UNIT'
       },
       { conflictFields: ["id_system"] },

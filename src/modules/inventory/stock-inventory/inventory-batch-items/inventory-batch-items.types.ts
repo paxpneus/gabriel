@@ -22,3 +22,5 @@ export interface inventoryBatchItemFull extends InventoryBatchItemsAttributes {
 }
 
 export type InventoryBatchItemsCreationAttributes = Omit<InventoryBatchItemsAttributes, 'id'>;
+
+export type Operation = 'INCREMENT' | 'DECREMENT'

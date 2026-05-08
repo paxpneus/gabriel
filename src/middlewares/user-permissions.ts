@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import redisService from "../shared/utils/base-models/base-redis";
 import userService from "../modules/warehouse/users/users/user.service";
 import { AuthRequest } from "./auth-token";
-import { ROLE_PERMISSIONS } from "../shared/constants/roles";
+import { ROLE_PERMISSIONS, RoleType } from "../shared/constants/roles";
 import { resolveEntityFromRoute } from "../config/routes";
 
 type Actions = "read" | "write" | "delete" | "update";
@@ -35,16 +35,16 @@ const MODEL_LABEL = (entity: string): string => {
   return entity;
 };
 
-function resolvePermissionEntity(entity: string): string {
-  const isPrimary = ROLE_PERMISSIONS.find((r) => r.entity === entity);
-  if (isPrimary) return entity;
+function resolvePermissionEntity(entity: string): { entity: string; type: RoleType } {
+  const primary = ROLE_PERMISSIONS.find((r) => r.entity === entity);
+  if (primary) return { entity: primary.entity, type: primary.type };
 
   for (const role of ROLE_PERMISSIONS) {
     const isChild = role.children?.find((c) => c.entity === entity);
-    if (isChild) return role.entity;
+    if (isChild) return { entity: role.entity, type: role.type };
   }
 
-  return entity;
+  return { entity, type: 'REGULAR' };
 }
 
 function userHasPermission(
@@ -54,12 +54,16 @@ function userHasPermission(
 ): boolean {
   if (!role?.permissions) return false;
 
-  const permissionEntity = resolvePermissionEntity(entity);
+  const { entity: permEntity, type } = resolvePermissionEntity(entity);
 
   for (const perm of role.permissions) {
     if (perm === "*") return true;
-    if (perm.entity === permissionEntity && perm.permissions.includes(action))
-      return true;
+
+    if (type === 'CUSTOM') {
+      if (perm.entity === permEntity && perm.permissions.includes(action)) return true;
+    } else {
+      if (perm.entity === permEntity && perm.permissions.includes(action)) return true;
+    }
   }
 
   return false;
@@ -98,6 +102,12 @@ export async function userPermissions(
 
     const entity = resolveEntityFromRoute(req.originalUrl);
     if (!entity) return next();
+
+    const { type } = resolvePermissionEntity(entity);
+
+    if (type === 'CUSTOM') {
+      
+    }
 
     if (!userHasPermission(user.role, entity, action)) {
       const scope =

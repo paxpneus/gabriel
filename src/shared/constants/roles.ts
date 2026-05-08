@@ -1,5 +1,7 @@
 type Actions = 'read' | 'write' | 'delete' | 'update'
 
+export type RoleType = 'CUSTOM' | 'REGULAR'
+
 type Scopes =
   | 'Pedidos'
   | 'Notas Fiscais'
@@ -14,6 +16,8 @@ type Scopes =
   | 'Transportadoras'
   | 'Integrações'
   | 'Impressoras'
+  | 'Multiplicador Estoque'
+  | 'Financeiro - Produtos'
 
 interface ChildEntity {
   entity: string
@@ -23,6 +27,7 @@ interface ChildEntity {
 interface Roles {
   scope: Scopes
   entity: string
+  type: RoleType,
   permissions: Actions[]
   children?: ChildEntity[]
 }
@@ -34,6 +39,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
     scope: 'Pedidos',
     entity: 'orders',
     permissions: all,
+    type: 'REGULAR',
     children: [
       { entity: 'order_items',   label: 'Itens do Pedido' },
       { entity: 'order_history', label: 'Histórico' },
@@ -45,6 +51,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
     scope: 'Notas Fiscais',
     entity: 'invoices',
     permissions: all,
+    type: 'REGULAR',
     children: [
       { entity: 'invoice_items',           label: 'Itens da NF' },
       { entity: 'entrance_scan_logs',      label: 'Logs de Entrada' },
@@ -55,6 +62,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
     scope: 'Produtos',
     entity: 'products',
     permissions: all,
+    type: 'REGULAR',
     children: [
       { entity: 'supplier_mappings',    label: 'Mapeamento de Fornecedores' },
       { entity: 'integration_mappings', label: 'Mapeamento de Integração' },
@@ -64,12 +72,14 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Estoque',
     entity: 'stocks',
+    type: 'REGULAR',
     permissions: all,
   },
   {
     scope: 'Inventário',
     entity: 'inventory_batches',
     permissions: all,
+    type: 'REGULAR',
     children: [
       { entity: 'inventory_batch_items', label: 'Itens do Inventário' },
       { entity: 'inventory_batch_logs',  label: 'Logs de Inventário' },
@@ -79,6 +89,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
     scope: 'Lotes',
     entity: 'expedition_batches',
     permissions: all,
+    type: 'REGULAR',
     children: [
       { entity: 'expedition_batch_items',    label: 'Itens do Lote' },
       { entity: 'expedition_batch_invoices', label: 'Notas do Lote' },
@@ -89,6 +100,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
     scope: 'Usuários',
     entity: 'users',
     permissions: all,
+    type: 'REGULAR',
     children: [
       { entity: 'roles', label: 'Perfis' },
     ],
@@ -96,23 +108,27 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Fornecedores',
     entity: 'suppliers',
+    type: 'REGULAR',
     permissions: all,
     
   },
   {
     scope: 'Unidades de Negócio',
     entity: 'unit_businesses',
+    type: 'REGULAR',
     permissions: all,
   },
   {
     scope: 'Transportadoras',
     entity: 'transporters',
+    type: 'REGULAR',
     permissions: all,
   },
   {
     scope: 'Integrações',
     entity: 'integrations',
     permissions: all,
+    type: 'REGULAR',
     children: [
       { entity: 'config_tokens', label: 'Tokens de Configuração' },
     ],
@@ -120,7 +136,20 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Impressoras',
     entity: 'printer_configs',
+    type: 'REGULAR',
     permissions: all,
+  },
+   {
+    scope: 'Multiplicador Estoque',
+    entity: 'multiply-stk',
+    type: 'CUSTOM',
+    permissions: ['read'],
+  },
+  {
+    scope: 'Financeiro - Produtos',
+    entity: 'financial-pdt',
+    type: 'CUSTOM',
+    permissions: ['read'],
   },
 ]
 
