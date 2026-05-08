@@ -15,6 +15,7 @@ export interface InventoryBatchItemsAttributes {
     stock_id: string;
     inventory_batch_id: string
     price?: number;
+    initial_divergency?: number
 }
 export interface inventoryBatchItemFull extends InventoryBatchItemsAttributes {
     product: ProductWithStock

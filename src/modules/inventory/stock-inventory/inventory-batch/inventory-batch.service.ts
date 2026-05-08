@@ -109,6 +109,7 @@ export class InventoryBatchService extends BaseService<
               stock_id: stock.id,
               price: stock.total_price,
               divergency: 0,
+              initial_divergency: 0,
               quantity_read: 0,
             };
           });
