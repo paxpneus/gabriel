@@ -74,7 +74,7 @@ interface BlingApiProduct {
   preco: number;
   precoCusto: number;
   precoCompra: number;
-  formato?: string
+  formato?: string;
 }
 
 interface BlingApiSupplier {
@@ -213,7 +213,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
         ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
         price: blingProduct.precoCusto,
-        type: blingProduct.formato === 'E' ? 'KIT' : 'UNIT'
+        type: blingProduct.formato === "E" ? "KIT" : "UNIT",
       },
       { conflictFields: ["id_system"] },
     );
@@ -357,18 +357,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const invoiceType: "INCOMING" | "OUTGOING" =
       nf.tipo === 0 ? "INCOMING" : "OUTGOING";
 
-      const existingInvoice = await Invoice.findOne({
-  where: { id_system: String(nf.id) },
-  attributes: ['status'],
-});
+    const existingInvoice = await Invoice.findOne({
+      where: { id_system: String(nf.id) },
+      attributes: ["status"],
+    });
 
     const invoiceStatus: "OPEN" | "PENDING" | "FINISHED" =
       partial.status === "CANCELLED"
         ? "OPEN" // Bling cancelada → mantemos como OPEN para revisão manual
         : ((partial.status as "OPEN" | "PENDING" | "FINISHED") ?? "PENDING");
 
-        const incomingStatus = existingInvoice?.status ?? 'WAITING_SCHEDULE_SALES'
-
+    const incomingStatus = existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
 
     const encryptedKey = nf.chaveAcesso ? nf.chaveAcesso : null;
 
@@ -440,7 +439,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         customer_name: customerName,
         customer_document: customerDoc,
         type: invoiceType,
-        status: invoiceType === 'OUTGOING' ? invoiceStatus : incomingStatus,
+        status: invoiceType === "OUTGOING" ? invoiceStatus : incomingStatus,
         sender_cnpj: senderCnpj,
         sender_name: senderName,
         receiver_cnpj: receiverCnpj,
@@ -456,8 +455,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         transporter_id: transporter?.id ?? null,
         transporter_document: transporter_document ?? null,
         transporter_name: transporter_name ?? null,
-        // unit_business_id: deve ser resolvido via loja → unit_business conforme regra de negócio
-        // transporter_id: idem
       },
       { conflictFields: ["id_system"] },
     );
@@ -607,6 +604,245 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         );
       }
     }
+  }
+
+  /**
+   * Importa uma NF-e a partir de um XML bruto (sem passar pela API Bling).
+   * Usado pelo endpoint de importação manual de XML.
+   */
+  async upsertInvoiceFromXml(xmlContent: string): Promise<void> {
+    const parsed = parser.parse(xmlContent);
+
+    const nfe =
+      parsed?.nfeProc?.NFe?.infNFe ||
+      parsed?.procNFe?.NFe?.infNFe ||
+      parsed?.NFe?.infNFe;
+
+    if (!nfe) {
+      throw new Error("XML inválido: estrutura de NF-e não reconhecida");
+    }
+
+    const ide = nfe.ide ?? {};
+    const emit = nfe.emit ?? {};
+    const dest = nfe.dest ?? {};
+    const transp = nfe.transp ?? {};
+    const det = nfe.det ? (Array.isArray(nfe.det) ? nfe.det : [nfe.det]) : [];
+
+    // ─── Chave de acesso ─────────────────────────────────────────────────────
+
+    // Está no atributo Id do infNFe: "NFe35250..." → remove prefixo "NFe"
+   const rawId: string = nfe['@_Id'] ?? ''
+    let chaveAcesso = rawId.replace(/^NFe/, '')
+
+     if (!chaveAcesso) {
+      chaveAcesso =
+        parsed?.nfeProc?.protNFe?.infProt?.chNFe ??
+        parsed?.procNFe?.protNFe?.infProt?.chNFe ??
+        ''
+    }
+
+       if (!chaveAcesso) {
+      const emit = nfe.emit ?? {}
+      const cuf    = String(ide.cUF   ?? '')
+      const aamm   = String(ide.dhEmi ?? '').slice(2, 4) + String(ide.dhEmi ?? '').slice(5, 7)
+      const cnpj   = String(emit.CNPJ ?? '').replace(/\D/g, '')
+      const mod    = String(ide.mod   ?? '55').padStart(2, '0')
+      const serie  = String(ide.serie ?? '').padStart(3, '0')
+      const nnf    = String(ide.nNF   ?? '').padStart(9, '0')
+      const tpemis = String(ide.tpEmis ?? '1')
+      const cnf    = String(ide.cNF   ?? '').padStart(8, '0')
+      const cdv    = String(ide.cDV   ?? '')
+
+      const candidate = `${cuf}${aamm}${cnpj}${mod}${serie}${nnf}${tpemis}${cnf}${cdv}`
+      if (candidate.length === 44) chaveAcesso = candidate
+    }
+
+    const numero   = String(ide.nNF ?? '')
+    const idSystem = chaveAcesso || `MANUAL-${Date.now()}`
+
+    // ─── Partes ──────────────────────────────────────────────────────────────
+
+    const extracted = extractPartiesFromXml(xmlContent);
+    const senderCnpj = cleanDocument(extracted.senderCnpj);
+    const senderName = extracted.senderName;
+    const receiverCnpj = cleanDocument(extracted.receiverCnpj);
+    const receiverName = extracted.receiverName;
+    const transporterName = extracted.transporterName || null;
+    const transporterDocument = extracted.transporterDocument || null;
+
+    // ─── Tipo: tpNF 0=entrada, 1=saída ──────────────────────────────────────
+
+    const invoiceType: "INCOMING" | "OUTGOING" =
+      Number(ide.tpNF) === 0 ? "INCOMING" : "OUTGOING";
+
+    // ─── Infra ───────────────────────────────────────────────────────────────
+
+    let unit_business: UnitBusiness | null = null;
+
+    if (invoiceType === "INCOMING") {
+      unit_business = await UnitBusiness.findOne({
+        where: { cnpj: receiverCnpj },
+      });
+      if (!unit_business) {
+        unit_business = await UnitBusiness.findOne({
+          where: { cnpj: senderCnpj },
+        });
+      }
+    } else {
+      unit_business = await UnitBusiness.findOne({
+        where: { cnpj: senderCnpj },
+      });
+    }
+
+    if (!unit_business) {
+      console.warn(
+        `[IMPORT_XML] UnitBusiness não encontrada | type=${invoiceType} | sender=${senderCnpj} | receiver=${receiverCnpj} | fallback padrão`,
+      );
+      unit_business = await UnitBusiness.findByPk(BLING_UNIT_BUSINESS_ID);
+    }
+
+    if (!unit_business) {
+      throw new Error(
+        `UnitBusiness não encontrada | id=${BLING_UNIT_BUSINESS_ID}`,
+      );
+    }
+
+    const integration = await getBlingIntegration("Bling");
+
+    const transporter = transporterDocument
+      ? await Transporter.findOne({
+          where: { cnpj: cleanDocument(transporterDocument) },
+        })
+      : null;
+
+    // CNPJ do destinatário como customer_document (ajuste se precisar)
+    const customerDocument = receiverCnpj;
+    const customerName = receiverName;
+
+    // ─── Upsert Invoice ──────────────────────────────────────────────────────
+
+    const existingInvoice = await Invoice.findOne({
+      where: { id_system: idSystem },
+      attributes: ["status"],
+    });
+
+    const incomingStatus = existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
+
+    const store = await Store.findOne({ where: { name: "Outros" } });
+
+    const [invoice] = await Invoice.upsert(
+      {
+        id_system: idSystem,
+        customer_name: customerName,
+        customer_document: customerDocument,
+        type: invoiceType,
+        status: invoiceType === "OUTGOING" ? "PENDING" : incomingStatus,
+        sender_cnpj: senderCnpj,
+        sender_name: senderName,
+        receiver_cnpj: receiverCnpj,
+        receiver_name: receiverName,
+        unit_business_id: unit_business.id,
+        danfe_path: "",
+        xml_path: encryptXml(xmlContent),
+        xml_key: chaveAcesso || null,
+        emitted_at: ide.dhEmi ? new Date(ide.dhEmi) : new Date(),
+        number_system: numero,
+        integrations_id: integration.id,
+        store_id: store?.id ?? "",
+        transporter_id: transporter?.id ?? null,
+        transporter_document: transporterDocument,
+        transporter_name: transporterName,
+      },
+      { conflictFields: ["id_system"] },
+    );
+
+    console.log(invoice)
+
+    console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
+
+    // ─── Itens ───────────────────────────────────────────────────────────────
+
+    if (!det.length) return;
+
+    const quantityByProduct = new Map<string, number>();
+
+    for (const item of det) {
+      const prod = item.prod ?? {};
+      const sku = prod.cProd ? String(prod.cProd).trim() : undefined;
+      const gtin =
+        prod.cEAN && prod.cEAN !== "SEM GTIN" ? prod.cEAN : undefined;
+      const qty = Number(prod.qCom ?? 0);
+
+      let product = null;
+
+      if (sku) {
+        product = await Product.findOne({ where: { sku } });
+      }
+
+      if (!product && gtin) {
+        product = await Product.findOne({
+          where: { [Op.or]: [{ ean: gtin }, { ean_tribut: gtin }] },
+        });
+      }
+
+      if (!product) {
+        const reason =
+          !sku && !gtin
+            ? "SKU e EAN ausentes no XML"
+            : !sku
+              ? "SKU ausente — apenas EAN salvo"
+              : !gtin
+                ? "EAN ausente — apenas SKU salvo"
+                : "SKU e EAN presentes mas sem produto correspondente no banco";
+
+        const existing = await UnmappedInvoiceProduct.findOne({
+          where: { invoice_id: invoice.id, ean: gtin ?? null },
+        });
+
+        if (!existing) {
+          await UnmappedInvoiceProduct.create({
+            invoice_id: invoice.id,
+            ean: gtin ?? null,
+            sku: sku ?? null,
+            product_name: prod.xProd ?? null,
+            quantity: qty,
+            reason,
+            status: "UNMAPPED",
+          });
+        } else {
+          await existing.update({ quantity: qty });
+        }
+
+        console.warn(
+          `[IMPORT_XML] Produto não mapeado | invoice=${invoice.id} | sku=${sku} | ean=${gtin} | motivo=${reason}`,
+        );
+        continue;
+      }
+
+      const current = quantityByProduct.get(String(product.id)) ?? 0;
+      quantityByProduct.set(String(product.id), current + qty);
+    }
+
+    for (const [productId, quantity] of quantityByProduct) {
+      const existingItem = await InvoiceItems.findOne({
+        where: { invoice_id: invoice.id, product_id: productId },
+      });
+
+      if (existingItem) {
+        await existingItem.update({ quantity_expected: quantity });
+      } else {
+        await InvoiceItems.create({
+          product_id: productId,
+          invoice_id: invoice.id,
+          quantity_expected: quantity,
+          status: "PENDING",
+        });
+      }
+    }
+
+    console.log(
+      `[IMPORT_XML] ${det.length} item(ns) processado(s) para invoice ${idSystem}`,
+    );
   }
 
   protected override onFailed(

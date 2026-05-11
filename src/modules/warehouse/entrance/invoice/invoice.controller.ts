@@ -12,6 +12,10 @@ import { PassThrough } from 'stream'
 import { PDFDocument } from 'pdf-lib'
 import { Op } from 'sequelize';
 import { InvoiceAttributes } from './invoice.types';
+import multer from 'multer';
+import { BlingApiFetchQueue } from '../../../handlers/bling/services/bling/queues/bling-api-fetch.queue';
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 export class InvoiceController extends BaseController<Invoice, typeof InvoiceService> {
 
@@ -47,6 +51,12 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
       ...this.mw('scheduleInvoice'),
       this.scheduleInvoice,
     )
+    this.router.post(
+  '/import/xml',
+  upload.single('xml'),        
+  ...this.mw('importXML'),
+  this.importXML,
+)
   }
 
   protected registerCustomRoutes(): void {
@@ -68,6 +78,8 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
 
       updateInvoicesOpen: [authenticate, userPermissions],
       scheduleInvoice: [authenticate, userPermissions],
+
+      importXML: [authenticate, userPermissions],
     };
   }
 
@@ -190,6 +202,29 @@ scheduleInvoice = async (req: Request, res: Response): Promise<void> => {
     const {id} = req.params
     
     await this.service.scheduleInvoice(id as string, expectedDate)
+    res.json({ success: true })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
+importXML = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'Nenhum arquivo XML enviado' })
+      return
+    }
+
+    const xmlContent = req.file.buffer.toString('utf-8')
+
+    if (!xmlContent.trim()) {
+      res.status(400).json({ error: 'Arquivo XML vazio' })
+      return
+    }
+
+    const queue = req.app.locals.BlingApiFetchQueue as BlingApiFetchQueue
+    await queue.upsertInvoiceFromXml(xmlContent)
+
     res.json({ success: true })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
