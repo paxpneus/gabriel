@@ -41,6 +41,8 @@ export interface BlingProductPayload {
   tipo?: string;
   situacao?: string;
   preco?: number;
+  precoCusto?: number;
+  precoCompra?: number;
   unidade?: string;
   formato?: string;
   idProdutoPai?: number;
