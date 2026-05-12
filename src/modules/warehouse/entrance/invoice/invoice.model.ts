@@ -58,7 +58,7 @@ Invoice.init(
     },
     description: {
       type: DataTypes.STRING(255),
-      allowNull: false,
+      allowNull: true,
     },
     xml_path: {
       type: DataTypes.TEXT,
