@@ -7,10 +7,10 @@ import { normalizeDocument } from '../../../shared/utils/normalizers/document';
 class Transporter extends Model<TransporterAttributes, TransporterCreationAttributes> implements TransporterAttributes {
   public id!: string;
   public name!: string;
-  public cnpj!: string;
-  public city!: string;
-  public uf!: string;
-  public id_system!: string;
+  public cnpj?: string;
+  public city?: string;
+  public uf?: string;
+  public id_system?: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -26,6 +26,7 @@ Transporter.init(
     },
      id_system: {
       type: DataTypes.STRING(100),
+      allowNull: true
     },
     name: {
       type: DataTypes.STRING(255),
@@ -33,16 +34,16 @@ Transporter.init(
     },
     cnpj: {
       type: DataTypes.STRING(18),
-      allowNull: false,
+      allowNull: true,
       unique: true,
     },
     city: {
       type: DataTypes.STRING(100),
-      allowNull: false,
+      allowNull: true,
     },
     uf: {
       type: DataTypes.STRING(2),
-      allowNull: false,
+      allowNull: true,
     },
   },
   {

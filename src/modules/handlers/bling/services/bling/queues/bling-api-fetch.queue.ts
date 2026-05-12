@@ -48,6 +48,8 @@ export function extractPartiesFromXml(xml: string) {
 
   const transporterName = transporter?.xNome ?? "";
   const transporterDocument = transporter?.CNPJ ?? transporter?.CPF ?? "";
+  const transporterCity = transporter?.xMun ?? "";
+  const transporterUf = transporter?.UF ?? "";
 
   return {
     senderCnpj,
@@ -56,6 +58,8 @@ export function extractPartiesFromXml(xml: string) {
     receiverName,
     transporterName,
     transporterDocument,
+    transporterCity,
+    transporterUf,
   };
 }
 
@@ -143,6 +147,43 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
 
     this.api = blingApi;
+  }
+
+  // ─── Helper: busca ou cria transportadora ────────────────────────────────────
+  private async findOrCreateTransporter(params: {
+    document: string | null;
+    name: string | null;
+    city?: string | null;
+    uf?: string | null;
+  }): Promise<Transporter | null> {
+    const { document, name, city, uf } = params;
+
+    if (!document) return null;
+
+    const cleanDoc = cleanDocument(document);
+    if (!cleanDoc) return null;
+
+    const existing = await Transporter.findOne({ where: { cnpj: cleanDoc } });
+    if (existing) return existing;
+
+    if (!name) {
+      console.warn(
+        `[TRANSPORTER] Documento ${cleanDoc} sem nome — transportadora não criada.`,
+      );
+      return null;
+    }
+
+    const created = await Transporter.create({
+      name,
+      cnpj: cleanDoc,
+      city: city ?? "",
+      uf: uf ?? "",
+    });
+
+    console.log(
+      `[TRANSPORTER] Transportadora criada automaticamente: cnpj=${cleanDoc}, nome=${name}`,
+    );
+    return created;
   }
 
   async process(job: Job<ApiFetchJobPayload>): Promise<void> {
@@ -380,6 +421,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     let xmlContent: string | null = null;
     let transporter_name: string | null = null;
     let transporter_document: string | null = null;
+    let transporter_city: string | null = null;
+    let transporter_uf: string | null = null;
 
     if (nf.xml) {
       try {
@@ -393,6 +436,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           receiverName = extracted.receiverName || receiverName;
           transporter_name = extracted.transporterName;
           transporter_document = extracted.transporterDocument;
+          transporter_city = extracted.transporterCity;
+          transporter_uf = extracted.transporterUf;
         }
       } catch (err) {
         console.warn("[XML PARSE ERROR]", err);
@@ -425,12 +470,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const integration = await getBlingIntegration("Bling");
 
-    const transporter = await Transporter.findOne({
-      where: {
-        cnpj: cleanDocument(
-          String(nf.transporte.transportador.numeroDocumento),
-        ),
-      },
+    const transporter = await this.findOrCreateTransporter({
+      document:
+        transporter_document ??
+        String(nf.transporte?.transportador?.numeroDocumento ?? ""),
+      name: transporter_name,
+      city: transporter_city,
+      uf: transporter_uf,
     });
 
     const [invoice] = await Invoice.upsert(
@@ -631,34 +677,36 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Chave de acesso ─────────────────────────────────────────────────────
 
     // Está no atributo Id do infNFe: "NFe35250..." → remove prefixo "NFe"
-   const rawId: string = nfe['@_Id'] ?? ''
-    let chaveAcesso = rawId.replace(/^NFe/, '')
+    const rawId: string = nfe["@_Id"] ?? "";
+    let chaveAcesso = rawId.replace(/^NFe/, "");
 
-     if (!chaveAcesso) {
+    if (!chaveAcesso) {
       chaveAcesso =
         parsed?.nfeProc?.protNFe?.infProt?.chNFe ??
         parsed?.procNFe?.protNFe?.infProt?.chNFe ??
-        ''
+        "";
     }
 
-       if (!chaveAcesso) {
-      const emit = nfe.emit ?? {}
-      const cuf    = String(ide.cUF   ?? '')
-      const aamm   = String(ide.dhEmi ?? '').slice(2, 4) + String(ide.dhEmi ?? '').slice(5, 7)
-      const cnpj   = String(emit.CNPJ ?? '').replace(/\D/g, '')
-      const mod    = String(ide.mod   ?? '55').padStart(2, '0')
-      const serie  = String(ide.serie ?? '').padStart(3, '0')
-      const nnf    = String(ide.nNF   ?? '').padStart(9, '0')
-      const tpemis = String(ide.tpEmis ?? '1')
-      const cnf    = String(ide.cNF   ?? '').padStart(8, '0')
-      const cdv    = String(ide.cDV   ?? '')
+    if (!chaveAcesso) {
+      const emit = nfe.emit ?? {};
+      const cuf = String(ide.cUF ?? "");
+      const aamm =
+        String(ide.dhEmi ?? "").slice(2, 4) +
+        String(ide.dhEmi ?? "").slice(5, 7);
+      const cnpj = String(emit.CNPJ ?? "").replace(/\D/g, "");
+      const mod = String(ide.mod ?? "55").padStart(2, "0");
+      const serie = String(ide.serie ?? "").padStart(3, "0");
+      const nnf = String(ide.nNF ?? "").padStart(9, "0");
+      const tpemis = String(ide.tpEmis ?? "1");
+      const cnf = String(ide.cNF ?? "").padStart(8, "0");
+      const cdv = String(ide.cDV ?? "");
 
-      const candidate = `${cuf}${aamm}${cnpj}${mod}${serie}${nnf}${tpemis}${cnf}${cdv}`
-      if (candidate.length === 44) chaveAcesso = candidate
+      const candidate = `${cuf}${aamm}${cnpj}${mod}${serie}${nnf}${tpemis}${cnf}${cdv}`;
+      if (candidate.length === 44) chaveAcesso = candidate;
     }
 
-    const numero   = String(ide.nNF ?? '')
-    const idSystem = chaveAcesso || `MANUAL-${Date.now()}`
+    const numero = String(ide.nNF ?? "");
+    const idSystem = chaveAcesso || `MANUAL-${Date.now()}`;
 
     // ─── Partes ──────────────────────────────────────────────────────────────
 
@@ -709,11 +757,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const integration = await getBlingIntegration("Bling");
 
-    const transporter = transporterDocument
-      ? await Transporter.findOne({
-          where: { cnpj: cleanDocument(transporterDocument) },
-        })
-      : null;
+    const transporter = await this.findOrCreateTransporter({
+      document: transporterDocument,
+      name: transporterName,
+      city: extracted.transporterCity,
+      uf: extracted.transporterUf,
+    });
 
     // CNPJ do destinatário como customer_document (ajuste se precisar)
     const customerDocument = receiverCnpj;
@@ -756,7 +805,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       { conflictFields: ["id_system"] },
     );
 
-    console.log(invoice)
+    console.log(invoice);
 
     console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
 
