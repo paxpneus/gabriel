@@ -25,6 +25,14 @@ import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-pr
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
 
+function parseBlingDate(date: string) {
+  if (date.includes('Z') || date.includes('+') || date.includes('-03')) {
+    return new Date(date)
+  }
+
+  return new Date(date.replace(' ', 'T') + '-03:00')
+}
+
 export function extractPartiesFromXml(xml: string) {
   const parsed = parser.parse(xml);
 
@@ -494,7 +502,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         danfe_path: "",
         xml_path: xmlContent ? encryptXml(xmlContent!) : null,
         xml_key: encryptedKey,
-        emitted_at: new Date(nf.dataOperacao!),
+        emitted_at: parseBlingDate(nf.dataOperacao!),
         number_system: String(nf.numero),
         integrations_id: integration.id,
         store_id: store_id!.id ?? null,
@@ -794,7 +802,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         danfe_path: "",
         xml_path: encryptXml(xmlContent),
         xml_key: chaveAcesso || null,
-        emitted_at: ide.dhEmi ? new Date(ide.dhEmi) : new Date(),
+        emitted_at: ide.dhEmi ? parseBlingDate(ide.dhEmi) : new Date(),
         number_system: numero,
         integrations_id: integration.id,
         store_id: store?.id ?? "",
