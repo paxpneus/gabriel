@@ -18,6 +18,7 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public total_volumes_received!: number
   public type!: string
   public transporters_id!: string | null; 
+  public description?: string
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -28,6 +29,10 @@ ExpeditionBatch.init(
       type: DataTypes.UUID,
       defaultValue: uuidv4,
       primaryKey: true,
+      allowNull: false,
+    },
+    description: {
+      type: DataTypes.STRING(255),
       allowNull: false,
     },
     number: {
