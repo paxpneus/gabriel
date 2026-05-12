@@ -31,7 +31,7 @@ async function bootstrap() {
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
 const DRY_RUN       = process.env.DRY_RUN === 'true';
-const DAYS_BACK     = 3;
+const DAYS_BACK     = 15;
 const PAGE_DELAY_MS = 350;
 const MAX_PER_ENTITY = Number(process.env.MAX_PER_ENTITY ?? 0);
 const QUEUE_POLL_MS  = 5_000;
