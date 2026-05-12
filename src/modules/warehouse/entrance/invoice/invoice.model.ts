@@ -35,6 +35,7 @@ class Invoice
   public total_read!: number;
   public total_expected!: number;
   public description?: string;
+  public bonded_invoice?: string
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -57,6 +58,10 @@ Invoice.init(
       allowNull: false,
     },
     description: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    bonded_invoice: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },

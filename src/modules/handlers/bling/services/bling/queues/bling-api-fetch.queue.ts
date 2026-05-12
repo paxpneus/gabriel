@@ -24,6 +24,8 @@ import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-pr
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
+const NO_TRANSPORTER_NAME = "Sem transporte";
+const NO_TRANSPORTER_DOCUMENT = "0000000";
 
 function parseBlingDate(date: string) {
   if (date.includes("Z") || date.includes("+") || date.includes("-03")) {
@@ -40,6 +42,10 @@ export function extractPartiesFromXml(xml: string) {
     parsed?.nfeProc?.NFe?.infNFe ||
     parsed?.procNFe?.NFe?.infNFe ||
     parsed?.NFe?.infNFe;
+
+   const refNFeMatch = xml.match(/<refNFe>(\d{44})<\/refNFe>/);
+    const refNfeResult = refNFeMatch ? refNFeMatch[1] : null;
+    const refNFe = refNfeResult ? Number(refNfeResult.slice(25, 34)) : null
 
   const emit = nfe?.emit ?? {};
   const dest = nfe?.dest ?? {};
@@ -68,6 +74,7 @@ export function extractPartiesFromXml(xml: string) {
     transporterDocument,
     transporterCity,
     transporterUf,
+    refNFe: refNFe !== null ? String(refNFe) : null
   };
 }
 
@@ -165,6 +172,42 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     uf?: string | null;
   }): Promise<Transporter | null> {
     const { document, name, city, uf } = params;
+    const isNoTransporterFallback =
+      name === NO_TRANSPORTER_NAME &&
+      (!document || cleanDocument(document) === NO_TRANSPORTER_DOCUMENT);
+
+    if (isNoTransporterFallback) {
+      const existingNoTransporter = await Transporter.findOne({
+        where: {
+          [Op.or]: [
+            { cnpj: NO_TRANSPORTER_DOCUMENT },
+            { name: NO_TRANSPORTER_NAME },
+          ],
+        },
+      });
+
+      if (existingNoTransporter) {
+        if (!existingNoTransporter.cnpj) {
+          await existingNoTransporter.update({
+            cnpj: NO_TRANSPORTER_DOCUMENT,
+          });
+        }
+
+        return existingNoTransporter;
+      }
+
+      const createdNoTransporter = await Transporter.create({
+        name: NO_TRANSPORTER_NAME,
+        cnpj: NO_TRANSPORTER_DOCUMENT,
+        city: city ?? "",
+        uf: uf ?? "",
+      });
+
+      console.log(
+        `[TRANSPORTER] Transportadora padrão criada automaticamente: cnpj=${NO_TRANSPORTER_DOCUMENT}, nome=${NO_TRANSPORTER_NAME}`,
+      );
+      return createdNoTransporter;
+    }
 
     if (!document) return null;
 
@@ -431,6 +474,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     let transporter_document: string | null = null;
     let transporter_city: string | null = null;
     let transporter_uf: string | null = null;
+    let nfeRef: string | null = null;
 
     if (nf.xml) {
       try {
@@ -446,6 +490,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           transporter_document = extracted.transporterDocument;
           transporter_city = extracted.transporterCity;
           transporter_uf = extracted.transporterUf;
+          nfeRef = extracted.refNFe
         }
       } catch (err) {
         console.warn("[XML PARSE ERROR]", err);
@@ -478,10 +523,31 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const integration = await getBlingIntegration("Bling");
 
+    if (!transporter_document) {
+      const blingDoc = String(
+        nf.transporte?.transportador?.numeroDocumento ?? "",
+      ).trim();
+      const blingName = String(nf.transporte?.transportador?.nome ?? "").trim();
+
+      if (blingDoc) {
+        transporter_document = blingDoc;
+        transporter_name = transporter_name || blingName || null;
+
+        console.log(
+          `[BLING_API_FETCH] Transportador não encontrado no XML — usando dados da API Bling: doc=${blingDoc}, nome=${blingName}`,
+        );
+      }
+    }
+
+    if (!transporter_document) {
+      transporter_name = NO_TRANSPORTER_NAME;
+      transporter_document = NO_TRANSPORTER_DOCUMENT;
+    } else if (!transporter_name) {
+      transporter_name = NO_TRANSPORTER_NAME;
+    }
+
     const transporter = await this.findOrCreateTransporter({
-      document:
-        transporter_document ??
-        String(nf.transporte?.transportador?.numeroDocumento ?? ""),
+      document: transporter_document,
       name: transporter_name,
       city: transporter_city,
       uf: transporter_uf,
@@ -509,6 +575,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         transporter_id: transporter?.id ?? null,
         transporter_document: transporter_document ?? null,
         transporter_name: transporter_name ?? null,
+        description: nfeRef ? `REF: ${nfeRef}` : null
       },
       { conflictFields: ["id_system"] },
     );
@@ -723,8 +790,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const senderName = extracted.senderName;
     const receiverCnpj = cleanDocument(extracted.receiverCnpj);
     const receiverName = extracted.receiverName;
-    const transporterName = extracted.transporterName || null;
-    const transporterDocument = extracted.transporterDocument || null;
+    let transporterName = extracted.transporterName || null;
+    let transporterDocument = extracted.transporterDocument || null;
+    let nfeRef = extracted.refNFe || null;
 
     // ─── Tipo: tpNF 0=entrada, 1=saída ──────────────────────────────────────
 
@@ -771,6 +839,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const integration = await getBlingIntegration("Bling");
 
+    if (!transporterDocument) {
+      transporterName = NO_TRANSPORTER_NAME;
+      transporterDocument = NO_TRANSPORTER_DOCUMENT;
+    } else if (!transporterName) {
+      transporterName = NO_TRANSPORTER_NAME;
+    }
+
     const transporter = await this.findOrCreateTransporter({
       document: transporterDocument,
       name: transporterName,
@@ -815,6 +890,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         transporter_id: transporter?.id ?? null,
         transporter_document: transporterDocument,
         transporter_name: transporterName,
+        description: nfeRef ? `REF: ${nfeRef}` : null
       },
       { conflictFields: ["id_system"] },
     );
