@@ -26,11 +26,11 @@ const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
 
 function parseBlingDate(date: string) {
-  if (date.includes('Z') || date.includes('+') || date.includes('-03')) {
-    return new Date(date)
+  if (date.includes("Z") || date.includes("+") || date.includes("-03")) {
+    return new Date(date);
   }
 
-  return new Date(date.replace(' ', 'T') + '-03:00')
+  return new Date(date.replace(" ", "T") + "-03:00");
 }
 
 export function extractPartiesFromXml(xml: string) {
@@ -728,8 +728,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // ─── Tipo: tpNF 0=entrada, 1=saída ──────────────────────────────────────
 
-    const invoiceType: "INCOMING" | "OUTGOING" =
-      Number(ide.tpNF) === 0 ? "INCOMING" : "OUTGOING";
+    const senderUnit = await UnitBusiness.findOne({
+      where: { cnpj: senderCnpj },
+    });
+
+    // define tipo baseado nisso
+    const invoiceType: "INCOMING" | "OUTGOING" = senderUnit
+      ? "OUTGOING"
+      : "INCOMING";
 
     // ─── Infra ───────────────────────────────────────────────────────────────
 
