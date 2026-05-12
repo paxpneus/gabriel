@@ -33,7 +33,7 @@ ExpeditionBatch.init(
     },
     description: {
       type: DataTypes.STRING(255),
-      allowNull: false,
+      allowNull: true,
     },
     number: {
       type: DataTypes.STRING(50),
