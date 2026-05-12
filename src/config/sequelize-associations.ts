@@ -7,6 +7,8 @@
 
 import UnitBusiness from '../modules/warehouse/unit-business/unit-business.model';
 import User from '../modules/warehouse/users/users/user.model';
+import UserConfig from '../modules/warehouse/users/user_config/user_config.model';
+import UserUnitBusiness from '../modules/warehouse/users/user_unit_business/user_unit_business.model';
 import Role from '../modules/warehouse/users/roles/role.model';
 import Transporter from '../modules/warehouse/transporter/transporter.model';
 import ExpeditionBatch from '../modules/warehouse/expedition/batch/batch.model';
@@ -93,6 +95,44 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
   User.belongsTo(UnitBusiness, {
     foreignKey: 'unit_business_id',
     as: 'unitBusiness',
+  });
+
+  User.hasOne(UserConfig, {
+    foreignKey: 'user_id',
+    as: 'config',
+  });
+  UserConfig.belongsTo(User, {
+    foreignKey: 'user_id',
+    as: 'user',
+  });
+
+  User.hasMany(UserUnitBusiness, {
+    foreignKey: 'user_id',
+    as: 'userUnitBusinesses',
+  });
+  UserUnitBusiness.belongsTo(User, {
+    foreignKey: 'user_id',
+    as: 'user',
+  });
+  UnitBusiness.hasMany(UserUnitBusiness, {
+    foreignKey: 'unit_business_id',
+    as: 'userUnitBusinesses',
+  });
+  UserUnitBusiness.belongsTo(UnitBusiness, {
+    foreignKey: 'unit_business_id',
+    as: 'unitBusiness',
+  });
+  User.belongsToMany(UnitBusiness, {
+    through: UserUnitBusiness,
+    foreignKey: 'user_id',
+    otherKey: 'unit_business_id',
+    as: 'availableUnitBusinesses',
+  });
+  UnitBusiness.belongsToMany(User, {
+    through: UserUnitBusiness,
+    foreignKey: 'unit_business_id',
+    otherKey: 'user_id',
+    as: 'availableUsers',
   });
 
   // Unit Business -> Expedition Batches

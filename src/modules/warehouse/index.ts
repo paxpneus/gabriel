@@ -1,6 +1,8 @@
 // Warehouse Models
 export { default as UnitBusiness } from './unit-business/unit-business.model';
 export { default as User } from './users/users/user.model';
+export { default as UserConfig } from './users/user_config/user_config.model';
+export { default as UserUnitBusiness } from './users/user_unit_business/user_unit_business.model';
 export { default as Role } from './users/roles/role.model';
 export { default as Transporter } from './transporter/transporter.model';
 
