@@ -34,6 +34,7 @@ class Invoice
   public transporter_document?: string;
   public total_read!: number;
   public total_expected!: number;
+  public description?: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -55,7 +56,10 @@ Invoice.init(
       type: DataTypes.STRING(14),
       allowNull: false,
     },
-
+    description: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+    },
     xml_path: {
       type: DataTypes.TEXT,
     },
