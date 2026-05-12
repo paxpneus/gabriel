@@ -277,7 +277,7 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e') {
     situacao?: number;
     tipo?: number;
     loja?: { id: number };
-  }>(endpoint, { dataInicial: DATA_INICIAL })) {
+  }>(endpoint, { dataEmissaoInicial: DATA_INICIAL })) {
     for (const invoice of page) {
       const blingId = invoice.id;
 

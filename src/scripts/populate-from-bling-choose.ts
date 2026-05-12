@@ -295,7 +295,7 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e', invoiceDirection: 0 | 1) 
   let skipped = 0;
 
   for await (const page of paginateBling<{ id: number; numero?: string; situacao?: number; tipo?: number; loja?: { id: number } }>(
-    endpoint, { dataInicial: DATA_INICIAL, tipo: invoiceDirection },
+    endpoint, { dataEmissaoInicial: DATA_INICIAL, tipo: invoiceDirection },
   )) {
     for (const invoice of page) {
       const blingId = invoice.id;
