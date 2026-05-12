@@ -26,20 +26,33 @@ export class QueryParser {
     const offset = (page - 1) * perPage;
 
     // ── Ordenação ──────────────────────────────────────────────────────────
-    const requestedSort = params.sortBy ?? defaults.sortBy;
-    const sortBy = config.sortableFields?.length
-      ? config.sortableFields.includes(requestedSort)
-        ? requestedSort
-        : defaults.sortBy
-      : requestedSort; // sem whitelist → aceita qualquer campo
+   const rawSortBy = params.sortBy ?? defaults.sortBy;
+const rawSortDir = params.sortDir ?? defaults.sortDir;
 
-    const sortDir = (
-      ["ASC", "DESC"].includes((params.sortDir ?? "").toUpperCase())
-        ? params.sortDir!.toUpperCase()
-        : defaults.sortDir
-    ) as "ASC" | "DESC";
+const sortByList = Array.isArray(rawSortBy)
+  ? rawSortBy
+  : rawSortBy.split(",").map((s) => s.trim());
 
-    const order: OrderItem[] = [[sortBy, sortDir]];
+const sortDirList = Array.isArray(rawSortDir)
+  ? rawSortDir
+  : String(rawSortDir).split(",").map((s) => s.trim().toUpperCase());
+
+// Fallback sempre como string simples
+const fallbackSortBy = Array.isArray(defaults.sortBy)
+  ? defaults.sortBy[0]
+  : defaults.sortBy ?? DEFAULTS.sortBy;
+
+const order: OrderItem[] = sortByList.map((field, i) => {
+  const allowed = config.sortableFields;
+  const resolvedField: string =
+    allowed?.length && !allowed.includes(field) ? fallbackSortBy : field;
+
+  const dir = (["ASC", "DESC"].includes(sortDirList[i] ?? "")
+    ? sortDirList[i]
+    : sortDirList[0] ?? defaults.sortDir) as "ASC" | "DESC";
+
+  return [resolvedField, dir] as [string, "ASC" | "DESC"];
+});
 
     // ── Where ──────────────────────────────────────────────────────────────
     const conditions: WhereOptions[] = [];

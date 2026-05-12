@@ -5,8 +5,8 @@ import { Op, WhereOptions, OrderItem } from "sequelize";
 export interface QueryParams {
   page?: number | string;
   perPage?: number | string;
-  sortBy?: string;
-  sortDir?: string;
+  sortBy?: string | string[];
+  sortDir?: string | string[];
   search?: string;
   filters?: Record<string, string | string[] | undefined>;
   dateFrom?: string;
@@ -25,8 +25,8 @@ export interface QueryConfig {
   defaults?: {
     page?: number;
     perPage?: number;
-    sortBy?: string;
-    sortDir?: "ASC" | "DESC";
+    sortBy?: string | string[];          
+    sortDir?: "ASC" | "DESC" | ("ASC" | "DESC")[]; 
   };
 }
 

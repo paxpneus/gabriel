@@ -14,7 +14,7 @@ import {
 } from "../../../../shared/query/query.types";
 import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import UnitBusiness from "../../unit-business/unit-business.model";
-import { FindOptions } from "sequelize";
+import { FindOptions, UniqueConstraintError } from "sequelize";
 import redisService from "../../../../shared/utils/base-models/base-redis";
 import UserConfig from "../user_config/user_config.model";
 import UserUnitBusiness from "../user_unit_business/user_unit_business.model";
@@ -60,6 +60,7 @@ export class UserService extends BaseService<User, UserRepository> {
   }
 
   async createUserWithValidation(userDto: CreateUserInput): Promise<User> {
+    try {
     return await sequelize.transaction(async (t) => {
     const existingUser = await this.repository.findOne({
       where: { email: userDto.email }, transaction: t
@@ -83,12 +84,22 @@ export class UserService extends BaseService<User, UserRepository> {
 
     if (userDto.user_unit_business && userDto.user_unit_business?.length > 1) {
 
-      const unitBusinessPayload = userDto.user_unit_business?.map((v) => ({
+      let unitBusinessPayload = userDto.user_unit_business?.map((v) => ({
       user_id: user.id,
       unit_business_id: v,
     }));
 
-    UserUnitBusiness.bulkCreate(unitBusinessPayload, {transaction: t})
+    if (!unitBusinessPayload.map((s) => s.unit_business_id).includes(userDto.unit_business_id)) {
+    unitBusinessPayload = [
+      ...unitBusinessPayload,
+      {
+        user_id: user.id,
+        unit_business_id: userDto.unit_business_id
+      }
+    ]
+  }
+
+    await UserUnitBusiness.bulkCreate(unitBusinessPayload, {transaction: t})
 
     } else {
       await UserUnitBusiness.create({
@@ -101,6 +112,16 @@ export class UserService extends BaseService<User, UserRepository> {
     return user;
  
     })
+  } catch (err: any) {
+    if (err instanceof UniqueConstraintError) {
+      // Identifica qual campo violou a constraint
+      const field = err.errors?.[0]?.path;
+      if (field === 'email') throw new Error("Usuário com este email já existe");
+      if (field === 'cpf') throw new Error("Usuário com este CPF já existe");
+      throw new Error("Dados duplicados, verifique email ou CPF");
+    }
+    throw err;
+  }
     
   }
 
@@ -180,6 +201,10 @@ export class UserService extends BaseService<User, UserRepository> {
         {
           model: UnitBusiness,
           as: "unitBusiness",
+        },
+        {
+          model: UnitBusiness,
+          as: "availableUnitBusinesses"
         },
         {
           model: UserConfig,

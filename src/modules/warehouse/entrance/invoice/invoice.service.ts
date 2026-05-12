@@ -21,8 +21,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       stringFields: ["receiver_cnpj", "sender_cnpj", "customer_document"],
       defaults: {
         perPage: 20,
-        sortBy: "emitted_at",
-        sortDir: "DESC",
+        sortBy: ["status", "number_system"],
+        sortDir: ["ASC", "ASC"],
       },
       // Campos para busca textual (LIKE)
       searchFields: ["customer_name", "sender_name", "number_system"],
@@ -50,7 +50,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "batch_generated",
         "printed_label",
         "type",
-        "status"
+        "status",
+        "number_system"
       ],
       customFields: {
         batchStatus: (value) => ({

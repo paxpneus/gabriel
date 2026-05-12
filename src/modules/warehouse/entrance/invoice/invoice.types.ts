@@ -33,7 +33,8 @@ export interface InvoiceAttributes {
   transporter_document?: string | null;
   total_read?: number;
   total_expected?: number;
-  description?: string;
+  description?: string | null;
+  bonded_invoice?: string | null;
 }
 
 export interface FullInvoice extends InvoiceAttributes {
