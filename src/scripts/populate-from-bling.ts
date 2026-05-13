@@ -27,6 +27,12 @@ import { BlingApiFetchQueue } from '../modules/handlers/bling/services/bling/que
 import { UnitBusiness } from '../modules/warehouse';
 import { setupAssociations } from '../config/sequelize-associations';
 import sequelize from '../config/sequelize';
+import {
+  BLING_INVOICE_CUTOFF_DATE_PARAM,
+  formatBlingInvoiceCutoffForLog,
+  getBlingInvoiceReferenceDate,
+  isKnownBlingInvoiceBeforeCutoff,
+} from '../modules/handlers/bling/services/bling/bling-invoice-cutoff';
 
 // ─── Bootstrap do banco ───────────────────────────────────────────────────────
 
@@ -473,10 +479,18 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e', invoiceDirection: 0 | 1) 
     numero?: string;
     situacao?: number;
     tipo?: number;
+    dataEmissao?: string;
+    dataOperacao?: string;
     loja?: { id: number };
-  }>(endpoint, { dataEmissaoInicial: DATA_INICIAL, tipo: invoiceDirection, })) {
+  }>(endpoint, { dataEmissaoInicial: BLING_INVOICE_CUTOFF_DATE_PARAM, tipo: invoiceDirection, })) {
     for (const invoice of page) {
       const blingId = invoice.id;
+      const referenceDate = getBlingInvoiceReferenceDate(invoice);
+
+      if (referenceDate && isKnownBlingInvoiceBeforeCutoff(referenceDate)) {
+        skipped++;
+        continue;
+      }
 
       
        const jobBase = basePayload(resource, blingId);
@@ -518,6 +532,7 @@ async function main() {
   console.log('═'.repeat(55));
   console.log('  🚀 Bling → Filas — Script de Migração Inicial');
   console.log(`  📅 Período: últimos ${DAYS_BACK} dias (desde ${DATA_INICIAL})`);
+  console.log(`  🧾 NF somente a partir de ${formatBlingInvoiceCutoffForLog()}`);
   console.log('═'.repeat(55));
 
   if (DRY_RUN) {

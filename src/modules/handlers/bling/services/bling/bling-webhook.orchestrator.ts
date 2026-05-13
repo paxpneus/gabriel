@@ -1,6 +1,11 @@
 import crypto from 'crypto';
 import { BlingWebhookEnvelope, WebhookQueuePayload } from './bling-webhook.types';
 import { mapBlingWebhook, parseEvent } from './bling-webhook.mapper';
+import {
+  formatBlingInvoiceCutoffForLog,
+  getBlingInvoiceReferenceDate,
+  isKnownBlingInvoiceBeforeCutoff,
+} from './bling-invoice-cutoff';
 
 // ─── HMAC Signature ───────────────────────────────────────────────────────────
 
@@ -81,6 +86,23 @@ export async function orchestrateBlingWebhook(
 
   const { resource, action } = parsed;
   const jobId = `bling-${resource}-${action}-${envelope.eventId}`;
+
+  if (
+    (resource === 'invoice' || resource === 'consumer_invoice') &&
+    action !== 'deleted'
+  ) {
+    const invoiceDate = getBlingInvoiceReferenceDate(envelope.data as {
+      dataEmissao?: string | null;
+      dataOperacao?: string | null;
+    });
+
+    if (invoiceDate && isKnownBlingInvoiceBeforeCutoff(invoiceDate)) {
+      return {
+        status: 'ignored',
+        reason: `Invoice before cutoff ${formatBlingInvoiceCutoffForLog()}`,
+      };
+    }
+  }
 
   // 3. Pedidos → fila dedicada já existente
   if (resource === 'order') {
