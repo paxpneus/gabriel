@@ -11,6 +11,8 @@ import UserConfig from '../modules/warehouse/users/user_config/user_config.model
 import UserUnitBusiness from '../modules/warehouse/users/user_unit_business/user_unit_business.model';
 import Role from '../modules/warehouse/users/roles/role.model';
 import Transporter from '../modules/warehouse/transporter/transporter.model';
+import CarrierLabelRange from '../modules/warehouse/transporter/carrier-label-ranges/carrier-label-ranges.model';
+import CarrierImportLayout from '../modules/warehouse/transporter/carrier-import-layouts/carrier-import-layouts.model';
 import ExpeditionBatch from '../modules/warehouse/expedition/batch/batch.model';
 import ExpeditionBatchItems from '../modules/warehouse/expedition/batch-items/batch-items.model';
 import ExpeditionBatchInvoice from '../modules/warehouse/expedition/batch-invoices/batch-invoices.model';
@@ -183,6 +185,24 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
     as: 'invoices',
   });
   Invoice.belongsTo(Transporter, {
+    foreignKey: 'transporter_id',
+    as: 'transporter',
+  });
+
+  Transporter.hasOne(CarrierLabelRange, {
+    foreignKey: 'transporter_id',
+    as: 'labelRange',
+  });
+  CarrierLabelRange.belongsTo(Transporter, {
+    foreignKey: 'transporter_id',
+    as: 'transporter',
+  });
+
+  Transporter.hasOne(CarrierImportLayout, {
+    foreignKey: 'transporter_id',
+    as: 'importLayout',
+  });
+  CarrierImportLayout.belongsTo(Transporter, {
     foreignKey: 'transporter_id',
     as: 'transporter',
   });
