@@ -9,6 +9,8 @@ import CarrierLabelRange from "./carrier-label-ranges.model";
 import carrierLabelRangeRepository, {
   CarrierLabelRangeRepository,
 } from "./carrier-label-ranges.repository";
+import sequelize from "../../../../config/sequelize";
+import carrierImportLayoutsService from "../carrier-import-layouts/carrier-import-layouts.service";
 
 export class CarrierLabelRangeService extends BaseService<
   CarrierLabelRange,
@@ -55,6 +57,21 @@ export class CarrierLabelRangeService extends BaseService<
         },
       ],
     });
+  }
+
+  async importLabelsFromExcel(transporter_id: string,  file: { buffer: Buffer, filename: string, mimeType: string }) {
+    return sequelize.transaction(async (t) => {
+      const importLayout = await carrierImportLayoutsService.findOne({
+        where: {
+          transporter_id: transporter_id,
+        },
+        transaction: t
+      })
+
+      if (!importLayout) {
+        throw new Error("O transportador deve ter um layout de importação!")
+      }
+    })
   }
 }
 
