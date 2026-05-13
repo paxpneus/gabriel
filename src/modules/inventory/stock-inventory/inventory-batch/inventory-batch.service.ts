@@ -39,6 +39,30 @@ export class InventoryBatchService extends BaseService<
     };
   }
 
+  private calculateDivergencyTotals(items: any[] = []) {
+    return items.reduce(
+      (
+        totals: { total_entries: number; total_outputs: number },
+        item: any,
+      ) => {
+        const divergency = Number(item.divergency ?? 0);
+        const productPrice = Number(item.product?.price ?? item.price ?? 0);
+        const divergencyValue = divergency * productPrice;
+
+        if (divergency < 0) {
+          totals.total_entries += divergencyValue;
+        }
+
+        if (divergency > 0) {
+          totals.total_outputs += divergencyValue;
+        }
+
+        return totals;
+      },
+      { total_entries: 0, total_outputs: 0 },
+    );
+  }
+
   async createInventoryBatch(
     unitBusinessId: string,
     mode: string,
@@ -332,6 +356,11 @@ export class InventoryBatchService extends BaseService<
         };
       });
 
+      Object.assign(
+        batchJson,
+        this.calculateDivergencyTotals(batchJson.items),
+      );
+
       return batchJson;
     }
 
@@ -369,7 +398,10 @@ export class InventoryBatchService extends BaseService<
 
     if (!batch) throw new Error("Lote de inventário não encontrado");
 
-    return batch;
+    const batchJson = batch.toJSON() as any;
+    Object.assign(batchJson, this.calculateDivergencyTotals(batchJson.items));
+
+    return batchJson;
   }
 
   async paginate(
