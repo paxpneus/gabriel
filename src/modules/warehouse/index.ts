@@ -5,6 +5,8 @@ export { default as UserConfig } from './users/user_config/user_config.model';
 export { default as UserUnitBusiness } from './users/user_unit_business/user_unit_business.model';
 export { default as Role } from './users/roles/role.model';
 export { default as Transporter } from './transporter/transporter.model';
+export { default as CarrierLabelRange } from './transporter/carrier-label-ranges/carrier-label-ranges.model';
+export { default as CarrierImportLayout } from './transporter/carrier-import-layouts/carrier-import-layouts.model';
 
 // Expedition Models
 export { default as ExpeditionBatch } from './expedition/batch/batch.model';
