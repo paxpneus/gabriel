@@ -21,6 +21,11 @@ import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
 import { Op } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
+import {
+  formatBlingInvoiceCutoffForLog,
+  getBlingInvoiceReferenceDate,
+  isBlingInvoiceOnOrAfterCutoff,
+} from "../bling-invoice-cutoff";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -441,8 +446,26 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const { data } = await this.api.get<{ data: BlingApiInvoice }>(endpoint);
     const nf = data.data;
+    const invoiceReferenceDate = getBlingInvoiceReferenceDate(nf);
+
+    if (!invoiceReferenceDate) {
+      console.warn(
+        `[BLING_API_FETCH] Nota ${apiFetch.blingId} sem dataEmissao/dataOperacao. Ignorada pelo corte de NF.`,
+      );
+      return;
+    }
+
+    if (!isBlingInvoiceOnOrAfterCutoff(invoiceReferenceDate)) {
+      console.log(
+        `[BLING_API_FETCH] Nota ${apiFetch.blingId} ignorada: anterior a ${formatBlingInvoiceCutoffForLog()}`,
+      );
+      return;
+    }
 
     const partial = apiFetch.partialData ?? {};
+    const emittedAt = parseBlingDate(
+      nf.dataOperacao ?? nf.dataEmissao ?? invoiceReferenceDate.toISOString(),
+    );
 
     // ─── Resolve tipo e status a partir dos dados completos da API ───────────
 
@@ -568,7 +591,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         danfe_path: "",
         xml_path: xmlContent ? encryptXml(xmlContent!) : null,
         xml_key: encryptedKey,
-        emitted_at: parseBlingDate(nf.dataOperacao!),
+        emitted_at: emittedAt,
         number_system: String(nf.numero),
         integrations_id: integration.id,
         store_id: store_id!.id ?? null,

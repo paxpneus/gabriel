@@ -24,6 +24,12 @@ import { BlingApiFetchQueue } from '../modules/handlers/bling/services/bling/que
 import { UnitBusiness } from '../modules/warehouse';
 import { setupAssociations } from '../config/sequelize-associations';
 import sequelize from '../config/sequelize';
+import {
+  BLING_INVOICE_CUTOFF_DATE_PARAM,
+  formatBlingInvoiceCutoffForLog,
+  getBlingInvoiceReferenceDate,
+  isKnownBlingInvoiceBeforeCutoff,
+} from '../modules/handlers/bling/services/bling/bling-invoice-cutoff';
 
 // ─── Bootstrap do banco ───────────────────────────────────────────────────────
 
@@ -276,10 +282,18 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e') {
     numero?: string;
     situacao?: number;
     tipo?: number;
+    dataEmissao?: string;
+    dataOperacao?: string;
     loja?: { id: number };
-  }>(endpoint, { dataEmissaoInicial: DATA_INICIAL })) {
+  }>(endpoint, { dataEmissaoInicial: BLING_INVOICE_CUTOFF_DATE_PARAM })) {
     for (const invoice of page) {
       const blingId = invoice.id;
+      const referenceDate = getBlingInvoiceReferenceDate(invoice);
+
+      if (referenceDate && isKnownBlingInvoiceBeforeCutoff(referenceDate)) {
+        skipped++;
+        continue;
+      }
 
       if (!invoice.loja?.id) {
         console.warn(`  ⚠️  Invoice ${blingId} sem loja — ignorada`);
@@ -336,6 +350,7 @@ async function main() {
   console.log('═'.repeat(55));
   console.log('  🚀 Bling → Filas — Migração Parcial (a partir de Estoques)');
   console.log(`  📅 NF período: últimos ${DAYS_BACK} dias (desde ${DATA_INICIAL})`);
+  console.log(`  🧾 NF somente a partir de ${formatBlingInvoiceCutoffForLog()}`);
   console.log('  ⏩ Etapas ignoradas: Produtos, Fornecedores, Produto-Fornecedor');
   console.log('═'.repeat(55));
 
