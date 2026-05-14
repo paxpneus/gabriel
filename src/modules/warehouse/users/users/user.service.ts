@@ -126,32 +126,62 @@ export class UserService extends BaseService<User, UserRepository> {
   }
 
   async updateUserWithValidation(
-    userId: string,
-    userDto: UpdateUserInput,
-  ): Promise<User | null> {
-    const userCached = await redisService.get(`user:${userId}`);
-    if (userCached) await redisService.delete(`user:${userId}`);
+  userId: string,
+  userDto: UpdateUserInput,
+): Promise<User | null> {
+  const userCached = await redisService.get(`user:${userId}`);
+  if (userCached) await redisService.delete(`user:${userId}`);
 
+  return await sequelize.transaction(async (t) => {
     if (userDto.email) {
-      const existingUser = await this.repository.findOne({
-        where: { email: userDto.email },
-      });
+      const existingUser = await this.repository.findOne({ where: { email: userDto.email } });
       if (existingUser && existingUser.id !== userId) {
         throw new Error("Outro usuário já possui este email");
       }
     }
 
     if (userDto.cpf) {
-      const cpfExists = await this.repository.findOne({
-        where: { cpf: userDto.cpf },
-      });
+      const cpfExists = await this.repository.findOne({ where: { cpf: userDto.cpf } });
       if (cpfExists && cpfExists.id !== userId) {
         throw new Error("Outro usuário já possui este CPF");
       }
     }
 
-    return await this.repository.update(userId, userDto);
-  }
+    const updated = await this.repository.update(userId, userDto, { transaction: t });
+
+    if (userDto.user_unit_business) {
+      let incoming = [...userDto.user_unit_business];
+      if (userDto.unit_business_id && !incoming.includes(userDto.unit_business_id)) {
+        incoming.push(userDto.unit_business_id);
+      }
+
+      const current = await UserUnitBusiness.findAll({
+        where: { user_id: userId },
+        transaction: t,
+      });
+
+      const currentIds = current.map((r) => r.unit_business_id);
+      const toAdd = incoming.filter((id) => !currentIds.includes(id));
+      const toRemove = currentIds.filter((id) => !incoming.includes(id));
+
+      if (toRemove.length) {
+        await UserUnitBusiness.destroy({
+          where: { user_id: userId, unit_business_id: toRemove },
+          transaction: t,
+        });
+      }
+
+      if (toAdd.length) {
+        await UserUnitBusiness.bulkCreate(
+          toAdd.map((unit_business_id) => ({ user_id: userId, unit_business_id })),
+          { transaction: t },
+        );
+      }
+    }
+
+    return updated;
+  });
+}
 
   async login(email: string, password: string) {
     const user = await this.repository.findOne({
