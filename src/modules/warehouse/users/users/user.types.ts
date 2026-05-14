@@ -1,3 +1,6 @@
+import UnitBusiness from "../../unit-business/unit-business.model";
+import UserConfig from "../user_config/user_config.model";
+
 export interface UserAttributes {
   id: string;
   name: string;
@@ -6,6 +9,8 @@ export interface UserAttributes {
   role_id: string;
   email: string;
   password: string;
+  config?: UserConfig;
+  availableUnitBusinesses?: UnitBusiness[]
   createdAt?: Date;
   updatedAt?: Date;
 }
