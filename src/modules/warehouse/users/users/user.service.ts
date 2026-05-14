@@ -296,7 +296,7 @@ export class UserService extends BaseService<User, UserRepository> {
 
     const userWithBusinessToView = {
       ...plainUser,
-      businessToView: unitBusiness
+      businessToView: (Array.isArray(unitBusiness) ? unitBusiness.map((s) => s.id) : unitBusiness)
     }
 
     await redisService.set(`user:${decoded.id}`, userWithBusinessToView);
