@@ -7,6 +7,7 @@ import Invoice from "./invoice.model";
 import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
 import Transporter from "../../transporter/transporter.model";
 import {  InvoiceWithTransporter } from "./invoice.types";
+import CarrierLabelRange from "../../transporter/carrier-label-ranges/carrier-label-ranges.model";
 
 // Importe seus modelos e a instância do sequelize se necessário
 // import { Invoice } from '../../database/models/Invoice';
@@ -30,6 +31,9 @@ export interface LabelVolume {
   volumeAtual: number;
   volumeTotal: number;
   codigoBarras: string;
+   routeAcronym: string | null;
+  routeCode: string | null;
+  observation: string | null;
 }
 
 export interface LabelData {
@@ -77,6 +81,24 @@ export class LabelService {
   return result;
 }
 
+private async findCarrierRange(
+  transporter_id: string,
+  cep: string
+): Promise<CarrierLabelRange | null> {
+  const cleanedCep = cep.replace(/\D/g, '').padStart(8, '0')
+
+  const range = await CarrierLabelRange.findOne({
+    where: {
+      transporter_id,
+      active: true,
+      cep_start: { [Op.lte]: cleanedCep },
+      cep_end:   { [Op.gte]: cleanedCep },
+    },
+  })
+
+  return range
+}
+
 
 
   private async extractFromXml(invoice: any): Promise<LabelData> {
@@ -89,13 +111,14 @@ export class LabelService {
     
   }
   
-    return await this.parseNFeXml(invoice.id, xmlPath);
+    return await this.parseNFeXml(invoice.id, xmlPath, invoice.transporter_id);
   
 }
 
   private async parseNFeXml(
     invoiceId: string,
     xml: string,
+    transporter_id: string
   ): Promise<LabelData> {
     const parsed = await parseStringPromise(xml, {
       explicitArray: false,
@@ -141,7 +164,8 @@ export class LabelService {
     const destNumero = String(endDest.nro ?? "");
     const destMunicipio = String(endDest.xMun ?? "");
     const destUF = String(endDest.UF ?? "");
-    const destCEP = String(endDest.CEP ?? "").replace(/\D/g, "");
+    const destCEP = String(endDest.CEP ?? "").replace(/\D/g, "").padStart(8, '0');
+
 
     // ── Total ────────────────────────────────────────────────────────────────
     const total = infNFe.total ?? {};
@@ -178,6 +202,20 @@ export class LabelService {
 
     const volumeTotal = Math.max(1, Math.round(somaQtd));
 
+    let routeAcronym: string | null = null
+  let routeCode: string | null = null
+  let observation: string | null = null
+
+  if (transporter_id && destCEP) {
+    console.log(destCEP)
+    const range = await this.findCarrierRange(transporter_id, destCEP)
+    if (range) {
+      routeAcronym = range.route_acronym ?? null
+      routeCode    = range.route_code    ?? null
+      observation  = (range.metadata as any)?.observation ?? null
+    }
+  }
+
     const volumes = this.buildVolumes({
       invoiceId,
       numero,
@@ -196,6 +234,9 @@ export class LabelService {
       transportador,
       volumeTotal,
       cnpjEmit,
+      routeAcronym,   
+    routeCode,
+    observation,
     });
 
     return { invoiceId, numero, volumes, cnpjEmit };

@@ -189,7 +189,7 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
     as: 'transporter',
   });
 
-  Transporter.hasOne(CarrierLabelRange, {
+  Transporter.hasMany(CarrierLabelRange, {
     foreignKey: 'transporter_id',
     as: 'labelRange',
   });

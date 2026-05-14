@@ -1,4 +1,4 @@
-import { FindOptions } from "sequelize";
+import { CreateOptions, FindOptions } from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -9,6 +9,9 @@ import CarrierImportLayout from "./carrier-import-layouts.model";
 import carrierImportLayoutRepository, {
   CarrierImportLayoutRepository,
 } from "./carrier-import-layouts.repository";
+import { CarrierImportLayoutCreationAttributes } from "./carrier-import-layouts.types";
+import sequelize from "../../../../config/sequelize";
+import carrierLabelRangesService from "../carrier-label-ranges/carrier-label-ranges.service";
 
 export class CarrierImportLayoutService extends BaseService<
   CarrierImportLayout,
@@ -58,6 +61,37 @@ export class CarrierImportLayoutService extends BaseService<
       ],
     });
   }
+
+ async createWithFile(
+  data: Partial<CarrierImportLayoutCreationAttributes>,
+  options?: CreateOptions,
+  file?: { buffer: Buffer; filename: string; mimeType: string }
+): Promise<CarrierImportLayout> {
+  const alreadyExists = await this.findOne({
+    where: { transporter_id: data.transporter_id },
+  });
+
+  if (alreadyExists) {
+    throw new Error("Esta transportadora já possui um layout de importação!");
+  }
+
+  const created = await this.repository.create(data);
+
+  if (file) {
+    setImmediate(async () => {
+      try {
+        await carrierLabelRangesService.importLabelsFromExcel(
+          created.transporter_id,
+          file,
+        );
+      } catch (err: any) {
+        console.error("[importLabels] background error:", err.message);
+      }
+    });
+  }
+
+  return created; 
+}
 }
 
 export default new CarrierImportLayoutService();
