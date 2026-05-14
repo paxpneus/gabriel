@@ -133,6 +133,34 @@ export class UserService extends BaseService<User, UserRepository> {
   if (userCached) await redisService.delete(`user:${userId}`);
 
   return await sequelize.transaction(async (t) => {
+    const {
+      config,
+      user_unit_business,
+      theme,
+      profile_photo,
+      language,
+      timezone,
+      items_per_page,
+      notifications_enabled,
+      visualize_only_current_unit_business,
+      compact_mode,
+      ...userPayload
+    } = userDto;
+
+    const configPayload = {
+      ...(theme !== undefined && { theme }),
+      ...(profile_photo !== undefined && { profile_photo }),
+      ...(language !== undefined && { language }),
+      ...(timezone !== undefined && { timezone }),
+      ...(items_per_page !== undefined && { items_per_page }),
+      ...(notifications_enabled !== undefined && { notifications_enabled }),
+      ...(visualize_only_current_unit_business !== undefined && {
+        visualize_only_current_unit_business,
+      }),
+      ...(compact_mode !== undefined && { compact_mode }),
+      ...config,
+    };
+
     if (userDto.email) {
       const existingUser = await this.repository.findOne({ where: { email: userDto.email } });
       if (existingUser && existingUser.id !== userId) {
@@ -147,10 +175,24 @@ export class UserService extends BaseService<User, UserRepository> {
       }
     }
 
-    const updated = await this.repository.update(userId, userDto, { transaction: t });
+    const updated = await this.repository.update(userId, userPayload, { transaction: t });
 
-    if (userDto.user_unit_business) {
-      let incoming = [...userDto.user_unit_business];
+    if (Object.keys(configPayload).length) {
+      const [updatedConfigs] = await UserConfig.update(configPayload, {
+        where: { user_id: userId },
+        transaction: t,
+      });
+
+      if (!updatedConfigs) {
+        await UserConfig.create(
+          { user_id: userId, ...configPayload },
+          { transaction: t },
+        );
+      }
+    }
+
+    if (user_unit_business) {
+      let incoming = [...user_unit_business];
       if (userDto.unit_business_id && !incoming.includes(userDto.unit_business_id)) {
         incoming.push(userDto.unit_business_id);
       }
@@ -231,10 +273,12 @@ export class UserService extends BaseService<User, UserRepository> {
         {
           model: UnitBusiness,
           as: "unitBusiness",
+          attributes: ['id', 'name', 'number', 'id_system']
         },
         {
           model: UnitBusiness,
-          as: "availableUnitBusinesses"
+          as: "availableUnitBusinesses",
+          attributes: ['id', 'name', 'number', 'id_system']
         },
         {
           model: UserConfig,
@@ -245,9 +289,19 @@ export class UserService extends BaseService<User, UserRepository> {
 
     if (!user) throw new Error("Usuário não encontrado");
 
-    await redisService.set(`user:${decoded.id}`, user);
+    const plainUser = user.get({ plain: true });
+    const unitBusiness = plainUser.config!.visualize_only_current_unit_business
+      ? plainUser.unit_business_id
+      : plainUser.availableUnitBusinesses;
 
-    return user;
+    const userWithBusinessToView = {
+      ...plainUser,
+      businessToView: unitBusiness
+    }
+
+    await redisService.set(`user:${decoded.id}`, userWithBusinessToView);
+
+    return userWithBusinessToView;
   }
 }
 

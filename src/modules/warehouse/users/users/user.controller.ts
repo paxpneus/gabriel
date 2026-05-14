@@ -16,6 +16,7 @@ import {
 import { Request, Response } from "express";
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
+import redisService from "../../../../shared/utils/base-models/base-redis";
 
 export class UserController extends BaseController<User, typeof UserService> {
   constructor() {
@@ -104,7 +105,9 @@ export class UserController extends BaseController<User, typeof UserService> {
   };
 
   logout = async (req: Request, res: Response): Promise<Response> => {
+    const {userId} = req.body
     res.clearCookie("token");
+    await redisService.delete(`user:${userId}`)
     return res.json({ message: "Logout realizado" });
   };
 }

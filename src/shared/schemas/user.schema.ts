@@ -5,6 +5,31 @@ import { isValidCPF } from "../utils/validators/document";
  * Validações customizadas
  */
 const cpfRegex = /^\d{3}\.?\d{3}\.?\d{3}-?\d{2}$|^\d{11}$/;
+
+const UserConfigUpdateFields = {
+  theme: z.enum(["dark", "light"]).optional(),
+  profile_photo: z.string().nullable().optional(),
+  language: z
+    .string()
+    .min(2, "Idioma deve ter pelo menos 2 caracteres")
+    .max(10, "Idioma não pode ter mais de 10 caracteres")
+    .optional(),
+  timezone: z
+    .string()
+    .min(1, "Timezone é obrigatório")
+    .max(100, "Timezone não pode ter mais de 100 caracteres")
+    .optional(),
+  items_per_page: z
+    .number()
+    .int("Itens por página deve ser um número inteiro")
+    .min(1, "Itens por página deve ser maior que zero")
+    .optional(),
+  notifications_enabled: z.boolean().optional(),
+  visualize_only_current_unit_business: z.boolean().optional(),
+  compact_mode: z.boolean().optional(),
+};
+
+const UserConfigUpdateSchema = z.object(UserConfigUpdateFields).strict();
 /**
  * Schema para criar um novo usuário
  * Todos os campos são obrigatórios
@@ -91,6 +116,9 @@ export const UpdateUserSchema = z
       .optional(),
 
     role_id: z.string().uuid("ID do papel deve ser um UUID válido").optional(),
+
+    config: UserConfigUpdateSchema.optional(),
+    ...UserConfigUpdateFields,
   })
   .strict();
 

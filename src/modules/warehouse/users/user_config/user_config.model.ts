@@ -6,7 +6,6 @@ import {
   UserTheme,
 } from "./user_config.types";
 import { v4 as uuidv4 } from "uuid";
-
 class UserConfig
   extends Model<UserConfigAttributes, UserConfigCreationAttributes>
   implements UserConfigAttributes
@@ -14,12 +13,13 @@ class UserConfig
   public id!: string;
   public user_id!: string;
   public theme!: UserTheme;
-  public profile_photo?: string;
+  public profile_photo?: string | null;
   public language!: string;
   public timezone!: string;
   public items_per_page!: number;
   public notifications_enabled!: boolean;
   public compact_mode!: boolean;
+  public visualize_only_current_unit_business!: boolean
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -67,6 +67,11 @@ UserConfig.init(
       defaultValue: 20,
     },
     notifications_enabled: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
+    visualize_only_current_unit_business: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,
