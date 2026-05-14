@@ -43,6 +43,11 @@ export interface LabelData {
   cnpjEmit: string;
 }
 
+interface LabelProductVolume {
+  produtos: string[];
+  ean: string;
+}
+
 export class LabelService {
   /**
    * Busca os dados para etiquetas utilizando Sequelize
@@ -178,19 +183,31 @@ private async findCarrierRange(
 
     let somaQtd = 0;
     const produtos: string[] = [];
+    const productVolumes: LabelProductVolume[] = [];
     let ean = "";
 
     for (const det of itens) {
       const prod = det.prod ?? {};
-      somaQtd += parseFloat(String(prod.qCom ?? prod.qTrib ?? 1));
+      const qtd = parseFloat(String(prod.qCom ?? prod.qTrib ?? 1));
+      somaQtd += qtd;
 
       const desc = String(prod.xProd ?? "");
       if (desc && desc !== "***" && !produtos.includes(desc))
         produtos.push(desc);
 
-      if (!ean) {
-        const cEAN = String(prod.cEAN ?? prod.cEANTrib ?? "");
-        if (cEAN && cEAN !== "SEM GTIN" && /^\d{8,14}$/.test(cEAN)) ean = cEAN;
+      let itemEan = "";
+      const cEAN = String(prod.cEAN ?? prod.cEANTrib ?? "");
+      if (cEAN && cEAN !== "SEM GTIN" && /^\d{8,14}$/.test(cEAN)) {
+        itemEan = cEAN;
+        if (!ean) ean = cEAN;
+      }
+
+      const labelQuantity = Math.max(0, Math.round(qtd));
+      for (let i = 0; i < labelQuantity; i++) {
+        productVolumes.push({
+          produtos: desc && desc !== "***" ? [desc] : [],
+          ean: itemEan,
+        });
       }
     }
 
@@ -231,6 +248,7 @@ private async findCarrierRange(
       destCEP,
       produtos,
       ean,
+      productVolumes,
       transportador,
       volumeTotal,
       cnpjEmit,
@@ -245,16 +263,24 @@ private async findCarrierRange(
   private buildVolumes(params: any): LabelVolume[] {
     const volumes: LabelVolume[] = [];
     for (let va = 1; va <= params.volumeTotal; va++) {
+      const productVolume: LabelProductVolume | undefined =
+        params.productVolumes?.[va - 1];
+      const produtos = productVolume?.produtos?.length
+        ? productVolume.produtos
+        : params.produtos;
+      const ean = productVolume?.ean || params.ean;
       const codigoBarras = this.buildBarcode(
         params.cnpjEmit,
         params.numero,
-        params.ean,
+        ean,
         va,
         params.volumeTotal,
       );
 
       volumes.push({
         ...params,
+        produtos,
+        ean,
         volumeAtual: va,
         codigoBarras,
       });
