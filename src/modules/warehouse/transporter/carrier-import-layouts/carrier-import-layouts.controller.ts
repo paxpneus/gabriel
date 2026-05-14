@@ -47,7 +47,6 @@ export class CarrierImportLayoutController extends BaseController<
       const { buffer, originalname, mimetype } = req.file;
 
       const file = { buffer, filename: originalname, mimeType: mimetype };
-      console.log(payload);
       const created = await this.service.createWithFile(payload, {}, file);
 
       return res.status(201).json({

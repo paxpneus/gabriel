@@ -160,12 +160,7 @@ async importLabelsFromExcel(
   }
 
   // 6. Delete rápido FORA de transaction longa — sem lock prolongado
-  console.log('Header row:', rows[importLayout.data_start_row - 2])
-console.log('Cols resolved:', cols)
-console.log('Total rows:', rows.length)
-console.log('Data rows:', dataRows.length)
-console.log('First data row:', dataRows[0])
-console.log('Records built:', records.length)
+  
   await this.bulkDelete({ where: { transporter_id }, transaction });
 
   // 7. Insert em chunks dentro de transactions curtas e independentes
