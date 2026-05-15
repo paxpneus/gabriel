@@ -70,6 +70,7 @@ Invoice.init(
     },
     xml_key: {
       type: DataTypes.STRING(255),
+      unique: true,
       allowNull: true,
     },
     danfe_path: {

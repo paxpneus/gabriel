@@ -273,12 +273,12 @@ export class UserService extends BaseService<User, UserRepository> {
         {
           model: UnitBusiness,
           as: "unitBusiness",
-          attributes: ['id', 'name', 'number', 'id_system']
+          attributes: ['id', 'name', 'number', 'id_system', 'cnpj']
         },
         {
           model: UnitBusiness,
           as: "availableUnitBusinesses",
-          attributes: ['id', 'name', 'number', 'id_system']
+          attributes: ['id', 'name', 'number', 'id_system', 'cnpj']
         },
         {
           model: UserConfig,

@@ -242,6 +242,65 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     return created;
   }
 
+  private async findProductForInvoiceItem(params: {
+    sku?: string | null;
+    ean?: string | number | null;
+    supplierCnpj?: string | null;
+    logPrefix: string;
+  }): Promise<Product | null> {
+    const sku = params.sku?.trim();
+    const ean = params.ean ? String(params.ean).trim() : null;
+
+    let product: Product | null = null;
+
+    if (ean) {
+      product = await Product.findOne({
+        where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
+      });
+    }
+
+    if (!product && sku) {
+      product = await Product.findOne({ where: { sku } });
+    }
+
+    if (product || !ean) return product;
+
+    const supplierProductCode: string = ean;
+
+    const cleanSupplierCnpj = params.supplierCnpj
+      ? cleanDocument(params.supplierCnpj)
+      : null;
+
+    const supplierMapping = cleanSupplierCnpj
+      ? (await SupplierMapping.findOne({
+          where: {
+            supplier_product_code: supplierProductCode,
+            supplier_cnpj: cleanSupplierCnpj,
+          },
+          order: [["updatedAt", "DESC"]],
+        })) ??
+        (await SupplierMapping.findOne({
+          where: { supplier_product_code: supplierProductCode },
+          order: [["updatedAt", "DESC"]],
+        }))
+      : await SupplierMapping.findOne({
+          where: { supplier_product_code: supplierProductCode },
+          order: [["updatedAt", "DESC"]],
+        });
+
+    if (!supplierMapping) return null;
+
+    product = await Product.findByPk(supplierMapping.product_id);
+
+    if (product) {
+      console.log(
+        `${params.logPrefix} Produto resolvido via SupplierMapping | ean_nf=${ean} | product_id=${product.id} | ean_sistema=${product.ean}`,
+      );
+    }
+
+    return product;
+  }
+
   async process(job: Job<ApiFetchJobPayload>): Promise<void> {
     const { eventId, resource, action, apiFetch } = job.data;
 
@@ -617,18 +676,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const quantityByProduct = new Map<string, number>();
 
     for (const item of nf.itens) {
-      let product = null;
       const sku = item.codigo?.trim();
-
-      if (sku) {
-        product = await Product.findOne({ where: { sku } });
-      }
-
-      if (!product && item.gtin) {
-        product = await Product.findOne({
-          where: { [Op.or]: [{ ean: item.gtin }, { ean_tribut: item.gtin }] },
-        });
-      }
+      const product = await this.findProductForInvoiceItem({
+        sku,
+        ean: item.gtin,
+        supplierCnpj: senderCnpj,
+        logPrefix: "[BLING_API_FETCH]",
+      });
 
       if (!product) {
         const reason =
@@ -708,13 +762,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
       for (const item of nf.itens) {
         const sku = item.codigo?.trim();
-        let product = sku ? await Product.findOne({ where: { sku } }) : null;
-
-        if (!product && item.gtin) {
-          product = await Product.findOne({
-            where: { [Op.or]: [{ ean: item.gtin }, { ean_tribut: item.gtin }] },
-          });
-        }
+        const product = await this.findProductForInvoiceItem({
+          sku,
+          ean: item.gtin,
+          supplierCnpj: senderCnpj,
+          logPrefix: "[BLING_API_FETCH]",
+        });
 
         if (!product) continue;
 
@@ -935,17 +988,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         prod.cEAN && prod.cEAN !== "SEM GTIN" ? prod.cEAN : undefined;
       const qty = Number(prod.qCom ?? 0);
 
-      let product = null;
-
-      if (sku) {
-        product = await Product.findOne({ where: { sku } });
-      }
-
-      if (!product && gtin) {
-        product = await Product.findOne({
-          where: { [Op.or]: [{ ean: gtin }, { ean_tribut: gtin }] },
-        });
-      }
+      const product = await this.findProductForInvoiceItem({
+        sku,
+        ean: gtin,
+        supplierCnpj: senderCnpj,
+        logPrefix: "[IMPORT_XML]",
+      });
 
       if (!product) {
         const reason =
