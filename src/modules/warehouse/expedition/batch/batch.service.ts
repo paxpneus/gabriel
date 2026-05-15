@@ -24,6 +24,8 @@ import {
 import { FindOptions } from "sequelize";
 import UnitBusiness from "../../unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
+import invoiceService from "../../entrance/invoice/invoice.service";
+import invoiceItemsService from "../../entrance/invoice-items/invoice-items.service";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -489,6 +491,35 @@ export class ExpeditionBatchService extends BaseService<
         },
       ],
     });
+  }
+
+  async finishBatch(batchId: string, justification: string) {
+    await sequelize.transaction(async (t) => {
+      const fullBatch = await this.findByIdFullBatch(batchId);
+
+      const invoicesIds = fullBatch.batchInvoices!.map((s) => s.invoice_id);
+
+      const invoiceItemsIds = fullBatch.batchInvoices!.flatMap((s) =>
+        s.invoice.items.map((i) => i.id),
+      );
+
+      await Promise.all([
+        ExpeditionBatch.update(
+          { status: "FINISHED", justification },
+          { where: { id: batchId }, transaction: t },
+        ),
+        invoiceService.bulkUpdate(
+          { status: "FINISHED" },
+          { where: { id: invoicesIds }, transaction: t },
+        ),
+        invoiceItemsService.bulkUpdate(
+          { status: "FINISHED" },
+          { where: { id: invoiceItemsIds }, transaction: t },
+        ),
+      ]);
+    });
+
+    return this.findByIdFullBatch(batchId);
   }
 }
 
