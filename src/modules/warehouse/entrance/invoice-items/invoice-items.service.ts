@@ -1,6 +1,7 @@
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import { Product } from "../../../inventory";
+import supplierMappingService from "../../../inventory/supplier-mapping/supplier-mapping.service";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../../expedition/batch-items/batch-items.model";
@@ -31,6 +32,9 @@ export class InvoiceItemsService extends BaseService<
         throw new Error("Quantidade do item divergente da quantidade da nota")
       }
 
+      if (invoiceItemDto.quantity_expected! != unMappedProcut?.quantity!) {
+        throw Error("Quantidade do produto diferente da nota")
+      }
       const invoiceItem = await this.create(invoiceItemDto, {
         transaction: t,
       });
@@ -90,6 +94,18 @@ export class InvoiceItemsService extends BaseService<
           },
         );
       }
+
+      const invoiceType = invoice?.type
+      let spMap
+      if (invoiceType === 'INCOMING') {
+       spMap = await supplierMappingService.create({
+        product_id: invoiceItemDto.product_id,
+        supplier_cnpj: invoice?.sender_cnpj,
+        supplier_product_code: unMappedProcut?.ean!
+      }, {transaction: t})
+      }
+
+      console.log(spMap)
 
       await UnmappedInvoiceProduct.destroy({
         where: {

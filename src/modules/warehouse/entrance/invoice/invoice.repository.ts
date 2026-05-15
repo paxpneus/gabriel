@@ -4,7 +4,7 @@ import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/
 import { InvoiceFull } from "../../expedition/batch/batch.types";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import Invoice from "./invoice.model";
-import { Product } from '../../../inventory';
+import { Product, SupplierMapping } from '../../../inventory';
 import { Sequelize } from 'sequelize';
 
 export class InvoiceRepository extends BaseRepository<Invoice> {
@@ -43,7 +43,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           include: [
           {
             model: Product,
-            as: 'product'
+            as: 'product',
           }
           ]
         },

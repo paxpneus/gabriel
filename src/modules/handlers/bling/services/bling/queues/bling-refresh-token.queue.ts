@@ -39,6 +39,7 @@ export class BlingTokenRefreshQueue extends BaseQueueService<void> {
                         type: 'INCOMING',
                         status: { [Op.notIn]: ['FINISHED', 'CANCELLED', 'LATE', 'OPEN', 'PENDING'] },
                         expected_receiving: { [Op.lt]: today },
+                        batch_generated: false,
                     },
                 }
             );

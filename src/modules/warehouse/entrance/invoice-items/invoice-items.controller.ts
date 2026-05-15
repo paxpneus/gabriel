@@ -11,6 +11,28 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
     this.router.post("/add/item", this.createInvoiceItem)
   }
 
+  private getErrorMessage(error: any): string {
+    if (error?.name === "SequelizeUniqueConstraintError") {
+      const constraint = error?.parent?.constraint ?? error?.constraint;
+
+      if (constraint === "uq_invoice_items_invoice_product") {
+        return "Esse produto já está vinculado a esta nota.";
+      }
+
+      if (constraint === "product_supplier_maps_product_id_supplier_cnpj_unique") {
+        return "Esse produto já possui mapeamento para este fornecedor.";
+      }
+
+      return "Já existe um registro com esses dados.";
+    }
+
+    if (error?.name === "SequelizeValidationError" && error?.errors?.length) {
+      return error.errors.map((item: any) => item.message).join(", ");
+    }
+
+    return error?.message ?? "Erro ao processar a solicitação.";
+  }
+
    protected middlewaresFor() {
         return {
           index: [authenticate],
@@ -34,7 +56,7 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
 
       return res.status(201).json(response);
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      return res.status(400).json({ error: this.getErrorMessage(error) });
     }
   };
 }
