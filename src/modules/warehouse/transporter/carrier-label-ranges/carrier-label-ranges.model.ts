@@ -18,7 +18,7 @@ class CarrierLabelRange
   public transporter_id!: string;
   public cep_start!: string;
   public cep_end!: string;
-  public route_acronym!: string;
+  public route_acronym!: string | null;
   public service_name?: string | null;
   public route_code?: string | null;
   public transporter_code!: string;
@@ -56,7 +56,7 @@ CarrierLabelRange.init(
     },
     route_acronym: {
       type: DataTypes.STRING(100),
-      allowNull: false,
+      allowNull: true,
     },
     service_name: {
       type: DataTypes.STRING(255),
@@ -68,7 +68,7 @@ CarrierLabelRange.init(
     },
     transporter_code: {
       type: DataTypes.STRING(100),
-      allowNull: false,
+      allowNull: true,
     },
     metadata: {
       type: DataTypes.JSONB,

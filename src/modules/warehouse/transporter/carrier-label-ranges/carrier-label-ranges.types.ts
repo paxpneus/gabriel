@@ -3,7 +3,7 @@ export interface CarrierLabelRangeAttributes {
   transporter_id: string;
   cep_start: string;
   cep_end: string;
-  route_acronym: string;
+  route_acronym: string | null;
   service_name?: string | null;
   route_code?: string | null;
   transporter_code: string;
