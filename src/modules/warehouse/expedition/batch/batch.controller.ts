@@ -25,7 +25,8 @@ export class ExpeditionBatchController extends BaseController<
         getBatchesByInvoice: [authenticate, userPermissions],
         getBatches: [authenticate, userPermissions],
         getFullBatch: [authenticate, userPermissions],
-        addInvoiceToBatch: [authenticate, userPermissions]
+        addInvoiceToBatch: [authenticate, userPermissions],
+        finishBatch: [authenticate, userPermissions]
       };
     }
 
@@ -41,6 +42,8 @@ export class ExpeditionBatchController extends BaseController<
     this.router.get("/full/get", ...this.mw("getFullBatch"), this.getFullBatch)
 
     this.router.post("/add-invoice", ...this.mw("addInvoiceToBatch"), (req, res) => this.addInvoiceToBatch(req, res))
+
+    this.router.put("/finish/:batchId", ...this.mw("finishBatch"), (req, res) => this.finishBatch(req, res))
   }
 
   /**
@@ -150,6 +153,20 @@ export class ExpeditionBatchController extends BaseController<
       return res.status(400).json({ error: error.message });
     }
   };
+
+  finishBatch = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { batchId } = req.params
+      const { justification } = req.body
+
+      await this.service.finishBatch(batchId as string, justification)
+
+      return res.json('Lote finalizado com sucesso!');
+
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  }
 }
 
 export default new ExpeditionBatchController();
