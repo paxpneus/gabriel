@@ -86,7 +86,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             model: ExpeditionBatch,
             as: "batch",
             required: hasBatchFilter,
-            attributes: ["number", "status"],
+            attributes: ["number", "status", 'id'],
           },
         ],
       },

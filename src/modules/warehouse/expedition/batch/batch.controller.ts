@@ -26,6 +26,7 @@ export class ExpeditionBatchController extends BaseController<
         getBatches: [authenticate, userPermissions],
         getFullBatch: [authenticate, userPermissions],
         addInvoiceToBatch: [authenticate, userPermissions],
+        addInvoicesToBatch: [authenticate, userPermissions],
         finishBatch: [authenticate, userPermissions]
       };
     }
@@ -42,6 +43,8 @@ export class ExpeditionBatchController extends BaseController<
     this.router.get("/full/get", ...this.mw("getFullBatch"), this.getFullBatch)
 
     this.router.post("/add-invoice", ...this.mw("addInvoiceToBatch"), (req, res) => this.addInvoiceToBatch(req, res))
+
+    this.router.post("/add-invoices", ...this.mw("addInvoicesToBatch"), (req, res) => this.addInvoicesToBatch(req, res))
 
     this.router.put("/finish/:batchId", ...this.mw("finishBatch"), (req, res) => this.finishBatch(req, res))
   }
@@ -79,6 +82,21 @@ export class ExpeditionBatchController extends BaseController<
     
       const batches =
         await ExpeditionBatchService.addInvoiceToBatch(invoiceKey, unitBusinessId, type, batchId);
+      return res.status(201).json(batches);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+      addInvoicesToBatch = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const { invoicesKey, unitBusinessId , type, batchId } = req.body;
+    
+      const batches =
+        await ExpeditionBatchService.addInvoicesToBatch(invoicesKey, unitBusinessId, type, batchId);
       return res.status(201).json(batches);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
