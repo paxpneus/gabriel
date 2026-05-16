@@ -58,10 +58,11 @@ export const CreateUserSchema = z.object({
     .string({ error: "Senha é obrigatória" })
     .min(8, "Senha deve ter no mínimo 8 caracteres")
     .max(255, "Senha não pode ter mais de 255 caracteres"),
-    user_unit_business: z
-      .array(z.string().uuid("IDs da unidade devem ser UUIDs válidos"))
-      .optional(),
-
+  user_unit_business: z
+    .array(z.string().uuid("IDs da unidade devem ser UUIDs válidos"))
+    .nullable()
+    .optional()
+    .transform((val) => val ?? []),
   unit_business_id: z
     .string({ error: "ID da unidade de negócio é obrigatório" })
     .uuid("ID da unidade deve ser um UUID válido"),
@@ -113,7 +114,9 @@ export const UpdateUserSchema = z
       .optional(),
     user_unit_business: z
       .array(z.string().uuid("IDs da unidade devem ser UUIDs válidos"))
-      .optional(),
+      .nullable()
+      .optional()
+      .transform((val) => val ?? []),
 
     role_id: z.string().uuid("ID do papel deve ser um UUID válido").optional(),
 
