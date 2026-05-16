@@ -18,9 +18,9 @@ const normalizeDocument = <T extends hasDocument> (instance: T) => {
 
 const cleanDocument = (doc: string) => String(doc).replace(/\D/g, '')
 
-const cleanCep = (cep: string | number): string => {
-  return String(cep).replace(/\D/g, '');
-};
+ function cleanCep(cep: string): string {
+  return cep.replace(/\D/g, '').padStart(8, '0')
+}
 
 
 export {
