@@ -32,6 +32,7 @@ export interface LabelVolume {
   volumeTotal: number;
   codigoBarras: string;
    routeAcronym: string | null;
+   destination: string | null;
   routeCode: string | null;
   observation: string | null;
 }
@@ -222,6 +223,7 @@ private async findCarrierRange(
     let routeAcronym: string | null = null
   let routeCode: string | null = null
   let observation: string | null = null
+  let destination: string | null = null
 
   if (transporter_id && destCEP) {
     console.log(destCEP)
@@ -230,6 +232,7 @@ private async findCarrierRange(
       routeAcronym = range.route_acronym ?? null
       routeCode    = range.route_code    ?? null
       observation  = (range.metadata as any)?.observation ?? null
+      destination = range.destination ?? null
     }
   }
 
@@ -253,6 +256,7 @@ private async findCarrierRange(
       volumeTotal,
       cnpjEmit,
       routeAcronym,   
+      destination,
     routeCode,
     observation,
     });

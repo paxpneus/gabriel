@@ -25,6 +25,7 @@ class CarrierImportLayout
   public zip_from_label!: string;
   public zip_to_label!: string;
   public route_code_label?: string | null;
+  public route_acronym?: string | null;
   public destination_label?: string | null;
   public observation_label?: string | null;
   public metadata?: Record<string, any> | null;
@@ -84,6 +85,10 @@ CarrierImportLayout.init(
     },
     route_code_label: {
       type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    route_acronym: {
+      type: DataTypes.STRING(100),
       allowNull: true,
     },
     destination_label: {

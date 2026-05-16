@@ -19,7 +19,7 @@ class CarrierLabelRange
   public cep_start!: string;
   public cep_end!: string;
   public route_acronym!: string | null;
-  public service_name?: string | null;
+  public destination?: string | null;
   public route_code?: string | null;
   public transporter_code!: string;
   public metadata?: Record<string, any> | null;
@@ -47,18 +47,18 @@ CarrierLabelRange.init(
       },
     },
     cep_start: {
-      type: DataTypes.STRING(8),
+      type: DataTypes.STRING(15),
       allowNull: false,
     },
     cep_end: {
-      type: DataTypes.STRING(8),
+      type: DataTypes.STRING(15),
       allowNull: false,
     },
     route_acronym: {
       type: DataTypes.STRING(100),
       allowNull: true,
     },
-    service_name: {
+    destination: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },
