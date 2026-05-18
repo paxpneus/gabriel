@@ -4,7 +4,7 @@ import Product from "./product.model";
 export interface ProductAttributes {
   id: string;
   name: string;
-  sku: string;
+  sku?: string;
   ean: string;
    ean_tribut: string;
   id_system?: string;

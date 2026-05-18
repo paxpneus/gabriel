@@ -81,13 +81,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
   private async upsertProduct(
     data: Extract<DirectUpsertPayload, { table: "products" }>["data"],
   ): Promise<void> {
-    if (!data.sku) {
-      console.warn(
-        "[BLING_DIRECT_UPSERT] Produto sem SKU, ignorando upsert parcial",
-        data,
-      );
-      return;
-    }
+
 
     const [product, created] = await Product.findOrCreate({
       where: { id_system: String(data.blingId) },

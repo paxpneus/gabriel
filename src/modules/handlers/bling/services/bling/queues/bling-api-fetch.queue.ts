@@ -354,13 +354,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const blingProduct = data.data;
 
-    if (!blingProduct?.codigo) {
-      console.warn(
-        `[BLING_API_FETCH] Produto ${apiFetch.blingId} sem SKU na Bling. Ignorado.`,
-      );
-      return;
-    }
-
     await Product.upsert(
       {
         name: blingProduct.nome,
