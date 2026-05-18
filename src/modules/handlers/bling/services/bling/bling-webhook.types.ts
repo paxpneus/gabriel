@@ -153,6 +153,7 @@ export interface MappedProduct {
   sku: string;
   /** EAN não vem no webhook; será preenchido via req adicional */
   ean?: string;
+  price?: number;
 }
 
 export interface MappedStock {

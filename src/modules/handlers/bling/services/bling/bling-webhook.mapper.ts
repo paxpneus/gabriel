@@ -79,6 +79,7 @@ function mapProduct(
         blingId: data.id,
         name: data.nome ?? "",
         sku: data.codigo ?? "",
+        price: data.precoCusto ?? 0,
         // ean será preenchido pelo worker que consome a fila de API fetch
       },
     },
