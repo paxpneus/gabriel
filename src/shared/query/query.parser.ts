@@ -1,6 +1,12 @@
 // src/shared/query/query.parser.ts
 
-import { Op, WhereOptions, OrderItem } from "sequelize";
+import {
+  Op,
+  WhereOptions,
+  OrderItem,
+  where as sequelizeWhere,
+  literal,
+} from "sequelize";
 import type { QueryParams, ResolvedQuery, QueryConfig } from "./query.types";
 
 const DEFAULTS = {
@@ -90,6 +96,28 @@ const order: OrderItem[] = sortByList.map((field, i) => {
         ) {
           const { start, end } = value as any;
 
+          if (field === "emitted_at") {
+            const emittedAtRange: Record<symbol, any> = {};
+
+            if (start) {
+              emittedAtRange[Op.gte] = literal(
+                `('${start}'::date AT TIME ZONE 'America/Sao_Paulo')`,
+              );
+            }
+
+            if (end) {
+              emittedAtRange[Op.lt] = literal(
+                `(('${end}'::date + INTERVAL '1 day') AT TIME ZONE 'America/Sao_Paulo')`,
+              );
+            }
+
+            where[Op.and] = [
+              ...(where[Op.and] ?? []),
+              sequelizeWhere(literal(`"emitted_at"`), emittedAtRange),
+            ];
+            continue;
+          }
+
           where[field] = {
             ...(start ? { [Op.gte]: new Date(start) } : {}),
             ...(end
@@ -109,6 +137,21 @@ const order: OrderItem[] = sortByList.map((field, i) => {
           typeof value === "string" &&
           /^\d{4}-\d{2}-\d{2}$/.test(value)
         ) {
+          if (field === "emitted_at") {
+            where[Op.and] = [
+              ...(where[Op.and] ?? []),
+              sequelizeWhere(
+                literal(`"emitted_at"`),
+                {
+                  [Op.gte]: literal(
+                    `('${value}'::date AT TIME ZONE 'America/Sao_Paulo')`,
+                  ),
+                },
+              ),
+            ];
+            continue;
+          }
+
           where[field] = {
             [Op.gte]: new Date(value + "T00:00:00"),
             [Op.lte]: new Date(value + "T23:59:59.999"),
