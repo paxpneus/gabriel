@@ -1,3 +1,4 @@
+import { FindOptions } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import { Product, Stock } from "../../../inventory";
 import InvoiceItems from "../../entrance/invoice-items/invoice-items.model";
@@ -17,6 +18,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
   async getFullBatch(
     batchId?: string,
     number?: string,
+    options?: FindOptions
   ): Promise<ExpeditionBatchFull> {
     let data;
     if (batchId) {
@@ -68,6 +70,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
             ],
           },
         ],
+       ...options
       });
     } else {
       data = await this.findOne({
@@ -119,6 +122,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
             ],
           },
         ],
+        ...options
       });
     }
 
