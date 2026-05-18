@@ -66,6 +66,11 @@ export class ExpeditionBatchService extends BaseService<
         lock: t.LOCK.UPDATE,
       });
 
+      const transportations = invoices.map(s => s.transporter_name)
+      if (transportations.length > 1) {
+        throw Error("Não é permitido adicionar notas com transportadoras diferentes ao lote!")
+      }
+
       if (invoices.length !== invoiceIds.length) {
         const foundIds = invoices.map((i) => i.id);
         const missing = invoiceIds.filter((id) => !foundIds.includes(id));

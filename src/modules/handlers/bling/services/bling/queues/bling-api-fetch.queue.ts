@@ -33,7 +33,7 @@ const NO_TRANSPORTER_NAME = "Sem transporte";
 const NO_TRANSPORTER_DOCUMENT = "0000000";
 
 function parseBlingDate(date: string) {
-  if (date.includes("Z") || date.includes("+") || date.includes("-03")) {
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(date)) {
     return new Date(date);
   }
 
