@@ -94,6 +94,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       const fieldsToUpdate: Record<string, any> = {};
       if (data.name) fieldsToUpdate.name = data.name;
       if (data.sku) fieldsToUpdate.sku = data.sku;
+      if (data.price !== undefined) fieldsToUpdate.price = data.price;
 
       if (Object.keys(fieldsToUpdate).length > 0) {
         await product.update(fieldsToUpdate);
@@ -112,6 +113,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
           id_system: idSystem,
           ean: `PENDING-${data.blingId}`,
           ean_tribut: `PENDING-TRIBUT-${data.blingId}`,
+          price: data.price ?? 0,
         },
       });
     } catch (error: any) {

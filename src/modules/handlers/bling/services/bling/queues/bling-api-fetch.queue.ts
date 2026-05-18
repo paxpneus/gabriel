@@ -688,11 +688,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
                 : "SKU e EAN presentes mas sem produto correspondente no banco";
 
         const existing = await UnmappedInvoiceProduct.findOne({
-          where: {
-            invoice_id: invoice.id,
-            ean: item.gtin ? String(item.gtin) : null,
-          },
-        });
+  where: {
+    invoice_id: invoice.id,
+    ...(item.gtin 
+      ? { ean: String(item.gtin) } 
+      : { sku: sku ?? null } 
+    ),
+  },
+});
 
         if (!existing) {
           await UnmappedInvoiceProduct.create({
@@ -998,9 +1001,15 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
                 ? "EAN ausente — apenas SKU salvo"
                 : "SKU e EAN presentes mas sem produto correspondente no banco";
 
-        const existing = await UnmappedInvoiceProduct.findOne({
-          where: { invoice_id: invoice.id, ean: gtin ?? null },
-        });
+       const existing = await UnmappedInvoiceProduct.findOne({
+  where: {
+    invoice_id: invoice.id,
+    ...(item.gtin 
+      ? { ean: String(item.gtin) } 
+      : { sku: sku ?? null }  
+    ),
+  },
+});
 
         if (!existing) {
           await UnmappedInvoiceProduct.create({
