@@ -17,6 +17,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
       },
       // Campos para busca textual (LIKE)
       searchFields: ["name", "ean", "ean_tribut", "sku"],
+      filterableFields: ["type"]
       
      
     };

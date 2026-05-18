@@ -27,6 +27,8 @@ import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomen
 import invoiceService from "../../entrance/invoice/invoice.service";
 import invoiceItemsService from "../../entrance/invoice-items/invoice-items.service";
 import { ensureSameBy } from "../../../../shared/utils/validators/same-not-allowed";
+import transporterService from "../../transporter/transporter.service";
+import Transporter from "../../transporter/transporter.model";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -47,6 +49,7 @@ export class ExpeditionBatchService extends BaseService<
         "type",
         "integrations_id",
         "unit_business_id",
+        "transporters_id"
       ],
       sortableFields: ["number", "createdAt", "updatedAt"],
     };
@@ -130,12 +133,18 @@ export class ExpeditionBatchService extends BaseService<
         },
       });
 
+      let transporter;
+      if (invoices[0].transporter_id) {
+        transporter = await transporterService.findById(invoices[0].transporter_id)
+      }
+
       const batch = await ExpeditionBatch.create(
         {
           number: await setBatchNumber(
             batchType,
             unitBusiness?.number!,
             unitBusinessId,
+            transporter?.name ?? invoices[0].transporter_name ?? null
           ),
           status: "OPEN",
           unit_business_id: unitBusinessId,
@@ -270,12 +279,19 @@ export class ExpeditionBatchService extends BaseService<
           },
         });
 
+        let transporter;
+
+        if (invoice.transporter_id) {
+          transporter = await transporterService.findById(invoice.transporter_id)
+        }
+
         batch = await ExpeditionBatch.create(
           {
             number: await setBatchNumber(
               "ENTRANCE",
               unitBusiness?.number!,
               unitBusinessId,
+              transporter?.name ?? invoice.transporter_name ?? null
             ),
             status: "OPEN",
             unit_business_id: unitBusinessId,
@@ -375,6 +391,17 @@ export class ExpeditionBatchService extends BaseService<
         const unitBusiness = await UnitBusiness.findOne({
           where: { id: unitBusinessId },
         });
+        let transporter;
+
+        const firstInvoice = await Invoice.findOne({
+          where: {
+            xml_key: chavesAcesso[0]
+          }
+        })
+
+        if (firstInvoice?.transporter_id) {
+          transporter = await transporterService.findById(firstInvoice.transporter_id)
+        }
 
         batch = await ExpeditionBatch.create(
           {
@@ -382,6 +409,7 @@ export class ExpeditionBatchService extends BaseService<
               "ENTRANCE",
               unitBusiness?.number!,
               unitBusinessId,
+              transporter?.name ?? firstInvoice?.transporter_name ??  null
             ),
             status: "OPEN",
             unit_business_id: unitBusinessId,
@@ -658,6 +686,10 @@ export class ExpeditionBatchService extends BaseService<
           model: UnitBusiness,
           as: "unitBusiness",
         },
+        {
+          model: Transporter,
+          as: 'transporter'
+        }
       ],
     });
   }

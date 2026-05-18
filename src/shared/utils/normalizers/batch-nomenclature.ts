@@ -4,7 +4,7 @@ import { getBrazilDate } from "./date"
 
 type batchType = 'INVENTORY' | 'ENTRANCE' | 'EXPEDITION' | 'DIVERGENCY'
 
-export const setBatchNumber = async (type: string, unitBusinessNumber: string, unitBusinessId: string): Promise<string> => {
+export const setBatchNumber = async (type: string, unitBusinessNumber: string, unitBusinessId: string, transporter_name?: string | null): Promise<string> => {
   let sequence: string = '0001'
 
   switch (type) {
@@ -36,8 +36,12 @@ export const setBatchNumber = async (type: string, unitBusinessNumber: string, u
       sequence = formatSequence(expeditionCount + 1)
       break
   }
-
-  const setBody = `${type.substring(0, 3)}_LOJA${unitBusinessNumber}_${sequence}_${getBrazilDate()}`
+  let setBody;
+  if (type == 'INVENTORY') {
+    setBody = `${type.substring(0, 3)}_${`LOJA${unitBusinessNumber}_${sequence}_${getBrazilDate()}`}`
+    return setBody
+  }
+  setBody = `${transporter_name}_${`LOJA${unitBusinessNumber}_${sequence}`}`
   return setBody
 }
 
