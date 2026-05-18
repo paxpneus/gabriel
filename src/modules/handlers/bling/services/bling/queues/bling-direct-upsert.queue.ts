@@ -13,7 +13,7 @@ import { Invoice, UnitBusiness } from "../../../../../warehouse";
 import { blingApi } from "../../../api/bling_api.service";
 import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
-import { Op } from "sequelize";
+import { Op, UniqueConstraintError } from "sequelize";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
@@ -81,21 +81,8 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
   private async upsertProduct(
     data: Extract<DirectUpsertPayload, { table: "products" }>["data"],
   ): Promise<void> {
-
-
-    const [product, created] = await Product.findOrCreate({
-      where: { id_system: String(data.blingId) },
-      defaults: {
-        name: data.name,
-        sku: data.sku,
-        id_system: String(data.blingId),
-        ean: `PENDING-${data.blingId}`,
-        ean_tribut: `PENDING-TRIBUT-${data.blingId}`,
-      },
-    });
-
-    if (!created) {
-      // só atualiza os campos que vieram — nunca sobrescreve com PENDING
+    const updateProductFields = async (product: Product) => {
+      // só atualiza os campos que vieram — nunca sobrescreve EAN real com PENDING
       const fieldsToUpdate: Record<string, any> = {};
       if (data.name) fieldsToUpdate.name = data.name;
       if (data.sku) fieldsToUpdate.sku = data.sku;
@@ -103,6 +90,40 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       if (Object.keys(fieldsToUpdate).length > 0) {
         await product.update(fieldsToUpdate);
       }
+    };
+
+    let product: Product;
+    let created = false;
+
+    try {
+      [product, created] = await Product.findOrCreate({
+        where: { id_system: String(data.blingId) },
+        defaults: {
+          name: data.name,
+          sku: data.sku,
+          id_system: String(data.blingId),
+          ean: `PENDING-${data.blingId}`,
+          ean_tribut: `PENDING-TRIBUT-${data.blingId}`,
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof UniqueConstraintError)) {
+        throw error;
+      }
+
+      const existingProduct = await Product.findOne({
+        where: { id_system: String(data.blingId) },
+      });
+
+      if (!existingProduct) {
+        throw error;
+      }
+
+      product = existingProduct;
+    }
+
+    if (!created) {
+      await updateProductFields(product);
     }
 
     console.log(
