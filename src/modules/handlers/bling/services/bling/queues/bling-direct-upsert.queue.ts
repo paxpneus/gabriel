@@ -81,6 +81,14 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
   private async upsertProduct(
     data: Extract<DirectUpsertPayload, { table: "products" }>["data"],
   ): Promise<void> {
+    if (!data.blingId) {
+      throw new Error(
+        `[BLING_DIRECT_UPSERT] Produto sem blingId no payload de upsert direto: ${JSON.stringify(data)}`,
+      );
+    }
+
+    const idSystem = String(data.blingId);
+
     const updateProductFields = async (product: Product) => {
       // só atualiza os campos que vieram — nunca sobrescreve EAN real com PENDING
       const fieldsToUpdate: Record<string, any> = {};
@@ -97,25 +105,37 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
     try {
       [product, created] = await Product.findOrCreate({
-        where: { id_system: String(data.blingId) },
+        where: { id_system: idSystem },
         defaults: {
           name: data.name,
           sku: data.sku,
-          id_system: String(data.blingId),
+          id_system: idSystem,
           ean: `PENDING-${data.blingId}`,
           ean_tribut: `PENDING-TRIBUT-${data.blingId}`,
         },
       });
-    } catch (error) {
-      if (!(error instanceof UniqueConstraintError)) {
+    } catch (error: any) {
+      const isUniqueConstraintError =
+        error instanceof UniqueConstraintError ||
+        error?.name === "SequelizeUniqueConstraintError";
+
+      if (!isUniqueConstraintError) {
         throw error;
       }
 
       const existingProduct = await Product.findOne({
-        where: { id_system: String(data.blingId) },
+        where: { id_system: idSystem },
       });
 
       if (!existingProduct) {
+        console.error("[BLING_DIRECT_UPSERT] UniqueConstraintError não recuperável ao criar produto", {
+          blingId: data.blingId,
+          idSystem,
+          sku: data.sku,
+          constraint: error?.parent?.constraint,
+          detail: error?.parent?.detail,
+          fields: error?.fields,
+        });
         throw error;
       }
 
