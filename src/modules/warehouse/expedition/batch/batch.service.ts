@@ -59,6 +59,7 @@ export class ExpeditionBatchService extends BaseService<
     invoiceIds: string[],
     unitBusinessId: string,
     type: string,
+    mode?: string
   ): Promise<ExpeditionBatch> {
     let batchId: string;
 
@@ -74,6 +75,7 @@ export class ExpeditionBatchService extends BaseService<
         invoices,
         (i) => i.transporter_name,
         "Não é permitido adicionar notas com transportadoras diferentes ao lote!",
+        mode,
       );
 
       if (invoices.length !== invoiceIds.length) {
@@ -277,6 +279,7 @@ export class ExpeditionBatchService extends BaseService<
           [...(found.batchInvoices ?? []), { invoice }],
           (item) => item.invoice.transporter_name,
           "Não é permitido adicionar notas com transportadoras diferentes ao lote!",
+          batch.mode
         );
       } else {
         const unitBusiness = await UnitBusiness.findOne({
@@ -526,6 +529,7 @@ export class ExpeditionBatchService extends BaseService<
         allInvoices,
         (i) => i!.transporter_name,
         "Não é permitido adicionar notas com transportadoras diferentes ao lote!",
+        batch.mode
       );
 
       if (totalVolumesAdded > 0) {
