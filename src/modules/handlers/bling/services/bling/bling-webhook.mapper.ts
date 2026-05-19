@@ -236,7 +236,8 @@ export function mapBlingWebhook(
       return mapInvoice(resource, action, data as BlingInvoicePayload);
 
     case "product_supplier":
-      return mapProductSupplier(action, data as BlingProductSupplierPayload);
+      return null;
+      // return mapProductSupplier(action, data as BlingProductSupplierPayload);
 
     default:
       return null;
