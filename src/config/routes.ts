@@ -71,7 +71,8 @@ function getApiBaseSegment(originalUrl: string): string | null {
 
 const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "financial-batch-info": "financial-pdt",
-  "multiplier-scan": "multiply-stk",
+  "multiplier-scan-inventory": "multiply-stk-inventory",
+  "multiplier-scan-entrance": "multiply-stk-entrance",
 };
 
 /**

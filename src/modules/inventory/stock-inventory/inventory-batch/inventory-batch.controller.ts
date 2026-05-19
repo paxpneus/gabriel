@@ -55,7 +55,7 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
 
     this.router.get("/financial-batch-info/get", ...this.mw("getFinancialInventoryBatch"), (req, res) => this.getFinancialInventoryBatch(req, res))
     
-     this.router.get("/multiplier-scan/get", ...this.mw("getMultiplierScan"), (req, res) => this.getMultiplierScan(req, res))
+     this.router.get("/multiplier-scan-inventory/get", ...this.mw("getMultiplierScan"), (req, res) => this.getMultiplierScan(req, res))
   }
 
   createInventoryBatch = async (
