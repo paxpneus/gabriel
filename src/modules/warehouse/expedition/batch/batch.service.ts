@@ -49,7 +49,7 @@ export class ExpeditionBatchService extends BaseService<
         "type",
         "integrations_id",
         "unit_business_id",
-        "transporters_id"
+        "transporters_id",
       ],
       sortableFields: ["number", "createdAt", "updatedAt"],
     };
@@ -135,7 +135,9 @@ export class ExpeditionBatchService extends BaseService<
 
       let transporter;
       if (invoices[0].transporter_id) {
-        transporter = await transporterService.findById(invoices[0].transporter_id)
+        transporter = await transporterService.findById(
+          invoices[0].transporter_id,
+        );
       }
 
       const batch = await ExpeditionBatch.create(
@@ -144,7 +146,7 @@ export class ExpeditionBatchService extends BaseService<
             batchType,
             unitBusiness?.number!,
             unitBusinessId,
-            transporter?.name ?? invoices[0].transporter_name ?? null
+            transporter?.name ?? invoices[0].transporter_name ?? null,
           ),
           status: "OPEN",
           unit_business_id: unitBusinessId,
@@ -259,9 +261,13 @@ export class ExpeditionBatchService extends BaseService<
       let batch: ExpeditionBatchFull;
 
       if (batchId) {
-        const found = await this.findByIdFullBatch(batchId, "", {
+        await ExpeditionBatch.findByPk(batchId, {
           transaction: t,
           lock: t.LOCK.UPDATE,
+        });
+
+        const found = await this.findByIdFullBatch(batchId, "", {
+          transaction: t,
         });
         if (!found) throw new Error("Lote não encontrado");
         if (found.status === "FINISHED") throw new Error("Lote já finalizado");
@@ -282,7 +288,9 @@ export class ExpeditionBatchService extends BaseService<
         let transporter;
 
         if (invoice.transporter_id) {
-          transporter = await transporterService.findById(invoice.transporter_id)
+          transporter = await transporterService.findById(
+            invoice.transporter_id,
+          );
         }
 
         batch = await ExpeditionBatch.create(
@@ -291,7 +299,7 @@ export class ExpeditionBatchService extends BaseService<
               "ENTRANCE",
               unitBusiness?.number!,
               unitBusinessId,
-              transporter?.name ?? invoice.transporter_name ?? null
+              transporter?.name ?? invoice.transporter_name ?? null,
             ),
             status: "OPEN",
             unit_business_id: unitBusinessId,
@@ -395,12 +403,14 @@ export class ExpeditionBatchService extends BaseService<
 
         const firstInvoice = await Invoice.findOne({
           where: {
-            xml_key: chavesAcesso[0]
-          }
-        })
+            xml_key: chavesAcesso[0],
+          },
+        });
 
         if (firstInvoice?.transporter_id) {
-          transporter = await transporterService.findById(firstInvoice.transporter_id)
+          transporter = await transporterService.findById(
+            firstInvoice.transporter_id,
+          );
         }
 
         batch = await ExpeditionBatch.create(
@@ -409,7 +419,7 @@ export class ExpeditionBatchService extends BaseService<
               "ENTRANCE",
               unitBusiness?.number!,
               unitBusinessId,
-              transporter?.name ?? firstInvoice?.transporter_name ??  null
+              transporter?.name ?? firstInvoice?.transporter_name ?? null,
             ),
             status: "OPEN",
             unit_business_id: unitBusinessId,
@@ -688,8 +698,8 @@ export class ExpeditionBatchService extends BaseService<
         },
         {
           model: Transporter,
-          as: 'transporter'
-        }
+          as: "transporter",
+        },
       ],
     });
   }
