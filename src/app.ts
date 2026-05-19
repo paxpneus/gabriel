@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser'
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') ?? []
 const app = express()
 import crypto from 'crypto'
+import qs from 'qs'
 
 
 app.use(cors({
@@ -47,7 +48,12 @@ app.use(cors({
 app.use(express.json())
 app.use(express.urlencoded({extended: true}))
 app.use(cookieParser());
-app.set("query parser", "extended");
+app.set('query parser', (str: string) => {
+  return qs.parse(str, {
+    arrayLimit: 1000, 
+    depth: 10,
+  })
+})
 
 app.get('/health', (_, res) => res.json({status: 'ok'}))
 

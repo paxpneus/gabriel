@@ -19,6 +19,7 @@ type Scopes =
   | 'Multiplicador Estoque - Inventário'
   | 'Multiplicador Estoque - Entradas'
   | 'Financeiro - Produtos'
+  | 'Todas as Lojas'
 
 interface ChildEntity {
   entity: string
@@ -155,6 +156,12 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Financeiro - Produtos',
     entity: 'financial-pdt',
+    type: 'CUSTOM',
+    permissions: ['read'],
+  },
+  {
+    scope: 'Todas as Lojas',
+    entity: 'visualize-all-unit-business',
     type: 'CUSTOM',
     permissions: ['read'],
   },

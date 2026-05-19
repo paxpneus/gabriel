@@ -35,6 +35,7 @@ class BaseController<
       dateFrom: q.dateFrom,
       dateTo: q.dateTo,
       dateField: q.dateField,
+      userId: q.userId,
     };
   }
 

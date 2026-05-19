@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { normalizeDocument } from '../../../../shared/utils/normalizers/document';
 import UserConfig from '../user_config/user_config.model';
 import UnitBusiness from '../../unit-business/unit-business.model';
+import Role from '../roles/role.model';
 
 class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
   public id!: string;
@@ -16,6 +17,7 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   public email!: string;
   public password!: string;
   public config?: UserConfig;
+  public role?: Role;
   public availableUnitBusinesses?: UnitBusiness[]
 
   public readonly createdAt!: Date;
