@@ -15,6 +15,7 @@ export interface ExpeditionBatchAttributes {
   total_volumes_received?: number;
   transporters_id?: string | null;
   description?: string
+  mode?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -35,6 +36,7 @@ export interface ExpeditionBatchFull {
   id_system?: string;
   unit_business_id: string;
   total_volumes: number;
+  mode?: string;
   createdAt?: Date;
   updatedAt?: Date;
   batchInvoices?: ExpeditionBatchInvoiceFull[];

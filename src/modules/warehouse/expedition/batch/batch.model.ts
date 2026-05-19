@@ -19,6 +19,7 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public type!: string
   public transporters_id!: string | null; 
   public description?: string
+  public mode?: string
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -86,6 +87,11 @@ ExpeditionBatch.init(
       type: DataTypes.ENUM("INCOMING", "OUTGOING"),
       allowNull: false,
       defaultValue: 'OUTGOING'
+    },
+    mode: {
+      type: DataTypes.ENUM("REGULAR", "ADVANCED"),
+      allowNull: false,
+      defaultValue: 'REGULAR'
     }
   },
   {

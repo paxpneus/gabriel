@@ -1,7 +1,9 @@
 export function ensureSameBy<T>(
   items: T[],
   getValue: (item: T) => string | null | undefined,
-  errorMessage = "Valores diferentes não são permitidos"
+  errorMessage = "Valores diferentes não são permitidos",
+  mode?: string,
+
 ): void {
   const values = items.map(getValue).filter(Boolean)
 
@@ -11,7 +13,7 @@ export function ensureSameBy<T>(
 
   const hasDifferent = values.some(v => v !== first)
 
-  if (hasDifferent) {
+  if (hasDifferent && mode == 'REGULAR') {
     throw new Error(errorMessage)
   }
 }
