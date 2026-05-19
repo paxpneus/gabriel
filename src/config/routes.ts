@@ -73,6 +73,7 @@ const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "financial-batch-info": "financial-pdt",
   "multiplier-scan-inventory": "multiply-stk-inventory",
   "multiplier-scan-entrance": "multiply-stk-entrance",
+   "all-unit-business": "visualize-all-unit-business",
 };
 
 /**

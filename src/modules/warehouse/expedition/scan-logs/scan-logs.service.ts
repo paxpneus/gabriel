@@ -129,7 +129,8 @@ export class ExpeditionScanLogService extends BaseService<
         throw Error("Produto já totalmente bipado");
       }
 
-      const eanExistsOnLabel = productRead.product.ean && labelcode.includes(productRead.product.ean);
+      const eanExistsOnLabel =
+        productRead.product.ean && labelcode.includes(productRead.product.ean);
       const eanTributExistsOnLabel =
         productRead.product.ean_tribut &&
         labelcode.includes(productRead.product.ean_tribut);
@@ -229,11 +230,20 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
       // ── 2. Busca o produto pelo EAN ────────────────────────────────────────
-      const productFound = await Product.findOne({
+      let productFound = await Product.findOne({
         where: {
           [Op.or]: [{ ean: labelcode }, { ean_tribut: labelcode }],
         },
       });
+
+      if (!productFound) {
+        const supplierMapping = await SupplierMapping.findOne({
+          where: { supplier_product_code: labelcode },
+          include: [{ model: Product, as: "product" }],
+        });
+
+        productFound = (supplierMapping as any)?.product ?? null;
+      }
 
       if (!productFound) throw new Error("Produto não encontrado!");
 
@@ -424,11 +434,20 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
       // ── 2. Busca o produto pelo EAN ────────────────────────────────────────
-      const productFound = await Product.findOne({
+      let productFound = await Product.findOne({
         where: {
           [Op.or]: [{ ean: labelcode }, { ean_tribut: labelcode }],
         },
       });
+
+      if (!productFound) {
+        const supplierMapping = await SupplierMapping.findOne({
+          where: { supplier_product_code: labelcode },
+          include: [{ model: Product, as: "product" }],
+        });
+
+        productFound = (supplierMapping as any)?.product ?? null;
+      }
 
       if (!productFound) throw new Error("Produto não encontrado!");
 

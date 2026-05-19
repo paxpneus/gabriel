@@ -6,7 +6,10 @@ import { v4 as uuidv4 } from 'uuid';
 class Role extends Model<RoleAttributes, RoleCreationAttributes> implements RoleAttributes {
   public id!: string;
   public name!: string;
-  public permissions!: string[];
+  public permissions!: {
+  entity: string;
+  permissions: string[];
+}[];
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;

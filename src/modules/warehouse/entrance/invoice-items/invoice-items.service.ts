@@ -20,20 +20,30 @@ export class InvoiceItemsService extends BaseService<
     super(invoiceItemsRepository);
   }
 
-  async createInvoiceItem(invoiceItemDto: Partial<InvoiceItems>, newEan: string, unMappedProductId: string): Promise<void> {
+  async createInvoiceItem(
+    invoiceItemDto: Partial<InvoiceItems>,
+    newEan: string,
+    unMappedProductId: string,
+  ): Promise<void> {
     return sequelize.transaction(async (t) => {
       if (!invoiceItemDto.product_id) {
         throw new Error("Produto não encontrado!");
       }
 
-      const unMappedProcut = await UnmappedInvoiceProduct.findByPk(unMappedProductId, {transaction: t})
+      const unMappedProcut = await UnmappedInvoiceProduct.findByPk(
+        unMappedProductId,
+        { transaction: t },
+      );
 
-      if (unMappedProcut && unMappedProcut.quantity != invoiceItemDto.quantity_expected) {
-        throw new Error("Quantidade do item divergente da quantidade da nota")
+      if (
+        unMappedProcut &&
+        unMappedProcut.quantity != invoiceItemDto.quantity_expected
+      ) {
+        throw new Error("Quantidade do item divergente da quantidade da nota");
       }
 
       if (invoiceItemDto.quantity_expected! != unMappedProcut?.quantity!) {
-        throw Error("Quantidade do produto diferente da nota")
+        throw Error("Quantidade do produto diferente da nota");
       }
       const invoiceItem = await this.create(invoiceItemDto, {
         transaction: t,
@@ -83,29 +93,26 @@ export class InvoiceItemsService extends BaseService<
         );
       }
 
-      if (newEan) {
-        await Product.update(
-          { ean_tribut: newEan },
-          {
-            where: {
-              id: invoiceItemDto.product_id,
+      const invoiceType = invoice?.type;
+      let spMap;
+      if (invoiceType === "INCOMING") {
+        const supplierProductCode = newEan || unMappedProcut?.ean;
+
+        if (supplierProductCode) {
+          const spMap = await supplierMappingService.create(
+            {
+              product_id: invoiceItemDto.product_id,
+              supplier_cnpj: invoice?.sender_cnpj,
+              supplier_product_code: supplierProductCode,
             },
-            transaction: t,
-          },
-        );
+            { transaction: t },
+          );
+
+          console.log(spMap);
+        }
       }
 
-      const invoiceType = invoice?.type
-      let spMap
-      if (invoiceType === 'INCOMING') {
-       spMap = await supplierMappingService.create({
-        product_id: invoiceItemDto.product_id,
-        supplier_cnpj: invoice?.sender_cnpj,
-        supplier_product_code: unMappedProcut?.ean!
-      }, {transaction: t})
-      }
-
-      console.log(spMap)
+      console.log(spMap);
 
       await UnmappedInvoiceProduct.destroy({
         where: {

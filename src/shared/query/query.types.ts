@@ -12,6 +12,7 @@ export interface QueryParams {
   dateFrom?: string;
   dateTo?: string;
   dateField?: string;
+  userId?: string;
 }
 
 export type CustomFieldResolver = (value: string | string[]) => WhereOptions;
