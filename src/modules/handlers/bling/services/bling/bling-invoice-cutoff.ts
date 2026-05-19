@@ -50,7 +50,7 @@ export function getBlingInvoiceReferenceDate(invoice: {
   dataEmissao?: string | null;
   dataOperacao?: string | null;
 }): Date | null {
-  return parseBlingInvoiceDate(invoice.dataOperacao ?? invoice.dataEmissao);
+  return parseBlingInvoiceDate(invoice.dataEmissao ?? invoice.dataOperacao);
 }
 
 export function isBlingInvoiceOnOrAfterCutoff(

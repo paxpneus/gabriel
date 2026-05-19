@@ -16,7 +16,8 @@ type Scopes =
   | 'Transportadoras'
   | 'Integrações'
   | 'Impressoras'
-  | 'Multiplicador Estoque'
+  | 'Multiplicador Estoque - Inventário'
+  | 'Multiplicador Estoque - Entradas'
   | 'Financeiro - Produtos'
 
 interface ChildEntity {
@@ -140,8 +141,14 @@ export const ROLE_PERMISSIONS: Roles[] = [
     permissions: all,
   },
    {
-    scope: 'Multiplicador Estoque',
-    entity: 'multiply-stk',
+    scope: 'Multiplicador Estoque - Inventário',
+    entity: 'multiply-stk-inventory',
+    type: 'CUSTOM',
+    permissions: ['read'],
+  },
+    {
+    scope: 'Multiplicador Estoque - Entradas',
+    entity: 'multiply-stk-entrance',
     type: 'CUSTOM',
     permissions: ['read'],
   },

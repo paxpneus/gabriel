@@ -27,7 +27,8 @@ export class ExpeditionBatchController extends BaseController<
         getFullBatch: [authenticate, userPermissions],
         addInvoiceToBatch: [authenticate, userPermissions],
         addInvoicesToBatch: [authenticate, userPermissions],
-        finishBatch: [authenticate, userPermissions]
+        finishBatch: [authenticate, userPermissions],
+        getMultiplierScan: [authenticate, userPermissions]
       };
     }
 
@@ -47,6 +48,8 @@ export class ExpeditionBatchController extends BaseController<
     this.router.post("/add-invoices", ...this.mw("addInvoicesToBatch"), (req, res) => this.addInvoicesToBatch(req, res))
 
     this.router.put("/finish/:batchId", ...this.mw("finishBatch"), (req, res) => this.finishBatch(req, res))
+
+    this.router.get("/multiplier-scan-entrance/get", ...this.mw("getMultiplierScan"), (req, res) => this.getMultiplierScan(req, res))
   }
 
   /**
@@ -184,6 +187,10 @@ export class ExpeditionBatchController extends BaseController<
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
+  }
+
+  getMultiplierScan(req: Request, res: Response) {
+    return res.json(true);
   }
 }
 
