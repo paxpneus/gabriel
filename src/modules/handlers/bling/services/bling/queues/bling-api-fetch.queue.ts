@@ -48,9 +48,9 @@ export function extractPartiesFromXml(xml: string) {
     parsed?.procNFe?.NFe?.infNFe ||
     parsed?.NFe?.infNFe;
 
-   const refNFeMatch = xml.match(/<refNFe>(\d{44})<\/refNFe>/);
-    const refNfeResult = refNFeMatch ? refNFeMatch[1] : null;
-    const refNFe = refNfeResult ? Number(refNfeResult.slice(25, 34)) : null
+  const refNFeMatch = xml.match(/<refNFe>(\d{44})<\/refNFe>/);
+  const refNfeResult = refNFeMatch ? refNFeMatch[1] : null;
+  const refNFe = refNfeResult ? Number(refNfeResult.slice(25, 34)) : null;
 
   const emit = nfe?.emit ?? {};
   const dest = nfe?.dest ?? {};
@@ -79,7 +79,7 @@ export function extractPartiesFromXml(xml: string) {
     transporterDocument,
     transporterCity,
     transporterUf,
-    refNFe: refNFe !== null ? String(refNFe) : null
+    refNFe: refNFe !== null ? String(refNFe) : null,
   };
 }
 
@@ -272,7 +272,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       : null;
 
     const supplierMapping = cleanSupplierCnpj
-      ? (await SupplierMapping.findOne({
+      ? ((await SupplierMapping.findOne({
           where: {
             supplier_product_code: supplierProductCode,
             supplier_cnpj: cleanSupplierCnpj,
@@ -282,7 +282,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         (await SupplierMapping.findOne({
           where: { supplier_product_code: supplierProductCode },
           order: [["updatedAt", "DESC"]],
-        }))
+        })))
       : await SupplierMapping.findOne({
           where: { supplier_product_code: supplierProductCode },
           order: [["updatedAt", "DESC"]],
@@ -354,18 +354,31 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const blingProduct = data.data;
 
-    await Product.upsert(
-      {
-        name: blingProduct.nome,
-        id_system: String(blingProduct.id),
-        sku: blingProduct.codigo,
-        ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
-        ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
-        price: blingProduct.precoCusto,
-        type: blingProduct.formato === "E" ? "KIT" : "UNIT",
-      },
-      { conflictFields: ["id_system"] },
-    );
+    try {
+      await Product.upsert(
+        {
+          name: blingProduct.nome,
+          id_system: String(blingProduct.id),
+          sku: blingProduct.codigo,
+          ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
+          ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
+          price: blingProduct.precoCusto,
+          type: blingProduct.formato === "E" ? "KIT" : "UNIT",
+        },
+        { conflictFields: ["id_system"] },
+      );
+    } catch (error: any) {
+      console.error("[BLING_API_FETCH] Erro no upsert do produto", {
+        blingId: apiFetch.blingId,
+        sku: blingProduct?.codigo,
+        ean: blingProduct?.gtin,
+        message: error.message,
+        detail: error?.parent?.detail,
+        fields: error?.fields,
+        sql: error?.sql,
+      });
+      throw error;
+    }
 
     console.log(
       `[BLING_API_FETCH] Produto ${blingProduct.codigo} complementado com EAN=${blingProduct.gtin ?? "N/A"}`,
@@ -565,7 +578,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           transporter_document = extracted.transporterDocument;
           transporter_city = extracted.transporterCity;
           transporter_uf = extracted.transporterUf;
-          nfeRef = extracted.refNFe
+          nfeRef = extracted.refNFe;
         }
       } catch (err) {
         console.warn("[XML PARSE ERROR]", err);
@@ -650,7 +663,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         transporter_id: transporter?.id ?? null,
         transporter_document: transporter_document ?? null,
         transporter_name: transporter_name ?? null,
-        description: nfeRef ? `REF: ${nfeRef}` : null
+        description: nfeRef ? `REF: ${nfeRef}` : null,
       },
       { conflictFields: ["id_system"] },
     );
@@ -688,14 +701,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
                 : "SKU e EAN presentes mas sem produto correspondente no banco";
 
         const existing = await UnmappedInvoiceProduct.findOne({
-  where: {
-    invoice_id: invoice.id,
-    ...(item.gtin 
-      ? { ean: String(item.gtin) } 
-      : { sku: sku ?? null } 
-    ),
-  },
-});
+          where: {
+            invoice_id: invoice.id,
+            ...(item.gtin ? { ean: String(item.gtin) } : { sku: sku ?? null }),
+          },
+        });
 
         if (!existing) {
           await UnmappedInvoiceProduct.create({
@@ -962,7 +972,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         transporter_id: transporter?.id ?? null,
         transporter_document: transporterDocument,
         transporter_name: transporterName,
-        description: nfeRef ? `REF: ${nfeRef}` : null
+        description: nfeRef ? `REF: ${nfeRef}` : null,
       },
       { conflictFields: ["id_system"] },
     );
@@ -1001,15 +1011,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
                 ? "EAN ausente — apenas SKU salvo"
                 : "SKU e EAN presentes mas sem produto correspondente no banco";
 
-       const existing = await UnmappedInvoiceProduct.findOne({
-  where: {
-    invoice_id: invoice.id,
-    ...(item.gtin 
-      ? { ean: String(item.gtin) } 
-      : { sku: sku ?? null }  
-    ),
-  },
-});
+        const existing = await UnmappedInvoiceProduct.findOne({
+          where: {
+            invoice_id: invoice.id,
+            ...(item.gtin ? { ean: String(item.gtin) } : { sku: sku ?? null }),
+          },
+        });
 
         if (!existing) {
           await UnmappedInvoiceProduct.create({
