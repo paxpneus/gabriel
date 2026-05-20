@@ -61,18 +61,36 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             : value,
         }),
         pendingProcess: (value) => {
-          if (!value || value === "false") return {};
-          return {
-            [Op.or]: [
-              { batch_generated: false },
-              { printed_label: false },
-              {
-                status: {
-                  [Op.notIn]: ["FINISHED", "CANCELLED"],
+          // "Todos" → sem filtro
+          if (value === "" || value === null || value === undefined) return {};
+
+          // "Processo em andamento" (true) → notas que ainda têm algo pendente
+          if (value === "true") {
+            return {
+              [Op.or]: [
+                { batch_generated: false },
+                { printed_label: false },
+                {
+                  status: {
+                    [Op.notIn]: ["FINISHED", "CANCELLED"],
+                  },
                 },
+              ],
+            };
+          }
+
+          // "Processo finalizado" (false) → tudo concluído
+          if (value === "false") {
+            return {
+              batch_generated: true,
+              printed_label: true,
+              status: {
+                [Op.in]: ["FINISHED", "CANCELLED"],
               },
-            ],
-          };
+            };
+          }
+
+          return {};
         },
       },
     };
