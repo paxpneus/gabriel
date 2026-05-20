@@ -30,6 +30,7 @@ class DailyOperationFact
   public incoming_perf_min_hours?: number | string | null;
   public incoming_perf_max_hours?: number | string | null;
   public incoming_perf_invoice_count?: number;
+  public advance_payment_count?: boolean;
   public last_updated_at?: Date;
 
   public readonly createdAt!: Date;
@@ -76,6 +77,7 @@ DailyOperationFact.init(
     incoming_perf_min_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     incoming_perf_max_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     incoming_perf_invoice_count: { type: DataTypes.INTEGER, defaultValue: 0 },
+    advance_payment_count: { type: DataTypes.INTEGER, defaultValue: 0, allowNull: false },
     last_updated_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,

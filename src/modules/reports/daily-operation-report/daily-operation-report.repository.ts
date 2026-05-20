@@ -9,7 +9,9 @@ import {
 const JOB_NAME = "daily_operation_report";
 
 /**
- * Transportadoras internas (CD 12 e CD 17) excluídas de todo o fluxo analítico.
+ * Transportadoras internas (CD 12 e CD 17) excluídas do fluxo analítico principal.
+ * Notas vinculadas a essas transportadoras são marcadas como `is_advance_payment = TRUE`
+ * e aparecem no relatório como contagem separada, sem influenciar KPIs.
  * id_system: '18130521578' (CD 12) e '18130513305' (CD 17)
  */
 const EXCLUDED_TRANSPORTER_ID_SYSTEMS = ["18130521578", "18130513305"];
@@ -230,6 +232,23 @@ export class DailyOperationReportRepository {
         JOIN unit_businesses ub ON ub.cnpj = i.sender_cnpj
         WHERE i.type = 'INCOMING'
       ),
+      -- Identifica notas de adiantamento:
+      -- Notas cuja transportadora efetiva (batch tem precedência sobre a nota)
+      -- pertence às transportadoras internas (CD 12 ou CD 17).
+      -- Essas notas são gravadas no snapshot mas ficam fora dos KPIs principais.
+      advance_payments AS (
+        SELECT
+          i.id AS invoice_id,
+          TRUE AS is_advance_payment
+        FROM invoices i
+        JOIN affected a ON a.invoice_id = i.id
+        LEFT JOIN batch_data bd ON bd.invoice_id = i.id
+        LEFT JOIN transporters t_eff ON t_eff.id = CASE
+          WHEN bd.invoice_id IS NOT NULL THEN bd.batch_transporter_id
+          ELSE i.transporter_id
+        END
+        WHERE t_eff.id_system = ANY(ARRAY[:excludedTransporterIdSystems])
+      ),
       snapshot_source AS (
         SELECT
           i.id AS invoice_id,
@@ -283,23 +302,17 @@ export class DailyOperationReportRepository {
             ELSE 'open'
           END AS snapshot_status,
           -- Flag de devolução de fornecedor: INCOMING cujo sender_cnpj é de uma filial
-          COALESCE(sr.is_supplier_return, FALSE) AS is_supplier_return
+          COALESCE(sr.is_supplier_return, FALSE) AS is_supplier_return,
+          -- Flag de adiantamento: nota cuja transportadora efetiva é interna (CD 12 / CD 17)
+          COALESCE(ap.is_advance_payment, FALSE) AS is_advance_payment
         FROM invoices i
         JOIN affected a ON a.invoice_id = i.id
         LEFT JOIN item_totals it ON it.invoice_id = i.id
         LEFT JOIN scan_bounds sb ON sb.invoice_id = i.id
         LEFT JOIN batch_data bd ON bd.invoice_id = i.id
         LEFT JOIN supplier_returns sr ON sr.invoice_id = i.id
-        -- Dois joins separados para resolver transporter: da invoice e do batch
-        -- O COALESCE no WHERE não pode referenciar bd antes do join estar declarado
-        LEFT JOIN transporters t_eff ON t_eff.id = CASE
-  WHEN bd.invoice_id IS NOT NULL THEN bd.batch_transporter_id
-  ELSE i.transporter_id
-END
-WHERE NOT (
-  t_eff.id_system IS NOT NULL
-  AND t_eff.id_system = ANY(ARRAY[:excludedTransporterIdSystems])
-)
+        LEFT JOIN advance_payments ap ON ap.invoice_id = i.id
+        -- Sem filtro de exclusão aqui: adiantamentos são gravados com flag, não descartados
       )
       INSERT INTO invoice_operation_snapshots (
         invoice_id,
@@ -319,6 +332,7 @@ WHERE NOT (
         hours_batch_to_fully_scanned,
         snapshot_status,
         is_supplier_return,
+        is_advance_payment,
         last_updated_at,
         created_at,
         updated_at
@@ -341,6 +355,7 @@ WHERE NOT (
         hours_batch_to_fully_scanned,
         snapshot_status,
         is_supplier_return,
+        is_advance_payment,
         NOW(),
         NOW(),
         NOW()
@@ -362,6 +377,7 @@ WHERE NOT (
         hours_batch_to_fully_scanned = EXCLUDED.hours_batch_to_fully_scanned,
         snapshot_status = EXCLUDED.snapshot_status,
         is_supplier_return = EXCLUDED.is_supplier_return,
+        is_advance_payment = EXCLUDED.is_advance_payment,
         last_updated_at = NOW(),
         updated_at = NOW()
       `,
@@ -400,34 +416,40 @@ WHERE NOT (
             CAST(:factDate AS date) AS fact_date,
             CAST(:unitBusinessId AS uuid) AS unit_business_id,
 
-            -- Contar apenas notas que NÃO são devolução de fornecedor e NÃO são de transportadora interna
+            -- Contar apenas notas que NÃO são devolução de fornecedor e NÃO são adiantamento
             COUNT(*) FILTER (
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
+                AND is_advance_payment = FALSE
             )::integer AS invoices_incoming_count,
 
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
+                AND is_advance_payment = FALSE
             )::integer AS invoices_outgoing_count,
 
             COUNT(*) FILTER (
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
+                AND is_advance_payment = FALSE
             )::integer AS invoices_incoming_total,
 
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
+                AND is_advance_payment = FALSE
             )::integer AS invoices_outgoing_total,
 
-            -- Completude: excluir devoluções de fornecedor das entradas
+            -- Completude: excluir devoluções de fornecedor e adiantamentos das entradas
             COUNT(*) FILTER (
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
+                AND is_advance_payment = FALSE
                 AND fully_processed_at IS NOT NULL
             )::integer AS invoices_incoming_fully_processed,
 
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
+                AND is_advance_payment = FALSE
                 AND fully_processed_at IS NOT NULL
             )::integer AS invoices_outgoing_fully_processed,
 
@@ -437,64 +459,67 @@ WHERE NOT (
                 AND is_supplier_return = TRUE
             )::integer AS supplier_return_count,
 
-            -- Devoluções excluídas do desempenho de saída (não se aplica pois são INCOMING)
+            -- Adiantamentos: contagem separada, sem entrar no fluxo
+            COUNT(*) FILTER (
+              WHERE is_advance_payment = TRUE
+            )::integer AS advance_payment_count,
+
             ROUND(AVG(hours_emission_to_delivery_note) FILTER (
               WHERE type = 'OUTGOING'
+                AND is_advance_payment = FALSE
                 AND hours_emission_to_delivery_note IS NOT NULL
             ), 2) AS outgoing_perf_avg_hours,
 
             MIN(hours_emission_to_delivery_note) FILTER (
               WHERE type = 'OUTGOING'
+                AND is_advance_payment = FALSE
                 AND hours_emission_to_delivery_note IS NOT NULL
             ) AS outgoing_perf_min_hours,
 
             MAX(hours_emission_to_delivery_note) FILTER (
               WHERE type = 'OUTGOING'
+                AND is_advance_payment = FALSE
                 AND hours_emission_to_delivery_note IS NOT NULL
             ) AS outgoing_perf_max_hours,
 
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
+                AND is_advance_payment = FALSE
                 AND hours_emission_to_delivery_note IS NOT NULL
             )::integer AS outgoing_perf_invoice_count,
 
-            -- Desempenho de entrada em HORAS decimais — devoluções excluídas
+            -- Desempenho de entrada em HORAS decimais — devoluções e adiantamentos excluídos
             ROUND(AVG(hours_batch_to_fully_scanned) FILTER (
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
+                AND is_advance_payment = FALSE
                 AND hours_batch_to_fully_scanned IS NOT NULL
             ), 2) AS incoming_perf_avg_hours,
 
             MIN(hours_batch_to_fully_scanned) FILTER (
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
+                AND is_advance_payment = FALSE
                 AND hours_batch_to_fully_scanned IS NOT NULL
             ) AS incoming_perf_min_hours,
 
             MAX(hours_batch_to_fully_scanned) FILTER (
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
+                AND is_advance_payment = FALSE
                 AND hours_batch_to_fully_scanned IS NOT NULL
             ) AS incoming_perf_max_hours,
 
             COUNT(*) FILTER (
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
+                AND is_advance_payment = FALSE
                 AND hours_batch_to_fully_scanned IS NOT NULL
             )::integer AS incoming_perf_invoice_count
 
           FROM invoice_operation_snapshots
           WHERE invoice_date = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
-            -- Snapshots de transportadoras internas já foram filtrados no upsertSnapshots,
-            -- mas garantimos aqui também via subquery caso existam registros antigos
-            AND (
-              transporter_id IS NULL
-              OR transporter_id NOT IN (
-                SELECT id FROM transporters
-                WHERE id_system IN (:excludedTransporterIdSystems)
-              )
-            )
         ),
         volumes_received AS (
           SELECT COUNT(*)::integer AS total
@@ -530,6 +555,7 @@ WHERE NOT (
           invoices_incoming_fully_processed,
           invoices_outgoing_fully_processed,
           supplier_return_count,
+          advance_payment_count,
           outgoing_perf_avg_hours,
           outgoing_perf_min_hours,
           outgoing_perf_max_hours,
@@ -554,6 +580,7 @@ WHERE NOT (
           sm.invoices_incoming_fully_processed,
           sm.invoices_outgoing_fully_processed,
           sm.supplier_return_count,
+          sm.advance_payment_count,
           sm.outgoing_perf_avg_hours,
           sm.outgoing_perf_min_hours,
           sm.outgoing_perf_max_hours,
@@ -578,6 +605,7 @@ WHERE NOT (
           invoices_incoming_fully_processed = EXCLUDED.invoices_incoming_fully_processed,
           invoices_outgoing_fully_processed = EXCLUDED.invoices_outgoing_fully_processed,
           supplier_return_count = EXCLUDED.supplier_return_count,
+          advance_payment_count = EXCLUDED.advance_payment_count,
           outgoing_perf_avg_hours = EXCLUDED.outgoing_perf_avg_hours,
           outgoing_perf_min_hours = EXCLUDED.outgoing_perf_min_hours,
           outgoing_perf_max_hours = EXCLUDED.outgoing_perf_max_hours,
@@ -615,6 +643,7 @@ WHERE NOT (
         AND ios.invoice_date IS NOT NULL
         AND ios.transporter_id IS NOT NULL
         AND ios.type = 'OUTGOING'
+        AND ios.is_advance_payment = FALSE
         AND t.id_system NOT IN (:excludedTransporterIdSystems)
       `,
       {
@@ -654,8 +683,8 @@ WHERE NOT (
             AND unit_business_id = :unitBusinessId
             AND transporter_id = :transporterId
             AND type = 'OUTGOING'
-            -- Devoluções de fornecedor não existem em OUTGOING, mas mantemos consistência
             AND is_supplier_return = FALSE
+            AND is_advance_payment = FALSE
         )
         INSERT INTO daily_transporter_facts (
           fact_date,
@@ -757,12 +786,11 @@ WHERE NOT (
           SELECT ios.*, i.number_system, i.description
           FROM invoice_operation_snapshots ios
           JOIN invoices i ON i.id = ios.invoice_id
-          -- Excluir transportadoras internas do drill-down
+          -- Adiantamentos aparecem no drill-down (is_advance_payment visível ao consumidor)
           LEFT JOIN transporters t ON t.id = ios.transporter_id
           WHERE ios.invoice_date = CAST(:date AS date)
             AND (CAST(:unitBusinessId AS uuid) IS NULL OR ios.unit_business_id = CAST(:unitBusinessId AS uuid))
             AND (CAST(:transporterId AS uuid) IS NULL OR ios.transporter_id = CAST(:transporterId AS uuid))
-            AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
           ORDER BY ios.hours_emission_to_delivery_note DESC NULLS LAST, ios.last_updated_at DESC
           `,
           {
@@ -771,7 +799,6 @@ WHERE NOT (
               date: filters.date,
               unitBusinessId: filters.unitBusinessId ?? null,
               transporterId: filters.transporterId ?? null,
-              excludedTransporterIdSystems: EXCLUDED_TRANSPORTER_ID_SYSTEMS,
             },
           },
         )

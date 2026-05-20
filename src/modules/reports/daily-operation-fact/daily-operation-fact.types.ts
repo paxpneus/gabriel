@@ -21,6 +21,7 @@ export interface DailyOperationFactAttributes {
   incoming_perf_min_hours?: number | string | null;
   incoming_perf_max_hours?: number | string | null;
   incoming_perf_invoice_count?: number;
+  advance_payment_count?: boolean;
   last_updated_at?: Date;
   createdAt?: Date;
   updatedAt?: Date;

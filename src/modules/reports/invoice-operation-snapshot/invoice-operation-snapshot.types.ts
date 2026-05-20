@@ -22,6 +22,7 @@ export interface InvoiceOperationSnapshotAttributes {
   hours_batch_to_fully_scanned?: number | string | null;
   is_supplier_return?: boolean;
   snapshot_status?: InvoiceOperationSnapshotStatus;
+  is_advance_payment?: boolean;
   last_updated_at?: Date;
   createdAt?: Date;
   updatedAt?: Date;
