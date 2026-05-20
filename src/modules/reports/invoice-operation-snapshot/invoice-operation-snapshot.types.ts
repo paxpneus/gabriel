@@ -18,8 +18,9 @@ export interface InvoiceOperationSnapshotAttributes {
   total_items_expected?: number;
   total_items_received?: number;
   scan_completion_pct?: number | string;
-  minutes_emission_to_delivery_note?: number | string | null;
-  minutes_batch_to_fully_scanned?: number | string | null;
+  hours_emission_to_delivery_note?: number | string | null;
+  hours_batch_to_fully_scanned?: number | string | null;
+  is_supplier_return?: boolean;
   snapshot_status?: InvoiceOperationSnapshotStatus;
   last_updated_at?: Date;
   createdAt?: Date;
@@ -39,8 +40,9 @@ export type InvoiceOperationSnapshotCreationAttributes = Optional<
   | "total_items_expected"
   | "total_items_received"
   | "scan_completion_pct"
-  | "minutes_emission_to_delivery_note"
-  | "minutes_batch_to_fully_scanned"
+  | "hours_emission_to_delivery_note"
+  | "hours_batch_to_fully_scanned"
+  | "is_supplier_return"
   | "snapshot_status"
   | "last_updated_at"
   | "createdAt"

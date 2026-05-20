@@ -8,6 +8,12 @@ import {
 
 const JOB_NAME = "daily_operation_report";
 
+/**
+ * Transportadoras internas (CD 12 e CD 17) excluídas de todo o fluxo analítico.
+ * id_system: '18130521578' (CD 12) e '18130513305' (CD 17)
+ */
+const EXCLUDED_TRANSPORTER_ID_SYSTEMS = ["18130521578", "18130513305"];
+
 interface CheckpointRow {
   last_processed_at: Date;
 }
@@ -192,16 +198,16 @@ export class DailyOperationReportRepository {
         JOIN affected a ON a.invoice_id = ii.invoice_id
         GROUP BY ii.invoice_id
       ),
-     scan_bounds AS (
-  SELECT
-    ebi.invoice_id,
-    MIN(esl.created_at) AS first_scan_at,
-    MAX(esl.created_at) AS last_scan_at
-  FROM expedition_scan_logs esl
-  JOIN expedition_batch_invoices ebi ON ebi.id = esl.expedition_batch_invoices_id
-  JOIN affected a ON a.invoice_id = ebi.invoice_id
-  GROUP BY ebi.invoice_id
-),
+      scan_bounds AS (
+        SELECT
+          ebi.invoice_id,
+          MIN(esl.created_at) AS first_scan_at,
+          MAX(esl.created_at) AS last_scan_at
+        FROM expedition_scan_logs esl
+        JOIN expedition_batch_invoices ebi ON ebi.id = esl.expedition_batch_invoices_id
+        JOIN affected a ON a.invoice_id = ebi.invoice_id
+        GROUP BY ebi.invoice_id
+      ),
       batch_data AS (
         SELECT DISTINCT ON (ebi.invoice_id)
           ebi.invoice_id,
@@ -212,6 +218,17 @@ export class DailyOperationReportRepository {
         JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
         JOIN affected a ON a.invoice_id = ebi.invoice_id
         ORDER BY ebi.invoice_id, ebi.created_at ASC
+      ),
+      -- Identifica se a invoice é devolução de fornecedor:
+      -- INCOMING onde sender_cnpj bate com algum CNPJ de unit_business cadastrado no sistema.
+      supplier_returns AS (
+        SELECT
+          i.id AS invoice_id,
+          TRUE AS is_supplier_return
+        FROM invoices i
+        JOIN affected a ON a.invoice_id = i.id
+        JOIN unit_businesses ub ON ub.cnpj = i.sender_cnpj
+        WHERE i.type = 'INCOMING'
       ),
       snapshot_source AS (
         SELECT
@@ -231,39 +248,54 @@ export class DailyOperationReportRepository {
             ELSE ROUND((COALESCE(it.total_received, 0)::numeric / it.total_expected::numeric) * 100, 2)
           END AS scan_completion_pct,
           CASE
-  WHEN i.type = 'INCOMING'
-    AND COALESCE(it.total_expected, 0) > 0
-    AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
-    THEN sb.last_scan_at   -- NULL se não tem scan, o que é correto
-  WHEN i.type = 'OUTGOING' AND bd.delivery_note_generated_at IS NOT NULL
-    THEN bd.delivery_note_generated_at
-  ELSE NULL
-END AS fully_processed_at,
+            WHEN i.type = 'INCOMING'
+              AND COALESCE(it.total_expected, 0) > 0
+              AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
+              THEN sb.last_scan_at
+            WHEN i.type = 'OUTGOING' AND bd.delivery_note_generated_at IS NOT NULL
+              THEN bd.delivery_note_generated_at
+            ELSE NULL
+          END AS fully_processed_at,
           CASE
             WHEN i.type = 'OUTGOING'
               AND i.emitted_at IS NOT NULL
               AND bd.delivery_note_generated_at IS NOT NULL
-              THEN ROUND((EXTRACT(EPOCH FROM (bd.delivery_note_generated_at - i.emitted_at::timestamptz)) / 60)::numeric, 2)
+              -- Convertido de minutos para horas decimais (/ 60)
+              THEN ROUND((EXTRACT(EPOCH FROM (bd.delivery_note_generated_at - i.emitted_at::timestamptz)) / 3600)::numeric, 2)
             ELSE NULL
-          END AS minutes_emission_to_delivery_note,
-         CASE
-  WHEN i.type = 'INCOMING'
-    AND COALESCE(it.total_expected, 0) > 0
-    AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
-    AND sb.last_scan_at IS NOT NULL
-    THEN ROUND((EXTRACT(EPOCH FROM (sb.last_scan_at - COALESCE(i.received_at, i.emitted_at)::timestamptz)) / 60)::numeric, 2)
-  ELSE NULL
-END AS minutes_batch_to_fully_scanned,
+          END AS hours_emission_to_delivery_note,
+          CASE
+            WHEN i.type = 'INCOMING'
+              AND COALESCE(it.total_expected, 0) > 0
+              AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
+              AND sb.last_scan_at IS NOT NULL
+              -- Convertido de minutos para horas decimais (/ 60)
+              THEN ROUND((EXTRACT(EPOCH FROM (sb.last_scan_at - COALESCE(i.received_at, i.emitted_at)::timestamptz)) / 3600)::numeric, 2)
+            ELSE NULL
+          END AS hours_batch_to_fully_scanned,
           CASE
             WHEN i.status = 'CANCELLED' THEN 'cancelled'
             WHEN i.status = 'FINISHED' THEN 'completed'
             ELSE 'open'
-          END AS snapshot_status
+          END AS snapshot_status,
+          -- Flag de devolução de fornecedor: INCOMING cujo sender_cnpj é de uma filial
+          COALESCE(sr.is_supplier_return, FALSE) AS is_supplier_return
         FROM invoices i
         JOIN affected a ON a.invoice_id = i.id
         LEFT JOIN item_totals it ON it.invoice_id = i.id
         LEFT JOIN scan_bounds sb ON sb.invoice_id = i.id
         LEFT JOIN batch_data bd ON bd.invoice_id = i.id
+        LEFT JOIN supplier_returns sr ON sr.invoice_id = i.id
+        -- Dois joins separados para resolver transporter: da invoice e do batch
+        -- O COALESCE no WHERE não pode referenciar bd antes do join estar declarado
+        LEFT JOIN transporters t_inv ON t_inv.id = i.transporter_id
+        LEFT JOIN transporters t_bat ON t_bat.id = bd.batch_transporter_id
+        WHERE NOT (
+          -- Excluir apenas quando o transporter efetivo for explicitamente um dos internos.
+          -- NOT IN com NULL retorna NULL (não filtra), então testamos IS NOT NULL antes.
+          COALESCE(t_inv.id_system, t_bat.id_system) IS NOT NULL
+          AND COALESCE(t_inv.id_system, t_bat.id_system) = ANY(ARRAY[:excludedTransporterIdSystems])
+        )
       )
       INSERT INTO invoice_operation_snapshots (
         invoice_id,
@@ -279,9 +311,10 @@ END AS minutes_batch_to_fully_scanned,
         total_items_expected,
         total_items_received,
         scan_completion_pct,
-        minutes_emission_to_delivery_note,
-        minutes_batch_to_fully_scanned,
+        hours_emission_to_delivery_note,
+        hours_batch_to_fully_scanned,
         snapshot_status,
+        is_supplier_return,
         last_updated_at,
         created_at,
         updated_at
@@ -300,9 +333,10 @@ END AS minutes_batch_to_fully_scanned,
         total_items_expected,
         total_items_received,
         scan_completion_pct,
-        minutes_emission_to_delivery_note,
-        minutes_batch_to_fully_scanned,
+        hours_emission_to_delivery_note,
+        hours_batch_to_fully_scanned,
         snapshot_status,
+        is_supplier_return,
         NOW(),
         NOW(),
         NOW()
@@ -320,13 +354,19 @@ END AS minutes_batch_to_fully_scanned,
         total_items_expected = EXCLUDED.total_items_expected,
         total_items_received = EXCLUDED.total_items_received,
         scan_completion_pct = EXCLUDED.scan_completion_pct,
-        minutes_emission_to_delivery_note = EXCLUDED.minutes_emission_to_delivery_note,
-        minutes_batch_to_fully_scanned = EXCLUDED.minutes_batch_to_fully_scanned,
+        hours_emission_to_delivery_note = EXCLUDED.hours_emission_to_delivery_note,
+        hours_batch_to_fully_scanned = EXCLUDED.hours_batch_to_fully_scanned,
         snapshot_status = EXCLUDED.snapshot_status,
+        is_supplier_return = EXCLUDED.is_supplier_return,
         last_updated_at = NOW(),
         updated_at = NOW()
       `,
-      { replacements: { invoiceIds } },
+      {
+        replacements: {
+          invoiceIds,
+          excludedTransporterIdSystems: EXCLUDED_TRANSPORTER_ID_SYSTEMS,
+        },
+      },
     );
   }
 
@@ -355,40 +395,125 @@ END AS minutes_batch_to_fully_scanned,
           SELECT
             CAST(:factDate AS date) AS fact_date,
             CAST(:unitBusinessId AS uuid) AS unit_business_id,
-            COUNT(*) FILTER (WHERE type = 'INCOMING')::integer AS invoices_incoming_count,
-            COUNT(*) FILTER (WHERE type = 'OUTGOING')::integer AS invoices_outgoing_count,
-            COUNT(*) FILTER (WHERE type = 'INCOMING')::integer AS invoices_incoming_total,
-            COUNT(*) FILTER (WHERE type = 'OUTGOING')::integer AS invoices_outgoing_total,
-            COUNT(*) FILTER (WHERE type = 'INCOMING' AND fully_processed_at IS NOT NULL)::integer AS invoices_incoming_fully_processed,
-            COUNT(*) FILTER (WHERE type = 'OUTGOING' AND fully_processed_at IS NOT NULL)::integer AS invoices_outgoing_fully_processed,
-            ROUND(AVG(minutes_emission_to_delivery_note) FILTER (WHERE type = 'OUTGOING' AND minutes_emission_to_delivery_note IS NOT NULL), 2) AS outgoing_perf_avg_minutes,
-            MIN(minutes_emission_to_delivery_note) FILTER (WHERE type = 'OUTGOING' AND minutes_emission_to_delivery_note IS NOT NULL) AS outgoing_perf_min_minutes,
-            MAX(minutes_emission_to_delivery_note) FILTER (WHERE type = 'OUTGOING' AND minutes_emission_to_delivery_note IS NOT NULL) AS outgoing_perf_max_minutes,
-            COUNT(*) FILTER (WHERE type = 'OUTGOING' AND minutes_emission_to_delivery_note IS NOT NULL)::integer AS outgoing_perf_invoice_count,
-            ROUND(AVG(minutes_batch_to_fully_scanned) FILTER (WHERE type = 'INCOMING' AND minutes_batch_to_fully_scanned IS NOT NULL), 2) AS incoming_perf_avg_minutes,
-            MIN(minutes_batch_to_fully_scanned) FILTER (WHERE type = 'INCOMING' AND minutes_batch_to_fully_scanned IS NOT NULL) AS incoming_perf_min_minutes,
-            MAX(minutes_batch_to_fully_scanned) FILTER (WHERE type = 'INCOMING' AND minutes_batch_to_fully_scanned IS NOT NULL) AS incoming_perf_max_minutes,
-            COUNT(*) FILTER (WHERE type = 'INCOMING' AND minutes_batch_to_fully_scanned IS NOT NULL)::integer AS incoming_perf_invoice_count
+
+            -- Contar apenas notas que NÃO são devolução de fornecedor e NÃO são de transportadora interna
+            COUNT(*) FILTER (
+              WHERE type = 'INCOMING'
+                AND is_supplier_return = FALSE
+            )::integer AS invoices_incoming_count,
+
+            COUNT(*) FILTER (
+              WHERE type = 'OUTGOING'
+            )::integer AS invoices_outgoing_count,
+
+            COUNT(*) FILTER (
+              WHERE type = 'INCOMING'
+                AND is_supplier_return = FALSE
+            )::integer AS invoices_incoming_total,
+
+            COUNT(*) FILTER (
+              WHERE type = 'OUTGOING'
+            )::integer AS invoices_outgoing_total,
+
+            -- Completude: excluir devoluções de fornecedor das entradas
+            COUNT(*) FILTER (
+              WHERE type = 'INCOMING'
+                AND is_supplier_return = FALSE
+                AND fully_processed_at IS NOT NULL
+            )::integer AS invoices_incoming_fully_processed,
+
+            COUNT(*) FILTER (
+              WHERE type = 'OUTGOING'
+                AND fully_processed_at IS NOT NULL
+            )::integer AS invoices_outgoing_fully_processed,
+
+            -- Devoluções de fornecedor: contagem separada, sem entrar no fluxo
+            COUNT(*) FILTER (
+              WHERE type = 'INCOMING'
+                AND is_supplier_return = TRUE
+            )::integer AS supplier_return_count,
+
+            -- Devoluções excluídas do desempenho de saída (não se aplica pois são INCOMING)
+            ROUND(AVG(hours_emission_to_delivery_note) FILTER (
+              WHERE type = 'OUTGOING'
+                AND hours_emission_to_delivery_note IS NOT NULL
+            ), 2) AS outgoing_perf_avg_hours,
+
+            MIN(hours_emission_to_delivery_note) FILTER (
+              WHERE type = 'OUTGOING'
+                AND hours_emission_to_delivery_note IS NOT NULL
+            ) AS outgoing_perf_min_hours,
+
+            MAX(hours_emission_to_delivery_note) FILTER (
+              WHERE type = 'OUTGOING'
+                AND hours_emission_to_delivery_note IS NOT NULL
+            ) AS outgoing_perf_max_hours,
+
+            COUNT(*) FILTER (
+              WHERE type = 'OUTGOING'
+                AND hours_emission_to_delivery_note IS NOT NULL
+            )::integer AS outgoing_perf_invoice_count,
+
+            -- Desempenho de entrada em HORAS decimais — devoluções excluídas
+            ROUND(AVG(hours_batch_to_fully_scanned) FILTER (
+              WHERE type = 'INCOMING'
+                AND is_supplier_return = FALSE
+                AND hours_batch_to_fully_scanned IS NOT NULL
+            ), 2) AS incoming_perf_avg_hours,
+
+            MIN(hours_batch_to_fully_scanned) FILTER (
+              WHERE type = 'INCOMING'
+                AND is_supplier_return = FALSE
+                AND hours_batch_to_fully_scanned IS NOT NULL
+            ) AS incoming_perf_min_hours,
+
+            MAX(hours_batch_to_fully_scanned) FILTER (
+              WHERE type = 'INCOMING'
+                AND is_supplier_return = FALSE
+                AND hours_batch_to_fully_scanned IS NOT NULL
+            ) AS incoming_perf_max_hours,
+
+            COUNT(*) FILTER (
+              WHERE type = 'INCOMING'
+                AND is_supplier_return = FALSE
+                AND hours_batch_to_fully_scanned IS NOT NULL
+            )::integer AS incoming_perf_invoice_count
+
           FROM invoice_operation_snapshots
           WHERE invoice_date = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
+            -- Snapshots de transportadoras internas já foram filtrados no upsertSnapshots,
+            -- mas garantimos aqui também via subquery caso existam registros antigos
+            AND (
+              transporter_id IS NULL
+              OR transporter_id NOT IN (
+                SELECT id FROM transporters
+                WHERE id_system IN (:excludedTransporterIdSystems)
+              )
+            )
         ),
         volumes_received AS (
-  SELECT COUNT(*)::integer AS total
-  FROM expedition_scan_logs esl
-  JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
-  WHERE DATE(esl.created_at) = CAST(:factDate AS date)
-    AND eb.unit_business_id = :unitBusinessId
-    AND eb.type = 'INCOMING'
-),
+          SELECT COUNT(*)::integer AS total
+          FROM expedition_scan_logs esl
+          JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
+          -- Excluir transportadoras internas nos volumes recebidos
+          LEFT JOIN transporters t ON t.id = eb.transporters_id
+          WHERE DATE(esl.created_at) = CAST(:factDate AS date)
+            AND eb.unit_business_id = :unitBusinessId
+            AND eb.type = 'INCOMING'
+            AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
+        ),
         volumes_dispatched AS (
-  SELECT COUNT(*)::integer AS total
-  FROM expedition_scan_logs esl
-  JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
-  WHERE DATE(esl.created_at) = CAST(:factDate AS date)
-    AND eb.unit_business_id = :unitBusinessId
-    AND eb.type = 'OUTGOING'
-)
+          SELECT COUNT(*)::integer AS total
+          FROM expedition_scan_logs esl
+          JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
+          -- Excluir transportadoras internas nos volumes expedidos
+          LEFT JOIN transporters t ON t.id = eb.transporters_id
+          WHERE DATE(esl.created_at) = CAST(:factDate AS date)
+            AND eb.unit_business_id = :unitBusinessId
+            AND eb.type = 'OUTGOING'
+            AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
+        )
         INSERT INTO daily_operation_facts (
           fact_date,
           unit_business_id,
@@ -400,13 +525,14 @@ END AS minutes_batch_to_fully_scanned,
           invoices_outgoing_total,
           invoices_incoming_fully_processed,
           invoices_outgoing_fully_processed,
-          outgoing_perf_avg_minutes,
-          outgoing_perf_min_minutes,
-          outgoing_perf_max_minutes,
+          supplier_return_count,
+          outgoing_perf_avg_hours,
+          outgoing_perf_min_hours,
+          outgoing_perf_max_hours,
           outgoing_perf_invoice_count,
-          incoming_perf_avg_minutes,
-          incoming_perf_min_minutes,
-          incoming_perf_max_minutes,
+          incoming_perf_avg_hours,
+          incoming_perf_min_hours,
+          incoming_perf_max_hours,
           incoming_perf_invoice_count,
           last_updated_at,
           created_at,
@@ -423,13 +549,14 @@ END AS minutes_batch_to_fully_scanned,
           sm.invoices_outgoing_total,
           sm.invoices_incoming_fully_processed,
           sm.invoices_outgoing_fully_processed,
-          sm.outgoing_perf_avg_minutes,
-          sm.outgoing_perf_min_minutes,
-          sm.outgoing_perf_max_minutes,
+          sm.supplier_return_count,
+          sm.outgoing_perf_avg_hours,
+          sm.outgoing_perf_min_hours,
+          sm.outgoing_perf_max_hours,
           sm.outgoing_perf_invoice_count,
-          sm.incoming_perf_avg_minutes,
-          sm.incoming_perf_min_minutes,
-          sm.incoming_perf_max_minutes,
+          sm.incoming_perf_avg_hours,
+          sm.incoming_perf_min_hours,
+          sm.incoming_perf_max_hours,
           sm.incoming_perf_invoice_count,
           NOW(),
           NOW(),
@@ -446,13 +573,14 @@ END AS minutes_batch_to_fully_scanned,
           invoices_outgoing_total = EXCLUDED.invoices_outgoing_total,
           invoices_incoming_fully_processed = EXCLUDED.invoices_incoming_fully_processed,
           invoices_outgoing_fully_processed = EXCLUDED.invoices_outgoing_fully_processed,
-          outgoing_perf_avg_minutes = EXCLUDED.outgoing_perf_avg_minutes,
-          outgoing_perf_min_minutes = EXCLUDED.outgoing_perf_min_minutes,
-          outgoing_perf_max_minutes = EXCLUDED.outgoing_perf_max_minutes,
+          supplier_return_count = EXCLUDED.supplier_return_count,
+          outgoing_perf_avg_hours = EXCLUDED.outgoing_perf_avg_hours,
+          outgoing_perf_min_hours = EXCLUDED.outgoing_perf_min_hours,
+          outgoing_perf_max_hours = EXCLUDED.outgoing_perf_max_hours,
           outgoing_perf_invoice_count = EXCLUDED.outgoing_perf_invoice_count,
-          incoming_perf_avg_minutes = EXCLUDED.incoming_perf_avg_minutes,
-          incoming_perf_min_minutes = EXCLUDED.incoming_perf_min_minutes,
-          incoming_perf_max_minutes = EXCLUDED.incoming_perf_max_minutes,
+          incoming_perf_avg_hours = EXCLUDED.incoming_perf_avg_hours,
+          incoming_perf_min_hours = EXCLUDED.incoming_perf_min_hours,
+          incoming_perf_max_hours = EXCLUDED.incoming_perf_max_hours,
           incoming_perf_invoice_count = EXCLUDED.incoming_perf_invoice_count,
           last_updated_at = NOW(),
           updated_at = NOW()
@@ -461,6 +589,7 @@ END AS minutes_batch_to_fully_scanned,
           replacements: {
             factDate: key.fact_date,
             unitBusinessId: key.unit_business_id,
+            excludedTransporterIdSystems: EXCLUDED_TRANSPORTER_ID_SYSTEMS,
           },
         },
       );
@@ -474,16 +603,22 @@ END AS minutes_batch_to_fully_scanned,
 
     return sequelize.query<AffectedTransporterFactKey>(
       `
-      SELECT DISTINCT invoice_date AS fact_date, unit_business_id, transporter_id
-      FROM invoice_operation_snapshots
-      WHERE invoice_id IN (:invoiceIds)
-        AND invoice_date IS NOT NULL
-        AND transporter_id IS NOT NULL
-        AND type = 'OUTGOING'
+      SELECT DISTINCT ios.invoice_date AS fact_date, ios.unit_business_id, ios.transporter_id
+      FROM invoice_operation_snapshots ios
+      -- Excluir transportadoras internas dos facts de transportadora
+      JOIN transporters t ON t.id = ios.transporter_id
+      WHERE ios.invoice_id IN (:invoiceIds)
+        AND ios.invoice_date IS NOT NULL
+        AND ios.transporter_id IS NOT NULL
+        AND ios.type = 'OUTGOING'
+        AND t.id_system NOT IN (:excludedTransporterIdSystems)
       `,
       {
         type: QueryTypes.SELECT,
-        replacements: { invoiceIds },
+        replacements: {
+          invoiceIds,
+          excludedTransporterIdSystems: EXCLUDED_TRANSPORTER_ID_SYSTEMS,
+        },
       },
     );
   }
@@ -495,14 +630,17 @@ END AS minutes_batch_to_fully_scanned,
       await sequelize.query(
         `
         WITH volumes_dispatched AS (
-  SELECT COUNT(*)::integer AS total
-  FROM expedition_scan_logs esl
-  JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
-  WHERE DATE(esl.created_at) = CAST(:factDate AS date)
-    AND eb.unit_business_id = :unitBusinessId
-    AND eb.transporters_id = :transporterId
-    AND eb.type = 'OUTGOING'  
-),
+          SELECT COUNT(*)::integer AS total
+          FROM expedition_scan_logs esl
+          JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
+          -- Garantia dupla: excluir transportadoras internas
+          LEFT JOIN transporters t ON t.id = eb.transporters_id
+          WHERE DATE(esl.created_at) = CAST(:factDate AS date)
+            AND eb.unit_business_id = :unitBusinessId
+            AND eb.transporters_id = :transporterId
+            AND eb.type = 'OUTGOING'
+            AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
+        ),
         invoice_metrics AS (
           SELECT
             COUNT(*)::integer AS invoices_count,
@@ -512,6 +650,8 @@ END AS minutes_batch_to_fully_scanned,
             AND unit_business_id = :unitBusinessId
             AND transporter_id = :transporterId
             AND type = 'OUTGOING'
+            -- Devoluções de fornecedor não existem em OUTGOING, mas mantemos consistência
+            AND is_supplier_return = FALSE
         )
         INSERT INTO daily_transporter_facts (
           fact_date,
@@ -548,6 +688,7 @@ END AS minutes_batch_to_fully_scanned,
             factDate: key.fact_date,
             unitBusinessId: key.unit_business_id,
             transporterId: key.transporter_id,
+            excludedTransporterIdSystems: EXCLUDED_TRANSPORTER_ID_SYSTEMS,
           },
         },
       );
@@ -588,7 +729,9 @@ END AS minutes_batch_to_fully_scanned,
       SELECT dtf.*, t.name AS transporter_name
       FROM daily_transporter_facts dtf
       JOIN transporters t ON t.id = dtf.transporter_id
+      -- Excluir transportadoras internas da listagem do relatório
       WHERE dtf.fact_date = CAST(:date AS date)
+        AND t.id_system NOT IN (:excludedTransporterIdSystems)
         AND (CAST(:unitBusinessId AS uuid) IS NULL OR dtf.unit_business_id = CAST(:unitBusinessId AS uuid))
         AND (CAST(:transporterId AS uuid) IS NULL OR dtf.transporter_id = CAST(:transporterId AS uuid))
       ORDER BY t.name ASC
@@ -599,6 +742,7 @@ END AS minutes_batch_to_fully_scanned,
           date: filters.date,
           unitBusinessId: filters.unitBusinessId ?? null,
           transporterId: filters.transporterId ?? null,
+          excludedTransporterIdSystems: EXCLUDED_TRANSPORTER_ID_SYSTEMS,
         },
       },
     );
@@ -607,12 +751,15 @@ END AS minutes_batch_to_fully_scanned,
       ? await sequelize.query(
           `
           SELECT ios.*, i.number_system, i.description
-FROM invoice_operation_snapshots ios
-JOIN invoices i ON i.id = ios.invoice_id
-WHERE ios.invoice_date = CAST(:date AS date)
-  AND (CAST(:unitBusinessId AS uuid) IS NULL OR ios.unit_business_id = CAST(:unitBusinessId AS uuid))
-  AND (CAST(:transporterId AS uuid) IS NULL OR ios.transporter_id = CAST(:transporterId AS uuid))
-ORDER BY ios.minutes_emission_to_delivery_note DESC NULLS LAST, ios.last_updated_at DESC
+          FROM invoice_operation_snapshots ios
+          JOIN invoices i ON i.id = ios.invoice_id
+          -- Excluir transportadoras internas do drill-down
+          LEFT JOIN transporters t ON t.id = ios.transporter_id
+          WHERE ios.invoice_date = CAST(:date AS date)
+            AND (CAST(:unitBusinessId AS uuid) IS NULL OR ios.unit_business_id = CAST(:unitBusinessId AS uuid))
+            AND (CAST(:transporterId AS uuid) IS NULL OR ios.transporter_id = CAST(:transporterId AS uuid))
+            AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
+          ORDER BY ios.hours_emission_to_delivery_note DESC NULLS LAST, ios.last_updated_at DESC
           `,
           {
             type: QueryTypes.SELECT,
@@ -620,6 +767,7 @@ ORDER BY ios.minutes_emission_to_delivery_note DESC NULLS LAST, ios.last_updated
               date: filters.date,
               unitBusinessId: filters.unitBusinessId ?? null,
               transporterId: filters.transporterId ?? null,
+              excludedTransporterIdSystems: EXCLUDED_TRANSPORTER_ID_SYSTEMS,
             },
           },
         )

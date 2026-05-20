@@ -21,13 +21,14 @@ class DailyOperationFact
   public invoices_outgoing_total?: number;
   public invoices_incoming_fully_processed?: number;
   public invoices_outgoing_fully_processed?: number;
-  public outgoing_perf_avg_minutes?: number | string | null;
-  public outgoing_perf_min_minutes?: number | string | null;
-  public outgoing_perf_max_minutes?: number | string | null;
+  public supplier_return_count?: number;
+  public outgoing_perf_avg_hours?: number | string | null;
+  public outgoing_perf_min_hours?: number | string | null;
+  public outgoing_perf_max_hours?: number | string | null;
   public outgoing_perf_invoice_count?: number;
-  public incoming_perf_avg_minutes?: number | string | null;
-  public incoming_perf_min_minutes?: number | string | null;
-  public incoming_perf_max_minutes?: number | string | null;
+  public incoming_perf_avg_hours?: number | string | null;
+  public incoming_perf_min_hours?: number | string | null;
+  public incoming_perf_max_hours?: number | string | null;
   public incoming_perf_invoice_count?: number;
   public last_updated_at?: Date;
 
@@ -66,13 +67,14 @@ DailyOperationFact.init(
       type: DataTypes.INTEGER,
       defaultValue: 0,
     },
-    outgoing_perf_avg_minutes: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    outgoing_perf_min_minutes: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    outgoing_perf_max_minutes: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    supplier_return_count: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+    outgoing_perf_avg_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    outgoing_perf_min_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    outgoing_perf_max_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     outgoing_perf_invoice_count: { type: DataTypes.INTEGER, defaultValue: 0 },
-    incoming_perf_avg_minutes: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    incoming_perf_min_minutes: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    incoming_perf_max_minutes: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    incoming_perf_avg_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    incoming_perf_min_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    incoming_perf_max_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     incoming_perf_invoice_count: { type: DataTypes.INTEGER, defaultValue: 0 },
     last_updated_at: {
       type: DataTypes.DATE,
