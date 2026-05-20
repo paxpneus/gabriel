@@ -60,6 +60,20 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             ? { [Op.in]: value }
             : value,
         }),
+        pendingProcess: (value) => {
+          if (!value || value === "false") return {};
+          return {
+            [Op.or]: [
+              { batch_generated: false },
+              { printed_label: false },
+              {
+                status: {
+                  [Op.notIn]: ["FINISHED", "CANCELLED"],
+                },
+              },
+            ],
+          };
+        },
       },
     };
   }
@@ -138,7 +152,6 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   }
 
   async scheduleInvoice(id: string, expectedDate: string) {
-
     if (!expectedDate) {
       throw new Error("Data inválida");
     }
@@ -152,7 +165,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     const expectedBR = formatToBrazilDate(expectedDate);
 
     if (expectedBR < todayBR) {
-      throw new Error("Data inválida, não é possível agendar notas para dias anteriores a hoje!");
+      throw new Error(
+        "Data inválida, não é possível agendar notas para dias anteriores a hoje!",
+      );
     }
 
     const invoice = await this.findById(id);
