@@ -34,7 +34,9 @@ export class DailyOperationReportRepository {
     );
 
     if (!rows[0]) {
-      throw new Error("Não foi possível inicializar o checkpoint daily_operation_report.");
+      throw new Error(
+        "Não foi possível inicializar o checkpoint daily_operation_report.",
+      );
     }
 
     return rows[0].last_processed_at;
@@ -190,16 +192,16 @@ export class DailyOperationReportRepository {
         JOIN affected a ON a.invoice_id = ii.invoice_id
         GROUP BY ii.invoice_id
       ),
-      scan_bounds AS (
-        SELECT
-          ii.invoice_id,
-          MIN(esl.created_at) AS first_scan_at,
-          MAX(esl.created_at) AS last_scan_at
-        FROM entrance_scan_logs esl
-        JOIN invoice_items ii ON ii.id = esl.invoice_items_id
-        JOIN affected a ON a.invoice_id = ii.invoice_id
-        GROUP BY ii.invoice_id
-      ),
+     scan_bounds AS (
+  SELECT
+    ebi.invoice_id,
+    MIN(esl.created_at) AS first_scan_at,
+    MAX(esl.created_at) AS last_scan_at
+  FROM expedition_scan_logs esl
+  JOIN expedition_batch_invoices ebi ON ebi.id = esl.expedition_batch_invoices_id
+  JOIN affected a ON a.invoice_id = ebi.invoice_id
+  GROUP BY ebi.invoice_id
+),
       batch_data AS (
         SELECT DISTINCT ON (ebi.invoice_id)
           ebi.invoice_id,
@@ -218,14 +220,18 @@ export class DailyOperationReportRepository {
           COALESCE(i.transporter_id, bd.batch_transporter_id) AS transporter_id,
           i.type,
           CASE
-            WHEN i.type = 'OUTGOING' THEN DATE(COALESCE(
-              bd.delivery_note_generated_at,
-              bd.batch_created_at,
-              i.emitted_at,
-              i.created_at
-            ))
-            ELSE DATE(i.created_at)
-          END AS invoice_date,
+  WHEN i.type = 'OUTGOING' THEN DATE(COALESCE(
+    bd.delivery_note_generated_at,
+    bd.batch_created_at,
+    i.emitted_at,
+    i.created_at
+  ))
+  WHEN i.type = 'INCOMING' THEN DATE(COALESCE(
+    bd.batch_created_at,   -- data que entrou no lote
+    sb.first_scan_at,      -- ou primeiro scan
+    i.created_at           -- fallback
+  ))
+END AS invoice_date,
           i.emitted_at,
           bd.delivery_note_generated_at,
           sb.first_scan_at,
@@ -237,30 +243,30 @@ export class DailyOperationReportRepository {
             ELSE ROUND((COALESCE(it.total_received, 0)::numeric / it.total_expected::numeric) * 100, 2)
           END AS scan_completion_pct,
           CASE
-            WHEN i.type = 'INCOMING'
-              AND COALESCE(it.total_expected, 0) > 0
-              AND COALESCE(it.total_received, 0) = COALESCE(it.total_expected, 0)
-              THEN sb.last_scan_at
-            WHEN i.type = 'OUTGOING' AND bd.delivery_note_generated_at IS NOT NULL
-              THEN bd.delivery_note_generated_at
-            ELSE NULL
-          END AS fully_processed_at,
+  WHEN i.type = 'INCOMING'
+    AND COALESCE(it.total_expected, 0) > 0
+    AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
+     THEN sb.last_scan_at
+  WHEN i.type = 'OUTGOING' AND bd.delivery_note_generated_at IS NOT NULL
+    THEN bd.delivery_note_generated_at
+  ELSE NULL
+END AS fully_processed_at,
           CASE
             WHEN i.type = 'OUTGOING'
               AND i.emitted_at IS NOT NULL
               AND bd.delivery_note_generated_at IS NOT NULL
-              THEN ROUND((EXTRACT(EPOCH FROM (bd.delivery_note_generated_at - i.emitted_at)) / 60)::numeric, 2)
+              THEN ROUND((EXTRACT(EPOCH FROM (bd.delivery_note_generated_at - i.emitted_at::timestamptz)) / 60)::numeric, 2)
             ELSE NULL
           END AS minutes_emission_to_delivery_note,
           CASE
-            WHEN i.type = 'INCOMING'
-              AND bd.batch_created_at IS NOT NULL
-              AND COALESCE(it.total_expected, 0) > 0
-              AND COALESCE(it.total_received, 0) = COALESCE(it.total_expected, 0)
-              AND sb.last_scan_at IS NOT NULL
-              THEN ROUND((EXTRACT(EPOCH FROM (sb.last_scan_at - bd.batch_created_at)) / 60)::numeric, 2)
-            ELSE NULL
-          END AS minutes_batch_to_fully_scanned,
+  WHEN i.type = 'INCOMING'
+    AND bd.batch_created_at IS NOT NULL
+    AND COALESCE(it.total_expected, 0) > 0
+    AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
+     THEN ROUND((EXTRACT(EPOCH FROM (sb.last_scan_at - i.emitted_at::timestamptz)) / 60)::numeric, 2)
+
+  ELSE NULL
+END AS minutes_batch_to_fully_scanned,
           CASE
             WHEN i.status = 'CANCELLED' THEN 'cancelled'
             WHEN i.status = 'FINISHED' THEN 'completed'
@@ -381,20 +387,21 @@ export class DailyOperationReportRepository {
             AND unit_business_id = :unitBusinessId
         ),
         volumes_received AS (
-          SELECT COUNT(*)::integer AS total
-          FROM entrance_scan_logs esl
-          JOIN invoice_items ii ON ii.id = esl.invoice_items_id
-          JOIN invoices i ON i.id = ii.invoice_id
-          WHERE DATE(esl.created_at) = CAST(:factDate AS date)
-            AND i.unit_business_id = :unitBusinessId
-        ),
+  SELECT COUNT(*)::integer AS total
+  FROM expedition_scan_logs esl
+  JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
+  WHERE DATE(esl.created_at) = CAST(:factDate AS date)
+    AND eb.unit_business_id = :unitBusinessId
+    AND eb.type = 'INCOMING'
+),
         volumes_dispatched AS (
-          SELECT COUNT(*)::integer AS total
-          FROM expedition_scan_logs esl
-          JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
-          WHERE DATE(esl.created_at) = CAST(:factDate AS date)
-            AND eb.unit_business_id = :unitBusinessId
-        )
+  SELECT COUNT(*)::integer AS total
+  FROM expedition_scan_logs esl
+  JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
+  WHERE DATE(esl.created_at) = CAST(:factDate AS date)
+    AND eb.unit_business_id = :unitBusinessId
+    AND eb.type = 'OUTGOING'
+)
         INSERT INTO daily_operation_facts (
           fact_date,
           unit_business_id,
@@ -485,6 +492,7 @@ export class DailyOperationReportRepository {
       WHERE invoice_id IN (:invoiceIds)
         AND invoice_date IS NOT NULL
         AND transporter_id IS NOT NULL
+        AND type = 'OUTGOING'
       `,
       {
         type: QueryTypes.SELECT,
@@ -500,13 +508,14 @@ export class DailyOperationReportRepository {
       await sequelize.query(
         `
         WITH volumes_dispatched AS (
-          SELECT COUNT(*)::integer AS total
-          FROM expedition_scan_logs esl
-          JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
-          WHERE DATE(esl.created_at) = CAST(:factDate AS date)
-            AND eb.unit_business_id = :unitBusinessId
-            AND eb.transporters_id = :transporterId
-        ),
+  SELECT COUNT(*)::integer AS total
+  FROM expedition_scan_logs esl
+  JOIN expedition_batches eb ON eb.id = esl.expedition_batch_id
+  WHERE DATE(esl.created_at) = CAST(:factDate AS date)
+    AND eb.unit_business_id = :unitBusinessId
+    AND eb.transporters_id = :transporterId
+    AND eb.type = 'OUTGOING'  
+),
         invoice_metrics AS (
           SELECT
             COUNT(*)::integer AS invoices_count,
@@ -515,6 +524,7 @@ export class DailyOperationReportRepository {
           WHERE invoice_date = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
             AND transporter_id = :transporterId
+            AND type = 'OUTGOING'
         )
         INSERT INTO daily_transporter_facts (
           fact_date,
