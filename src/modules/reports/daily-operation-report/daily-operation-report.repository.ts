@@ -234,7 +234,11 @@ export class DailyOperationReportRepository {
         SELECT
           i.id AS invoice_id,
           i.unit_business_id,
-          COALESCE(i.transporter_id, bd.batch_transporter_id) AS transporter_id,
+          -- Transporter efetivo: batch tem precedência sobre a nota
+          CASE
+            WHEN bd.invoice_id IS NOT NULL THEN bd.batch_transporter_id
+            ELSE i.transporter_id
+          END AS transporter_id,
           i.type,
           DATE(COALESCE(i.emitted_at, i.created_at)) AS invoice_date,
           i.emitted_at,
