@@ -219,18 +219,7 @@ export class DailyOperationReportRepository {
           i.unit_business_id,
           COALESCE(i.transporter_id, bd.batch_transporter_id) AS transporter_id,
           i.type,
-          CASE
-  WHEN i.type = 'OUTGOING' THEN DATE(COALESCE(
-    bd.delivery_note_generated_at,
-    bd.batch_created_at,
-    i.emitted_at,
-    i.created_at
-  ))
-  WHEN i.type = 'INCOMING' THEN DATE(COALESCE(
-  i.created_at,
-  i.emitted_at
-))
-END AS invoice_date,
+          DATE(COALESCE(i.emitted_at, i.created_at)) AS invoice_date,
           i.emitted_at,
           bd.delivery_note_generated_at,
           sb.first_scan_at,
@@ -617,7 +606,7 @@ END AS minutes_batch_to_fully_scanned,
     const snapshots = filters.drillDown
       ? await sequelize.query(
           `
-          SELECT ios.*, i.number_system
+          SELECT ios.*, i.number_system, i.description
 FROM invoice_operation_snapshots ios
 JOIN invoices i ON i.id = ios.invoice_id
 WHERE ios.invoice_date = CAST(:date AS date)
