@@ -16,6 +16,8 @@ export interface ExpeditionBatchAttributes {
   transporters_id?: string | null;
   description?: string
   mode?: string;
+  delivery_note_generated_at?: Date | null;
+  finished_at?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -36,6 +38,8 @@ export interface ExpeditionBatchFull {
   id_system?: string;
   unit_business_id: string;
   total_volumes: number;
+  delivery_note_generated_at?: Date | null;
+  type?: string;
   mode?: string;
   createdAt?: Date;
   updatedAt?: Date;

@@ -26,6 +26,7 @@ import { BlingDirectUpsertQueue } from "./../modules/handlers/bling/services/bli
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { BlingTokenRefreshQueue } from './../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue';
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
+import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
 
 export const serverAdapter = new ExpressAdapter();
 
@@ -88,6 +89,7 @@ function buildQueues(workless: boolean) {
   const blingApiFetchQueue = new BlingApiFetchQueue({ workless });
   const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless })
   const blingDailyReconciler = new BlingMigrationQueue({ workless })
+  const dailyOperationReportQueue = new DailyOperationReportQueue({ workless })
 
   return {
     nfeQueue,
@@ -100,6 +102,7 @@ function buildQueues(workless: boolean) {
     blingApiFetchQueue,
     blingTokenRefreshQueue,
     blingDailyReconciler,
+    dailyOperationReportQueue,
   };
 }
 
@@ -116,6 +119,7 @@ export function registerQueues(app: Express) {
     blingApiFetchQueue,
     blingTokenRefreshQueue,
     blingDailyReconciler,
+    dailyOperationReportQueue,
   } = buildQueues(true); // workless: true → zero Workers na API
 
   // Scraping só para o BullBoard enxergar a fila, sem Worker
@@ -134,6 +138,7 @@ export function registerQueues(app: Express) {
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
   app.locals.BlingMigrationQueue = blingDailyReconciler;
+  app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
 
   serverAdapter.setBasePath("/admin/queues");
 
@@ -150,6 +155,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(blingApiFetchQueue.queue),
       new BullMQAdapter(blingTokenRefreshQueue.queue),
       new BullMQAdapter(blingDailyReconciler.queue),
+      new BullMQAdapter(dailyOperationReportQueue.queue),
     ],
     serverAdapter,
   });
@@ -174,6 +180,7 @@ export function startWorkers() {
     blingReconcilerQueue,
     blingTokenRefreshQueue,
     blingDailyReconciler,
+    dailyOperationReportQueue,
   } = buildQueues(false); // workless: false → Worker ativo em cada fila
 
   // reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
@@ -182,10 +189,12 @@ export function startWorkers() {
 
   // blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   // blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
+  dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
   console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
   console.log("  → BLING_ORDER_INGESTION, NFE_RECONCILER, BLING_RECONCILER");
+  console.log("  → DAILY_OPERATION_REPORT");
 }
 
 // ─── Chamado pelo container worker-scraping ───────────────────────────────────

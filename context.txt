@@ -1,0 +1,143 @@
+# CONTEXTO DO PROJETO — PAX PNEUS BACKEND
+
+Você está trabalhando no backend da **PAX Pneus**, uma rede de 30+ filiais de pneus.
+Antes de qualquer implementação, siga rigorosamente os passos abaixo.
+
+---
+
+## PASSO 1 — LEIA OS ARQUIVOS BASE DO PROJETO
+
+Leia os seguintes arquivos antes de escrever qualquer código. Eles definem os padrões que TODA entidade deve seguir:
+
+- `src/shared/base/base-controller.ts`
+- `src/shared/base/base-service.ts`
+- `src/shared/base/base-repository.ts`
+- `src/shared/base/base-redis.ts` *(RedisService + redisConnection)*
+- `src/shared/base/base-queue.ts` *(BaseQueueService)*
+
+### O que você aprenderá com esses arquivos:
+
+**BaseController** — expõe automaticamente as rotas: `GET /`, `GET /:id`, `POST /`, `POST /bulk`, `PUT /:id`, `DELETE /:id`, `DELETE /bulk`. Controllers específicos devem estender `BaseController<Model, Service>`, sobrescrever `middlewaresFor()` para injetar middlewares por rota, e chamar `this.extractQueryParams(req)` para obter os filtros de paginação.
+
+**BaseService** — métodos disponíveis sem precisar reimplementar: `findAll`, `paginate`, `findById`, `findOne`, `create`, `bulkCreate`, `update`, `bulkUpdate`, `delete`, `bulkDelete`. Para customizar filtros de query, sobrescreva `queryConfig` ou `normalizeFilters`. O `paginate` já integra com o `QueryParser`.
+
+**BaseRepository** — encapsula o Sequelize. Métodos: `findAll`, `findPaginated`, `findOne`, `findById`, `create`, `bulkCreate`, `update`, `bulkUpdate`, `delete`, `bulkDelete`. Sempre passe `FindOptions` para incluir `include`, `where`, `order` customizados.
+
+**RedisService** (`redisService`) — singleton exportado. Métodos: `get<T>(key)`, `set<T>(key, value, options?)`, `delete(key)`, `deleteByPattern(pattern)`. O `set` aceita opções de TTL (`EX`, `PX`), condição (`NX`, `XX`) e `GET`. Valores são serializados/desserializados como JSON automaticamente.
+
+**BaseQueueService** — usa BullMQ. Para criar uma fila, estenda `BaseQueueService<T>`, implemente o método `process(job: Job<T>)`. Métodos disponíveis: `add(data, jobId?)`, `addDelayed(data, jobId, delayMs)`, `scheduleRepeat({ every })`, `removeJob(jobId)`, `getJob(jobId)`. Jobs têm retry exponencial (5 tentativas, delay 30s) por padrão. Para jobs recorrentes (cron/interval), use `scheduleRepeat`.
+
+---
+
+## PASSO 2 — LEIA O ARQUIVO DE MODELAGEM DO BANCO
+
+Leia o arquivo:
+
+```
+modelagem_banco_dados.txt
+```
+
+Esse arquivo contém a modelagem completa do PostgreSQL com todos os domínios, campos, tipos, relacionamentos e pontos de atenção. É a fonte de verdade da estrutura de dados.
+
+### Domínios existentes (resumo):
+
+| Domínio | Tabelas principais |
+|---|---|
+| Integrações | `integrations`, `config_tokens`, `integration_mappings` |
+| Vendas | `customers`, `stores`, `orders`, `order_items`, `steps`, `order_histories` |
+| Warehouse | `unit_businesses`, `transporters`, `carrier_label_ranges`, `carrier_import_layouts`, `printer_configs` |
+| Usuários | `roles`, `users`, `user_config`, `user_unit_business` |
+| Entrada / Notas | `invoices`, `invoice_items`, `entrance_scan_logs`, `unmapped_invoice_products` |
+| Expedição | `expedition_batches`, `expedition_batch_items`, `expedition_batch_invoices`, `expedition_scan_logs` |
+| Estoque | `products`, `suppliers`, `product_supplier_maps`, `stocks`, `inventory_batches`, `inventory_batch_items`, `inventory_batch_logs` |
+| Analítico (novo) | `report_job_checkpoints`, `invoice_operation_snapshots`, `daily_operation_facts`, `daily_transporter_facts` |
+
+### Campos virtuais importantes (NÃO existem no banco):
+- `Invoice.total_read` → calcule sempre via `SUM(invoice_items.quantity_received)`
+- `Invoice.total_expected` → calcule sempre via `SUM(invoice_items.quantity_expected)`
+
+### Regras de completude de notas:
+- **INCOMING (entrada):** 100% concluída quando `SUM(quantity_received) = SUM(quantity_expected)`
+- **OUTGOING (saída):** 100% concluída quando `expedition_batches.delivery_note_generated_at IS NOT NULL` no batch ao qual a invoice está vinculada
+
+---
+
+## PASSO 3 — ENTENDA A ESTRUTURA DO PROJETO
+
+Cada entidade segue **exatamente** esta estrutura de módulo:
+
+```
+src/modules/<entidade>/
+├── <entidade>.model.ts          ← Model Sequelize (define campos, hooks, validações)
+├── <entidade>.types.ts          ← Tipos/interfaces TypeScript da entidade
+├── <entidade>.service.ts        ← Estende BaseService, lógica de negócio
+├── <entidade>.controller.ts     ← Estende BaseController, define middlewares e rotas extras
+├── <entidade>.repository.ts     ← Estende BaseRepository, queries específicas
+└── <entidade>.router.ts         ← Instancia controller e exporta o router
+```
+
+### Regras de criação de entidade:
+
+1. **Model** — usar `underscored: true`, `tableName` explícito, `UUID` como PK com `defaultValue: DataTypes.UUIDV4`. Hooks de lifecycle (`beforeCreate`, `beforeUpdate`) ficam no model.
+
+2. **Repository** — apenas queries. Lógica de negócio nunca entra aqui. Use `FindOptions` com `include` para JOINs. Queries analíticas com SQL bruto usam `sequelize.query()`.
+
+3. **Service** — orquestra regras de negócio. Pode usar `redisService` para cache e instanciar filas. Nunca acessa `req`/`res`. Sobrescreva `queryConfig` para customizar paginação padrão.
+
+4. **Controller** — apenas HTTP. Extrai dados de `req`, chama service, retorna resposta. Use `middlewaresFor()` para associar middlewares (auth, validação) por rota.
+
+5. **Router** — instancia o controller e exporta `controller.router`. Não define lógica aqui.
+
+### Associações Sequelize:
+Ficam centralizadas em `src/config/sequelize-associations.ts`. Ao criar uma nova entidade, adicione suas associações nesse arquivo dentro da função `setupAssociations()`.
+
+---
+
+## PASSO 4 — ENTENDA O PADRÃO DE ROTAS
+
+A rota HTTP de cada entidade é definida pelo **nome da pasta** do módulo.
+
+Exemplos:
+
+| Pasta do módulo | Rota HTTP |
+|---|---|
+| `src/modules/invoices/` | `/invoices` |
+| `src/modules/expedition-batches/` | `/expedition-batches` |
+| `src/modules/unit-businesses/` | `/unit-businesses` |
+| `src/modules/daily-operation-facts/` | `/daily-operation-facts` |
+
+O arquivo `<entidade>.router.ts` dentro da pasta exporta o router, que é registrado no app principal com o prefixo correspondente ao nome da pasta.
+
+Rotas base já providas pelo `BaseController` (não precisam ser redeclaradas):
+- `GET /invoices` → listagem paginada
+- `GET /invoices/:id` → busca por ID
+- `POST /invoices` → criação
+- `POST /invoices/bulk` → criação em massa
+- `PUT /invoices/:id` → atualização
+- `DELETE /invoices/:id` → deleção
+- `DELETE /invoices/bulk` → deleção em massa
+
+Rotas extras (específicas da entidade) são adicionadas no construtor do controller, após o `super(service)`.
+
+---
+
+## PASSO 5 — LEIA O PACKAGE.JSON
+
+Leia o arquivo `package.json` na raiz do projeto para saber exatamente quais bibliotecas estão disponíveis antes de sugerir ou usar qualquer dependência.
+
+Não assuma que uma lib está disponível só porque é comum. Se precisar de algo que não está no `package.json`, sinalize explicitamente e pergunte se pode ser adicionado.
+
+---
+
+## REGRAS GERAIS DE IMPLEMENTAÇÃO
+
+- **TypeScript estrito** — sem `any` desnecessário. Defina tipos em `<entidade>.types.ts`.
+- **Nunca altere models diretamente** para adicionar colunas — crie uma migration Sequelize primeiro.
+- **Migrations** — sempre via Sequelize CLI. Use `gen_random_uuid()` para UUIDs no PostgreSQL ou `DataTypes.UUIDV4` no Sequelize.
+- **Campos virtuais** — nunca dependa de `total_read`/`total_expected` de `Invoice` em queries de banco. Sempre calcule via SQL em `invoice_items`.
+- **Redis** — use o singleton `redisService` importado de `base-redis`. Nunca instancie `Redis` diretamente.
+- **Filas** — estenda `BaseQueueService`. Jobs recorrentes usam `scheduleRepeat`. Jobs pontuais usam `add` ou `addDelayed`.
+- **Jobs incrementais** — capture o timestamp de início antes de qualquer query e use-o como novo `last_processed_at` ao final. Nunca use `NOW()` ao final da execução.
+- **Upserts** — use `ON CONFLICT DO UPDATE` (Sequelize: `upsert` ou `bulkCreate` com `updateOnDuplicate`) para garantir idempotência.
+- **Padrão de resposta de erro** — siga o padrão do `BaseController`: `res.status(4xx/5xx).json({ error: error.message })`.
+- **underscored: true** — todos os models usam snake_case no banco. No código TypeScript, use camelCase; o Sequelize faz a conversão.

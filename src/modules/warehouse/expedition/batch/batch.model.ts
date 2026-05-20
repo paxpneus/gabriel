@@ -20,6 +20,8 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public transporters_id!: string | null; 
   public description?: string
   public mode?: string
+  public delivery_note_generated_at?: Date | null;
+  public finished_at?: Date | null;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -92,6 +94,14 @@ ExpeditionBatch.init(
       type: DataTypes.ENUM("REGULAR", "ADVANCED"),
       allowNull: false,
       defaultValue: 'REGULAR'
+    },
+    delivery_note_generated_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    finished_at: {
+      type: DataTypes.DATE,
+      allowNull: true,
     }
   },
   {
@@ -99,6 +109,17 @@ ExpeditionBatch.init(
     tableName: 'expedition_batches',
     timestamps: true,
     underscored: true,
+    hooks: {
+      beforeUpdate: (instance: ExpeditionBatch) => {
+        if (
+          instance.changed('status') &&
+          instance.status === 'FINISHED' &&
+          !instance.finished_at
+        ) {
+          instance.finished_at = new Date();
+        }
+      },
+    },
   }
 );
 

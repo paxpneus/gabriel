@@ -718,9 +718,15 @@ export class ExpeditionBatchService extends BaseService<
         s.invoice.items.map((i) => i.id),
       );
 
+      const batchUpdatePayload = {
+        status: "FINISHED" as const,
+        justification,
+        finished_at: sequelize.literal("COALESCE(finished_at, NOW())") as unknown as Date,
+      };
+
       await Promise.all([
         ExpeditionBatch.update(
-          { status: "FINISHED", justification },
+          batchUpdatePayload,
           { where: { id: batchId }, transaction: t },
         ),
         invoiceService.bulkUpdate(
@@ -736,6 +742,19 @@ export class ExpeditionBatchService extends BaseService<
 
     return this.findByIdFullBatch(batchId);
   }
+
+  async generateDeliveryNote(batchId: string) {
+  const batchInfo = await this.findByIdFullBatch(batchId)
+
+
+  if (!batchInfo.delivery_note_generated_at) {
+    await this.repository.update(batchId, { 
+    delivery_note_generated_at: new Date()
+  })
+  }
+  
+  return batchInfo
+}
 }
 
 export default new ExpeditionBatchService();
