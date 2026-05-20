@@ -29,8 +29,9 @@ class InvoiceOperationSnapshot
   public total_items_expected?: number;
   public total_items_received?: number;
   public scan_completion_pct?: number | string;
-  public minutes_emission_to_delivery_note?: number | string | null;
-  public minutes_batch_to_fully_scanned?: number | string | null;
+  public hours_emission_to_delivery_note?: number | string | null;
+  public hours_batch_to_fully_scanned?: number | string | null;
+  public is_supplier_return?: boolean;
   public snapshot_status?: InvoiceOperationSnapshotStatus;
   public last_updated_at?: Date;
 
@@ -102,13 +103,18 @@ InvoiceOperationSnapshot.init(
       type: DataTypes.DECIMAL(5, 2),
       defaultValue: 0,
     },
-    minutes_emission_to_delivery_note: {
+    hours_emission_to_delivery_note: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: true,
     },
-    minutes_batch_to_fully_scanned: {
+    hours_batch_to_fully_scanned: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: true,
+    },
+    is_supplier_return: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     snapshot_status: {
       type: DataTypes.STRING(20),
