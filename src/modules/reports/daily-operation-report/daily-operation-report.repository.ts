@@ -292,14 +292,14 @@ export class DailyOperationReportRepository {
         LEFT JOIN supplier_returns sr ON sr.invoice_id = i.id
         -- Dois joins separados para resolver transporter: da invoice e do batch
         -- O COALESCE no WHERE não pode referenciar bd antes do join estar declarado
-        LEFT JOIN transporters t_inv ON t_inv.id = i.transporter_id
-        LEFT JOIN transporters t_bat ON t_bat.id = bd.batch_transporter_id
-        WHERE NOT (
-          -- Excluir apenas quando o transporter efetivo for explicitamente um dos internos.
-          -- NOT IN com NULL retorna NULL (não filtra), então testamos IS NOT NULL antes.
-          COALESCE(t_inv.id_system, t_bat.id_system) IS NOT NULL
-          AND COALESCE(t_inv.id_system, t_bat.id_system) = ANY(ARRAY[:excludedTransporterIdSystems])
-        )
+        LEFT JOIN transporters t_eff ON t_eff.id = CASE
+  WHEN bd.invoice_id IS NOT NULL THEN bd.batch_transporter_id
+  ELSE i.transporter_id
+END
+WHERE NOT (
+  t_eff.id_system IS NOT NULL
+  AND t_eff.id_system = ANY(ARRAY[:excludedTransporterIdSystems])
+)
       )
       INSERT INTO invoice_operation_snapshots (
         invoice_id,
