@@ -32,6 +32,7 @@ class InvoiceOperationSnapshot
   public hours_emission_to_delivery_note?: number | string | null;
   public hours_batch_to_fully_scanned?: number | string | null;
   public is_supplier_return?: boolean;
+  public is_advance_payment?: boolean;
   public snapshot_status?: InvoiceOperationSnapshotStatus;
   public last_updated_at?: Date;
 
@@ -112,6 +113,11 @@ InvoiceOperationSnapshot.init(
       allowNull: true,
     },
     is_supplier_return: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    is_advance_payment: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false,
