@@ -36,6 +36,9 @@ import InventoryBatch from '../modules/inventory/stock-inventory/inventory-batch
 import InventoryBatchItems from '../modules/inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model';
 import InventoryBatchLogs from '../modules/inventory/stock-inventory/inventory-batch-logs/inventory-batch-logs.model';
 import UnmappedInvoiceProduct from '../modules/inventory/unmapped-invoice-product/unmapped-invoice-product.model';
+import InvoiceOperationSnapshot from '../modules/reports/invoice-operation-snapshot/invoice-operation-snapshot.model';
+import DailyOperationFact from '../modules/reports/daily-operation-fact/daily-operation-fact.model';
+import DailyTransporterFact from '../modules/reports/daily-transporter-fact/daily-transporter-fact.model';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -470,4 +473,60 @@ Invoice.hasMany(UnmappedInvoiceProduct, {
 UnmappedInvoiceProduct.belongsTo(Invoice, {
   foreignKey: 'invoice_id',
   as: 'invoice',
+});
+
+// ===== ANALYTICS REPORTS =====
+
+Invoice.hasOne(InvoiceOperationSnapshot, {
+  foreignKey: 'invoice_id',
+  as: 'operationSnapshot',
+});
+InvoiceOperationSnapshot.belongsTo(Invoice, {
+  foreignKey: 'invoice_id',
+  as: 'invoice',
+});
+
+UnitBusiness.hasMany(InvoiceOperationSnapshot, {
+  foreignKey: 'unit_business_id',
+  as: 'invoiceOperationSnapshots',
+});
+InvoiceOperationSnapshot.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+
+Transporter.hasMany(InvoiceOperationSnapshot, {
+  foreignKey: 'transporter_id',
+  as: 'invoiceOperationSnapshots',
+});
+InvoiceOperationSnapshot.belongsTo(Transporter, {
+  foreignKey: 'transporter_id',
+  as: 'transporter',
+});
+
+UnitBusiness.hasMany(DailyOperationFact, {
+  foreignKey: 'unit_business_id',
+  as: 'dailyOperationFacts',
+});
+DailyOperationFact.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+
+UnitBusiness.hasMany(DailyTransporterFact, {
+  foreignKey: 'unit_business_id',
+  as: 'dailyTransporterFacts',
+});
+DailyTransporterFact.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+
+Transporter.hasMany(DailyTransporterFact, {
+  foreignKey: 'transporter_id',
+  as: 'dailyTransporterFacts',
+});
+DailyTransporterFact.belongsTo(Transporter, {
+  foreignKey: 'transporter_id',
+  as: 'transporter',
 });

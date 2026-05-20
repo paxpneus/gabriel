@@ -28,7 +28,8 @@ export class ExpeditionBatchController extends BaseController<
         addInvoiceToBatch: [authenticate, userPermissions],
         addInvoicesToBatch: [authenticate, userPermissions],
         finishBatch: [authenticate, userPermissions],
-        getMultiplierScan: [authenticate, userPermissions]
+        getMultiplierScan: [authenticate, userPermissions],
+        generateDeliveryNote: [authenticate, userPermissions]
       };
     }
 
@@ -42,6 +43,8 @@ export class ExpeditionBatchController extends BaseController<
     this.router.get("/by-ids/get", ...this.mw("getBatches"), this.getBatches)
 
     this.router.get("/full/get", ...this.mw("getFullBatch"), this.getFullBatch)
+
+    this.router.get("/delivery-note/get", ...this.mw("generateDeliveryNote"), this.generateDeliveryNote)
 
     this.router.post("/add-invoice", ...this.mw("addInvoiceToBatch"), (req, res) => this.addInvoiceToBatch(req, res))
 
@@ -175,6 +178,20 @@ export class ExpeditionBatchController extends BaseController<
     }
   };
 
+  generateDeliveryNote = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { batchId } = req.query
+
+
+      const fullBatch = await this.service.generateDeliveryNote(batchId as string)
+
+      return res.json(fullBatch);
+
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  }
+  
   finishBatch = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { batchId } = req.params
