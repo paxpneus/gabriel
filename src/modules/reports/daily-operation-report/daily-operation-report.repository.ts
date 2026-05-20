@@ -18,6 +18,8 @@ interface InvoiceIdRow {
 
 export class DailyOperationReportRepository {
   async getCheckpoint(): Promise<Date> {
+    await this.ensureCheckpoint();
+
     const rows = await sequelize.query<CheckpointRow>(
       `
       SELECT last_processed_at
@@ -32,10 +34,37 @@ export class DailyOperationReportRepository {
     );
 
     if (!rows[0]) {
-      throw new Error("Checkpoint daily_operation_report não encontrado.");
+      throw new Error("Não foi possível inicializar o checkpoint daily_operation_report.");
     }
 
     return rows[0].last_processed_at;
+  }
+
+  private async ensureCheckpoint(): Promise<void> {
+    await sequelize.query(
+      `
+      INSERT INTO report_job_checkpoints (
+        job_name,
+        last_processed_at,
+        last_run_at,
+        status,
+        rows_processed,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        :jobName,
+        NOW() - INTERVAL '1 day',
+        NOW(),
+        'success',
+        0,
+        NOW(),
+        NOW()
+      )
+      ON CONFLICT (job_name) DO NOTHING
+      `,
+      { replacements: { jobName: JOB_NAME } },
+    );
   }
 
   async markRunning(): Promise<void> {
@@ -189,7 +218,12 @@ export class DailyOperationReportRepository {
           COALESCE(i.transporter_id, bd.batch_transporter_id) AS transporter_id,
           i.type,
           CASE
-            WHEN i.type = 'OUTGOING' THEN DATE(COALESCE(i.emitted_at, i.created_at))
+            WHEN i.type = 'OUTGOING' THEN DATE(COALESCE(
+              bd.delivery_note_generated_at,
+              bd.batch_created_at,
+              i.emitted_at,
+              i.created_at
+            ))
             ELSE DATE(i.created_at)
           END AS invoice_date,
           i.emitted_at,
