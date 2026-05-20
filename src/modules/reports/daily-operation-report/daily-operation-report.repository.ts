@@ -227,10 +227,9 @@ export class DailyOperationReportRepository {
     i.created_at
   ))
   WHEN i.type = 'INCOMING' THEN DATE(COALESCE(
-    bd.batch_created_at,   -- data que entrou no lote
-    sb.first_scan_at,      -- ou primeiro scan
-    i.created_at           -- fallback
-  ))
+  i.created_at,
+  i.emitted_at
+))
 END AS invoice_date,
           i.emitted_at,
           bd.delivery_note_generated_at,
@@ -246,7 +245,7 @@ END AS invoice_date,
   WHEN i.type = 'INCOMING'
     AND COALESCE(it.total_expected, 0) > 0
     AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
-     THEN sb.last_scan_at
+    THEN sb.last_scan_at   -- NULL se não tem scan, o que é correto
   WHEN i.type = 'OUTGOING' AND bd.delivery_note_generated_at IS NOT NULL
     THEN bd.delivery_note_generated_at
   ELSE NULL
@@ -258,13 +257,12 @@ END AS fully_processed_at,
               THEN ROUND((EXTRACT(EPOCH FROM (bd.delivery_note_generated_at - i.emitted_at::timestamptz)) / 60)::numeric, 2)
             ELSE NULL
           END AS minutes_emission_to_delivery_note,
-          CASE
+         CASE
   WHEN i.type = 'INCOMING'
-    AND bd.batch_created_at IS NOT NULL
     AND COALESCE(it.total_expected, 0) > 0
     AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
-     THEN ROUND((EXTRACT(EPOCH FROM (sb.last_scan_at - i.emitted_at::timestamptz)) / 60)::numeric, 2)
-
+    AND sb.last_scan_at IS NOT NULL
+    THEN ROUND((EXTRACT(EPOCH FROM (sb.last_scan_at - COALESCE(i.received_at, i.emitted_at)::timestamptz)) / 60)::numeric, 2)
   ELSE NULL
 END AS minutes_batch_to_fully_scanned,
           CASE
@@ -619,12 +617,13 @@ END AS minutes_batch_to_fully_scanned,
     const snapshots = filters.drillDown
       ? await sequelize.query(
           `
-          SELECT *
-          FROM invoice_operation_snapshots
-          WHERE invoice_date = CAST(:date AS date)
-            AND (CAST(:unitBusinessId AS uuid) IS NULL OR unit_business_id = CAST(:unitBusinessId AS uuid))
-            AND (CAST(:transporterId AS uuid) IS NULL OR transporter_id = CAST(:transporterId AS uuid))
-          ORDER BY minutes_emission_to_delivery_note DESC NULLS LAST, last_updated_at DESC
+          SELECT ios.*, i.number_system
+FROM invoice_operation_snapshots ios
+JOIN invoices i ON i.id = ios.invoice_id
+WHERE ios.invoice_date = CAST(:date AS date)
+  AND (CAST(:unitBusinessId AS uuid) IS NULL OR ios.unit_business_id = CAST(:unitBusinessId AS uuid))
+  AND (CAST(:transporterId AS uuid) IS NULL OR ios.transporter_id = CAST(:transporterId AS uuid))
+ORDER BY ios.minutes_emission_to_delivery_note DESC NULLS LAST, ios.last_updated_at DESC
           `,
           {
             type: QueryTypes.SELECT,
