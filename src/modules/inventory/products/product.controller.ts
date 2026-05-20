@@ -1,11 +1,65 @@
+import { Request, Response } from 'express';
+import { authenticate } from '../../../middlewares/auth-token';
+import { QueryParams } from '../../../shared/query/query.types';
 import BaseController from '../../../shared/utils/base-models/base-controller';
+import User from '../../warehouse/users/users/user.model';
 import Product from './product.model';
 import ProductService from './product.service';
+
+type StockUnitFilter = {
+  unitBusinessId?: string;
+  stockUnit?: 'positive' | 'zero';
+};
+
+type ProductQueryParams = Omit<QueryParams, 'filters'> & {
+  filters?: Record<string, string | string[] | StockUnitFilter | undefined>;
+};
+
+type AuthenticatedRequest = Request & {
+  user?: {
+    id: string;
+    role: string;
+  };
+};
 
 export class ProductController extends BaseController<Product, typeof ProductService> {
   constructor() {
     super(ProductService);
   }
+
+  protected middlewaresFor() {
+    return {
+      index: [authenticate],
+    };
+  }
+
+  index = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req) as ProductQueryParams;
+      const userId = (req as AuthenticatedRequest).user?.id;
+      const user = userId
+        ? await User.findByPk(userId, { attributes: ['unit_business_id'] })
+        : null;
+      const unitBusinessId = user?.unit_business_id;
+
+      if (unitBusinessId) {
+        params.filters = params.filters ?? {};
+        const stockUnit = Array.isArray(params.filters.stockUnit)
+          ? params.filters.stockUnit[0]
+          : params.filters.stockUnit;
+
+        params.filters.stockUnit = {
+          unitBusinessId,
+          stockUnit: stockUnit === 'positive' || stockUnit === 'zero' ? stockUnit : undefined,
+        };
+      }
+
+      const result = await this.service.paginate(params as unknown as QueryParams);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
 }
 
 export default new ProductController();
