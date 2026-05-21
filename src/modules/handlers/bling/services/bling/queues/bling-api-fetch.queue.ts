@@ -761,6 +761,18 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
     }
 
+    for (const item of nf.itens) {
+  const sku = item.codigo?.trim();
+  const ean = item.gtin ? String(item.gtin).trim() : null;
+
+  await UnmappedInvoiceProduct.destroy({
+    where: {
+      invoice_id: invoice.id,
+      ...(ean ? { ean } : { sku: sku ?? null }),
+    },
+  });
+}
+
     console.log(
       `[BLING_API_FETCH] ${nf.itens?.length} item(ns) upsertado(s) para invoice ${nf.id}`,
     );
@@ -1066,6 +1078,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           status: "PENDING",
         });
       }
+    }
+
+        for (const item of det) {
+      const prod = item.prod ?? {};
+      const sku = prod.cProd ? String(prod.cProd).trim() : null;
+      const gtin =
+        prod.cEAN && prod.cEAN !== "SEM GTIN"
+          ? String(prod.cEAN).trim()
+          : null;
+
+      await UnmappedInvoiceProduct.destroy({
+        where: {
+          invoice_id: invoice.id,
+          ...(gtin ? { ean: gtin } : { sku: sku ?? null }),
+        },
+      });
     }
 
     console.log(
