@@ -542,14 +542,18 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       attributes: ["status"],
     });
 
-    const invoiceStatus:
+    const resolveOutgoingStatus = ():
       | "OPEN"
       | "PENDING"
       | "FINISHED"
-      | "PENDING_CANCELLED_SYSTEM" =
-      partial.status === "CANCELLED"
-        ? "PENDING_CANCELLED_SYSTEM"
-        : ((partial.status as "OPEN" | "PENDING" | "FINISHED") ?? "PENDING");
+      | "PENDING_CANCELLED_SYSTEM" => {
+      if (nf.situacao === 2) return "PENDING_CANCELLED_SYSTEM";
+      return (existingInvoice?.status as any) ?? "PENDING";
+    };
+
+    const invoiceStatus = resolveOutgoingStatus();
+
+    console.log("INVOICE STATUS", invoiceStatus, nf, apiFetch)
 
     const incomingStatus = existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
 
@@ -951,6 +955,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
 
     const incomingStatus = existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
+    const outgoingStatus = existingInvoice?.status ?? "PENDING";
 
     const store = await Store.findOne({ where: { name: "Outros" } });
 
@@ -960,7 +965,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         customer_name: customerName,
         customer_document: customerDocument,
         type: invoiceType,
-        status: invoiceType === "OUTGOING" ? "PENDING" : incomingStatus,
+        status: invoiceType === "OUTGOING" ? outgoingStatus : incomingStatus,
         sender_cnpj: senderCnpj,
         sender_name: senderName,
         receiver_cnpj: receiverCnpj,

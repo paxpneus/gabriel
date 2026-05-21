@@ -255,12 +255,11 @@ async function migrateStocks() {
 // ─── 5 & 6. Notas Fiscais ─────────────────────────────────────────────────────
 
 function mapSituacao(situacao?: number): 'OPEN' | 'PENDING' | 'FINISHED' | 'CANCELLED' {
-  switch (situacao) {
-    case 3:
-    case 5:
-      return 'CANCELLED';
+   switch (situacao) {
+    case 2:  
+      return "CANCELLED";
     default:
-      return 'OPEN';
+      return "OPEN";
   }
 }
 

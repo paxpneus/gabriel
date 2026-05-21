@@ -283,8 +283,10 @@ async function migrateStocks() {
 
 function mapSituacao(situacao?: number): 'OPEN' | 'PENDING' | 'FINISHED' | 'CANCELLED' {
   switch (situacao) {
-    case 3: case 5: return 'CANCELLED';
-    default: return 'OPEN';
+    case 2: 
+      return "CANCELLED";
+    default:
+      return "OPEN";
   }
 }
 
@@ -329,6 +331,67 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e', invoiceDirection: 0 | 1) 
   await waitForQueuesToDrain(`Notas Fiscais ${label}`);
 }
 
+async function migrateCancelledInvoices(type: 'NF-e' | 'NFC-e') {
+  const resource = type === 'NF-e' ? 'invoice' : 'consumer_invoice';
+  const endpoint = type === 'NF-e' ? '/nfe' : '/nfce';
+  const label    = `${type} Canceladas`;
+
+  console.log('─'.repeat(55));
+  console.log(`🚫  ETAPA — Notas Fiscais ${label}`);
+  console.log('─'.repeat(55));
+
+  let count = 0;
+  let skipped = 0;
+
+  // situacao 2 = Cancelada na Bling
+  for await (const page of paginateBling<{
+    id: number;
+    situacao?: number;
+    dataEmissao?: string;
+    dataOperacao?: string;
+  }>(endpoint, {
+    dataEmissaoInicial: BLING_INVOICE_CUTOFF_DATE_PARAM,
+    situacao: 2,
+  })) {
+    for (const invoice of page) {
+      const blingId = invoice.id;
+      const referenceDate = getBlingInvoiceReferenceDate(invoice);
+
+      if (referenceDate && isKnownBlingInvoiceBeforeCutoff(referenceDate)) {
+        skipped++;
+        continue;
+      }
+
+      const jobBase = basePayload(resource, blingId);
+      await enqueueApiFetch(
+        {
+          ...jobBase,
+          apiFetch: {
+            resource: resource as any,
+            blingId,
+            action: 'created',
+            companyId: '',
+            partialData: {
+              blingId,
+              id_system: String(blingId),
+              status: 'CANCELLED',
+            },
+          },
+        },
+        `migration-${resource}-cancelled-fetch-${blingId}`,
+      );
+
+      count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+    }
+    console.log(`  → ${count} nota(s) cancelada(s) enfileirada(s)...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+  }
+
+  console.log(`\n  🚫 ${label} enfileiradas: ${count} | ignoradas: ${skipped}`);
+  await waitForQueuesToDrain(`Notas Fiscais ${label}`);
+}
+
 // ─── UI interativa estilo Vite ────────────────────────────────────────────────
 
 const STEPS = [
@@ -338,6 +401,7 @@ const STEPS = [
   { key: 'stocks',            label: '📊  Estoques',                    fn: () => migrateStocks() },
   { key: 'nfe_out',           label: '🧾  NF-e Saída  (tipo 1)',        fn: () => migrateInvoices('NF-e', 1) },
   { key: 'nfe_in',            label: '🧾  NF-e Entrada (tipo 0)',       fn: () => migrateInvoices('NF-e', 0) },
+   { key: 'nfe_cancelled',          label: '🚫  NF-e Canceladas',               fn: () => migrateCancelledInvoices('NF-e') },
   { key: 'nfce',              label: '🧾  NFC-e',                       fn: () => migrateInvoices('NFC-e', 1) },
 ] as const;
 
