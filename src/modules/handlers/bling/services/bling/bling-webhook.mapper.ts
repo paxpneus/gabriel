@@ -38,13 +38,9 @@ function parseEvent(
  * Situações Bling NF-e: 1 = Em digitação / 6 = Autorizada / 2 = Cancelada etc.
  * Ajuste conforme o enum real da Bling se necessário.
  */
-function mapInvoiceSituacao(
-  situacao?: number,
-): "OPEN" | "PENDING" | "FINISHED" | "CANCELLED" {
+function mapInvoiceSituacao(situacao?: number) {
   switch (situacao) {
-    case 3: // Cancelada
-      return "CANCELLED";
-      case 5: // Rejeitada
+    case 2:  // Cancelada (NF-e)
       return "CANCELLED";
     default:
       return "OPEN";

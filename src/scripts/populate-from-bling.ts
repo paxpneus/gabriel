@@ -453,11 +453,10 @@ async function migrateStocks() {
 
 function mapSituacao(situacao?: number): 'OPEN' | 'PENDING' | 'FINISHED' | 'CANCELLED' {
   switch (situacao) {
-    case 3:
-    case 5:
-      return 'CANCELLED';
+    case 2:  
+      return "CANCELLED";
     default:
-      return 'OPEN';
+      return "OPEN";
   }
 }
 
@@ -526,6 +525,66 @@ async function migrateInvoices(type: 'NF-e' | 'NFC-e', invoiceDirection: 0 | 1) 
   await waitForQueuesToDrain(`Notas Fiscais ${type}`);
 }
 
+async function migrateCancelledInvoices(type: 'NF-e' | 'NFC-e') {
+  const resource = type === 'NF-e' ? 'invoice' : 'consumer_invoice';
+  const endpoint = type === 'NF-e' ? '/nfe' : '/nfce';
+  const label    = `${type} Canceladas`;
+
+  console.log('─'.repeat(55));
+  console.log(`🚫  ETAPA — Notas Fiscais ${label}`);
+  console.log('─'.repeat(55));
+
+  let count = 0;
+  let skipped = 0;
+
+  for await (const page of paginateBling<{
+    id: number;
+    situacao?: number;
+    dataEmissao?: string;
+    dataOperacao?: string;
+  }>(endpoint, {
+    dataEmissaoInicial: BLING_INVOICE_CUTOFF_DATE_PARAM,
+    situacao: 2,
+  })) {
+    for (const invoice of page) {
+      const blingId = invoice.id;
+      const referenceDate = getBlingInvoiceReferenceDate(invoice);
+
+      if (referenceDate && isKnownBlingInvoiceBeforeCutoff(referenceDate)) {
+        skipped++;
+        continue;
+      }
+
+      const jobBase = basePayload(resource, blingId);
+      await enqueueApiFetch(
+        {
+          ...jobBase,
+          apiFetch: {
+            resource: resource as any,
+            blingId,
+            action: 'created',
+            companyId: '',
+            partialData: {
+              blingId,
+              id_system: String(blingId),
+              status: 'CANCELLED',
+            },
+          },
+        },
+        `migration-${resource}-cancelled-fetch-${blingId}`,
+      );
+
+      count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+    }
+    console.log(`  → ${count} nota(s) cancelada(s) enfileirada(s)...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+  }
+
+  console.log(`\n  🚫 ${label} enfileiradas: ${count} | ignoradas: ${skipped}`);
+  await waitForQueuesToDrain(`Notas Fiscais ${label}`);
+}
+
 // ─── Runner principal ─────────────────────────────────────────────────────────
 
 async function main() {
@@ -553,6 +612,7 @@ async function main() {
     await migrateStocks();            // 4 — depende de produto
     await migrateInvoices('NF-e', 0);   // 6 — depende de UnitBusiness
     await migrateInvoices('NF-e', 1);    // 5 — depende de UnitBusiness
+     await migrateCancelledInvoices('NF-e');
   } catch (err: any) {
     console.error('\n❌ Erro durante a migração:', err.message);
     process.exit(1);
