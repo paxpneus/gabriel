@@ -7,7 +7,10 @@ import {
 } from "./daily-operation-fact.types";
 
 class DailyOperationFact
-  extends Model<DailyOperationFactAttributes, DailyOperationFactCreationAttributes>
+  extends Model<
+    DailyOperationFactAttributes,
+    DailyOperationFactCreationAttributes
+  >
   implements DailyOperationFactAttributes
 {
   public id!: string;
@@ -29,6 +32,8 @@ class DailyOperationFact
   public incoming_perf_avg_hours?: number | string | null;
   public incoming_perf_min_hours?: number | string | null;
   public incoming_perf_max_hours?: number | string | null;
+  public invoices_outgoing_cancelled?: number;
+  public invoices_outgoing_pending_cancelled?: number;
   public incoming_perf_invoice_count?: number;
   public advance_payment_count?: boolean;
   public last_updated_at?: Date;
@@ -68,19 +73,55 @@ DailyOperationFact.init(
       type: DataTypes.INTEGER,
       defaultValue: 0,
     },
-    supplier_return_count: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-    outgoing_perf_avg_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    outgoing_perf_min_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    outgoing_perf_max_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    supplier_return_count: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
+    outgoing_perf_avg_hours: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
+    outgoing_perf_min_hours: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
+    outgoing_perf_max_hours: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
     outgoing_perf_invoice_count: { type: DataTypes.INTEGER, defaultValue: 0 },
-    incoming_perf_avg_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    incoming_perf_min_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-    incoming_perf_max_hours: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    incoming_perf_avg_hours: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
+    incoming_perf_min_hours: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
+    incoming_perf_max_hours: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
     incoming_perf_invoice_count: { type: DataTypes.INTEGER, defaultValue: 0 },
-    advance_payment_count: { type: DataTypes.INTEGER, defaultValue: 0, allowNull: false },
+    advance_payment_count: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      allowNull: false,
+    },
     last_updated_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,
+    },
+    invoices_outgoing_cancelled: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      allowNull: false,
+    },
+    invoices_outgoing_pending_cancelled: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      allowNull: false,
     },
   },
   {

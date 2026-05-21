@@ -542,9 +542,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       attributes: ["status"],
     });
 
-    const invoiceStatus: "OPEN" | "PENDING" | "FINISHED" =
+    const invoiceStatus:
+      | "OPEN"
+      | "PENDING"
+      | "FINISHED"
+      | "PENDING_CANCELLED_SYSTEM" =
       partial.status === "CANCELLED"
-        ? "OPEN" // Bling cancelada → mantemos como OPEN para revisão manual
+        ? "PENDING_CANCELLED_SYSTEM"
         : ((partial.status as "OPEN" | "PENDING" | "FINISHED") ?? "PENDING");
 
     const incomingStatus = existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";

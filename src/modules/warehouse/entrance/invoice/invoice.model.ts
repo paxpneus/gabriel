@@ -2,6 +2,7 @@ import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import { InvoiceAttributes, InvoiceCreationAttributes } from "./invoice.types";
 import { v4 as uuidv4 } from "uuid";
+import { ExpeditionBatchInvoiceAttributes } from "../../expedition/batch-invoices/batch-invoices.types";
 
 class Invoice
   extends Model<InvoiceAttributes, InvoiceCreationAttributes>
@@ -22,7 +23,7 @@ class Invoice
   public id_system?: string;
   public transporter_id?: string;
   public type!: "INCOMING" | "OUTGOING";
-  public status!: "OPEN" | "PENDING" | "FINISHED" | "CANCELLED" | "FREE_TO_SCHEDULE" | "WAITING_SCHEDULE_SALES" | "SCHEDULED" | "LATE";
+  public status!: "OPEN" | "PENDING" | "FINISHED" | "CANCELLED" | "FREE_TO_SCHEDULE" | "WAITING_SCHEDULE_SALES" | "SCHEDULED" | "LATE" | "PENDING_CANCELLED_SYSTEM";
   public batch_generated!: boolean;
   public printed_label!: boolean;
   public emitted_at?: Date;
@@ -36,6 +37,8 @@ class Invoice
   public total_expected!: number;
   public description?: string;
   public bonded_invoice?: string
+
+  public batchInvoice?: ExpeditionBatchInvoiceAttributes;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -149,6 +152,7 @@ Invoice.init(
         "SCHEDULED",
         "LATE",
         "CANCELLED",
+        "PENDING_CANCELLED_SYSTEM"
       ),
       defaultValue: "PENDING",
       allowNull: false,

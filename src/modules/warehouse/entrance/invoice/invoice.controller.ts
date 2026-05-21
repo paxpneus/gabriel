@@ -9,7 +9,7 @@ import { gerarPDF } from '@alexssmusica/node-pdf-nfe';
 import archiver from 'archiver';
 import { decryptXml, isEncrypted } from '../../../../shared/utils/xml/xml-cipher';
 import { PassThrough } from 'stream'
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, radians } from 'pdf-lib'
 import { Op } from 'sequelize';
 import { InvoiceAttributes } from './invoice.types';
 import multer from 'multer';
@@ -51,6 +51,13 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
       ...this.mw('scheduleInvoice'),
       this.scheduleInvoice,
     )
+
+    this.router.put(
+      '/bond/invoice/:id',
+      ...this.mw('bondPendingCancelledInvoice'),
+      this.bondPendingCancelledInvoice,
+    )
+
     this.router.post(
   '/import/xml',
   upload.single('xml'),        
@@ -80,6 +87,7 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
       scheduleInvoice: [authenticate, userPermissions],
 
       importXML: [authenticate, userPermissions],
+      bondPendingCancelledInvoice: [authenticate, userPermissions]
     };
   }
 
@@ -195,6 +203,18 @@ export class InvoiceController extends BaseController<Invoice, typeof InvoiceSer
     res.status(500).json({ error: err.message })
   }
 }
+
+bondPendingCancelledInvoice = async (req: Request, res: Response): Promise<void> => {
+  try { 
+    const {id} = req.params
+    const  {bondedInvoiceId}  = req.body
+    await this.service.bondInvoice(id as string, bondedInvoiceId)
+    res.json({ success: true })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
 
 scheduleInvoice = async (req: Request, res: Response): Promise<void> => {
   try { 
