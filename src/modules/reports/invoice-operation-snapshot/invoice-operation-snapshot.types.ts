@@ -1,7 +1,7 @@
 import { Optional } from "sequelize";
 
 export type InvoiceOperationSnapshotType = "INCOMING" | "OUTGOING";
-export type InvoiceOperationSnapshotStatus = "open" | "completed" | "cancelled";
+export type InvoiceOperationSnapshotStatus = "open" | "completed" | "cancelled" | "pending_cancelled";
 
 export interface InvoiceOperationSnapshotAttributes {
   id: string;

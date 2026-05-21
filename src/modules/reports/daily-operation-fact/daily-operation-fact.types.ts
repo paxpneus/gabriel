@@ -20,6 +20,8 @@ export interface DailyOperationFactAttributes {
   incoming_perf_avg_hours?: number | string | null;
   incoming_perf_min_hours?: number | string | null;
   incoming_perf_max_hours?: number | string | null;
+  invoices_outgoing_cancelled?: number;
+  invoices_outgoing_pending_cancelled?: number;
   incoming_perf_invoice_count?: number;
   advance_payment_count?: boolean;
   last_updated_at?: Date;

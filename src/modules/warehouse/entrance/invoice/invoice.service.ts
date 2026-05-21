@@ -14,6 +14,8 @@ import { InvoiceAttributes } from "./invoice.types";
 import Store from "../../../sales/stores/stores.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import { getBrazilDate } from "../../../../shared/utils/normalizers/date";
+import sequelize from "../../../../config/sequelize";
+import batchInvoicesService from "../../expedition/batch-invoices/batch-invoices.service";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -203,6 +205,51 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       status: "SCHEDULED",
       expected_receiving: expectedDate,
     });
+  }
+
+
+  async bondInvoice(id: string, bondedInvoiceId: string) {
+    return sequelize.transaction(async (t) => {
+      const invoice = await this.findById(id, {include: [
+        {
+          model: ExpeditionBatchInvoice,
+          as: 'batchInvoice'
+        }
+      ], transaction: t}  )
+
+      if (!invoice) {
+        throw new Error("Nota fiscal não encontrada!")
+      }
+
+      const invoiceToBond = await this.findById(bondedInvoiceId, {include: [
+        {
+          model: ExpeditionBatchInvoice,
+          as: 'batchInvoice'
+        }
+      ], transaction: t}  )
+
+      if (!invoiceToBond) {
+        throw new Error("Nota fiscal vinculada não encontrada!")
+      }
+
+      if (invoice.status != 'PENDING_CANCELLED_SYSTEM') {
+        throw new Error("Status não permitido para vincular nota, apenas status CANCELAMENTO PENDENTE NA PLATAFORMA permitido!")
+
+      }
+
+      await this.update(id, {
+        bonded_invoice: invoiceToBond.number_system,
+        status: 'CANCELLED'
+      })
+
+      await this.update(bondedInvoiceId, {
+        bonded_invoice: invoice.number_system,
+      })
+
+      if (invoice.batchInvoice) {
+      await batchInvoicesService.removeBatchInvoice(invoice.batchInvoice.id, t)
+      }
+    })
   }
 }
 

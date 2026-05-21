@@ -297,8 +297,9 @@ export class DailyOperationReportRepository {
             ELSE NULL
           END AS hours_batch_to_fully_scanned,
           CASE
-            WHEN i.status = 'CANCELLED' THEN 'cancelled'
-            WHEN i.status = 'FINISHED' THEN 'completed'
+            WHEN i.status = 'CANCELLED'                THEN 'cancelled'
+            WHEN i.status = 'PENDING_CANCELLED_SYSTEM' THEN 'pending_cancelled'
+            WHEN i.status = 'FINISHED'                 THEN 'completed'
             ELSE 'open'
           END AS snapshot_status,
           -- Flag de devolução de fornecedor: INCOMING cujo sender_cnpj é de uma filial
@@ -307,9 +308,9 @@ export class DailyOperationReportRepository {
           COALESCE(ap.is_advance_payment, FALSE) AS is_advance_payment
         FROM invoices i
         JOIN affected a ON a.invoice_id = i.id
-        LEFT JOIN item_totals it ON it.invoice_id = i.id
-        LEFT JOIN scan_bounds sb ON sb.invoice_id = i.id
-        LEFT JOIN batch_data bd ON bd.invoice_id = i.id
+        LEFT JOIN item_totals it      ON it.invoice_id = i.id
+        LEFT JOIN scan_bounds sb      ON sb.invoice_id = i.id
+        LEFT JOIN batch_data bd       ON bd.invoice_id = i.id
         LEFT JOIN supplier_returns sr ON sr.invoice_id = i.id
         LEFT JOIN advance_payments ap ON ap.invoice_id = i.id
         -- Sem filtro de exclusão aqui: adiantamentos são gravados com flag, não descartados
@@ -361,25 +362,25 @@ export class DailyOperationReportRepository {
         NOW()
       FROM snapshot_source
       ON CONFLICT (invoice_id) DO UPDATE SET
-        unit_business_id = EXCLUDED.unit_business_id,
-        transporter_id = EXCLUDED.transporter_id,
-        type = EXCLUDED.type,
-        invoice_date = EXCLUDED.invoice_date,
-        emitted_at = EXCLUDED.emitted_at,
-        delivery_note_generated_at = EXCLUDED.delivery_note_generated_at,
-        first_scan_at = EXCLUDED.first_scan_at,
-        last_scan_at = EXCLUDED.last_scan_at,
-        fully_processed_at = EXCLUDED.fully_processed_at,
-        total_items_expected = EXCLUDED.total_items_expected,
-        total_items_received = EXCLUDED.total_items_received,
-        scan_completion_pct = EXCLUDED.scan_completion_pct,
-        hours_emission_to_delivery_note = EXCLUDED.hours_emission_to_delivery_note,
-        hours_batch_to_fully_scanned = EXCLUDED.hours_batch_to_fully_scanned,
-        snapshot_status = EXCLUDED.snapshot_status,
-        is_supplier_return = EXCLUDED.is_supplier_return,
-        is_advance_payment = EXCLUDED.is_advance_payment,
-        last_updated_at = NOW(),
-        updated_at = NOW()
+        unit_business_id                 = EXCLUDED.unit_business_id,
+        transporter_id                   = EXCLUDED.transporter_id,
+        type                             = EXCLUDED.type,
+        invoice_date                     = EXCLUDED.invoice_date,
+        emitted_at                       = EXCLUDED.emitted_at,
+        delivery_note_generated_at       = EXCLUDED.delivery_note_generated_at,
+        first_scan_at                    = EXCLUDED.first_scan_at,
+        last_scan_at                     = EXCLUDED.last_scan_at,
+        fully_processed_at               = EXCLUDED.fully_processed_at,
+        total_items_expected             = EXCLUDED.total_items_expected,
+        total_items_received             = EXCLUDED.total_items_received,
+        scan_completion_pct              = EXCLUDED.scan_completion_pct,
+        hours_emission_to_delivery_note  = EXCLUDED.hours_emission_to_delivery_note,
+        hours_batch_to_fully_scanned     = EXCLUDED.hours_batch_to_fully_scanned,
+        snapshot_status                  = EXCLUDED.snapshot_status,
+        is_supplier_return               = EXCLUDED.is_supplier_return,
+        is_advance_payment               = EXCLUDED.is_advance_payment,
+        last_updated_at                  = NOW(),
+        updated_at                       = NOW()
       `,
       {
         replacements: {
@@ -416,7 +417,8 @@ export class DailyOperationReportRepository {
             CAST(:factDate AS date) AS fact_date,
             CAST(:unitBusinessId AS uuid) AS unit_business_id,
 
-            -- Contar apenas notas que NÃO são devolução de fornecedor e NÃO são adiantamento
+            -- Contar apenas notas que NÃO são devolução de fornecedor e NÃO são adiantamento.
+            -- Canceladas ficam fora do fluxo normal e são contadas separadamente abaixo.
             COUNT(*) FILTER (
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
@@ -426,6 +428,7 @@ export class DailyOperationReportRepository {
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
             )::integer AS invoices_outgoing_count,
 
             COUNT(*) FILTER (
@@ -437,9 +440,10 @@ export class DailyOperationReportRepository {
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
             )::integer AS invoices_outgoing_total,
 
-            -- Completude: excluir devoluções de fornecedor e adiantamentos das entradas
+            -- Completude: excluir devoluções de fornecedor, adiantamentos e canceladas das entradas
             COUNT(*) FILTER (
               WHERE type = 'INCOMING'
                 AND is_supplier_return = FALSE
@@ -447,9 +451,11 @@ export class DailyOperationReportRepository {
                 AND fully_processed_at IS NOT NULL
             )::integer AS invoices_incoming_fully_processed,
 
+            -- Completude de saída: canceladas fora pelo filtro de status
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND fully_processed_at IS NOT NULL
             )::integer AS invoices_outgoing_fully_processed,
 
@@ -464,27 +470,48 @@ export class DailyOperationReportRepository {
               WHERE is_advance_payment = TRUE
             )::integer AS advance_payment_count,
 
+            -- Canceladas definitivamente (status CANCELLED → snapshot_status 'cancelled').
+            -- Ficam fora dos KPIs operacionais mas entram no indicador de cancelamento.
+            COUNT(*) FILTER (
+              WHERE type = 'OUTGOING'
+                AND is_advance_payment = FALSE
+                AND snapshot_status = 'cancelled'
+            )::integer AS invoices_outgoing_cancelled,
+
+            -- Cancelamento pendente no sistema (status PENDING_CANCELLED_SYSTEM → snapshot_status 'pending_cancelled').
+            -- Mesma lógica: fora dos KPIs operacionais, dentro do indicador de cancelamento.
+            COUNT(*) FILTER (
+              WHERE type = 'OUTGOING'
+                AND is_advance_payment = FALSE
+                AND snapshot_status = 'pending_cancelled'
+            )::integer AS invoices_outgoing_pending_cancelled,
+
+            -- Desempenho de saída em HORAS decimais — canceladas e adiantamentos excluídos
             ROUND(AVG(hours_emission_to_delivery_note) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND hours_emission_to_delivery_note IS NOT NULL
             ), 2) AS outgoing_perf_avg_hours,
 
             MIN(hours_emission_to_delivery_note) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND hours_emission_to_delivery_note IS NOT NULL
             ) AS outgoing_perf_min_hours,
 
             MAX(hours_emission_to_delivery_note) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND hours_emission_to_delivery_note IS NOT NULL
             ) AS outgoing_perf_max_hours,
 
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'
                 AND is_advance_payment = FALSE
+                AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
                 AND hours_emission_to_delivery_note IS NOT NULL
             )::integer AS outgoing_perf_invoice_count,
 
@@ -556,6 +583,8 @@ export class DailyOperationReportRepository {
           invoices_outgoing_fully_processed,
           supplier_return_count,
           advance_payment_count,
+          invoices_outgoing_cancelled,
+          invoices_outgoing_pending_cancelled,
           outgoing_perf_avg_hours,
           outgoing_perf_min_hours,
           outgoing_perf_max_hours,
@@ -581,6 +610,8 @@ export class DailyOperationReportRepository {
           sm.invoices_outgoing_fully_processed,
           sm.supplier_return_count,
           sm.advance_payment_count,
+          sm.invoices_outgoing_cancelled,
+          sm.invoices_outgoing_pending_cancelled,
           sm.outgoing_perf_avg_hours,
           sm.outgoing_perf_min_hours,
           sm.outgoing_perf_max_hours,
@@ -596,26 +627,28 @@ export class DailyOperationReportRepository {
         CROSS JOIN volumes_received vr
         CROSS JOIN volumes_dispatched vd
         ON CONFLICT (fact_date, unit_business_id) DO UPDATE SET
-          invoices_incoming_count = EXCLUDED.invoices_incoming_count,
-          invoices_outgoing_count = EXCLUDED.invoices_outgoing_count,
-          volumes_received = EXCLUDED.volumes_received,
-          volumes_dispatched = EXCLUDED.volumes_dispatched,
-          invoices_incoming_total = EXCLUDED.invoices_incoming_total,
-          invoices_outgoing_total = EXCLUDED.invoices_outgoing_total,
-          invoices_incoming_fully_processed = EXCLUDED.invoices_incoming_fully_processed,
-          invoices_outgoing_fully_processed = EXCLUDED.invoices_outgoing_fully_processed,
-          supplier_return_count = EXCLUDED.supplier_return_count,
-          advance_payment_count = EXCLUDED.advance_payment_count,
-          outgoing_perf_avg_hours = EXCLUDED.outgoing_perf_avg_hours,
-          outgoing_perf_min_hours = EXCLUDED.outgoing_perf_min_hours,
-          outgoing_perf_max_hours = EXCLUDED.outgoing_perf_max_hours,
-          outgoing_perf_invoice_count = EXCLUDED.outgoing_perf_invoice_count,
-          incoming_perf_avg_hours = EXCLUDED.incoming_perf_avg_hours,
-          incoming_perf_min_hours = EXCLUDED.incoming_perf_min_hours,
-          incoming_perf_max_hours = EXCLUDED.incoming_perf_max_hours,
-          incoming_perf_invoice_count = EXCLUDED.incoming_perf_invoice_count,
-          last_updated_at = NOW(),
-          updated_at = NOW()
+          invoices_incoming_count              = EXCLUDED.invoices_incoming_count,
+          invoices_outgoing_count              = EXCLUDED.invoices_outgoing_count,
+          volumes_received                     = EXCLUDED.volumes_received,
+          volumes_dispatched                   = EXCLUDED.volumes_dispatched,
+          invoices_incoming_total              = EXCLUDED.invoices_incoming_total,
+          invoices_outgoing_total              = EXCLUDED.invoices_outgoing_total,
+          invoices_incoming_fully_processed    = EXCLUDED.invoices_incoming_fully_processed,
+          invoices_outgoing_fully_processed    = EXCLUDED.invoices_outgoing_fully_processed,
+          supplier_return_count                = EXCLUDED.supplier_return_count,
+          advance_payment_count                = EXCLUDED.advance_payment_count,
+          invoices_outgoing_cancelled          = EXCLUDED.invoices_outgoing_cancelled,
+          invoices_outgoing_pending_cancelled  = EXCLUDED.invoices_outgoing_pending_cancelled,
+          outgoing_perf_avg_hours              = EXCLUDED.outgoing_perf_avg_hours,
+          outgoing_perf_min_hours              = EXCLUDED.outgoing_perf_min_hours,
+          outgoing_perf_max_hours              = EXCLUDED.outgoing_perf_max_hours,
+          outgoing_perf_invoice_count          = EXCLUDED.outgoing_perf_invoice_count,
+          incoming_perf_avg_hours              = EXCLUDED.incoming_perf_avg_hours,
+          incoming_perf_min_hours              = EXCLUDED.incoming_perf_min_hours,
+          incoming_perf_max_hours              = EXCLUDED.incoming_perf_max_hours,
+          incoming_perf_invoice_count          = EXCLUDED.incoming_perf_invoice_count,
+          last_updated_at                      = NOW(),
+          updated_at                           = NOW()
         `,
         {
           replacements: {
@@ -685,6 +718,8 @@ export class DailyOperationReportRepository {
             AND type = 'OUTGOING'
             AND is_supplier_return = FALSE
             AND is_advance_payment = FALSE
+            -- Canceladas fora do cômputo de transportadora também
+            AND snapshot_status NOT IN ('cancelled', 'pending_cancelled')
         )
         INSERT INTO daily_transporter_facts (
           fact_date,
@@ -710,11 +745,11 @@ export class DailyOperationReportRepository {
         FROM volumes_dispatched vd
         CROSS JOIN invoice_metrics im
         ON CONFLICT (fact_date, unit_business_id, transporter_id) DO UPDATE SET
-          volumes_dispatched = EXCLUDED.volumes_dispatched,
-          invoices_count = EXCLUDED.invoices_count,
+          volumes_dispatched       = EXCLUDED.volumes_dispatched,
+          invoices_count           = EXCLUDED.invoices_count,
           invoices_fully_processed = EXCLUDED.invoices_fully_processed,
-          last_updated_at = NOW(),
-          updated_at = NOW()
+          last_updated_at          = NOW(),
+          updated_at               = NOW()
         `,
         {
           replacements: {
@@ -741,7 +776,38 @@ export class DailyOperationReportRepository {
         CASE
           WHEN dof.invoices_outgoing_total = 0 THEN 0
           ELSE ROUND((dof.invoices_outgoing_fully_processed::numeric / dof.invoices_outgoing_total::numeric) * 100, 2)
-        END AS pct_outgoing
+        END AS pct_outgoing,
+
+        -- Total de notas emitidas no dia: fluxo normal + canceladas + pendentes de cancelamento.
+        -- Usado como denominador do KPI de cancelamento para refletir tudo que foi tentado vender.
+        (
+          dof.invoices_outgoing_total
+          + dof.invoices_outgoing_cancelled
+          + dof.invoices_outgoing_pending_cancelled
+        ) AS invoices_outgoing_emitted_total,
+
+        -- KPI de cancelamento: de tudo que foi emitido no dia, qual % virou cancelamento.
+        -- Numerador: canceladas + pendentes de cancelamento.
+        -- Denominador: fluxo normal + canceladas + pendentes (universo completo do dia).
+        CASE
+          WHEN (
+            dof.invoices_outgoing_total
+            + dof.invoices_outgoing_cancelled
+            + dof.invoices_outgoing_pending_cancelled
+          ) = 0 THEN 0
+          ELSE ROUND(
+            (
+              (dof.invoices_outgoing_cancelled + dof.invoices_outgoing_pending_cancelled)::numeric
+              / (
+                  dof.invoices_outgoing_total
+                  + dof.invoices_outgoing_cancelled
+                  + dof.invoices_outgoing_pending_cancelled
+                )::numeric
+            ) * 100,
+            2
+          )
+        END AS pct_outgoing_cancelled
+
       FROM daily_operation_facts dof
       JOIN unit_businesses ub ON ub.id = dof.unit_business_id
       WHERE dof.fact_date = CAST(:date AS date)
