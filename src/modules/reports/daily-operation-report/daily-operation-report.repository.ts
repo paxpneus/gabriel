@@ -831,7 +831,7 @@ export class DailyOperationReportRepository {
       JOIN transporters t ON t.id = dtf.transporter_id
       -- Excluir transportadoras internas da listagem do relatório
       WHERE dtf.fact_date = CAST(:date AS date)
-        AND t.id_system NOT IN (:excludedTransporterIdSystems)
+        AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
         AND (CAST(:unitBusinessId AS uuid) IS NULL OR dtf.unit_business_id = CAST(:unitBusinessId AS uuid))
         AND (CAST(:transporterId AS uuid) IS NULL OR dtf.transporter_id = CAST(:transporterId AS uuid))
       ORDER BY t.name ASC
