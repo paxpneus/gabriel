@@ -275,6 +275,16 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
     as: 'batch',
   });
 
+  ExpeditionBatch.belongsTo(User, {
+    foreignKey: 'operator_id',
+    as: 'operator'
+  })
+
+  User.hasMany(ExpeditionBatch, {
+    foreignKey: 'operator_id',
+    as: 'batches'
+  })
+
   // Expedition Batch -> Batch Invoices
   ExpeditionBatch.hasMany(ExpeditionBatchInvoice, {
     foreignKey: 'expedition_batch_id',

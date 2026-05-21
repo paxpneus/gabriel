@@ -22,6 +22,7 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public mode?: string
   public delivery_note_generated_at?: Date | null;
   public finished_at?: Date | null;
+  public operator_id!: string;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -102,7 +103,15 @@ ExpeditionBatch.init(
     finished_at: {
       type: DataTypes.DATE,
       allowNull: true,
-    }
+    },
+    operator_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: 'users',
+        key: 'id',
+      },
+    },
   },
   {
     sequelize,

@@ -21,7 +21,7 @@ import {
   PaginatedResult,
   QueryParams,
 } from "../../../../shared/query/query.types";
-import { FindOptions } from "sequelize";
+import { FindOptions, Op } from "sequelize";
 import UnitBusiness from "../../unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import invoiceService from "../../entrance/invoice/invoice.service";
@@ -52,6 +52,17 @@ export class ExpeditionBatchService extends BaseService<
         "transporters_id",
       ],
       sortableFields: ["number", "createdAt", "updatedAt"],
+     customFields: {
+  delivery_note_generated: (value) => {
+    if (value === 'true' ) {
+      return { delivery_note_generated_at: { [Op.not]: null } }
+    }
+    if (value === 'false') {
+      return { delivery_note_generated_at: { [Op.is]: null } }
+    }
+    return {}
+  }
+}
     };
   }
 
@@ -643,51 +654,15 @@ export class ExpeditionBatchService extends BaseService<
   }
 
   async findByIdFullBatch(
-    batchId?: string,
-    number?: string,
-    options?: FindOptions,
-  ): Promise<ExpeditionBatchFull> {
-    const fullBatch = await this.repository.getFullBatch(
-      batchId ?? "",
-      number ?? "",
-      options,
-    );
-    if (!fullBatch) throw new Error("Lote não encontrado");
+  batchId?: string,
+  number?: string,
+  options?: FindOptions,
+): Promise<ExpeditionBatchFull> {
+  const fullBatch = await this.repository.getFullBatch(batchId ?? '', number ?? '', options)
+  if (!fullBatch) throw new Error('Lote não encontrado')
+  return this.enrichBatch(fullBatch)
+}
 
-    const batchWithTotalVolumes = fullBatch.batchInvoices!.map((s) => {
-      const invoiceVolume = s.invoice.items.reduce(
-        (acc: number, item: InvoiceItemsAttributes) => {
-          acc += item.quantity_expected;
-
-          return acc;
-        },
-        0,
-      );
-
-      let chaveAcesso = "";
-
-      const rawXml = s.invoice.xml_path ?? "";
-      const xml = isEncrypted(rawXml) ? decryptXml(rawXml) : rawXml;
-      chaveAcesso = extractChaveFromXml(xml);
-      const { xml_path, ...invoiceSemXml } = s.invoice as any;
-
-      return {
-        ...s,
-        invoice: {
-          ...s.invoice,
-          key: chaveAcesso.replace(/\s/g, ""),
-          invoiceVolume,
-        },
-      };
-    });
-
-    const enrichedData = {
-      ...fullBatch,
-      batchWithTotalVolumes,
-    };
-
-    return enrichedData;
-  }
 
   async paginate(
     params: QueryParams,
@@ -743,17 +718,56 @@ export class ExpeditionBatchService extends BaseService<
     return this.findByIdFullBatch(batchId);
   }
 
-  async generateDeliveryNote(batchId: string) {
+  async generateDeliveryNote(batchId: string, userId: string) {
   const batchInfo = await this.findByIdFullBatch(batchId)
+    let generated_at: Date;
+    let operator_id: string;
 
-
-  if (!batchInfo.delivery_note_generated_at) {
-    await this.repository.update(batchId, { 
-    delivery_note_generated_at: new Date()
-  })
-  }
+  !batchInfo.delivery_note_generated_at ? generated_at = new Date() : generated_at = batchInfo.delivery_note_generated_at
   
-  return batchInfo
+
+  !batchInfo.operator_id ? operator_id = userId : operator_id = batchInfo.operator_id
+
+    console.log(userId, batchInfo.operator_id)
+  
+    await this.repository.update(batchId, { 
+    delivery_note_generated_at: generated_at,
+    operator_id: operator_id
+  })
+
+  const updatedBatch = await this.findByIdFullBatch(batchId)
+  
+  return updatedBatch
+}
+
+async downloadDeliveryNotes(batchesId: string[]) {
+  const batches = await this.repository.getFullBatches(batchesId)
+  return batches.map((batch) => this.enrichBatch(batch))
+}
+
+private enrichBatch(fullBatch: ExpeditionBatchFull): ExpeditionBatchFull {
+  const batchWithTotalVolumes = fullBatch.batchInvoices!.map((s) => {
+    const invoiceVolume = s.invoice.items.reduce(
+      (acc: number, item: InvoiceItemsAttributes) => acc + item.quantity_expected,
+      0,
+    )
+
+    const rawXml = s.invoice.xml_path ?? ''
+    const xml = isEncrypted(rawXml) ? decryptXml(rawXml) : rawXml
+    const chaveAcesso = extractChaveFromXml(xml)
+    const { xml_path, ...invoiceSemXml } = s.invoice as any
+
+    return {
+      ...s,
+      invoice: {
+        ...s.invoice,
+        key: chaveAcesso.replace(/\s/g, ''),
+        invoiceVolume,
+      },
+    }
+  })
+
+  return { ...fullBatch, batchWithTotalVolumes }
 }
 }
 
