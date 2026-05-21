@@ -677,7 +677,8 @@ export class DailyOperationReportRepository {
         AND ios.transporter_id IS NOT NULL
         AND ios.type = 'OUTGOING'
         AND ios.is_advance_payment = FALSE
-        AND t.id_system NOT IN (:excludedTransporterIdSystems)
+        AND (t.id_system IS NULL OR t.id_system NOT IN (:excludedTransporterIdSystems))
+
       `,
       {
         type: QueryTypes.SELECT,
