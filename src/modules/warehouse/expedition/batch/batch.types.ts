@@ -18,8 +18,16 @@ export interface ExpeditionBatchAttributes {
   mode?: string;
   delivery_note_generated_at?: Date | null;
   finished_at?: Date | null;
+  operator_id?: string;
   createdAt?: Date;
   updatedAt?: Date;
+}
+
+export interface EnrichedBatchInvoice extends ExpeditionBatchInvoiceFull {
+  invoice: InvoiceFull & {
+    key: string
+    invoiceVolume: number
+  }
 }
 
 export interface InvoiceFull extends InvoiceAttributes {
@@ -41,8 +49,10 @@ export interface ExpeditionBatchFull {
   delivery_note_generated_at?: Date | null;
   type?: string;
   mode?: string;
+  operator_id?: string;
   createdAt?: Date;
   updatedAt?: Date;
+  batchWithTotalVolumes?: EnrichedBatchInvoice[];
   batchInvoices?: ExpeditionBatchInvoiceFull[];
 }
 
