@@ -7,7 +7,6 @@ import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoic
 import ExpeditionBatchItems from "../../expedition/batch-items/batch-items.model";
 import ExpeditionBatch from "../../expedition/batch/batch.model";
 import InvoiceFiscalItem from "../invoice-fiscal-item/invoice-fiscal-item.model";
-import Invoice from "../invoice/invoice.model";
 import invoiceService from "../invoice/invoice.service";
 import InvoiceItems from "./invoice-items.model";
 import invoiceItemsRepository, {
@@ -46,7 +45,7 @@ export class InvoiceItemsService extends BaseService<
       }
 
       // ─── 1. Cria o InvoiceItem operacional ───────────────────────────────
-      const invoiceItem = await this.create(invoiceItemDto, { transaction: t });
+      await this.create(invoiceItemDto, { transaction: t });
 
       const invoice = await invoiceService.findById(invoiceItemDto.invoice_id!, {
         transaction: t,
@@ -56,31 +55,30 @@ export class InvoiceItemsService extends BaseService<
         throw new Error("Invoice não encontrada!");
       }
 
-      // ─── 2. Cria o InvoiceFiscalItem ─────────────────────────────────────
-      // Busca o produto para complementar com NCM, CEST e preço
+      // ─── 2. Cria o InvoiceFiscalItem ──────────────────────────────────────
+      // Os totais da invoice já estão corretos desde o upsert do Bling/XML,
+      // pois refletem todos os itens da NF-e independente de mapeamento.
+      // Aqui apenas registramos o item fiscal para rastreabilidade interna.
+      // Impostos ficam zerados — sem XML completo neste fluxo manual;
+      // serão preenchidos quando o XML for reprocessado pelo Bling.
       const product = await Product.findByPk(invoiceItemDto.product_id, {
         transaction: t,
       });
 
       const quantity = unMappedProduct.quantity ?? 0;
-      // Tenta usar unit_price do dto; fallback para supplier_cost_price do produto
-      const unitPrice =
-        (invoiceItemDto as any).unit_price ??
-        Number(product?.supplier_cost_price ?? 0);
+      const unitPrice = Number(product?.supplier_cost_price ?? 0);
       const totalValue = unitPrice * quantity;
 
-      // Descobre o próximo item_number para esta invoice
       const existingFiscalItemsCount = await InvoiceFiscalItem.count({
         where: { invoice_id: invoice.id },
         transaction: t,
       });
-      const nextItemNumber = existingFiscalItemsCount + 1;
 
       await InvoiceFiscalItem.upsert(
         {
           invoice_id: invoice.id,
           product_id: product?.id ?? null,
-          item_number: nextItemNumber,
+          item_number: existingFiscalItemsCount + 1,
           sku: product?.sku ?? unMappedProduct.sku ?? null,
           description: unMappedProduct.product_name?.slice(0, 255) ?? null,
           quantity,
@@ -90,8 +88,6 @@ export class InvoiceItemsService extends BaseService<
           cest: product?.cest ?? null,
           cfop: null,
           gtin: newEan || unMappedProduct.ean || product?.ean || null,
-          // Impostos ficam zerados — não temos XML completo neste fluxo manual.
-          // Serão preenchidos quando o XML da NF-e for processado pelo Bling.
           approx_tax_value: 0,
           icms_rate: 0,
           icms_value: 0,
@@ -108,26 +104,12 @@ export class InvoiceItemsService extends BaseService<
         },
       );
 
-      // ─── 3. Incrementa os totais da Invoice principal ─────────────────────
-      // Apenas incrementa invoice_products_value e invoice_value com o valor
-      // do item recém mapeado, sem recalcular campos fiscais (esses virão do XML).
-      await Invoice.increment(
-        {
-          invoice_products_value: totalValue,
-          invoice_value: totalValue,
-        },
-        {
-          where: { id: invoice.id },
-          transaction: t,
-        },
-      );
-
       console.log(
-        `[INVOICE_ITEMS] FiscalItem criado e invoice ${invoice.id} incrementada em +${totalValue} (produto ${product?.sku})`,
+        `[INVOICE_ITEMS] FiscalItem criado para invoice ${invoice.id} | produto=${product?.sku} | qty=${quantity}`,
       );
 
-      // ─── 4. Sincroniza batch se a invoice já pertencer a um ───────────────
-      if (invoice?.batch_generated) {
+      // ─── 3. Sincroniza batch se a invoice já pertencer a um ───────────────
+      if (invoice.batch_generated) {
         const batchInvoices = await ExpeditionBatchInvoice.findAll({
           where: { invoice_id: invoice.id },
           transaction: t,
@@ -163,28 +145,28 @@ export class InvoiceItemsService extends BaseService<
         );
       }
 
-      // ─── 5. Cria SupplierMapping se for nota de entrada ───────────────────
+      // ─── 4. Cria SupplierMapping se for nota de entrada ───────────────────
       if (invoice.type === "INCOMING") {
-        const supplierProductCode = newEan || unMappedProduct?.ean;
+        const supplierProductCode = newEan || unMappedProduct.ean;
 
         if (supplierProductCode) {
           const spMap = await supplierMappingService.create(
             {
               product_id: invoiceItemDto.product_id,
-              supplier_cnpj: invoice?.sender_cnpj,
+              supplier_cnpj: invoice.sender_cnpj,
               supplier_product_code: supplierProductCode,
             },
             { transaction: t },
           );
 
           console.log(
-            `[INVOICE_ITEMS] SupplierMapping criado: product_id=${invoiceItemDto.product_id}, cnpj=${invoice?.sender_cnpj}`,
+            `[INVOICE_ITEMS] SupplierMapping criado: product_id=${invoiceItemDto.product_id}, cnpj=${invoice.sender_cnpj}`,
           );
           console.log(spMap);
         }
       }
 
-      // ─── 6. Remove o UnmappedInvoiceProduct ──────────────────────────────
+      // ─── 5. Remove o UnmappedInvoiceProduct ──────────────────────────────
       await UnmappedInvoiceProduct.destroy({
         where: { id: unMappedProductId },
         transaction: t,
