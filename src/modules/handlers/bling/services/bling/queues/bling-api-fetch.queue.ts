@@ -537,7 +537,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           break;
 
         case "product_supplier":
-          await this.fetchAndUpsertProductSupplier(apiFetch);
+          // await this.fetchAndUpsertProductSupplier(apiFetch);
           break;
 
         case "invoice":
@@ -582,9 +582,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
           price: blingProduct.precoCusto,
           type: blingProduct.formato === "E" ? "KIT" : "UNIT",
-          source_system: "BLING",
           integrations_id: integration.id,
-          external_id: String(blingProduct.id),
           source_payload: blingProduct as unknown as Record<string, unknown>,
           unit: blingProduct.unidade,
           brand: blingProduct.marca,
@@ -593,15 +591,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           gtin: blingProduct.gtin,
           gtin_package: blingProduct.gtinEmbalagem,
           ncm: blingProduct.tributacao?.ncm,
-          cest: blingProduct.tributacao?.cest,
-          supplier_external_id: blingProduct.fornecedor?.id
-            ? String(blingProduct.fornecedor.id)
-            : undefined,
-          supplier_contact_id: blingProduct.fornecedor?.contato?.id
-            ? String(blingProduct.fornecedor.contato.id)
-            : undefined,
-          supplier_name: blingProduct.fornecedor?.contato?.nome,
-          supplier_product_code: blingProduct.fornecedor?.codigo,
+          cest: blingProduct.tributacao?.cest,   
           supplier_cost_price: Number(
             blingProduct.fornecedor?.precoCusto ?? blingProduct.precoCusto ?? 0,
           ),
@@ -911,8 +901,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         danfe_path: "",
         xml_path: xmlContent ? encryptXml(xmlContent) : null,
         xml_key: encryptedKey,
-        source_system: "BLING",
-        external_id: String(nf.id),
         // CORREÇÃO 1: UF/cidade do XML com fallback para API
         destination_uf: destinationUf,
         destination_city: destinationCity,
