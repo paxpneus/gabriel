@@ -21,8 +21,8 @@ class Order
   public nfe_emitted?: boolean;
   public internal_status?: string;
   public store_id?: string;
-  public unit_business_id?: string;   
-  public invoice_id?: string;        
+  public unit_business_id?: string;
+  public invoice_id?: string;
   public waiting_acceptance?: boolean;
   public source_payload?: Record<string, unknown>;
   public total_products?: number;
@@ -38,6 +38,18 @@ class Order
   public tax_base_value?: number;
   public marketplace_fee?: number;
   public payment_fee?: number;
+
+  // Campos fiscais/geográficos
+  public destination_uf?: string;
+  public destination_city?: string;
+  public icms_value?: number;
+  public ipi_value?: number;
+  public pis_value?: number;
+  public cofins_value?: number;
+  public difal_value?: number;
+  public ibs_value?: number;
+  public cbs_value?: number;
+  public approx_tax_value?: number;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -201,6 +213,56 @@ Order.init(
       defaultValue: 0,
     },
     payment_fee: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+
+    // Campos fiscais/geográficos
+    destination_uf: {
+      type: DataTypes.STRING(2),
+      allowNull: true,
+    },
+    destination_city: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    icms_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    ipi_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    pis_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    cofins_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    difal_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    ibs_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    cbs_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    approx_tax_value: {
       type: DataTypes.DECIMAL(14, 2),
       allowNull: true,
       defaultValue: 0,
