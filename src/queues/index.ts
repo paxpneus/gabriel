@@ -1,3 +1,4 @@
+import { SalesReportQueue } from './../modules/reports/daily-sales/sales-report/sales-report.queue';
 import { Express } from "express";
 import { blingApi } from "../modules/handlers/bling/api/bling_api.service";
 
@@ -90,6 +91,7 @@ function buildQueues(workless: boolean) {
   const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless })
   const blingDailyReconciler = new BlingMigrationQueue({ workless })
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless })
+  const dailySalesReportQueue = new SalesReportQueue({ workless })
 
   return {
     nfeQueue,
@@ -103,6 +105,7 @@ function buildQueues(workless: boolean) {
     blingTokenRefreshQueue,
     blingDailyReconciler,
     dailyOperationReportQueue,
+    dailySalesReportQueue
   };
 }
 
@@ -120,6 +123,7 @@ export function registerQueues(app: Express) {
     blingTokenRefreshQueue,
     blingDailyReconciler,
     dailyOperationReportQueue,
+    dailySalesReportQueue
   } = buildQueues(true); // workless: true → zero Workers na API
 
   // Scraping só para o BullBoard enxergar a fila, sem Worker
@@ -139,6 +143,7 @@ export function registerQueues(app: Express) {
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
   app.locals.BlingMigrationQueue = blingDailyReconciler;
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
+  app.locals.DailySalesReportQueue = dailySalesReportQueue
 
   serverAdapter.setBasePath("/admin/queues");
 
@@ -156,6 +161,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(blingTokenRefreshQueue.queue),
       new BullMQAdapter(blingDailyReconciler.queue),
       new BullMQAdapter(dailyOperationReportQueue.queue),
+      new BullMQAdapter(dailySalesReportQueue.queue)
     ],
     serverAdapter,
   });
