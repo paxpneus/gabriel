@@ -1,7 +1,6 @@
-export interface ExternalOrderStatusMappingAttributes {
+export interface IntegrationOrderStatusMappingAttributes {
   id: string;
-  integration_id?: string | null;
-  source_system?: string | null;
+  integration_id: string;
   external_status_id: string;
   external_status_value?: string | null;
   normalized_status: string;
@@ -12,7 +11,7 @@ export interface ExternalOrderStatusMappingAttributes {
   updatedAt?: Date;
 }
 
-export type ExternalOrderStatusMappingCreationAttributes = Omit<
-  ExternalOrderStatusMappingAttributes,
+export type IntegrationOrderStatusMappingCreationAttributes = Omit<
+  IntegrationOrderStatusMappingAttributes,
   "id" | "createdAt" | "updatedAt"
 >;
