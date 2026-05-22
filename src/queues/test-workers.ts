@@ -3,6 +3,7 @@ import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/que
 import { BlingTokenRefreshQueue } from "../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
+import { SalesReportQueue } from "../modules/reports/daily-sales/sales-report/sales-report.queue";
 
 export function startBlingWorkers() {
   console.log("🚀 Iniciando Bling workers isolados...");
@@ -12,6 +13,7 @@ export function startBlingWorkers() {
   const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless: false });
   const blingDailyReconciler = new BlingMigrationQueue({ workless: false})
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless: false });
+  const dailySalesReportQueue = new SalesReportQueue({workless: false}) 
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });

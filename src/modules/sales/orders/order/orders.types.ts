@@ -16,6 +16,29 @@ export interface orderAttributes {
     internal_status?: string;
     store_id?: string;
     waiting_acceptance?: boolean;
+    source_system?: string;
+    external_id?: string;
+    external_number?: string;
+    external_store_order_number?: string;
+    external_status_id?: string;
+    external_status_name?: string;
+    external_invoice_id?: string;
+    external_store_id?: string;
+    external_unit_business_id?: string;
+    source_payload?: Record<string, unknown>;
+    total_products?: number;
+    total_order?: number;
+    discount_value?: number;
+    discount_type?: string;
+    other_expenses?: number;
+    freight_charged?: number;
+    freight_cost?: number;
+    freight_by_account?: number;
+    gross_weight?: number;
+    tax_commission?: number;
+    tax_base_value?: number;
+    marketplace_fee?: number;
+    payment_fee?: number;
     
     createdAt?: Date,
     updatedAt?: Date,

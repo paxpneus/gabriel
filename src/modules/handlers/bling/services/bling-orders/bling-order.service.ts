@@ -82,7 +82,39 @@ export class BlingOrderService {
         actual_situation: String(orderData.situacao.id),
         totalPrice: Number(orderData.total),
         date: new Date(orderData.data),
-        internal_status: internalStatus
+        internal_status: internalStatus,
+        source_system: "BLING",
+        external_id: String(orderData.id),
+        external_number: String(orderData.numero),
+        external_store_order_number: String(orderData.numeroLoja ?? ""),
+        external_status_id: String(orderData.situacao?.id ?? ""),
+        external_status_name: String(orderData.situacao?.valor ?? ""),
+        external_invoice_id: orderData.notaFiscal?.id
+          ? String(orderData.notaFiscal.id)
+          : undefined,
+        external_store_id: orderData.loja?.id
+          ? String(orderData.loja.id)
+          : undefined,
+        external_unit_business_id: orderData.loja?.unidadeNegocio?.id
+          ? String(orderData.loja.unidadeNegocio.id)
+          : undefined,
+        source_payload: orderData,
+        total_products: Number(orderData.totalProdutos ?? 0),
+        total_order: Number(orderData.total ?? 0),
+        discount_value: Number(orderData.desconto?.valor ?? 0),
+        discount_type: orderData.desconto?.unidade
+          ? String(orderData.desconto.unidade)
+          : undefined,
+        other_expenses: Number(orderData.outrasDespesas ?? 0),
+        freight_charged: Number(orderData.transporte?.frete ?? 0),
+        freight_cost: Number(orderData.taxas?.custoFrete ?? 0),
+        freight_by_account:
+          orderData.transporte?.fretePorConta !== undefined
+            ? Number(orderData.transporte.fretePorConta)
+            : undefined,
+        gross_weight: Number(orderData.transporte?.pesoBruto ?? 0),
+        tax_commission: Number(orderData.taxas?.taxaComissao ?? 0),
+        tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
       });
 
       console.log(
@@ -216,19 +248,66 @@ export class BlingOrderService {
         date: new Date(orderData.data),
         totalPrice: Number(orderData.total),
         store_id: store.id,
+        source_system: "BLING",
+        external_id: String(orderData.id),
+        external_number: String(orderData.numero),
+        external_store_order_number: String(orderData.numeroLoja ?? ""),
+        external_status_id: String(orderData.situacao?.id ?? ""),
+        external_status_name: String(orderData.situacao?.valor ?? ""),
+        external_invoice_id: orderData.notaFiscal?.id
+          ? String(orderData.notaFiscal.id)
+          : undefined,
+        external_store_id: orderData.loja?.id
+          ? String(orderData.loja.id)
+          : undefined,
+        external_unit_business_id: orderData.loja?.unidadeNegocio?.id
+          ? String(orderData.loja.unidadeNegocio.id)
+          : undefined,
+        source_payload: orderData,
+        total_products: Number(orderData.totalProdutos ?? 0),
+        total_order: Number(orderData.total ?? 0),
+        discount_value: Number(orderData.desconto?.valor ?? 0),
+        discount_type: orderData.desconto?.unidade
+          ? String(orderData.desconto.unidade)
+          : undefined,
+        other_expenses: Number(orderData.outrasDespesas ?? 0),
+        freight_charged: Number(orderData.transporte?.frete ?? 0),
+        freight_cost: Number(orderData.taxas?.custoFrete ?? 0),
+        freight_by_account:
+          orderData.transporte?.fretePorConta !== undefined
+            ? Number(orderData.transporte.fretePorConta)
+            : undefined,
+        gross_weight: Number(orderData.transporte?.pesoBruto ?? 0),
+        tax_commission: Number(orderData.taxas?.taxaComissao ?? 0),
+        tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
       };
 
       // 3. Cria o pedido
       const createdOrder = await ordersService.create(ordersPayload);
 
-      const itemsPayload: orderItemsCreationAttributes[] = orderData.itens.map((i: Record<string, string | number>) => {
+      const itemsPayload: orderItemsCreationAttributes[] = orderData.itens.map((i: any) => {
+        const quantity = Number(i.quantidade ?? i.quantity ?? 0);
+        const unitPrice = Number(i.valor ?? 0);
+        const discountValue = Number(i.desconto ?? 0);
         return {
           name: i.descricao,
           order_id: createdOrder.id,
           sku: String(i.codigo),
           unit: i.unidade,
-          quantity: i.quantity,
-          price: i.valor,
+          quantity,
+          price: unitPrice,
+          source_system: "BLING",
+          integrations_id: integration.id,
+          external_item_id: i.id ? String(i.id) : undefined,
+          external_product_id: i.produto?.id ? String(i.produto.id) : undefined,
+          source_payload: i,
+          unit_price: unitPrice,
+          gross_total: unitPrice * quantity,
+          discount_value: discountValue,
+          net_total: unitPrice * quantity - discountValue,
+          commission_base: Number(i.comissao?.base ?? 0),
+          commission_rate: Number(i.comissao?.aliquota ?? 0),
+          commission_value: Number(i.comissao?.valor ?? 0),
         }
       })
 

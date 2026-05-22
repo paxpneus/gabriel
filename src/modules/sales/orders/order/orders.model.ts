@@ -22,6 +22,29 @@ class Order
   public internal_status?: string;
   public store_id?: string;
   public waiting_acceptance?: boolean;
+  public source_system?: string;
+  public external_id?: string;
+  public external_number?: string;
+  public external_store_order_number?: string;
+  public external_status_id?: string;
+  public external_status_name?: string;
+  public external_invoice_id?: string;
+  public external_store_id?: string;
+  public external_unit_business_id?: string;
+  public source_payload?: Record<string, unknown>;
+  public total_products?: number;
+  public total_order?: number;
+  public discount_value?: number;
+  public discount_type?: string;
+  public other_expenses?: number;
+  public freight_charged?: number;
+  public freight_cost?: number;
+  public freight_by_account?: number;
+  public gross_weight?: number;
+  public tax_commission?: number;
+  public tax_base_value?: number;
+  public marketplace_fee?: number;
+  public payment_fee?: number;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -121,6 +144,110 @@ Order.init(
         }
     }
 }
+,
+    source_system: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    external_id: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    external_number: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    external_store_order_number: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    external_status_id: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    external_status_name: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    external_invoice_id: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    external_store_id: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    external_unit_business_id: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    source_payload: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+    },
+    total_products: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    total_order: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    discount_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    discount_type: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+    },
+    other_expenses: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    freight_charged: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    freight_cost: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    freight_by_account: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    gross_weight: {
+      type: DataTypes.DECIMAL(14, 4),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    tax_commission: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    tax_base_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    marketplace_fee: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    payment_fee: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
   },
   {
     sequelize,
