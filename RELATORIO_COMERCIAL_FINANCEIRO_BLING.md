@@ -2,7 +2,15 @@
 
 Este documento descreve tudo que precisa ser alterado/adicionado no backend da PAX Pneus para gerar um relatório comercial e financeiro com visões por estado, geral, produto, loja e status, usando dados de ERPs integrados, XML de NF-e e custo médio do estoque.
 
-A Bling é a primeira integração considerada neste desenho, mas a estrutura não deve ficar presa a ela. No futuro, o mesmo relatório deve receber dados da Tecinco ou de outro ERP sem alterar as tabelas analíticas principais. Por isso, os campos do domínio devem ser genéricos (`external_id`, `source_system`, `integration_id`) e cada conector deve traduzir seu payload para o mesmo modelo canônico.
+A Bling é a primeira integração considerada neste desenho, mas a estrutura não deve ficar presa a ela. No futuro, o mesmo relatório deve receber dados da Tecinco ou de outro ERP sem alterar as tabelas analíticas principais.
+
+O sistema já possui três entidades estruturais que cobrem completamente a origem e contexto de cada dado:
+
+- `integrations` → de onde veio o dado (Bling, Tecinco, etc.)
+- `stores` → canal de venda (Mercado Livre, Shopee, loja virtual, etc.)
+- `unit_businesses` → filial/unidade operacional física
+
+Por isso, **não há campos `source_system` ou `external_*` genéricos** nas tabelas operacionais. Cada conector/adapter deve traduzir seu payload para esse modelo canônico usando as FKs existentes.
 
 O desenho segue o mesmo padrão do relatório diário operacional já existente em `src/modules/reports/daily-operation-report`:
 
@@ -124,59 +132,49 @@ Use cada ERP assim:
 
 ## 3. Modelo canônico de integração
 
-O sistema deve separar três camadas:
+O sistema separa três camadas:
 
 ```txt
-ERP externo, como Bling ou Tecinco
+ERP externo (Bling, Tecinco, etc.)
   -> adapter/conector de ingestão
-  -> tabelas canônicas do sistema
+  -> tabelas canônicas do sistema (integrations, stores, unit_businesses como FKs)
   -> snapshots/facts do relatório
 ```
 
-As tabelas de venda, produto, nota e relatório não devem ter colunas específicas como `bling_order_id` quando o campo representa um conceito comum a qualquer ERP. O padrão recomendado é:
+As tabelas de venda, produto, nota e relatório **não têm colunas `source_system`** porque a origem é sempre resolvida por `integrations_id` (FK para `integrations`). O nome do ERP é `integrations.name`; o tipo é `integrations.type`.
+
+Mapeamento canônico:
 
 ```txt
-integration_id       -> FK para integrations.id
-source_system        -> identificador legível: BLING, TECINCO, etc.
-external_id          -> id do registro no ERP de origem
-external_number      -> número/código exibido pelo ERP de origem
-external_status_id   -> id/código de status no ERP de origem
-external_status_name -> nome normalizado/mapeado do status
-source_payload       -> JSON bruto opcional para auditoria/debug
+"De onde veio?"          → integrations_id (FK → integrations)
+"Qual canal de venda?"   → store_id (FK → stores)
+"Qual filial/unidade?"   → unit_business_id (FK → unit_businesses)
+"Id do registro no ERP?" → campos *_system já existentes:
+                           orders.id_order_system
+                           orders.number_order_system
+                           orders.number_order_channel
+                           products.id_system
+                           invoices.id_system / xml_key
 ```
 
-Exemplos:
+Se algum ERP tiver campo muito específico sem equivalente canônico, usar `source_payload JSONB` nas tabelas de snapshot — não nas tabelas operacionais principais.
+
+Exemplos de mapeamento por ERP:
 
 ```txt
-Bling pedido data.id        -> orders.external_id
-Bling pedido data.numero    -> orders.external_number
-Bling situacao.id           -> orders.external_status_id
-Bling situacao.valor/status -> orders.external_status_name via mapping
+Bling pedido data.id        -> orders.id_order_system
+Bling pedido data.numero    -> orders.number_order_system
+Bling pedido data.numeroLoja -> orders.number_order_channel
+Bling loja.id               -> stores (buscar/criar por external lookup)
+Bling loja.unidadeNegocio.id -> unit_businesses (buscar/criar por external lookup)
+Bling situacao              -> via integration_mappings (status normalizado)
 
-Tecinco pedido id           -> orders.external_id
-Tecinco pedido numero       -> orders.external_number
-Tecinco status codigo       -> orders.external_status_id
-Tecinco status descricao    -> orders.external_status_name via mapping
-```
-
-Se algum ERP tiver um campo muito específico que não existe nos outros, ele não deve poluir o modelo principal de relatório. Nesse caso, usar uma destas opções:
-
-- salvar no `source_payload` JSON;
-- criar tabela específica do conector, como `bling_order_details` ou `tecinco_order_details`;
-- criar uma tabela de mapping se o campo for necessário para traduzir para o domínio canônico.
-
-Decisão recomendada:
-
-```txt
-Não criar uma árvore de tabelas de relatório separada por ERP, como order_bling_report e order_tecinco_report.
-Criar um modelo canônico único de vendas e relatórios.
-Criar adapters por ERP para preencher esse modelo.
-Criar tabelas específicas por ERP apenas para payload bruto, auditoria ou campos que não participam do relatório principal.
+Tecinco pedido id           -> orders.id_order_system
+Tecinco pedido numero       -> orders.number_order_system
+(campos adicionais)         -> source_payload no snapshot
 ```
 
 ## 4. O que a Bling entrega
-
-Esta seção documenta a Bling porque é a fonte atual. A Tecinco deve ter uma seção equivalente quando a integração for desenhada, sempre mapeando seus campos para o modelo canônico.
 
 ### 4.1. Pedido de venda
 
@@ -196,12 +194,12 @@ data.contato.tipoPessoa
 data.contato.numeroDocumento
 data.situacao.id
 data.situacao.valor
-data.loja.id
-data.loja.unidadeNegocio.id
+data.loja.id                     -> stores (via lookup)
+data.loja.unidadeNegocio.id      -> unit_businesses (via lookup)
 data.outrasDespesas
 data.desconto.valor
 data.desconto.unidade
-data.notaFiscal.id
+data.notaFiscal.id               -> busca da invoice via id_system
 data.tributacao.totalICMS
 data.tributacao.totalIPI
 data.itens[].id
@@ -216,7 +214,7 @@ data.itens[].comissao.aliquota
 data.itens[].comissao.valor
 data.transporte.fretePorConta
 data.transporte.frete
-data.transporte.quantidadeVolumes
+data.transporte.quantidadeVolumes  -> NÃO usar para volumes do relatório
 data.transporte.pesoBruto
 data.taxas.taxaComissao
 data.taxas.custoFrete
@@ -228,7 +226,7 @@ Pontos de atenção:
 - `transporte.quantidadeVolumes` pode vir zerado. Não usar para volumes do relatório.
 - `transporte.etiqueta.uf` pode vir vazio. Para UF, preferir NF-e/XML.
 - `taxas.custoFrete` pode representar custo de frete pago pela operação, mas precisa ser validado contra a regra real de cada canal.
-- `situacao.valor` isolado não é legível para usuário. Deve existir mapeamento para nome do status.
+- `situacao.valor` deve ser normalizado via `integration_mappings`.
 
 ### 4.2. Nota fiscal
 
@@ -303,7 +301,7 @@ total/ICMSTot/vCOFINS
 total/ICMSTot/vICMSUFDest
 ```
 
-O projeto já possui `fast-xml-parser` e `xml2js` no `package.json`, então não é necessário adicionar dependência para parsear XML.
+O projeto já possui `fast-xml-parser` e `xml2js` no `package.json`.
 
 ### 4.4. Produto
 
@@ -333,28 +331,31 @@ data.tributacao.cest
 
 Pontos de atenção:
 
-- `fornecedor.precoCusto` pode alimentar o cadastro/produto.
-- O custo do relatório deve ser custo médio do estoque.
-- `estoque.saldoVirtualTotal` pode ajudar conciliação, mas o cálculo oficial deve usar o estoque interno se ele for a fonte de verdade. 
+- `fornecedor.precoCusto` alimenta `products.supplier_cost_price` e o vínculo `product_supplier_maps`.
+- O fornecedor é mapeado via `supplier_id` (FK → `suppliers`).
+- O custo do relatório deve ser custo médio do estoque, não o custo do fornecedor.
+- `estoque.saldoVirtualTotal` pode ajudar conciliação, mas o cálculo oficial usa o estoque interno.
 
 ## 5. O que falta no sistema atual
 
 ### 5.1. `orders`
 
-Hoje a tabela `orders` tem poucos campos para relatório financeiro. Ela guarda total, data, loja, cliente, status interno e números externos.
-
-Faltam campos comerciais genéricos de ERP:
+Campos já existentes e suficientes para identificação canônica:
 
 ```txt
-source_system
-integration_id
-external_id
-external_number
-external_store_order_number
-external_status_id
-external_status_name
-external_invoice_id
-source_payload
+integrations_id        -> de qual ERP/canal
+store_id               -> canal de venda
+unit_business_id       -> filial (adicionado na última migration)
+invoice_id             -> nota fiscal vinculada (adicionado na última migration)
+id_order_system        -> id do pedido no ERP
+number_order_system    -> número do pedido no ERP
+number_order_channel   -> número do pedido no canal de venda
+customer_id
+```
+
+Faltam apenas campos comerciais/financeiros:
+
+```txt
 total_products
 total_order
 discount_value
@@ -364,38 +365,27 @@ freight_charged
 freight_cost
 freight_by_account
 gross_weight
-external_store_id
-external_unit_business_id
 tax_commission
 tax_base_value
 marketplace_fee
 payment_fee
 ```
 
-Observação: não é obrigatório adicionar todos diretamente em `orders` se eles forem salvos em uma tabela nova de snapshot comercial. Porém, para sincronização e auditoria, é melhor persistir os principais no pedido.
+Obs.: campos como `external_id`, `external_number`, `external_status_id`,
+`external_status_name`, `external_store_id`, `source_system` foram removidos
+nas migrations porque já são cobertos pelo modelo canônico existente.
 
 ### 5.2. `order_items`
 
-Hoje a tabela tem:
+Campos já existentes:
 
 ```txt
-order_id
-name
-sku
-unit
-quantity
-price
+order_id, product_id, name, sku, unit, quantity, price
 ```
 
 Faltam:
 
 ```txt
-product_id
-source_system
-integration_id
-external_item_id
-external_product_id
-source_payload
 unit_price
 gross_total
 discount_value
@@ -418,27 +408,21 @@ MANUAL
 UNKNOWN
 ```
 
+Obs.: campos `external_item_id`, `external_product_id` e `source_system` foram
+removidos nas migrations. Detalhes de item do ERP que precisem de auditoria
+devem ir em `source_payload` no snapshot correspondente.
+
 ### 5.3. `products`
 
-Hoje a tabela tem:
+Campos já existentes:
 
 ```txt
-id_system
-name
-sku
-ean
-ean_tribut
-price
-type
+id_system, name, sku, ean, price, type, integrations_id, supplier_id (novo FK)
 ```
 
-Faltam campos vindos do ERP e campos de custo:
+Faltam campos de cadastro enriquecido:
 
 ```txt
-source_system
-integration_id
-external_id
-source_payload
 unit
 brand
 gross_weight
@@ -447,55 +431,52 @@ gtin
 gtin_package
 ncm
 cest
-supplier_external_id
-supplier_contact_id
-supplier_name
-supplier_product_code
 supplier_cost_price
 supplier_purchase_price
-stock_virtual_total
 average_cost
 average_cost_updated_at
 ```
 
-`average_cost` pode ser armazenado para consulta rápida, mas a fonte calculável continua sendo:
-
-```txt
-stocks.total_price / stocks.quantity
-```
+Obs.: campos `source_system`, `external_id`, `supplier_external_id`,
+`supplier_contact_id`, `supplier_name`, `supplier_product_code` foram removidos
+nas migrations. A origem é coberta por `integrations_id`; dados do fornecedor
+pertencem a `suppliers` e `product_supplier_maps`.
 
 ### 5.4. `stocks`
 
 Hoje `stocks` tem:
 
 ```txt
-product_id
-unit_business_id
-total_price
-quantity
+product_id, unit_business_id, total_price, quantity
 ```
 
-Isso é suficiente para custo médio, desde que `total_price` represente o valor total gasto com o estoque atual.
+Isso é suficiente para custo médio, desde que `total_price` represente o valor
+total gasto com o estoque atual.
 
-Recomendações:
+Ações recomendadas:
 
-- Garantir que a unicidade seja composta por `(product_id, unit_business_id)`.
-- Conferir se o banco real não está com `unique` separado em `product_id` e `unit_business_id`, pois isso quebraria estoque por filial.
+- Garantir unicidade composta `(product_id, unit_business_id)` — não individual.
 - Padronizar atualizações de entrada/saída para manter `total_price` e `quantity` corretos.
 
 ### 5.5. `invoices`
 
-Hoje `invoices` guarda dados operacionais, XML path, chave, emitente/destinatário, status e datas, mas não guarda os totais fiscais necessários para relatório comercial.
-
-Faltam:
+Campos já existentes:
 
 ```txt
-source_system
-integration_id
-external_id
+unit_business_id, store_id, integrations_id, transporter_id
+xml_key, xml_path, danfe_path, id_system
+sender_cnpj/name, receiver_cnpj/name
+type, status, emitted_at, received_at
+```
+
+Obs.: `external_id` e `source_system` foram removidos nas migrations. A origem
+é coberta por `integrations_id`; o id externo fica em `id_system`.
+
+Faltam campos fiscais para o relatório:
+
+```txt
 invoice_number
 invoice_series
-invoice_key
 invoice_value
 invoice_products_value
 invoice_freight_value
@@ -517,45 +498,13 @@ source_payload
 
 ### 5.6. `invoice_items`
 
-Hoje `invoice_items` é voltada para operação de recebimento/expedição. Ela não guarda valores fiscais por item.
+Hoje voltada para operação de recebimento/expedição. Não guarda valores fiscais.
 
-Faltam campos, ou uma tabela nova separada, para:
-
-```txt
-sku
-description
-quantity
-unit_price
-total_value
-ncm
-cest
-cfop
-gtin
-approx_tax_value
-icms_rate
-icms_value
-ipi_value
-pis_value
-cofins_value
-difal_value
-ibs_value
-cbs_value
-```
-
-Recomendação: criar uma tabela fiscal separada, por exemplo `invoice_fiscal_items`, para não misturar com o fluxo operacional de leitura.
+Recomendação: criar tabela `invoice_fiscal_items` separada (ver seção 10.2).
 
 ## 6. Modelo recomendado de tabelas para o relatório
 
-O relatório diário operacional atual usa:
-
-```txt
-invoice_operation_snapshots
-daily_operation_facts
-daily_transporter_facts
-report_job_checkpoints
-```
-
-Para este relatório, recomendo criar estrutura equivalente:
+Estrutura equivalente ao relatório diário operacional:
 
 ```txt
 sales_order_snapshots
@@ -567,17 +516,9 @@ daily_sales_product_facts
 daily_sales_status_facts
 ```
 
-Também pode existir uma rota única `sales-report` que consulta essas facts.
-
 ## 7. Tabela `sales_order_snapshots`
 
 Snapshot por pedido. Uma linha por pedido vendido.
-
-Finalidade:
-
-- Congelar dados comerciais, fiscais e financeiros do pedido.
-- Permitir agregações rápidas por data, loja, UF e status.
-- Evitar que mudanças futuras no ERP/produto/estoque alterem o histórico.
 
 Campos recomendados:
 
@@ -590,10 +531,8 @@ customer_id UUID NULL FK customers.id
 store_id UUID NULL FK stores.id
 unit_business_id UUID NULL FK unit_businesses.id
 
-source_system VARCHAR(50)
-external_order_id VARCHAR(100)
-external_order_number VARCHAR(100)
-external_invoice_id VARCHAR(100)
+order_number_system VARCHAR(100)       -- orders.number_order_system
+order_number_channel VARCHAR(100)      -- orders.number_order_channel
 invoice_number VARCHAR(100)
 invoice_key VARCHAR(255)
 
@@ -604,9 +543,7 @@ emitted_at TIMESTAMP NULL
 destination_uf VARCHAR(2)
 destination_city VARCHAR(100)
 
-status_id VARCHAR(50)
-status_name VARCHAR(100)
-status_value VARCHAR(50)
+status_snapshot VARCHAR(100)           -- valor normalizado via integration_mappings
 snapshot_status VARCHAR(30)
 
 items_quantity INTEGER DEFAULT 0
@@ -644,7 +581,7 @@ markup_pct NUMERIC(8,2) DEFAULT 0
 
 has_cost_fallback BOOLEAN DEFAULT FALSE
 has_invoice_data BOOLEAN DEFAULT FALSE
-source_payload JSONB NULL
+source_payload JSONB NULL              -- payload bruto do ERP para auditoria
 last_updated_at TIMESTAMP
 created_at TIMESTAMP
 updated_at TIMESTAMP
@@ -658,49 +595,35 @@ INDEX(order_date)
 INDEX(order_date, store_id)
 INDEX(order_date, unit_business_id)
 INDEX(order_date, destination_uf)
-INDEX(order_date, status_id)
+INDEX(order_date, integration_id)
 INDEX(invoice_id)
 ```
+
+Obs.: não há `external_order_id`, `external_order_number`, `external_invoice_id`
+nem `source_system` neste snapshot. A origem é `integration_id` (FK);
+os números do ERP ficam em `order_number_system` e `order_number_channel`,
+copiados de `orders`.
 
 ### Fórmulas no snapshot do pedido
 
 ```txt
 items_quantity = SUM(sales_order_item_snapshots.quantity)
-total_cost = SUM(sales_order_item_snapshots.total_cost)
+total_cost = SUM(sales_order_item_snapshots.total_cost_snapshot)
 total_taxes = icms + ipi + pis + cofins + difal + ibs + cbs
 total_fees = tax_commission + marketplace_fee + payment_fee
-```
 
-Frete:
-
-```txt
-freight_charged = valor de frete cobrado do cliente
-freight_cost = custo de frete pago pela empresa
-```
-
-Contribuição:
-
-```txt
 contribution_value =
   total_order
   - total_cost
   - CASE WHEN freight_paid_by_company THEN freight_cost ELSE 0 END
   - total_taxes
   - total_fees
-```
 
-Percentual de contribuição:
-
-```txt
 contribution_pct =
   CASE WHEN total_order = 0 THEN 0
   ELSE contribution_value / total_order * 100
   END
-```
 
-Markup:
-
-```txt
 markup_pct =
   CASE WHEN total_cost = 0 THEN 0
   ELSE (total_order - total_cost) / total_cost * 100
@@ -721,13 +644,11 @@ order_item_id UUID NULL FK order_items.id
 product_id UUID NULL FK products.id
 store_id UUID NULL FK stores.id
 unit_business_id UUID NULL FK unit_businesses.id
+integration_id UUID NULL FK integrations.id
 
 order_date DATE NOT NULL
 destination_uf VARCHAR(2)
 
-source_system VARCHAR(50)
-external_item_id VARCHAR(100)
-external_product_id VARCHAR(100)
 sku VARCHAR(100)
 description VARCHAR(255)
 unit VARCHAR(20)
@@ -776,38 +697,48 @@ INDEX(order_snapshot_id)
 INDEX(order_date, product_id)
 INDEX(order_date, sku)
 INDEX(order_date, store_id)
+INDEX(order_date, unit_business_id)
 INDEX(order_date, destination_uf)
 ```
 
 ### Fórmulas por item
 
-Quantidade:
-
 ```txt
 quantity = ERP pedido itens[].quantidade
-```
-
-Valor:
-
-```txt
 gross_total = unit_price * quantity
 net_total = gross_total - discount_value
-```
 
-Custo:
-
-```txt
 average_cost_snapshot = stocks.total_price / stocks.quantity
 total_cost_snapshot = average_cost_snapshot * quantity
-```
 
-Markup:
-
-```txt
 markup_pct =
   CASE WHEN total_cost_snapshot = 0 THEN 0
   ELSE (net_total - total_cost_snapshot) / total_cost_snapshot * 100
   END
+```
+
+Custo (pseudo-SQL):
+
+```sql
+CASE
+  WHEN s.quantity > 0 THEN ROUND((s.total_price::numeric / s.quantity::numeric), 4)
+  WHEN p.supplier_cost_price IS NOT NULL THEN p.supplier_cost_price
+  ELSE 0
+END AS average_cost_snapshot,
+
+CASE
+  WHEN s.quantity > 0 THEN 'STOCK_AVERAGE'
+  WHEN p.supplier_cost_price IS NOT NULL THEN 'PRODUCT_SUPPLIER_COST'
+  ELSE 'UNKNOWN'
+END AS cost_source
+```
+
+O join de estoque usa:
+
+```sql
+LEFT JOIN stocks s
+  ON s.product_id = oi.product_id
+  AND s.unit_business_id = o.unit_business_id
 ```
 
 ## 9. Tabelas agregadas de facts
@@ -816,12 +747,11 @@ markup_pct =
 
 Uma linha por dia e unidade de negócio.
 
-Campos:
-
 ```txt
 id UUID PK
 fact_date DATE NOT NULL
-unit_business_id UUID NULL
+unit_business_id UUID NULL FK unit_businesses.id
+integration_id UUID NULL FK integrations.id
 
 orders_count INTEGER DEFAULT 0
 items_quantity NUMERIC(14,4) DEFAULT 0
@@ -852,12 +782,10 @@ UNIQUE(fact_date, unit_business_id)
 
 Uma linha por dia, unidade e UF.
 
-Campos:
-
 ```txt
 id UUID PK
 fact_date DATE NOT NULL
-unit_business_id UUID NULL
+unit_business_id UUID NULL FK unit_businesses.id
 destination_uf VARCHAR(2) NOT NULL
 
 orders_count INTEGER DEFAULT 0
@@ -880,15 +808,13 @@ UNIQUE(fact_date, unit_business_id, destination_uf)
 
 ### 9.3. `daily_sales_store_facts`
 
-Uma linha por dia, unidade e loja.
-
-Campos:
+Uma linha por dia, unidade e loja (canal de venda).
 
 ```txt
 id UUID PK
 fact_date DATE NOT NULL
-unit_business_id UUID NULL
-store_id UUID NOT NULL
+unit_business_id UUID NULL FK unit_businesses.id
+store_id UUID NOT NULL FK stores.id
 
 orders_count INTEGER DEFAULT 0
 items_quantity NUMERIC(14,4) DEFAULT 0
@@ -929,13 +855,11 @@ contribution_pct = contribution_value / total_value * 100
 
 Uma linha por dia, unidade e produto.
 
-Campos:
-
 ```txt
 id UUID PK
 fact_date DATE NOT NULL
-unit_business_id UUID NULL
-product_id UUID NULL
+unit_business_id UUID NULL FK unit_businesses.id
+product_id UUID NULL FK products.id
 sku VARCHAR(100) NOT NULL
 description VARCHAR(255)
 
@@ -949,7 +873,7 @@ created_at TIMESTAMP
 updated_at TIMESTAMP
 ```
 
-Constraint sugerida:
+Constraint:
 
 ```txt
 UNIQUE(fact_date, unit_business_id, sku)
@@ -959,16 +883,15 @@ Use `sku` como parte da chave porque pode haver pedido antigo sem `product_id` m
 
 ### 9.5. `daily_sales_status_facts`
 
-Uma linha por dia, unidade e status.
-
-Campos:
+Uma linha por dia, unidade e status (normalizado).
 
 ```txt
 id UUID PK
 fact_date DATE NOT NULL
-unit_business_id UUID NULL
-status_id VARCHAR(50) NOT NULL
-status_name VARCHAR(100) NOT NULL
+unit_business_id UUID NULL FK unit_businesses.id
+integration_id UUID NULL FK integrations.id
+status_normalized VARCHAR(100) NOT NULL     -- valor normalizado via integration_mappings
+status_display_name VARCHAR(100)            -- nome para exibição
 
 orders_count INTEGER DEFAULT 0
 total_value NUMERIC(14,2) DEFAULT 0
@@ -981,39 +904,26 @@ updated_at TIMESTAMP
 Constraint:
 
 ```txt
-UNIQUE(fact_date, unit_business_id, status_id)
+UNIQUE(fact_date, unit_business_id, integration_id, status_normalized)
 ```
 
-Exemplo de retorno:
-
-```txt
-Atendido (1229/1428) valor total: 1701
-```
-
-Para esse formato:
-
-```txt
-orders_count_por_status = 1229
-orders_count_total_do_dia = 1428
-total_value_por_status = 1701
-```
+Obs.: a chave inclui `integration_id` porque o mesmo status normalizado pode
+vir de ERPs distintos, e convém distinguir na agregação quando relevante.
 
 ## 10. Campos de domínio auxiliares
 
-### 10.1. `external_order_status_mappings`
+### 10.1. `integration_order_status_mappings`
 
-Para não depender só do formato de status de cada ERP, criar uma tabela genérica de mapeamento de status.
-
-Campos:
+Tabela para normalizar status de pedido de qualquer ERP usando `integrations`
+como âncora — sem campo `source_system`.
 
 ```txt
 id UUID PK
-integration_id UUID FK integrations.id
-source_system VARCHAR(50)
-external_status_id VARCHAR(50)
-external_status_value VARCHAR(100)
-normalized_status VARCHAR(100)
-display_name VARCHAR(100)
+integration_id UUID FK integrations.id    -- qual ERP/canal
+external_status_id VARCHAR(50)            -- id/código no ERP
+external_status_value VARCHAR(100)        -- valor bruto no ERP
+normalized_status VARCHAR(100)            -- chave canônica interna
+display_name VARCHAR(100)                 -- nome legível para UI
 is_cancelled BOOLEAN DEFAULT FALSE
 is_final BOOLEAN DEFAULT FALSE
 created_at
@@ -1026,11 +936,12 @@ Constraint:
 UNIQUE(integration_id, external_status_id)
 ```
 
-O snapshot grava `status_id` e `status_name` já normalizados. Se o nome do ERP mudar depois, o histórico continua legível.
+O snapshot grava `status_snapshot` já normalizado. Se o nome do ERP mudar
+depois, o histórico continua legível.
 
-### 10.2. Tabela fiscal opcional `invoice_fiscal_items`
+### 10.2. Tabela fiscal `invoice_fiscal_items`
 
-Se não quiser adicionar campos fiscais em `invoice_items`, criar:
+Criada separada para não misturar com o fluxo operacional de `invoice_items`.
 
 ```txt
 id UUID PK
@@ -1064,11 +975,7 @@ Constraint:
 UNIQUE(invoice_id, sku, cfop)
 ```
 
-Se houver risco de SKU repetido na mesma nota, incluir `item_number` do XML.
-
 ## 11. Fluxo do job incremental
-
-Criar módulo:
 
 ```txt
 src/modules/reports/sales-report/
@@ -1080,7 +987,7 @@ src/modules/reports/sales-report/
 └── sales-report.types.ts
 ```
 
-Também criar models/types para as novas tabelas:
+Models para as novas tabelas:
 
 ```txt
 src/modules/reports/sales-order-snapshot/
@@ -1100,7 +1007,7 @@ Usar `report_job_checkpoints` com:
 job_name = 'sales_report'
 ```
 
-Seguir a mesma regra do relatório operacional:
+Mesma regra do relatório operacional:
 
 - capturar `jobStartTime` no começo;
 - buscar `last_processed_at`;
@@ -1110,8 +1017,6 @@ Seguir a mesma regra do relatório operacional:
 - nunca usar `NOW()` no final como novo checkpoint.
 
 ### 11.2. Encontrar pedidos afetados
-
-O repository deve ter algo como:
 
 ```txt
 findAffectedOrderIds(lastProcessedAt)
@@ -1123,81 +1028,45 @@ Fontes de alteração:
 orders.updated_at >= lastProcessedAt
 order_items.updated_at >= lastProcessedAt
 invoices.updated_at >= lastProcessedAt
-invoice fiscal items updated_at >= lastProcessedAt
+invoice_fiscal_items.updated_at >= lastProcessedAt
 products.updated_at >= lastProcessedAt
 stocks.updated_at >= lastProcessedAt
 ```
 
 Ponto importante sobre custo médio:
 
-- Se `stocks` de um produto mudar, não se deve recalcular custo de todos os pedidos antigos indiscriminadamente.
-- O custo do item vendido deve ser congelado no momento da venda.
-- Alteração de `stocks` deve afetar novos snapshots ainda sem custo, pedidos recentes em aberto ou reprocessamento manual controlado.
-
-Recomendação:
-
-- Job incremental normal recalcula pedidos alterados.
-- Backfill/reprocessamento de custo histórico deve ser um comando separado e explícito.
+- Alteração de `stocks` não deve recalcular todos os pedidos antigos.
+- O custo do item vendido deve ser congelado no snapshot do momento da venda.
+- Backfill/reprocessamento de custo histórico deve ser comando separado e explícito.
 
 ### 11.3. Buscar chaves antigas antes do upsert
 
-Igual ao `daily-operation-report.service.ts`, antes de atualizar snapshots:
+Igual ao `daily-operation-report.service.ts`:
 
 ```txt
-previousFactKeys = findAffectedFactKeys(orderIds)
-previousStateKeys = findAffectedStateFactKeys(orderIds)
-previousStoreKeys = findAffectedStoreFactKeys(orderIds)
-previousProductKeys = findAffectedProductFactKeys(orderIds)
-previousStatusKeys = findAffectedStatusFactKeys(orderIds)
+previousFactKeys        = findAffectedFactKeys(orderIds)
+previousStateKeys       = findAffectedStateFactKeys(orderIds)
+previousStoreKeys       = findAffectedStoreFactKeys(orderIds)
+previousProductKeys     = findAffectedProductFactKeys(orderIds)
+previousStatusKeys      = findAffectedStatusFactKeys(orderIds)
 ```
 
-Depois do `upsertSnapshots(orderIds)`, buscar as chaves atuais e unir com as antigas.
-
-Isso é necessário porque um pedido pode mudar:
-
-- de data;
-- de loja;
-- de UF;
-- de status;
-- de unidade de negócio;
-- de produto mapeado.
-
-Sem recalcular as chaves antigas, a fact antiga fica com lixo acumulado.
+Necessário porque um pedido pode mudar de: data, loja (canal), UF, status,
+unidade de negócio ou produto mapeado.
 
 ### 11.4. Upsert de snapshots
 
 Etapas:
 
 1. Montar dados comerciais a partir de `orders` e `order_items`.
-2. Associar produto por `product_id`, `sku`, `id_system` ou `external_product_id`.
-3. Buscar custo médio em `stocks`.
-4. Buscar dados fiscais em `invoices` e XML/tabela fiscal.
-5. Gravar `sales_order_item_snapshots`.
-6. Agregar itens e gravar `sales_order_snapshots`.
-
-Pseudo-SQL do custo médio:
-
-```sql
-CASE
-  WHEN s.quantity > 0 THEN ROUND((s.total_price::numeric / s.quantity::numeric), 4)
-  WHEN p.supplier_cost_price IS NOT NULL THEN p.supplier_cost_price
-  ELSE 0
-END AS average_cost_snapshot
-```
-
-Fonte do custo:
-
-```sql
-CASE
-  WHEN s.quantity > 0 THEN 'STOCK_AVERAGE'
-  WHEN p.supplier_cost_price IS NOT NULL THEN 'PRODUCT_SUPPLIER_COST'
-  ELSE 'UNKNOWN'
-END AS cost_source
-```
+2. Associar produto por `product_id` ou `sku`.
+3. Buscar custo médio em `stocks` com join por `product_id + unit_business_id`.
+4. Buscar dados fiscais em `invoices` (via `orders.invoice_id`) e `invoice_fiscal_items`.
+5. Normalizar status via `integration_order_status_mappings`.
+6. Gravar `sales_order_item_snapshots`.
+7. Agregar itens e gravar `sales_order_snapshots`.
 
 ### 11.5. Upsert das facts
-
-Depois dos snapshots, recalcular agregados somente das chaves afetadas:
 
 ```txt
 upsertDailySalesFacts(keys)
@@ -1207,110 +1076,76 @@ upsertDailySalesProductFacts(keys)
 upsertDailySalesStatusFacts(keys)
 ```
 
-Todas devem usar `ON CONFLICT DO UPDATE`, como no relatório operacional.
+Todas usam `ON CONFLICT DO UPDATE`.
 
 ## 12. Cálculos das visões
 
 ### 12.1. Por estado
 
-Fonte:
+Fonte: `daily_sales_state_facts`
 
 ```txt
-daily_sales_state_facts
+Numero de pedidos  = orders_count
+Qtde de volumes    = items_quantity
+Valor total        = total_value
+Frete medio        = total_freight / orders_count
+Ticket medio       = total_value / orders_count
+UF                 = XML dest/enderDest/UF ou invoices.destination_uf
 ```
-
-Fórmulas:
-
-```txt
-Numero de pedidos = orders_count
-Quantidade de volumes = items_quantity
-Valor total = total_value
-Frete medio = total_freight / orders_count
-Ticket medio = total_value / orders_count
-```
-
-UF:
-
-```txt
-destination_uf = NF-e contato.endereco.uf ou XML dest/enderDest/UF
-```
-
-Não usar UF da etiqueta de transporte se a NF-e existir.
 
 ### 12.2. Geral
 
-Fonte:
+Fonte: `daily_sales_facts`
 
 ```txt
-daily_sales_facts
-```
-
-Fórmulas:
-
-```txt
-Numero de pedidos = orders_count
-Quantidade de volumes = items_quantity
-Valor total = total_value
-Frete = total_freight
-Ticket medio = total_value / orders_count
+Numero de pedidos  = orders_count
+Qtde de volumes    = items_quantity
+Valor total        = total_value
+Frete              = total_freight
+Ticket medio       = total_value / orders_count
 ```
 
 ### 12.3. Por produto
 
-Fonte:
-
-```txt
-daily_sales_product_facts
-```
-
-Fórmulas:
+Fonte: `daily_sales_product_facts`
 
 ```txt
 Quantidade = quantity
-Custo = total_cost
-Valor = total_value
-Markup = (total_value - total_cost) / total_cost * 100
+Custo      = total_cost
+Valor      = total_value
+Markup     = (total_value - total_cost) / total_cost * 100
 ```
 
 ### 12.4. Por loja
 
-Fonte:
+Fonte: `daily_sales_store_facts`
+
+`store` aqui representa o canal de venda (Mercado Livre, Shopee, etc.),
+conforme `stores.name`.
 
 ```txt
-daily_sales_store_facts
-```
-
-Fórmulas:
-
-```txt
-Quantidade de pedidos = orders_count
-Ticket medio = total_value / orders_count
-Quantidade de volumes = items_quantity
-Custo = total_cost
-Valor = total_value
-Frete = total_freight
-Valor peça = total_value / items_quantity
-Markup = (total_value - total_cost) / total_cost * 100
-Impostos = total_taxes
-Taxas = total_fees
-$ contribuição = contribution_value
-% contribuição = contribution_value / total_value * 100
+Qtde de pedidos     = orders_count
+Ticket medio        = total_value / orders_count
+Qtde de volumes     = items_quantity
+Custo               = total_cost
+Valor               = total_value
+Frete               = total_freight
+Valor peça          = total_value / items_quantity
+Markup              = (total_value - total_cost) / total_cost * 100
+Impostos            = total_taxes
+Taxas               = total_fees
+$ contribuição      = contribution_value
+% contribuição      = contribution_value / total_value * 100
 ```
 
 ### 12.5. Por status
 
-Fonte:
+Fonte: `daily_sales_status_facts`
 
 ```txt
-daily_sales_status_facts
-```
-
-Fórmulas:
-
-```txt
-Quantidade por status = orders_count do status
-Quantidade total = SUM(orders_count) do dia/unidade
-Valor total do status = total_value
+Qtde por status  = orders_count do status
+Qtde total       = SUM(orders_count) do dia/unidade/integration
+Valor do status  = total_value
 ```
 
 Formato:
@@ -1320,8 +1155,6 @@ Atendido (1229/1428) valor total: 1701
 ```
 
 ## 13. API sugerida
-
-Criar rota:
 
 ```txt
 GET /sales-report
@@ -1333,11 +1166,12 @@ Filtros:
 dateFrom
 dateTo
 unitBusinessId
-storeId
+storeId          -- canal de venda
+integrationId    -- ERP/fonte
 state
 productId
 sku
-statusId
+statusNormalized
 drillDown
 ```
 
@@ -1362,59 +1196,57 @@ Retorno sugerido:
 
 ## 14. Sincronização dos ERPs
 
-Cada ERP deve ter um adapter/conector que converte o payload externo para o modelo canônico do sistema. Bling e Tecinco não devem gerar tabelas de relatório diferentes; devem alimentar as mesmas tabelas (`orders`, `order_items`, `products`, `invoices`, snapshots e facts).
+Cada ERP tem um adapter que converte o payload externo para o modelo canônico.
+O adapter da Bling e o da Tecinco alimentam as mesmas tabelas.
 
 ### 14.1. Produto
 
 Ao sincronizar produto de qualquer ERP:
 
-1. Upsert em `products`.
-2. Salvar `integration_id`, `source_system`, `external_id` e campos canônicos.
-3. Atualizar `supplier_cost_price` e `supplier_purchase_price`.
-4. Opcionalmente atualizar `stock_virtual_total` para conciliação.
-
-Não substituir custo médio oficial apenas com o custo informado pelo ERP, exceto se a regra da empresa definir aquele ERP como fonte de estoque/custo.
+1. Upsert em `products` com `integrations_id`, `id_system`, e campos canônicos.
+2. Upsert em `suppliers` e criar/atualizar `products.supplier_id`.
+3. Upsert em `product_supplier_maps` com código do fornecedor.
+4. Atualizar `supplier_cost_price` e `supplier_purchase_price`.
 
 ### 14.2. Pedido
 
 Ao sincronizar pedido:
 
-1. Upsert em `orders`.
+1. Upsert em `orders` com `integrations_id`, `store_id`, `unit_business_id`,
+   `id_order_system`, `number_order_system`, `number_order_channel`.
 2. Upsert em `order_items`.
-3. Salvar status externo e status normalizado via `external_order_status_mappings`.
+3. Normalizar status via `integration_order_status_mappings`.
 4. Salvar totais, frete, desconto, despesas e taxas.
-5. Se o ERP informar uma nota vinculada, preencher `external_invoice_id` e enfileirar busca da NF-e.
-
-Na Bling esse vínculo vem como `notaFiscal.id`. Na Tecinco, o nome do campo pode ser diferente; o adapter deve preencher o mesmo campo canônico `external_invoice_id`.
+5. Se o ERP informar nota vinculada, buscar/criar `invoices` e preencher
+   `orders.invoice_id`.
 
 ### 14.3. Nota fiscal e XML
 
 Ao sincronizar nota:
 
-1. Upsert em `invoices`.
-2. Salvar `valorNota`, `valorFrete`, chave, número, data, UF e cidade.
-3. Baixar/parsear XML.
-4. Salvar totais fiscais da NF-e.
-5. Salvar itens fiscais em `invoice_fiscal_items` ou campos equivalentes.
-6. Enfileirar/reprocessar `sales_report` para os pedidos afetados.
+1. Upsert em `invoices` com `integrations_id`, `unit_business_id`, `store_id`,
+   `id_system` (id da nota no ERP), `xml_key`, totais fiscais, UF e cidade.
+2. Baixar/parsear XML.
+3. Salvar itens fiscais em `invoice_fiscal_items`.
+4. Enfileirar reprocessamento do `sales_report` para os pedidos afetados.
 
 ## 15. Ordem recomendada de implementação
 
 ### Fase 1: base de dados
 
-1. Criar migrations para campos faltantes em `products`, `orders`, `order_items`, `invoices`.
-2. Criar tabela fiscal `invoice_fiscal_items`.
-3. Criar tabelas de snapshots/facts de venda.
-4. Criar constraints e índices.
+1. Migrations para campos faltantes em `products`, `orders`, `order_items`, `invoices`.
+2. Criar tabela `invoice_fiscal_items`.
+3. Criar tabela `integration_order_status_mappings`.
+4. Criar tabelas de snapshots/facts de venda.
+5. Criar constraints e índices.
 
 ### Fase 2: ingestão dos ERPs
 
 1. Atualizar sincronização de produtos da Bling usando campos canônicos.
-2. Atualizar sincronização de pedidos da Bling usando campos canônicos.
-3. Atualizar sincronização de notas da Bling usando campos canônicos.
+2. Atualizar sincronização de pedidos da Bling.
+3. Atualizar sincronização de notas da Bling.
 4. Implementar parser do XML da NF-e.
-5. Salvar status externo em tabela auxiliar genérica.
-6. Quando a Tecinco entrar, criar apenas o adapter dela para alimentar o mesmo modelo.
+5. Quando a Tecinco entrar, criar apenas o adapter dela para alimentar o mesmo modelo.
 
 ### Fase 3: relatório
 
@@ -1424,15 +1256,15 @@ Ao sincronizar nota:
 4. Implementar `upsertSnapshots`.
 5. Implementar upsert das facts.
 6. Criar endpoint de consulta.
-7. Adicionar fila recorrente com `BaseQueueService`, igual ao relatório diário operacional.
+7. Adicionar fila recorrente com `BaseQueueService`.
 
 ### Fase 4: validação
 
 1. Validar pedido real com NF-e e XML.
-2. Conferir se quantidade de volumes bate com soma dos itens.
+2. Conferir quantidade de volumes = soma dos itens.
 3. Conferir custo médio por produto/unidade.
 4. Conferir markup por produto.
-5. Conferir contribuição por loja.
+5. Conferir contribuição por loja (canal de venda).
 6. Conferir status e totais.
 
 ## 16. Exemplo com os dados informados
@@ -1447,7 +1279,7 @@ Quantidade: 4
 Fornecedor preço custo Bling: 335.605
 ```
 
-Se o estoque interno estiver:
+Estoque interno:
 
 ```txt
 stocks.total_price = 5369.68
@@ -1463,76 +1295,32 @@ Custo médio:
 Item vendido:
 
 ```txt
-Valor = 449.90 * 4 = 1799.60
-Custo = 335.605 * 4 = 1342.42
+Valor  = 449.90 * 4 = 1799.60
+Custo  = 335.605 * 4 = 1342.42
 Markup = ((1799.60 - 1342.42) / 1342.42) * 100 = 34.06%
 ```
 
 Quantidade de volumes:
 
 ```txt
-SUM(itens.quantidade) = 4
+SUM(order_items.quantity) = 4
 ```
 
-Mesmo que a Bling retorne:
+Mesmo que a Bling retorne `transporte.quantidadeVolumes = 0`, o relatório usa 4.
 
-```txt
-transporte.quantidadeVolumes = 0
-produto.volumes = 0
-```
-
-o relatório deve usar:
-
-```txt
-quantidade_volumes = 4
-```
-
-UF:
-
-```txt
-XML dest/enderDest/UF = SP
-```
-
-Logo o pedido entra no agrupamento por estado `SP`.
+UF: `XML dest/enderDest/UF = SP` → pedido entra no agrupamento `SP`.
 
 ## 17. Riscos e decisões pendentes
 
 ### 17.1. Frete pago pela empresa
 
-A Bling traz:
-
 ```txt
-pedido.transporte.frete
-pedido.taxas.custoFrete
-nota.valorFrete
-XML total/ICMSTot/vFrete
-```
-
-É preciso definir:
-
-- qual campo representa frete cobrado do cliente;
-- qual campo representa frete pago pela PAX;
-- em quais canais o frete deve entrar como despesa na contribuição.
-
-Recomendação:
-
-```txt
-freight_charged = pedido.transporte.frete ou nota.valorFrete, conforme canal
+freight_charged = pedido.transporte.frete ou invoices.invoice_freight_value
 freight_cost = pedido.taxas.custoFrete quando preenchido
-freight_paid_by_company = regra por fretePorConta/canal/loja
+freight_paid_by_company = regra por fretePorConta / canal (store) / filial (unit_business)
 ```
 
 ### 17.2. Taxas
-
-A Bling traz algumas taxas no pedido:
-
-```txt
-taxas.taxaComissao
-taxas.valorBase
-itens[].comissao.valor
-```
-
-Mas marketplace/payment podem precisar vir de outra integração, planilha ou configuração por loja/canal.
 
 Até existir fonte melhor:
 
@@ -1540,61 +1328,39 @@ Até existir fonte melhor:
 total_fees = taxaComissao + SUM(item.comissao.valor)
 ```
 
+Marketplace/payment podem precisar vir de configuração por `store` ou `integration`.
+
 ### 17.3. Impostos
 
-Para relatório gerencial, pode-se usar:
-
-```txt
-total_taxes = vTotTrib
-```
-
-Mas para contribuição fiscal real, talvez seja melhor usar:
-
-```txt
-ICMS + IPI + PIS + COFINS + DIFAL + IBS + CBS
-```
-
-Essa decisão deve ser alinhada com o fiscal/contábil.
-
-Recomendação técnica:
-
-- salvar ambos;
-- deixar claro no relatório qual métrica está sendo usada.
+- Para relatório gerencial: `total_taxes = vTotTrib`.
+- Para contribuição fiscal real: `ICMS + IPI + PIS + COFINS + DIFAL + IBS + CBS`.
+- Recomendação: salvar ambos; deixar claro qual métrica está sendo usada.
 
 ### 17.4. Pedidos sem NF-e
 
-Pedido pode existir antes da emissão da NF-e.
-
-Regra sugerida:
-
-- entrar no relatório comercial usando dados do pedido;
-- `has_invoice_data = false`;
-- UF pode ficar nula ou vir do contato/endereço do pedido se disponível;
-- impostos ficam 0 até a NF-e chegar;
-- quando a NF-e/XML chegar, o job recalcula snapshots/facts.
+- Entram no relatório comercial usando dados do pedido.
+- `has_invoice_data = false`.
+- UF pode ficar nula até a NF-e chegar.
+- Quando a NF-e/XML chegar, o job recalcula snapshots/facts.
 
 ### 17.5. Custo sem estoque
 
-Se `stocks.quantity = 0` ou não existir estoque para produto/unidade:
-
-1. usar `products.supplier_cost_price` como fallback;
-2. marcar `cost_source = PRODUCT_SUPPLIER_COST`;
-3. marcar `has_cost_fallback = true`;
-4. expor isso no drill-down para auditoria.
+1. Usar `products.supplier_cost_price` como fallback.
+2. Marcar `cost_source = PRODUCT_SUPPLIER_COST`.
+3. Marcar `has_cost_fallback = true`.
+4. Expor no drill-down para auditoria.
 
 ## 18. Checklist final
 
-Para o relatório funcionar corretamente, o sistema precisa ter:
-
-- Produto sincronizado do ERP com `integration_id`, `source_system`, `external_id`, custo fornecedor, NCM, CEST, GTIN, marca e pesos.
-- Estoque interno com `total_price` e `quantity` confiáveis.
-- Cálculo de custo médio por produto/unidade.
-- Pedido sincronizado com totais, loja, status, taxas, frete e itens.
-- Item de pedido com produto mapeado e quantidade.
-- NF-e sincronizada com UF, valor, frete, chave e XML.
-- XML parseado e impostos salvos.
+- Produto sincronizado com `integrations_id`, `supplier_id`, custo fornecedor, NCM, CEST, GTIN, marca e pesos.
+- Estoque interno com `total_price` e `quantity` confiáveis; unicidade composta por `(product_id, unit_business_id)`.
+- Pedido sincronizado com `integrations_id`, `store_id`, `unit_business_id`, `invoice_id`, totais, frete, desconto, taxas e itens.
+- Status de pedido normalizado via `integration_order_status_mappings`.
+- Item de pedido com `product_id` mapeado e quantidade.
+- NF-e sincronizada com `invoices.destination_uf`, valor, frete, chave e XML.
+- XML parseado e impostos salvos em `invoice_fiscal_items`.
 - Snapshot de pedido com custo, impostos, taxas, frete e contribuição congelados.
-- Snapshot de item com custo médio congelado.
-- Facts diárias por geral, estado, loja, produto e status.
+- Snapshot de item com custo médio congelado e `cost_source` preenchido.
+- Facts diárias por geral, estado, loja (canal), produto e status.
 - Job incremental com checkpoint e `ON CONFLICT DO UPDATE`.
 - Drill-down para auditar pedido/item quando algum número não bater.
