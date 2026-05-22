@@ -21,16 +21,9 @@ class Order
   public nfe_emitted?: boolean;
   public internal_status?: string;
   public store_id?: string;
+  public unit_business_id?: string;   
+  public invoice_id?: string;        
   public waiting_acceptance?: boolean;
-  public source_system?: string;
-  public external_id?: string;
-  public external_number?: string;
-  public external_store_order_number?: string;
-  public external_status_id?: string;
-  public external_status_name?: string;
-  public external_invoice_id?: string;
-  public external_store_id?: string;
-  public external_unit_business_id?: string;
   public source_payload?: Record<string, unknown>;
   public total_products?: number;
   public total_order?: number;
@@ -61,26 +54,27 @@ Order.init(
     integrations_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      references: {
-        model: "integrations",
-        key: "id",
-      },
+      references: { model: "integrations", key: "id" },
     },
     customer_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      references: {
-        model: "customers",
-        key: "id",
-      },
+      references: { model: "customers", key: "id" },
     },
     store_id: {
       type: DataTypes.UUID,
       allowNull: true,
-      references: {
-        model: "stores",
-        key: "id",
-      }
+      references: { model: "stores", key: "id" },
+    },
+    unit_business_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "unit_businesses", key: "id" },
+    },
+    invoice_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "invoices", key: "id" },
     },
     id_order_system: {
       type: DataTypes.STRING(100),
@@ -127,59 +121,22 @@ Order.init(
       defaultValue: false,
     },
     internal_status: {
-    type: DataTypes.ENUM(
-        'OPEN', 
-        'WAITING CHANNEL VALIDATION', 
+      type: DataTypes.ENUM(
+        'OPEN',
+        'WAITING CHANNEL VALIDATION',
         'WAITING FOR NFE EMISSION',
         'CANCELLED',
         'EMITTED',
         'UNKNOWN'
-    ),
-    allowNull: false,
-    defaultValue: 'OPEN',
-    validate: {
+      ),
+      allowNull: false,
+      defaultValue: 'OPEN',
+      validate: {
         isIn: {
-            args: [['OPEN', 'WAITING CHANNEL VALIDATION', 'WAITING FOR NFE EMISSION', 'CANCELLED', 'EMITTED', 'UNKNOWN']],
-            msg: "O status fornecido não é permitido."
+          args: [['OPEN', 'WAITING CHANNEL VALIDATION', 'WAITING FOR NFE EMISSION', 'CANCELLED', 'EMITTED', 'UNKNOWN']],
+          msg: "O status fornecido não é permitido."
         }
-    }
-}
-,
-    source_system: {
-      type: DataTypes.STRING(50),
-      allowNull: true,
-    },
-    external_id: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    external_number: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    external_store_order_number: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    external_status_id: {
-      type: DataTypes.STRING(50),
-      allowNull: true,
-    },
-    external_status_name: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    external_invoice_id: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    external_store_id: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    external_unit_business_id: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
+      }
     },
     source_payload: {
       type: DataTypes.JSONB,

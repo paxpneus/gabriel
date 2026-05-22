@@ -1,24 +1,21 @@
 import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
-import { orderItemsAttributes, orderItemsCreationAttributes } from "./order_items.types";
 import { v4 as uuidv4 } from "uuid";
+import { orderItemsAttributes, orderItemsCreationAttributes } from "./order_items.types";
 
-class OrderItems 
-  extends Model<orderItemsAttributes, orderItemsCreationAttributes> 
-  implements orderItemsAttributes 
+class OrderItems
+  extends Model<orderItemsAttributes, orderItemsCreationAttributes>
+  implements orderItemsAttributes
 {
   public id!: string;
-  public order_id!: string; 
+  public order_id!: string;
   public name!: string;
   public sku!: string;
   public unit!: string;
   public quantity!: number;
   public price!: number;
   public product_id?: string;
-  public source_system?: string;
   public integrations_id?: string;
-  public external_item_id?: string;
-  public external_product_id?: string;
   public source_payload?: Record<string, unknown>;
   public unit_price?: number;
   public gross_total?: number;
@@ -30,7 +27,7 @@ class OrderItems
   public average_cost_snapshot?: number;
   public total_cost_snapshot?: number;
   public cost_source?: string;
-  
+
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -46,10 +43,7 @@ OrderItems.init(
     order_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      references: {
-        model: "orders",
-        key: "id",
-      },
+      references: { model: "orders", key: "id" },
       onUpdate: "CASCADE",
       onDelete: "CASCADE",
     },
@@ -77,30 +71,12 @@ OrderItems.init(
     product_id: {
       type: DataTypes.UUID,
       allowNull: true,
-      references: {
-        model: "products",
-        key: "id",
-      },
-    },
-    source_system: {
-      type: DataTypes.STRING(50),
-      allowNull: true,
+      references: { model: "products", key: "id" },
     },
     integrations_id: {
       type: DataTypes.UUID,
       allowNull: true,
-      references: {
-        model: "integrations",
-        key: "id",
-      },
-    },
-    external_item_id: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    external_product_id: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
+      references: { model: "integrations", key: "id" },
     },
     source_payload: {
       type: DataTypes.JSONB,
