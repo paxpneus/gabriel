@@ -2,20 +2,19 @@ import { DataTypes, Model } from "sequelize";
 import { v4 as uuidv4 } from "uuid";
 import sequelize from "../../../../config/sequelize";
 import {
-  ExternalOrderStatusMappingAttributes,
-  ExternalOrderStatusMappingCreationAttributes,
-} from "./external-order-status-mapping.types";
+  IntegrationOrderStatusMappingAttributes,
+  IntegrationOrderStatusMappingCreationAttributes,
+} from "./integration-order-status-mapping.types";
 
-class ExternalOrderStatusMapping
+class IntegrationOrderStatusMapping
   extends Model<
-    ExternalOrderStatusMappingAttributes,
-    ExternalOrderStatusMappingCreationAttributes
+    IntegrationOrderStatusMappingAttributes,
+    IntegrationOrderStatusMappingCreationAttributes
   >
-  implements ExternalOrderStatusMappingAttributes
+  implements IntegrationOrderStatusMappingAttributes
 {
   public id!: string;
-  public integration_id?: string | null;
-  public source_system?: string | null;
+  public integration_id!: string;
   public external_status_id!: string;
   public external_status_value?: string | null;
   public normalized_status!: string;
@@ -26,11 +25,10 @@ class ExternalOrderStatusMapping
   public readonly updatedAt!: Date;
 }
 
-ExternalOrderStatusMapping.init(
+IntegrationOrderStatusMapping.init(
   {
     id: { type: DataTypes.UUID, defaultValue: uuidv4, primaryKey: true },
-    integration_id: { type: DataTypes.UUID, allowNull: true },
-    source_system: { type: DataTypes.STRING(50), allowNull: true },
+    integration_id: { type: DataTypes.UUID, allowNull: false },
     external_status_id: { type: DataTypes.STRING(50), allowNull: false },
     external_status_value: { type: DataTypes.STRING(100), allowNull: true },
     normalized_status: { type: DataTypes.STRING(100), allowNull: false },
@@ -40,10 +38,10 @@ ExternalOrderStatusMapping.init(
   },
   {
     sequelize,
-    tableName: "external_order_status_mappings",
+    tableName: "integration_order_status_mappings",
     timestamps: true,
     underscored: true,
   },
 );
 
-export default ExternalOrderStatusMapping;
+export default IntegrationOrderStatusMapping;
