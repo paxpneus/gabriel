@@ -20,6 +20,8 @@ export interface SalesReportJobResult {
 export interface SalesFactKey {
   fact_date: string;
   unit_business_id: string | null;
+  integration_id: string | null;
+  status_normalized: string | null;
 }
 
 export interface SalesStateFactKey extends SalesFactKey {

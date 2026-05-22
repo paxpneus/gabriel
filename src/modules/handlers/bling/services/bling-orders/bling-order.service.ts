@@ -67,7 +67,9 @@ export class BlingOrderService {
         const quantity = Number(i.quantidade ?? i.quantity ?? 0);
         const unitPrice = Number(i.valor ?? 0);
         const discountValue = Number(i.desconto ?? 0);
-        const externalProductId = i.produto?.id ? String(i.produto.id) : undefined;
+        const externalProductId = i.produto?.id
+          ? String(i.produto.id)
+          : undefined;
         const sku = i.codigo ? String(i.codigo) : undefined;
 
         const productId = await this.resolveProductId(externalProductId, sku);
@@ -80,10 +82,6 @@ export class BlingOrderService {
           quantity,
           price: unitPrice,
           product_id: productId,
-          source_system: "BLING",
-          integrations_id: integrationId,
-          external_item_id: i.id ? String(i.id) : undefined,
-          external_product_id: externalProductId,
           source_payload: i,
           unit_price: unitPrice,
           gross_total: unitPrice * quantity,
@@ -110,7 +108,9 @@ export class BlingOrderService {
         return null;
       }
 
-      const { data } = await this.blingApi.get(`/pedidos/vendas/${body.data.id}`);
+      const { data } = await this.blingApi.get(
+        `/pedidos/vendas/${body.data.id}`,
+      );
       const orderData = data.data;
 
       const existingOrder = await ordersService.findOne({
@@ -137,21 +137,6 @@ export class BlingOrderService {
         totalPrice: Number(orderData.total),
         date: new Date(orderData.data),
         internal_status: internalStatus,
-        source_system: "BLING",
-        external_id: String(orderData.id),
-        external_number: String(orderData.numero),
-        external_store_order_number: String(orderData.numeroLoja ?? ""),
-        external_status_id: String(orderData.situacao?.id ?? ""),
-        external_status_name: String(orderData.situacao?.valor ?? ""),
-        external_invoice_id: orderData.notaFiscal?.id
-          ? String(orderData.notaFiscal.id)
-          : undefined,
-        external_store_id: orderData.loja?.id
-          ? String(orderData.loja.id)
-          : undefined,
-        external_unit_business_id: orderData.loja?.unidadeNegocio?.id
-          ? String(orderData.loja.unidadeNegocio.id)
-          : undefined,
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
         total_order: Number(orderData.total ?? 0),
@@ -178,15 +163,16 @@ export class BlingOrderService {
           const quantity = Number(i.quantidade ?? 0);
           const unitPrice = Number(i.valor ?? 0);
           const discountValue = Number(i.desconto ?? 0);
-          const externalProductId = i.produto?.id ? String(i.produto.id) : undefined;
+          const externalProductId = i.produto?.id
+            ? String(i.produto.id)
+            : undefined;
           const sku = i.codigo ? String(i.codigo) : undefined;
-          const externalItemId = i.id ? String(i.id) : undefined;
 
           const productId = await this.resolveProductId(externalProductId, sku);
 
-          const existingItem = externalItemId
+          const existingItem = sku
             ? await orderItemsService.findOne({
-                where: { order_id: existingOrder.id, external_item_id: externalItemId },
+                where: { order_id: existingOrder.id, sku },
               })
             : null;
 
@@ -201,7 +187,7 @@ export class BlingOrderService {
               commission_base: Number(i.comissao?.base ?? 0),
               commission_rate: Number(i.comissao?.aliquota ?? 0),
               commission_value: Number(i.comissao?.valor ?? 0),
-              
+
               ...(productId ? { product_id: productId } : {}),
               source_payload: i,
             });
@@ -214,10 +200,7 @@ export class BlingOrderService {
               quantity,
               price: unitPrice,
               product_id: productId,
-              source_system: "BLING",
               integrations_id: integration.id,
-              external_item_id: externalItemId,
-              external_product_id: externalProductId,
               source_payload: i,
               unit_price: unitPrice,
               gross_total: unitPrice * quantity,
@@ -231,7 +214,9 @@ export class BlingOrderService {
         }
       }
 
-      console.log(`[BlingOrderService] Pedido ${orderData.numero} atualizado com sucesso`);
+      console.log(
+        `[BlingOrderService] Pedido ${orderData.numero} atualizado com sucesso`,
+      );
       return null;
     } catch (error: any) {
       console.error(
@@ -274,7 +259,9 @@ export class BlingOrderService {
   }
 
   async createOrderFromBling(
-    body: blingOrderWebHookData | { data: { id: number | string; numero?: string | number } },
+    body:
+      | blingOrderWebHookData
+      | { data: { id: number | string; numero?: string | number } },
   ): Promise<{ customer: any; cnaes: any[]; orderSystem: any } | null> {
     console.log(body.data.id);
     try {
@@ -294,7 +281,9 @@ export class BlingOrderService {
         return await this.updateOrderFromBling(body as any);
       }
 
-      const { data } = await this.blingApi.get(`/pedidos/vendas/${body.data.id}`);
+      const { data } = await this.blingApi.get(
+        `/pedidos/vendas/${body.data.id}`,
+      );
       const orderData = data.data;
 
       let store = await this.storeService.findOne({
@@ -302,7 +291,9 @@ export class BlingOrderService {
       });
 
       if (!store) {
-        const blingStore = await this.blingApi.get(`/canais-venda/${orderData.loja.id}`);
+        const blingStore = await this.blingApi.get(
+          `/canais-venda/${orderData.loja.id}`,
+        );
         store = await this.storeService.create({
           name: blingStore.data.data.tipo,
           id_store_system: blingStore.data.data.id,
@@ -314,14 +305,24 @@ export class BlingOrderService {
       }
 
       if (!integration.allowed_channels?.includes(store.name)) {
-        console.log("[BLING ORDER] Pedido não originado do mercado livre, ignorando...");
+        console.log(
+          "[BLING ORDER] Pedido não originado do mercado livre, ignorando...",
+        );
         console.log("[DEBUG] channel.data.tipo:", store.name);
-        console.log("[DEBUG] integration.allowed_channels:", integration.allowed_channels);
-        console.log("[DEBUG] includes?", integration.allowed_channels?.includes(store.name));
+        console.log(
+          "[DEBUG] integration.allowed_channels:",
+          integration.allowed_channels,
+        );
+        console.log(
+          "[DEBUG] includes?",
+          integration.allowed_channels?.includes(store.name),
+        );
         return null;
       }
 
-      const customer = await this.blingCustomerService.getOrCreateCustomer(orderData.contato);
+      const customer = await this.blingCustomerService.getOrCreateCustomer(
+        orderData.contato,
+      );
 
       const ordersPayload: orderCreationAttributes = {
         integrations_id: integration.id,
@@ -332,19 +333,6 @@ export class BlingOrderService {
         date: new Date(orderData.data),
         totalPrice: Number(orderData.total),
         store_id: store.id,
-        source_system: "BLING",
-        external_id: String(orderData.id),
-        external_number: String(orderData.numero),
-        external_store_order_number: String(orderData.numeroLoja ?? ""),
-        external_status_id: String(orderData.situacao?.id ?? ""),
-        external_status_name: String(orderData.situacao?.valor ?? ""),
-        external_invoice_id: orderData.notaFiscal?.id
-          ? String(orderData.notaFiscal.id)
-          : undefined,
-        external_store_id: orderData.loja?.id ? String(orderData.loja.id) : undefined,
-        external_unit_business_id: orderData.loja?.unidadeNegocio?.id
-          ? String(orderData.loja.unidadeNegocio.id)
-          : undefined,
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
         total_order: Number(orderData.total ?? 0),

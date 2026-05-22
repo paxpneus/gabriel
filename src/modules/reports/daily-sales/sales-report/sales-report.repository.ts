@@ -137,26 +137,14 @@ export class SalesReportRepository {
 
         SELECT o.id AS order_id
         FROM orders o
-        JOIN invoices i ON (
-          i.integrations_id = o.integrations_id
-          AND (
-            NULLIF(o.external_invoice_id, '') = i.id_system
-            OR NULLIF(o.external_invoice_id, '') = i.external_id
-          )
-        )
+        JOIN invoices i ON i.id = o.invoice_id
         WHERE i.updated_at >= :lastProcessedAt
 
         UNION
 
         SELECT o.id AS order_id
         FROM orders o
-        JOIN invoices i ON (
-          i.integrations_id = o.integrations_id
-          AND (
-            NULLIF(o.external_invoice_id, '') = i.id_system
-            OR NULLIF(o.external_invoice_id, '') = i.external_id
-          )
-        )
+        JOIN invoices i ON i.id = o.invoice_id
         JOIN invoice_fiscal_items ifi ON ifi.invoice_id = i.id
         WHERE ifi.updated_at >= :lastProcessedAt
       ) affected
@@ -171,72 +159,123 @@ export class SalesReportRepository {
   async upsertSnapshots(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
 
+    // -------------------------------------------------------------------------
+    // Alinhamento com o schema real:
+    //
+    // sales_order_snapshots NÃO tem: source_system, external_order_id,
+    //   external_order_number, external_invoice_id, status_id, status_name,
+    //   status_value.
+    // Tem: order_number_system, order_number_channel, status_snapshot,
+    //   snapshot_status.
+    //
+    // invoices: usa number_system (não invoice_number separada) e id_system.
+    //   O join é feito via orders.invoice_id (FK direta).
+    //
+    // integration_order_status_mappings: tabela com normalized_status e
+    //   display_name, ancorada em integration_id + external_status_id.
+    //   Usa orders.actual_situation como external_status_id para lookup.
+    //
+    // sales_order_item_snapshots NÃO tem: source_system, external_item_id,
+    //   external_product_id. Tem: integration_id.
+    // -------------------------------------------------------------------------
+
     await sequelize.query(
       `
       WITH affected(order_id) AS (
         SELECT unnest(ARRAY[:orderIds]::uuid[])
       ),
+
+      -- ------------------------------------------------------------------
+      -- 1. Fonte de dados do pedido
+      -- ------------------------------------------------------------------
       order_source AS (
         SELECT
-          o.id AS order_id,
-          i.id AS invoice_id,
-          o.integrations_id AS integration_id,
+          o.id                                                  AS order_id,
+          -- FK direta orders.invoice_id — sem fallbacks externos
+          i.id                                                  AS invoice_id,
+          o.integrations_id                                     AS integration_id,
           o.customer_id,
           o.store_id,
-          i.unit_business_id,
-          COALESCE(o.source_system, 'BLING') AS source_system,
-          COALESCE(o.external_id, o.id_order_system) AS external_order_id,
-          COALESCE(o.external_number, o.number_order_system) AS external_order_number,
-          COALESCE(o.external_invoice_id, i.external_id, i.id_system) AS external_invoice_id,
-          COALESCE(i.number_system, o.external_invoice_id) AS invoice_number,
-          i.xml_key AS invoice_key,
-          DATE(COALESCE(o.date, o.created_at)) AS order_date,
-          DATE(i.emitted_at) AS invoice_date,
+          -- unit_business_id preferencial da NF, fallback para o pedido
+          COALESCE(i.unit_business_id, o.unit_business_id)      AS unit_business_id,
+
+          -- Números canônicos do pedido
+          o.number_order_system                                 AS order_number_system,
+          o.number_order_channel                                AS order_number_channel,
+
+          -- Número/chave da NF: invoices.number_system é o número da nota
+          i.number_system                                       AS invoice_number,
+          i.xml_key                                             AS invoice_key,
+
+          DATE(COALESCE(o.date, o.created_at))                  AS order_date,
+          DATE(i.emitted_at)                                    AS invoice_date,
           i.emitted_at,
-          COALESCE(i.destination_uf, NULL) AS destination_uf,
+
+          -- UF real: XML/NF tem precedência sobre fallback do pedido
+          COALESCE(i.destination_uf, NULL)                      AS destination_uf,
           i.destination_city,
-          COALESCE(o.external_status_id, o.actual_situation, o.internal_status) AS status_id,
-          COALESCE(eosm.display_name, o.external_status_name, o.internal_status, o.actual_situation) AS status_name,
-          COALESCE(o.external_status_name, o.actual_situation, o.internal_status) AS status_value,
+
+          -- Status normalizado via integration_order_status_mappings
+          -- status_snapshot = valor normalizado (chave canônica)
+          COALESCE(iosm.normalized_status, o.actual_situation)  AS status_snapshot,
+
+          -- snapshot_status é o estado lógico: open / completed / cancelled
           CASE
-            WHEN COALESCE(eosm.is_cancelled, FALSE) = TRUE OR o.internal_status = 'CANCELLED' THEN 'cancelled'
-            WHEN COALESCE(eosm.is_final, FALSE) = TRUE OR o.internal_status = 'EMITTED' THEN 'completed'
+            WHEN COALESCE(iosm.is_cancelled, FALSE)                          THEN 'cancelled'
+            WHEN COALESCE(iosm.is_final, FALSE)
+              OR o.internal_status::text = 'EMITTED'                         THEN 'completed'
             ELSE 'open'
-          END AS snapshot_status,
-          COALESCE(o.total_products, o.total_price, 0) AS total_products,
-          COALESCE(o.total_order, o.total_price, 0) AS total_order,
-          COALESCE(o.discount_value, 0) AS discount_value,
-          COALESCE(o.other_expenses, 0) AS other_expenses,
-          COALESCE(o.freight_charged, i.invoice_freight_value, 0) AS freight_charged,
-          COALESCE(o.freight_cost, 0) AS freight_cost,
-          COALESCE(o.freight_by_account, 0) AS freight_by_account,
-          COALESCE(o.tax_commission, 0) AS tax_commission,
-          COALESCE(o.marketplace_fee, 0) AS marketplace_fee,
-          COALESCE(o.payment_fee, 0) AS payment_fee,
-          COALESCE(i.icms_value, 0) AS icms_value,
-          COALESCE(i.ipi_value, 0) AS ipi_value,
-          COALESCE(i.pis_value, 0) AS pis_value,
-          COALESCE(i.cofins_value, 0) AS cofins_value,
-          COALESCE(i.difal_value, 0) AS difal_value,
-          COALESCE(i.ibs_value, 0) AS ibs_value,
-          COALESCE(i.cbs_value, 0) AS cbs_value,
-          COALESCE(i.invoice_total_tax_value, 0) AS approx_tax_value,
-          (i.id IS NOT NULL) AS has_invoice_data,
+          END                                                   AS snapshot_status,
+
+          -- Totais financeiros do pedido
+          COALESCE(o.total_products, o.total_price, 0)          AS total_products,
+          COALESCE(o.total_order, o.total_price, 0)             AS total_order,
+          COALESCE(o.discount_value, 0)                         AS discount_value,
+          COALESCE(o.other_expenses, 0)                         AS other_expenses,
+
+          -- Frete cobrado: NF tem precedência quando o pedido não informar
+          COALESCE(
+            NULLIF(o.freight_charged, 0),
+            i.invoice_freight_value,
+            0
+          )                                                     AS freight_charged,
+          COALESCE(o.freight_cost, 0)                           AS freight_cost,
+          COALESCE(o.freight_by_account, 0)                     AS freight_by_account,
+
+          -- Taxas e comissões
+          COALESCE(o.tax_commission, 0)                         AS tax_commission,
+          COALESCE(o.marketplace_fee, 0)                        AS marketplace_fee,
+          COALESCE(o.payment_fee, 0)                            AS payment_fee,
+
+          -- Impostos da NF
+          COALESCE(i.icms_value, 0)                             AS icms_value,
+          COALESCE(i.ipi_value, 0)                              AS ipi_value,
+          COALESCE(i.pis_value, 0)                              AS pis_value,
+          COALESCE(i.cofins_value, 0)                           AS cofins_value,
+          COALESCE(i.difal_value, 0)                            AS difal_value,
+          COALESCE(i.ibs_value, 0)                              AS ibs_value,
+          COALESCE(i.cbs_value, 0)                              AS cbs_value,
+          COALESCE(i.invoice_total_tax_value, 0)                AS approx_tax_value,
+
+          (i.id IS NOT NULL)                                    AS has_invoice_data,
           o.source_payload
+
         FROM orders o
         JOIN affected a ON a.order_id = o.id
-        LEFT JOIN invoices i ON (
-          i.integrations_id = o.integrations_id
-          AND (
-            NULLIF(o.external_invoice_id, '') = i.id_system
-            OR NULLIF(o.external_invoice_id, '') = i.external_id
-          )
-        )
-        LEFT JOIN external_order_status_mappings eosm ON (
-          eosm.integration_id = o.integrations_id
-          AND eosm.external_status_id = COALESCE(o.external_status_id, o.actual_situation)
+
+        -- Join direto pela FK — sem magic externo
+        LEFT JOIN invoices i ON i.id = o.invoice_id
+
+        -- Normalização de status: ancora em integrations_id + actual_situation
+        LEFT JOIN integration_order_status_mappings iosm ON (
+          iosm.integration_id    = o.integrations_id
+          AND iosm.external_status_id = o.actual_situation
         )
       ),
+
+      -- ------------------------------------------------------------------
+      -- 2. Upsert dos snapshots de pedido
+      -- ------------------------------------------------------------------
       inserted_orders AS (
         INSERT INTO sales_order_snapshots (
           order_id,
@@ -245,10 +284,8 @@ export class SalesReportRepository {
           customer_id,
           store_id,
           unit_business_id,
-          source_system,
-          external_order_id,
-          external_order_number,
-          external_invoice_id,
+          order_number_system,
+          order_number_channel,
           invoice_number,
           invoice_key,
           order_date,
@@ -256,9 +293,7 @@ export class SalesReportRepository {
           emitted_at,
           destination_uf,
           destination_city,
-          status_id,
-          status_name,
-          status_value,
+          status_snapshot,
           snapshot_status,
           total_products,
           total_order,
@@ -292,10 +327,8 @@ export class SalesReportRepository {
           customer_id,
           store_id,
           unit_business_id,
-          source_system,
-          external_order_id,
-          external_order_number,
-          external_invoice_id,
+          order_number_system,
+          order_number_channel,
           invoice_number,
           invoice_key,
           order_date,
@@ -303,9 +336,7 @@ export class SalesReportRepository {
           emitted_at,
           destination_uf,
           destination_city,
-          status_id,
-          status_name,
-          status_value,
+          status_snapshot,
           snapshot_status,
           total_products,
           total_order,
@@ -313,6 +344,7 @@ export class SalesReportRepository {
           other_expenses,
           freight_charged,
           freight_cost,
+          -- freight_paid_by_company: verdadeiro quando a empresa arca com o frete
           freight_cost > 0,
           freight_by_account,
           tax_commission,
@@ -333,125 +365,165 @@ export class SalesReportRepository {
           NOW()
         FROM order_source
         ON CONFLICT (order_id) DO UPDATE SET
-          invoice_id = EXCLUDED.invoice_id,
-          integration_id = EXCLUDED.integration_id,
-          customer_id = EXCLUDED.customer_id,
-          store_id = EXCLUDED.store_id,
-          unit_business_id = EXCLUDED.unit_business_id,
-          source_system = EXCLUDED.source_system,
-          external_order_id = EXCLUDED.external_order_id,
-          external_order_number = EXCLUDED.external_order_number,
-          external_invoice_id = EXCLUDED.external_invoice_id,
-          invoice_number = EXCLUDED.invoice_number,
-          invoice_key = EXCLUDED.invoice_key,
-          order_date = EXCLUDED.order_date,
-          invoice_date = EXCLUDED.invoice_date,
-          emitted_at = EXCLUDED.emitted_at,
-          destination_uf = EXCLUDED.destination_uf,
-          destination_city = EXCLUDED.destination_city,
-          status_id = EXCLUDED.status_id,
-          status_name = EXCLUDED.status_name,
-          status_value = EXCLUDED.status_value,
-          snapshot_status = EXCLUDED.snapshot_status,
-          total_products = EXCLUDED.total_products,
-          total_order = EXCLUDED.total_order,
-          discount_value = EXCLUDED.discount_value,
-          other_expenses = EXCLUDED.other_expenses,
-          freight_charged = EXCLUDED.freight_charged,
-          freight_cost = EXCLUDED.freight_cost,
+          invoice_id              = EXCLUDED.invoice_id,
+          integration_id          = EXCLUDED.integration_id,
+          customer_id             = EXCLUDED.customer_id,
+          store_id                = EXCLUDED.store_id,
+          unit_business_id        = EXCLUDED.unit_business_id,
+          order_number_system     = EXCLUDED.order_number_system,
+          order_number_channel    = EXCLUDED.order_number_channel,
+          invoice_number          = EXCLUDED.invoice_number,
+          invoice_key             = EXCLUDED.invoice_key,
+          order_date              = EXCLUDED.order_date,
+          invoice_date            = EXCLUDED.invoice_date,
+          emitted_at              = EXCLUDED.emitted_at,
+          destination_uf          = EXCLUDED.destination_uf,
+          destination_city        = EXCLUDED.destination_city,
+          status_snapshot         = EXCLUDED.status_snapshot,
+          snapshot_status         = EXCLUDED.snapshot_status,
+          total_products          = EXCLUDED.total_products,
+          total_order             = EXCLUDED.total_order,
+          discount_value          = EXCLUDED.discount_value,
+          other_expenses          = EXCLUDED.other_expenses,
+          freight_charged         = EXCLUDED.freight_charged,
+          freight_cost            = EXCLUDED.freight_cost,
           freight_paid_by_company = EXCLUDED.freight_paid_by_company,
-          freight_by_account = EXCLUDED.freight_by_account,
-          tax_commission = EXCLUDED.tax_commission,
-          marketplace_fee = EXCLUDED.marketplace_fee,
-          payment_fee = EXCLUDED.payment_fee,
-          icms_value = EXCLUDED.icms_value,
-          ipi_value = EXCLUDED.ipi_value,
-          pis_value = EXCLUDED.pis_value,
-          cofins_value = EXCLUDED.cofins_value,
-          difal_value = EXCLUDED.difal_value,
-          ibs_value = EXCLUDED.ibs_value,
-          cbs_value = EXCLUDED.cbs_value,
-          approx_tax_value = EXCLUDED.approx_tax_value,
-          has_invoice_data = EXCLUDED.has_invoice_data,
-          source_payload = EXCLUDED.source_payload,
-          last_updated_at = NOW(),
-          updated_at = NOW()
+          freight_by_account      = EXCLUDED.freight_by_account,
+          tax_commission          = EXCLUDED.tax_commission,
+          marketplace_fee         = EXCLUDED.marketplace_fee,
+          payment_fee             = EXCLUDED.payment_fee,
+          icms_value              = EXCLUDED.icms_value,
+          ipi_value               = EXCLUDED.ipi_value,
+          pis_value               = EXCLUDED.pis_value,
+          cofins_value            = EXCLUDED.cofins_value,
+          difal_value             = EXCLUDED.difal_value,
+          ibs_value               = EXCLUDED.ibs_value,
+          cbs_value               = EXCLUDED.cbs_value,
+          approx_tax_value        = EXCLUDED.approx_tax_value,
+          has_invoice_data        = EXCLUDED.has_invoice_data,
+          source_payload          = EXCLUDED.source_payload,
+          last_updated_at         = NOW(),
+          updated_at              = NOW()
         RETURNING id, order_id
       ),
+
+      -- ------------------------------------------------------------------
+      -- 3. Fonte de dados dos itens
+      -- ------------------------------------------------------------------
       item_source AS (
         SELECT
-          sos.id AS order_snapshot_id,
+          sos.id                                                AS order_snapshot_id,
           oi.order_id,
-          oi.id AS order_item_id,
-          COALESCE(oi.product_id, p.id) AS product_id,
+          oi.id                                                 AS order_item_id,
+          COALESCE(oi.product_id, p.id)                         AS product_id,
           sos.store_id,
           sos.unit_business_id,
+          sos.integration_id,
           sos.order_date,
           sos.destination_uf,
-          COALESCE(oi.source_system, sos.source_system) AS source_system,
-          oi.external_item_id,
-          COALESCE(oi.external_product_id, p.external_id, p.id_system) AS external_product_id,
+
           oi.sku,
-          oi.name AS description,
+          oi.name                                               AS description,
           oi.unit,
-          COALESCE(oi.quantity, 0)::numeric AS quantity,
-          COALESCE(oi.unit_price, oi.price, 0)::numeric AS unit_price,
-          COALESCE(oi.gross_total, COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric) AS gross_total,
-          COALESCE(oi.discount_value, 0) AS discount_value,
-          COALESCE(oi.net_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric) - COALESCE(oi.discount_value, 0)) AS net_total,
+
+          COALESCE(oi.quantity, 0)::numeric                     AS quantity,
+          COALESCE(oi.unit_price, oi.price, 0)::numeric         AS unit_price,
+
+          COALESCE(
+            oi.gross_total,
+            COALESCE(oi.unit_price, oi.price, 0)::numeric
+              * COALESCE(oi.quantity, 0)::numeric
+          )                                                     AS gross_total,
+
+          COALESCE(oi.discount_value, 0)                        AS discount_value,
+
+          COALESCE(
+            oi.net_total,
+            (COALESCE(oi.unit_price, oi.price, 0)::numeric
+              * COALESCE(oi.quantity, 0)::numeric)
+              - COALESCE(oi.discount_value, 0)
+          )                                                     AS net_total,
+
+          -- Custo médio: estoque / fallback fornecedor / zero
           CASE
-            WHEN st.quantity > 0 THEN ROUND((st.total_price::numeric / st.quantity::numeric), 4)
-            WHEN p.supplier_cost_price IS NOT NULL THEN p.supplier_cost_price
+            WHEN st.quantity > 0
+              THEN ROUND((st.total_price::numeric / st.quantity::numeric), 4)
+            WHEN p.supplier_cost_price IS NOT NULL
+              THEN p.supplier_cost_price
             ELSE 0
-          END AS average_cost_snapshot,
+          END                                                   AS average_cost_snapshot,
+
           CASE
-            WHEN st.quantity > 0 THEN 'STOCK_AVERAGE'
+            WHEN st.quantity > 0               THEN 'STOCK_AVERAGE'
             WHEN p.supplier_cost_price IS NOT NULL THEN 'PRODUCT_SUPPLIER_COST'
             ELSE 'UNKNOWN'
-          END AS cost_source,
-          COALESCE(oi.commission_base, 0) AS commission_base,
-          COALESCE(oi.commission_rate, 0) AS commission_rate,
-          COALESCE(oi.commission_value, 0) AS commission_value,
-          COALESCE(ifi.ncm, p.ncm) AS ncm,
-          COALESCE(ifi.cest, p.cest) AS cest,
+          END                                                   AS cost_source,
+
+          COALESCE(oi.commission_base, 0)                       AS commission_base,
+          COALESCE(oi.commission_rate, 0)                       AS commission_rate,
+          COALESCE(oi.commission_value, 0)                      AS commission_value,
+
+          -- Dados fiscais: item da NF tem precedência sobre cadastro do produto
+          COALESCE(ifi.ncm,  p.ncm)                             AS ncm,
+          COALESCE(ifi.cest, p.cest)                            AS cest,
           ifi.cfop,
-          COALESCE(ifi.gtin, p.gtin, p.ean) AS gtin,
-          COALESCE(ifi.approx_tax_value, 0) AS approx_tax_value,
-          COALESCE(ifi.icms_rate, 0) AS icms_rate,
-          COALESCE(ifi.icms_value, 0) AS icms_value,
-          COALESCE(ifi.ipi_value, 0) AS ipi_value,
-          COALESCE(ifi.pis_value, 0) AS pis_value,
-          COALESCE(ifi.cofins_value, 0) AS cofins_value,
-          COALESCE(ifi.difal_value, 0) AS difal_value,
-          COALESCE(ifi.ibs_value, 0) AS ibs_value,
-          COALESCE(ifi.cbs_value, 0) AS cbs_value,
+          COALESCE(ifi.gtin, p.gtin, p.ean)                     AS gtin,
+
+          COALESCE(ifi.approx_tax_value, 0)                     AS approx_tax_value,
+          COALESCE(ifi.icms_rate,   0)                          AS icms_rate,
+          COALESCE(ifi.icms_value,  0)                          AS icms_value,
+          COALESCE(ifi.ipi_value,   0)                          AS ipi_value,
+          COALESCE(ifi.pis_value,   0)                          AS pis_value,
+          COALESCE(ifi.cofins_value,0)                          AS cofins_value,
+          COALESCE(ifi.difal_value, 0)                          AS difal_value,
+          COALESCE(ifi.ibs_value,   0)                          AS ibs_value,
+          COALESCE(ifi.cbs_value,   0)                          AS cbs_value,
+
           oi.source_payload
+
         FROM order_items oi
         JOIN inserted_orders io ON io.order_id = oi.order_id
         JOIN sales_order_snapshots sos ON sos.order_id = oi.order_id
+
+        -- Produto: por FK direta, por sku ou por id_system
         LEFT JOIN products p ON (
-          p.id = oi.product_id
-          OR p.sku = oi.sku
-          OR p.id_system = oi.external_product_id
-          OR p.external_id = oi.external_product_id
+          p.id        = oi.product_id
+          OR p.sku      = oi.sku
+          OR p.id_system = oi.sku   -- fallback: sku pode ser o id_system do ERP
         )
+
+        -- Estoque: join por produto + unidade de negócio (custo médio)
         LEFT JOIN LATERAL (
           SELECT s.total_price, s.quantity
           FROM stocks s
           WHERE s.product_id = COALESCE(oi.product_id, p.id)
-            AND (s.unit_business_id = sos.unit_business_id OR sos.unit_business_id IS NULL)
-          ORDER BY CASE WHEN s.unit_business_id = sos.unit_business_id THEN 0 ELSE 1 END, s.updated_at DESC
+            AND (
+              s.unit_business_id = sos.unit_business_id
+              OR sos.unit_business_id IS NULL
+            )
+          ORDER BY
+            CASE WHEN s.unit_business_id = sos.unit_business_id THEN 0 ELSE 1 END,
+            s.updated_at DESC
           LIMIT 1
         ) st ON TRUE
+
+        -- Item fiscal: join via invoice_id do snapshot + produto ou sku
         LEFT JOIN LATERAL (
           SELECT ifi.*
           FROM invoice_fiscal_items ifi
           WHERE ifi.invoice_id = sos.invoice_id
-            AND (ifi.product_id = COALESCE(oi.product_id, p.id) OR ifi.sku = oi.sku)
+            AND (
+              ifi.product_id = COALESCE(oi.product_id, p.id)
+              OR ifi.sku     = oi.sku
+            )
           ORDER BY ifi.updated_at DESC
           LIMIT 1
         ) ifi ON TRUE
       ),
+
+      -- ------------------------------------------------------------------
+      -- 4. Upsert dos snapshots de item
+      -- ------------------------------------------------------------------
       inserted_items AS (
         INSERT INTO sales_order_item_snapshots (
           order_snapshot_id,
@@ -460,11 +532,9 @@ export class SalesReportRepository {
           product_id,
           store_id,
           unit_business_id,
+          integration_id,
           order_date,
           destination_uf,
-          source_system,
-          external_item_id,
-          external_product_id,
           sku,
           description,
           unit,
@@ -505,11 +575,9 @@ export class SalesReportRepository {
           product_id,
           store_id,
           unit_business_id,
+          integration_id,
           order_date,
           destination_uf,
-          source_system,
-          external_item_id,
-          external_product_id,
           sku,
           description,
           unit,
@@ -521,8 +589,13 @@ export class SalesReportRepository {
           average_cost_snapshot,
           ROUND((average_cost_snapshot * quantity)::numeric, 2),
           cost_source,
-          CASE WHEN (average_cost_snapshot * quantity) = 0 THEN 0
-            ELSE ROUND(((net_total - (average_cost_snapshot * quantity)) / (average_cost_snapshot * quantity) * 100)::numeric, 2)
+          CASE
+            WHEN (average_cost_snapshot * quantity) = 0 THEN 0
+            ELSE ROUND(
+              ((net_total - (average_cost_snapshot * quantity))
+                / (average_cost_snapshot * quantity) * 100)::numeric,
+              2
+            )
           END,
           commission_base,
           commission_rate,
@@ -546,121 +619,138 @@ export class SalesReportRepository {
           NOW()
         FROM item_source
         ON CONFLICT (order_item_id) DO UPDATE SET
-          order_snapshot_id = EXCLUDED.order_snapshot_id,
-          product_id = EXCLUDED.product_id,
-          store_id = EXCLUDED.store_id,
-          unit_business_id = EXCLUDED.unit_business_id,
-          order_date = EXCLUDED.order_date,
-          destination_uf = EXCLUDED.destination_uf,
-          source_system = EXCLUDED.source_system,
-          external_item_id = EXCLUDED.external_item_id,
-          external_product_id = EXCLUDED.external_product_id,
-          sku = EXCLUDED.sku,
-          description = EXCLUDED.description,
-          unit = EXCLUDED.unit,
-          quantity = EXCLUDED.quantity,
-          unit_price = EXCLUDED.unit_price,
-          gross_total = EXCLUDED.gross_total,
-          discount_value = EXCLUDED.discount_value,
-          net_total = EXCLUDED.net_total,
+          order_snapshot_id     = EXCLUDED.order_snapshot_id,
+          product_id            = EXCLUDED.product_id,
+          store_id              = EXCLUDED.store_id,
+          unit_business_id      = EXCLUDED.unit_business_id,
+          integration_id        = EXCLUDED.integration_id,
+          order_date            = EXCLUDED.order_date,
+          destination_uf        = EXCLUDED.destination_uf,
+          sku                   = EXCLUDED.sku,
+          description           = EXCLUDED.description,
+          unit                  = EXCLUDED.unit,
+          quantity              = EXCLUDED.quantity,
+          unit_price            = EXCLUDED.unit_price,
+          gross_total           = EXCLUDED.gross_total,
+          discount_value        = EXCLUDED.discount_value,
+          net_total             = EXCLUDED.net_total,
           average_cost_snapshot = EXCLUDED.average_cost_snapshot,
-          total_cost_snapshot = EXCLUDED.total_cost_snapshot,
-          cost_source = EXCLUDED.cost_source,
-          markup_pct = EXCLUDED.markup_pct,
-          commission_base = EXCLUDED.commission_base,
-          commission_rate = EXCLUDED.commission_rate,
-          commission_value = EXCLUDED.commission_value,
-          ncm = EXCLUDED.ncm,
-          cest = EXCLUDED.cest,
-          cfop = EXCLUDED.cfop,
-          gtin = EXCLUDED.gtin,
-          approx_tax_value = EXCLUDED.approx_tax_value,
-          icms_rate = EXCLUDED.icms_rate,
-          icms_value = EXCLUDED.icms_value,
-          ipi_value = EXCLUDED.ipi_value,
-          pis_value = EXCLUDED.pis_value,
-          cofins_value = EXCLUDED.cofins_value,
-          difal_value = EXCLUDED.difal_value,
-          ibs_value = EXCLUDED.ibs_value,
-          cbs_value = EXCLUDED.cbs_value,
-          source_payload = EXCLUDED.source_payload,
-          last_updated_at = NOW(),
-          updated_at = NOW()
+          total_cost_snapshot   = EXCLUDED.total_cost_snapshot,
+          cost_source           = EXCLUDED.cost_source,
+          markup_pct            = EXCLUDED.markup_pct,
+          commission_base       = EXCLUDED.commission_base,
+          commission_rate       = EXCLUDED.commission_rate,
+          commission_value      = EXCLUDED.commission_value,
+          ncm                   = EXCLUDED.ncm,
+          cest                  = EXCLUDED.cest,
+          cfop                  = EXCLUDED.cfop,
+          gtin                  = EXCLUDED.gtin,
+          approx_tax_value      = EXCLUDED.approx_tax_value,
+          icms_rate             = EXCLUDED.icms_rate,
+          icms_value            = EXCLUDED.icms_value,
+          ipi_value             = EXCLUDED.ipi_value,
+          pis_value             = EXCLUDED.pis_value,
+          cofins_value          = EXCLUDED.cofins_value,
+          difal_value           = EXCLUDED.difal_value,
+          ibs_value             = EXCLUDED.ibs_value,
+          cbs_value             = EXCLUDED.cbs_value,
+          source_payload        = EXCLUDED.source_payload,
+          last_updated_at       = NOW(),
+          updated_at            = NOW()
         RETURNING order_snapshot_id
       ),
+
+      -- ------------------------------------------------------------------
+      -- 5. Agrega totais dos itens para atualizar o snapshot do pedido
+      -- ------------------------------------------------------------------
       item_totals AS (
         SELECT
           sois.order_snapshot_id,
-          SUM(sois.quantity) AS items_quantity,
-          SUM(sois.total_cost_snapshot) AS total_cost,
+          SUM(sois.quantity)                                        AS items_quantity,
+          SUM(sois.total_cost_snapshot)                             AS total_cost,
           BOOL_OR(sois.cost_source IS DISTINCT FROM 'STOCK_AVERAGE') AS has_cost_fallback
         FROM sales_order_item_snapshots sois
         JOIN inserted_orders io ON io.id = sois.order_snapshot_id
         GROUP BY sois.order_snapshot_id
       )
+
+      -- ------------------------------------------------------------------
+      -- 6. Atualiza campos derivados no snapshot do pedido
+      -- ------------------------------------------------------------------
       UPDATE sales_order_snapshots sos
-      SET items_quantity = COALESCE(it.items_quantity, 0),
-          total_cost = COALESCE(it.total_cost, 0),
-          total_taxes = COALESCE(sos.icms_value, 0)
-            + COALESCE(sos.ipi_value, 0)
-            + COALESCE(sos.pis_value, 0)
-            + COALESCE(sos.cofins_value, 0)
-            + COALESCE(sos.difal_value, 0)
-            + COALESCE(sos.ibs_value, 0)
-            + COALESCE(sos.cbs_value, 0),
-          total_fees = COALESCE(sos.tax_commission, 0)
-            + COALESCE(sos.marketplace_fee, 0)
-            + COALESCE(sos.payment_fee, 0),
-          contribution_value = COALESCE(sos.total_order, 0)
+      SET
+        items_quantity    = COALESCE(it.items_quantity, 0),
+        total_cost        = COALESCE(it.total_cost, 0),
+
+        total_taxes       = COALESCE(sos.icms_value,   0)
+                          + COALESCE(sos.ipi_value,    0)
+                          + COALESCE(sos.pis_value,    0)
+                          + COALESCE(sos.cofins_value, 0)
+                          + COALESCE(sos.difal_value,  0)
+                          + COALESCE(sos.ibs_value,    0)
+                          + COALESCE(sos.cbs_value,    0),
+
+        total_fees        = COALESCE(sos.tax_commission,  0)
+                          + COALESCE(sos.marketplace_fee, 0)
+                          + COALESCE(sos.payment_fee,     0),
+
+        contribution_value =
+          COALESCE(sos.total_order, 0)
+          - COALESCE(it.total_cost, 0)
+          - CASE WHEN sos.freight_paid_by_company
+              THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
+          - (  COALESCE(sos.icms_value,   0)
+             + COALESCE(sos.ipi_value,    0)
+             + COALESCE(sos.pis_value,    0)
+             + COALESCE(sos.cofins_value, 0)
+             + COALESCE(sos.difal_value,  0)
+             + COALESCE(sos.ibs_value,    0)
+             + COALESCE(sos.cbs_value,    0))
+          - (  COALESCE(sos.tax_commission,  0)
+             + COALESCE(sos.marketplace_fee, 0)
+             + COALESCE(sos.payment_fee,     0)),
+
+        contribution_pct  =
+          CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
+          ELSE ROUND(((
+            COALESCE(sos.total_order, 0)
             - COALESCE(it.total_cost, 0)
-            - CASE WHEN sos.freight_paid_by_company THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-            - (
-              COALESCE(sos.icms_value, 0)
-              + COALESCE(sos.ipi_value, 0)
-              + COALESCE(sos.pis_value, 0)
-              + COALESCE(sos.cofins_value, 0)
-              + COALESCE(sos.difal_value, 0)
-              + COALESCE(sos.ibs_value, 0)
-              + COALESCE(sos.cbs_value, 0)
-            )
-            - (
-              COALESCE(sos.tax_commission, 0)
-              + COALESCE(sos.marketplace_fee, 0)
-              + COALESCE(sos.payment_fee, 0)
-            ),
-          contribution_pct = CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
-            ELSE ROUND(((
-              COALESCE(sos.total_order, 0)
-              - COALESCE(it.total_cost, 0)
-              - CASE WHEN sos.freight_paid_by_company THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-              - (
-                COALESCE(sos.icms_value, 0)
-                + COALESCE(sos.ipi_value, 0)
-                + COALESCE(sos.pis_value, 0)
-                + COALESCE(sos.cofins_value, 0)
-                + COALESCE(sos.difal_value, 0)
-                + COALESCE(sos.ibs_value, 0)
-                + COALESCE(sos.cbs_value, 0)
-              )
-              - (
-                COALESCE(sos.tax_commission, 0)
-                + COALESCE(sos.marketplace_fee, 0)
-                + COALESCE(sos.payment_fee, 0)
-              )
-            ) / sos.total_order * 100)::numeric, 2)
+            - CASE WHEN sos.freight_paid_by_company
+                THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
+            - (  COALESCE(sos.icms_value,   0)
+               + COALESCE(sos.ipi_value,    0)
+               + COALESCE(sos.pis_value,    0)
+               + COALESCE(sos.cofins_value, 0)
+               + COALESCE(sos.difal_value,  0)
+               + COALESCE(sos.ibs_value,    0)
+               + COALESCE(sos.cbs_value,    0))
+            - (  COALESCE(sos.tax_commission,  0)
+               + COALESCE(sos.marketplace_fee, 0)
+               + COALESCE(sos.payment_fee,     0))
+          ) / sos.total_order * 100)::numeric, 2)
           END,
-          markup_pct = CASE WHEN COALESCE(it.total_cost, 0) = 0 THEN 0
-            ELSE ROUND((((COALESCE(sos.total_order, 0) - it.total_cost) / it.total_cost) * 100)::numeric, 2)
+
+        markup_pct        =
+          CASE WHEN COALESCE(it.total_cost, 0) = 0 THEN 0
+          ELSE ROUND((
+            (COALESCE(sos.total_order, 0) - it.total_cost) / it.total_cost * 100
+          )::numeric, 2)
           END,
-          has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
-          last_updated_at = NOW(),
-          updated_at = NOW()
+
+        has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
+        last_updated_at   = NOW(),
+        updated_at        = NOW()
+
       FROM item_totals it
       WHERE sos.id = it.order_snapshot_id
       `,
       { replacements: { orderIds } },
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Helpers para buscar chaves afetadas (usadas para recalcular facts)
+  // ---------------------------------------------------------------------------
 
   async findAffectedFactKeys(orderIds: string[]): Promise<SalesFactKey[]> {
     if (!orderIds.length) return [];
@@ -676,9 +766,7 @@ export class SalesReportRepository {
     );
   }
 
-  async findAffectedStateFactKeys(
-    orderIds: string[],
-  ): Promise<SalesStateFactKey[]> {
+  async findAffectedStateFactKeys(orderIds: string[]): Promise<SalesStateFactKey[]> {
     if (!orderIds.length) return [];
 
     return sequelize.query<SalesStateFactKey>(
@@ -693,9 +781,7 @@ export class SalesReportRepository {
     );
   }
 
-  async findAffectedStoreFactKeys(
-    orderIds: string[],
-  ): Promise<SalesStoreFactKey[]> {
+  async findAffectedStoreFactKeys(orderIds: string[]): Promise<SalesStoreFactKey[]> {
     if (!orderIds.length) return [];
 
     return sequelize.query<SalesStoreFactKey>(
@@ -710,9 +796,7 @@ export class SalesReportRepository {
     );
   }
 
-  async findAffectedProductFactKeys(
-    orderIds: string[],
-  ): Promise<SalesProductFactKey[]> {
+  async findAffectedProductFactKeys(orderIds: string[]): Promise<SalesProductFactKey[]> {
     if (!orderIds.length) return [];
 
     return sequelize.query<SalesProductFactKey>(
@@ -727,22 +811,29 @@ export class SalesReportRepository {
     );
   }
 
-  async findAffectedStatusFactKeys(
-    orderIds: string[],
-  ): Promise<SalesStatusFactKey[]> {
+  // status_normalized é o campo real no schema (não status_id)
+  async findAffectedStatusFactKeys(orderIds: string[]): Promise<SalesStatusFactKey[]> {
     if (!orderIds.length) return [];
 
     return sequelize.query<SalesStatusFactKey>(
       `
-      SELECT DISTINCT order_date AS fact_date, unit_business_id, status_id
+      SELECT DISTINCT
+        order_date       AS fact_date,
+        unit_business_id,
+        integration_id,
+        status_snapshot  AS status_normalized
       FROM sales_order_snapshots
       WHERE order_id IN (:orderIds)
         AND unit_business_id IS NOT NULL
-        AND status_id IS NOT NULL
+        AND status_snapshot IS NOT NULL
       `,
       { type: QueryTypes.SELECT, replacements: { orderIds } },
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Upsert das tabelas de facts
+  // ---------------------------------------------------------------------------
 
   async upsertDailySalesFacts(keys: SalesFactKey[]): Promise<void> {
     for (const key of keys) {
@@ -750,74 +841,60 @@ export class SalesReportRepository {
         `
         WITH metrics AS (
           SELECT
-            CAST(:factDate AS date) AS fact_date,
-            CAST(:unitBusinessId AS uuid) AS unit_business_id,
-            COUNT(*)::integer AS orders_count,
-            COALESCE(SUM(items_quantity), 0) AS items_quantity,
-            COALESCE(SUM(total_order), 0) AS total_value,
-            COALESCE(SUM(freight_charged), 0) AS total_freight,
-            COALESCE(SUM(total_cost), 0) AS total_cost,
-            COALESCE(SUM(total_taxes), 0) AS total_taxes,
-            COALESCE(SUM(total_fees), 0) AS total_fees,
-            COALESCE(SUM(contribution_value), 0) AS contribution_value
+            CAST(:factDate AS date)        AS fact_date,
+            CAST(:unitBusinessId AS uuid)  AS unit_business_id,
+            COUNT(*)::integer              AS orders_count,
+            COALESCE(SUM(items_quantity),    0) AS items_quantity,
+            COALESCE(SUM(total_order),       0) AS total_value,
+            COALESCE(SUM(freight_charged),   0) AS total_freight,
+            COALESCE(SUM(total_cost),        0) AS total_cost,
+            COALESCE(SUM(total_taxes),       0) AS total_taxes,
+            COALESCE(SUM(total_fees),        0) AS total_fees,
+            COALESCE(SUM(contribution_value),0) AS contribution_value
           FROM sales_order_snapshots
-          WHERE order_date = CAST(:factDate AS date)
+          WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
             AND snapshot_status <> 'cancelled'
         )
         INSERT INTO daily_sales_facts (
-          fact_date,
-          unit_business_id,
-          orders_count,
-          items_quantity,
-          total_value,
-          total_freight,
-          average_freight,
-          average_ticket,
-          total_cost,
-          total_taxes,
-          total_fees,
-          contribution_value,
-          contribution_pct,
-          markup_pct,
-          last_updated_at,
-          created_at,
-          updated_at
+          fact_date, unit_business_id,
+          orders_count, items_quantity,
+          total_value, total_freight, average_freight, average_ticket,
+          total_cost, total_taxes, total_fees,
+          contribution_value, contribution_pct, markup_pct,
+          last_updated_at, created_at, updated_at
         )
         SELECT
-          fact_date,
-          unit_business_id,
-          orders_count,
-          items_quantity,
-          total_value,
-          total_freight,
-          CASE WHEN orders_count = 0 THEN 0 ELSE ROUND((total_freight / orders_count)::numeric, 2) END,
-          CASE WHEN orders_count = 0 THEN 0 ELSE ROUND((total_value / orders_count)::numeric, 2) END,
-          total_cost,
-          total_taxes,
-          total_fees,
+          fact_date, unit_business_id,
+          orders_count, items_quantity,
+          total_value, total_freight,
+          CASE WHEN orders_count = 0 THEN 0
+            ELSE ROUND((total_freight / orders_count)::numeric, 2) END,
+          CASE WHEN orders_count = 0 THEN 0
+            ELSE ROUND((total_value  / orders_count)::numeric, 2) END,
+          total_cost, total_taxes, total_fees,
           contribution_value,
-          CASE WHEN total_value = 0 THEN 0 ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
-          CASE WHEN total_cost = 0 THEN 0 ELSE ROUND(((total_value - total_cost) / total_cost * 100)::numeric, 2) END,
-          NOW(),
-          NOW(),
-          NOW()
+          CASE WHEN total_value = 0 THEN 0
+            ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
+          CASE WHEN total_cost = 0 THEN 0
+            ELSE ROUND(((total_value - total_cost) / total_cost * 100)::numeric, 2) END,
+          NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id) DO UPDATE SET
-          orders_count = EXCLUDED.orders_count,
-          items_quantity = EXCLUDED.items_quantity,
-          total_value = EXCLUDED.total_value,
-          total_freight = EXCLUDED.total_freight,
-          average_freight = EXCLUDED.average_freight,
-          average_ticket = EXCLUDED.average_ticket,
-          total_cost = EXCLUDED.total_cost,
-          total_taxes = EXCLUDED.total_taxes,
-          total_fees = EXCLUDED.total_fees,
+          orders_count       = EXCLUDED.orders_count,
+          items_quantity     = EXCLUDED.items_quantity,
+          total_value        = EXCLUDED.total_value,
+          total_freight      = EXCLUDED.total_freight,
+          average_freight    = EXCLUDED.average_freight,
+          average_ticket     = EXCLUDED.average_ticket,
+          total_cost         = EXCLUDED.total_cost,
+          total_taxes        = EXCLUDED.total_taxes,
+          total_fees         = EXCLUDED.total_fees,
           contribution_value = EXCLUDED.contribution_value,
-          contribution_pct = EXCLUDED.contribution_pct,
-          markup_pct = EXCLUDED.markup_pct,
-          last_updated_at = NOW(),
-          updated_at = NOW()
+          contribution_pct   = EXCLUDED.contribution_pct,
+          markup_pct         = EXCLUDED.markup_pct,
+          last_updated_at    = NOW(),
+          updated_at         = NOW()
         `,
         {
           replacements: {
@@ -835,56 +912,44 @@ export class SalesReportRepository {
         `
         WITH metrics AS (
           SELECT
-            CAST(:factDate AS date) AS fact_date,
-            CAST(:unitBusinessId AS uuid) AS unit_business_id,
-            CAST(:destinationUf AS varchar) AS destination_uf,
-            COUNT(*)::integer AS orders_count,
+            CAST(:factDate AS date)          AS fact_date,
+            CAST(:unitBusinessId AS uuid)    AS unit_business_id,
+            CAST(:destinationUf AS varchar)  AS destination_uf,
+            COUNT(*)::integer                AS orders_count,
             COALESCE(SUM(items_quantity), 0) AS items_quantity,
-            COALESCE(SUM(total_order), 0) AS total_value,
-            COALESCE(SUM(freight_charged), 0) AS total_freight
+            COALESCE(SUM(total_order),    0) AS total_value,
+            COALESCE(SUM(freight_charged),0) AS total_freight
           FROM sales_order_snapshots
-          WHERE order_date = CAST(:factDate AS date)
+          WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
-            AND destination_uf = :destinationUf
+            AND destination_uf   = :destinationUf
             AND snapshot_status <> 'cancelled'
         )
         INSERT INTO daily_sales_state_facts (
-          fact_date,
-          unit_business_id,
-          destination_uf,
-          orders_count,
-          items_quantity,
-          total_value,
-          total_freight,
-          average_freight,
-          average_ticket,
-          last_updated_at,
-          created_at,
-          updated_at
+          fact_date, unit_business_id, destination_uf,
+          orders_count, items_quantity, total_value,
+          total_freight, average_freight, average_ticket,
+          last_updated_at, created_at, updated_at
         )
         SELECT
-          fact_date,
-          unit_business_id,
-          destination_uf,
-          orders_count,
-          items_quantity,
-          total_value,
+          fact_date, unit_business_id, destination_uf,
+          orders_count, items_quantity, total_value,
           total_freight,
-          CASE WHEN orders_count = 0 THEN 0 ELSE ROUND((total_freight / orders_count)::numeric, 2) END,
-          CASE WHEN orders_count = 0 THEN 0 ELSE ROUND((total_value / orders_count)::numeric, 2) END,
-          NOW(),
-          NOW(),
-          NOW()
+          CASE WHEN orders_count = 0 THEN 0
+            ELSE ROUND((total_freight / orders_count)::numeric, 2) END,
+          CASE WHEN orders_count = 0 THEN 0
+            ELSE ROUND((total_value  / orders_count)::numeric, 2) END,
+          NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, destination_uf) DO UPDATE SET
-          orders_count = EXCLUDED.orders_count,
-          items_quantity = EXCLUDED.items_quantity,
-          total_value = EXCLUDED.total_value,
-          total_freight = EXCLUDED.total_freight,
+          orders_count    = EXCLUDED.orders_count,
+          items_quantity  = EXCLUDED.items_quantity,
+          total_value     = EXCLUDED.total_value,
+          total_freight   = EXCLUDED.total_freight,
           average_freight = EXCLUDED.average_freight,
-          average_ticket = EXCLUDED.average_ticket,
+          average_ticket  = EXCLUDED.average_ticket,
           last_updated_at = NOW(),
-          updated_at = NOW()
+          updated_at      = NOW()
         `,
         {
           replacements: {
@@ -903,78 +968,60 @@ export class SalesReportRepository {
         `
         WITH metrics AS (
           SELECT
-            CAST(:factDate AS date) AS fact_date,
-            CAST(:unitBusinessId AS uuid) AS unit_business_id,
-            CAST(:storeId AS uuid) AS store_id,
-            COUNT(*)::integer AS orders_count,
-            COALESCE(SUM(items_quantity), 0) AS items_quantity,
-            COALESCE(SUM(total_order), 0) AS total_value,
+            CAST(:factDate AS date)           AS fact_date,
+            CAST(:unitBusinessId AS uuid)     AS unit_business_id,
+            CAST(:storeId AS uuid)            AS store_id,
+            COUNT(*)::integer                 AS orders_count,
+            COALESCE(SUM(items_quantity),  0) AS items_quantity,
+            COALESCE(SUM(total_order),     0) AS total_value,
             COALESCE(SUM(freight_charged), 0) AS total_freight,
-            COALESCE(SUM(total_cost), 0) AS total_cost,
-            COALESCE(SUM(total_taxes), 0) AS total_taxes,
-            COALESCE(SUM(total_fees), 0) AS total_fees,
-            COALESCE(SUM(contribution_value), 0) AS contribution_value
+            COALESCE(SUM(total_cost),      0) AS total_cost,
+            COALESCE(SUM(total_taxes),     0) AS total_taxes,
+            COALESCE(SUM(total_fees),      0) AS total_fees,
+            COALESCE(SUM(contribution_value),0) AS contribution_value
           FROM sales_order_snapshots
-          WHERE order_date = CAST(:factDate AS date)
+          WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
-            AND store_id = :storeId
+            AND store_id         = :storeId
             AND snapshot_status <> 'cancelled'
         )
         INSERT INTO daily_sales_store_facts (
-          fact_date,
-          unit_business_id,
-          store_id,
-          orders_count,
-          items_quantity,
-          total_value,
-          total_freight,
-          average_ticket,
-          total_cost,
-          piece_average_value,
-          markup_pct,
-          total_taxes,
-          total_fees,
-          contribution_value,
-          contribution_pct,
-          last_updated_at,
-          created_at,
-          updated_at
+          fact_date, unit_business_id, store_id,
+          orders_count, items_quantity, total_value, total_freight,
+          average_ticket, total_cost, piece_average_value, markup_pct,
+          total_taxes, total_fees, contribution_value, contribution_pct,
+          last_updated_at, created_at, updated_at
         )
         SELECT
-          fact_date,
-          unit_business_id,
-          store_id,
-          orders_count,
-          items_quantity,
-          total_value,
-          total_freight,
-          CASE WHEN orders_count = 0 THEN 0 ELSE ROUND((total_value / orders_count)::numeric, 2) END,
+          fact_date, unit_business_id, store_id,
+          orders_count, items_quantity, total_value, total_freight,
+          CASE WHEN orders_count  = 0 THEN 0
+            ELSE ROUND((total_value / orders_count)::numeric, 2) END,
           total_cost,
-          CASE WHEN items_quantity = 0 THEN 0 ELSE ROUND((total_value / items_quantity)::numeric, 2) END,
-          CASE WHEN total_cost = 0 THEN 0 ELSE ROUND(((total_value - total_cost) / total_cost * 100)::numeric, 2) END,
-          total_taxes,
-          total_fees,
-          contribution_value,
-          CASE WHEN total_value = 0 THEN 0 ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
-          NOW(),
-          NOW(),
-          NOW()
+          CASE WHEN items_quantity = 0 THEN 0
+            ELSE ROUND((total_value / items_quantity)::numeric, 2) END,
+          CASE WHEN total_cost     = 0 THEN 0
+            ELSE ROUND(((total_value - total_cost) / total_cost * 100)::numeric, 2) END,
+          total_taxes, total_fees, contribution_value,
+          CASE WHEN total_value    = 0 THEN 0
+            ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
+          NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, store_id) DO UPDATE SET
-          orders_count = EXCLUDED.orders_count,
-          items_quantity = EXCLUDED.items_quantity,
-          total_value = EXCLUDED.total_value,
-          total_freight = EXCLUDED.total_freight,
-          average_ticket = EXCLUDED.average_ticket,
-          total_cost = EXCLUDED.total_cost,
-          piece_average_value = EXCLUDED.piece_average_value,
-          markup_pct = EXCLUDED.markup_pct,
-          total_taxes = EXCLUDED.total_taxes,
-          total_fees = EXCLUDED.total_fees,
+          orders_count       = EXCLUDED.orders_count,
+          items_quantity     = EXCLUDED.items_quantity,
+          total_value        = EXCLUDED.total_value,
+          total_freight      = EXCLUDED.total_freight,
+          average_ticket     = EXCLUDED.average_ticket,
+          total_cost         = EXCLUDED.total_cost,
+          piece_average_value= EXCLUDED.piece_average_value,
+          markup_pct         = EXCLUDED.markup_pct,
+          total_taxes        = EXCLUDED.total_taxes,
+          total_fees         = EXCLUDED.total_fees,
           contribution_value = EXCLUDED.contribution_value,
-          contribution_pct = EXCLUDED.contribution_pct,
-          last_updated_at = NOW(),
-          updated_at = NOW()
+          contribution_pct   = EXCLUDED.contribution_pct,
+          last_updated_at    = NOW(),
+          updated_at         = NOW()
         `,
         {
           replacements: {
@@ -987,64 +1034,46 @@ export class SalesReportRepository {
     }
   }
 
-  async upsertDailySalesProductFacts(
-    keys: SalesProductFactKey[],
-  ): Promise<void> {
+  async upsertDailySalesProductFacts(keys: SalesProductFactKey[]): Promise<void> {
     for (const key of keys) {
       await sequelize.query(
         `
         WITH metrics AS (
           SELECT
-            CAST(:factDate AS date) AS fact_date,
-            CAST(:unitBusinessId AS uuid) AS unit_business_id,
+            CAST(:factDate AS date)          AS fact_date,
+            CAST(:unitBusinessId AS uuid)    AS unit_business_id,
             (ARRAY_AGG(product_id) FILTER (WHERE product_id IS NOT NULL))[1] AS product_id,
-            CAST(:sku AS varchar) AS sku,
-            MAX(description) AS description,
-            COALESCE(SUM(quantity), 0) AS quantity,
-            COALESCE(SUM(total_cost_snapshot), 0) AS total_cost,
-            COALESCE(SUM(net_total), 0) AS total_value
+            CAST(:sku AS varchar)            AS sku,
+            MAX(description)                 AS description,
+            COALESCE(SUM(quantity),          0) AS quantity,
+            COALESCE(SUM(total_cost_snapshot),0) AS total_cost,
+            COALESCE(SUM(net_total),         0) AS total_value
           FROM sales_order_item_snapshots
-          WHERE order_date = CAST(:factDate AS date)
+          WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
-            AND sku = :sku
+            AND sku              = :sku
         )
         INSERT INTO daily_sales_product_facts (
-          fact_date,
-          unit_business_id,
-          product_id,
-          sku,
-          description,
-          quantity,
-          total_cost,
-          total_value,
-          markup_pct,
-          last_updated_at,
-          created_at,
-          updated_at
+          fact_date, unit_business_id, product_id, sku, description,
+          quantity, total_cost, total_value, markup_pct,
+          last_updated_at, created_at, updated_at
         )
         SELECT
-          fact_date,
-          unit_business_id,
-          product_id,
-          sku,
-          description,
-          quantity,
-          total_cost,
-          total_value,
-          CASE WHEN total_cost = 0 THEN 0 ELSE ROUND(((total_value - total_cost) / total_cost * 100)::numeric, 2) END,
-          NOW(),
-          NOW(),
-          NOW()
+          fact_date, unit_business_id, product_id, sku, description,
+          quantity, total_cost, total_value,
+          CASE WHEN total_cost = 0 THEN 0
+            ELSE ROUND(((total_value - total_cost) / total_cost * 100)::numeric, 2) END,
+          NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, sku) DO UPDATE SET
-          product_id = EXCLUDED.product_id,
-          description = EXCLUDED.description,
-          quantity = EXCLUDED.quantity,
-          total_cost = EXCLUDED.total_cost,
-          total_value = EXCLUDED.total_value,
-          markup_pct = EXCLUDED.markup_pct,
+          product_id      = EXCLUDED.product_id,
+          description     = EXCLUDED.description,
+          quantity        = EXCLUDED.quantity,
+          total_cost      = EXCLUDED.total_cost,
+          total_value     = EXCLUDED.total_value,
+          markup_pct      = EXCLUDED.markup_pct,
           last_updated_at = NOW(),
-          updated_at = NOW()
+          updated_at      = NOW()
         `,
         {
           replacements: {
@@ -1057,73 +1086,82 @@ export class SalesReportRepository {
     }
   }
 
+  // daily_sales_status_facts usa status_normalized + status_display_name
+  // Constraint UNIQUE: (fact_date, unit_business_id, integration_id, status_normalized)
   async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
     for (const key of keys) {
       await sequelize.query(
         `
         WITH metrics AS (
           SELECT
-            CAST(:factDate AS date) AS fact_date,
-            CAST(:unitBusinessId AS uuid) AS unit_business_id,
-            CAST(:statusId AS varchar) AS status_id,
-            COALESCE(MAX(status_name), :statusId) AS status_name,
-            COUNT(*)::integer AS orders_count,
-            COALESCE(SUM(total_order), 0) AS total_value
-          FROM sales_order_snapshots
-          WHERE order_date = CAST(:factDate AS date)
-            AND unit_business_id = :unitBusinessId
-            AND status_id = :statusId
+            CAST(:factDate AS date)               AS fact_date,
+            CAST(:unitBusinessId AS uuid)         AS unit_business_id,
+            CAST(:integrationId AS uuid)          AS integration_id,
+            CAST(:statusNormalized AS varchar)    AS status_normalized,
+            -- display_name: busca na tabela de mapeamento, fallback para o valor bruto
+            COALESCE(
+              MAX(iosm.display_name),
+              :statusNormalized
+            )                                     AS status_display_name,
+            COUNT(sos.*)::integer                 AS orders_count,
+            COALESCE(SUM(sos.total_order), 0)     AS total_value
+          FROM sales_order_snapshots sos
+          LEFT JOIN integration_order_status_mappings iosm ON (
+            iosm.integration_id    = sos.integration_id
+            AND iosm.normalized_status = sos.status_snapshot
+          )
+          WHERE sos.order_date       = CAST(:factDate AS date)
+            AND sos.unit_business_id = :unitBusinessId
+            AND sos.integration_id   = :integrationId
+            AND sos.status_snapshot  = :statusNormalized
         )
         INSERT INTO daily_sales_status_facts (
-          fact_date,
-          unit_business_id,
-          status_id,
-          status_name,
-          orders_count,
-          total_value,
-          last_updated_at,
-          created_at,
-          updated_at
+          fact_date, unit_business_id, integration_id,
+          status_normalized, status_display_name,
+          orders_count, total_value,
+          last_updated_at, created_at, updated_at
         )
         SELECT
-          fact_date,
-          unit_business_id,
-          status_id,
-          status_name,
-          orders_count,
-          total_value,
-          NOW(),
-          NOW(),
-          NOW()
+          fact_date, unit_business_id, integration_id,
+          status_normalized, status_display_name,
+          orders_count, total_value,
+          NOW(), NOW(), NOW()
         FROM metrics
-        ON CONFLICT (fact_date, unit_business_id, status_id) DO UPDATE SET
-          status_name = EXCLUDED.status_name,
-          orders_count = EXCLUDED.orders_count,
-          total_value = EXCLUDED.total_value,
-          last_updated_at = NOW(),
-          updated_at = NOW()
+        ON CONFLICT (fact_date, unit_business_id, integration_id, status_normalized)
+        DO UPDATE SET
+          status_display_name = EXCLUDED.status_display_name,
+          orders_count        = EXCLUDED.orders_count,
+          total_value         = EXCLUDED.total_value,
+          last_updated_at     = NOW(),
+          updated_at          = NOW()
         `,
         {
           replacements: {
             factDate: key.fact_date,
             unitBusinessId: key.unit_business_id,
-            statusId: key.status_id,
+            integrationId: key.integration_id,
+            statusNormalized: key.status_normalized,
           },
         },
       );
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Consulta do relatório
+  // ---------------------------------------------------------------------------
+
   async getReport(filters: SalesReportFilters) {
     const replacements = {
-      dateFrom: filters.dateFrom,
-      dateTo: filters.dateTo,
-      unitBusinessId: filters.unitBusinessId ?? null,
-      storeId: filters.storeId ?? null,
-      state: filters.state ?? null,
-      productId: filters.productId ?? null,
-      sku: filters.sku ?? null,
-      statusId: filters.statusId ?? null,
+      dateFrom:        filters.dateFrom,
+      dateTo:          filters.dateTo,
+      unitBusinessId:  filters.unitBusinessId  ?? null,
+      storeId:         filters.storeId         ?? null,
+      state:           filters.state           ?? null,
+      productId:       filters.productId       ?? null,
+      sku:             filters.sku             ?? null,
+      // statusId no filtro agora mapeia para status_normalized
+      statusNormalized: filters.statusId       ?? null,
     };
 
     const unitFilter =
@@ -1132,20 +1170,20 @@ export class SalesReportRepository {
     const [general] = await sequelize.query<ReportRow>(
       `
       SELECT
-        COALESCE(SUM(orders_count), 0)::integer AS orders_count,
-        COALESCE(SUM(items_quantity), 0) AS items_quantity,
-        COALESCE(SUM(total_value), 0) AS total_value,
-        COALESCE(SUM(total_freight), 0) AS total_freight,
+        COALESCE(SUM(orders_count),    0)::integer AS orders_count,
+        COALESCE(SUM(items_quantity),  0) AS items_quantity,
+        COALESCE(SUM(total_value),     0) AS total_value,
+        COALESCE(SUM(total_freight),   0) AS total_freight,
         CASE WHEN COALESCE(SUM(orders_count), 0) = 0 THEN 0
-          ELSE ROUND((SUM(total_value) / SUM(orders_count))::numeric, 2)
+          ELSE ROUND((SUM(total_value)  / SUM(orders_count))::numeric, 2)
         END AS average_ticket,
         CASE WHEN COALESCE(SUM(orders_count), 0) = 0 THEN 0
           ELSE ROUND((SUM(total_freight) / SUM(orders_count))::numeric, 2)
         END AS average_freight,
-        COALESCE(SUM(total_cost), 0) AS total_cost,
-        COALESCE(SUM(total_taxes), 0) AS total_taxes,
-        COALESCE(SUM(total_fees), 0) AS total_fees,
-        COALESCE(SUM(contribution_value), 0) AS contribution_value,
+        COALESCE(SUM(total_cost),        0) AS total_cost,
+        COALESCE(SUM(total_taxes),       0) AS total_taxes,
+        COALESCE(SUM(total_fees),        0) AS total_fees,
+        COALESCE(SUM(contribution_value),0) AS contribution_value,
         CASE WHEN COALESCE(SUM(total_value), 0) = 0 THEN 0
           ELSE ROUND((SUM(contribution_value) / SUM(total_value) * 100)::numeric, 2)
         END AS contribution_pct,
@@ -1163,15 +1201,15 @@ export class SalesReportRepository {
       `
       SELECT
         destination_uf,
-        COALESCE(SUM(orders_count), 0)::integer AS orders_count,
+        COALESCE(SUM(orders_count),   0)::integer AS orders_count,
         COALESCE(SUM(items_quantity), 0) AS items_quantity,
-        COALESCE(SUM(total_value), 0) AS total_value,
-        COALESCE(SUM(total_freight), 0) AS total_freight,
+        COALESCE(SUM(total_value),    0) AS total_value,
+        COALESCE(SUM(total_freight),  0) AS total_freight,
         CASE WHEN COALESCE(SUM(orders_count), 0) = 0 THEN 0
           ELSE ROUND((SUM(total_freight) / SUM(orders_count))::numeric, 2)
         END AS average_freight,
         CASE WHEN COALESCE(SUM(orders_count), 0) = 0 THEN 0
-          ELSE ROUND((SUM(total_value) / SUM(orders_count))::numeric, 2)
+          ELSE ROUND((SUM(total_value)  / SUM(orders_count))::numeric, 2)
         END AS average_ticket
       FROM daily_sales_state_facts
       WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
@@ -1188,10 +1226,10 @@ export class SalesReportRepository {
       SELECT
         product_id,
         sku,
-        MAX(description) AS description,
-        COALESCE(SUM(quantity), 0) AS quantity,
-        COALESCE(SUM(total_cost), 0) AS total_cost,
-        COALESCE(SUM(total_value), 0) AS total_value,
+        MAX(description)        AS description,
+        COALESCE(SUM(quantity),  0) AS quantity,
+        COALESCE(SUM(total_cost),0) AS total_cost,
+        COALESCE(SUM(total_value),0) AS total_value,
         CASE WHEN COALESCE(SUM(total_cost), 0) = 0 THEN 0
           ELSE ROUND(((SUM(total_value) - SUM(total_cost)) / SUM(total_cost) * 100)::numeric, 2)
         END AS markup_pct
@@ -1210,23 +1248,23 @@ export class SalesReportRepository {
       `
       SELECT
         dsf.store_id,
-        s.name AS store_name,
-        COALESCE(SUM(dsf.orders_count), 0)::integer AS orders_count,
-        COALESCE(SUM(dsf.items_quantity), 0) AS items_quantity,
-        COALESCE(SUM(dsf.total_value), 0) AS total_value,
-        COALESCE(SUM(dsf.total_freight), 0) AS total_freight,
+        s.name                                   AS store_name,
+        COALESCE(SUM(dsf.orders_count),       0)::integer AS orders_count,
+        COALESCE(SUM(dsf.items_quantity),     0) AS items_quantity,
+        COALESCE(SUM(dsf.total_value),        0) AS total_value,
+        COALESCE(SUM(dsf.total_freight),      0) AS total_freight,
         CASE WHEN COALESCE(SUM(dsf.orders_count), 0) = 0 THEN 0
           ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.orders_count))::numeric, 2)
         END AS average_ticket,
-        COALESCE(SUM(dsf.total_cost), 0) AS total_cost,
+        COALESCE(SUM(dsf.total_cost),         0) AS total_cost,
         CASE WHEN COALESCE(SUM(dsf.items_quantity), 0) = 0 THEN 0
           ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.items_quantity))::numeric, 2)
         END AS piece_average_value,
         CASE WHEN COALESCE(SUM(dsf.total_cost), 0) = 0 THEN 0
           ELSE ROUND(((SUM(dsf.total_value) - SUM(dsf.total_cost)) / SUM(dsf.total_cost) * 100)::numeric, 2)
         END AS markup_pct,
-        COALESCE(SUM(dsf.total_taxes), 0) AS total_taxes,
-        COALESCE(SUM(dsf.total_fees), 0) AS total_fees,
+        COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
+        COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
         COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
         CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
           ELSE ROUND((SUM(dsf.contribution_value) / SUM(dsf.total_value) * 100)::numeric, 2)
@@ -1251,17 +1289,17 @@ export class SalesReportRepository {
           AND ${unitFilter}
       )
       SELECT
-        dssf.status_id,
-        MAX(dssf.status_name) AS status_name,
+        dssf.status_normalized,
+        MAX(dssf.status_display_name)            AS status_display_name,
         COALESCE(SUM(dssf.orders_count), 0)::integer AS orders_count,
-        total.orders_count AS total_orders_count,
-        COALESCE(SUM(dssf.total_value), 0) AS total_value
+        total.orders_count                       AS total_orders_count,
+        COALESCE(SUM(dssf.total_value),  0)      AS total_value
       FROM daily_sales_status_facts dssf
       CROSS JOIN total
       WHERE dssf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
         AND (:unitBusinessId IS NULL OR dssf.unit_business_id = CAST(:unitBusinessId AS uuid))
-        AND (:statusId IS NULL OR dssf.status_id = :statusId)
-      GROUP BY dssf.status_id, total.orders_count
+        AND (:statusNormalized IS NULL OR dssf.status_normalized = :statusNormalized)
+      GROUP BY dssf.status_normalized, total.orders_count
       ORDER BY orders_count DESC
       `,
       { type: QueryTypes.SELECT, replacements },
@@ -1276,7 +1314,7 @@ export class SalesReportRepository {
             AND (:unitBusinessId IS NULL OR unit_business_id = CAST(:unitBusinessId AS uuid))
             AND (:storeId IS NULL OR store_id = CAST(:storeId AS uuid))
             AND (:state IS NULL OR destination_uf = :state)
-            AND (:statusId IS NULL OR status_id = :statusId)
+            AND (:statusNormalized IS NULL OR status_snapshot = :statusNormalized)
           ORDER BY order_date DESC, updated_at DESC
           LIMIT 500
           `,
@@ -1287,9 +1325,9 @@ export class SalesReportRepository {
     return {
       period: {
         dateFrom: filters.dateFrom,
-        dateTo: filters.dateTo,
+        dateTo:   filters.dateTo,
       },
-      general: general ?? {},
+      general:   general ?? {},
       byState,
       byProduct,
       byStore,
