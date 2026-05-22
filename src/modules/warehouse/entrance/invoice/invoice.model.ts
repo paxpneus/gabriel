@@ -37,7 +37,6 @@ class Invoice
   public total_expected!: number;
   public description?: string;
   public bonded_invoice?: string
-  public source_system?: string | null;
   public external_id?: string | null;
   public invoice_series?: string | null;
   public invoice_value?: number;
@@ -209,10 +208,7 @@ Invoice.init(
   type: DataTypes.VIRTUAL,
   allowNull: true,
 },
-    source_system: {
-      type: DataTypes.STRING(50),
-      allowNull: true,
-    },
+  
     external_id: {
       type: DataTypes.STRING(100),
       allowNull: true,
