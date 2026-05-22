@@ -553,7 +553,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const invoiceStatus = resolveOutgoingStatus();
 
-    console.log("INVOICE STATUS", invoiceStatus, nf, apiFetch)
+    console.log("INVOICE STATUS", invoiceStatus, nf, apiFetch);
 
     const incomingStatus = existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
 
@@ -761,17 +761,36 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
     }
 
-    for (const item of nf.itens) {
-  const sku = item.codigo?.trim();
-  const ean = item.gtin ? String(item.gtin).trim() : null;
+    const invoiceItems = await InvoiceItems.findAll({
+      where: { invoice_id: invoice.id },
+      include: [{ model: Product, as: "product" }],
+    });
 
-  await UnmappedInvoiceProduct.destroy({
-    where: {
-      invoice_id: invoice.id,
-      ...(ean ? { ean } : { sku: sku ?? null }),
-    },
-  });
-}
+    const mappedEans = new Set(
+      invoiceItems.map((i) => i.product?.ean).filter(Boolean),
+    );
+    const mappedSkus = new Set(
+      invoiceItems.map((i) => i.product?.sku).filter(Boolean),
+    );
+
+    for (const item of nf.itens) {
+      const sku = item.codigo?.trim();
+      const ean = item.gtin ? String(item.gtin).trim() : null;
+
+      const wasMapped = ean
+        ? mappedEans.has(ean)
+        : sku
+          ? mappedSkus.has(sku)
+          : false;
+      if (!wasMapped) continue;
+
+      await UnmappedInvoiceProduct.destroy({
+        where: {
+          invoice_id: invoice.id,
+          ...(ean ? { ean } : { sku: sku ?? null }),
+        },
+      });
+    }
 
     console.log(
       `[BLING_API_FETCH] ${nf.itens?.length} item(ns) upsertado(s) para invoice ${nf.id}`,
@@ -1080,13 +1099,30 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
     }
 
-        for (const item of det) {
+    const invoiceItemsXml = await InvoiceItems.findAll({
+      where: { invoice_id: invoice.id },
+      include: [{ model: Product, as: "product" }],
+    });
+
+    const mappedEansXml = new Set(
+      invoiceItemsXml.map((i) => i.product?.ean).filter(Boolean),
+    );
+    const mappedSkusXml = new Set(
+      invoiceItemsXml.map((i) => i.product?.sku).filter(Boolean),
+    );
+
+    for (const item of det) {
       const prod = item.prod ?? {};
       const sku = prod.cProd ? String(prod.cProd).trim() : null;
       const gtin =
-        prod.cEAN && prod.cEAN !== "SEM GTIN"
-          ? String(prod.cEAN).trim()
-          : null;
+        prod.cEAN && prod.cEAN !== "SEM GTIN" ? String(prod.cEAN).trim() : null;
+
+      const wasMapped = gtin
+        ? mappedEansXml.has(gtin)
+        : sku
+          ? mappedSkusXml.has(sku)
+          : false;
+      if (!wasMapped) continue;
 
       await UnmappedInvoiceProduct.destroy({
         where: {

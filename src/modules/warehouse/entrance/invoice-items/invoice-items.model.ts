@@ -2,6 +2,7 @@ import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../../../config/sequelize';
 import { InvoiceItemsAttributes, InvoiceItemsCreationAttributes } from './invoice-items.types';
 import { v4 as uuidv4 } from 'uuid';
+import { Product } from '../../../inventory';
 
 class InvoiceItems extends Model<InvoiceItemsAttributes, InvoiceItemsCreationAttributes> implements InvoiceItemsAttributes {
   public id!: string;
@@ -9,6 +10,7 @@ class InvoiceItems extends Model<InvoiceItemsAttributes, InvoiceItemsCreationAtt
   public invoice_id!: string;
   public quantity_expected!: number;
   public quantity_received!: number;
+  public product?: Product;
   public status!: 'PENDING' | 'FINISHED';
 
   public readonly createdAt!: Date;
