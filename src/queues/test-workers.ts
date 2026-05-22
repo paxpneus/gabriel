@@ -19,6 +19,11 @@ export function startBlingWorkers() {
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
 
+  setTimeout(() => {
+  dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  console.log("  → SalesReportQueue (relatório comercial a cada 1h, offset 30min)");
+}, 30 * 60 * 1000);
+
 
   console.log("✅ Workers ativos:");
   console.log("  → BlingDirectUpsertQueue");

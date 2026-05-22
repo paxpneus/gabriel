@@ -115,7 +115,6 @@ export function registerQueues(app: Express) {
     nfeQueue,
     mlOrderSyncQueue,
     cnpjQueue,
-    blingOrderQueue,
     reconcilerQueue,
     blingReconcilerQueue,
     blingDirectUpsertQueue,
@@ -125,6 +124,12 @@ export function registerQueues(app: Express) {
     dailyOperationReportQueue,
     dailySalesReportQueue
   } = buildQueues(true); // workless: true → zero Workers na API
+
+   const blingOrderQueue = new BlingOrderQueue(
+    new BlingOrderService(blingApi),
+    { add: async () => {}},
+    { workless: false },
+  );
 
   // Scraping só para o BullBoard enxergar a fila, sem Worker
   const mlScrapingQueue = new MLScrapingQueue(

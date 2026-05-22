@@ -48,6 +48,7 @@ import DailySalesProductFact from '../modules/reports/daily-sales/daily-sales-pr
 import DailySalesStatusFact from '../modules/reports/daily-sales/daily-sales-status-fact/daily-sales-status-fact.model';
 import InvoiceFiscalItem from '../modules/warehouse/entrance/invoice-fiscal-item/invoice-fiscal-item.model';
 import ExternalOrderStatusMapping from '../modules/sales/orders/external-order-status-mapping/external-order-status-mapping.model';
+import { Supplier } from '../modules/inventory';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -70,6 +71,14 @@ Order.belongsToMany(Step, {
     otherKey: 'step_id',
     as: 'steps' 
 });
+
+// Order -> UnitBusiness
+Order.belongsTo(UnitBusiness, { foreignKey: 'unit_business_id', as: 'unitBusiness' });
+UnitBusiness.hasMany(Order, { foreignKey: 'unit_business_id', as: 'orders' });
+
+// Order -> Invoice (1:1)
+Order.belongsTo(Invoice, { foreignKey: 'invoice_id', as: 'invoice' });
+Invoice.hasOne(Order, { foreignKey: 'invoice_id', as: 'order' });
 
 Step.belongsToMany(Order, { 
     through: OrderHistory, 
@@ -241,6 +250,9 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
     foreignKey: 'product_id',
     as: 'product',
   });
+
+Supplier.hasMany(Product, { foreignKey: 'supplier_id', as: 'products' });
+Product.belongsTo(Supplier, { foreignKey: 'supplier_id', as: 'supplier' });
 
   // Product -> Stock
   Product.hasMany(Stock, {

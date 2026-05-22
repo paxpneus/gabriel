@@ -1,16 +1,13 @@
 export interface orderItemsAttributes {
-    id: string,
-    name: string
+    id: string;
     order_id: string;
-    sku: string,
-    unit: string,
-    quantity: number,
-    price: number,
+    name: string;
+    sku: string;
+    unit: string;
+    quantity: number;
+    price: number;
     product_id?: string;
-    source_system?: string;
     integrations_id?: string;
-    external_item_id?: string;
-    external_product_id?: string;
     source_payload?: Record<string, unknown>;
     unit_price?: number;
     gross_total?: number;
@@ -23,8 +20,8 @@ export interface orderItemsAttributes {
     total_cost_snapshot?: number;
     cost_source?: string;
 
-    createdAt?: Date,
-    updatedAt?: Date,
+    createdAt?: Date;
+    updatedAt?: Date;
 }
 
 export type orderItemsCreationAttributes = Omit<orderItemsAttributes, 'id' | 'createdAt' | 'updatedAt'>
