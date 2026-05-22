@@ -16,8 +16,8 @@ export interface orderAttributes {
     nfe_emitted?: boolean;
     internal_status?: string;
     store_id?: string;
-    unit_business_id?: string;   
-    invoice_id?: string;         
+    unit_business_id?: string;
+    invoice_id?: string;
     waiting_acceptance?: boolean;
     source_payload?: Record<string, unknown>;
     total_products?: number;
@@ -33,6 +33,18 @@ export interface orderAttributes {
     tax_base_value?: number;
     marketplace_fee?: number;
     payment_fee?: number;
+
+    // Campos fiscais/geográficos vindos do ERP (ex: endereço do contato na Bling)
+    destination_uf?: string;
+    destination_city?: string;
+    icms_value?: number;
+    ipi_value?: number;
+    pis_value?: number;
+    cofins_value?: number;
+    difal_value?: number;
+    ibs_value?: number;
+    cbs_value?: number;
+    approx_tax_value?: number;
 
     createdAt?: Date;
     updatedAt?: Date;
