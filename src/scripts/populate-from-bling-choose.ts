@@ -293,40 +293,55 @@ async function migrateOrders() {
   console.log('─'.repeat(55));
 
   const currentYear = new Date().getFullYear();
-  const dataInicial = `${currentYear}-01-01`;
-
-  let count = 0;
-  let skipped = 0;
-
-  for await (const page of paginateBling<{
-    id: number;
-    numero?: string;
-    situacao?: string;
-    data?: string;
-    dataPrevista?: string;
-    loja?: { id: number };
-  }>('/pedidos/vendas', { dataInicial })) {
-    for (const order of page) {
-      const blingId = order.id;
-
-      await (DRY_RUN
-        ? Promise.resolve(console.log(`[DRY_RUN] OrderQueue: migration-order-${blingId}`))
-        : orderQueue.add(
-            {
-              event: 'order.created',
-              data: { id: blingId },
-            },
-            `migration-order-${blingId}`,
-          ));
-
-      count++;
-      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
-    }
-    console.log(`  → ${count} pedido(s) enfileirado(s)...`);
-    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+  const currentMonth = new Date().getMonth(); // 0-indexed
+  
+  // Gera array de meses desde janeiro até o mês atual
+  const months = [];
+  for (let m = 0; m <= currentMonth; m++) {
+    const start = new Date(currentYear, m, 1);
+    const end   = new Date(currentYear, m + 1, 0); // último dia do mês
+    months.push({
+      dataInicial: start.toISOString().split('T')[0],
+      dataFinal:   end.toISOString().split('T')[0],
+    });
   }
 
-  console.log(`\n  🛒 Pedidos enfileirados: ${count} | ignorados: ${skipped}`);
+  let totalCount = 0;
+
+  for (const { dataInicial, dataFinal } of months) {
+    console.log(`\n  📅 Período: ${dataInicial} → ${dataFinal}`);
+    let count = 0;
+
+    for await (const page of paginateBling<{
+      id: number;
+      numero?: string;
+      situacao?: string;
+      data?: string;
+      loja?: { id: number };
+    }>('/pedidos/vendas', { dataInicial, dataFinal })) {
+      for (const order of page) {
+        const blingId = order.id;
+
+        await (DRY_RUN
+          ? Promise.resolve(console.log(`[DRY_RUN] OrderQueue: migration-order-${blingId}`))
+          : orderQueue.add(
+              { event: 'order.created', data: { id: blingId } },
+              `migration-order-${blingId}`,
+            ));
+
+        count++;
+        totalCount++;
+        if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
+      }
+      console.log(`  → ${count} pedido(s) neste mês...`);
+      if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
+    }
+
+    if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
+    await sleep(PAGE_DELAY_MS);
+  }
+
+  console.log(`\n  🛒 Total de pedidos enfileirados: ${totalCount}`);
   await waitForQueuesToDrain('Pedidos');
 }
 
