@@ -35,7 +35,6 @@ export interface InvoiceAttributes {
   total_expected?: number;
   description?: string | null;
   bonded_invoice?: string | null;
-  external_id?: string | null;
   invoice_series?: string | null;
   invoice_value?: number;
   invoice_products_value?: number;

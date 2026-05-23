@@ -24,8 +24,8 @@ export interface ProductAttributes {
   ncm?: string;
   cest?: string;
   stock_virtual_total?: number;
-  average_cost?: number;
-  average_cost_updated_at?: Date;
+  average_cost?: number | null;
+  average_cost_updated_at?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }

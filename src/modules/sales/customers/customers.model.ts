@@ -9,7 +9,7 @@ class Customer extends Model<customerAttributes, customerCreationAttributes> imp
     public id!: string;
     public name!: string;
     public type!: userType;
-    public document!: number;
+    public document!: string;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;

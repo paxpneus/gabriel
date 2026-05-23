@@ -3,7 +3,7 @@ import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
 import { ApiFetchRequest, WebhookQueuePayload } from "../bling-webhook.types";
 import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
-import { Product, Supplier } from "../../../../../inventory";
+import { Product, Stock, Supplier } from "../../../../../inventory";
 import { SupplierMapping } from "../../../../../inventory";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import {
@@ -565,60 +565,86 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   // ─── Handlers por recurso ─────────────────────────────────────────────────
 
   private async fetchAndUpsertProduct(apiFetch: ApiFetchRequest): Promise<void> {
-    const { data } = await this.api.get<{ data: BlingApiProduct }>(
-      `/produtos/${apiFetch.blingId}`,
+  const { data } = await this.api.get<{ data: BlingApiProduct }>(
+    `/produtos/${apiFetch.blingId}`,
+  );
+
+  const blingProduct = data.data;
+  const integration = await getBlingIntegration("Bling");
+
+  const newSupplierCost = Number(blingProduct.fornecedor?.precoCusto ?? blingProduct.precoCusto ?? 0);
+
+  // Busca produto e estoque atuais antes do upsert para calcular CMP
+  const existingProduct = await Product.findOne({
+    where: { id_system: String(blingProduct.id) },
+  });
+
+  try {
+    await Product.upsert(
+      {
+        name: blingProduct.nome,
+        id_system: String(blingProduct.id),
+        sku: blingProduct.codigo,
+        ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
+        ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
+        price: blingProduct.precoCusto,
+        type: blingProduct.formato === "E" ? "KIT" : "UNIT",
+        integrations_id: integration.id,
+        source_payload: blingProduct as unknown as Record<string, unknown>,
+        unit: blingProduct.unidade,
+        brand: blingProduct.marca,
+        gross_weight: Number(blingProduct.pesoBruto ?? 0),
+        net_weight: Number(blingProduct.pesoLiquido ?? 0),
+        gtin: blingProduct.gtin,
+        gtin_package: blingProduct.gtinEmbalagem,
+        ncm: blingProduct.tributacao?.ncm,
+        cest: blingProduct.tributacao?.cest,
+        supplier_cost_price: newSupplierCost,
+        supplier_purchase_price: Number(
+          blingProduct.fornecedor?.precoCompra ?? blingProduct.precoCompra ?? 0,
+        ),
+        stock_virtual_total: Number(blingProduct.estoque?.saldoVirtualTotal ?? 0),
+        
+      },
+      { conflictFields: ["id_system"] },
     );
-
-    const blingProduct = data.data;
-    const integration = await getBlingIntegration("Bling");
-
-    try {
-      await Product.upsert(
-        {
-          name: blingProduct.nome,
-          id_system: String(blingProduct.id),
-          sku: blingProduct.codigo,
-          ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
-          ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
-          price: blingProduct.precoCusto,
-          type: blingProduct.formato === "E" ? "KIT" : "UNIT",
-          integrations_id: integration.id,
-          source_payload: blingProduct as unknown as Record<string, unknown>,
-          unit: blingProduct.unidade,
-          brand: blingProduct.marca,
-          gross_weight: Number(blingProduct.pesoBruto ?? 0),
-          net_weight: Number(blingProduct.pesoLiquido ?? 0),
-          gtin: blingProduct.gtin,
-          gtin_package: blingProduct.gtinEmbalagem,
-          ncm: blingProduct.tributacao?.ncm,
-          cest: blingProduct.tributacao?.cest,   
-          supplier_cost_price: Number(
-            blingProduct.fornecedor?.precoCusto ?? blingProduct.precoCusto ?? 0,
-          ),
-          supplier_purchase_price: Number(
-            blingProduct.fornecedor?.precoCompra ?? blingProduct.precoCompra ?? 0,
-          ),
-          stock_virtual_total: Number(blingProduct.estoque?.saldoVirtualTotal ?? 0),
-        },
-        { conflictFields: ["id_system"] },
-      );
-    } catch (error: any) {
-      console.error("[BLING_API_FETCH] Erro no upsert do produto", {
-        blingId: apiFetch.blingId,
-        sku: blingProduct?.codigo,
-        ean: blingProduct?.gtin,
-        message: error.message,
-        detail: error?.parent?.detail,
-        fields: error?.fields,
-        sql: error?.sql,
-      });
-      throw error;
-    }
-
-    console.log(
-      `[BLING_API_FETCH] Produto ${blingProduct.codigo} complementado com EAN=${blingProduct.gtin ?? "N/A"}`,
-    );
+  } catch (error: any) {
+    console.error("[BLING_API_FETCH] Erro no upsert do produto", {
+      blingId: apiFetch.blingId,
+      sku: blingProduct?.codigo,
+      ean: blingProduct?.gtin,
+      message: error.message,
+      detail: error?.parent?.detail,
+      fields: error?.fields,
+      sql: error?.sql,
+    });
+    throw error;
   }
+
+  // Se produto já existia sem average_cost e agora temos custo do fornecedor,
+  // atualiza o total_price do estoque com o custo inicial
+  if (existingProduct && !existingProduct.average_cost && newSupplierCost > 0) {
+    const stock = await Stock.findOne({ where: { product_id: existingProduct.id } });
+    if (stock && Number(stock.quantity) > 0) {
+      const qty = Number(stock.quantity);
+      await stock.update({
+        total_price: qty * newSupplierCost,
+      });
+      // Agora que temos o custo, atualiza o average_cost no produto
+      await Product.update(
+        { average_cost: newSupplierCost, average_cost_updated_at: new Date() },
+        { where: { id: existingProduct.id } },
+      );
+      console.log(
+        `[BLING_API_FETCH] average_cost inicializado: sku=${blingProduct.codigo} | custo=${newSupplierCost} | qty=${qty} | total_price=${qty * newSupplierCost}`,
+      );
+    }
+  }
+
+  console.log(
+    `[BLING_API_FETCH] Produto ${blingProduct.codigo} complementado com EAN=${blingProduct.gtin ?? "N/A"}`,
+  );
+}
 
   private async fetchAndUpsertProductSupplier(apiFetch: ApiFetchRequest): Promise<void> {
     const { data } = await this.api.get<{ data: BlingApiProductSupplier }>(
