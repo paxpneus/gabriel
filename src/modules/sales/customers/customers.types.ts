@@ -4,7 +4,7 @@ export interface customerAttributes {
     id: string,
     name: string,
     type: userType,
-    document: number
+    document: string
 }
 
 export type customerCreationAttributes = Omit<customerAttributes, 'id'>

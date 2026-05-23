@@ -12,6 +12,7 @@ import { mapOrder } from "../../../../../shared/utils/normalizers/bling/status-m
 import { Product } from "../../../../inventory";
 import { Op } from "sequelize";
 import { UnitBusiness } from "../../../../warehouse";
+import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 
 export class BlingOrderService {
   public blingApi: AxiosInstance;
@@ -308,6 +309,9 @@ export class BlingOrderService {
     try {
       const integration = await getBlingIntegration("Bling");
 
+      await integrationOrderStatusMappingService.ensureBlingDefaults(integration.id);
+
+
       const existingOrder = await ordersService.findOne({
         where: {
           integrations_id: integration.id,
@@ -353,6 +357,7 @@ const unitBusiness = unidadeNegocioId
       const ordersPayload: orderCreationAttributes = {
         integrations_id:      integration.id,
         customer_id:          customer.id,
+        actual_situation: String(orderData.situacao.id),
         unit_business_id: unitBusiness?.id ?? null,
         id_order_system:      String(orderData.id),
         number_order_system:  String(orderData.numero),

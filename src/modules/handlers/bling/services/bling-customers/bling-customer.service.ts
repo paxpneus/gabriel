@@ -58,7 +58,7 @@ export class BlingCustomerService {
       const customerPayload: customerCreationAttributes = {
         name: contato.nome,
         type: contato.tipoPessoa,
-        document: contato.numeroDocumento,
+        document: cleanDocument(contato.numeroDocumento),
       };
 
       customer = await customersService.create(customerPayload);
