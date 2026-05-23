@@ -3,33 +3,40 @@ import { BaseQueueService } from "../../../../../shared/utils/base-models/base-q
 import BlingOrderService from "./bling-order.service";
 import { nextStepOnQueue } from "../../../../../shared/types/queue/base-queue";
 
-
 export class BlingOrderQueue extends BaseQueueService<any> {
-    private orderService: BlingOrderService;
-    private next: nextStepOnQueue;
-    
-    constructor(orderService: BlingOrderService, next: nextStepOnQueue,  options: { workless?: boolean } = {}) {
-        super('BLING_ORDER_INGESTION', {
-            concurrency: 1,
-            limiter: {
-                max: 1,
-                duration: 3000
-            },
-            workless: options.workless
-        })
-        this.orderService = orderService
-        this.next = next
-    }
+  private orderService: BlingOrderService;
+  private next: nextStepOnQueue;
 
-    async process(job: Job<any, any, string>): Promise<void> {
-        console.log('[1]. Data do job vindo webhook diretamente', job.data)
-        console.log(`[1] [QUEUE] Processando Pedido ${job.data.event} - ${job.data.data.id}`)
-        const result = await this.orderService.processWebhook(job.data.event, job.data)
-        
+  constructor(
+    orderService: BlingOrderService,
+    next: nextStepOnQueue,
+    options: { workless?: boolean } = {},
+  ) {
+    super("BLING_ORDER_INGESTION", {
+      concurrency: 3,
+      limiter: {
+        max: 2,
+        duration: 10000, 
+      },
+      workless: options.workless,
+    });
+    this.orderService = orderService;
+    this.next = next;
+  }
 
-        // STOP PROCESS
-        // if (result) {
-        //     await this.next.add(result, `document-check-${result.orderSystem.id_order_system}`);
-        // }
-    }
+  async process(job: Job<any, any, string>): Promise<void> {
+    console.log("[1]. Data do job vindo webhook diretamente", job.data);
+    console.log(
+      `[1] [QUEUE] Processando Pedido ${job.data.event} - ${job.data.data.id}`,
+    );
+    const result = await this.orderService.processWebhook(
+      job.data.event,
+      job.data,
+    );
+
+    // STOP PROCESS
+    // if (result) {
+    //     await this.next.add(result, `document-check-${result.orderSystem.id_order_system}`);
+    // }
+  }
 }
