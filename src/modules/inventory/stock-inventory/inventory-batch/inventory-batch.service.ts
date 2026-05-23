@@ -126,7 +126,7 @@ export class InventoryBatchService extends BaseService<
             return {
               product_id: p.id,
               inventory_batch_id: batch.id,
-              ean: p.ean_tribut ?? p.ean,
+              ean: p.ean_tribut ?? p.ean ?? '',
               sku: p.sku ?? "",
               quantity_stock: stock.quantity,
               status: "OPEN",

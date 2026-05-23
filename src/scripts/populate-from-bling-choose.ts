@@ -17,9 +17,12 @@ import { ApiFetchJobPayload } from '../modules/handlers/bling/services/bling/que
 import type { DirectUpsertJobPayload } from '../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
 import { BlingDirectUpsertQueue } from '../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
 import { BlingApiFetchQueue } from '../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue';
+import { BlingOrderQueue } from '../modules/handlers/bling/services/bling-orders/bling-order.queue';
+
 import { UnitBusiness } from '../modules/warehouse';
 import { setupAssociations } from '../config/sequelize-associations';
 import sequelize from '../config/sequelize';
+
 import {
   BLING_INVOICE_CUTOFF_DATE_PARAM,
   formatBlingInvoiceCutoffForLog,
@@ -50,6 +53,8 @@ const DATA_INICIAL = cutoffDate.toISOString().split('T')[0];
 
 const directUpsertQueue = new BlingDirectUpsertQueue({ workless: true });
 const apiFetchQueue     = new BlingApiFetchQueue({ workless: true });
+const orderQueue = new BlingOrderQueue(null as any, null as any, { workless: true });
+
 
 // ─── UnitBusiness map ─────────────────────────────────────────────────────────
 
@@ -121,6 +126,7 @@ async function waitForQueuesToDrain(label: string) {
   const queues: Queue[] = [
     (directUpsertQueue as any).queue,
     (apiFetchQueue as any).queue,
+    (orderQueue as any).queue,
   ];
   while (true) {
     const counts = await Promise.all(
@@ -281,6 +287,46 @@ async function migrateStocks() {
   await waitForQueuesToDrain('Estoques');
 }
 
+async function migrateOrders() {
+  console.log('─'.repeat(55));
+  console.log('🛒  ETAPA — Pedidos');
+  console.log('─'.repeat(55));
+
+  let count = 0;
+  let skipped = 0;
+
+  for await (const page of paginateBling<{
+    id: number;
+    numero?: string;
+    situacao?: string;
+    data?: string;
+    dataPrevista?: string;
+    loja?: { id: number };
+  }>('/pedidos/vendas', { dataInicial: DATA_INICIAL })) {
+    for (const order of page) {
+      const blingId = order.id;
+
+      await (DRY_RUN
+        ? Promise.resolve(console.log(`[DRY_RUN] OrderQueue: migration-order-${blingId}`))
+        : orderQueue.add(
+            {
+              event: 'order.created',
+              data: { id: blingId },
+            },
+            `migration-order-${blingId}`,
+          ));
+
+      count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+    }
+    console.log(`  → ${count} pedido(s) enfileirado(s)...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+  }
+
+  console.log(`\n  🛒 Pedidos enfileirados: ${count} | ignorados: ${skipped}`);
+  await waitForQueuesToDrain('Pedidos');
+}
+
 function mapSituacao(situacao?: number): 'OPEN' | 'PENDING' | 'FINISHED' | 'CANCELLED' {
   switch (situacao) {
     case 2: 
@@ -395,14 +441,15 @@ async function migrateCancelledInvoices(type: 'NF-e' | 'NFC-e') {
 // ─── UI interativa estilo Vite ────────────────────────────────────────────────
 
 const STEPS = [
-  { key: 'products',          label: '📦  Produtos',                    fn: () => migrateProducts() },
-  { key: 'suppliers',         label: '🏭  Fornecedores',                fn: () => migrateSuppliers() },
-  { key: 'product_suppliers', label: '🔗  Produto-Fornecedor',          fn: () => migrateProductSuppliers() },
-  { key: 'stocks',            label: '📊  Estoques',                    fn: () => migrateStocks() },
-  { key: 'nfe_out',           label: '🧾  NF-e Saída  (tipo 1)',        fn: () => migrateInvoices('NF-e', 1) },
-  { key: 'nfe_in',            label: '🧾  NF-e Entrada (tipo 0)',       fn: () => migrateInvoices('NF-e', 0) },
-   { key: 'nfe_cancelled',          label: '🚫  NF-e Canceladas',               fn: () => migrateCancelledInvoices('NF-e') },
-  { key: 'nfce',              label: '🧾  NFC-e',                       fn: () => migrateInvoices('NFC-e', 1) },
+  { key: 'products',          label: '📦  Produtos',                fn: () => migrateProducts() },
+  { key: 'suppliers',         label: '🏭  Fornecedores',            fn: () => migrateSuppliers() },
+  { key: 'product_suppliers', label: '🔗  Produto-Fornecedor',      fn: () => migrateProductSuppliers() },
+  { key: 'stocks',            label: '📊  Estoques',                fn: () => migrateStocks() },
+  { key: 'orders',            label: '🛒  Pedidos',                 fn: () => migrateOrders() }, // ← novo
+  { key: 'nfe_out',           label: '🧾  NF-e Saída  (tipo 1)',    fn: () => migrateInvoices('NF-e', 1) },
+  { key: 'nfe_in',            label: '🧾  NF-e Entrada (tipo 0)',   fn: () => migrateInvoices('NF-e', 0) },
+  { key: 'nfe_cancelled',     label: '🚫  NF-e Canceladas',         fn: () => migrateCancelledInvoices('NF-e') },
+  { key: 'nfce',              label: '🧾  NFC-e',                   fn: () => migrateInvoices('NFC-e', 1) },
 ] as const;
 
 type StepKey = typeof STEPS[number]['key'];

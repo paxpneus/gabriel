@@ -24,6 +24,7 @@ import { ApiFetchJobPayload } from '../modules/handlers/bling/services/bling/que
 import type { DirectUpsertJobPayload } from '../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
 import { BlingDirectUpsertQueue } from '../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
 import { BlingApiFetchQueue } from '../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue';
+import { BlingOrderQueue } from '../modules/handlers/bling/services/bling-orders/bling-order.queue';
 import { UnitBusiness } from '../modules/warehouse';
 import { setupAssociations } from '../config/sequelize-associations';
 import sequelize from '../config/sequelize';
@@ -72,6 +73,9 @@ const DATA_INICIAL = cutoffDate.toISOString().split('T')[0]; // YYYY-MM-DD
 
 const directUpsertQueue = new BlingDirectUpsertQueue({ workless: true });
 const apiFetchQueue     = new BlingApiFetchQueue({ workless: true });
+const orderQueue = new BlingOrderQueue(null as any, null as any, { workless: true });
+
+
 
 // ─── Mapa loja Bling → UnitBusiness UUID ──────────────────────────────────────
 
@@ -449,6 +453,46 @@ async function migrateStocks() {
   await waitForQueuesToDrain('Estoques');
 }
 
+async function migrateOrders() {
+  console.log('─'.repeat(55));
+  console.log('🛒  ETAPA — Pedidos');
+  console.log('─'.repeat(55));
+
+  let count = 0;
+  let skipped = 0;
+
+  for await (const page of paginateBling<{
+    id: number;
+    numero?: string;
+    situacao?: string;
+    data?: string;
+    dataPrevista?: string;
+    loja?: { id: number };
+  }>('/pedidos/vendas', { dataInicial: DATA_INICIAL })) {
+    for (const order of page) {
+      const blingId = order.id;
+
+      await (DRY_RUN
+        ? Promise.resolve(console.log(`[DRY_RUN] OrderQueue: migration-order-${blingId}`))
+        : orderQueue.add(
+            {
+              event: 'order.created',
+              data: { id: blingId },
+            },
+            `migration-order-${blingId}`,
+          ));
+
+      count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+    }
+    console.log(`  → ${count} pedido(s) enfileirado(s)...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+  }
+
+  console.log(`\n  🛒 Pedidos enfileirados: ${count} | ignorados: ${skipped}`);
+  await waitForQueuesToDrain('Pedidos');
+}
+
 // ─── 5 & 6. Notas Fiscais ─────────────────────────────────────────────────────
 
 function mapSituacao(situacao?: number): 'OPEN' | 'PENDING' | 'FINISHED' | 'CANCELLED' {
@@ -610,6 +654,7 @@ async function main() {
     await migrateSuppliers();         // 2 — sem dependências
     // await migrateProductSuppliers();  // 3 — depende de produto + fornecedor
     await migrateStocks();            // 4 — depende de produto
+    await migrateOrders(); // após migrateStocks, antes ou após NFs
     await migrateInvoices('NF-e', 0);   // 6 — depende de UnitBusiness
     await migrateInvoices('NF-e', 1);    // 5 — depende de UnitBusiness
      await migrateCancelledInvoices('NF-e');

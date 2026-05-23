@@ -37,6 +37,24 @@ class Invoice
   public total_expected!: number;
   public description?: string;
   public bonded_invoice?: string
+  public invoice_series?: string | null;
+  public invoice_value?: number;
+  public invoice_products_value?: number;
+  public invoice_freight_value?: number;
+  public invoice_discount_value?: number;
+  public invoice_other_value?: number;
+  public invoice_total_tax_value?: number;
+  public icms_value?: number;
+  public ipi_value?: number;
+  public pis_value?: number;
+  public cofins_value?: number;
+  public difal_value?: number;
+  public ibs_value?: number;
+  public cbs_value?: number;
+  public destination_uf?: string | null;
+  public destination_city?: string | null;
+  public xml_url?: string | null;
+  public source_payload?: Record<string, unknown> | null;
 
   public batchInvoice?: ExpeditionBatchInvoiceAttributes;
 
@@ -189,6 +207,91 @@ Invoice.init(
   type: DataTypes.VIRTUAL,
   allowNull: true,
 },
+    invoice_series: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    invoice_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    invoice_products_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    invoice_freight_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    invoice_discount_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    invoice_other_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    invoice_total_tax_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    icms_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    ipi_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    pis_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    cofins_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    difal_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    ibs_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    cbs_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    destination_uf: {
+      type: DataTypes.STRING(2),
+      allowNull: true,
+    },
+    destination_city: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    xml_url: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    source_payload: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+    },
   },
   {
     sequelize,
