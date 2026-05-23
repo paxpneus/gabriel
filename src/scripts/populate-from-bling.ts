@@ -50,7 +50,7 @@ const DRY_RUN = process.env.DRY_RUN === 'true';
 const DAYS_BACK = 15;
 
 /** Pausa entre páginas para respeitar o rate limit da Bling (ms) */
-const PAGE_DELAY_MS = 350; // ~3 req/s
+const PAGE_DELAY_MS = 1000 // ~3 req/s
 
 /** Limite máximo de registros por entidade (0 = sem limite) */
 const MAX_PER_ENTITY = Number(process.env.MAX_PER_ENTITY ?? 0);
@@ -172,6 +172,7 @@ async function waitForQueuesToDrain(label: string) {
   const queues: Queue[] = [
     (directUpsertQueue as any).queue,
     (apiFetchQueue as any).queue,
+    (orderQueue as any).queue,
   ];
 
   while (true) {

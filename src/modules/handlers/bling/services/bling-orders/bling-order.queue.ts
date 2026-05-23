@@ -2,10 +2,13 @@ import { Job } from "bullmq";
 import { BaseQueueService } from "../../../../../shared/utils/base-models/base-queue-service";
 import BlingOrderService from "./bling-order.service";
 import { nextStepOnQueue } from "../../../../../shared/types/queue/base-queue";
+import { getBlingIntegration } from "../../api/bling_api.service";
+import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 
 export class BlingOrderQueue extends BaseQueueService<any> {
   private orderService: BlingOrderService;
   private next: nextStepOnQueue;
+  private defaultsEnsured = false; 
 
   constructor(
     orderService: BlingOrderService,
@@ -13,7 +16,7 @@ export class BlingOrderQueue extends BaseQueueService<any> {
     options: { workless?: boolean } = {},
   ) {
     super("BLING_ORDER_INGESTION", {
-      concurrency: 3,
+      concurrency: 2,
       limiter: {
         max: 2,
         duration: 10000, 
@@ -29,10 +32,13 @@ export class BlingOrderQueue extends BaseQueueService<any> {
     console.log(
       `[1] [QUEUE] Processando Pedido ${job.data.event} - ${job.data.data.id}`,
     );
-    const result = await this.orderService.processWebhook(
-      job.data.event,
-      job.data,
-    );
+    const integration = await getBlingIntegration("Bling");
+  if (integration && !this.defaultsEnsured) {
+    await integrationOrderStatusMappingService.ensureBlingDefaults(integration.id);
+    this.defaultsEnsured = true;
+  }
+
+  const result = await this.orderService.processWebhook(job.data.event, job.data);
 
     // STOP PROCESS
     // if (result) {

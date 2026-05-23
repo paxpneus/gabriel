@@ -41,7 +41,7 @@ async function bootstrap() {
 
 const DRY_RUN       = process.env.DRY_RUN === 'true';
 const DAYS_BACK     = 15;
-const PAGE_DELAY_MS = 350;
+const PAGE_DELAY_MS = 1000;
 const MAX_PER_ENTITY = Number(process.env.MAX_PER_ENTITY ?? 0);
 const QUEUE_POLL_MS  = 5_000;
 
@@ -336,7 +336,7 @@ async function migrateOrders() {
       console.log(`  → ${count} pedido(s) neste mês...`);
       if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
     }
-
+    await sleep(2000);
     if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
     await sleep(PAGE_DELAY_MS);
   }

@@ -38,6 +38,11 @@ export class BlingOrderService {
     return await executeWebhookAction(action, body, handlers);
   }
 
+private async blingGet(url: string): Promise<any> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+  return this.blingApi.get(url);
+}
+
   // ─── Resolve product_id interno para um item da Bling ──────────────────────
   private async resolveProductId(
     externalProductId: string | undefined,
@@ -67,7 +72,7 @@ export class BlingOrderService {
     if (!contatoId) return {};
 
     try {
-      const { data } = await this.blingApi.get(`/contatos/${contatoId}`);
+      const { data } = await this.blingGet(`/contatos/${contatoId}`);
       const endereco = data?.data?.endereco?.geral;
 
       if (!endereco) return {};
@@ -157,7 +162,7 @@ export class BlingOrderService {
         return null;
       }
 
-      const { data } = await this.blingApi.get(`/pedidos/vendas/${body.data.id}`);
+      const { data } = await this.blingGet(`/pedidos/vendas/${body.data.id}`);
       const orderData = data.data;
 
       const existingOrder = await ordersService.findOne({
@@ -309,9 +314,6 @@ export class BlingOrderService {
     try {
       const integration = await getBlingIntegration("Bling");
 
-      await integrationOrderStatusMappingService.ensureBlingDefaults(integration.id);
-
-
       const existingOrder = await ordersService.findOne({
         where: {
           integrations_id: integration.id,
@@ -326,7 +328,7 @@ export class BlingOrderService {
         return await this.updateOrderFromBling(body as any);
       }
 
-      const { data } = await this.blingApi.get(`/pedidos/vendas/${body.data.id}`);
+      const { data } = await this.blingGet(`/pedidos/vendas/${body.data.id}`);
       const orderData = data.data;
 
       let store = await this.storeService.findOne({
@@ -334,7 +336,7 @@ export class BlingOrderService {
       });
 
       if (!store) {
-        const blingStore = await this.blingApi.get(`/canais-venda/${orderData.loja.id}`);
+        const blingStore = await this.blingGet(`/canais-venda/${orderData.loja.id}`);
         store = await this.storeService.create({
           name:            blingStore.data.data.tipo,
           id_store_system: blingStore.data.data.id,
