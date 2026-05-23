@@ -16,7 +16,7 @@ export interface orderAttributes {
     nfe_emitted?: boolean;
     internal_status?: string;
     store_id?: string;
-    unit_business_id?: string;
+    unit_business_id?: string | null;
     invoice_id?: string;
     waiting_acceptance?: boolean;
     source_payload?: Record<string, unknown>;

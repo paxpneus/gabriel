@@ -11,6 +11,7 @@ import { StoreService } from "../../../../sales/stores/stores.service";
 import { mapOrder } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import { Product } from "../../../../inventory";
 import { Op } from "sequelize";
+import { UnitBusiness } from "../../../../warehouse";
 
 export class BlingOrderService {
   public blingApi: AxiosInstance;
@@ -340,13 +341,10 @@ export class BlingOrderService {
         throw new Error("Bling Integration não encontrada no cache");
       }
 
-      if (!integration.allowed_channels?.includes(store.name)) {
-        console.log("[BLING ORDER] Pedido não originado do mercado livre, ignorando...");
-        console.log("[DEBUG] channel.data.tipo:", store.name);
-        console.log("[DEBUG] integration.allowed_channels:", integration.allowed_channels);
-        console.log("[DEBUG] includes?", integration.allowed_channels?.includes(store.name));
-        return null;
-      }
+      const unidadeNegocioId = orderData.loja?.id;
+const unitBusiness = unidadeNegocioId
+  ? await UnitBusiness.findOne({ where: { id_system: String(unidadeNegocioId) } })
+  : null;
 
       const customer     = await this.blingCustomerService.getOrCreateCustomer(orderData.contato);
       const destination  = await this.resolveDestination(orderData.contato?.id);
@@ -355,6 +353,7 @@ export class BlingOrderService {
       const ordersPayload: orderCreationAttributes = {
         integrations_id:      integration.id,
         customer_id:          customer.id,
+        unit_business_id: unitBusiness?.id ?? null,
         id_order_system:      String(orderData.id),
         number_order_system:  String(orderData.numero),
         number_order_channel: String(orderData.numeroLoja),
@@ -389,6 +388,14 @@ export class BlingOrderService {
       );
 
       const createdItems = await orderItemsService.bulkCreate(itemsPayload);
+
+      if (!integration.allowed_channels?.includes(store.name)) {
+        console.log("[BLING ORDER] Pedido não originado do mercado livre, apenas salvando no sistema, puando etapas de automação.");
+        console.log("[DEBUG] channel.data.tipo:", store.name);
+        console.log("[DEBUG] integration.allowed_channels:", integration.allowed_channels);
+        console.log("[DEBUG] includes?", integration.allowed_channels?.includes(store.name));
+        return null;
+      }
 
       if (orderData.situacao.id != 6) {
         console.log(

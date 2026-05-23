@@ -34,6 +34,7 @@ export class SalesReportService {
         await salesReportRepository.findAffectedStatusFactKeys(orderIds);
 
       await salesReportRepository.upsertSnapshots(orderIds);
+      await salesReportRepository.updateSnapshotTotals(orderIds);
 
       const currentFactKeys =
         await salesReportRepository.findAffectedFactKeys(orderIds);

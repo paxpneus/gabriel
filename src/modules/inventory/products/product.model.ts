@@ -28,7 +28,7 @@ class Product extends Model<ProductAttributes, ProductCreationAttributes> implem
   public stock_virtual_total?: number;
   public average_cost?: number;
   public average_cost_updated_at?: Date;
-
+  
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
