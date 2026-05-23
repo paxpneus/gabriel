@@ -35,6 +35,24 @@ export interface InvoiceAttributes {
   total_expected?: number;
   description?: string | null;
   bonded_invoice?: string | null;
+  invoice_series?: string | null;
+  invoice_value?: number;
+  invoice_products_value?: number;
+  invoice_freight_value?: number;
+  invoice_discount_value?: number;
+  invoice_other_value?: number;
+  invoice_total_tax_value?: number;
+  icms_value?: number;
+  ipi_value?: number;
+  pis_value?: number;
+  cofins_value?: number;
+  difal_value?: number;
+  ibs_value?: number;
+  cbs_value?: number;
+  destination_uf?: string | null;
+  destination_city?: string | null;
+  xml_url?: string | null;
+  source_payload?: Record<string, unknown> | null;
 }
 
 export interface FullInvoice extends InvoiceAttributes {

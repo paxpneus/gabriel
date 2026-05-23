@@ -152,121 +152,158 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       `[BLING_DIRECT_UPSERT] Produto ${created ? "criado" : "atualizado parcialmente"}: sku=${data.sku}`,
     );
   }
+
   private async upsertStock(
-    data: Extract<DirectUpsertPayload, { table: "stocks" }>["data"],
-  ): Promise<void> {
-    let product = await Product.findOne({
-      where: { id_system: String(data.productBlingId) },
-    });
+  data: Extract<DirectUpsertPayload, { table: "stocks" }>["data"],
+): Promise<void> {
+  let product = await Product.findOne({
+    where: { id_system: String(data.productBlingId) },
+  });
 
-    if (!product) {
-      try {
-        const { data: res } = await this.api.get<{ data: any }>(
-          `/produtos/${data.productBlingId}`,
-        );
-        const p = res.data;
-
-        if (!p?.codigo) {
-          throw new Error(
-            `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado nem na Bling. Retry.`,
-          );
-        }
-
-        [product] = await Product.upsert(
-          {
-            id_system: String(p.id),
-            name: p.nome,
-            sku: p.codigo,
-            ean: p.gtin ?? `NO-EAN-${p.id}`,
-            ean_tribut: p.gtinEmbalagem ?? `NO-EAN-${p.id}`,
-          },
-          { conflictFields: ["id_system"] },
-        );
-
-        product = await Product.findOne({
-          where: { id_system: String(data.productBlingId) },
-        });
-      } catch (err: any) {
-        throw new Error(
-          `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado. Retry agendado.`,
-        );
-      }
-    }
-
-    if (!product) {
-      throw new Error(
-        `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado após fallback. Retry agendado.`,
-      );
-    }
-
-    const unitBusiness = await UnitBusiness.findOne({
-      where: { cnpj: "02316749002111" },
-    });
-
-    if (!unitBusiness) {
-      throw new Error(
-        "[BLING_DIRECT_UPSERT] UnitBusiness CD Minas Gerais não encontrado.",
-      );
-    }
-
-    // 1. Atualiza o stock do produto
-    const [stock] = await Stock.upsert(
-      {
-        product_id: product.id,
-        quantity: data.quantity,
-        unit_business_id: unitBusiness.id,
-        total_price: data.quantity * (product.price ?? 0)
-      },
-      { conflictFields: ["product_id"] },
+  // Busca dados frescos do produto na Bling para ter o precoCusto atual
+  let entryUnitCost = 0;
+  try {
+    const { data: blingProductRes } = await this.api.get<{ data: any }>(
+      `/produtos/${data.productBlingId}`,
     );
+    const p = blingProductRes.data;
+    entryUnitCost = Number(p?.fornecedor?.precoCusto ?? p?.precoCusto ?? 0);
 
-    // 2. Busca todos os InventoryBatches que possuem um batch item com este produto
-    console.log(`[DEBUG] Buscando batches para product_id=${product.id}`);
-    const affectedBatches = await InventoryBatch.findAll({
-      where: {
-        mode: "CYCLIC",
-        status: { [Op.in]: ["OPEN", "PENDING"] },
-      },
-      include: [
+    if (!product && p?.codigo) {
+      [product] = await Product.upsert(
         {
-          model: InventoryBatchItems,
-          as: "items",
-          where: { product_id: product.id },
-          required: true,
+          id_system: String(p.id),
+          name: p.nome,
+          sku: p.codigo,
+          ean: p.gtin ?? `NO-EAN-${p.id}`,
+          ean_tribut: p.gtinEmbalagem ?? `NO-EAN-${p.id}`,
+          supplier_cost_price: entryUnitCost,
         },
-      ],
-    });
-    console.log(`[DEBUG] Batches encontrados: ${affectedBatches.length}`);
-
-    for (const batch of affectedBatches) {
-      // 3. Atualiza quantity_stock apenas dos batch items deste lote que têm o produto
-      await InventoryBatchItems.update(
-        { quantity_stock: data.quantity },
-        {
-          where: {
-            inventory_batch_id: batch.id,
-            product_id: product.id,
-          },
-        },
+        { conflictFields: ["id_system"] },
       );
-
-      // 4. Recalcula total_quantity_stock do batch como soma dos quantity_stock de todos os seus itens
-      const newTotalQuantityStock =
-        (await InventoryBatchItems.sum("quantity_stock", {
-          where: { inventory_batch_id: batch.id },
-        })) ?? 0;
-
-      await batch.update({ total_quantity_stock: newTotalQuantityStock });
-
-      console.log(
-        `[BLING_DIRECT_UPSERT] InventoryBatch ${batch.id} atualizado | total_quantity_stock=${newTotalQuantityStock}`,
+      product = await Product.findOne({
+        where: { id_system: String(data.productBlingId) },
+      });
+    }
+  } catch (err: any) {
+    if (!product) {
+      throw new Error(
+        `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado. Retry agendado.`,
       );
     }
-
-    console.log(
-      `[BLING_DIRECT_UPSERT] Stock upsertado: productId=${product.id}, quantity=${data.quantity} | ${affectedBatches.length} batch(es) sincronizado(s)`,
+    // Se falhou mas product existe, usa o custo que já está no banco
+    entryUnitCost = Number(product.average_cost ?? product.supplier_cost_price ?? 0);
+    console.warn(
+      `[BLING_DIRECT_UPSERT] Falha ao buscar precoCusto na Bling para ${data.productBlingId} — usando custo do banco: ${entryUnitCost}`,
     );
   }
+
+  if (!product) {
+    throw new Error(
+      `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado após fallback. Retry agendado.`,
+    );
+  }
+
+  const unitBusiness = await UnitBusiness.findOne({
+    where: { cnpj: "02316749002111" },
+  });
+
+  if (!unitBusiness) {
+    throw new Error("[BLING_DIRECT_UPSERT] UnitBusiness CD Minas Gerais não encontrado.");
+  }
+
+  const newQuantity = data.quantity;
+
+  const existingStock = await Stock.findOne({
+    where: { product_id: product.id, unit_business_id: unitBusiness.id },
+  });
+
+  const oldQuantity = Number(existingStock?.quantity ?? 0);
+  const oldTotalPrice = Number(existingStock?.total_price ?? 0);
+
+  let newTotalPrice: number;
+  let newAverageCost: number;
+
+  if (!existingStock || oldQuantity === 0) {
+    // Sem estoque anterior: inicializa com custo atual da Bling
+    newTotalPrice = newQuantity * entryUnitCost;
+    newAverageCost = entryUnitCost;
+  } else if (newQuantity > oldQuantity) {
+    // Entrada: CMP = (valor antigo + quantidade entrada × custo entrada) / nova quantidade
+    const enteredQty = newQuantity - oldQuantity;
+    newTotalPrice = oldTotalPrice + enteredQty * entryUnitCost;
+    newAverageCost = newQuantity > 0 ? newTotalPrice / newQuantity : entryUnitCost;
+  } else if (newQuantity < oldQuantity) {
+    // Saída: desconta pelo CMP atual (custo médio não muda em saída)
+    const currentAvg = oldQuantity > 0 ? oldTotalPrice / oldQuantity : entryUnitCost;
+    newTotalPrice = newQuantity * currentAvg;
+    newAverageCost = currentAvg;
+  } else {
+    // Sem mudança de quantidade
+    newTotalPrice = oldTotalPrice;
+    newAverageCost = oldQuantity > 0 ? oldTotalPrice / oldQuantity : entryUnitCost;
+  }
+
+  // Atualiza CMP no produto
+  await product.update({
+    supplier_cost_price: entryUnitCost,
+    average_cost: newAverageCost,
+    average_cost_updated_at: new Date(),
+  });
+
+  await Stock.upsert(
+    {
+      product_id: product.id,
+      quantity: newQuantity,
+      unit_business_id: unitBusiness.id,
+      total_price: newTotalPrice,
+    },
+    { conflictFields: ["product_id"] },
+  );
+
+  console.log(
+    `[BLING_DIRECT_UPSERT] Stock upsertado: sku=${product.sku} | qty=${newQuantity} | entry_cost=${entryUnitCost.toFixed(4)} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
+  );
+
+  // ─── Sincroniza InventoryBatches ──────────────────────────────────────────
+
+  const affectedBatches = await InventoryBatch.findAll({
+    where: {
+      mode: "CYCLIC",
+      status: { [Op.in]: ["OPEN", "PENDING"] },
+    },
+    include: [
+      {
+        model: InventoryBatchItems,
+        as: "items",
+        where: { product_id: product.id },
+        required: true,
+      },
+    ],
+  });
+
+  for (const batch of affectedBatches) {
+    await InventoryBatchItems.update(
+      { quantity_stock: newQuantity },
+      { where: { inventory_batch_id: batch.id, product_id: product.id } },
+    );
+
+    const newTotalQuantityStock =
+      (await InventoryBatchItems.sum("quantity_stock", {
+        where: { inventory_batch_id: batch.id },
+      })) ?? 0;
+
+    await batch.update({ total_quantity_stock: newTotalQuantityStock });
+
+    console.log(
+      `[BLING_DIRECT_UPSERT] InventoryBatch ${batch.id} atualizado | total_quantity_stock=${newTotalQuantityStock}`,
+    );
+  }
+
+  console.log(
+    `[BLING_DIRECT_UPSERT] ${affectedBatches.length} batch(es) sincronizado(s)`,
+  );
+}
 
   private async upsertSupplierMapping(
     data: Extract<

@@ -39,6 +39,16 @@ import UnmappedInvoiceProduct from '../modules/inventory/unmapped-invoice-produc
 import InvoiceOperationSnapshot from '../modules/reports/invoice-operation-snapshot/invoice-operation-snapshot.model';
 import DailyOperationFact from '../modules/reports/daily-operation-fact/daily-operation-fact.model';
 import DailyTransporterFact from '../modules/reports/daily-transporter-fact/daily-transporter-fact.model';
+import SalesOrderSnapshot from '../modules/reports/daily-sales/sales-order-snapshot/sales-order-snapshot.model';
+import SalesOrderItemSnapshot from '../modules/reports/daily-sales/sales-order-item-snapshot/sales-order-item-snapshot.model';
+import DailySalesFact from '../modules/reports/daily-sales/daily-sales-fact/daily-sales-fact.model';
+import DailySalesStateFact from '../modules/reports/daily-sales/daily-sales-state-fact/daily-sales-state-fact.model';
+import DailySalesStoreFact from '../modules/reports/daily-sales/daily-sales-store-fact/daily-sales-store-fact.model';
+import DailySalesProductFact from '../modules/reports/daily-sales/daily-sales-product-fact/daily-sales-product-fact.model';
+import DailySalesStatusFact from '../modules/reports/daily-sales/daily-sales-status-fact/daily-sales-status-fact.model';
+import InvoiceFiscalItem from '../modules/warehouse/entrance/invoice-fiscal-item/invoice-fiscal-item.model';
+import IntegrationOrderStatusMapping from '../modules/sales/orders/integration-order-status-mapping/integration-order-status-mapping.model';
+import { Supplier } from '../modules/inventory';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -61,6 +71,14 @@ Order.belongsToMany(Step, {
     otherKey: 'step_id',
     as: 'steps' 
 });
+
+// Order -> UnitBusiness
+Order.belongsTo(UnitBusiness, { foreignKey: 'unit_business_id', as: 'unitBusiness' });
+UnitBusiness.hasMany(Order, { foreignKey: 'unit_business_id', as: 'orders' });
+
+// Order -> Invoice (1:1)
+Order.belongsTo(Invoice, { foreignKey: 'invoice_id', as: 'invoice' });
+Invoice.hasOne(Order, { foreignKey: 'invoice_id', as: 'order' });
 
 Step.belongsToMany(Order, { 
     through: OrderHistory, 
@@ -232,6 +250,9 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
     foreignKey: 'product_id',
     as: 'product',
   });
+
+Supplier.hasMany(Product, { foreignKey: 'supplier_id', as: 'products' });
+Product.belongsTo(Supplier, { foreignKey: 'supplier_id', as: 'supplier' });
 
   // Product -> Stock
   Product.hasMany(Stock, {
@@ -539,4 +560,233 @@ Transporter.hasMany(DailyTransporterFact, {
 DailyTransporterFact.belongsTo(Transporter, {
   foreignKey: 'transporter_id',
   as: 'transporter',
+});
+
+// ===== SALES ANALYTICS REPORTS =====
+
+Order.hasOne(SalesOrderSnapshot, {
+  foreignKey: 'order_id',
+  as: 'salesSnapshot',
+});
+SalesOrderSnapshot.belongsTo(Order, {
+  foreignKey: 'order_id',
+  as: 'order',
+});
+
+Invoice.hasMany(SalesOrderSnapshot, {
+  foreignKey: 'invoice_id',
+  as: 'salesOrderSnapshots',
+});
+SalesOrderSnapshot.belongsTo(Invoice, {
+  foreignKey: 'invoice_id',
+  as: 'invoice',
+});
+
+Integration.hasMany(SalesOrderSnapshot, {
+  foreignKey: 'integration_id',
+  as: 'salesOrderSnapshots',
+});
+SalesOrderSnapshot.belongsTo(Integration, {
+  foreignKey: 'integration_id',
+  as: 'integration',
+});
+
+Customer.hasMany(SalesOrderSnapshot, {
+  foreignKey: 'customer_id',
+  as: 'salesOrderSnapshots',
+});
+SalesOrderSnapshot.belongsTo(Customer, {
+  foreignKey: 'customer_id',
+  as: 'customer',
+});
+
+Store.hasMany(SalesOrderSnapshot, {
+  foreignKey: 'store_id',
+  as: 'salesOrderSnapshots',
+});
+SalesOrderSnapshot.belongsTo(Store, {
+  foreignKey: 'store_id',
+  as: 'store',
+});
+
+UnitBusiness.hasMany(SalesOrderSnapshot, {
+  foreignKey: 'unit_business_id',
+  as: 'salesOrderSnapshots',
+});
+SalesOrderSnapshot.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+ 
+
+Invoice.hasMany(InvoiceFiscalItem, {
+  foreignKey: 'invoice_id',
+  as: 'fiscalItems',
+});
+InvoiceFiscalItem.belongsTo(Invoice, {
+  foreignKey: 'invoice_id',
+  as: 'invoice',
+});
+
+Product.hasMany(InvoiceFiscalItem, {
+  foreignKey: 'product_id',
+  as: 'invoiceFiscalItems',
+});
+InvoiceFiscalItem.belongsTo(Product, {
+  foreignKey: 'product_id',
+  as: 'product',
+});
+
+SalesOrderSnapshot.hasMany(SalesOrderItemSnapshot, {
+  foreignKey: 'order_snapshot_id',
+  as: 'items',
+});
+SalesOrderItemSnapshot.belongsTo(SalesOrderSnapshot, {
+  foreignKey: 'order_snapshot_id',
+  as: 'orderSnapshot',
+});
+
+OrderItems.hasOne(SalesOrderItemSnapshot, {
+  foreignKey: 'order_item_id',
+  as: 'salesSnapshot',
+});
+SalesOrderItemSnapshot.belongsTo(OrderItems, {
+  foreignKey: 'order_item_id',
+  as: 'orderItem',
+});
+
+Order.hasMany(SalesOrderItemSnapshot, {
+  foreignKey: 'order_id',
+  as: 'salesItemSnapshots',
+});
+SalesOrderItemSnapshot.belongsTo(Order, {
+  foreignKey: 'order_id',
+  as: 'order',
+});
+
+Product.hasMany(SalesOrderItemSnapshot, {
+  foreignKey: 'product_id',
+  as: 'salesItemSnapshots',
+});
+SalesOrderItemSnapshot.belongsTo(Product, {
+  foreignKey: 'product_id',
+  as: 'product',
+});
+ 
+Store.hasMany(SalesOrderItemSnapshot, {
+  foreignKey: 'store_id',
+  as: 'salesItemSnapshots',
+});
+SalesOrderItemSnapshot.belongsTo(Store, {
+  foreignKey: 'store_id',
+  as: 'store',
+});
+
+UnitBusiness.hasMany(SalesOrderItemSnapshot, {
+  foreignKey: 'unit_business_id',
+  as: 'salesItemSnapshots',
+});
+SalesOrderItemSnapshot.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+
+Integration.hasMany(SalesOrderItemSnapshot, {
+  foreignKey: 'integration_id',
+  as: 'salesItemSnapshots',
+});
+SalesOrderItemSnapshot.belongsTo(Integration, {
+  foreignKey: 'integration_id',
+  as: 'integration',
+});
+
+UnitBusiness.hasMany(DailySalesFact, {
+  foreignKey: 'unit_business_id',
+  as: 'dailySalesFacts',
+});
+DailySalesFact.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+ 
+Integration.hasMany(DailySalesFact, {
+  foreignKey: 'integration_id',
+  as: 'dailySalesFacts',
+});
+DailySalesFact.belongsTo(Integration, {
+  foreignKey: 'integration_id',
+  as: 'integration',
+});
+ 
+
+UnitBusiness.hasMany(DailySalesStateFact, {
+  foreignKey: 'unit_business_id',
+  as: 'dailySalesStateFacts',
+});
+DailySalesStateFact.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+
+UnitBusiness.hasMany(DailySalesStoreFact, {
+  foreignKey: 'unit_business_id',
+  as: 'dailySalesStoreFacts',
+});
+DailySalesStoreFact.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+
+Store.hasMany(DailySalesStoreFact, {
+  foreignKey: 'store_id',
+  as: 'dailySalesFacts',
+});
+DailySalesStoreFact.belongsTo(Store, {
+  foreignKey: 'store_id',
+  as: 'store',
+});
+
+UnitBusiness.hasMany(DailySalesProductFact, {
+  foreignKey: 'unit_business_id',
+  as: 'dailySalesProductFacts',
+});
+DailySalesProductFact.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+
+Product.hasMany(DailySalesProductFact, {
+  foreignKey: 'product_id',
+  as: 'dailySalesFacts',
+});
+DailySalesProductFact.belongsTo(Product, {
+  foreignKey: 'product_id',
+  as: 'product',
+});
+
+UnitBusiness.hasMany(DailySalesStatusFact, {
+  foreignKey: 'unit_business_id',
+  as: 'dailySalesStatusFacts',
+});
+DailySalesStatusFact.belongsTo(UnitBusiness, {
+  foreignKey: 'unit_business_id',
+  as: 'unitBusiness',
+});
+
+Integration.hasMany(DailySalesStatusFact, {
+  foreignKey: 'integration_id',
+  as: 'dailySalesStatusFacts',
+});
+DailySalesStatusFact.belongsTo(Integration, {
+  foreignKey: 'integration_id',
+  as: 'integration',
+});
+
+Integration.hasMany(IntegrationOrderStatusMapping, {
+  foreignKey: 'integration_id',
+  as: 'integrationOrderStatusMappings',
+});
+IntegrationOrderStatusMapping.belongsTo(Integration, {
+  foreignKey: 'integration_id',
+  as: 'integration',
 });
