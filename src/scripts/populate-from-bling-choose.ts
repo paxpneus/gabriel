@@ -292,6 +292,9 @@ async function migrateOrders() {
   console.log('🛒  ETAPA — Pedidos');
   console.log('─'.repeat(55));
 
+  const currentYear = new Date().getFullYear();
+  const dataInicial = `${currentYear}-01-01`;
+
   let count = 0;
   let skipped = 0;
 
@@ -302,7 +305,7 @@ async function migrateOrders() {
     data?: string;
     dataPrevista?: string;
     loja?: { id: number };
-  }>('/pedidos/vendas', { dataInicial: DATA_INICIAL })) {
+  }>('/pedidos/vendas', { dataInicial })) {
     for (const order of page) {
       const blingId = order.id;
 
