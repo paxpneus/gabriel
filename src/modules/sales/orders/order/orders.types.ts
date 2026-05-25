@@ -15,7 +15,7 @@ export interface orderAttributes {
     totalPrice?: number;
     nfe_emitted?: boolean;
     internal_status?: string;
-    store_id?: string;
+    store_id?: string | null;
     unit_business_id?: string | null;
     invoice_id?: string;
     waiting_acceptance?: boolean;

@@ -403,7 +403,7 @@ export class BlingOrderService {
         number_order_channel: String(orderData.numeroLoja),
         date: new Date(orderData.data),
         totalPrice: Number(orderData.total),
-        store_id: store.id ?? null,
+        store_id: store?.id ?? null,
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
         total_order: Number(orderData.total ?? 0),
@@ -434,18 +434,18 @@ export class BlingOrderService {
 
       const createdItems = await orderItemsService.bulkCreate(itemsPayload);
 
-      if (!integration.allowed_channels?.includes(store.name)) {
+      if (!integration.allowed_channels?.includes(store?.name ?? '')) {
         console.log(
           "[BLING ORDER] Pedido não originado do mercado livre, apenas salvando no sistema, puando etapas de automação.",
         );
-        console.log("[DEBUG] channel.data.tipo:", store.name);
+        console.log("[DEBUG] channel.data.tipo:", store?.name ?? 'Não reconhecido');
         console.log(
           "[DEBUG] integration.allowed_channels:",
           integration.allowed_channels,
         );
         console.log(
           "[DEBUG] includes?",
-          integration.allowed_channels?.includes(store.name),
+          integration.allowed_channels?.includes(store?.name ?? ''),
         );
         return null;
       }
