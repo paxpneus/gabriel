@@ -14,6 +14,8 @@ import { Op } from "sequelize";
 import { UnitBusiness } from "../../../../warehouse";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 
+const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
+
 export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService;
@@ -38,10 +40,10 @@ export class BlingOrderService {
     return await executeWebhookAction(action, body, handlers);
   }
 
-private async blingGet(url: string): Promise<any> {
-  await new Promise<void>((resolve) => setTimeout(resolve, 1000));
-  return this.blingApi.get(url);
-}
+  private async blingGet(url: string): Promise<any> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+    return this.blingApi.get(url);
+  }
 
   // ─── Resolve product_id interno para um item da Bling ──────────────────────
   private async resolveProductId(
@@ -78,8 +80,10 @@ private async blingGet(url: string): Promise<any> {
       if (!endereco) return {};
 
       return {
-        destination_uf:   endereco.uf        ? String(endereco.uf).trim()        : undefined,
-        destination_city: endereco.municipio  ? String(endereco.municipio).trim() : undefined,
+        destination_uf: endereco.uf ? String(endereco.uf).trim() : undefined,
+        destination_city: endereco.municipio
+          ? String(endereco.municipio).trim()
+          : undefined,
       };
     } catch (error: any) {
       console.warn(
@@ -99,15 +103,15 @@ private async blingGet(url: string): Promise<any> {
     destination: { destination_uf?: string; destination_city?: string },
   ) {
     return {
-      destination_uf:   destination.destination_uf,
+      destination_uf: destination.destination_uf,
       destination_city: destination.destination_city,
-      icms_value:       Number(orderData.tributacao?.totalICMS ?? 0),
-      ipi_value:        Number(orderData.tributacao?.totalIPI  ?? 0),
-      pis_value:        0,
-      cofins_value:     0,
-      difal_value:      0,
-      ibs_value:        0,
-      cbs_value:        0,
+      icms_value: Number(orderData.tributacao?.totalICMS ?? 0),
+      ipi_value: Number(orderData.tributacao?.totalIPI ?? 0),
+      pis_value: 0,
+      cofins_value: 0,
+      difal_value: 0,
+      ibs_value: 0,
+      cbs_value: 0,
       approx_tax_value: 0,
     };
   }
@@ -120,30 +124,32 @@ private async blingGet(url: string): Promise<any> {
   ): Promise<orderItemsCreationAttributes[]> {
     return Promise.all(
       blingItems.map(async (i: any) => {
-        const quantity      = Number(i.quantidade ?? i.quantity ?? 0);
-        const unitPrice     = Number(i.valor ?? 0);
+        const quantity = Number(i.quantidade ?? i.quantity ?? 0);
+        const unitPrice = Number(i.valor ?? 0);
         const discountValue = Number(i.desconto ?? 0);
-        const externalProductId = i.produto?.id ? String(i.produto.id) : undefined;
-        const sku           = i.codigo ? String(i.codigo) : undefined;
+        const externalProductId = i.produto?.id
+          ? String(i.produto.id)
+          : undefined;
+        const sku = i.codigo ? String(i.codigo) : undefined;
 
         const productId = await this.resolveProductId(externalProductId, sku);
 
         return {
-          name:             i.descricao,
-          order_id:         orderId,
-          sku:              sku ?? "",
-          unit:             i.unidade,
+          name: i.descricao,
+          order_id: orderId,
+          sku: sku ?? "",
+          unit: i.unidade,
           quantity,
-          price:            unitPrice,
-          product_id:       productId,
-          source_payload:   i,
-          unit_price:       unitPrice,
-          gross_total:      unitPrice * quantity,
-          discount_value:   discountValue,
-          net_total:        unitPrice * quantity - discountValue,
-          commission_base:  Number(i.comissao?.base     ?? 0),
-          commission_rate:  Number(i.comissao?.aliquota ?? 0),
-          commission_value: Number(i.comissao?.valor    ?? 0),
+          price: unitPrice,
+          product_id: productId,
+          source_payload: i,
+          unit_price: unitPrice,
+          gross_total: unitPrice * quantity,
+          discount_value: discountValue,
+          net_total: unitPrice * quantity - discountValue,
+          commission_base: Number(i.comissao?.base ?? 0),
+          commission_rate: Number(i.comissao?.aliquota ?? 0),
+          commission_value: Number(i.comissao?.valor ?? 0),
         };
       }),
     );
@@ -182,41 +188,44 @@ private async blingGet(url: string): Promise<any> {
       await this.blingCustomerService.updateCustomer(orderData.contato);
 
       const internalStatus = mapOrder(orderData.situacao.id);
-      const destination    = await this.resolveDestination(orderData.contato?.id);
-      const fiscalFields   = this.extractFiscalFields(orderData, destination);
+      const destination = await this.resolveDestination(orderData.contato?.id);
+      const fiscalFields = this.extractFiscalFields(orderData, destination);
 
       await ordersService.update(existingOrder.id, {
         number_order_channel: String(orderData.numeroLoja),
-        actual_situation:     String(orderData.situacao.id),
-        totalPrice:           Number(orderData.total),
-        date:                 new Date(orderData.data),
-        internal_status:      internalStatus,
-        source_payload:       orderData,
-        total_products:       Number(orderData.totalProdutos ?? 0),
-        total_order:          Number(orderData.total         ?? 0),
-        discount_value:       Number(orderData.desconto?.valor ?? 0),
-        discount_type:        orderData.desconto?.unidade
-                                ? String(orderData.desconto.unidade)
-                                : undefined,
-        other_expenses:       Number(orderData.outrasDespesas ?? 0),
-        freight_charged:      Number(orderData.transporte?.frete    ?? 0),
-        freight_cost:         Number(orderData.taxas?.custoFrete    ?? 0),
-        freight_by_account:   orderData.transporte?.fretePorConta !== undefined
-                                ? Number(orderData.transporte.fretePorConta)
-                                : undefined,
-        gross_weight:         Number(orderData.transporte?.pesoBruto ?? 0),
-        tax_commission:       Number(orderData.taxas?.taxaComissao   ?? 0),
-        tax_base_value:       Number(orderData.taxas?.valorBase      ?? 0),
+        actual_situation: String(orderData.situacao.id),
+        totalPrice: Number(orderData.total),
+        date: new Date(orderData.data),
+        internal_status: internalStatus,
+        source_payload: orderData,
+        total_products: Number(orderData.totalProdutos ?? 0),
+        total_order: Number(orderData.total ?? 0),
+        discount_value: Number(orderData.desconto?.valor ?? 0),
+        discount_type: orderData.desconto?.unidade
+          ? String(orderData.desconto.unidade)
+          : undefined,
+        other_expenses: Number(orderData.outrasDespesas ?? 0),
+        freight_charged: Number(orderData.transporte?.frete ?? 0),
+        freight_cost: Number(orderData.taxas?.custoFrete ?? 0),
+        freight_by_account:
+          orderData.transporte?.fretePorConta !== undefined
+            ? Number(orderData.transporte.fretePorConta)
+            : undefined,
+        gross_weight: Number(orderData.transporte?.pesoBruto ?? 0),
+        tax_commission: Number(orderData.taxas?.taxaComissao ?? 0),
+        tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
         ...fiscalFields,
       });
 
       if (orderData.itens?.length) {
         for (const i of orderData.itens) {
-          const quantity          = Number(i.quantidade ?? 0);
-          const unitPrice         = Number(i.valor      ?? 0);
-          const discountValue     = Number(i.desconto   ?? 0);
-          const externalProductId = i.produto?.id ? String(i.produto.id) : undefined;
-          const sku               = i.codigo ? String(i.codigo) : undefined;
+          const quantity = Number(i.quantidade ?? 0);
+          const unitPrice = Number(i.valor ?? 0);
+          const discountValue = Number(i.desconto ?? 0);
+          const externalProductId = i.produto?.id
+            ? String(i.produto.id)
+            : undefined;
+          const sku = i.codigo ? String(i.codigo) : undefined;
 
           const productId = await this.resolveProductId(externalProductId, sku);
 
@@ -229,41 +238,43 @@ private async blingGet(url: string): Promise<any> {
           if (existingItem) {
             await orderItemsService.update(existingItem.id, {
               quantity,
-              price:            unitPrice,
-              unit_price:       unitPrice,
-              gross_total:      unitPrice * quantity,
-              discount_value:   discountValue,
-              net_total:        unitPrice * quantity - discountValue,
-              commission_base:  Number(i.comissao?.base     ?? 0),
-              commission_rate:  Number(i.comissao?.aliquota ?? 0),
-              commission_value: Number(i.comissao?.valor    ?? 0),
+              price: unitPrice,
+              unit_price: unitPrice,
+              gross_total: unitPrice * quantity,
+              discount_value: discountValue,
+              net_total: unitPrice * quantity - discountValue,
+              commission_base: Number(i.comissao?.base ?? 0),
+              commission_rate: Number(i.comissao?.aliquota ?? 0),
+              commission_value: Number(i.comissao?.valor ?? 0),
               ...(productId ? { product_id: productId } : {}),
               source_payload: i,
             });
           } else {
             await orderItemsService.create({
-              name:             i.descricao,
-              order_id:         existingOrder.id,
-              sku:              sku ?? "",
-              unit:             i.unidade,
+              name: i.descricao,
+              order_id: existingOrder.id,
+              sku: sku ?? "",
+              unit: i.unidade,
               quantity,
-              price:            unitPrice,
-              product_id:       productId,
-              integrations_id:  integration.id,
-              source_payload:   i,
-              unit_price:       unitPrice,
-              gross_total:      unitPrice * quantity,
-              discount_value:   discountValue,
-              net_total:        unitPrice * quantity - discountValue,
-              commission_base:  Number(i.comissao?.base     ?? 0),
-              commission_rate:  Number(i.comissao?.aliquota ?? 0),
-              commission_value: Number(i.comissao?.valor    ?? 0),
+              price: unitPrice,
+              product_id: productId,
+              integrations_id: integration.id,
+              source_payload: i,
+              unit_price: unitPrice,
+              gross_total: unitPrice * quantity,
+              discount_value: discountValue,
+              net_total: unitPrice * quantity - discountValue,
+              commission_base: Number(i.comissao?.base ?? 0),
+              commission_rate: Number(i.comissao?.aliquota ?? 0),
+              commission_value: Number(i.comissao?.valor ?? 0),
             });
           }
         }
       }
 
-      console.log(`[BlingOrderService] Pedido ${orderData.numero} atualizado com sucesso`);
+      console.log(
+        `[BlingOrderService] Pedido ${orderData.numero} atualizado com sucesso`,
+      );
       return null;
     } catch (error: any) {
       console.error(
@@ -331,58 +342,85 @@ private async blingGet(url: string): Promise<any> {
       const { data } = await this.blingGet(`/pedidos/vendas/${body.data.id}`);
       const orderData = data.data;
 
-      let store = await this.storeService.findOne({
-        where: { id_store_system: String(orderData.loja.id) },
-      });
+      let store = null;
 
-      if (!store) {
-        const blingStore = await this.blingGet(`/canais-venda/${orderData.loja.id}`);
-        store = await this.storeService.create({
-          name:            blingStore.data.data.tipo,
-          id_store_system: blingStore.data.data.id,
+      if (orderData.loja?.id) {
+        store = await this.storeService.findOne({
+          where: { id_store_system: String(orderData.loja.id) },
         });
+
+        if (!store) {
+          const blingStore = await this.blingGet(
+            `/canais-venda/${orderData.loja.id}`,
+          );
+          store = await this.storeService.create({
+            name: blingStore.data.data.tipo,
+            id_store_system: String(blingStore.data.data.id),
+          });
+        }
       }
 
       if (!integration) {
         throw new Error("Bling Integration não encontrada no cache");
       }
 
-      const unidadeNegocioId = orderData.loja?.id;
-const unitBusiness = unidadeNegocioId
-  ? await UnitBusiness.findOne({ where: { id_system: String(unidadeNegocioId) } })
-  : null;
+      let unitBusiness = null;
 
-      const customer     = await this.blingCustomerService.getOrCreateCustomer(orderData.contato);
-      const destination  = await this.resolveDestination(orderData.contato?.id);
+      if (orderData.loja?.id) {
+        unitBusiness = await UnitBusiness.findOne({
+          where: { id_system: String(orderData.loja.id) },
+        });
+      } else {
+        // Pedido sem loja na Bling → garante que existe um UnitBusiness "Sem Loja"
+        unitBusiness = await UnitBusiness.findOne({
+          where: { id_system: "SEM_LOJA" },
+        });
+
+        if (unitBusiness) {
+          UnitBusiness.create({
+            id_system: "SEM_LOJA",
+            name: "Sem Loja",
+            cnpj: "00000000000000",
+            head_office: false,
+            number: "0",
+          });
+        }
+      }
+
+      const customer = await this.blingCustomerService.getOrCreateCustomer(
+        orderData.contato,
+      );
+      const destination = await this.resolveDestination(orderData.contato?.id);
       const fiscalFields = this.extractFiscalFields(orderData, destination);
 
       const ordersPayload: orderCreationAttributes = {
-        integrations_id:      integration.id,
-        customer_id:          customer.id,
+        integrations_id: integration.id,
+        customer_id: customer.id,
         actual_situation: String(orderData.situacao.id),
         unit_business_id: unitBusiness?.id ?? null,
-        id_order_system:      String(orderData.id),
-        number_order_system:  String(orderData.numero),
+        id_order_system: String(orderData.id),
+        number_order_system: String(orderData.numero),
         number_order_channel: String(orderData.numeroLoja),
-        date:                 new Date(orderData.data),
-        totalPrice:           Number(orderData.total),
-        store_id:             store.id,
-        source_payload:       orderData,
-        total_products:       Number(orderData.totalProdutos ?? 0),
-        total_order:          Number(orderData.total         ?? 0),
-        discount_value:       Number(orderData.desconto?.valor ?? 0),
-        discount_type:        orderData.desconto?.unidade
-                                ? String(orderData.desconto.unidade)
-                                : undefined,
-        other_expenses:       Number(orderData.outrasDespesas ?? 0),
-        freight_charged:      Number(orderData.transporte?.frete    ?? 0),
-        freight_cost:         Number(orderData.taxas?.custoFrete    ?? 0),
-        freight_by_account:   orderData.transporte?.fretePorConta !== undefined
-                                ? Number(orderData.transporte.fretePorConta)
-                                : undefined,
-        gross_weight:         Number(orderData.transporte?.pesoBruto ?? 0),
-        tax_commission:       Number(orderData.taxas?.taxaComissao   ?? 0),
-        tax_base_value:       Number(orderData.taxas?.valorBase      ?? 0),
+        date: new Date(orderData.data),
+        totalPrice: Number(orderData.total),
+        store_id: store.id ?? null,
+        source_payload: orderData,
+        total_products: Number(orderData.totalProdutos ?? 0),
+        total_order: Number(orderData.total ?? 0),
+        discount_value: Number(orderData.desconto?.valor ?? 0),
+        discount_type: orderData.desconto?.unidade
+          ? String(orderData.desconto.unidade)
+          : undefined,
+        other_expenses: Number(orderData.outrasDespesas ?? 0),
+        freight_charged: Number(orderData.transporte?.frete ?? 0),
+        freight_cost: Number(orderData.taxas?.custoFrete ?? 0),
+        freight_by_account:
+          orderData.transporte?.fretePorConta !== undefined
+            ? Number(orderData.transporte.fretePorConta)
+            : undefined,
+        gross_weight: Number(orderData.transporte?.pesoBruto ?? 0),
+        tax_commission: Number(orderData.taxas?.taxaComissao ?? 0),
+        tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
         ...fiscalFields,
       };
 
@@ -397,10 +435,18 @@ const unitBusiness = unidadeNegocioId
       const createdItems = await orderItemsService.bulkCreate(itemsPayload);
 
       if (!integration.allowed_channels?.includes(store.name)) {
-        console.log("[BLING ORDER] Pedido não originado do mercado livre, apenas salvando no sistema, puando etapas de automação.");
+        console.log(
+          "[BLING ORDER] Pedido não originado do mercado livre, apenas salvando no sistema, puando etapas de automação.",
+        );
         console.log("[DEBUG] channel.data.tipo:", store.name);
-        console.log("[DEBUG] integration.allowed_channels:", integration.allowed_channels);
-        console.log("[DEBUG] includes?", integration.allowed_channels?.includes(store.name));
+        console.log(
+          "[DEBUG] integration.allowed_channels:",
+          integration.allowed_channels,
+        );
+        console.log(
+          "[DEBUG] includes?",
+          integration.allowed_channels?.includes(store.name),
+        );
         return null;
       }
 

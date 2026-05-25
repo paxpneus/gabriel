@@ -518,9 +518,9 @@ export class SalesReportRepository {
           END,
 
         markup_pct        =
-          CASE WHEN COALESCE(it.total_cost, 0) = 0 THEN 0
+          CASE WHEN COALESCE(it.total_order, 0) = 0 THEN 0
           ELSE ROUND((
-            (COALESCE(sos.total_order, 0) - it.total_cost) / it.total_cost * 100
+            (COALESCE(sos.total_order, 0) - it.total_cost) / it.total_order * 100
           )::numeric, 2)
           END,
 
@@ -670,8 +670,9 @@ export class SalesReportRepository {
           contribution_value,
           CASE WHEN total_value = 0 THEN 0
             ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
-          CASE WHEN total_cost = 0 THEN 0
-            ELSE ROUND(((total_value - total_cost) / total_cost * 100)::numeric, 2) END,
+          CASE WHEN total_value = 0 THEN 0
+            ELSE ROUND(((total_value - total_cost) / total_value * 100)::numeric, 2)
+ END,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id) DO UPDATE SET
@@ -795,7 +796,8 @@ export class SalesReportRepository {
           CASE WHEN items_quantity = 0 THEN 0
             ELSE ROUND((total_value / items_quantity)::numeric, 2) END,
           CASE WHEN total_cost     = 0 THEN 0
-            ELSE ROUND(((total_value - total_cost) / total_cost * 100)::numeric, 2) END,
+            ELSE ROUND(((total_value - total_cost) / total_value * 100)::numeric, 2)
+ END,
           total_taxes, total_fees, contribution_value,
           CASE WHEN total_value    = 0 THEN 0
             ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
@@ -857,8 +859,9 @@ export class SalesReportRepository {
         SELECT
           fact_date, unit_business_id, product_id, sku, description,
           quantity, total_cost, total_value,
-          CASE WHEN total_cost = 0 THEN 0
-            ELSE ROUND(((total_value - total_cost) / total_cost * 100)::numeric, 2) END,
+          CASE WHEN total_value = 0 THEN 0
+            ELSE ROUND(((total_value - total_cost) / total_value * 100)::numeric, 2)
+ END,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, sku) DO UPDATE SET
@@ -946,18 +949,18 @@ export class SalesReportRepository {
 
   async getReport(filters: SalesReportFilters) {
     const replacements = {
-      dateFrom: filters.dateFrom,
-      dateTo: filters.dateTo,
-      unitBusinessId: filters.unitBusinessId ?? null,
-      storeId: filters.storeId ?? null,
-      state: filters.state ?? null,
-      productId: filters.productId ?? null,
-      sku: filters.sku ?? null,
-      statusNormalized: filters.statusId ?? null,
-    };
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+    unitBusinessId: filters.unitBusinessId ?? null,
+    storeId: filters.storeId ?? null,
+    state: filters.state ?? null,
+    productId: filters.productId ?? null,
+    sku: filters.sku ?? null,
+    statusNormalized: filters.statusId ?? null,
+  };
 
     const unitFilter =
-      "(:unitBusinessId IS NULL OR unit_business_id = CAST(:unitBusinessId AS uuid))";
+    "(:unitBusinessId IS NULL OR unit_business_id = CAST(:unitBusinessId AS uuid))";
 
     const [general] = await sequelize.query<ReportRow>(
       `
@@ -979,9 +982,9 @@ export class SalesReportRepository {
         CASE WHEN COALESCE(SUM(total_value), 0) = 0 THEN 0
           ELSE ROUND((SUM(contribution_value) / SUM(total_value) * 100)::numeric, 2)
         END AS contribution_pct,
-        CASE WHEN COALESCE(SUM(total_cost), 0) = 0 THEN 0
-          ELSE ROUND(((SUM(total_value) - SUM(total_cost)) / SUM(total_cost) * 100)::numeric, 2)
-        END AS markup_pct
+        CASE WHEN COALESCE(SUM(total_value), 0) = 0 THEN 0
+  ELSE ROUND(((SUM(total_value) - SUM(total_cost)) / SUM(total_value) * 100)::numeric, 2)
+END AS markup_pct
       FROM daily_sales_facts
       WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
         AND ${unitFilter}
@@ -1014,88 +1017,101 @@ export class SalesReportRepository {
     );
 
     const byProduct = await sequelize.query<ReportRow>(
-      `
-      SELECT
-        product_id,
-        sku,
-        MAX(description)          AS description,
-        COALESCE(SUM(quantity),   0) AS quantity,
-        COALESCE(SUM(total_cost), 0) AS total_cost,
-        COALESCE(SUM(total_value),0) AS total_value,
-        CASE WHEN COALESCE(SUM(total_cost), 0) = 0 THEN 0
-          ELSE ROUND(((SUM(total_value) - SUM(total_cost)) / SUM(total_cost) * 100)::numeric, 2)
-        END AS markup_pct
-      FROM daily_sales_product_facts
-      WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-        AND ${unitFilter}
-        AND (:productId IS NULL OR product_id = CAST(:productId AS uuid))
-        AND (:sku IS NULL OR sku = :sku)
-      GROUP BY product_id, sku
-      ORDER BY total_value DESC
-      `,
-      { type: QueryTypes.SELECT, replacements },
-    );
+    `
+    SELECT
+      product_id,
+      sku,
+      MAX(description)          AS description,
+      COALESCE(SUM(quantity),   0) AS quantity,
+      COALESCE(SUM(total_cost), 0) AS total_cost,
+      COALESCE(SUM(total_value),0) AS total_value,
+      CASE WHEN COALESCE(SUM(total_value), 0) = 0 THEN 0
+  ELSE ROUND(((SUM(total_value) - SUM(total_cost)) / SUM(total_value) * 100)::numeric, 2)
+END AS markup_pct
+    FROM daily_sales_product_facts
+    WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+      AND ${unitFilter}
+      AND (:productId IS NULL OR product_id = CAST(:productId AS uuid))
+      AND (:sku IS NULL OR sku = :sku)
+    GROUP BY product_id, sku
+    ORDER BY quantity DESC          -- ✅ era total_value DESC
+    `,
+    { type: QueryTypes.SELECT, replacements },
+  );
 
-    const byStore = await sequelize.query<ReportRow>(
-      `
-      SELECT
-        dsf.store_id,
-        s.name                                    AS store_name,
-        COALESCE(SUM(dsf.orders_count),       0)::integer AS orders_count,
-        COALESCE(SUM(dsf.items_quantity),     0) AS items_quantity,
-        COALESCE(SUM(dsf.total_value),        0) AS total_value,
-        COALESCE(SUM(dsf.total_freight),      0) AS total_freight,
-        CASE WHEN COALESCE(SUM(dsf.orders_count), 0) = 0 THEN 0
-          ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.orders_count))::numeric, 2)
-        END AS average_ticket,
-        COALESCE(SUM(dsf.total_cost),         0) AS total_cost,
-        CASE WHEN COALESCE(SUM(dsf.items_quantity), 0) = 0 THEN 0
-          ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.items_quantity))::numeric, 2)
-        END AS piece_average_value,
-        CASE WHEN COALESCE(SUM(dsf.total_cost), 0) = 0 THEN 0
-          ELSE ROUND(((SUM(dsf.total_value) - SUM(dsf.total_cost)) / SUM(dsf.total_cost) * 100)::numeric, 2)
-        END AS markup_pct,
-        COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
-        COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
-        COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
-        CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
-          ELSE ROUND((SUM(dsf.contribution_value) / SUM(dsf.total_value) * 100)::numeric, 2)
-        END AS contribution_pct
-      FROM daily_sales_store_facts dsf
-      LEFT JOIN stores s ON s.id = dsf.store_id
-      WHERE dsf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-        AND (:unitBusinessId IS NULL OR dsf.unit_business_id = CAST(:unitBusinessId AS uuid))
-        AND (:storeId IS NULL OR dsf.store_id = CAST(:storeId AS uuid))
-      GROUP BY dsf.store_id, s.name
-      ORDER BY total_value DESC
-      `,
-      { type: QueryTypes.SELECT, replacements },
-    );
+    const byUnitBusiness = await sequelize.query<ReportRow>(
+    `
+    SELECT
+      dsf.unit_business_id,
+      ub.name                                       AS unit_business_name,
+      COALESCE(SUM(dsf.orders_count),       0)::integer AS orders_count,
+      COALESCE(SUM(dsf.items_quantity),     0) AS items_quantity,
+      COALESCE(SUM(dsf.total_value),        0) AS total_value,
+      COALESCE(SUM(dsf.total_freight),      0) AS total_freight,
+      CASE WHEN COALESCE(SUM(dsf.orders_count), 0) = 0 THEN 0
+        ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.orders_count))::numeric, 2)
+      END AS average_ticket,
+      COALESCE(SUM(dsf.total_cost),         0) AS total_cost,
+      CASE WHEN COALESCE(SUM(dsf.items_quantity), 0) = 0 THEN 0
+        ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.items_quantity))::numeric, 2)
+      END AS piece_average_value,
+      CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
+  ELSE ROUND(((SUM(dsf.total_value) - SUM(dsf.total_cost)) / SUM(dsf.total_value) * 100)::numeric, 2)
+END AS markup_pct,
+      COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
+      COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
+      COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
+      CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
+        ELSE ROUND((SUM(dsf.contribution_value) / SUM(dsf.total_value) * 100)::numeric, 2)
+      END AS contribution_pct
+    FROM daily_sales_facts dsf                    -- ✅ era daily_sales_store_facts
+    LEFT JOIN unit_businesses ub ON ub.id = dsf.unit_business_id
+    WHERE dsf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+      AND (:unitBusinessId IS NULL OR dsf.unit_business_id = CAST(:unitBusinessId AS uuid))
+    GROUP BY dsf.unit_business_id, ub.name
+    ORDER BY total_value DESC
+    `,
+    { type: QueryTypes.SELECT, replacements },
+  );
 
     const byStatus = await sequelize.query<ReportRow>(
-      `
-      WITH total AS (
-        SELECT COALESCE(SUM(orders_count), 0)::integer AS orders_count
-        FROM daily_sales_status_facts
-        WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-          AND ${unitFilter}
-      )
-      SELECT
-        dssf.status_normalized,
-        MAX(dssf.status_display_name)                AS status_display_name,
-        COALESCE(SUM(dssf.orders_count), 0)::integer AS orders_count,
-        total.orders_count                           AS total_orders_count,
-        COALESCE(SUM(dssf.total_value),  0)          AS total_value
-      FROM daily_sales_status_facts dssf
-      CROSS JOIN total
-      WHERE dssf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-        AND (:unitBusinessId IS NULL OR dssf.unit_business_id = CAST(:unitBusinessId AS uuid))
-        AND (:statusNormalized IS NULL OR dssf.status_normalized = :statusNormalized)
-      GROUP BY dssf.status_normalized, total.orders_count
-      ORDER BY orders_count DESC
-      `,
-      { type: QueryTypes.SELECT, replacements },
-    );
+    `
+    WITH total AS (
+      SELECT COALESCE(SUM(orders_count), 0)::integer AS orders_count
+      FROM daily_sales_status_facts
+      WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+        AND ${unitFilter}
+    )
+    SELECT
+      dssf.status_normalized,
+      -- ✅ usa display_name da tabela de mapeamento; fallback para status_normalized
+      COALESCE(
+        MAX(iosm.display_name),
+        MAX(dssf.status_display_name),
+        dssf.status_normalized
+      )                                              AS status_display_name,
+      COALESCE(SUM(dssf.orders_count), 0)::integer  AS orders_count,
+      total.orders_count                            AS total_orders_count,
+      COALESCE(SUM(dssf.total_value),  0)           AS total_value
+    FROM daily_sales_status_facts dssf
+    CROSS JOIN total
+    -- ✅ JOIN direto na tabela de mapeamento para garantir display_name correto
+    LEFT JOIN integration_order_status_mappings iosm ON (
+      iosm.normalized_status = dssf.status_normalized
+      AND (:unitBusinessId IS NULL OR EXISTS (
+        SELECT 1 FROM integrations i
+        WHERE i.id = iosm.integration_id
+          AND (:unitBusinessId IS NULL OR i.unit_business_id = CAST(:unitBusinessId AS uuid))
+      ))
+    )
+    WHERE dssf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+      AND (:unitBusinessId IS NULL OR dssf.unit_business_id = CAST(:unitBusinessId AS uuid))
+      AND (:statusNormalized IS NULL OR dssf.status_normalized = :statusNormalized)
+    GROUP BY dssf.status_normalized, total.orders_count
+    ORDER BY orders_count DESC
+    `,
+    { type: QueryTypes.SELECT, replacements },
+  );
 
     const orders = filters.drillDown
       ? await sequelize.query<ReportRow>(
@@ -1121,7 +1137,7 @@ export class SalesReportRepository {
       general: general ?? {},
       byState,
       byProduct,
-      byStore,
+      byUnitBusiness,
       byStatus,
       orders,
     };
@@ -1187,12 +1203,10 @@ export class SalesReportRepository {
         ) / sos.total_order * 100)::numeric, 2)
         END,
 
-      markup_pct        =
-        CASE WHEN COALESCE(it.total_cost, 0) = 0 THEN 0
-        ELSE ROUND((
-          (COALESCE(sos.total_order, 0) - it.total_cost) / it.total_cost * 100
-        )::numeric, 2)
-        END,
+      markup_pct = CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
+  ELSE ROUND((
+    (COALESCE(sos.total_order, 0) - it.total_cost) / sos.total_order * 100
+  )::numeric, 2) END,
 
       has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
       last_updated_at   = NOW(),
