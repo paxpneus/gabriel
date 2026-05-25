@@ -517,12 +517,15 @@ export class SalesReportRepository {
           ) / sos.total_order * 100)::numeric, 2)
           END,
 
-        markup_pct        =
-          CASE WHEN COALESCE(it.total_order, 0) = 0 THEN 0
-          ELSE ROUND((
-            (COALESCE(sos.total_order, 0) - it.total_cost) / it.total_order * 100
-          )::numeric, 2)
-          END,
+        markup_pct =
+CASE
+  WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
+  ELSE ROUND((
+    (COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0))
+    / COALESCE(sos.total_order, 0)
+    * 100
+  )::numeric, 2)
+END,
 
         has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
         last_updated_at   = NOW(),
