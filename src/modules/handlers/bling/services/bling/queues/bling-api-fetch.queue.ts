@@ -955,7 +955,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         cbs_value: cbsValue,
       },
       { conflictFields: ["id_system"] },
-    );
+    ).catch((error) => {
+       console.error("[INVOICE UPSERT ERROR DETAIL]", JSON.stringify({
+    message: error.message,
+    original: error.original?.message,
+    detail: error.original?.detail,
+    hint: error.original?.hint,
+    where: error.original?.where,
+    table: error.original?.table,
+    column: error.original?.column,
+    constraint: error.original?.constraint,
+    sql: error.sql?.substring(0, 500),
+    blingId: nf.id,
+    numero: nf.numero,
+  }, null, 2));
+  throw error;
+    });
 
     console.log(`[BLING_API_FETCH] Invoice upsertada: id_system=${nf.id}, key=${key}`);
 
