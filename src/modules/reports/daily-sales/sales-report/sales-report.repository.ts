@@ -1096,14 +1096,10 @@ END AS markup_pct,
     FROM daily_sales_status_facts dssf
     CROSS JOIN total
     -- ✅ JOIN direto na tabela de mapeamento para garantir display_name correto
-    LEFT JOIN integration_order_status_mappings iosm ON (
-      iosm.normalized_status = dssf.status_normalized
-      AND (:unitBusinessId IS NULL OR EXISTS (
-        SELECT 1 FROM integrations i
-        WHERE i.id = iosm.integration_id
-          AND (:unitBusinessId IS NULL OR i.unit_business_id = CAST(:unitBusinessId AS uuid))
-      ))
-    )
+    LEFT JOIN integration_order_status_mappings iosm 
+  ON iosm.normalized_status = dssf.status_normalized
+ AND (:unitBusinessId IS NULL 
+      OR iosm.unit_business_id = CAST(:unitBusinessId AS uuid))
     WHERE dssf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
       AND (:unitBusinessId IS NULL OR dssf.unit_business_id = CAST(:unitBusinessId AS uuid))
       AND (:statusNormalized IS NULL OR dssf.status_normalized = :statusNormalized)
