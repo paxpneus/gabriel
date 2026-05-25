@@ -8,6 +8,8 @@ import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher
 import Transporter from "../../transporter/transporter.model";
 import {  InvoiceWithTransporter } from "./invoice.types";
 import CarrierLabelRange from "../../transporter/carrier-label-ranges/carrier-label-ranges.model";
+import InvoiceItems from "../invoice-items/invoice-items.model";
+import { Product } from "../../../inventory";
 
 // Importe seus modelos e a instância do sequelize se necessário
 // import { Invoice } from '../../database/models/Invoice';
@@ -50,6 +52,27 @@ interface LabelProductVolume {
 }
 
 export class LabelService {
+
+  private async findEanFromInvoiceItems(invoiceId: string): Promise<Map<number, string>> {
+  const items = await InvoiceItems.findAll({
+    where: { invoice_id: invoiceId },
+    include: [{ model: Product, as: 'product' }],
+    order: [['createdAt', 'ASC']],
+  });
+
+  const eanMap = new Map<number, string>(); 
+  items.forEach((item, index) => {
+    const product = (item as any).product as Product | undefined;
+    const ean =
+      product?.ean ||
+      product?.ean_tribut ||
+      product?.gtin ||
+      '';
+    if (ean) eanMap.set(index, ean);
+  });
+
+  return eanMap;
+}
   /**
    * Busca os dados para etiquetas utilizando Sequelize
    */
@@ -180,37 +203,45 @@ private async findCarrierRange(
 
     // ── Itens (det) ──────────────────────────────────────────────────────────
     let itens = infNFe.det ?? [];
-    if (!Array.isArray(itens)) itens = [itens];
+if (!Array.isArray(itens)) itens = [itens];
 
-    let somaQtd = 0;
-    const produtos: string[] = [];
-    const productVolumes: LabelProductVolume[] = [];
-    let ean = "";
+// Pré-carrega EANs do cadastro para usar como fallback
+const eanFallbackMap = await this.findEanFromInvoiceItems(invoiceId);
 
-    for (const det of itens) {
-      const prod = det.prod ?? {};
-      const qtd = parseFloat(String(prod.qCom ?? prod.qTrib ?? 1));
-      somaQtd += qtd;
+let somaQtd = 0;
+const produtos: string[] = [];
+const productVolumes: LabelProductVolume[] = [];
+let ean = "";
 
-      const desc = String(prod.xProd ?? "");
-      if (desc && desc !== "***" && !produtos.includes(desc))
-        produtos.push(desc);
+for (let idx = 0; idx < itens.length; idx++) {
+  const det = itens[idx];
+  const prod = det.prod ?? {};
+  const qtd = parseFloat(String(prod.qCom ?? prod.qTrib ?? 1));
+  somaQtd += qtd;
 
-      let itemEan = "";
-      const cEAN = String(prod.cEAN ?? prod.cEANTrib ?? "");
-      if (cEAN && cEAN !== "SEM GTIN" && /^\d{8,14}$/.test(cEAN)) {
-        itemEan = cEAN;
-        if (!ean) ean = cEAN;
-      }
+  const desc = String(prod.xProd ?? "");
+  if (desc && desc !== "***" && !produtos.includes(desc))
+    produtos.push(desc);
 
-      const labelQuantity = Math.max(0, Math.round(qtd));
-      for (let i = 0; i < labelQuantity; i++) {
-        productVolumes.push({
-          produtos: desc && desc !== "***" ? [desc] : [],
-          ean: itemEan,
-        });
-      }
-    }
+  let itemEan = "";
+  const cEAN = String(prod.cEAN ?? prod.cEANTrib ?? "");
+  if (cEAN && cEAN !== "SEM GTIN" && /^\d{8,14}$/.test(cEAN)) {
+    itemEan = cEAN;
+  } else {
+    // Fallback: busca pelo índice do item no cadastro
+    itemEan = eanFallbackMap.get(idx) ?? "";
+  }
+
+  if (itemEan && !ean) ean = itemEan;
+
+  const labelQuantity = Math.max(0, Math.round(qtd));
+  for (let i = 0; i < labelQuantity; i++) {
+    productVolumes.push({
+      produtos: desc && desc !== "***" ? [desc] : [],
+      ean: itemEan,
+    });
+  }
+}
 
     // ── Transporte ───────────────────────────────────────────────────────────
     const transp = infNFe.transp ?? {};
