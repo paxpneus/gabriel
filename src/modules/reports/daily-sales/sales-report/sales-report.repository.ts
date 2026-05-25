@@ -522,7 +522,7 @@ CASE
   WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
   ELSE ROUND((
     (COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0))
-    / COALESCE(sos.total_order, 0)
+    / NULLIF(COALESCE(sos.total_order, 0), 0)
     * 100
   )::numeric, 2)
 END,
@@ -672,9 +672,9 @@ END,
           total_cost, total_taxes, total_fees,
           contribution_value,
           CASE WHEN total_value = 0 THEN 0
-            ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
+            ELSE ROUND((contribution_value / NULLIF(total_value, 0) * 100)::numeric, 2) END,
           CASE WHEN total_value = 0 THEN 0
-            ELSE ROUND(((total_value - total_cost) / total_value * 100)::numeric, 2)
+            ELSE ROUND(((total_value - total_cost) / NULLIF(total_value, 0) * 100)::numeric, 2)
  END,
           NOW(), NOW(), NOW()
         FROM metrics
@@ -798,9 +798,13 @@ END,
           total_cost,
           CASE WHEN items_quantity = 0 THEN 0
             ELSE ROUND((total_value / items_quantity)::numeric, 2) END,
-          CASE WHEN total_cost     = 0 THEN 0
-            ELSE ROUND(((total_value - total_cost) / total_value * 100)::numeric, 2)
- END,
+          CASE
+  WHEN total_value = 0 THEN 0
+  ELSE ROUND(
+    ((total_value - total_cost) / NULLIF(total_value, 0) * 100)::numeric,
+    2
+  )
+END,
           total_taxes, total_fees, contribution_value,
           CASE WHEN total_value    = 0 THEN 0
             ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
@@ -862,9 +866,13 @@ END,
         SELECT
           fact_date, unit_business_id, product_id, sku, description,
           quantity, total_cost, total_value,
-          CASE WHEN total_value = 0 THEN 0
-            ELSE ROUND(((total_value - total_cost) / total_value * 100)::numeric, 2)
- END,
+          CASE
+  WHEN total_value = 0 THEN 0
+  ELSE ROUND(
+    ((total_value - total_cost) / NULLIF(total_value, 0) * 100)::numeric,
+    2
+  )
+END,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, sku) DO UPDATE SET
@@ -983,10 +991,13 @@ END,
         COALESCE(SUM(total_fees),        0) AS total_fees,
         COALESCE(SUM(contribution_value),0) AS contribution_value,
         CASE WHEN COALESCE(SUM(total_value), 0) = 0 THEN 0
-          ELSE ROUND((SUM(contribution_value) / SUM(total_value) * 100)::numeric, 2)
+          ELSE ROUND((SUM(contribution_value) / NULLIF(SUM(total_value), 0) * 100)::numeric, 2)
         END AS contribution_pct,
-        CASE WHEN COALESCE(SUM(total_value), 0) = 0 THEN 0
-  ELSE ROUND(((SUM(total_value) - SUM(total_cost)) / SUM(total_value) * 100)::numeric, 2)
+        CASE WHEN SUM(total_value) = 0 THEN 0
+  ELSE ROUND(
+    ((SUM(total_value) - SUM(total_cost)) / NULLIF(SUM(total_value), 0) * 100)::numeric,
+    2
+  )
 END AS markup_pct
       FROM daily_sales_facts
       WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
@@ -1028,8 +1039,11 @@ END AS markup_pct
       COALESCE(SUM(quantity),   0) AS quantity,
       COALESCE(SUM(total_cost), 0) AS total_cost,
       COALESCE(SUM(total_value),0) AS total_value,
-      CASE WHEN COALESCE(SUM(total_value), 0) = 0 THEN 0
-  ELSE ROUND(((SUM(total_value) - SUM(total_cost)) / SUM(total_value) * 100)::numeric, 2)
+      CASE WHEN SUM(total_value) = 0 THEN 0
+  ELSE ROUND(
+    ((SUM(total_value) - SUM(total_cost)) / NULLIF(SUM(total_value), 0) * 100)::numeric,
+    2
+  )
 END AS markup_pct
     FROM daily_sales_product_facts
     WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
@@ -1059,13 +1073,13 @@ END AS markup_pct
         ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.items_quantity))::numeric, 2)
       END AS piece_average_value,
       CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
-  ELSE ROUND(((SUM(dsf.total_value) - SUM(dsf.total_cost)) / SUM(dsf.total_value) * 100)::numeric, 2)
+  ELSE ROUND(((SUM(dsf.total_value) - SUM(dsf.total_cost)) / NULLIF(SUM(dsf.total_value), 0) * 100)::numeric, 2)
 END AS markup_pct,
       COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
       COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
       COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
       CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
-        ELSE ROUND((SUM(dsf.contribution_value) / SUM(dsf.total_value) * 100)::numeric, 2)
+        ELSE ROUND((SUM(dsf.contribution_value) / NULLIF(SUM(dsf.total_value), 0) * 100)::numeric, 2)
       END AS contribution_pct
     FROM daily_sales_facts dsf                    -- ✅ era daily_sales_store_facts
     LEFT JOIN unit_businesses ub ON ub.id = dsf.unit_business_id
@@ -1197,12 +1211,12 @@ END AS markup_pct,
              + COALESCE(sos.cbs_value,    0))
           - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
              + COALESCE(sos.payment_fee,     0))
-        ) / sos.total_order * 100)::numeric, 2)
+        ) / NULLIF(sos.total_order, 0) * 100)::numeric, 2)
         END,
 
       markup_pct = CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
   ELSE ROUND((
-    (COALESCE(sos.total_order, 0) - it.total_cost) / sos.total_order * 100
+    (COALESCE(sos.total_order, 0) - it.total_cost) / NULLIF(sos.total_order, 0) * 100
   )::numeric, 2) END,
 
       has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
