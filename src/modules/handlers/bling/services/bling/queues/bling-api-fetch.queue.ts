@@ -1311,7 +1311,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         cbs_value: fiscalTotals.cbsValue,
       },
       { conflictFields: ["id_system"] },
-    );
+    ).catch((error: any) => {
+  console.error("[IMPORT_XML UPSERT ERROR DETAIL]", JSON.stringify({
+    message: error.message,
+    original: error.original?.message,
+    detail: error.original?.detail,
+    hint: error.original?.hint,
+    where: error.original?.where,
+    table: error.original?.table,
+    column: error.original?.column,
+    constraint: error.original?.constraint,
+    sql: error.sql?.substring(0, 500),
+    idSystem,
+    numero,
+  }, null, 2));
+  throw error;
+});;
 
     console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
 
