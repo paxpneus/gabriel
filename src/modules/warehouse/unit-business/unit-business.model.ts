@@ -20,6 +20,7 @@ class UnitBusiness
   public head_office!: boolean;
   public certifcate_password?: string;
   public certificate_path?: string;
+  public ult_nsu?: string
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -42,6 +43,11 @@ UnitBusiness.init(
       type: DataTypes.STRING(50),
       allowNull: true,
       unique: true,
+    },
+    ult_nsu: {
+      type: DataTypes.STRING(15),
+      allowNull: false,
+      defaultValue: "000000000000000",
     },
     name: {
       type: DataTypes.STRING(255),

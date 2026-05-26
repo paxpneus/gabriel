@@ -8,6 +8,7 @@ export interface UnitBusinessAttributes {
   head_office: boolean;
   certificate_path?: string;
   certificate_password?: string;
+  ult_nsu?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
