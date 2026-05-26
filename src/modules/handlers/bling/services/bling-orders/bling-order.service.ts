@@ -191,7 +191,18 @@ export class BlingOrderService {
       const destination = await this.resolveDestination(orderData.contato?.id);
       const fiscalFields = this.extractFiscalFields(orderData, destination);
 
+      // ─── Resolve unit_business_id se ainda estiver nulo ──────────────────
+      let unitBusinessId: string | null =
+        existingOrder.unit_business_id ?? null;
+      if (!unitBusinessId && orderData.loja?.id) {
+        const unitBusiness = await UnitBusiness.findOne({
+          where: { id_system: String(orderData.loja.id) },
+        });
+        unitBusinessId = unitBusiness?.id ?? null;
+      }
+
       await ordersService.update(existingOrder.id, {
+        unit_business_id: unitBusinessId, // ← preenche retroativamente
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
         totalPrice: Number(orderData.total),
@@ -376,7 +387,7 @@ export class BlingOrderService {
           where: { id_system: "SEM_LOJA" },
         });
 
-        if (unitBusiness) {
+        if (!unitBusiness) {
           UnitBusiness.create({
             id_system: "SEM_LOJA",
             name: "Sem Loja",
@@ -434,18 +445,21 @@ export class BlingOrderService {
 
       const createdItems = await orderItemsService.bulkCreate(itemsPayload);
 
-      if (!integration.allowed_channels?.includes(store?.name ?? '')) {
+      if (!integration.allowed_channels?.includes(store?.name ?? "")) {
         console.log(
           "[BLING ORDER] Pedido não originado do mercado livre, apenas salvando no sistema, puando etapas de automação.",
         );
-        console.log("[DEBUG] channel.data.tipo:", store?.name ?? 'Não reconhecido');
+        console.log(
+          "[DEBUG] channel.data.tipo:",
+          store?.name ?? "Não reconhecido",
+        );
         console.log(
           "[DEBUG] integration.allowed_channels:",
           integration.allowed_channels,
         );
         console.log(
           "[DEBUG] includes?",
-          integration.allowed_channels?.includes(store?.name ?? ''),
+          integration.allowed_channels?.includes(store?.name ?? ""),
         );
         return null;
       }

@@ -253,7 +253,7 @@ export class InvoiceController extends BaseController<
 
         const invoices = await Invoice.findAll({
           where: { id: chunkIds },
-          attributes: ["id", "xml_path", "number"],
+          attributes: ["id", "xml_path", "number_system"],
         });
 
         for (const invoice of invoices) {
