@@ -20,7 +20,7 @@ export async function startBlingWorkers() {
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  sefazQueue.scheduleRepeat({ every: 2 * 60 * 1000 });
+  sefazQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
 
   setTimeout(() => {
   dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
