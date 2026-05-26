@@ -1,4 +1,4 @@
-// src/modules/sefaz/sefaz_api/sefaz_api.service.ts
+// sefaz_api.service.ts
 
 import https from "https";
 import { XMLParser } from "fast-xml-parser";
@@ -23,7 +23,6 @@ const SOAP_ACTION =
 
 const xmlParser = new XMLParser({ ignoreAttributes: false });
 
-// Stats válidos: 137 = sem docs, 138 = docs encontrados
 const VALID_CSTATS = ["137", "138"];
 
 export class SefazApiService {
@@ -43,10 +42,36 @@ export class SefazApiService {
     });
   }
 
-  private buildEnvelopeConsNSU(params: { cnpj: string; cUF: string; NSU: string }): string {
-  const tpAmb = this.environment === "producao" ? "1" : "2";
+  private buildEnvelopeDistNSU(params: SefazConsultaParams): string {
+    const tpAmb = this.environment === "producao" ? "1" : "2";
+    const ultNSU = params.ultNSU.padStart(15, "0");
 
-  return `<?xml version="1.0" encoding="utf-8"?>
+    return `<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe">
+      <nfeDadosMsg>
+        <distDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01">
+          <tpAmb>${tpAmb}</tpAmb>
+          <cUFAutor>${params.cUF}</cUFAutor>
+          <CNPJ>${params.cnpj}</CNPJ>
+          <distNSU>
+            <ultNSU>${ultNSU}</ultNSU>
+          </distNSU>
+        </distDFeInt>
+      </nfeDadosMsg>
+    </nfeDistDFeInteresse>
+  </soap12:Body>
+</soap12:Envelope>`;
+  }
+
+  private buildEnvelopeConsNSU(params: { cnpj: string; cUF: string; NSU: string }): string {
+    const tpAmb = this.environment === "producao" ? "1" : "2";
+
+    return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xmlns:xsd="http://www.w3.org/2001/XMLSchema"
@@ -66,29 +91,10 @@ export class SefazApiService {
     </nfeDistDFeInteresse>
   </soap12:Body>
 </soap12:Envelope>`;
-}
+  }
 
-// Retorna o maxNSU atual sem avançar o cursor de distribuição
-async descobrirMaxNSU(cnpj: string, cUF: string): Promise<string> {
-  // NSU "1" sempre existe — a resposta sempre traz maxNSU independente do doc
-  const envelope = this.buildEnvelopeConsNSU({ cnpj, cUF, NSU: "000000000000001" });
-  const xml = await this.postSoap(envelope);
-  const parsed = xmlParser.parse(xml);
-
-  const retDistDFeInt =
-    parsed?.["soap:Envelope"]?.["soap:Body"]
-      ?.["nfeDistDFeInteresseResponse"]
-      ?.["nfeDistDFeInteresseResult"]
-      ?.["retDistDFeInt"];
-
-  if (!retDistDFeInt) throw new Error("[Sefaz] Estrutura inesperada em consNSU");
-
-  return String(retDistDFeInt.maxNSU).padStart(15, "0");
-}
-
-  private buildEnvelope(params: SefazConsultaParams): string {
+  private buildEnvelopeConsChNFe(params: { cnpj: string; cUF: string; chNFe: string }): string {
     const tpAmb = this.environment === "producao" ? "1" : "2";
-    const ultNSU = params.ultNSU.padStart(15, "0");
 
     return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope
@@ -102,9 +108,9 @@ async descobrirMaxNSU(cnpj: string, cUF: string): Promise<string> {
           <tpAmb>${tpAmb}</tpAmb>
           <cUFAutor>${params.cUF}</cUFAutor>
           <CNPJ>${params.cnpj}</CNPJ>
-          <distNSU>
-            <ultNSU>${ultNSU}</ultNSU>
-          </distNSU>
+          <consChNFe>
+            <chNFe>${params.chNFe}</chNFe>
+          </consChNFe>
         </distDFeInt>
       </nfeDadosMsg>
     </nfeDistDFeInteresse>
@@ -135,11 +141,7 @@ async descobrirMaxNSU(cnpj: string, cUF: string): Promise<string> {
           res.on("end", () => {
             const raw = Buffer.concat(chunks).toString("utf-8");
             if (res.statusCode !== 200) {
-              reject(
-                new Error(
-                  `[Sefaz] HTTP ${res.statusCode}: ${raw.slice(0, 300)}`,
-                ),
-              );
+              reject(new Error(`[Sefaz] HTTP ${res.statusCode}: ${raw.slice(0, 300)}`));
             } else {
               resolve(raw);
             }
@@ -196,15 +198,44 @@ async descobrirMaxNSU(cnpj: string, cUF: string): Promise<string> {
     };
   }
 
-  async consultarDistribuicao(
-    params: SefazConsultaParams,
-  ): Promise<SefazDistribuicaoResponse> {
-    const envelope = this.buildEnvelope(params);
+  async consultarDistribuicao(params: SefazConsultaParams): Promise<SefazDistribuicaoResponse> {
+    const envelope = this.buildEnvelopeDistNSU(params);
     const xml = await this.postSoap(envelope);
     return this.parseResponse(xml);
   }
 
-  // XMLs da SEFAZ vêm como base64(gzip(xml))
+  // Busca XML completo de uma NF-e pela chave de acesso
+  // cUF extraído dos 2 primeiros dígitos da chave (posição 0-1)
+  async consultarPorChave(chNFe: string, cnpj: string): Promise<string> {
+    const cUF = chNFe.substring(0, 2);
+    const envelope = this.buildEnvelopeConsChNFe({ cnpj, cUF, chNFe });
+    const xml = await this.postSoap(envelope);
+    const response = this.parseResponse(xml);
+
+    const procNFe = response.documentos.find((d) => d.schema.startsWith("procNFe"));
+    if (!procNFe) {
+      throw new Error(`[Sefaz] procNFe não encontrado para chave=${chNFe} — nota pode não estar autorizada`);
+    }
+
+    return this.decodeDocumento(procNFe.xmlBase64);
+  }
+
+  async descobrirMaxNSU(cnpj: string, cUF: string): Promise<string> {
+    const envelope = this.buildEnvelopeConsNSU({ cnpj, cUF, NSU: "000000000000001" });
+    const xml = await this.postSoap(envelope);
+    const parsed = xmlParser.parse(xml);
+
+    const retDistDFeInt =
+      parsed?.["soap:Envelope"]?.["soap:Body"]
+        ?.["nfeDistDFeInteresseResponse"]
+        ?.["nfeDistDFeInteresseResult"]
+        ?.["retDistDFeInt"];
+
+    if (!retDistDFeInt) throw new Error("[Sefaz] Estrutura inesperada em consNSU");
+
+    return String(retDistDFeInt.maxNSU).padStart(15, "0");
+  }
+
   decodeDocumento(base64Gzip: string): string {
     const buffer = Buffer.from(base64Gzip, "base64");
     return zlib.gunzipSync(buffer).toString("utf-8");
