@@ -651,7 +651,7 @@ END,
           FROM sales_order_snapshots
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
-            AND snapshot_status <> 'cancelled'
+            AND snapshot_status IN ('open', 'completed')
         )
         INSERT INTO daily_sales_facts (
           fact_date, unit_business_id,
@@ -721,7 +721,8 @@ END,
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
             AND destination_uf   = :destinationUf
-            AND snapshot_status <> 'cancelled'
+            AND snapshot_status IN ('open', 'completed')
+
         )
         INSERT INTO daily_sales_state_facts (
           fact_date, unit_business_id, destination_uf,
@@ -781,7 +782,7 @@ END,
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
             AND store_id         = :storeId
-            AND snapshot_status <> 'cancelled'
+            AND snapshot_status IN ('open', 'completed')
         )
         INSERT INTO daily_sales_store_facts (
           fact_date, unit_business_id, store_id,
@@ -853,11 +854,13 @@ END,
             COALESCE(SUM(quantity),           0) AS quantity,
             COALESCE(SUM(total_cost_snapshot),0) AS total_cost,
             COALESCE(SUM(net_total),          0) AS total_value
-          FROM sales_order_item_snapshots
-          WHERE order_date       = CAST(:factDate AS date)
-            AND unit_business_id = :unitBusinessId
-            AND sku              = :sku
-        )
+          FROM sales_order_item_snapshots sois
+          JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
+  WHERE sois.order_date       = CAST(:factDate AS date)
+    AND sois.unit_business_id = :unitBusinessId
+    AND sois.sku              = :sku
+    AND sos.snapshot_status IN ('open', 'completed')  
+)
         INSERT INTO daily_sales_product_facts (
           fact_date, unit_business_id, product_id, sku, description,
           quantity, total_cost, total_value, markup_pct,
