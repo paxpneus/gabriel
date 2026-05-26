@@ -30,7 +30,8 @@ export class ExpeditionBatchController extends BaseController<
         finishBatch: [authenticate, userPermissions],
         getMultiplierScan: [authenticate, userPermissions],
         generateDeliveryNote: [authenticate, userPermissions],
-        downloadDeliveryNotes: [authenticate, userPermissions]
+        downloadDeliveryNotes: [authenticate, userPermissions],
+        isComplete: [authenticate, userPermissions]
       };
     }
 
@@ -56,6 +57,8 @@ export class ExpeditionBatchController extends BaseController<
     this.router.put("/finish/:batchId", ...this.mw("finishBatch"), (req, res) => this.finishBatch(req, res))
 
     this.router.get("/multiplier-scan-entrance/get", ...this.mw("getMultiplierScan"), (req, res) => this.getMultiplierScan(req, res))
+
+    this.router.get("/is-complete/get", ...this.mw("isComplete"), (req, res) => this.isComplete(req, res))
   }
 
   /**
@@ -170,11 +173,22 @@ export class ExpeditionBatchController extends BaseController<
     try {
       const { batchId, number } = req.query
 
-      console.log(batchId, number)
-
       const fullBatch = await this.service.findByIdFullBatch(batchId as string ?? '', number as string ?? '')
 
       return res.json(fullBatch);
+
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+    isComplete = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { batchIds } = req.query
+
+      const response = await this.service.isComplete(batchIds as string)
+
+      return res.json(response);
 
     } catch (error: any) {
       return res.status(400).json({ error: error.message });

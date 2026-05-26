@@ -43,6 +43,49 @@ export class SefazApiService {
     });
   }
 
+  private buildEnvelopeConsNSU(params: { cnpj: string; cUF: string; NSU: string }): string {
+  const tpAmb = this.environment === "producao" ? "1" : "2";
+
+  return `<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe">
+      <nfeDadosMsg>
+        <distDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01">
+          <tpAmb>${tpAmb}</tpAmb>
+          <cUFAutor>${params.cUF}</cUFAutor>
+          <CNPJ>${params.cnpj}</CNPJ>
+          <consNSU>
+            <NSU>${params.NSU.padStart(15, "0")}</NSU>
+          </consNSU>
+        </distDFeInt>
+      </nfeDadosMsg>
+    </nfeDistDFeInteresse>
+  </soap12:Body>
+</soap12:Envelope>`;
+}
+
+// Retorna o maxNSU atual sem avançar o cursor de distribuição
+async descobrirMaxNSU(cnpj: string, cUF: string): Promise<string> {
+  // NSU "1" sempre existe — a resposta sempre traz maxNSU independente do doc
+  const envelope = this.buildEnvelopeConsNSU({ cnpj, cUF, NSU: "000000000000001" });
+  const xml = await this.postSoap(envelope);
+  const parsed = xmlParser.parse(xml);
+
+  const retDistDFeInt =
+    parsed?.["soap:Envelope"]?.["soap:Body"]
+      ?.["nfeDistDFeInteresseResponse"]
+      ?.["nfeDistDFeInteresseResult"]
+      ?.["retDistDFeInt"];
+
+  if (!retDistDFeInt) throw new Error("[Sefaz] Estrutura inesperada em consNSU");
+
+  return String(retDistDFeInt.maxNSU).padStart(15, "0");
+}
+
   private buildEnvelope(params: SefazConsultaParams): string {
     const tpAmb = this.environment === "producao" ? "1" : "2";
     const ultNSU = params.ultNSU.padStart(15, "0");

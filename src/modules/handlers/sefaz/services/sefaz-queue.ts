@@ -68,59 +68,69 @@ async process(job: Job<SefazDistribuicaoJobData>): Promise<void> {
 }
 
   private async processarFilial(filial: UnitBusiness): Promise<void> {
-    const cnpj = filial.cnpj.replace(/\D/g, "");
-    let ultNSU = filial.ult_nsu ?? "000000000000000";
-    const cUF = process.env.SEFAZ_CUF ?? "42";
-    const label = filial.name ?? cnpj;
+  const cnpj = filial.cnpj.replace(/\D/g, "");
+  const cUF = process.env.SEFAZ_CUF ?? "42";
+  const label = filial.name ?? cnpj;
 
-    console.log(`[SEFAZ] Filial=${label} | CNPJ=${cnpj} | ultNSU=${ultNSU}`);
+  if (!filial.ult_nsu || filial.ult_nsu === "000000000000000") {
+    console.warn(`[SEFAZ] Filial=${label} | ult_nsu zerado — inicializando via consNSU`);
+    const maxNSU = await sefazApiService.descobrirMaxNSU(cnpj, cUF);
+    await filial.update({ ult_nsu: maxNSU });
+    filial.ult_nsu = maxNSU;
+    console.log(`[SEFAZ] Filial=${label} | ult_nsu inicializado em ${maxNSU}`);
+  }
 
-    let hasMore = true;
-    let totalDocumentos = 0;
+  let ultNSU = filial.ult_nsu;
+  let hasMore = true;
+  let totalDocumentos = 0;
 
-    while (hasMore) {
-      const response = await sefazApiService.consultarDistribuicao({
-        cnpj,
-        ultNSU,
-        cUF,
-      });
+  while (hasMore) {
+    let response;
 
-      console.log(
-        `[SEFAZ] Filial=${label} | cStat=${response.cStat} | docs=${response.documentos.length} | ultNSU=${response.ultNSU} | maxNSU=${response.maxNSU}`,
-      );
-
-      for (const doc of response.documentos) {
-        if (!doc.schema.startsWith("procNFe")) {
-          console.log(`[SEFAZ] NSU=${doc.NSU} schema=${doc.schema} ignorado`);
-          continue;
-        }
-
-        try {
-          const xml = sefazApiService.decodeDocumento(doc.xmlBase64);
-          if (!this.temProdutoRelevante(xml)) {
-            console.log(
-              `[SEFAZ] NSU=${doc.NSU} ignorado — sem produtos relevantes`,
-            );
-            continue;
-          }
-
-          await this.apiFetchQueue.upsertInvoiceFromXml(xml);
-          console.log(`[SEFAZ] NSU=${doc.NSU} processado`);
-          totalDocumentos++;
-        } catch (err) {
-          console.warn(`[SEFAZ] NSU=${doc.NSU} falhou:`, err);
-        }
+    try {
+      response = await sefazApiService.consultarDistribuicao({ cnpj, ultNSU, cUF });
+    } catch (err: any) {
+      if (err.message?.includes("cStat=656")) {
+        console.warn(`[SEFAZ] Filial=${label} | cStat=656 — recuperando cursor via consNSU`);
+        const maxNSU = await sefazApiService.descobrirMaxNSU(cnpj, cUF);
+        await filial.update({ ult_nsu: maxNSU });
+        console.warn(`[SEFAZ] Filial=${label} | cursor corrigido para ${maxNSU} — tente novamente em 1h`);
+        return; 
       }
-
-      await filial.update({ ult_nsu: response.ultNSU });
-      ultNSU = response.ultNSU;
-      hasMore = response.ultNSU !== response.maxNSU;
+      throw err; 
     }
 
     console.log(
-      `[SEFAZ] Filial=${label} | ${totalDocumentos} doc(s) processado(s) | novo ultNSU=${ultNSU}`,
+      `[SEFAZ] Filial=${label} | cStat=${response.cStat} | docs=${response.documentos.length} | ultNSU=${response.ultNSU} | maxNSU=${response.maxNSU}`,
     );
+
+    for (const doc of response.documentos) {
+      if (!doc.schema.startsWith("procNFe")) {
+        console.log(`[SEFAZ] NSU=${doc.NSU} schema=${doc.schema} ignorado`);
+        continue;
+      }
+      try {
+        const xml = sefazApiService.decodeDocumento(doc.xmlBase64);
+        if (!this.temProdutoRelevante(xml)) {
+          console.log(`[SEFAZ] NSU=${doc.NSU} ignorado — sem produtos relevantes`);
+          continue;
+        }
+        await this.apiFetchQueue.upsertInvoiceFromXml(xml);
+        console.log(`[SEFAZ] NSU=${doc.NSU} processado`);
+        totalDocumentos++;
+      } catch (err) {
+        console.warn(`[SEFAZ] NSU=${doc.NSU} falhou:`, err);
+      }
+    }
+
+    // sempre grava após cada página — nunca perde posição
+    await filial.update({ ult_nsu: response.ultNSU });
+    ultNSU = response.ultNSU;
+    hasMore = response.ultNSU !== response.maxNSU;
   }
+
+  console.log(`[SEFAZ] Filial=${label} | ${totalDocumentos} doc(s) processado(s) | ultNSU=${ultNSU}`);
+}
 
   protected override onFailed(
     job: Job<SefazDistribuicaoJobData>,

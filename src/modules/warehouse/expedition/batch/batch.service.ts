@@ -66,6 +66,21 @@ export class ExpeditionBatchService extends BaseService<
     };
   }
 
+  async isComplete(id: string): Promise<boolean> {
+  const batch: ExpeditionBatch | null = await this.findById(id)
+
+  if (!batch) {
+    throw new Error("Lote não encontrado!")
+  }
+
+  if (batch.total_volumes_received >= batch.total_volumes) {
+    return true
+  }
+
+  return false
+}
+
+
   async generateBatchFromInvoices(
     invoiceIds: string[],
     unitBusinessId: string,
