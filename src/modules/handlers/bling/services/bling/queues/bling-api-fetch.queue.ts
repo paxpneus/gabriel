@@ -1,3 +1,4 @@
+import { InvoiceStatus } from './../../../../../warehouse/entrance/invoice/invoice.types';
 import { Job } from "bullmq";
 import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
@@ -1250,7 +1251,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
    * Importa uma NF-e a partir de um XML bruto (sem passar pela API Bling).
    * Usado pelo endpoint de importação manual de XML.
    */
-  async upsertInvoiceFromXml(xmlContent: string): Promise<void> {
+  async upsertInvoiceFromXml(xmlContent: string, status?: InvoiceStatus): Promise<void> {
     const parsed = parser.parse(xmlContent);
 
     const nfe =
@@ -1380,8 +1381,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       attributes: ["status"],
     });
 
-    const incomingStatus = existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
-    const outgoingStatus = existingInvoice?.status ?? "PENDING";
+    const incomingStatus = status ?? existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
+    const outgoingStatus = status ?? existingInvoice?.status ?? "PENDING";
 
     const store = await Store.findOne({ where: { name: "Outros" } });
 
