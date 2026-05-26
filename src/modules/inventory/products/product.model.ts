@@ -28,6 +28,8 @@ class Product extends Model<ProductAttributes, ProductCreationAttributes> implem
   public stock_virtual_total?: number;
   public average_cost?: number;
   public average_cost_updated_at?: Date;
+  public line?: string;
+  public measure?: string;
   
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -100,6 +102,14 @@ Product.init(
       type: DataTypes.STRING(100),
       allowNull: true,
     },
+    line: {                          
+  type: DataTypes.STRING(100),
+  allowNull: true,
+},
+measure: {                       
+  type: DataTypes.STRING(50),
+  allowNull: true,
+},
     gross_weight: {
       type: DataTypes.DECIMAL(14, 4),
       allowNull: true,

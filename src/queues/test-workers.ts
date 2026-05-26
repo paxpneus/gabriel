@@ -1,3 +1,4 @@
+import { SefazDistribuicaoQueue } from './../modules/handlers/sefaz/services/sefaz-queue';
 import { BlingDirectUpsertQueue } from "../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue";
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { BlingTokenRefreshQueue } from "../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
@@ -5,7 +6,7 @@ import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/qu
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
 import { SalesReportQueue } from "../modules/reports/daily-sales/sales-report/sales-report.queue";
 
-export function startBlingWorkers() {
+export async function startBlingWorkers() {
   console.log("🚀 Iniciando Bling workers isolados...");
 
   const blingDirectUpsertQueue = new BlingDirectUpsertQueue({ workless: false });
@@ -14,10 +15,12 @@ export function startBlingWorkers() {
   const blingDailyReconciler = new BlingMigrationQueue({ workless: false})
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless: false });
   const dailySalesReportQueue = new SalesReportQueue({workless: false}) 
+  const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  sefazQueue.scheduleRepeat({ every: 2 * 60 * 1000 });
 
   setTimeout(() => {
   dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
@@ -30,6 +33,7 @@ export function startBlingWorkers() {
   console.log("  → BlingApiFetchQueue");
   console.log("  → BlingTokenRefreshQueue (refresh a cada 1h)");
   console.log("  → DailyOperationReportQueue (relatório operacional a cada 1h)");
+  console.log("  → SefazQueue a (cada 1h)");
 
   return {
     blingDirectUpsertQueue,

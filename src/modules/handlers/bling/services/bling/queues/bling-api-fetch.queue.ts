@@ -40,6 +40,54 @@ function parseBlingDate(date: string) {
   return new Date(date.replace(" ", "T") + "-03:00");
 }
 
+// ─── Extrai measure e line do nome do produto ─────────────────────────────────
+// measure: token com padrão numérico + barra + letra  ex: "165/70R14", "192/20R"
+// line:    tokens após a measure até o final, excluindo a própria marca
+export function extractProductMeasureAndLine(
+  nome: string,
+  marca?: string,
+): { measure: string | null; line: string | null } {
+  if (!nome) return { measure: null, line: null };
+
+  const tokens = nome.trim().split(/\s+/);
+
+  // Measure: primeiro token que começa com dígito e contém barra seguida de letra
+  // Exemplos válidos: 165/70R14, 192/20R, 205/55R16, 7.50R16
+  const measureIndex = tokens.findIndex((t) =>
+    /^\d[\d.,]*\/\d+[A-Za-z]/i.test(t),
+  );
+
+  if (measureIndex === -1) return { measure: null, line: null };
+
+  const measure = tokens[measureIndex];
+
+  // Line: tokens após a measure
+  const afterMeasure = tokens.slice(measureIndex + 1);
+
+  if (!afterMeasure.length) return { measure, line: null };
+
+  // Remove a marca do final se bater (case-insensitive)
+  // ex: "Bravuris 5HM Barum" com marca "Barum" → "Bravuris 5HM"
+  let lineTokens = [...afterMeasure];
+
+  if (marca) {
+    const brandTokens = marca.trim().split(/\s+/);
+    const brandLen = brandTokens.length;
+
+    const tailMatches = lineTokens
+      .slice(-brandLen)
+      .every((t, i) => t.toLowerCase() === brandTokens[i].toLowerCase());
+
+    if (tailMatches) {
+      lineTokens = lineTokens.slice(0, -brandLen);
+    }
+  }
+
+  const line = lineTokens.length ? lineTokens.join(" ") : null;
+
+  return { measure, line };
+}
+
 // ─── Extrai partes da NF-e do XML ─────────────────────────────────────────────
 // CORREÇÃO 1: adicionados destinationUf e destinationCity a partir de dest.enderDest
 export function extractPartiesFromXml(xml: string) {
@@ -410,9 +458,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
       const sku = prod.cProd ? String(prod.cProd).trim() : null;
       const gtin =
-        prod.cEAN && prod.cEAN !== "SEM GTIN"
-          ? String(prod.cEAN).trim()
-          : null;
+        prod.cEAN && prod.cEAN !== "SEM GTIN" ? String(prod.cEAN).trim() : null;
       const qty = Number(prod.qCom ?? 0);
       const unitPrice = Number(prod.vUnCom ?? 0);
       const totalValue = Number(prod.vProd ?? 0);
@@ -450,9 +496,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
       // DIFAL
       const difalValue = Number(
-        imposto?.ICMSUFDest?.vICMSUFDest ??
-        imposto?.ICMSUFDest?.vICMSDest ??
-        0,
+        imposto?.ICMSUFDest?.vICMSUFDest ?? imposto?.ICMSUFDest?.vICMSDest ?? 0,
       );
 
       // IPI
@@ -479,11 +523,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
       // IBS/CBS (reforma tributária — disponíveis em notas mais novas)
       const ibsCbsGroup: any = imposto?.IBSCBS?.gIBSCBS ?? {};
-      const ibsValue = Number(
-        ibsCbsGroup?.gIBSUF?.vIBSUF ?? 0,
-      ) + Number(
-        ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0,
-      );
+      const ibsValue =
+        Number(ibsCbsGroup?.gIBSUF?.vIBSUF ?? 0) +
+        Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0);
       const cbsValue = Number(ibsCbsGroup?.gCBS?.vCBS ?? 0);
 
       const approxTaxValue = Number(imposto?.vTotTrib ?? 0);
@@ -564,89 +606,114 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
   // ─── Handlers por recurso ─────────────────────────────────────────────────
 
-  private async fetchAndUpsertProduct(apiFetch: ApiFetchRequest): Promise<void> {
-  const { data } = await this.api.get<{ data: BlingApiProduct }>(
-    `/produtos/${apiFetch.blingId}`,
-  );
-
-  const blingProduct = data.data;
-  const integration = await getBlingIntegration("Bling");
-
-  const newSupplierCost = Number(blingProduct.fornecedor?.precoCusto ?? blingProduct.precoCusto ?? 0);
-
-  // Busca produto e estoque atuais antes do upsert para calcular CMP
-  const existingProduct = await Product.findOne({
-    where: { id_system: String(blingProduct.id) },
-  });
-
-  try {
-    await Product.upsert(
-      {
-        name: blingProduct.nome,
-        id_system: String(blingProduct.id),
-        sku: blingProduct.codigo,
-        ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
-        ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
-        price: blingProduct.precoCusto,
-        type: blingProduct.formato === "E" ? "KIT" : "UNIT",
-        integrations_id: integration.id,
-        source_payload: blingProduct as unknown as Record<string, unknown>,
-        unit: blingProduct.unidade,
-        brand: blingProduct.marca,
-        gross_weight: Number(blingProduct.pesoBruto ?? 0),
-        net_weight: Number(blingProduct.pesoLiquido ?? 0),
-        gtin: blingProduct.gtin,
-        gtin_package: blingProduct.gtinEmbalagem,
-        ncm: blingProduct.tributacao?.ncm,
-        cest: blingProduct.tributacao?.cest,
-        supplier_cost_price: newSupplierCost,
-        supplier_purchase_price: Number(
-          blingProduct.fornecedor?.precoCompra ?? blingProduct.precoCompra ?? 0,
-        ),
-        stock_virtual_total: Number(blingProduct.estoque?.saldoVirtualTotal ?? 0),
-        
-      },
-      { conflictFields: ["id_system"] },
+  private async fetchAndUpsertProduct(
+    apiFetch: ApiFetchRequest,
+  ): Promise<void> {
+    const { data } = await this.api.get<{ data: BlingApiProduct }>(
+      `/produtos/${apiFetch.blingId}`,
     );
-  } catch (error: any) {
-    console.error("[BLING_API_FETCH] Erro no upsert do produto", {
-      blingId: apiFetch.blingId,
-      sku: blingProduct?.codigo,
-      ean: blingProduct?.gtin,
-      message: error.message,
-      detail: error?.parent?.detail,
-      fields: error?.fields,
-      sql: error?.sql,
+
+    const blingProduct = data.data;
+    const integration = await getBlingIntegration("Bling");
+
+    const newSupplierCost = Number(
+      blingProduct.fornecedor?.precoCusto ?? blingProduct.precoCusto ?? 0,
+    );
+
+    // Busca produto e estoque atuais antes do upsert para calcular CMP
+    const existingProduct = await Product.findOne({
+      where: { id_system: String(blingProduct.id) },
     });
-    throw error;
-  }
 
-  // Se produto já existia sem average_cost e agora temos custo do fornecedor,
-  // atualiza o total_price do estoque com o custo inicial
-  if (existingProduct && !existingProduct.average_cost && newSupplierCost > 0) {
-    const stock = await Stock.findOne({ where: { product_id: existingProduct.id } });
-    if (stock && Number(stock.quantity) > 0) {
-      const qty = Number(stock.quantity);
-      await stock.update({
-        total_price: qty * newSupplierCost,
+    const { measure, line } = extractProductMeasureAndLine(
+      blingProduct.nome,
+      blingProduct.marca,
+    );
+
+    try {
+      await Product.upsert(
+        {
+          name: blingProduct.nome,
+          id_system: String(blingProduct.id),
+          sku: blingProduct.codigo,
+          ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
+          ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
+          price: blingProduct.precoCusto,
+          type: blingProduct.formato === "E" ? "KIT" : "UNIT",
+          integrations_id: integration.id,
+          source_payload: blingProduct as unknown as Record<string, unknown>,
+          unit: blingProduct.unidade,
+          brand: blingProduct.marca,
+          line,
+          measure,
+          gross_weight: Number(blingProduct.pesoBruto ?? 0),
+          net_weight: Number(blingProduct.pesoLiquido ?? 0),
+          gtin: blingProduct.gtin,
+          gtin_package: blingProduct.gtinEmbalagem,
+          ncm: blingProduct.tributacao?.ncm,
+          cest: blingProduct.tributacao?.cest,
+          supplier_cost_price: newSupplierCost,
+          supplier_purchase_price: Number(
+            blingProduct.fornecedor?.precoCompra ??
+              blingProduct.precoCompra ??
+              0,
+          ),
+          stock_virtual_total: Number(
+            blingProduct.estoque?.saldoVirtualTotal ?? 0,
+          ),
+        },
+        { conflictFields: ["id_system"] },
+      );
+    } catch (error: any) {
+      console.error("[BLING_API_FETCH] Erro no upsert do produto", {
+        blingId: apiFetch.blingId,
+        sku: blingProduct?.codigo,
+        ean: blingProduct?.gtin,
+        message: error.message,
+        detail: error?.parent?.detail,
+        fields: error?.fields,
+        sql: error?.sql,
       });
-      // Agora que temos o custo, atualiza o average_cost no produto
-      await Product.update(
-        { average_cost: newSupplierCost, average_cost_updated_at: new Date() },
-        { where: { id: existingProduct.id } },
-      );
-      console.log(
-        `[BLING_API_FETCH] average_cost inicializado: sku=${blingProduct.codigo} | custo=${newSupplierCost} | qty=${qty} | total_price=${qty * newSupplierCost}`,
-      );
+      throw error;
     }
+
+    // Se produto já existia sem average_cost e agora temos custo do fornecedor,
+    // atualiza o total_price do estoque com o custo inicial
+    if (
+      existingProduct &&
+      !existingProduct.average_cost &&
+      newSupplierCost > 0
+    ) {
+      const stock = await Stock.findOne({
+        where: { product_id: existingProduct.id },
+      });
+      if (stock && Number(stock.quantity) > 0) {
+        const qty = Number(stock.quantity);
+        await stock.update({
+          total_price: qty * newSupplierCost,
+        });
+        // Agora que temos o custo, atualiza o average_cost no produto
+        await Product.update(
+          {
+            average_cost: newSupplierCost,
+            average_cost_updated_at: new Date(),
+          },
+          { where: { id: existingProduct.id } },
+        );
+        console.log(
+          `[BLING_API_FETCH] average_cost inicializado: sku=${blingProduct.codigo} | custo=${newSupplierCost} | qty=${qty} | total_price=${qty * newSupplierCost}`,
+        );
+      }
+    }
+
+    console.log(
+      `[BLING_API_FETCH] Produto ${blingProduct.codigo} complementado com EAN=${blingProduct.gtin ?? "N/A"}`,
+    );
   }
 
-  console.log(
-    `[BLING_API_FETCH] Produto ${blingProduct.codigo} complementado com EAN=${blingProduct.gtin ?? "N/A"}`,
-  );
-}
-
-  private async fetchAndUpsertProductSupplier(apiFetch: ApiFetchRequest): Promise<void> {
+  private async fetchAndUpsertProductSupplier(
+    apiFetch: ApiFetchRequest,
+  ): Promise<void> {
     const { data } = await this.api.get<{ data: BlingApiProductSupplier }>(
       `/produtos/fornecedores/${apiFetch.blingId}`,
     );
@@ -674,7 +741,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const supplierId = ps.fornecedor?.id ? String(ps.fornecedor.id) : null;
 
     if (!cnpj && supplierId) {
-      const supplierDb = await Supplier.findOne({ where: { id_system: supplierId } });
+      const supplierDb = await Supplier.findOne({
+        where: { id_system: supplierId },
+      });
       if (supplierDb?.document && !supplierDb.document.startsWith("PENDING-")) {
         cnpj = supplierDb.document;
       }
@@ -701,7 +770,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         }
       } catch (error: any) {
         if (error?.response?.status === 404) {
-          console.warn(`[BLING_API_FETCH] Contato ${supplierId} não existe na Bling.`);
+          console.warn(
+            `[BLING_API_FETCH] Contato ${supplierId} não existe na Bling.`,
+          );
           return;
         }
         throw error;
@@ -717,7 +788,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const cleanCnpj = cleanDocument(cnpj);
 
-    const existing = await SupplierMapping.findOne({ where: { product_id: product.id } });
+    const existing = await SupplierMapping.findOne({
+      where: { product_id: product.id },
+    });
 
     if (existing) {
       await existing.update({
@@ -742,7 +815,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     type: "NF-e" | "NFC-e",
   ): Promise<void> {
     const endpoint =
-      type === "NF-e" ? `/nfe/${apiFetch.blingId}` : `/nfce/${apiFetch.blingId}`;
+      type === "NF-e"
+        ? `/nfe/${apiFetch.blingId}`
+        : `/nfce/${apiFetch.blingId}`;
 
     const { data } = await this.api.get<{ data: BlingApiInvoice }>(endpoint);
     const nf = data.data;
@@ -792,7 +867,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     let senderCnpj = String(nf.emitente?.cnpj ?? "");
     let senderName = nf.emitente?.nome ?? "";
-    let receiverCnpj = String(nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "");
+    let receiverCnpj = String(
+      nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "",
+    );
     let receiverName = nf.destinatario?.nome ?? "";
     let xmlContent: string | null = null;
     let transporter_name: string | null = null;
@@ -806,7 +883,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     let destinationCityFromXml: string | null = null;
 
     // CORREÇÃO 2: variáveis para totais fiscais vindos do XML
-    let fiscalTotals: ReturnType<typeof extractInvoiceFiscalTotalsFromXml> | null = null;
+    let fiscalTotals: ReturnType<
+      typeof extractInvoiceFiscalTotalsFromXml
+    > | null = null;
 
     if (nf.xml) {
       try {
@@ -838,13 +917,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // CORREÇÃO 1: fallback para o campo do contato da API Bling quando XML não tiver UF
     const destinationUf =
-      destinationUfFromXml ||
-      nf.contato?.endereco?.uf ||
-      null;
+      destinationUfFromXml || nf.contato?.endereco?.uf || null;
     const destinationCity =
-      destinationCityFromXml ||
-      nf.contato?.endereco?.municipio ||
-      null;
+      destinationCityFromXml || nf.contato?.endereco?.municipio || null;
 
     const customerDoc = nf.contato
       ? (nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "")
@@ -871,7 +946,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const integration = await getBlingIntegration("Bling");
 
     if (!transporter_document) {
-      const blingDoc = String(nf.transporte?.transportador?.numeroDocumento ?? "").trim();
+      const blingDoc = String(
+        nf.transporte?.transportador?.numeroDocumento ?? "",
+      ).trim();
       const blingName = String(nf.transporte?.transportador?.nome ?? "").trim();
 
       if (blingDoc) {
@@ -899,13 +976,18 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // CORREÇÃO 2: monta campos fiscais para o upsert da invoice
     // Prioridade: XML (mais confiável) > API Bling > 0
-    const invoiceValue = fiscalTotals?.invoiceValue ?? Number(nf.valorNota ?? 0);
-    const invoiceFreightValue = fiscalTotals?.invoiceFreightValue ?? Number(nf.valorFrete ?? 0);
-    const invoiceProductsValue = fiscalTotals?.invoiceProductsValue ?? Number(nf.totalProdutos ?? 0);
+    const invoiceValue =
+      fiscalTotals?.invoiceValue ?? Number(nf.valorNota ?? 0);
+    const invoiceFreightValue =
+      fiscalTotals?.invoiceFreightValue ?? Number(nf.valorFrete ?? 0);
+    const invoiceProductsValue =
+      fiscalTotals?.invoiceProductsValue ?? Number(nf.totalProdutos ?? 0);
     const invoiceDiscountValue = fiscalTotals?.invoiceDiscountValue ?? 0;
     const invoiceTotalTaxValue = fiscalTotals?.invoiceTotalTaxValue ?? 0;
-    const icmsValue = fiscalTotals?.icmsValue ?? Number(nf.tributacao?.totalICMS ?? 0);
-    const ipiValue = fiscalTotals?.ipiValue ?? Number(nf.tributacao?.totalIPI ?? 0);
+    const icmsValue =
+      fiscalTotals?.icmsValue ?? Number(nf.tributacao?.totalICMS ?? 0);
+    const ipiValue =
+      fiscalTotals?.ipiValue ?? Number(nf.tributacao?.totalIPI ?? 0);
     const pisValue = fiscalTotals?.pisValue ?? 0;
     const cofinsValue = fiscalTotals?.cofinsValue ?? 0;
     const difalValue = fiscalTotals?.difalValue ?? 0;
@@ -956,31 +1038,48 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       },
       { conflictFields: ["id_system"] },
     ).catch((error) => {
-       console.error("[INVOICE UPSERT ERROR DETAIL]", JSON.stringify({
-    message: error.message,
-    original: error.original?.message,
-    detail: error.original?.detail,
-    hint: error.original?.hint,
-    where: error.original?.where,
-    table: error.original?.table,
-    column: error.original?.column,
-    constraint: error.original?.constraint,
-    sql: error.sql?.substring(0, 500),
-    blingId: nf.id,
-    numero: nf.numero,
-  }, null, 2));
-  throw error;
+      console.error(
+        "[INVOICE UPSERT ERROR DETAIL]",
+        JSON.stringify(
+          {
+            message: error.message,
+            original: error.original?.message,
+            detail: error.original?.detail,
+            hint: error.original?.hint,
+            where: error.original?.where,
+            table: error.original?.table,
+            column: error.original?.column,
+            constraint: error.original?.constraint,
+            sql: error.sql?.substring(0, 500),
+            blingId: nf.id,
+            numero: nf.numero,
+          },
+          null,
+          2,
+        ),
+      );
+      throw error;
     });
 
-    console.log(`[BLING_API_FETCH] Invoice upsertada: id_system=${nf.id}, key=${key}`);
+    console.log(
+      `[BLING_API_FETCH] Invoice upsertada: id_system=${nf.id}, key=${key}`,
+    );
 
     // CORREÇÃO 3: upsert dos itens fiscais a partir do XML
     if (xmlContent) {
       try {
-        await this.upsertFiscalItems(invoice.id, xmlContent, senderCnpj, "[BLING_API_FETCH]");
+        await this.upsertFiscalItems(
+          invoice.id,
+          xmlContent,
+          senderCnpj,
+          "[BLING_API_FETCH]",
+        );
       } catch (err) {
         // Não bloqueia o fluxo principal se os fiscais falharem
-        console.warn(`[BLING_API_FETCH] Falha ao upsert fiscal items para invoice ${nf.id}:`, err);
+        console.warn(
+          `[BLING_API_FETCH] Falha ao upsert fiscal items para invoice ${nf.id}:`,
+          err,
+        );
       }
     }
 
@@ -1037,7 +1136,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
 
       const current = quantityByProduct.get(String(product.id)) ?? 0;
-      quantityByProduct.set(String(product.id), current + (item.quantidade ?? 0));
+      quantityByProduct.set(
+        String(product.id),
+        current + (item.quantidade ?? 0),
+      );
     }
 
     for (const [productId, quantity] of quantityByProduct) {
@@ -1179,7 +1281,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       const emit = nfe.emit ?? {};
       const cuf = String(ide.cUF ?? "");
       const aamm =
-        String(ide.dhEmi ?? "").slice(2, 4) + String(ide.dhEmi ?? "").slice(5, 7);
+        String(ide.dhEmi ?? "").slice(2, 4) +
+        String(ide.dhEmi ?? "").slice(5, 7);
       const cnpj = String(emit.CNPJ ?? "").replace(/\D/g, "");
       const mod = String(ide.mod ?? "55").padStart(2, "0");
       const serie = String(ide.serie ?? "").padStart(3, "0");
@@ -1215,20 +1318,30 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // ─── Tipo ────────────────────────────────────────────────────────────────
 
-    const senderUnit = await UnitBusiness.findOne({ where: { cnpj: senderCnpj } });
-    const invoiceType: "INCOMING" | "OUTGOING" = senderUnit ? "OUTGOING" : "INCOMING";
+    const senderUnit = await UnitBusiness.findOne({
+      where: { cnpj: senderCnpj },
+    });
+    const invoiceType: "INCOMING" | "OUTGOING" = senderUnit
+      ? "OUTGOING"
+      : "INCOMING";
 
     // ─── UnitBusiness ────────────────────────────────────────────────────────
 
     let unit_business: UnitBusiness | null = null;
 
     if (invoiceType === "INCOMING") {
-      unit_business = await UnitBusiness.findOne({ where: { cnpj: receiverCnpj } });
+      unit_business = await UnitBusiness.findOne({
+        where: { cnpj: receiverCnpj },
+      });
       if (!unit_business) {
-        unit_business = await UnitBusiness.findOne({ where: { cnpj: senderCnpj } });
+        unit_business = await UnitBusiness.findOne({
+          where: { cnpj: senderCnpj },
+        });
       }
     } else {
-      unit_business = await UnitBusiness.findOne({ where: { cnpj: senderCnpj } });
+      unit_business = await UnitBusiness.findOne({
+        where: { cnpj: senderCnpj },
+      });
     }
 
     if (!unit_business) {
@@ -1239,7 +1352,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     if (!unit_business) {
-      throw new Error(`UnitBusiness não encontrada | id=${BLING_UNIT_BUSINESS_ID}`);
+      throw new Error(
+        `UnitBusiness não encontrada | id=${BLING_UNIT_BUSINESS_ID}`,
+      );
     }
 
     const integration = await getBlingIntegration("Bling");
@@ -1312,29 +1427,44 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       },
       { conflictFields: ["id_system"] },
     ).catch((error: any) => {
-  console.error("[IMPORT_XML UPSERT ERROR DETAIL]", JSON.stringify({
-    message: error.message,
-    original: error.original?.message,
-    detail: error.original?.detail,
-    hint: error.original?.hint,
-    where: error.original?.where,
-    table: error.original?.table,
-    column: error.original?.column,
-    constraint: error.original?.constraint,
-    sql: error.sql?.substring(0, 500),
-    idSystem,
-    numero,
-  }, null, 2));
-  throw error;
-});;
+      console.error(
+        "[IMPORT_XML UPSERT ERROR DETAIL]",
+        JSON.stringify(
+          {
+            message: error.message,
+            original: error.original?.message,
+            detail: error.original?.detail,
+            hint: error.original?.hint,
+            where: error.original?.where,
+            table: error.original?.table,
+            column: error.original?.column,
+            constraint: error.original?.constraint,
+            sql: error.sql?.substring(0, 500),
+            idSystem,
+            numero,
+          },
+          null,
+          2,
+        ),
+      );
+      throw error;
+    });
 
     console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
 
     // CORREÇÃO 3: upsert dos itens fiscais
     try {
-      await this.upsertFiscalItems(invoice.id, xmlContent, senderCnpj, "[IMPORT_XML]");
+      await this.upsertFiscalItems(
+        invoice.id,
+        xmlContent,
+        senderCnpj,
+        "[IMPORT_XML]",
+      );
     } catch (err) {
-      console.warn(`[IMPORT_XML] Falha ao upsert fiscal items para invoice ${idSystem}:`, err);
+      console.warn(
+        `[IMPORT_XML] Falha ao upsert fiscal items para invoice ${idSystem}:`,
+        err,
+      );
     }
 
     // ─── Itens operacionais ───────────────────────────────────────────────────
@@ -1346,7 +1476,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     for (const item of det) {
       const prod = item.prod ?? {};
       const sku = prod.cProd ? String(prod.cProd).trim() : undefined;
-      const gtin = prod.cEAN && prod.cEAN !== "SEM GTIN" ? prod.cEAN : undefined;
+      const gtin =
+        prod.cEAN && prod.cEAN !== "SEM GTIN" ? prod.cEAN : undefined;
       const qty = Number(prod.qCom ?? 0);
 
       const product = await this.findProductForInvoiceItem({
@@ -1447,10 +1578,15 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       });
     }
 
-    console.log(`[IMPORT_XML] ${det.length} item(ns) processado(s) para invoice ${idSystem}`);
+    console.log(
+      `[IMPORT_XML] ${det.length} item(ns) processado(s) para invoice ${idSystem}`,
+    );
   }
 
-  protected override onFailed(job: Job<ApiFetchJobPayload>, error: Error): void {
+  protected override onFailed(
+    job: Job<ApiFetchJobPayload>,
+    error: Error,
+  ): void {
     alertService.sendAlert({
       severity: "HIGH",
       title: "BlingApiFetchQueue — job esgotou tentativas",

@@ -17,6 +17,8 @@ export interface ProductAttributes {
   source_payload?: Record<string, unknown>;
   unit?: string;
   brand?: string;
+  line?: string | null;
+  measure?: string | null;
   gross_weight?: number;
   net_weight?: number;
   gtin?: string;
@@ -30,7 +32,10 @@ export interface ProductAttributes {
   updatedAt?: Date;
 }
 
-export interface ProductCreationAttributes extends Omit<ProductAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+export interface ProductCreationAttributes extends Omit<
+  ProductAttributes,
+  "id" | "createdAt" | "updatedAt"
+> {}
 
 export interface ProductWithStock extends Product {
   stocks: Stock[];
