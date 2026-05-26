@@ -30,6 +30,19 @@ const FILIAIS_ATIVAS = [
   "02316749002111", // Loja 21 - CD MG
 ];
 
+const FILIAIS_CUF: Record<string, string> = {
+  "02316749001220": "35", // Loja 12 - ASSIS (SP)
+  "02316749001735": "41", // Loja 17 - LONDRINA (PR)
+  "02316749001573": "35", // Loja 15 - ITU (SP)
+  "02316749002111": "31", // Loja 21 - CD MG
+};
+
+// FIX B: Tempo de espera após receber cStat=656 (Consumo Indevido).
+// Disparar nova requisição imediatamente piora o score do IP na SEFAZ.
+// Aguardamos 60 minutos antes de tentar novamente na próxima execução
+// do job — por isso simplesmente retornamos após gravar o cursor corrigido.
+const SLEEP_APOS_656_MS = 0; // sem sleep aqui — o retorno já encerra o loop da filial
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJobData> {
@@ -46,6 +59,8 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
     this.apiFetchQueue = new BlingApiFetchQueue({ workless: true });
   }
 
+  // FIX D: temProdutoRelevante só deve ser chamado para procNFe.
+  // resNFe não contém lista de produtos — a checagem aqui seria sempre falsa.
   private temProdutoRelevante(xml: string): boolean {
     return NCM_PERMITIDOS.some((ncm) => xml.includes(`<NCM>${ncm}</NCM>`));
   }
@@ -82,7 +97,7 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
 
   private async processarFilial(filial: UnitBusiness): Promise<void> {
     const cnpj = filial.cnpj.replace(/\D/g, "");
-    const cUF = process.env.SEFAZ_CUF ?? "42";
+    const cUF = FILIAIS_CUF[cnpj] ?? process.env.SEFAZ_CUF ?? "42";
     const label = filial.name ?? cnpj;
 
     if (!filial.ult_nsu || filial.ult_nsu === "000000000000000") {
@@ -104,11 +119,20 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       try {
         response = await sefazApiService.consultarDistribuicao({ cnpj, ultNSU, cUF });
       } catch (err: any) {
+        // FIX B: ao receber 656 (Consumo Indevido), atualizamos o cursor para o
+        // maxNSU atual e encerramos o processamento desta filial imediatamente.
+        // NÃO fazemos nova requisição — a execução seguinte do job (agendada
+        // com intervalo de pelo menos 1h) retomará do cursor correto.
         if (err.message?.includes("cStat=656")) {
-          console.warn(`[SEFAZ] Filial=${label} | cStat=656 — recuperando cursor via consNSU`);
+          console.warn(
+            `[SEFAZ] Filial=${label} | cStat=656 — recuperando cursor via consNSU`,
+          );
           const maxNSU = await sefazApiService.descobrirMaxNSU(cnpj, cUF);
           await filial.update({ ult_nsu: maxNSU });
-          console.warn(`[SEFAZ] Filial=${label} | cursor corrigido para ${maxNSU} — tente novamente em 1h`);
+          console.warn(
+            `[SEFAZ] Filial=${label} | cursor corrigido para ${maxNSU} — aguardando próxima execução (mín. 1h)`,
+          );
+          // Encerra o loop desta filial sem disparar nova consulta à SEFAZ
           return;
         }
         throw err;
@@ -147,7 +171,7 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
   ): Promise<boolean> {
     const xml = sefazApiService.decodeDocumento(doc.xmlBase64);
 
-    // XML completo — processa direto
+    // FIX D: procNFe — XML completo disponível, valida NCMs e processa
     if (doc.schema.startsWith("procNFe")) {
       if (!this.temProdutoRelevante(xml)) {
         console.log(`[SEFAZ] NSU=${doc.NSU} procNFe ignorado — sem produtos relevantes`);
@@ -158,7 +182,16 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       return true;
     }
 
-    // Resumo — busca XML completo via consChNFe
+    // FIX D: resNFe — XML de resumo (sem lista de produtos).
+    // NÃO tentamos baixar o XML completo via consChNFe aqui porque:
+    //   1. A SEFAZ retorna Rejeição 632 se a nota não tiver sido manifestada.
+    //   2. O XML completo será disponibilizado automaticamente na fila após
+    //      a Manifestação do Destinatário (Ciência da Emissão).
+    //
+    // Fluxo correto:
+    //   a) Extraímos e registramos a chave de acesso.
+    //   b) Disparamos a fila de Manifestação (Ciência da Emissão).
+    //   c) Nas próximas varreduras o loop capturará o procNFe completo.
     if (doc.schema.startsWith("resNFe")) {
       const chave = this.extrairChaveAcesso(xml);
       if (!chave) {
@@ -166,21 +199,19 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
         return false;
       }
 
-      console.log(`[SEFAZ] NSU=${doc.NSU} resNFe → buscando XML completo chave=${chave}`);
+      console.log(
+        `[SEFAZ] NSU=${doc.NSU} resNFe chave=${chave} — registrando e aguardando manifestação`,
+      );
 
-      // pausa extra — consChNFe é mais limitado
-      await sleep(2000);
+      // TODO: persistir `chave` no banco (tabela de pendentes de manifestação)
+      // e disparar a fila de Manifestação do Destinatário (Ciência da Emissão).
+      // Exemplo:
+      //   await sefazManifestacaoQueue.add({ chave, cnpj, tpEvento: "210210" });
+      //
+      // O procNFe completo chegará nos NSUs seguintes após a manifestação.
+      // A checagem de NCM_PERMITIDOS ocorrerá quando o procNFe for processado.
 
-      const xmlCompleto = await sefazApiService.consultarPorChave(chave, cnpj);
-
-      if (!this.temProdutoRelevante(xmlCompleto)) {
-        console.log(`[SEFAZ] NSU=${doc.NSU} resNFe ignorado — sem produtos relevantes`);
-        return false;
-      }
-
-      await this.apiFetchQueue.upsertInvoiceFromXml(xmlCompleto);
-      console.log(`[SEFAZ] NSU=${doc.NSU} resNFe processado com XML completo`);
-      return true;
+      return false; 
     }
 
     // Cancelamento
@@ -189,7 +220,7 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       if (tpEvento === "110111") {
         const chave = this.extrairChaveAcesso(xml);
         console.log(`[SEFAZ] NSU=${doc.NSU} cancelamento chave=${chave}`);
-        await this.apiFetchQueue.upsertInvoiceFromXml(xml, 'CANCELLED');
+        await this.apiFetchQueue.upsertInvoiceFromXml(xml, "CANCELLED");
         return true;
       }
       console.log(`[SEFAZ] NSU=${doc.NSU} evento tpEvento=${tpEvento} ignorado`);

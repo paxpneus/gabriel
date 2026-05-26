@@ -21,9 +21,24 @@ const ENDPOINTS: Record<SefazEnvironment, string> = {
 const SOAP_ACTION =
   "http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse";
 
-const xmlParser = new XMLParser({ ignoreAttributes: false });
+// FIX A: removeNSPrefix garante que tanto "soap:" quanto "soap12:" sejam lidos
+// sem quebrar o parsing independente do prefixo retornado pela SEFAZ.
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  removeNSPrefix: true,
+});
 
+// FIX C: VALID_CSTATS usado apenas no fluxo de distNSU / consNSU.
+// O consultarPorChave tem seu próprio conjunto de cStats aceitáveis.
 const VALID_CSTATS = ["137", "138"];
+
+// cStats aceitáveis na consulta por chave de acesso (consChNFe):
+//   138 = documento localizado (procNFe disponível)
+//   137 = nenhum documento (nota ainda não disponível — sem rejeição, apenas ausente)
+//   140 = lote de distribuição gerado (também válido em alguns cenários)
+// Rejeição 632 (não autorizado) não está aqui intencionalmente — é tratada
+// como ausência de XML, não como erro fatal do serviço.
+const VALID_CSTATS_CHAVE = ["137", "138", "140"];
 
 export class SefazApiService {
   private agent: https.Agent;
@@ -157,11 +172,12 @@ export class SefazApiService {
     });
   }
 
-  private parseResponse(xml: string): SefazDistribuicaoResponse {
-    const parsed = xmlParser.parse(xml);
-
+  // FIX A: Com removeNSPrefix: true no parser, o acesso ao objeto não precisa
+  // mais de prefixo — "Envelope", "Body" etc. funcionam independente de
+  // "soap:" ou "soap12:" ter sido usado na resposta da SEFAZ.
+  private extractRetDistDFeInt(parsed: any): any {
     const retDistDFeInt =
-      parsed?.["soap:Envelope"]?.["soap:Body"]
+      parsed?.["Envelope"]?.["Body"]
         ?.["nfeDistDFeInteresseResponse"]
         ?.["nfeDistDFeInteresseResult"]
         ?.["retDistDFeInt"];
@@ -169,10 +185,17 @@ export class SefazApiService {
     if (!retDistDFeInt)
       throw new Error("[Sefaz] Estrutura de resposta inesperada");
 
+    return retDistDFeInt;
+  }
+
+  private parseResponse(xml: string, validCStats = VALID_CSTATS): SefazDistribuicaoResponse {
+    const parsed = xmlParser.parse(xml);
+    const retDistDFeInt = this.extractRetDistDFeInt(parsed);
+
     const cStat = String(retDistDFeInt.cStat);
     const xMotivo = String(retDistDFeInt.xMotivo ?? "");
 
-    if (!VALID_CSTATS.includes(cStat)) {
+    if (!validCStats.includes(cStat)) {
       throw new Error(`[Sefaz] cStat=${cStat} xMotivo=${xMotivo}`);
     }
 
@@ -204,17 +227,25 @@ export class SefazApiService {
     return this.parseResponse(xml);
   }
 
-  // Busca XML completo de uma NF-e pela chave de acesso
-  // cUF extraído dos 2 primeiros dígitos da chave (posição 0-1)
-  async consultarPorChave(chNFe: string, cnpj: string): Promise<string> {
+  // FIX C: consultarPorChave usa VALID_CSTATS_CHAVE em vez do conjunto global.
+  // Retorna null quando a SEFAZ confirma que o documento não está disponível
+  // (cStat=137 sem procNFe), evitando lançar erro genérico nesses casos.
+  // O chamador deve tratar null como "nota não disponível ainda — aguardar manifestação".
+  async consultarPorChave(chNFe: string, cnpj: string): Promise<string | null> {
     const cUF = chNFe.substring(0, 2);
     const envelope = this.buildEnvelopeConsChNFe({ cnpj, cUF, chNFe });
     const xml = await this.postSoap(envelope);
-    const response = this.parseResponse(xml);
+
+    // FIX C: usa conjunto de cStats específico para consChNFe
+    const response = this.parseResponse(xml, VALID_CSTATS_CHAVE);
 
     const procNFe = response.documentos.find((d) => d.schema.startsWith("procNFe"));
     if (!procNFe) {
-      throw new Error(`[Sefaz] procNFe não encontrado para chave=${chNFe} — nota pode não estar autorizada`);
+      // cStat=137 ou documento não liberado (aguarda manifestação) — não é um erro
+      console.log(
+        `[Sefaz] consultarPorChave chave=${chNFe} cStat=${response.cStat} — procNFe não disponível (${response.xMotivo})`,
+      );
+      return null;
     }
 
     return this.decodeDocumento(procNFe.xmlBase64);
@@ -225,8 +256,9 @@ export class SefazApiService {
     const xml = await this.postSoap(envelope);
     const parsed = xmlParser.parse(xml);
 
+    // FIX A: removeNSPrefix: true — sem prefixo no acesso
     const retDistDFeInt =
-      parsed?.["soap:Envelope"]?.["soap:Body"]
+      parsed?.["Envelope"]?.["Body"]
         ?.["nfeDistDFeInteresseResponse"]
         ?.["nfeDistDFeInteresseResult"]
         ?.["retDistDFeInt"];
