@@ -1385,6 +1385,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const outgoingStatus = status ?? existingInvoice?.status ?? "PENDING";
 
     const store = await Store.findOne({ where: { name: "Outros" } });
+    const conflictFields = chaveAcesso ? ["xml_key"] : ["id_system"];
+
 
     const [invoice] = await Invoice.upsert(
       {
@@ -1426,7 +1428,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         ibs_value: fiscalTotals.ibsValue,
         cbs_value: fiscalTotals.cbsValue,
       },
-      { conflictFields: ["id_system"] },
+      { conflictFields: conflictFields as any },
     ).catch((error: any) => {
       console.error(
         "[IMPORT_XML UPSERT ERROR DETAIL]",

@@ -101,11 +101,15 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
     const label = filial.name ?? cnpj;
 
     if (!filial.ult_nsu || filial.ult_nsu === "000000000000000") {
-      console.warn(`[SEFAZ] Filial=${label} | ult_nsu zerado — inicializando via consNSU`);
+      console.warn(
+        `[SEFAZ] Filial=${label} | ult_nsu zerado — inicializando via consNSU`,
+      );
       const maxNSU = await sefazApiService.descobrirMaxNSU(cnpj, cUF);
       await filial.update({ ult_nsu: maxNSU });
       filial.ult_nsu = maxNSU;
-      console.log(`[SEFAZ] Filial=${label} | ult_nsu inicializado em ${maxNSU}`);
+      console.log(
+        `[SEFAZ] Filial=${label} | ult_nsu inicializado em ${maxNSU}`,
+      );
       return;
     }
 
@@ -117,7 +121,11 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       let response;
 
       try {
-        response = await sefazApiService.consultarDistribuicao({ cnpj, ultNSU, cUF });
+        response = await sefazApiService.consultarDistribuicao({
+          cnpj,
+          ultNSU,
+          cUF,
+        });
       } catch (err: any) {
         // FIX B: ao receber 656 (Consumo Indevido), atualizamos o cursor para o
         // maxNSU atual e encerramos o processamento desta filial imediatamente.
@@ -161,7 +169,9 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       if (hasMore) await sleep(2000);
     }
 
-    console.log(`[SEFAZ] Filial=${label} | ${totalDocumentos} doc(s) processado(s) | ultNSU=${ultNSU}`);
+    console.log(
+      `[SEFAZ] Filial=${label} | ${totalDocumentos} doc(s) processado(s) | ultNSU=${ultNSU}`,
+    );
   }
 
   private async processarDocumento(
@@ -174,7 +184,9 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
     // FIX D: procNFe — XML completo disponível, valida NCMs e processa
     if (doc.schema.startsWith("procNFe")) {
       if (!this.temProdutoRelevante(xml)) {
-        console.log(`[SEFAZ] NSU=${doc.NSU} procNFe ignorado — sem produtos relevantes`);
+        console.log(
+          `[SEFAZ] NSU=${doc.NSU} procNFe ignorado — sem produtos relevantes`,
+        );
         return false;
       }
       await this.apiFetchQueue.upsertInvoiceFromXml(xml);
@@ -195,7 +207,9 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
     if (doc.schema.startsWith("resNFe")) {
       const chave = this.extrairChaveAcesso(xml);
       if (!chave) {
-        console.warn(`[SEFAZ] NSU=${doc.NSU} resNFe sem chaveAcesso — ignorado`);
+        console.warn(
+          `[SEFAZ] NSU=${doc.NSU} resNFe sem chaveAcesso — ignorado`,
+        );
         return false;
       }
 
@@ -211,19 +225,58 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       // O procNFe completo chegará nos NSUs seguintes após a manifestação.
       // A checagem de NCM_PERMITIDOS ocorrerá quando o procNFe for processado.
 
-      return false; 
+      return false;
     }
 
     // Cancelamento
     if (doc.schema.startsWith("procEventoNFe")) {
       const tpEvento = this.extrairTpEvento(xml);
+
       if (tpEvento === "110111") {
         const chave = this.extrairChaveAcesso(xml);
         console.log(`[SEFAZ] NSU=${doc.NSU} cancelamento chave=${chave}`);
         await this.apiFetchQueue.upsertInvoiceFromXml(xml, "CANCELLED");
         return true;
       }
-      console.log(`[SEFAZ] NSU=${doc.NSU} evento tpEvento=${tpEvento} ignorado`);
+
+      // Ciência da Operação — tenta buscar o procNFe completo por chave
+      if (tpEvento === "210210") {
+        const chave = this.extrairChaveAcesso(xml);
+        if (!chave) {
+          console.warn(
+            `[SEFAZ] NSU=${doc.NSU} 210210 sem chaveAcesso — ignorado`,
+          );
+          return false;
+        }
+
+        const xmlCompleto = await sefazApiService.consultarPorChave(
+          chave,
+          cnpj,
+        );
+        if (!xmlCompleto) {
+          console.log(
+            `[SEFAZ] NSU=${doc.NSU} 210210 chave=${chave} — procNFe ainda não disponível`,
+          );
+          return false;
+        }
+
+        if (!this.temProdutoRelevante(xmlCompleto)) {
+          console.log(
+            `[SEFAZ] NSU=${doc.NSU} 210210 ignorado — sem produtos relevantes`,
+          );
+          return false;
+        }
+
+        await this.apiFetchQueue.upsertInvoiceFromXml(xmlCompleto);
+        console.log(
+          `[SEFAZ] NSU=${doc.NSU} 210210 procNFe obtido e processado chave=${chave}`,
+        );
+        return true;
+      }
+
+      console.log(
+        `[SEFAZ] NSU=${doc.NSU} evento tpEvento=${tpEvento} ignorado`,
+      );
       return false;
     }
 
