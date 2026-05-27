@@ -22,6 +22,11 @@ class Operations
   public to_unit?: string | null;
   public transporter_name?: string | null;
   public total_quantity!: number;
+  public receiver_confirmation?: boolean;
+  public sender_confirmation?: boolean;
+  public invoice_number?: string;
+  public note?: string;
+  public code?: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -34,6 +39,10 @@ Operations.init(
       defaultValue: uuidv4,
       primaryKey: true,
       allowNull: false,
+    },
+    code: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
     },
     description: {
       type: DataTypes.STRING(255),
@@ -64,6 +73,10 @@ Operations.init(
         key: "id",
       },
     },
+    invoice_number: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
     from_unit: {
       type: DataTypes.UUID,
       allowNull: true,
@@ -88,6 +101,18 @@ Operations.init(
       type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 0,
+    },
+    receiver_confirmation: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    sender_confirmation: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    note: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
     },
   },
   {
