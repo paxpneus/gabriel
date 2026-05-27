@@ -16,6 +16,7 @@ import InvoiceItems from "../invoice-items/invoice-items.model";
 import { getBrazilDate } from "../../../../shared/utils/normalizers/date";
 import sequelize from "../../../../config/sequelize";
 import batchInvoicesService from "../../expedition/batch-invoices/batch-invoices.service";
+import { Product } from "../../../inventory";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -43,6 +44,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "printed_label",
         "emitted_at",
         "status",
+        "store_id"
       ],
       sortableFields: [
         "customer_name",
@@ -251,6 +253,54 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       }
     })
   }
+
+  async getInvoiceProductReport(params: QueryParams) {
+  params.filters = { ...params.filters, type: "INCOMING" };
+
+  const rows = await this.findAll(
+    {
+      attributes: ["number_system"],
+      include: [
+        {
+          model: InvoiceItems,
+          as: "items",
+          attributes: ["quantity_expected"],
+          include: [
+            {
+              model: Product,
+              as: "product",
+              attributes: ["measure", "line", "brand"],
+            },
+          ],
+        },
+      ],
+    },
+    params,
+    this.queryConfig,
+  );
+
+  const result: {
+    number_system: string | undefined;
+    measure: string | null;
+    quantity: number;
+    line: string | null;
+    brand: string | null;
+  }[] = [];
+
+  for (const invoice of rows) {
+    for (const item of (invoice as any).items ?? []) {
+      result.push({
+        number_system: invoice.number_system,
+        measure: item.product?.measure ?? null,
+        quantity: item.quantity_expected,
+        line: item.product?.line ?? null,
+        brand: item.product?.brand ?? null,
+      });
+    }
+  }
+
+  return result;
+}
 }
 
 export default new InvoiceService();

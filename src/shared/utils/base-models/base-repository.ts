@@ -10,9 +10,17 @@ class BaseRepository<T extends Model> {
     this.model = model
   }
 
-  findAll(options?: FindOptions): Promise<T[]> {
-    return this.model.findAll(options)
+  findAll(
+  options?: FindOptions,
+  params?: QueryParams,
+  config?: QueryConfig,
+): Promise<T[]> {
+  if (params) {
+    const resolved = QueryParser.parse(params, config ?? {});
+    return this.model.findAll({ ...options, where: resolved.where, order: resolved.order });
   }
+  return this.model.findAll(options);
+}
 
    async findPaginated(
     params: QueryParams,
