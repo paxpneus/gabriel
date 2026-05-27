@@ -704,6 +704,12 @@ export class ExpeditionBatchService extends BaseService<
     await sequelize.transaction(async (t) => {
       const fullBatch = await this.findByIdFullBatch(batchId);
 
+      const isComplete = this.isComplete(batchId)
+
+      if (!isComplete) {
+        throw new Error("Lote ainda possui pendências!")
+      }
+
       const invoicesIds = fullBatch.batchInvoices!.map((s) => s.invoice_id);
 
       const invoiceItemsIds = fullBatch.batchInvoices!.flatMap((s) =>
