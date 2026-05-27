@@ -1,14 +1,15 @@
 import { Request, Response, Router } from "express";
 import { authenticate } from "../../../../middlewares/auth-token";
 import SalesReportService from "./sales-report.service";
+import { userPermissions } from "../../../../middlewares/user-permissions";
 
 class SalesReportController {
   public router: Router;
 
   constructor() {
     this.router = Router();
-    this.router.get("/", authenticate, this.index);
-    this.router.post("/run", authenticate, this.runJob);
+    this.router.get("/", authenticate, userPermissions, this.index);
+    this.router.post("/run", authenticate, userPermissions, this.runJob);
   }
 
   index = async (req: Request, res: Response): Promise<Response> => {

@@ -7,6 +7,8 @@ export { default as Role } from './users/roles/role.model';
 export { default as Transporter } from './transporter/transporter.model';
 export { default as CarrierLabelRange } from './transporter/carrier-label-ranges/carrier-label-ranges.model';
 export { default as CarrierImportLayout } from './transporter/carrier-import-layouts/carrier-import-layouts.model';
+export { default as Operations } from './operations/operation/operations.model';
+export { default as OperationItems } from './operations/operations-itens/operations-itens.model'
 
 // Expedition Models
 export { default as ExpeditionBatch } from './expedition/batch/batch.model';
