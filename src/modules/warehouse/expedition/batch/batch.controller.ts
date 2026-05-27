@@ -55,35 +55,33 @@ export class ExpeditionBatchController extends BaseController<
     this.router.post("/add-invoices", ...this.mw("addInvoicesToBatch"), (req, res) => this.addInvoicesToBatch(req, res))
 
     this.router.put("/finish/:batchId", ...this.mw("finishBatch"), (req, res) => this.finishBatch(req, res))
+    
+    this.router.get("/is-complete/:batchId", ...this.mw("isComplete"), (req, res) => this.isComplete(req, res))
+
 
     this.router.get("/multiplier-scan-entrance/get", ...this.mw("getMultiplierScan"), (req, res) => this.getMultiplierScan(req, res))
 
-    this.router.get("/is-complete/get", ...this.mw("isComplete"), (req, res) => this.isComplete(req, res))
   }
 
   /**
    * POST /expedition-batches/generate-from-invoices
    * Body: { invoiceIds: string[] }
    */
-  generateBatchesFromInvoices = async (
-    req: Request,
-    res: Response,
-  ): Promise<Response> => {
-    try {
-      const { invoiceIds, unitBusinessId, type } = req.body;
-      if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
-        return res
-          .status(400)
-          .json({ error: "Informe ao menos uma nota fiscal" });
-      }
-
-      const batches =
-        await ExpeditionBatchService.generateBatchFromInvoices(invoiceIds, unitBusinessId, type);
-      return res.status(201).json(batches);
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+  generateBatchesFromInvoices = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const { invoiceIds, unitBusinessId, type } = req.body;
+    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+      return res.status(400).json({ error: "Informe ao menos uma nota fiscal" });
     }
-  };
+
+    const batches = await ExpeditionBatchService.generateBatchFromInvoices(invoiceIds, unitBusinessId, type);
+    return res.status(201).json(batches);
+  } catch (error: any) {
+    console.error('ERRO DETALHADO:', JSON.stringify(error, null, 2))  // <- adiciona isso
+    console.error('ERRORS ARRAY:', error?.errors)                      // <- e isso
+    return res.status(500).json({ error: error.message, details: error?.errors });
+  }
+};
 
     addInvoiceToBatch = async (
     req: Request,
@@ -184,9 +182,9 @@ export class ExpeditionBatchController extends BaseController<
 
     isComplete = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { batchIds } = req.query
-
-      const response = await this.service.isComplete(batchIds as string)
+      const { batchId } = req.params
+      console.log(batchId)
+      const response = await this.service.isComplete(batchId as string)
 
       return res.json(response);
 

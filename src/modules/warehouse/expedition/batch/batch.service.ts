@@ -68,7 +68,6 @@ export class ExpeditionBatchService extends BaseService<
 
   async isComplete(id: string): Promise<boolean> {
   const batch: ExpeditionBatch | null = await this.findById(id)
-
   if (!batch) {
     throw new Error("Lote não encontrado!")
   }
@@ -175,6 +174,7 @@ export class ExpeditionBatchService extends BaseService<
             unitBusiness?.number!,
             unitBusinessId,
             transporter?.name ?? invoices[0].transporter_name ?? null,
+            t
           ),
           status: "OPEN",
           unit_business_id: unitBusinessId,
@@ -329,6 +329,7 @@ export class ExpeditionBatchService extends BaseService<
               unitBusiness?.number!,
               unitBusinessId,
               transporter?.name ?? invoice.transporter_name ?? null,
+              t
             ),
             status: "OPEN",
             unit_business_id: unitBusinessId,
@@ -449,6 +450,7 @@ export class ExpeditionBatchService extends BaseService<
               unitBusiness?.number!,
               unitBusinessId,
               transporter?.name ?? firstInvoice?.transporter_name ?? null,
+              t
             ),
             status: "OPEN",
             unit_business_id: unitBusinessId,
