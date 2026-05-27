@@ -186,11 +186,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     const todayBR = getBrazilDate();
     const expectedBR = formatToBrazilDate(expectedDate);
 
-    if (expectedBR < todayBR) {
-      throw new Error(
-        "Data inválida, não é possível agendar notas para dias anteriores a hoje!",
-      );
-    }
+    // if (expectedBR < todayBR) {
+    //   throw new Error(
+    //     "Data inválida, não é possível agendar notas para dias anteriores a hoje!",
+    //   );
+    // }
 
     const invoice = await this.findById(id);
     if (!invoice) {
