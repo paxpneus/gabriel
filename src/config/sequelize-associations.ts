@@ -49,6 +49,8 @@ import DailySalesStatusFact from '../modules/reports/daily-sales/daily-sales-sta
 import InvoiceFiscalItem from '../modules/warehouse/entrance/invoice-fiscal-item/invoice-fiscal-item.model';
 import IntegrationOrderStatusMapping from '../modules/sales/orders/integration-order-status-mapping/integration-order-status-mapping.model';
 import { Supplier } from '../modules/inventory';
+import Operations from '../modules/warehouse/operations/operation/operations.model';
+import OperationsItens from '../modules/warehouse/operations/operations-itens/operations-itens.model';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -443,6 +445,53 @@ Store.hasMany(Invoice, { foreignKey: 'store_id', as: 'invoices' });
   Integration.hasMany(IntegrationMapping, {
     foreignKey: 'integrations_id',
     as: 'mappings',
+  });
+
+  // ===== OPERATIONS =====
+
+  Invoice.hasMany(Operations, {
+    foreignKey: 'invoice_id',
+    as: 'operations',
+  });
+  Operations.belongsTo(Invoice, {
+    foreignKey: 'invoice_id',
+    as: 'invoice',
+  });
+
+  UnitBusiness.hasMany(Operations, {
+    foreignKey: 'from_unit',
+    as: 'operationsFrom',
+  });
+  Operations.belongsTo(UnitBusiness, {
+    foreignKey: 'from_unit',
+    as: 'fromUnit',
+  });
+
+  UnitBusiness.hasMany(Operations, {
+    foreignKey: 'to_unit',
+    as: 'operationsTo',
+  });
+  Operations.belongsTo(UnitBusiness, {
+    foreignKey: 'to_unit',
+    as: 'toUnit',
+  });
+
+  Operations.hasMany(OperationsItens, {
+    foreignKey: 'operation_id',
+    as: 'items',
+  });
+  OperationsItens.belongsTo(Operations, {
+    foreignKey: 'operation_id',
+    as: 'operation',
+  });
+
+  Product.hasMany(OperationsItens, {
+    foreignKey: 'product_id',
+    as: 'operationsItens',
+  });
+  OperationsItens.belongsTo(Product, {
+    foreignKey: 'product_id',
+    as: 'product',
   });
 }
 
