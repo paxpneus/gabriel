@@ -194,15 +194,23 @@ export class SalesReportRepository {
           COALESCE(o.difal_value, 0)                            AS difal_value,
           COALESCE(o.ibs_value, 0)                              AS ibs_value,
           COALESCE(o.cbs_value, 0)                              AS cbs_value,
-          COALESCE(o.approx_tax_value, 0)                       AS approx_tax_value,
+          ROUND(
+  COALESCE(o.total_products, o.total_price, 0) 
+  * COALESCE(ubtc.approx_tax_rate, 0), 
+  2
+) AS approx_tax_value,
           FALSE                                                 AS has_invoice_data,
           o.source_payload
+          
+
         FROM orders o
         JOIN affected a ON a.order_id = o.id
         LEFT JOIN integration_order_status_mappings iosm ON (
           iosm.integration_id     = o.integrations_id
           AND iosm.external_status_id = o.actual_situation
         )
+          LEFT JOIN unit_business_tax_configs ubtc 
+  ON ubtc.unit_business_id = o.unit_business_id
       ),
 
       -- ------------------------------------------------------------------
@@ -483,7 +491,8 @@ export class SalesReportRepository {
                           + COALESCE(sos.cofins_value, 0)
                           + COALESCE(sos.difal_value,  0)
                           + COALESCE(sos.ibs_value,    0)
-                          + COALESCE(sos.cbs_value,    0),
+                          + COALESCE(sos.cbs_value,    0)
+                          + COALESCE(sos.approx_tax_value,0),
 
         total_fees        = COALESCE(sos.tax_commission,  0)
                           + COALESCE(sos.marketplace_fee, 0)
@@ -494,10 +503,8 @@ export class SalesReportRepository {
           - COALESCE(it.total_cost, 0)
           - CASE WHEN sos.freight_paid_by_company
               THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-          - (  COALESCE(sos.icms_value,   0) + COALESCE(sos.ipi_value,    0)
-             + COALESCE(sos.pis_value,    0) + COALESCE(sos.cofins_value, 0)
-             + COALESCE(sos.difal_value,  0) + COALESCE(sos.ibs_value,    0)
-             + COALESCE(sos.cbs_value,    0))
+          - COALESCE(sos.approx_tax_value, 0)
+             
           - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
              + COALESCE(sos.payment_fee,     0)),
 
@@ -511,7 +518,8 @@ export class SalesReportRepository {
             - (  COALESCE(sos.icms_value,   0) + COALESCE(sos.ipi_value,    0)
                + COALESCE(sos.pis_value,    0) + COALESCE(sos.cofins_value, 0)
                + COALESCE(sos.difal_value,  0) + COALESCE(sos.ibs_value,    0)
-               + COALESCE(sos.cbs_value,    0))
+               
+               + COALESCE(sos.cbs_value,    0) + COALESCE(sos.approx_tax_value, 0))
             - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
                + COALESCE(sos.payment_fee,     0))
           ) / sos.total_order * 100)::numeric, 2)
@@ -1127,22 +1135,6 @@ END AS markup_pct,
     { type: QueryTypes.SELECT, replacements },
   );
 
-    const orders = filters.drillDown
-      ? await sequelize.query<ReportRow>(
-          `
-          SELECT *
-          FROM sales_order_snapshots
-          WHERE order_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-            AND (:storeId IS NULL OR store_id = CAST(:storeId AS uuid))
-            AND (:state IS NULL OR destination_uf = :state)
-            AND (:statusNormalized IS NULL OR status_snapshot = :statusNormalized)
-          ORDER BY order_date DESC, updated_at DESC
-          LIMIT 500
-          `,
-          { type: QueryTypes.SELECT, replacements },
-        )
-      : [];
-
     return {
       period: {
         dateFrom: filters.dateFrom,
@@ -1153,7 +1145,6 @@ END AS markup_pct,
       byProduct,
       byUnitBusiness,
       byStatus,
-      orders,
     };
   }
 
@@ -1183,7 +1174,8 @@ END AS markup_pct,
                         + COALESCE(sos.cofins_value, 0)
                         + COALESCE(sos.difal_value,  0)
                         + COALESCE(sos.ibs_value,    0)
-                        + COALESCE(sos.cbs_value,    0),
+                        + COALESCE(sos.cbs_value,    0)
+                        + COALESCE(sos.approx_tax_value,0),
 
       total_fees        = COALESCE(sos.tax_commission,  0)
                         + COALESCE(sos.marketplace_fee, 0)
@@ -1194,6 +1186,7 @@ END AS markup_pct,
         - COALESCE(it.total_cost, 0)
         - CASE WHEN sos.freight_paid_by_company
             THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
+            - COALESCE(sos.approx_tax_value, 0) 
         - (  COALESCE(sos.icms_value,   0) + COALESCE(sos.ipi_value,    0)
            + COALESCE(sos.pis_value,    0) + COALESCE(sos.cofins_value, 0)
            + COALESCE(sos.difal_value,  0) + COALESCE(sos.ibs_value,    0)
@@ -1211,7 +1204,7 @@ END AS markup_pct,
           - (  COALESCE(sos.icms_value,   0) + COALESCE(sos.ipi_value,    0)
              + COALESCE(sos.pis_value,    0) + COALESCE(sos.cofins_value, 0)
              + COALESCE(sos.difal_value,  0) + COALESCE(sos.ibs_value,    0)
-             + COALESCE(sos.cbs_value,    0))
+             + COALESCE(sos.cbs_value,    0) + COALESCE(sos.approx_tax_value, 0))
           - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
              + COALESCE(sos.payment_fee,     0))
         ) / NULLIF(sos.total_order, 0) * 100)::numeric, 2)

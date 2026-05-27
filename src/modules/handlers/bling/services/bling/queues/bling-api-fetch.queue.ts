@@ -1375,16 +1375,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
 
     // ─── Upsert Invoice ──────────────────────────────────────────────────────
-
+    
     const existingInvoice = await Invoice.findOne({
-      where: { id_system: idSystem },
+      where: { xml_key: chaveAcesso },
       attributes: ["status"],
     });
 
     const incomingStatus = status ?? existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
     const outgoingStatus = status ?? existingInvoice?.status ?? "PENDING";
 
-    const store = await Store.findOne({ where: { name: "Outros" } });
+     let store_id = await Store.findOne({
+      where: { id: existingInvoice?.store_id },
+    });
+
+    if (!store_id) {
+      store_id = await Store.findOne({ where: { name: "Outros" } });
+    }
     const conflictFields = chaveAcesso ? ["xml_key"] : ["id_system"];
 
 
@@ -1406,7 +1412,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         emitted_at: ide.dhEmi ? parseBlingDate(ide.dhEmi) : new Date(),
         number_system: numero,
         integrations_id: integration.id,
-        store_id: store?.id ?? "",
+        store_id: store_id?.id ?? "",
         transporter_id: transporter?.id ?? null,
         transporter_document: transporterDocument,
         transporter_name: transporterName,
