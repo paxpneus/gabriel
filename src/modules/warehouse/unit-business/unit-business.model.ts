@@ -21,6 +21,7 @@ class UnitBusiness
   public certifcate_password?: string;
   public certificate_path?: string;
   public ult_nsu?: string
+  public emails?: string[] | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -77,6 +78,11 @@ UnitBusiness.init(
     },
     certificate_path: {
       type: DataTypes.TEXT,
+    },
+    emails: {
+      type: DataTypes.ARRAY(DataTypes.STRING),
+      allowNull: true,
+      defaultValue: [],
     },
   },
   {
