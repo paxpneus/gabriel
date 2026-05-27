@@ -64,9 +64,13 @@ class BaseService<
     };
   }
 
-  findAll(options?: FindOptions) {
-    return this.repository.findAll(options);
-  }
+  findAll(
+  options?: FindOptions,
+  params?: QueryParams,
+  config?: QueryConfig,
+) {
+  return this.repository.findAll(options, params, config);
+}
 
   paginate(
     params: QueryParams,

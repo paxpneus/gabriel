@@ -173,6 +173,7 @@ export class InvoiceItemsService extends BaseService<
       });
     });
   }
+  
 }
 
 export default new InvoiceItemsService();

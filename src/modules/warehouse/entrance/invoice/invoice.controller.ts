@@ -75,6 +75,12 @@ export class InvoiceController extends BaseController<
       ...this.mw("downloadXmlBatch"),
       this.downloadXmlBatch,
     );
+
+    this.router.get(
+  "/report/products",
+  ...this.mw("getInvoiceProductReport"),
+  this.getInvoiceProductReport,
+);
   }
 
   protected registerCustomRoutes(): void {}
@@ -99,6 +105,8 @@ export class InvoiceController extends BaseController<
       importXML: [authenticate, userPermissions],
       bondPendingCancelledInvoice: [authenticate, userPermissions],
       downloadXmlBatch: [authenticate, userPermissions],
+      getInvoiceProductReport: [authenticate, userPermissions],
+
     };
   }
 
@@ -359,6 +367,16 @@ export class InvoiceController extends BaseController<
       res.status(500).json({ error: err.message });
     }
   };
+
+  getInvoiceProductReport = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const params = this.extractQueryParams(req);
+    const data = await this.service.getInvoiceProductReport(params);
+    return res.json({ data });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+};
 }
 
 export default new InvoiceController();
