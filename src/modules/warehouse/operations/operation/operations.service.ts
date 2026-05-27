@@ -30,6 +30,7 @@ export class OperationsService extends BaseService<
         "status",
         "createdAt",
         "updatedAt",
+        "transporter_name"
       ],
     };
   }

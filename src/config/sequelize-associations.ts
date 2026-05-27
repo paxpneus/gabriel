@@ -51,6 +51,7 @@ import IntegrationOrderStatusMapping from '../modules/sales/orders/integration-o
 import { Supplier } from '../modules/inventory';
 import Operations from '../modules/warehouse/operations/operation/operations.model';
 import OperationsItens from '../modules/warehouse/operations/operations-itens/operations-itens.model';
+import OperationComment from '../modules/warehouse/operations/operation-comment/operation-comment.model';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -492,6 +493,44 @@ Store.hasMany(Invoice, { foreignKey: 'store_id', as: 'invoices' });
   OperationsItens.belongsTo(Product, {
     foreignKey: 'product_id',
     as: 'product',
+  });
+
+  // ===== OPERATION COMMENTS =====
+
+  Operations.hasMany(OperationComment, {
+    foreignKey: 'operation_id',
+    as: 'comments',
+  });
+  OperationComment.belongsTo(Operations, {
+    foreignKey: 'operation_id',
+    as: 'operation',
+  });
+
+  User.hasMany(OperationComment, {
+    foreignKey: 'user_id',
+    as: 'operationComments',
+  });
+  OperationComment.belongsTo(User, {
+    foreignKey: 'user_id',
+    as: 'user',
+  });
+
+  UnitBusiness.hasMany(OperationComment, {
+    foreignKey: 'unit_business_id',
+    as: 'operationComments',
+  });
+  OperationComment.belongsTo(UnitBusiness, {
+    foreignKey: 'unit_business_id',
+    as: 'unitBusiness',
+  });
+
+  OperationComment.hasMany(OperationComment, {
+    foreignKey: 'point_to',
+    as: 'replies',
+  });
+  OperationComment.belongsTo(OperationComment, {
+    foreignKey: 'point_to',
+    as: 'parentComment',
   });
 }
 

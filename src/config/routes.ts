@@ -70,6 +70,7 @@ function getApiBaseSegment(originalUrl: string): string | null {
 }
 
 const CUSTOM_ROUTE_MAP: Record<string, string> = {
+  
   "financial-batch-info": "financial-pdt",
   "sales-report": "financial-pdt",
   "sales-report/run" : "financial-pdt",
