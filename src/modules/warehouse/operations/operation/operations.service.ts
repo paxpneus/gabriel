@@ -1,12 +1,14 @@
 import sequelize from "../../../../config/sequelize";
+import { QueryParams, PaginatedResult } from "../../../../shared/query/query.types";
 import BaseService from "../../../../shared/utils/base-models/base-service";
+import UnitBusiness from "../../unit-business/unit-business.model";
 import OperationsItens from "../operations-itens/operations-itens.model";
 import Operations from "./operations.model";
 import operationsRepository, {
   OperationsRepository,
 } from "./operations.repository";
 import { CreateOperationItemDTO } from "./operations.types";
-import { CreateOptions } from "sequelize";
+import { CreateOptions, FindOptions } from "sequelize";
 
 export class OperationsService extends BaseService<
   Operations,
@@ -33,6 +35,22 @@ export class OperationsService extends BaseService<
         "transporter_name"
       ],
     };
+  }
+
+  async paginate(params: QueryParams, extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">): Promise<PaginatedResult<Operations>> {
+      return super.paginate(params, {
+        ...extraOptions,
+        include: [
+          {
+            model: UnitBusiness,
+            as: 'fromUnit'
+          },
+          {
+            model: UnitBusiness,
+            as: 'toUnit'
+          }
+        ]
+      })
   }
 
   async create(

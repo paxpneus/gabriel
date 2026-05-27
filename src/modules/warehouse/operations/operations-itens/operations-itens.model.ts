@@ -12,8 +12,9 @@ class OperationsItens
 {
   public id!: string;
   public operation_id!: string;
-  public product_id!: string;
+  public product_id?: string | null;
   public code?: string | null;
+  public description?: string | null;
   public quantity!: number;
 
   public readonly createdAt!: Date;
@@ -28,6 +29,10 @@ OperationsItens.init(
       primaryKey: true,
       allowNull: false,
     },
+    description: {
+          type: DataTypes.STRING(255),
+          allowNull: true,
+        },
     operation_id: {
       type: DataTypes.UUID,
       allowNull: false,
@@ -38,7 +43,7 @@ OperationsItens.init(
     },
     product_id: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
       references: {
         model: "products",
         key: "id",
