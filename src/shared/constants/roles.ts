@@ -18,7 +18,7 @@ type Scopes =
   | 'Impressoras'
   | 'Multiplicador Estoque - Inventário'
   | 'Multiplicador Estoque - Entradas'
-  | 'Financeiro - Produtos'
+  | 'Dados Financeiros'
   | 'Todas as Lojas'
 
 interface ChildEntity {
@@ -154,7 +154,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
     permissions: ['read'],
   },
   {
-    scope: 'Financeiro - Produtos',
+    scope: 'Dados Financeiros',
     entity: 'financial-pdt',
     type: 'CUSTOM',
     permissions: ['read'],
