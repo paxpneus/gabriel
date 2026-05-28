@@ -1,10 +1,10 @@
 export interface OperationCommentAttributes {
   id: string;
-  userId: string;
-  unitBusinessId: string;
-  operationId: string;
+  user_id: string;
+  unit_business_id: string;
+  operation_id: string;
   comment: string;
-  pointTo?: string | null;
+  point_to?: string | null;
   date: Date;
   createdAt?: Date;
   updatedAt?: Date;
