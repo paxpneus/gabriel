@@ -9,6 +9,7 @@ export interface UnitBusinessAttributes {
   certificate_path?: string;
   certificate_password?: string;
   ult_nsu?: string;
+  emails?: string[] | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
