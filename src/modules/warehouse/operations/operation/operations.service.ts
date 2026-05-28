@@ -15,10 +15,20 @@ import {
   CreateOperationItemDTO,
   OperationsCreationAttributes,
 } from "./operations.types";
-import { CreateOptions, DestroyOptions, FindOptions, Op, UpdateOptions } from "sequelize";
+import {
+  CreateOptions,
+  DestroyOptions,
+  FindOptions,
+  Op,
+  UpdateOptions,
+} from "sequelize";
 import { Product } from "../../../inventory";
 import Invoice from "../../entrance/invoice/invoice.model";
-
+import type {
+  InvoiceLinkedEmailPayload,
+  OperationRequestEmailPayload,
+} from "./../../../../shared/providers/mail-provider/operations/templates/operation.templates";
+import nodemailerOperationService from "../../../../shared/providers/mail-provider/operations/nodemailer-operation.service";
 // ─── service ──────────────────────────────────────────────────────────────────
 
 export class OperationsService extends BaseService<
@@ -51,42 +61,149 @@ export class OperationsService extends BaseService<
     };
   }
 
+  // ─── update ───────────────────────────────────────────────────────────────────
+
   async update(
     id: string,
     data: Partial<OperationsCreationAttributes>,
     options?: Partial<UpdateOptions>,
   ): Promise<Operations | null> {
     return sequelize.transaction(async (t) => {
-      const existing = await this.findById(id, {
-        transaction: t,
-      });
+      const existing = await this.findById(id, { transaction: t });
 
-      if (!existing) {
-        throw new Error("Operação não encontrada!");
-      }
+      if (!existing) throw new Error("Operação não encontrada!");
+      if (existing.status === "FINISHED")
+        throw new Error("Operações finalizadas não podem ser alteradas");
 
-      if (existing?.status === 'FINISHED') {
-        throw new Error("Operações finalizadas não podem ser alteradas")
-      }
+      const isLinkingInvoice =
+        existing.status === "OPEN" && (data.invoice_id || data.invoice_number);
 
-      if (
-        existing?.status === "OPEN" && data.invoice_id || data.invoice_number
-      ) {
-        existing.update(
-          {
-            sender_confirmation: true,
-            status: "PENDING",
-            ...data,
-          },
+      if (isLinkingInvoice) {
+        await existing.update(
+          { sender_confirmation: true, status: "PENDING", ...data },
           { transaction: t },
+        );
+
+        // ── Busca e-mails da unidade de destino (to_unit) ─────────────────────
+        const toUnit = existing.to_unit
+          ? await UnitBusiness.findByPk(existing.to_unit, { transaction: t })
+          : null;
+
+        const emails: string[] = (toUnit as any)?.emails ?? [];
+
+        if (emails.length) {
+          const payload: InvoiceLinkedEmailPayload = {
+            code: existing.code ?? id,
+            invoiceNumber: String(data.invoice_number ?? data.invoice_id ?? ""),
+          };
+
+          // fire-and-forget — não bloqueia a transação
+          Promise.allSettled(
+            emails.map((to) =>
+              nodemailerOperationService.notifyInvoiceLinked(to, payload),
+            ),
+          ).catch(() => {});
+        }
+      }
+
+      return this.repository.update(id, data, { transaction: t, ...options });
+    });
+  }
+
+  // ─── create ───────────────────────────────────────────────────────────────────
+
+  async create(
+    data: Partial<Operations["_creationAttributes"]> & {
+      items?: CreateOperationItemDTO[];
+    },
+    options?: CreateOptions,
+  ): Promise<Operations> {
+    const run = async (transaction: any) => {
+      const { items = [], ...operationPayload } = data;
+
+      const [fromUnit, toUnit] = await Promise.all([
+        operationPayload.from_unit
+          ? UnitBusiness.findByPk(operationPayload.from_unit, { transaction })
+          : null,
+        operationPayload.to_unit
+          ? UnitBusiness.findByPk(operationPayload.to_unit, { transaction })
+          : null,
+      ]);
+
+      const fromNumber =
+        (fromUnit as any)?.number ?? operationPayload.from_unit ?? "X";
+      const toNumber =
+        (toUnit as any)?.number ?? operationPayload.to_unit ?? "X";
+
+      const code = await generateOperationCode(
+        String(fromNumber),
+        String(toNumber),
+        transaction,
+      );
+
+      const totalQuantity =
+        operationPayload.total_quantity ??
+        items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
+
+      const operation = await this.repository.create(
+        {
+          ...operationPayload,
+          code,
+          date: new Date(),
+          total_quantity: totalQuantity,
+        },
+        { transaction },
+      );
+
+      if (items.length) {
+        await OperationsItens.bulkCreate(
+          items.map((item) => ({
+            operation_id: operation.id,
+            product_id: item.product_id,
+            quantity: item.quantity,
+            code: item.code,
+            description: item.description,
+          })),
+          { transaction },
         );
       }
 
-      return this.repository.update(id, data, {
-        transaction: t,
-        ...options,
-      });
-    });
+      // ── Notifica e-mails da unidade de origem (from_unit) ─────────────────
+      const fullOperation = await this.repository.findByIdWithRelations(
+        operation.id,
+        {transaction}
+      );
+
+      const fromEmails: string[] = (fromUnit as any)?.emails ?? [];
+
+      if (fromEmails.length) {
+        const payload: OperationRequestEmailPayload = {
+          fromUnitName: (fromUnit as any)?.name ?? String(fromNumber),
+          toUnitName: (toUnit as any)?.name ?? String(toNumber),
+          code,
+          items: (fullOperation?.items ?? items).map((item: any) => ({
+            nameOrDescription:
+              item.product?.name ??
+              item.description ??
+              item.code ??
+              "Item sem descrição",
+            quantity: Number(item.quantity),
+            code: item.product?.sku ?? undefined,
+          })),
+        };
+
+        Promise.allSettled(
+          fromEmails.map((to) =>
+            nodemailerOperationService.notifyNewOperationRequest(to, payload),
+          ),
+        ).catch(() => {});
+      }
+
+      return fullOperation ?? operation;
+    };
+
+    if (options?.transaction) return run(options.transaction);
+    return sequelize.transaction(run);
   }
 
   async markAsReceived(id: string): Promise<void> {
@@ -142,92 +259,30 @@ export class OperationsService extends BaseService<
     });
   }
 
-  async create(
-    data: Partial<Operations["_creationAttributes"]> & {
-      items?: CreateOperationItemDTO[];
-    },
-    options?: CreateOptions,
-  ): Promise<Operations> {
-    const run = async (transaction: any) => {
-      const { items = [], ...operationPayload } = data;
-
-      // ── Busca números das filiais para compor o code ───────────────────────
-      const [fromUnit, toUnit] = await Promise.all([
-        operationPayload.from_unit
-          ? UnitBusiness.findByPk(operationPayload.from_unit, { transaction })
-          : null,
-        operationPayload.to_unit
-          ? UnitBusiness.findByPk(operationPayload.to_unit, { transaction })
-          : null,
-      ]);
-
-      const fromNumber =
-        (fromUnit as any)?.number ?? operationPayload.from_unit ?? "X";
-      const toNumber =
-        (toUnit as any)?.number ?? operationPayload.to_unit ?? "X";
-
-      const code = await generateOperationCode(
-        String(fromNumber),
-        String(toNumber),
-        transaction,
-      );
-
-      const totalQuantity =
-        operationPayload.total_quantity ??
-        items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
-
-      const operation = await this.repository.create(
-        {
-          ...operationPayload,
-          code,
-          date: new Date(),
-          total_quantity: totalQuantity,
-        },
-        { transaction },
-      );
-
-      if (items.length) {
-        await OperationsItens.bulkCreate(
-          items.map((item) => ({ ...item, operation_id: operation.id })),
-          { transaction },
-        );
-      }
-
-      return (
-        (await this.repository.findByIdWithRelations(operation.id)) ?? operation
-      );
-    };
-
-    if (options?.transaction) {
-      return run(options.transaction);
-    }
-
-    return sequelize.transaction(run);
-  }
-
   findByIdFull(id: string) {
     return this.repository.findByIdWithRelations(id);
   }
 
   async bulkDelete(options: DestroyOptions): Promise<number> {
-  if (!options || !options.where) {
-    throw new Error("Opções de busca não informadas.");
-  }
-
-  const possuiCancelados = await Operations.count({
-    where: {
-      ...options.where,
-      status: ['FINISHED', 'PENDING']
+    if (!options || !options.where) {
+      throw new Error("Opções de busca não informadas.");
     }
-  });
 
- 
-  if (possuiCancelados > 0) {
-    throw new Error("Não é permitido excluir registros que possuem o status em pendente ou finalizado.");
+    const possuiCancelados = await Operations.count({
+      where: {
+        ...options.where,
+        status: ["FINISHED", "PENDING"],
+      },
+    });
+
+    if (possuiCancelados > 0) {
+      throw new Error(
+        "Não é permitido excluir registros que possuem o status em pendente ou finalizado.",
+      );
+    }
+
+    return await this.repository.bulkDelete(options);
   }
-
-  return await this.repository.bulkDelete(options);
-}
 }
 
 export default new OperationsService();

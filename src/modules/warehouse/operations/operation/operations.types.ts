@@ -1,3 +1,4 @@
+import { Product } from "../../../inventory";
 import { OperationsItensAttributes } from "../operations-itens/operations-itens.types";
 
 export type OperationStatus = "OPEN" | "PENDING" | "FINISHED" | "CANCELLED";
@@ -19,6 +20,7 @@ export interface OperationsAttributes {
   sender_confirmation?: boolean;
   note?: string
   code?: string;
+  items?: OperationsItensAttributes[]
   createdAt?: Date;
   updatedAt?: Date;
 }

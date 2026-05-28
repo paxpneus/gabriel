@@ -27,6 +27,7 @@ class Operations
   public invoice_number?: string;
   public note?: string;
   public code?: string;
+  public items?: any[];
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
