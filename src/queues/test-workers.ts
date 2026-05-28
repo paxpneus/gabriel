@@ -15,12 +15,12 @@ export async function startBlingWorkers() {
   const blingDailyReconciler = new BlingMigrationQueue({ workless: false})
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless: false });
   const dailySalesReportQueue = new SalesReportQueue({workless: false}) 
-  const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
+  // const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  sefazQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  // sefazQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
 
   setTimeout(() => {
   dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
