@@ -87,7 +87,6 @@ export class OperationsService extends BaseService<Operations, OperationsReposit
       const code = await generateOperationCode(
         String(fromNumber),
         String(toNumber),
-        operationPayload.from_unit!,
         transaction,
       )
 
