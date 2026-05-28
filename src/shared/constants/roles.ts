@@ -20,6 +20,7 @@ type Scopes =
   | 'Multiplicador Estoque - Entradas'
   | 'Dados Financeiros'
   | 'Todas as Lojas'
+  | 'Operações'
 
 interface ChildEntity {
   entity: string
@@ -140,6 +141,16 @@ export const ROLE_PERMISSIONS: Roles[] = [
     entity: 'printer_configs',
     type: 'REGULAR',
     permissions: all,
+  },
+  {
+    scope: 'Operações',
+    entity: 'operations',
+    type: 'REGULAR',
+    permissions: all,
+    children: [
+      { entity: 'operations_itens', label: 'Itens da operação' },
+      { entity: 'operation_comments', label: 'Comentários da operação' },
+    ],
   },
    {
     scope: 'Multiplicador Estoque - Inventário',

@@ -1,3 +1,4 @@
+import { FindOptions } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import { Product } from "../../../inventory";
 import Invoice from "../../entrance/invoice/invoice.model";
@@ -10,8 +11,9 @@ export class OperationsRepository extends BaseRepository<Operations> {
     super(Operations);
   }
 
-  findByIdWithRelations(id: string) {
+  findByIdWithRelations(id: string, options?: FindOptions) {
     return this.findById(id, {
+      ...options,
       include: [
         { model: Invoice, as: "invoice" },
         { model: UnitBusiness, as: "fromUnit" },

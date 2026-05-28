@@ -14,6 +14,12 @@ export class OperationsController extends BaseController<
     this.router.get("/full/:id", ...this.mw("show"), (req, res) =>
       this.showFull(req, res),
     );
+
+    this.router.put(
+      "/confirm-received/:id",
+      ...this.mw("markAsReceived"),
+      (req, res) => this.markAsReceived(req, res),
+    );
   }
 
   protected middlewaresFor() {
@@ -25,6 +31,7 @@ export class OperationsController extends BaseController<
       show: [authenticate, userPermissions],
       destroy: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
+      markAsReceived: [authenticate, userPermissions],
     };
   }
 
@@ -33,6 +40,16 @@ export class OperationsController extends BaseController<
       const record = await this.service.findByIdFull(req.params.id as string);
       if (!record) return res.status(404).json({ error: "Não encontrado" });
       return res.json(record);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  markAsReceived = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { id } = req.params;
+      await this.service.markAsReceived(id as string);
+      return res.status(200).json({ success: true });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
