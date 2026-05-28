@@ -1,8 +1,11 @@
+import { FindOptions } from "sequelize";
+import { QueryParams, PaginatedResult } from "../../../../shared/query/query.types";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import OperationComment from "./operation-comment.model";
 import operationCommentRepository, {
   OperationCommentRepository,
 } from "./operation-comment.repository";
+import User from "../../users/users/user.model";
 
 export class OperationCommentService extends BaseService<
   OperationComment,
@@ -18,10 +21,23 @@ export class OperationCommentService extends BaseService<
         sortDir: "DESC",
       },
       searchFields: ["comment"],
-      filterableFields: ["userId", "unitBusinessId", "operationId", "pointTo"],
+      filterableFields: ["user_id", "unit_business_id", "operation_id", "point_to"],
       sortableFields: ["date", "createdAt", "updatedAt"],
     };
   }
+
+  async paginate(params: QueryParams, extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">): Promise<PaginatedResult<OperationComment>> {
+      return super.paginate(params, {
+        ...extraOptions,
+        include: [
+          {model: User,
+            as: 'user',
+            attributes: ['name', 'id']
+          }
+        ]
+      })
+  }
 }
+
 
 export default new OperationCommentService();

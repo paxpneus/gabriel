@@ -11,11 +11,11 @@ class OperationComment
   implements OperationCommentAttributes
 {
   public id!: string;
-  public userId!: string;
-  public unitBusinessId!: string;
-  public operationId!: string;
+  public user_id!: string;
+  public unit_business_id!: string;
+  public operation_id!: string;
   public comment!: string;
-  public pointTo?: string | null;
+  public point_to?: string | null;
   public date!: Date;
 
   public readonly createdAt!: Date;
@@ -30,45 +30,41 @@ OperationComment.init(
       primaryKey: true,
       allowNull: false,
     },
-    userId: {
+    user_id: {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
         model: "users",
         key: "id",
       },
-      field: "user_id",
     },
-    unitBusinessId: {
+    unit_business_id: {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
         model: "unit_businesses",
         key: "id",
       },
-      field: "unit_business_id",
     },
-    operationId: {
+    operation_id: {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
         model: "operations",
         key: "id",
       },
-      field: "operation_id",
     },
     comment: {
       type: DataTypes.TEXT,
       allowNull: false,
     },
-    pointTo: {
+    point_to: {
       type: DataTypes.UUID,
       allowNull: true,
       references: {
         model: "operation_comments",
         key: "id",
       },
-      field: "point_to",
     },
     date: {
       type: DataTypes.DATE,
