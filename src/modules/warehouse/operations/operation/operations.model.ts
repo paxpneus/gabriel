@@ -61,7 +61,7 @@ Operations.init(
       allowNull: true,
     },
     status: {
-      type: DataTypes.ENUM("OPEN", "PENDING", "FINISHED"),
+      type: DataTypes.ENUM("OPEN", "PENDING", "FINISHED", "CANCELLED"),
       allowNull: false,
       defaultValue: "OPEN",
     },

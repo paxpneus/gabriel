@@ -1,6 +1,6 @@
 import { OperationsItensAttributes } from "../operations-itens/operations-itens.types";
 
-export type OperationStatus = "OPEN" | "PENDING" | "FINISHED";
+export type OperationStatus = "OPEN" | "PENDING" | "FINISHED" | "CANCELLED";
 
 export interface OperationsAttributes {
   id: string;
