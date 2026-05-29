@@ -17,6 +17,20 @@ export interface ApplicationAttributes {
   role?: Role;
 }
 
+export type ApplicationRequestAttributes = Omit<
+  ApplicationAttributes,
+  "api_secret_hash" | "role"
+> & {
+  role?: {
+    id: string;
+    name: string;
+    permissions: {
+      entity: string;
+      permissions: string[];
+    }[];
+  };
+};
+
 export type ApplicationCreationAttributes = Omit<
   ApplicationAttributes,
   "id" | "api_key" | "api_secret_hash" | "token_version" | "role"
@@ -52,4 +66,3 @@ export interface ApplicationTokenPayload {
   type: "application";
   tokenVersion: number;
 }
-

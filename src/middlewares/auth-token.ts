@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { Request, Response, NextFunction } from 'express';
 import 'dotenv/config'
 import applicationService from '../modules/integrations/applications/applications.service';
-import { ApplicationTokenPayload, ApplicationAttributes } from '../modules/integrations/applications/applications.types';
+import { ApplicationTokenPayload, ApplicationRequestAttributes } from '../modules/integrations/applications/applications.types';
 import { enforceApplicationRateLimit } from './application-rate-limit';
 
 export interface AuthRequest extends Request {
@@ -11,7 +11,7 @@ export interface AuthRequest extends Request {
     id: string;
     role: string;
   };
-  application?: ApplicationAttributes;
+  application?: ApplicationRequestAttributes;
 }
 
 function getBearerToken(req: Request): string | null {
@@ -61,7 +61,7 @@ export async function authenticate(req: AuthRequest, res: Response, next: NextFu
       const application =
         (await applicationService.getAuthenticatedApplication(
           appPayload.id,
-        )) as ApplicationAttributes | null;
+        )) as ApplicationRequestAttributes | null;
 
       if (!application) {
         return res.status(401).json({ error: "Aplicativo inválido ou inativo" });
