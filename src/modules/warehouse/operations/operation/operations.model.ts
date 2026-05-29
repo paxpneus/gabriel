@@ -3,6 +3,7 @@ import sequelize from "../../../../config/sequelize";
 import {
   OperationsAttributes,
   OperationsCreationAttributes,
+  OperationPriorityLevel,
   OperationStatus,
 } from "./operations.types";
 import { v4 as uuidv4 } from "uuid";
@@ -17,6 +18,10 @@ class Operations
   public due_at?: Date | null;
   public expected_at?: Date | null;
   public status!: OperationStatus;
+  public priority_level?: OperationPriorityLevel | null;
+  public justification_priority_level?: string | null;
+  public request_user?: string | null;
+  public receiver_user?: string | null;
   public invoice_id?: string | null;
   public from_unit?: string | null;
   public to_unit?: string | null;
@@ -65,6 +70,30 @@ Operations.init(
       type: DataTypes.ENUM("OPEN", "PENDING", "FINISHED", "CANCELLED"),
       allowNull: false,
       defaultValue: "OPEN",
+    },
+    priority_level: {
+      type: DataTypes.ENUM("URGENT", "HIGH", "REGULAR", "LOW"),
+      allowNull: true,
+    },
+    justification_priority_level: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    request_user: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "users",
+        key: "id",
+      },
+    },
+    receiver_user: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "users",
+        key: "id",
+      },
     },
     invoice_id: {
       type: DataTypes.UUID,

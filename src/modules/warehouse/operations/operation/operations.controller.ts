@@ -47,8 +47,8 @@ export class OperationsController extends BaseController<
 
   markAsReceived = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { id } = req.params;
-      await this.service.markAsReceived(id as string);
+      const { id, userId } = req.params;
+      await this.service.markAsReceived(id as string, userId as string);
       return res.status(200).json({ success: true });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
