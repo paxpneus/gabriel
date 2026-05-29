@@ -41,7 +41,7 @@ async function bootstrap() {
 
 const DRY_RUN       = process.env.DRY_RUN === 'true';
 const DAYS_BACK     = 15;
-const PAGE_DELAY_MS = 1000;
+const PAGE_DELAY_MS = Number(process.env.BLING_SCRIPT_PAGE_DELAY_MS ?? 3500);
 const MAX_PER_ENTITY = Number(process.env.MAX_PER_ENTITY ?? 0);
 const QUEUE_POLL_MS  = 5_000;
 
@@ -98,6 +98,11 @@ async function enqueueApiFetch(payload: ApiFetchJobPayload, jobId: string) {
   await apiFetchQueue.add(payload, jobId);
 }
 
+async function blingGet<T>(endpoint: string, params?: Record<string, string | number>) {
+  await sleep(PAGE_DELAY_MS);
+  return blingApi.get<T>(endpoint, params ? { params } : undefined);
+}
+
 async function* paginateBling<T>(
   endpoint: string,
   params: Record<string, string | number> = {},
@@ -105,15 +110,15 @@ async function* paginateBling<T>(
 ): AsyncGenerator<T[]> {
   let page = 1;
   while (true) {
-    const { data } = await blingApi.get<{ data: T[] }>(endpoint, {
-      params: { ...params, pagina: page, limite: limitPerPage },
-    });
+    const { data } = await blingGet<{ data: T[] }>(
+      endpoint,
+      { ...params, pagina: page, limite: limitPerPage },
+    );
     const items: T[] = data?.data ?? [];
     if (!items.length) break;
     yield items;
     if (items.length < limitPerPage) break;
     page++;
-    await sleep(PAGE_DELAY_MS);
   }
 }
 
@@ -261,7 +266,7 @@ async function migrateStocks() {
     for (const id of batch) params.append('idsProdutos[]', String(id));
     params.append('filtroSaldoEstoque', '1');
 
-    const { data } = await blingApi.get<{ data: Array<{ produto: { id: number }; saldoFisicoTotal: number }> }>(
+    const { data } = await blingGet<{ data: Array<{ produto: { id: number }; saldoFisicoTotal: number }> }>(
       `/estoques/saldos?${params.toString()}`,
     );
 
@@ -280,7 +285,6 @@ async function migrateStocks() {
 
     console.log(`  → ${count} estoque(s) enfileirado(s)...`);
     if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
-    await sleep(PAGE_DELAY_MS);
   }
 
   console.log(`\n  📊 Estoques enfileirados: ${count}`);
@@ -338,7 +342,6 @@ async function migrateOrders() {
     }
     await sleep(2000);
     if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
-    await sleep(PAGE_DELAY_MS);
   }
 
   console.log(`\n  🛒 Total de pedidos enfileirados: ${totalCount}`);
