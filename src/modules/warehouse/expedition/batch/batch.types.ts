@@ -46,6 +46,7 @@ export interface ExpeditionBatchFull {
   id_system?: string;
   unit_business_id: string;
   total_volumes: number;
+  transporters_id?: string | null;
   delivery_note_generated_at?: Date | null;
   type?: string;
   mode?: string;
