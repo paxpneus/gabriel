@@ -255,7 +255,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   }
 
   async getInvoiceProductReport(params: QueryParams) {
-  params.filters = { ...params.filters, type: "INCOMING" };
+  params.filters = { ...params.filters };
 
   const rows = await this.findAll(
     {
