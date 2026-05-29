@@ -3,6 +3,7 @@ import { BaseQueueService } from "../../../../../../shared/utils/base-models/bas
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
 
 const execFileAsync = promisify(execFile);
 
@@ -10,6 +11,7 @@ export class BlingMigrationQueue extends BaseQueueService<void> {
   constructor(options: { workless?: boolean } = {}) {
     super("BLING_MIGRATION", {
       concurrency: 1,
+      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
   }

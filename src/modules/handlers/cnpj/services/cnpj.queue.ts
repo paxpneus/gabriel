@@ -5,6 +5,7 @@ import { AxiosInstance } from "axios";
 import { nextStepOnQueue } from "../../../../shared/types/queue/base-queue";
 import ordersService from "../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
+import { BLING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/bling-queue-lock";
 
 const ErrorValues = [
   { id: 1, error: "Documento não informado ou inválido " },
@@ -25,6 +26,7 @@ export class CNPJQueue extends BaseQueueService<any> {
     super("CNPJ_VERIFY_CNAE", {
       concurrency: 1,
       limiter: { max: 1, duration: 3000 },
+      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
     this.CNPJService = cnpjService;

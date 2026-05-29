@@ -7,6 +7,7 @@ import { NFeJobData } from "./nfe.types";
 import { AxiosInstance } from "axios";
 import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
+import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 
 const STATUS = {
   NFE_AGENDADA: 748748,
@@ -41,6 +42,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         max: 1,
         duration: 3000,
       },
+      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
     this.blingApi = blingApi;
