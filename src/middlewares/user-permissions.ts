@@ -75,6 +75,24 @@ export async function userPermissions(
   next: NextFunction,
 ) {
   try {
+    if (req.application) {
+      const action = METHOD_ACTION_MAP[req.method];
+      if (!action)
+        return res.status(400).json({ message: "Método HTTP inválido." });
+
+      const entity = resolveEntityFromRoute(req.originalUrl);
+      if (!entity) return next();
+
+      if (!userHasPermission(req.application.role, entity, action)) {
+        return res.status(400).json({
+          error: `Acesso negado: sem permissão de "${ACTION_LABEL[action]}" em "${MODEL_LABEL(entity)}".`,
+        });
+      }
+
+      req.user = { id: req.application.id, role: req.application.role_id };
+      return next();
+    }
+
     const token = req.cookies?.token;
     if (!token)
       return res.status(401).json({ message: "Token não encontrado." });
