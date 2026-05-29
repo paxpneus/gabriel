@@ -477,6 +477,24 @@ Store.hasMany(Invoice, { foreignKey: 'store_id', as: 'invoices' });
     as: 'toUnit',
   });
 
+  User.hasMany(Operations, {
+    foreignKey: 'request_user',
+    as: 'requestedOperations',
+  });
+  Operations.belongsTo(User, {
+    foreignKey: 'request_user',
+    as: 'requestUser',
+  });
+
+  User.hasMany(Operations, {
+    foreignKey: 'receiver_user',
+    as: 'receivedOperations',
+  });
+  Operations.belongsTo(User, {
+    foreignKey: 'receiver_user',
+    as: 'receiverUser',
+  });
+
   Operations.hasMany(OperationsItens, {
     foreignKey: 'operation_id',
     as: 'items',

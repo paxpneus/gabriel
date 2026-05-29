@@ -3,6 +3,7 @@ import BaseRepository from "../../../../shared/utils/base-models/base-repository
 import { Product } from "../../../inventory";
 import Invoice from "../../entrance/invoice/invoice.model";
 import UnitBusiness from "../../unit-business/unit-business.model";
+import User from "../../users/users/user.model";
 import OperationsItens from "../operations-itens/operations-itens.model";
 import Operations from "./operations.model";
 
@@ -18,6 +19,8 @@ export class OperationsRepository extends BaseRepository<Operations> {
         { model: Invoice, as: "invoice" },
         { model: UnitBusiness, as: "fromUnit" },
         { model: UnitBusiness, as: "toUnit" },
+        { model: User, as: "requestUser", attributes: ["id", "name", "email"] },
+        { model: User, as: "receiverUser", attributes: ["id", "name", "email"] },
         {
           model: OperationsItens,
           as: "items",

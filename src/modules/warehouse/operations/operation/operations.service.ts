@@ -24,11 +24,13 @@ import {
 } from "sequelize";
 import { Product } from "../../../inventory";
 import Invoice from "../../entrance/invoice/invoice.model";
+import User from "../../users/users/user.model";
 import type {
   InvoiceLinkedEmailPayload,
   OperationRequestEmailPayload,
 } from "./../../../../shared/providers/mail-provider/operations/templates/operation.templates";
 import nodemailerOperationService from "../../../../shared/providers/mail-provider/operations/nodemailer-operation.service";
+import OperationComment from "../operation-comment/operation-comment.model";
 // ─── service ──────────────────────────────────────────────────────────────────
 
 export class OperationsService extends BaseService<
@@ -41,7 +43,15 @@ export class OperationsService extends BaseService<
     this.queryConfig = {
       defaults: { perPage: 20, sortBy: "createdAt", sortDir: "DESC" },
       searchFields: ["description", "transporter_name", "code"],
-      filterableFields: ["status", "invoice_id", "from_unit", "to_unit"],
+      filterableFields: [
+        "status",
+        "priority_level",
+        "invoice_id",
+        "from_unit",
+        "to_unit",
+        "request_user",
+        "receiver_user",
+      ],
       sortableFields: [
         "date",
         "from_unit",
@@ -49,6 +59,7 @@ export class OperationsService extends BaseService<
         "due_at",
         "expected_at",
         "status",
+        "priority_level",
         "createdAt",
         "updatedAt",
         "transporter_name",
@@ -80,7 +91,7 @@ export class OperationsService extends BaseService<
 
       if (isLinkingInvoice) {
         await existing.update(
-          { sender_confirmation: true, status: "PENDING", ...data },
+          { sender_confirmation: true, status: "PENDING", receiver_user: data.receiver_user, ...data },
           { transaction: t },
         );
 
@@ -206,7 +217,7 @@ export class OperationsService extends BaseService<
     return sequelize.transaction(run);
   }
 
-  async markAsReceived(id: string): Promise<void> {
+  async markAsReceived(id: string, userId: string): Promise<void> {
     const existing = await this.findById(id);
 
     if (!existing) {
@@ -230,8 +241,25 @@ export class OperationsService extends BaseService<
     return super.paginate(params, {
       ...extraOptions,
       include: [
-        { model: UnitBusiness, as: "fromUnit" },
-        { model: UnitBusiness, as: "toUnit" },
+        { model: UnitBusiness, as: "fromUnit", attributes: ['name', 'id'] },
+        { model: UnitBusiness, as: "toUnit", attributes: ['name', 'id'] },
+        { model: User, as: "requestUser", attributes: ["id", "name", "email"] },
+        { model: User, as: "receiverUser", attributes: ["id", "name", "email"] },
+        {
+                  model: OperationsItens,
+                  as: "items",
+                  include: [{ model: Product, as: "product", attributes: ['name', 'sku', 'id'] }],
+                },
+                {
+                  model: OperationComment,
+                  as: 'comments',
+                  limit: 2
+                },
+                {
+                  model: Invoice,
+                  as: 'invoice',
+                  attributes: ['id', 'number_system']
+                }
       ],
     });
   }
@@ -241,9 +269,12 @@ export class OperationsService extends BaseService<
     options?: FindOptions,
   ): Promise<Operations | null> {
     return this.repository.findById(id, {
+      ...options,
       include: [
         { model: UnitBusiness, as: "fromUnit" },
         { model: UnitBusiness, as: "toUnit" },
+        { model: User, as: "requestUser", attributes: ["id", "name", "email"] },
+        { model: User, as: "receiverUser", attributes: ["id", "name", "email"] },
         {
           model: OperationsItens,
           as: "items",
