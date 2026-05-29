@@ -4,6 +4,7 @@ import BlingOrderService from "./bling-order.service";
 import { nextStepOnQueue } from "../../../../../shared/types/queue/base-queue";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
+import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 
 export class BlingOrderQueue extends BaseQueueService<any> {
   private orderService: BlingOrderService;
@@ -16,11 +17,12 @@ export class BlingOrderQueue extends BaseQueueService<any> {
     options: { workless?: boolean } = {},
   ) {
     super("BLING_ORDER_INGESTION", {
-      concurrency: 2,
+      concurrency: 1,
       limiter: {
         max: 2,
         duration: 10000, 
       },
+      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
     this.orderService = orderService;

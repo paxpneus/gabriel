@@ -17,6 +17,7 @@ import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import redisService from "../../../../shared/utils/base-models/base-redis";
 import integrationsService from "../../../integrations/integrations/integrations.service";
+import { BLING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/bling-queue-lock";
 
 /**
  * Job pode vir de duas origens:
@@ -39,6 +40,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     super("ML-ORDER-SYNC", {
       concurrency: 1,
       limiter: { max: 1, duration: 3000 },
+      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
     this.blingApi = blingApi;

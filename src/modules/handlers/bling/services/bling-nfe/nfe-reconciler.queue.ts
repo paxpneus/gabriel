@@ -16,6 +16,7 @@ import { getBlingIntegration } from "../../api/bling_api.service";
 import { FullOrder } from "../../../../sales/orders/order/orders.types";
 import OrderItems from "../../../../sales/orders/order_items/order_items.model";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
+import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 
 export type NFeReconcilerJobData = Record<string, never>; // job sem payload, só disparo periódico
 
@@ -40,7 +41,11 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     blingApi: AxiosInstance,
     options: { workless?: boolean } = {},
   ) {
-    super("NFE_RECONCILER", { concurrency: 1, workless: options.workless });
+    super("NFE_RECONCILER", {
+      concurrency: 1,
+      sharedLock: BLING_SHARED_QUEUE_LOCK,
+      workless: options.workless,
+    });
     this.blingApi = blingApi;
     this.cnpjNext = cnpjNext;
     this.nfeNext = nfeNext;

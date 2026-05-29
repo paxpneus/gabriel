@@ -14,6 +14,7 @@ import { blingApi } from "../../../api/bling_api.service";
 import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import { Op, UniqueConstraintError } from "sequelize";
+import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
@@ -23,11 +24,12 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
   constructor(options: { workless?: boolean } = {}) {
     super("BLING_DIRECT_UPSERT", {
-      concurrency: 3,
+      concurrency: 1,
       limiter: {
         max: 10,
         duration: 1000,
       },
+      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
   }

@@ -28,6 +28,7 @@ import {
   getBlingInvoiceReferenceDate,
   isBlingInvoiceOnOrAfterCutoff,
 } from "../bling-invoice-cutoff";
+import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -297,6 +298,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         max: 1,
         duration: 3000,
       },
+      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
 

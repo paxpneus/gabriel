@@ -1,13 +1,18 @@
-import { EventEmitter } from "events";
 import { redisConfig } from "./../../../config/redis";
 import { Queue, Worker, QueueEvents, Job } from "bullmq";
 import { redisConnection } from "./base-redis";
+import { randomUUID } from "crypto";
 
 export type baseQueueOptions = {
   concurrency?: number;
   limiter?: { max: number; duration: number };
   lockDuration?: number;
   workless?: boolean;
+  sharedLock?: {
+    key: string;
+    ttlMs?: number;
+    retryDelayMs?: number;
+  };
 };
 
 export abstract class BaseQueueService<T> {
@@ -23,6 +28,11 @@ export abstract class BaseQueueService<T> {
       limiter?: { max: number; duration: number };
       lockDuration?: number;
       workless?: boolean;
+      sharedLock?: {
+        key: string;
+        ttlMs?: number;
+        retryDelayMs?: number;
+      };
     } = {},
   ) {
     this.queueName = queueName;
@@ -32,7 +42,11 @@ export abstract class BaseQueueService<T> {
     });
 
     if (!options.workless) {
-      this.worker = new Worker(this.queueName, this.process.bind(this), {
+      const processor = options.sharedLock
+        ? (job: Job<T>) => this.processWithSharedLock(job, options.sharedLock!)
+        : this.process.bind(this);
+
+      this.worker = new Worker(this.queueName, processor, {
         connection: redisConnection,
         lockDuration: options.lockDuration ?? 30000,
         stalledInterval: 30000,
@@ -59,6 +73,80 @@ export abstract class BaseQueueService<T> {
   }
 
   abstract process(job: Job<T>): Promise<void>;
+
+  private async processWithSharedLock(
+    job: Job<T>,
+    sharedLock: NonNullable<baseQueueOptions["sharedLock"]>,
+  ): Promise<void> {
+    const token = `${this.queueName}:${job.id ?? "no-id"}:${randomUUID()}`;
+    const ttlMs = sharedLock.ttlMs ?? 15 * 60 * 1000;
+    const retryDelayMs = sharedLock.retryDelayMs ?? 1000;
+
+    await this.acquireSharedLock(sharedLock.key, token, ttlMs, retryDelayMs);
+
+    const refreshInterval = setInterval(() => {
+      this.refreshSharedLock(sharedLock.key, token, ttlMs).catch((error) => {
+        console.error(
+          `[QUEUE] Falha ao renovar lock compartilhado ${sharedLock.key}:`,
+          error.message,
+        );
+      });
+    }, Math.max(1000, Math.floor(ttlMs / 3)));
+
+    try {
+      await this.process(job);
+    } finally {
+      clearInterval(refreshInterval);
+      await this.releaseSharedLock(sharedLock.key, token);
+    }
+  }
+
+  private async acquireSharedLock(
+    key: string,
+    token: string,
+    ttlMs: number,
+    retryDelayMs: number,
+  ): Promise<void> {
+    while (true) {
+      const acquired = await redisConnection.set(key, token, "PX", ttlMs, "NX");
+      if (acquired === "OK") return;
+
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+
+  private async refreshSharedLock(
+    key: string,
+    token: string,
+    ttlMs: number,
+  ): Promise<void> {
+    await redisConnection.eval(
+      `
+      if redis.call("GET", KEYS[1]) == ARGV[1] then
+        return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+      end
+      return 0
+      `,
+      1,
+      key,
+      token,
+      String(ttlMs),
+    );
+  }
+
+  private async releaseSharedLock(key: string, token: string): Promise<void> {
+    await redisConnection.eval(
+      `
+      if redis.call("GET", KEYS[1]) == ARGV[1] then
+        return redis.call("DEL", KEYS[1])
+      end
+      return 0
+      `,
+      1,
+      key,
+      token,
+    );
+  }
 
   async add(data: T, jobId?: string) {
     if (jobId) {

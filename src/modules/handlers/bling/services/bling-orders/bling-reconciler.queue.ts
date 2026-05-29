@@ -5,6 +5,7 @@ import BlingOrderService from "../bling-orders/bling-order.service";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
+import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 
 export class BlingReconcilerQueue extends BaseQueueService<
   Record<string, never>
@@ -18,7 +19,11 @@ export class BlingReconcilerQueue extends BaseQueueService<
     blingOrderNext: { add: (data: any, jobId: string) => Promise<any> },
      options: { workless?: boolean } = {}
   ) {
-    super("BLING_RECONCILER", { concurrency: 1, workless: options.workless });
+    super("BLING_RECONCILER", {
+      concurrency: 1,
+      sharedLock: BLING_SHARED_QUEUE_LOCK,
+      workless: options.workless,
+    });
     this.blingApi = blingApi;
     this.blingOrderNext = blingOrderNext;
     this.blingOrderService = new BlingOrderService(blingApi);
