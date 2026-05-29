@@ -22,6 +22,7 @@ O banco esta dividido principalmente nos seguintes dominios:
    - integrations
    - config_tokens
    - integration_mappings
+   - applications
 
 2. Vendas
    - customers
@@ -127,6 +128,29 @@ Campos:
 Relacionamentos:
 - N:1 com integrations.
 - N:1 com unit_businesses.
+
+
+Tabela: applications
+Finalidade: representa aplicativos externos autorizados a consumir a API da PAX Pneus via api_key/api_secret e token Bearer temporario.
+
+Campos:
+- id: UUID, PK.
+- name: string(120), obrigatorio.
+- description: text, opcional.
+- role_id: UUID, FK para roles.id, obrigatorio.
+- api_key: string(80), obrigatorio, unico.
+- api_secret_hash: string(255), obrigatorio. O segredo original e exibido apenas na criacao/rotacao.
+- allowed_routes: array de string, obrigatorio, default [].
+- rate_limit_max_requests: integer, default 120.
+- rate_limit_window_seconds: integer, default 60.
+- token_version: integer, default 0. Incrementado para revogar tokens emitidos.
+- last_login_at: date, opcional.
+- revoked_at: date, opcional.
+- is_active: boolean, default true.
+- created_at, updated_at.
+
+Relacionamentos:
+- N:1 com roles.
 
 
 3. VENDAS
@@ -797,6 +821,7 @@ Integracoes:
 Usuarios e unidades:
 - unit_businesses 1:N users
 - roles 1:N users
+- roles 1:N applications
 - users 1:1 user_config
 - users N:N unit_businesses via user_unit_business
 
@@ -924,4 +949,3 @@ SELECT
 FROM pg_indexes
 WHERE schemaname = 'public'
 ORDER BY tablename, indexname;
-

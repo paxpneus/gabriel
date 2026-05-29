@@ -15,6 +15,7 @@ type Scopes =
   | 'Unidades de Negócio'
   | 'Transportadoras'
   | 'Integrações'
+  | 'Aplicativos'
   | 'Impressoras'
   | 'Multiplicador Estoque - Inventário'
   | 'Multiplicador Estoque - Entradas'
@@ -134,6 +135,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
     type: 'REGULAR',
     children: [
       { entity: 'config_tokens', label: 'Tokens de Configuração' },
+      { entity: 'applications', label: 'Aplicativos' },
     ],
   },
   {
