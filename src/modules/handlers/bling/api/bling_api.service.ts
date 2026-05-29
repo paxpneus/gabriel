@@ -8,6 +8,30 @@ import { alertService } from "../../../../shared/providers/mail-provider/nodemai
 let isRefreshing = false;
 let failedQueue: QueueItem[] = [];
 
+const BLING_429_MAX_RETRIES = Number(process.env.BLING_429_MAX_RETRIES ?? 5);
+const BLING_429_BASE_DELAY_MS = Number(
+  process.env.BLING_429_BASE_DELAY_MS ?? 3000,
+);
+const BLING_429_MAX_DELAY_MS = Number(
+  process.env.BLING_429_MAX_DELAY_MS ?? 60000,
+);
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function getRetryAfterMs(retryAfter?: string): number | null {
+  if (!retryAfter) return null;
+
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+
+  const dateMs = Date.parse(retryAfter);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+
+  return null;
+}
+
 // Fila em memória para lidar com os requests para a bling. Se caso uma falhar, não tenta enviar vários requests com o token expirado até fazer refresh, guarda todos requests numa fila, executa o refresh, pega o token novo e faz as requisições com o token novo, sem desperdiçar chamadas falhas para a bling
 function processQueue(error: unknown, token: string | null = null): void {
   failedQueue.forEach(({ resolve, reject }) =>
@@ -106,7 +130,35 @@ export const blingApi: AxiosInstance = createAxiosInstance({
 
     const originalRequest = error.config as AxiosRequestConfig & {
       _retry?: boolean;
+      _bling429Retries?: number;
     };
+
+    if (error.response?.status === 429) {
+      const attempt = originalRequest._bling429Retries ?? 0;
+
+      if (attempt >= BLING_429_MAX_RETRIES) {
+        return Promise.reject(error);
+      }
+
+      originalRequest._bling429Retries = attempt + 1;
+
+      const retryAfterMs = getRetryAfterMs(error.response.headers?.["retry-after"]);
+      const exponentialDelayMs = Math.min(
+        BLING_429_BASE_DELAY_MS * 2 ** attempt,
+        BLING_429_MAX_DELAY_MS,
+      );
+      const delayMs = Math.min(
+        retryAfterMs ?? exponentialDelayMs,
+        BLING_429_MAX_DELAY_MS,
+      );
+
+      console.warn(
+        `[BlingApi] 429 rate limit. Tentando novamente em ${Math.ceil(delayMs / 1000)}s (${attempt + 1}/${BLING_429_MAX_RETRIES})`,
+      );
+
+      await sleep(delayMs);
+      return blingApi(originalRequest);
+    }
 
     // rejeita sem tentar de novo se caso resposta for 401 ou já tentou refresh
     if (error.response?.status !== 401 || originalRequest._retry) {
