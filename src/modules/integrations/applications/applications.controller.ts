@@ -13,6 +13,21 @@ class ApplicationController extends BaseController<
 > {
   constructor() {
     super(applicationService);
+    this.router.get(
+      "/metadata/allowed-routes",
+      ...this.mw("allowedRoutes"),
+      this.allowedRoutes,
+    );
+    this.router.post(
+      "/clean-timeout/post",
+      ...this.mw("cleanTimeOutByIp"),
+      this.cleanTimeOutByIp,
+    );
+    this.router.get(
+      "/ban-time/get",
+      ...this.mw("getBanTimeRemaining"),
+      this.getBanTimeRemaining,
+    );
 
     this.router.post("/login", this.login);
     this.router.post(
@@ -25,11 +40,7 @@ class ApplicationController extends BaseController<
       ...this.mw("rotateSecret"),
       this.rotateSecret,
     );
-    this.router.get(
-      "/metadata/allowed-routes",
-      ...this.mw("allowedRoutes"),
-      this.allowedRoutes,
-    );
+    
   }
 
   protected middlewaresFor() {
@@ -44,6 +55,8 @@ class ApplicationController extends BaseController<
       revokeTokens: [authenticate, userPermissions],
       rotateSecret: [authenticate, userPermissions],
       allowedRoutes: [authenticate, userPermissions],
+      cleanTimeOutByIp: [authenticate, userPermissions],
+      getBanTimeRemaining: [authenticate, userPermissions],
     };
   }
 
@@ -82,6 +95,34 @@ class ApplicationController extends BaseController<
       return res.status(400).json({ error: error.message });
     }
   };
+
+  cleanTimeOutByIp = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const ip = this.getClientIp(req);
+      await this.service.cleanTimeOutByIp(ip);
+      return res.json({ message: "Ban removido com sucesso" });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  getBanTimeRemaining = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const ip = this.getClientIp(req);
+      const banTime = await this.service.getBanTimeRemaining(ip);
+      return res.json( banTime );
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  private getClientIp(req: Request): string {
+    const forwarded = req.headers["x-forwarded-for"];
+    if (typeof forwarded === "string" && forwarded.length) {
+      return forwarded.split(",")[0].trim();
+    }
+    return req.ip || req.socket.remoteAddress || "unknown";
+  }
 
   allowedRoutes = async (_req: Request, res: Response): Promise<Response> => {
     try {
