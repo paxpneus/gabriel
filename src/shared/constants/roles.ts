@@ -31,7 +31,8 @@ interface ChildEntity {
 interface Roles {
   scope: Scopes
   entity: string
-  type: RoleType,
+  type: RoleType
+  route: string
   permissions: Actions[]
   children?: ChildEntity[]
 }
@@ -42,6 +43,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Pedidos',
     entity: 'orders',
+    route: 'order',
     permissions: all,
     type: 'REGULAR',
     children: [
@@ -54,6 +56,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Notas Fiscais',
     entity: 'invoices',
+    route: 'invoices',
     permissions: all,
     type: 'REGULAR',
     children: [
@@ -65,6 +68,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Produtos',
     entity: 'products',
+    route: 'products',
     permissions: all,
     type: 'REGULAR',
     children: [
@@ -76,12 +80,14 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Estoque',
     entity: 'stocks',
+    route: 'stocks',
     type: 'REGULAR',
     permissions: all,
   },
   {
     scope: 'Inventário',
     entity: 'inventory_batches',
+    route: 'inventory_batch',
     permissions: all,
     type: 'REGULAR',
     children: [
@@ -92,6 +98,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Lotes',
     entity: 'expedition_batches',
+    route: 'batch',
     permissions: all,
     type: 'REGULAR',
     children: [
@@ -103,6 +110,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Usuários',
     entity: 'users',
+    route: 'users',
     permissions: all,
     type: 'REGULAR',
     children: [
@@ -112,6 +120,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Fornecedores',
     entity: 'suppliers',
+    route: 'suppliers',
     type: 'REGULAR',
     permissions: all,
     
@@ -119,18 +128,21 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Unidades de Negócio',
     entity: 'unit_businesses',
+    route: 'unit_business',
     type: 'REGULAR',
     permissions: all,
   },
   {
     scope: 'Transportadoras',
     entity: 'transporters',
+    route: 'transporter',
     type: 'REGULAR',
     permissions: all,
   },
   {
     scope: 'Integrações',
     entity: 'integrations',
+    route: 'integrations',
     permissions: all,
     type: 'REGULAR',
     children: [
@@ -141,12 +153,14 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Impressoras',
     entity: 'printer_configs',
+    route: 'printer',
     type: 'REGULAR',
     permissions: all,
   },
   {
     scope: 'Operações',
     entity: 'operations',
+    route: 'operation',
     type: 'REGULAR',
     permissions: all,
     children: [
@@ -157,24 +171,28 @@ export const ROLE_PERMISSIONS: Roles[] = [
    {
     scope: 'Multiplicador Estoque - Inventário',
     entity: 'multiply-stk-inventory',
+    route: '',
     type: 'CUSTOM',
     permissions: ['read'],
   },
     {
     scope: 'Multiplicador Estoque - Entradas',
     entity: 'multiply-stk-entrance',
+    route: '',
     type: 'CUSTOM',
     permissions: ['read'],
   },
   {
     scope: 'Dados Financeiros',
     entity: 'financial-pdt',
+    route: '',
     type: 'CUSTOM',
     permissions: ['read'],
   },
   {
     scope: 'Todas as Lojas',
     entity: 'visualize-all-unit-business',
+    route: '',
     type: 'CUSTOM',
     permissions: ['read'],
   },

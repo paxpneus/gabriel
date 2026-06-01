@@ -1,7 +1,8 @@
 import bcrypt from "bcrypt";
 import crypto from "crypto";
+import { createHash } from "crypto";
 import jwt from "jsonwebtoken";
-import { FindOptions, UpdateOptions } from "sequelize";
+import { DestroyOptions, FindOptions, UpdateOptions } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import redisService from "../../../shared/utils/base-models/base-redis";
 import Role from "../../warehouse/users/roles/role.model";
@@ -66,7 +67,7 @@ export class ApplicationService extends BaseService<
     data: CreateApplicationInput,
   ): Promise<{ application: Application; credentials: ApplicationCredentials }> {
     const credentials = this.generateCredentials();
-    const apiSecretHash = await bcrypt.hash(credentials.api_secret, 12);
+    const apiSecretHash = await this.hashApiSecret(credentials.api_secret);
 
     const application = await this.repository.create({
       name: data.name,
@@ -82,6 +83,26 @@ export class ApplicationService extends BaseService<
 
     return { application, credentials };
   }
+
+async delete(id: string, options?: DestroyOptions): Promise<boolean> {
+  const app = await this.findById(id, {
+    include: [{ model: Role, as: 'role' }]
+  })
+
+  if (!app) {
+    throw new Error("Aplicativo não encontrado")
+  }
+
+  const roleId = app.role_id
+
+  await app.destroy()
+
+  await Role.destroy({
+    where: { id: roleId }
+  })
+
+  return true
+}
 
   async update(
     id: string,
@@ -105,7 +126,7 @@ export class ApplicationService extends BaseService<
     if (!application) throw new Error("Aplicativo não encontrado");
 
     const credentials = this.generateCredentials(application.api_key);
-    const apiSecretHash = await bcrypt.hash(credentials.api_secret, 12);
+    const apiSecretHash = await this.hashApiSecret(credentials.api_secret);
 
     await application.update({
       api_secret_hash: apiSecretHash,
@@ -140,8 +161,9 @@ export class ApplicationService extends BaseService<
       throw new Error("Aplicativo não encontrado ou inativo");
     }
 
+    const secretHash = this.hashApiSecretSync(api_secret);
     const validSecret = await bcrypt.compare(
-      api_secret,
+      secretHash,
       application.api_secret_hash,
     );
     if (!validSecret) throw new Error("Credenciais inválidas");
@@ -183,6 +205,20 @@ export class ApplicationService extends BaseService<
     return safe;
   }
 
+  async cleanTimeOutByIp(ip: string): Promise<void> {
+    const banKey = `application-rate:ban:${ip}`;
+    await redisService.client.del(banKey);
+  }
+
+  async getBanTimeRemaining(ip: string): Promise<number | null> {
+    const banKey = `application-rate:ban:${ip}`;
+    const banned = await redisService.get(banKey);
+    if (!banned) return null;
+    
+    const ttl = await redisService.client.ttl(banKey);
+    return ttl > 0 ? ttl : null;
+  }
+
   getAllowedApiRoutes() {
     return [
       { method: "GET", path: "/api/:resource", mode: "paginate" },
@@ -206,6 +242,24 @@ export class ApplicationService extends BaseService<
     const plain = application.get({ plain: true });
     const { api_secret_hash, ...safe } = plain;
     return safe;
+  }
+
+  /**
+   * Hash the API secret with SHA256 first, then bcrypt.
+   * This prevents the bcrypt 72-byte truncation vulnerability where
+   * incomplete secrets could match if they share the same first 72 bytes.
+   */
+  private hashApiSecretSync(secret: string): string {
+    return createHash("sha256").update(secret).digest("hex");
+  }
+
+  /**
+   * Hash the API secret asynchronously with bcrypt.
+   * First hashes with SHA256 to normalize length and prevent truncation issues.
+   */
+  private async hashApiSecret(secret: string): Promise<string> {
+    const hashedSecret = this.hashApiSecretSync(secret);
+    return bcrypt.hash(hashedSecret, 12);
   }
 }
 

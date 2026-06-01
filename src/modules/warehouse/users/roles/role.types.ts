@@ -1,6 +1,7 @@
 export interface RoleAttributes {
   id: string;
   name: string;
+  type?: string;
  permissions: {
   entity: string;
   permissions: string[];
