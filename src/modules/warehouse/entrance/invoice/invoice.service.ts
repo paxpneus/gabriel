@@ -262,7 +262,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
   const rows = await this.findAll(
     {
-      attributes: ["id", "id_system", "number_system", "seller_id"],
+      attributes: ["id", "id_system", "destination_city", "number_system", "seller_id"],
       include: [
         {
           model: Contact,
@@ -316,6 +316,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       attributes: [
         "id",
         "invoice_id",
+        "date",
         "id_order_system",
         "number_order_system",
         "number_order_channel",
@@ -348,6 +349,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     } | null;
     order: {
       id: string;
+      date: Date | null;
       id_order_system?: string;
       number_order_system: string;
       number_order_channel: string;
@@ -383,6 +385,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         order: order
           ? {
               id: order.id,
+              date: order.date ?? null,
               id_order_system: order.id_order_system,
               number_order_system: order.number_order_system,
               number_order_channel: order.number_order_channel,
