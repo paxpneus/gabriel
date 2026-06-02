@@ -40,6 +40,8 @@ class ApplicationController extends BaseController<
       ...this.mw("rotateSecret"),
       this.rotateSecret,
     );
+
+    this.router.post("/test-webhook/post", [], this.testWebhook)
     
   }
 
@@ -57,6 +59,7 @@ class ApplicationController extends BaseController<
       allowedRoutes: [authenticate, userPermissions],
       cleanTimeOutByIp: [authenticate, userPermissions],
       getBanTimeRemaining: [authenticate, userPermissions],
+      
     };
   }
 
@@ -64,6 +67,15 @@ class ApplicationController extends BaseController<
     try {
       const result = await this.service.createApplication(req.body);
       return res.status(201).json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  testWebhook = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      console.log(req.body)
+      return res.status(201).json('ok');
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

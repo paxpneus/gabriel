@@ -5,6 +5,7 @@ import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import { externalApiAccess } from './middlewares/external-api-access'
 import { applicationRateLimit } from './middlewares/application-rate-limit'
+import { applicationWebhookEvents } from './middlewares/application-webhook-events'
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') ?? []
 const app = express()
 import crypto from 'crypto'
@@ -59,7 +60,7 @@ app.set('query parser', (str: string) => {
 
 app.get('/health', (_, res) => res.json({status: 'ok'}))
 
-app.use('/api', externalApiAccess, applicationRateLimit, router)
+app.use('/api', externalApiAccess, applicationRateLimit, applicationWebhookEvents, router)
 
 
 

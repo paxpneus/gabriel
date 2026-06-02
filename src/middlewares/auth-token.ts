@@ -24,7 +24,9 @@ function applicationRouteAllowed(
   req: Request,
   allowedRoutes: string[],
 ): boolean {
-  if (req.method !== "GET") return false;
+  if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
+    return false;
+  }
   if (allowedRoutes.includes("*")) return true;
 
   const cleanPath = req.originalUrl.split("?")[0];

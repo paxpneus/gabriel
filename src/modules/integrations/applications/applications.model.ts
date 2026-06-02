@@ -18,6 +18,7 @@ class Application
   public api_key!: string;
   public api_secret_hash!: string;
   public allowed_routes!: string[];
+  public webhook_url?: string | null;
   public rate_limit_max_requests!: number;
   public rate_limit_window_seconds!: number;
   public token_version!: number;
@@ -68,6 +69,24 @@ Application.init(
       allowNull: false,
       defaultValue: [],
     },
+    webhook_url: {
+      type: DataTypes.STRING(2048),
+      allowNull: true,
+      validate: {
+        isValidWebhookUrl(value: string | null) {
+          if (value == null || value === "") return;
+
+          try {
+            const parsed = new URL(value);
+            if (!["http:", "https:"].includes(parsed.protocol)) {
+              throw new Error();
+            }
+          } catch {
+            throw new Error("URL de webhook inválida");
+          }
+        },
+      },
+    },
     rate_limit_max_requests: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -112,4 +131,3 @@ Application.init(
 );
 
 export default Application;
-

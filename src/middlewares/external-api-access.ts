@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") ?? [];
-const PUBLIC_API_ROUTES = new Set(["applications/login"]);
+const PUBLIC_API_ROUTES = new Set([
+  "applications/login",
+  "applications/test-webhook/post",
+]);
 const EXTERNAL_ROUTE_PREFIXES = ["bling", "bling-orders"];
 
 function getApiPath(req: Request): string {
@@ -30,4 +33,3 @@ export function externalApiAccess(
     error: "Aplicativo não autenticado para acessar a API.",
   });
 }
-
