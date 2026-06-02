@@ -1,4 +1,4 @@
-import { InvoiceStatus } from './../../../../../warehouse/entrance/invoice/invoice.types';
+import { InvoiceStatus } from "./../../../../../warehouse/entrance/invoice/invoice.types";
 import { Job } from "bullmq";
 import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
@@ -30,6 +30,10 @@ import {
   isBlingInvoiceOnOrAfterCutoff,
 } from "../bling-invoice-cutoff";
 import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
+import {
+  logDbError,
+  rethrowWithLog,
+} from "../../../../../../shared/utils/logging/db-errors-logs";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -670,14 +674,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         { conflictFields: ["id_system"] },
       );
     } catch (error: any) {
-      console.error("[BLING_API_FETCH] Erro no upsert do produto", {
+      logDbError("[BLING_API_FETCH] Erro no upsert do produto", error, {
         blingId: apiFetch.blingId,
         sku: blingProduct?.codigo,
         ean: blingProduct?.gtin,
-        message: error.message,
-        detail: error?.parent?.detail,
-        fields: error?.fields,
-        sql: error?.sql,
       });
       throw error;
     }
@@ -916,7 +916,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           fiscalTotals = extractInvoiceFiscalTotalsFromXml(xmlContent);
         }
       } catch (err) {
-        console.warn("[XML PARSE ERROR]", err);
+        console.warn("[XML PARSE ERROR]", { blingId: apiFetch.blingId, err });
       }
     }
 
@@ -1063,26 +1063,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       },
       { conflictFields: ["id_system"] },
     ).catch((error) => {
-      console.error(
-        "[INVOICE UPSERT ERROR DETAIL]",
-        JSON.stringify(
-          {
-            message: error.message,
-            original: error.original?.message,
-            detail: error.original?.detail,
-            hint: error.original?.hint,
-            where: error.original?.where,
-            table: error.original?.table,
-            column: error.original?.column,
-            constraint: error.original?.constraint,
-            sql: error.sql?.substring(0, 500),
-            blingId: nf.id,
-            numero: nf.numero,
-          },
-          null,
-          2,
-        ),
-      );
+      logDbError("[INVOICE UPSERT ERROR DETAIL]", error, {
+        blingId: nf.id,
+        numero: nf.numero,
+        id_system: String(nf.id),
+      });
       throw error;
     });
 
@@ -1100,10 +1085,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           "[BLING_API_FETCH]",
         );
       } catch (err) {
-        // Não bloqueia o fluxo principal se os fiscais falharem
-        console.warn(
-          `[BLING_API_FETCH] Falha ao upsert fiscal items para invoice ${nf.id}:`,
-          err,
+        logDbError(
+          "[BLING_API_FETCH] Falha ao upsert fiscal items",
+          err as Error,
+          {
+            invoiceId: invoice.id,
+            blingId: nf.id,
+          },
         );
       }
     }
@@ -1275,7 +1263,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
    * Importa uma NF-e a partir de um XML bruto (sem passar pela API Bling).
    * Usado pelo endpoint de importação manual de XML.
    */
-  async upsertInvoiceFromXml(xmlContent: string, status?: InvoiceStatus): Promise<void> {
+  async upsertInvoiceFromXml(
+    xmlContent: string,
+    status?: InvoiceStatus,
+  ): Promise<void> {
     const parsed = parser.parse(xmlContent);
 
     const nfe =
@@ -1399,16 +1390,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
 
     // ─── Upsert Invoice ──────────────────────────────────────────────────────
-    
+
     const existingInvoice = await Invoice.findOne({
       where: { xml_key: chaveAcesso },
       attributes: ["status"],
     });
 
-    const incomingStatus = status ?? existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
+    const incomingStatus =
+      status ?? existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
     const outgoingStatus = status ?? existingInvoice?.status ?? "PENDING";
 
-     let store_id = await Store.findOne({
+    let store_id = await Store.findOne({
       where: { id: existingInvoice?.store_id },
     });
 
@@ -1416,7 +1408,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       store_id = await Store.findOne({ where: { name: "Outros" } });
     }
     const conflictFields = chaveAcesso ? ["xml_key"] : ["id_system"];
-
 
     const [invoice] = await Invoice.upsert(
       {
@@ -1460,26 +1451,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       },
       { conflictFields: conflictFields as any },
     ).catch((error: any) => {
-      console.error(
-        "[IMPORT_XML UPSERT ERROR DETAIL]",
-        JSON.stringify(
-          {
-            message: error.message,
-            original: error.original?.message,
-            detail: error.original?.detail,
-            hint: error.original?.hint,
-            where: error.original?.where,
-            table: error.original?.table,
-            column: error.original?.column,
-            constraint: error.original?.constraint,
-            sql: error.sql?.substring(0, 500),
-            idSystem,
-            numero,
-          },
-          null,
-          2,
-        ),
-      );
+      logDbError("[IMPORT_XML UPSERT ERROR DETAIL]", error, {
+        idSystem,
+        numero,
+        chaveAcesso,
+      });
       throw error;
     });
 
@@ -1494,10 +1470,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         "[IMPORT_XML]",
       );
     } catch (err) {
-      console.warn(
-        `[IMPORT_XML] Falha ao upsert fiscal items para invoice ${idSystem}:`,
-        err,
-      );
+      logDbError("[IMPORT_XML] Falha ao upsert fiscal items", err as Error, {
+        invoiceId: invoice.id,
+        idSystem,
+      });
     }
 
     // ─── Itens operacionais ───────────────────────────────────────────────────
