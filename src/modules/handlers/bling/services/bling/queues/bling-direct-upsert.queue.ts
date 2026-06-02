@@ -16,6 +16,7 @@ import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-b
 import { Op, UniqueConstraintError } from "sequelize";
 import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
 import Contact from "../../../../../sales/contacts/contacts.model";
+import { logDbError } from "../../../../../../shared/utils/logging/db-errors-logs";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
@@ -75,11 +76,17 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
           );
       }
     } catch (error: any) {
-      console.error(
-        `[BLING_DIRECT_UPSERT] Erro ao processar job ${job.id}:`,
+      logDbError(
+        `[BLING_DIRECT_UPSERT] Erro ao processar job ${job.id}`,
         error,
+        {
+          jobId: job.id,
+          resource: job.data.resource,
+          action: job.data.action,
+          table: job.data.directUpsert?.table,
+        },
       );
-      throw error; // relança para BullMQ registrar falha e fazer retry
+      throw error;
     }
   }
 
@@ -137,14 +144,15 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       });
 
       if (!existingProduct) {
-        console.error("[BLING_DIRECT_UPSERT] UniqueConstraintError não recuperável ao criar produto", {
-          blingId: data.blingId,
-          idSystem,
-          sku: data.sku,
-          constraint: error?.parent?.constraint,
-          detail: error?.parent?.detail,
-          fields: error?.fields,
-        });
+        logDbError(
+          "[BLING_DIRECT_UPSERT] UniqueConstraintError não recuperável ao criar produto",
+          error,
+          {
+            blingId: data.blingId,
+            idSystem,
+            sku: data.sku,
+          },
+        );
         throw error;
       }
 
@@ -161,156 +169,163 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
   }
 
   private async upsertStock(
-  data: Extract<DirectUpsertPayload, { table: "stocks" }>["data"],
-): Promise<void> {
-  let product = await Product.findOne({
-    where: { id_system: String(data.productBlingId) },
-  });
+    data: Extract<DirectUpsertPayload, { table: "stocks" }>["data"],
+  ): Promise<void> {
+    let product = await Product.findOne({
+      where: { id_system: String(data.productBlingId) },
+    });
 
-  // Busca dados frescos do produto na Bling para ter o precoCusto atual
-  let entryUnitCost = 0;
-  try {
-    const { data: blingProductRes } = await this.api.get<{ data: any }>(
-      `/produtos/${data.productBlingId}`,
-    );
-    const p = blingProductRes.data;
-    entryUnitCost = Number(p?.fornecedor?.precoCusto ?? p?.precoCusto ?? 0);
-
-    if (!product && p?.codigo) {
-      [product] = await Product.upsert(
-        {
-          id_system: String(p.id),
-          name: p.nome,
-          sku: p.codigo,
-          ean: p.gtin ?? `NO-EAN-${p.id}`,
-          ean_tribut: p.gtinEmbalagem ?? `NO-EAN-${p.id}`,
-          supplier_cost_price: entryUnitCost,
-        },
-        { conflictFields: ["id_system"] },
+    // Busca dados frescos do produto na Bling para ter o precoCusto atual
+    let entryUnitCost = 0;
+    try {
+      const { data: blingProductRes } = await this.api.get<{ data: any }>(
+        `/produtos/${data.productBlingId}`,
       );
-      product = await Product.findOne({
-        where: { id_system: String(data.productBlingId) },
-      });
+      const p = blingProductRes.data;
+      entryUnitCost = Number(p?.fornecedor?.precoCusto ?? p?.precoCusto ?? 0);
+
+      if (!product && p?.codigo) {
+        [product] = await Product.upsert(
+          {
+            id_system: String(p.id),
+            name: p.nome,
+            sku: p.codigo,
+            ean: p.gtin ?? `NO-EAN-${p.id}`,
+            ean_tribut: p.gtinEmbalagem ?? `NO-EAN-${p.id}`,
+            supplier_cost_price: entryUnitCost,
+          },
+          { conflictFields: ["id_system"] },
+        );
+        product = await Product.findOne({
+          where: { id_system: String(data.productBlingId) },
+        });
+      }
+    } catch (err: any) {
+      if (!product) {
+        throw new Error(
+          `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado. Retry agendado.`,
+        );
+      }
+      // Se falhou mas product existe, usa o custo que já está no banco
+      entryUnitCost = Number(
+        product.average_cost ?? product.supplier_cost_price ?? 0,
+      );
+      console.warn(
+        `[BLING_DIRECT_UPSERT] Falha ao buscar precoCusto na Bling para ${data.productBlingId} — usando custo do banco: ${entryUnitCost}`,
+      );
     }
-  } catch (err: any) {
+
     if (!product) {
       throw new Error(
-        `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado. Retry agendado.`,
+        `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado após fallback. Retry agendado.`,
       );
     }
-    // Se falhou mas product existe, usa o custo que já está no banco
-    entryUnitCost = Number(product.average_cost ?? product.supplier_cost_price ?? 0);
-    console.warn(
-      `[BLING_DIRECT_UPSERT] Falha ao buscar precoCusto na Bling para ${data.productBlingId} — usando custo do banco: ${entryUnitCost}`,
-    );
-  }
 
-  if (!product) {
-    throw new Error(
-      `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado após fallback. Retry agendado.`,
-    );
-  }
+    const unitBusiness = await UnitBusiness.findOne({
+      where: { cnpj: "02316749002111" },
+    });
 
-  const unitBusiness = await UnitBusiness.findOne({
-    where: { cnpj: "02316749002111" },
-  });
+    if (!unitBusiness) {
+      throw new Error(
+        "[BLING_DIRECT_UPSERT] UnitBusiness CD Minas Gerais não encontrado.",
+      );
+    }
 
-  if (!unitBusiness) {
-    throw new Error("[BLING_DIRECT_UPSERT] UnitBusiness CD Minas Gerais não encontrado.");
-  }
+    const newQuantity = data.quantity;
 
-  const newQuantity = data.quantity;
+    const existingStock = await Stock.findOne({
+      where: { product_id: product.id, unit_business_id: unitBusiness.id },
+    });
 
-  const existingStock = await Stock.findOne({
-    where: { product_id: product.id, unit_business_id: unitBusiness.id },
-  });
+    const oldQuantity = Number(existingStock?.quantity ?? 0);
+    const oldTotalPrice = Number(existingStock?.total_price ?? 0);
 
-  const oldQuantity = Number(existingStock?.quantity ?? 0);
-  const oldTotalPrice = Number(existingStock?.total_price ?? 0);
+    let newTotalPrice: number;
+    let newAverageCost: number;
 
-  let newTotalPrice: number;
-  let newAverageCost: number;
+    if (!existingStock || oldQuantity === 0) {
+      // Sem estoque anterior: inicializa com custo atual da Bling
+      newTotalPrice = newQuantity * entryUnitCost;
+      newAverageCost = entryUnitCost;
+    } else if (newQuantity > oldQuantity) {
+      // Entrada: CMP = (valor antigo + quantidade entrada × custo entrada) / nova quantidade
+      const enteredQty = newQuantity - oldQuantity;
+      newTotalPrice = oldTotalPrice + enteredQty * entryUnitCost;
+      newAverageCost =
+        newQuantity > 0 ? newTotalPrice / newQuantity : entryUnitCost;
+    } else if (newQuantity < oldQuantity) {
+      // Saída: desconta pelo CMP atual (custo médio não muda em saída)
+      const currentAvg =
+        oldQuantity > 0 ? oldTotalPrice / oldQuantity : entryUnitCost;
+      newTotalPrice = newQuantity * currentAvg;
+      newAverageCost = currentAvg;
+    } else {
+      // Sem mudança de quantidade
+      newTotalPrice = oldTotalPrice;
+      newAverageCost =
+        oldQuantity > 0 ? oldTotalPrice / oldQuantity : entryUnitCost;
+    }
 
-  if (!existingStock || oldQuantity === 0) {
-    // Sem estoque anterior: inicializa com custo atual da Bling
-    newTotalPrice = newQuantity * entryUnitCost;
-    newAverageCost = entryUnitCost;
-  } else if (newQuantity > oldQuantity) {
-    // Entrada: CMP = (valor antigo + quantidade entrada × custo entrada) / nova quantidade
-    const enteredQty = newQuantity - oldQuantity;
-    newTotalPrice = oldTotalPrice + enteredQty * entryUnitCost;
-    newAverageCost = newQuantity > 0 ? newTotalPrice / newQuantity : entryUnitCost;
-  } else if (newQuantity < oldQuantity) {
-    // Saída: desconta pelo CMP atual (custo médio não muda em saída)
-    const currentAvg = oldQuantity > 0 ? oldTotalPrice / oldQuantity : entryUnitCost;
-    newTotalPrice = newQuantity * currentAvg;
-    newAverageCost = currentAvg;
-  } else {
-    // Sem mudança de quantidade
-    newTotalPrice = oldTotalPrice;
-    newAverageCost = oldQuantity > 0 ? oldTotalPrice / oldQuantity : entryUnitCost;
-  }
+    // Atualiza CMP no produto
+    await product.update({
+      supplier_cost_price: entryUnitCost,
+      average_cost: newAverageCost,
+      average_cost_updated_at: new Date(),
+    });
 
-  // Atualiza CMP no produto
-  await product.update({
-    supplier_cost_price: entryUnitCost,
-    average_cost: newAverageCost,
-    average_cost_updated_at: new Date(),
-  });
-
-  await Stock.upsert(
-    {
-      product_id: product.id,
-      quantity: newQuantity,
-      unit_business_id: unitBusiness.id,
-      total_price: newTotalPrice,
-    },
-    { conflictFields: ["product_id"] },
-  );
-
-  console.log(
-    `[BLING_DIRECT_UPSERT] Stock upsertado: sku=${product.sku} | qty=${newQuantity} | entry_cost=${entryUnitCost.toFixed(4)} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
-  );
-
-  // ─── Sincroniza InventoryBatches ──────────────────────────────────────────
-
-  const affectedBatches = await InventoryBatch.findAll({
-    where: {
-      mode: "CYCLIC",
-      status: { [Op.in]: ["OPEN", "PENDING"] },
-    },
-    include: [
+    await Stock.upsert(
       {
-        model: InventoryBatchItems,
-        as: "items",
-        where: { product_id: product.id },
-        required: true,
+        product_id: product.id,
+        quantity: newQuantity,
+        unit_business_id: unitBusiness.id,
+        total_price: newTotalPrice,
       },
-    ],
-  });
-
-  for (const batch of affectedBatches) {
-    await InventoryBatchItems.update(
-      { quantity_stock: newQuantity },
-      { where: { inventory_batch_id: batch.id, product_id: product.id } },
+      { conflictFields: ["product_id"] },
     );
-
-    const newTotalQuantityStock =
-      (await InventoryBatchItems.sum("quantity_stock", {
-        where: { inventory_batch_id: batch.id },
-      })) ?? 0;
-
-    await batch.update({ total_quantity_stock: newTotalQuantityStock });
 
     console.log(
-      `[BLING_DIRECT_UPSERT] InventoryBatch ${batch.id} atualizado | total_quantity_stock=${newTotalQuantityStock}`,
+      `[BLING_DIRECT_UPSERT] Stock upsertado: sku=${product.sku} | qty=${newQuantity} | entry_cost=${entryUnitCost.toFixed(4)} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
+    );
+
+    // ─── Sincroniza InventoryBatches ──────────────────────────────────────────
+
+    const affectedBatches = await InventoryBatch.findAll({
+      where: {
+        mode: "CYCLIC",
+        status: { [Op.in]: ["OPEN", "PENDING"] },
+      },
+      include: [
+        {
+          model: InventoryBatchItems,
+          as: "items",
+          where: { product_id: product.id },
+          required: true,
+        },
+      ],
+    });
+
+    for (const batch of affectedBatches) {
+      await InventoryBatchItems.update(
+        { quantity_stock: newQuantity },
+        { where: { inventory_batch_id: batch.id, product_id: product.id } },
+      );
+
+      const newTotalQuantityStock =
+        (await InventoryBatchItems.sum("quantity_stock", {
+          where: { inventory_batch_id: batch.id },
+        })) ?? 0;
+
+      await batch.update({ total_quantity_stock: newTotalQuantityStock });
+
+      console.log(
+        `[BLING_DIRECT_UPSERT] InventoryBatch ${batch.id} atualizado | total_quantity_stock=${newTotalQuantityStock}`,
+      );
+    }
+
+    console.log(
+      `[BLING_DIRECT_UPSERT] ${affectedBatches.length} batch(es) sincronizado(s)`,
     );
   }
-
-  console.log(
-    `[BLING_DIRECT_UPSERT] ${affectedBatches.length} batch(es) sincronizado(s)`,
-  );
-}
 
   private async upsertSupplierMapping(
     data: Extract<

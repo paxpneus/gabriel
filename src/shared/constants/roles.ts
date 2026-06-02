@@ -187,7 +187,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
     entity: 'financial-pdt',
     route: '',
     type: 'CUSTOM',
-    permissions: ['read'],
+    permissions: ['read', 'write'],
   },
   {
     scope: 'Todas as Lojas',
