@@ -6,4 +6,14 @@ export const BLING_SHARED_QUEUE_LOCK: NonNullable<
   key: "locks:bling:queues",
   ttlMs: 15 * 60 * 1000,
   retryDelayMs: 1000,
+  priority: {
+    enabled: true,
+    ranks: {
+      product: 1,
+      invoice: 2,
+      consumer_invoice: 2,
+      order: 3,
+    },
+    defaultRank: 4,
+  },
 };

@@ -1,7 +1,11 @@
-const DEFAULT_BLING_INVOICE_CUTOFF_AT = "2026-05-08T00:00:00-03:00";
+const DEFAULT_BLING_INVOICE_CUTOFF_AT = `${new Date().getFullYear()}-01-01T00:00:00-03:00`;
+const BLING_MIGRATION_START_DATE = process.env.BLING_MIGRATION_START_DATE;
 
 export const BLING_INVOICE_CUTOFF_AT =
-  process.env.BLING_INVOICE_CUTOFF_AT ?? DEFAULT_BLING_INVOICE_CUTOFF_AT;
+  process.env.BLING_INVOICE_CUTOFF_AT ??
+  (BLING_MIGRATION_START_DATE
+    ? `${BLING_MIGRATION_START_DATE}T00:00:00-03:00`
+    : DEFAULT_BLING_INVOICE_CUTOFF_AT);
 
 function parseBlingDateLike(value: string): Date | null {
   const normalized = value.trim();

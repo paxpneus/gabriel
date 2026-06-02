@@ -5,9 +5,18 @@ import { QueueItem, BlingTokenResponse } from "./bling_api.types";
 import ConfigToken from "../../../integrations/config_tokens/config_tokens.model";
 import { FullIntegration } from "../../../integrations/integrations/integrations.types";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
+import { redisConnection } from "../../../../shared/utils/base-models/base-redis";
+import { randomUUID } from "crypto";
 let isRefreshing = false;
 let failedQueue: QueueItem[] = [];
 
+const BLING_RATE_LIMIT_MAX_REQUESTS = Number(
+  process.env.BLING_RATE_LIMIT_MAX_REQUESTS ?? 2,
+);
+const BLING_RATE_LIMIT_WINDOW_MS = Number(
+  process.env.BLING_RATE_LIMIT_WINDOW_MS ?? 1000,
+);
+const BLING_RATE_LIMIT_KEY = "rate-limit:bling:api";
 const BLING_429_MAX_RETRIES = Number(process.env.BLING_429_MAX_RETRIES ?? 5);
 const BLING_429_BASE_DELAY_MS = Number(
   process.env.BLING_429_BASE_DELAY_MS ?? 3000,
@@ -18,6 +27,39 @@ const BLING_429_MAX_DELAY_MS = Number(
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForBlingRateLimit(): Promise<void> {
+  while (true) {
+    const now = Date.now();
+    const minScore = now - BLING_RATE_LIMIT_WINDOW_MS;
+    const member = `${now}:${randomUUID()}`;
+
+    const allowed = await redisConnection.eval(
+      `
+      redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[1])
+      local count = redis.call("ZCARD", KEYS[1])
+      if count < tonumber(ARGV[2]) then
+        redis.call("ZADD", KEYS[1], ARGV[3], ARGV[4])
+        redis.call("PEXPIRE", KEYS[1], ARGV[5])
+        return 1
+      end
+      redis.call("PEXPIRE", KEYS[1], ARGV[5])
+      return 0
+      `,
+      1,
+      BLING_RATE_LIMIT_KEY,
+      String(minScore),
+      String(BLING_RATE_LIMIT_MAX_REQUESTS),
+      String(now),
+      member,
+      String(BLING_RATE_LIMIT_WINDOW_MS * 2),
+    );
+
+    if (Number(allowed) === 1) return;
+
+    await sleep(100);
+  }
 }
 
 function getRetryAfterMs(retryAfter?: string): number | null {
@@ -119,6 +161,7 @@ export const blingApi: AxiosInstance = createAxiosInstance({
 
   // Interceptor de request: injeta o token atual
   onRequest: async (config) => {
+    await waitForBlingRateLimit();
     const configToken = await getBlingToken();
     config.headers.Authorization = `Bearer ${configToken.access_token}`;
     return config;

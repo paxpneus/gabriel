@@ -7,7 +7,8 @@ export type BlingResource =
   | 'virtual_stock'
   | 'invoice'
   | 'consumer_invoice'
-  | 'product_supplier';
+  | 'product_supplier'
+  | 'seller';
 
 export type BlingAction = 'created' | 'updated' | 'deleted';
 
@@ -132,6 +133,7 @@ export type DirectUpsertPayload =
   | { table: 'products'; data: MappedProduct }
   | { table: 'stocks'; data: MappedStock }
   | { table: 'suppliers'; data: MappedSupplier }
+  | { table: 'contacts'; data: MappedContact }
   | { table: 'product_supplier_maps'; data: MappedSupplierMapping }
   | { table: 'delete'; resource: BlingResource; blingId: number };
 
@@ -162,6 +164,14 @@ export interface MappedStock {
   /** saldoFisicoTotal do deposito */
   quantity: number;
   unit_business_id: string;
+}
+
+export interface MappedContact {
+  id_system: string;
+  name: string;
+  type: 'SELLER' | 'CUSTOMER';
+  integrations_id?: string | null;
+  unit_business_id?: string | null;
 }
 
 export interface MappedInvoice {

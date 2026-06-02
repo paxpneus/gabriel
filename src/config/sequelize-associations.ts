@@ -28,6 +28,7 @@ import Integration from '../modules/integrations/integrations/integrations.model
 import ConfigToken from '../modules/integrations/config_tokens/config_tokens.model';
 import Order from '../modules/sales/orders/order/orders.model';
 import Customer from '../modules/sales/customers/customers.model';
+import Contact from '../modules/sales/contacts/contacts.model';
 import OrderHistory from '../modules/sales/orders/order_history/order_history.model';
 import Store from '../modules/sales/stores/stores.model';
 import OrderItems from '../modules/sales/orders/order_items/order_items.model';
@@ -61,6 +62,12 @@ Order.belongsTo(Integration, { foreignKey: 'integrations_id', as: 'integration' 
 // 3. CUSTOMER (CLIENTE) 1:N ORDERS (PEDIDOS)
 Customer.hasMany(Order, { foreignKey: 'customer_id', as: 'orders' });
 Order.belongsTo(Customer, { foreignKey: 'customer_id', as: 'customer' });
+
+// Contacts -> Integration / Unit Business
+Contact.belongsTo(Integration, { foreignKey: 'integrations_id', as: 'integration' });
+Integration.hasMany(Contact, { foreignKey: 'integrations_id', as: 'contacts' });
+Contact.belongsTo(UnitBusiness, { foreignKey: 'unit_business_id', as: 'unitBusiness' });
+UnitBusiness.hasMany(Contact, { foreignKey: 'unit_business_id', as: 'contacts' });
 
 // 4. ORDER (PEDIDO) 1:N ORDER_HISTORY (HISTORICO)
 Order.hasMany(OrderHistory, { foreignKey: 'order_id', as: 'history' });
@@ -411,6 +418,10 @@ ExpeditionBatchInvoice.belongsTo(Invoice, {
   // Invoice -> Store
 Invoice.belongsTo(Store, { foreignKey: 'store_id', as: 'store' });
 Store.hasMany(Invoice, { foreignKey: 'store_id', as: 'invoices' });
+
+// Invoice -> Seller Contact
+Invoice.belongsTo(Contact, { foreignKey: 'seller_id', as: 'seller' });
+Contact.hasMany(Invoice, { foreignKey: 'seller_id', as: 'sellerInvoices' });
 
   // ===== INVOICE ITEMS =====
   
