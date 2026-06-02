@@ -53,6 +53,7 @@ import { Supplier } from '../modules/inventory';
 import Operations from '../modules/warehouse/operations/operation/operations.model';
 import OperationsItens from '../modules/warehouse/operations/operations-itens/operations-itens.model';
 import OperationComment from '../modules/warehouse/operations/operation-comment/operation-comment.model';
+import Application from '../modules/integrations/applications/applications.model';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -245,6 +246,15 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
     as: 'users',
   });
   User.belongsTo(Role, {
+    foreignKey: 'role_id',
+    as: 'role',
+  });
+
+  Role.hasMany(Application, {
+    foreignKey: 'role_id',
+    as: 'applications',
+  });
+  Application.belongsTo(Role, {
     foreignKey: 'role_id',
     as: 'role',
   });

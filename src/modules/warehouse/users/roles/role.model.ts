@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 class Role extends Model<RoleAttributes, RoleCreationAttributes> implements RoleAttributes {
   public id!: string;
   public name!: string;
+  public type?: string;
   public permissions!: {
   entity: string;
   permissions: string[];
@@ -27,6 +28,10 @@ Role.init(
       type: DataTypes.STRING(100),
       allowNull: false,
       unique: true,
+    },
+    type: {
+      type: DataTypes.ENUM('USER', 'APPS'),
+      defaultValue: 'USER'
     },
     permissions: {
       type: DataTypes.JSON,
