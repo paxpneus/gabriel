@@ -141,6 +141,7 @@ Campos:
 - api_key: string(80), obrigatorio, unico.
 - api_secret_hash: string(255), obrigatorio. O segredo original e exibido apenas na criacao/rotacao.
 - allowed_routes: array de string, obrigatorio, default [].
+- webhook_url: string(2048), opcional. URL para receber eventos de webhook da API.
 - rate_limit_max_requests: integer, default 120.
 - rate_limit_window_seconds: integer, default 60.
 - token_version: integer, default 0. Incrementado para revogar tokens emitidos.

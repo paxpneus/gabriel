@@ -1,8 +1,9 @@
 import bcrypt from "bcrypt";
+import axios from "axios";
 import crypto from "crypto";
 import { createHash } from "crypto";
 import jwt from "jsonwebtoken";
-import { DestroyOptions, FindOptions, UpdateOptions } from "sequelize";
+import { DestroyOptions, FindOptions, Op, UpdateOptions } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import redisService from "../../../shared/utils/base-models/base-redis";
 import Role from "../../warehouse/users/roles/role.model";
@@ -17,6 +18,7 @@ import applicationRepository, {
 } from "./applications.repository";
 import {
   ApplicationCredentials,
+  ApplicationWebhookPayload,
   ApplicationLoginInput,
   ApplicationTokenPayload,
   CreateApplicationInput,
@@ -76,6 +78,7 @@ export class ApplicationService extends BaseService<
       api_key: credentials.api_key,
       api_secret_hash: apiSecretHash,
       allowed_routes: this.normalizeAllowedRoutes(data.allowed_routes),
+      webhook_url: this.normalizeWebhookUrl(data.webhook_url),
       rate_limit_max_requests: data.rate_limit_max_requests ?? 120,
       rate_limit_window_seconds: data.rate_limit_window_seconds ?? 60,
       is_active: data.is_active ?? true,
@@ -114,6 +117,9 @@ async delete(id: string, options?: DestroyOptions): Promise<boolean> {
       safeData.allowed_routes = this.normalizeAllowedRoutes(
         safeData.allowed_routes,
       );
+    }
+    if ("webhook_url" in safeData) {
+      safeData.webhook_url = this.normalizeWebhookUrl(safeData.webhook_url);
     }
 
     const updated = await this.repository.update(id, safeData, options);
@@ -219,16 +225,101 @@ async delete(id: string, options?: DestroyOptions): Promise<boolean> {
     return ttl > 0 ? ttl : null;
   }
 
+  async dispatchWebhookEvent(
+    payload: ApplicationWebhookPayload,
+    routeSegment: string,
+  ): Promise<void> {
+    const applications = await this.repository.findAll({
+      where: {
+        is_active: true,
+        webhook_url: { [Op.ne]: null },
+      },
+      attributes: ["id", "name", "allowed_routes", "webhook_url"],
+    });
+
+    const targets = applications.filter((application) => {
+      if (!application.webhook_url) return false;
+      return this.applicationCanReceiveWebhook(
+        application.allowed_routes,
+        routeSegment,
+        payload.entity,
+      );
+    });
+
+    if (!targets.length) return;
+
+    const deliveries = targets.map((application) =>
+      axios.post(application.webhook_url!, payload, {
+        timeout: 10_000,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Pax-Webhook-Event": payload.event,
+          "X-Pax-Webhook-Entity": payload.entity,
+        },
+      }),
+    );
+
+    const results = await Promise.allSettled(deliveries);
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        const app = targets[index];
+        console.error(
+          `[ApplicationsWebhook] Falha ao enviar ${payload.event}:${payload.entity} para ${app.name} (${app.id})`,
+          result.reason?.message ?? result.reason,
+        );
+      }
+    });
+  }
+
   getAllowedApiRoutes() {
     return [
       { method: "GET", path: "/api/:resource", mode: "paginate" },
       { method: "GET", path: "/api/:resource/:id", mode: "show" },
+      { method: "POST", path: "/api/:resource", mode: "create" },
+      { method: "POST", path: "/api/:resource/bulk", mode: "bulkCreate" },
+      { method: "PUT", path: "/api/:resource/:id", mode: "update" },
+      { method: "PATCH", path: "/api/:resource/:id", mode: "update" },
+      { method: "DELETE", path: "/api/:resource/:id", mode: "delete" },
+      { method: "DELETE", path: "/api/:resource/bulk", mode: "bulkDelete" },
     ];
   }
 
   private normalizeAllowedRoutes(routes?: string[]): string[] {
     if (!routes?.length) return [];
     return [...new Set(routes.map((route) => route.trim()).filter(Boolean))];
+  }
+
+  private normalizeWebhookUrl(url?: string | null): string | null {
+    if (!url) return null;
+    const trimmed = url.trim();
+    if (!trimmed) return null;
+
+    try {
+      const parsed = new URL(trimmed);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error("Protocolo inválido");
+      }
+      return parsed.toString();
+    } catch {
+      throw new Error("URL de webhook inválida");
+    }
+  }
+
+  private applicationCanReceiveWebhook(
+    allowedRoutes: string[],
+    routeSegment: string,
+    entity: string,
+  ): boolean {
+    if (allowedRoutes.includes("*")) return true;
+
+    return allowedRoutes.some((route) => {
+      const normalized = route
+        .replace(/^\/api\/?/, "")
+        .replace(/^\/+/, "")
+        .replace(/\/+$/, "");
+
+      return normalized === routeSegment || normalized === entity;
+    });
   }
 
   private generateCredentials(apiKey?: string): ApplicationCredentials {
@@ -264,4 +355,3 @@ async delete(id: string, options?: DestroyOptions): Promise<boolean> {
 }
 
 export default new ApplicationService();
-

@@ -8,6 +8,7 @@ export interface ApplicationAttributes {
   api_key: string;
   api_secret_hash: string;
   allowed_routes: string[];
+  webhook_url?: string | null;
   rate_limit_max_requests: number;
   rate_limit_window_seconds: number;
   token_version: number;
@@ -45,9 +46,18 @@ export interface CreateApplicationInput {
   description?: string | null;
   role_id: string;
   allowed_routes?: string[];
+  webhook_url?: string | null;
   rate_limit_max_requests?: number;
   rate_limit_window_seconds?: number;
   is_active?: boolean;
+}
+
+export type ApplicationWebhookEvent = "create" | "edit" | "delete";
+
+export interface ApplicationWebhookPayload {
+  event: ApplicationWebhookEvent;
+  entity: string;
+  data: unknown;
 }
 
 export interface ApplicationCredentials {
