@@ -10,11 +10,12 @@ import { SupplierMapping } from "../../../../../inventory";
 import { Supplier } from "../../../../../inventory";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { Invoice, UnitBusiness } from "../../../../../warehouse";
-import { blingApi } from "../../../api/bling_api.service";
+import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
 import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import { Op, UniqueConstraintError } from "sequelize";
 import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
+import Contact from "../../../../../sales/contacts/contacts.model";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
@@ -57,6 +58,10 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
         case "suppliers":
           await this.upsertSupplier(directUpsert.data);
+          break;
+
+        case "contacts":
+          await this.upsertContact(directUpsert.data);
           break;
 
         case "delete":
@@ -365,6 +370,43 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
     console.log(
       `[BLING_DIRECT_UPSERT] Supplier upsertado: id_system=${data.id_system}`,
+    );
+  }
+
+  private async upsertContact(
+    data: Extract<DirectUpsertPayload, { table: "contacts" }>["data"],
+  ): Promise<void> {
+    const integrationsId =
+      data.integrations_id ?? (await getBlingIntegration("Bling")).id;
+    const unitBusinessId = data.unit_business_id ?? null;
+
+    const existing = await Contact.findOne({
+      where: {
+        id_system: data.id_system,
+        type: data.type,
+        integrations_id: integrationsId,
+        unit_business_id: unitBusinessId,
+      },
+    });
+
+    if (existing) {
+      await existing.update({
+        name: data.name,
+        integrations_id: integrationsId,
+        unit_business_id: unitBusinessId,
+      });
+    } else {
+      await Contact.create({
+        id_system: data.id_system,
+        name: data.name,
+        type: data.type,
+        integrations_id: integrationsId,
+        unit_business_id: unitBusinessId,
+      });
+    }
+
+    console.log(
+      `[BLING_DIRECT_UPSERT] Contact ${existing ? "atualizado" : "criado"}: type=${data.type}, id_system=${data.id_system}`,
     );
   }
 

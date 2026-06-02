@@ -20,7 +20,7 @@ export class BlingOrderQueue extends BaseQueueService<any> {
       concurrency: 1,
       limiter: {
         max: 2,
-        duration: 10000, 
+        duration: 1000,
       },
       sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,

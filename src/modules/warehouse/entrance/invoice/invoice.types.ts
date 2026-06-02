@@ -20,6 +20,7 @@ export interface InvoiceAttributes {
   integrations_id?: string;
   id_system?: string;
   transporter_id?: string | null;
+  seller_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   type: string;

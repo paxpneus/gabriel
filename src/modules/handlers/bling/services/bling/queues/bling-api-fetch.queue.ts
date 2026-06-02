@@ -20,6 +20,7 @@ import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
+import Contact from "../../../../../sales/contacts/contacts.model";
 import { Op } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import InvoiceFiscalItem from "../../../../../warehouse/entrance/invoice-fiscal-item/invoice-fiscal-item.model";
@@ -255,6 +256,7 @@ interface BlingApiInvoice {
     };
   };
   loja?: { id: number };
+  vendedor?: { id: number };
   naturezaOperacao?: { id: number };
   transporte: {
     transportador: {
@@ -295,8 +297,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     super("BLING_API_FETCH", {
       concurrency: 1,
       limiter: {
-        max: 1,
-        duration: 3000,
+        max: 2,
+        duration: 1000,
       },
       sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
@@ -948,6 +950,25 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const integration = await getBlingIntegration("Bling");
 
+    let sellerId: string | null = null;
+    if (nf.vendedor?.id) {
+      const seller = await Contact.findOne({
+        where: {
+          id_system: String(nf.vendedor.id),
+          type: "SELLER",
+          integrations_id: integration.id,
+        },
+      });
+
+      sellerId = seller?.id ?? null;
+
+      if (!sellerId) {
+        console.warn(
+          `[BLING_API_FETCH] Vendedor Bling ${nf.vendedor.id} não encontrado em contacts. Invoice será gravada sem seller_id.`,
+        );
+      }
+    }
+
     if (!transporter_document) {
       const blingDoc = String(
         nf.transporte?.transportador?.numeroDocumento ?? "",
@@ -1021,6 +1042,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         number_system: String(nf.numero),
         integrations_id: integration.id,
         store_id: store_id!.id ?? null,
+        seller_id: sellerId,
         transporter_id: transporter?.id ?? null,
         transporter_document: transporter_document ?? null,
         transporter_name: transporter_name ?? null,

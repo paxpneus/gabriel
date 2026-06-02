@@ -22,6 +22,7 @@ class Invoice
   public integrations_id?: string;
   public id_system?: string;
   public transporter_id?: string;
+  public seller_id?: string | null;
   public type!: "INCOMING" | "OUTGOING";
   public status!: "OPEN" | "PENDING" | "FINISHED" | "CANCELLED" | "FREE_TO_SCHEDULE" | "WAITING_SCHEDULE_SALES" | "SCHEDULED" | "LATE" | "PENDING_CANCELLED_SYSTEM";
   public batch_generated!: boolean;
@@ -147,6 +148,16 @@ Invoice.init(
         model: "transporters",
         key: "id",
       },
+    },
+    seller_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "contacts",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
     },
     transporter_name: {
       type: DataTypes.STRING(255),

@@ -40,14 +40,13 @@ async function bootstrap() {
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
 const DRY_RUN       = process.env.DRY_RUN === 'true';
-const DAYS_BACK     = 15;
-const PAGE_DELAY_MS = Number(process.env.BLING_SCRIPT_PAGE_DELAY_MS ?? 3500);
+const PAGE_DELAY_MS = Number(process.env.BLING_SCRIPT_PAGE_DELAY_MS ?? 250);
 const MAX_PER_ENTITY = Number(process.env.MAX_PER_ENTITY ?? 0);
 const QUEUE_POLL_MS  = 5_000;
 
-const cutoffDate = new Date();
-cutoffDate.setDate(cutoffDate.getDate() - DAYS_BACK);
-const DATA_INICIAL = cutoffDate.toISOString().split('T')[0];
+const DATA_INICIAL =
+  process.env.BLING_MIGRATION_START_DATE ??
+  `${new Date().getFullYear()}-01-01`;
 
 // ─── Filas ────────────────────────────────────────────────────────────────────
 
@@ -65,6 +64,23 @@ async function loadUnitBusinessMap() {
   const units = await UnitBusiness.findAll({ attributes: ['id', 'id_system'] });
   unitBusinessMap = Object.fromEntries(units.map((u) => [u.id_system, u.id]));
   console.log(`  → ${units.length} UnitBusiness(es) carregado(s)`);
+}
+
+function resolveCompanyId(blingStoreId?: string | number): string {
+  if (!blingStoreId) throw new Error('Bling store id não informado');
+  const companyId = unitBusinessMap[String(blingStoreId)];
+  if (!companyId) throw new Error(`UnitBusiness não encontrado para loja ${blingStoreId}`);
+  return companyId;
+}
+
+function resolveOptionalCompanyId(blingStoreId?: string | number): string | null {
+  if (!blingStoreId) return null;
+  const companyId = unitBusinessMap[String(blingStoreId)];
+  if (!companyId) {
+    console.warn(`  ⚠️  UnitBusiness não encontrado para loja ${blingStoreId}. Vendedor será salvo sem unidade.`);
+    return null;
+  }
+  return companyId;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -213,6 +229,50 @@ async function migrateSuppliers() {
   await waitForQueuesToDrain('Fornecedores');
 }
 
+async function migrateSellers() {
+  console.log('─'.repeat(55));
+  console.log('👤  ETAPA — Vendedores');
+  console.log('─'.repeat(55));
+
+  let count = 0;
+
+  for await (const page of paginateBling<{
+    id: number;
+    loja?: { id?: number };
+    contato?: { id?: number; nome?: string; situacao?: string };
+  }>('/vendedores')) {
+    for (const seller of page) {
+      const blingId = seller.id;
+      const jobBase = basePayload('seller', blingId);
+      const unitBusinessId = resolveOptionalCompanyId(seller.loja?.id);
+
+      await enqueueDirectUpsert(
+        {
+          ...jobBase,
+          directUpsert: {
+            table: 'contacts',
+            data: {
+              id_system: String(blingId),
+              name: seller.contato?.nome ?? '',
+              type: 'SELLER',
+              unit_business_id: unitBusinessId,
+            },
+          },
+        },
+        `migration-seller-upsert-${blingId}`,
+      );
+
+      count++;
+      if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+    }
+    console.log(`  → ${count} vendedor(es) enfileirado(s)...`);
+    if (MAX_PER_ENTITY && count >= MAX_PER_ENTITY) break;
+  }
+
+  console.log(`\n  👤 Vendedores enfileirados: ${count}`);
+  await waitForQueuesToDrain('Vendedores');
+}
+
 async function migrateProductSuppliers() {
   console.log('─'.repeat(55));
   console.log('🔗  ETAPA — Produto-Fornecedor');
@@ -296,14 +356,29 @@ async function migrateOrders() {
   console.log('🛒  ETAPA — Pedidos');
   console.log('─'.repeat(55));
 
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth(); // 0-indexed
+  const startDate = new Date(`${DATA_INICIAL}T00:00:00-03:00`);
+  const today = new Date();
   
-  // Gera array de meses desde janeiro até o mês atual
   const months = [];
-  for (let m = 0; m <= currentMonth; m++) {
-    const start = new Date(currentYear, m, 1);
-    const end   = new Date(currentYear, m + 1, 0); // último dia do mês
+  for (
+    let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    cursor <= today;
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+  ) {
+    const isFirstMonth =
+      cursor.getFullYear() === startDate.getFullYear() &&
+      cursor.getMonth() === startDate.getMonth();
+    const isCurrentMonth =
+      cursor.getFullYear() === today.getFullYear() &&
+      cursor.getMonth() === today.getMonth();
+
+    const start = isFirstMonth
+      ? startDate
+      : new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    const end = isCurrentMonth
+      ? today
+      : new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+
     months.push({
       dataInicial: start.toISOString().split('T')[0],
       dataFinal:   end.toISOString().split('T')[0],
@@ -464,13 +539,14 @@ async function migrateCancelledInvoices(type: 'NF-e' | 'NFC-e') {
 const STEPS = [
   { key: 'products',          label: '📦  Produtos',                fn: () => migrateProducts() },
   { key: 'suppliers',         label: '🏭  Fornecedores',            fn: () => migrateSuppliers() },
+  { key: 'sellers',           label: '👤  Vendedores',              fn: () => migrateSellers() },
   { key: 'product_suppliers', label: '🔗  Produto-Fornecedor',      fn: () => migrateProductSuppliers() },
   { key: 'stocks',            label: '📊  Estoques',                fn: () => migrateStocks() },
-  { key: 'orders',            label: '🛒  Pedidos',                 fn: () => migrateOrders() }, // ← novo
   { key: 'nfe_out',           label: '🧾  NF-e Saída  (tipo 1)',    fn: () => migrateInvoices('NF-e', 1) },
   { key: 'nfe_in',            label: '🧾  NF-e Entrada (tipo 0)',   fn: () => migrateInvoices('NF-e', 0) },
   { key: 'nfe_cancelled',     label: '🚫  NF-e Canceladas',         fn: () => migrateCancelledInvoices('NF-e') },
   { key: 'nfce',              label: '🧾  NFC-e',                   fn: () => migrateInvoices('NFC-e', 1) },
+  { key: 'orders',            label: '🛒  Pedidos',                 fn: () => migrateOrders() },
 ] as const;
 
 type StepKey = typeof STEPS[number]['key'];
@@ -567,7 +643,7 @@ async function selectSteps(): Promise<StepKey[]> {
 async function main() {
   console.log('\n' + '═'.repeat(55));
   console.log('  🚀 Bling Migration — Seleção Interativa');
-  console.log(`  📅 Período: últimos ${DAYS_BACK} dias (desde ${DATA_INICIAL})`);
+  console.log(`  📅 Período: desde ${DATA_INICIAL}`);
   console.log(`  🧾 NF somente a partir de ${formatBlingInvoiceCutoffForLog()}`);
   if (DRY_RUN) console.log('  ⚠️  DRY_RUN ativo — nenhum job será enfileirado');
   console.log('═'.repeat(55) + '\n');

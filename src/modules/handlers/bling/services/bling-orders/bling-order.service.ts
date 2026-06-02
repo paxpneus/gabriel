@@ -15,6 +15,9 @@ import { UnitBusiness } from "../../../../warehouse";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
+const BLING_ORDER_REQUEST_DELAY_MS = Number(
+  process.env.BLING_ORDER_REQUEST_DELAY_MS ?? 0,
+);
 
 export class BlingOrderService {
   public blingApi: AxiosInstance;
@@ -41,7 +44,11 @@ export class BlingOrderService {
   }
 
   private async blingGet(url: string): Promise<any> {
-    await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+    if (BLING_ORDER_REQUEST_DELAY_MS > 0) {
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, BLING_ORDER_REQUEST_DELAY_MS),
+      );
+    }
     return this.blingApi.get(url);
   }
 
