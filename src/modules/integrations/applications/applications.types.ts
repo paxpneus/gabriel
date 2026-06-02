@@ -25,10 +25,8 @@ export type ApplicationRequestAttributes = Omit<
   role?: {
     id: string;
     name: string;
-    permissions: {
-      entity: string;
-      permissions: string[];
-    }[];
+    entity: string;
+    permissions: string[];
   };
 };
 
