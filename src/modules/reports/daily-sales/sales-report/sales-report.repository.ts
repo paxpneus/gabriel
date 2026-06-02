@@ -143,7 +143,7 @@ export class SalesReportRepository {
       { type: QueryTypes.SELECT, replacements: { lastProcessedAt } },
     );
 
-    return rows.map((row) => row.order_id);
+    return [...new Set(rows.map((row) => row.order_id))];
   }
 
   async upsertSnapshots(orderIds: string[]): Promise<void> {
@@ -152,8 +152,8 @@ export class SalesReportRepository {
     await sequelize.query(
       `
       WITH affected(order_id) AS (
-        SELECT unnest(ARRAY[:orderIds]::uuid[])
-      ),
+  SELECT DISTINCT unnest(ARRAY[:orderIds]::uuid[])
+),
 
       -- ------------------------------------------------------------------
       -- 1. Fonte de dados do pedido
@@ -971,18 +971,18 @@ END,
 
   async getReport(filters: SalesReportFilters) {
     const replacements = {
-    dateFrom: filters.dateFrom,
-    dateTo: filters.dateTo,
-    unitBusinessId: filters.unitBusinessId ?? null,
-    storeId: filters.storeId ?? null,
-    state: filters.state ?? null,
-    productId: filters.productId ?? null,
-    sku: filters.sku ?? null,
-    statusNormalized: filters.statusId ?? null,
-  };
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      unitBusinessId: filters.unitBusinessId ?? null,
+      storeId: filters.storeId ?? null,
+      state: filters.state ?? null,
+      productId: filters.productId ?? null,
+      sku: filters.sku ?? null,
+      statusNormalized: filters.statusId ?? null,
+    };
 
     const unitFilter =
-    "(:unitBusinessId IS NULL OR unit_business_id = CAST(:unitBusinessId AS uuid))";
+      "(:unitBusinessId IS NULL OR unit_business_id = CAST(:unitBusinessId AS uuid))";
 
     const [general] = await sequelize.query<ReportRow>(
       `
@@ -1042,7 +1042,7 @@ END AS markup_pct
     );
 
     const byProduct = await sequelize.query<ReportRow>(
-    `
+      `
     SELECT
       product_id,
       sku,
@@ -1064,11 +1064,11 @@ END AS markup_pct
     GROUP BY product_id, sku
     ORDER BY quantity DESC          -- ✅ era total_value DESC
     `,
-    { type: QueryTypes.SELECT, replacements },
-  );
+      { type: QueryTypes.SELECT, replacements },
+    );
 
     const byUnitBusiness = await sequelize.query<ReportRow>(
-    `
+      `
     SELECT
       dsf.unit_business_id,
       ub.name                                       AS unit_business_name,
@@ -1099,11 +1099,11 @@ END AS markup_pct,
     GROUP BY dsf.unit_business_id, ub.name
     ORDER BY total_value DESC
     `,
-    { type: QueryTypes.SELECT, replacements },
-  );
+      { type: QueryTypes.SELECT, replacements },
+    );
 
     const byStatus = await sequelize.query<ReportRow>(
-    `
+      `
     WITH total AS (
       SELECT COALESCE(SUM(orders_count), 0)::integer AS orders_count
       FROM daily_sales_status_facts
@@ -1132,8 +1132,8 @@ END AS markup_pct,
     GROUP BY dssf.status_normalized, total.orders_count
     ORDER BY orders_count DESC
     `,
-    { type: QueryTypes.SELECT, replacements },
-  );
+      { type: QueryTypes.SELECT, replacements },
+    );
 
     return {
       period: {
@@ -1149,10 +1149,10 @@ END AS markup_pct,
   }
 
   async updateSnapshotTotals(orderIds: string[]): Promise<void> {
-  if (!orderIds.length) return;
+    if (!orderIds.length) return;
 
-  await sequelize.query(
-    `
+    await sequelize.query(
+      `
     WITH item_totals AS (
       SELECT
         sois.order_snapshot_id,
@@ -1222,9 +1222,9 @@ END AS markup_pct,
     FROM item_totals it
     WHERE sos.id = it.order_snapshot_id
     `,
-    { replacements: { orderIds } },
-  );
-}
+      { replacements: { orderIds } },
+    );
+  }
 }
 
 export const salesReportRepository = new SalesReportRepository();
