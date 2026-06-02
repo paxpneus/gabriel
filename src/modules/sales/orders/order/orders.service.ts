@@ -4,10 +4,20 @@ import Customer from "../../customers/customers.model";
 import Order from "./orders.model";
 import orderRepository, { OrderRepository } from "./orders.repository";
 import { FullOrder } from "./orders.types";
+import { QueryParams, PaginatedResult } from "../../../../shared/query/query.types";
 
 export class OrderService extends BaseService<Order, OrderRepository> {
   constructor() {
     super(orderRepository);
+  }
+
+  async paginate(params: QueryParams, extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">): Promise<PaginatedResult<Order>> {
+      return super.paginate(params, {
+        ...extraOptions,
+        attributes: {exclude: [
+          'source_payload'
+        ]}
+      })
   }
 
   async getFullOrder(id: string): Promise<FullOrder> {

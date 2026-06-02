@@ -17,6 +17,8 @@ import { getBrazilDate } from "../../../../shared/utils/normalizers/date";
 import sequelize from "../../../../config/sequelize";
 import batchInvoicesService from "../../expedition/batch-invoices/batch-invoices.service";
 import { Product } from "../../../inventory";
+import Contact from "../../../sales/contacts/contacts.model";
+import Order from "../../../sales/orders/order/orders.model";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -145,6 +147,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         },
       ],
       attributes: {
+        exclude: ['source_payload'],
         include: [
           [
             Sequelize.literal(`(
@@ -259,8 +262,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
   const rows = await this.findAll(
     {
-      attributes: ["number_system"],
+      attributes: ["id", "id_system", "number_system", "seller_id"],
       include: [
+        {
+          model: Contact,
+          as: "seller",
+          attributes: ["id", "name", "id_system"],
+        },
         {
           model: InvoiceItems,
           as: "items",
@@ -279,8 +287,71 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     this.queryConfig,
   );
 
+  const orderByInvoiceId = new Map<string, Order>();
+  const orderByInvoiceSystemId = new Map<string, Order>();
+  const invoiceIds = rows.map((invoice) => invoice.id).filter(Boolean);
+  const invoiceSystemIds = rows
+    .map((invoice) => invoice.id_system)
+    .filter((idSystem): idSystem is string => Boolean(idSystem));
+
+  if (invoiceIds.length || invoiceSystemIds.length) {
+    const orderWhere: FindOptions["where"] = {
+      [Op.or]: [
+        ...(invoiceIds.length
+          ? [{ invoice_id: { [Op.in]: invoiceIds } }]
+          : []),
+        ...(invoiceSystemIds.length
+          ? [
+              Sequelize.where(
+                Sequelize.literal(`"Order"."source_payload" #>> '{notaFiscal,id}'`),
+                { [Op.in]: invoiceSystemIds },
+              ),
+            ]
+          : []),
+      ],
+    };
+
+    const orders = await Order.findAll({
+      where: orderWhere,
+      attributes: [
+        "id",
+        "invoice_id",
+        "id_order_system",
+        "number_order_system",
+        "number_order_channel",
+        "source_payload",
+      ],
+    });
+
+    for (const order of orders) {
+      if (order.invoice_id) {
+        orderByInvoiceId.set(order.invoice_id, order);
+      }
+
+      const sourcePayload = order.source_payload as
+        | { notaFiscal?: { id?: string | number } }
+        | undefined;
+      const sourceInvoiceId = sourcePayload?.notaFiscal?.id;
+      if (sourceInvoiceId != null) {
+        orderByInvoiceSystemId.set(String(sourceInvoiceId), order);
+      }
+    }
+  }
+
   const result: {
     number_system: string | undefined;
+    city: string | null;
+    seller: {
+      id: string;
+      name: string;
+      id_system: string;
+    } | null;
+    order: {
+      id: string;
+      id_order_system?: string;
+      number_order_system: string;
+      number_order_channel: string;
+    } | null;
     measure: string | null;
     quantity: number;
     line: string | null;
@@ -288,9 +359,35 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   }[] = [];
 
   for (const invoice of rows) {
-    for (const item of (invoice as any).items ?? []) {
+    const invoiceWithRelations = invoice as Invoice & {
+      seller?: Contact | null;
+      items?: (InvoiceItems & { product?: Product | null })[];
+    };
+    const order =
+      orderByInvoiceId.get(invoice.id) ??
+      (invoice.id_system
+        ? orderByInvoiceSystemId.get(invoice.id_system)
+        : undefined);
+
+    for (const item of invoiceWithRelations.items ?? []) {
       result.push({
         number_system: invoice.number_system,
+        city: invoice.destination_city ?? null,
+        seller: invoiceWithRelations.seller
+          ? {
+              id: invoiceWithRelations.seller.id,
+              name: invoiceWithRelations.seller.name,
+              id_system: invoiceWithRelations.seller.id_system,
+            }
+          : null,
+        order: order
+          ? {
+              id: order.id,
+              id_order_system: order.id_order_system,
+              number_order_system: order.number_order_system,
+              number_order_channel: order.number_order_channel,
+            }
+          : null,
         measure: item.product?.measure ?? null,
         quantity: item.quantity_expected,
         line: item.product?.line ?? null,
