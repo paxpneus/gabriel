@@ -260,7 +260,7 @@ export class ExpeditionBatchService extends BaseService<
     await sequelize.transaction(async (t) => {
       const invoice = await Invoice.findOne({
         where: { xml_key: chaveAcesso.replace(/\s/g, "") },
-        include: [{ model: InvoiceItems, as: "items", required: true }],
+        include: [{ model: InvoiceItems, as: "items", required: false }],
         transaction: t,
       });
 
