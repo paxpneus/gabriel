@@ -33,7 +33,7 @@ Customer.init(
         },
         document: {
             type: DataTypes.STRING(14), 
-            allowNull: false,
+            allowNull: true,
             unique: true 
         }
     },
