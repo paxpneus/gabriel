@@ -118,24 +118,27 @@ export abstract class BaseQueueService<T> {
       priorityTicket,
     );
 
-    const refreshInterval = setInterval(() => {
-      this.refreshSharedLock(sharedLock.key, token, ttlMs).catch((error) => {
-        console.error(
-          `[QUEUE] Falha ao renovar lock compartilhado ${sharedLock.key}:`,
-          error.message,
-        );
-      });
-      if (priorityTicket) {
-        this.refreshSharedLockPriorityTicket(priorityTicket, ttlMs).catch(
-          (error) => {
-            console.error(
-              `[QUEUE] Falha ao renovar ticket de prioridade ${priorityTicket.ticketKey}:`,
-              error.message,
-            );
-          },
-        );
-      }
-    }, Math.max(1000, Math.floor(ttlMs / 3)));
+    const refreshInterval = setInterval(
+      () => {
+        this.refreshSharedLock(sharedLock.key, token, ttlMs).catch((error) => {
+          console.error(
+            `[QUEUE] Falha ao renovar lock compartilhado ${sharedLock.key}:`,
+            error.message,
+          );
+        });
+        if (priorityTicket) {
+          this.refreshSharedLockPriorityTicket(priorityTicket, ttlMs).catch(
+            (error) => {
+              console.error(
+                `[QUEUE] Falha ao renovar ticket de prioridade ${priorityTicket.ticketKey}:`,
+                error.message,
+              );
+            },
+          );
+        }
+      },
+      Math.max(1000, Math.floor(ttlMs / 3)),
+    );
 
     try {
       await this.process(job);
@@ -158,7 +161,8 @@ export abstract class BaseQueueService<T> {
     while (true) {
       if (priorityTicket) {
         await this.cleanupSharedLockPriorityQueue(priorityTicket.waitKey);
-        const isNext = await this.isNextSharedLockPriorityTicket(priorityTicket);
+        const isNext =
+          await this.isNextSharedLockPriorityTicket(priorityTicket);
         if (!isNext) {
           await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
           continue;
@@ -359,12 +363,24 @@ export abstract class BaseQueueService<T> {
     });
   }
 
-  async scheduleRepeat(options: { every: number }): Promise<void> {
+  async scheduleRepeat(options: {
+    every?: number;
+    cron?: string;
+    tz?: string;
+  }): Promise<void> {
+    if (!options.every && !options.cron) {
+      throw new Error("Você deve informar 'every' ou 'cron'");
+    }
+
     await this.queue.add(
       this.queueName,
       {},
       {
-        repeat: { every: options.every },
+        repeat: {
+          ...(options.every ? { every: options.every } : {}),
+          ...(options.cron ? { pattern: options.cron } : {}),
+          ...(options.tz ? { tz: options.tz } : {}),
+        },
         removeOnComplete: true,
         removeOnFail: {
           age: 24 * 3600 * 7,
@@ -373,9 +389,16 @@ export abstract class BaseQueueService<T> {
         backoff: { type: "exponential", delay: 10000 },
       },
     );
-    console.log(
-      `[QUEUE] ${this.queueName} agendado para repetir a cada ${options.every / 1000}s`,
-    );
+
+    if (options.cron) {
+      console.log(
+        `[QUEUE] ${this.queueName} agendado via CRON (${options.cron}) tz=${options.tz ?? "UTC"}`,
+      );
+    } else {
+      console.log(
+        `[QUEUE] ${this.queueName} agendado a cada ${options.every! / 1000}s`,
+      );
+    }
   }
 
   async removeJob(jobId: string): Promise<void> {
