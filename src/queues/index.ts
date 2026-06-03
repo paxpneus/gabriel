@@ -29,6 +29,7 @@ import { BlingTokenRefreshQueue } from './../modules/handlers/bling/services/bli
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
 import { SefazDistribuicaoQueue } from '../modules/handlers/sefaz/services/sefaz-queue';
+import { AutoBackupQueue } from '../modules/handlers/backup/auto-backup.queue';
 
 export const serverAdapter = new ExpressAdapter();
 
@@ -93,6 +94,7 @@ function buildQueues(workless: boolean) {
   const blingDailyReconciler = new BlingMigrationQueue({ workless })
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless })
   const dailySalesReportQueue = new SalesReportQueue({ workless })
+  const autoBackupQueue = new AutoBackupQueue({ workless })
 
   return {
     nfeQueue,
@@ -106,7 +108,8 @@ function buildQueues(workless: boolean) {
     blingTokenRefreshQueue,
     blingDailyReconciler,
     dailyOperationReportQueue,
-    dailySalesReportQueue
+    dailySalesReportQueue,
+    autoBackupQueue
   };
 }
 
@@ -123,7 +126,8 @@ export function registerQueues(app: Express) {
     blingTokenRefreshQueue,
     blingDailyReconciler,
     dailyOperationReportQueue,
-    dailySalesReportQueue
+    dailySalesReportQueue,
+    autoBackupQueue
   } = buildQueues(true); // workless: true → zero Workers na API
 
    const blingOrderQueue = new BlingOrderQueue(
@@ -152,6 +156,7 @@ export function registerQueues(app: Express) {
   app.locals.BlingMigrationQueue = blingDailyReconciler;
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
   app.locals.DailySalesReportQueue = dailySalesReportQueue
+  app.locals.AutoBackupQueue = autoBackupQueue
 
   serverAdapter.setBasePath("/admin/queues");
 
@@ -170,6 +175,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(blingDailyReconciler.queue),
       new BullMQAdapter(dailyOperationReportQueue.queue),
       new BullMQAdapter(dailySalesReportQueue.queue),
+      new BullMQAdapter(autoBackupQueue.queue),
       new BullMQAdapter(sefazQueue.queue)
     ],
     serverAdapter,
@@ -197,6 +203,7 @@ export function startWorkers() {
     blingDailyReconciler,
     dailyOperationReportQueue,
     dailySalesReportQueue,
+    autoBackupQueue,
   } = buildQueues(false); // workless: false → Worker ativo em cada fila
 
   // reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
@@ -207,6 +214,7 @@ export function startWorkers() {
   // blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
   const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  autoBackupQueue.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
   sefazQueue.scheduleRepeat({ every: 60 * 60 * 1000 });
 
   
@@ -214,7 +222,7 @@ export function startWorkers() {
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
   console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
   console.log("  → BLING_ORDER_INGESTION, NFE_RECONCILER, BLING_RECONCILER");
-  console.log("  → DAILY_OPERATION_REPORT");
+  console.log("  → DAILY_OPERATION_REPORT, AUTO_BACKUP");
   
   void sefazQueue;
 }

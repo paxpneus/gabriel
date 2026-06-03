@@ -37,6 +37,7 @@ ENV NODE_ENV=production
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Diretório para sessão/downloads do ML (será sobrescrito pelo worker-scraping)

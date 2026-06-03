@@ -6,6 +6,9 @@ export type UploadInput = {
   buffer: Buffer;
   filename: string;
   mimeType: string;
+  directory?: string;
+  preserveFilename?: boolean;
+  timeoutMs?: number;
 };
 
 export class UploaderService {
@@ -13,17 +16,33 @@ export class UploaderService {
 
   async upload(file: UploadInput) {
     const extension = file.mimeType.split('/')[1] || 'bin';
-    const filename = `${randomUUID()}.${extension}`;
+    const filename = file.preserveFilename
+      ? this.sanitizeFilename(file.filename)
+      : `${randomUUID()}.${extension}`;
+    const directory = this.normalizeDirectory(file.directory ?? "/uploads");
 
-    const path = `/uploads/${filename}`;
+    const path = `${directory}/${filename}`;
 
     await this.api.put(path, file.buffer, {
+      timeout: file.timeoutMs,
       headers: {
         'Content-Type': file.mimeType
       }
     });
 
     return path;
+  }
+
+  private normalizeDirectory(directory: string): string {
+    const normalized = directory.trim().replace(/\/+$/, "");
+
+    if (!normalized) return "/uploads";
+
+    return normalized.startsWith("/") ? normalized : `/${normalized}`;
+  }
+
+  private sanitizeFilename(filename: string): string {
+    return filename.replace(/[\\/]/g, "-");
   }
 
   async getFile(path: string): Promise<Buffer> {
