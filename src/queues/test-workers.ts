@@ -30,6 +30,7 @@ export async function startBlingWorkers() {
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   autoBackUpQueue.scheduleRepeat({
     cron: "0 19 * * *",
+    tz: "America/Sao_Paulo",
   });
   
   // sefazQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
