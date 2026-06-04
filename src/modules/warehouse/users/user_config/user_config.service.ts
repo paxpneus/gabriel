@@ -4,6 +4,7 @@ import { PaginatedResult, QueryParams } from "../../../../shared/query/query.typ
 import User from "../users/user.model";
 import UserConfig from "./user_config.model";
 import userConfigRepository, { UserConfigRepository } from "./user_config.repository";
+import { USER_TYPE_CONFIG, USER_TYPES } from "../../../../shared/constants/user-types";
 
 export class UserConfigService extends BaseService<UserConfig, UserConfigRepository> {
   constructor() {
@@ -41,6 +42,10 @@ export class UserConfigService extends BaseService<UserConfig, UserConfigReposit
       ],
     });
   }
+
+  getUserTypes(): USER_TYPE_CONFIG[] {
+  return USER_TYPES;
+}
 }
 
 export default new UserConfigService();
