@@ -4,6 +4,7 @@ import {
   UserConfigAttributes,
   UserConfigCreationAttributes,
   UserTheme,
+  UserType,
 } from "./user_config.types";
 import { v4 as uuidv4 } from "uuid";
 class UserConfig
@@ -13,13 +14,14 @@ class UserConfig
   public id!: string;
   public user_id!: string;
   public theme!: UserTheme;
+  public type!: UserType;
   public profile_photo?: string | null;
   public language!: string;
   public timezone!: string;
   public items_per_page!: number;
   public notifications_enabled!: boolean;
   public compact_mode!: boolean;
-  public visualize_only_current_unit_business!: boolean
+  public visualize_only_current_unit_business!: boolean;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -41,6 +43,11 @@ UserConfig.init(
         model: "users",
         key: "id",
       },
+    },
+    type: {
+      type: DataTypes.STRING(50), 
+      allowNull: false,
+      defaultValue: "operator",
     },
     theme: {
       type: DataTypes.ENUM("dark", "light"),

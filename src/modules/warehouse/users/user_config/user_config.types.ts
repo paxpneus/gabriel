@@ -1,9 +1,12 @@
 export type UserTheme = "dark" | "light";
 
+export type UserType = "admin" | "stock-requester" | "operator" | (string & {});
+
 export interface UserConfigAttributes {
   id: string;
   user_id: string;
   theme: UserTheme;
+  type?: UserType
   profile_photo?: string | null;
   language: string;
   timezone: string;
@@ -20,6 +23,7 @@ export interface UserConfigCreationAttributes
     UserConfigAttributes,
     | "id"
     | "theme"
+    | "type"
     | "profile_photo"
     | "language"
     | "timezone"
@@ -31,6 +35,7 @@ export interface UserConfigCreationAttributes
     | "updatedAt"
   > {
   theme?: UserTheme;
+  type?: UserType
   profile_photo?: string | null;
   language?: string;
   timezone?: string;

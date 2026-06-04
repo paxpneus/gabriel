@@ -19,6 +19,7 @@ import redisService from "../../../../shared/utils/base-models/base-redis";
 import UserConfig from "../user_config/user_config.model";
 import UserUnitBusiness from "../user_unit_business/user_unit_business.model";
 import sequelize from "../../../../config/sequelize";
+import { USER_TYPES } from "../../../../shared/constants/user-types";
 
 export class UserService extends BaseService<User, UserRepository> {
   constructor() {
@@ -294,9 +295,12 @@ export class UserService extends BaseService<User, UserRepository> {
       ? plainUser.unit_business_id
       : plainUser.availableUnitBusinesses;
 
+    const allowedModules = USER_TYPES.find((tp) => tp.type === plainUser.config?.type);
+
     const userWithBusinessToView = {
       ...plainUser,
-      businessToView: (Array.isArray(unitBusiness) ? unitBusiness.map((s) => s.id) : unitBusiness)
+      businessToView: (Array.isArray(unitBusiness) ? unitBusiness.map((s) => s.id) : unitBusiness),
+      allowedModules: allowedModules
     }
 
     await redisService.set(`user:${decoded.id}`, userWithBusinessToView);
