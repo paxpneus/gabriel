@@ -53,6 +53,7 @@ export class UnmappedInvoiceProductService extends BaseService<
   async createUnmappedFromReadingEan(
     ean: string,
     image: UploadInput,
+    integrations_id: string
   ): Promise<UnmappedInvoiceProductAttributes> {
     let id: string;
     let imagePath: string;
@@ -84,6 +85,7 @@ export class UnmappedInvoiceProductService extends BaseService<
 
       const payload = {
         ean,
+        integrations_id,
         reason:
           "EAN não encontrado no sistema, verificar ERP para ajustar cadastro!",
         image_path: imagePath,

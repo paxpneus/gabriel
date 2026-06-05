@@ -4,7 +4,7 @@ import {
 } from "./../bling-webhook.types";
 import { Job } from "bullmq";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
-import { Product } from "../../../../../inventory";
+import { Product, ProductConfig } from "../../../../../inventory";
 import { Stock } from "../../../../../inventory/index";
 import { SupplierMapping } from "../../../../../inventory";
 import { Supplier } from "../../../../../inventory";
@@ -107,8 +107,6 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       // só atualiza os campos que vieram — nunca sobrescreve EAN real com PENDING
       const fieldsToUpdate: Record<string, any> = {};
       if (data.name) fieldsToUpdate.name = data.name;
-      if (data.sku) fieldsToUpdate.sku = data.sku;
-      if (data.price !== undefined) fieldsToUpdate.price = data.price;
 
       if (Object.keys(fieldsToUpdate).length > 0) {
         await product.update(fieldsToUpdate);
@@ -123,11 +121,9 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         where: { id_system: idSystem },
         defaults: {
           name: data.name,
-          sku: data.sku,
           id_system: idSystem,
           ean: `PENDING-${data.blingId}`,
           ean_tribut: `PENDING-TRIBUT-${data.blingId}`,
-          price: data.price ?? 0,
         },
       });
     } catch (error: any) {
@@ -163,6 +159,22 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       await updateProductFields(product);
     }
 
+    const unitBusiness = await UnitBusiness.findOne({
+      where: { cnpj: "02316749002111" },
+    });
+
+    if (unitBusiness) {
+      await ProductConfig.upsert(
+        {
+          product_id: product.id,
+          unit_business_id: unitBusiness.id,
+          sku: data.sku,
+          price: data.price ?? 0,
+        },
+        { conflictFields: ["product_id", "unit_business_id"] },
+      );
+    }
+
     console.log(
       `[BLING_DIRECT_UPSERT] Produto ${created ? "criado" : "atualizado parcialmente"}: sku=${data.sku}`,
     );
@@ -189,10 +201,8 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
           {
             id_system: String(p.id),
             name: p.nome,
-            sku: p.codigo,
             ean: p.gtin ?? `NO-EAN-${p.id}`,
             ean_tribut: p.gtinEmbalagem ?? `NO-EAN-${p.id}`,
-            supplier_cost_price: entryUnitCost,
           },
           { conflictFields: ["id_system"] },
         );
@@ -206,9 +216,15 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
           `[BLING_DIRECT_UPSERT] Produto blingId=${data.productBlingId} não encontrado. Retry agendado.`,
         );
       }
-      // Se falhou mas product existe, usa o custo que já está no banco
+      // Se falhou mas product existe, usa o custo que já está na configuração.
+      const existingConfig = await ProductConfig.findOne({
+        where: { product_id: product.id },
+        order: [["updatedAt", "DESC"]],
+      });
       entryUnitCost = Number(
-        product.average_cost ?? product.supplier_cost_price ?? 0,
+        existingConfig?.average_cost ??
+          existingConfig?.supplier_cost_price ??
+          0,
       );
       console.warn(
         `[BLING_DIRECT_UPSERT] Falha ao buscar precoCusto na Bling para ${data.productBlingId} — usando custo do banco: ${entryUnitCost}`,
@@ -266,13 +282,17 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         oldQuantity > 0 ? oldTotalPrice / oldQuantity : entryUnitCost;
     }
 
-    // Atualiza CMP no produto
-    await product.update({
-      supplier_cost_price: entryUnitCost,
-      average_cost: newAverageCost,
-      average_cost_updated_at: new Date(),
-    });
-
+    await ProductConfig.upsert(
+      {
+        product_id: product.id,
+        unit_business_id: unitBusiness.id,
+        supplier_cost_price: entryUnitCost,
+        average_cost: newAverageCost,
+        average_cost_updated_at: new Date(),
+      },
+      { conflictFields: ["product_id", "unit_business_id"] },
+    );
+    
     await Stock.upsert(
       {
         product_id: product.id,
@@ -280,11 +300,11 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         unit_business_id: unitBusiness.id,
         total_price: newTotalPrice,
       },
-      { conflictFields: ["product_id"] },
+      { conflictFields: ["product_id", "unit_business_id"] },
     );
 
     console.log(
-      `[BLING_DIRECT_UPSERT] Stock upsertado: sku=${product.sku} | qty=${newQuantity} | entry_cost=${entryUnitCost.toFixed(4)} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
+      `[BLING_DIRECT_UPSERT] Stock upsertado: ean=${product.ean} | qty=${newQuantity} | entry_cost=${entryUnitCost.toFixed(4)} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
     );
 
     // ─── Sincroniza InventoryBatches ──────────────────────────────────────────
@@ -427,15 +447,6 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
   private async handleDelete(resource: string, blingId: number): Promise<void> {
     switch (resource) {
-      case "product": {
-        const deleted = await Product.destroy({
-          where: { sku: String(blingId) },
-        });
-        console.log(
-          `[BLING_DIRECT_UPSERT] Produto deletado blingId=${blingId}: ${deleted} reg(s)`,
-        );
-        break;
-      }
 
       case "product_supplier": {
         console.warn(

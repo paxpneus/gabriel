@@ -46,7 +46,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "printed_label",
         "emitted_at",
         "status",
-        "store_id"
+        "store_id",
       ],
       sortableFields: [
         "customer_name",
@@ -102,8 +102,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     };
   }
 
-  async findByIdFull(id: string, options?: FindOptions) {
-    return await this.repository.getFullInvoice(id);
+  async findByIdFull(id: string, unitBusinessId?: string) {
+    return this.repository.getFullInvoice(id, unitBusinessId);
   }
 
   async paginate(
@@ -147,7 +147,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         },
       ],
       attributes: {
-        exclude: ['source_payload'],
+        exclude: ["source_payload"],
         include: [
           [
             Sequelize.literal(`(
@@ -212,195 +212,212 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     });
   }
 
-
   async bondInvoice(id: string, bondedInvoiceId: string) {
     return sequelize.transaction(async (t) => {
-      const invoice = await this.findById(id, {include: [
-        {
-          model: ExpeditionBatchInvoice,
-          as: 'batchInvoice'
-        }
-      ], transaction: t}  )
+      const invoice = await this.findById(id, {
+        include: [
+          {
+            model: ExpeditionBatchInvoice,
+            as: "batchInvoice",
+          },
+        ],
+        transaction: t,
+      });
 
       if (!invoice) {
-        throw new Error("Nota fiscal não encontrada!")
+        throw new Error("Nota fiscal não encontrada!");
       }
 
-      const invoiceToBond = await this.findById(bondedInvoiceId, {include: [
-        {
-          model: ExpeditionBatchInvoice,
-          as: 'batchInvoice'
-        }
-      ], transaction: t}  )
+      const invoiceToBond = await this.findById(bondedInvoiceId, {
+        include: [
+          {
+            model: ExpeditionBatchInvoice,
+            as: "batchInvoice",
+          },
+        ],
+        transaction: t,
+      });
 
       if (!invoiceToBond) {
-        throw new Error("Nota fiscal vinculada não encontrada!")
+        throw new Error("Nota fiscal vinculada não encontrada!");
       }
 
-      if (invoice.status != 'PENDING_CANCELLED_SYSTEM') {
-        throw new Error("Status não permitido para vincular nota, apenas status CANCELAMENTO PENDENTE NA PLATAFORMA permitido!")
-
+      if (invoice.status != "PENDING_CANCELLED_SYSTEM") {
+        throw new Error(
+          "Status não permitido para vincular nota, apenas status CANCELAMENTO PENDENTE NA PLATAFORMA permitido!",
+        );
       }
 
       await this.update(id, {
         bonded_invoice: invoiceToBond.number_system,
-        status: 'CANCELLED'
-      })
+        status: "CANCELLED",
+      });
 
       await this.update(bondedInvoiceId, {
         bonded_invoice: invoice.number_system,
-      })
+      });
 
       if (invoice.batchInvoice) {
-      await batchInvoicesService.removeBatchInvoice(invoice.batchInvoice.id, t)
+        await batchInvoicesService.removeBatchInvoice(
+          invoice.batchInvoice.id,
+          t,
+        );
       }
-    })
+    });
   }
 
   async getInvoiceProductReport(params: QueryParams) {
-  params.filters = { ...params.filters };
+    params.filters = { ...params.filters };
 
-  const rows = await this.findAll(
-    {
-      attributes: ["id", "id_system", "destination_city", "number_system", "seller_id"],
-      include: [
-        {
-          model: Contact,
-          as: "seller",
-          attributes: ["id", "name", "id_system"],
-        },
-        {
-          model: InvoiceItems,
-          as: "items",
-          attributes: ["quantity_expected"],
-          include: [
-            {
-              model: Product,
-              as: "product",
-              attributes: ["measure", "line", "brand"],
-            },
-          ],
-        },
-      ],
-    },
-    params,
-    this.queryConfig,
-  );
+    const rows = await this.findAll(
+      {
+        attributes: [
+          "id",
+          "id_system",
+          "destination_city",
+          "number_system",
+          "seller_id",
+        ],
+        include: [
+          {
+            model: Contact,
+            as: "seller",
+            attributes: ["id", "name", "id_system"],
+          },
+          {
+            model: InvoiceItems,
+            as: "items",
+            attributes: ["quantity_expected"],
+            include: [
+              {
+                model: Product,
+                as: "product",
+                attributes: ["measure", "line", "brand"],
+              },
+            ],
+          },
+        ],
+      },
+      params,
+      this.queryConfig,
+    );
 
-  const orderByInvoiceId = new Map<string, Order>();
-  const orderByInvoiceSystemId = new Map<string, Order>();
-  const invoiceIds = rows.map((invoice) => invoice.id).filter(Boolean);
-  const invoiceSystemIds = rows
-    .map((invoice) => invoice.id_system)
-    .filter((idSystem): idSystem is string => Boolean(idSystem));
+    const orderByInvoiceId = new Map<string, Order>();
+    const orderByInvoiceSystemId = new Map<string, Order>();
+    const invoiceIds = rows.map((invoice) => invoice.id).filter(Boolean);
+    const invoiceSystemIds = rows
+      .map((invoice) => invoice.id_system)
+      .filter((idSystem): idSystem is string => Boolean(idSystem));
 
-  if (invoiceIds.length || invoiceSystemIds.length) {
-    const orderWhere: FindOptions["where"] = {
-      [Op.or]: [
-        ...(invoiceIds.length
-          ? [{ invoice_id: { [Op.in]: invoiceIds } }]
-          : []),
-        ...(invoiceSystemIds.length
-          ? [
-              Sequelize.where(
-                Sequelize.literal(`"Order"."source_payload" #>> '{notaFiscal,id}'`),
-                { [Op.in]: invoiceSystemIds },
-              ),
-            ]
-          : []),
-      ],
-    };
+    if (invoiceIds.length || invoiceSystemIds.length) {
+      const orderWhere: FindOptions["where"] = {
+        [Op.or]: [
+          ...(invoiceIds.length
+            ? [{ invoice_id: { [Op.in]: invoiceIds } }]
+            : []),
+          ...(invoiceSystemIds.length
+            ? [
+                Sequelize.where(
+                  Sequelize.literal(
+                    `"Order"."source_payload" #>> '{notaFiscal,id}'`,
+                  ),
+                  { [Op.in]: invoiceSystemIds },
+                ),
+              ]
+            : []),
+        ],
+      };
 
-    const orders = await Order.findAll({
-      where: orderWhere,
-      attributes: [
-        "id",
-        "invoice_id",
-        "date",
-        "id_order_system",
-        "number_order_system",
-        "number_order_channel",
-        "source_payload",
-      ],
-    });
-
-    for (const order of orders) {
-      if (order.invoice_id) {
-        orderByInvoiceId.set(order.invoice_id, order);
-      }
-
-      const sourcePayload = order.source_payload as
-        | { notaFiscal?: { id?: string | number } }
-        | undefined;
-      const sourceInvoiceId = sourcePayload?.notaFiscal?.id;
-      if (sourceInvoiceId != null) {
-        orderByInvoiceSystemId.set(String(sourceInvoiceId), order);
-      }
-    }
-  }
-
-  const result: {
-    number_system: string | undefined;
-    city: string | null;
-    seller: {
-      id: string;
-      name: string;
-      id_system: string;
-    } | null;
-    order: {
-      id: string;
-      date: Date | null;
-      id_order_system?: string;
-      number_order_system: string;
-      number_order_channel: string;
-    } | null;
-    measure: string | null;
-    quantity: number;
-    line: string | null;
-    brand: string | null;
-  }[] = [];
-
-  for (const invoice of rows) {
-    const invoiceWithRelations = invoice as Invoice & {
-      seller?: Contact | null;
-      items?: (InvoiceItems & { product?: Product | null })[];
-    };
-    const order =
-      orderByInvoiceId.get(invoice.id) ??
-      (invoice.id_system
-        ? orderByInvoiceSystemId.get(invoice.id_system)
-        : undefined);
-
-    for (const item of invoiceWithRelations.items ?? []) {
-      result.push({
-        number_system: invoice.number_system,
-        city: invoice.destination_city ?? null,
-        seller: invoiceWithRelations.seller
-          ? {
-              id: invoiceWithRelations.seller.id,
-              name: invoiceWithRelations.seller.name,
-              id_system: invoiceWithRelations.seller.id_system,
-            }
-          : null,
-        order: order
-          ? {
-              id: order.id,
-              date: order.date ?? null,
-              id_order_system: order.id_order_system,
-              number_order_system: order.number_order_system,
-              number_order_channel: order.number_order_channel,
-            }
-          : null,
-        measure: item.product?.measure ?? null,
-        quantity: item.quantity_expected,
-        line: item.product?.line ?? null,
-        brand: item.product?.brand ?? null,
+      const orders = await Order.findAll({
+        where: orderWhere,
+        attributes: [
+          "id",
+          "invoice_id",
+          "date",
+          "id_order_system",
+          "number_order_system",
+          "number_order_channel",
+          "source_payload",
+        ],
       });
-    }
-  }
 
-  return result;
-}
+      for (const order of orders) {
+        if (order.invoice_id) {
+          orderByInvoiceId.set(order.invoice_id, order);
+        }
+
+        const sourcePayload = order.source_payload as
+          | { notaFiscal?: { id?: string | number } }
+          | undefined;
+        const sourceInvoiceId = sourcePayload?.notaFiscal?.id;
+        if (sourceInvoiceId != null) {
+          orderByInvoiceSystemId.set(String(sourceInvoiceId), order);
+        }
+      }
+    }
+
+    const result: {
+      number_system: string | undefined;
+      city: string | null;
+      seller: {
+        id: string;
+        name: string;
+        id_system: string;
+      } | null;
+      order: {
+        id: string;
+        date: Date | null;
+        id_order_system?: string;
+        number_order_system: string;
+        number_order_channel: string;
+      } | null;
+      measure: string | null;
+      quantity: number;
+      line: string | null;
+      brand: string | null;
+    }[] = [];
+
+    for (const invoice of rows) {
+      const invoiceWithRelations = invoice as Invoice & {
+        seller?: Contact | null;
+        items?: (InvoiceItems & { product?: Product | null })[];
+      };
+      const order =
+        orderByInvoiceId.get(invoice.id) ??
+        (invoice.id_system
+          ? orderByInvoiceSystemId.get(invoice.id_system)
+          : undefined);
+
+      for (const item of invoiceWithRelations.items ?? []) {
+        result.push({
+          number_system: invoice.number_system,
+          city: invoice.destination_city ?? null,
+          seller: invoiceWithRelations.seller
+            ? {
+                id: invoiceWithRelations.seller.id,
+                name: invoiceWithRelations.seller.name,
+                id_system: invoiceWithRelations.seller.id_system,
+              }
+            : null,
+          order: order
+            ? {
+                id: order.id,
+                date: order.date ?? null,
+                id_order_system: order.id_order_system,
+                number_order_system: order.number_order_system,
+                number_order_channel: order.number_order_channel,
+              }
+            : null,
+          measure: item.product?.measure ?? null,
+          quantity: item.quantity_expected,
+          line: item.product?.line ?? null,
+          brand: item.product?.brand ?? null,
+        });
+      }
+    }
+
+    return result;
+  }
 }
 
 export default new InvoiceService();

@@ -8,6 +8,7 @@ import { UnmappedInvoiceProductCreationAttributes } from "./unmapped-invoice-pro
 
 import multer from "multer";
 import uploaderService from "../../handlers/uploader/services/uploader.service";
+import { UnitBusiness, User } from "../../warehouse";
 
 const upload = multer({ storage: multer.memoryStorage() });
 export class UnmappedInvoiceProductController extends BaseController<
@@ -99,35 +100,45 @@ export class UnmappedInvoiceProductController extends BaseController<
 };
 
   createUnmappedFromReadingEan = async (
-    req: Request,
-    res: Response,
-  ): Promise<Response> => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "Imagem obrigatória" });
-      }
-
-      const { ean } = req.body;
-      const { buffer, originalname, mimetype } = req.file;
-
-      const image = {
-        buffer: buffer,
-        filename: originalname,
-        mimeType: mimetype,
-      };
-
-      await this.service.createUnmappedFromReadingEan(
-        ean as string,
-        image,
-      );
-
-      return res
-        .status(201)
-        .json({ message: "Produto não mapeado registrado com sucesso!" });
-    } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Imagem obrigatória" });
     }
-  };
+
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Usuário não autenticado" });
+    }
+
+    const user = await User.findByPk(userId, {
+      include: [{ model: UnitBusiness, as: 'unitBusiness' }],
+    });
+
+    if (!user?.unitBusiness?.integrations_id) {
+      return res.status(400).json({ error: "Unidade de negócio ou integração não encontrada para o usuário" });
+    }
+
+    const integrationsId = user.unitBusiness.integrations_id;
+
+    const { ean } = req.body;
+    const { buffer, originalname, mimetype } = req.file;
+
+    const image = {
+      buffer,
+      filename: originalname,
+      mimeType: mimetype,
+    };
+
+    await this.service.createUnmappedFromReadingEan(ean as string, image, integrationsId);
+
+    return res.status(201).json({ message: "Produto não mapeado registrado com sucesso!" });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
+};
 }
 
 export default new UnmappedInvoiceProductController();
