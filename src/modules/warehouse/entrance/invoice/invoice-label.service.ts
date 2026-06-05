@@ -66,7 +66,6 @@ export class LabelService {
     const ean =
       product?.ean ||
       product?.ean_tribut ||
-      product?.gtin ||
       '';
     if (ean) eanMap.set(index, ean);
   });

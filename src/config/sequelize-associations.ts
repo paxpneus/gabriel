@@ -21,6 +21,7 @@ import Invoice from '../modules/warehouse/entrance/invoice/invoice.model';
 import InvoiceItems from '../modules/warehouse/entrance/invoice-items/invoice-items.model';
 import EntranceScanLog from '../modules/warehouse/entrance/entrance-scan-logs/entrance-scan-logs.model';
 import Product from '../modules/inventory/products/product.model';
+import ProductConfig from '../modules/inventory/product-config/product_config.model';
 import Stock from '../modules/inventory/stock/stock.model';
 import SupplierMapping from '../modules/inventory/supplier-mapping/supplier-mapping.model';
 import IntegrationMapping from '../modules/integrations/integration-mapping/integration-mapping.model';
@@ -273,6 +274,24 @@ Integration.hasMany(Order, { foreignKey: 'integrations_id', as: 'orders' });
 
 Supplier.hasMany(Product, { foreignKey: 'supplier_id', as: 'products' });
 Product.belongsTo(Supplier, { foreignKey: 'supplier_id', as: 'supplier' });
+
+  // Product -> Product Config
+  Product.hasMany(ProductConfig, {
+    foreignKey: 'product_id',
+    as: 'productConfigs',
+  });
+  ProductConfig.belongsTo(Product, {
+    foreignKey: 'product_id',
+    as: 'product',
+  });
+  UnitBusiness.hasMany(ProductConfig, {
+    foreignKey: 'unit_business_id',
+    as: 'productConfigs',
+  });
+  ProductConfig.belongsTo(UnitBusiness, {
+    foreignKey: 'unit_business_id',
+    as: 'unitBusiness',
+  });
 
   // Product -> Stock
   Product.hasMany(Stock, {
@@ -632,6 +651,17 @@ UnmappedInvoiceProduct.belongsTo(Invoice, {
   foreignKey: 'invoice_id',
   as: 'invoice',
 });
+
+// UnmappedInvoiceProduct -> Integration
+UnmappedInvoiceProduct.belongsTo(Integration, {
+  foreignKey: 'integrations_id',
+  as: 'integration',
+});
+Integration.hasMany(UnmappedInvoiceProduct, {
+  foreignKey: 'integrations_id',
+  as: 'unmappedInvoiceProducts',
+});
+
 
 // ===== ANALYTICS REPORTS =====
 

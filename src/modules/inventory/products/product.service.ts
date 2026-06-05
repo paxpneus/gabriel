@@ -4,6 +4,7 @@ import BaseService from '../../../shared/utils/base-models/base-service';
 import Product from './product.model';
 import productRepository, { ProductRepository } from './product.repository';
 import Stock from '../stock/stock.model';
+import ProductConfig from '../product-config/product_config.model';
 
 type StockUnitFilter = {
   unitBusinessId?: string;
@@ -56,18 +57,26 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     };
 
     return super.paginate(paramsWithoutStockFilter, {
-      ...extraOptions,
-      subQuery: false,
-      include: [
-        {
-          model: Stock,
-          as: 'stocks',
-          where: Object.keys(stockWhere).length ? stockWhere : undefined,
-          required: !!stockFilter?.stockUnit,
-          attributes: ['id', 'quantity', 'unit_business_id', 'total_price'],
-        },
-      ],
-    });
+  ...extraOptions,
+  subQuery: false,
+  include: [
+    {
+      model: Stock,
+      as: 'stocks',
+      where: Object.keys(stockWhere).length ? stockWhere : undefined,
+      required: !!stockFilter?.stockUnit,
+      attributes: ['id', 'quantity', 'unit_business_id', 'total_price'],
+    },
+    {
+      model: ProductConfig,
+      as: 'productConfigs',
+      where: stockFilter?.unitBusinessId
+        ? { unit_business_id: stockFilter.unitBusinessId }
+        : undefined,
+      required: false,
+    },
+  ],
+});
   }
 }
 

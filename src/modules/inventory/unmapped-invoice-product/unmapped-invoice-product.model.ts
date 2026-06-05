@@ -19,6 +19,7 @@ class UnmappedInvoiceProduct
   public status!: string;
   public quantity!: number;
   public image_path!: string;
+  public integrations_id!: string | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -56,6 +57,14 @@ UnmappedInvoiceProduct.init(
     product_name: {
       type: DataTypes.STRING(255),
       allowNull: true,
+    },
+    integrations_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: 'integrations',
+        key: 'id',
+      },
     },
     status: {
       type: DataTypes.ENUM(

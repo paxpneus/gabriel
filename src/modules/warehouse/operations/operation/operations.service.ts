@@ -22,7 +22,7 @@ import {
   Op,
   UpdateOptions,
 } from "sequelize";
-import { Product } from "../../../inventory";
+import { Product, ProductConfig } from "../../../inventory";
 import Invoice from "../../entrance/invoice/invoice.model";
 import User from "../../users/users/user.model";
 import type {
@@ -91,7 +91,12 @@ export class OperationsService extends BaseService<
 
       if (isLinkingInvoice) {
         await existing.update(
-          { sender_confirmation: true, status: "PENDING", receiver_user: data.receiver_user, ...data },
+          {
+            sender_confirmation: true,
+            status: "PENDING",
+            receiver_user: data.receiver_user,
+            ...data,
+          },
           { transaction: t },
         );
 
@@ -182,7 +187,8 @@ export class OperationsService extends BaseService<
       // ── Notifica e-mails da unidade de origem (from_unit) ─────────────────
       const fullOperation = await this.repository.findByIdWithRelations(
         operation.id,
-        {transaction}
+        undefined,
+        { transaction },
       );
 
       const fromEmails: string[] = (fromUnit as any)?.emails ?? [];
@@ -238,43 +244,21 @@ export class OperationsService extends BaseService<
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<Operations>> {
+    const unitBusinessId = params.filters?.unit as string | undefined;
+
+    const filters = { ...params.filters };
+
     return super.paginate(params, {
       ...extraOptions,
       include: [
-        { model: UnitBusiness, as: "fromUnit", attributes: ['name', 'id'] },
-        { model: UnitBusiness, as: "toUnit", attributes: ['name', 'id'] },
+        { model: UnitBusiness, as: "fromUnit", attributes: ["name", "id"] },
+        { model: UnitBusiness, as: "toUnit", attributes: ["name", "id"] },
         { model: User, as: "requestUser", attributes: ["id", "name", "email"] },
-        { model: User, as: "receiverUser", attributes: ["id", "name", "email"] },
         {
-                  model: OperationsItens,
-                  as: "items",
-                  include: [{ model: Product, as: "product", attributes: ['name', 'sku', 'id'] }],
-                },
-                {
-                  model: OperationComment,
-                  as: 'comments',
-                  limit: 2
-                },
-                {
-                  model: Invoice,
-                  as: 'invoice',
-                  attributes: ['id', 'number_system']
-                }
-      ],
-    });
-  }
-
-  async findById(
-    id: string,
-    options?: FindOptions,
-  ): Promise<Operations | null> {
-    return this.repository.findById(id, {
-      ...options,
-      include: [
-        { model: UnitBusiness, as: "fromUnit" },
-        { model: UnitBusiness, as: "toUnit" },
-        { model: User, as: "requestUser", attributes: ["id", "name", "email"] },
-        { model: User, as: "receiverUser", attributes: ["id", "name", "email"] },
+          model: User,
+          as: "receiverUser",
+          attributes: ["id", "name", "email"],
+        },
         {
           model: OperationsItens,
           as: "items",
@@ -282,16 +266,77 @@ export class OperationsService extends BaseService<
             {
               model: Product,
               as: "product",
+              attributes: ["name", "sku", "id"],
+              include: [
+                {
+                  model: ProductConfig,
+                  as: "productConfigs",
+                  required: false,
+                  where: unitBusinessId
+                    ? { unit_business_id: unitBusinessId }
+                    : undefined,
+                },
+              ],
+            },
+          ],
+        },
+        {
+          model: OperationComment,
+          as: "comments",
+          limit: 2,
+        },
+        {
+          model: Invoice,
+          as: "invoice",
+          attributes: ["id", "number_system"],
+        },
+      ],
+    });
+  }
+
+  findByIdFull(id: string, unitBusinessId?: string) {
+    return this.repository.findByIdWithRelations(id, unitBusinessId);
+  }
+
+  async findById(
+    id: string,
+    options?: FindOptions,
+    unitBusinessId?: string,
+  ): Promise<Operations | null> {
+    return this.repository.findById(id, {
+      ...options,
+      include: [
+        { model: UnitBusiness, as: "fromUnit" },
+        { model: UnitBusiness, as: "toUnit" },
+        { model: User, as: "requestUser", attributes: ["id", "name", "email"] },
+        {
+          model: User,
+          as: "receiverUser",
+          attributes: ["id", "name", "email"],
+        },
+        {
+          model: OperationsItens,
+          as: "items",
+          include: [
+            {
+              model: Product,
+              as: "product",
+              include: [
+                {
+                  model: ProductConfig,
+                  as: "productConfigs",
+                  required: false,
+                  where: unitBusinessId
+                    ? { unit_business_id: unitBusinessId }
+                    : undefined,
+                },
+              ],
             },
           ],
         },
         { model: Invoice, as: "invoice" },
       ],
     });
-  }
-
-  findByIdFull(id: string) {
-    return this.repository.findByIdWithRelations(id);
   }
 
   async bulkDelete(options: DestroyOptions): Promise<number> {

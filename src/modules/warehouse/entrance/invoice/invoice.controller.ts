@@ -17,6 +17,7 @@ import { Op } from "sequelize";
 import { InvoiceAttributes } from "./invoice.types";
 import multer from "multer";
 import { BlingApiFetchQueue } from "../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
+import User from "../../users/users/user.model";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -77,10 +78,10 @@ export class InvoiceController extends BaseController<
     );
 
     this.router.get(
-  "/report/products",
-  ...this.mw("getInvoiceProductReport"),
-  this.getInvoiceProductReport,
-);
+      "/report/products",
+      ...this.mw("getInvoiceProductReport"),
+      this.getInvoiceProductReport,
+    );
   }
 
   protected registerCustomRoutes(): void {}
@@ -106,21 +107,26 @@ export class InvoiceController extends BaseController<
       bondPendingCancelledInvoice: [authenticate, userPermissions],
       downloadXmlBatch: [authenticate, userPermissions],
       getInvoiceProductReport: [authenticate, userPermissions],
-
     };
   }
 
-  getFullInvoice = async (req: Request, res: Response): Promise<Response> => {
-    try {
-      const { id } = req.params;
-      console.log(id, req.params);
-      const data = await this.service.findByIdFull(id as string);
+ getFullInvoice = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const { id } = req.params;
+    const userId = (req as any).user?.id;
+    
+    // pega unit_business_id do usuário logado
+    const user = await User.findByPk(userId, { 
+      attributes: ['unit_business_id'] 
+    });
+    const unitBusinessId = user?.unit_business_id ?? undefined;
 
-      return res.json({ data });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  };
+    const data = await this.service.findByIdFull(id as string, unitBusinessId);
+    return res.json({ data });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+};
 
   getLabelData = async (req: Request, res: Response): Promise<Response> => {
     try {
@@ -368,15 +374,18 @@ export class InvoiceController extends BaseController<
     }
   };
 
-  getInvoiceProductReport = async (req: Request, res: Response): Promise<Response> => {
-  try {
-    const params = this.extractQueryParams(req);
-    const data = await this.service.getInvoiceProductReport(params);
-    return res.json({ data });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
-};
+  getInvoiceProductReport = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      const data = await this.service.getInvoiceProductReport(params);
+      return res.json({ data });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  };
 }
 
 export default new InvoiceController();
