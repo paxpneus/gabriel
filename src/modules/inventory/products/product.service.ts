@@ -21,8 +21,13 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         sortBy: ['created_at', 'name'],
         sortDir: 'DESC',
       },
-      searchFields: ['name', 'ean', 'ean_tribut', 'sku'],
+      searchFields: ['name', 'ean', 'ean_tribut', '$productConfigs.sku$'],
       filterableFields: ['type'],
+      customFields: {
+        sku: (value) => ({
+          "$productConfigs.sku$": value
+        })
+      }
     };
   }
 
@@ -59,6 +64,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     return super.paginate(paramsWithoutStockFilter, {
   ...extraOptions,
   subQuery: false,
+  attributes: {exclude: ['source_payload']},
   include: [
     {
       model: Stock,

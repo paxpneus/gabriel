@@ -13,7 +13,7 @@ export function ensureSameBy<T>(
 
   const hasDifferent = values.some(v => v !== first)
 
-  if (hasDifferent && mode == 'REGULAR') {
+  if (hasDifferent && mode !== 'ADVANCED') {
     throw new Error(errorMessage)
   }
 }

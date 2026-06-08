@@ -2,6 +2,7 @@ import { Request, Response, Router } from "express";
 import { authenticate } from "../../../../middlewares/auth-token";
 import SalesReportService from "./sales-report.service";
 import { userPermissions } from "../../../../middlewares/user-permissions";
+import User from "../../../warehouse/users/users/user.model";
 
 class SalesReportController {
   public router: Router;
@@ -10,15 +11,29 @@ class SalesReportController {
     this.router = Router();
     this.router.get("/", authenticate, userPermissions, this.index);
     this.router.post("/run", authenticate, userPermissions, this.runJob);
+    this.router.get(
+      "/job-status",
+      authenticate,
+      userPermissions,
+      this.jobStatus,
+    );
   }
 
   index = async (req: Request, res: Response): Promise<Response> => {
     try {
+      const userId = (req as any).user?.id;
+      const user = await User.findByPk(userId, {
+        attributes: ["unit_business_id"],
+      });
+      const unitBusinessIdFromUser = user?.unit_business_id ?? undefined;
+
       const report = await SalesReportService.getReport({
         dateFrom: String(req.query.dateFrom ?? req.query.date_from ?? ""),
         dateTo: String(req.query.dateTo ?? req.query.date_to ?? ""),
-        unitBusinessId: (req.query.unitBusinessId ??
-          req.query.unit_business_id) as string | undefined,
+        unitBusinessId:
+          ((req.query.unitBusinessId ?? req.query.unit_business_id) as
+            | string
+            | undefined) ?? unitBusinessIdFromUser,
         storeId: (req.query.storeId ?? req.query.store_id) as
           | string
           | undefined,
@@ -41,13 +56,30 @@ class SalesReportController {
     }
   };
 
-  runJob = async (_req: Request, res: Response): Promise<Response> => {
+  jobStatus = async (_req: Request, res: Response): Promise<Response> => {
     try {
-      const result = await SalesReportService.runIncrementalJob();
-      return res.json(result);
+      const status = await SalesReportService.getJobStatus();
+      return res.json(status);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
+  };
+
+  runJob = async (_req: Request, res: Response): Promise<Response> => {
+    res.status(202).json({
+      message:
+        "os dados estão sendo processados, isso pode levar alguns minutos. Favor atualizar página novamente em breve para ver o resultado do relatório.",
+    });
+
+    SalesReportService.runIncrementalJob()
+      .then((result) => {
+        console.log("[SalesReport] Job finalizado com sucesso:", result);
+      })
+      .catch((error) => {
+        console.error("[SalesReport] Job falhou:", error?.message ?? error);
+      });
+
+    return res;
   };
 }
 

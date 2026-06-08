@@ -69,12 +69,12 @@ export class ExpeditionBatchController extends BaseController<
    */
   generateBatchesFromInvoices = async (req: Request, res: Response): Promise<Response> => {
   try {
-    const { invoiceIds, unitBusinessId, type } = req.body;
+    const { invoiceIds, unitBusinessId, type, mode } = req.body;
     if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
       return res.status(400).json({ error: "Informe ao menos uma nota fiscal" });
     }
 
-    const batches = await ExpeditionBatchService.generateBatchFromInvoices(invoiceIds, unitBusinessId, type);
+    const batches = await ExpeditionBatchService.generateBatchFromInvoices(invoiceIds, unitBusinessId, type, mode);
     return res.status(201).json(batches);
   } catch (error: any) {
     console.error('ERRO DETALHADO:', JSON.stringify(error, null, 2))  // <- adiciona isso

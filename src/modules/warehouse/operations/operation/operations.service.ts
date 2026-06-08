@@ -205,7 +205,8 @@ export class OperationsService extends BaseService<
               item.code ??
               "Item sem descrição",
             quantity: Number(item.quantity),
-            code: item.product?.sku ?? undefined,
+            code:
+              item.product?.productConfigs?.[0]?.sku ?? item.code ?? undefined,
           })),
         };
 
@@ -266,7 +267,7 @@ export class OperationsService extends BaseService<
             {
               model: Product,
               as: "product",
-              attributes: ["name", "sku", "id"],
+              attributes: ["name", "id"],
               include: [
                 {
                   model: ProductConfig,
