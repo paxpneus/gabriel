@@ -90,6 +90,10 @@ export class SalesReportService {
     }
   }
 
+  async getJobStatus() {
+  return salesReportRepository.getJobStatus();
+}
+
   async getReport(filters: SalesReportFilters) {
     if (!filters.dateFrom || !filters.dateTo) {
       throw new Error("dateFrom e dateTo são obrigatórios.");

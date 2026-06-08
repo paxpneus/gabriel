@@ -321,7 +321,7 @@ export class InventoryBatchService extends BaseService<
     const productInclude = {
       model: Product,
       as: "product",
-      attributes: ["id", "name", "ean", "sku"],
+      attributes: ["id", "name", "ean"],
       include: [
         {
           model: ProductConfig,
