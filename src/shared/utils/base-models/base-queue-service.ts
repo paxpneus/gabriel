@@ -8,6 +8,7 @@ export type baseQueueOptions = {
   limiter?: { max: number; duration: number };
   lockDuration?: number;
   workless?: boolean;
+  backoffStrategy?: (attemptsMade: number, type: string, err: Error) => number; // ← faltou aqui
   sharedLock?: {
     key: string;
     ttlMs?: number;
@@ -33,6 +34,7 @@ export abstract class BaseQueueService<T> {
   protected worker: Worker | undefined;
   protected queueEvents: QueueEvents;
   public queueName: string;
+  private hasCustomBackoff: boolean;
   private sharedLockPriority?: NonNullable<
     NonNullable<baseQueueOptions["sharedLock"]>["priority"]
   >;
@@ -44,6 +46,7 @@ export abstract class BaseQueueService<T> {
       limiter?: { max: number; duration: number };
       lockDuration?: number;
       workless?: boolean;
+      backoffStrategy?: (attemptsMade: number, type: string, err: Error) => number; 
       sharedLock?: {
         key: string;
         ttlMs?: number;
@@ -57,6 +60,8 @@ export abstract class BaseQueueService<T> {
     } = {},
   ) {
     this.queueName = queueName;
+    this.hasCustomBackoff = !!options.backoffStrategy;
+
     this.queue = new Queue(this.queueName, { connection: redisConfig });
     this.queueEvents = new QueueEvents(this.queueName, {
       connection: redisConfig,
@@ -78,19 +83,15 @@ export abstract class BaseQueueService<T> {
           max: 3,
           duration: 1000,
         },
+        ...(options.backoffStrategy 
+    ? { backoffStrategy: options.backoffStrategy } 
+    : {}),
       });
 
       this.worker.on("failed", (job, err) => {
         console.error(`[QUEUE] Job ${job?.id} falhou:`, err.message);
       });
 
-      this.worker.on("completed", (job, err) => {
-        console.log(`[QUEUE] Job ${job.id} concluído com sucesso`);
-
-        if (job && job.attemptsMade >= (job.opts.attempts ?? 5)) {
-          this.onFailed(job, err);
-        }
-      });
     }
   }
 
@@ -330,7 +331,9 @@ export abstract class BaseQueueService<T> {
         age: 24 * 3600 * 7,
       },
       attempts: 5,
-      backoff: { type: "exponential", delay: 30000 },
+      backoff: this.hasCustomBackoff 
+      ? { type: "custom" } 
+      : { type: "exponential", delay: 30000 },
     });
   }
 
@@ -359,7 +362,9 @@ export abstract class BaseQueueService<T> {
         age: 24 * 3600 * 7,
       },
       attempts: 5,
-      backoff: { type: "exponential", delay: 30000 },
+      backoff: this.hasCustomBackoff 
+      ? { type: "custom" } 
+      : { type: "exponential", delay: 30000 },
     });
   }
 
@@ -386,7 +391,9 @@ export abstract class BaseQueueService<T> {
           age: 24 * 3600 * 7,
         },
         attempts: 3,
-        backoff: { type: "exponential", delay: 10000 },
+        backoff: this.hasCustomBackoff 
+      ? { type: "custom" } 
+      : { type: "exponential", delay: 10000 },
       },
     );
 
