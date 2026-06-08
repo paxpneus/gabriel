@@ -311,6 +311,35 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       },
       sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
+      backoffStrategy: (attemptsMade, _type, err) => {
+        const status = (err as any)?.response?.status;
+        const retryAfter = (err as any)?.response?.headers?.["retry-after"];
+
+        if (retryAfter) {
+          const waitMs = Number(retryAfter) * 1000;
+          console.warn(
+            `[BLING_BACKOFF] Retry-After=${retryAfter}s — aguardando`,
+          );
+          return Math.min(waitMs + 5_000, 12 * 60 * 1000);
+        }
+
+        if (status === 429) {
+          return Math.min(attemptsMade * 30_000, 3 * 60 * 1000);
+        }
+
+        if (status === 503) {
+          return 60_000;
+        }
+
+        if (
+          err?.message?.includes("aborted") ||
+          err?.message?.includes("fetch")
+        ) {
+          return 5_000;
+        }
+
+        return 3_000;
+      },
     });
 
     this.api = blingApi;
