@@ -45,7 +45,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Invoice,
                 as: "invoice",
-                attributes: { exclude: ["xml_path"] },
+                attributes: { exclude: ["xml_path", "source_payload"] },
                 include: [
                   {
                     model: InvoiceItems,
@@ -55,6 +55,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                       {
                         model: Product,
                         as: "product",
+                        attributes: {exclude: ["source_payload"]}
                       },
                     ],
                   },
@@ -70,6 +71,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Product,
                 as: "product",
+                attributes: {exclude: ["source_payload"]},
                 include: [{ model: Stock, as: "stocks" }],
               },
             ],
@@ -101,7 +103,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Invoice,
                 as: "invoice",
-                attributes: { exclude: ["xml_path"] },
+                attributes: { exclude: ["xml_path", "source_payload"] },
                 include: [
                   {
                     model: InvoiceItems,
@@ -110,6 +112,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                     include: [
                       {
                         model: Product,
+                        attributes: {exclude: ["source_payload"]},
                         as: "product",
                       },
                     ],
@@ -126,6 +129,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Product,
                 as: "product",
+                attributes: {exclude: ["source_payload"]},
                 include: [{ model: Stock, as: "stocks" }],
               },
             ],
@@ -172,7 +176,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Invoice,
                 as: "invoice",
-                attributes: { exclude: ["xml_path"] },
+                attributes: { exclude: ["xml_path", "source_payload"] },
                 include: [
                   {
                     model: InvoiceItems,
@@ -181,6 +185,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                     include: [
                       {
                         model: Product,
+                        attributes: {exclude: ["source_payload"]},
                         as: "product",
                       },
                     ],
@@ -197,6 +202,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               {
                 model: Product,
                 as: "product",
+                attributes: {exclude: ["source_payload"]},
                 include: [{ model: Stock, as: "stocks" }],
               },
             ],

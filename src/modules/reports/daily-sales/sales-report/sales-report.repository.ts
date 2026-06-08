@@ -72,14 +72,12 @@ export class SalesReportRepository {
   }
 
   async markRunning(): Promise<void> {
-    await sequelize.query(
+    const result = await sequelize.query(
       `
-      UPDATE report_job_checkpoints
-      SET status = 'running',
-          last_run_at = NOW(),
-          updated_at = NOW()
-      WHERE job_name = :jobName
-      `,
+    UPDATE report_job_checkpoints
+    SET status = 'running', last_run_at = NOW(), updated_at = NOW()
+    WHERE job_name = :jobName AND status != 'running'
+    `,
       { replacements: { jobName: JOB_NAME } },
     );
   }
@@ -304,84 +302,99 @@ export class SalesReportRepository {
           payment_fee
       ),
 
-      -- ------------------------------------------------------------------
-      -- 3. Fonte de dados dos itens
-      --    Usa inserted_orders (io) via RETURNING — alias io em todo lugar.
-      -- ------------------------------------------------------------------
-      item_source AS (
-        SELECT
-          io.id                                                 AS order_snapshot_id,
-          oi.order_id,
-          oi.id                                                 AS order_item_id,
-          COALESCE(oi.product_id, p.id)                         AS product_id,
-          io.store_id,
-          io.unit_business_id,
-          io.integration_id,
-          io.order_date,
-          io.destination_uf,
-          oi.sku,
-          oi.name                                               AS description,
-          oi.unit,
-          COALESCE(oi.quantity, 0)::numeric                     AS quantity,
-          COALESCE(oi.unit_price, oi.price, 0)::numeric         AS unit_price,
-          COALESCE(
-            oi.gross_total,
-            COALESCE(oi.unit_price, oi.price, 0)::numeric
-              * COALESCE(oi.quantity, 0)::numeric
-          )                                                     AS gross_total,
-          COALESCE(oi.discount_value, 0)                        AS discount_value,
-          COALESCE(
-            oi.net_total,
-            (COALESCE(oi.unit_price, oi.price, 0)::numeric
-              * COALESCE(oi.quantity, 0)::numeric)
-              - COALESCE(oi.discount_value, 0)
-          )                                                     AS net_total,
-          CASE
-            WHEN st.quantity > 0
-              THEN ROUND((st.total_price::numeric / st.quantity::numeric), 4)
-            WHEN p.supplier_cost_price IS NOT NULL
-              THEN p.supplier_cost_price
-            ELSE 0
-          END                                                   AS average_cost_snapshot,
-          CASE
-            WHEN st.quantity > 0               THEN 'STOCK_AVERAGE'
-            WHEN p.supplier_cost_price IS NOT NULL THEN 'PRODUCT_SUPPLIER_COST'
-            ELSE 'UNKNOWN'
-          END                                                   AS cost_source,
-          COALESCE(oi.commission_base, 0)                       AS commission_base,
-          COALESCE(oi.commission_rate, 0)                       AS commission_rate,
-          COALESCE(oi.commission_value, 0)                      AS commission_value,
-          p.ncm,
-          p.cest,
-          NULL::varchar                                         AS cfop,
-          COALESCE(p.gtin, p.ean)                               AS gtin,
-          0::numeric                                            AS approx_tax_value,
-          0::numeric                                            AS icms_rate,
-          0::numeric                                            AS icms_value,
-          0::numeric                                            AS ipi_value,
-          0::numeric                                            AS pis_value,
-          0::numeric                                            AS cofins_value,
-          0::numeric                                            AS difal_value,
-          0::numeric                                            AS ibs_value,
-          0::numeric                                            AS cbs_value,
-          oi.source_payload
-        FROM order_items oi
-        JOIN inserted_orders io ON io.order_id = oi.order_id
-        LEFT JOIN products p ON (
-          p.id = oi.product_id OR p.sku = oi.sku OR p.id_system = oi.sku
-        )
-         LEFT JOIN LATERAL (
-          SELECT s.total_price, s.quantity
-          FROM stocks s
-          WHERE s.product_id = COALESCE(oi.product_id, p.id)
-            AND s.quantity > 0
-          ORDER BY
-            CASE WHEN s.unit_business_id = io.unit_business_id THEN 0 ELSE 1 END,
-            s.updated_at DESC
-          LIMIT 1
-        ) st ON TRUE
-      ),
+     -- ------------------------------------------------------------------
+-- 3. Fonte de dados dos itens
+-- ------------------------------------------------------------------
+item_source AS (
+  SELECT
+    io.id                                                 AS order_snapshot_id,
+    oi.order_id,
+    oi.id                                                 AS order_item_id,
+    COALESCE(oi.product_id, p.id)                         AS product_id,
+    io.store_id,
+    io.unit_business_id,
+    io.integration_id,
+    io.order_date,
+    io.destination_uf,
+    COALESCE(pc.sku, oi.sku)                              AS sku,
+    oi.name                                               AS description,
+    oi.unit,
+    COALESCE(oi.quantity, 0)::numeric                     AS quantity,
+    COALESCE(oi.unit_price, oi.price, 0)::numeric         AS unit_price,
+    COALESCE(
+      oi.gross_total,
+      COALESCE(oi.unit_price, oi.price, 0)::numeric
+        * COALESCE(oi.quantity, 0)::numeric
+    )                                                     AS gross_total,
+    COALESCE(oi.discount_value, 0)                        AS discount_value,
+    COALESCE(
+      oi.net_total,
+      (COALESCE(oi.unit_price, oi.price, 0)::numeric
+        * COALESCE(oi.quantity, 0)::numeric)
+        - COALESCE(oi.discount_value, 0)
+    )                                                     AS net_total,
+    CASE
+      WHEN pc.supplier_cost_price IS NOT NULL
+        THEN pc.supplier_cost_price
+      WHEN st.quantity > 0
+        THEN ROUND((st.total_price::numeric / st.quantity::numeric), 4)
+      ELSE 0
+    END                                                   AS average_cost_snapshot,
+    CASE
+      WHEN pc.supplier_cost_price IS NOT NULL THEN 'PRODUCT_CONFIG_COST'
+      WHEN st.quantity > 0                    THEN 'STOCK_AVERAGE'
+      ELSE 'UNKNOWN'
+    END                                                   AS cost_source,
+    COALESCE(oi.commission_base, 0)                       AS commission_base,
+    COALESCE(oi.commission_rate, 0)                       AS commission_rate,
+    COALESCE(oi.commission_value, 0)                      AS commission_value,
+    pc.ncm                                                AS ncm,
+    pc.cest                                               AS cest,
+    NULL::varchar                                         AS cfop,
+    COALESCE(pc.gtin, p.ean)                              AS gtin,
+    0::numeric                                            AS approx_tax_value,
+    0::numeric                                            AS icms_rate,
+    0::numeric                                            AS icms_value,
+    0::numeric                                            AS ipi_value,
+    0::numeric                                            AS pis_value,
+    0::numeric                                            AS cofins_value,
+    0::numeric                                            AS difal_value,
+    0::numeric                                            AS ibs_value,
+    0::numeric                                            AS cbs_value,
+    oi.source_payload
+  FROM order_items oi
+  JOIN inserted_orders io ON io.order_id = oi.order_id
 
+  -- tenta resolver pelo sku quando não há product_id no item
+  LEFT JOIN product_configs pc_by_sku ON (
+    oi.product_id IS NULL
+    AND pc_by_sku.sku = oi.sku
+    AND pc_by_sku.unit_business_id = io.unit_business_id
+  )
+
+  -- produto resolvido por id direto ou via pc_by_sku
+  LEFT JOIN products p ON (
+    p.id = oi.product_id
+    OR p.id = pc_by_sku.product_id
+  )
+
+  -- product_config definitivo para custo, preço, ncm, gtin etc.
+  LEFT JOIN product_configs pc ON (
+    pc.product_id = COALESCE(oi.product_id, p.id)
+    AND pc.unit_business_id = io.unit_business_id
+  )
+
+  LEFT JOIN LATERAL (
+    SELECT s.total_price, s.quantity
+    FROM stocks s
+    WHERE s.product_id = COALESCE(oi.product_id, p.id)
+      AND s.quantity > 0
+    ORDER BY
+      CASE WHEN s.unit_business_id = io.unit_business_id THEN 0 ELSE 1 END,
+      s.updated_at DESC
+    LIMIT 1
+  ) st ON TRUE
+),
       -- ------------------------------------------------------------------
       -- 4. Upsert dos snapshots de item
       --    RETURNING expande os campos necessários para item_totals.
@@ -1224,6 +1237,26 @@ END AS markup_pct,
     `,
       { replacements: { orderIds } },
     );
+  }
+
+  async getJobStatus() {
+    const rows = await sequelize.query<{
+      status: string;
+      last_run_at: Date;
+      last_processed_at: Date;
+      rows_processed: number;
+      metadata: { error?: string } | null;
+    }>(
+      `
+    SELECT status, last_run_at, last_processed_at, rows_processed, metadata
+    FROM report_job_checkpoints
+    WHERE job_name = :jobName
+    LIMIT 1
+    `,
+      { type: QueryTypes.SELECT, replacements: { jobName: JOB_NAME } },
+    );
+
+    return rows[0] ?? null;
   }
 }
 

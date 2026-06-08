@@ -6,7 +6,7 @@ import inventoryBatchRepository, {
 import InventoryBatchItems from "../inventory-batch-items/inventory-batch-items.model";
 import InventoryBatchLogs from "../inventory-batch-logs/inventory-batch-logs.model";
 import sequelize from "../../../../config/sequelize";
-import { Product, Stock } from "../../../inventory";
+import { Product, ProductConfig, Stock } from "../../../inventory";
 import User from "../../../warehouse/users/users/user.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import { UnitBusiness } from "../../../warehouse";
@@ -41,21 +41,15 @@ export class InventoryBatchService extends BaseService<
 
   private calculateDivergencyTotals(items: any[] = []) {
     return items.reduce(
-      (
-        totals: { total_entries: number; total_outputs: number },
-        item: any,
-      ) => {
+      (totals: { total_entries: number; total_outputs: number }, item: any) => {
         const divergency = Number(item.divergency ?? 0);
-        const productPrice = Number(item.product?.price ?? item.price ?? 0);
-        const divergencyValue = divergency * productPrice;
+        const unitPrice = Number(
+          item.product?.productConfigs?.[0]?.price ?? item.price ?? 0,
+        );
+        const divergencyValue = divergency * unitPrice;
 
-        if (divergency < 0) {
-          totals.total_entries += divergencyValue;
-        }
-
-        if (divergency > 0) {
-          totals.total_outputs += divergencyValue;
-        }
+        if (divergency < 0) totals.total_entries += divergencyValue;
+        if (divergency > 0) totals.total_outputs += divergencyValue;
 
         return totals;
       },
@@ -100,17 +94,19 @@ export class InventoryBatchService extends BaseService<
 
         // Pega todos produtos que tem estoque na unidade escolhida
         const products = (await Product.findAll({
-          where: {
-            type: "UNIT",
-          },
+          where: { type: "UNIT" },
           include: [
             {
               model: Stock,
               as: "stocks",
               required: true,
-              where: {
-                unit_business_id: unitBusinessId,
-              },
+              where: { unit_business_id: unitBusinessId },
+            },
+            {
+              model: ProductConfig,
+              as: "productConfigs",
+              required: false,
+              where: { unit_business_id: unitBusinessId },
             },
           ],
         })) as ProductWithStock[];
@@ -118,20 +114,22 @@ export class InventoryBatchService extends BaseService<
         const payloadBatchItem: InventoryBatchItemsCreationAttributes[] =
           products.map((p) => {
             const stock = p.stocks[0];
+            const config = (p as any).productConfigs?.[0];
 
-            if (!stock) {
-              throw new Error(`Produto ${p.id} sem estoque`);
-            }
+            if (!stock) throw new Error(`Produto ${p.id} sem estoque`);
+
+            const unitPrice = config?.price ?? 0;
+            const totalPrice = unitPrice * stock.quantity;
 
             return {
               product_id: p.id,
               inventory_batch_id: batch.id,
-              ean: p.ean_tribut ?? p.ean ?? '',
-              sku: p.sku ?? "",
+              ean: p.ean_tribut ?? p.ean ?? "",
+              sku: config?.sku ?? "",
               quantity_stock: stock.quantity,
               status: "OPEN",
               stock_id: stock.id,
-              price: stock.total_price,
+              price: totalPrice,
               divergency: 0,
               initial_divergency: 0,
               quantity_read: 0,
@@ -312,6 +310,28 @@ export class InventoryBatchService extends BaseService<
     if (batchId) whereClause.id = batchId;
     if (number) whereClause.number = number;
 
+    const batchMeta = await InventoryBatch.findOne({
+      where: whereClause,
+      attributes: ["id", "unit_business_id"],
+    });
+    if (!batchMeta) throw new Error("Lote de inventário não encontrado");
+
+    const unitBusinessId = batchMeta.unit_business_id;
+
+    const productInclude = {
+      model: Product,
+      as: "product",
+      attributes: ["id", "name", "ean"],
+      include: [
+        {
+          model: ProductConfig,
+          as: "productConfigs",
+          required: false,
+          where: { unit_business_id: unitBusinessId },
+        },
+      ],
+    };
+
     if (userId) {
       const batch = await InventoryBatch.findOne({
         where: whereClause,
@@ -320,11 +340,7 @@ export class InventoryBatchService extends BaseService<
             model: InventoryBatchItems,
             as: "items",
             include: [
-              {
-                model: Product,
-                as: "product",
-                attributes: ["id", "name", "ean", "sku", "type", "price"],
-              },
+              productInclude,
               {
                 model: Stock,
                 as: "stock",
@@ -356,10 +372,7 @@ export class InventoryBatchService extends BaseService<
         };
       });
 
-      Object.assign(
-        batchJson,
-        this.calculateDivergencyTotals(batchJson.items),
-      );
+      Object.assign(batchJson, this.calculateDivergencyTotals(batchJson.items));
 
       return batchJson;
     }
@@ -371,11 +384,8 @@ export class InventoryBatchService extends BaseService<
           model: InventoryBatchItems,
           as: "items",
           include: [
-            {
-              model: Product,
-              as: "product",
-              attributes: ["id", "name", "ean", "sku", "price"],
-            },
+            productInclude,
+
             {
               model: Stock,
               as: "stock",

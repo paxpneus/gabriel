@@ -19,6 +19,7 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   public config?: UserConfig;
   public role?: Role;
   public availableUnitBusinesses?: UnitBusiness[]
+  public unitBusiness?: UnitBusiness;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
