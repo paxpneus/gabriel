@@ -4,6 +4,7 @@ import { userPermissions } from "../../../../middlewares/user-permissions";
 import BaseController from "../../../../shared/utils/base-models/base-controller";
 import Operations from "./operations.model";
 import OperationsService from "./operations.service";
+import User from "../../users/users/user.model";
 
 export class OperationsController extends BaseController<
   Operations,
@@ -35,15 +36,19 @@ export class OperationsController extends BaseController<
     };
   }
 
-  showFull = async (req: Request, res: Response): Promise<Response> => {
-    try {
-      const record = await this.service.findByIdFull(req.params.id as string);
-      if (!record) return res.status(404).json({ error: "Não encontrado" });
-      return res.json(record);
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
-  };
+ showFull = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const userId = (req as any).user?.id;
+    const user = await User.findByPk(userId, { attributes: ['unit_business_id'] });
+    const unitBusinessId = user?.unit_business_id;
+
+    const record = await this.service.findByIdFull(req.params.id as string, unitBusinessId);
+    if (!record) return res.status(404).json({ error: "Não encontrado" });
+    return res.json(record);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+};
 
   markAsReceived = async (req: Request, res: Response): Promise<Response> => {
     try {

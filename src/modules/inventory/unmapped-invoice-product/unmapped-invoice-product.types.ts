@@ -10,6 +10,7 @@ export interface UnmappedInvoiceProductAttributes {
   status: string;
   quantity?: number;
   image_path?: string;
+  integrations_id?: string | null;
 }
 
 export interface UnmappedInvoiceProductCreationAttributes

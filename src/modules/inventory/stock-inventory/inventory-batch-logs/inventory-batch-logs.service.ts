@@ -11,6 +11,7 @@ import inventoryBatchLogsRepository, {
   InventoryBatchLogsRepository,
 } from "./inventory-batch-logs.repository";
 import inventoryBatchItemsRepository from "../inventory-batch-items/inventory-batch-items.repository";
+import ProductConfig from "../../product-config/product_config.model";
 
 export class InventoryBatchLogsService extends BaseService<
   InventoryBatchLogs,
@@ -20,126 +21,150 @@ export class InventoryBatchLogsService extends BaseService<
     super(inventoryBatchLogsRepository);
   }
 
-// inventory-batch-logs.service.ts
+  // inventory-batch-logs.service.ts
 
-async scanProduct(
-  unitBusinessId: string,
-  productcode: string,
-  inventoryBatchId: string,
-  userId: string,
-  quantity: number,
-) {
-  return await sequelize.transaction(async (t) => {
-    if (!unitBusinessId) throw new Error("Loja do usuário não encontrada");
-    if (!productcode) throw new Error("Código do produto não informado");
-    if (!inventoryBatchId) throw new Error("Lote de Inventário não informado [ERRO DO SISTEMA]");
+  async scanProduct(
+    unitBusinessId: string,
+    productcode: string,
+    inventoryBatchId: string,
+    userId: string,
+    quantity: number,
+  ) {
+    return await sequelize.transaction(async (t) => {
+      if (!unitBusinessId) throw new Error("Loja do usuário não encontrada");
+      if (!productcode) throw new Error("Código do produto não informado");
+      if (!inventoryBatchId)
+        throw new Error("Lote de Inventário não informado [ERRO DO SISTEMA]");
 
-    // ── 1. Valida batch ───────────────────────────────────────────────────────
-    const inventoryBatch = await InventoryBatch.findByPk(inventoryBatchId, {
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-    if (!inventoryBatch) throw new Error("Lote de Inventário não encontrado");
+      // ── 1. Valida batch ───────────────────────────────────────────────────────
+      const inventoryBatch = await InventoryBatch.findByPk(inventoryBatchId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!inventoryBatch) throw new Error("Lote de Inventário não encontrado");
 
-    // ── 2. Valida limite de 2 usuários por batch ───────────────────────────────
-    const existingUserIds = await InventoryBatchLogs.findAll({
-      attributes: ["user_id"],
-      where: {
-        inventory_batch_item_id: {
-          [Op.in]: sequelize.literal(
-            `(SELECT id FROM inventory_batch_items WHERE inventory_batch_id = '${inventoryBatchId}')`,
-          ),
+      // ── 2. Valida limite de 2 usuários por batch ───────────────────────────────
+      const existingUserIds = await InventoryBatchLogs.findAll({
+        attributes: ["user_id"],
+        where: {
+          inventory_batch_item_id: {
+            [Op.in]: sequelize.literal(
+              `(SELECT id FROM inventory_batch_items WHERE inventory_batch_id = '${inventoryBatchId}')`,
+            ),
+          },
         },
-      },
-      group: ["user_id"],
-      transaction: t,
-    });
+        group: ["user_id"],
+        transaction: t,
+      });
 
-    const uniqueUserIds = existingUserIds.map((l) => l.user_id);
-    const isNewUser = !uniqueUserIds.includes(userId);
-    if (isNewUser && uniqueUserIds.length >= 2) {
-      throw new Error("Este lote já possui 2 usuários em conferência. Não é permitido adicionar mais conferentes.");
-    }
+      const uniqueUserIds = existingUserIds.map((l) => l.user_id);
+      const isNewUser = !uniqueUserIds.includes(userId);
+      if (isNewUser && uniqueUserIds.length >= 2) {
+        throw new Error(
+          "Este lote já possui 2 usuários em conferência. Não é permitido adicionar mais conferentes.",
+        );
+      }
 
-    // ── 3. Busca produto + stock ──────────────────────────────────────────────
-    const productFound = (await Product.findOne({
-      where: { [Op.or]: [{ ean: productcode }, { ean_tribut: productcode }] },
-      include: [{ model: Stock, as: "stocks", where: { unit_business_id: unitBusinessId } }],
-      transaction: t,
-    })) as ProductWithStock;
+      // ── 3. Busca produto + stock ──────────────────────────────────────────────
+      const productFound = (await Product.findOne({
+        where: { [Op.or]: [{ ean: productcode }, { ean_tribut: productcode }] },
+        include: [
+          {
+            model: Stock,
+            as: "stocks",
+            where: { unit_business_id: unitBusinessId },
+          },
+          {
+            model: ProductConfig,
+            as: "productConfigs",
+            required: false,
+            where: { unit_business_id: unitBusinessId },
+          },
+        ],
+        transaction: t,
+      })) as ProductWithStock;
 
-    if (!productFound?.stocks?.length) throw new Error("Produto não encontrado no estoque da loja");
-    const stock = productFound.stocks[0];
+      if (!productFound?.stocks?.length)
+        throw new Error("Produto não encontrado no estoque da loja");
+      const stock = productFound.stocks[0];
+      const config = (productFound as any).productConfigs?.[0];
 
-    // ── 4. Upsert do batch item (centralizado) ────────────────────────────────
-    const inventoryBatchItem = await inventoryBatchItemsRepository.upsertItem(
-      {
-        batchId: inventoryBatchId,
-        productId: productFound.id,
-        stockId: stock.id!,
-        ean: productFound.ean ?? '',
-        sku: productFound.sku ?? '',
-        quantityStock: stock.quantity,
-      },
-      t,
-    );
-
-    // ── 5. Cria ou incrementa o log do usuário ────────────────────────────────
-    const existingLog = await InventoryBatchLogs.findOne({
-      where: { user_id: userId, inventory_batch_item_id: inventoryBatchItem.id },
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-
-    if (existingLog) {
-      await existingLog.increment("quantity_read", { by: quantity, transaction: t });
-    } else {
-      await InventoryBatchLogs.create(
+      // ── 4. Upsert do batch item (centralizado) ────────────────────────────────
+      const inventoryBatchItem = await inventoryBatchItemsRepository.upsertItem(
         {
-          user_id: userId,
-          quantity_read: quantity,
-          label_code: productcode,
-          inventory_batch_item_id: inventoryBatchItem.id,
-          date: new Date(),
-        },
-        { transaction: t },
-      );
-    }
-
-    // ── 6. Sincroniza item + batch após leitura (centralizado) ────────────────
-    await inventoryBatchLogsRepository.syncItemAndBatchAfterScan(
-      inventoryBatchItem.id,
-      inventoryBatchId,
-      userId,
-      inventoryBatch.type,
-      t,
-    );
-
-    // ── 7. Propaga para batch pai se for DIVERGENCY ───────────────────────────
-    if (
-      inventoryBatch.type === "DIVERGENCY" &&
-      inventoryBatch.BatchIdForDivergency
-    ) {
-      await inventoryBatchLogsRepository.syncDivergencyParent(
-        {
-          parentBatchId: inventoryBatch.BatchIdForDivergency,
-          productcode,
+          batchId: inventoryBatchId,
+          productId: productFound.id,
           stockId: stock.id!,
-          userId,
-          itemId: inventoryBatchItem.id,
+          ean: productFound.ean ?? "",
+          sku: config?.sku ?? "",
+          quantityStock: stock.quantity,
         },
         t,
       );
-    }
 
-    return {
-      product_id: productFound.id,
-      product_name: productFound.name,
-      ean: productFound.ean,
-      ean_tribut: productFound.ean_tribut,
-    };
-  });
-}
+      // ── 5. Cria ou incrementa o log do usuário ────────────────────────────────
+      const existingLog = await InventoryBatchLogs.findOne({
+        where: {
+          user_id: userId,
+          inventory_batch_item_id: inventoryBatchItem.id,
+        },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (existingLog) {
+        await existingLog.increment("quantity_read", {
+          by: quantity,
+          transaction: t,
+        });
+      } else {
+        await InventoryBatchLogs.create(
+          {
+            user_id: userId,
+            quantity_read: quantity,
+            label_code: productcode,
+            inventory_batch_item_id: inventoryBatchItem.id,
+            date: new Date(),
+          },
+          { transaction: t },
+        );
+      }
+
+      // ── 6. Sincroniza item + batch após leitura (centralizado) ────────────────
+      await inventoryBatchLogsRepository.syncItemAndBatchAfterScan(
+        inventoryBatchItem.id,
+        inventoryBatchId,
+        userId,
+        inventoryBatch.type,
+        t,
+        { unitPrice: config?.price ?? 0 },
+      );
+
+      // ── 7. Propaga para batch pai se for DIVERGENCY ───────────────────────────
+      if (
+        inventoryBatch.type === "DIVERGENCY" &&
+        inventoryBatch.BatchIdForDivergency
+      ) {
+        await inventoryBatchLogsRepository.syncDivergencyParent(
+          {
+            parentBatchId: inventoryBatch.BatchIdForDivergency,
+            productcode,
+            stockId: stock.id!,
+            userId,
+            itemId: inventoryBatchItem.id,
+          },
+          t,
+        );
+      }
+
+      return {
+        product_id: productFound.id,
+        product_name: productFound.name,
+        ean: productFound.ean,
+        ean_tribut: productFound.ean_tribut,
+      };
+    });
+  }
 
   async updateLogQuantity(
     logId: string,
@@ -202,13 +227,12 @@ async scanProduct(
           )
         : null;
 
-         await inventoryBatchItem.update(
+      await inventoryBatchItem.update(
         {
           quantity_read: newItemRead,
           divergency: Number(inventoryBatchItem.quantity_stock) - newItemRead,
           ...(inventoryBatch.type === "REGULAR" && {
-            initial_divergency:
-              userDivergency ?? 0,
+            initial_divergency: userDivergency ?? 0,
           }),
         },
         { transaction: t },

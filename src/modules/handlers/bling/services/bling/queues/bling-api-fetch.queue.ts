@@ -4,7 +4,12 @@ import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
 import { ApiFetchRequest, WebhookQueuePayload } from "../bling-webhook.types";
 import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
-import { Product, Stock, Supplier } from "../../../../../inventory";
+import {
+  Product,
+  ProductConfig,
+  Stock,
+  Supplier,
+} from "../../../../../inventory";
 import { SupplierMapping } from "../../../../../inventory";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import {
@@ -399,7 +404,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     if (!product && sku) {
-      product = await Product.findOne({ where: { sku } });
+      const config = await ProductConfig.findOne({
+        where: { sku, unit_business_id: BLING_UNIT_BUSINESS_ID },
+      });
+      if (config) product = await Product.findByPk(config.product_id);
     }
 
     if (product || !ean) return product;
@@ -624,6 +632,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const blingProduct = data.data;
     const integration = await getBlingIntegration("Bling");
+    const unitBusiness = await UnitBusiness.findByPk(BLING_UNIT_BUSINESS_ID);
+
+    if (!unitBusiness) {
+      throw new Error(
+        `[BLING_API_FETCH] UnitBusiness padrão Bling não encontrada | id=${BLING_UNIT_BUSINESS_ID}`,
+      );
+    }
 
     const newSupplierCost = Number(
       blingProduct.fornecedor?.precoCusto ?? blingProduct.precoCusto ?? 0,
@@ -640,14 +655,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     );
 
     try {
-      await Product.upsert(
+      const [product] = await Product.upsert(
         {
           name: blingProduct.nome,
           id_system: String(blingProduct.id),
-          sku: blingProduct.codigo,
           ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
           ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
-          price: blingProduct.precoCusto,
           type: blingProduct.formato === "E" ? "KIT" : "UNIT",
           integrations_id: integration.id,
           source_payload: blingProduct as unknown as Record<string, unknown>,
@@ -657,6 +670,19 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           measure,
           gross_weight: Number(blingProduct.pesoBruto ?? 0),
           net_weight: Number(blingProduct.pesoLiquido ?? 0),
+          stock_virtual_total: Number(
+            blingProduct.estoque?.saldoVirtualTotal ?? 0,
+          ),
+        },
+        { conflictFields: ["id_system"] },
+      );
+
+      await ProductConfig.upsert(
+        {
+          product_id: product.id,
+          unit_business_id: unitBusiness.id,
+          sku: blingProduct.codigo,
+          price: blingProduct.precoCusto,
           gtin: blingProduct.gtin,
           gtin_package: blingProduct.gtinEmbalagem,
           ncm: blingProduct.tributacao?.ncm,
@@ -667,11 +693,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
               blingProduct.precoCompra ??
               0,
           ),
-          stock_virtual_total: Number(
-            blingProduct.estoque?.saldoVirtualTotal ?? 0,
-          ),
         },
-        { conflictFields: ["id_system"] },
+        { conflictFields: ["product_id", "unit_business_id"] },
       );
     } catch (error: any) {
       logDbError("[BLING_API_FETCH] Erro no upsert do produto", error, {
@@ -684,26 +707,40 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // Se produto já existia sem average_cost e agora temos custo do fornecedor,
     // atualiza o total_price do estoque com o custo inicial
+    const existingConfig = await ProductConfig.findOne({
+      where: {
+        product_id: existingProduct!.id,
+        unit_business_id: BLING_UNIT_BUSINESS_ID,
+      },
+    });
     if (
       existingProduct &&
-      !existingProduct.average_cost &&
+      !existingConfig?.average_cost &&
       newSupplierCost > 0
     ) {
       const stock = await Stock.findOne({
-        where: { product_id: existingProduct.id },
+        where: {
+          product_id: existingProduct.id,
+          unit_business_id: unitBusiness.id,
+        },
       });
       if (stock && Number(stock.quantity) > 0) {
         const qty = Number(stock.quantity);
         await stock.update({
           total_price: qty * newSupplierCost,
         });
-        // Agora que temos o custo, atualiza o average_cost no produto
-        await Product.update(
+        // Agora que temos o custo, atualiza o average_cost da configuração da unidade.
+        await ProductConfig.update(
           {
             average_cost: newSupplierCost,
             average_cost_updated_at: new Date(),
           },
-          { where: { id: existingProduct.id } },
+          {
+            where: {
+              product_id: existingProduct.id,
+              unit_business_id: unitBusiness.id,
+            },
+          },
         );
         console.log(
           `[BLING_API_FETCH] average_cost inicializado: sku=${blingProduct.codigo} | custo=${newSupplierCost} | qty=${qty} | total_price=${qty * newSupplierCost}`,
@@ -1131,6 +1168,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         if (!existing) {
           await UnmappedInvoiceProduct.create({
             invoice_id: invoice.id,
+            integrations_id: unit_business.integrations_id ?? integration.id,
             ean: item.gtin ? String(item.gtin) : null,
             sku: sku ?? null,
             product_name: (item as any).descricao ?? null,
@@ -1139,7 +1177,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             status: "UNMAPPED",
           });
         } else {
-          await existing.update({ quantity: item.quantidade ?? 0 });
+          await existing.update({
+            quantity: item.quantidade ?? 0,
+            integrations_id: unit_business.integrations_id ?? integration.id,
+          });
         }
 
         console.warn(
@@ -1180,9 +1221,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const mappedEans = new Set(
       invoiceItems.map((i) => i.product?.ean).filter(Boolean),
     );
-    const mappedSkus = new Set(
-      invoiceItems.map((i) => i.product?.sku).filter(Boolean),
-    );
+    const productIds = invoiceItems.map((i) => i.product_id).filter(Boolean);
+    const configs = await ProductConfig.findAll({
+      where: {
+        product_id: productIds,
+        unit_business_id: BLING_UNIT_BUSINESS_ID,
+      },
+    });
+    const mappedSkus = new Set(configs.map((c) => c.sku).filter(Boolean));
 
     for (const item of nf.itens) {
       const sku = item.codigo?.trim();
@@ -1516,6 +1562,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         if (!existing) {
           await UnmappedInvoiceProduct.create({
             invoice_id: invoice.id,
+            integrations_id: unit_business.integrations_id ?? integration.id,
             ean: gtin ?? null,
             sku: sku ?? null,
             product_name: prod.xProd ?? null,
@@ -1524,7 +1571,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             status: "UNMAPPED",
           });
         } else {
-          await existing.update({ quantity: qty });
+          await existing.update({
+            quantity: qty,
+            integrations_id: unit_business.integrations_id ?? integration.id,
+          });
         }
 
         console.warn(
@@ -1562,9 +1612,16 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const mappedEansXml = new Set(
       invoiceItemsXml.map((i) => i.product?.ean).filter(Boolean),
     );
-    const mappedSkusXml = new Set(
-      invoiceItemsXml.map((i) => i.product?.sku).filter(Boolean),
-    );
+    const productIdsXml = invoiceItemsXml
+      .map((i) => i.product_id)
+      .filter(Boolean);
+    const configsXml = await ProductConfig.findAll({
+      where: {
+        product_id: productIdsXml,
+        unit_business_id: BLING_UNIT_BUSINESS_ID,
+      },
+    });
+    const mappedSkusXml = new Set(configsXml.map((c) => c.sku).filter(Boolean));
 
     for (const item of det) {
       const prod = item.prod ?? {};

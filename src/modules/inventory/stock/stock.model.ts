@@ -21,11 +21,9 @@ Stock.init(
       primaryKey: true,
       allowNull: false,
     },
-  
     product_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      unique: true,
       references: {
         model: 'products',
         key: 'id',
@@ -34,7 +32,6 @@ Stock.init(
     unit_business_id: {
        type: DataTypes.UUID,
       allowNull: false,
-      unique: true,
       references: {
         model: 'unit_businesses',
         key: 'id',
@@ -56,7 +53,13 @@ Stock.init(
     tableName: 'stocks',
     timestamps: true,
     underscored: true,
- 
+    indexes: [
+      {
+        unique: true,
+        fields: ['product_id', 'unit_business_id'],
+        name: 'stocks_product_unit_business_unique',
+      },
+    ],
   }
 );
 

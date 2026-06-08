@@ -1,6 +1,6 @@
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
-import { Product } from "../../../inventory";
+import { Product, ProductConfig } from "../../../inventory";
 import supplierMappingService from "../../../inventory/supplier-mapping/supplier-mapping.service";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
@@ -47,9 +47,12 @@ export class InvoiceItemsService extends BaseService<
       // ─── 1. Cria o InvoiceItem operacional ───────────────────────────────
       await this.create(invoiceItemDto, { transaction: t });
 
-      const invoice = await invoiceService.findById(invoiceItemDto.invoice_id!, {
-        transaction: t,
-      });
+      const invoice = await invoiceService.findById(
+        invoiceItemDto.invoice_id!,
+        {
+          transaction: t,
+        },
+      );
 
       if (!invoice) {
         throw new Error("Invoice não encontrada!");
@@ -62,11 +65,21 @@ export class InvoiceItemsService extends BaseService<
       // Impostos ficam zerados — sem XML completo neste fluxo manual;
       // serão preenchidos quando o XML for reprocessado pelo Bling.
       const product = await Product.findByPk(invoiceItemDto.product_id, {
+        include: [
+          {
+            model: ProductConfig,
+            as: "productConfigs",
+            required: false,
+            where: { unit_business_id: invoice.unit_business_id },
+          },
+        ],
         transaction: t,
       });
 
+      const config = (product as any)?.productConfigs?.[0];
+
       const quantity = unMappedProduct.quantity ?? 0;
-      const unitPrice = Number(product?.supplier_cost_price ?? 0);
+      const unitPrice = Number(config?.supplier_cost_price ?? 0);
       const totalValue = unitPrice * quantity;
 
       const existingFiscalItemsCount = await InvoiceFiscalItem.count({
@@ -79,13 +92,13 @@ export class InvoiceItemsService extends BaseService<
           invoice_id: invoice.id,
           product_id: product?.id ?? null,
           item_number: existingFiscalItemsCount + 1,
-          sku: product?.sku ?? unMappedProduct.sku ?? null,
+          sku: config?.sku  ?? unMappedProduct.sku ?? null,
           description: unMappedProduct.product_name?.slice(0, 255) ?? null,
           quantity,
           unit_price: unitPrice,
           total_value: totalValue,
-          ncm: product?.ncm ?? null,
-          cest: product?.cest ?? null,
+          ncm: config?.ncm ?? null,
+          cest: config?.cest ?? null,
           cfop: null,
           gtin: newEan || unMappedProduct.ean || product?.ean || null,
           approx_tax_value: 0,
@@ -105,7 +118,7 @@ export class InvoiceItemsService extends BaseService<
       );
 
       console.log(
-        `[INVOICE_ITEMS] FiscalItem criado para invoice ${invoice.id} | produto=${product?.sku} | qty=${quantity}`,
+        `[INVOICE_ITEMS] FiscalItem criado para invoice ${invoice.id} | produto=${config?.sku} | qty=${quantity}`,
       );
 
       // ─── 3. Sincroniza batch se a invoice já pertencer a um ───────────────
@@ -173,7 +186,6 @@ export class InvoiceItemsService extends BaseService<
       });
     });
   }
-  
 }
 
 export default new InvoiceItemsService();
