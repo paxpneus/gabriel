@@ -72,14 +72,12 @@ export class SalesReportRepository {
   }
 
   async markRunning(): Promise<void> {
-    await sequelize.query(
+    const result = await sequelize.query(
       `
-      UPDATE report_job_checkpoints
-      SET status = 'running',
-          last_run_at = NOW(),
-          updated_at = NOW()
-      WHERE job_name = :jobName
-      `,
+    UPDATE report_job_checkpoints
+    SET status = 'running', last_run_at = NOW(), updated_at = NOW()
+    WHERE job_name = :jobName AND status != 'running'
+    `,
       { replacements: { jobName: JOB_NAME } },
     );
   }
@@ -1242,24 +1240,24 @@ END AS markup_pct,
   }
 
   async getJobStatus() {
-  const rows = await sequelize.query<{
-    status: string;
-    last_run_at: Date;
-    last_processed_at: Date;
-    rows_processed: number;
-    metadata: { error?: string } | null;
-  }>(
-    `
+    const rows = await sequelize.query<{
+      status: string;
+      last_run_at: Date;
+      last_processed_at: Date;
+      rows_processed: number;
+      metadata: { error?: string } | null;
+    }>(
+      `
     SELECT status, last_run_at, last_processed_at, rows_processed, metadata
     FROM report_job_checkpoints
     WHERE job_name = :jobName
     LIMIT 1
     `,
-    { type: QueryTypes.SELECT, replacements: { jobName: JOB_NAME } },
-  );
+      { type: QueryTypes.SELECT, replacements: { jobName: JOB_NAME } },
+    );
 
-  return rows[0] ?? null;
-}
+    return rows[0] ?? null;
+  }
 }
 
 export const salesReportRepository = new SalesReportRepository();

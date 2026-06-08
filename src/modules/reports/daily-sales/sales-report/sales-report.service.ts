@@ -13,6 +13,11 @@ const JOB_NAME = "sales_report";
 
 export class SalesReportService {
   async runIncrementalJob(): Promise<SalesReportJobResult> {
+    const status = await salesReportRepository.getJobStatus();
+    if (status?.status === "running") {
+      throw new Error("Job já está em execução, aguarde.");
+    }
+
     const jobStartTime = new Date();
     const lastProcessedAt = await salesReportRepository.getCheckpoint();
 
@@ -91,8 +96,8 @@ export class SalesReportService {
   }
 
   async getJobStatus() {
-  return salesReportRepository.getJobStatus();
-}
+    return salesReportRepository.getJobStatus();
+  }
 
   async getReport(filters: SalesReportFilters) {
     if (!filters.dateFrom || !filters.dateTo) {
