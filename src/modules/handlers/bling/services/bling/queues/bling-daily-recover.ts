@@ -11,6 +11,7 @@ export class BlingMigrationQueue extends BaseQueueService<void> {
   constructor(options: { workless?: boolean } = {}) {
     super("BLING_MIGRATION", {
       concurrency: 1,
+         lockDuration: 12 * 60 * 60 * 1000, 
       sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
