@@ -18,6 +18,7 @@ class UnitBusiness
   public id_system!: string;
   public integrations_id?: string;
   public head_office!: boolean;
+  public transshipment_allowed?: boolean;
   public certifcate_password?: string;
   public certificate_path?: string;
   public ult_nsu?: string
@@ -84,6 +85,10 @@ UnitBusiness.init(
       allowNull: true,
       defaultValue: [],
     },
+    transshipment_allowed: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    }
   },
   {
     sequelize,
