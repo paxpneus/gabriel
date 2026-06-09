@@ -57,19 +57,19 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
      await new Promise(r => setTimeout(r, 1000));
 
-    await this.blingApi.put(`/pedidos/vendas/${orderId}`, {
-      ...data.data,
-      observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`,
-    });
+    // await this.blingApi.put(`/pedidos/vendas/${orderId}`, {
+    //   ...data.data,
+    //   observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`,
+    // });
 
      await new Promise(r => setTimeout(r, 3000));
      
-    await this.blingApi.patch(
-      `/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`,
-      {
-        id: STATUS.AGUARDANDO_VERIFICACAO_HUMANA,
-      },
-    );
+    // await this.blingApi.patch(
+    //   `/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`,
+    //   {
+    //     id: STATUS.AGUARDANDO_VERIFICACAO_HUMANA,
+    //   },
+    // );
     const orderSystem = await ordersService.findOne({
       where: {
         id_order_system: orderId,
@@ -147,7 +147,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
     // 4. Emite a NFe
     try {
-      await this.blingApi.post(`/pedidos/vendas/${order_id}/gerar-nfe`);
+      // await this.blingApi.post(`/pedidos/vendas/${order_id}/gerar-nfe`);
       console.log(`[NFeQueue] NFe emitida com sucesso para pedido ${order_id}`);
 
       const internalOrder = await ordersService.findOne({
