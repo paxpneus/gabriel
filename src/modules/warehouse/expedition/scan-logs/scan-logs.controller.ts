@@ -1,6 +1,8 @@
-import { authenticate } from '../../../../middlewares/auth-token';
+import { authenticate, AuthRequest } from '../../../../middlewares/auth-token';
 import { userPermissions } from '../../../../middlewares/user-permissions';
 import BaseController from '../../../../shared/utils/base-models/base-controller';
+import UnitBusiness from '../../unit-business/unit-business.model';
+import User from '../../users/users/user.model';
 import ExpeditionScanLog from './scan-logs.model';
 import ExpeditionScanLogService from './scan-logs.service';
 import { Request, Response } from 'express';
@@ -40,17 +42,33 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
       };
     }
 
-  scanProduct = async (req: Request, res: Response): Promise<Response> => {
-    try {
-      const {labelcode, productcode, batchId, userId} = req.body
+    private async getUnitBusiness(req: Request) {
+  const userId = (req as AuthRequest).user?.id;
+  if (!userId) return null;
 
-      await this.service.scanProduct(labelcode, productcode, batchId, userId)
+  const user = await User.findByPk(userId, {
+    attributes: ['unit_business_id'],
+  });
+  if (!user?.unit_business_id) return null;
+
+  return UnitBusiness.findByPk(user.unit_business_id, {
+    attributes: ['cnpj', 'transshipment_allowed'],
+  });
+}
+
+  scanProduct = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const { labelcode, productcode, batchId } = req.body;
+    const userId = (req as AuthRequest).user?.id;
+    const unitBusiness = await this.getUnitBusiness(req);
+
+    await this.service.scanProduct(labelcode, productcode, batchId, userId as string, unitBusiness);
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
-    } catch (error: any) {
-      return res.status(400).json({error: error.message})
-    }
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
   }
+};
 
     bulkRemoveScanLogsOutgoing = async (req: Request, res: Response): Promise<Response> => {
     try {
@@ -77,28 +95,32 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
   }
 
     scanProductIncoming = async (req: Request, res: Response): Promise<Response> => {
-    try {
-      const {labelcode, batchId, userId, quantity} = req.body
+  try {
+    const { labelcode, batchId, quantity } = req.body;
+    const userId = (req as AuthRequest).user?.id;
+    const unitBusiness = await this.getUnitBusiness(req);
 
-      await this.service.scanProductIncoming(labelcode, batchId, userId, quantity)
+    await this.service.scanProductIncoming(labelcode, batchId, userId as string, quantity, unitBusiness );
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
-    } catch (error: any) {
-      return res.status(400).json({error: error.message})
-    }
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
   }
+};
 
   scanProductIncomingByInvoice = async (req: Request, res: Response): Promise<Response> => {
-    try {
-      const {labelcode, batchId, invoiceId, userId, quantity} = req.body
+  try {
+    const { labelcode, batchId, invoiceId, quantity } = req.body;
+    const userId = (req as AuthRequest).user?.id;
+    const unitBusiness = await this.getUnitBusiness(req);
 
-      await this.service.scanProductIncomingByInvoice(labelcode, batchId, invoiceId, userId, quantity)
+    await this.service.scanProductIncomingByInvoice(labelcode, batchId, invoiceId,  userId as string, quantity, unitBusiness);
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
-    } catch (error: any) {
-      return res.status(400).json({error: error.message})
-    }
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
   }
+};
 }
 
 export default new ExpeditionScanLogController();

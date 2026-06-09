@@ -46,11 +46,32 @@ export class ExpeditionScanLogService extends BaseService<
     };
   }
 
+  private assertTransshipment(
+    invoice: { sender_cnpj: string | null; receiver_cnpj: string | null },
+    unitBusiness: { cnpj: string; transshipment_allowed?: boolean } | null,
+  ): void {
+    if (!unitBusiness || unitBusiness.transshipment_allowed) return;
+
+    const normalize = (cnpj: string | null) => (cnpj ?? "").replace(/\D/g, "");
+    const unitCnpj = normalize(unitBusiness.cnpj);
+
+    const allowed =
+      normalize(invoice.sender_cnpj) === unitCnpj ||
+      normalize(invoice.receiver_cnpj) === unitCnpj;
+
+    if (!allowed) {
+      throw new Error(
+        "Leitura bloqueada: nota fiscal não pertence à sua unidade de negócio",
+      );
+    }
+  }
+
   async scanProduct(
     labelcode: string,
     productcode: string,
     batchid: string,
     userId: string,
+    unitBusiness: { cnpj: string; transshipment_allowed?: boolean } | null,
   ) {
     return await sequelize.transaction(async (t) => {
       if (labelcode.length < 41) {
@@ -100,6 +121,11 @@ export class ExpeditionScanLogService extends BaseService<
       console.log(invoiceRead, productcode, eanfromlabel);
 
       if (!invoiceRead) throw Error("Nota não encontrada no lote");
+
+      this.assertTransshipment(
+        invoiceRead.batchInvoices![0].invoice,
+        unitBusiness,
+      );
 
       const productRead = (await ExpeditionBatchItems.findOne({
         where: { expedition_batch_id: batchid },
@@ -217,6 +243,7 @@ export class ExpeditionScanLogService extends BaseService<
     batchid: string,
     userId: string,
     quantity: number = 1,
+    unitBusiness: { cnpj: string; transshipment_allowed?: boolean } | null,
   ) {
     return await sequelize.transaction(async (t) => {
       // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
@@ -295,6 +322,8 @@ export class ExpeditionScanLogService extends BaseService<
           "Nenhuma nota fiscal encontrada para este produto no lote",
         );
       }
+
+      this.assertTransshipment(batchInvoices[0].invoice, unitBusiness);
 
       let remaining = quantity;
       const scanLogs: any[] = [];
@@ -421,6 +450,7 @@ export class ExpeditionScanLogService extends BaseService<
     invoiceId: string,
     userId: string,
     quantity: number = 1,
+    unitBusiness: { cnpj: string; transshipment_allowed?: boolean } | null,
   ) {
     return await sequelize.transaction(async (t) => {
       // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
@@ -495,6 +525,8 @@ export class ExpeditionScanLogService extends BaseService<
           "Nota fiscal não encontrada no lote ou não contém este produto",
         );
       }
+
+      this.assertTransshipment(batchInvoice.invoice, unitBusiness);
 
       const invoiceItem = batchInvoice.invoice.items[0];
 
