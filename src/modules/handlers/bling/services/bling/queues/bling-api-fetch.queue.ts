@@ -310,6 +310,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         duration: 1000,
       },
       sharedLock: BLING_SHARED_QUEUE_LOCK,
+      lockDuration: 10 * 60 * 1000,
       workless: options.workless,
       backoffStrategy: (attemptsMade, _type, err) => {
         const status = (err as any)?.response?.status;

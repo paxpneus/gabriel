@@ -4,14 +4,13 @@ import { BaseQueueService } from "../../../../../../shared/utils/base-models/bas
 import { doRefreshToken } from "../../../api/bling_api.service";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { Invoice } from "../../../../../warehouse";
-import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
 
 export class BlingTokenRefreshQueue extends BaseQueueService<void> {
 
     constructor(options: { workless?: boolean } = {}) {
         super('BLING_TOKEN_REFRESH', {
             concurrency: 1,
-            sharedLock: BLING_SHARED_QUEUE_LOCK,
+             lockDuration: 60_000,
             workless: options.workless
         })
     }
