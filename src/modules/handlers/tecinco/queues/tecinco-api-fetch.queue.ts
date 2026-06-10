@@ -65,7 +65,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
     // fll_codigo é o número da filial na TeCinco — usa pra resolver UnitBusiness
     // fazemos isso antes do upsert para logar o warn cedo, mas não bloqueia o produto
-    const filialNumber = String(data.fll_codigo ?? branchId ?? '');
+    const filialNumber = String(data.fll_codigo ?? branchId ?? '').padStart(2, '0');
+
     const unitBusiness = filialNumber
       ? await UnitBusiness.findOne({ where: { number: filialNumber } })
       : null;
@@ -133,7 +134,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
 
     const name = data.cln_nome?.trim() ?? '';
-    const type: 'P' | 'J' = data.cln_fisjur === 'J' ? 'J' : 'P';
+    const type: 'F' | 'J' = data.cln_fisjur === 'J' ? 'J' : 'F';
 
 
     const existing = await Customer.findOne({ where: { document } });

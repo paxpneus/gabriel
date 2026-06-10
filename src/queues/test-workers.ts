@@ -3,6 +3,7 @@ import { BlingDirectUpsertQueue } from "../modules/handlers/bling/services/bling
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { BlingTokenRefreshQueue } from "../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
+import { TCarUpsertQueue } from "../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
 import { SalesReportQueue } from "../modules/reports/daily-sales/sales-report/sales-report.queue";
 import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
@@ -21,6 +22,9 @@ export async function startBlingWorkers() {
   const dailyOperationReportQueue = new DailyOperationReportQueue({
     workless: false,
   });
+
+  const tcarApiFetchQueue = new TCarUpsertQueue({ workless: false });
+
   const dailySalesReportQueue = new SalesReportQueue({ workless: false });
   const autoBackUpQueue = new AutoBackupQueue({ workless: false });
   // const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
@@ -59,5 +63,6 @@ export async function startBlingWorkers() {
     blingApiFetchQueue,
     blingTokenRefreshQueue,
     dailyOperationReportQueue,
+    tcarApiFetchQueue,
   };
 }

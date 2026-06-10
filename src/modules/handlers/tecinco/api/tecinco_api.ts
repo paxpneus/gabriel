@@ -97,23 +97,24 @@ function processQueue(session: TCarBranchSession, error: unknown, token: string 
 export async function doTCarLogin(branchId: number): Promise<string> {
   const { baseUrl, apiKey, username, password, companyId } = await getTCarToken();
 
-  const loginRes = await fetch(`${baseUrl}/auth/login?company_id=${companyId}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-    },
-    body: JSON.stringify({ username, password }),
-    ...(httpsAgent ? { agent: httpsAgent } : {}),
+  const axiosInstance = axios.create({
+    baseURL: baseUrl,
+    ...(httpsAgent ? { httpsAgent } : {}),
   });
 
-  if (!loginRes.ok) {
-    throw new Error(
-      `[TCarApi] Login falhou para branch ${branchId}: ${loginRes.status} ${loginRes.statusText}`,
-    );
-  }
+  const loginRes = await axiosInstance.post(
+    `/auth/login`,
+    { username, password },
+    {
+      params: { company_id: companyId },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+    },
+  );
 
-  const body = (await loginRes.json()) as TCarLoginResponse;
+  const body = loginRes.data as TCarLoginResponse;
 
   if (body.status !== 'success') {
     throw new Error(
@@ -124,25 +125,18 @@ export async function doTCarLogin(branchId: number): Promise<string> {
   const { session_token, branch_required } = body.data;
 
   if (branch_required) {
-    const branchRes = await fetch(
-      `${baseUrl}/auth/session/branch?company_id=${companyId}`,
+    await axiosInstance.post(
+      `/auth/session/branch`,
+      { branch_id: branchId },
       {
-        method: 'POST',
+        params: { company_id: companyId },
         headers: {
           'Content-Type': 'application/json',
           'x-api-key': apiKey,
           'x-tcar-session': session_token,
         },
-        body: JSON.stringify({ branch_id: branchId }),
-        ...(httpsAgent ? { agent: httpsAgent } : {}),
       },
     );
-
-    if (!branchRes.ok) {
-      throw new Error(
-        `[TCarApi] Seleção de filial ${branchId} falhou: ${branchRes.status} ${branchRes.statusText}`,
-      );
-    }
   }
 
   getSession(branchId).sessionToken = session_token;
@@ -184,6 +178,20 @@ async function ensureSession(branchId: number): Promise<string> {
 export const tcarApi: AxiosInstance = createAxiosInstance({
   baseURL: 'http://placeholder',
   ...(httpsAgent ? { httpsAgent } : {}),
+
+   onResponse: (response) => {
+    if (typeof response.data === 'string') {
+      try {
+        const fixed = response.data.replace(
+          /:\s*(\d+),(\d{2})([,\}\]])/g,
+          ': $1.$2$3',
+        );
+        response.data = JSON.parse(fixed);
+      } catch (e) {
+      }
+    }
+    return response;
+  },
 
   onRequest: async (config) => {
     const { baseUrl, apiKey, companyId } = await getTCarToken();
@@ -297,16 +305,31 @@ export async function tcarRequest<T>(
 ): Promise<T> {
   const { baseUrl, companyId } = await getTCarToken();
 
-  const scoped = axios.create({ baseURL: baseUrl });
+  const scoped = axios.create({ baseURL: baseUrl, ...(httpsAgent ? { httpsAgent } : {}), });
 
   scoped.interceptors.request  = tcarApi.interceptors.request  as typeof scoped.interceptors.request;
   scoped.interceptors.response = tcarApi.interceptors.response as typeof scoped.interceptors.response;
 
+  // Injeta como params padrão E como transformRequest para garantir que
+  // o interceptor já encontre na URL antes de processar
   scoped.defaults.params = {
     ...scoped.defaults.params,
     company_id: companyId,
     branch_id: branchId,
   };
+
+  // Cria um adapter que força os params na URL antes do interceptor rodar
+  scoped.interceptors.request.use((config) => {
+    const url = new URL(config.url ?? '', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
+    if (!url.searchParams.has('branch_id')) {
+      url.searchParams.set('branch_id', String(branchId));
+    }
+    if (!url.searchParams.has('company_id')) {
+      url.searchParams.set('company_id', String(companyId));
+    }
+    config.url = url.pathname + url.search;
+    return config;
+  }, undefined, { runWhen: () => true });
 
   return fn(scoped);
 }
@@ -327,14 +350,22 @@ export async function tcarLogout(branchId: number): Promise<void> {
   if (!session?.sessionToken) return;
 
   try {
-    await fetch(`${baseUrl}/auth/logout?company_id=${companyId}`, {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'x-tcar-session': session.sessionToken,
-      },
-      ...(httpsAgent ? { agent: httpsAgent } : {}),
+    const axiosInstance = axios.create({
+      baseURL: baseUrl,
+      ...(httpsAgent ? { httpsAgent } : {}),
     });
+
+    await axiosInstance.post(
+      `/auth/logout`,
+      {},
+      {
+        params: { company_id: companyId },
+        headers: {
+          'x-api-key': apiKey,
+          'x-tcar-session': session.sessionToken,
+        },
+      },
+    );
   } finally {
     session.sessionToken = null;
   }

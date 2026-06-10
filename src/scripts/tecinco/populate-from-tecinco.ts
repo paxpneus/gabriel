@@ -45,6 +45,8 @@ const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? 'default';
 /** Tamanho de página (máximo que a TeCinco aceita — ajuste se necessário) */
 const PAGE_SIZE = Number(process.env.TCAR_PAGE_SIZE ?? 100);
 
+const MAX_ITEMS = Number(process.env.TCAR_MAX_ITEMS ?? 50);
+
 /** Pausa entre páginas para não sobrecarregar a API (ms) */
 const PAGE_DELAY_MS = Number(process.env.TCAR_PAGE_DELAY_MS ?? 300);
 
@@ -105,18 +107,28 @@ interface TCarPage<T> {
 
 async function* paginateTCar<T>(
   fetcher: (page: number, pageSize: number) => Promise<any>,
+  max = MAX_ITEMS, // 👈
 ): AsyncGenerator<T[]> {
   let page = 1;
+  let total = 0;
 
   while (true) {
-    const response: TCarPage<T> = await fetcher(page, PAGE_SIZE);
+    const response = await fetcher(page, PAGE_SIZE);
+
+    if (typeof response === 'string') {
+      console.error('  ❌ Resposta ainda em string — onResponse não aplicado');
+      break;
+    }
 
     const items: T[] = Array.isArray(response?.data) ? response.data : [];
     if (!items.length) break;
 
-    yield items;
+    const slice = items.slice(0, max - total); // respeita o limite
+    yield slice;
+    total += slice.length;
 
-    if (page >= response.pagination.totalPages) break;
+    if (total >= max) break;
+    if (page >= response.pagination?.totalPages) break;
 
     page++;
     await sleep(PAGE_DELAY_MS);
