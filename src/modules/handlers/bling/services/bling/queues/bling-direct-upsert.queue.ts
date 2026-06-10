@@ -169,7 +169,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
           product_id: product.id,
           unit_business_id: unitBusiness.id,
           sku: data.sku,
-          price: data.price ?? 0,
+          ...(data.price != null && data.price > 0 ? { price: data.price } : {}),
         },
         { conflictFields: ["product_id", "unit_business_id"] },
       );

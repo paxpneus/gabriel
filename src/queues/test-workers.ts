@@ -23,7 +23,7 @@ export async function startBlingWorkers() {
     workless: false,
   });
 
-  const tcarApiFetchQueue = new TCarUpsertQueue({ workless: false });
+  // const tcarApiFetchQueue = new TCarUpsertQueue({ workless: false });
 
   const dailySalesReportQueue = new SalesReportQueue({ workless: false });
   const autoBackUpQueue = new AutoBackupQueue({ workless: false });
@@ -63,6 +63,6 @@ export async function startBlingWorkers() {
     blingApiFetchQueue,
     blingTokenRefreshQueue,
     dailyOperationReportQueue,
-    tcarApiFetchQueue,
+    // tcarApiFetchQueue,
   };
 }

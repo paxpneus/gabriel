@@ -712,7 +712,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           product_id: product.id,
           unit_business_id: unitBusiness.id,
           sku: blingProduct.codigo,
-          price: blingProduct.precoCusto,
+          price: blingProduct.preco,
           gtin: blingProduct.gtin,
           gtin_package: blingProduct.gtinEmbalagem,
           ncm: blingProduct.tributacao?.ncm,
