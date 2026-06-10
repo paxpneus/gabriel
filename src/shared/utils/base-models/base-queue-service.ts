@@ -117,12 +117,15 @@ export abstract class BaseQueueService<T> {
 
     const refreshInterval = setInterval(
       () => {
+        if (job.token) {
+
         job.extendLock(job.token!, this.workerLockDuration).catch((error) => {
           console.warn(
             `[QUEUE] Falha ao renovar worker lock ${job.id}:`,
             error.message,
           );
         });
+      }
 
         this.refreshSharedLock(sharedLock.key, token, ttlMs).catch((error) => {
           console.error(
