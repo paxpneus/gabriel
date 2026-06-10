@@ -1,10 +1,11 @@
 import { Job } from 'bullmq';
 import { BaseQueueService } from '../../../../shared/utils/base-models/base-queue-service';
 import { alertService } from '../../../../shared/providers/mail-provider/nodemailer.alert';
-import { ProductConfig, Product } from '../../../inventory';
+import { ProductConfig, Product, SupplierMapping } from '../../../inventory';
 import Customer from '../../../sales/customers/customers.model';
 import UnitBusiness from '../../../warehouse/unit-business/unit-business.model';
 import { TCarProdutoPayload, TCarClientePayload, TCarResource, TCarAction } from '../service/tecinco/tecinco.types';
+import { getTCarIntegration } from '../api/tecinco_api';
 
 export interface TCarUpsertJobPayload {
   eventId: string;
@@ -51,62 +52,132 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   // ─── Produto ───────────────────────────────────────────────────────────────
 
   private async processProduct(
-    action: TCarAction,
-    data: TCarProdutoPayload,
-    branchId?: number,
-  ): Promise<void> {
-    const systemId = String(data.epctb_codigo);
+  action: TCarAction,
+  data: TCarProdutoPayload,
+  branchId?: number,
+): Promise<void> {
+  const systemId = String(data.epctb_codigo);
 
-    if (action === 'deleted') {
-      const deleted = await Product.destroy({ where: { id_system: systemId } });
-      console.log(`[TCAR_UPSERT] Produto deletado: id_system=${systemId} (${deleted} reg)`);
-      return;
-    }
-
-    // fll_codigo é o número da filial na TeCinco — usa pra resolver UnitBusiness
-    // fazemos isso antes do upsert para logar o warn cedo, mas não bloqueia o produto
-    const filialNumber = String(data.fll_codigo ?? branchId ?? '').padStart(2, '0');
-
-    const unitBusiness = filialNumber
-      ? await UnitBusiness.findOne({ where: { number: filialNumber } })
-      : null;
-
-    if (!unitBusiness) {
-      console.warn(`[TCAR_UPSERT] UnitBusiness não encontrada para fll_codigo=${filialNumber} — product_config será ignorado`);
-    }
-
-    const ean = normalizeEan(data.epctb_ean);
-
-    const [product] = await Product.upsert(
-      {
-        id_system: systemId,
-        name: data.epctb_nome?.trim() ?? '',
-        ean,
-        unit: data.epctb_unidade,
-        gross_weight: data.epctb_pesobruto,
-        net_weight: data.epctb_pesoliq,
-        category: 'TIRE',
-        source_payload: data as unknown as Record<string, unknown>,
-      },
-      { conflictFields: ['id_system'] },
-    );
-
-    if (!unitBusiness) return;
-
-    await ProductConfig.upsert(
-      {
-        product_id: product.id,
-        unit_business_id: unitBusiness.id,
-        sku: systemId,
-        price: data.epprc_preco ?? 0,
-        supplier_cost_price: data.epcte_custcont ?? 0,
-        average_cost: data.epcte_custcont ?? 0,
-      },
-      { conflictFields: ['product_id', 'unit_business_id'] },
-    );
-
-    console.log(`[TCAR_UPSERT] Produto upsertado: id_system=${systemId} | filial=${filialNumber}`);
+  if (action === 'deleted') {
+    const deleted = await Product.destroy({ where: { id_system: systemId } });
+    console.log(`[TCAR_UPSERT] Produto deletado: id_system=${systemId} (${deleted} reg)`);
+    return;
   }
+
+  const filialNumber = String(data.fll_codigo ?? branchId ?? '').padStart(2, '0');
+  const unitBusiness = filialNumber
+    ? await UnitBusiness.findOne({ where: { number: filialNumber } })
+    : null;
+
+  if (!unitBusiness) {
+    console.warn(`[TCAR_UPSERT] UnitBusiness não encontrada para fll_codigo=${filialNumber} — product_config será ignorado`);
+  }
+
+  const integrations = await getTCarIntegration('Tecinco');
+  const ean = normalizeEan(data.epctb_ean);
+
+  // ─── Verifica se já existe produto com esse EAN de outra integração ──────
+  // Se existir e NÃO for da Tecinco, apenas registra o SupplierMapping (de x para)
+  // e NÃO faz upsert do produto em si
+  if (ean) {
+    const existingProduct = await Product.findOne({
+      where: { ean },
+    });
+
+    if (existingProduct && existingProduct.integrations_id !== integrations.id) {
+      console.log(
+        `[TCAR_UPSERT] Produto EAN=${ean} pertence a outra integração (id=${existingProduct.integrations_id}) — registrando SupplierMapping apenas`,
+      );
+
+      // CNPJ do emitente/fornecedor Tecinco — precisa vir da UnitBusiness
+      // ou de um campo fixo configurado para a integração
+      const supplierCnpj = unitBusiness?.cnpj ?? null;
+
+      if (supplierCnpj) {
+        const existingMapping = await SupplierMapping.findOne({
+          where: {
+            product_id: existingProduct.id,
+            supplier_cnpj: supplierCnpj,
+          },
+        });
+
+        if (existingMapping) {
+          await existingMapping.update({
+            supplier_product_code: ean,
+          });
+        } else {
+          await SupplierMapping.create({
+            product_id: existingProduct.id,
+            supplier_cnpj: supplierCnpj,
+            supplier_product_code: ean,
+          });
+        }
+
+        console.log(
+          `[TCAR_UPSERT] SupplierMapping ${existingMapping ? 'atualizado' : 'criado'}: product_id=${existingProduct.id} | sku_tecinco=${systemId} | cnpj=${supplierCnpj}`,
+        );
+      } else {
+        console.warn(
+          `[TCAR_UPSERT] CNPJ do fornecedor Tecinco não resolvível para filial=${filialNumber} — SupplierMapping não registrado`,
+        );
+      }
+
+      return; // não toca no produto de outra integração
+    }
+  }
+
+  // ─── Produto é da Tecinco (ou não existe ainda) — faz upsert normal ──────
+  const [product] = await Product.upsert(
+    {
+      id_system: systemId,
+      name: data.epctb_nome?.trim() ?? '',
+      ean,
+      unit: data.epctb_unidade,
+      gross_weight: data.epctb_pesobruto,
+      net_weight: data.epctb_pesoliq,
+      category: 'TIRE',
+      integrations_id: integrations.id,
+      source_payload: data as unknown as Record<string, unknown>,
+    },
+    { conflictFields: ['id_system'] },
+  );
+
+  // ─── SupplierMapping para produtos próprios da Tecinco também ────────────
+  // Permite que o findProductForInvoiceItem resolva por supplier_product_code
+  const supplierCnpj = unitBusiness?.cnpj ?? null;
+
+  if (supplierCnpj) {
+    const existingMapping = await SupplierMapping.findOne({
+      where: { product_id: product.id, supplier_cnpj: supplierCnpj },
+    });
+
+    if (existingMapping) {
+      await existingMapping.update({ supplier_product_code: ean });
+    } else if (!existingMapping && ean) {
+      await SupplierMapping.create({
+        product_id: product.id,
+        supplier_cnpj: supplierCnpj,
+        supplier_product_code: ean,
+      });
+    }
+  }
+
+  if (!unitBusiness) return;
+
+  await ProductConfig.upsert(
+    {
+      product_id: product.id,
+      unit_business_id: unitBusiness.id,
+      sku: systemId,
+      price: data.epprc_preco ?? 0,
+      supplier_cost_price: data.epcte_custcont ?? 0,
+      average_cost: data.epcte_custcont ?? 0,
+    },
+    { conflictFields: ['product_id', 'unit_business_id'] },
+  );
+
+  console.log(`[TCAR_UPSERT] Produto upsertado: id_system=${systemId} | filial=${filialNumber}`);
+}
 
   // ─── Cliente ───────────────────────────────────────────────────────────────
 
