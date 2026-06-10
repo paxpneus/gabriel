@@ -316,6 +316,16 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         const status = (err as any)?.response?.status;
         const retryAfter = (err as any)?.response?.headers?.["retry-after"];
 
+        // Erros de dados — bull mq não faz backoff
+        if (
+          err?.name === "SequelizeUniqueConstraintError" ||
+          err?.name?.startsWith("Sequelize") ||
+          status === 400 ||
+          status === 404
+        ) {
+          return -1; // BullMQ não agenda retry
+        }
+
         if (retryAfter) {
           const waitMs = Number(retryAfter) * 1000;
           console.warn(
@@ -324,13 +334,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           return Math.min(waitMs + 5_000, 12 * 60 * 1000);
         }
 
-        if (status === 429) {
+        if (status === 429)
           return Math.min(attemptsMade * 30_000, 3 * 60 * 1000);
-        }
-
-        if (status === 503) {
-          return 60_000;
-        }
+        if (status === 503) return 60_000;
 
         if (
           err?.message?.includes("aborted") ||
@@ -1687,6 +1693,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     job: Job<ApiFetchJobPayload>,
     error: Error,
   ): void {
+    if ((error as any)?.name?.startsWith("Sequelize")) {
+      console.warn(
+        `[BLING_API_FETCH] Job ${job.id} falhou por erro de dados (sem alerta): ${error.message}`,
+      );
+      return;
+    }
+
     alertService.sendAlert({
       severity: "HIGH",
       title: "BlingApiFetchQueue — job esgotou tentativas",
