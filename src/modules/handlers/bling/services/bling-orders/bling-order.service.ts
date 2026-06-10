@@ -9,7 +9,7 @@ import { executeWebhookAction } from "../../../../../shared/utils/normalizers/we
 import { orderItemsCreationAttributes } from "../../../../sales/orders/order_items/order_items.types";
 import { StoreService } from "../../../../sales/stores/stores.service";
 import { mapOrder } from "../../../../../shared/utils/normalizers/bling/status-mapper";
-import { Product } from "../../../../inventory";
+import { Product, ProductConfig } from "../../../../inventory";
 import { Op } from "sequelize";
 import { UnitBusiness } from "../../../../warehouse";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
@@ -52,24 +52,32 @@ export class BlingOrderService {
     return this.blingApi.get(url);
   }
 
-  // ─── Resolve product_id interno para um item da Bling ──────────────────────
-  private async resolveProductId(
-    externalProductId: string | undefined,
-    sku: string | undefined,
-  ): Promise<string | undefined> {
-    if (!externalProductId && !sku) return undefined;
+ private async resolveProductId(
+  externalProductId: string | undefined,
+  sku: string | undefined,
+): Promise<string | undefined> {
+  if (!externalProductId && !sku) return undefined;
 
-    const conditions: any[] = [];
-    if (externalProductId) conditions.push({ id_system: externalProductId });
-    if (sku) conditions.push({ sku });
-
+  // Tenta pelo id_system primeiro (sem depender de sku na tabela Product)
+  if (externalProductId) {
     const product = await Product.findOne({
-      where: { [Op.or]: conditions },
+      where: { id_system: externalProductId },
       attributes: ["id"],
     });
-
-    return product?.id ?? undefined;
+    if (product) return product.id;
   }
+
+  // Fallback: busca via ProductConfig (sku mora aqui agora)
+  if (sku) {
+    const config = await ProductConfig.findOne({
+      where: { sku },
+      attributes: ["product_id"],
+    });
+    if (config) return config.product_id;
+  }
+
+  return undefined;
+}
 
   // ─── Busca UF e cidade do destinatário via contato da Bling ────────────────
   // Usa endereco.geral como fonte primária.
