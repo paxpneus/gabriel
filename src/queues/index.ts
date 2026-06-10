@@ -27,6 +27,7 @@ import { BlingDirectUpsertQueue } from "./../modules/handlers/bling/services/bli
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { BlingTokenRefreshQueue } from './../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue';
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
+import { TCarMigrationQueue } from '../modules/handlers/tecinco/queues/tecinco-daily-recover';
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
 // import { SefazDistribuicaoQueue } from '../modules/handlers/sefaz/services/sefaz-queue';
 import { AutoBackupQueue } from '../modules/handlers/backup/auto-backup.queue';
@@ -92,6 +93,7 @@ function buildQueues(workless: boolean) {
   const blingApiFetchQueue = new BlingApiFetchQueue({ workless });
   const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless })
   const blingDailyReconciler = new BlingMigrationQueue({ workless })
+  // const tcarMigrationQueue = new TCarMigrationQueue({ workless })
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless })
   const dailySalesReportQueue = new SalesReportQueue({ workless })
   const autoBackupQueue = new AutoBackupQueue({ workless })
@@ -109,7 +111,8 @@ function buildQueues(workless: boolean) {
     blingDailyReconciler,
     dailyOperationReportQueue,
     dailySalesReportQueue,
-    autoBackupQueue
+    autoBackupQueue,
+    // tcarMigrationQueue
   };
 }
 
@@ -127,7 +130,8 @@ export function registerQueues(app: Express) {
     blingDailyReconciler,
     dailyOperationReportQueue,
     dailySalesReportQueue,
-    autoBackupQueue
+    autoBackupQueue,
+    // tcarMigrationQueue,
   } = buildQueues(true); // workless: true → zero Workers na API
 
    const blingOrderQueue = new BlingOrderQueue(
@@ -154,6 +158,7 @@ export function registerQueues(app: Express) {
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
   app.locals.BlingMigrationQueue = blingDailyReconciler;
+  // app.locals.TCarMigrationQueue = tcarMigrationQueue;
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
   app.locals.DailySalesReportQueue = dailySalesReportQueue
   app.locals.AutoBackupQueue = autoBackupQueue

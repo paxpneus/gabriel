@@ -8,10 +8,10 @@
  *   npx ts-node seed-unit-businesses.script.ts
  */
 
-import { setupAssociations } from '../config/sequelize-associations';
-import sequelize from '../config/sequelize';
-import { UnitBusiness } from '../modules/warehouse';
-import { getBlingIntegration } from '../modules/handlers/bling/api/bling_api.service';
+import { setupAssociations } from '../../config/sequelize-associations';
+import sequelize from '../../config/sequelize';
+import { UnitBusiness } from '../../modules/warehouse';
+import { getBlingIntegration } from '../../modules/handlers/bling/api/bling_api.service';
 
 
 

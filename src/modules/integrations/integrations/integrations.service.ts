@@ -32,6 +32,7 @@ export class IntegrationService extends BaseService<
     }
 
     const integrationData = await this.repository.findOne({
+      ...params,
       include: [
         {
           model: ConfigToken,

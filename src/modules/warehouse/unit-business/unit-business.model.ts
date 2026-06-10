@@ -21,8 +21,9 @@ class UnitBusiness
   public transshipment_allowed?: boolean;
   public certifcate_password?: string;
   public certificate_path?: string;
-  public ult_nsu?: string
+  public ult_nsu?: string;
   public emails?: string[] | null;
+  public type?: string
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -50,6 +51,11 @@ UnitBusiness.init(
       type: DataTypes.STRING(15),
       allowNull: false,
       defaultValue: "000000000000000",
+    },
+    type: {
+      type: DataTypes.ENUM("PHYSICAL", "ONLINE"),
+      allowNull: false,
+      defaultValue: "PHYSICAL",
     },
     name: {
       type: DataTypes.STRING(255),
@@ -88,7 +94,7 @@ UnitBusiness.init(
     transshipment_allowed: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
-    }
+    },
   },
   {
     sequelize,
@@ -98,7 +104,7 @@ UnitBusiness.init(
   },
 );
 
-UnitBusiness.beforeCreate((unitBusiness) => normalizeDocument(unitBusiness))
-UnitBusiness.beforeUpdate((unitBusiness) => normalizeDocument(unitBusiness))
+UnitBusiness.beforeCreate((unitBusiness) => normalizeDocument(unitBusiness));
+UnitBusiness.beforeUpdate((unitBusiness) => normalizeDocument(unitBusiness));
 
 export default UnitBusiness;
