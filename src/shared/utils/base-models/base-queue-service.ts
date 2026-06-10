@@ -101,7 +101,7 @@ export abstract class BaseQueueService<T> {
 
   abstract process(job: Job<T>): Promise<void>;
 
-  private async processWithSharedLock(
+ private async processWithSharedLock(
     job: Job<T>,
     sharedLock: NonNullable<baseQueueOptions["sharedLock"]>,
   ): Promise<void> {
@@ -115,37 +115,38 @@ export abstract class BaseQueueService<T> {
       ttlMs,
     );
 
-    const refreshInterval = setInterval(
-      () => {
-        if (job.token) {
+    const workerLockRefreshMs = 30_000;
+    const sharedLockRefreshMs = Math.max(1000, Math.floor(ttlMs / 3));
 
-        job.extendLock(job.token!, this.workerLockDuration).catch((error) => {
+    const workerLockInterval = setInterval(() => {
+      if (job.token) {
+        job.extendLock(job.token, this.workerLockDuration).catch((error) => {
           console.warn(
             `[QUEUE] Falha ao renovar worker lock ${job.id}:`,
             error.message,
           );
         });
       }
+    }, workerLockRefreshMs);
 
-        this.refreshSharedLock(sharedLock.key, token, ttlMs).catch((error) => {
-          console.error(
-            `[QUEUE] Falha ao renovar lock compartilhado ${sharedLock.key}:`,
-            error.message,
-          );
-        });
-        if (priorityTicket) {
-          this.refreshSharedLockPriorityTicket(priorityTicket, ttlMs).catch(
-            (error) => {
-              console.error(
-                `[QUEUE] Falha ao renovar ticket de prioridade ${priorityTicket.ticketKey}:`,
-                error.message,
-              );
-            },
-          );
-        }
-      },
-      Math.max(1000, Math.floor(this.workerLockDuration / 3)),
-    );
+    const sharedLockInterval = setInterval(() => {
+      this.refreshSharedLock(sharedLock.key, token, ttlMs).catch((error) => {
+        console.error(
+          `[QUEUE] Falha ao renovar lock compartilhado ${sharedLock.key}:`,
+          error.message,
+        );
+      });
+      if (priorityTicket) {
+        this.refreshSharedLockPriorityTicket(priorityTicket, ttlMs).catch(
+          (error) => {
+            console.error(
+              `[QUEUE] Falha ao renovar ticket de prioridade ${priorityTicket.ticketKey}:`,
+              error.message,
+            );
+          },
+        );
+      }
+    }, sharedLockRefreshMs);
 
     try {
       await this.acquireSharedLock(
@@ -157,7 +158,8 @@ export abstract class BaseQueueService<T> {
       );
       await this.process(job);
     } finally {
-      clearInterval(refreshInterval);
+      clearInterval(workerLockInterval);
+      clearInterval(sharedLockInterval);
       await this.releaseSharedLock(sharedLock.key, token);
       if (priorityTicket) {
         await this.releaseSharedLockPriorityTicket(priorityTicket);
