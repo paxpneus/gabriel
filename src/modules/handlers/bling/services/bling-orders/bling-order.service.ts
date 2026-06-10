@@ -371,20 +371,26 @@ export class BlingOrderService {
       let store = null;
 
       if (orderData.loja?.id) {
-        store = await this.storeService.findOne({
-          where: { id_store_system: String(orderData.loja.id) },
-        });
+  store = await this.storeService.findOne({
+    where: { id_store_system: String(orderData.loja.id) },
+  });
 
-        if (!store) {
-          const blingStore = await this.blingGet(
-            `/canais-venda/${orderData.loja.id}`,
-          );
-          store = await this.storeService.create({
-            name: blingStore.data.data.tipo,
-            id_store_system: String(blingStore.data.data.id),
-          });
-        }
-      }
+  if (!store) {
+    const blingStore = await this.blingGet(`/canais-venda/${orderData.loja.id}`);
+    const tipo = blingStore.data.data.tipo; 
+
+    store = await this.storeService.findOne({
+      where: { name: tipo },
+    });
+
+    if (!store) {
+      store = await this.storeService.create({
+        name: tipo,
+        id_store_system: String(blingStore.data.data.id),
+      });
+    }
+  }
+}
 
       if (!integration) {
         throw new Error("Bling Integration não encontrada no cache");
