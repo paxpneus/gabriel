@@ -1476,9 +1476,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       status ?? existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
     const outgoingStatus = status ?? existingInvoice?.status ?? "PENDING";
 
-    let store_id = await Store.findOne({
-      where: { id: existingInvoice?.store_id },
-    });
+    let store_id: Store | null = null;
+
+    if (existingInvoice?.store_id) {
+      store_id = await Store.findOne({
+        where: { id: existingInvoice.store_id },
+      });
+    }
 
     if (!store_id) {
       store_id = await Store.findOne({ where: { name: "Outros" } });
