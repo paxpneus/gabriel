@@ -8,6 +8,7 @@ export interface ProductAttributes {
   ean_tribut?: string;
   id_system?: string;
   type?: string;
+  category?: string;
   integrations_id?: string;
   supplier_id?: string;
   source_payload?: Record<string, unknown>;
