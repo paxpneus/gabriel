@@ -38,6 +38,7 @@ export abstract class BaseQueueService<T> {
   private sharedLockPriority?: NonNullable<
     NonNullable<baseQueueOptions["sharedLock"]>["priority"]
   >;
+  private workerLockDuration: number;
 
   constructor(
     queueName: string,
@@ -65,7 +66,7 @@ export abstract class BaseQueueService<T> {
   ) {
     this.queueName = queueName;
     this.hasCustomBackoff = !!options.backoffStrategy;
-
+    this.workerLockDuration = options.lockDuration ?? 5 * 60 * 1000;
     this.queue = new Queue(this.queueName, { connection: redisConfig });
     this.queueEvents = new QueueEvents(this.queueName, {
       connection: redisConfig,
@@ -79,9 +80,9 @@ export abstract class BaseQueueService<T> {
 
       this.worker = new Worker(this.queueName, processor, {
         connection: redisConnection,
-        lockDuration: options.lockDuration ?? 5 * 60 * 1000, 
-        stalledInterval: 30000,
-        maxStalledCount: 1,
+        lockDuration: this.workerLockDuration,
+        stalledInterval: 60000,
+        maxStalledCount: 3,
         concurrency: options.concurrency ?? 2,
         limiter: options.limiter ?? {
           max: 3,
@@ -114,16 +115,15 @@ export abstract class BaseQueueService<T> {
       ttlMs,
     );
 
-    await this.acquireSharedLock(
-      sharedLock,
-      token,
-      ttlMs,
-      retryDelayMs,
-      priorityTicket,
-    );
-
     const refreshInterval = setInterval(
       () => {
+        job.extendLock(job.token!, this.workerLockDuration).catch((error) => {
+          console.warn(
+            `[QUEUE] Falha ao renovar worker lock ${job.id}:`,
+            error.message,
+          );
+        });
+
         this.refreshSharedLock(sharedLock.key, token, ttlMs).catch((error) => {
           console.error(
             `[QUEUE] Falha ao renovar lock compartilhado ${sharedLock.key}:`,
@@ -141,10 +141,17 @@ export abstract class BaseQueueService<T> {
           );
         }
       },
-      Math.max(1000, Math.floor(ttlMs / 3)),
+      Math.max(1000, Math.floor(this.workerLockDuration / 3)),
     );
 
     try {
+      await this.acquireSharedLock(
+        sharedLock,
+        token,
+        ttlMs,
+        retryDelayMs,
+        priorityTicket,
+      );
       await this.process(job);
     } finally {
       clearInterval(refreshInterval);
