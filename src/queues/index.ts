@@ -28,7 +28,7 @@ import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/que
 import { BlingTokenRefreshQueue } from './../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue';
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
-import { SefazDistribuicaoQueue } from '../modules/handlers/sefaz/services/sefaz-queue';
+// import { SefazDistribuicaoQueue } from '../modules/handlers/sefaz/services/sefaz-queue';
 import { AutoBackupQueue } from '../modules/handlers/backup/auto-backup.queue';
 
 export const serverAdapter = new ExpressAdapter();
@@ -143,7 +143,7 @@ export function registerQueues(app: Express) {
     { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
     { concurrency: 1, lockDuration: 15 * 60 * 1000, workless: true },
   );
-  const sefazQueue = new SefazDistribuicaoQueue({ workless: true });
+  // const sefazQueue = new SefazDistribuicaoQueue({ workless: true });
 
 
   app.locals.BlingOrderQueue = blingOrderQueue;
@@ -176,7 +176,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(dailyOperationReportQueue.queue),
       new BullMQAdapter(dailySalesReportQueue.queue),
       new BullMQAdapter(autoBackupQueue.queue),
-      new BullMQAdapter(sefazQueue.queue)
+      // new BullMQAdapter(sefazQueue.queue)
     ],
     serverAdapter,
   });
@@ -212,10 +212,10 @@ export function startWorkers() {
 
   // blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   // blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
-  const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
+  // const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   autoBackupQueue.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
-  sefazQueue.scheduleRepeat({ every: 60 * 60 * 1000 });
+  // sefazQueue.scheduleRepeat({ every: 60 * 60 * 1000 });
 
   
 
@@ -224,7 +224,7 @@ export function startWorkers() {
   console.log("  → BLING_ORDER_INGESTION, NFE_RECONCILER, BLING_RECONCILER");
   console.log("  → DAILY_OPERATION_REPORT, AUTO_BACKUP");
   
-  void sefazQueue;
+  // void sefazQueue;
 }
 
 // ─── Chamado pelo container worker-scraping ───────────────────────────────────
