@@ -16,20 +16,20 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { Queue } from 'bullmq';
-import { blingApi } from '../modules/handlers/bling/api/bling_api.service';
-import { ApiFetchJobPayload } from '../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue';
-import type { DirectUpsertJobPayload } from '../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
-import { BlingDirectUpsertQueue } from '../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
-import { BlingApiFetchQueue } from '../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue';
-import { UnitBusiness } from '../modules/warehouse';
-import { setupAssociations } from '../config/sequelize-associations';
-import sequelize from '../config/sequelize';
+import { blingApi } from '../../modules/handlers/bling/api/bling_api.service';
+import { ApiFetchJobPayload } from '../../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue';
+import type { DirectUpsertJobPayload } from '../../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
+import { BlingDirectUpsertQueue } from '../../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue';
+import { BlingApiFetchQueue } from '../../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue';
+import { UnitBusiness } from '../../modules/warehouse';
+import { setupAssociations } from '../../config/sequelize-associations';
+import sequelize from '../../config/sequelize';
 import {
   BLING_INVOICE_CUTOFF_DATE_PARAM,
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,
   isKnownBlingInvoiceBeforeCutoff,
-} from '../modules/handlers/bling/services/bling/bling-invoice-cutoff';
+} from '../../modules/handlers/bling/services/bling/bling-invoice-cutoff';
 
 // ─── Bootstrap do banco ───────────────────────────────────────────────────────
 
