@@ -93,7 +93,7 @@ function buildQueues(workless: boolean) {
   const blingApiFetchQueue = new BlingApiFetchQueue({ workless });
   const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless })
   const blingDailyReconciler = new BlingMigrationQueue({ workless })
-  const tcarMigrationQueue = new TCarMigrationQueue({ workless })
+  // const tcarMigrationQueue = new TCarMigrationQueue({ workless })
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless })
   const dailySalesReportQueue = new SalesReportQueue({ workless })
   const autoBackupQueue = new AutoBackupQueue({ workless })
@@ -112,7 +112,7 @@ function buildQueues(workless: boolean) {
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
-    tcarMigrationQueue
+    // tcarMigrationQueue
   };
 }
 
@@ -131,7 +131,7 @@ export function registerQueues(app: Express) {
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
-    tcarMigrationQueue,
+    // tcarMigrationQueue,
   } = buildQueues(true); // workless: true → zero Workers na API
 
    const blingOrderQueue = new BlingOrderQueue(
@@ -158,7 +158,7 @@ export function registerQueues(app: Express) {
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
   app.locals.BlingMigrationQueue = blingDailyReconciler;
-  app.locals.TCarMigrationQueue = tcarMigrationQueue;
+  // app.locals.TCarMigrationQueue = tcarMigrationQueue;
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
   app.locals.DailySalesReportQueue = dailySalesReportQueue
   app.locals.AutoBackupQueue = autoBackupQueue
