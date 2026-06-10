@@ -1469,7 +1469,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const existingInvoice = await Invoice.findOne({
       where: { xml_key: chaveAcesso },
-      attributes: ["status"],
+      attributes: ["status", "store_id", "id_system"],
     });
 
     const incomingStatus =
@@ -1491,7 +1491,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const [invoice] = await Invoice.upsert(
       {
-        id_system: idSystem,
+        ...(existingInvoice ? {} : { id_system: idSystem }),
         customer_name: receiverName,
         customer_document: receiverCnpj,
         type: invoiceType,
