@@ -1,15 +1,19 @@
-import { Model, DataTypes } from 'sequelize';
-import sequelize from '../../../config/sequelize';
-import { ProductAttributes, ProductCreationAttributes } from './product.types';
-import { v4 as uuidv4 } from 'uuid';
+import { Model, DataTypes } from "sequelize";
+import sequelize from "../../../config/sequelize";
+import { ProductAttributes, ProductCreationAttributes } from "./product.types";
+import { v4 as uuidv4 } from "uuid";
 
-class Product extends Model<ProductAttributes, ProductCreationAttributes> implements ProductAttributes {
+class Product
+  extends Model<ProductAttributes, ProductCreationAttributes>
+  implements ProductAttributes
+{
   public id!: string;
   public name!: string;
   public ean?: string;
   public ean_tribut?: string;
   public id_system?: string;
   public type?: string;
+  public category?: string;
   public integrations_id?: string;
   public supplier_id?: string;
   public source_payload?: Record<string, unknown>;
@@ -27,14 +31,42 @@ class Product extends Model<ProductAttributes, ProductCreationAttributes> implem
 
 Product.init(
   {
-    id: { type: DataTypes.UUID, defaultValue: uuidv4, primaryKey: true, allowNull: false },
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: uuidv4,
+      primaryKey: true,
+      allowNull: false,
+    },
     id_system: { type: DataTypes.STRING(100), allowNull: true },
     name: { type: DataTypes.STRING(255), allowNull: false },
     ean: { type: DataTypes.STRING(20), allowNull: true },
     ean_tribut: { type: DataTypes.STRING(20), allowNull: true },
     type: { type: DataTypes.ENUM("UNIT", "KIT"), defaultValue: "UNIT" },
-    integrations_id: { type: DataTypes.UUID, allowNull: true, references: { model: "integrations", key: "id" } },
-    supplier_id: { type: DataTypes.UUID, allowNull: true, references: { model: "suppliers", key: "id" } },
+    category: {
+      type: DataTypes.ENUM(
+        "TIRE",
+        "PART",
+        "OIL",
+        "BATTERY",
+        "ACCESSORY",
+        "WHEEL",
+        "TUBE",
+        "SERVICE",
+        "OTHER",
+      ),
+      allowNull: true,
+      defaultValue: "TIRE",
+    },
+    integrations_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "integrations", key: "id" },
+    },
+    supplier_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "suppliers", key: "id" },
+    },
     source_payload: { type: DataTypes.JSONB, allowNull: true },
     unit: { type: DataTypes.STRING(20), allowNull: true },
     brand: { type: DataTypes.STRING(100), allowNull: true },
@@ -46,10 +78,10 @@ Product.init(
   },
   {
     sequelize,
-    tableName: 'products',
+    tableName: "products",
     timestamps: true,
     underscored: true,
-  }
+  },
 );
 
 export default Product;

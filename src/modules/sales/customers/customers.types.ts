@@ -1,4 +1,4 @@
-export type userType = 'P' | 'J'
+export type userType = 'F' | 'J'
 
 export interface customerAttributes {
     id: string,

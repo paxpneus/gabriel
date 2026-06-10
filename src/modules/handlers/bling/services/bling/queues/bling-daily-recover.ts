@@ -22,7 +22,7 @@ export class BlingMigrationQueue extends BaseQueueService<void> {
 
     try {
       const { stdout, stderr } = await execFileAsync("node", [
-        "dist/scripts/populate-from-bling.js",
+        "dist/scripts/bling/populate-from-bling.js",
       ]);
 
       if (stdout) console.log(stdout);
