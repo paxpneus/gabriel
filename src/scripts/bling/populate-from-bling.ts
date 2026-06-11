@@ -250,31 +250,6 @@ async function migrateProducts() {
 
   console.log(`\n  📦 Total coletado: ${allProducts.length} produtos`);
 
-  // ── 1b. DirectUpsert: placeholder EAN — drena antes de continuar ──────────
-  console.log("\n  ⏩ Fase 1b — DirectUpsert (placeholder)");
-  for (const product of allProducts) {
-    const blingId = product.id;
-    const jobBase = basePayload("product", blingId);
-
-    await enqueueDirectUpsert(
-      {
-        ...jobBase,
-        directUpsert: {
-          table: "products",
-          data: {
-            blingId,
-            name: product.nome ?? "",
-            sku: product.codigo ?? "",
-            ean: `PENDING-${blingId}`,
-          },
-        },
-      },
-      `migration-product-upsert-${blingId}`,
-    );
-  }
-
-  await waitForQueuesToDrain("Produtos — DirectUpsert");
-
   // ── 1c. ApiFetch: EAN real — só depois que todos os placeholders existem ──
   console.log("\n  ⏩ Fase 1c — ApiFetch (EAN real)");
   for (const product of allProducts) {

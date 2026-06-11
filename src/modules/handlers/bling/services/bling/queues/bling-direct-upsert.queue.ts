@@ -45,9 +45,6 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
     try {
       switch (directUpsert.table) {
-        case "products":
-          await this.upsertProduct(directUpsert.data);
-          break;
 
         case "stocks":
           await this.upsertStock(directUpsert.data);
@@ -91,94 +88,6 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
   }
 
   // ─── Handlers por tabela ──────────────────────────────────────────────────
-
-  private async upsertProduct(
-    data: Extract<DirectUpsertPayload, { table: "products" }>["data"],
-  ): Promise<void> {
-    if (!data.blingId) {
-      throw new Error(
-        `[BLING_DIRECT_UPSERT] Produto sem blingId no payload de upsert direto: ${JSON.stringify(data)}`,
-      );
-    }
-
-    const idSystem = String(data.blingId);
-
-    const updateProductFields = async (product: Product) => {
-      // só atualiza os campos que vieram — nunca sobrescreve EAN real com PENDING
-      const fieldsToUpdate: Record<string, any> = {};
-      if (data.name) fieldsToUpdate.name = data.name;
-
-      if (Object.keys(fieldsToUpdate).length > 0) {
-        await product.update(fieldsToUpdate);
-      }
-    };
-
-    let product: Product;
-    let created = false;
-
-    try {
-      [product, created] = await Product.findOrCreate({
-        where: { id_system: idSystem },
-        defaults: {
-          name: data.name,
-          id_system: idSystem,
-          ean: `PENDING-${data.blingId}`,
-          ean_tribut: `PENDING-TRIBUT-${data.blingId}`,
-        },
-      });
-    } catch (error: any) {
-      const isUniqueConstraintError =
-        error instanceof UniqueConstraintError ||
-        error?.name === "SequelizeUniqueConstraintError";
-
-      if (!isUniqueConstraintError) {
-        throw error;
-      }
-
-      const existingProduct = await Product.findOne({
-        where: { id_system: idSystem },
-      });
-
-      if (!existingProduct) {
-        logDbError(
-          "[BLING_DIRECT_UPSERT] UniqueConstraintError não recuperável ao criar produto",
-          error,
-          {
-            blingId: data.blingId,
-            idSystem,
-            sku: data.sku,
-          },
-        );
-        throw error;
-      }
-
-      product = existingProduct;
-    }
-
-    if (!created) {
-      await updateProductFields(product);
-    }
-
-    const unitBusiness = await UnitBusiness.findOne({
-      where: { cnpj: "02316749002111" },
-    });
-
-    if (unitBusiness) {
-      await ProductConfig.upsert(
-        {
-          product_id: product.id,
-          unit_business_id: unitBusiness.id,
-          sku: data.sku,
-          ...(data.price != null && data.price > 0 ? { price: data.price } : {}),
-        },
-        { conflictFields: ["product_id", "unit_business_id"] },
-      );
-    }
-
-    console.log(
-      `[BLING_DIRECT_UPSERT] Produto ${created ? "criado" : "atualizado parcialmente"}: sku=${data.sku}`,
-    );
-  }
 
   private async upsertStock(
     data: Extract<DirectUpsertPayload, { table: "stocks" }>["data"],
