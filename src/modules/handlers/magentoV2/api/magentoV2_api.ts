@@ -51,24 +51,24 @@ export const magentoApi: AxiosInstance = createAxiosInstance({
     const base = integration.api_url.replace(/\/$/, "");
     config.baseURL = base;
 
-      console.log("[MagentoApi] URL final:", `${base}`);
-
     config.headers = config.headers ?? {};
     config.headers["Authorization"] = `Bearer ${token.access_token}`;
     config.headers["Content-Type"] = "application/json";
+    config.headers["Accept"] = "*/*";
 
+    console.log(
+      "[MagentoApi] Headers finais:",
+      JSON.stringify(config.headers, null, 2),
+    );
+    console.log("[MagentoApi] URL completa:", `${config.baseURL}${config.url}`);
     return config;
   },
 
   onResponseError: async (error: unknown) => {
-    
     // O token do Magento não expira — não há refresh automático.
     // Em caso de 401, o token foi revogado manualmente no admin e
     // precisa ser reemitido e atualizado no config_tokens.
-    if (
-    error instanceof AxiosError &&
-    error.response?.status === 401
-  ) {
+    if (error instanceof AxiosError && error.response?.status === 401) {
       console.error(
         "[MagentoApi] 401 Unauthorized — o Access Token pode ter sido revogado. " +
           "Gere um novo token no admin do Magento em System > Integrations e " +
