@@ -51,8 +51,7 @@ export const magentoApi: AxiosInstance = createAxiosInstance({
     const base = integration.api_url.replace(/\/$/, "");
     config.baseURL = base;
 
-      console.log("[MagentoApi] URL final:", `${base}${config.url}`);
-  console.log("[MagentoApi] Integration:", integration);
+      console.log("[MagentoApi] URL final:", `${base}`);
 
     config.headers = config.headers ?? {};
     config.headers["Authorization"] = `Bearer ${token.access_token}`;
