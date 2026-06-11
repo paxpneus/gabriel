@@ -68,6 +68,12 @@ export const magentoApi: AxiosInstance = createAxiosInstance({
     // O token do Magento não expira — não há refresh automático.
     // Em caso de 401, o token foi revogado manualmente no admin e
     // precisa ser reemitido e atualizado no config_tokens.
+      if (error instanceof AxiosError) {
+
+     console.error("[MagentoApi] Erro status:", error.response?.status);
+    console.error("[MagentoApi] Erro body:", JSON.stringify(error.response?.data, null, 2));
+      }
+      
     if (error instanceof AxiosError && error.response?.status === 401) {
       console.error(
         "[MagentoApi] 401 Unauthorized — o Access Token pode ter sido revogado. " +
