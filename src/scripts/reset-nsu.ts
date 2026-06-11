@@ -3,9 +3,6 @@ import { UnitBusiness } from "../modules/warehouse";
 import { sefazApiService } from "../modules/handlers/sefaz/api/sefaz_api.service";
 
 const FILIAIS = [
-  '02316749001220',
-  '02316749001735',
-  '02316749001573',
   '02316749002111',
 ];
 
