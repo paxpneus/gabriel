@@ -56,7 +56,6 @@ export const magentoApi: AxiosInstance = createAxiosInstance({
     config.headers = config.headers ?? {};
     config.headers["Authorization"] = `Bearer ${token.access_token}`;
     config.headers["Content-Type"] = "application/json";
-    config.headers["Accept"] = "application/json";
 
     return config;
   },
