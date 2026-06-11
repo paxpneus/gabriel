@@ -55,6 +55,7 @@ export const magentoApi: AxiosInstance = createAxiosInstance({
     config.headers["Authorization"] = `Bearer ${token.access_token}`;
     config.headers["Content-Type"] = "application/json";
     config.headers["Accept"] = "*/*";
+    config.headers["User-Agent"] = "curl/7.81.0";
 
     console.log(
       "[MagentoApi] Headers finais:",
@@ -73,7 +74,7 @@ export const magentoApi: AxiosInstance = createAxiosInstance({
      console.error("[MagentoApi] Erro status:", error.response?.status);
     console.error("[MagentoApi] Erro body:", JSON.stringify(error.response?.data, null, 2));
       }
-      
+
     if (error instanceof AxiosError && error.response?.status === 401) {
       console.error(
         "[MagentoApi] 401 Unauthorized — o Access Token pode ter sido revogado. " +
