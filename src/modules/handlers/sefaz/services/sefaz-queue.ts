@@ -24,16 +24,12 @@ const NCM_PERMITIDOS = [
 ];
 
 const FILIAIS_ATIVAS = [
-  "02316749001220", // Loja 12 - ASSIS
-  "02316749001735", // Loja 17 - LONDRINA
-  "02316749001573", // Loja 15 - Itu
+
   "02316749002111", // Loja 21 - CD MG
 ];
 
 const FILIAIS_CUF: Record<string, string> = {
-  "02316749001220": "35", // Loja 12 - ASSIS (SP)
-  "02316749001735": "41", // Loja 17 - LONDRINA (PR)
-  "02316749001573": "35", // Loja 15 - ITU (SP)
+
   "02316749002111": "31", // Loja 21 - CD MG
 };
 
