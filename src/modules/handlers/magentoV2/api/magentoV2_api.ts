@@ -49,7 +49,7 @@ export const magentoApi: AxiosInstance = createAxiosInstance({
     // Monta a baseURL dinamicamente a partir do api_url cadastrado na integração
     // Garante que não haja barra dupla
     const base = integration.api_url.replace(/\/$/, "");
-    config.baseURL = `${base}/rest/V1`;
+    config.baseURL = base;
 
     config.headers = config.headers ?? {};
     config.headers["Authorization"] = `Bearer ${token.access_token}`;
