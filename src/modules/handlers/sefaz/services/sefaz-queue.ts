@@ -7,6 +7,7 @@ import { sefazApiService } from "../api/sefaz_api.service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import UnitBusiness from "../../../warehouse/unit-business/unit-business.model";
 import { SefazDocumento } from "../api/sefaz_api.types";
+import { nfeManifestacaoService } from "./nfe-manifestation";
 
 export type SefazDistribuicaoJobData = Record<string, never>;
 
@@ -24,12 +25,10 @@ const NCM_PERMITIDOS = [
 ];
 
 const FILIAIS_ATIVAS = [
-
   "02316749002111", // Loja 21 - CD MG
 ];
 
 const FILIAIS_CUF: Record<string, string> = {
-
   "02316749002111": "31", // Loja 21 - CD MG
 };
 
@@ -210,18 +209,20 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       }
 
       console.log(
-        `[SEFAZ] NSU=${doc.NSU} resNFe chave=${chave} — registrando e aguardando manifestação`,
+        `[SEFAZ] NSU=${doc.NSU} resNFe chave=${chave} — enviando Ciência da Operação`,
       );
 
-      // TODO: persistir `chave` no banco (tabela de pendentes de manifestação)
-      // e disparar a fila de Manifestação do Destinatário (Ciência da Emissão).
-      // Exemplo:
-      //   await sefazManifestacaoQueue.add({ chave, cnpj, tpEvento: "210210" });
-      //
-      // O procNFe completo chegará nos NSUs seguintes após a manifestação.
-      // A checagem de NCM_PERMITIDOS ocorrerá quando o procNFe for processado.
+      try {
+        const resultado = await nfeManifestacaoService.cienciaDaOperacao(chave);
+        console.log(
+          `[SEFAZ] NSU=${doc.NSU} Ciência enviada | cStat=${resultado.cStat} | ${resultado.xMotivo}`,
+        );
+      } catch (err) {
+        console.warn(`[SEFAZ] NSU=${doc.NSU} falha ao enviar Ciência:`, err);
+        // não retorna true — ciência falhou, mas não bloqueia o loop
+      }
 
-      return false;
+      return false; // procNFe completo virá nos próximos NSUs após a manifestação
     }
 
     // Cancelamento

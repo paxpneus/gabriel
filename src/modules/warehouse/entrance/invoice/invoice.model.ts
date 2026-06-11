@@ -1,6 +1,10 @@
 import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
-import { InvoiceAttributes, InvoiceCreationAttributes } from "./invoice.types";
+import {
+  InvoiceAttributes,
+  InvoiceCreationAttributes,
+  SefazManifestationStatus,
+} from "./invoice.types";
 import { v4 as uuidv4 } from "uuid";
 import { ExpeditionBatchInvoiceAttributes } from "../../expedition/batch-invoices/batch-invoices.types";
 
@@ -24,7 +28,16 @@ class Invoice
   public transporter_id?: string;
   public seller_id?: string | null;
   public type!: "INCOMING" | "OUTGOING";
-  public status!: "OPEN" | "PENDING" | "FINISHED" | "CANCELLED" | "FREE_TO_SCHEDULE" | "WAITING_SCHEDULE_SALES" | "SCHEDULED" | "LATE" | "PENDING_CANCELLED_SYSTEM";
+  public status!:
+    | "OPEN"
+    | "PENDING"
+    | "FINISHED"
+    | "CANCELLED"
+    | "FREE_TO_SCHEDULE"
+    | "WAITING_SCHEDULE_SALES"
+    | "SCHEDULED"
+    | "LATE"
+    | "PENDING_CANCELLED_SYSTEM";
   public batch_generated!: boolean;
   public printed_label!: boolean;
   public emitted_at?: Date;
@@ -37,7 +50,7 @@ class Invoice
   public total_read!: number;
   public total_expected!: number;
   public description?: string;
-  public bonded_invoice?: string
+  public bonded_invoice?: string;
   public invoice_series?: string | null;
   public invoice_value?: number;
   public invoice_products_value?: number;
@@ -56,6 +69,9 @@ class Invoice
   public destination_city?: string | null;
   public xml_url?: string | null;
   public source_payload?: Record<string, unknown> | null;
+  public sefaz_manifestation_status?: SefazManifestationStatus | null;
+  public sefaz_n_seq_evento!: number;
+  public sefaz_nsu?: string | null;
 
   public batchInvoice?: ExpeditionBatchInvoiceAttributes;
 
@@ -181,7 +197,7 @@ Invoice.init(
         "SCHEDULED",
         "LATE",
         "CANCELLED",
-        "PENDING_CANCELLED_SYSTEM"
+        "PENDING_CANCELLED_SYSTEM",
       ),
       defaultValue: "PENDING",
       allowNull: false,
@@ -199,13 +215,13 @@ Invoice.init(
       allowNull: true,
     },
     received_at: {
-      type: DataTypes.DATEONLY, 
+      type: DataTypes.DATEONLY,
       allowNull: true,
     },
     expected_receiving: {
-  type: DataTypes.DATEONLY, 
-  allowNull: true,
-},
+      type: DataTypes.DATEONLY,
+      allowNull: true,
+    },
     number_system: {
       type: DataTypes.STRING(100),
       allowNull: true,
@@ -215,9 +231,9 @@ Invoice.init(
       allowNull: true,
     },
     total_expected: {
-  type: DataTypes.VIRTUAL,
-  allowNull: true,
-},
+      type: DataTypes.VIRTUAL,
+      allowNull: true,
+    },
     invoice_series: {
       type: DataTypes.STRING(50),
       allowNull: true,
@@ -302,6 +318,28 @@ Invoice.init(
     source_payload: {
       type: DataTypes.JSONB,
       allowNull: true,
+    },
+    sefaz_manifestation_status: {
+      type: DataTypes.ENUM(
+        "PENDING_CIENCIA",
+        "CIENCIA_ENVIADA",
+        "CIENCIA_REJEITADA",
+        "CONFIRMADO",
+        "DESCONHECIDO",
+        "OPERACAO_NAO_REALIZADA",
+      ),
+      allowNull: true,
+      defaultValue: null,
+    },
+    sefaz_n_seq_evento: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+    },
+    sefaz_nsu: {
+      type: DataTypes.STRING(15),
+      allowNull: true,
+      defaultValue: null,
     },
   },
   {
