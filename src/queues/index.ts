@@ -29,7 +29,7 @@ import { BlingTokenRefreshQueue } from './../modules/handlers/bling/services/bli
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 import { TCarMigrationQueue } from '../modules/handlers/tecinco/queues/tecinco-daily-recover';
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
-// import { SefazDistribuicaoQueue } from '../modules/handlers/sefaz/services/sefaz-queue';
+import { SefazDistribuicaoQueue } from '../modules/handlers/sefaz/services/sefaz-queue';
 import { AutoBackupQueue } from '../modules/handlers/backup/auto-backup.queue';
 
 export const serverAdapter = new ExpressAdapter();
@@ -147,7 +147,7 @@ export function registerQueues(app: Express) {
     { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
     { concurrency: 1, lockDuration: 15 * 60 * 1000, workless: true },
   );
-  // const sefazQueue = new SefazDistribuicaoQueue({ workless: true });
+  const sefazQueue = new SefazDistribuicaoQueue({ workless: true });
 
 
   app.locals.BlingOrderQueue = blingOrderQueue;
@@ -217,7 +217,7 @@ export function startWorkers() {
 
   // blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   // blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
-  // const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
+  const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   autoBackupQueue.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
   // sefazQueue.scheduleRepeat({ every: 60 * 60 * 1000 });
