@@ -177,10 +177,6 @@ async function migrateProducts() {
       const blingId = product.id;
       const jobBase = basePayload('product', blingId);
 
-      await enqueueDirectUpsert(
-        { ...jobBase, directUpsert: { table: 'products', data: { blingId, name: product.nome ?? '', sku: product.codigo ?? '', ean: `PENDING-${blingId}` } } },
-        `migration-product-upsert-${blingId}`,
-      );
       await enqueueApiFetch(
         { ...jobBase, apiFetch: { resource: 'product', blingId, action: 'created', companyId: '' } },
         `migration-product-fetch-${blingId}`,

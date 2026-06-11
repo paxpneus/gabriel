@@ -39,6 +39,7 @@ import {
   logDbError,
   rethrowWithLog,
 } from "../../../../../../shared/utils/logging/db-errors-logs";
+import magentoCatalogService from "../../../../magentoV2/service/catalog/products/products.service";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -690,8 +691,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingProduct.marca,
     );
 
+    let product: Product
+
     try {
-      const [product] = await Product.upsert(
+      [product] = await Product.upsert(
         {
           name: blingProduct.nome,
           id_system: String(blingProduct.id),
@@ -780,6 +783,38 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         );
         console.log(
           `[BLING_API_FETCH] average_cost inicializado: sku=${blingProduct.codigo} | custo=${newSupplierCost} | qty=${qty} | total_price=${qty * newSupplierCost}`,
+        );
+      }
+    }
+
+    try {
+      if (product) {
+        const config = await ProductConfig.findOne({
+          where: {
+            product_id: product.id,
+            unit_business_id: BLING_UNIT_BUSINESS_ID,
+          },
+        });
+
+        if (config?.average_cost && blingProduct.codigo) {
+          await magentoCatalogService.atualizarCustomAttribute(
+            blingProduct.codigo,
+            "custo_medio",
+            Number(config.average_cost).toFixed(2),
+          );
+          console.log(
+            `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${blingProduct.codigo} | average_cost=${config.average_cost}`,
+          );
+        }
+      }
+    } catch (magentoErr: any) {
+      if (magentoErr?.response?.status === 404) {
+        console.log(
+          `[BLING_API_FETCH] Produto não encontrado no Magento — custo_medio ignorado: sku=${blingProduct.codigo}`,
+        );
+      } else {
+        console.warn(
+          `[BLING_API_FETCH] Falha ao sincronizar custo_medio para Magento | sku=${blingProduct.codigo} | erro=${magentoErr?.message}`,
         );
       }
     }

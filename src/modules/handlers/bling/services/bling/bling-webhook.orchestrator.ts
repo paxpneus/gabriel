@@ -40,7 +40,7 @@ export interface OrchestratorDependencies {
   blingOrderQueue: {
     add: (payload: unknown, jobId: string) => Promise<void>;
   };
-  /** Fila para eventos que necessitam de upsert direto (produto, estoque, supplier) */
+  /** Fila para eventos que necessitam de upsert direto (estoque, supplier) */
   blingDirectUpsertQueue: {
     add: (payload: unknown, jobId: string) => Promise<void>;
   };

@@ -69,16 +69,7 @@ function mapProduct(
 
   // O webhook de produto NÃO traz EAN → precisa buscar na API Bling
   return {
-    directUpsert: {
-      table: "products",
-      data: {
-        blingId: data.id,
-        name: data.nome ?? "",
-        sku: data.codigo ?? "",
-        price: data.precoCusto ?? 0,
-        // ean será preenchido pelo worker que consome a fila de API fetch
-      },
-    },
+    
     requiresApiFetch: {
       resource: "product",
       blingId: data.id,
