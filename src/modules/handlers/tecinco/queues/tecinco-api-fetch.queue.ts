@@ -12,11 +12,13 @@ import UnitBusiness from "../../../warehouse/unit-business/unit-business.model";
 import {
   TCarProdutoPayload,
   TCarClientePayload,
+  TCarInvoiceXmlPayload,
   TCarResource,
   TCarAction,
 } from "../service/tecinco/tecinco.types";
 import { getTCarIntegration } from "../api/tecinco_api";
-
+import { TCarConferenciaEstoqueService, TCarNotaFiscalXmlByChaveComposta } from "../service/conferencias-estoque/conferencias-estoque.service";
+import { upsertInvoiceFromXml } from "../../../../shared/utils/xml/invoice-xml";
 export interface TCarUpsertJobPayload {
   eventId: string;
   resource: TCarResource;
@@ -49,6 +51,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     );
 
     switch (resource) {
+      case "invoice_xml":
+        await this.processInvoiceXml(data as TCarInvoiceXmlPayload, branchId);
+        break;
+
       case "product":
         await this.processProduct(action, data as TCarProdutoPayload, branchId);
         break;
@@ -277,6 +283,52 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
     console.log(`[TCAR_UPSERT] Cliente upsertado: document=${document}`);
   }
+
+  // ─── Invoice XML ───────────────────────────────────────────────────────────
+
+private async processInvoiceXml(
+  data: TCarInvoiceXmlPayload,
+  branchId?: number,
+): Promise<void> {
+  if (!branchId) {
+    console.warn('[TCAR_UPSERT] processInvoiceXml sem branchId — ignorado');
+    return;
+  }
+
+  const { numero, entrada_saida, ...identificacao } = data;
+  const logPrefix = `[TCAR_UPSERT] invoice_xml numero=${numero} branchId=${branchId}`;
+
+  if (entrada_saida && entrada_saida !== 'E') {
+  console.log(`${logPrefix} — nota de saída (${entrada_saida}), ignorando`);
+  return;
+}
+
+  const conferenciaService = new TCarConferenciaEstoqueService();
+
+  let xml: string | null = null;
+
+  try {
+    xml = await conferenciaService.buscarXmlNotaFiscal(
+      branchId,
+      numero,
+      identificacao as TCarNotaFiscalXmlByChaveComposta,
+    );
+  } catch (err: any) {
+    if (err?.response?.status === 404) {
+      console.warn(`${logPrefix} — XML não disponível (404), ignorando`);
+      return;
+    }
+    throw err;
+  }
+
+  if (!xml?.trim()) {
+    console.warn(`${logPrefix} — XML vazio, ignorando`);
+    return;
+  }
+
+  await upsertInvoiceFromXml(xml);
+  console.log(`${logPrefix} — invoice upsertada com sucesso`);
+}
 
   protected override onFailed(
     job: Job<TCarUpsertJobPayload>,
