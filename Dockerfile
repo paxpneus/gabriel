@@ -1,7 +1,11 @@
 # ─── Stage 1: Build ───────────────────────────────────────────────────────────
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    default-jdk \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 RUN npm ci
@@ -13,11 +17,10 @@ COPY migrations ./migrations
 RUN npm run build
 
 # ─── Stage 2: Base de produção (sem Playwright) ───────────────────────────────
-FROM node:20-slim AS base-prod
+FROM node:22-slim AS base-prod
 
 WORKDIR /app
 
-# Dependências de sistema mínimas
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
@@ -26,10 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
-RUN java -version
-
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
+
+COPY --from=builder /app/node_modules/xsd-schema-validator ./node_modules/xsd-schema-validator
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
