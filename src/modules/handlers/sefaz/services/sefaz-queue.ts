@@ -32,6 +32,12 @@ const FILIAIS_CUF: Record<string, string> = {
   "02316749002111": "31", // Loja 21 - CD MG
 };
 
+// cStats que indicam que o XML da NF-e ainda não está disponível para consulta
+// por chave. Não é erro — o procNFe virá nos próximos NSUs da distribuição.
+// 641 = NF-e indisponível para o emitente
+// 642 = NF-e indisponível
+const CSTAT_XML_INDISPONIVEL = new Set(["641", "642"]);
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJobData> {
@@ -71,21 +77,26 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
   /**
    * Extrai o CNPJ do destinatário do XML do resNFe.
    *
-   * Tenta primeiro dentro do bloco <dest> (layout padrão NF-e 4.00).
-   * Fallback para o primeiro <CNPJ> com 14 dígitos caso o layout varie.
+   * Busca SOMENTE dentro do bloco <dest> — sem fallback para o restante
+   * do documento, para não capturar o CNPJ do emitente por engano.
    *
-   * Retorna string limpa (apenas dígitos) ou null se não encontrar.
+   * Retorna string com 14 dígitos, ou null se não encontrar.
    */
   private extrairCnpjDestinatario(xml: string): string | null {
-    // Layout padrão: <dest> ... <CNPJ>00000000000000</CNPJ> ... </dest>
-    const dentroDestMatch = xml.match(
+    // CNPJ dentro de <dest> (destinatário pessoa jurídica)
+    const cnpjMatch = xml.match(
       /<dest>[\s\S]*?<CNPJ>(\d{14})<\/CNPJ>[\s\S]*?<\/dest>/,
     );
-    if (dentroDestMatch) return dentroDestMatch[1];
+    if (cnpjMatch) return cnpjMatch[1];
 
-    // Fallback: primeiro <CNPJ> com 14 dígitos no documento
-    const fallback = xml.match(/<CNPJ>(\d{14})<\/CNPJ>/);
-    return fallback?.[1] ?? null;
+    // CPF dentro de <dest> (destinatário pessoa física)
+    const cpfMatch = xml.match(
+      /<dest>[\s\S]*?<CPF>(\d{11})<\/CPF>[\s\S]*?<\/dest>/,
+    );
+    if (cpfMatch) return cpfMatch[1];
+
+    // Sem bloco <dest> identificável — não faz fallback
+    return null;
   }
 
   // ─── Processo principal ──────────────────────────────────────────────────────
@@ -142,8 +153,6 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       } catch (err: any) {
         // FIX B: ao receber 656 (Consumo Indevido), atualizamos o cursor para o
         // maxNSU atual e encerramos o processamento desta filial imediatamente.
-        // NÃO fazemos nova requisição — a execução seguinte do job (agendada
-        // com intervalo de pelo menos 1h) retomará do cursor correto.
         if (err.message?.includes("cStat=656")) {
           console.warn(
             `[SEFAZ] Filial=${label} | cStat=656 — recuperando cursor via consNSU`,
@@ -196,7 +205,6 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
     const xml = sefazApiService.decodeDocumento(doc.xmlBase64);
 
     // ── procNFe: XML completo ──────────────────────────────────────────────────
-    // FIX D: só valida NCMs aqui — resNFe não tem lista de produtos.
     if (doc.schema.startsWith("procNFe")) {
       if (!this.temProdutoRelevante(xml)) {
         console.log(
@@ -210,15 +218,6 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
     }
 
     // ── resNFe: XML de resumo ──────────────────────────────────────────────────
-    // Não tentamos baixar o XML completo aqui porque:
-    //   1. SEFAZ retorna Rejeição 632 se a nota não tiver sido manifestada.
-    //   2. O procNFe completo chega automaticamente nos próximos NSUs após
-    //      a Manifestação do Destinatário (Ciência da Operação).
-    //
-    // Fluxo:
-    //   a) Extraímos chave de acesso e CNPJ destinatário do resNFe.
-    //   b) cienciaDaOperacao() valida pré-condições e envia o evento.
-    //   c) Nas próximas varreduras o loop capturará o procNFe completo.
     if (doc.schema.startsWith("resNFe")) {
       const chave = this.extrairChaveAcesso(xml);
       if (!chave) {
@@ -228,10 +227,15 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
         return false;
       }
 
-      // Extrai o CNPJ do destinatário do próprio XML do resNFe para
-      // que cienciaDaOperacao() possa validar se a nota é realmente
-      // endereçada à nossa filial antes de acionar a SEFAZ.
-      const receiverCnpj = this.extrairCnpjDestinatario(xml) ?? "";
+      // FIX: busca CNPJ somente dentro de <dest> — sem fallback —
+      // para não capturar o CNPJ do emitente quando <dest> está ausente.
+      const receiverCnpj = this.extrairCnpjDestinatario(xml);
+      if (!receiverCnpj) {
+        console.warn(
+          `[SEFAZ] NSU=${doc.NSU} resNFe sem CNPJ destinatário em <dest> — ignorado`,
+        );
+        return false;
+      }
 
       console.log(
         `[SEFAZ] NSU=${doc.NSU} resNFe chave=${chave} receiver=${receiverCnpj} — enviando Ciência da Operação`,
@@ -245,9 +249,7 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
           label,
         );
 
-        // cStat=000 é o código sintético retornado quando a validação
-        // pré-ciência aborta sem acionar a SEFAZ (ex: CNPJ errado,
-        // nota cancelada, ciência já enviada). Apenas loga, não é erro.
+        // cStat=000 = validação pré-ciência abortou sem acionar a SEFAZ
         if (resultado.cStat !== "000") {
           console.log(
             `[SEFAZ] NSU=${doc.NSU} Ciência enviada | cStat=${resultado.cStat} | ${resultado.xMotivo}`,
@@ -255,10 +257,8 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
         }
       } catch (err) {
         console.warn(`[SEFAZ] NSU=${doc.NSU} falha ao enviar Ciência:`, err);
-        // Não retorna true — ciência falhou mas não bloqueia o loop
       }
 
-      // procNFe completo virá nos próximos NSUs após a manifestação
       return false;
     }
 
@@ -267,15 +267,52 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       const tpEvento = this.extrairTpEvento(xml);
 
       // 110111 = Cancelamento
-      if (tpEvento === "110111") {
+      // ── resEvento: resumo de evento (cancelamento ainda sem XML completo) ─────────
+      if (doc.schema.startsWith("resEvento")) {
+        const tpEvento = this.extrairTpEvento(xml);
         const chave = this.extrairChaveAcesso(xml);
-        console.log(`[SEFAZ] NSU=${doc.NSU} cancelamento chave=${chave}`);
-        await this.apiFetchQueue.upsertInvoiceFromXml(xml, "CANCELLED");
-        return true;
+
+        // 110111 = Cancelamento
+        if (tpEvento === "110111" && chave) {
+          let xmlCompleto: string | null = null;
+
+          try {
+            xmlCompleto = await sefazApiService.consultarPorChave(chave, cnpj);
+          } catch (err: any) {
+            const cStatMatch = err.message?.match(/cStat=(\d+)/);
+            if (cStatMatch && CSTAT_XML_INDISPONIVEL.has(cStatMatch[1])) {
+              console.log(
+                `[SEFAZ] NSU=${doc.NSU} resEvento cancelamento XML indisponível (cStat=${cStatMatch[1]}) — aguardando próximos NSUs`,
+              );
+              return false;
+            }
+            throw err;
+          }
+
+          if (xmlCompleto) {
+            await this.apiFetchQueue.upsertInvoiceFromXml(
+              xmlCompleto,
+              "CANCELLED",
+            );
+            console.log(
+              `[SEFAZ] NSU=${doc.NSU} resEvento cancelamento processado chave=${chave}`,
+            );
+            return true;
+          }
+
+          console.log(
+            `[SEFAZ] NSU=${doc.NSU} resEvento cancelamento — XML ainda não disponível chave=${chave}`,
+          );
+          return false;
+        }
+
+        console.log(
+          `[SEFAZ] NSU=${doc.NSU} resEvento tpEvento=${tpEvento} ignorado`,
+        );
+        return false;
       }
 
-      // 210210 = Ciência da Operação já registrada na SEFAZ —
-      // tenta buscar o procNFe completo por chave para processar agora.
+      // 210210 = Ciência da Operação já registrada — tenta buscar o procNFe completo
       if (tpEvento === "210210") {
         const chave = this.extrairChaveAcesso(xml);
         if (!chave) {
@@ -285,10 +322,23 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
           return false;
         }
 
-        const xmlCompleto = await sefazApiService.consultarPorChave(
-          chave,
-          cnpj,
-        );
+        let xmlCompleto: string | null = null;
+
+        try {
+          xmlCompleto = await sefazApiService.consultarPorChave(chave, cnpj);
+        } catch (err: any) {
+          // 641/642 = XML ainda não liberado pelo emitente — não é falha,
+          // o procNFe virá automaticamente nos próximos NSUs da distribuição.
+          const cStatMatch = err.message?.match(/cStat=(\d+)/);
+          if (cStatMatch && CSTAT_XML_INDISPONIVEL.has(cStatMatch[1])) {
+            console.log(
+              `[SEFAZ] NSU=${doc.NSU} 210210 chave=${chave} — XML indisponível na SEFAZ (cStat=${cStatMatch[1]}), aguardando próximos NSUs`,
+            );
+            return false;
+          }
+          throw err;
+        }
+
         if (!xmlCompleto) {
           console.log(
             `[SEFAZ] NSU=${doc.NSU} 210210 chave=${chave} — procNFe ainda não disponível`,
