@@ -19,8 +19,14 @@ WORKDIR /app
 
 # Dependências de sistema mínimas
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    gnupg \
     ca-certificates \
+    openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
+
+RUN java -version
 
 COPY package*.json ./
 RUN npm ci --omit=dev
