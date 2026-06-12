@@ -212,7 +212,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     if (!unitBusiness) return;
 
     // ─── Upsert de estoque ────────────────────────────────────────────────────
-    const stockQty = Number(data.epcte_estoque ?? 0);
+    const stockQty = Math.round(Number(data.epcte_estoque ?? 0));
     const entryUnitCost = Number(data.epcte_custcont ?? 0);
 
     const existingStock = await Stock.findOne({
