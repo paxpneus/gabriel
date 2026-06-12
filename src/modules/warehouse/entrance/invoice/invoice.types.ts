@@ -3,7 +3,16 @@ import Transporter from "../../transporter/transporter.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import Invoice from "./invoice.model";
 
-export type InvoiceStatus = "OPEN" | "PENDING" | "FINISHED" | "CANCELLED" | "FREE_TO_SCHEDULE" | "WAITING_SCHEDULE_SALES" | "SCHEDULED" | "LATE" | "PENDING_CANCELLED_SYSTEM";
+export type InvoiceStatus =
+  | "OPEN"
+  | "PENDING"
+  | "FINISHED"
+  | "CANCELLED"
+  | "FREE_TO_SCHEDULE"
+  | "WAITING_SCHEDULE_SALES"
+  | "SCHEDULED"
+  | "LATE"
+  | "PENDING_CANCELLED_SYSTEM";
 export interface InvoiceAttributes {
   id: string;
   customer_name: string;
@@ -12,7 +21,7 @@ export interface InvoiceAttributes {
   xml_key?: string | null;
   danfe_path?: string;
   unit_business_id: string;
-  store_id: string
+  store_id: string;
   sender_cnpj: string;
   sender_name: string;
   receiver_cnpj: string;
@@ -55,15 +64,29 @@ export interface InvoiceAttributes {
   destination_city?: string | null;
   xml_url?: string | null;
   source_payload?: Record<string, unknown> | null;
+  sefaz_manifestation_status?: SefazManifestationStatus | null;
+  sefaz_n_seq_evento?: number;
+  sefaz_nsu?: string | null;
 }
 
 export interface FullInvoice extends InvoiceAttributes {
-  unmappedProducts: UnmappedInvoiceProduct[]
-  items: InvoiceItems[]
+  unmappedProducts: UnmappedInvoiceProduct[];
+  items: InvoiceItems[];
 }
 
-export interface InvoiceCreationAttributes extends Omit<InvoiceAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+export interface InvoiceCreationAttributes extends Omit<
+  InvoiceAttributes,
+  "id" | "createdAt" | "updatedAt"
+> {}
 
 export type InvoiceWithTransporter = Invoice & {
   transporter: Transporter;
 };
+
+export type SefazManifestationStatus =
+  | "PENDING_CIENCIA"
+  | "CIENCIA_ENVIADA"
+  | "CIENCIA_REJEITADA"
+  | "CONFIRMADO"
+  | "DESCONHECIDO"
+  | "OPERACAO_NAO_REALIZADA";
