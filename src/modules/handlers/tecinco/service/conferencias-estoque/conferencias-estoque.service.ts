@@ -52,6 +52,34 @@ export interface TCarAutoConferirBody {
   usuario_id?: number;
 }
 
+export interface TCarNotaFiscalXmlByChaveNfe {
+  chave_nfe: string;
+}
+
+export interface TCarNotaFiscalXmlByChaveComposta {
+  tpneg_codigo: number | string;
+  ntz_codigo: number | string;
+  opr_codigo: number | string;
+  cln_codigo: number | string;
+  serie: string;
+  seq_cancelamento: string;
+}
+
+export type TCarNotaFiscalXmlParams =
+  | TCarNotaFiscalXmlByChaveNfe
+  | TCarNotaFiscalXmlByChaveComposta;
+
+export interface TCarNotaFiscalListParams {
+  nota?: number | string;
+  entrada_saida?: "E" | "S";
+  situacao?: "A" | "N" | "C";
+  modelo_documento?: number;
+  cliente_id?: number;
+  data_movimento_inicio?: string;
+  data_movimento_fim?: string;
+  limit?: number;
+  offset?: number;
+}
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -89,10 +117,44 @@ export class TCarConferenciaEstoqueService {
   // ─── GET /conferencias-estoque ─────────────────────────────────────────────
 
   /**
+   * Retorna o XML original de uma nota fiscal.
+   * GET /notas-fiscais/:nota/xml
+   *
+   * Identificação por chave NFe: passe { chave_nfe }
+   * Identificação por chave composta: passe { tpneg_codigo, ntz_codigo, opr_codigo, cln_codigo, serie, seq_cancelamento }
+   */
+  async buscarXmlNotaFiscal(
+    branchId: number,
+    nota: number | string,
+    identificacao: TCarNotaFiscalXmlParams,
+  ): Promise<string> {
+    return tcarRequest(branchId, (api) =>
+      api
+        .get(`/notas-fiscais/${encodeURIComponent(nota)}/xml`, {
+          params: identificacao,
+          responseType: "text",
+        })
+        .then((r) => r.data),
+    );
+  }
+
+  async listarNotasFiscais(
+    branchId: number,
+    params: TCarNotaFiscalListParams = {},
+  ): Promise<any> {
+    return tcarRequest(branchId, (api) =>
+      api.get("/notas-fiscais", { params }).then((r) => r.data),
+    );
+  }
+
+  /**
    * Lista documentos disponíveis para conferência.
    * GET /conferencias-estoque
    */
-  async listarConferencias(branchId: number, params: TCarConferenciaListParams = {}): Promise<any> {
+  async listarConferencias(
+    branchId: number,
+    params: TCarConferenciaListParams = {},
+  ): Promise<any> {
     return tcarRequest(branchId, (api) =>
       api.get("/conferencias-estoque", { params }).then((r) => r.data),
     );
@@ -127,7 +189,9 @@ export class TCarConferenciaEstoqueService {
     const params = this.buildParams(tipo, extraParams);
     return tcarRequest(branchId, (api) =>
       api
-        .get(`/conferencias-estoque/${tipo}/${encodeURIComponent(numero)}`, { params })
+        .get(`/conferencias-estoque/${tipo}/${encodeURIComponent(numero)}`, {
+          params,
+        })
         .then((r) => r.data),
     );
   }

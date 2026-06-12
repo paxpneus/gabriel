@@ -1,3 +1,4 @@
+import { TCarConferenciaEstoqueService } from "./../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
 /**
  * tecinco-migration.script.ts
  *
@@ -13,15 +14,16 @@
  *   DRY_RUN=true npx ts-node tecinco-migration.script.ts
  */
 
-import { v4 as uuidv4 } from 'uuid';
-import { Queue } from 'bullmq';
-import { setupAssociations } from '../../config/sequelize-associations';
-import sequelize from '../../config/sequelize';
-import { TCarProdutoService } from '../../modules/handlers/tecinco/service/produtos/produtos.service';
-import TCarClienteService from '../../modules/handlers/tecinco/service/clientes/clientes.service';
-import { TCarUpsertQueue, TCarUpsertJobPayload } from '../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue';
-
-
+import { v4 as uuidv4 } from "uuid";
+import { Queue } from "bullmq";
+import { setupAssociations } from "../../config/sequelize-associations";
+import sequelize from "../../config/sequelize";
+import { TCarProdutoService } from "../../modules/handlers/tecinco/service/produtos/produtos.service";
+import TCarClienteService from "../../modules/handlers/tecinco/service/clientes/clientes.service";
+import {
+  TCarUpsertQueue,
+  TCarUpsertJobPayload,
+} from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -32,15 +34,15 @@ async function bootstrap() {
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
-const DRY_RUN = process.env.DRY_RUN === 'true';
+const DRY_RUN = process.env.DRY_RUN === "true";
 
 /** Filiais a migrar — adicione quantas precisar */
-const BRANCH_IDS: number[] = (process.env.TCAR_BRANCH_IDS ?? '1')
-  .split(',')
+const BRANCH_IDS: number[] = (process.env.TCAR_BRANCH_IDS ?? "1")
+  .split(",")
   .map((s) => Number(s.trim()))
   .filter(Boolean);
 
-const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? 'default';
+const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? "default";
 
 /** Tamanho de página (máximo que a TeCinco aceita — ajuste se necessário) */
 const PAGE_SIZE = Number(process.env.TCAR_PAGE_SIZE ?? 100);
@@ -68,7 +70,9 @@ async function enqueue(payload: TCarUpsertJobPayload, jobId: string) {
     console.log(`[DRY_RUN] ${jobId}`);
     return;
   }
-  await upsertQueue.add(payload, jobId);
+  const job = await upsertQueue.add(payload, jobId, );
+  console.log(`enfileirado: ${job?.id ?? 'DUPLICADO/IGNORADO'}`);
+
 }
 
 async function waitForQueueToDrain(label: string) {
@@ -82,12 +86,15 @@ async function waitForQueueToDrain(label: string) {
   const queue: Queue = (upsertQueue as any).queue;
 
   while (true) {
-    const counts = await queue.getJobCounts('active', 'waiting', 'delayed');
-    const total = (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
+    const counts = await queue.getJobCounts("active", "waiting", "delayed");
+    const total =
+      (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
 
     if (total === 0) break;
 
-    console.log(`  ↻ Jobs pendentes: ${total} — checando em ${QUEUE_POLL_MS / 1000}s...`);
+    console.log(
+      `  ↻ Jobs pendentes: ${total} — checando em ${QUEUE_POLL_MS / 1000}s...`,
+    );
     await sleep(QUEUE_POLL_MS);
   }
 
@@ -115,8 +122,8 @@ async function* paginateTCar<T>(
   while (true) {
     const response = await fetcher(page, PAGE_SIZE);
 
-    if (typeof response === 'string') {
-      console.error('  ❌ Resposta ainda em string — onResponse não aplicado');
+    if (typeof response === "string") {
+      console.error("  ❌ Resposta ainda em string — onResponse não aplicado");
       break;
     }
 
@@ -138,9 +145,9 @@ async function* paginateTCar<T>(
 // ─── 1. Produtos ──────────────────────────────────────────────────────────────
 
 async function migrateProdutos() {
-  console.log('─'.repeat(55));
-  console.log('📦  ETAPA 1 — Produtos');
-  console.log('─'.repeat(55));
+  console.log("─".repeat(55));
+  console.log("📦  ETAPA 1 — Produtos");
+  console.log("─".repeat(55));
 
   const service = new TCarProdutoService();
 
@@ -157,9 +164,9 @@ async function migrateProdutos() {
 
         await enqueue(
           {
-            eventId: `migration-product-${systemId}-${uuidv4()}`,
-            resource: 'product',
-            action: 'sync',
+            eventId:  `migration-product-${branchId}-${systemId}-${Date.now()}`,
+            resource: "product",
+            action: "sync",
             companyId: COMPANY_ID,
             branchId,
             data: p,
@@ -176,15 +183,15 @@ async function migrateProdutos() {
     console.log(`  ✅ Filial ${branchId}: ${count} produtos`);
   }
 
-  await waitForQueueToDrain('Produtos');
+  await waitForQueueToDrain("Produtos");
 }
 
 // ─── 2. Clientes ──────────────────────────────────────────────────────────────
 
 async function migrateClientes() {
-  console.log('─'.repeat(55));
-  console.log('👥  ETAPA 2 — Clientes');
-  console.log('─'.repeat(55));
+  console.log("─".repeat(55));
+  console.log("👥  ETAPA 2 — Clientes");
+  console.log("─".repeat(55));
 
   const service = new TCarClienteService();
 
@@ -202,8 +209,8 @@ async function migrateClientes() {
         await enqueue(
           {
             eventId: `migration-customer-${systemId}-${uuidv4()}`,
-            resource: 'customer',
-            action: 'sync',
+            resource: "customer",
+            action: "sync",
             companyId: COMPANY_ID,
             branchId,
             data: c,
@@ -220,19 +227,79 @@ async function migrateClientes() {
     console.log(`  ✅ Filial ${branchId}: ${count} clientes`);
   }
 
-  await waitForQueueToDrain('Clientes');
+  await waitForQueueToDrain("Clientes");
+}
+
+// ─── 3. Notas Fiscais (XML → Invoice) ────────────────────────────────────────
+
+async function migrateNotasFiscais() {
+  console.log("─".repeat(55));
+  console.log("🧾  ETAPA 3 — Notas Fiscais via XML");
+  console.log("─".repeat(55));
+  const conferenciaService = new TCarConferenciaEstoqueService();
+
+  for (const branchId of BRANCH_IDS) {
+    console.log(`\n  🏢 Filial ${branchId}`);
+
+    // Busca todas as NF-e com chave (modelo 55, situação ativa)
+    const resultado = await conferenciaService.listarNotasFiscais(branchId, {
+      modelo_documento: 55,
+      situacao: "A",
+      entrada_saida: "E", // notas de entrada
+      limit: 500,
+    });
+
+    console.log(`  → notas: `, resultado?.data ?? []);
+
+    const notas: any[] = (resultado?.data ?? []).filter(
+      (n: any) => n.entrada_saida === "E" && n.chave_nfe,
+    );
+    console.log(`  → ${notas.length} nota(s) encontrada(s)`);
+
+    for (const nota of notas) {
+      if (!nota.chave_nfe) continue; // ignora sem XML
+
+      const { chave } = nota;
+      const logPrefix = `  [NF nota=${chave.nota}]`;
+
+      await enqueue(
+        {
+          eventId: `migration-invoice-xml-${branchId}-${chave.nota}-${uuidv4()}`,
+          resource: "invoice_xml",
+          action: "sync",
+          companyId: COMPANY_ID,
+          branchId,
+          data: {
+            numero: chave.nota,
+            entrada_saida: nota.entrada_saida,
+            cln_codigo: chave.cln_codigo,
+            tpneg_codigo: chave.tpneg_codigo,
+            ntz_codigo: chave.ntz_codigo,
+            opr_codigo: chave.opr_codigo,
+            serie: chave.serie,
+            seq_cancelamento: chave.seq_cancelamento ?? "0",
+          },
+        },
+        `migration-invoice-xml-${branchId}-${chave.nota}`,
+      );
+
+      console.log(`${logPrefix} enfileirada`);
+    }
+  }
+
+  await waitForQueueToDrain("Notas Fiscais");
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('═'.repeat(55));
-  console.log('  🚀 TeCinco → Filas — Script de Migração Inicial');
-  console.log(`  🏢 Filiais: ${BRANCH_IDS.join(', ')}`);
-  console.log('═'.repeat(55));
+  console.log("═".repeat(55));
+  console.log("  🚀 TeCinco → Filas — Script de Migração Inicial");
+  console.log(`  🏢 Filiais: ${BRANCH_IDS.join(", ")}`);
+  console.log("═".repeat(55));
 
   if (DRY_RUN) {
-    console.log('⚠️  MODO DRY_RUN ativo — nenhum job será enfileirado.\n');
+    console.log("⚠️  MODO DRY_RUN ativo — nenhum job será enfileirado.\n");
   }
 
   await bootstrap();
@@ -240,17 +307,18 @@ async function main() {
   const start = Date.now();
 
   try {
-    await migrateProdutos();
-    await migrateClientes();
+    // await migrateProdutos();
+    // await migrateClientes();
+    await migrateNotasFiscais();
   } catch (err: any) {
-    console.error('\n❌ Erro durante a migração:', err.message);
+    console.error("\n❌ Erro durante a migração:", err.message);
     process.exit(1);
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-  console.log('═'.repeat(55));
+  console.log("═".repeat(55));
   console.log(`  ✅ Migração concluída em ${elapsed}s`);
-  console.log('═'.repeat(55));
+  console.log("═".repeat(55));
 
   process.exit(0);
 }

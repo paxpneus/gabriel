@@ -28,8 +28,9 @@ import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/que
 import { BlingTokenRefreshQueue } from './../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue';
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 import { TCarMigrationQueue } from '../modules/handlers/tecinco/queues/tecinco-daily-recover';
+import { TCarUpsertQueue } from '../modules/handlers/tecinco/queues/tecinco-api-fetch.queue';
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
-// import { SefazDistribuicaoQueue } from '../modules/handlers/sefaz/services/sefaz-queue';
+import { SefazDistribuicaoQueue } from '../modules/handlers/sefaz/services/sefaz-queue';
 import { AutoBackupQueue } from '../modules/handlers/backup/auto-backup.queue';
 
 export const serverAdapter = new ExpressAdapter();
@@ -93,7 +94,8 @@ function buildQueues(workless: boolean) {
   const blingApiFetchQueue = new BlingApiFetchQueue({ workless });
   const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless })
   const blingDailyReconciler = new BlingMigrationQueue({ workless })
-  // const tcarMigrationQueue = new TCarMigrationQueue({ workless })
+  const tcarMigrationQueue = new TCarMigrationQueue({ workless })
+  const tcarUpsertQueue = new TCarUpsertQueue({ workless })
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless })
   const dailySalesReportQueue = new SalesReportQueue({ workless })
   const autoBackupQueue = new AutoBackupQueue({ workless })
@@ -112,7 +114,8 @@ function buildQueues(workless: boolean) {
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
-    // tcarMigrationQueue
+    tcarMigrationQueue,
+    tcarUpsertQueue
   };
 }
 
@@ -131,7 +134,8 @@ export function registerQueues(app: Express) {
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
-    // tcarMigrationQueue,
+    tcarMigrationQueue,
+    tcarUpsertQueue
   } = buildQueues(true); // workless: true → zero Workers na API
 
    const blingOrderQueue = new BlingOrderQueue(
@@ -147,7 +151,7 @@ export function registerQueues(app: Express) {
     { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
     { concurrency: 1, lockDuration: 15 * 60 * 1000, workless: true },
   );
-  // const sefazQueue = new SefazDistribuicaoQueue({ workless: true });
+  const sefazQueue = new SefazDistribuicaoQueue({ workless: true });
 
 
   app.locals.BlingOrderQueue = blingOrderQueue;
@@ -158,7 +162,8 @@ export function registerQueues(app: Express) {
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
   app.locals.BlingMigrationQueue = blingDailyReconciler;
-  // app.locals.TCarMigrationQueue = tcarMigrationQueue;
+  app.locals.TCarMigrationQueue = tcarMigrationQueue;
+  app.locals.TCarUpsertQueue = tcarUpsertQueue;
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
   app.locals.DailySalesReportQueue = dailySalesReportQueue
   app.locals.AutoBackupQueue = autoBackupQueue
@@ -181,7 +186,9 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(dailyOperationReportQueue.queue),
       new BullMQAdapter(dailySalesReportQueue.queue),
       new BullMQAdapter(autoBackupQueue.queue),
-      // new BullMQAdapter(sefazQueue.queue)
+      new BullMQAdapter(sefazQueue.queue),
+      new BullMQAdapter(tcarMigrationQueue.queue),
+      new BullMQAdapter(tcarUpsertQueue.queue),
     ],
     serverAdapter,
   });
@@ -217,7 +224,7 @@ export function startWorkers() {
 
   // blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   // blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
-  // const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
+  const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   autoBackupQueue.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
   // sefazQueue.scheduleRepeat({ every: 60 * 60 * 1000 });

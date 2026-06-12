@@ -23,11 +23,11 @@ export async function startBlingWorkers() {
     workless: false,
   });
 
-  // const tcarApiFetchQueue = new TCarUpsertQueue({ workless: false });
+  const tcarApiFetchQueue = new TCarUpsertQueue({ workless: false });
 
   const dailySalesReportQueue = new SalesReportQueue({ workless: false });
   const autoBackUpQueue = new AutoBackupQueue({ workless: false });
-  // const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
+  const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
@@ -36,8 +36,10 @@ export async function startBlingWorkers() {
     cron: "0 19 * * *",
     tz: "America/Sao_Paulo",
   });
+
   
   // sefazQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  await sefazQueue.addDelayed({}, "teste-sefaz", 20000);
 
   setTimeout(
     () => {

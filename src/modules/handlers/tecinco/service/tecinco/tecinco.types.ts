@@ -2,6 +2,7 @@
 
 export type TCarResource =
   | 'product'
+  | 'invoice_xml'
   | 'customer';
 
 export type TCarAction = 'created' | 'updated' | 'deleted' | 'sync';
@@ -47,6 +48,17 @@ export interface TCarProdutoPayload {
   epcte_custcont?: number;
   epprc_preco?: number;
   epprc_precorevenda?: number;
+}
+
+export interface TCarInvoiceXmlPayload {
+  numero: number | string;
+  entrada_saida?: string;
+  cln_codigo: number | string;
+  tpneg_codigo: number | string;
+  ntz_codigo: number | string;
+  opr_codigo: number | string;
+  serie: string;
+  seq_cancelamento: string;
 }
 
 /**
