@@ -39,7 +39,7 @@ export async function startBlingWorkers() {
 
   
   // sefazQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  // await sefazQueue.addDelayed({}, "teste-sefaz", 20000);
+  await sefazQueue.addDelayed({}, "teste-sefaz", 20000);
 
   setTimeout(
     () => {

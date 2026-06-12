@@ -262,11 +262,7 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
       return false;
     }
 
-    // ── procEventoNFe: eventos (cancelamento, ciência, etc.) ──────────────────
-    if (doc.schema.startsWith("procEventoNFe")) {
-      const tpEvento = this.extrairTpEvento(xml);
-
-      // 110111 = Cancelamento
+    // 110111 = Cancelamento
       // ── resEvento: resumo de evento (cancelamento ainda sem XML completo) ─────────
       if (doc.schema.startsWith("resEvento")) {
         const tpEvento = this.extrairTpEvento(xml);
@@ -311,6 +307,10 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
         );
         return false;
       }
+
+    // ── procEventoNFe: eventos (cancelamento, ciência, etc.) ──────────────────
+    if (doc.schema.startsWith("procEventoNFe")) {
+      const tpEvento = this.extrairTpEvento(xml);
 
       // 210210 = Ciência da Operação já registrada — tenta buscar o procNFe completo
       if (tpEvento === "210210") {
