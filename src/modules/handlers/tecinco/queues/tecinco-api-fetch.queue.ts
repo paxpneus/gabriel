@@ -17,7 +17,10 @@ import {
   TCarAction,
 } from "../service/tecinco/tecinco.types";
 import { getTCarIntegration } from "../api/tecinco_api";
-import { TCarConferenciaEstoqueService, TCarNotaFiscalXmlByChaveComposta } from "../service/conferencias-estoque/conferencias-estoque.service";
+import {
+  TCarConferenciaEstoqueService,
+  TCarNotaFiscalXmlByChaveComposta,
+} from "../service/conferencias-estoque/conferencias-estoque.service";
 import { upsertInvoiceFromXml } from "../../../../shared/utils/xml/invoice-xml";
 export interface TCarUpsertJobPayload {
   eventId: string;
@@ -141,6 +144,21 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
               supplier_product_code: ean,
             });
           }
+
+          await ProductConfig.upsert(
+            {
+              product_id: existingProduct.id,
+              unit_business_id: unitBusiness!.id,
+              sku: systemId,
+              price: data.epprc_preco ?? 0,
+              supplier_cost_price: Number(data.epcte_custcont ?? 0),
+              average_cost:
+                Number(data.epcte_custcont ?? 0) > 0
+                  ? Number(data.epcte_custcont)
+                  : 0,
+            },
+            { conflictFields: ["product_id", "unit_business_id"] },
+          );
 
           console.log(
             `[TCAR_UPSERT] SupplierMapping ${existingMapping ? "atualizado" : "criado"}: product_id=${existingProduct.id} | sku_tecinco=${systemId} | cnpj=${supplierCnpj}`,
@@ -286,49 +304,49 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
   // ─── Invoice XML ───────────────────────────────────────────────────────────
 
-private async processInvoiceXml(
-  data: TCarInvoiceXmlPayload,
-  branchId?: number,
-): Promise<void> {
-  if (!branchId) {
-    console.warn('[TCAR_UPSERT] processInvoiceXml sem branchId — ignorado');
-    return;
-  }
-
-  const { numero, entrada_saida, ...identificacao } = data;
-  const logPrefix = `[TCAR_UPSERT] invoice_xml numero=${numero} branchId=${branchId}`;
-
-  if (entrada_saida && entrada_saida !== 'E') {
-  console.log(`${logPrefix} — nota de saída (${entrada_saida}), ignorando`);
-  return;
-}
-
-  const conferenciaService = new TCarConferenciaEstoqueService();
-
-  let xml: string | null = null;
-
-  try {
-    xml = await conferenciaService.buscarXmlNotaFiscal(
-      branchId,
-      numero,
-      identificacao as TCarNotaFiscalXmlByChaveComposta,
-    );
-  } catch (err: any) {
-    if (err?.response?.status === 404) {
-      console.warn(`${logPrefix} — XML não disponível (404), ignorando`);
+  private async processInvoiceXml(
+    data: TCarInvoiceXmlPayload,
+    branchId?: number,
+  ): Promise<void> {
+    if (!branchId) {
+      console.warn("[TCAR_UPSERT] processInvoiceXml sem branchId — ignorado");
       return;
     }
-    throw err;
-  }
 
-  if (!xml?.trim()) {
-    console.warn(`${logPrefix} — XML vazio, ignorando`);
-    return;
-  }
+    const { numero, entrada_saida, ...identificacao } = data;
+    const logPrefix = `[TCAR_UPSERT] invoice_xml numero=${numero} branchId=${branchId}`;
 
-  await upsertInvoiceFromXml(xml);
-  console.log(`${logPrefix} — invoice upsertada com sucesso`);
-}
+    if (entrada_saida && entrada_saida !== "E") {
+      console.log(`${logPrefix} — nota de saída (${entrada_saida}), ignorando`);
+      return;
+    }
+
+    const conferenciaService = new TCarConferenciaEstoqueService();
+
+    let xml: string | null = null;
+
+    try {
+      xml = await conferenciaService.buscarXmlNotaFiscal(
+        branchId,
+        numero,
+        identificacao as TCarNotaFiscalXmlByChaveComposta,
+      );
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        console.warn(`${logPrefix} — XML não disponível (404), ignorando`);
+        return;
+      }
+      throw err;
+    }
+
+    if (!xml?.trim()) {
+      console.warn(`${logPrefix} — XML vazio, ignorando`);
+      return;
+    }
+
+    await upsertInvoiceFromXml(xml);
+    console.log(`${logPrefix} — invoice upsertada com sucesso`);
+  }
 
   protected override onFailed(
     job: Job<TCarUpsertJobPayload>,
