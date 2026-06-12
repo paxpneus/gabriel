@@ -29,13 +29,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
-COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts
-
-COPY --from=builder /app/node_modules/xsd-schema-validator ./node_modules/xsd-schema-validator
+# Copia node_modules já compilado do builder (bindings nativos incluídos)
+COPY --from=builder /app/node_modules ./node_modules
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
+COPY package*.json ./
 COPY .sequelizerc ./
 COPY src/config/database.js ./src/config/database.js
 
