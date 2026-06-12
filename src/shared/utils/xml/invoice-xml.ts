@@ -145,6 +145,75 @@ async function findOrCreateTransporter(params: {
   });
 }
 
+async function upsertTecincoCrossConfig(
+  det: any[],
+  senderCnpj: string,
+  logPrefix: string,
+): Promise<void> {
+  // Só faz sentido se o emitente for uma UnitBusiness Tecinco
+  const unitBusiness = await UnitBusiness.findOne({ where: { cnpj: senderCnpj } })
+  if (!unitBusiness) return
+
+  for (const item of det) {
+    const prod = item.prod ?? {}
+    const sku = prod.cProd ? String(prod.cProd).trim() : null
+    const gtin = prod.cEAN && prod.cEAN !== 'SEM GTIN' ? String(prod.cEAN).trim() : null
+    const unitPrice = Number(prod.vUnCom ?? 0)
+
+    if (!sku && !gtin) continue
+
+    // Tenta encontrar o produto pelo EAN ou pelo SupplierMapping
+    const product = await findProductForInvoiceItem({
+      sku,
+      ean: gtin,
+      supplierCnpj: senderCnpj,
+      logPrefix,
+    })
+
+    if (!product) continue
+
+    // ─── SupplierMapping ────────────────────────────────────────────────────
+    const supplierProductCode = gtin ?? sku!
+
+    const existingMapping = await SupplierMapping.findOne({
+      where: { product_id: product.id, supplier_cnpj: senderCnpj },
+    })
+
+    if (existingMapping) {
+      await existingMapping.update({ supplier_product_code: supplierProductCode })
+    } else {
+      await SupplierMapping.create({
+        product_id: product.id,
+        supplier_cnpj: senderCnpj,
+        supplier_product_code: supplierProductCode,
+      })
+    }
+
+    // ─── ProductConfig ──────────────────────────────────────────────────────
+    const existingConfig = await ProductConfig.findOne({
+      where: { product_id: product.id, unit_business_id: unitBusiness.id },
+    })
+
+    await ProductConfig.upsert(
+      {
+        product_id: product.id,
+        unit_business_id: unitBusiness.id,
+        sku: sku ?? existingConfig?.sku ?? '',
+        price: existingConfig?.price ?? unitPrice,         // não sobrescreve preço se já existe
+        supplier_cost_price: unitPrice,
+        average_cost: existingConfig?.average_cost         // não sobrescreve custo médio já calculado
+          ? existingConfig.average_cost
+          : unitPrice,
+      },
+      { conflictFields: ['product_id', 'unit_business_id'] },
+    )
+
+    console.log(
+      `${logPrefix} ProductConfig+SupplierMapping upsertado | product_id=${product.id} | sku=${sku} | ean=${gtin} | cnpj=${senderCnpj}`,
+    )
+  }
+}
+
 async function findProductForInvoiceItem(params: {
   sku?: string | null;
   ean?: string | number | null;
@@ -476,6 +545,18 @@ export async function upsertInvoiceFromXml(
       invoiceId: invoice.id,
       idSystem,
     });
+  }
+
+
+  // ─── ProductConfig + SupplierMapping para produtos Tecinco encontrados no XML ─
+
+   try {
+    await upsertTecincoCrossConfig(det, senderCnpj, '[IMPORT_XML]')
+  } catch (err) {
+    logDbError('[IMPORT_XML] Falha ao upsert Tecinco cross config', err as Error, {
+      invoiceId: invoice.id,
+      idSystem,
+    })
   }
 
   // ─── Itens operacionais ────────────────────────────────────────────────────

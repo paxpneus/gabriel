@@ -70,7 +70,9 @@ async function enqueue(payload: TCarUpsertJobPayload, jobId: string) {
     console.log(`[DRY_RUN] ${jobId}`);
     return;
   }
-  await upsertQueue.add(payload, jobId);
+  const job = await upsertQueue.add(payload, jobId, );
+  console.log(`enfileirado: ${job?.id ?? 'DUPLICADO/IGNORADO'}`);
+
 }
 
 async function waitForQueueToDrain(label: string) {
@@ -162,7 +164,7 @@ async function migrateProdutos() {
 
         await enqueue(
           {
-            eventId: `migration-product-${systemId}-${uuidv4()}`,
+            eventId:  `migration-product-${branchId}-${systemId}-${Date.now()}`,
             resource: "product",
             action: "sync",
             companyId: COMPANY_ID,
@@ -244,7 +246,7 @@ async function migrateNotasFiscais() {
       modelo_documento: 55,
       situacao: "A",
       entrada_saida: "E", // notas de entrada
-      limit: 50,
+      limit: 500,
     });
 
     console.log(`  → notas: `, resultado?.data ?? []);
