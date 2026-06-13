@@ -224,7 +224,7 @@ export function startWorkers() {
 
   // blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   // blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
-  const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
+  // const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   autoBackupQueue.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
   // sefazQueue.scheduleRepeat({ every: 60 * 60 * 1000 });
