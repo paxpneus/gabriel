@@ -72,6 +72,8 @@ class Invoice
   public sefaz_manifestation_status?: SefazManifestationStatus | null;
   public sefaz_n_seq_evento!: number;
   public sefaz_nsu?: string | null;
+  public sefaz_full_xml_attempts?: number | null;
+  public sefaz_full_xml_last_query_at?: Date | null;
 
   public batchInvoice?: ExpeditionBatchInvoiceAttributes;
 
@@ -327,6 +329,8 @@ Invoice.init(
         "CONFIRMADO",
         "DESCONHECIDO",
         "OPERACAO_NAO_REALIZADA",
+        "AGUARDANDO_PROCNFE",
+        "PROCNFE_DESISTIDO",
       ),
       allowNull: true,
       defaultValue: null,
@@ -338,6 +342,16 @@ Invoice.init(
     },
     sefaz_nsu: {
       type: DataTypes.STRING(15),
+      allowNull: true,
+      defaultValue: null,
+    },
+    sefaz_full_xml_attempts: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
+    sefaz_full_xml_last_query_at: {
+      type: DataTypes.DATE,
       allowNull: true,
       defaultValue: null,
     },

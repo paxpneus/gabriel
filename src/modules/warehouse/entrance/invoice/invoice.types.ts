@@ -67,6 +67,8 @@ export interface InvoiceAttributes {
   sefaz_manifestation_status?: SefazManifestationStatus | null;
   sefaz_n_seq_evento?: number;
   sefaz_nsu?: string | null;
+  sefaz_full_xml_attempts?: number | null;
+  sefaz_full_xml_last_query_at?: Date | null;
 }
 
 export interface FullInvoice extends InvoiceAttributes {
@@ -89,4 +91,7 @@ export type SefazManifestationStatus =
   | "CIENCIA_REJEITADA"
   | "CONFIRMADO"
   | "DESCONHECIDO"
-  | "OPERACAO_NAO_REALIZADA";
+  | "OPERACAO_NAO_REALIZADA"
+  | "AGUARDANDO_PROCNFE"
+  | "PROCNFE_DESISTIDO";
+
