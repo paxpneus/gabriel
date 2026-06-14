@@ -147,6 +147,21 @@ export class TCarConferenciaEstoqueService {
     );
   }
 
+async getNotaFiscal(
+  nota: number | string,
+  branchId: number,
+  identificacao: TCarNotaFiscalXmlParams,
+): Promise<any> {
+  return tcarRequest(branchId, (api) =>
+    api
+      .get(`/notas-fiscais/${encodeURIComponent(nota)}`, {
+        params: identificacao,
+      })
+      .then((r) => r.data),
+  );
+}
+
+
   /**
    * Lista documentos disponíveis para conferência.
    * GET /conferencias-estoque
