@@ -272,116 +272,50 @@ export class SefazDistribuicaoQueue extends BaseQueueService<SefazDistribuicaoJo
 
     // 110111 = Cancelamento
     // ── resEvento: resumo de evento (cancelamento ainda sem XML completo) ─────────
-    // if (doc.schema.startsWith("resEvento")) {
-    //   const tpEvento = this.extrairTpEvento(xml);
-    //   const chave = this.extrairChaveAcesso(xml);
-
-    //   // 110111 = Cancelamento
-    //   if (tpEvento === "110111" && chave) {
-    //     let xmlCompleto: string | null = null;
-
-    //     try {
-    //       xmlCompleto = await sefazApiService.consultarPorChave(chave, cnpj);
-    //     } catch (err: any) {
-    //       const cStatMatch = err.message?.match(/cStat=(\d+)/);
-    //       if (cStatMatch && CSTAT_XML_INDISPONIVEL.has(cStatMatch[1])) {
-    //         console.log(
-    //           `[SEFAZ] NSU=${doc.NSU} resEvento cancelamento XML indisponível (cStat=${cStatMatch[1]}) — aguardando próximos NSUs`,
-    //         );
-    //         return false;
-    //       }
-    //       throw err;
-    //     }
-
-    //     if (xmlCompleto) {
-    //       await this.apiFetchQueue.upsertInvoiceFromXml(
-    //         xmlCompleto,
-    //         "CANCELLED",
-    //       );
-    //       console.log(
-    //         `[SEFAZ] NSU=${doc.NSU} resEvento cancelamento processado chave=${chave}`,
-    //       );
-    //       return true;
-    //     }
-
-    //     console.log(
-    //       `[SEFAZ] NSU=${doc.NSU} resEvento cancelamento — XML ainda não disponível chave=${chave}`,
-    //     );
-    //     return false;
-    //   }
-
-    //   console.log(
-    //     `[SEFAZ] NSU=${doc.NSU} resEvento tpEvento=${tpEvento} ignorado`,
-    //   );
-    //   return false;
-    // }
     if (doc.schema.startsWith("resEvento")) {
-  const tpEvento = this.extrairTpEvento(xml);
-  const chave = this.extrairChaveAcesso(xml);
-  console.log(
-    `[SEFAZ] NSU=${doc.NSU} resEvento tpEvento=${tpEvento} chave=${chave} — ignorado`,
-  );
-  return false;
-}
+      const tpEvento = this.extrairTpEvento(xml);
+      const chave = this.extrairChaveAcesso(xml);
+
+      if (chave) {
+        await nfeManifestacaoService.marcarAguardandoProcNFe(
+          chave,
+          doc.NSU,
+          label,
+        );
+      }
+
+      console.log(
+        `[SEFAZ] NSU=${doc.NSU} resEvento tpEvento=${tpEvento} chave=${chave} — marcado p/ retry procNFe`,
+      );
+      return false;
+    }
+
+    if (doc.schema.startsWith("resEvento")) {
+      const tpEvento = this.extrairTpEvento(xml);
+      const chave = this.extrairChaveAcesso(xml);
+      console.log(
+        `[SEFAZ] NSU=${doc.NSU} resEvento tpEvento=${tpEvento} chave=${chave} — ignorado`,
+      );
+      return false;
+    }
     // ── procEventoNFe: eventos (cancelamento, ciência, etc.) ──────────────────
     if (doc.schema.startsWith("procEventoNFe")) {
       const tpEvento = this.extrairTpEvento(xml);
 
-      // 210210 = Ciência da Operação já registrada — tenta buscar o procNFe completo
-      // if (tpEvento === "210210") {
-      //   const chave = this.extrairChaveAcesso(xml);
-      //   if (!chave) {
-      //     console.warn(
-      //       `[SEFAZ] NSU=${doc.NSU} 210210 sem chaveAcesso — ignorado`,
-      //     );
-      //     return false;
-      //   }
-
-      //   let xmlCompleto: string | null = null;
-
-      //   try {
-      //     xmlCompleto = await sefazApiService.consultarPorChave(chave, cnpj);
-      //   } catch (err: any) {
-      //     // 641/642 = XML ainda não liberado pelo emitente — não é falha,
-      //     // o procNFe virá automaticamente nos próximos NSUs da distribuição.
-      //     const cStatMatch = err.message?.match(/cStat=(\d+)/);
-      //     if (cStatMatch && CSTAT_XML_INDISPONIVEL.has(cStatMatch[1])) {
-      //       console.log(
-      //         `[SEFAZ] NSU=${doc.NSU} 210210 chave=${chave} — XML indisponível na SEFAZ (cStat=${cStatMatch[1]}), aguardando próximos NSUs`,
-      //       );
-      //       return false;
-      //     }
-      //     throw err;
-      //   }
-
-      //   if (!xmlCompleto) {
-      //     console.log(
-      //       `[SEFAZ] NSU=${doc.NSU} 210210 chave=${chave} — procNFe ainda não disponível`,
-      //     );
-      //     return false;
-      //   }
-
-      //   if (!this.temProdutoRelevante(xmlCompleto)) {
-      //     console.log(
-      //       `[SEFAZ] NSU=${doc.NSU} 210210 ignorado — sem produtos relevantes`,
-      //     );
-      //     return false;
-      //   }
-
-      //   await this.apiFetchQueue.upsertInvoiceFromXml(xmlCompleto);
-      //   console.log(
-      //     `[SEFAZ] NSU=${doc.NSU} 210210 procNFe obtido e processado chave=${chave}`,
-      //   );
-      //   return true;
-      // }
-
-       if (tpEvento === "210210") {
-    const chave = this.extrairChaveAcesso(xml);
-    console.log(
-      `[SEFAZ] NSU=${doc.NSU} 210210 ciência confirmada chave=${chave} — aguardando procNFe`,
-    );
-    return false;
-  }
+      if (tpEvento === "210210") {
+        const chave = this.extrairChaveAcesso(xml);
+        if (chave) {
+          await nfeManifestacaoService.marcarAguardandoProcNFe(
+            chave,
+            doc.NSU,
+            label,
+          );
+        }
+        console.log(
+          `[SEFAZ] NSU=${doc.NSU} 210210 ciência confirmada chave=${chave} — marcado p/ retry procNFe`,
+        );
+        return false;
+      }
 
       console.log(
         `[SEFAZ] NSU=${doc.NSU} evento tpEvento=${tpEvento} ignorado`,

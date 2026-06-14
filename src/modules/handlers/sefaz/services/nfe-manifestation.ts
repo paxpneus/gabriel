@@ -19,6 +19,16 @@ const CSTAT_JA_REGISTRADO = new Set(["573"]);
 // 101 = NF-e Cancelada | 151 = NF-e Cancelada pelo contribuinte no prazo de 24h
 const CSTAT_CANCELADA = new Set(["101", "151"]);
 
+// cStats que indicam que o XML da NF-e ainda não está disponível para consulta
+// por chave. Não é erro — tentar de novo na próxima janela horária.
+const CSTAT_XML_INDISPONIVEL = new Set(["641", "642"]);
+
+// Limite de tentativas de consultarPorChave antes de desistir desta chave.
+// Cada tentativa = 1 consulta. Limite SEFAZ é 10/hora por chave; rodando
+// no máximo 1x/hora por chave, isto nos mantém MUITO abaixo do limite.
+const MAX_TENTATIVAS_PROCNFE = 48; // ~2 dias se rodar 1x/hora
+
+const CNPJ_DESTINATARIO_LIMPO = cleanDocument(CNPJ_DESTINATARIO);
 export interface ManifestacaoResult {
   cStat: string;
   xMotivo: string;
@@ -232,17 +242,14 @@ async function resolveUnitBusinessId(cnpj: string): Promise<string> {
   if (_unitBusinessId) return _unitBusinessId;
 
   // Import dinâmico para evitar dependência circular
-  const { default: UnitBusiness } = await import(
-    "../../../warehouse/unit-business/unit-business.model"
-  );
+  const { default: UnitBusiness } =
+    await import("../../../warehouse/unit-business/unit-business.model");
   const ub = await UnitBusiness.findOne({
     where: { cnpj },
     attributes: ["id"],
   });
   if (!ub)
-    throw new Error(
-      `[SEFAZ] UnitBusiness não encontrada para CNPJ=${cnpj}`,
-    );
+    throw new Error(`[SEFAZ] UnitBusiness não encontrada para CNPJ=${cnpj}`);
 
   _unitBusinessId = ub.id;
   return _unitBusinessId;
@@ -251,9 +258,7 @@ async function resolveUnitBusinessId(cnpj: string): Promise<string> {
 async function resolveDefaultStoreId(): Promise<string> {
   if (_storeId) return _storeId;
 
-  const { default: Store } = await import(
-    "../../../sales/stores/stores.model"
-  );
+  const { default: Store } = await import("../../../sales/stores/stores.model");
   const store = await Store.findOne({
     where: { name: "Outros" },
     attributes: ["id"],
@@ -266,6 +271,18 @@ async function resolveDefaultStoreId(): Promise<string> {
   _storeId = store.id;
   return _storeId;
 }
+
+const statusFinalizados: SefazManifestationStatus[] = [
+  "CONFIRMADO",
+  "DESCONHECIDO",
+  "OPERACAO_NAO_REALIZADA",
+];
+
+/**
+ * Marca (ou cria) a invoice como aguardando o procNFe completo.
+ * Não faz nenhuma consulta à SEFAZ — apenas registra a intenção.
+ * A busca real é feita por buscarProcNFePendentes(), no máximo 1x/hora.
+ */
 
 // ─── Serviço principal ────────────────────────────────────────────────────────
 
@@ -469,6 +486,67 @@ export class NfeManifestacaoService {
       dhRegEvento: retEvento?.dhRegEvento,
       nProt: retEvento?.nProt,
     };
+  }
+
+  async marcarAguardandoProcNFe(
+    chNFe: string,
+    nsu: string,
+    label: string,
+  ): Promise<void> {
+    const existing = await Invoice.findOne({
+      where: { xml_key: chNFe },
+      attributes: ["id", "status", "sefaz_manifestation_status"],
+    });
+
+    // Já cancelada, já confirmada, ou já desistimos — não reabre o ciclo
+    if (
+      existing &&
+      (existing.status === "CANCELLED" ||
+        (existing.sefaz_manifestation_status &&
+          statusFinalizados.includes(existing.sefaz_manifestation_status)) ||
+        existing.sefaz_manifestation_status === "PROCNFE_DESISTIDO")
+    ) {
+      return;
+    }
+
+    if (existing) {
+      // Não sobrescreve se já está em CIENCIA_ENVIADA/AGUARDANDO_PROCNFE com
+      // tentativas em andamento — apenas garante o status de espera.
+      if (existing.sefaz_manifestation_status !== "AGUARDANDO_PROCNFE") {
+        await existing.update({
+          sefaz_manifestation_status: "AGUARDANDO_PROCNFE",
+          sefaz_nsu: nsu,
+        });
+      }
+      return;
+    }
+
+    // Não existe ainda — cria placeholder mínimo (mesmo padrão do PENDING_CIENCIA)
+    const cleanReceiver = CNPJ_DESTINATARIO_LIMPO; // ver nota abaixo
+    await Invoice.create({
+      customer_name: "PENDENTE",
+      number_system: "PENDENTE",
+      customer_document: cleanReceiver,
+      sender_cnpj: "0".repeat(14),
+      sender_name: "PENDENTE",
+      receiver_cnpj: cleanReceiver,
+      receiver_name: "PENDENTE",
+      type: "INCOMING",
+      status: "PENDING",
+      xml_key: chNFe,
+      id_system: `SEFAZ-${chNFe}`,
+      batch_generated: false,
+      printed_label: false,
+      sefaz_manifestation_status: "AGUARDANDO_PROCNFE",
+      sefaz_n_seq_evento: 1,
+      sefaz_nsu: nsu,
+      unit_business_id: await resolveUnitBusinessId(cleanReceiver),
+      store_id: await resolveDefaultStoreId(),
+    } as any);
+
+    console.log(
+      `[SEFAZ] chNFe=${chNFe} Filial=${label} — placeholder AGUARDANDO_PROCNFE criado`,
+    );
   }
 }
 
