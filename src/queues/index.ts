@@ -30,9 +30,7 @@ import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/qu
 import { TCarMigrationQueue } from '../modules/handlers/tecinco/queues/tecinco-daily-recover';
 import { TCarUpsertQueue } from '../modules/handlers/tecinco/queues/tecinco-api-fetch.queue';
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
-import { SefazDistribuicaoQueue } from '../modules/handlers/sefaz/services/sefaz-queue';
 import { AutoBackupQueue } from '../modules/handlers/backup/auto-backup.queue';
-import { SefazProcNFeRetryQueue } from '../modules/handlers/sefaz/services/sefaz-procnfe-retry.queue';
 
 export const serverAdapter = new ExpressAdapter();
 
@@ -152,8 +150,6 @@ export function registerQueues(app: Express) {
     { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
     { concurrency: 1, lockDuration: 15 * 60 * 1000, workless: true },
   );
-  const sefazQueue = new SefazDistribuicaoQueue({ workless: true });
-  const sefazRertyProcNfeQueue = new SefazProcNFeRetryQueue({workless: true})
 
 
   app.locals.BlingOrderQueue = blingOrderQueue;
@@ -188,10 +184,8 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(dailyOperationReportQueue.queue),
       new BullMQAdapter(dailySalesReportQueue.queue),
       new BullMQAdapter(autoBackupQueue.queue),
-      new BullMQAdapter(sefazQueue.queue),
       new BullMQAdapter(tcarMigrationQueue.queue),
       new BullMQAdapter(tcarUpsertQueue.queue),
-      new BullMQAdapter(sefazRertyProcNfeQueue.queue),
     ],
     serverAdapter,
   });

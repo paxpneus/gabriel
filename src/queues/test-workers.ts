@@ -1,5 +1,3 @@
-import { SefazDistribuicaoQueue } from "./../modules/handlers/sefaz/services/sefaz-queue";
-import { SefazProcNFeRetryQueue } from "./../modules/handlers/sefaz/services/sefaz-procnfe-retry.queue"; 
 import { BlingDirectUpsertQueue } from "../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue";
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { BlingTokenRefreshQueue } from "../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
@@ -28,8 +26,6 @@ export async function startBlingWorkers() {
 
   const dailySalesReportQueue = new SalesReportQueue({ workless: false });
   const autoBackUpQueue = new AutoBackupQueue({ workless: false });
-  const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
-  const sefazProcNFeRetryQueue = new SefazProcNFeRetryQueue({ workless: false });
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
@@ -38,20 +34,6 @@ export async function startBlingWorkers() {
     cron: "0 19 * * *",
     tz: "America/Sao_Paulo",
   });
-
-  // sefazQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-    await sefazQueue.addDelayed({}, "teste-sefaz", 20000);
-
-  // sefazProcNFeRetryQueue inicia 5min depois, para não rodar junto com a distribuição
-  setTimeout(
-    () => {
-      // sefazProcNFeRetryQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-      sefazProcNFeRetryQueue.addDelayed({}, "teste-sefaz-retry", 2000)
-      console.log("  → SefazProcNFeRetryQueue (a cada 1h, offset 5min)");
-    },
-    5 * 60 * 1000,
-  );
-  // await sefazQueue.addDelayed({}, "teste-sefaz", 20000);
 
   setTimeout(
     () => {
