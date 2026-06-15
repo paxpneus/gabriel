@@ -172,3 +172,15 @@ export interface TCarMappedCustomer {
   type: 'F' | 'J';
   document?: string;
 }
+
+export interface TCarNotaFiscalItem {
+  epeit_seq: number;
+  epctb_codigo: string;
+  produto_nome: string;
+  produto_unidade: string;
+  epeit_qtdade: number;
+  epeit_vlrunit: number;
+  epeit_vlrdesc?: number;
+  epeit_vlrliquido?: number;
+  ntz_codigoproduto?: number;
+}

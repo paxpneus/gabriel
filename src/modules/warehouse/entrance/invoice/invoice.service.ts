@@ -16,7 +16,7 @@ import InvoiceItems from "../invoice-items/invoice-items.model";
 import { getBrazilDate } from "../../../../shared/utils/normalizers/date";
 import sequelize from "../../../../config/sequelize";
 import batchInvoicesService from "../../expedition/batch-invoices/batch-invoices.service";
-import { Product } from "../../../inventory";
+import { Product, ProductConfig, Supplier } from "../../../inventory";
 import Contact from "../../../sales/contacts/contacts.model";
 import Order from "../../../sales/orders/order/orders.model";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
@@ -47,6 +47,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "emitted_at",
         "status",
         "store_id",
+        "supplier_id"
       ],
       sortableFields: [
         "customer_name",
@@ -143,6 +144,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         {
           model: Transporter,
           as: "transporter",
+          attributes: ["name"],
+        },
+        {
+          model: Supplier,
+          as: "supplier",
           attributes: ["name"],
         },
       ],
@@ -412,6 +418,84 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           quantity: item.quantity_expected,
           line: item.product?.line ?? null,
           brand: item.product?.brand ?? null,
+        });
+      }
+    }
+
+    return result;
+  }
+
+  async getInvoiceSupplierReport(params: QueryParams, unitBusinessId: string) {
+    params.filters = { ...params.filters };
+
+    const rows = await this.findAll(
+      {
+        attributes: ["id", "number_system", "emitted_at", "xml_key"],
+        include: [
+          {
+            model: InvoiceItems,
+            as: "items",
+            attributes: ["quantity_expected"],
+            include: [
+              {
+                model: Product,
+                as: "product",
+                attributes: ["source_payload"],
+                include: [
+                  {
+                    model: ProductConfig,
+                    as: "productConfigs",
+                    attributes: ["sku"],
+                    where: unitBusinessId
+                      ? { unit_business_id: unitBusinessId }
+                      : undefined,
+                    required: false,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      params,
+      this.queryConfig,
+    );
+
+    const result: {
+      number_system: string | undefined;
+      date: Date | null;
+      xml_key: string | null;
+      sku: string | null;
+      description: string | null;
+      quantity: number;
+    }[] = [];
+
+    for (const invoice of rows) {
+      const invoiceWithRelations = invoice as Invoice & {
+        items?: (InvoiceItems & {
+          product?:
+            | (Product & {
+                productConfigs?: ProductConfig[];
+                source_payload?: { descricao?: string } | null;
+              })
+            | null;
+        })[];
+      };
+
+      for (const item of invoiceWithRelations.items ?? []) {
+        const product = item.product;
+        const productConfig = product?.productConfigs?.[0];
+        const sourcePayload = product?.source_payload as
+          | { descricaoCurta?: string }
+          | undefined;
+
+        result.push({
+          number_system: invoice.number_system,
+          date: invoice.emitted_at ?? null,
+          xml_key: invoice.xml_key ?? null,
+          sku: productConfig?.sku ?? null,
+          description: sourcePayload?.descricaoCurta ?? null,
+          quantity: item.quantity_expected,
         });
       }
     }

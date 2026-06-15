@@ -27,6 +27,7 @@ class Invoice
   public id_system?: string;
   public transporter_id?: string;
   public seller_id?: string | null;
+  public supplier_id?: string | null;
   public type!: "INCOMING" | "OUTGOING";
   public status!:
     | "OPEN"
@@ -172,6 +173,16 @@ Invoice.init(
       allowNull: true,
       references: {
         model: "contacts",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
+    },
+    supplier_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "suppliers",
         key: "id",
       },
       onUpdate: "CASCADE",

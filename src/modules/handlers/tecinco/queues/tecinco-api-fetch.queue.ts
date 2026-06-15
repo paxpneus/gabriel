@@ -15,6 +15,7 @@ import {
   TCarInvoiceXmlPayload,
   TCarResource,
   TCarAction,
+  TCarNotaFiscalItem,
 } from "../service/tecinco/tecinco.types";
 import { getTCarIntegration } from "../api/tecinco_api";
 import {
@@ -212,7 +213,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     if (!unitBusiness) return;
 
     // ─── Upsert de estoque ────────────────────────────────────────────────────
-    const stockQty = Number(data.epcte_estoque ?? 0);
+    const stockQty = Math.round(Number(data.epcte_estoque ?? 0));
     const entryUnitCost = Number(data.epcte_custcont ?? 0);
 
     const existingStock = await Stock.findOne({
@@ -322,6 +323,35 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
 
     const conferenciaService = new TCarConferenciaEstoqueService();
+    const chaveComposta = identificacao as TCarNotaFiscalXmlByChaveComposta;
+
+    // ─── Busca detalhe da nota fiscal e garante produtos dos itens ───────────
+    try {
+      const notaFiscal = await conferenciaService.getNotaFiscal(
+        numero,
+        branchId,
+        chaveComposta,
+      );
+
+      const itens = notaFiscal?.data?.itens ?? [];
+
+      if (Array.isArray(itens) && itens.length > 0) {
+        await this.ensureProductsFromInvoiceItems(itens, branchId);
+      } else {
+        console.warn(`${logPrefix} — nota fiscal sem itens retornados`);
+      }
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        console.warn(
+          `${logPrefix} — detalhe da nota fiscal não encontrado (404), seguindo sem upsert de produtos`,
+        );
+      } else {
+        console.error(
+          `${logPrefix} — erro ao buscar detalhe da nota fiscal: ${err?.message ?? err}`,
+        );
+        // não interrompe o fluxo do XML por falha na resolução de produtos
+      }
+    }
 
     let xml: string | null = null;
 
@@ -329,7 +359,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       xml = await conferenciaService.buscarXmlNotaFiscal(
         branchId,
         numero,
-        identificacao as TCarNotaFiscalXmlByChaveComposta,
+        chaveComposta,
       );
     } catch (err: any) {
       if (err?.response?.status === 404) {
@@ -346,6 +376,132 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
     await upsertInvoiceFromXml(xml);
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
+  }
+
+  // ─── Garante produtos a partir dos itens da nota fiscal ─────────────────────
+
+  private async ensureProductsFromInvoiceItems(
+    itens: TCarNotaFiscalItem[],
+    branchId: number,
+  ): Promise<void> {
+    const unitBusiness = await UnitBusiness.findOne({
+      where: { id: branchId },
+    });
+
+    if (!unitBusiness) {
+      console.warn(
+        `[TCAR_UPSERT] UnitBusiness não encontrada para branchId=${branchId} — produtos da nota não serão vinculados a estoque/preço`,
+      );
+    }
+
+    const integrations = await getTCarIntegration("Tecinco");
+
+    for (const item of itens) {
+      const systemId = String(item.epctb_codigo ?? "").trim();
+
+      if (!systemId) {
+        console.warn(
+          `[TCAR_UPSERT] Item de nota fiscal sem epctb_codigo (seq=${item.epeit_seq}) — ignorado`,
+        );
+        continue;
+      }
+
+      const existingProduct = await Product.findOne({
+        where: { id_system: systemId },
+      });
+
+      if (existingProduct) {
+        // produto já existe — não sobrescreve dados, apenas garante presença
+        continue;
+      }
+
+      const [product] = await Product.upsert(
+        {
+          id_system: systemId,
+          name: item.produto_nome?.trim() ?? "",
+          ean: undefined,
+          unit: item.produto_unidade,
+          category: "TIRE",
+          integrations_id: integrations.id,
+          source_payload: item as unknown as Record<string, unknown>,
+        },
+        { conflictFields: ["id_system"] },
+      );
+
+      console.log(
+        `[TCAR_UPSERT] Produto criado a partir de item de nota fiscal: id_system=${systemId} | nome=${item.produto_nome}`,
+      );
+
+      if (!unitBusiness) continue;
+
+      // ─── ProductConfig básico (sku/price) ──────────────────────────────────
+      const existingConfig = await ProductConfig.findOne({
+        where: { product_id: product.id, unit_business_id: unitBusiness.id },
+      });
+
+      if (!existingConfig) {
+        await ProductConfig.upsert(
+          {
+            product_id: product.id,
+            unit_business_id: unitBusiness.id,
+            sku: systemId,
+            price: 0,
+            supplier_cost_price: Number(item.epeit_vlrunit ?? 0),
+            average_cost: Number(item.epeit_vlrunit ?? 0),
+            average_cost_updated_at: new Date(),
+          },
+          { conflictFields: ["product_id", "unit_business_id"] },
+        );
+
+        console.log(
+          `[TCAR_UPSERT] ProductConfig criado para produto da nota: id_system=${systemId} | unit_business_id=${unitBusiness.id}`,
+        );
+
+         const itemQty = Number(item.epeit_qtdade ?? 0);
+      const itemUnitCost = Number(item.epeit_vlrunit ?? 0);
+
+      const existingStock = await Stock.findOne({
+        where: { product_id: product.id, unit_business_id: unitBusiness.id },
+      });
+
+      const oldQuantity = Number(existingStock?.quantity ?? 0);
+      const oldTotalPrice = Number(existingStock?.total_price ?? 0);
+
+      const newQuantity = oldQuantity + itemQty;
+      const newTotalPrice = oldTotalPrice + itemQty * itemUnitCost;
+
+      await Stock.upsert(
+        {
+          product_id: product.id,
+          unit_business_id: unitBusiness.id,
+          quantity: newQuantity,
+          total_price: newTotalPrice,
+        },
+        { conflictFields: ["product_id", "unit_business_id"] },
+      );
+
+      console.log(
+        `[TCAR_UPSERT] Stock atualizado (produto novo via nota): id_system=${systemId} | qty=${newQuantity} | total_price=${newTotalPrice.toFixed(2)}`,
+      );
+      }
+
+      // ─── SupplierMapping (CNPJ do emitente da nota) ────────────────────────
+      const supplierCnpj = unitBusiness.cnpj ?? null;
+
+      if (supplierCnpj) {
+        const existingMapping = await SupplierMapping.findOne({
+          where: { product_id: product.id, supplier_cnpj: supplierCnpj },
+        });
+
+        if (!existingMapping) {
+          await SupplierMapping.create({
+            product_id: product.id,
+            supplier_cnpj: supplierCnpj,
+            supplier_product_code: systemId,
+          });
+        }
+      }
+    }
   }
 
   protected override onFailed(

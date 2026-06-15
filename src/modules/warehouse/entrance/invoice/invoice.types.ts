@@ -30,6 +30,7 @@ export interface InvoiceAttributes {
   id_system?: string;
   transporter_id?: string | null;
   seller_id?: string | null;
+  supplier_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   type: string;
