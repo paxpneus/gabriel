@@ -494,7 +494,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
               {
                 model: Product,
                 as: "product",
-                attributes: ["source_payload", "brand"], // adicionado brand
+                attributes: ["name", "brand"], // adicionado brand
                 required: true, // só itens que têm produto
                 include: [
                   {
@@ -523,7 +523,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       sku: string | null;
       description: string | null;
       quantity: number;
-      brand: string | null; // adicionado
+      brand: string | null;
     }[] = [];
 
     for (const invoice of rows) {
@@ -551,7 +551,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           date: invoice.emitted_at ?? null,
           xml_key: invoice.xml_key ?? null,
           sku: productConfig?.sku ?? null,
-          description: sourcePayload?.descricaoCurta ?? null,
+          description: product?.name ?? '',
           quantity: item.quantity_expected,
           brand: product?.brand ?? null,
         });
