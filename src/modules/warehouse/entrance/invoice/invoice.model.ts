@@ -7,6 +7,7 @@ import {
 } from "./invoice.types";
 import { v4 as uuidv4 } from "uuid";
 import { ExpeditionBatchInvoiceAttributes } from "../../expedition/batch-invoices/batch-invoices.types";
+import Transporter from "../../transporter/transporter.model";
 
 class Invoice
   extends Model<InvoiceAttributes, InvoiceCreationAttributes>
@@ -75,6 +76,7 @@ class Invoice
   public sefaz_nsu?: string | null;
   public sefaz_full_xml_attempts?: number | null;
   public sefaz_full_xml_last_query_at?: Date | null;
+  public transporter?: Transporter;
 
   public batchInvoice?: ExpeditionBatchInvoiceAttributes;
 
