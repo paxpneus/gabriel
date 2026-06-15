@@ -1,0 +1,32 @@
+'use strict';
+
+/** @type {import('sequelize-cli').Migration} */
+module.exports = {
+  async up(queryInterface, Sequelize) {
+    await queryInterface.changeColumn('invoice_items', 'quantity_expected', {
+      type: Sequelize.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    });
+
+    await queryInterface.changeColumn('invoice_items', 'quantity_received', {
+      type: Sequelize.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    });
+  },
+
+  async down(queryInterface, Sequelize) {
+    await queryInterface.changeColumn('invoice_items', 'quantity_expected', {
+      type: Sequelize.DECIMAL(10, 2),
+      allowNull: false,
+      defaultValue: 0,
+    });
+
+    await queryInterface.changeColumn('invoice_items', 'quantity_received', {
+      type: Sequelize.DECIMAL(10, 2),
+      allowNull: false,
+      defaultValue: 0,
+    });
+  }
+};
