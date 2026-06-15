@@ -47,7 +47,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "emitted_at",
         "status",
         "store_id",
-        "supplier_id"
+        "supplier_id",
       ],
       sortableFields: [
         "customer_name",
@@ -62,6 +62,19 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "number_system",
       ],
       customFields: {
+        brand: (value) => ({
+          [Op.and]: Sequelize.literal(`EXISTS (
+    SELECT 1
+    FROM invoice_items ii
+    JOIN products p ON p.id = ii.product_id
+    WHERE ii.invoice_id = "Invoice"."id"
+      AND p.brand ${
+        Array.isArray(value)
+          ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
+          : `= '${String(value).replace(/'/g, "''")}'`
+      }
+  )`),
+        }),
         batchStatus: (value) => ({
           "$batchInvoice.batch.status$": Array.isArray(value)
             ? { [Op.in]: value }
@@ -112,8 +125,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<Invoice>> {
     const hasBatchFilter = !!params.filters?.batchStatus;
+    const hasProductBrandFilter = !!params.filters?.brand; // 👈
 
-    return super.paginate(params, {
+    const invoices = await super.paginate(params, {
       ...extraOptions,
       subQuery: false,
       include: [
@@ -144,7 +158,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         {
           model: Transporter,
           as: "transporter",
-          attributes: ["name"],
+          attributes: ["name", "uf", "cnpj"],
         },
         {
           model: Supplier,
@@ -155,6 +169,17 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       attributes: {
         exclude: ["source_payload"],
         include: [
+          [
+            Sequelize.literal(`(
+              SELECT ARRAY_AGG(DISTINCT p.brand)
+              FROM invoice_items ii
+              JOIN products p ON p.id = ii.product_id
+              WHERE ii.invoice_id = "Invoice"."id"
+                AND p.brand IS NOT NULL
+            )`),
+            "product_brands",
+          ] as [ReturnType<typeof Sequelize.literal>, string],
+
           [
             Sequelize.literal(`(
             SELECT COALESCE(SUM(quantity_expected), 0)
@@ -174,6 +199,30 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         ],
       },
     });
+
+    return {
+      ...invoices,
+      data: invoices.data.map((invoice) => {
+        const plain = invoice.get({ plain: true });
+
+        return {
+          ...plain,
+          product_brands: (plain as any).product_brands ?? [],
+          transporter: plain.transporter
+            ? {
+                ...plain.transporter,
+                name: [
+                  plain.transporter.name,
+                  plain.transporter.uf,
+                  plain.transporter.cnpj,
+                ]
+                  .filter(Boolean)
+                  .join(" | "),
+              }
+            : plain.transporter,
+        };
+      }) as unknown as Invoice[],
+    };
   }
 
   async updateInvoicesOpen(ids: string[], data: Partial<InvoiceAttributes>) {
@@ -426,21 +475,27 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   }
 
   async getInvoiceSupplierReport(params: QueryParams, unitBusinessId: string) {
-    params.filters = { ...params.filters };
+    params.filters = {
+      ...params.filters,
+      type: "OUTGOING", // força sempre notas de saída
+    };
 
     const rows = await this.findAll(
       {
+        subQuery: false, // necessário para filtros em associations aninhadas
         attributes: ["id", "number_system", "emitted_at", "xml_key"],
         include: [
           {
             model: InvoiceItems,
             as: "items",
             attributes: ["quantity_expected"],
+            required: true, // só notas que têm itens
             include: [
               {
                 model: Product,
                 as: "product",
-                attributes: ["source_payload"],
+                attributes: ["source_payload", "brand"], // adicionado brand
+                required: true, // só itens que têm produto
                 include: [
                   {
                     model: ProductConfig,
@@ -468,6 +523,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       sku: string | null;
       description: string | null;
       quantity: number;
+      brand: string | null; // adicionado
     }[] = [];
 
     for (const invoice of rows) {
@@ -476,7 +532,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           product?:
             | (Product & {
                 productConfigs?: ProductConfig[];
-                source_payload?: { descricao?: string } | null;
+                brand?: string | null;
+                source_payload?: { descricaoCurta?: string } | null;
               })
             | null;
         })[];
@@ -496,6 +553,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           sku: productConfig?.sku ?? null,
           description: sourcePayload?.descricaoCurta ?? null,
           quantity: item.quantity_expected,
+          brand: product?.brand ?? null,
         });
       }
     }
