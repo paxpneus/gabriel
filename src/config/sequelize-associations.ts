@@ -452,6 +452,10 @@ Store.hasMany(Invoice, { foreignKey: 'store_id', as: 'invoices' });
 Invoice.belongsTo(Contact, { foreignKey: 'seller_id', as: 'seller' });
 Contact.hasMany(Invoice, { foreignKey: 'seller_id', as: 'sellerInvoices' });
 
+// Invoice -> Seller Contact
+Invoice.belongsTo(Supplier, { foreignKey: 'supplier_id', as: 'supplier' });
+Supplier.hasMany(Invoice, { foreignKey: 'supplier_id', as: 'supplierInvoices' });
+
   // ===== INVOICE ITEMS =====
   
   // Invoice Items -> Entrance Scan Logs
