@@ -42,12 +42,12 @@ InvoiceItems.init(
       },
     },
     quantity_expected: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
       defaultValue: 0,
     },
     quantity_received: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.DECIMAL(10, 2),
       defaultValue: 0,
     },
     status: {
