@@ -70,6 +70,7 @@ export interface InvoiceAttributes {
   sefaz_nsu?: string | null;
   sefaz_full_xml_attempts?: number | null;
   sefaz_full_xml_last_query_at?: Date | null;
+  transporter?: Transporter;
 }
 
 export interface FullInvoice extends InvoiceAttributes {
