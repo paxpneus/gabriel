@@ -4,6 +4,7 @@ import UserConfig from "../user_config/user_config.model";
 
 export interface UserAttributes {
   id: string;
+  id_system?: number | null;
   name: string;
   cpf: string;
   unit_business_id: string;

@@ -254,10 +254,11 @@ async getNotaFiscal(
     extraParams: Partial<TCarNotaFiscalQueryParams> = {},
   ): Promise<any> {
     const params = this.buildParams(tipo, extraParams);
+    console.log("numero:", numero, "branchId:", branchId, "body:", body)
     return tcarRequest(branchId, (api) =>
       api
         .post(
-          `/conferencias-estoque/${tipo}/${encodeURIComponent(numero)}/conferir`,
+          `/conferencias-estoq/${tipo}/${encodeURIComponent(numero)}/conferir`,
           body,
           { params },
         )

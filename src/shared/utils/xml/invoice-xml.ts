@@ -631,7 +631,7 @@ export async function upsertInvoiceFromXml(
       await InvoiceItems.create({
         product_id: productId,
         invoice_id: invoice.id,
-        quantity_expected: quantity,
+        quantity_expected: Math.trunc(quantity),
         status: "PENDING",
       });
     }
