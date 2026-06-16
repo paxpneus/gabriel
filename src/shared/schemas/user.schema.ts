@@ -61,6 +61,12 @@ export const CreateUserSchema = z.object({
     .max(255, "Senha não pode ter mais de 255 caracteres"),
 
   type: z.string().optional(), // <-- Adicionado aqui como string opcional
+  id_system: z
+  .number()
+  .int("ID do sistema deve ser um número inteiro")
+  .positive("ID do sistema deve ser positivo")
+  .nullable()
+  .optional(),
 
   user_unit_business: z
     .array(z.string().uuid("IDs da unidade devem ser UUIDs válidos"))
@@ -114,6 +120,12 @@ export const UpdateUserSchema = z
       .optional(),
 
     type: z.string().optional(), // <-- Adicionado aqui também para o fluxo de update
+    id_system: z
+  .number()
+  .int("ID do sistema deve ser um número inteiro")
+  .positive("ID do sistema deve ser positivo")
+  .nullable()
+  .optional(),
 
     unit_business_id: z
       .string()
