@@ -1126,6 +1126,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const ibsValue = fiscalTotals?.ibsValue ?? 0;
     const cbsValue = fiscalTotals?.cbsValue ?? 0;
 
+    const invoiceFound = await Invoice.findOne({
+      where: { id_system: String(nf.id) },
+    });
+
     const [invoice] = await Invoice.upsert(
       {
         id_system: String(nf.id),
@@ -1154,7 +1158,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         transporter_id: transporter?.id ?? null,
         transporter_document: transporter_document ?? null,
         transporter_name: transporter_name ?? null,
-        description: nfeRef ? `REF: ${nfeRef}` : null,
+        description: invoiceFound?.description ? invoiceFound.description : `REF: ${nfeRef}`,
         // CORREÇÃO 2: campos fiscais populados
         invoice_value: invoiceValue,
         invoice_products_value: invoiceProductsValue,
@@ -1530,6 +1534,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
     const conflictFields = chaveAcesso ? ["xml_key"] : ["id_system"];
 
+    const invoiceFound = await Invoice.findOne({
+      where: { xml_key: chaveAcesso },
+    });
+
+
     const [invoice] = await Invoice.upsert(
       {
         ...(existingInvoice ? {} : { id_system: idSystem }),
@@ -1552,7 +1561,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         transporter_id: transporter?.id ?? null,
         transporter_document: transporterDocument,
         transporter_name: transporterName,
-        description: nfeRef ? `REF: ${nfeRef}` : null,
+        description: invoiceFound?.description ? invoiceFound.description : `REF: ${nfeRef}`,
         // CORREÇÃO 1: UF/cidade do XML
         destination_uf: destinationUf,
         destination_city: destinationCity,
