@@ -4,6 +4,8 @@ import ExpeditionBatch from "./batch.model";
 import ExpeditionBatchService from "./batch.service";
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
+import User from "../../users/users/user.model";
+import UnitBusiness from "../../unit-business/unit-business.model";
 
 export class ExpeditionBatchController extends BaseController<
   ExpeditionBatch,
@@ -15,98 +17,148 @@ export class ExpeditionBatchController extends BaseController<
   }
 
   protected middlewaresFor() {
-      return {
-        index: [authenticate, userPermissions],
-        create: [authenticate, userPermissions],
-        update: [authenticate, userPermissions],
-        show: [authenticate, userPermissions],
-        destroy: [authenticate, userPermissions],
-        generateBatchesFromInvoices: [authenticate, userPermissions],
-        getBatchesByInvoice: [authenticate, userPermissions],
-        getBatches: [authenticate, userPermissions],
-        getFullBatch: [authenticate, userPermissions],
-        addInvoiceToBatch: [authenticate, userPermissions],
-        addInvoicesToBatch: [authenticate, userPermissions],
-        finishBatch: [authenticate, userPermissions],
-        getMultiplierScan: [authenticate, userPermissions],
-        generateDeliveryNote: [authenticate, userPermissions],
-        downloadDeliveryNotes: [authenticate, userPermissions],
-        isComplete: [authenticate, userPermissions]
-      };
-    }
+    return {
+      index: [authenticate, userPermissions],
+      create: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
+      show: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
+      generateBatchesFromInvoices: [authenticate, userPermissions],
+      getBatchesByInvoice: [authenticate, userPermissions],
+      getBatches: [authenticate, userPermissions],
+      getFullBatch: [authenticate, userPermissions],
+      addInvoiceToBatch: [authenticate, userPermissions],
+      addInvoicesToBatch: [authenticate, userPermissions],
+      finishBatch: [authenticate, userPermissions],
+      getMultiplierScan: [authenticate, userPermissions],
+      generateDeliveryNote: [authenticate, userPermissions],
+      downloadDeliveryNotes: [authenticate, userPermissions],
+      isComplete: [authenticate, userPermissions],
+    };
+  }
 
   private registerCustomRoutes(): void {
     // POST /expedition-batches/generate-from-invoices
-    this.router.post("/generate-from-invoices",  ...this.mw("generateBatchesFromInvoices"), (req, res) =>
-      this.generateBatchesFromInvoices(req, res),
+    this.router.post(
+      "/generate-from-invoices",
+      ...this.mw("generateBatchesFromInvoices"),
+      (req, res) => this.generateBatchesFromInvoices(req, res),
     );
 
-    this.router.get("/by-invoices/get", ...this.mw("getBatchesByInvoice"), this.getBatchesByInvoice);
-    this.router.get("/by-ids/get", ...this.mw("getBatches"), this.getBatches)
+    this.router.get(
+      "/by-invoices/get",
+      ...this.mw("getBatchesByInvoice"),
+      this.getBatchesByInvoice,
+    );
+    this.router.get("/by-ids/get", ...this.mw("getBatches"), this.getBatches);
 
-    this.router.get("/full/get", ...this.mw("getFullBatch"), this.getFullBatch)
+    this.router.get("/full/get", ...this.mw("getFullBatch"), this.getFullBatch);
 
-    this.router.get("/delivery-note/get", ...this.mw("generateDeliveryNote"), this.generateDeliveryNote)
+    this.router.get(
+      "/delivery-note/get",
+      ...this.mw("generateDeliveryNote"),
+      this.generateDeliveryNote,
+    );
 
-    this.router.get("/delivery-notes/get", ...this.mw("downloadDeliveryNotes"), this.downloadDeliveryNotes)
+    this.router.get(
+      "/delivery-notes/get",
+      ...this.mw("downloadDeliveryNotes"),
+      this.downloadDeliveryNotes,
+    );
 
-    this.router.post("/add-invoice", ...this.mw("addInvoiceToBatch"), (req, res) => this.addInvoiceToBatch(req, res))
+    this.router.post(
+      "/add-invoice",
+      ...this.mw("addInvoiceToBatch"),
+      (req, res) => this.addInvoiceToBatch(req, res),
+    );
 
-    this.router.post("/add-invoices", ...this.mw("addInvoicesToBatch"), (req, res) => this.addInvoicesToBatch(req, res))
+    this.router.post(
+      "/add-invoices",
+      ...this.mw("addInvoicesToBatch"),
+      (req, res) => this.addInvoicesToBatch(req, res),
+    );
 
-    this.router.put("/finish/:batchId", ...this.mw("finishBatch"), (req, res) => this.finishBatch(req, res))
-    
-    this.router.get("/is-complete/:batchId", ...this.mw("isComplete"), (req, res) => this.isComplete(req, res))
+    this.router.put("/finish/:batchId", ...this.mw("finishBatch"), (req, res) =>
+      this.finishBatch(req, res),
+    );
 
+    this.router.get(
+      "/is-complete/:batchId",
+      ...this.mw("isComplete"),
+      (req, res) => this.isComplete(req, res),
+    );
 
-    this.router.get("/multiplier-scan-entrance/get", ...this.mw("getMultiplierScan"), (req, res) => this.getMultiplierScan(req, res))
-
+    this.router.get(
+      "/multiplier-scan-entrance/get",
+      ...this.mw("getMultiplierScan"),
+      (req, res) => this.getMultiplierScan(req, res),
+    );
   }
 
   /**
    * POST /expedition-batches/generate-from-invoices
    * Body: { invoiceIds: string[] }
    */
-  generateBatchesFromInvoices = async (req: Request, res: Response): Promise<Response> => {
-  try {
-    const { invoiceIds, unitBusinessId, type, mode } = req.body;
-    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
-      return res.status(400).json({ error: "Informe ao menos uma nota fiscal" });
-    }
-
-    const batches = await ExpeditionBatchService.generateBatchFromInvoices(invoiceIds, unitBusinessId, type, mode);
-    return res.status(201).json(batches);
-  } catch (error: any) {
-    console.error('ERRO DETALHADO:', JSON.stringify(error, null, 2))  // <- adiciona isso
-    console.error('ERRORS ARRAY:', error?.errors)                      // <- e isso
-    return res.status(500).json({ error: error.message, details: error?.errors });
-  }
-};
-
-    addInvoiceToBatch = async (
+  generateBatchesFromInvoices = async (
     req: Request,
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoiceKey, unitBusinessId , type, batchId } = req.body;
-    
-      const batches =
-        await ExpeditionBatchService.addInvoiceToBatch(invoiceKey, unitBusinessId, type, batchId);
+      const { invoiceIds, unitBusinessId, type, mode } = req.body;
+      if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+        return res
+          .status(400)
+          .json({ error: "Informe ao menos uma nota fiscal" });
+      }
+
+      const batches = await ExpeditionBatchService.generateBatchFromInvoices(
+        invoiceIds,
+        unitBusinessId,
+        type,
+        mode,
+      );
+      return res.status(201).json(batches);
+    } catch (error: any) {
+      console.error("ERRO DETALHADO:", JSON.stringify(error, null, 2)); // <- adiciona isso
+      console.error("ERRORS ARRAY:", error?.errors); // <- e isso
+      return res
+        .status(500)
+        .json({ error: error.message, details: error?.errors });
+    }
+  };
+
+  addInvoiceToBatch = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const { invoiceKey, unitBusinessId, type, batchId } = req.body;
+
+      const batches = await ExpeditionBatchService.addInvoiceToBatch(
+        invoiceKey,
+        unitBusinessId,
+        type,
+        batchId,
+      );
       return res.status(201).json(batches);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
   };
 
-      addInvoicesToBatch = async (
+  addInvoicesToBatch = async (
     req: Request,
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoicesKey, unitBusinessId , type, batchId } = req.body;
-    
-      const batches =
-        await ExpeditionBatchService.addInvoicesToBatch(invoicesKey, unitBusinessId, type, batchId);
+      const { invoicesKey, unitBusinessId, type, batchId } = req.body;
+
+      const batches = await ExpeditionBatchService.addInvoicesToBatch(
+        invoicesKey,
+        unitBusinessId,
+        type,
+        batchId,
+      );
       return res.status(201).json(batches);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
@@ -140,10 +192,7 @@ export class ExpeditionBatchController extends BaseController<
     }
   };
 
-  getBatches = async (
-    req: Request,
-    res: Response,
-  ): Promise<Response> => {
+  getBatches = async (req: Request, res: Response): Promise<Response> => {
     try {
       let ids: string[] = [];
 
@@ -169,69 +218,95 @@ export class ExpeditionBatchController extends BaseController<
 
   getFullBatch = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { batchId, number } = req.query
+      const { batchId, number } = req.query;
 
-      const fullBatch = await this.service.findByIdFullBatch(batchId as string ?? '', number as string ?? '')
+      const fullBatch = await this.service.findByIdFullBatch(
+        (batchId as string) ?? "",
+        (number as string) ?? "",
+      );
 
       return res.json(fullBatch);
-
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
   };
 
-    isComplete = async (req: Request, res: Response): Promise<Response> => {
+  isComplete = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { batchId } = req.params
-      console.log(batchId)
-      const response = await this.service.isComplete(batchId as string)
+      const { batchId } = req.params;
+      console.log(batchId);
+      const response = await this.service.isComplete(batchId as string);
 
       return res.json(response);
-
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
   };
 
-  generateDeliveryNote = async (req: Request, res: Response): Promise<Response> => {
+  generateDeliveryNote = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
     try {
-      const { batchId, userId } = req.query
+      const { batchId, userId } = req.query;
 
-      const fullBatch = await this.service.generateDeliveryNote(batchId as string, userId as string)
+      const fullBatch = await this.service.generateDeliveryNote(
+        batchId as string,
+        userId as string,
+      );
 
       return res.json(fullBatch);
-
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
-  }
+  };
 
-    downloadDeliveryNotes = async (req: Request, res: Response): Promise<Response> => {
+  downloadDeliveryNotes = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
     try {
-      const { batchIds } = req.query
+      const { batchIds } = req.query;
 
-      const fullBatch = await this.service.downloadDeliveryNotes(batchIds as string[])
+      const fullBatch = await this.service.downloadDeliveryNotes(
+        batchIds as string[],
+      );
 
       return res.json(fullBatch);
-
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
-  }
-  
+  };
+
   finishBatch = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { batchId } = req.params
-      const { justification } = req.body
+      const { batchId } = req.params;
+      const { justification } = req.body;
+      const userId = (req as any).user?.id;
+      if (!userId) {
+        return res.status(401).json({ error: "Usuário não autenticado" });
+      }
 
-      await this.service.finishBatch(batchId as string, justification)
+      const user = await User.findByPk(userId, {
+        include: [{ model: UnitBusiness, as: "unitBusiness" }],
+      });
 
-      return res.json('Lote finalizado com sucesso!');
+      if (!user?.unitBusiness?.integrations_id) {
+        return res
+          .status(400)
+          .json({
+            error:
+              "Unidade de negócio ou integração não encontrada para o usuário",
+          });
+      }
 
+      await this.service.finishBatch(batchId as string, justification, user);
+
+      return res.json("Lote finalizado com sucesso!");
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
-  }
+  };
 
   getMultiplierScan(req: Request, res: Response) {
     return res.json(true);
