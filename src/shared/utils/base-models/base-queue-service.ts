@@ -95,13 +95,23 @@ export abstract class BaseQueueService<T> {
 
       this.worker.on("failed", (job, err) => {
         console.error(`[QUEUE] Job ${job?.id} falhou:`, err.message);
+        if (job) {
+          try {
+            this.onFailed(job, err);
+          } catch (hookError: any) {
+            console.error(
+              `[QUEUE] Erro ao executar onFailed para job ${job.id}:`,
+              hookError.message,
+            );
+          }
+        }
       });
     }
   }
 
   abstract process(job: Job<T>): Promise<void>;
 
- private async processWithSharedLock(
+  private async processWithSharedLock(
     job: Job<T>,
     sharedLock: NonNullable<baseQueueOptions["sharedLock"]>,
   ): Promise<void> {
@@ -160,9 +170,25 @@ export abstract class BaseQueueService<T> {
     } finally {
       clearInterval(workerLockInterval);
       clearInterval(sharedLockInterval);
-      await this.releaseSharedLock(sharedLock.key, token);
+
+      try {
+        await this.releaseSharedLock(sharedLock.key, token);
+      } catch (error: any) {
+        console.error(
+          `[QUEUE] Falha ao liberar lock compartilhado ${sharedLock.key}:`,
+          error.message,
+        );
+      }
+
       if (priorityTicket) {
-        await this.releaseSharedLockPriorityTicket(priorityTicket);
+        try {
+          await this.releaseSharedLockPriorityTicket(priorityTicket);
+        } catch (error: any) {
+          console.error(
+            `[QUEUE] Falha ao liberar ticket de prioridade ${priorityTicket.ticketKey}:`,
+            error.message,
+          );
+        }
       }
     }
   }
@@ -174,7 +200,18 @@ export abstract class BaseQueueService<T> {
     retryDelayMs: number,
     priorityTicket?: SharedLockPriorityTicket,
   ): Promise<void> {
+    const maxWaitMs =
+      (sharedLock as any).maxWaitMs ??
+      Math.max(this.workerLockDuration - 30_000, 60_000);
+    const startedAt = Date.now();
+
     while (true) {
+      if (Date.now() - startedAt > maxWaitMs) {
+        throw new Error(
+          `[QUEUE] Timeout aguardando lock compartilhado "${sharedLock.key}" (esperou ${Date.now() - startedAt}ms)`,
+        );
+      }
+
       if (priorityTicket) {
         await this.cleanupSharedLockPriorityQueue(priorityTicket.waitKey);
         const isNext =
