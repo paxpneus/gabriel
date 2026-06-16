@@ -426,7 +426,7 @@ export class TCarConferenciaPostService {
       TPNEG_CODIGO: chave.tpneg_codigo,
       NTZ_CODIGO: chave.ntz_codigo,
       OPR_CODIGO: chave.opr_codigo,
-      EPENF_SERIE: chave.serie,
+      EPENF_SERIE: chave.epenf_serie,
     };
   }
 }
