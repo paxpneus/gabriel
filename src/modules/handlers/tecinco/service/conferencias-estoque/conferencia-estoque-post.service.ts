@@ -5,10 +5,12 @@ import ExpeditionBatch from "../../../../warehouse/expedition/batch/batch.model"
 import ExpeditionBatchInvoice from "../../../../warehouse/expedition/batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../../../../warehouse/expedition/batch-items/batch-items.model";
 import {
-  TCarConferenciaEstoqueService,
+  // TCarConferenciaEstoqueService,
   TCarConferenciaTipo,
+  TCarNotaFiscalQueryParams,
 } from "../../../../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
 import { Product, ProductConfig } from "../../../../inventory";
+import { TCarConferenciaEstoqueServiceMock as TCarConferenciaEstoqueService } from "./conferencias-estoque.mock";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -57,6 +59,7 @@ export interface TCarConferenciaVerificacaoResult {
     produto_codigo: string;
     qtde_conferida: number;
   }>;
+  extraParams: Partial<TCarNotaFiscalQueryParams>;
 }
 
 export interface TCarConferenciaPostResult {
@@ -116,7 +119,6 @@ export class TCarConferenciaPostService {
     branchId: number,
     tipo: TCarConferenciaTipo = "nota-fiscal",
   ): Promise<TCarConferenciaVerificacaoResult> {
-    // ── 1. Carrega a Invoice ──────────────────────────────────────────────────
     const invoice = await Invoice.findByPk(invoiceId, {
       attributes: ["id", "number_system"],
     });
@@ -135,11 +137,17 @@ export class TCarConferenciaPostService {
       );
     }
 
-    // ── 2. Carrega documento na Tecinco ───────────────────────────────────────
+    // ── Resolve extra params da Tecinco (obrigatórios para nota-fiscal) ────────
+    const extraParams =
+      tipo === "nota-fiscal"
+        ? await this.resolveExtraParams(branchId, numero)
+        : {};
+
     const documento = await this.conferenciaService.carregarDocumento(
       branchId,
       tipo,
       numero,
+      extraParams,
     );
 
     const itensTecinco: Array<{
@@ -155,6 +163,7 @@ export class TCarConferenciaPostService {
         sincronizado: true,
         itens: [],
         itens_a_conferir: [],
+        extraParams,
       };
     }
 
@@ -225,6 +234,7 @@ export class TCarConferenciaPostService {
       sincronizado,
       itens,
       itens_a_conferir,
+      extraParams,
     };
   }
 
@@ -278,6 +288,7 @@ export class TCarConferenciaPostService {
         usuario_id: userId,
         itens: itens_a_conferir,
       },
+      verificacao.extraParams,
     );
 
     console.log(
@@ -370,6 +381,7 @@ export class TCarConferenciaPostService {
         tipo,
         numero,
         { usuario_id: userId, itens: itens_a_conferir },
+        verificacao.extraParams,
       );
 
       console.log(
@@ -385,6 +397,37 @@ export class TCarConferenciaPostService {
     }
 
     return results;
+  }
+
+  private async resolveExtraParams(
+    branchId: number,
+    numero: string,
+  ): Promise<TCarNotaFiscalQueryParams> {
+    const resultado = await this.conferenciaService.listarNotasFiscais(
+      branchId,
+      {
+        nota: numero,
+        entrada_saida: "S", // expedição = saída
+      },
+    );
+
+    const nf = resultado?.data?.[0];
+
+    if (!nf) {
+      throw new Error(
+        `[TCarConferenciaPostService] NF não encontrada na Tecinco | numero=${numero} | branchId=${branchId}`,
+      );
+    }
+
+    const chave = nf.chave;
+
+    return {
+      CLN_CODIGO: chave.cln_codigo,
+      TPNEG_CODIGO: chave.tpneg_codigo,
+      NTZ_CODIGO: chave.ntz_codigo,
+      OPR_CODIGO: chave.opr_codigo,
+      EPENF_SERIE: chave.epenf_serie,
+    };
   }
 }
 

@@ -16,6 +16,7 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   public role_id!: string;
   public email!: string;
   public password!: string;
+  public id_system?: number | null;
   public config?: UserConfig;
   public role?: Role;
   public availableUnitBusinesses?: UnitBusiness[]
@@ -33,6 +34,10 @@ User.init(
       primaryKey: true,
       allowNull: false,
     },
+    id_system: {
+  type: DataTypes.INTEGER,
+  allowNull: true,
+},
     name: {
       type: DataTypes.STRING(255),
       allowNull: false,

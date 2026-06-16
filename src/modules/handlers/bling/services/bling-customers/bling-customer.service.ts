@@ -11,45 +11,43 @@ export class BlingCustomerService {
     this.blingApi = blingApi;
   }
 
+  async updateCustomer(contato: any) {
+    // Busca dados completos do contato na Bling
 
-  
-   async updateCustomer(contato: any) {
-  // Busca dados completos do contato na Bling
+    const customer = await customersService.findOne({
+      where: {
+        document: cleanDocument(contato.numeroDocumento),
+      },
+    });
 
-
-  const customer = await customersService.findOne({
-    where: {
-      document: cleanDocument(contato.numeroDocumento),
-      name: contato.nome
+    if (!customer) {
+      console.log(
+        `[BlingCustomerService] Cliente ${contato.nome} não encontrado para atualizar, criando...`,
+      );
+      return await this.getOrCreateCustomer(contato);
     }
-  })
 
-  if (!customer) {
-    console.log(`[BlingCustomerService] Cliente ${contato.nome} não encontrado para atualizar, criando...`)
-    return await this.getOrCreateCustomer(contato)
-  }
-
-  await customersService.update(
-    customer.id,
-    {
+    await customersService.update(customer.id, {
       name: contato.nome,
       type: contato.tipoPessoa,
       document: contato.numeroDocumento,
-    },
-  )
+    });
 
-  console.log(`[BlingCustomerService] Cliente ${contato.nome} atualizado com sucesso`)
-  return customer
-}
+    console.log(
+      `[BlingCustomerService] Cliente ${contato.nome} atualizado com sucesso`,
+    );
+    return customer;
+  }
 
-   // Método para gerenciar a existência do cliente
-   
+  // Método para gerenciar a existência do cliente
+
   async getOrCreateCustomer(contato: any) {
     // Tenta encontrar o cliente existente
+    const document = cleanDocument(contato.numeroDocumento);
+
     let customer = await customersService.findOne({
       where: {
-        name: contato.nome,
-        document: cleanDocument(contato.numeroDocumento),
+        document,
       },
     });
 
@@ -61,11 +59,19 @@ export class BlingCustomerService {
         document: cleanDocument(contato.numeroDocumento),
       };
 
-      customer = await customersService.create(customerPayload);
+      try {
+        customer = await customersService.create(customerPayload);
+      } catch (err: any) {
+        if (err?.name === "SequelizeUniqueConstraintError") {
+          customer = await customersService.findOne({ where: { document } });
+          if (customer) return customer;
+        }
+        throw err;
+      }
     }
 
     return customer;
   }
 }
 
-export default BlingCustomerService
+export default BlingCustomerService;
