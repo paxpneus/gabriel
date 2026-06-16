@@ -45,7 +45,6 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
     try {
       switch (directUpsert.table) {
-
         case "stocks":
           await this.upsertStock(directUpsert.data);
           break;
@@ -158,6 +157,17 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
     const newQuantity = data.quantity;
 
+    if (data.quantity < 0) {
+      alertService.sendAlert({
+        severity: "CRITICAL",
+        title: "Estoque negativo",
+        message: `Estoque bling negativo para o produto ${product.name}`,
+      });
+      throw new Error(
+        "[BLING_DIRECT_UPSERT] Stock com quantidade negativa, mandando alerta!",
+      );
+    }
+
     const existingStock = await Stock.findOne({
       where: { product_id: product.id, unit_business_id: unitBusiness.id },
     });
@@ -201,7 +211,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       },
       { conflictFields: ["product_id", "unit_business_id"] },
     );
-    
+
     await Stock.upsert(
       {
         product_id: product.id,
@@ -211,6 +221,22 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       },
       { conflictFields: ["product_id", "unit_business_id"] },
     );
+
+    const savedStock = await Stock.findOne({
+      where: { product_id: product.id, unit_business_id: unitBusiness.id },
+    });
+
+    if (savedStock && Number(savedStock.quantity) < 0) {
+      alertService.sendAlert({
+        severity: "CRITICAL",
+        title: "Estoque negativo após upsert",
+        message: `Produto: ${product.name} | Qty no banco: ${savedStock.quantity}`,
+      });
+
+      throw new Error(
+        "[BLING_DIRECT_UPSERT] Stock com quantidade negativa, mandando alerta!",
+      );
+    }
 
     console.log(
       `[BLING_DIRECT_UPSERT] Stock upsertado: ean=${product.ean} | qty=${newQuantity} | entry_cost=${entryUnitCost.toFixed(4)} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
@@ -356,7 +382,6 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
   private async handleDelete(resource: string, blingId: number): Promise<void> {
     switch (resource) {
-
       case "product_supplier": {
         console.warn(
           `[BLING_DIRECT_UPSERT] Delete de product_supplier blingId=${blingId} — sem chave direta. Ignorado.`,
