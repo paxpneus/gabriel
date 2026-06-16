@@ -217,7 +217,7 @@ export class BlingOrderService {
       }
 
       await ordersService.update(existingOrder.id, {
-        unit_business_id: unitBusinessId, // ← preenche retroativamente
+        unit_business_id: unitBusinessId,
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
         totalPrice: Number(orderData.total),
