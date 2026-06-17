@@ -9,8 +9,8 @@ import {
   TCarConferenciaTipo,
   TCarNotaFiscalQueryParams,
 } from "../../../../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
-import { Product, ProductConfig } from "../../../../inventory";
-import { TCarConferenciaEstoqueServiceMock as TCarConferenciaEstoqueService } from "./conferencias-estoque.mock";
+import { Product, ProductConfig, SupplierMapping } from "../../../../inventory";
+import { TCarConferenciaEstoqueService } from "./conferencias-estoque.service";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -78,16 +78,30 @@ export interface TCarConferenciaPostResult {
 async function findSkuByProductId(
   productId: string,
   unitBusinessId: string,
+  tecincoCodigosValidos: Set<string>,
 ): Promise<string | null> {
+  // 1. ProductConfig — sku é o epctb_codigo da Tecinco
   const config = await ProductConfig.findOne({
     where: { product_id: productId, unit_business_id: unitBusinessId },
   });
-  if (config?.sku) return config.sku;
+  if (config?.sku && tecincoCodigosValidos.has(config.sku)) return config.sku;
 
-  const product = await Product.findByPk(productId, {
-    attributes: ["ean"],
+  // 2. SupplierMapping — pega o que bate com algum item da Tecinco
+  const mappings = await SupplierMapping.findAll({
+    where: { product_id: productId },
   });
-  return product?.ean ?? null;
+  for (const m of mappings) {
+    if (tecincoCodigosValidos.has(m.supplier_product_code)) {
+      return m.supplier_product_code;
+    }
+  }
+
+  // 3. EAN como último fallback
+  const product = await Product.findByPk(productId, { attributes: ["ean"] });
+  if (product?.ean && tecincoCodigosValidos.has(product.ean))
+    return product.ean;
+
+  return null;
 }
 
 // ─── Service ───────────────────────────────────────────────────────────────────
@@ -156,6 +170,8 @@ export class TCarConferenciaPostService {
       qtde_solicitada: number;
       qtde_conferida: number;
     }> = documento?.itens ?? [];
+    console.log("[DEBUG] documento raw:", JSON.stringify(documento, null, 2));
+    console.log("[DEBUG] itensTecinco:", itensTecinco);
 
     if (!itensTecinco.length) {
       return {
@@ -175,18 +191,27 @@ export class TCarConferenciaPostService {
     // ── 4. Monta mapa SKU → quantity_scanned a partir dos BatchItems ──────────
     // Resolve o SKU de cada BatchItem via ProductConfig da unidade / EAN.
     const scannedBySku = new Map<string, number>();
+    const tecincoCodigosValidos = new Set(
+      itensTecinco.map((i) => i.produto_codigo),
+    );
 
     for (const bi of batchItems) {
-      const sku = await findSkuByProductId(bi.product_id, unitBusiness.id);
+      const sku = await findSkuByProductId(
+        bi.product_id,
+        unitBusiness.id,
+        tecincoCodigosValidos,
+      );
       if (!sku) {
         console.warn(
-          `[TCarConferenciaPostService] SKU não resolvido | product_id=${bi.product_id} | unit_business=${unitBusiness.id}`,
+          `[TCarConferenciaPostService] Código Tecinco não resolvido | product_id=${bi.product_id} | unit_business=${unitBusiness.id}`,
         );
         continue;
       }
-      // Soma caso o mesmo SKU apareça em mais de um BatchItem (edge case)
       scannedBySku.set(sku, (scannedBySku.get(sku) ?? 0) + bi.quantity_scanned);
     }
+    console.log("[DEBUG] batchItems count:", batchItems.length);
+    console.log("[DEBUG] scannedBySku:", Object.fromEntries(scannedBySku));
+    console.log("[DEBUG] tecincoCodigosValidos:", [...tecincoCodigosValidos]);
 
     // ── 5. Compara item a item (usando os itens da Tecinco como referência) ───
     const itens: TCarConferenciaItemDiff[] = [];
@@ -407,7 +432,7 @@ export class TCarConferenciaPostService {
       branchId,
       {
         nota: numero,
-        entrada_saida: "S", // expedição = saída
+        entrada_saida: "E", // expedição = saída
       },
     );
 
@@ -426,7 +451,7 @@ export class TCarConferenciaPostService {
       TPNEG_CODIGO: chave.tpneg_codigo,
       NTZ_CODIGO: chave.ntz_codigo,
       OPR_CODIGO: chave.opr_codigo,
-      EPENF_SERIE: chave.epenf_serie,
+      EPENF_SERIE: chave.serie,
     };
   }
 }

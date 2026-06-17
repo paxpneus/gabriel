@@ -24,7 +24,7 @@ export interface QueryConfig {
   stringFields?: string[];
   customFields?: Record<string, CustomFieldResolver>;
   defaults?: {
-    page?: number;
+    offset?: number;
     perPage?: number;
     sortBy?: string | string[];          
     sortDir?: "ASC" | "DESC" | ("ASC" | "DESC")[]; 

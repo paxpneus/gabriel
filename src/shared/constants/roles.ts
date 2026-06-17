@@ -128,7 +128,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Unidades de Negócio',
     entity: 'unit_businesses',
-    route: 'unit_business',
+    route: 'unit-business',
     type: 'REGULAR',
     permissions: all,
   },
