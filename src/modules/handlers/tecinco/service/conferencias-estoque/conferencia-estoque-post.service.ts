@@ -11,6 +11,7 @@ import {
 } from "../../../../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
 import { Product, ProductConfig, SupplierMapping } from "../../../../inventory";
 import { TCarConferenciaEstoqueService } from "./conferencias-estoque.service";
+import { cleanDocument } from "../../../../../shared/utils/normalizers/document";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,23 @@ async function findSkuByProductId(
   return null;
 }
 
+function notaPertenceAFilial(
+  invoice: {
+    type: "INCOMING" | "OUTGOING";
+    sender_cnpj: string;
+    receiver_cnpj: string;
+  },
+  unitBusiness: TCarConferenciaUnitBusiness,
+): boolean {
+  const cnpjFilial = cleanDocument(unitBusiness.cnpj);
+  const cnpjRelevante =
+    invoice.type === "OUTGOING"
+      ? cleanDocument(invoice.sender_cnpj)
+      : cleanDocument(invoice.receiver_cnpj);
+
+  return cnpjRelevante === cnpjFilial;
+}
+
 // ─── Service ───────────────────────────────────────────────────────────────────
 
 export class TCarConferenciaPostService {
@@ -134,7 +152,7 @@ export class TCarConferenciaPostService {
     tipo: TCarConferenciaTipo = "nota-fiscal",
   ): Promise<TCarConferenciaVerificacaoResult> {
     const invoice = await Invoice.findByPk(invoiceId, {
-      attributes: ["id", "number_system"],
+      attributes: ["id", "number_system", "type", "sender_cnpj", "receiver_cnpj"],
     });
 
     if (!invoice) {
@@ -149,6 +167,19 @@ export class TCarConferenciaPostService {
       throw new Error(
         `[TCarConferenciaPostService] Invoice ${invoiceId} sem number_system`,
       );
+    }
+
+    if (!notaPertenceAFilial(invoice, unitBusiness)) {
+      console.warn(
+        `[TCarConferenciaPostService] Invoice ignorada — não pertence à filial | invoice=${invoiceId} | numero=${numero} | type=${invoice.type} | sender_cnpj=${invoice.sender_cnpj} | receiver_cnpj=${invoice.receiver_cnpj} | unit_business_cnpj=${unitBusiness.cnpj}`,
+      );
+      return {
+        numero,
+        sincronizado: true,
+        itens: [],
+        itens_a_conferir: [],
+        extraParams: {},
+      };
     }
 
     // ── Resolve extra params da Tecinco (obrigatórios para nota-fiscal) ────────
@@ -345,6 +376,7 @@ export class TCarConferenciaPostService {
     userId: number,
     tipo: TCarConferenciaTipo = "nota-fiscal",
   ): Promise<TCarConferenciaPostResult[]> {
+    console.log("ENVIANDO CONFERENCIA PARA TECINCO")
     const batchInvoices = (await ExpeditionBatchInvoice.findAll({
       where: { expedition_batch_id: batchId },
       include: [
