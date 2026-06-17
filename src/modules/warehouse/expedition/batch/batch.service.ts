@@ -80,6 +80,27 @@ export class ExpeditionBatchService extends BaseService<
     return false;
   }
 
+  // ── Garante que a nota pertença à unidade de negócio, salvo se transbordo for permitido ──
+  private assertTransshipment(
+    invoice: { sender_cnpj: string | null; receiver_cnpj: string | null },
+    unitBusiness: { cnpj: string; transshipment_allowed?: boolean } | null,
+  ): void {
+    if (!unitBusiness || unitBusiness.transshipment_allowed) return;
+
+    const normalize = (cnpj: string | null) => (cnpj ?? "").replace(/\D/g, "");
+    const unitCnpj = normalize(unitBusiness.cnpj);
+
+    const allowed =
+      normalize(invoice.sender_cnpj) === unitCnpj ||
+      normalize(invoice.receiver_cnpj) === unitCnpj;
+
+    if (!allowed) {
+      throw new Error(
+        "Leitura bloqueada: nota fiscal não pertence à sua unidade de negócio",
+      );
+    }
+  }
+
   async generateBatchFromInvoices(
     invoiceIds: string[],
     unitBusinessId: string,
@@ -120,6 +141,13 @@ export class ExpeditionBatchService extends BaseService<
         throw new Error("Nenhuma nota encontrada");
       }
 
+      const unitBusiness = await UnitBusiness.findOne({
+        where: {
+          id: unitBusinessId,
+        },
+        transaction: t,
+      });
+
       const alreadyBatched = invoices.filter((i) => i.batch_generated);
       const notBatched = invoices.filter((i) => !i.batch_generated);
 
@@ -148,17 +176,16 @@ export class ExpeditionBatchService extends BaseService<
         )) as ExpeditionBatch;
       }
 
+      for (const invoice of notBatched) {
+        this.assertTransshipment(invoice, unitBusiness);
+      }
+
       const batchNumber = `LOTE-${Date.now()}-${Math.random()
         .toString(36)
         .substring(2, 6)
         .toUpperCase()}`;
 
       const batchType = type == "OUTGOING" ? "EXPEDITION" : "ENTRANCE";
-      const unitBusiness = await UnitBusiness.findOne({
-        where: {
-          id: unitBusinessId,
-        },
-      });
 
       let transporter;
       if (invoices[0].transporter_id) {
@@ -271,6 +298,15 @@ export class ExpeditionBatchService extends BaseService<
       if (!(invoice as any).items?.length)
         throw new Error("Nota não possui itens");
 
+      const unitBusiness = await UnitBusiness.findOne({
+        where: {
+          id: unitBusinessId,
+        },
+        transaction: t,
+      });
+
+      this.assertTransshipment(invoice, unitBusiness);
+
       const alreadyInBatch = await ExpeditionBatchInvoice.findOne({
         where: { invoice_id: invoice.id },
 
@@ -313,12 +349,6 @@ export class ExpeditionBatchService extends BaseService<
           );
         }
       } else {
-        const unitBusiness = await UnitBusiness.findOne({
-          where: {
-            id: unitBusinessId,
-          },
-        });
-
         let transporter;
 
         if (invoice.transporter_id) {
@@ -421,6 +451,11 @@ export class ExpeditionBatchService extends BaseService<
     await sequelize.transaction(async (t) => {
       let batch: ExpeditionBatch;
 
+      const unitBusiness = await UnitBusiness.findOne({
+        where: { id: unitBusinessId },
+        transaction: t,
+      });
+
       // ── Resolve ou cria o lote uma única vez ──────────────────────
       if (batchId) {
         const found = await ExpeditionBatch.findByPk(batchId, {
@@ -431,15 +466,13 @@ export class ExpeditionBatchService extends BaseService<
         if (found.status === "FINISHED") throw new Error("Lote já finalizado");
         batch = found;
       } else {
-        const unitBusiness = await UnitBusiness.findOne({
-          where: { id: unitBusinessId },
-        });
         let transporter;
 
         const firstInvoice = await Invoice.findOne({
           where: {
             xml_key: chavesAcesso[0],
           },
+          transaction: t,
         });
 
         if (firstInvoice?.transporter_id) {
@@ -483,6 +516,8 @@ export class ExpeditionBatchService extends BaseService<
           throw new Error(`Nota não encontrada para a chave: ${chaveAcesso}`);
         if (!(invoice as any).items?.length)
           throw new Error(`Nota ${chaveAcesso} não possui itens`);
+
+        this.assertTransshipment(invoice, unitBusiness);
 
         if (
           batch.mode === "REGULAR" &&
