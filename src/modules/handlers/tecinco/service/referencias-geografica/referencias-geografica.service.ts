@@ -27,7 +27,7 @@ export class TCarReferenciaGeograficaService {
    */
   async listarCidades(
     branchId: number,
-    params: { uf?: string; nome?: string; alterado_desde?: string; page?: number; page_size?: number } = {},
+    params: { uf?: string; nome?: string; alterado_desde?: string; limit?: number; offset?: number; page_size?: number } = {},
   ): Promise<any> {
     return tcarRequest(branchId, (api) =>
       api.get("/cidades", { params }).then((r) => r.data),

@@ -14,7 +14,8 @@ export class TCarProdutoService {
       codigo?: string;
       grupo?: string;
       alterado_desde?: string;
-      page?: number;
+      offset?: number;
+      limit?: number;
       page_size?: number;
     } = {},
   ): Promise<any> {
@@ -42,7 +43,7 @@ export class TCarProdutoService {
   async listarServicos(
     branchId: number,
     attmaId: string,
-    params: { alterado_desde?: string; page?: number; page_size?: number } = {},
+    params: { alterado_desde?: string; offset?: number; page_size?: number } = {},
   ): Promise<any> {
     return tcarRequest(branchId, (api) =>
       api.get(`/servicos/${encodeURIComponent(attmaId)}`, { params }).then((r) => r.data),

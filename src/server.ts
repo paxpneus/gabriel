@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import app from './app'
 import sequelize from './config/sequelize'
-import { registerQueues } from './queues'
+import { registerQueues, startWorkers } from './queues'
 import { setupAssociations } from './config/sequelize-associations'
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -14,7 +14,7 @@ async function start(): Promise<void> {
 
 
     setupAssociations()
-    
+    startWorkers()
     registerQueues(app)
 
     app.listen(PORT, HOST, () => {

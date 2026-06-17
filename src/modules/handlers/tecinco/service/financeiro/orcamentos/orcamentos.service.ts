@@ -13,7 +13,8 @@ export class TCarOrcamentoService {
       status?: string;
       data_emissao_inicio?: string;
       data_emissao_fim?: string;
-      page?: number;
+      offset?: number;
+      limit?: number;
       page_size?: number;
     } = {},
   ): Promise<any> {

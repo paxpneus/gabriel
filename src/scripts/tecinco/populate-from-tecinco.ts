@@ -1,17 +1,6 @@
-import { TCarConferenciaEstoqueService } from "./../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
 /**
  * tecinco-migration.script.ts
- *
- * Script de migração inicial: busca todos os produtos e clientes da TeCinco
- * e enfileira na TCarUpsertQueue.
- *
- * Ordem:
- *   1. Produtos  (por filial)
- *   2. Clientes  (por filial)
- *
- * Uso:
- *   npx ts-node tecinco-migration.script.ts
- *   DRY_RUN=true npx ts-node tecinco-migration.script.ts
+ * ...
  */
 
 import { v4 as uuidv4 } from "uuid";
@@ -20,6 +9,7 @@ import { setupAssociations } from "../../config/sequelize-associations";
 import sequelize from "../../config/sequelize";
 import { TCarProdutoService } from "../../modules/handlers/tecinco/service/produtos/produtos.service";
 import TCarClienteService from "../../modules/handlers/tecinco/service/clientes/clientes.service";
+import { TCarConferenciaEstoqueService } from "./../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
 import {
   TCarUpsertQueue,
   TCarUpsertJobPayload,
@@ -36,7 +26,6 @@ async function bootstrap() {
 
 const DRY_RUN = process.env.DRY_RUN === "true";
 
-/** Filiais a migrar — adicione quantas precisar */
 const BRANCH_IDS: number[] = (process.env.TCAR_BRANCH_IDS ?? "1")
   .split(",")
   .map((s) => Number(s.trim()))
@@ -44,18 +33,17 @@ const BRANCH_IDS: number[] = (process.env.TCAR_BRANCH_IDS ?? "1")
 
 const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? "default";
 
-/** Tamanho de página (máximo que a TeCinco aceita — ajuste se necessário) */
-const PAGE_SIZE = Number(process.env.TCAR_PAGE_SIZE ?? 100);
+/** Limite fixo aceito pela TeCinco */
+const PAGE_SIZE = 50;
 
-const MAX_ITEMS = Number(process.env.TCAR_MAX_ITEMS ?? 50);
+const MAX_ITEMS = Number(process.env.TCAR_MAX_ITEMS ?? Infinity);
 
-/** Pausa entre páginas para não sobrecarregar a API (ms) */
+/** Pausa entre páginas (ms) */
 const PAGE_DELAY_MS = Number(process.env.TCAR_PAGE_DELAY_MS ?? 300);
 
-/** Intervalo de polling para aguardar fila esvaziar (ms) */
 const QUEUE_POLL_MS = 5_000;
 
-// ─── Fila (workless = só enfileira, não processa aqui) ────────────────────────
+// ─── Fila ─────────────────────────────────────────────────────────────────────
 
 const upsertQueue = new TCarUpsertQueue({ workless: true });
 
@@ -70,9 +58,8 @@ async function enqueue(payload: TCarUpsertJobPayload, jobId: string) {
     console.log(`[DRY_RUN] ${jobId}`);
     return;
   }
-  const job = await upsertQueue.add(payload, jobId, );
-  console.log(`enfileirado: ${job?.id ?? 'DUPLICADO/IGNORADO'}`);
-
+  const job = await upsertQueue.add(payload, jobId);
+  console.log(`enfileirado: ${job?.id ?? "DUPLICADO/IGNORADO"}`);
 }
 
 async function waitForQueueToDrain(label: string) {
@@ -82,45 +69,38 @@ async function waitForQueueToDrain(label: string) {
   }
 
   console.log(`\n⏳ Aguardando fila esvaziar após "${label}"...`);
-
   const queue: Queue = (upsertQueue as any).queue;
 
   while (true) {
     const counts = await queue.getJobCounts("active", "waiting", "delayed");
-    const total =
-      (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
-
+    const total = (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
     if (total === 0) break;
-
-    console.log(
-      `  ↻ Jobs pendentes: ${total} — checando em ${QUEUE_POLL_MS / 1000}s...`,
-    );
+    console.log(`  ↻ Jobs pendentes: ${total} — checando em ${QUEUE_POLL_MS / 1000}s...`);
     await sleep(QUEUE_POLL_MS);
   }
 
   console.log(`  ✅ Fila vazia. Avançando...\n`);
 }
 
-// ─── Paginação genérica ───────────────────────────────────────────────────────
+// ─── Paginação por offset ─────────────────────────────────────────────────────
 
-interface TCarPage<T> {
-  data: T[];
-  pagination: {
-    page: number;
-    totalPages: number;
-    total: number;
-  };
-}
-
+/**
+ * Itera sobre todos os itens da TeCinco usando offset/limit.
+ *
+ * A API não tem "totalPages" — o critério de parada é:
+ *   items retornados < limit  →  última página.
+ *
+ * O fetcher recebe (offset, limit).
+ */
 async function* paginateTCar<T>(
-  fetcher: (page: number, pageSize: number) => Promise<any>,
-  max = MAX_ITEMS, // 👈
+  fetcher: (offset: number, limit: number) => Promise<any>,
+  max = MAX_ITEMS,
 ): AsyncGenerator<T[]> {
-  let page = 1;
+  let offset = 0;
   let total = 0;
 
   while (true) {
-    const response = await fetcher(page, PAGE_SIZE);
+    const response = await fetcher(offset, PAGE_SIZE);
 
     if (typeof response === "string") {
       console.error("  ❌ Resposta ainda em string — onResponse não aplicado");
@@ -130,14 +110,16 @@ async function* paginateTCar<T>(
     const items: T[] = Array.isArray(response?.data) ? response.data : [];
     if (!items.length) break;
 
-    const slice = items.slice(0, max - total); // respeita o limite
+    const remaining = max - total;
+    const slice = items.slice(0, remaining);
     yield slice;
+
     total += slice.length;
 
-    if (total >= max) break;
-    if (page >= response.pagination?.totalPages) break;
+    // Chegou ao limite definido ou a API retornou menos do que o page size (última página)
+    if (total >= max || items.length < PAGE_SIZE) break;
 
-    page++;
+    offset += PAGE_SIZE;
     await sleep(PAGE_DELAY_MS);
   }
 }
@@ -155,8 +137,8 @@ async function migrateProdutos() {
     console.log(`\n  🏢 Filial ${branchId}`);
     let count = 0;
 
-    for await (const page of paginateTCar((p, ps) =>
-      service.listarProdutos(branchId, { page: p, page_size: ps }),
+    for await (const page of paginateTCar((offset, limit) =>
+      service.listarProdutos(branchId, { offset, limit }),
     )) {
       for (const produto of page) {
         const p = produto as any;
@@ -164,7 +146,7 @@ async function migrateProdutos() {
 
         await enqueue(
           {
-            eventId:  `migration-product-${branchId}-${systemId}-${Date.now()}`,
+            eventId: `migration-product-${branchId}-${systemId}-${Date.now()}`,
             resource: "product",
             action: "sync",
             companyId: COMPANY_ID,
@@ -199,8 +181,8 @@ async function migrateClientes() {
     console.log(`\n  🏢 Filial ${branchId}`);
     let count = 0;
 
-    for await (const page of paginateTCar((p, ps) =>
-      service.listarClientes(branchId, { page: p, page_size: ps }),
+    for await (const page of paginateTCar((offset, limit) =>
+      service.listarClientes(branchId, { offset, limit }),
     )) {
       for (const cliente of page) {
         const c = cliente as any;
@@ -230,23 +212,23 @@ async function migrateClientes() {
   await waitForQueueToDrain("Clientes");
 }
 
-// ─── 3. Notas Fiscais (XML → Invoice) ────────────────────────────────────────
+// ─── 3. Notas Fiscais ─────────────────────────────────────────────────────────
 
 async function migrateNotasFiscais() {
   console.log("─".repeat(55));
   console.log("🧾  ETAPA 3 — Notas Fiscais via XML");
   console.log("─".repeat(55));
+
   const conferenciaService = new TCarConferenciaEstoqueService();
 
   for (const branchId of BRANCH_IDS) {
     console.log(`\n  🏢 Filial ${branchId}`);
 
-    // Busca todas as NF-e com chave (modelo 55, situação ativa)
     const resultado = await conferenciaService.listarNotasFiscais(branchId, {
       modelo_documento: 55,
       situacao: "A",
-      entrada_saida: "E", // notas de entrada
-      limit: 500,
+      entrada_saida: "E",
+      limit: 500,          // endpoint de NF tem parâmetro próprio, mantém como estava
     });
 
     console.log(`  → notas: `, resultado?.data ?? []);
@@ -257,10 +239,9 @@ async function migrateNotasFiscais() {
     console.log(`  → ${notas.length} nota(s) encontrada(s)`);
 
     for (const nota of notas) {
-      if (!nota.chave_nfe) continue; // ignora sem XML
+      if (!nota.chave_nfe) continue;
 
       const { chave } = nota;
-      const logPrefix = `  [NF nota=${chave.nota}]`;
 
       await enqueue(
         {
@@ -283,7 +264,7 @@ async function migrateNotasFiscais() {
         `migration-invoice-xml-${branchId}-${chave.nota}`,
       );
 
-      console.log(`${logPrefix} enfileirada`);
+      console.log(`  [NF nota=${chave.nota}] enfileirada`);
     }
   }
 
@@ -303,13 +284,12 @@ async function main() {
   }
 
   await bootstrap();
-
   const start = Date.now();
 
   try {
-    // await migrateProdutos();
+    await migrateProdutos();
     // await migrateClientes();
-    await migrateNotasFiscais();
+    // await migrateNotasFiscais();
   } catch (err: any) {
     console.error("\n❌ Erro durante a migração:", err.message);
     process.exit(1);

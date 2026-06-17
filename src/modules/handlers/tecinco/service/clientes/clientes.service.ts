@@ -6,7 +6,8 @@ export interface TCarClienteListParams {
   cpf_cnpj?: string;
   email?: string;
   alterado_desde?: string;
-  page?: number;
+  offset?: number;
+  limit?: number;
   page_size?: number;
 }
 
