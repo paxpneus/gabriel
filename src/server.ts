@@ -14,7 +14,6 @@ async function start(): Promise<void> {
 
 
     setupAssociations()
-    startWorkers()
     registerQueues(app)
 
     app.listen(PORT, HOST, () => {

@@ -194,14 +194,14 @@ export function registerQueues(app: Express) {
 
 export function startBlingWorkers() {
   const {
-    nfeQueue,
-    mlOrderSyncQueue,
-    cnpjQueue,
+    // nfeQueue,
+    // mlOrderSyncQueue,
+    // cnpjQueue,
     blingOrderQueue,
-    reconcilerQueue,
-    blingReconcilerQueue,
+    // reconcilerQueue,
+    // blingReconcilerQueue,
     blingTokenRefreshQueue,
-    blingDailyReconciler,
+    // blingDailyReconciler,
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
@@ -210,10 +210,10 @@ export function startBlingWorkers() {
     tcarSyncQueue
   } = buildQueues(false);
 
-  reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
+  // reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  // blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
+  // blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
   console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
