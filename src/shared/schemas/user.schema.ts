@@ -27,6 +27,7 @@ const UserConfigUpdateFields = {
   notifications_enabled: z.boolean().optional(),
   visualize_only_current_unit_business: z.boolean().optional(),
   compact_mode: z.boolean().optional(),
+  auto_advance_collector: z.boolean().optional(),
 };
 
 const UserConfigUpdateSchema = z.object(UserConfigUpdateFields).strict();

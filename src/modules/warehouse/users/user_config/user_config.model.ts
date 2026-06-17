@@ -22,6 +22,7 @@ class UserConfig
   public notifications_enabled!: boolean;
   public compact_mode!: boolean;
   public visualize_only_current_unit_business!: boolean;
+  public auto_advance_collector!: boolean;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -87,6 +88,12 @@ UserConfig.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false,
+    },
+     auto_advance_collector: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+      comment: 'When enabled, the data collector automatically advances to the next field after reading or typing. When disabled, the collector must send an Enter key command (or the user must press Enter) to proceed.'
     },
   },
   {
