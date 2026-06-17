@@ -10,7 +10,8 @@ export interface TCarOrdemServicoListParams {
   tipo_os?: string;
   veiculo?: string;
   alterado_desde?: string;
-  page?: number;
+  offset?: number;
+  limit?: number;
   page_size?: number;
 }
 

@@ -23,6 +23,7 @@ import {
   TCarNotaFiscalXmlByChaveComposta,
 } from "../service/conferencias-estoque/conferencias-estoque.service";
 import { upsertInvoiceFromXml } from "../../../../shared/utils/xml/invoice-xml";
+import TCarClienteService from "../service/clientes/clientes.service";
 export interface TCarUpsertJobPayload {
   eventId: string;
   resource: TCarResource;
@@ -305,6 +306,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
   // ─── Invoice XML ───────────────────────────────────────────────────────────
 
+  // ─── Invoice XML ───────────────────────────────────────────────────────────────
+
   private async processInvoiceXml(
     data: TCarInvoiceXmlPayload,
     branchId?: number,
@@ -313,7 +316,6 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       console.warn("[TCAR_UPSERT] processInvoiceXml sem branchId — ignorado");
       return;
     }
-
     const { numero, entrada_saida, ...identificacao } = data;
     const logPrefix = `[TCAR_UPSERT] invoice_xml numero=${numero} branchId=${branchId}`;
 
@@ -334,6 +336,16 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       );
 
       const itens = notaFiscal?.data?.itens ?? [];
+      const clnCodigo = notaFiscal?.data?.cliente?.codigo ?? data.cln_codigo;
+
+      // ─── Upsert do customer da nota ──────────────────────────────────────
+      if (clnCodigo) {
+        await this.upsertCustomerFromTCar(branchId, clnCodigo, logPrefix);
+      } else {
+        console.warn(
+          `${logPrefix} — cln_codigo não resolvido, customer não sincronizado`,
+        );
+      }
 
       if (Array.isArray(itens) && itens.length > 0) {
         await this.ensureProductsFromInvoiceItems(itens, branchId);
@@ -349,7 +361,6 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         console.error(
           `${logPrefix} — erro ao buscar detalhe da nota fiscal: ${err?.message ?? err}`,
         );
-        // não interrompe o fluxo do XML por falha na resolução de produtos
       }
     }
 
@@ -376,6 +387,59 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
     await upsertInvoiceFromXml(xml);
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
+  }
+
+  // ─── Upsert customer a partir da TeCinco ─────────────────────────────────────
+
+  private async upsertCustomerFromTCar(
+    branchId: number,
+    clnCodigo: number | string,
+    logPrefix: string,
+  ): Promise<void> {
+    const clienteService = new TCarClienteService();
+
+    let raw: any;
+    try {
+      raw = await clienteService.obterCliente(branchId, clnCodigo);
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        console.warn(
+          `${logPrefix} — cliente cln_codigo=${clnCodigo} não encontrado na TeCinco (404)`,
+        );
+        return;
+      }
+      console.error(
+        `${logPrefix} — erro ao buscar cliente cln_codigo=${clnCodigo}: ${err?.message ?? err}`,
+      );
+      return; // não interrompe o fluxo da invoice
+    }
+
+    // A resposta do GET /clientes/:id não é paginada — é o objeto direto
+    const c = raw?.data ?? raw;
+
+    const document =
+      (c?.CLN_CPFCNPJ ?? c?.cln_cpfcnpj)?.replace(/\D/g, "") || null;
+
+    if (!document) {
+      console.warn(
+        `${logPrefix} — cliente cln_codigo=${clnCodigo} sem CPF/CNPJ — ignorado`,
+      );
+      return;
+    }
+
+    const name: string = (c?.CLN_NOME ?? c?.cln_nome ?? c?.nome ?? "").trim();
+    const type: "F" | "J" =
+      (c?.CLN_FISJUR ?? c?.cln_fisjur ?? c?.tipo_pessoa) === "J" ? "J" : "F";
+
+    const existing = await Customer.findOne({ where: { document } });
+
+    if (existing) {
+      await existing.update({ name, type });
+    } else {
+      await Customer.create({ name, type, document });
+    }
+
+    console.log(`${logPrefix} — customer upsertado: document=${document}`);
   }
 
   // ─── Garante produtos a partir dos itens da nota fiscal ─────────────────────
@@ -434,6 +498,23 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
       if (!unitBusiness) continue;
 
+      // ─── SupplierMapping universal (código Tecinco, CNPJ zerado) ──────────────
+      const existingUniversalMapping = await SupplierMapping.findOne({
+        where: { product_id: product.id, supplier_cnpj: "00000000000000" },
+      });
+
+      if (!existingUniversalMapping) {
+        await SupplierMapping.create({
+          product_id: product.id,
+          supplier_cnpj: "00000000000000",
+          supplier_product_code: systemId,
+        });
+
+        console.log(
+          `[TCAR_UPSERT] SupplierMapping universal criado: id_system=${systemId} | product_id=${product.id}`,
+        );
+      }
+
       // ─── ProductConfig básico (sku/price) ──────────────────────────────────
       const existingConfig = await ProductConfig.findOne({
         where: { product_id: product.id, unit_business_id: unitBusiness.id },
@@ -457,32 +538,32 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           `[TCAR_UPSERT] ProductConfig criado para produto da nota: id_system=${systemId} | unit_business_id=${unitBusiness.id}`,
         );
 
-         const itemQty = Number(item.epeit_qtdade ?? 0);
-      const itemUnitCost = Number(item.epeit_vlrunit ?? 0);
+        const itemQty = Number(item.epeit_qtdade ?? 0);
+        const itemUnitCost = Number(item.epeit_vlrunit ?? 0);
 
-      const existingStock = await Stock.findOne({
-        where: { product_id: product.id, unit_business_id: unitBusiness.id },
-      });
+        const existingStock = await Stock.findOne({
+          where: { product_id: product.id, unit_business_id: unitBusiness.id },
+        });
 
-      const oldQuantity = Number(existingStock?.quantity ?? 0);
-      const oldTotalPrice = Number(existingStock?.total_price ?? 0);
+        const oldQuantity = Number(existingStock?.quantity ?? 0);
+        const oldTotalPrice = Number(existingStock?.total_price ?? 0);
 
-      const newQuantity = oldQuantity + itemQty;
-      const newTotalPrice = oldTotalPrice + itemQty * itemUnitCost;
+        const newQuantity = oldQuantity + itemQty;
+        const newTotalPrice = oldTotalPrice + itemQty * itemUnitCost;
 
-      await Stock.upsert(
-        {
-          product_id: product.id,
-          unit_business_id: unitBusiness.id,
-          quantity: newQuantity,
-          total_price: newTotalPrice,
-        },
-        { conflictFields: ["product_id", "unit_business_id"] },
-      );
+        await Stock.upsert(
+          {
+            product_id: product.id,
+            unit_business_id: unitBusiness.id,
+            quantity: newQuantity,
+            total_price: newTotalPrice,
+          },
+          { conflictFields: ["product_id", "unit_business_id"] },
+        );
 
-      console.log(
-        `[TCAR_UPSERT] Stock atualizado (produto novo via nota): id_system=${systemId} | qty=${newQuantity} | total_price=${newTotalPrice.toFixed(2)}`,
-      );
+        console.log(
+          `[TCAR_UPSERT] Stock atualizado (produto novo via nota): id_system=${systemId} | qty=${newQuantity} | total_price=${newTotalPrice.toFixed(2)}`,
+        );
       }
 
       // ─── SupplierMapping (CNPJ do emitente da nota) ────────────────────────

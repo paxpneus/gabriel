@@ -11,7 +11,9 @@ export class UnitBusinessController extends BaseController<UnitBusiness, typeof 
 
     this.router.get('/head-office/get', this.getHeadOffice)
 
-     this.router.get("/all-unit-business/get", ...this.mw("viewAllUnitBusiness"), (req, res) => this.viewAllUnitBusiness(req, res))
+     this.router.get("/all-unit-business/get", ...this.mw("viewAllUnitBusiness"), (req, res) => this.viewAllUnitBusiness(req, res)),
+     
+     this.router.post("/queues/shutdown", ...this.mw("shutdownQueues"), (req, res) => this.shutdownQueues(req, res))
   }
 
    protected middlewaresFor() {
@@ -25,7 +27,8 @@ export class UnitBusinessController extends BaseController<UnitBusiness, typeof 
           show: [authenticate],
           destroy: [authenticate, userPermissions],
           getHeadOffice: [authenticate],
-          viewAllUnitBusiness: [authenticate, userPermissions]
+          viewAllUnitBusiness: [authenticate, userPermissions],
+          shutdownQueues: [authenticate, userPermissions],
         };
       }
 
@@ -40,6 +43,34 @@ export class UnitBusinessController extends BaseController<UnitBusiness, typeof 
 
    viewAllUnitBusiness(req: Request, res: Response) {
     return res.json(true);
+  }
+
+   shutdownQueues = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const locals = req.app.locals;
+
+      const queues = [
+        locals.BlingOrderQueue,
+        locals.CNPJQueue,
+        locals.NfeQueue,
+        locals.MLOrderSyncQueue,
+        locals.BlingDirectUpsertQueue,
+        locals.BlingApiFetchQueue,
+        locals.BlingTokenRefreshQueue,
+        locals.BlingMigrationQueue,
+        locals.TCarMigrationQueue,
+        locals.TCarUpsertQueue,
+        locals.DailyOperationReportQueue,
+        locals.DailySalesReportQueue,
+        locals.AutoBackupQueue,
+      ].filter(Boolean);
+
+      await Promise.all(queues.map((q: any) => q.queue?.close()));
+
+      return res.json({ message: `${queues.length} filas desconectadas do Redis com sucesso.` });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
   }
 }
 
