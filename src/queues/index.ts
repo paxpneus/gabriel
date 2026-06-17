@@ -1,4 +1,4 @@
-import { SalesReportQueue } from './../modules/reports/daily-sales/sales-report/sales-report.queue';
+import { SalesReportQueue } from "./../modules/reports/daily-sales/sales-report/sales-report.queue";
 import { Express } from "express";
 import { blingApi } from "../modules/handlers/bling/api/bling_api.service";
 
@@ -25,24 +25,18 @@ import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-o
 
 import { BlingDirectUpsertQueue } from "./../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue";
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
-import { BlingTokenRefreshQueue } from './../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue';
+import { BlingTokenRefreshQueue } from "./../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
-import { TCarMigrationQueue } from '../modules/handlers/tecinco/queues/tecinco-daily-recover';
-import { TCarUpsertQueue } from '../modules/handlers/tecinco/queues/tecinco-api-fetch.queue';
+import { TCarUpsertQueue } from "../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
+import {
+  scheduleTCarSync,
+  TCarSyncQueue,
+} from "../modules/handlers/tecinco/queues/tecinco-sync-queue";
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
-import { AutoBackupQueue } from '../modules/handlers/backup/auto-backup.queue';
+import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
 
 export const serverAdapter = new ExpressAdapter();
 
-/**
- * buildQueues(workless)
- *
- * workless = true  → só instancia Queue (produtor). Usado pelo container `api`.
- * workless = false → instancia Queue + Worker (consumidor). Usado pelo container `workers`.
- *
- * Isso evita ter dois Workers ativos consumindo a mesma fila ao mesmo tempo
- * (que é o que causava os 429 na Bling mesmo com limiter configurado).
- */
 function buildQueues(workless: boolean) {
   const blingOrderService = new BlingOrderService(blingApi);
 
@@ -91,13 +85,13 @@ function buildQueues(workless: boolean) {
 
   const blingDirectUpsertQueue = new BlingDirectUpsertQueue({ workless });
   const blingApiFetchQueue = new BlingApiFetchQueue({ workless });
-  const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless })
-  const blingDailyReconciler = new BlingMigrationQueue({ workless })
-  const tcarMigrationQueue = new TCarMigrationQueue({ workless })
-  const tcarUpsertQueue = new TCarUpsertQueue({ workless })
-  const dailyOperationReportQueue = new DailyOperationReportQueue({ workless })
-  const dailySalesReportQueue = new SalesReportQueue({ workless })
-  const autoBackupQueue = new AutoBackupQueue({ workless })
+  const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless });
+  const blingDailyReconciler = new BlingMigrationQueue({ workless });
+  const tcarUpsertQueue = new TCarUpsertQueue({ workless });
+  const tcarSyncQueue = new TCarSyncQueue({ workless });
+  const dailyOperationReportQueue = new DailyOperationReportQueue({ workless });
+  const dailySalesReportQueue = new SalesReportQueue({ workless });
+  const autoBackupQueue = new AutoBackupQueue({ workless });
 
   return {
     nfeQueue,
@@ -113,12 +107,12 @@ function buildQueues(workless: boolean) {
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
-    tcarMigrationQueue,
-    tcarUpsertQueue
+    tcarUpsertQueue,
+    tcarSyncQueue,
   };
 }
 
-// ─── Chamado pela API: registra filas + BullBoard, SEM subir Workers ──────────
+// ─── API: registra filas + BullBoard, SEM Workers ────────────────────────────
 export function registerQueues(app: Express) {
   const {
     nfeQueue,
@@ -133,24 +127,22 @@ export function registerQueues(app: Express) {
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
-    tcarMigrationQueue,
-    tcarUpsertQueue
-  } = buildQueues(true); // workless: true → zero Workers na API
+    tcarUpsertQueue,
+    tcarSyncQueue,
+  } = buildQueues(true);
 
-   const blingOrderQueue = new BlingOrderQueue(
+  const blingOrderQueue = new BlingOrderQueue(
     new BlingOrderService(blingApi),
-    { add: async () => {}},
+    { add: async () => {} },
     { workless: false },
   );
 
-  // Scraping só para o BullBoard enxergar a fila, sem Worker
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
     new MLOrderService(),
     { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
     { concurrency: 1, lockDuration: 15 * 60 * 1000, workless: true },
   );
-
 
   app.locals.BlingOrderQueue = blingOrderQueue;
   app.locals.CNPJQueue = cnpjQueue;
@@ -160,11 +152,11 @@ export function registerQueues(app: Express) {
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
   app.locals.BlingMigrationQueue = blingDailyReconciler;
-  app.locals.TCarMigrationQueue = tcarMigrationQueue;
   app.locals.TCarUpsertQueue = tcarUpsertQueue;
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
-  app.locals.DailySalesReportQueue = dailySalesReportQueue
-  app.locals.AutoBackupQueue = autoBackupQueue
+  app.locals.DailySalesReportQueue = dailySalesReportQueue;
+  app.locals.AutoBackupQueue = autoBackupQueue;
+  app.locals.TCarSyncQueue = tcarSyncQueue;
 
   serverAdapter.setBasePath("/admin/queues");
 
@@ -184,8 +176,9 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(dailyOperationReportQueue.queue),
       new BullMQAdapter(dailySalesReportQueue.queue),
       new BullMQAdapter(autoBackupQueue.queue),
-      new BullMQAdapter(tcarMigrationQueue.queue),
       new BullMQAdapter(tcarUpsertQueue.queue),
+      new BullMQAdapter(tcarSyncQueue.queue),
+
     ],
     serverAdapter,
   });
@@ -197,63 +190,103 @@ export function registerQueues(app: Express) {
   );
 }
 
-// ─── Chamado pelo container workers: sobe Workers + agenda repetições ─────────
-export function startWorkers() {
-  // Mantém referência de TODAS as filas — sem isso o GC coleta as instâncias
-  // e os Workers morrem silenciosamente logo após o start.
+// ─── Workers principais ───────────────────────────────────────────────────────
+
+export function startBlingWorkers() {
   const {
-    nfeQueue,
-    mlOrderSyncQueue,
-    cnpjQueue,
+    // nfeQueue,
+    // mlOrderSyncQueue,
+    // cnpjQueue,
     blingOrderQueue,
-    reconcilerQueue,
-    blingReconcilerQueue,
+    // reconcilerQueue,
+    // blingReconcilerQueue,
     blingTokenRefreshQueue,
-    blingDailyReconciler,
+    // blingDailyReconciler,
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
-  } = buildQueues(false); // workless: false → Worker ativo em cada fila
+    blingApiFetchQueue,
+    blingDirectUpsertQueue,
+    tcarSyncQueue
+  } = buildQueues(false);
 
-  // reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
-  //TESTE
-  // blingReconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
-
-  // blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  // reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  // blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
+  blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   // blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
-  // const sefazQueue = new SefazDistribuicaoQueue({ workless: false });
-  dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  autoBackupQueue.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
-  // sefazQueue.scheduleRepeat({ every: 60 * 60 * 1000 });
-  // dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-
-
-  
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
   console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
-  console.log("  → BLING_ORDER_INGESTION, NFE_RECONCILER, BLING_RECONCILER");
-  console.log("  → DAILY_OPERATION_REPORT, AUTO_BACKUP");
-  
-  // void sefazQueue;
+  console.log(
+    "  → BLING_ORDER_INGESTION, NFE_RECONCILER (1h), BLING_RECONCILER (2h)",
+  );
+  console.log("  → BLING_TOKEN_REFRESH (1h), BLING_MIGRATION (24h)");
+  console.log("  → DAILY_OPERATION_REPORT (1h), SALES_REPORT (1h)");
+  console.log("  → AUTO_BACKUP (19h BRT)");
+
+
+  void scheduleTCarSync();
+  void tcarSyncQueue;
+
 }
 
-// ─── Chamado pelo container worker-scraping ───────────────────────────────────
+// ─── Bling workers isolados (ex-startBlingWorkers) ───────────────────────────
+export function startWorkers() {
+  console.log("🚀 Iniciando Bling workers isolados...");
+
+  const { dailyOperationReportQueue, dailySalesReportQueue, autoBackupQueue } =
+    buildQueues(false);
+
+  dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  autoBackupQueue.scheduleRepeat({
+    cron: "0 19 * * *",
+    tz: "America/Sao_Paulo",
+  });
+
+  setTimeout(
+    () => {
+      dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+      console.log(
+        "  → SalesReportQueue (relatório comercial a cada 1h, offset 30min)",
+      );
+    },
+    30 * 60 * 1000,
+  );
+
+  console.log("✅ Workers ativos:");
+  console.log("  → BlingDirectUpsertQueue");
+  console.log("  → BlingApiFetchQueue");
+  console.log("  → BlingTokenRefreshQueue (refresh a cada 1h)");
+  console.log("  → BlingMigrationQueue (reconciler diário)");
+  console.log("  → TCarUpsertQueue");
+  console.log(
+    "  → DailyOperationReportQueue (relatório operacional a cada 1h)",
+  );
+  console.log("  → AutoBackupQueue (todo dia às 19h BRT)");
+  console.log(
+    "  → SalesReportQueue (relatório comercial a cada 1h, offset 30min)",
+  );
+
+  // Mantém referências vivas para o GC não coletar os Workers
+  (void dailyOperationReportQueue, dailySalesReportQueue, autoBackupQueue);
+}
+
+// ─── Scraping worker ──────────────────────────────────────────────────────────
 export function startScrapingWorker() {
-  // mlOrderSyncQueue aqui só como produtor (workless: true)
-  // quem consome ML-ORDER-SYNC é o container workers via startWorkers()
   const { mlOrderSyncQueue } = buildQueues(true);
 
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
     new MLOrderService(),
     { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
-    { workless: false }, // scraping tem seu próprio Worker aqui
+    { workless: false },
   );
 
-  // mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
+  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
 
   console.log(
     "------------------- QUEUE: Scraping Worker Ativo! -------------------",
   );
+
+  void mlScrapingQueue;
 }

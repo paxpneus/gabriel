@@ -5,7 +5,8 @@ export interface TCarVeiculoListParams {
   chassi?: string;
   cliente_codigo?: number | string;
   alterado_desde?: string;
-  page?: number;
+  offset?: number;
+  limit?: number;
   page_size?: number;
 }
 

@@ -21,7 +21,8 @@ export interface TCarNotaFiscalQueryParams {
 export interface TCarConferenciaListParams {
   tipo?: TCarConferenciaTipo;
   status_conferencia?: string;
-  page?: number;
+  offset?: number;
+  limit?: number;
   page_size?: number;
 }
 
@@ -147,20 +148,19 @@ export class TCarConferenciaEstoqueService {
     );
   }
 
-async getNotaFiscal(
-  nota: number | string,
-  branchId: number,
-  identificacao: TCarNotaFiscalXmlParams,
-): Promise<any> {
-  return tcarRequest(branchId, (api) =>
-    api
-      .get(`/notas-fiscais/${encodeURIComponent(nota)}`, {
-        params: identificacao,
-      })
-      .then((r) => r.data),
-  );
-}
-
+  async getNotaFiscal(
+    nota: number | string,
+    branchId: number,
+    identificacao: TCarNotaFiscalXmlParams,
+  ): Promise<any> {
+    return tcarRequest(branchId, (api) =>
+      api
+        .get(`/notas-fiscais/${encodeURIComponent(nota)}`, {
+          params: identificacao,
+        })
+        .then((r) => r.data),
+    );
+  }
 
   /**
    * Lista documentos disponíveis para conferência.
@@ -207,10 +207,24 @@ async getNotaFiscal(
         .get(`/conferencias-estoque/${tipo}/${encodeURIComponent(numero)}`, {
           params,
         })
-        .then((r) => r.data),
+        .then((r) => {
+          let raw =
+            typeof r.data === "string" ? r.data : JSON.stringify(r.data);
+          // Corrige números com vírgula decimal: 80,000 → 80.000
+          raw = raw.replace(/:(\s*)(\d+),(\d+)/g, ":$1$2.$3");
+
+          try {
+            return JSON.parse(raw);
+          } catch (e) {
+            console.error(
+              "[TCarConferenciaEstoqueService] JSON inválido:",
+              raw,
+            );
+            throw e;
+          }
+        }),
     );
   }
-
   // ─── POST /conferencias-estoque/:tipo/:numero/validar-item ─────────────────
 
   /**
@@ -254,11 +268,11 @@ async getNotaFiscal(
     extraParams: Partial<TCarNotaFiscalQueryParams> = {},
   ): Promise<any> {
     const params = this.buildParams(tipo, extraParams);
-    console.log("numero:", numero, "branchId:", branchId, "body:", body)
+    console.log("numero:", numero, "branchId:", branchId, "body:", body);
     return tcarRequest(branchId, (api) =>
       api
         .post(
-          `/conferencias-estoq/${tipo}/${encodeURIComponent(numero)}/conferir`,
+          `/conferencias-estoque/${tipo}/${encodeURIComponent(numero)}/conferir`,
           body,
           { params },
         )

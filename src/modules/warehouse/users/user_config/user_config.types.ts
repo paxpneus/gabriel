@@ -14,6 +14,7 @@ export interface UserConfigAttributes {
   notifications_enabled: boolean;
   visualize_only_current_unit_business: boolean;
   compact_mode: boolean;
+  auto_advance_collector?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
