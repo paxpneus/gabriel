@@ -65,14 +65,25 @@ RUN mkdir -p /app/ml_session /app/ml_downloads
 CMD ["node", "dist/server.js"]
 
 # ─── Stage 4: Worker de Scraping (com Playwright + Chromium) ──────────────────
-FROM base-prod AS worker-scraping
+FROM mcr.microsoft.com/playwright:v1.58.2-noble AS worker-scraping
+
+WORKDIR /app
 
 ENV NODE_ENV=production \
     ML_HEADLESS=true \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Let Playwright install Chromium AND all its own system dependencies
-RUN npx playwright install --with-deps chromium
+# Copy everything from base-prod manually (can't inherit since we changed base)
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/migrations ./migrations
+COPY package*.json ./
+COPY .sequelizerc ./
+COPY src/config/database.js ./src/config/database.js
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-17-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /app/ml_session /app/ml_downloads
 
