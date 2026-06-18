@@ -120,12 +120,17 @@ export class ExpeditionScanLogService extends BaseService<
 
       console.log(invoiceRead, productcode, eanfromlabel);
 
-      if (!invoiceRead) throw Error("Nota não encontrada no lote");
+      if (!invoiceRead || !invoiceRead.batchInvoices?.length) {
+        throw new Error("Nota não encontrada no lote");
+      }
 
-      this.assertTransshipment(
-        invoiceRead.batchInvoices![0].invoice,
-        unitBusiness,
-      );
+      const batchInvoice = invoiceRead.batchInvoices[0];
+
+      if (!batchInvoice.invoice) {
+        throw new Error("Nota fiscal não carregada corretamente");
+      }
+
+      this.assertTransshipment(batchInvoice.invoice, unitBusiness);
 
       const productRead = (await ExpeditionBatchItems.findOne({
         where: { expedition_batch_id: batchid },
