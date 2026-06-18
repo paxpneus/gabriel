@@ -71,11 +71,10 @@ ENV NODE_ENV=production \
     ML_HEADLESS=true \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Dependências do Chromium headless
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     fonts-liberation \
-    libasound2 \
+    libasound2t64 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
     libcups2 \
@@ -90,12 +89,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage1 \
     libxfixes3 \
     libxrandr2 \
-    libxss1 \
     libxtst6 \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala Playwright e baixa apenas o Chromium
 RUN npx playwright install chromium
 
 RUN mkdir -p /app/ml_session /app/ml_downloads
