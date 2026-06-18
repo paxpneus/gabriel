@@ -71,29 +71,8 @@ ENV NODE_ENV=production \
     ML_HEADLESS=true \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
-    fonts-liberation \
-    libasound2t64 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libxtst6 \
-    xdg-utils \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN npx playwright install chromium
+# Let Playwright install Chromium AND all its own system dependencies
+RUN npx playwright install --with-deps chromium
 
 RUN mkdir -p /app/ml_session /app/ml_downloads
 
