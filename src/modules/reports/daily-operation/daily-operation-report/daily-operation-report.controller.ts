@@ -1,5 +1,5 @@
 import { Request, Response, Router } from "express";
-import { authenticate } from "../../../middlewares/auth-token";
+import { authenticate } from "../../../../middlewares/auth-token";
 import DailyOperationReportService from "./daily-operation-report.service";
 
 class DailyOperationReportController {

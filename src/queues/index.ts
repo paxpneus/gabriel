@@ -32,7 +32,7 @@ import {
   scheduleTCarSync,
   TCarSyncQueue,
 } from "../modules/handlers/tecinco/queues/tecinco-sync-queue";
-import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
+import { DailyOperationReportQueue } from "../modules/reports/daily-operation/daily-operation-report/daily-operation-report.queue";
 import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
 
 export const serverAdapter = new ExpressAdapter();

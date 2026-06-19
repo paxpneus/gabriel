@@ -1,5 +1,5 @@
 import { Job } from "bullmq";
-import { BaseQueueService } from "../../../shared/utils/base-models/base-queue-service";
+import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import DailyOperationReportService from "./daily-operation-report.service";
 
 export class DailyOperationReportQueue extends BaseQueueService<void> {

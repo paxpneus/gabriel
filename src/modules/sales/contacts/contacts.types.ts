@@ -7,6 +7,7 @@ export interface ContactAttributes {
   id_system: string;
   integrations_id?: string | null;
   unit_business_id?: string | null;
+  user_id?: string | null;
 }
 
 export type ContactCreationAttributes = Omit<ContactAttributes, "id">;
