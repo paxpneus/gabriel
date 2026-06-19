@@ -92,6 +92,7 @@ function buildQueues(workless: boolean) {
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless });
   const dailySalesReportQueue = new SalesReportQueue({ workless });
   const autoBackupQueue = new AutoBackupQueue({ workless });
+  
 
   return {
     nfeQueue,
@@ -201,6 +202,7 @@ export function startBlingWorkers() {
     // reconcilerQueue,
     // blingReconcilerQueue,
     blingTokenRefreshQueue,
+    blingDailyReconciler,
     // blingDailyReconciler,
     dailyOperationReportQueue,
     dailySalesReportQueue,
@@ -213,7 +215,7 @@ export function startBlingWorkers() {
   // reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   // blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  // blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
+  blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
 
   console.log("------------------- QUEUE: Workers Ativos! -------------------");
   console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
