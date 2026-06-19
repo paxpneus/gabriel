@@ -1,167 +1,104 @@
-import {
-  SalesFactKey,
-  SalesProductFactKey,
-  SalesReportFilters,
-  SalesReportJobResult,
-  SalesStateFactKey,
-  SalesStatusFactKey,
-  SalesStoreFactKey,
-} from "./sales-report.types";
-import { salesReportRepository } from "./sales-report.repository";
+import { SalesReportRepository } from "./sales-report.repository";
+import { SalesReportFilters } from "./sales-report.types";
 
-const JOB_NAME = "sales_report";
+// ---------------------------------------------------------------------------
+// Minimal BaseService contract — adapt to whatever your project exports
+// ---------------------------------------------------------------------------
+// If you already have a BaseService with logger / error handling, extend it
+// here instead. This keeps the service self-contained until then.
+// ---------------------------------------------------------------------------
 
 export class SalesReportService {
-  async runIncrementalJob(): Promise<SalesReportJobResult> {
-    const status = await salesReportRepository.getJobStatus();
-    if (status?.status === "running") {
-      throw new Error("Job já está em execução, aguarde.");
-    }
+  constructor(private readonly repo: SalesReportRepository) {}
 
+  // -------------------------------------------------------------------------
+  // Main pipeline — called by the scheduler / job runner
+  // -------------------------------------------------------------------------
+
+  async run(): Promise<{ rowsProcessed: number }> {
     const jobStartTime = new Date();
-    const lastProcessedAt = await salesReportRepository.getCheckpoint();
+
+    await this.repo.markRunning();
 
     try {
-      await salesReportRepository.markRunning();
+      const lastProcessedAt = await this.repo.getCheckpoint();
+      const orderIds = await this.repo.findAffectedOrderIds(lastProcessedAt);
 
-      const orderIds =
-        await salesReportRepository.findAffectedOrderIds(lastProcessedAt);
+      if (!orderIds.length) {
+        await this.repo.markSuccess(jobStartTime, 0);
+        return { rowsProcessed: 0 };
+      }
 
-      const previousFactKeys =
-        await salesReportRepository.findAffectedFactKeys(orderIds);
-      const previousStateFactKeys =
-        await salesReportRepository.findAffectedStateFactKeys(orderIds);
-      const previousStoreFactKeys =
-        await salesReportRepository.findAffectedStoreFactKeys(orderIds);
-      const previousProductFactKeys =
-        await salesReportRepository.findAffectedProductFactKeys(orderIds);
-      const previousStatusFactKeys =
-        await salesReportRepository.findAffectedStatusFactKeys(orderIds);
+      // 1. Snapshots (heavy CTE upsert)
+      await this.repo.upsertSnapshots(orderIds);
 
-      await salesReportRepository.upsertSnapshots(orderIds);
-      await salesReportRepository.updateSnapshotTotals(orderIds);
+      // 2. Discover which fact-table keys were touched
+      const [factKeys, stateKeys, storeKeys, productKeys, statusKeys] =
+        await Promise.all([
+          this.repo.findAffectedFactKeys(orderIds),
+          this.repo.findAffectedStateFactKeys(orderIds),
+          this.repo.findAffectedStoreFactKeys(orderIds),
+          this.repo.findAffectedProductFactKeys(orderIds),
+          this.repo.findAffectedStatusFactKeys(orderIds),
+        ]);
 
-      const currentFactKeys =
-        await salesReportRepository.findAffectedFactKeys(orderIds);
-      const currentStateFactKeys =
-        await salesReportRepository.findAffectedStateFactKeys(orderIds);
-      const currentStoreFactKeys =
-        await salesReportRepository.findAffectedStoreFactKeys(orderIds);
-      const currentProductFactKeys =
-        await salesReportRepository.findAffectedProductFactKeys(orderIds);
-      const currentStatusFactKeys =
-        await salesReportRepository.findAffectedStatusFactKeys(orderIds);
+      // 3. Upsert all fact tables (sequential — avoids connection exhaustion
+      //    on large batches; flip to Promise.all if your pool can handle it)
+      await this.repo.upsertDailySalesFacts(factKeys);
+      await this.repo.upsertDailySalesStateFacts(stateKeys);
+      await this.repo.upsertDailySalesStoreFacts(storeKeys);
+      await this.repo.upsertDailySalesProductFacts(productKeys);
+      await this.repo.upsertDailySalesStatusFacts(statusKeys);
 
-      await salesReportRepository.upsertDailySalesFacts(
-        this.uniqueFactKeys([...previousFactKeys, ...currentFactKeys]),
-      );
-      await salesReportRepository.upsertDailySalesStateFacts(
-        this.uniqueStateFactKeys([
-          ...previousStateFactKeys,
-          ...currentStateFactKeys,
-        ]),
-      );
-      await salesReportRepository.upsertDailySalesStoreFacts(
-        this.uniqueStoreFactKeys([
-          ...previousStoreFactKeys,
-          ...currentStoreFactKeys,
-        ]),
-      );
-      await salesReportRepository.upsertDailySalesProductFacts(
-        this.uniqueProductFactKeys([
-          ...previousProductFactKeys,
-          ...currentProductFactKeys,
-        ]),
-      );
-      await salesReportRepository.upsertDailySalesStatusFacts(
-        this.uniqueStatusFactKeys([
-          ...previousStatusFactKeys,
-          ...currentStatusFactKeys,
-        ]),
-      );
+      await this.repo.markSuccess(jobStartTime, orderIds.length);
 
-      await salesReportRepository.markSuccess(jobStartTime, orderIds.length);
-
-      return {
-        jobName: JOB_NAME,
-        startedAt: jobStartTime,
-        lastProcessedAt,
-        ordersProcessed: orderIds.length,
-      };
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      await salesReportRepository.markFailed(err);
-      throw err;
+      return { rowsProcessed: orderIds.length };
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      await this.repo.markFailed(error);
+      throw error;
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // On-demand re-processing for specific orders (e.g. backfill command)
+  // -------------------------------------------------------------------------
+
+  async reprocessOrders(orderIds: string[]): Promise<void> {
+    if (!orderIds.length) return;
+
+    await this.repo.upsertSnapshots(orderIds);
+    await this.repo.updateSnapshotTotals(orderIds);
+
+    const [factKeys, stateKeys, storeKeys, productKeys, statusKeys] =
+      await Promise.all([
+        this.repo.findAffectedFactKeys(orderIds),
+        this.repo.findAffectedStateFactKeys(orderIds),
+        this.repo.findAffectedStoreFactKeys(orderIds),
+        this.repo.findAffectedProductFactKeys(orderIds),
+        this.repo.findAffectedStatusFactKeys(orderIds),
+      ]);
+
+    await this.repo.upsertDailySalesFacts(factKeys);
+    await this.repo.upsertDailySalesStateFacts(stateKeys);
+    await this.repo.upsertDailySalesStoreFacts(storeKeys);
+    await this.repo.upsertDailySalesProductFacts(productKeys);
+    await this.repo.upsertDailySalesStatusFacts(statusKeys);
+  }
+
+  // -------------------------------------------------------------------------
+  // Read API — forwarded straight to repo (no extra logic here)
+  // -------------------------------------------------------------------------
+
+  async getReport(filters: SalesReportFilters) {
+    return this.repo.getReport(filters);
   }
 
   async getJobStatus() {
-    return salesReportRepository.getJobStatus();
-  }
-
-  async getReport(filters: SalesReportFilters) {
-    if (!filters.dateFrom || !filters.dateTo) {
-      throw new Error("dateFrom e dateTo são obrigatórios.");
-    }
-
-    return salesReportRepository.getReport(filters);
-  }
-
-  private uniqueFactKeys(keys: SalesFactKey[]): SalesFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [`${key.fact_date}:${key.unit_business_id}`, key]),
-      ).values(),
-    );
-  }
-
-  private uniqueStateFactKeys(keys: SalesStateFactKey[]): SalesStateFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [
-          `${key.fact_date}:${key.unit_business_id}:${key.destination_uf}`,
-          key,
-        ]),
-      ).values(),
-    );
-  }
-
-  private uniqueStoreFactKeys(keys: SalesStoreFactKey[]): SalesStoreFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [
-          `${key.fact_date}:${key.unit_business_id}:${key.store_id}`,
-          key,
-        ]),
-      ).values(),
-    );
-  }
-
-  private uniqueProductFactKeys(
-    keys: SalesProductFactKey[],
-  ): SalesProductFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [
-          `${key.fact_date}:${key.unit_business_id}:${key.sku}`,
-          key,
-        ]),
-      ).values(),
-    );
-  }
-
-  private uniqueStatusFactKeys(
-    keys: SalesStatusFactKey[],
-  ): SalesStatusFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [
-          `${key.fact_date}:${key.unit_business_id}:${key.status_id}`,
-          key,
-        ]),
-      ).values(),
-    );
+    return this.repo.getJobStatus();
   }
 }
 
-export default new SalesReportService();
+// Singleton for use in controllers / schedulers
+import { salesReportRepository } from "./sales-report.repository";
+export const salesReportService = new SalesReportService(salesReportRepository);

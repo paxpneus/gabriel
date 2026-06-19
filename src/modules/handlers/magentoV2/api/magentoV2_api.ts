@@ -57,10 +57,6 @@ export const magentoApi: AxiosInstance = createAxiosInstance({
     config.headers["Accept"] = "*/*";
     config.headers["User-Agent"] = "curl/7.81.0";
 
-    console.log(
-      "[MagentoApi] Headers finais:",
-      JSON.stringify(config.headers, null, 2),
-    );
     console.log("[MagentoApi] URL completa:", `${config.baseURL}${config.url}`);
     return config;
   },
