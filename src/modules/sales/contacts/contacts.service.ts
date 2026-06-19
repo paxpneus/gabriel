@@ -8,6 +8,8 @@ import roleService from "../../warehouse/users/roles/role.service";
 import { Transaction } from "sequelize";
 import User from "../../warehouse/users/users/user.model";
 
+const SELLER_REPORT_PATH = "/reports/sales/seller";
+
 export class ContactService extends BaseService<Contact, ContactRepository> {
   constructor() {
     super(contactRepository);
@@ -22,9 +24,19 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
   }
 
   /**
+   * Monta a URL completa do front que já carrega o token de acesso,
+   * em vez do back devolver o token "cru" pro chamador.
+   */
+  private buildSellerReportUrl(token: string): string {
+    const baseUrl = process.env.FRONTEND_URL ?? "https://hub.paxpneus.com.br";
+    return `${baseUrl}${SELLER_REPORT_PATH}/${token}`;
+  }
+
+  /**
    * Resolve o usuário a partir das credenciais:
-   * - Se já existe um user com o email, faz login e retorna
+   * - Se já existe um user com o email, faz login
    * - Se não existe, cria o user com os dados do seller e faz login
+   * Em ambos os casos, devolve a URL completa do front (com o token embutido).
    */
   private async resolveUser(
     {
@@ -43,27 +55,27 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
       password: string;
     },
     t: Transaction
-  ): Promise<{ token: string; user: User }> {
+  ): Promise<{ url: string; user: User }> {
     const existingUser = await userService.findOne({
       where: { email },
       transaction: t,
     });
 
-    if (existingUser) {
-      return userService.login(email, password);
+    if (!existingUser) {
+      await userService.createUserWithValidation({
+        name: sellerName,
+        email,
+        password,
+        cpf: sellerCpf,
+        unit_business_id: unitBusinessId,
+        user_unit_business: [unitBusinessId],
+        role_id: roleId,
+      });
     }
 
-    await userService.createUserWithValidation({
-      name: sellerName,
-      email,
-      password,
-      cpf: sellerCpf,
-      unit_business_id: unitBusinessId,
-      user_unit_business: [unitBusinessId],
-      role_id: roleId,
-    });
+    const { token, user } = await userService.login(email, password);
 
-    return userService.login(email, password);
+    return { url: this.buildSellerReportUrl(token), user };
   }
 
   async createUserFromSellerName(

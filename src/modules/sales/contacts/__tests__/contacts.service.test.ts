@@ -65,6 +65,7 @@ const mockSeller = {
 const mockUnitBusiness = { id: "ub-uuid", number: "01", name: "Loja 01" };
 const mockUser = { id: "user-uuid", name: "Calebe Munhoz Venancio" };
 const mockToken = "jwt.token.here";
+const mockUrl = `https://hub.paxpneus.com.br/reports/sales/seller/${mockToken}`;
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
@@ -205,7 +206,7 @@ describe("ContactService.createUserFromSellerName", () => {
         })
       );
       expect(userService.login).toHaveBeenCalledWith("calebe@email.com", "senha123");
-      expect(result).toEqual({ token: mockToken, user: mockUser });
+      expect(result).toEqual({ url: mockUrl, user: mockUser });
     });
 
     it("apenas faz login quando usuário com o email já existe", async () => {
@@ -217,7 +218,7 @@ describe("ContactService.createUserFromSellerName", () => {
 
       expect(userService.createUserWithValidation).not.toHaveBeenCalled();
       expect(userService.login).toHaveBeenCalledWith("calebe@email.com", "senha123");
-      expect(result).toEqual({ token: mockToken, user: mockUser });
+      expect(result).toEqual({ url: mockUrl, user: mockUser });
     });
   });
 
@@ -229,11 +230,11 @@ describe("ContactService.createUserFromSellerName", () => {
     expect(sequelize.transaction).toHaveBeenCalledTimes(1);
   });
 
-  it("retorna token e user no caminho feliz", async () => {
+  it("retorna a url do front e o user no caminho feliz", async () => {
     const result = await service.createUserFromSellerName(
       "Calebe Munhoz Venancio", 1, "calebe@email.com", "senha123"
     );
 
-    expect(result).toEqual({ token: mockToken, user: mockUser });
+    expect(result).toEqual({ url: mockUrl, user: mockUser });
   });
 });
