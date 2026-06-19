@@ -17,6 +17,7 @@ class Contact
   public id_system!: string;
   public integrations_id?: string | null;
   public unit_business_id?: string | null;
+  public user_id?: string | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -57,6 +58,16 @@ Contact.init(
       allowNull: true,
       references: {
         model: "unit_businesses",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
+    },
+     user_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "users",
         key: "id",
       },
       onUpdate: "CASCADE",
