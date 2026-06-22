@@ -13,6 +13,15 @@ const SELLER_REPORT_PATH = "/reports/sales/seller";
 export class ContactService extends BaseService<Contact, ContactRepository> {
   constructor() {
     super(contactRepository);
+
+    this.queryConfig = {
+      defaults: {
+        perPage: 20,
+        sortBy: ['created_at', 'name'],
+        sortDir: 'DESC',
+      },
+      searchFields: ['name'],
+    };
   }
 
   private normalizeName(name: string): string {

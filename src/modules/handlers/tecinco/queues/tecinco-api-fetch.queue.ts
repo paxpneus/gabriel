@@ -24,6 +24,7 @@ import {
 } from "../service/conferencias-estoque/conferencias-estoque.service";
 import { upsertInvoiceFromXml } from "../../../../shared/utils/xml/invoice-xml";
 import TCarClienteService from "../service/clientes/clientes.service";
+import { extractProductMeasureAndLine } from "../../bling/services/bling/queues/bling-api-fetch.queue";
 export interface TCarUpsertJobPayload {
   eventId: string;
   resource: TCarResource;
@@ -176,6 +177,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
 
     // ─── Produto é da Tecinco (ou não existe ainda) — faz upsert normal ──────
+    const {measure, line} = extractProductMeasureAndLine(data.epctb_nome, data.marca_descricao)
     const [product] = await Product.upsert(
       {
         id_system: systemId,
@@ -185,6 +187,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         gross_weight: data.epctb_pesobruto,
         net_weight: data.epctb_pesoliq,
         category: "TIRE",
+        measure,
+        line,
+        brand: data.marca_descricao,
         integrations_id: integrations.id,
         source_payload: data as unknown as Record<string, unknown>,
       },

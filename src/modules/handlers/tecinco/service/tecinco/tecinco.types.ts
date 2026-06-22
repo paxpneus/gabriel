@@ -48,6 +48,7 @@ export interface TCarProdutoPayload {
   epcte_custcont?: number;
   epprc_preco?: number;
   epprc_precorevenda?: number;
+  marca_descricao?: string;
 }
 
 export interface TCarInvoiceXmlPayload {
