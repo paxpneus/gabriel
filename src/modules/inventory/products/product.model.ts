@@ -19,6 +19,7 @@ class Product
   public source_payload?: Record<string, unknown>;
   public unit?: string;
   public brand?: string;
+  public commission?: number;
   public gross_weight?: number;
   public net_weight?: number;
   public stock_virtual_total?: number;
@@ -70,11 +71,13 @@ Product.init(
     source_payload: { type: DataTypes.JSONB, allowNull: true },
     unit: { type: DataTypes.STRING(20), allowNull: true },
     brand: { type: DataTypes.STRING(100), allowNull: true },
+     commission: { type: DataTypes.FLOAT, allowNull: true },
     line: { type: DataTypes.STRING(100), allowNull: true },
     measure: { type: DataTypes.STRING(50), allowNull: true },
     gross_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     net_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     stock_virtual_total: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
+   
   },
   {
     sequelize,

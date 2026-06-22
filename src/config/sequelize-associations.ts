@@ -55,6 +55,8 @@ import Operations from '../modules/warehouse/operations/operation/operations.mod
 import OperationsItens from '../modules/warehouse/operations/operations-itens/operations-itens.model';
 import OperationComment from '../modules/warehouse/operations/operation-comment/operation-comment.model';
 import Application from '../modules/integrations/applications/applications.model';
+import DailySellerProductFact from '../modules/reports/sellers-report/models/daily-seller-product-fact/daily-seller-product-fact.model';
+import DailySellerCustomerFact from '../modules/reports/sellers-report/models/daily-seller-customer-fact/daily-seller-customer-fact.model';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -952,4 +954,42 @@ Integration.hasMany(IntegrationOrderStatusMapping, {
 IntegrationOrderStatusMapping.belongsTo(Integration, {
   foreignKey: 'integration_id',
   as: 'integration',
+});
+
+// ===== SELLER SALES ANALYTICS =====
+
+Contact.hasMany(DailySellerProductFact, {
+  foreignKey: 'seller_id',
+  as: 'dailySellerProductFacts',
+});
+DailySellerProductFact.belongsTo(Contact, {
+  foreignKey: 'seller_id',
+  as: 'seller',
+});
+ 
+Product.hasMany(DailySellerProductFact, {
+  foreignKey: 'product_id',
+  as: 'dailySellerProductFacts',
+});
+DailySellerProductFact.belongsTo(Product, {
+  foreignKey: 'product_id',
+  as: 'product',
+});
+ 
+Contact.hasMany(DailySellerCustomerFact, {
+  foreignKey: 'seller_id',
+  as: 'dailySellerCustomerFacts',
+});
+DailySellerCustomerFact.belongsTo(Contact, {
+  foreignKey: 'seller_id',
+  as: 'seller',
+});
+ 
+Customer.hasMany(DailySellerCustomerFact, {
+  foreignKey: 'customer_id',
+  as: 'dailySellerCustomerFacts',
+});
+DailySellerCustomerFact.belongsTo(Customer, {
+  foreignKey: 'customer_id',
+  as: 'customer',
 });
