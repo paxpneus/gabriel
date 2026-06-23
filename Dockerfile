@@ -14,6 +14,8 @@ COPY tsconfig.json .sequelizerc ./
 COPY src ./src
 COPY migrations ./migrations
 
+RUN npm test -- --runInBand
+
 RUN npm run build
 
 # ─── Stage 2: Base de produção (sem Playwright) ───────────────────────────────
