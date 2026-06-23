@@ -19,6 +19,14 @@ const JOB_NAME = "seller_sales_report";
  * com base no padrão visto em invoices (usadas no daily_operation_report
  * e mencionadas na FK invoices_seller_id_fkey -> contacts). Validar nome
  * exato da coluna de status em invoices antes de rodar em produção.
+ *
+ * NOTA SOBRE A TABELA `seller_sales_order_item_snapshots`:
+ * Existe no banco uma tabela `sales_order_item_snapshots` que pertence a
+ * OUTRO relatório (snapshot fiscal/operacional por loja, com order_snapshot_id
+ * obrigatório e colunas de imposto — icms, ipi, pis, cofins, ncm, cest, cfop).
+ * Para não acoplar o seller_sales_report a uma estrutura de outro domínio,
+ * este job usa sua PRÓPRIA tabela, `seller_sales_order_item_snapshots`
+ * (ver migration). Não confundir as duas.
  */
 const VALID_ACTUAL_SITUATIONS = ["6", "9"];
 const INVALID_INVOICE_STATUSES = ["CANCELLED", "PENDING_CANCELLED_SYSTEM"];
@@ -202,7 +210,7 @@ export class SellerSalesReportRepository {
               THEN o.actual_situation = ANY(ARRAY[:validActualSituations])
             ELSE
               os.invoice_status IS NULL
-              OR os.invoice_status <> ALL(ARRAY[:invalidInvoiceStatuses])
+              OR os.invoice_status::text <> ALL(ARRAY[:invalidInvoiceStatuses])
           END AS is_valid_sale
         FROM orders o
         JOIN affected a ON a.order_id = o.id
@@ -224,13 +232,13 @@ export class SellerSalesReportRepository {
 
           oi.quantity,
           oi.unit_price,
-          COALESCE(oi.net_total, 0) AS net_total,
+          COALESCE(oi.net_total, 0)::numeric AS net_total,
 
-          COALESCE(pc.average_cost, 0) AS average_cost,
-          COALESCE(pc.average_cost, 0) * COALESCE(oi.quantity, 0) AS total_cost,
+          COALESCE(pc.average_cost, 0)::numeric AS average_cost,
+          COALESCE(pc.average_cost, 0)::numeric * COALESCE(oi.quantity, 0)::numeric AS total_cost,
 
-          COALESCE(p.commission, 0) AS commission_rate,
-          COALESCE(oi.net_total, 0) * COALESCE(p.commission, 0) AS commission_value,
+          COALESCE(p.commission, 0)::numeric AS commission_rate,
+          COALESCE(oi.net_total, 0)::numeric * COALESCE(p.commission, 0)::numeric AS commission_value,
 
           vo.is_valid_sale
         FROM order_items oi
@@ -249,16 +257,16 @@ export class SellerSalesReportRepository {
           (net_total - total_cost) AS markup_value,
           CASE
             WHEN total_cost = 0 THEN 0
-            ELSE ROUND(((net_total - total_cost) / total_cost) * 100, 2)
+            ELSE ROUND((((net_total - total_cost) / total_cost) * 100)::numeric, 2)
           END AS markup_pct,
           (net_total - total_cost - commission_value) AS contribution_value,
           CASE
             WHEN net_total = 0 THEN 0
-            ELSE ROUND(((net_total - total_cost - commission_value) / net_total) * 100, 2)
+            ELSE ROUND((((net_total - total_cost - commission_value) / net_total) * 100)::numeric, 2)
           END AS contribution_pct
         FROM snapshot_source
       )
-      INSERT INTO sales_order_item_snapshots (
+      INSERT INTO seller_sales_order_item_snapshots (
         order_item_id,
         order_id,
         seller_id,
@@ -354,7 +362,7 @@ export class SellerSalesReportRepository {
     return sequelize.query<AffectedSellerProductFactKey>(
       `
       SELECT DISTINCT order_date AS fact_date, seller_id, product_id
-      FROM sales_order_item_snapshots
+      FROM seller_sales_order_item_snapshots
       WHERE order_id IN (:orderIds)
         AND order_date IS NOT NULL
         AND seller_id IS NOT NULL
@@ -375,7 +383,7 @@ export class SellerSalesReportRepository {
     return sequelize.query<AffectedSellerCustomerFactKey>(
       `
       SELECT DISTINCT order_date AS fact_date, seller_id, customer_id
-      FROM sales_order_item_snapshots
+      FROM seller_sales_order_item_snapshots
       WHERE order_id IN (:orderIds)
         AND order_date IS NOT NULL
         AND seller_id IS NOT NULL
@@ -409,7 +417,7 @@ export class SellerSalesReportRepository {
             COALESCE(SUM(commission_value), 0) AS total_commission,
             COALESCE(SUM(markup_value), 0) AS total_markup_value,
             COALESCE(SUM(contribution_value), 0) AS total_contribution_value
-          FROM sales_order_item_snapshots
+          FROM seller_sales_order_item_snapshots
           WHERE order_date = CAST(:factDate AS date)
             AND seller_id = CAST(:sellerId AS uuid)
             AND product_id = CAST(:productId AS uuid)
@@ -491,7 +499,7 @@ export class SellerSalesReportRepository {
             COALESCE(SUM(s.net_total), 0) AS total_purchased,
             COALESCE(SUM(s.commission_value), 0) AS total_commission,
             MAX(c.name) AS customer_name
-          FROM sales_order_item_snapshots s
+          FROM seller_sales_order_item_snapshots s
           LEFT JOIN customers c ON c.id = s.customer_id
           WHERE s.order_date = CAST(:factDate AS date)
             AND s.seller_id = CAST(:sellerId AS uuid)
@@ -550,7 +558,13 @@ export class SellerSalesReportRepository {
       brand: filters.brand ?? null,
       tireMeasure: filters.tireMeasure ?? null,
       customerId: filters.customerId ?? null,
+      // ✅ Novo filtro: unitBusinessId (opcional, null = sem filtro)
+      unitBusinessId: filters.unitBusinessId ?? null,
     };
+
+    // Cláusula de filtro por unit_business_id reutilizada nas queries
+    // que possuem essa coluna: daily_seller_product_facts e seller_sales_order_item_snapshots.
+    // daily_seller_customer_facts NÃO possui unit_business_id, portanto não recebe o filtro.
 
     // -------------------------------------------------------------
     // Indicadores Gerais
@@ -583,6 +597,16 @@ export class SellerSalesReportRepository {
         AND (CAST(:productId AS uuid) IS NULL OR dspf.product_id = CAST(:productId AS uuid))
         AND (CAST(:brand AS varchar) IS NULL OR dspf.product_brand = CAST(:brand AS varchar))
         AND (CAST(:tireMeasure AS varchar) IS NULL OR dspf.product_measure = CAST(:tireMeasure AS varchar))
+        AND (CAST(:unitBusinessId AS uuid) IS NULL OR EXISTS (
+          SELECT 1
+          FROM orders o_ub
+          JOIN order_items oi_ub ON oi_ub.order_id = o_ub.id
+          JOIN invoices inv_ub ON inv_ub.id = o_ub.invoice_id
+          WHERE DATE(o_ub.date) = dspf.fact_date
+            AND inv_ub.seller_id = dspf.seller_id
+            AND oi_ub.product_id = dspf.product_id
+            AND o_ub.unit_business_id = CAST(:unitBusinessId AS uuid)
+        ))
       `,
       {
         type: QueryTypes.SELECT,
@@ -621,6 +645,16 @@ export class SellerSalesReportRepository {
         AND (CAST(:productId AS uuid) IS NULL OR dspf.product_id = CAST(:productId AS uuid))
         AND (CAST(:brand AS varchar) IS NULL OR dspf.product_brand = CAST(:brand AS varchar))
         AND (CAST(:tireMeasure AS varchar) IS NULL OR dspf.product_measure = CAST(:tireMeasure AS varchar))
+        AND (CAST(:unitBusinessId AS uuid) IS NULL OR EXISTS (
+          SELECT 1
+          FROM orders o_ub
+          JOIN order_items oi_ub ON oi_ub.order_id = o_ub.id
+          JOIN invoices inv_ub ON inv_ub.id = o_ub.invoice_id
+          WHERE DATE(o_ub.date) = dspf.fact_date
+            AND inv_ub.seller_id = dspf.seller_id
+            AND oi_ub.product_id = dspf.product_id
+            AND o_ub.unit_business_id = CAST(:unitBusinessId AS uuid)
+        ))
       GROUP BY dspf.product_id
       ORDER BY sale_value DESC
       `,
@@ -649,6 +683,16 @@ export class SellerSalesReportRepository {
           AND (CAST(:productId AS uuid) IS NULL OR dspf.product_id = CAST(:productId AS uuid))
           AND (CAST(:brand AS varchar) IS NULL OR dspf.product_brand = CAST(:brand AS varchar))
           AND (CAST(:tireMeasure AS varchar) IS NULL OR dspf.product_measure = CAST(:tireMeasure AS varchar))
+          AND (CAST(:unitBusinessId AS uuid) IS NULL OR EXISTS (
+          SELECT 1
+          FROM orders o_ub
+          JOIN order_items oi_ub ON oi_ub.order_id = o_ub.id
+          JOIN invoices inv_ub ON inv_ub.id = o_ub.invoice_id
+          WHERE DATE(o_ub.date) = dspf.fact_date
+            AND inv_ub.seller_id = dspf.seller_id
+            AND oi_ub.product_id = dspf.product_id
+            AND o_ub.unit_business_id = CAST(:unitBusinessId AS uuid)
+        ))
         GROUP BY dspf.product_id
       )
       SELECT
@@ -664,7 +708,122 @@ export class SellerSalesReportRepository {
     );
 
     // -------------------------------------------------------------
+    // Vendas por Loja (Unit Business)
+    //
+    // Usamos seller_sales_order_item_snapshots diretamente em vez das tabelas
+    // de fato diárias (daily_seller_*_facts) porque elas NÃO possuem
+    // unit_business_id — agrupar por loja a partir delas exigiria o
+    // mesmo JOIN/EXISTS pesado contra orders/invoices usado acima,
+    // o que anula a vantagem de usar uma tabela pré-agregada.
+    // seller_sales_order_item_snapshots já guarda unit_business_id por linha,
+    // então o agrupamento aqui é direto.
+    //
+    // Se filters.unitBusinessId estiver preenchido, o WHERE abaixo já
+    // restringe os dados antes do GROUP BY, então o resultado natural
+    // será apenas 1 linha (a da loja filtrada).
+    // -------------------------------------------------------------
+    const byStore = await sequelize.query(
+      `
+      SELECT
+        s.unit_business_id,
+        MAX(ub.name) AS unit_business_name,
+        MAX(ub.number) AS unit_business_number,
+        COUNT(DISTINCT s.order_id) AS sales_count,
+        COALESCE(SUM(s.quantity), 0) AS items_sold_count,
+        COALESCE(SUM(s.net_total), 0) AS total_sold,
+        CASE
+          WHEN COUNT(DISTINCT s.order_id) = 0 THEN 0
+          ELSE ROUND(SUM(s.net_total) / COUNT(DISTINCT s.order_id), 2)
+        END AS average_ticket,
+        COALESCE(SUM(s.total_cost), 0) AS total_cost,
+        COALESCE(SUM(s.commission_value), 0) AS total_commission,
+        COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
+        CASE
+          WHEN SUM(s.total_cost) = 0 THEN 0
+          ELSE ROUND((SUM(s.markup_value) / SUM(s.total_cost)) * 100, 2)
+        END AS markup_pct,
+        COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
+        CASE
+          WHEN SUM(s.net_total) = 0 THEN 0
+          ELSE ROUND((SUM(s.contribution_value) / SUM(s.net_total)) * 100, 2)
+        END AS contribution_pct
+      FROM seller_sales_order_item_snapshots s
+      LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
+      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
+        AND s.is_valid_sale = TRUE
+        AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
+        AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
+        AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
+        AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
+        AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
+        AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
+      GROUP BY s.unit_business_id
+      ORDER BY total_sold DESC
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: baseFilterReplacements,
+      },
+    );
+
+    // -------------------------------------------------------------
+    // Vendas por Vendedor
+    //
+    // Mesmo raciocínio do bloco acima: usamos seller_sales_order_item_snapshots
+    // (que já tem seller_id por linha) em vez de daily_seller_product_facts,
+    // para manter a MESMA fonte de dados entre "por loja" e "por vendedor"
+    // — evita que os dois quadros fiquem com números levemente diferentes
+    // por causa de timing de agregação entre tabelas.
+    //
+    // Se filters.sellerId estiver preenchido, o resultado natural também
+    // será 1 linha (a do vendedor filtrado).
+    // -------------------------------------------------------------
+    const bySeller = await sequelize.query(
+      `
+      SELECT
+        s.seller_id,
+        MAX(ct.name) AS seller_name,
+        COUNT(DISTINCT s.order_id) AS sales_count,
+        COALESCE(SUM(s.quantity), 0) AS items_sold_count,
+        COALESCE(SUM(s.net_total), 0) AS total_sold,
+        CASE
+          WHEN COUNT(DISTINCT s.order_id) = 0 THEN 0
+          ELSE ROUND(SUM(s.net_total) / COUNT(DISTINCT s.order_id), 2)
+        END AS average_ticket,
+        COALESCE(SUM(s.total_cost), 0) AS total_cost,
+        COALESCE(SUM(s.commission_value), 0) AS total_commission,
+        COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
+        CASE
+          WHEN SUM(s.total_cost) = 0 THEN 0
+          ELSE ROUND((SUM(s.markup_value) / SUM(s.total_cost)) * 100, 2)
+        END AS markup_pct,
+        COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
+        CASE
+          WHEN SUM(s.net_total) = 0 THEN 0
+          ELSE ROUND((SUM(s.contribution_value) / SUM(s.net_total)) * 100, 2)
+        END AS contribution_pct
+      FROM seller_sales_order_item_snapshots s
+      LEFT JOIN contacts ct ON ct.id = s.seller_id
+      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
+        AND s.is_valid_sale = TRUE
+        AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
+        AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
+        AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
+        AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
+        AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
+        AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
+      GROUP BY s.seller_id
+      ORDER BY total_sold DESC
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: baseFilterReplacements,
+      },
+    );
+
+    // -------------------------------------------------------------
     // Clientes Atendidos
+    // (daily_seller_customer_facts não possui unit_business_id — sem filtro aqui)
     // -------------------------------------------------------------
     const customers = await sequelize.query(
       `
@@ -702,6 +861,16 @@ export class SellerSalesReportRepository {
         AND (CAST(:productId AS uuid) IS NULL OR dspf.product_id = CAST(:productId AS uuid))
         AND (CAST(:brand AS varchar) IS NULL OR dspf.product_brand = CAST(:brand AS varchar))
         AND (CAST(:tireMeasure AS varchar) IS NULL OR dspf.product_measure = CAST(:tireMeasure AS varchar))
+        AND (CAST(:unitBusinessId AS uuid) IS NULL OR EXISTS (
+          SELECT 1
+          FROM orders o_ub
+          JOIN order_items oi_ub ON oi_ub.order_id = o_ub.id
+          JOIN invoices inv_ub ON inv_ub.id = o_ub.invoice_id
+          WHERE DATE(o_ub.date) = dspf.fact_date
+            AND inv_ub.seller_id = dspf.seller_id
+            AND oi_ub.product_id = dspf.product_id
+            AND o_ub.unit_business_id = CAST(:unitBusinessId AS uuid)
+        ))
       GROUP BY dspf.fact_date
       ORDER BY dspf.fact_date ASC
       `,
@@ -723,6 +892,16 @@ export class SellerSalesReportRepository {
         AND (CAST(:productId AS uuid) IS NULL OR dspf.product_id = CAST(:productId AS uuid))
         AND (CAST(:brand AS varchar) IS NULL OR dspf.product_brand = CAST(:brand AS varchar))
         AND (CAST(:tireMeasure AS varchar) IS NULL OR dspf.product_measure = CAST(:tireMeasure AS varchar))
+        AND (CAST(:unitBusinessId AS uuid) IS NULL OR EXISTS (
+          SELECT 1
+          FROM orders o_ub
+          JOIN order_items oi_ub ON oi_ub.order_id = o_ub.id
+          JOIN invoices inv_ub ON inv_ub.id = o_ub.invoice_id
+          WHERE DATE(o_ub.date) = dspf.fact_date
+            AND inv_ub.seller_id = dspf.seller_id
+            AND oi_ub.product_id = dspf.product_id
+            AND o_ub.unit_business_id = CAST(:unitBusinessId AS uuid)
+        ))
       GROUP BY DATE_TRUNC('week', dspf.fact_date)
       ORDER BY period ASC
       `,
@@ -744,6 +923,16 @@ export class SellerSalesReportRepository {
         AND (CAST(:productId AS uuid) IS NULL OR dspf.product_id = CAST(:productId AS uuid))
         AND (CAST(:brand AS varchar) IS NULL OR dspf.product_brand = CAST(:brand AS varchar))
         AND (CAST(:tireMeasure AS varchar) IS NULL OR dspf.product_measure = CAST(:tireMeasure AS varchar))
+        AND (CAST(:unitBusinessId AS uuid) IS NULL OR EXISTS (
+          SELECT 1
+          FROM orders o_ub
+          JOIN order_items oi_ub ON oi_ub.order_id = o_ub.id
+          JOIN invoices inv_ub ON inv_ub.id = o_ub.invoice_id
+          WHERE DATE(o_ub.date) = dspf.fact_date
+            AND inv_ub.seller_id = dspf.seller_id
+            AND oi_ub.product_id = dspf.product_id
+            AND o_ub.unit_business_id = CAST(:unitBusinessId AS uuid)
+        ))
       GROUP BY DATE_TRUNC('month', dspf.fact_date)
       ORDER BY period ASC
       `,
@@ -762,7 +951,7 @@ export class SellerSalesReportRepository {
           SELECT
             s.*,
             ct.name AS seller_name
-          FROM sales_order_item_snapshots s
+          FROM seller_sales_order_item_snapshots s
           LEFT JOIN contacts ct ON ct.id = s.seller_id
           WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
             AND s.is_valid_sale = TRUE
@@ -771,6 +960,7 @@ export class SellerSalesReportRepository {
             AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
             AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
             AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
+            AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
           ORDER BY s.order_date DESC, s.last_updated_at DESC
           `,
           {
@@ -785,6 +975,8 @@ export class SellerSalesReportRepository {
       summary,
       products,
       ranking: ranking[0],
+      byStore,
+      bySeller,
       customers,
       evolution: {
         daily: evolutionDaily,
@@ -796,24 +988,24 @@ export class SellerSalesReportRepository {
   }
 
   async getJobStatus() {
-  const rows = await sequelize.query<{
-    status: string;
-    last_run_at: Date;
-    last_processed_at: Date;
-    rows_processed: number;
-    metadata: { error?: string } | null;
-  }>(
-    `
-    SELECT status, last_run_at, last_processed_at, rows_processed, metadata
-    FROM report_job_checkpoints
-    WHERE job_name = :jobName
-    LIMIT 1
-    `,
-    { type: QueryTypes.SELECT, replacements: { jobName: JOB_NAME } },
-  );
+    const rows = await sequelize.query<{
+      status: string;
+      last_run_at: Date;
+      last_processed_at: Date;
+      rows_processed: number;
+      metadata: { error?: string } | null;
+    }>(
+      `
+      SELECT status, last_run_at, last_processed_at, rows_processed, metadata
+      FROM report_job_checkpoints
+      WHERE job_name = :jobName
+      LIMIT 1
+      `,
+      { type: QueryTypes.SELECT, replacements: { jobName: JOB_NAME } },
+    );
 
-  return rows[0] ?? null;
-}
+    return rows[0] ?? null;
+  }
 }
 
 export const sellerSalesReportRepository = new SellerSalesReportRepository();

@@ -6,6 +6,7 @@ export interface SellerSalesReportFilters {
   brand?: string;
   tireMeasure?: string; // "Aro do Pneu" -> products.measure
   customerId?: string;
+  unitBusinessId?: string;
   /** Quando true, retorna também os order_items detalhados (drill-down). */
   drillDown?: boolean;
 }
