@@ -7,10 +7,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     default-jdk \
     && rm -rf /var/lib/apt/lists/*
 
+# Atualiza npm para a mesma versão do ambiente local
+RUN npm install -g npm@11.6.2
+
 COPY package*.json ./
 RUN npm ci
 
-COPY tsconfig.json .sequelizerc ./
+COPY jest.config.ts tsconfig.json .sequelizerc ./
 COPY src ./src
 COPY migrations ./migrations
 
