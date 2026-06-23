@@ -9,6 +9,16 @@ import { QueryParams, PaginatedResult } from "../../../../shared/query/query.typ
 export class OrderService extends BaseService<Order, OrderRepository> {
   constructor() {
     super(orderRepository);
+
+     this.queryConfig = {
+      defaults: {
+        perPage: 20,
+        sortBy: ['created_at'],
+        sortDir: 'DESC',
+      },
+      stringFields: ['number_order_system'],
+      searchFields: ['number_order_system'],
+    };
   }
 
   async paginate(params: QueryParams, extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">): Promise<PaginatedResult<Order>> {

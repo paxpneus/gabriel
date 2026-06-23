@@ -20,6 +20,7 @@ import UserConfig from "../user_config/user_config.model";
 import UserUnitBusiness from "../user_unit_business/user_unit_business.model";
 import sequelize from "../../../../config/sequelize";
 import { USER_TYPES } from "../../../../shared/constants/user-types";
+import Contact from "../../../sales/contacts/contacts.model";
 
 export class UserService extends BaseService<User, UserRepository> {
   constructor() {
@@ -261,6 +262,10 @@ export class UserService extends BaseService<User, UserRepository> {
           model: Role,
           as: "role",
         },
+        {
+          model: Contact,
+          as: 'contact'
+        }
       ],
     });
 
@@ -312,6 +317,10 @@ export class UserService extends BaseService<User, UserRepository> {
           model: UserConfig,
           as: "config",
         },
+         {
+          model: Contact,
+          as: 'contact'
+        }
       ],
     });
 
