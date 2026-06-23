@@ -11,7 +11,7 @@ import { StoreService } from "../../../../sales/stores/stores.service";
 import { mapOrder } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import { Product, ProductConfig } from "../../../../inventory";
 import { Op } from "sequelize";
-import { UnitBusiness } from "../../../../warehouse";
+import { Invoice, UnitBusiness } from "../../../../warehouse";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
@@ -51,6 +51,19 @@ export class BlingOrderService {
     }
     return this.blingApi.get(url);
   }
+
+  private async resolveInvoiceId(
+  notaFiscalId: string | number | undefined,
+): Promise<string | null> {
+  if (!notaFiscalId) return null;
+
+  const invoice = await Invoice.findOne({
+    where: { id_system: String(notaFiscalId) },
+    attributes: ["id"],
+  });
+
+  return invoice?.id ?? null;
+}
 
   private async resolveProductId(
     externalProductId: string | undefined,
@@ -216,8 +229,11 @@ export class BlingOrderService {
         unitBusinessId = unitBusiness?.id ?? null;
       }
 
+      const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
+
       await ordersService.update(existingOrder.id, {
         unit_business_id: unitBusinessId,
+        invoice_id: invoiceId,
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
         totalPrice: Number(orderData.total),
@@ -427,10 +443,12 @@ export class BlingOrderService {
       );
       const destination = await this.resolveDestination(orderData.contato?.id);
       const fiscalFields = this.extractFiscalFields(orderData, destination);
+      const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
 
       const ordersPayload: orderCreationAttributes = {
         integrations_id: integration.id,
         customer_id: customer.id,
+        invoice_id: invoiceId,
         actual_situation: String(orderData.situacao.id),
         unit_business_id: unitBusiness?.id ?? null,
         id_order_system: String(orderData.id),
