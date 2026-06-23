@@ -52,32 +52,32 @@ export class BlingOrderService {
     return this.blingApi.get(url);
   }
 
- private async resolveProductId(
-  externalProductId: string | undefined,
-  sku: string | undefined,
-): Promise<string | undefined> {
-  if (!externalProductId && !sku) return undefined;
+  private async resolveProductId(
+    externalProductId: string | undefined,
+    sku: string | undefined,
+  ): Promise<string | undefined> {
+    if (!externalProductId && !sku) return undefined;
 
-  // Tenta pelo id_system primeiro (sem depender de sku na tabela Product)
-  if (externalProductId) {
-    const product = await Product.findOne({
-      where: { id_system: externalProductId },
-      attributes: ["id"],
-    });
-    if (product) return product.id;
+    // Tenta pelo id_system primeiro (sem depender de sku na tabela Product)
+    if (externalProductId) {
+      const product = await Product.findOne({
+        where: { id_system: externalProductId },
+        attributes: ["id"],
+      });
+      if (product) return product.id;
+    }
+
+    // Fallback: busca via ProductConfig (sku mora aqui agora)
+    if (sku) {
+      const config = await ProductConfig.findOne({
+        where: { sku },
+        attributes: ["product_id"],
+      });
+      if (config) return config.product_id;
+    }
+
+    return undefined;
   }
-
-  // Fallback: busca via ProductConfig (sku mora aqui agora)
-  if (sku) {
-    const config = await ProductConfig.findOne({
-      where: { sku },
-      attributes: ["product_id"],
-    });
-    if (config) return config.product_id;
-  }
-
-  return undefined;
-}
 
   // ─── Busca UF e cidade do destinatário via contato da Bling ────────────────
   // Usa endereco.geral como fonte primária.
@@ -371,26 +371,28 @@ export class BlingOrderService {
       let store = null;
 
       if (orderData.loja?.id) {
-  store = await this.storeService.findOne({
-    where: { id_store_system: String(orderData.loja.id) },
-  });
+        store = await this.storeService.findOne({
+          where: { id_store_system: String(orderData.loja.id) },
+        });
 
-  if (!store) {
-    const blingStore = await this.blingGet(`/canais-venda/${orderData.loja.id}`);
-    const tipo = blingStore.data.data.tipo; 
+        if (!store) {
+          const blingStore = await this.blingGet(
+            `/canais-venda/${orderData.loja.id}`,
+          );
+          const tipo = blingStore.data.data.tipo;
 
-    store = await this.storeService.findOne({
-      where: { name: tipo },
-    });
+          store = await this.storeService.findOne({
+            where: { name: tipo },
+          });
 
-    if (!store) {
-      store = await this.storeService.create({
-        name: tipo,
-        id_store_system: String(blingStore.data.data.id),
-      });
-    }
-  }
-}
+          if (!store) {
+            store = await this.storeService.create({
+              name: tipo,
+              id_store_system: String(blingStore.data.data.id),
+            });
+          }
+        }
+      }
 
       if (!integration) {
         throw new Error("Bling Integration não encontrada no cache");
@@ -402,14 +404,15 @@ export class BlingOrderService {
         unitBusiness = await UnitBusiness.findOne({
           where: { id_system: String(orderData.loja.id) },
         });
-      } else {
-        // Pedido sem loja na Bling → garante que existe um UnitBusiness "Sem Loja"
+      }
+
+      if (!unitBusiness) {
         unitBusiness = await UnitBusiness.findOne({
           where: { id_system: "SEM_LOJA" },
         });
 
         if (!unitBusiness) {
-          UnitBusiness.create({
+          unitBusiness = await UnitBusiness.create({
             id_system: "SEM_LOJA",
             name: "Sem Loja",
             cnpj: "00000000000000",

@@ -920,63 +920,78 @@ END,
     }
   }
 
-  async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
-    for (const key of keys) {
-      await sequelize.query(
-        `
-        WITH metrics AS (
-          SELECT
-            CAST(:factDate AS date)            AS fact_date,
-            CAST(:unitBusinessId AS uuid)      AS unit_business_id,
-            CAST(:integrationId AS uuid)       AS integration_id,
-            CAST(:statusNormalized AS varchar) AS status_normalized,
-            COALESCE(
-              MAX(iosm.display_name),
-              :statusNormalized
-            )                                  AS status_display_name,
-            COUNT(sos.*)::integer              AS orders_count,
-            COALESCE(SUM(sos.total_order), 0)  AS total_value
-          FROM sales_order_snapshots sos
-          LEFT JOIN integration_order_status_mappings iosm ON (
-            iosm.integration_id    = sos.integration_id
-            AND iosm.normalized_status = sos.status_snapshot
-          )
-          WHERE sos.order_date       = CAST(:factDate AS date)
-            AND sos.unit_business_id = :unitBusinessId
-            AND sos.integration_id   = :integrationId
-            AND sos.status_snapshot  = :statusNormalized
-        )
-        INSERT INTO daily_sales_status_facts (
-          fact_date, unit_business_id, integration_id,
-          status_normalized, status_display_name,
-          orders_count, total_value,
-          last_updated_at, created_at, updated_at
-        )
-        SELECT
-          fact_date, unit_business_id, integration_id,
-          status_normalized, status_display_name,
-          orders_count, total_value,
-          NOW(), NOW(), NOW()
-        FROM metrics
-        ON CONFLICT (fact_date, unit_business_id, integration_id, status_normalized)
-        DO UPDATE SET
-          status_display_name = EXCLUDED.status_display_name,
-          orders_count        = EXCLUDED.orders_count,
-          total_value         = EXCLUDED.total_value,
-          last_updated_at     = NOW(),
-          updated_at          = NOW()
-        `,
+async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
+  if (!keys.length) return;
+
+  const dayKeys = [
+    ...new Map(
+      keys.map((k) => [
+        `${k.fact_date}|${k.unit_business_id}|${k.integration_id}`,
         {
-          replacements: {
-            factDate: key.fact_date,
-            unitBusinessId: key.unit_business_id,
-            integrationId: key.integration_id,
-            statusNormalized: key.status_normalized,
-          },
+          fact_date: k.fact_date,
+          unit_business_id: k.unit_business_id,
+          integration_id: k.integration_id,
         },
-      );
-    }
+      ]),
+    ).values(),
+  ];
+
+  for (const key of dayKeys) {
+    // 1. Deleta TODAS as linhas do dia para essa combinação
+    await sequelize.query(
+      `
+      DELETE FROM daily_sales_status_facts
+      WHERE fact_date        = CAST(:factDate AS date)
+        AND unit_business_id = CAST(:unitBusinessId AS uuid)
+        AND integration_id   = CAST(:integrationId AS uuid)
+      `,
+      {
+        replacements: {
+          factDate: key.fact_date,
+          unitBusinessId: key.unit_business_id,
+          integrationId: key.integration_id,
+        },
+      },
+    );
+
+    // 2. Reinsere a partir dos snapshots atuais
+    await sequelize.query(
+      `
+      INSERT INTO daily_sales_status_facts (
+        fact_date, unit_business_id, integration_id,
+        status_normalized, status_display_name,
+        orders_count, total_value,
+        last_updated_at, created_at, updated_at
+      )
+      SELECT
+        CAST(:factDate AS date),
+        CAST(:unitBusinessId AS uuid),
+        CAST(:integrationId AS uuid),
+        sos.status_snapshot,
+        COALESCE(MAX(iosm.display_name), sos.status_snapshot),
+        COUNT(*)::integer,
+        COALESCE(SUM(sos.total_order), 0),
+        NOW(), NOW(), NOW()
+      FROM sales_order_snapshots sos
+      LEFT JOIN integration_order_status_mappings iosm ON (
+        iosm.integration_id    = sos.integration_id
+        AND iosm.normalized_status = sos.status_snapshot
+      )
+      WHERE sos.order_date       = CAST(:factDate AS date)
+        AND sos.unit_business_id = CAST(:unitBusinessId AS uuid)
+        AND sos.integration_id   = CAST(:integrationId AS uuid)
+      GROUP BY sos.status_snapshot
+      `,
+      {
+        replacements: {
+          factDate: key.fact_date,
+          unitBusinessId: key.unit_business_id,
+          integrationId: key.integration_id,
+        },
+      },
+    );
   }
+}
 
   // ---------------------------------------------------------------------------
   // Consulta do relatório
