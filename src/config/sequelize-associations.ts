@@ -38,9 +38,9 @@ import InventoryBatch from '../modules/inventory/stock-inventory/inventory-batch
 import InventoryBatchItems from '../modules/inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model';
 import InventoryBatchLogs from '../modules/inventory/stock-inventory/inventory-batch-logs/inventory-batch-logs.model';
 import UnmappedInvoiceProduct from '../modules/inventory/unmapped-invoice-product/unmapped-invoice-product.model';
-import InvoiceOperationSnapshot from '../modules/reports/invoice-operation-snapshot/invoice-operation-snapshot.model';
-import DailyOperationFact from '../modules/reports/daily-operation-fact/daily-operation-fact.model';
-import DailyTransporterFact from '../modules/reports/daily-transporter-fact/daily-transporter-fact.model';
+import InvoiceOperationSnapshot from '../modules/reports/daily-operation/invoice-operation-snapshot/invoice-operation-snapshot.model';
+import DailyOperationFact from '../modules/reports/daily-operation/daily-operation-fact/daily-operation-fact.model';
+import DailyTransporterFact from '../modules/reports/daily-operation/daily-transporter-fact/daily-transporter-fact.model';
 import SalesOrderSnapshot from '../modules/reports/daily-sales/sales-order-snapshot/sales-order-snapshot.model';
 import SalesOrderItemSnapshot from '../modules/reports/daily-sales/sales-order-item-snapshot/sales-order-item-snapshot.model';
 import DailySalesFact from '../modules/reports/daily-sales/daily-sales-fact/daily-sales-fact.model';
@@ -55,6 +55,8 @@ import Operations from '../modules/warehouse/operations/operation/operations.mod
 import OperationsItens from '../modules/warehouse/operations/operations-itens/operations-itens.model';
 import OperationComment from '../modules/warehouse/operations/operation-comment/operation-comment.model';
 import Application from '../modules/integrations/applications/applications.model';
+import DailySellerProductFact from '../modules/reports/sellers-report/models/daily-seller-product-fact/daily-seller-product-fact.model';
+import DailySellerCustomerFact from '../modules/reports/sellers-report/models/daily-seller-customer-fact/daily-seller-customer-fact.model';
 export function setupAssociations() {
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
@@ -70,6 +72,8 @@ Contact.belongsTo(Integration, { foreignKey: 'integrations_id', as: 'integration
 Integration.hasMany(Contact, { foreignKey: 'integrations_id', as: 'contacts' });
 Contact.belongsTo(UnitBusiness, { foreignKey: 'unit_business_id', as: 'unitBusiness' });
 UnitBusiness.hasMany(Contact, { foreignKey: 'unit_business_id', as: 'contacts' });
+Contact.belongsTo(User, { foreignKey: 'user_id', as: 'user'})
+User.hasOne(Contact, {foreignKey: 'user_id', as: 'contact'})
 
 // 4. ORDER (PEDIDO) 1:N ORDER_HISTORY (HISTORICO)
 Order.hasMany(OrderHistory, { foreignKey: 'order_id', as: 'history' });
@@ -950,4 +954,42 @@ Integration.hasMany(IntegrationOrderStatusMapping, {
 IntegrationOrderStatusMapping.belongsTo(Integration, {
   foreignKey: 'integration_id',
   as: 'integration',
+});
+
+// ===== SELLER SALES ANALYTICS =====
+
+Contact.hasMany(DailySellerProductFact, {
+  foreignKey: 'seller_id',
+  as: 'dailySellerProductFacts',
+});
+DailySellerProductFact.belongsTo(Contact, {
+  foreignKey: 'seller_id',
+  as: 'seller',
+});
+ 
+Product.hasMany(DailySellerProductFact, {
+  foreignKey: 'product_id',
+  as: 'dailySellerProductFacts',
+});
+DailySellerProductFact.belongsTo(Product, {
+  foreignKey: 'product_id',
+  as: 'product',
+});
+ 
+Contact.hasMany(DailySellerCustomerFact, {
+  foreignKey: 'seller_id',
+  as: 'dailySellerCustomerFacts',
+});
+DailySellerCustomerFact.belongsTo(Contact, {
+  foreignKey: 'seller_id',
+  as: 'seller',
+});
+ 
+Customer.hasMany(DailySellerCustomerFact, {
+  foreignKey: 'customer_id',
+  as: 'dailySellerCustomerFacts',
+});
+DailySellerCustomerFact.belongsTo(Customer, {
+  foreignKey: 'customer_id',
+  as: 'customer',
 });

@@ -3,7 +3,7 @@ import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/que
 import { BlingTokenRefreshQueue } from "../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 import { TCarUpsertQueue } from "../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
-import { DailyOperationReportQueue } from "../modules/reports/daily-operation-report/daily-operation-report.queue";
+import { DailyOperationReportQueue } from "../modules/reports/daily-operation/daily-operation-report/daily-operation-report.queue";
 import { SalesReportQueue } from "../modules/reports/daily-sales/sales-report/sales-report.queue";
 import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
 

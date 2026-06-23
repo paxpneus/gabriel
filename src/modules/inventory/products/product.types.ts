@@ -14,6 +14,7 @@ export interface ProductAttributes {
   source_payload?: Record<string, unknown>;
   unit?: string;
   brand?: string;
+  commission?: number;
   line?: string | null;
   measure?: string | null;
   gross_weight?: number;
