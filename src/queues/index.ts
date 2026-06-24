@@ -92,7 +92,6 @@ function buildQueues(workless: boolean) {
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless });
   const dailySalesReportQueue = new SalesReportQueue({ workless });
   const autoBackupQueue = new AutoBackupQueue({ workless });
-  
 
   return {
     nfeQueue,
@@ -179,7 +178,6 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(autoBackupQueue.queue),
       new BullMQAdapter(tcarUpsertQueue.queue),
       new BullMQAdapter(tcarSyncQueue.queue),
-
     ],
     serverAdapter,
   });
@@ -195,12 +193,6 @@ export function registerQueues(app: Express) {
 
 export function startBlingWorkers() {
   const {
-    nfeQueue,
-    mlOrderSyncQueue,
-    cnpjQueue,
-    blingOrderQueue,
-    reconcilerQueue,
-    blingReconcilerQueue,
     blingTokenRefreshQueue,
     blingDailyReconciler,
     dailyOperationReportQueue,
@@ -211,8 +203,6 @@ export function startBlingWorkers() {
     // tcarSyncQueue
   } = buildQueues(false);
 
-  // reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  // blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
 
@@ -225,10 +215,41 @@ export function startBlingWorkers() {
   console.log("  → DAILY_OPERATION_REPORT (1h), SALES_REPORT (1h)");
   console.log("  → AUTO_BACKUP (19h BRT)");
 
-
   // void scheduleTCarSync();
   // void tcarSyncQueue;
+}
 
+export function startAutomationWorkers() {
+  const {
+    // nfeQueue,
+    // mlOrderSyncQueue,
+    // cnpjQueue,
+    // blingOrderQueue,
+    // reconcilerQueue,
+    // blingReconcilerQueue,
+  } = buildQueues(false);
+
+  // Agendamentos que já existiam
+  // reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  // blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
+
+  console.log(
+    "------------------- QUEUE: Automation Workers Ativos! -------------------",
+  );
+  console.log("  → BLING_ORDER_INGESTION");
+  console.log("  → CNPJ_VERIFY_CNAE");
+  console.log("  → ML-ORDER-SYNC");
+  console.log("  → NFE_EMISSION");
+  console.log("  → NFE_RECONCILER (1h)");
+  console.log("  → BLING_RECONCILER (2h)");
+
+  // Mantém referências vivas
+  // void nfeQueue;
+  // void mlOrderSyncQueue;
+  // void cnpjQueue;
+  // void blingOrderQueue;
+  // void reconcilerQueue;
+  // void blingReconcilerQueue;
 }
 
 // ─── Bling workers isolados (ex-startBlingWorkers) ───────────────────────────
