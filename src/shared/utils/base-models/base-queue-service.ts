@@ -265,8 +265,8 @@ export abstract class BaseQueueService<T> {
   }
 
   private resolveSharedLockResource(job: Job<T>): string {
-    return this.resolveSharedLockResourceFromData(job.data);
-  }
+  return this.queueName;
+}
 
   private resolveSharedLockResourceFromData(data: unknown): string {
     const payload = data as Record<string, any> | undefined;
@@ -373,11 +373,9 @@ export abstract class BaseQueueService<T> {
       }
     }
 
-    const priority = this.resolveJobPriority(data);
 
     return this.queue.add(this.queueName, data, {
       jobId,
-      priority,
       removeOnComplete: true,
       removeOnFail: {
         age: 24 * 3600 * 7,
@@ -403,12 +401,9 @@ export abstract class BaseQueueService<T> {
       }
     }
 
-    const priority = this.resolveJobPriority(data);
-
     return this.queue.add(this.queueName, data, {
       jobId,
       delay: delayMs,
-      priority,
       removeOnComplete: true,
       removeOnFail: {
         age: 24 * 3600 * 7,
