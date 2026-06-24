@@ -88,7 +88,7 @@ function buildQueues(workless: boolean) {
   const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless });
   const blingDailyReconciler = new BlingMigrationQueue({ workless });
   const tcarUpsertQueue = new TCarUpsertQueue({ workless });
-  const tcarSyncQueue = new TCarSyncQueue({ workless });
+  // const tcarSyncQueue = new TCarSyncQueue({ workless });
   const dailyOperationReportQueue = new DailyOperationReportQueue({ workless });
   const dailySalesReportQueue = new SalesReportQueue({ workless });
   const autoBackupQueue = new AutoBackupQueue({ workless });
@@ -109,7 +109,7 @@ function buildQueues(workless: boolean) {
     dailySalesReportQueue,
     autoBackupQueue,
     tcarUpsertQueue,
-    tcarSyncQueue,
+    // tcarSyncQueue,
   };
 }
 
@@ -129,7 +129,7 @@ export function registerQueues(app: Express) {
     dailySalesReportQueue,
     autoBackupQueue,
     tcarUpsertQueue,
-    tcarSyncQueue,
+    // tcarSyncQueue,
   } = buildQueues(true);
 
   const blingOrderQueue = new BlingOrderQueue(
@@ -157,7 +157,7 @@ export function registerQueues(app: Express) {
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
   app.locals.DailySalesReportQueue = dailySalesReportQueue;
   app.locals.AutoBackupQueue = autoBackupQueue;
-  app.locals.TCarSyncQueue = tcarSyncQueue;
+  // app.locals.TCarSyncQueue = tcarSyncQueue;
 
   serverAdapter.setBasePath("/admin/queues");
 
@@ -178,7 +178,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(dailySalesReportQueue.queue),
       new BullMQAdapter(autoBackupQueue.queue),
       new BullMQAdapter(tcarUpsertQueue.queue),
-      new BullMQAdapter(tcarSyncQueue.queue),
+      // new BullMQAdapter(tcarSyncQueue.queue),
 
     ],
     serverAdapter,
@@ -208,7 +208,7 @@ export function startBlingWorkers() {
     autoBackupQueue,
     blingApiFetchQueue,
     blingDirectUpsertQueue,
-    tcarSyncQueue
+    // tcarSyncQueue
   } = buildQueues(false);
 
   reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
@@ -227,7 +227,7 @@ export function startBlingWorkers() {
 
 
   void scheduleTCarSync();
-  void tcarSyncQueue;
+  // void tcarSyncQueue;
 
 }
 
