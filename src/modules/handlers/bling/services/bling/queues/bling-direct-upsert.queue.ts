@@ -14,7 +14,6 @@ import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
 import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import { Op, UniqueConstraintError } from "sequelize";
-import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
 import Contact from "../../../../../sales/contacts/contacts.model";
 import { logDbError } from "../../../../../../shared/utils/logging/db-errors-logs";
 import productController from "../../../../../inventory/products/product.controller";
@@ -34,7 +33,6 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         max: 10,
         duration: 1000,
       },
-      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
   }
