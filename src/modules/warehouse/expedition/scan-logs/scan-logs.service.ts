@@ -576,23 +576,7 @@ export class ExpeditionScanLogService extends BaseService<
         transaction: t,
       });
 
-      // ── 8. Verifica se esta NF fechou ──────────────────────────────────────
-      const stillPending = await InvoiceItems.count({
-        where: {
-          invoice_id: invoiceId,
-          quantity_received: { [Op.lt]: sequelize.col("quantity_expected") },
-        },
-        transaction: t,
-      });
-
-      if (stillPending === 0) {
-        await Invoice.update(
-          { status: "FINISHED" },
-          { where: { id: invoiceId }, transaction: t },
-        );
-      }
-
-      // ── 9. Verifica se todas as NFs do lote foram finalizadas ──────────────
+      // ── 8. Verifica se todas as NFs do lote foram finalizadas ──────────────
       const pendingInvoices = await Invoice.count({
         include: [
           {

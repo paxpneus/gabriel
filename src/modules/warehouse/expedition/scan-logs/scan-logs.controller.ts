@@ -110,11 +110,10 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
 
   scanProductIncomingByInvoice = async (req: Request, res: Response): Promise<Response> => {
   try {
-    const { labelcode, batchId, invoiceId, quantity } = req.body;
-    const userId = (req as AuthRequest).user?.id;
+    const { labelcode, batchId, userId, invoiceId, quantity } = req.body;
     const unitBusiness = await this.getUnitBusiness(req);
 
-    await this.service.scanProductIncomingByInvoice(labelcode, batchId, invoiceId,  userId as string, quantity, unitBusiness);
+    await this.service.scanProductIncomingByInvoice(labelcode, batchId, invoiceId,  userId, quantity, unitBusiness);
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
   } catch (error: any) {
