@@ -195,9 +195,6 @@ export function startBlingWorkers() {
   const {
     blingTokenRefreshQueue,
     blingDailyReconciler,
-    dailyOperationReportQueue,
-    dailySalesReportQueue,
-    autoBackupQueue,
     blingApiFetchQueue,
     blingDirectUpsertQueue,
     // tcarSyncQueue
