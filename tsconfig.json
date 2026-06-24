@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     // "types": ["node"],
-    "types": ["jest"],
+    "types": ["jest", "node"],
     "target": "ES2020",
     "module": "commonjs",
     "lib": ["ES2020"],
