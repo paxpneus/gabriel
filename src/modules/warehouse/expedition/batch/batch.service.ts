@@ -1,4 +1,7 @@
-import { TCarConferenciaUnitBusiness, TCarConferenciaPostService } from './../../../handlers/tecinco/service/conferencias-estoque/conferencia-estoque-post.service';
+import {
+  TCarConferenciaUnitBusiness,
+  TCarConferenciaPostService,
+} from "./../../../handlers/tecinco/service/conferencias-estoque/conferencia-estoque-post.service";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import ExpeditionBatch from "./batch.model";
 import expeditionBatchRepository, {
@@ -30,6 +33,7 @@ import invoiceItemsService from "../../entrance/invoice-items/invoice-items.serv
 import { ensureSameBy } from "../../../../shared/utils/validators/same-not-allowed";
 import transporterService from "../../transporter/transporter.service";
 import Transporter from "../../transporter/transporter.model";
+import integrationsService from "../../../integrations/integrations/integrations.service";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -748,67 +752,80 @@ export class ExpeditionBatchService extends BaseService<
   }
 
   async finishBatch(batchId: string, justification: string, user: any) {
-  await sequelize.transaction(async (t) => {
-    const fullBatch = await this.findByIdFullBatch(batchId);
+    const fullBatch = await this.finishBatchTransaction(batchId, justification);
 
-    const invoicesIds = fullBatch.batchInvoices!.map((s) => s.invoice_id);
-
-    const invoiceItemsIds = fullBatch.batchInvoices!.flatMap((s) =>
-      s.invoice.items.map((i) => i.id),
+    await this.postTecincoConferencia(fullBatch, batchId, user).catch((err) =>
+      console.error(
+        `[finishBatch] Erro ao postar conferência Tecinco | batch=${batchId}`,
+        err,
+      ),
     );
 
-    const batchUpdatePayload = {
-      status: "FINISHED" as const,
-      justification,
-      finished_at: sequelize.literal(
-        "COALESCE(finished_at, NOW())",
-      ) as unknown as Date,
+    return this.findByIdFullBatch(batchId);
+  }
+
+  private async finishBatchTransaction(
+    batchId: string,
+    justification: string,
+  ): Promise<ExpeditionBatchFull> {
+    return sequelize.transaction(async (t) => {
+      const fullBatch = await this.findByIdFullBatch(batchId);
+
+      const invoicesIds = fullBatch.batchInvoices!.map((s) => s.invoice_id);
+      const invoiceItemsIds = fullBatch.batchInvoices!.flatMap((s) =>
+        s.invoice.items.map((i) => i.id),
+      );
+
+      await Promise.all([
+        ExpeditionBatch.update(
+          {
+            status: "FINISHED",
+            justification,
+            finished_at: sequelize.literal(
+              "COALESCE(finished_at, NOW())",
+            ) as unknown as Date,
+          },
+          { where: { id: batchId }, transaction: t },
+        ),
+        invoiceService.bulkUpdate(
+          { status: "FINISHED" },
+          { where: { id: invoicesIds }, transaction: t },
+        ),
+        invoiceItemsService.bulkUpdate(
+          { status: "FINISHED" },
+          { where: { id: invoiceItemsIds }, transaction: t },
+        ),
+      ]);
+
+      return fullBatch;
+    });
+  }
+
+  private async postTecincoConferencia(
+    fullBatch: ExpeditionBatchFull,
+    batchId: string,
+    user: any,
+  ) {
+    const { integrations_id } = fullBatch;
+    if (!integrations_id) return;
+
+    const integration = await integrationsService.findById(integrations_id);
+    if (integration?.name !== "Tecinco") return;
+
+    const branchId = parseInt(user.unitBusiness.number, 10);
+    const unitBusiness: TCarConferenciaUnitBusiness = {
+      id: user.unitBusiness.id,
+      cnpj: user.unitBusiness.cnpj,
+      number: user.unitBusiness.number,
     };
 
-    await Promise.all([
-      ExpeditionBatch.update(batchUpdatePayload, {
-        where: { id: batchId },
-        transaction: t,
-      }),
-      invoiceService.bulkUpdate(
-        { status: "FINISHED" },
-        { where: { id: invoicesIds }, transaction: t },
-      ),
-      invoiceItemsService.bulkUpdate(
-        { status: "FINISHED" },
-        { where: { id: invoiceItemsIds }, transaction: t },
-      ),
-    ]);
-  });
-
-  // ── Posta conferência na Tecinco após commit da transação ──────────────────
-  const branchId = parseInt(user.unitBusiness.number, 10); // remove zeros à esquerda
-
-  const unitBusiness: TCarConferenciaUnitBusiness = {
-    id: user.unitBusiness.id,
-    cnpj: user.unitBusiness.cnpj,
-    number: user.unitBusiness.number,
-  };
-
-  const tCarConferenciaPostService = new TCarConferenciaPostService();
-
-  try {
-    await tCarConferenciaPostService.postarConferenciaPorLote(
+    await new TCarConferenciaPostService().postarConferenciaPorLote(
       batchId,
       unitBusiness,
       branchId,
       user.id_system,
     );
-  } catch (err) {
-    console.error(
-      `[finishBatch] Erro ao postar conferência Tecinco | batch=${batchId}`,
-      err,
-    );
-    // Não relança — o batch já foi finalizado com sucesso no banco
   }
-
-  return this.findByIdFullBatch(batchId);
-}
 
   async generateDeliveryNote(batchId: string, userId: string) {
     const batchInfo = await this.findByIdFullBatch(batchId);
