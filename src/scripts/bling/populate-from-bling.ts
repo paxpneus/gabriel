@@ -764,7 +764,7 @@ async function main() {
     await migrateInvoices("NF-e", 0); // 6 — depende de UnitBusiness
     await migrateInvoices("NF-e", 1); // 5 — depende de UnitBusiness
     await migrateCancelledInvoices("NF-e");
-    await migrateOrders(); // pedidos depois de notas: mais lento e faz mais chamadas
+    // await migrateOrders(); // pedidos depois de notas: mais lento e faz mais chamadas
   } catch (err: any) {
     console.error("\n❌ Erro durante a migração:", err.message);
     process.exit(1);
