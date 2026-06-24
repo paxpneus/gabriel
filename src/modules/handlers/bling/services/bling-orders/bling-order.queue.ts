@@ -42,8 +42,8 @@ export class BlingOrderQueue extends BaseQueueService<any> {
 
   const result = await this.orderService.processWebhook(job.data.event, job.data);
 
-    if (result) {
-        await this.next.add(result, `document-check-${result.orderSystem.id_order_system}`);
-    }
+    // if (result) {
+    //     await this.next.add(result, `document-check-${result.orderSystem.id_order_system}`);
+    // }
   }
 }

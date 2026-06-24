@@ -211,8 +211,8 @@ export function startBlingWorkers() {
     // tcarSyncQueue
   } = buildQueues(false);
 
-  reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
+  // reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  // blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
 
@@ -283,7 +283,7 @@ export function startScrapingWorker() {
     { workless: false },
   );
 
-  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
+  // mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
 
   console.log(
     "------------------- QUEUE: Scraping Worker Ativo! -------------------",
