@@ -349,7 +349,7 @@ async function upsertFiscalItems(
           Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0),
         cbs_value: Number(ibsCbsGroup?.gCBS?.vCBS ?? 0),
       },
-      { conflictFields: ["invoice_id", "item_number"] as any },
+      { conflictFields: ["invoice_id", "product_id"] as any },
     );
   }
 

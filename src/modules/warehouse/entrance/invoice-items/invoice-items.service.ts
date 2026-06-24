@@ -160,7 +160,7 @@ export class InvoiceItemsService extends BaseService<
 
       // ─── 4. Cria SupplierMapping se for nota de entrada ───────────────────
       if (invoice.type === "INCOMING") {
-        const supplierProductCode = newEan || unMappedProduct.ean;
+        const supplierProductCode = newEan ?? unMappedProduct.ean ?? unMappedProduct.sku;
 
         if (supplierProductCode) {
           const spMap = await supplierMappingService.create(

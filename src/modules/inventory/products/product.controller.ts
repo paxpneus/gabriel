@@ -25,13 +25,36 @@ type AuthenticatedRequest = Request & {
 export class ProductController extends BaseController<Product, typeof ProductService> {
   constructor() {
     super(ProductService);
+
+    this.router.get("/:id/full", ...this.mw("findByIdFull"), this.findByIdFull)
   }
 
   protected middlewaresFor() {
     return {
       index: [authenticate],
+      findByIdFull: [authenticate]
     };
   }
+
+  findByIdFull = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const { id } = req.params;
+    const userId = (req as AuthenticatedRequest).user?.id;
+    const user = userId
+      ? await User.findByPk(userId, { attributes: ['unit_business_id'] })
+      : null;
+
+    const product = await this.service.findByIdFull(id as string, user?.unit_business_id);
+
+    if (!product) {
+      return res.status(404).json({ error: 'Produto não encontrado' });
+    }
+
+    return res.json(product);
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+};
 
   index = async (req: Request, res: Response): Promise<Response> => {
     try {

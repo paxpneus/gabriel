@@ -9,7 +9,7 @@
     "start": "node dist/server.js",
     "migrate": "sequelize-cli db:migrate",
     "migrate:undo": "sequelize-cli db:migrate:undo",
-    "start:worker": "node src/worker",
+    "start:worker": "node dist/src/queues/index.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
