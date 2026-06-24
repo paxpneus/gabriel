@@ -218,6 +218,49 @@ services:
     networks:
       - backend
 
+    # ── 7. Worker Automation ──────────────────────────────────────────────────
+  worker-automation:
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    command: ["node", "dist/worker-automation.js"]
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      MAILER_HOST: ${MAILER_HOST}
+      MAILER_PORT: ${MAILER_PORT}
+      MAILER_SECURE: ${MAILER_SECURE}
+      MAILER_USER: ${MAILER_USER}
+      MAILER_PASS: ${MAILER_PASS}
+      MAILER_FROM: ${MAILER_FROM}
+      MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+      BLING_UNIT_BUSINESS_ID: ${BLING_UNIT_BUSINESS_ID}
+      CERT_ENCRYPTION_KEY: ${CERT_ENCRYPTION_KEY}
+      SEFAZ_CERT_ENCRYPTED: ${SEFAZ_CERT_ENCRYPTED}
+      SEFAZ_CERT_PASSPHRASE: ${SEFAZ_CERT_PASSPHRASE}
+      SEFAZ_CNPJ: ${SEFAZ_CNPJ}
+      SEFAZ_UF: ${SEFAZ_UF}
+      SEFAZ_AMBIENTE: ${SEFAZ_AMBIENTE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:
