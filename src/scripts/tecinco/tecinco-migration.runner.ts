@@ -294,7 +294,7 @@ export async function runMigration(opts: RunMigrationOptions): Promise<void> {
     console.log("🚀  Migração full — sem filtro de data\n");
   }
 
-  await migrateProdutos(resolved);
-  await migrateClientes(resolved);
+  // await migrateProdutos(resolved);
+  // await migrateClientes(resolved);
   await migrateNotasFiscais(resolved);
 }

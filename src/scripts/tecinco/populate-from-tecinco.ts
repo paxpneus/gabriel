@@ -3,6 +3,7 @@ import sequelize from "../../config/sequelize";
 import { TCarUpsertQueue } from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { runMigration } from "./tecinco-migration.runner";
 import { UnitBusiness } from "../../modules/warehouse";
+import { Op } from "sequelize";
 
 const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? "default";
 const ALTERADO_DESDE = process.env.TCAR_ALTERADO_DESDE;
@@ -13,6 +14,11 @@ async function main() {
 
   const units = await UnitBusiness.findAll({
     attributes: ["id", "id_system", "number"],
+    where: {
+      number: {
+        [Op.in]: ["12"],
+      },
+    },
   });
   const branchIds: number[] = units.map((u) => Number(u.number));
 

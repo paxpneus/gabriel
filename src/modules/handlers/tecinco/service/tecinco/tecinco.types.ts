@@ -26,6 +26,7 @@ export interface TCarWebhookEnvelope {
 export interface TCarProdutoPayload {
   fll_codigo: number;
   epctb_codigo: string;
+  epctb_codigofabrica?: string;
   epctb_nome: string;
   epctb_coded?: string;
   epctb_ean?: string;

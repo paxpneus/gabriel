@@ -65,6 +65,10 @@ export class UnitBusinessService extends BaseService<UnitBusiness, UnitBusinessR
 
   return this.repository.findPaginated(finalParams, this.queryConfig, extraOptions);
 }
+
+async shutdownRedis() {
+  await redisService.client.quit();
+}
 }
 
 export default new UnitBusinessService();

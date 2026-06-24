@@ -1,10 +1,11 @@
-import { FindOptions, Op } from 'sequelize';
+import { CreateOptions, FindOptions, Op, CreationAttributes, UpdateOptions } from 'sequelize';
 import { PaginatedResult, QueryParams } from '../../../shared/query/query.types';
 import BaseService from '../../../shared/utils/base-models/base-service';
 import Product from './product.model';
 import productRepository, { ProductRepository } from './product.repository';
 import Stock from '../stock/stock.model';
 import ProductConfig from '../product-config/product_config.model';
+import { ProductCreationAttributes } from './product.types';
 
 type StockUnitFilter = {
   unitBusinessId?: string;
@@ -84,6 +85,125 @@ export class ProductService extends BaseService<Product, ProductRepository> {
   ],
 });
   }
+
+  async findByIdFull(  id: string,
+    unitBusinessId?: string,
+    options?: FindOptions,
+  ): Promise<Product | null> {
+    return this.repository.findByIdWithRelations(id, unitBusinessId, options);
+  }
+
+ async create(
+    data: Partial<ProductCreationAttributes> & {
+      config?: Partial<CreationAttributes<ProductConfig>>;
+    },
+    options?: CreateOptions,
+  ): Promise<Product> {
+    const { config, ...productData } = data;
+
+    const sequelize = Product.sequelize!;
+    const ownTransaction = !options?.transaction;
+    const transaction = options?.transaction ?? (await sequelize.transaction());
+
+    try {
+      const product = await this.repository.create(
+        productData as Partial<ProductCreationAttributes>,
+        { ...options, transaction },
+      );
+
+      if (config) {
+        if (!config.unit_business_id) {
+          console.warn(
+            `[ProductService.create] product_id=${product.id} — config sem unit_business_id, ProductConfig não criado`,
+          );
+        } else {
+          await ProductConfig.create(
+            { ...config, product_id: product.id } as CreationAttributes<ProductConfig>,
+            { transaction },
+          );
+        }
+      }
+
+      if (ownTransaction) {
+        await transaction.commit();
+      }
+
+      return (
+        (await this.repository.findById(product.id, {
+          include: [{ model: ProductConfig, as: 'productConfigs' }],
+        })) ?? product
+      );
+    } catch (err) {
+      if (ownTransaction) {
+        await transaction.rollback();
+      }
+      throw err;
+    }
+  }
+
+  async update(
+    id: string,
+    data: Partial<ProductCreationAttributes> & {
+      config?: Partial<CreationAttributes<ProductConfig>>;
+    },
+    options?: Partial<UpdateOptions>,
+  ): Promise<Product> {
+    const { config, ...productData } = data;
+
+    const sequelize = Product.sequelize!;
+    const ownTransaction = !options?.transaction;
+    const transaction = options?.transaction ?? (await sequelize.transaction());
+
+    try {
+      await this.repository.update(
+        id,
+        productData as Partial<ProductCreationAttributes>,
+        { ...options, transaction },
+      );
+
+      if (config) {
+        if (!config.unit_business_id) {
+          console.warn(
+            `[ProductService.update] product_id=${id} — config sem unit_business_id, ProductConfig não atualizado`,
+          );
+        } else {
+          const existingConfig = await ProductConfig.findOne({
+            where: { product_id: id, unit_business_id: config.unit_business_id },
+            transaction,
+          });
+
+          if (existingConfig) {
+            await existingConfig.update(config, { transaction });
+          } else {
+            await ProductConfig.create(
+              { ...config, product_id: id } as CreationAttributes<ProductConfig>,
+              { transaction },
+            );
+          }
+        }
+      }
+
+      if (ownTransaction) {
+        await transaction.commit();
+      }
+
+      const updated = await this.repository.findById(id, {
+        include: [{ model: ProductConfig, as: 'productConfigs' }],
+      });
+
+      if (!updated) {
+        throw new Error(`Product id=${id} não encontrado após update`);
+      }
+
+      return updated;
+    } catch (err) {
+      if (ownTransaction) {
+        await transaction.rollback();
+      }
+      throw err;
+    }
+  }
+
 }
 
 export default new ProductService();

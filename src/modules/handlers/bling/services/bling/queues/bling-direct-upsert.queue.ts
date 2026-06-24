@@ -17,6 +17,9 @@ import { Op, UniqueConstraintError } from "sequelize";
 import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
 import Contact from "../../../../../sales/contacts/contacts.model";
 import { logDbError } from "../../../../../../shared/utils/logging/db-errors-logs";
+import productController from "../../../../../inventory/products/product.controller";
+import unitBusinessController from "../../../../../warehouse/unit-business/unit-business.controller";
+import unitBusinessService from "../../../../../warehouse/unit-business/unit-business.service";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
@@ -163,6 +166,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         title: "Estoque negativo",
         message: `Estoque bling negativo para o produto ${product.name}`,
       });
+      unitBusinessService.shutdownRedis()
       throw new Error(
         "[BLING_DIRECT_UPSERT] Stock com quantidade negativa, mandando alerta!",
       );

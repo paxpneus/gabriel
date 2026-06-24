@@ -24,7 +24,10 @@ import {
 } from "../service/conferencias-estoque/conferencias-estoque.service";
 import { upsertInvoiceFromXml } from "../../../../shared/utils/xml/invoice-xml";
 import TCarClienteService from "../service/clientes/clientes.service";
+import TCarProdutoService from "../service/produtos/produtos.service";
 import { extractProductMeasureAndLine } from "../../bling/services/bling/queues/bling-api-fetch.queue";
+import { normalizeEan, ensureSupplierMappings, resolveProduct } from "./helpers/product.helpers";
+import { upsertCustomerFromTCar } from "./helpers/customer.helper";
 export interface TCarUpsertJobPayload {
   eventId: string;
   resource: TCarResource;
@@ -32,12 +35,6 @@ export interface TCarUpsertJobPayload {
   companyId: string;
   branchId?: number;
   data: unknown;
-}
-
-function normalizeEan(ean?: string): string | undefined {
-  if (!ean || ean.trim() === "" || ean.trim().toUpperCase() === "SEM GTIN")
-    return undefined;
-  return ean.trim();
 }
 
 export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
@@ -77,192 +74,149 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   // ─── Produto ───────────────────────────────────────────────────────────────
 
   private async processProduct(
-    action: TCarAction,
-    data: TCarProdutoPayload,
-    branchId?: number,
-  ): Promise<void> {
-    const systemId = String(data.epctb_codigo);
+  action: TCarAction,
+  data: TCarProdutoPayload,
+  branchId?: number,
+): Promise<void> {
+  const systemId = String(data.epctb_codigo);
+  const logPrefix = `[TCAR_UPSERT][processProduct] id_system=${systemId}`;
 
-    if (action === "deleted") {
-      const deleted = await Product.destroy({ where: { id_system: systemId } });
-      console.log(
-        `[TCAR_UPSERT] Produto deletado: id_system=${systemId} (${deleted} reg)`,
-      );
-      return;
-    }
-
-    const filialNumber = String(data.fll_codigo ?? branchId ?? "").padStart(
-      2,
-      "0",
-    );
-    const unitBusiness = filialNumber
-      ? await UnitBusiness.findOne({ where: { number: filialNumber } })
-      : null;
-
-    if (!unitBusiness) {
-      console.warn(
-        `[TCAR_UPSERT] UnitBusiness não encontrada para fll_codigo=${filialNumber} — product_config será ignorado`,
-      );
-    }
-
-    const integrations = await getTCarIntegration("Tecinco");
-    const ean = normalizeEan(data.epctb_ean);
-
-    // ─── Verifica se já existe produto com esse EAN de outra integração ──────
-    // Se existir e NÃO for da Tecinco, apenas registra o SupplierMapping (de x para)
-    // e NÃO faz upsert do produto em si
-    if (ean) {
-      const existingProduct = await Product.findOne({
-        where: { ean },
-      });
-
-      if (
-        existingProduct &&
-        existingProduct.integrations_id !== integrations.id
-      ) {
-        console.log(
-          `[TCAR_UPSERT] Produto EAN=${ean} pertence a outra integração (id=${existingProduct.integrations_id}) — registrando SupplierMapping apenas`,
-        );
-
-        // CNPJ do emitente/fornecedor Tecinco — precisa vir da UnitBusiness
-        // ou de um campo fixo configurado para a integração
-        const supplierCnpj = unitBusiness?.cnpj ?? null;
-
-        if (supplierCnpj) {
-          const existingMapping = await SupplierMapping.findOne({
-            where: {
-              product_id: existingProduct.id,
-              supplier_cnpj: supplierCnpj,
-            },
-          });
-
-          if (existingMapping) {
-            await existingMapping.update({
-              supplier_product_code: ean,
-            });
-          } else {
-            await SupplierMapping.create({
-              product_id: existingProduct.id,
-              supplier_cnpj: supplierCnpj,
-              supplier_product_code: ean,
-            });
-          }
-
-          await ProductConfig.upsert(
-            {
-              product_id: existingProduct.id,
-              unit_business_id: unitBusiness!.id,
-              sku: systemId,
-              price: data.epprc_preco ?? 0,
-              supplier_cost_price: Number(data.epcte_custcont ?? 0),
-              average_cost:
-                Number(data.epcte_custcont ?? 0) > 0
-                  ? Number(data.epcte_custcont)
-                  : 0,
-            },
-            { conflictFields: ["product_id", "unit_business_id"] },
-          );
-
-          console.log(
-            `[TCAR_UPSERT] SupplierMapping ${existingMapping ? "atualizado" : "criado"}: product_id=${existingProduct.id} | sku_tecinco=${systemId} | cnpj=${supplierCnpj}`,
-          );
-        } else {
-          console.warn(
-            `[TCAR_UPSERT] CNPJ do fornecedor Tecinco não resolvível para filial=${filialNumber} — SupplierMapping não registrado`,
-          );
-        }
-
-        return; // não toca no produto de outra integração
-      }
-    }
-
-    // ─── Produto é da Tecinco (ou não existe ainda) — faz upsert normal ──────
-    const {measure, line} = extractProductMeasureAndLine(data.epctb_nome, data.marca_descricao)
-    const [product] = await Product.upsert(
-      {
-        id_system: systemId,
-        name: data.epctb_nome?.trim() ?? "",
-        ean,
-        unit: data.epctb_unidade,
-        gross_weight: data.epctb_pesobruto,
-        net_weight: data.epctb_pesoliq,
-        category: "TIRE",
-        measure,
-        line,
-        brand: data.marca_descricao,
-        integrations_id: integrations.id,
-        source_payload: data as unknown as Record<string, unknown>,
-      },
-      { conflictFields: ["id_system"] },
-    );
-
-    // ─── SupplierMapping para produtos próprios da Tecinco também ────────────
-    // Permite que o findProductForInvoiceItem resolva por supplier_product_code
-    const supplierCnpj = unitBusiness?.cnpj ?? null;
-
-    if (supplierCnpj) {
-      const existingMapping = await SupplierMapping.findOne({
-        where: { product_id: product.id, supplier_cnpj: supplierCnpj },
-      });
-
-      if (existingMapping) {
-        await existingMapping.update({ supplier_product_code: ean });
-      } else if (!existingMapping && ean) {
-        await SupplierMapping.create({
-          product_id: product.id,
-          supplier_cnpj: supplierCnpj,
-          supplier_product_code: ean,
-        });
-      }
-    }
-
-    if (!unitBusiness) return;
-
-    // ─── Upsert de estoque ────────────────────────────────────────────────────
-    const stockQty = Math.round(Number(data.epcte_estoque ?? 0));
-    const entryUnitCost = Number(data.epcte_custcont ?? 0);
-
-    const existingStock = await Stock.findOne({
-      where: { product_id: product.id, unit_business_id: unitBusiness.id },
-    });
-
-    const oldQuantity = Number(existingStock?.quantity ?? 0);
-    const oldTotalPrice = Number(existingStock?.total_price ?? 0);
-
-    const newAverageCost =
-      entryUnitCost > 0
-        ? entryUnitCost
-        : oldQuantity > 0
-          ? oldTotalPrice / oldQuantity
-          : 0;
-
-    await ProductConfig.upsert(
-      {
-        product_id: product.id,
-        unit_business_id: unitBusiness.id,
-        sku: systemId,
-        price: data.epprc_preco ?? 0,
-        supplier_cost_price: entryUnitCost,
-        average_cost: newAverageCost,
-        average_cost_updated_at: new Date(),
-      },
-      { conflictFields: ["product_id", "unit_business_id"] },
-    );
-
-    await Stock.upsert(
-      {
-        product_id: product.id,
-        unit_business_id: unitBusiness.id,
-        quantity: stockQty,
-        total_price: stockQty * newAverageCost,
-      },
-      { conflictFields: ["product_id", "unit_business_id"] },
-    );
-
-    console.log(
-      `[TCAR_UPSERT] Stock upsertado: id_system=${systemId} | qty=${stockQty} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${(stockQty * newAverageCost).toFixed(2)}`,
-    );
+  if (action === "deleted") {
+    const deleted = await Product.destroy({ where: { id_system: systemId } });
+    console.log(`${logPrefix} — deletado (${deleted} reg)`);
+    return;
   }
+
+  const filialNumber = String(data.fll_codigo ?? branchId ?? "").padStart(2, "0");
+  const unitBusiness = filialNumber
+    ? await UnitBusiness.findOne({ where: { number: filialNumber } })
+    : null;
+
+  if (!unitBusiness) {
+    console.warn(`${logPrefix} — UnitBusiness não encontrada para fll_codigo=${filialNumber}`);
+  }
+
+  const integrations = await getTCarIntegration("Tecinco");
+  const ean = normalizeEan(data.epctb_ean);
+  const codigoFabrica = data.epctb_codigofabrica
+    ? String(data.epctb_codigofabrica).trim()
+    : undefined;
+
+  // ─── Resolve produto pelos identificadores ────────────────────────────────
+  let product = await resolveProduct({ systemId, codigoFabrica, ean, logPrefix });
+
+  const isOwnProduct = !product || product.integrations_id === integrations.id;
+
+  // ─── Produto de outra integração → apenas vincula, não sobrescreve ────────
+  if (product && !isOwnProduct) {
+    console.log(`${logPrefix} — produto pertence a outra integração (id=${product.integrations_id}) — apenas vinculando`);
+
+    const supplierCnpj = unitBusiness?.cnpj ?? null;
+    if (supplierCnpj && unitBusiness) {
+      await ProductConfig.upsert(
+        {
+          product_id: product.id,
+          unit_business_id: unitBusiness.id,
+          sku: codigoFabrica ?? systemId,
+          price: data.epprc_preco ?? 0,
+          supplier_cost_price: Number(data.epcte_custcont ?? 0),
+          average_cost: Number(data.epcte_custcont ?? 0) > 0 ? Number(data.epcte_custcont) : 0,
+        },
+        { conflictFields: ["product_id", "unit_business_id"] },
+      );
+
+      await ensureSupplierMappings({
+        productId: product.id,
+        supplierCnpj,
+        ean,
+        codigoFabrica,
+        logPrefix,
+      });
+    } else {
+      console.warn(`${logPrefix} — CNPJ do fornecedor não resolvível para filial=${filialNumber} — SupplierMapping não registrado`);
+    }
+
+    return;
+  }
+
+  // ─── Produto próprio da Tecinco: cria ou atualiza ─────────────────────────
+  const { measure, line } = extractProductMeasureAndLine(data.epctb_nome, data.marca_descricao);
+
+  const [upsertedProduct] = await Product.upsert(
+    {
+      id_system: systemId,
+      name: data.epctb_nome?.trim() ?? "",
+      ean,
+      unit: data.epctb_unidade,
+      gross_weight: data.epctb_pesobruto,
+      net_weight: data.epctb_pesoliq,
+      category: "TIRE",
+      measure,
+      line,
+      brand: data.marca_descricao,
+      integrations_id: integrations.id,
+      source_payload: data as unknown as Record<string, unknown>,
+    },
+    { conflictFields: ["id_system"] },
+  );
+  product = upsertedProduct;
+  console.log(`${logPrefix} — produto upsertado: id=${product.id}`);
+
+  if (!unitBusiness) return;
+
+  // ─── ProductConfig + Stock ────────────────────────────────────────────────
+  const entryUnitCost = Number(data.epcte_custcont ?? 0);
+  const stockQty = Math.round(Number(data.epcte_estoque ?? 0));
+
+  const existingStock = await Stock.findOne({
+    where: { product_id: product.id, unit_business_id: unitBusiness.id },
+  });
+  const oldQuantity = Number(existingStock?.quantity ?? 0);
+  const oldTotalPrice = Number(existingStock?.total_price ?? 0);
+  const newAverageCost =
+    entryUnitCost > 0
+      ? entryUnitCost
+      : oldQuantity > 0
+        ? oldTotalPrice / oldQuantity
+        : 0;
+
+  await ProductConfig.upsert(
+    {
+      product_id: product.id,
+      unit_business_id: unitBusiness.id,
+      sku: codigoFabrica ?? systemId,
+      price: data.epprc_preco ?? 0,
+      supplier_cost_price: entryUnitCost,
+      average_cost: newAverageCost,
+      average_cost_updated_at: new Date(),
+    },
+    { conflictFields: ["product_id", "unit_business_id"] },
+  );
+
+  await Stock.upsert(
+    {
+      product_id: product.id,
+      unit_business_id: unitBusiness.id,
+      quantity: stockQty,
+      total_price: stockQty * newAverageCost,
+    },
+    { conflictFields: ["product_id", "unit_business_id"] },
+  );
+
+  console.log(
+    `${logPrefix} — Stock upsertado: qty=${stockQty} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${(stockQty * newAverageCost).toFixed(2)}`,
+  );
+
+  // ─── SupplierMappings ─────────────────────────────────────────────────────
+  await ensureSupplierMappings({
+    productId: product.id,
+    supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
+    ean,
+    codigoFabrica,
+    logPrefix,
+  });
+}
+
 
   // ─── Cliente ───────────────────────────────────────────────────────────────
 
@@ -345,7 +299,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
       // ─── Upsert do customer da nota ──────────────────────────────────────
       if (clnCodigo) {
-        await this.upsertCustomerFromTCar(branchId, clnCodigo, logPrefix);
+        await upsertCustomerFromTCar(branchId, clnCodigo, logPrefix);
       } else {
         console.warn(
           `${logPrefix} — cln_codigo não resolvido, customer não sincronizado`,
@@ -396,199 +350,135 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
   // ─── Upsert customer a partir da TeCinco ─────────────────────────────────────
 
-  private async upsertCustomerFromTCar(
-    branchId: number,
-    clnCodigo: number | string,
-    logPrefix: string,
-  ): Promise<void> {
-    const clienteService = new TCarClienteService();
 
-    let raw: any;
-    try {
-      raw = await clienteService.obterCliente(branchId, clnCodigo);
-    } catch (err: any) {
-      if (err?.response?.status === 404) {
-        console.warn(
-          `${logPrefix} — cliente cln_codigo=${clnCodigo} não encontrado na TeCinco (404)`,
-        );
-        return;
-      }
-      console.error(
-        `${logPrefix} — erro ao buscar cliente cln_codigo=${clnCodigo}: ${err?.message ?? err}`,
-      );
-      return; // não interrompe o fluxo da invoice
-    }
-
-    // A resposta do GET /clientes/:id não é paginada — é o objeto direto
-    const c = raw?.data ?? raw;
-
-    const document =
-      (c?.CLN_CPFCNPJ ?? c?.cln_cpfcnpj)?.replace(/\D/g, "") || null;
-
-    if (!document) {
-      console.warn(
-        `${logPrefix} — cliente cln_codigo=${clnCodigo} sem CPF/CNPJ — ignorado`,
-      );
-      return;
-    }
-
-    const name: string = (c?.CLN_NOME ?? c?.cln_nome ?? c?.nome ?? "").trim();
-    const type: "F" | "J" =
-      (c?.CLN_FISJUR ?? c?.cln_fisjur ?? c?.tipo_pessoa) === "J" ? "J" : "F";
-
-    const existing = await Customer.findOne({ where: { document } });
-
-    if (existing) {
-      await existing.update({ name, type });
-    } else {
-      await Customer.create({ name, type, document });
-    }
-
-    console.log(`${logPrefix} — customer upsertado: document=${document}`);
-  }
 
   // ─── Garante produtos a partir dos itens da nota fiscal ─────────────────────
 
   private async ensureProductsFromInvoiceItems(
-    itens: TCarNotaFiscalItem[],
-    branchId: number,
-  ): Promise<void> {
-    const unitBusiness = await UnitBusiness.findOne({
-      where: { id: branchId },
-    });
+  itens: TCarNotaFiscalItem[],
+  branchId: number,
+): Promise<void> {
+  const unitBusiness = await UnitBusiness.findOne({
+    where: { number: String(branchId).padStart(2, "0") },
+  });
 
-    if (!unitBusiness) {
-      console.warn(
-        `[TCAR_UPSERT] UnitBusiness não encontrada para branchId=${branchId} — produtos da nota não serão vinculados a estoque/preço`,
-      );
+  if (!unitBusiness) {
+    console.warn(
+      `[TCAR_UPSERT] UnitBusiness não encontrada para branchId=${branchId} — produtos da nota não serão vinculados`,
+    );
+  }
+
+  const integrations = await getTCarIntegration("Tecinco");
+  const produtoService = new TCarProdutoService();
+
+  for (const item of itens) {
+    const systemId = String(item.epctb_codigo ?? "").trim();
+    const logPrefix = `[TCAR_UPSERT][ensureProducts] seq=${item.epeit_seq} systemId=${systemId}`;
+
+    if (!systemId) {
+      console.warn(`${logPrefix} — sem epctb_codigo, ignorado`);
+      continue;
     }
 
-    const integrations = await getTCarIntegration("Tecinco");
+    // ─── Busca Tecinco API para obter codigoFabrica e EAN ────────────────────
+    let tcarPayload: any = null;
+    let codigoFabrica: string | undefined;
+    let ean: string | undefined;
 
-    for (const item of itens) {
-      const systemId = String(item.epctb_codigo ?? "").trim();
+    try {
+      const resultado = await produtoService.obterProduto(branchId, systemId);
+      tcarPayload = resultado?.data ?? resultado;
+      codigoFabrica = tcarPayload?.epctb_codigofabrica
+        ? String(tcarPayload.epctb_codigofabrica).trim()
+        : undefined;
+      ean = normalizeEan(tcarPayload?.epctb_ean);
+    } catch (err: any) {
+      console.warn(`${logPrefix} — falha ao buscar produto na Tecinco: ${err?.message ?? err}`);
+    }
 
-      if (!systemId) {
-        console.warn(
-          `[TCAR_UPSERT] Item de nota fiscal sem epctb_codigo (seq=${item.epeit_seq}) — ignorado`,
-        );
-        continue;
-      }
+    // ─── Resolve produto pelos identificadores ────────────────────────────────
+    let product = await resolveProduct({ systemId, codigoFabrica, ean, logPrefix });
 
-      const existingProduct = await Product.findOne({
-        where: { id_system: systemId },
-      });
+    // ─── Produto não encontrado → cria ───────────────────────────────────────
+    if (!product) {
+      const { measure, line } = extractProductMeasureAndLine(
+        tcarPayload?.epctb_nome ?? item.produto_nome,
+        tcarPayload?.marca_descricao,
+      );
 
-      if (existingProduct) {
-        // produto já existe — não sobrescreve dados, apenas garante presença
-        continue;
-      }
-
-      const [product] = await Product.upsert(
+      const [created] = await Product.upsert(
         {
           id_system: systemId,
-          name: item.produto_nome?.trim() ?? "",
-          ean: undefined,
-          unit: item.produto_unidade,
+          name: (tcarPayload?.epctb_nome ?? item.produto_nome)?.trim() ?? "",
+          ean,
+          unit: tcarPayload?.epctb_unidade ?? item.produto_unidade,
           category: "TIRE",
+          measure,
+          line,
+          brand: tcarPayload?.marca_descricao,
           integrations_id: integrations.id,
-          source_payload: item as unknown as Record<string, unknown>,
+          source_payload: (tcarPayload ?? item) as unknown as Record<string, unknown>,
         },
         { conflictFields: ["id_system"] },
       );
+      product = created;
+      console.log(`${logPrefix} — produto criado: id=${product.id} | sku_fabrica=${codigoFabrica}`);
 
-      console.log(
-        `[TCAR_UPSERT] Produto criado a partir de item de nota fiscal: id_system=${systemId} | nome=${item.produto_nome}`,
-      );
-
-      if (!unitBusiness) continue;
-
-      // ─── SupplierMapping universal (código Tecinco, CNPJ zerado) ──────────────
-      const existingUniversalMapping = await SupplierMapping.findOne({
-        where: { product_id: product.id, supplier_cnpj: "00000000000000" },
-      });
-
-      if (!existingUniversalMapping) {
-        await SupplierMapping.create({
-          product_id: product.id,
-          supplier_cnpj: "00000000000000",
-          supplier_product_code: systemId,
-        });
-
-        console.log(
-          `[TCAR_UPSERT] SupplierMapping universal criado: id_system=${systemId} | product_id=${product.id}`,
+      // Stock inicial (só para produtos recém-criados)
+      if (unitBusiness) {
+        const itemQty = Number(item.epeit_qtdade ?? 0);
+        const itemUnitCost = Number(tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0);
+        await Stock.upsert(
+          {
+            product_id: product.id,
+            unit_business_id: unitBusiness.id,
+            quantity: itemQty,
+            total_price: itemQty * itemUnitCost,
+          },
+          { conflictFields: ["product_id", "unit_business_id"] },
         );
       }
+    }
 
-      // ─── ProductConfig básico (sku/price) ──────────────────────────────────
+    if (!product) {
+      console.error(`${logPrefix} — produto não resolvido e criação falhou, ignorando`);
+      continue;
+    }
+
+    // ─── Garante ProductConfig para a unit_business ───────────────────────────
+    if (unitBusiness) {
       const existingConfig = await ProductConfig.findOne({
         where: { product_id: product.id, unit_business_id: unitBusiness.id },
       });
 
       if (!existingConfig) {
+        const skuToUse = codigoFabrica ?? systemId;
         await ProductConfig.upsert(
           {
             product_id: product.id,
             unit_business_id: unitBusiness.id,
-            sku: systemId,
-            price: 0,
-            supplier_cost_price: Number(item.epeit_vlrunit ?? 0),
-            average_cost: Number(item.epeit_vlrunit ?? 0),
+            sku: skuToUse,
+            price: Number(tcarPayload?.epprc_preco ?? 0),
+            supplier_cost_price: Number(tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0),
+            average_cost: Number(tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0),
             average_cost_updated_at: new Date(),
           },
           { conflictFields: ["product_id", "unit_business_id"] },
         );
-
-        console.log(
-          `[TCAR_UPSERT] ProductConfig criado para produto da nota: id_system=${systemId} | unit_business_id=${unitBusiness.id}`,
-        );
-
-        const itemQty = Number(item.epeit_qtdade ?? 0);
-        const itemUnitCost = Number(item.epeit_vlrunit ?? 0);
-
-        const existingStock = await Stock.findOne({
-          where: { product_id: product.id, unit_business_id: unitBusiness.id },
-        });
-
-        const oldQuantity = Number(existingStock?.quantity ?? 0);
-        const oldTotalPrice = Number(existingStock?.total_price ?? 0);
-
-        const newQuantity = oldQuantity + itemQty;
-        const newTotalPrice = oldTotalPrice + itemQty * itemUnitCost;
-
-        await Stock.upsert(
-          {
-            product_id: product.id,
-            unit_business_id: unitBusiness.id,
-            quantity: newQuantity,
-            total_price: newTotalPrice,
-          },
-          { conflictFields: ["product_id", "unit_business_id"] },
-        );
-
-        console.log(
-          `[TCAR_UPSERT] Stock atualizado (produto novo via nota): id_system=${systemId} | qty=${newQuantity} | total_price=${newTotalPrice.toFixed(2)}`,
-        );
-      }
-
-      // ─── SupplierMapping (CNPJ do emitente da nota) ────────────────────────
-      const supplierCnpj = unitBusiness.cnpj ?? null;
-
-      if (supplierCnpj) {
-        const existingMapping = await SupplierMapping.findOne({
-          where: { product_id: product.id, supplier_cnpj: supplierCnpj },
-        });
-
-        if (!existingMapping) {
-          await SupplierMapping.create({
-            product_id: product.id,
-            supplier_cnpj: supplierCnpj,
-            supplier_product_code: systemId,
-          });
-        }
+        console.log(`${logPrefix} — ProductConfig garantido: sku=${skuToUse}`);
       }
     }
+
+    // ─── SupplierMappings ─────────────────────────────────────────────────────
+    await ensureSupplierMappings({
+      productId: product.id,
+      supplierCnpj: unitBusiness?.cnpj ?? "00000000000000",
+      ean,
+      codigoFabrica,
+      logPrefix,
+    });
   }
+}
 
   protected override onFailed(
     job: Job<TCarUpsertJobPayload>,
