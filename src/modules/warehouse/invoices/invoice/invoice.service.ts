@@ -1,4 +1,4 @@
-import { FindOptions, Op, Sequelize } from "sequelize";
+import { FindOptions, Op, Sequelize, WhereOptions } from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -10,7 +10,7 @@ import UnitBusiness from "../../unit-business/unit-business.model";
 import Transporter from "../../transporter/transporter.model";
 import ExpeditionBatch from "../../expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
-import { InvoiceAttributes } from "./invoice.types";
+import { FullInvoiceAttributes, InvoiceAttributes } from "./invoice.types";
 import Store from "../../../sales/stores/stores.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import { getBrazilDate } from "../../../../shared/utils/normalizers/date";
@@ -35,17 +35,14 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       // Campos permitidos para filtros exatos (WHERE field = value)
       // ADICIONADO: 'type' e 'customer_name' aqui
       filterableFields: [
-        "type",
         "unit_business_id",
         "transporter_id",
         "receiver_cnpj",
         "receiver_name",
         "sender_name",
         "sender_cnpj",
-        "batch_generated",
         "printed_label",
         "emitted_at",
-        "status",
         "store_id",
         "supplier_id",
       ],
@@ -112,126 +109,58 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
           return {};
         },
+        type: () => ({}),
+        status: () => ({}),
+        batch_generated: () => ({}),
       },
     };
   }
 
-  async findByIdFull(id: string, unitBusinessId?: string) {
+  async findByIdFull(id: string, unitBusinessId: string) {
     return this.repository.getFullInvoice(id, unitBusinessId);
   }
 
-  async paginate(
+  async listInvoices(
     params: QueryParams,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-  ): Promise<PaginatedResult<Invoice>> {
-    const hasBatchFilter = !!params.filters?.batchStatus;
-    const hasProductBrandFilter = !!params.filters?.brand; // 👈
-
-    const invoices = await super.paginate(params, {
-      ...extraOptions,
-      subQuery: false,
-      include: [
-        {
-          model: ExpeditionBatchInvoice,
-          as: "batchInvoice",
-          required: hasBatchFilter,
-          attributes: ["id"],
-          include: [
-            {
-              model: ExpeditionBatch,
-              as: "batch",
-              required: hasBatchFilter,
-              attributes: ["number", "status", "mode", "id"],
-            },
-          ],
-        },
-        {
-          model: UnitBusiness,
-          as: "unitBusiness",
-          attributes: ["number", "name"],
-        },
-        {
-          model: Store,
-          as: "store",
-          attributes: ["name"],
-        },
-        {
-          model: Transporter,
-          as: "transporter",
-          attributes: ["name", "uf", "cnpj"],
-        },
-        {
-          model: Supplier,
-          as: "supplier",
-          attributes: ["name"],
-        },
-      ],
-      attributes: {
-        exclude: ["source_payload"],
-        include: [
-          [
-            Sequelize.literal(`(
-              SELECT ARRAY_AGG(DISTINCT p.brand)
-              FROM invoice_items ii
-              JOIN products p ON p.id = ii.product_id
-              WHERE ii.invoice_id = "Invoice"."id"
-                AND p.brand IS NOT NULL
-            )`),
-            "product_brands",
-          ] as [ReturnType<typeof Sequelize.literal>, string],
-
-          [
-            Sequelize.literal(`(
-            SELECT COALESCE(SUM(quantity_expected), 0)
-            FROM invoice_items
-            WHERE invoice_items.invoice_id = "Invoice"."id"
-          )`),
-            "total_expected",
-          ],
-          [
-            Sequelize.literal(`(
-            SELECT COALESCE(SUM(quantity_received), 0)
-            FROM invoice_items
-            WHERE invoice_items.invoice_id = "Invoice"."id"
-          )`),
-            "total_received",
-          ],
-        ],
-      },
-    });
-
-    return {
-      ...invoices,
-      data: invoices.data.map((invoice) => {
-        const plain = invoice.get({ plain: true });
-
-        return {
-          ...plain,
-          product_brands: (plain as any).product_brands ?? [],
-          transporter: plain.transporter
-            ? {
-                ...plain.transporter,
-                name: [
-                  plain.transporter.name,
-                  plain.transporter.uf,
-                  plain.transporter.cnpj,
-                ]
-                  .filter(Boolean)
-                  .join(" | "),
-              }
-            : plain.transporter,
-        };
-      }) as unknown as Invoice[],
-    };
+    unitBusinessId: string,
+  ): Promise<PaginatedResult<FullInvoiceAttributes>> {
+    return this.repository.listInvoices(
+      params,
+      unitBusinessId,
+      this.queryConfig,
+    );
   }
 
-  async updateInvoicesOpen(ids: string[], data: Partial<InvoiceAttributes>) {
-    return await Invoice.update(data, {
-      where: { id: ids, status: "OPEN" },
-    });
+  async updateInvoicesOpen(ids: string[], unitBusinessId: string) {
+    return this.repository.updateWithAttributes(
+      ids,
+      unitBusinessId,
+      { status: "PENDING" },
+      { status: "OPEN" },
+    );
   }
 
-  async scheduleInvoice(id: string, expectedDate: string) {
+  async updateInvoices(
+    invoiceIds: string[],
+    unitBusinessId: string,
+    data: Partial<
+      InvoiceAttributes & { status: string; batch_generated: boolean }
+    >,
+    attrWhere?: WhereOptions,
+  ): Promise<void> {
+    return this.repository.updateWithAttributes(
+      invoiceIds,
+      unitBusinessId,
+      data,
+      attrWhere,
+    );
+  }
+
+  async scheduleInvoice(
+    id: string,
+    expectedDate: string,
+    unitBusinessId: string,
+  ) {
     if (!expectedDate) {
       throw new Error("Data inválida");
     }
@@ -250,60 +179,60 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     //   );
     // }
 
-    const invoice = await this.findById(id);
+    const invoice = await this.repository.getInvoice(id, unitBusinessId);
     if (!invoice) {
       throw new Error("Nota fiscal não encontrada");
     }
 
-    if (["LATE", "FINISHED", "CANCELLED"].includes(invoice.status)) {
+    if (
+      ["LATE", "FINISHED", "CANCELLED"].includes(
+        invoice.unitBusinessAttributes?.status!,
+      )
+    ) {
       throw new Error(
         "Status não permitido para alterar data prevista de entrega",
       );
     }
 
-    await invoice.update({
+    await this.repository.updateWithAttributes([id], unitBusinessId, {
       status: "SCHEDULED",
       expected_receiving: expectedDate,
     });
   }
 
-  async bondInvoice(id: string, bondedInvoiceId: string) {
+  async bondInvoice(
+    id: string,
+    bondedInvoiceId: string,
+    unitBusinessId: string,
+  ) {
     return sequelize.transaction(async (t) => {
-      const invoice = await this.findById(id, {
-        include: [
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoice",
-          },
-        ],
-        transaction: t,
-      });
+      const invoice = await this.repository.getFullInvoiceWithBatch(
+        id,
+        unitBusinessId,
+      );
 
       if (!invoice) {
         throw new Error("Nota fiscal não encontrada!");
       }
 
-      const invoiceToBond = await this.findById(bondedInvoiceId, {
-        include: [
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoice",
-          },
-        ],
-        transaction: t,
-      });
+      const invoiceToBond = await this.repository.getFullInvoiceWithBatch(
+        bondedInvoiceId,
+        unitBusinessId,
+      );
 
       if (!invoiceToBond) {
         throw new Error("Nota fiscal vinculada não encontrada!");
       }
 
-      if (invoice.status != "PENDING_CANCELLED_SYSTEM") {
+      if (
+        invoice.unitBusinessAttributes?.status != "PENDING_CANCELLED_SYSTEM"
+      ) {
         throw new Error(
           "Status não permitido para vincular nota, apenas status CANCELAMENTO PENDENTE NA PLATAFORMA permitido!",
         );
       }
 
-      await this.update(id, {
+      await this.repository.updateWithAttributes([id], unitBusinessId, {
         bonded_invoice: invoiceToBond.number_system,
         status: "CANCELLED",
       });
@@ -551,7 +480,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           date: invoice.emitted_at ?? null,
           xml_key: invoice.xml_key ?? null,
           sku: productConfig?.sku ?? null,
-          description: product?.name ?? '',
+          description: product?.name ?? "",
           quantity: item.quantity_expected,
           brand: product?.brand ?? null,
         });

@@ -3,7 +3,7 @@ export interface BatchInvoiceItemsAttributes {
   batch_item_id: string;
   batch_invoice_id: string;
   quantity_expected: number;
-  quantity_received?: number;
+  quantity_read?: number;
   status: 'PENDING' | 'FINISHED';
   createdAt?: Date;
   updatedAt?: Date;
