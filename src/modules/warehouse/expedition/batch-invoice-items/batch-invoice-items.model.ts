@@ -11,7 +11,7 @@ class BatchInvoiceItems
   public batch_item_id!: string;
   public batch_invoice_id!: string;
   public quantity_expected!: number;
-  public quantity_received!: number;
+  public quantity_read!: number;
   public status!: 'PENDING' | 'FINISHED';
 
   public readonly createdAt!: Date;
@@ -47,7 +47,7 @@ BatchInvoiceItems.init(
       allowNull: false,
       defaultValue: 0,
     },
-    quantity_received: {
+    quantity_read: {
       type: DataTypes.DECIMAL(10, 2),
       defaultValue: 0,
     },

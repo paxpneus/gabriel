@@ -24,6 +24,7 @@ import {
 } from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { upsertInvoiceFromXml } from "../../../../shared/utils/xml/invoice-xml";
 import UnitBusiness from "../../unit-business/unit-business.model";
+import { getUserContext } from "../../../../shared/query/get-logged-user";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -123,20 +124,42 @@ export class InvoiceController extends BaseController<
     };
   }
 
+  index = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      const context = await getUserContext(req);
+      const result = await this.service.listInvoices(
+        params,
+        context.unitBusinessId,
+      );
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  update = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const context = await getUserContext(req);
+    await this.service.updateInvoices(
+      [req.params.id as string],
+      context.unitBusinessId,
+      req.body,
+    );
+    return res.json({ success: true });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
+};
+
   getFullInvoice = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { id } = req.params;
-      const userId = (req as any).user?.id;
-
-      // pega unit_business_id do usuário logado
-      const user = await User.findByPk(userId, {
-        attributes: ["unit_business_id"],
-      });
-      const unitBusinessId = user?.unit_business_id ?? undefined;
+      const context = await getUserContext(req);
 
       const data = await this.service.findByIdFull(
         id as string,
-        unitBusinessId,
+        context.unitBusinessId,
       );
       return res.json({ data });
     } catch (err: any) {
@@ -322,24 +345,22 @@ export class InvoiceController extends BaseController<
     }
   };
 
-  updateInvoicesOpen = async (req: Request, res: Response): Promise<void> => {
-    console.log(req.body);
-    try {
-      const ids = req.body;
-      await Invoice.update(
-        { status: "PENDING" },
-        {
-          where: {
-            id: { [Op.in]: ids },
-            status: "OPEN",
-          },
-        },
-      );
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  };
+ updateInvoicesOpen = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const ids = req.body;
+    const context = await getUserContext(req);
+
+    await this.service.updateInvoicesOpen(
+      ids,
+      context.unitBusinessId,
+  
+    );
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
   bondPendingCancelledInvoice = async (
     req: Request,
@@ -348,7 +369,9 @@ export class InvoiceController extends BaseController<
     try {
       const { id } = req.params;
       const { bondedInvoiceId } = req.body;
-      await this.service.bondInvoice(id as string, bondedInvoiceId);
+      const context = await getUserContext(req);
+
+      await this.service.bondInvoice(id as string, bondedInvoiceId, context.unitBusinessId);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -359,8 +382,9 @@ export class InvoiceController extends BaseController<
     try {
       const { expectedDate } = req.body;
       const { id } = req.params;
+      const context = await getUserContext(req)
 
-      await this.service.scheduleInvoice(id as string, expectedDate);
+      await this.service.scheduleInvoice(id as string, expectedDate, context.unitBusinessId);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -368,60 +392,58 @@ export class InvoiceController extends BaseController<
   };
 
   importXML = async (req: Request, res: Response): Promise<void> => {
-  const { integration } = req.body;
-  try {
-    if (!req.file) {
-      res.status(400).json({ error: "Nenhum arquivo XML enviado" });
-      return;
+    const { integration } = req.body;
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: "Nenhum arquivo XML enviado" });
+        return;
+      }
+
+      const xmlContent = req.file.buffer.toString("utf-8");
+
+      if (!xmlContent.trim()) {
+        res.status(400).json({ error: "Arquivo XML vazio" });
+        return;
+      }
+
+      if (integration === "bling") {
+        console.log("IMPORT BLING");
+        const queue = req.app.locals.BlingApiFetchQueue as BlingApiFetchQueue;
+        await queue.upsertInvoiceFromXml(xmlContent);
+      } else if (integration === "tecinco") {
+        const userId = (req as any).user?.id;
+        const user = await User.findByPk(userId, {
+          attributes: ["unit_business_id"],
+        });
+
+        const unitBusiness = user?.unit_business_id
+          ? await UnitBusiness.findByPk(user.unit_business_id, {
+              attributes: ["number"],
+            })
+          : null;
+
+        const branchId = unitBusiness?.number
+          ? Number(unitBusiness.number)
+          : undefined;
+
+        const queue = req.app.locals.TCarUpsertQueue as TCarUpsertQueue;
+        await queue.add({
+          eventId: `manual-xml-${Date.now()}`,
+          resource: "invoice_xml",
+          action: "created",
+          companyId: "",
+          branchId,
+          data: { xml: xmlContent },
+        } satisfies TCarUpsertJobPayload);
+      } else {
+        await upsertInvoiceFromXml(xmlContent);
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const xmlContent = req.file.buffer.toString("utf-8");
-
-    if (!xmlContent.trim()) {
-      res.status(400).json({ error: "Arquivo XML vazio" });
-      return;
-    }
-
-    if (integration === "bling") {
-      console.log("IMPORT BLING")
-      const queue = req.app.locals.BlingApiFetchQueue as BlingApiFetchQueue;
-      await queue.upsertInvoiceFromXml(xmlContent);
-
-    } else if (integration === "tecinco") {
-      const userId = (req as any).user?.id;
-      const user = await User.findByPk(userId, {
-        attributes: ["unit_business_id"],
-      });
-
-      const unitBusiness = user?.unit_business_id
-        ? await UnitBusiness.findByPk(user.unit_business_id, {
-            attributes: ["number"],
-          })
-        : null;
-
-      const branchId = unitBusiness?.number
-        ? Number(unitBusiness.number)
-        : undefined;
-
-      const queue = req.app.locals.TCarUpsertQueue as TCarUpsertQueue;
-      await queue.add({
-        eventId: `manual-xml-${Date.now()}`,
-        resource: "invoice_xml",
-        action: "created",
-        companyId: "",
-        branchId,
-        data: { xml: xmlContent },
-      } satisfies TCarUpsertJobPayload);
-
-    } else {
-      await upsertInvoiceFromXml(xmlContent);
-    }
-
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-};
+  };
 
   getInvoiceProductReport = async (
     req: Request,
