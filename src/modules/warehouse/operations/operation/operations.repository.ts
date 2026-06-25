@@ -1,7 +1,7 @@
 import { FindOptions } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import { Product, ProductConfig } from "../../../inventory";
-import Invoice from "../../entrance/invoice/invoice.model";
+import Invoice from "../../invoices/invoice/invoice.model";
 import UnitBusiness from "../../unit-business/unit-business.model";
 import User from "../../users/users/user.model";
 import OperationsItens from "../operations-itens/operations-itens.model";

@@ -9,13 +9,13 @@ import expeditionBatchRepository, {
 } from "./batch.repository";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
-import InvoiceItems from "../../entrance/invoice-items/invoice-items.model";
-import Invoice from "../../entrance/invoice/invoice.model";
+import InvoiceItems from "../../invoices/invoice-items/invoice-items.model";
+import Invoice from "../../invoices/invoice/invoice.model";
 import sequelize from "../../../../config/sequelize";
 import { Product, Stock } from "../../../inventory";
 import ExpeditionScanLog from "../scan-logs/scan-logs.model";
 import { ExpeditionBatchFull } from "./batch.types";
-import { InvoiceItemsAttributes } from "../../entrance/invoice-items/invoice-items.types";
+import { InvoiceItemsAttributes } from "../../invoices/invoice-items/invoice-items.types";
 import { extractChaveFromXml } from "../../../../shared/utils/xml/xml-parser";
 import {
   decryptXml,
@@ -28,8 +28,8 @@ import {
 import { FindOptions, Op } from "sequelize";
 import UnitBusiness from "../../unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
-import invoiceService from "../../entrance/invoice/invoice.service";
-import invoiceItemsService from "../../entrance/invoice-items/invoice-items.service";
+import invoiceService from "../../invoices/invoice/invoice.service";
+import invoiceItemsService from "../../invoices/invoice-items/invoice-items.service";
 import { ensureSameBy } from "../../../../shared/utils/validators/same-not-allowed";
 import transporterService from "../../transporter/transporter.service";
 import Transporter from "../../transporter/transporter.model";

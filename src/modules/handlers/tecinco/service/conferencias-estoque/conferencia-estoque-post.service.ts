@@ -1,6 +1,6 @@
 import { Op } from "sequelize";
-import Invoice from "../../../../warehouse/entrance/invoice/invoice.model";
-import InvoiceItems from "../../../../warehouse/entrance/invoice-items/invoice-items.model";
+import Invoice from "../../../../warehouse/invoices/invoice/invoice.model";
+import InvoiceItems from "../../../../warehouse/invoices/invoice-items/invoice-items.model";
 import ExpeditionBatch from "../../../../warehouse/expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../../../warehouse/expedition/batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../../../../warehouse/expedition/batch-items/batch-items.model";

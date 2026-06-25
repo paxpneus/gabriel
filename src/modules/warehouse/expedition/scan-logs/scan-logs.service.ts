@@ -2,7 +2,7 @@ import { Op, Sequelize, Transaction } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import { Product, SupplierMapping } from "../../../inventory";
-import Invoice from "../../entrance/invoice/invoice.model";
+import Invoice from "../../invoices/invoice/invoice.model";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import batchItemsService, {
@@ -15,9 +15,9 @@ import ExpeditionScanLog from "./scan-logs.model";
 import expeditionScanLogRepository, {
   ExpeditionScanLogRepository,
 } from "./scan-logs.repository";
-import InvoiceItems from "../../entrance/invoice-items/invoice-items.model";
 import supplierMappingService from "../../../inventory/supplier-mapping/supplier-mapping.service";
 import productsService from "../../../inventory/products/product.service";
+import InvoiceItems from "../../invoices/invoice-items/invoice-items.model";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
