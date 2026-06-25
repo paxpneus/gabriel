@@ -1,3 +1,3 @@
 import { startAutomationWorkers } from "./queues";
 
-startAutomationWorkers();
+// startAutomationWorkers();
