@@ -1,4 +1,4 @@
-import { InvoiceStatus } from "./../../../../../warehouse/entrance/invoice/invoice.types";
+import { InvoiceStatus } from "../../../../../warehouse/invoices/invoice/invoice.types";
 import { Job } from "bullmq";
 import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
@@ -28,7 +28,7 @@ import Store from "../../../../../sales/stores/stores.model";
 import Contact from "../../../../../sales/contacts/contacts.model";
 import { Op } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
-import InvoiceFiscalItem from "../../../../../warehouse/entrance/invoice-fiscal-item/invoice-fiscal-item.model";
+import InvoiceFiscalItem from "../../../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import {
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,

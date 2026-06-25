@@ -1,7 +1,7 @@
 // src/modules/fiscal/nfe-manifestacao/nfe-manifestacao.service.ts
 
-import Invoice from "../../../warehouse/entrance/invoice/invoice.model";
-import { SefazManifestationStatus } from "../../../warehouse/entrance/invoice/invoice.types";
+import Invoice from "../../../warehouse/invoices/invoice/invoice.model";
+import { SefazManifestationStatus } from "../../../warehouse/invoices/invoice/invoice.types";
 import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import { getWizard } from "./wizard.service";
 

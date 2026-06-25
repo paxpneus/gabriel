@@ -1,5 +1,5 @@
-import { InvoiceItemsAttributes } from "../../entrance/invoice-items/invoice-items.types";
-import { InvoiceAttributes } from "../../entrance/invoice/invoice.types";
+import { InvoiceItemsAttributes } from "../../invoices/invoice-items/invoice-items.types";
+import { InvoiceAttributes } from "../../invoices/invoice/invoice.types";
 import { ExpeditionBatchInvoiceAttributes } from "./../batch-invoices/batch-invoices.types";
 export interface ExpeditionBatchAttributes {
   id: string;

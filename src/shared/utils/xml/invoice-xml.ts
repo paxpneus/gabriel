@@ -1,4 +1,4 @@
-import { InvoiceStatus } from "../../../modules/warehouse/entrance/invoice/invoice.types";
+import { InvoiceStatus } from "../../../modules/warehouse/invoices/invoice/invoice.types";
 import {
   Invoice,
   InvoiceItems,
@@ -10,7 +10,7 @@ import {
   ProductConfig,
   SupplierMapping,
 } from "../../../modules/inventory";
-import InvoiceFiscalItem from "../../../modules/warehouse/entrance/invoice-fiscal-item/invoice-fiscal-item.model";
+import InvoiceFiscalItem from "../../../modules/warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import UnmappedInvoiceProduct from "../../../modules/inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import Store from "../../../modules/sales/stores/stores.model";
 import parser from "../../../shared/utils/xml/xml-parser";
