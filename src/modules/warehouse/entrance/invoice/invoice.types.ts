@@ -33,7 +33,7 @@ export interface InvoiceAttributes {
   supplier_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
-  type: string;
+  type: "INCOMING" | "OUTGOING";
   status: string;
   batch_generated?: boolean;
   printed_label?: boolean;
