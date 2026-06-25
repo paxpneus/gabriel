@@ -1,15 +1,15 @@
 import BaseController from '../../../../shared/utils/base-models/base-controller';
-import EntranceScanLog from './entrance-scan-logs.model';
-import EntranceScanLogService from './entrance-scan-logs.service';
+import BatchInvoiceItems from './batch-invoice-items.model';
+import BatchInvoiceItemsService from './batch-invoice-items.service';
 import { authenticate } from '../../../../middlewares/auth-token';
 import { userPermissions } from '../../../../middlewares/user-permissions';
 
-export class EntranceScanLogController extends BaseController<
-  EntranceScanLog,
-  typeof EntranceScanLogService
+export class BatchInvoiceItemsController extends BaseController<
+  BatchInvoiceItems,
+  typeof BatchInvoiceItemsService
 > {
   constructor() {
-    super(EntranceScanLogService);
+    super(BatchInvoiceItemsService);
   }
 
   protected middlewaresFor() {
@@ -23,4 +23,4 @@ export class EntranceScanLogController extends BaseController<
   }
 }
 
-export default new EntranceScanLogController();
+export default new BatchInvoiceItemsController();
