@@ -17,7 +17,7 @@ import batchInvoicesRoutes from '../modules/warehouse/expedition/batch-invoices/
 import scanLogsRoutes from '../modules/warehouse/expedition/scan-logs/scan-logs.routes';
 import invoiceRoutes from '../modules/warehouse/entrance/invoice/invoice.routes';
 import invoiceItemsRoutes from '../modules/warehouse/entrance/invoice-items/invoice-items.routes';
-import entranceScanLogsRoutes from '../modules/warehouse/entrance/entrance-scan-logs/entrance-scan-logs.routes';
+
 
 // Inventory Routes
 import productRoutes from '../modules/inventory/products/product.routes';
@@ -40,7 +40,6 @@ router.use('/warehouse/expedition/batch-invoices', batchInvoicesRoutes);
 router.use('/warehouse/expedition/scan-logs', scanLogsRoutes);
 router.use('/warehouse/entrance/invoices', invoiceRoutes);
 router.use('/warehouse/entrance/invoice-items', invoiceItemsRoutes);
-router.use('/warehouse/entrance/scan-logs', entranceScanLogsRoutes);
 
 // Inventory Endpoints
 router.use('/inventory/products', productRoutes);
