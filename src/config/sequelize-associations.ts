@@ -57,6 +57,7 @@ import Application from "../modules/integrations/applications/applications.model
 import DailySellerProductFact from "../modules/reports/sellers-report/models/daily-seller-product-fact/daily-seller-product-fact.model";
 import DailySellerCustomerFact from "../modules/reports/sellers-report/models/daily-seller-customer-fact/daily-seller-customer-fact.model";
 import BatchInvoiceItems from "../modules/warehouse/expedition/batch-invoice-items/batch-invoice-items.model";
+import InvoiceUnitBusinessAttributes from "../modules/warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 export function setupAssociations() {
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
 
@@ -504,6 +505,26 @@ export function setupAssociations() {
   Supplier.hasMany(Invoice, {
     foreignKey: "supplier_id",
     as: "supplierInvoices",
+  });
+
+  // ===== INVOICE UNIT BUSINESS ATTRIBUTES =====
+
+  UnitBusiness.hasMany(InvoiceUnitBusinessAttributes, {
+    foreignKey: "unit_business_id",
+    as: "invoiceUnitBusinessAttributes",
+  });
+  InvoiceUnitBusinessAttributes.belongsTo(UnitBusiness, {
+    foreignKey: "unit_business_id",
+    as: "unitBusiness",
+  });
+
+  Invoice.hasMany(InvoiceUnitBusinessAttributes, {
+    foreignKey: "invoice_id",
+    as: "unitBusinessAttributes",
+  });
+  InvoiceUnitBusinessAttributes.belongsTo(Invoice, {
+    foreignKey: "invoice_id",
+    as: "invoice",
   });
 
   // ===== INTEGRATIONS =====
