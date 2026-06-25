@@ -28,20 +28,39 @@ import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/que
 import { BlingTokenRefreshQueue } from "./../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 import { TCarUpsertQueue } from "../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
-import {
-  scheduleTCarSync,
-  TCarSyncQueue,
-} from "../modules/handlers/tecinco/queues/tecinco-sync-queue";
+import { TCarSyncQueue } from "../modules/handlers/tecinco/queues/tecinco-sync-queue";
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation/daily-operation-report/daily-operation-report.queue";
 import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
 
 export const serverAdapter = new ExpressAdapter();
 
-function buildQueues(workless: boolean) {
+// ─── Nomes canônicos de todas as filas ───────────────────────────────────────
+export type QueueName =
+  | "NFE_EMISSION"
+  | "ML_ORDER_SYNC"
+  | "CNPJ_VERIFY_CNAE"
+  | "BLING_ORDER_INGESTION"
+  | "NFE_RECONCILER"
+  | "BLING_RECONCILER"
+  | "BLING_DIRECT_UPSERT"
+  | "BLING_API_FETCH"
+  | "BLING_TOKEN_REFRESH"
+  | "BLING_MIGRATION"
+  | "TCAR_UPSERT"
+  | "TCAR_SYNC"
+  | "DAILY_OPERATION_REPORT"
+  | "DAILY_SALES_REPORT"
+  | "AUTO_BACKUP";
+
+// ─── buildQueues: só ativa worker nas filas explicitamente listadas ───────────
+function buildQueues(activeWorkers: QueueName[]) {
+  const active = new Set<QueueName>(activeWorkers);
+  const w = (name: QueueName) => !active.has(name); // workless = true se NÃO estiver na lista
+
   const blingOrderService = new BlingOrderService(blingApi);
 
   const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi, {
-    workless,
+    workless: w("NFE_EMISSION"),
   });
 
   const nfeNext = {
@@ -52,14 +71,14 @@ function buildQueues(workless: boolean) {
   };
 
   const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi, {
-    workless,
+    workless: w("ML_ORDER_SYNC"),
   });
 
   const cnpjQueue = new CNPJQueue(
     new CNPJService(),
     blingApi,
     { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
-    { workless },
+    { workless: w("CNPJ_VERIFY_CNAE") },
   );
 
   const cnpjNext = {
@@ -70,28 +89,28 @@ function buildQueues(workless: boolean) {
   const blingOrderQueue = new BlingOrderQueue(
     blingOrderService,
     { add: (data, jobId) => cnpjQueue.add(data, jobId) },
-    { workless },
+    { workless: w("BLING_ORDER_INGESTION") },
   );
 
   const reconcilerQueue = new ReconcilerQueue(cnpjNext, nfeNext, blingApi, {
-    workless,
+    workless: w("NFE_RECONCILER"),
   });
 
   const blingReconcilerQueue = new BlingReconcilerQueue(
     blingApi,
     { add: (data: any, jobId: string) => blingOrderQueue.add(data, jobId) },
-    { workless },
+    { workless: w("BLING_RECONCILER") },
   );
 
-  const blingDirectUpsertQueue = new BlingDirectUpsertQueue({ workless });
-  const blingApiFetchQueue = new BlingApiFetchQueue({ workless });
-  const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless });
-  const blingDailyReconciler = new BlingMigrationQueue({ workless });
-  const tcarUpsertQueue = new TCarUpsertQueue({ workless });
-  const tcarSyncQueue = new TCarSyncQueue({ workless });
-  const dailyOperationReportQueue = new DailyOperationReportQueue({ workless });
-  const dailySalesReportQueue = new SalesReportQueue({ workless });
-  const autoBackupQueue = new AutoBackupQueue({ workless });
+  const blingDirectUpsertQueue = new BlingDirectUpsertQueue({ workless: w("BLING_DIRECT_UPSERT") });
+  const blingApiFetchQueue = new BlingApiFetchQueue({ workless: w("BLING_API_FETCH") });
+  const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless: w("BLING_TOKEN_REFRESH") });
+  const blingDailyReconciler = new BlingMigrationQueue({ workless: w("BLING_MIGRATION") });
+  const tcarUpsertQueue = new TCarUpsertQueue({ workless: w("TCAR_UPSERT") });
+  const tcarSyncQueue = new TCarSyncQueue({ workless: w("TCAR_SYNC") });
+  const dailyOperationReportQueue = new DailyOperationReportQueue({ workless: w("DAILY_OPERATION_REPORT") });
+  const dailySalesReportQueue = new SalesReportQueue({ workless: w("DAILY_SALES_REPORT") });
+  const autoBackupQueue = new AutoBackupQueue({ workless: w("AUTO_BACKUP") });
 
   return {
     nfeQueue,
@@ -129,12 +148,12 @@ export function registerQueues(app: Express) {
     autoBackupQueue,
     tcarUpsertQueue,
     tcarSyncQueue,
-  } = buildQueues(true);
+  } = buildQueues([]); 
 
   const blingOrderQueue = new BlingOrderQueue(
     new BlingOrderService(blingApi),
     { add: async () => {} },
-    { workless: false },
+    { workless: true },
   );
 
   const mlScrapingQueue = new MLScrapingQueue(
@@ -189,72 +208,85 @@ export function registerQueues(app: Express) {
   );
 }
 
-// ─── Workers principais ───────────────────────────────────────────────────────
-
+// ─── container: workers ───────────────────────────────────────────────────────
 export function startBlingWorkers() {
   const {
-    blingTokenRefreshQueue,
-    blingDailyReconciler,
     blingApiFetchQueue,
     blingDirectUpsertQueue,
-    // tcarSyncQueue
-  } = buildQueues(false);
+    blingTokenRefreshQueue,
+    blingDailyReconciler,
+    tcarUpsertQueue,
+  } = buildQueues([
+    "BLING_API_FETCH",
+    "BLING_DIRECT_UPSERT",
+    "BLING_TOKEN_REFRESH",
+    "BLING_MIGRATION",
+    "TCAR_UPSERT",
+  ]);
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
 
-  console.log("------------------- QUEUE: Workers Ativos! -------------------");
-  console.log("  → NFE_EMISSION, ML-ORDER-SYNC, CNPJ_VERIFY_CNAE");
-  console.log(
-    "  → BLING_ORDER_INGESTION, NFE_RECONCILER (1h), BLING_RECONCILER (2h)",
-  );
-  console.log("  → BLING_TOKEN_REFRESH (1h), BLING_MIGRATION (24h)");
-  console.log("  → DAILY_OPERATION_REPORT (1h), SALES_REPORT (1h)");
-  console.log("  → AUTO_BACKUP (19h BRT)");
+  void blingApiFetchQueue;
+  void blingDirectUpsertQueue;
+  void tcarUpsertQueue;
 
-  // void scheduleTCarSync();
-  // void tcarSyncQueue;
+  console.log("------------------- QUEUE: Bling Workers Ativos! -------------------");
+  console.log("  → BLING_API_FETCH");
+  console.log("  → BLING_DIRECT_UPSERT");
+  console.log("  → BLING_TOKEN_REFRESH (1h)");
+  console.log("  → BLING_MIGRATION (24h)");
+  console.log("  → TCAR_UPSERT");
 }
 
+// ─── container: worker-automation ────────────────────────────────────────────
 export function startAutomationWorkers() {
   const {
-    // nfeQueue,
-    // mlOrderSyncQueue,
-    // cnpjQueue,
-    // blingOrderQueue,
-    // reconcilerQueue,
-    // blingReconcilerQueue,
-  } = buildQueues(false);
+    nfeQueue,
+    mlOrderSyncQueue,
+    cnpjQueue,
+    blingOrderQueue,
+    reconcilerQueue,
+    blingReconcilerQueue,
+  } = buildQueues([
+    "NFE_EMISSION",
+    "ML_ORDER_SYNC",
+    "CNPJ_VERIFY_CNAE",
+    "BLING_ORDER_INGESTION",
+    "NFE_RECONCILER",
+    "BLING_RECONCILER",
+  ]);
 
-  // Agendamentos que já existiam
-  // reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  // blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
+  reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
 
-  console.log(
-    "------------------- QUEUE: Automation Workers Ativos! -------------------",
-  );
+  void nfeQueue;
+  void mlOrderSyncQueue;
+  void cnpjQueue;
+  void blingOrderQueue;
+  void reconcilerQueue;
+  void blingReconcilerQueue;
+
+  console.log("------------------- QUEUE: Automation Workers Ativos! -------------------");
   console.log("  → BLING_ORDER_INGESTION");
   console.log("  → CNPJ_VERIFY_CNAE");
-  console.log("  → ML-ORDER-SYNC");
+  console.log("  → ML_ORDER_SYNC");
   console.log("  → NFE_EMISSION");
   console.log("  → NFE_RECONCILER (1h)");
   console.log("  → BLING_RECONCILER (2h)");
-
-  // Mantém referências vivas
-  // void nfeQueue;
-  // void mlOrderSyncQueue;
-  // void cnpjQueue;
-  // void blingOrderQueue;
-  // void reconcilerQueue;
-  // void blingReconcilerQueue;
 }
 
-// ─── Bling workers isolados (ex-startBlingWorkers) ───────────────────────────
+// ─── container: workers (relatórios e backup) ────────────────────────────────
 export function startWorkers() {
-  console.log("🚀 Iniciando Bling workers isolados...");
-
-  const { dailyOperationReportQueue, dailySalesReportQueue, autoBackupQueue } =
-    buildQueues(false);
+  const {
+    dailyOperationReportQueue,
+    dailySalesReportQueue,
+    autoBackupQueue,
+  } = buildQueues([
+    "DAILY_OPERATION_REPORT",
+    "DAILY_SALES_REPORT",
+    "AUTO_BACKUP",
+  ]);
 
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   autoBackupQueue.scheduleRepeat({
@@ -262,37 +294,23 @@ export function startWorkers() {
     tz: "America/Sao_Paulo",
   });
 
-  setTimeout(
-    () => {
-      dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-      console.log(
-        "  → SalesReportQueue (relatório comercial a cada 1h, offset 30min)",
-      );
-    },
-    30 * 60 * 1000,
-  );
+  setTimeout(() => {
+    dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+    console.log("  → DAILY_SALES_REPORT (offset 30min)");
+  }, 30 * 60 * 1000);
 
-  console.log("✅ Workers ativos:");
-  console.log("  → BlingDirectUpsertQueue");
-  console.log("  → BlingApiFetchQueue");
-  console.log("  → BlingTokenRefreshQueue (refresh a cada 1h)");
-  console.log("  → BlingMigrationQueue (reconciler diário)");
-  console.log("  → TCarUpsertQueue");
-  console.log(
-    "  → DailyOperationReportQueue (relatório operacional a cada 1h)",
-  );
-  console.log("  → AutoBackupQueue (todo dia às 19h BRT)");
-  console.log(
-    "  → SalesReportQueue (relatório comercial a cada 1h, offset 30min)",
-  );
+  void dailyOperationReportQueue;
+  void autoBackupQueue;
 
-  // Mantém referências vivas para o GC não coletar os Workers
-  (void dailyOperationReportQueue, dailySalesReportQueue, autoBackupQueue);
+  console.log("🚀 Workers de relatórios/backup ativos:");
+  console.log("  → DAILY_OPERATION_REPORT (1h)");
+  console.log("  → DAILY_SALES_REPORT (1h, offset 30min)");
+  console.log("  → AUTO_BACKUP (19h BRT)");
 }
 
-// ─── Scraping worker ──────────────────────────────────────────────────────────
+// ─── container: worker-scraping ───────────────────────────────────────────────
 export function startScrapingWorker() {
-  const { mlOrderSyncQueue } = buildQueues(true);
+  const { mlOrderSyncQueue } = buildQueues([]);
 
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
@@ -301,11 +319,9 @@ export function startScrapingWorker() {
     { workless: false },
   );
 
-  // mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
-
-  console.log(
-    "------------------- QUEUE: Scraping Worker Ativo! -------------------",
-  );
+  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 }); 
 
   void mlScrapingQueue;
+
+  console.log("------------------- QUEUE: Scraping Worker Ativo! -------------------");
 }
