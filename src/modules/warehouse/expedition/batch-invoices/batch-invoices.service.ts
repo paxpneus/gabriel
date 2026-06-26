@@ -333,5 +333,7 @@ export class ExpeditionBatchInvoiceService extends BaseService<
 
     return { batchInvoices, volumesAdded };
   }
+
+  
 }
 export default new ExpeditionBatchInvoiceService();

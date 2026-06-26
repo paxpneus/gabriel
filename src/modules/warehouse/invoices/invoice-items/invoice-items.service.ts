@@ -268,6 +268,146 @@ export class InvoiceItemsService extends BaseService<
       });
     });
   }
+
+  async syncBatchFromInvoice(
+    batchInvoice: ExpeditionBatchInvoice,
+  ): Promise<void> {
+    return sequelize.transaction(async (t) => {
+      const invoice = await invoiceService.findByIdFullForAllUnits(
+        batchInvoice.invoice_id,
+      );
+
+      if (!invoice) {
+        throw new Error("Invoice não encontrada!");
+      }
+
+      const invoiceItems = await this.findAll({
+        where: { invoice_id: batchInvoice.invoice_id },
+        transaction: t,
+      });
+
+      if (!invoiceItems.length) {
+        console.log(
+          `[SYNC_BATCH] Nenhum InvoiceItem encontrado para invoice ${batchInvoice.invoice_id}`,
+        );
+        return;
+      }
+
+      const expedition_batch_id = batchInvoice.expedition_batch_id;
+
+      await Promise.all(
+        invoiceItems.map(async (invoiceItem) => {
+          const quantityExpected = invoiceItem.quantity_expected ?? 0;
+
+          // ─── Upsert BatchItem ──────────────────────────────────────────────
+          const existingBatchItem = await batchItemsService.findOne({
+            where: {
+              expedition_batch_id,
+              product_id: invoiceItem.product_id!,
+            },
+            transaction: t,
+          });
+
+          let batchItem: ExpeditionBatchItems;
+
+          if (existingBatchItem) {
+            // Detecta se a quantidade mudou comparando com o que já está no batch invoice item
+            const existingBatchInvoiceItem =
+              await batchInvoiceItemsService.findOne({
+                where: {
+                  expedition_batch_invoice_id: batchInvoice.id,
+                  expedition_batch_item_id: existingBatchItem.id,
+                },
+                transaction: t,
+              });
+
+            const previousQty =
+              existingBatchInvoiceItem?.quantity_expected ?? 0;
+            const diff = quantityExpected - previousQty;
+
+            if (diff !== 0) {
+              await batchItemsService.increment("quantity", {
+                by: diff,
+                where: { id: existingBatchItem.id },
+                transaction: t,
+              });
+
+              await batchService.increment("total_volumes", {
+                by: diff,
+                where: { id: expedition_batch_id },
+                transaction: t,
+              });
+            }
+
+            batchItem = existingBatchItem;
+          } else {
+            batchItem = await batchItemsService.create(
+              {
+                expedition_batch_id,
+                product_id: invoiceItem.product_id!,
+                quantity: quantityExpected,
+                quantity_scanned: 0,
+              },
+              { transaction: t },
+            );
+
+            await batchService.increment("total_volumes", {
+              by: quantityExpected,
+              where: { id: expedition_batch_id },
+              transaction: t,
+            });
+          }
+
+          // ─── Upsert BatchInvoiceItem ───────────────────────────────────────
+          const existingBatchInvoiceItem =
+            await batchInvoiceItemsService.findOne({
+              where: {
+                expedition_batch_invoice_id: batchInvoice.id,
+                expedition_batch_item_id: batchItem.id,
+              },
+              transaction: t,
+            });
+
+          if (existingBatchInvoiceItem) {
+            await batchInvoiceItemsService.update(
+              existingBatchInvoiceItem.id,
+              {
+                quantity_expected: quantityExpected,
+                status: "PENDING",
+              },
+              { transaction: t },
+            );
+          } else {
+            await batchInvoiceItemsService.create(
+              {
+                expedition_batch_invoice_id: batchInvoice.id,
+                expedition_batch_item_id: batchItem.id,
+                quantity_expected: quantityExpected,
+                quantity_read: 0,
+                status: "PENDING",
+              },
+              { transaction: t },
+            );
+          }
+
+          console.log(
+            `[SYNC_BATCH] Sincronizado product_id=${invoiceItem.product_id} | qty=${quantityExpected} | batch=${expedition_batch_id}`,
+          );
+        }),
+      );
+
+      // ─── Atualiza status do Batch ──────────────────────────────────────────
+      await batchService.update(
+        expedition_batch_id,
+        { status: "PENDING" },
+        { transaction: t },
+      );
+
+      console.log(
+        `[SYNC_BATCH] Batch ${expedition_batch_id} sincronizado para invoice ${batchInvoice.invoice_id}`,
+      );
+    });
+  }
 }
 
 export default new InvoiceItemsService();

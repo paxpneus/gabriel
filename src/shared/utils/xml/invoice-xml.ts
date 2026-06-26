@@ -1,4 +1,8 @@
-import { FullInvoiceForAllUnits, InvoiceStatus, ItemWithFiscal } from "../../../modules/warehouse/invoices/invoice/invoice.types";
+import {
+  FullInvoiceForAllUnits,
+  InvoiceStatus,
+  ItemWithFiscal,
+} from "../../../modules/warehouse/invoices/invoice/invoice.types";
 import {
   Invoice,
   InvoiceItems,
@@ -23,6 +27,7 @@ import invoiceService from "../../../modules/warehouse/invoices/invoice/invoice.
 import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import unitBusinessService from "../../../modules/warehouse/unit-business/unit-business.service";
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
+import integrationsService from "../../../modules/integrations/integrations/integrations.service";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const NO_TRANSPORTER_NAME = "Sem transporte";
@@ -387,7 +392,22 @@ async function upsertFiscalItems(
 
 // ─── Export público ───────────────────────────────────────────────────────────
 
-export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
+export async function upsertInvoiceFromXml(
+  xmlContent: string,
+  options?: {
+    integrationName?: string;
+    initialStatus?: InvoiceUnitBusinessAttributesStatus;
+    updateStatus?: InvoiceUnitBusinessAttributesStatus;
+    skipCrossConfig?: boolean;
+    allowUpdateFromAnyIntegration?: boolean;
+  },
+): Promise<void> {
+  const {
+    integrationName = "Tecinco",
+    initialStatus = "WAITING_SCHEDULE_SALES",
+    skipCrossConfig = false,
+    allowUpdateFromAnyIntegration = false,
+  } = options ?? {};
   const parsed = parser.parse(xmlContent);
 
   const nfe =
@@ -448,7 +468,9 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
 
   const fiscalTotals = extractInvoiceFiscalTotalsFromXml(xmlContent);
 
-  const integration = await getTCarIntegration("Tecinco");
+  const integration = await integrationsService.getFullIntegration({
+    where: { name: integrationName, type: "SYSTEM" },
+  });
 
   if (!transporterDocument) {
     transporterName = NO_TRANSPORTER_NAME;
@@ -529,7 +551,6 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
   }> = [];
 
   if (det.length && !existingInvoice) {
-
     for (let idx = 0; idx < det.length; idx++) {
       const item = det[idx];
       const prod = item.prod ?? {};
@@ -537,9 +558,7 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
 
       const sku = prod.cProd ? String(prod.cProd).trim() : null;
       const gtin =
-        prod.cEAN && prod.cEAN !== "SEM GTIN"
-          ? String(prod.cEAN).trim()
-          : null;
+        prod.cEAN && prod.cEAN !== "SEM GTIN" ? String(prod.cEAN).trim() : null;
       const qty = Number(prod.qCom ?? 0);
 
       const product = await findProductForInvoiceItem({
@@ -631,7 +650,6 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
         },
       });
     }
-
   }
 
   // ─── Create ou Update da invoice ──────────────────────────────────────────
@@ -665,13 +683,19 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
       throw new Error("Invoice não encontrada.");
     }
   } else {
-    if (existingInvoice.integrations_id !== integration.id) {
+    if (
+      !allowUpdateFromAnyIntegration &&
+      existingInvoice.integrations_id !== integration.id
+    ) {
       return;
     }
 
     await invoiceService.updateInvoicesForAllUnitBusiness(
       [existingInvoice.id],
-      { ...invoiceBaseData },
+      {
+        ...invoiceBaseData,
+        ...(options ? options.updateStatus ? { status: options.updateStatus } : {} : {}),
+      },
     );
 
     invoice = await invoiceService.findByIdFullForAllUnits(existingInvoice.id);
@@ -719,7 +743,9 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
   // ─── ProductConfig + SupplierMapping para produtos Tecinco ────────────────
 
   try {
-    await upsertTecincoCrossConfig(det, senderCnpj, "[IMPORT_XML]");
+    if (!skipCrossConfig) {
+      await upsertTecincoCrossConfig(det, senderCnpj, "[IMPORT_XML]");
+    }
   } catch (err) {
     logDbError(
       "[IMPORT_XML] Falha ao upsert Tecinco cross config",
