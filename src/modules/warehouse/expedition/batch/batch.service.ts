@@ -551,9 +551,8 @@ export class ExpeditionBatchService extends BaseService<
           },
           { where: { id: batchId }, transaction: t },
         ),
-        invoiceService.bulkUpdate(
+        invoiceService.updateInvoices(invoicesIds, fullBatch.unit_business_id,
           { status: "FINISHED" },
-          { where: { id: invoicesIds }, transaction: t },
         ),
         batchInvoiceItemsService.bulkUpdate(
           { status: "FINISHED" },

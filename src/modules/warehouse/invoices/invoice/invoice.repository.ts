@@ -11,7 +11,13 @@ import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import Invoice from "./invoice.model";
 import { Product, ProductConfig, Supplier } from "../../../inventory";
-import { FindOptions, Op, Sequelize, Transaction, WhereOptions } from "sequelize";
+import {
+  FindOptions,
+  Op,
+  Sequelize,
+  Transaction,
+  WhereOptions,
+} from "sequelize";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
 import BatchInvoiceItems from "../../expedition/batch-invoice-items/batch-invoice-items.model";
 import ExpeditionBatchItems from "../../expedition/batch-items/batch-items.model";
@@ -25,10 +31,16 @@ import {
   QueryParams,
   QueryConfig,
 } from "../../../../shared/query/query.types";
-import { InvoiceUnitBusinessAttributesCreationAttributes, InvoiceUnitBusinessAttributesStatus } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
+import {
+  InvoiceUnitBusinessAttributesCreationAttributes,
+  InvoiceUnitBusinessAttributesStatus,
+} from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import { InvoiceItemsAttributes } from "../invoice-items/invoice-items.types";
 import InvoiceFiscalItem from "../invoice-fiscal-item/invoice-fiscal-item.model";
-import { InvoiceFiscalItemAttributes, InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
+import {
+  InvoiceFiscalItemAttributes,
+  InvoiceFiscalItemCreationAttributes,
+} from "../invoice-fiscal-item/invoice-fiscal-item.types";
 
 export class InvoiceRepository extends BaseRepository<Invoice> {
   constructor() {
@@ -319,14 +331,20 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   }
 
   async getFullInvoiceForAllUnits(
-    invoiceId: string,
-  ): Promise<FullInvoiceForAllUnits> {
-    const data = await this.findById(invoiceId, {
+    invoiceId?: string,
+    invoiceKey?: string,
+  ): Promise<FullInvoiceForAllUnits | null> {
+    if (!invoiceId && !invoiceKey) {
+      throw new Error("É necessário informar invoiceId ou invoiceKey.");
+    }
+
+    const data = await this.findOne({
+      where: {
+        ...(invoiceId ? { id: invoiceId } : { xml_key: invoiceKey }),
+      },
       attributes: {
         exclude: ["xml_path", "source_payload"],
-        include: [
-          [this.totalExpectedLiteral(), "total_expected"],
-        ],
+        include: [[this.totalExpectedLiteral(), "total_expected"]],
       },
       include: [
         {
@@ -343,7 +361,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
               model: Product,
               as: "product",
               attributes: { exclude: ["source_payload"] },
-              
             },
           ],
         },
@@ -354,7 +371,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       ],
     });
 
-    if (!data) throw new Error(`Nota não encontrada`);
+    if (!data) return null
 
     return data.get({ plain: true }) as FullInvoiceForAllUnits;
   }
@@ -481,7 +498,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     invoiceIds: string[],
     unitBusinessId: string,
     data: Partial<
-      InvoiceAttributes & { status: string; batch_generated: boolean }
+      InvoiceAttributes & { status: InvoiceUnitBusinessAttributesStatus; batch_generated: boolean }
     >,
     attrWhere?: WhereOptions,
   ): Promise<void> {
@@ -545,45 +562,49 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     ]);
   }
 
-async createInvoice(
-  invoiceData: InvoiceCreationData,
-  transaction?: Transaction,
-): Promise<Invoice> {
-  return Invoice.create(invoiceData as InvoiceAttributes, { transaction });
-}
+  async createInvoice(
+    invoiceData: InvoiceCreationData,
+    transaction?: Transaction,
+  ): Promise<Invoice> {
+    return Invoice.create(invoiceData as InvoiceAttributes, { transaction });
+  }
 
-async createInvoiceItems(
-  items: Omit<InvoiceItemsAttributes, "id" | "createdAt" | "updatedAt">[],
-  transaction?: Transaction,
-): Promise<void> {
-  await InvoiceItems.bulkCreate(items as InvoiceItemsAttributes[], { transaction });
-}
+  async createInvoiceItems(
+    items: Omit<InvoiceItemsAttributes, "id" | "createdAt" | "updatedAt">[],
+    transaction?: Transaction,
+  ): Promise<void> {
+    await InvoiceItems.bulkCreate(items as InvoiceItemsAttributes[], {
+      transaction,
+    });
+  }
 
-async createInvoiceFiscalItems(
-  items: InvoiceFiscalItemCreationAttributes[],
-  transaction?: Transaction,
-): Promise<void> {
-  await InvoiceFiscalItem.bulkCreate(items as InvoiceFiscalItemAttributes[], { transaction });
-}
+  async createInvoiceFiscalItems(
+    items: InvoiceFiscalItemCreationAttributes[],
+    transaction?: Transaction,
+  ): Promise<void> {
+    await InvoiceFiscalItem.bulkCreate(items as InvoiceFiscalItemAttributes[], {
+      transaction,
+    });
+  }
 
-async createInvoiceAttributes(
-  attributes: InvoiceUnitBusinessAttributesCreationAttributes[],
-  transaction?: Transaction,
-): Promise<void> {
-  await InvoiceUnitBusinessAttributes.bulkCreate(attributes, { transaction });
-}
+  async createInvoiceAttributes(
+    attributes: InvoiceUnitBusinessAttributesCreationAttributes[],
+    transaction?: Transaction,
+  ): Promise<void> {
+    await InvoiceUnitBusinessAttributes.bulkCreate(attributes, { transaction });
+  }
 
-async findUnitBusinessesByCnpj(
-  cnpjs: string[],
-  transaction?: Transaction,
-): Promise<{ id: string; cnpj: string }[]> {
-  const results = await UnitBusiness.findAll({
-    where: { cnpj: { [Op.in]: cnpjs } },
-    attributes: ["id", "cnpj"],
-    transaction,
-  });
-  return results.map((ub) => ({ id: ub.id, cnpj: (ub as any).cnpj }));
-}
+  async findUnitBusinessesByCnpj(
+    cnpjs: string[],
+    transaction?: Transaction,
+  ): Promise<{ id: string; cnpj: string }[]> {
+    const results = await UnitBusiness.findAll({
+      where: { cnpj: { [Op.in]: cnpjs } },
+      attributes: ["id", "cnpj"],
+      transaction,
+    });
+    return results.map((ub) => ({ id: ub.id, cnpj: (ub as any).cnpj }));
+  }
 }
 
 export default new InvoiceRepository();
