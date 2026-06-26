@@ -40,6 +40,7 @@ export interface InvoiceAttributes {
   type: "INCOMING" | "OUTGOING";
   status: InvoiceStatus;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[]
+  items?: InvoiceItems[];
   batch_generated?: boolean;
   printed_label?: boolean;
   emitted_at?: Date;
@@ -211,7 +212,7 @@ export type InvoiceCreationData = Omit<InvoiceAttributes, "id" | "createdAt" | "
 };
 
 export interface FullInvoice extends FullInvoiceAttributes {
-  unmappedProducts: UnmappedInvoiceProduct[];
+  unmappedProducts?: UnmappedInvoiceProduct[];
   items: InvoiceItems[];
 }
 
