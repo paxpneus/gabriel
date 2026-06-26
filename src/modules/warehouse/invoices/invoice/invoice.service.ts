@@ -225,7 +225,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         });
       };
 
-      if (senderUbId) addAttr(senderUbId, "OUTGOING", initialStatus ?? "OPEN");
+      if (senderUbId) addAttr(senderUbId, "OUTGOING", "OPEN");
       if (receiverUbId)
         addAttr(receiverUbId, "INCOMING", initialStatus ?? "OPEN");
 
