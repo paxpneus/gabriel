@@ -43,19 +43,23 @@ class BaseService<
       if (value === undefined || value === null) continue;
 
       if (Array.isArray(value)) {
-    normalized[key] = { [Op.in]: value };
-    continue;
-  }
+        normalized[key] = { [Op.in]: value };
+        continue;
+      }
 
       if (value === "true") {
-  normalized[key] = true;
-} else if (value === "false") {
-  normalized[key] = false;
-} else if (typeof value === "string" && value.trim() !== "" && !isNaN(Number(value))) {
-  normalized[key] = Number(value);
-} else {
-  normalized[key] = value;
-}
+        normalized[key] = true;
+      } else if (value === "false") {
+        normalized[key] = false;
+      } else if (
+        typeof value === "string" &&
+        value.trim() !== "" &&
+        !isNaN(Number(value))
+      ) {
+        normalized[key] = Number(value);
+      } else {
+        normalized[key] = value;
+      }
     }
 
     return {
@@ -64,23 +68,19 @@ class BaseService<
     };
   }
 
-  findAll(
-  options?: FindOptions,
-  params?: QueryParams,
-  config?: QueryConfig,
-) {
-  return this.repository.findAll(options, params, config);
-}
+  findAll(options?: FindOptions, params?: QueryParams, config?: QueryConfig) {
+    return this.repository.findAll(options, params, config);
+  }
 
   paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<T>> {
     return this.repository.findPaginated(
-    params, 
-    this.queryConfig,
-    extraOptions,
-  );
+      params,
+      this.queryConfig,
+      extraOptions,
+    );
   }
 
   findById(id: string, options?: FindOptions) {
@@ -107,20 +107,41 @@ class BaseService<
     return this.repository.update(id, data, options);
   }
 
-bulkUpdate(
-  data: Partial<T["_creationAttributes"]>,
-  options: UpdateOptions
-) {
-  return this.repository.bulkUpdate(data, options)
-}
+  bulkUpdate(data: Partial<T["_creationAttributes"]>, options: UpdateOptions) {
+    return this.repository.bulkUpdate(data, options);
+  }
+
+  increment(
+    field: string,
+    options: { by: number; where: any; transaction?: any },
+  ) {
+    return this.repository.increment(field, options);
+  }
+
+  upsertByFind(
+    where: FindOptions["where"],
+    updateData: Partial<T["_creationAttributes"]>,
+    createData: Partial<T["_creationAttributes"]>,
+    options?: { transaction?: any },
+  ) {
+    return this.repository.upsertByFind(where, updateData, createData, options);
+  }
+
+  findOneAndUpdate(
+    where: FindOptions["where"],
+    data: Partial<T["_creationAttributes"]>,
+    options?: { transaction?: any },
+  ) {
+    return this.repository.findOneAndUpdate(where, data, options);
+  }
 
   delete(id: string, options?: DestroyOptions) {
     return this.repository.delete(id, options);
   }
 
   bulkDelete(options: DestroyOptions) {
-  return this.repository.bulkDelete(options)
-}
+    return this.repository.bulkDelete(options);
+  }
 }
 
 export default BaseService;

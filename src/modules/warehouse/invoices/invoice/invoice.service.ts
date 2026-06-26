@@ -1,4 +1,10 @@
-import { FindOptions, Op, Sequelize, WhereOptions } from "sequelize";
+import {
+  FindOptions,
+  Op,
+  Sequelize,
+  Transaction,
+  WhereOptions,
+} from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -10,7 +16,12 @@ import UnitBusiness from "../../unit-business/unit-business.model";
 import Transporter from "../../transporter/transporter.model";
 import ExpeditionBatch from "../../expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
-import { FullInvoiceAttributes, InvoiceAttributes } from "./invoice.types";
+import {
+  FullInvoiceAttributes,
+  InvoiceAttributes,
+  InvoiceCreationData,
+  ItemWithFiscal,
+} from "./invoice.types";
 import Store from "../../../sales/stores/stores.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import { getBrazilDate } from "../../../../shared/utils/normalizers/date";
@@ -19,6 +30,11 @@ import batchInvoicesService from "../../expedition/batch-invoices/batch-invoices
 import { Product, ProductConfig, Supplier } from "../../../inventory";
 import Contact from "../../../sales/contacts/contacts.model";
 import Order from "../../../sales/orders/order/orders.model";
+import {
+  InvoiceUnitBusinessAttributesCreationAttributes,
+  InvoiceUnitBusinessAttributesStatus,
+} from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
+import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -116,8 +132,104 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     };
   }
 
+  async createWithRelations(
+    invoiceData: InvoiceCreationData,
+    items: ItemWithFiscal[],
+    transaction?: Transaction,
+  ): Promise<Invoice> {
+    const t = transaction ?? (await sequelize.transaction());
+    const isExternalTransaction = !!transaction;
+
+    try {
+      // ─── 1. Resolve unit businesses ──────────────────────────────────────
+      const unitBusinesses = await this.repository.findUnitBusinessesByCnpj(
+        [invoiceData.sender_cnpj, invoiceData.receiver_cnpj].filter(
+          Boolean,
+        ) as string[],
+        t,
+      );
+
+      const cnpjMap = new Map(unitBusinesses.map((ub) => [ub.cnpj, ub.id]));
+      const senderUbId = cnpjMap.get(invoiceData.sender_cnpj);
+      const receiverUbId = cnpjMap.get(invoiceData.receiver_cnpj);
+      const mainUnitBusinessId = (receiverUbId ?? senderUbId)!;
+
+      // ─── 2. Cria a invoice ───────────────────────────────────────────────
+      const invoice = await this.repository.createInvoice(
+        { ...invoiceData, unit_business_id: mainUnitBusinessId },
+        t,
+      );
+
+      // ─── 3. Cria items e fiscal items ────────────────────────────────────
+      const invoiceItems = items.map(({ fiscal: _, ...itemData }) => ({
+        ...itemData,
+        invoice_id: invoice.id,
+      }));
+
+      await this.repository.createInvoiceItems(invoiceItems, t);
+
+      const fiscalItems = items
+        .map(({ fiscal, ...itemData }, index) =>
+          fiscal
+            ? {
+                ...fiscal,
+                invoice_id: invoice.id,
+                item_number: fiscal.item_number ?? index + 1,
+              }
+            : null,
+        )
+        .filter(Boolean) as InvoiceFiscalItemCreationAttributes[];
+
+      if (fiscalItems.length > 0) {
+        await this.repository.createInvoiceFiscalItems(fiscalItems, t);
+      }
+
+      // ─── 4. Resolve attributes por cnpj ──────────────────────────────────
+      const seen = new Set<string>();
+      const attributes: InvoiceUnitBusinessAttributesCreationAttributes[] = [];
+
+      const addAttr = (
+        unitBusinessId: string,
+        type: "INCOMING" | "OUTGOING",
+        status: InvoiceUnitBusinessAttributesStatus,
+      ) => {
+        const key = `${invoice.id}:${unitBusinessId}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        attributes.push({
+          invoice_id: invoice.id,
+          unit_business_id: unitBusinessId,
+          type,
+          status,
+          batch_generated: false,
+        });
+      };
+
+      if (senderUbId) {
+        addAttr(senderUbId, "OUTGOING", "OPEN");
+      }
+      if (receiverUbId) {
+        addAttr(receiverUbId, "INCOMING", "OPEN");
+      }
+
+      if (attributes.length > 0) {
+        await this.repository.createInvoiceAttributes(attributes, t);
+      }
+
+      if (!isExternalTransaction) await t.commit();
+      return invoice;
+    } catch (err) {
+      if (!isExternalTransaction) await t.rollback();
+      throw err;
+    }
+  }
+
   async findByIdFull(id: string, unitBusinessId: string) {
     return this.repository.getFullInvoice(id, unitBusinessId);
+  }
+
+  async findByIdFullForAllUnits(id: string) {
+    return this.repository.getFullInvoiceForAllUnits(id);
   }
 
   async listInvoices(
@@ -151,6 +263,20 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     return this.repository.updateWithAttributes(
       invoiceIds,
       unitBusinessId,
+      data,
+      attrWhere,
+    );
+  }
+
+  async updateInvoicesForAllUnitBusiness(
+    invoiceIds: string[],
+    data: Partial<
+      InvoiceAttributes & { status: string; batch_generated: boolean }
+    >,
+    attrWhere?: WhereOptions,
+  ): Promise<void> {
+    return this.repository.updateWithAttributesForAllUnits(
+      invoiceIds,
       data,
       attrWhere,
     );

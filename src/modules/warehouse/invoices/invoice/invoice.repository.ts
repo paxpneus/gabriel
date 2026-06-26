@@ -1,14 +1,17 @@
 import {
   FullInvoice,
   FullInvoiceAttributes,
+  FullInvoiceForAllUnits,
   InvoiceAttributes,
+  InvoiceCreationData,
+  ItemWithFiscal,
 } from "./invoice.types";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import Invoice from "./invoice.model";
 import { Product, ProductConfig, Supplier } from "../../../inventory";
-import { FindOptions, Op, Sequelize, WhereOptions } from "sequelize";
+import { FindOptions, Op, Sequelize, Transaction, WhereOptions } from "sequelize";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
 import BatchInvoiceItems from "../../expedition/batch-invoice-items/batch-invoice-items.model";
 import ExpeditionBatchItems from "../../expedition/batch-items/batch-items.model";
@@ -22,6 +25,10 @@ import {
   QueryParams,
   QueryConfig,
 } from "../../../../shared/query/query.types";
+import { InvoiceUnitBusinessAttributesCreationAttributes, InvoiceUnitBusinessAttributesStatus } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
+import { InvoiceItemsAttributes } from "../invoice-items/invoice-items.types";
+import InvoiceFiscalItem from "../invoice-fiscal-item/invoice-fiscal-item.model";
+import { InvoiceFiscalItemAttributes, InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 
 export class InvoiceRepository extends BaseRepository<Invoice> {
   constructor() {
@@ -311,6 +318,47 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     return data.get({ plain: true }) as FullInvoice;
   }
 
+  async getFullInvoiceForAllUnits(
+    invoiceId: string,
+  ): Promise<FullInvoiceForAllUnits> {
+    const data = await this.findById(invoiceId, {
+      attributes: {
+        exclude: ["xml_path", "source_payload"],
+        include: [
+          [this.totalExpectedLiteral(), "total_expected"],
+        ],
+      },
+      include: [
+        {
+          model: InvoiceUnitBusinessAttributes,
+          as: "unitBusinessAttributes",
+          required: false,
+          attributes: ["status", "type", "batch_generated"],
+        },
+        {
+          model: InvoiceItems,
+          as: "items",
+          include: [
+            {
+              model: Product,
+              as: "product",
+              attributes: { exclude: ["source_payload"] },
+              
+            },
+          ],
+        },
+        {
+          model: UnmappedInvoiceProduct,
+          as: "unmappedProducts",
+        },
+      ],
+    });
+
+    if (!data) throw new Error(`Nota não encontrada`);
+
+    return data.get({ plain: true }) as FullInvoiceForAllUnits;
+  }
+
   async getInvoice(
     invoiceId: string,
     unitBusinessId: string,
@@ -463,6 +511,79 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         : Promise.resolve(),
     ]);
   }
+
+  async updateWithAttributesForAllUnits(
+    invoiceIds: string[],
+    data: Partial<
+      InvoiceAttributes & { status: string; batch_generated: boolean }
+    >,
+    attrWhere?: WhereOptions,
+  ): Promise<void> {
+    const { status, batch_generated, ...invoiceData } = data;
+
+    await Promise.all([
+      Object.keys(invoiceData).length > 0
+        ? Invoice.update(invoiceData, {
+            where: { id: { [Op.in]: invoiceIds } },
+          })
+        : Promise.resolve(),
+
+      status !== undefined || batch_generated !== undefined
+        ? InvoiceUnitBusinessAttributes.update(
+            {
+              ...(status !== undefined ? { status: status as any } : {}),
+              ...(batch_generated !== undefined ? { batch_generated } : {}),
+            },
+            {
+              where: {
+                invoice_id: { [Op.in]: invoiceIds },
+                ...attrWhere,
+              },
+            },
+          )
+        : Promise.resolve(),
+    ]);
+  }
+
+async createInvoice(
+  invoiceData: InvoiceCreationData,
+  transaction?: Transaction,
+): Promise<Invoice> {
+  return Invoice.create(invoiceData as InvoiceAttributes, { transaction });
+}
+
+async createInvoiceItems(
+  items: Omit<InvoiceItemsAttributes, "id" | "createdAt" | "updatedAt">[],
+  transaction?: Transaction,
+): Promise<void> {
+  await InvoiceItems.bulkCreate(items as InvoiceItemsAttributes[], { transaction });
+}
+
+async createInvoiceFiscalItems(
+  items: InvoiceFiscalItemCreationAttributes[],
+  transaction?: Transaction,
+): Promise<void> {
+  await InvoiceFiscalItem.bulkCreate(items as InvoiceFiscalItemAttributes[], { transaction });
+}
+
+async createInvoiceAttributes(
+  attributes: InvoiceUnitBusinessAttributesCreationAttributes[],
+  transaction?: Transaction,
+): Promise<void> {
+  await InvoiceUnitBusinessAttributes.bulkCreate(attributes, { transaction });
+}
+
+async findUnitBusinessesByCnpj(
+  cnpjs: string[],
+  transaction?: Transaction,
+): Promise<{ id: string; cnpj: string }[]> {
+  const results = await UnitBusiness.findAll({
+    where: { cnpj: { [Op.in]: cnpjs } },
+    attributes: ["id", "cnpj"],
+    transaction,
+  });
+  return results.map((ub) => ({ id: ub.id, cnpj: (ub as any).cnpj }));
+}
 }
 
 export default new InvoiceRepository();
