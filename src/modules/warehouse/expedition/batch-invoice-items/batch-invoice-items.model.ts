@@ -8,8 +8,8 @@ class BatchInvoiceItems
   implements BatchInvoiceItemsAttributes
 {
   public id!: string;
-  public batch_item_id!: string;
-  public batch_invoice_id!: string;
+  public expedition_batch_item_id!: string;
+  public expedition_batch_invoice_id!: string;
   public quantity_expected!: number;
   public quantity_read!: number;
   public status!: 'PENDING' | 'FINISHED';

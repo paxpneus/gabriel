@@ -3,9 +3,14 @@ import BaseService from "../../../../shared/utils/base-models/base-service";
 import { Product, ProductConfig } from "../../../inventory";
 import supplierMappingService from "../../../inventory/supplier-mapping/supplier-mapping.service";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
+import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import batchInvoiceItemsService from "../../expedition/batch-invoice-items/batch-invoice-items.service";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
+import batchInvoicesService from "../../expedition/batch-invoices/batch-invoices.service";
 import ExpeditionBatchItems from "../../expedition/batch-items/batch-items.model";
+import batchItemsService from "../../expedition/batch-items/batch-items.service";
 import ExpeditionBatch from "../../expedition/batch/batch.model";
+import batchService from "../../expedition/batch/batch.service";
 import InvoiceFiscalItem from "../invoice-fiscal-item/invoice-fiscal-item.model";
 import invoiceService from "../invoice/invoice.service";
 import InvoiceItems from "./invoice-items.model";
@@ -31,7 +36,7 @@ export class InvoiceItemsService extends BaseService<
         throw new Error("Produto não encontrado!");
       }
 
-      const unMappedProduct = await UnmappedInvoiceProduct.findByPk(
+      const unMappedProduct = await unmappedInvoiceProductService.findById(
         unMappedProductId,
         { transaction: t },
       );
@@ -44,14 +49,16 @@ export class InvoiceItemsService extends BaseService<
         throw new Error("Quantidade do item divergente da quantidade da nota");
       }
 
-      // ─── 1. Cria o InvoiceItem operacional ───────────────────────────────
+      // ─── 1. Cria o InvoiceItem operacional e atualiza invoice status ───────────────────────────────
       await this.create(invoiceItemDto, { transaction: t });
 
-      const invoice = await invoiceService.findById(
+      const invoice = await invoiceService.findByIdFullForAllUnits(
         invoiceItemDto.invoice_id!,
-        {
-          transaction: t,
-        },
+      );
+
+      await invoiceService.updateInvoicesForAllUnitBusiness(
+        [invoiceItemDto.invoice_id!],
+        { status: "OPEN" },
       );
 
       if (!invoice) {
@@ -92,7 +99,7 @@ export class InvoiceItemsService extends BaseService<
           invoice_id: invoice.id,
           product_id: product?.id ?? null,
           item_number: existingFiscalItemsCount + 1,
-          sku: config?.sku  ?? unMappedProduct.sku ?? null,
+          sku: config?.sku ?? unMappedProduct.sku ?? null,
           description: unMappedProduct.product_name?.slice(0, 255) ?? null,
           quantity,
           unit_price: unitPrice,
@@ -122,8 +129,8 @@ export class InvoiceItemsService extends BaseService<
       );
 
       // ─── 3. Sincroniza batch se a invoice já pertencer a um ───────────────
-      if (invoice.batch_generated) {
-        const batchInvoices = await ExpeditionBatchInvoice.findAll({
+      if (invoice.unitBusinessAttributes?.some((s) => s.batch_generated)) {
+        const batchInvoices = await batchInvoicesService.findAll({
           where: { invoice_id: invoice.id },
           transaction: t,
         });
@@ -134,33 +141,109 @@ export class InvoiceItemsService extends BaseService<
 
         await Promise.all(
           uniqueBatchIds.map(async (expedition_batch_id) => {
-            await ExpeditionBatchItems.create(
-              {
+            const existingItem = await batchItemsService.findOne({
+              where: {
                 expedition_batch_id,
                 product_id: invoiceItemDto.product_id!,
-                quantity: invoiceItemDto.quantity_expected!,
-                quantity_scanned: 0,
               },
-              { transaction: t },
-            );
+              transaction: t,
+            });
 
-            await ExpeditionBatch.increment("total_volumes", {
-              by: invoiceItemDto.quantity_expected,
+            if (existingItem) {
+              await batchItemsService.increment("quantity", {
+                by: invoiceItemDto.quantity_expected ?? 0,
+                where: { id: existingItem.id },
+                transaction: t,
+              });
+            } else {
+              await batchItemsService.create(
+                {
+                  expedition_batch_id,
+                  product_id: invoiceItemDto.product_id!,
+                  quantity: invoiceItemDto.quantity_expected!,
+                  quantity_scanned: 0,
+                },
+                { transaction: t },
+              );
+            }
+
+            await batchService.increment("total_volumes", {
+              by: invoiceItemDto.quantity_expected ?? 0,
               where: { id: expedition_batch_id },
               transaction: t,
             });
 
-            await ExpeditionBatch.update(
+            await batchService.update(
+              expedition_batch_id,
               { status: "PENDING" },
-              { where: { id: expedition_batch_id }, transaction: t },
+              { transaction: t },
             );
+
+            // busca o batch_invoice para essa combinação batch + invoice
+            const batchInvoice = batchInvoices.find(
+              (b) => b.expedition_batch_id === expedition_batch_id,
+            );
+
+            if (batchInvoice) {
+              // pega o batch_item que acabamos de criar/incrementar
+              const batchItem = await batchItemsService.findOne({
+                where: {
+                  expedition_batch_id,
+                  product_id: invoiceItemDto.product_id!,
+                },
+                transaction: t,
+              });
+
+              if (batchItem) {
+                const existingBatchInvoiceItem =
+                  await batchInvoiceItemsService.findOne({
+                    where: {
+                      expedition_batch_invoice_id: batchInvoice.id,
+                      expedition_batch_item_id: batchItem.id,
+                    },
+                    transaction: t,
+                  });
+
+                if (existingBatchInvoiceItem) {
+                  await batchInvoiceItemsService.increment(
+                    "quantity_expected",
+                    {
+                      by: invoiceItemDto.quantity_expected ?? 0,
+                      where: { id: existingBatchInvoiceItem.id },
+                      transaction: t,
+                    },
+                  );
+
+                  await batchInvoiceItemsService.update(
+                    existingBatchInvoiceItem.id,
+                    { status: "PENDING" },
+                    { transaction: t },
+                  );
+                } else {
+                  await batchInvoiceItemsService.create(
+                    {
+                      expedition_batch_invoice_id: batchInvoice.id,
+                      expedition_batch_item_id: batchItem.id,
+                      quantity_expected: invoiceItemDto.quantity_expected!,
+                      quantity_read: 0,
+                      status: "PENDING",
+                    },
+                    { transaction: t },
+                  );
+                }
+              }
+            }
           }),
         );
       }
 
+      const incomingAttr = invoice.unitBusinessAttributes?.find(
+        (attr) => attr.type === "INCOMING",
+      );
       // ─── 4. Cria SupplierMapping se for nota de entrada ───────────────────
-      if (invoice.type === "INCOMING") {
-        const supplierProductCode = newEan ?? unMappedProduct.ean ?? unMappedProduct.sku;
+      if (incomingAttr) {
+        const supplierProductCode =
+          newEan ?? unMappedProduct.ean ?? unMappedProduct.sku;
 
         if (supplierProductCode) {
           const spMap = await supplierMappingService.create(
@@ -180,8 +263,7 @@ export class InvoiceItemsService extends BaseService<
       }
 
       // ─── 5. Remove o UnmappedInvoiceProduct ──────────────────────────────
-      await UnmappedInvoiceProduct.destroy({
-        where: { id: unMappedProductId },
+      await unmappedInvoiceProductService.delete(unMappedProductId, {
         transaction: t,
       });
     });

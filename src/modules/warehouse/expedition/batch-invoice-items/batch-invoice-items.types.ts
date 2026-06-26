@@ -1,7 +1,7 @@
 export interface BatchInvoiceItemsAttributes {
   id: string;
-  batch_item_id: string;
-  batch_invoice_id: string;
+  expedition_batch_item_id: string;
+  expedition_batch_invoice_id: string;
   quantity_expected: number;
   quantity_read?: number;
   status: 'PENDING' | 'FINISHED';
