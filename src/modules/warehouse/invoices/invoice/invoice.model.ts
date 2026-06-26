@@ -8,6 +8,8 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { ExpeditionBatchInvoiceAttributes } from "../../expedition/batch-invoices/batch-invoices.types";
 import Transporter from "../../transporter/transporter.model";
+import { InvoiceUnitBusinessAttributesAttributes } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
+import InvoiceItems from "../invoice-items/invoice-items.model";
 
 class Invoice
   extends Model<InvoiceAttributes, InvoiceCreationAttributes>

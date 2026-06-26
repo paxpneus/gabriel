@@ -1,5 +1,6 @@
 import { InvoiceItemsAttributes } from "../../invoices/invoice-items/invoice-items.types";
 import { InvoiceAttributes } from "../../invoices/invoice/invoice.types";
+import { BatchInvoiceItemsAttributes } from "../batch-invoice-items/batch-invoice-items.types";
 import { ExpeditionBatchInvoiceAttributes } from "./../batch-invoices/batch-invoices.types";
 export interface ExpeditionBatchAttributes {
   id: string;
@@ -24,18 +25,15 @@ export interface ExpeditionBatchAttributes {
 }
 
 export interface EnrichedBatchInvoice extends ExpeditionBatchInvoiceFull {
-  invoice: InvoiceFull & {
+  invoice: InvoiceAttributes & {
     key: string
     invoiceVolume: number
   }
 }
 
-export interface InvoiceFull extends InvoiceAttributes {
-  items: InvoiceItemsAttributes[];
-}
-
 export interface ExpeditionBatchInvoiceFull extends ExpeditionBatchInvoiceAttributes {
-  invoice: InvoiceFull;
+  invoice: InvoiceAttributes;
+  items?: BatchInvoiceItemsAttributes[]
 }
 
 export interface ExpeditionBatchFull {
