@@ -1,4 +1,4 @@
-import { FullInvoiceForAllUnits, InvoiceStatus } from "../../../modules/warehouse/invoices/invoice/invoice.types";
+import { FullInvoiceForAllUnits, InvoiceStatus, ItemWithFiscal } from "../../../modules/warehouse/invoices/invoice/invoice.types";
 import {
   Invoice,
   InvoiceItems,
@@ -464,15 +464,7 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
     uf: extracted.transporterUf,
   });
 
-  const senderUnit = await unitBusinessService.findOne({
-    where: { cnpj: senderCnpj },
-  });
-
-  const receiverUnit = await unitBusinessService.findOne({
-    where: { cnpj: receiverCnpj },
-  });
-
-  // ─── Invoice existente + status atual (agora em invoice_unit_business_attributes) ──
+  // ─── Invoice existente ─────────────────────────────────────────────────────
 
   const existingInvoice = await invoiceService.findByIdFullForAllUnits(
     "",
@@ -487,7 +479,7 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
     store_id = await Store.findOne({ where: { name: "Outros" } });
   }
 
-  // ─── Dados base da invoice (sem type/status/batch_generated — vivem em attributes) ──
+  // ─── Dados base da invoice ─────────────────────────────────────────────────
 
   const invoiceBaseData = {
     customer_name: receiverName,
@@ -523,24 +515,140 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
     cbs_value: fiscalTotals.cbsValue,
   };
 
+  // ─── Monta invoice items + fiscal items a partir do det ───────────────────
+  // Feito antes do create/update para passar tudo junto ao createWithRelations.
+  // Unmapped só pode ser registrado após ter o invoice.id, então é tratado depois.
+
+  const invoiceItemsForCreate: ItemWithFiscal[] = [];
+  const unmappedDet: Array<{
+    sku: string | null;
+    gtin: string | null;
+    qty: number;
+    xProd: string | null;
+    reason: string;
+  }> = [];
+
+  if (det.length && !existingInvoice) {
+
+    for (let idx = 0; idx < det.length; idx++) {
+      const item = det[idx];
+      const prod = item.prod ?? {};
+      const imposto = item.imposto ?? {};
+
+      const sku = prod.cProd ? String(prod.cProd).trim() : null;
+      const gtin =
+        prod.cEAN && prod.cEAN !== "SEM GTIN"
+          ? String(prod.cEAN).trim()
+          : null;
+      const qty = Number(prod.qCom ?? 0);
+
+      const product = await findProductForInvoiceItem({
+        sku,
+        ean: gtin,
+        supplierCnpj: senderCnpj,
+        logPrefix: "[IMPORT_XML]",
+      });
+
+      if (!product) {
+        const reason =
+          !sku && !gtin
+            ? "SKU e EAN ausentes no XML"
+            : !sku
+              ? "SKU ausente — apenas EAN salvo"
+              : !gtin
+                ? "EAN ausente — apenas SKU salvo"
+                : "SKU e EAN presentes mas sem produto correspondente no banco";
+
+        unmappedDet.push({ sku, gtin, qty, xProd: prod.xProd ?? null, reason });
+        continue;
+      }
+
+      // ─── Fiscal item ─────────────────────────────────────────────────────
+
+      const icmsGroup: any =
+        imposto?.ICMS?.ICMS00 ??
+        imposto?.ICMS?.ICMS10 ??
+        imposto?.ICMS?.ICMS20 ??
+        imposto?.ICMS?.ICMS40 ??
+        imposto?.ICMS?.ICMS51 ??
+        imposto?.ICMS?.ICMS60 ??
+        imposto?.ICMS?.ICMS70 ??
+        imposto?.ICMS?.ICMS90 ??
+        imposto?.ICMS?.ICMSSN101 ??
+        imposto?.ICMS?.ICMSSN102 ??
+        imposto?.ICMS?.ICMSSN201 ??
+        imposto?.ICMS?.ICMSSN202 ??
+        imposto?.ICMS?.ICMSSN500 ??
+        imposto?.ICMS?.ICMSSN900 ??
+        {};
+
+      const ipiGroup: any = imposto?.IPI?.IPITrib ?? imposto?.IPI?.IPINT ?? {};
+      const pisGroup: any =
+        imposto?.PIS?.PISAliq ??
+        imposto?.PIS?.PISQtde ??
+        imposto?.PIS?.PISNT ??
+        imposto?.PIS?.PISOutr ??
+        {};
+      const cofinsGroup: any =
+        imposto?.COFINS?.COFINSAliq ??
+        imposto?.COFINS?.COFINSQtde ??
+        imposto?.COFINS?.COFINSNT ??
+        imposto?.COFINS?.COFINSOutr ??
+        {};
+      const ibsCbsGroup: any = imposto?.IBSCBS?.gIBSCBS ?? {};
+
+      invoiceItemsForCreate.push({
+        product_id: product.id,
+        quantity_expected: Math.trunc(qty),
+        status: "PENDING",
+        fiscal: {
+          product_id: product.id,
+          item_number: idx + 1,
+          sku,
+          description: String(prod.xProd ?? "").slice(0, 255) || null,
+          quantity: qty,
+          unit_price: Number(prod.vUnCom ?? 0),
+          total_value: Number(prod.vProd ?? 0),
+          ncm: prod.NCM ? String(prod.NCM) : null,
+          cest: prod.CEST ? String(prod.CEST) : null,
+          cfop: prod.CFOP ? String(prod.CFOP) : null,
+          gtin,
+          approx_tax_value: Number(imposto?.vTotTrib ?? 0),
+          icms_rate: Number(icmsGroup?.pICMS ?? 0),
+          icms_value: Number(icmsGroup?.vICMS ?? 0),
+          ipi_value: Number(ipiGroup?.vIPI ?? 0),
+          pis_value: Number(pisGroup?.vPIS ?? 0),
+          cofins_value: Number(cofinsGroup?.vCOFINS ?? 0),
+          difal_value: Number(
+            imposto?.ICMSUFDest?.vICMSUFDest ??
+              imposto?.ICMSUFDest?.vICMSDest ??
+              0,
+          ),
+          ibs_value:
+            Number(ibsCbsGroup?.gIBSUF?.vIBSUF ?? 0) +
+            Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0),
+          cbs_value: Number(ibsCbsGroup?.gCBS?.vCBS ?? 0),
+        },
+      });
+    }
+
+  }
+
+  // ─── Create ou Update da invoice ──────────────────────────────────────────
+
   let invoice: FullInvoiceForAllUnits | null;
 
   if (!existingInvoice) {
-    // ─── Nota nova: createWithRelations cria invoice + attributes ────────────
-    // items vai vazio aqui de propósito — os itens fiscais e operacionais
-    // continuam sendo tratados depois (upsertFiscalItems + loop de det),
-    // porque dependem de matching de produto/agregação por SKU que não
-    // é responsabilidade do createWithRelations.
-     const created = await invoiceService
+    const created = await invoiceService
       .createWithRelations(
         {
           ...invoiceBaseData,
           id_system: idSystem,
         },
-        [],
+        invoiceItemsForCreate,
         {
-          initialStatus: 'WAITING_SCHEDULE_SALES'
-        }
+          initialStatus: "WAITING_SCHEDULE_SALES",
+        },
       )
       .catch((error: any) => {
         logDbError("[IMPORT_XML CREATE ERROR DETAIL]", error, {
@@ -551,22 +659,19 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
         throw error;
       });
 
-      invoice = await invoiceService.findByIdFullForAllUnits(created.id);
+    invoice = await invoiceService.findByIdFullForAllUnits(created.id);
 
     if (!invoice) {
       throw new Error("Invoice não encontrada.");
     }
   } else {
-    // ─── Nota existente: atualiza dados base + status do attribute do lado certo ──
     if (existingInvoice.integrations_id !== integration.id) {
       return;
     }
 
     await invoiceService.updateInvoicesForAllUnitBusiness(
       [existingInvoice.id],
-      {
-        ...invoiceBaseData,
-      },
+      { ...invoiceBaseData },
     );
 
     invoice = await invoiceService.findByIdFullForAllUnits(existingInvoice.id);
@@ -578,18 +683,40 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
 
   console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
 
-  // ─── Itens fiscais ─────────────────────────────────────────────────────────
+  // ─── Unmapped products (requer invoice.id) ─────────────────────────────────
 
-  try {
-    await upsertFiscalItems(invoice.id, xmlContent, senderCnpj, "[IMPORT_XML]");
-  } catch (err) {
-    logDbError("[IMPORT_XML] Falha ao upsert fiscal items", err as Error, {
-      invoiceId: invoice.id,
-      idSystem,
+  for (const u of unmappedDet) {
+    const existing = await UnmappedInvoiceProduct.findOne({
+      where: {
+        invoice_id: invoice.id,
+        ...(u.gtin ? { ean: u.gtin } : { sku: u.sku ?? null }),
+      },
     });
+
+    if (!existing) {
+      await UnmappedInvoiceProduct.create({
+        invoice_id: invoice.id,
+        integrations_id: integration.id,
+        ean: u.gtin ?? null,
+        sku: u.sku ?? null,
+        product_name: u.xProd,
+        quantity: u.qty,
+        reason: u.reason,
+        status: "UNMAPPED",
+      });
+    } else {
+      await existing.update({
+        quantity: u.qty,
+        integrations_id: integration.id,
+      });
+    }
+
+    console.warn(
+      `[IMPORT_XML] Produto não mapeado | invoice=${idSystem} | sku=${u.sku} | ean=${u.gtin} | motivo=${u.reason}`,
+    );
   }
 
-  // ─── ProductConfig + SupplierMapping para produtos Tecinco encontrados no XML ─
+  // ─── ProductConfig + SupplierMapping para produtos Tecinco ────────────────
 
   try {
     await upsertTecincoCrossConfig(det, senderCnpj, "[IMPORT_XML]");
@@ -602,126 +729,6 @@ export async function upsertInvoiceFromXml(xmlContent: string): Promise<void> {
         idSystem,
       },
     );
-  }
-
-  // ─── Itens operacionais ────────────────────────────────────────────────────
-
-  if (!det.length) return;
-
-  const quantityByProduct = new Map<string, number>();
-
-  for (const item of det) {
-    const prod = item.prod ?? {};
-    const sku = prod.cProd ? String(prod.cProd).trim() : undefined;
-    const gtin = prod.cEAN && prod.cEAN !== "SEM GTIN" ? prod.cEAN : undefined;
-    const qty = Number(prod.qCom ?? 0);
-
-    const product = await findProductForInvoiceItem({
-      sku,
-      ean: gtin,
-      supplierCnpj: senderCnpj,
-      logPrefix: "[IMPORT_XML]",
-    });
-
-    if (!product) {
-      const reason =
-        !sku && !gtin
-          ? "SKU e EAN ausentes no XML"
-          : !sku
-            ? "SKU ausente — apenas EAN salvo"
-            : !gtin
-              ? "EAN ausente — apenas SKU salvo"
-              : "SKU e EAN presentes mas sem produto correspondente no banco";
-
-      const existing = await UnmappedInvoiceProduct.findOne({
-        where: {
-          invoice_id: invoice.id,
-          ...(gtin ? { ean: String(gtin) } : { sku: sku ?? null }),
-        },
-      });
-
-      if (!existing) {
-        await UnmappedInvoiceProduct.create({
-          invoice_id: invoice.id,
-          integrations_id: integration.id,
-          ean: gtin ?? null,
-          sku: sku ?? null,
-          product_name: prod.xProd ?? null,
-          quantity: qty,
-          reason,
-          status: "UNMAPPED",
-        });
-      } else {
-        await existing.update({
-          quantity: qty,
-          integrations_id: existingInvoice?.integrations_id ?? integration.id,
-        });
-      }
-
-      console.warn(
-        `[IMPORT_XML] Produto não mapeado | invoice=${existingInvoice?.integrations_id} | sku=${sku} | ean=${gtin} | motivo=${reason}`,
-      );
-      continue;
-    }
-
-    const current = quantityByProduct.get(String(product.id)) ?? 0;
-    quantityByProduct.set(String(product.id), current + qty);
-  }
-
-  for (const [productId, quantity] of quantityByProduct) {
-    const existingItem = await InvoiceItems.findOne({
-      where: { invoice_id: invoice.id, product_id: productId },
-    });
-
-    if (existingItem) {
-      await existingItem.update({ quantity_expected: quantity });
-    } else {
-      await InvoiceItems.create({
-        product_id: productId,
-        invoice_id: invoice.id,
-        quantity_expected: Math.trunc(quantity),
-        status: "PENDING",
-      });
-    }
-  }
-
-  // ─── Limpa unmapped que agora estão mapeados ───────────────────────────────
-
-  const invoiceItemsResult = await InvoiceItems.findAll({
-    where: { invoice_id: invoice.id },
-    include: [{ model: Product, as: "product" }],
-  });
-
-  const mappedEans = new Set(
-    invoiceItemsResult.map((i) => i.product?.ean).filter(Boolean),
-  );
-  const productIds = invoiceItemsResult
-    .map((i) => i.product_id)
-    .filter(Boolean);
-  const configs = await ProductConfig.findAll({
-    where: { product_id: productIds, unit_business_id: BLING_UNIT_BUSINESS_ID },
-  });
-  const mappedSkus = new Set(configs.map((c) => c.sku).filter(Boolean));
-
-  for (const item of det) {
-    const prod = item.prod ?? {};
-    const sku = prod.cProd ? String(prod.cProd).trim() : null;
-    const gtin =
-      prod.cEAN && prod.cEAN !== "SEM GTIN" ? String(prod.cEAN).trim() : null;
-
-    const wasMapped = gtin
-      ? mappedEans.has(gtin)
-      : sku
-        ? mappedSkus.has(sku)
-        : false;
-    if (!wasMapped) continue;
-
-    await UnmappedInvoiceProduct.destroy({
-      where: {
-        invoice_id: invoice.id,
-        ...(gtin ? { ean: gtin } : { sku: sku ?? null }),
-      },
-    });
   }
 
   console.log(

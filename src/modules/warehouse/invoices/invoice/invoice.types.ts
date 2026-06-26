@@ -195,7 +195,7 @@ export interface FullInvoiceAttributesForAllUnits {
 }
 
 export type ItemWithFiscal = Omit<InvoiceItemsAttributes, "id" | "invoice_id" | "createdAt" | "updatedAt"> & {
-  fiscal?: InvoiceFiscalItemCreationAttributes;
+  fiscal?: Omit<InvoiceFiscalItemCreationAttributes, "invoice_id">;
 };
 
 export type InvoiceCreationData = Omit<InvoiceAttributes, "id" | "createdAt" | "updatedAt" | "unit_business_id"> & {
