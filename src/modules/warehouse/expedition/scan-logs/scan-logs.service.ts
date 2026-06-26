@@ -1,10 +1,9 @@
 import { Op, Sequelize, Transaction } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
-import { Product, SupplierMapping } from "../../../inventory";
+import { Product } from "../../../inventory";
 import Invoice from "../../invoices/invoice/invoice.model";
 import invoiceService from "../../invoices/invoice/invoice.service";
-import InvoiceUnitBusinessAttributes from "../../invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import batchItemsService, {
@@ -72,6 +71,10 @@ export class ExpeditionScanLogService extends BaseService<
     }
   }
 
+  /**
+   * Busca produto por EAN/EAN tribut ou por supplier_product_code.
+   * Centraliza a lógica de resolução de produto por código em todas as funções.
+   */
   private async findProductByCode(
     code: string,
     t?: Transaction,
@@ -84,15 +87,16 @@ export class ExpeditionScanLogService extends BaseService<
 
     return result;
   }
+
   /**
    * Função centralizada que sincroniza todos os contadores e status
    * após criação ou remoção de scan logs.
    *
-   * @param batchId            - ID do lote pai
-   * @param batchItemId        - ID do ExpeditionBatchItem (produto no lote)
-   * @param batchInvoiceId     - ID do ExpeditionBatchInvoice (NF no lote)
-   * @param delta              - quantidade a incrementar (positivo) ou decrementar (negativo)
-   * @param t                  - transação ativa
+   * @param batchId        - ID do lote pai
+   * @param batchItemId    - ID do ExpeditionBatchItem (produto no lote)
+   * @param batchInvoiceId - ID do ExpeditionBatchInvoice (NF no lote)
+   * @param delta          - quantidade a incrementar (positivo) ou decrementar (negativo)
+   * @param t              - transação ativa
    */
   private async syncFromScanning(
     batchId: string,
@@ -102,8 +106,7 @@ export class ExpeditionScanLogService extends BaseService<
     t: Transaction,
   ): Promise<void> {
     // ── 1. Resolve unit_business_id do lote pai ────────────────────────────
-    //    Busca com lock pois também pode atualizar o status do lote abaixo
-    const batch = await ExpeditionBatch.findByPk(batchId, {
+    const batch = await batchService.findById(batchId, {
       attributes: ["id", "unit_business_id"],
       transaction: t,
       lock: t.LOCK.UPDATE,
@@ -113,7 +116,6 @@ export class ExpeditionScanLogService extends BaseService<
     const unitBusinessId: string = (batch as any).unit_business_id;
 
     // ── 2. Atualiza BatchInvoiceItems.quantity_read ────────────────────────
-    //    Chave única: (expedition_batch_invoice_id, expedition_batch_item_id)
     if (delta > 0) {
       await batchInvoiceItemsService.increment("quantity_read", {
         by: delta,
@@ -165,7 +167,7 @@ export class ExpeditionScanLogService extends BaseService<
     }
 
     // ── 5. Reavalia status da NF via InvoiceUnitBusinessAttributes ─────────
-    //    Verifica se ainda há BatchInvoiceItems pendentes para esta batchInvoice
+
     const pendingBatchInvoiceItem = await batchInvoiceItemsService.findOne({
       where: {
         expedition_batch_invoice_id: batchInvoiceId,
@@ -174,17 +176,18 @@ export class ExpeditionScanLogService extends BaseService<
       transaction: t,
     });
 
-    const batchInvoice = await ExpeditionBatchInvoice.findByPk(batchInvoiceId, {
-      attributes: ["invoice_id"],
-      transaction: t,
-    });
-
-    if (batchInvoice && pendingBatchInvoiceItem) {
-      const invoiceId: string = (batchInvoice as any).invoice_id;
-
-      await invoiceService.updateInvoices([invoiceId], unitBusinessId, {
-        status: "PENDING",
+    if (pendingBatchInvoiceItem) {
+      const bi = await batchInvoicesService.findById(batchInvoiceId, {
+        attributes: ["invoice_id"],
+        transaction: t,
       });
+
+      if (bi) {
+        const invoiceId: string = (bi as any).invoice_id;
+        await invoiceService.updateInvoices([invoiceId], unitBusinessId, {
+          status: "PENDING",
+        });
+      }
     }
   }
 
@@ -201,7 +204,6 @@ export class ExpeditionScanLogService extends BaseService<
       }
 
       const nffromlabel = labelcode.substring(14, 22);
-      const eanfromlabel = labelcode.substring(22, 35);
       const labelRead = labelcode;
       const volRead = labelcode.substring(35, 41);
 
@@ -250,7 +252,7 @@ export class ExpeditionScanLogService extends BaseService<
 
       this.assertTransshipment(batchInvoice.invoice, unitBusiness);
 
-      // ── Busca o produto primeiro (raiz correta, sem include aninhado) ──
+      // ── Busca produto centralizada (EAN + supplier mapping) ───────────────
       const { product, matchedCode } = await this.findProductByCode(
         productcode,
         t,
@@ -302,8 +304,9 @@ export class ExpeditionScanLogService extends BaseService<
       ) {
         throw Error("Etiqueta não pertencente ao produto lido!");
       }
+
       try {
-        await ExpeditionScanLog.create(
+        await this.create(
           {
             expedition_batch_items_id: productRead.id,
             expedition_batch_invoices_id: batchInvoice.id,
@@ -340,7 +343,7 @@ export class ExpeditionScanLogService extends BaseService<
   ) {
     return await sequelize.transaction(async (t) => {
       // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
-      const batch = await ExpeditionBatch.findByPk(batchid, {
+      const batch = await batchService.findById(batchid, {
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
@@ -349,27 +352,14 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
-      // ── 2. Busca o produto pelo EAN ────────────────────────────────────────
-      let productFound = await Product.findOne({
-        where: {
-          [Op.or]: [{ ean: labelcode }, { ean_tribut: labelcode }],
-        },
-      });
-
-      if (!productFound) {
-        const supplierMapping =
-          await supplierMappingService.findByProductCode(labelcode);
-
-        productFound = supplierMapping?.product ?? null;
-      }
-
-      if (!productFound) throw new Error("Produto não encontrado!");
+      // ── 2. Busca produto centralizada (EAN + supplier mapping) ─────────────
+      const {product} = await this.findProductByCode(labelcode, t);
 
       // ── 3. Busca o BatchItem do produto neste lote (com lock) ──────────────
-      const batchItem = await ExpeditionBatchItems.findOne({
+      const batchItem = await batchItemsService.findOne({
         where: {
           expedition_batch_id: batchid,
-          product_id: productFound.id,
+          product_id: product.id,
         },
         transaction: t,
         lock: t.LOCK.UPDATE,
@@ -413,7 +403,6 @@ export class ExpeditionScanLogService extends BaseService<
 
       let remaining = quantity;
       const scanLogs: any[] = [];
-      // Rastreia quanto sincronizar por batchInvoice ao final
       const syncMap = new Map<string, number>();
 
       for (const bi of batchInvoices) {
@@ -421,11 +410,10 @@ export class ExpeditionScanLogService extends BaseService<
 
         const batchInvoiceItem = bi.items[0];
 
-        // Lê fresh com lock para evitar race condition
-        const fresh = await BatchInvoiceItems.findByPk(batchInvoiceItem.id, {
-          transaction: t,
-          lock: t.LOCK.UPDATE,
-        });
+        const fresh = await batchInvoiceItemsService.findById(
+          batchInvoiceItem.id,
+          { transaction: t, lock: t.LOCK.UPDATE },
+        );
 
         if (!fresh) continue;
 
@@ -469,16 +457,13 @@ export class ExpeditionScanLogService extends BaseService<
       }
 
       // ── 5. Cria todos os ScanLogs ──────────────────────────────────────────
-      await ExpeditionScanLog.bulkCreate(scanLogs, { transaction: t });
+      await this.bulkCreate(scanLogs, { transaction: t });
 
       // ── 6. Sincroniza contadores e status por batchInvoice ─────────────────
-      //    syncFromScanning cuida de BatchInvoiceItems, BatchItems, Batch e
-      //    InvoiceUnitBusinessAttributes de forma centralizada
       for (const [biId, delta] of syncMap.entries()) {
         await this.syncFromScanning(batchid, batchItem.id, biId, delta, t);
       }
 
-      // TODO: gerar NF-e na Bling quando lote finalizar
       return true;
     });
   }
@@ -493,7 +478,7 @@ export class ExpeditionScanLogService extends BaseService<
   ) {
     return await sequelize.transaction(async (t) => {
       // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
-      const batch = await ExpeditionBatch.findByPk(batchid, {
+      const batch = await batchService.findById(batchid, {
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
@@ -502,28 +487,14 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
-      // ── 2. Busca o produto pelo EAN ────────────────────────────────────────
-      let productFound = await Product.findOne({
-        where: {
-          [Op.or]: [{ ean: labelcode }, { ean_tribut: labelcode }],
-        },
-      });
-
-      if (!productFound) {
-        const supplierMapping = await SupplierMapping.findOne({
-          where: { supplier_product_code: labelcode },
-          include: [{ model: Product, as: "product" }],
-        });
-        productFound = (supplierMapping as any)?.product ?? null;
-      }
-
-      if (!productFound) throw new Error("Produto não encontrado!");
+      // ── 2. Busca produto centralizada (EAN + supplier mapping) ─────────────
+      const {product} = await this.findProductByCode(labelcode, t);
 
       // ── 3. Busca o BatchItem do produto neste lote (com lock) ──────────────
-      const batchItem = await ExpeditionBatchItems.findOne({
+      const batchItem = await batchItemsService.findOne({
         where: {
           expedition_batch_id: batchid,
-          product_id: productFound.id,
+          product_id: product.id,
         },
         transaction: t,
         lock: t.LOCK.UPDATE,
@@ -574,7 +545,7 @@ export class ExpeditionScanLogService extends BaseService<
         user_id: userId,
       }));
 
-      await ExpeditionScanLog.bulkCreate(scanLogs, { transaction: t });
+      await this.bulkCreate(scanLogs, { transaction: t });
 
       // ── 6. Sincroniza contadores e status ──────────────────────────────────
       await this.syncFromScanning(
@@ -599,7 +570,7 @@ export class ExpeditionScanLogService extends BaseService<
     }>,
   ) {
     return await sequelize.transaction(async (t) => {
-      const batch = await ExpeditionBatch.findByPk(batchid, {
+      const batch = await batchService.findById(batchid, {
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
@@ -608,27 +579,23 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.type === "INCOMING") throw new Error("Lote não é de saída");
 
       for (const item of items) {
-        const productRead = (await ExpeditionBatchItems.findOne({
-          where: { expedition_batch_id: batchid },
-          include: [
-            {
-              model: Product,
-              as: "product",
-              where: {
-                [Op.or]: [
-                  { ean: item.productcode },
-                  { ean_tribut: item.productcode },
-                ],
-              },
-            },
-          ],
+        // ── Busca produto centralizada (EAN + supplier mapping) ───────────────
+        const {product} = await this.findProductByCode(item.productcode, t);
+
+        const productRead = (await batchItemsService.findOne({
+          where: {
+            expedition_batch_id: batchid,
+            product_id: product.id,
+          },
           transaction: t,
         })) as ExpeditionBaatchItemFull;
 
         if (!productRead)
-          throw new Error(`Produto não encontrado: ${item.productcode}`);
+          throw new Error(
+            `Produto não encontrado no lote: ${item.productcode}`,
+          );
 
-        const batchItemLocked = (await ExpeditionBatchItems.findOne({
+        const batchItemLocked = (await batchItemsService.findOne({
           where: { id: productRead.id },
           transaction: t,
           lock: t.LOCK.UPDATE,
@@ -640,7 +607,7 @@ export class ExpeditionScanLogService extends BaseService<
           );
         }
 
-        const logsToDelete = await ExpeditionScanLog.findAll({
+        const logsToDelete = await this.findAll({
           where: {
             expedition_batch_id: batchid,
             expedition_batch_items_id: productRead.id,
@@ -661,12 +628,11 @@ export class ExpeditionScanLogService extends BaseService<
           );
         }
 
-        await ExpeditionScanLog.destroy({
+        await this.bulkDelete({
           where: { id: logsToDelete.map((l) => l.id) },
           transaction: t,
         });
 
-        // Agrupa por batchInvoice e chama syncFromScanning com delta negativo
         const affectedMap = new Map<string, number>();
         for (const log of logsToDelete) {
           const biId: string = (log as any).expedition_batch_invoices_id;
@@ -691,7 +657,7 @@ export class ExpeditionScanLogService extends BaseService<
     }>,
   ) {
     return await sequelize.transaction(async (t) => {
-      const batch = await ExpeditionBatch.findByPk(batchid, {
+      const batch = await batchService.findById(batchid, {
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
@@ -700,7 +666,7 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
 
       for (const item of items) {
-        const batchItem = await ExpeditionBatchItems.findOne({
+        const batchItem = await batchItemsService.findOne({
           where: {
             expedition_batch_id: batchid,
             product_id: item.productId,
@@ -720,7 +686,7 @@ export class ExpeditionScanLogService extends BaseService<
           );
         }
 
-        const logsToDelete = await ExpeditionScanLog.findAll({
+        const logsToDelete = await this.findAll({
           where: {
             expedition_batch_id: batchid,
             expedition_batch_items_id: batchItem.id,
@@ -740,12 +706,11 @@ export class ExpeditionScanLogService extends BaseService<
           );
         }
 
-        await ExpeditionScanLog.destroy({
+        await this.bulkDelete({
           where: { id: logsToDelete.map((l) => l.id) },
           transaction: t,
         });
 
-        // Agrupa por batchInvoice e chama syncFromScanning com delta negativo
         const affectedMap = new Map<string, number>();
         for (const log of logsToDelete) {
           const biId: string = (log as any).expedition_batch_invoices_id;

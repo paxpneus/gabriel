@@ -17,41 +17,7 @@ export class ExpeditionBatchItemsService extends BaseService<
     super(expeditionBatchItemsRepository);
   }
 
-  async updateBatchItemAndBatch(
-  batchItemId: string,
-  invoiceId: string,
-  productId: string,
-  transaction: Transaction,
-): Promise<void> {
-  await ExpeditionBatchItems.increment("quantity_scanned", {
-    by: 1,
-    where: { id: batchItemId },
-    transaction,
-  });
-
-  const expeditionItem = await ExpeditionBatchItems.findByPk(batchItemId, {
-    attributes: ["expedition_batch_id"],
-    transaction,
-  });
-
-  if (!expeditionItem) throw Error("Item do lote não encontrado!");
-
-  await ExpeditionBatch.increment("total_volumes_received", {
-    by: 1,
-    where: { id: expeditionItem.expedition_batch_id },
-    transaction,
-  });
-
-  await InvoiceItems.increment("quantity_received", {
-    by: 1,
-    where: {
-      invoice_id: invoiceId,
-      product_id: productId,
-    },
-    
-    transaction,
-  });
-}
+ 
 }
 
 export default new ExpeditionBatchItemsService();
