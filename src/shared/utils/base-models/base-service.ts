@@ -118,6 +118,13 @@ class BaseService<
     return this.repository.increment(field, options);
   }
 
+  decrement(
+    field: string,
+    options: { by: number; where: any; transaction?: any },
+  ) {
+    return this.repository.decrement(field, options);
+  }
+
   upsertByFind(
     where: FindOptions["where"],
     updateData: Partial<T["_creationAttributes"]>,

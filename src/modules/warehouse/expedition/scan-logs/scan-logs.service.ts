@@ -3,6 +3,8 @@ import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import { Product, SupplierMapping } from "../../../inventory";
 import Invoice from "../../invoices/invoice/invoice.model";
+import invoiceService from "../../invoices/invoice/invoice.service";
+import InvoiceUnitBusinessAttributes from "../../invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import batchItemsService, {
@@ -11,6 +13,7 @@ import batchItemsService, {
 import { ExpeditionBaatchItemFull } from "../batch-items/batch-items.types";
 import ExpeditionBatch from "../batch/batch.model";
 import { ExpeditionBatchFull } from "../batch/batch.types";
+import BatchInvoiceItems from "../batch-invoice-items/batch-invoice-items.model";
 import ExpeditionScanLog from "./scan-logs.model";
 import expeditionScanLogRepository, {
   ExpeditionScanLogRepository,
@@ -18,6 +21,9 @@ import expeditionScanLogRepository, {
 import supplierMappingService from "../../../inventory/supplier-mapping/supplier-mapping.service";
 import productsService from "../../../inventory/products/product.service";
 import InvoiceItems from "../../invoices/invoice-items/invoice-items.model";
+import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items.service";
+import batchService from "../batch/batch.service";
+import batchInvoicesService from "../batch-invoices/batch-invoices.service";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
@@ -27,7 +33,6 @@ export class ExpeditionScanLogService extends BaseService<
 
   constructor() {
     super(expeditionScanLogRepository);
-
     this.batchItemService = batchItemsService;
 
     this.queryConfig = {
@@ -37,7 +42,6 @@ export class ExpeditionScanLogService extends BaseService<
         sortDir: "DESC",
       },
       searchFields: ["label_full_code"],
-
       filterableFields: [
         "expedition_batch_id",
         "expedition_batch_items_id",
@@ -80,6 +84,109 @@ export class ExpeditionScanLogService extends BaseService<
 
     return result;
   }
+  /**
+   * Função centralizada que sincroniza todos os contadores e status
+   * após criação ou remoção de scan logs.
+   *
+   * @param batchId            - ID do lote pai
+   * @param batchItemId        - ID do ExpeditionBatchItem (produto no lote)
+   * @param batchInvoiceId     - ID do ExpeditionBatchInvoice (NF no lote)
+   * @param delta              - quantidade a incrementar (positivo) ou decrementar (negativo)
+   * @param t                  - transação ativa
+   */
+  private async syncFromScanning(
+    batchId: string,
+    batchItemId: string,
+    batchInvoiceId: string,
+    delta: number,
+    t: Transaction,
+  ): Promise<void> {
+    // ── 1. Resolve unit_business_id do lote pai ────────────────────────────
+    //    Busca com lock pois também pode atualizar o status do lote abaixo
+    const batch = await ExpeditionBatch.findByPk(batchId, {
+      attributes: ["id", "unit_business_id"],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!batch) throw new Error("Lote não encontrado");
+    const unitBusinessId: string = (batch as any).unit_business_id;
+
+    // ── 2. Atualiza BatchInvoiceItems.quantity_read ────────────────────────
+    //    Chave única: (expedition_batch_invoice_id, expedition_batch_item_id)
+    if (delta > 0) {
+      await batchInvoiceItemsService.increment("quantity_read", {
+        by: delta,
+        where: {
+          expedition_batch_invoice_id: batchInvoiceId,
+          expedition_batch_item_id: batchItemId,
+        },
+        transaction: t,
+      });
+    } else {
+      await batchInvoiceItemsService.decrement("quantity_read", {
+        by: Math.abs(delta),
+        where: {
+          expedition_batch_invoice_id: batchInvoiceId,
+          expedition_batch_item_id: batchItemId,
+        },
+        transaction: t,
+      });
+    }
+
+    // ── 3. Atualiza ExpeditionBatchItems.quantity_scanned ──────────────────
+    if (delta > 0) {
+      await batchItemsService.increment("quantity_scanned", {
+        by: delta,
+        where: { id: batchItemId },
+        transaction: t,
+      });
+    } else {
+      await batchItemsService.decrement("quantity_scanned", {
+        by: Math.abs(delta),
+        where: { id: batchItemId },
+        transaction: t,
+      });
+    }
+
+    // ── 4. Atualiza ExpeditionBatch.total_volumes_received ─────────────────
+    if (delta > 0) {
+      await batchService.increment("total_volumes_received", {
+        by: delta,
+        where: { id: batchId },
+        transaction: t,
+      });
+    } else {
+      await batchService.decrement("total_volumes_received", {
+        by: Math.abs(delta),
+        where: { id: batchId },
+        transaction: t,
+      });
+    }
+
+    // ── 5. Reavalia status da NF via InvoiceUnitBusinessAttributes ─────────
+    //    Verifica se ainda há BatchInvoiceItems pendentes para esta batchInvoice
+    const pendingBatchInvoiceItem = await batchInvoiceItemsService.findOne({
+      where: {
+        expedition_batch_invoice_id: batchInvoiceId,
+        quantity_read: { [Op.lt]: sequelize.col("quantity_expected") },
+      },
+      transaction: t,
+    });
+
+    const batchInvoice = await ExpeditionBatchInvoice.findByPk(batchInvoiceId, {
+      attributes: ["invoice_id"],
+      transaction: t,
+    });
+
+    if (batchInvoice && pendingBatchInvoiceItem) {
+      const invoiceId: string = (batchInvoice as any).invoice_id;
+
+      await invoiceService.updateInvoices([invoiceId], unitBusinessId, {
+        status: "PENDING",
+      });
+    }
+  }
 
   async scanProduct(
     labelcode: string,
@@ -98,10 +205,8 @@ export class ExpeditionScanLogService extends BaseService<
       const labelRead = labelcode;
       const volRead = labelcode.substring(35, 41);
 
-      const alreadyExists = await ExpeditionScanLog.findOne({
-        where: {
-          label_full_code: labelRead,
-        },
+      const alreadyExists = await this.findOne({
+        where: { label_full_code: labelRead },
         transaction: t,
       });
 
@@ -132,8 +237,6 @@ export class ExpeditionScanLogService extends BaseService<
         ],
         transaction: t,
       })) as ExpeditionBatchFull;
-
-      console.log(invoiceRead, productcode, eanfromlabel);
 
       if (!invoiceRead || !invoiceRead.batchInvoices?.length) {
         throw new Error("Nota não encontrada no lote");
@@ -203,7 +306,7 @@ export class ExpeditionScanLogService extends BaseService<
         await ExpeditionScanLog.create(
           {
             expedition_batch_items_id: productRead.id,
-            expedition_batch_invoices_id: invoiceRead?.batchInvoices?.[0].id,
+            expedition_batch_invoices_id: batchInvoice.id,
             expedition_batch_id: batchid,
             label_full_code: labelRead,
             vol_number: volRead,
@@ -218,57 +321,13 @@ export class ExpeditionScanLogService extends BaseService<
         throw error;
       }
 
-      await this.batchItemService.updateBatchItemAndBatch(
+      await this.syncFromScanning(
+        batchid,
         productRead.id,
-        invoiceRead?.batchInvoices?.[0]?.invoice?.id!,
-        productRead.product_id,
+        batchInvoice.id,
+        1,
         t,
       );
-
-      const invoiceId = invoiceRead?.batchInvoices?.[0]?.invoice?.id!;
-
-      const invoiceItem = await InvoiceItems.findOne({
-        where: { invoice_id: invoiceId },
-        attributes: ["quantity_expected", "quantity_received"],
-        transaction: t,
-      });
-
-      const pendingItem = await InvoiceItems.findOne({
-        where: {
-          invoice_id: invoiceId,
-          [Op.and]: sequelize.literal(
-            '"quantity_received" < "quantity_expected"',
-          ),
-        },
-        transaction: t,
-      });
-
-      if (!pendingItem) {
-        await Invoice.update(
-          { status: "FINISHED" },
-          { where: { id: invoiceId }, transaction: t },
-        );
-      }
-
-      const pendingInvoices = await Invoice.count({
-        include: [
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoice",
-            where: { expedition_batch_id: batchid },
-            required: true,
-          },
-        ],
-        where: { status: { [Op.ne]: "FINISHED" } },
-        transaction: t,
-      });
-
-      if (pendingInvoices === 0) {
-        await ExpeditionBatch.update(
-          { status: "FINISHED" },
-          { where: { id: batchid }, transaction: t },
-        );
-      }
     });
   }
 
@@ -323,10 +382,7 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      // ── 5. Resolve qual InvoiceItem incrementar (preenche uma NF por vez) ──
-      //    Busca todas as batchInvoices do lote que contêm este produto,
-      //    ordenadas por createdAt para garantir ordem consistente,
-      //    e pega a primeira que ainda tem quantity_received < quantity_expected
+      // ── 4. Busca batchInvoices que contêm este produto, ordenadas por createdAt
       const batchInvoices = (await ExpeditionBatchInvoice.findAll({
         where: { expedition_batch_id: batchid },
         include: [
@@ -334,14 +390,12 @@ export class ExpeditionScanLogService extends BaseService<
             model: Invoice,
             as: "invoice",
             where: { type: "INCOMING" },
-            include: [
-              {
-                model: InvoiceItems,
-                as: "items",
-                where: { product_id: productFound.id },
-                required: true,
-              },
-            ],
+            required: true,
+          },
+          {
+            model: BatchInvoiceItems,
+            as: "items",
+            where: { expedition_batch_item_id: batchItem.id },
             required: true,
           },
         ],
@@ -359,119 +413,72 @@ export class ExpeditionScanLogService extends BaseService<
 
       let remaining = quantity;
       const scanLogs: any[] = [];
+      // Rastreia quanto sincronizar por batchInvoice ao final
+      const syncMap = new Map<string, number>();
 
-      for (const batchInvoice of batchInvoices) {
+      for (const bi of batchInvoices) {
         if (remaining <= 0) break;
 
-        const invoiceItem = batchInvoice.invoice.items[0];
-        const invoiceId = batchInvoice.invoice.id;
+        const batchInvoiceItem = bi.items[0];
 
-        // Lê o valor atual direto do banco com lock
-        const fresh = await InvoiceItems.findByPk(invoiceItem.id, {
+        // Lê fresh com lock para evitar race condition
+        const fresh = await BatchInvoiceItems.findByPk(batchInvoiceItem.id, {
           transaction: t,
           lock: t.LOCK.UPDATE,
         });
 
         if (!fresh) continue;
 
-        const space = fresh.quantity_expected - fresh.quantity_received;
-        if (space <= 0) continue; // NF já cheia, vai pra próxima
+        const space =
+          Number(fresh.quantity_expected) - Number(fresh.quantity_read);
+        if (space <= 0) continue;
 
         const toIncrement = Math.min(remaining, space);
-
-        await InvoiceItems.increment("quantity_received", {
-          by: toIncrement,
-          where: { id: fresh.id },
-          transaction: t,
-        });
 
         for (let j = 0; j < toIncrement; j++) {
           scanLogs.push({
             expedition_batch_id: batchid,
             expedition_batch_items_id: batchItem.id,
-            expedition_batch_invoices_id: batchInvoice.id,
+            expedition_batch_invoices_id: bi.id,
             label_full_code: labelcode,
             vol_number: "000000",
             user_id: userId,
           });
         }
 
+        syncMap.set(bi.id, (syncMap.get(bi.id) ?? 0) + toIncrement);
         remaining -= toIncrement;
-
-        // Checa se esta NF fechou
-        const stillPending = await InvoiceItems.count({
-          where: {
-            invoice_id: invoiceId,
-            quantity_received: { [Op.lt]: sequelize.col("quantity_expected") },
-          },
-          transaction: t,
-        });
-
-        if (stillPending === 0) {
-          await Invoice.update(
-            { status: "FINISHED" },
-            { where: { id: invoiceId }, transaction: t },
-          );
-        }
       }
 
-      // Over-receiving: se sobrou, joga na última NF
+      // Over-receiving: joga o restante na última NF
       if (remaining > 0) {
-        const lastInvoice = batchInvoices[batchInvoices.length - 1];
-        const lastItem = lastInvoice.invoice.items[0];
-
-        await InvoiceItems.increment("quantity_received", {
-          by: remaining,
-          where: { id: lastItem.id },
-          transaction: t,
-        });
+        const lastBi = batchInvoices[batchInvoices.length - 1];
 
         for (let j = 0; j < remaining; j++) {
           scanLogs.push({
             expedition_batch_id: batchid,
             expedition_batch_items_id: batchItem.id,
-            expedition_batch_invoices_id: lastInvoice.id,
+            expedition_batch_invoices_id: lastBi.id,
             label_full_code: labelcode,
             vol_number: "000000",
             user_id: userId,
           });
         }
+
+        syncMap.set(lastBi.id, (syncMap.get(lastBi.id) ?? 0) + remaining);
       }
 
-      // ── 6. Cria todos os ScanLogs de uma vez ──────────────────────────────
+      // ── 5. Cria todos os ScanLogs ──────────────────────────────────────────
       await ExpeditionScanLog.bulkCreate(scanLogs, { transaction: t });
 
-      // ── 7. Incrementa BatchItem e total do lote ────────────────────────────
-      await ExpeditionBatchItems.increment("quantity_scanned", {
-        by: quantity,
-        where: { id: batchItem.id },
-        transaction: t,
-      });
-
-      await ExpeditionBatch.increment("total_volumes_received", {
-        by: quantity,
-        where: { id: batchid },
-        transaction: t,
-      });
-
-      // ── 8. Verifica se todas as NFs do lote foram finalizadas ──────────────
-      const pendingInvoices = await Invoice.count({
-        include: [
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoice",
-            where: { expedition_batch_id: batchid },
-            required: true,
-          },
-        ],
-        where: { status: { [Op.ne]: "FINISHED" } },
-        transaction: t,
-      });
-
-      if (pendingInvoices === 0) {
-        // TODO: gerar NF-e na Bling
+      // ── 6. Sincroniza contadores e status por batchInvoice ─────────────────
+      //    syncFromScanning cuida de BatchInvoiceItems, BatchItems, Batch e
+      //    InvoiceUnitBusinessAttributes de forma centralizada
+      for (const [biId, delta] of syncMap.entries()) {
+        await this.syncFromScanning(batchid, batchItem.id, biId, delta, t);
       }
 
+      // TODO: gerar NF-e na Bling quando lote finalizar
       return true;
     });
   }
@@ -507,7 +514,6 @@ export class ExpeditionScanLogService extends BaseService<
           where: { supplier_product_code: labelcode },
           include: [{ model: Product, as: "product" }],
         });
-
         productFound = (supplierMapping as any)?.product ?? null;
       }
 
@@ -538,14 +544,12 @@ export class ExpeditionScanLogService extends BaseService<
             model: Invoice,
             as: "invoice",
             where: { id: invoiceId, type: "INCOMING" },
-            include: [
-              {
-                model: InvoiceItems,
-                as: "items",
-                where: { product_id: productFound.id },
-                required: true,
-              },
-            ],
+            required: true,
+          },
+          {
+            model: BatchInvoiceItems,
+            as: "items",
+            where: { expedition_batch_item_id: batchItem.id },
             required: true,
           },
         ],
@@ -560,26 +564,8 @@ export class ExpeditionScanLogService extends BaseService<
 
       this.assertTransshipment(batchInvoice.invoice, unitBusiness);
 
-      const invoiceItem = batchInvoice.invoice.items[0];
-
-      // ── 5. Lê o InvoiceItem com lock e incrementa ──────────────────────────
-      const fresh = await InvoiceItems.findByPk(invoiceItem.id, {
-        transaction: t,
-        lock: t.LOCK.UPDATE,
-      });
-
-      if (!fresh) throw new Error("Item da nota não encontrado");
-
-      const toIncrement = quantity;
-
-      await InvoiceItems.increment("quantity_received", {
-        by: toIncrement,
-        where: { id: fresh.id },
-        transaction: t,
-      });
-
-      // ── 6. Cria os ScanLogs ────────────────────────────────────────────────
-      const scanLogs = Array.from({ length: toIncrement }, () => ({
+      // ── 5. Cria os ScanLogs ────────────────────────────────────────────────
+      const scanLogs = Array.from({ length: quantity }, () => ({
         expedition_batch_id: batchid,
         expedition_batch_items_id: batchItem.id,
         expedition_batch_invoices_id: batchInvoice.id,
@@ -590,39 +576,14 @@ export class ExpeditionScanLogService extends BaseService<
 
       await ExpeditionScanLog.bulkCreate(scanLogs, { transaction: t });
 
-      // ── 7. Incrementa BatchItem e total do lote ────────────────────────────
-      await ExpeditionBatchItems.increment("quantity_scanned", {
-        by: toIncrement,
-        where: { id: batchItem.id },
-        transaction: t,
-      });
-
-      await ExpeditionBatch.increment("total_volumes_received", {
-        by: toIncrement,
-        where: { id: batchid },
-        transaction: t,
-      });
-
-      // ── 8. Verifica se todas as NFs do lote foram finalizadas ──────────────
-      const pendingInvoices = await Invoice.count({
-        include: [
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoice",
-            where: { expedition_batch_id: batchid },
-            required: true,
-          },
-        ],
-        where: { status: { [Op.ne]: "FINISHED" } },
-        transaction: t,
-      });
-
-      if (pendingInvoices === 0) {
-        await ExpeditionBatch.update(
-          { status: "FINISHED" },
-          { where: { id: batchid }, transaction: t },
-        );
-      }
+      // ── 6. Sincroniza contadores e status ──────────────────────────────────
+      await this.syncFromScanning(
+        batchid,
+        batchItem.id,
+        batchInvoice.id,
+        quantity,
+        t,
+      );
 
       return true;
     });
@@ -638,7 +599,6 @@ export class ExpeditionScanLogService extends BaseService<
     }>,
   ) {
     return await sequelize.transaction(async (t) => {
-      // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
       const batch = await ExpeditionBatch.findByPk(batchid, {
         transaction: t,
         lock: t.LOCK.UPDATE,
@@ -648,7 +608,6 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.type === "INCOMING") throw new Error("Lote não é de saída");
 
       for (const item of items) {
-        // ── 2. Busca o produto pelo productcode (igual ao scanProduct) ─────
         const productRead = (await ExpeditionBatchItems.findOne({
           where: { expedition_batch_id: batchid },
           include: [
@@ -669,7 +628,6 @@ export class ExpeditionScanLogService extends BaseService<
         if (!productRead)
           throw new Error(`Produto não encontrado: ${item.productcode}`);
 
-        // ── 3. Bloqueia o BatchItem ────────────────────────────────────────
         const batchItemLocked = (await ExpeditionBatchItems.findOne({
           where: { id: productRead.id },
           transaction: t,
@@ -682,10 +640,6 @@ export class ExpeditionScanLogService extends BaseService<
           );
         }
 
-        // ── 4. Busca os logs a deletar — ordem decrescente por vol_number ──
-        //    Cada etiqueta de saída é única (41 chars), então filtramos apenas
-        //    por batch_items_id + batch_id e ordenamos desc por vol_number
-        //    para remover do maior volume para o menor (4 → 3 → 2...)
         const logsToDelete = await ExpeditionScanLog.findAll({
           where: {
             expedition_batch_id: batchid,
@@ -712,86 +666,17 @@ export class ExpeditionScanLogService extends BaseService<
           transaction: t,
         });
 
-        // ── 5. Decrementa quantity_scanned no BatchItem ────────────────────
-        await ExpeditionBatchItems.decrement("quantity_scanned", {
-          by: item.quantity,
-          where: { id: productRead.id },
-          transaction: t,
-        });
+        // Agrupa por batchInvoice e chama syncFromScanning com delta negativo
+        const affectedMap = new Map<string, number>();
+        for (const log of logsToDelete) {
+          const biId: string = (log as any).expedition_batch_invoices_id;
+          affectedMap.set(biId, (affectedMap.get(biId) ?? 0) + 1);
+        }
 
-        await ExpeditionBatch.decrement("total_volumes_received", {
-          by: item.quantity,
-          where: { id: batchid },
-          transaction: t,
-        });
-
-        // ── 6. Reavalia status de cada NF afetada ──────────────────────────
-        //    Agrupa os logs deletados por batchInvoice para reavaliar cada NF
-        const affectedInvoiceIds = [
-          ...new Set(logsToDelete.map((l) => l.expedition_batch_invoices_id)),
-        ];
-
-        for (const batchInvoiceId of affectedInvoiceIds) {
-          const countRemoved = logsToDelete.filter(
-            (l) => l.expedition_batch_invoices_id === batchInvoiceId,
-          ).length;
-
-          const batchInvoice = (await ExpeditionBatchInvoice.findByPk(
-            batchInvoiceId,
-            {
-              include: [{ model: Invoice, as: "invoice" }],
-              transaction: t,
-            },
-          )) as any;
-
-          if (!batchInvoice?.invoice) continue;
-
-          const invoiceId = batchInvoice.invoice.id;
-
-          await InvoiceItems.decrement("quantity_received", {
-            by: countRemoved,
-            where: {
-              invoice_id: invoiceId,
-              product_id: productRead.product_id,
-            },
-            transaction: t,
-          });
-
-          const pendingItem = await InvoiceItems.findOne({
-            where: {
-              invoice_id: invoiceId,
-              [Op.and]: sequelize.literal(
-                '"quantity_received" < "quantity_expected"',
-              ),
-            },
-            transaction: t,
-          });
-
-          await Invoice.update(
-            { status: pendingItem ? "PENDING" : "FINISHED" },
-            { where: { id: invoiceId }, transaction: t },
-          );
+        for (const [biId, count] of affectedMap.entries()) {
+          await this.syncFromScanning(batchid, productRead.id, biId, -count, t);
         }
       }
-
-      // ── 7. Reavalia status do lote ─────────────────────────────────────────
-      const pendingInvoices = await Invoice.count({
-        include: [
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoice",
-            where: { expedition_batch_id: batchid },
-            required: true,
-          },
-        ],
-        where: { status: { [Op.ne]: "FINISHED" } },
-        transaction: t,
-      });
-
-      await ExpeditionBatch.update(
-        { status: pendingInvoices === 0 ? "FINISHED" : "PENDING" },
-        { where: { id: batchid }, transaction: t },
-      );
 
       return true;
     });
@@ -815,7 +700,6 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
 
       for (const item of items) {
-        // ── 1. Bloqueia o BatchItem ──────────────────────────────────────────
         const batchItem = await ExpeditionBatchItems.findOne({
           where: {
             expedition_batch_id: batchid,
@@ -836,9 +720,6 @@ export class ExpeditionScanLogService extends BaseService<
           );
         }
 
-        // ── 2. Busca os logs a deletar ────────────────────────────────────────
-        // Em incoming, label_full_code é o próprio EAN e vol_number é '000000'
-        // então filtramos por batch_items_id e ordenamos por createdAt DESC
         const logsToDelete = await ExpeditionScanLog.findAll({
           where: {
             expedition_batch_id: batchid,
@@ -864,85 +745,17 @@ export class ExpeditionScanLogService extends BaseService<
           transaction: t,
         });
 
-        // ── 3. Decrementa BatchItem e total do lote ───────────────────────────
-        await ExpeditionBatchItems.decrement("quantity_scanned", {
-          by: item.quantity,
-          where: { id: batchItem.id },
-          transaction: t,
-        });
+        // Agrupa por batchInvoice e chama syncFromScanning com delta negativo
+        const affectedMap = new Map<string, number>();
+        for (const log of logsToDelete) {
+          const biId: string = (log as any).expedition_batch_invoices_id;
+          affectedMap.set(biId, (affectedMap.get(biId) ?? 0) + 1);
+        }
 
-        await ExpeditionBatch.decrement("total_volumes_received", {
-          by: item.quantity,
-          where: { id: batchid },
-          transaction: t,
-        });
-
-        // ── 4. Reavalia status de cada NF afetada ─────────────────────────────
-        const affectedInvoiceIds = [
-          ...new Set(logsToDelete.map((l) => l.expedition_batch_invoices_id)),
-        ];
-
-        for (const batchInvoiceId of affectedInvoiceIds) {
-          const countRemoved = logsToDelete.filter(
-            (l) => l.expedition_batch_invoices_id === batchInvoiceId,
-          ).length;
-
-          const batchInvoice = (await ExpeditionBatchInvoice.findByPk(
-            batchInvoiceId,
-            {
-              include: [{ model: Invoice, as: "invoice" }],
-              transaction: t,
-            },
-          )) as any;
-
-          if (!batchInvoice?.invoice) continue;
-
-          const invoiceId = batchInvoice.invoice.id;
-
-          await InvoiceItems.decrement("quantity_received", {
-            by: countRemoved,
-            where: {
-              invoice_id: invoiceId,
-              product_id: item.productId,
-            },
-            transaction: t,
-          });
-
-          const pendingItem = await InvoiceItems.findOne({
-            where: {
-              invoice_id: invoiceId,
-              [Op.and]: sequelize.literal(
-                '"quantity_received" < "quantity_expected"',
-              ),
-            },
-            transaction: t,
-          });
-
-          await Invoice.update(
-            { status: pendingItem ? "PENDING" : "FINISHED" },
-            { where: { id: invoiceId }, transaction: t },
-          );
+        for (const [biId, count] of affectedMap.entries()) {
+          await this.syncFromScanning(batchid, batchItem.id, biId, -count, t);
         }
       }
-
-      // ── 5. Reavalia status do lote ─────────────────────────────────────────
-      const pendingInvoices = await Invoice.count({
-        include: [
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoice",
-            where: { expedition_batch_id: batchid },
-            required: true,
-          },
-        ],
-        where: { status: { [Op.ne]: "FINISHED" } },
-        transaction: t,
-      });
-
-      await ExpeditionBatch.update(
-        { status: pendingInvoices === 0 ? "FINISHED" : "PENDING" },
-        { where: { id: batchid }, transaction: t },
-      );
 
       return true;
     });

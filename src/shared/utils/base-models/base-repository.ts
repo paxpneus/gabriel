@@ -113,30 +113,53 @@ class BaseRepository<T extends Model> {
     });
   }
 
-  async upsertByFind(
-  where: FindOptions["where"],
-  updateData: Partial<T["_creationAttributes"]>,
-  createData: Partial<T["_creationAttributes"]>,
-  options?: { transaction?: any },
-): Promise<T> {
-  const record = await this.model.findOne({ where, transaction: options?.transaction });
-  if (record) {
-    return record.update(updateData as any, { transaction: options?.transaction });
+  async decrement(
+    field: string,
+    options: { by: number; where: any; transaction?: any },
+  ): Promise<void> {
+    await this.model.decrement(field, {
+      by: options.by,
+      where: options.where,
+      transaction: options.transaction,
+    });
   }
-  return this.model.create({ ...createData } as any, { transaction: options?.transaction });
-}
 
-async findOneAndUpdate(
-  where: FindOptions["where"],
-  data: Partial<T["_creationAttributes"]>,
-  options?: { transaction?: any },
-): Promise<T> {
-  const record = await this.model.findOne({ where, transaction: options?.transaction });
-  if (record) {
-    return record.update(data as any, { transaction: options?.transaction });
+  async upsertByFind(
+    where: FindOptions["where"],
+    updateData: Partial<T["_creationAttributes"]>,
+    createData: Partial<T["_creationAttributes"]>,
+    options?: { transaction?: any },
+  ): Promise<T> {
+    const record = await this.model.findOne({
+      where,
+      transaction: options?.transaction,
+    });
+    if (record) {
+      return record.update(updateData as any, {
+        transaction: options?.transaction,
+      });
+    }
+    return this.model.create({ ...createData } as any, {
+      transaction: options?.transaction,
+    });
   }
-  return this.model.create({ ...where, ...data } as any, { transaction: options?.transaction });
-}
+
+  async findOneAndUpdate(
+    where: FindOptions["where"],
+    data: Partial<T["_creationAttributes"]>,
+    options?: { transaction?: any },
+  ): Promise<T> {
+    const record = await this.model.findOne({
+      where,
+      transaction: options?.transaction,
+    });
+    if (record) {
+      return record.update(data as any, { transaction: options?.transaction });
+    }
+    return this.model.create({ ...where, ...data } as any, {
+      transaction: options?.transaction,
+    });
+  }
 
   async delete(id: string, options?: DestroyOptions): Promise<boolean> {
     const record = await this.model.findByPk(id, options);
