@@ -23,6 +23,7 @@ import InvoiceItems from "../../invoices/invoice-items/invoice-items.model";
 import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items.service";
 import batchService from "../batch/batch.service";
 import batchInvoicesService from "../batch-invoices/batch-invoices.service";
+import { assertTransshipment } from "../utils/helpers/transshipment-resolver";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
@@ -51,25 +52,6 @@ export class ExpeditionScanLogService extends BaseService<
     };
   }
 
-  private assertTransshipment(
-    invoice: { sender_cnpj: string | null; receiver_cnpj: string | null },
-    unitBusiness: { cnpj: string; transshipment_allowed?: boolean } | null,
-  ): void {
-    if (!unitBusiness || unitBusiness.transshipment_allowed) return;
-
-    const normalize = (cnpj: string | null) => (cnpj ?? "").replace(/\D/g, "");
-    const unitCnpj = normalize(unitBusiness.cnpj);
-
-    const allowed =
-      normalize(invoice.sender_cnpj) === unitCnpj ||
-      normalize(invoice.receiver_cnpj) === unitCnpj;
-
-    if (!allowed) {
-      throw new Error(
-        "Leitura bloqueada: nota fiscal não pertence à sua unidade de negócio",
-      );
-    }
-  }
 
   /**
    * Busca produto por EAN/EAN tribut ou por supplier_product_code.
@@ -250,7 +232,7 @@ export class ExpeditionScanLogService extends BaseService<
         throw new Error("Nota fiscal não carregada corretamente");
       }
 
-      this.assertTransshipment(batchInvoice.invoice, unitBusiness);
+      assertTransshipment(batchInvoice.invoice, unitBusiness);
 
       // ── Busca produto centralizada (EAN + supplier mapping) ───────────────
       const { product, matchedCode } = await this.findProductByCode(
@@ -399,7 +381,7 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      this.assertTransshipment(batchInvoices[0].invoice, unitBusiness);
+      assertTransshipment(batchInvoices[0].invoice, unitBusiness);
 
       let remaining = quantity;
       const scanLogs: any[] = [];
@@ -533,7 +515,7 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      this.assertTransshipment(batchInvoice.invoice, unitBusiness);
+      assertTransshipment(batchInvoice.invoice, unitBusiness);
 
       // ── 5. Cria os ScanLogs ────────────────────────────────────────────────
       const scanLogs = Array.from({ length: quantity }, () => ({
