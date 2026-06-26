@@ -37,11 +37,8 @@ export interface InvoiceAttributes {
   supplier_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
-  type: "INCOMING" | "OUTGOING";
-  status: InvoiceStatus;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[]
   items?: InvoiceItems[];
-  batch_generated?: boolean;
   printed_label?: boolean;
   emitted_at?: Date;
   number_system?: string;
@@ -99,11 +96,8 @@ export interface FullInvoiceAttributes {
   supplier_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
-  type: "INCOMING" | "OUTGOING";
-  status: InvoiceStatus;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes;
   batchInvoice?: ExpeditionBatchInvoiceAttributes;
-  batch_generated?: boolean;
   printed_label?: boolean;
   emitted_at?: Date;
   number_system?: string;
@@ -161,11 +155,8 @@ export interface FullInvoiceAttributesForAllUnits {
   supplier_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
-  type: "INCOMING" | "OUTGOING";
-  status: InvoiceStatus;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[];
   batchInvoice?: ExpeditionBatchInvoiceAttributes;
-  batch_generated?: boolean;
   printed_label?: boolean;
   emitted_at?: Date;
   number_system?: string;

@@ -132,13 +132,21 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     };
   }
 
-  async createWithRelations(
-    invoiceData: InvoiceCreationData,
-    items: ItemWithFiscal[],
-    transaction?: Transaction,
-  ): Promise<Invoice> {
+ async createWithRelations(
+  invoiceData: InvoiceCreationData,
+  items: ItemWithFiscal[],
+  {
+    transaction,
+    initialStatus = "OPEN",
+  }: {
+    transaction?: Transaction;
+    initialStatus?: InvoiceUnitBusinessAttributesStatus;
+    mainUnitBusinessId?: string;
+  } = {},
+): Promise<Invoice> {
     const t = transaction ?? (await sequelize.transaction());
     const isExternalTransaction = !!transaction;
+    
 
     try {
       // ─── 1. Resolve unit businesses ──────────────────────────────────────
@@ -152,15 +160,14 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       const cnpjMap = new Map(unitBusinesses.map((ub) => [ub.cnpj, ub.id]));
       const senderUbId = cnpjMap.get(invoiceData.sender_cnpj);
       const receiverUbId = cnpjMap.get(invoiceData.receiver_cnpj);
-      const mainUnitBusinessId = (receiverUbId ?? senderUbId)!;
 
       // ─── 2. Cria a invoice ───────────────────────────────────────────────
       const invoice = await this.repository.createInvoice(
-        { ...invoiceData, unit_business_id: mainUnitBusinessId },
+        { ...invoiceData },
         t,
       );
 
-      // ─── 3. Cria items e fiscal items ────────────────────────────────────
+      // ─── 3. Cria items e fiscal items ─────────────────────
       const invoiceItems = items.map(({ fiscal: _, ...itemData }) => ({
         ...itemData,
         invoice_id: invoice.id,
@@ -205,12 +212,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         });
       };
 
-      if (senderUbId) {
-        addAttr(senderUbId, "OUTGOING", "OPEN");
-      }
-      if (receiverUbId) {
-        addAttr(receiverUbId, "INCOMING", "OPEN");
-      }
+      if (senderUbId) addAttr(senderUbId, "OUTGOING", initialStatus ?? "OPEN");
+      if (receiverUbId) addAttr(receiverUbId, "INCOMING", initialStatus ?? "OPEN");
 
       if (attributes.length > 0) {
         await this.repository.createInvoiceAttributes(attributes, t);
@@ -228,8 +231,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     return this.repository.getFullInvoice(id, unitBusinessId);
   }
 
-  async findByIdFullForAllUnits(id: string) {
-    return this.repository.getFullInvoiceForAllUnits(id);
+  async findByIdFullForAllUnits(id?: string, xml_key?: string) {
+    return this.repository.getFullInvoiceForAllUnits(id, xml_key);
   }
 
   async listInvoices(
@@ -256,7 +259,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     invoiceIds: string[],
     unitBusinessId: string,
     data: Partial<
-      InvoiceAttributes & { status: string; batch_generated: boolean }
+      InvoiceAttributes & { status: InvoiceUnitBusinessAttributesStatus; batch_generated: boolean }
     >,
     attrWhere?: WhereOptions,
   ): Promise<void> {

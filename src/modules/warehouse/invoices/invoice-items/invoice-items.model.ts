@@ -9,7 +9,6 @@ class InvoiceItems extends Model<InvoiceItemsAttributes, InvoiceItemsCreationAtt
   public product_id!: string;
   public invoice_id!: string;
   public quantity_expected!: number;
-  public quantity_received!: number;
   public product?: Product;
   public status!: 'PENDING' | 'FINISHED';
 
@@ -44,10 +43,6 @@ InvoiceItems.init(
     quantity_expected: {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
-      defaultValue: 0,
-    },
-    quantity_received: {
-      type: DataTypes.DECIMAL(10, 2),
       defaultValue: 0,
     },
     status: {
