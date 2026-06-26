@@ -132,21 +132,20 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     };
   }
 
- async createWithRelations(
-  invoiceData: InvoiceCreationData,
-  items: ItemWithFiscal[],
-  {
-    transaction,
-    initialStatus = "OPEN",
-  }: {
-    transaction?: Transaction;
-    initialStatus?: InvoiceUnitBusinessAttributesStatus;
-    mainUnitBusinessId?: string;
-  } = {},
-): Promise<Invoice> {
+  async createWithRelations(
+    invoiceData: InvoiceCreationData,
+    items: ItemWithFiscal[],
+    {
+      transaction,
+      initialStatus = "OPEN",
+    }: {
+      transaction?: Transaction;
+      initialStatus?: InvoiceUnitBusinessAttributesStatus;
+      mainUnitBusinessId?: string;
+    } = {},
+  ): Promise<Invoice> {
     const t = transaction ?? (await sequelize.transaction());
     const isExternalTransaction = !!transaction;
-    
 
     try {
       // ─── 1. Resolve unit businesses ──────────────────────────────────────
@@ -168,14 +167,28 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       );
 
       // ─── 3. Cria items e fiscal items ─────────────────────
-      const invoiceItems = items.map(({ fiscal: _, ...itemData }) => ({
-        ...itemData,
-        invoice_id: invoice.id,
-      }));
+      const deduplicatedItems = items.reduce<ItemWithFiscal[]>((acc, item) => {
+        const existing = acc.find((i) => i.product_id === item.product_id);
+        if (existing) {
+          existing.quantity_expected = Math.trunc(
+            existing.quantity_expected + item.quantity_expected,
+          );
+        } else {
+          acc.push({ ...item });
+        }
+        return acc;
+      }, []);
+
+      const invoiceItems = deduplicatedItems.map(
+        ({ fiscal: _, ...itemData }) => ({
+          ...itemData,
+          invoice_id: invoice.id,
+        }),
+      );
 
       await this.repository.createInvoiceItems(invoiceItems, t);
 
-      const fiscalItems = items
+      const fiscalItems = deduplicatedItems
         .map(({ fiscal, ...itemData }, index) =>
           fiscal
             ? {
@@ -213,7 +226,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       };
 
       if (senderUbId) addAttr(senderUbId, "OUTGOING", initialStatus ?? "OPEN");
-      if (receiverUbId) addAttr(receiverUbId, "INCOMING", initialStatus ?? "OPEN");
+      if (receiverUbId)
+        addAttr(receiverUbId, "INCOMING", initialStatus ?? "OPEN");
 
       if (attributes.length > 0) {
         await this.repository.createInvoiceAttributes(attributes, t);
@@ -259,7 +273,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     invoiceIds: string[],
     unitBusinessId: string,
     data: Partial<
-      InvoiceAttributes & { status: InvoiceUnitBusinessAttributesStatus; batch_generated: boolean }
+      InvoiceAttributes & {
+        status: InvoiceUnitBusinessAttributesStatus;
+        batch_generated: boolean;
+      }
     >,
     attrWhere?: WhereOptions,
   ): Promise<void> {
