@@ -191,6 +191,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           where: attrWhere,
           required: true,
           attributes: ["status", "type", "batch_generated"],
+           include: [
+            {
+              model: UnitBusiness,
+              as: 'unitBusiness'
+            }
+          ]
         },
         {
           model: ExpeditionBatchInvoice,
@@ -214,11 +220,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                 : {}),
             },
           ],
-        },
-        {
-          model: UnitBusiness,
-          as: "unitBusiness",
-          attributes: ["number", "name"],
         },
         {
           model: Store,
@@ -297,6 +298,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           where: { unit_business_id: unitBusinessId },
           required: false,
           attributes: ["status", "type", "batch_generated"],
+           include: [
+            {
+              model: UnitBusiness,
+              as: 'unitBusiness'
+            }
+          ]
         },
         {
           model: InvoiceItems,
@@ -352,6 +359,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           as: "unitBusinessAttributes",
           required: false,
           attributes: ["status", "type", "batch_generated"],
+           include: [
+            {
+              model: UnitBusiness,
+              as: 'unitBusiness'
+            }
+          ]
         },
         {
           model: InvoiceItems,
@@ -389,6 +402,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           where: { unit_business_id: unitBusinessId },
           required: false,
           attributes: ["status", "type", "batch_generated"],
+           include: [
+            {
+              model: UnitBusiness,
+              as: 'unitBusiness'
+            }
+          ]
         },
       ],
     });
@@ -424,6 +443,32 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           where: { unit_business_id: unitBusinessId },
           required: false,
           attributes: ["status", "type", "batch_generated"],
+          include: [
+            {
+              model: UnitBusiness,
+              as: 'unitBusiness'
+            }
+          ]
+        },
+         {
+          model: InvoiceItems,
+          as: "items",
+          include: [
+            {
+              model: Product,
+              as: "product",
+              attributes: { exclude: ["source_payload"] },
+              include: [
+                {
+                  model: ProductConfig,
+                  as: "productConfigs",
+                  where: { unit_business_id: unitBusinessId },
+                  required: false,
+                  limit: 1,
+                },
+              ],
+            },
+          ],
         },
         {
           model: ExpeditionBatchInvoice,

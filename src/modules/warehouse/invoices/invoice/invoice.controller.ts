@@ -157,7 +157,7 @@ export class InvoiceController extends BaseController<
       const { id } = req.params;
       const context = await getUserContext(req);
 
-      const data = await this.service.findByIdFull(
+      const data = await this.service.findByIdFullWithBatch(
         id as string,
         context.unitBusinessId,
       );
