@@ -298,10 +298,12 @@ export class ExpeditionScanLogService extends BaseService<
       });
 
       if (!productFound) {
-        const supplierMapping =
-          await supplierMappingService.findByProductCode(labelcode);
+        const supplierMapping = await SupplierMapping.findOne({
+          where: { supplier_product_code: labelcode },
+          include: [{ model: Product, as: "product" }],
+        });
 
-        productFound = supplierMapping?.product ?? null;
+        productFound = (supplierMapping as any)?.product ?? null;
       }
 
       if (!productFound) throw new Error("Produto não encontrado!");
