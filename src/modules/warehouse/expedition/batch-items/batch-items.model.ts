@@ -2,6 +2,7 @@ import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../../../config/sequelize';
 import { ExpeditionBatchItemsAttributes, ExpeditionBatchItemsCreationAttributes } from './batch-items.types';
 import { v4 as uuidv4 } from 'uuid';
+import { ProductAttributes } from '../../../inventory/products/product.types';
 
 class ExpeditionBatchItems extends Model<ExpeditionBatchItemsAttributes, ExpeditionBatchItemsCreationAttributes> implements ExpeditionBatchItemsAttributes {
   public id!: string;
@@ -12,6 +13,9 @@ class ExpeditionBatchItems extends Model<ExpeditionBatchItemsAttributes, Expedit
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
+
+
+  public product?: ProductAttributes
 }
 
 ExpeditionBatchItems.init(
