@@ -1,4 +1,4 @@
-import { Sequelize } from "sequelize";
+import { Op, Sequelize } from "sequelize";
 import BaseRepository from "../../../shared/utils/base-models/base-repository";
 import Product from "../products/product.model";
 import SupplierMapping from "./supplier-mapping.model";
@@ -9,28 +9,23 @@ export class SupplierMappingRepository extends BaseRepository<SupplierMapping> {
     super(SupplierMapping);
   }
 
-  async findSupplirByProductCode(
-    ean: string,
-  ): Promise<FullSupplierMapping | null> {
-    const supplierMappingFound = (await this.findOne({
-      where: Sequelize.where(
-        Sequelize.fn("LTRIM", Sequelize.col("supplier_product_code"), "0"),
-        ean.replace(/^0+/, ""),
-      ),
-      include: [
-        {
-          model: Product,
-          as: "product",
-        },
-      ],
-    })) as unknown as FullSupplierMapping;
+ async findSupplierByProductCode(
+  ean: string,
+): Promise<FullSupplierMapping | null> {
+  const supplierMappingFound = (await this.findOne({
+    where: {
+      supplier_product_code: ean
+    },
+    include: [
+      {
+        model: Product,
+        as: "product",
+      },
+    ],
+  })) as unknown as FullSupplierMapping;
 
-    if (!supplierMappingFound) {
-      return null;
-    }
-
-    return supplierMappingFound;
-  }
+  return supplierMappingFound ?? null;
+}
 }
 
 export default new SupplierMappingRepository();

@@ -13,9 +13,9 @@ export class SupplierMappingService extends BaseService<SupplierMapping, Supplie
       throw Error("EAN Não informado")
     }
 
-    const supplierFound = await this.repository.findSupplirByProductCode(ean)
+    const supplierFound = await this.repository.findSupplierByProductCode(ean)
 
-    if (supplierFound!) return null
+    if (!supplierFound) return null
 
     return supplierFound
   }
