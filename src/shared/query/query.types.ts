@@ -23,11 +23,12 @@ export interface QueryConfig {
   sortableFields?: string[];
   stringFields?: string[];
   customFields?: Record<string, CustomFieldResolver>;
+  customSort?: Record<string, (dir: "ASC" | "DESC") => OrderItem>;
   defaults?: {
     offset?: number;
     perPage?: number;
-    sortBy?: string | string[];          
-    sortDir?: "ASC" | "DESC" | ("ASC" | "DESC")[]; 
+    sortBy?: string | string[];
+    sortDir?: "ASC" | "DESC" | ("ASC" | "DESC")[];
   };
 }
 

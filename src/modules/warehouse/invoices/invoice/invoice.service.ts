@@ -68,12 +68,20 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "emitted_at",
         "received_at",
         "expected_receiving",
-        "batch_generated",
+
         "printed_label",
-        "type",
-        "status",
+
         "number_system",
       ],
+      customSort: {
+        status: (dir) => ["unitBusinessAttributes", "status", dir],
+        type: (dir) => ["unitBusinessAttributes", "type", dir],
+        batch_generated: (dir) => [
+          "unitBusinessAttributes",
+          "batch_generated",
+          dir,
+        ],
+      },
       customFields: {
         brand: (value) => ({
           [Op.and]: Sequelize.literal(`EXISTS (
@@ -125,9 +133,21 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
           return {};
         },
-        type: () => ({}),
-        status: () => ({}),
-        batch_generated: () => ({}),
+        status: (value) => ({
+          "$unitBusinessAttributes.status$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
+        }),
+
+        type: (value) => ({
+          "$unitBusinessAttributes.type$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
+        }),
+
+        batch_generated: (value) => ({
+          "$unitBusinessAttributes.batch_generated$": value === "true",
+        }),
       },
     };
   }
@@ -243,6 +263,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
   async findByIdFull(id: string, unitBusinessId: string) {
     return this.repository.getFullInvoice(id, unitBusinessId);
+  }
+
+  async findByIdFullWithBatch(id: string, unitBusinessId: string) {
+    return this.repository.getFullInvoiceWithBatch(id, unitBusinessId);
   }
 
   async findByIdFullForAllUnits(id?: string, xml_key?: string) {
