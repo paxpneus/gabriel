@@ -223,6 +223,7 @@ export function startBlingWorkers() {
     "BLING_TOKEN_REFRESH",
     "BLING_MIGRATION",
     "TCAR_UPSERT",
+    "BLING_ORDER_INGESTION",
   ]);
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
@@ -254,7 +255,6 @@ export function startAutomationWorkers() {
     "NFE_EMISSION",
     "ML_ORDER_SYNC",
     "CNPJ_VERIFY_CNAE",
-    "BLING_ORDER_INGESTION",
     "NFE_RECONCILER",
     "BLING_RECONCILER",
   ]);
