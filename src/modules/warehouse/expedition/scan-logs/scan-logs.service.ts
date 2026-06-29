@@ -158,14 +158,9 @@ export class ExpeditionScanLogService extends BaseService<
                 {
                   model: SupplierMapping,
                   as: "supplierMappings",
-                  where: Sequelize.where(
-                    Sequelize.fn(
-                      "LTRIM",
-                      Sequelize.col("supplier_product_code"),
-                      "0",
-                    ),
-                    productcode.replace(/^0+/, ""),
-                  ),
+                  where: {
+                    supplier_product_code: productcode
+                  }
                 },
               ],
             },
@@ -181,7 +176,6 @@ export class ExpeditionScanLogService extends BaseService<
         transaction: t,
         lock: t.LOCK.UPDATE,
       })) as ExpeditionBaatchItemFull;
-
 
       productReadLocked.product = productRead.product;
 
