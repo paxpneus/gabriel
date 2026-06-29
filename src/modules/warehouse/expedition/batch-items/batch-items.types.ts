@@ -1,4 +1,5 @@
 import { Product } from "../../../inventory";
+import { ProductAttributes } from "../../../inventory/products/product.types";
 import ExpeditionBatchItems from "./batch-items.model";
 
 export interface ExpeditionBatchItemsAttributes {
@@ -9,10 +10,13 @@ export interface ExpeditionBatchItemsAttributes {
   quantity_scanned: number;
   createdAt?: Date;
   updatedAt?: Date;
+
+  product?: ProductAttributes
+
 }
 
 export interface ExpeditionBaatchItemFull extends ExpeditionBatchItems {
-  product: Product
+  product: ProductAttributes
 }
 
 export interface ExpeditionBatchItemsCreationAttributes extends Omit<ExpeditionBatchItemsAttributes, 'id' | 'createdAt' | 'updatedAt'> {}

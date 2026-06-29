@@ -1,4 +1,5 @@
 import Stock from "../stock/stock.model";
+import { SupplierMappingAttributes } from "../supplier-mapping/supplier-mapping.types";
 import Product from "./product.model";
 
 export interface ProductAttributes {
@@ -22,6 +23,9 @@ export interface ProductAttributes {
   stock_virtual_total?: number;
   createdAt?: Date;
   updatedAt?: Date;
+
+
+  supplierMappings?: SupplierMappingAttributes[]
 }
 
 export interface ProductCreationAttributes extends Omit<

@@ -1,4 +1,4 @@
-import { Op, Transaction } from "sequelize";
+import { Op, Sequelize, Transaction } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import { Product, SupplierMapping } from "../../../inventory";
@@ -16,6 +16,7 @@ import expeditionScanLogRepository, {
   ExpeditionScanLogRepository,
 } from "./scan-logs.repository";
 import InvoiceItems from "../../entrance/invoice-items/invoice-items.model";
+import supplierMappingService from "../../../inventory/supplier-mapping/supplier-mapping.service";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
@@ -132,7 +133,7 @@ export class ExpeditionScanLogService extends BaseService<
 
       this.assertTransshipment(batchInvoice.invoice, unitBusiness);
 
-      const productRead = (await ExpeditionBatchItems.findOne({
+      let productRead = await ExpeditionBatchItems.findOne({
         where: { expedition_batch_id: batchid },
         include: [
           {
@@ -144,15 +145,43 @@ export class ExpeditionScanLogService extends BaseService<
           },
         ],
         transaction: t,
-      })) as ExpeditionBaatchItemFull;
+      });
 
-      if (!productRead) throw Error("Produto não encontrado");
+      if (!productRead) {
+        productRead = await ExpeditionBatchItems.findOne({
+          where: { expedition_batch_id: batchid },
+          include: [
+            {
+              model: Product,
+              as: "product",
+              include: [
+                {
+                  model: SupplierMapping,
+                  as: "supplierMappings",
+                  where: Sequelize.where(
+                    Sequelize.fn(
+                      "LTRIM",
+                      Sequelize.col("supplier_product_code"),
+                      "0",
+                    ),
+                    productcode.replace(/^0+/, ""),
+                  ),
+                },
+              ],
+            },
+          ],
+          transaction: t,
+        });
+      }
+
+      if (!productRead?.product) throw Error("Produto não encontrado");
 
       const productReadLocked = (await ExpeditionBatchItems.findOne({
         where: { id: productRead.id },
         transaction: t,
         lock: t.LOCK.UPDATE,
       })) as ExpeditionBaatchItemFull;
+
 
       productReadLocked.product = productRead.product;
 
@@ -269,12 +298,10 @@ export class ExpeditionScanLogService extends BaseService<
       });
 
       if (!productFound) {
-        const supplierMapping = await SupplierMapping.findOne({
-          where: { supplier_product_code: labelcode },
-          include: [{ model: Product, as: "product" }],
-        });
+        const supplierMapping =
+          await supplierMappingService.findByProductCode(labelcode);
 
-        productFound = (supplierMapping as any)?.product ?? null;
+        productFound = supplierMapping?.product ?? null;
       }
 
       if (!productFound) throw new Error("Produto não encontrado!");
