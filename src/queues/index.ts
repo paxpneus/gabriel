@@ -216,6 +216,7 @@ export function startBlingWorkers() {
     blingTokenRefreshQueue,
     blingDailyReconciler,
     tcarUpsertQueue,
+    blingOrderQueue,
   } = buildQueues([
     "BLING_API_FETCH",
     "BLING_DIRECT_UPSERT",
@@ -230,6 +231,7 @@ export function startBlingWorkers() {
   void blingApiFetchQueue;
   void blingDirectUpsertQueue;
   void tcarUpsertQueue;
+  void blingOrderQueue;
 
   console.log("------------------- QUEUE: Bling Workers Ativos! -------------------");
   console.log("  → BLING_API_FETCH");
@@ -245,7 +247,7 @@ export function startAutomationWorkers() {
     nfeQueue,
     mlOrderSyncQueue,
     cnpjQueue,
-    blingOrderQueue,
+    // blingOrderQueue,
     reconcilerQueue,
     blingReconcilerQueue,
   } = buildQueues([
@@ -263,7 +265,7 @@ export function startAutomationWorkers() {
   void nfeQueue;
   void mlOrderSyncQueue;
   void cnpjQueue;
-  void blingOrderQueue;
+  // void blingOrderQueue;
   void reconcilerQueue;
   void blingReconcilerQueue;
 
