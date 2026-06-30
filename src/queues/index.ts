@@ -148,7 +148,10 @@ export function registerQueues(app: Express) {
     autoBackupQueue,
     tcarUpsertQueue,
     tcarSyncQueue,
-  } = buildQueues([]); 
+  } = buildQueues([
+    "BLING_API_FETCH",
+    "TCAR_UPSERT"
+  ]); 
 
   const blingOrderQueue = new BlingOrderQueue(
     new BlingOrderService(blingApi),

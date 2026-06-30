@@ -267,7 +267,7 @@ interface BlingApiInvoice {
   contato?: {
     id: number;
     nome?: string;
-    numeroDocumento?: number;
+    numeroDocumento?: string;
     endereco?: {
       uf?: string;
       municipio?: string;
@@ -1024,9 +1024,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       destinationUfFromXml || nf.contato?.endereco?.uf || null;
     const destinationCity =
       destinationCityFromXml || nf.contato?.endereco?.municipio || null;
-    const customerDoc = nf.contato
-      ? (nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "")
-      : "";
+    const customerDoc =
+      nf.contato?.numeroDocumento ?? nf.destinatario?.nome ?? "";
     const customerName = nf.contato?.nome ?? nf.destinatario?.nome ?? "";
     const key = nf.chaveAcesso ?? `PENDING-KEY-${nf.id}`;
 

@@ -52,7 +52,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
   // ─── Subqueries reutilizáveis ────────────────────────────────────────────────
 
-
   private productBrandsLiteral() {
     return Sequelize.literal(`(
       SELECT ARRAY_AGG(DISTINCT p.brand)
@@ -428,12 +427,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           where: { unit_business_id: unitBusinessId },
           required: false,
           attributes: ["status", "type", "batch_generated"],
-          include: [
-            {
-              model: UnitBusiness,
-              as: "unitBusiness",
-            },
-          ],
+          include: [{ model: UnitBusiness, as: "unitBusiness" }],
         },
         {
           model: InvoiceItems,
@@ -449,7 +443,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                   as: "productConfigs",
                   where: { unit_business_id: unitBusinessId },
                   required: false,
-                  limit: 1,
                 },
               ],
             },
@@ -497,7 +490,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                           ],
                           where: { unit_business_id: unitBusinessId },
                           required: false,
-                          limit: 1,
                         },
                       ],
                     },
@@ -507,16 +499,41 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
             },
           ],
         },
-        {
-          model: UnmappedInvoiceProduct,
-          as: "unmappedProducts",
-        },
+        { model: UnmappedInvoiceProduct, as: "unmappedProducts" },
       ],
     });
 
     if (!data) throw new Error(`Nota não encontrada`);
 
     const plain = data.get({ plain: true }) as any;
+
+    plain.items = plain.items?.map((item: any) => ({
+      ...item,
+      product: item.product
+        ? {
+            ...item.product,
+            productConfigs: item.product.productConfigs?.[0] ?? [],
+          }
+        : item.product,
+    }));
+
+    if (plain.batchInvoice?.items) {
+      plain.batchInvoice.items = plain.batchInvoice.items.map((bi: any) => ({
+        ...bi,
+        batchItem: bi.batchItem
+          ? {
+              ...bi.batchItem,
+              product: bi.batchItem.product
+                ? {
+                    ...bi.batchItem.product,
+                    productConfigs:
+                      bi.batchItem.product.productConfigs?.slice(0, 1) ?? [],
+                  }
+                : bi.batchItem.product,
+            }
+          : bi.batchItem,
+      }));
+    }
 
     const batchItemsMap = new Map<string, any>(
       plain.batchInvoice?.items?.map((b: BatchInvoiceItemsAttributes) => [
@@ -530,7 +547,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       unitBusinessAttributes: plain.unitBusinessAttributes?.[0] ?? null,
       items: plain.items?.map((item: any) => ({
         ...item,
-        status: batchItemsMap.get(item.product_id)?.status ?? 'PENDING',
+        status: batchItemsMap.get(item.product_id)?.status ?? "PENDING",
         quantity_read: batchItemsMap.get(item.product_id)?.quantity_read ?? 0,
       })),
     } as FullInvoiceMappedForFrontend;

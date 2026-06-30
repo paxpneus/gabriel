@@ -97,6 +97,15 @@ export class InvoiceController extends BaseController<
     );
   }
 
+  private resolveUnitBusinessId(
+    req: Request,
+    contextUnitBusinessId: string,
+  ): string {
+    const fromParams = (req.params.unitBusinessId ??
+      req.query.unitBusinessId) as string | undefined;
+    return fromParams && fromParams.trim() ? fromParams : contextUnitBusinessId;
+  }
+
   protected registerCustomRoutes(): void {}
 
   protected middlewaresFor() {
@@ -128,10 +137,11 @@ export class InvoiceController extends BaseController<
     try {
       const params = this.extractQueryParams(req);
       const context = await getUserContext(req);
-      const result = await this.service.listInvoices(
-        params,
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
         context.unitBusinessId,
       );
+      const result = await this.service.listInvoices(params, unitBusinessId);
       return res.json(result);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
@@ -139,27 +149,34 @@ export class InvoiceController extends BaseController<
   };
 
   update = async (req: Request, res: Response): Promise<Response> => {
-  try {
-    const context = await getUserContext(req);
-    await this.service.updateInvoices(
-      [req.params.id as string],
-      context.unitBusinessId,
-      req.body,
-    );
-    return res.json({ success: true });
-  } catch (error: any) {
-    return res.status(400).json({ error: error.message });
-  }
-};
+    try {
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      await this.service.updateInvoices(
+        [req.params.id as string],
+        unitBusinessId,
+        req.body,
+      );
+      return res.json({ success: true });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
 
   getFullInvoice = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { id } = req.params;
       const context = await getUserContext(req);
-
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
       const data = await this.service.findByIdFullWithBatch(
         id as string,
-        context.unitBusinessId,
+        unitBusinessId,
       );
       return res.json({ data });
     } catch (err: any) {
@@ -345,22 +362,20 @@ export class InvoiceController extends BaseController<
     }
   };
 
- updateInvoicesOpen = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const ids = req.body;
-    const context = await getUserContext(req);
-
-    await this.service.updateInvoicesOpen(
-      ids,
-      context.unitBusinessId,
-  
-    );
-
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-};
+  updateInvoicesOpen = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const ids = req.body;
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      await this.service.updateInvoicesOpen(ids, unitBusinessId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  };
 
   bondPendingCancelledInvoice = async (
     req: Request,
@@ -370,8 +385,15 @@ export class InvoiceController extends BaseController<
       const { id } = req.params;
       const { bondedInvoiceId } = req.body;
       const context = await getUserContext(req);
-
-      await this.service.bondInvoice(id as string, bondedInvoiceId, context.unitBusinessId);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      await this.service.bondInvoice(
+        id as string,
+        bondedInvoiceId,
+        unitBusinessId,
+      );
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -382,9 +404,16 @@ export class InvoiceController extends BaseController<
     try {
       const { expectedDate } = req.body;
       const { id } = req.params;
-      const context = await getUserContext(req)
-
-      await this.service.scheduleInvoice(id as string, expectedDate, context.unitBusinessId);
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      await this.service.scheduleInvoice(
+        id as string,
+        expectedDate,
+        unitBusinessId,
+      );
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -464,11 +493,14 @@ export class InvoiceController extends BaseController<
   ): Promise<Response> => {
     try {
       const params = this.extractQueryParams(req);
-      const { unitBusinessId } = req.params;
-
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
       const data = await this.service.getInvoiceSupplierReport(
         params,
-        unitBusinessId as string,
+        unitBusinessId,
       );
       return res.json({ data });
     } catch (err: any) {

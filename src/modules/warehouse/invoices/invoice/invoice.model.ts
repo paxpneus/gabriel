@@ -20,7 +20,6 @@ class Invoice
   public customer_document!: string;
   public xml_path?: string;
   public danfe_path?: string;
-  public unit_business_id!: string;
   public store_id!: string;
   public sender_cnpj!: string;
   public sender_name!: string;
@@ -108,14 +107,6 @@ Invoice.init(
     },
     danfe_path: {
       type: DataTypes.TEXT,
-    },
-    unit_business_id: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: "unit_businesses",
-        key: "id",
-      },
     },
     store_id: {
       type: DataTypes.UUID,
