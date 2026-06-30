@@ -1,4 +1,4 @@
-import { CreateOptions, FindOptions, Op, CreationAttributes, UpdateOptions } from 'sequelize';
+import { CreateOptions, FindOptions, Op, CreationAttributes, UpdateOptions, Transaction } from 'sequelize';
 import { PaginatedResult, QueryParams } from '../../../shared/query/query.types';
 import BaseService from '../../../shared/utils/base-models/base-service';
 import Product from './product.model';
@@ -6,6 +6,7 @@ import productRepository, { ProductRepository } from './product.repository';
 import Stock from '../stock/stock.model';
 import ProductConfig from '../product-config/product_config.model';
 import { ProductCreationAttributes } from './product.types';
+import supplierMappingService from '../supplier-mapping/supplier-mapping.service';
 
 type StockUnitFilter = {
   unitBusinessId?: string;
@@ -204,6 +205,30 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     }
   }
 
+    async findByCode(
+    code: string,
+    options?: { transaction?: Transaction },
+  ): Promise<{ product: Product; matchedCode: string } | null> {
+    const byEan = await this.findOne({
+      where: {
+        [Op.or]: [{ ean: code }, { ean_tribut: code }],
+      },
+      transaction: options?.transaction,
+    });
+
+    if (byEan) return { product: byEan, matchedCode: code };
+
+    const mapping = await supplierMappingService.findOne({
+      where: { supplier_product_code: code },
+      include: [{ model: Product, as: "product" }],
+      transaction: options?.transaction,
+    });
+
+    const product = (mapping as any)?.product ?? null;
+    if (!product) return null;
+
+    return { product, matchedCode: code };
+  }
 }
 
 export default new ProductService();

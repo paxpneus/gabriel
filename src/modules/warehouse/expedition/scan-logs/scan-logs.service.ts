@@ -17,6 +17,7 @@ import expeditionScanLogRepository, {
 } from "./scan-logs.repository";
 import InvoiceItems from "../../entrance/invoice-items/invoice-items.model";
 import supplierMappingService from "../../../inventory/supplier-mapping/supplier-mapping.service";
+import productsService from "../../../inventory/products/product.service";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
@@ -65,6 +66,19 @@ export class ExpeditionScanLogService extends BaseService<
         "Leitura bloqueada: nota fiscal não pertence à sua unidade de negócio",
       );
     }
+  }
+
+  private async findProductByCode(
+    code: string,
+    t?: Transaction,
+  ): Promise<{ product: Product; matchedCode: string }> {
+    const result = await productsService.findByCode(code, {
+      transaction: t,
+    });
+
+    if (!result) throw new Error("Produto não encontrado!");
+
+    return result;
   }
 
   async scanProduct(
