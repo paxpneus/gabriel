@@ -271,7 +271,9 @@ export class DailyOperationReportRepository {
         FROM invoices i
         JOIN affected a ON a.invoice_id = i.id
         JOIN invoice_attrs ia ON ia.invoice_id = i.id
-        JOIN unit_businesses ub ON ub.cnpj = i.sender_cnpj
+        JOIN unit_businesses ub
+          ON ub.id = i.unit_business_id
+        AND ub.cnpj = i.sender_cnpj
         WHERE ia.type = 'INCOMING'
       ),
       -- Identifica notas de adiantamento:

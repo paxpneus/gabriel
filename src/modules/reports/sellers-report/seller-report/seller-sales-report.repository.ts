@@ -161,12 +161,14 @@ export class SellerSalesReportRepository {
         FROM order_items oi
         WHERE oi.updated_at >= :lastProcessedAt
 
-        UNION
+       UNION
 
-        SELECT o.id AS order_id
-        FROM orders o
-        JOIN invoices i ON i.id = o.invoice_id
-        WHERE i.updated_at >= :lastProcessedAt
+      SELECT o.id AS order_id
+      FROM orders o
+      JOIN invoice_unit_business_attributes iuba
+        ON iuba.invoice_id = o.invoice_id
+      AND iuba.unit_business_id = o.unit_business_id
+      WHERE iuba.updated_at >= :lastProcessedAt
       ) affected
       WHERE order_id IS NOT NULL
       `,
@@ -189,15 +191,18 @@ export class SellerSalesReportRepository {
       ),
       -- Vendedor: orders -> invoices (orders.invoice_id) -> invoices.seller_id -> contacts
       order_seller AS (
-        SELECT
-          o.id AS order_id,
-          o.invoice_id,
-          inv.seller_id,
-          inv.status AS invoice_status
-        FROM orders o
-        JOIN affected a ON a.order_id = o.id
-        LEFT JOIN invoices inv ON inv.id = o.invoice_id
-      ),
+      SELECT
+        o.id AS order_id,
+        o.invoice_id,
+        inv.seller_id,
+        iuba.status AS invoice_status
+      FROM orders o
+      JOIN affected a ON a.order_id = o.id
+      LEFT JOIN invoices inv ON inv.id = o.invoice_id
+      LEFT JOIN invoice_unit_business_attributes iuba
+        ON iuba.invoice_id = o.invoice_id
+      AND iuba.unit_business_id = o.unit_business_id
+    ),
       -- Regra de venda válida:
       -- 1) Se orders.actual_situation in ('6','9') -> válida
       -- 2) Se actual_situation vazio/nulo -> usa invoices.status,
