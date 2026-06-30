@@ -1,10 +1,16 @@
-import { Model, DataTypes } from 'sequelize';
-import sequelize from '../../../../config/sequelize';
-import { BatchInvoiceItemsAttributes, BatchInvoiceItemsCreationAttributes } from './batch-invoice-items.types';
-import { v4 as uuidv4 } from 'uuid';
+import { Model, DataTypes } from "sequelize";
+import sequelize from "../../../../config/sequelize";
+import {
+  BatchInvoiceItemsAttributes,
+  BatchInvoiceItemsCreationAttributes,
+} from "./batch-invoice-items.types";
+import { v4 as uuidv4 } from "uuid";
 
 class BatchInvoiceItems
-  extends Model<BatchInvoiceItemsAttributes, BatchInvoiceItemsCreationAttributes>
+  extends Model<
+    BatchInvoiceItemsAttributes,
+    BatchInvoiceItemsCreationAttributes
+  >
   implements BatchInvoiceItemsAttributes
 {
   public id!: string;
@@ -12,7 +18,7 @@ class BatchInvoiceItems
   public expedition_batch_invoice_id!: string;
   public quantity_expected!: number;
   public quantity_read!: number;
-  public status!: 'PENDING' | 'FINISHED';
+  public status!: "PENDING" | "FINISHED";
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -30,45 +36,45 @@ BatchInvoiceItems.init(
       type: DataTypes.UUID,
       allowNull: false,
       references: {
-        model: 'expedition_batch_items',
-        key: 'id',
+        model: "expedition_batch_items",
+        key: "id",
       },
     },
     expedition_batch_invoice_id: {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
-        model: 'expedition_batch_invoices',
-        key: 'id',
+        model: "expedition_batch_invoices",
+        key: "id",
       },
     },
     quantity_expected: {
-      type: DataTypes.DECIMAL(10, 2),
+      type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 0,
     },
     quantity_read: {
-      type: DataTypes.DECIMAL(10, 2),
+      type: DataTypes.INTEGER,
       defaultValue: 0,
     },
     status: {
-      type: DataTypes.ENUM('PENDING', 'FINISHED'),
-      defaultValue: 'PENDING',
+      type: DataTypes.ENUM("PENDING", "FINISHED"),
+      defaultValue: "PENDING",
     },
   },
   {
     sequelize,
-    tableName: 'batch_invoice_items',
+    tableName: "batch_invoice_items",
     timestamps: true,
     underscored: true,
     hooks: {
       beforeUpdate: (instance: any) => {
         if (instance.quantity_received === instance.quantity_expected) {
-          instance.status = 'FINISHED';
+          instance.status = "FINISHED";
         }
       },
     },
-  }
+  },
 );
 
 export default BatchInvoiceItems;

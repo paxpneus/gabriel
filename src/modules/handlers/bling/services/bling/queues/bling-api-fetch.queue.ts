@@ -1305,7 +1305,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         invoiceItemsForCreate.push({
           product_id: product.id,
           quantity_expected: Math.trunc(qty),
-          status: "PENDING",
           fiscal,
         });
       }

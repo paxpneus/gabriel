@@ -24,6 +24,7 @@ import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items
 import batchService from "../batch/batch.service";
 import batchInvoicesService from "../batch-invoices/batch-invoices.service";
 import { assertTransshipment } from "../utils/helpers/transshipment-resolver";
+import InvoiceUnitBusinessAttributes from "../../invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
@@ -51,7 +52,6 @@ export class ExpeditionScanLogService extends BaseService<
       sortableFields: ["vol_number"],
     };
   }
-
 
   /**
    * Busca produto por EAN/EAN tribut ou por supplier_product_code.
@@ -361,8 +361,15 @@ export class ExpeditionScanLogService extends BaseService<
           {
             model: Invoice,
             as: "invoice",
-            where: { type: "INCOMING" },
             required: true,
+            include: [
+              {
+                model: InvoiceUnitBusinessAttributes,
+                as: "unitBusinessAttributes",
+                where: { type: "INCOMING", unit_business_id: batch.unit_business_id },
+                required: true,
+              },
+            ],
           },
           {
             model: BatchInvoiceItems,
@@ -496,8 +503,16 @@ export class ExpeditionScanLogService extends BaseService<
           {
             model: Invoice,
             as: "invoice",
-            where: { id: invoiceId, type: "INCOMING" },
+            where: { id: invoiceId },
             required: true,
+            include: [
+              {
+                model: InvoiceUnitBusinessAttributes,
+                as: "unitBusinessAttributes",
+                where: { type: "INCOMING", unit_business_id: batch.unit_business_id },
+                required: true,
+              },
+            ],
           },
           {
             model: BatchInvoiceItems,

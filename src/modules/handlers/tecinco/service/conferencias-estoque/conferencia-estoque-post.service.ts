@@ -169,18 +169,18 @@ export class TCarConferenciaPostService {
       );
     }
 
-    if (!notaPertenceAFilial(invoice, unitBusiness)) {
-      console.warn(
-        `[TCarConferenciaPostService] Invoice ignorada — não pertence à filial | invoice=${invoiceId} | numero=${numero} | type=${invoice.type} | sender_cnpj=${invoice.sender_cnpj} | receiver_cnpj=${invoice.receiver_cnpj} | unit_business_cnpj=${unitBusiness.cnpj}`,
-      );
-      return {
-        numero,
-        sincronizado: true,
-        itens: [],
-        itens_a_conferir: [],
-        extraParams: {},
-      };
-    }
+    // if (!notaPertenceAFilial(invoice, unitBusiness)) {
+    //   console.warn(
+    //     `[TCarConferenciaPostService] Invoice ignorada — não pertence à filial | invoice=${invoiceId} | numero=${numero} | type=${invoice.type} | sender_cnpj=${invoice.sender_cnpj} | receiver_cnpj=${invoice.receiver_cnpj} | unit_business_cnpj=${unitBusiness.cnpj}`,
+    //   );
+    //   return {
+    //     numero,
+    //     sincronizado: true,
+    //     itens: [],
+    //     itens_a_conferir: [],
+    //     extraParams: {},
+    //   };
+    // }
 
     // ── Resolve extra params da Tecinco (obrigatórios para nota-fiscal) ────────
     const extraParams =

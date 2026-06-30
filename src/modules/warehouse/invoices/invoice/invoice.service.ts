@@ -43,7 +43,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       stringFields: ["receiver_cnpj", "sender_cnpj", "customer_document"],
       defaults: {
         perPage: 20,
-        sortBy: ["status", "number_system"],
+        sortBy: ["number_system"],
         sortDir: ["ASC", "ASC"],
       },
       // Campos para busca textual (LIKE)

@@ -2,6 +2,7 @@ import {
   FullInvoice,
   FullInvoiceAttributes,
   FullInvoiceForAllUnits,
+  FullInvoiceMappedForFrontend,
   InvoiceAttributes,
   InvoiceCreationData,
   ItemWithFiscal,
@@ -41,6 +42,8 @@ import {
   InvoiceFiscalItemAttributes,
   InvoiceFiscalItemCreationAttributes,
 } from "../invoice-fiscal-item/invoice-fiscal-item.types";
+import { BatchInvoiceItemsAttributes } from "../../expedition/batch-invoice-items/batch-invoice-items.types";
+import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
 
 export class InvoiceRepository extends BaseRepository<Invoice> {
   constructor() {
@@ -49,24 +52,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
   // ─── Subqueries reutilizáveis ────────────────────────────────────────────────
 
-  private totalExpectedLiteral() {
-    return Sequelize.literal(`(
-      SELECT COALESCE(SUM(quantity_expected), 0)
-      FROM invoice_items
-      WHERE invoice_items.invoice_id = "Invoice"."id"
-    )`);
-  }
-
-  private totalReadLiteral(unitBusinessId: string) {
-    return Sequelize.literal(`(
-    SELECT COALESCE(SUM(bii.quantity_read), 0)
-    FROM expedition_batch_invoices ebi
-    INNER JOIN batch_invoice_items bii ON bii.expedition_batch_invoice_id = ebi.id
-    INNER JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
-    WHERE ebi.invoice_id = "Invoice"."id"
-      AND eb.unit_business_id = '${unitBusinessId}'
-  )`);
-  }
 
   private productBrandsLiteral() {
     return Sequelize.literal(`(
@@ -191,12 +176,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           where: attrWhere,
           required: true,
           attributes: ["status", "type", "batch_generated"],
-           include: [
+          include: [
             {
               model: UnitBusiness,
-              as: 'unitBusiness'
-            }
-          ]
+              as: "unitBusiness",
+            },
+          ],
         },
         {
           model: ExpeditionBatchInvoice,
@@ -241,8 +226,8 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         exclude: ["source_payload"],
         include: [
           [this.productBrandsLiteral(), "product_brands"],
-          [this.totalExpectedLiteral(), "total_expected"],
-          [this.totalReadLiteral(unitBusinessId), "total_read"],
+          [totalExpectedLiteral(), "total_expected"],
+          [totalReadLiteral(unitBusinessId), "total_read"],
         ],
       },
     };
@@ -287,8 +272,8 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       attributes: {
         exclude: ["xml_path", "source_payload"],
         include: [
-          [this.totalExpectedLiteral(), "total_expected"],
-          [this.totalReadLiteral(unitBusinessId), "total_read"],
+          [totalExpectedLiteral(), "total_expected"],
+          [totalReadLiteral(unitBusinessId), "total_read"],
         ],
       },
       include: [
@@ -298,12 +283,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           where: { unit_business_id: unitBusinessId },
           required: false,
           attributes: ["status", "type", "batch_generated"],
-           include: [
+          include: [
             {
               model: UnitBusiness,
-              as: 'unitBusiness'
-            }
-          ]
+              as: "unitBusiness",
+            },
+          ],
         },
         {
           model: InvoiceItems,
@@ -351,7 +336,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       },
       attributes: {
         exclude: ["xml_path", "source_payload"],
-        include: [[this.totalExpectedLiteral(), "total_expected"]],
+        include: [[totalExpectedLiteral(), "total_expected"]],
       },
       include: [
         {
@@ -359,12 +344,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           as: "unitBusinessAttributes",
           required: false,
           attributes: ["status", "type", "batch_generated"],
-           include: [
+          include: [
             {
               model: UnitBusiness,
-              as: 'unitBusiness'
-            }
-          ]
+              as: "unitBusiness",
+            },
+          ],
         },
         {
           model: InvoiceItems,
@@ -384,7 +369,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       ],
     });
 
-    if (!data) return null
+    if (!data) return null;
 
     return data.get({ plain: true }) as FullInvoiceForAllUnits;
   }
@@ -402,12 +387,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           where: { unit_business_id: unitBusinessId },
           required: false,
           attributes: ["status", "type", "batch_generated"],
-           include: [
+          include: [
             {
               model: UnitBusiness,
-              as: 'unitBusiness'
-            }
-          ]
+              as: "unitBusiness",
+            },
+          ],
         },
       ],
     });
@@ -427,13 +412,13 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   async getFullInvoiceWithBatch(
     invoiceId: string,
     unitBusinessId: string,
-  ): Promise<FullInvoice> {
+  ): Promise<FullInvoiceMappedForFrontend> {
     const data = await this.findById(invoiceId, {
       attributes: {
         exclude: ["xml_path", "source_payload"],
         include: [
-          [this.totalExpectedLiteral(), "total_expected"],
-          [this.totalReadLiteral(unitBusinessId), "total_read"],
+          [totalExpectedLiteral(), "total_expected"],
+          [totalReadLiteral(unitBusinessId), "total_read"],
         ],
       },
       include: [
@@ -446,11 +431,11 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           include: [
             {
               model: UnitBusiness,
-              as: 'unitBusiness'
-            }
-          ]
+              as: "unitBusiness",
+            },
+          ],
         },
-         {
+        {
           model: InvoiceItems,
           as: "items",
           include: [
@@ -533,17 +518,32 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
     const plain = data.get({ plain: true }) as any;
 
+    const batchItemsMap = new Map<string, any>(
+      plain.batchInvoice?.items?.map((b: BatchInvoiceItemsAttributes) => [
+        b.batchItem?.product_id,
+        b,
+      ]) ?? [],
+    );
+
     return {
       ...plain,
       unitBusinessAttributes: plain.unitBusinessAttributes?.[0] ?? null,
-    } as FullInvoice;
+      items: plain.items?.map((item: any) => ({
+        ...item,
+        status: batchItemsMap.get(item.product_id)?.status ?? 'PENDING',
+        quantity_read: batchItemsMap.get(item.product_id)?.quantity_read ?? 0,
+      })),
+    } as FullInvoiceMappedForFrontend;
   }
 
   async updateWithAttributes(
     invoiceIds: string[],
     unitBusinessId: string,
     data: Partial<
-      InvoiceAttributes & { status: InvoiceUnitBusinessAttributesStatus; batch_generated: boolean }
+      InvoiceAttributes & {
+        status: InvoiceUnitBusinessAttributesStatus;
+        batch_generated: boolean;
+      }
     >,
     attrWhere?: WhereOptions,
   ): Promise<void> {

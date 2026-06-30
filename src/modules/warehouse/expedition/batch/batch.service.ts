@@ -148,6 +148,14 @@ export class ExpeditionBatchService extends BaseService<
     let batchId: string;
 
     await sequelize.transaction(async (t) => {
+      const lockedInvoices = await invoiceService.findAll({
+        where: { id: invoiceIds },
+        attributes: ["id"],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      // 2. Busca completa sem lock
       const rawInvoices = await invoiceService.findAll({
         where: { id: invoiceIds },
         include: [
@@ -160,7 +168,6 @@ export class ExpeditionBatchService extends BaseService<
           },
         ],
         transaction: t,
-        lock: t.LOCK.UPDATE,
       });
 
       const invoices: FullInvoice[] = rawInvoices.map((invoice) => {
@@ -551,9 +558,9 @@ export class ExpeditionBatchService extends BaseService<
           },
           { where: { id: batchId }, transaction: t },
         ),
-        invoiceService.updateInvoices(invoicesIds, fullBatch.unit_business_id,
-          { status: "FINISHED" },
-        ),
+        invoiceService.updateInvoices(invoicesIds, fullBatch.unit_business_id, {
+          status: "FINISHED",
+        }),
         batchInvoiceItemsService.bulkUpdate(
           { status: "FINISHED" },
           { where: { id: batchInvoiceItemsIds }, transaction: t },

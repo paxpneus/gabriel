@@ -10,7 +10,6 @@ class InvoiceItems extends Model<InvoiceItemsAttributes, InvoiceItemsCreationAtt
   public invoice_id!: string;
   public quantity_expected!: number;
   public product?: Product;
-  public status!: 'PENDING' | 'FINISHED';
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -44,10 +43,6 @@ InvoiceItems.init(
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
       defaultValue: 0,
-    },
-    status: {
-      type: DataTypes.ENUM('PENDING', 'FINISHED'),
-      defaultValue: 'PENDING',
     },
   },
   {
