@@ -3,12 +3,15 @@ import sequelize from '../../../config/sequelize';
 import { SupplierMappingAttributes, SupplierMappingCreationAttributes } from './supplier-mapping.types';
 import { v4 as uuidv4 } from 'uuid';
 import { cleanDocument } from '../../../shared/utils/normalizers/document';
+import Product from '../products/product.model';
 
 class SupplierMapping extends Model<SupplierMappingAttributes, SupplierMappingCreationAttributes> implements SupplierMappingAttributes {
   public id!: string;
   public product_id!: string;
   public supplier_cnpj!: string;
   public supplier_product_code!: string;
+
+  public product?: Product
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
