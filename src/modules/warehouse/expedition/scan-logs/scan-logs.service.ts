@@ -133,50 +133,46 @@ export class ExpeditionScanLogService extends BaseService<
 
       this.assertTransshipment(batchInvoice.invoice, unitBusiness);
 
+      // ── Busca o produto primeiro (raiz correta, sem include aninhado) ──
       let matchedSupplierCode: string | null = null;
 
-      let productRead = await ExpeditionBatchItems.findOne({
-        where: { expedition_batch_id: batchid },
-        include: [
-          {
-            model: Product,
-            as: "product",
-            where: {
-              [Op.or]: [{ ean: productcode }, { ean_tribut: productcode }],
-            },
-          },
-        ],
+      let product = await Product.findOne({
+        where: {
+          [Op.or]: [{ ean: productcode }, { ean_tribut: productcode }],
+        },
         transaction: t,
       });
 
-      if (!productRead) {
-        productRead = await ExpeditionBatchItems.findOne({
-          where: { expedition_batch_id: batchid },
+      if (!product) {
+        const supplierMapping = await SupplierMapping.findOne({
+          where: { supplier_product_code: productcode },
           include: [
             {
               model: Product,
               as: "product",
-              include: [
-                {
-                  model: SupplierMapping,
-                  as: "supplierMappings",
-                  where: {
-                    supplier_product_code: productcode,
-                  },
-                },
-              ],
             },
           ],
           transaction: t,
         });
 
-        if (productRead?.product?.supplierMappings?.length) {
-          matchedSupplierCode =
-            productRead.product.supplierMappings[0].supplier_product_code;
+        if (supplierMapping?.product) {
+          product = supplierMapping.product;
+          matchedSupplierCode = supplierMapping.supplier_product_code;
         }
       }
 
-      if (!productRead?.product) throw Error("Produto não encontrado");
+      if (!product) throw Error("Produto não encontrado");
+
+      // ── Busca o item do lote vinculado a esse produto ───────────────────
+      let productRead = await ExpeditionBatchItems.findOne({
+        where: {
+          expedition_batch_id: batchid,
+          product_id: product.id,
+        },
+        transaction: t,
+      });
+
+      if (!productRead) throw Error("Produto não encontrado no lote");
 
       const productReadLocked = (await ExpeditionBatchItems.findOne({
         where: { id: productRead.id },
@@ -184,17 +180,15 @@ export class ExpeditionScanLogService extends BaseService<
         lock: t.LOCK.UPDATE,
       })) as ExpeditionBaatchItemFull;
 
-      productReadLocked.product = productRead.product;
+      productReadLocked.product = product;
 
       if (productReadLocked.quantity_scanned >= productReadLocked.quantity) {
         throw Error("Produto já totalmente bipado");
       }
 
-      const eanExistsOnLabel =
-        productRead.product.ean && labelcode.includes(productRead.product.ean);
+      const eanExistsOnLabel = product.ean && labelcode.includes(product.ean);
       const eanTributExistsOnLabel =
-        productRead.product.ean_tribut &&
-        labelcode.includes(productRead.product.ean_tribut);
+        product.ean_tribut && labelcode.includes(product.ean_tribut);
       const supplierCodeExistsOnLabel =
         matchedSupplierCode && labelcode.includes(matchedSupplierCode);
 
