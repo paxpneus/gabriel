@@ -51,14 +51,23 @@ module.exports = {
         const { id, type, status, batch_generated, sender_cnpj, receiver_cnpj } = invoice;
 
         if (type === 'INCOMING') {
-          // sender_cnpj: do ponto de vista dessa UB, ela está enviando → OUTGOING
           const senderUbId = cnpjToUnitBusiness.get(sender_cnpj);
+          const receiverUbId = cnpjToUnitBusiness.get(receiver_cnpj);
+
           if (senderUbId) {
-            addAttribute(id, senderUbId, 'OUTGOING', 'OPEN', false);
+            // Só é devolução (INCOMING do lado do sender) se o receiver não for
+            // uma unit_business cadastrada diferente do sender — ou seja, a nota
+            // não tem um destinatário interno "real" recebendo a mercadoria.
+            // Caso contrário, é o fluxo normal: sender está enviando → OUTGOING.
+            const isReturn = !receiverUbId || receiverUbId === senderUbId;
+
+            if (isReturn) {
+              addAttribute(id, senderUbId, 'INCOMING', status, batch_generated);
+            } else {
+              addAttribute(id, senderUbId, 'OUTGOING', 'OPEN', false);
+            }
           }
 
-          // receiver_cnpj: do ponto de vista dessa UB, ela está recebendo → INCOMING
-          const receiverUbId = cnpjToUnitBusiness.get(receiver_cnpj);
           if (receiverUbId) {
             addAttribute(id, receiverUbId, 'INCOMING', status, batch_generated);
           }
