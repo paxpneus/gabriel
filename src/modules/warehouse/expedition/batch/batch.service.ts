@@ -279,7 +279,7 @@ export class ExpeditionBatchService extends BaseService<
       await invoiceService.updateInvoices(
         notBatched.map((i) => i.id),
         unitBusinessId,
-        { batch_generated: true },
+        { batch_generated: true, status: 'PENDING' },
       );
 
       batchId = batch.id;

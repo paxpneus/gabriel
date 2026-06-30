@@ -130,6 +130,12 @@ export class DailyOperationReportRepository {
     );
   }
 
+  /**
+   * Notas afetadas desde o checkpoint. Agora também observa mudanças em
+   * invoice_unit_business_attributes (status/type/batch_generated) e em
+   * batch_invoice_items (quantity_read/status), que substituíram os campos
+   * equivalentes que existiam direto em invoices/invoice_items.
+   */
   async findAffectedInvoiceIds(lastProcessedAt: Date): Promise<string[]> {
     const rows = await sequelize.query<InvoiceIdRow>(
       `
@@ -147,16 +153,22 @@ export class DailyOperationReportRepository {
 
         UNION
 
-        SELECT ii.invoice_id
-        FROM entrance_scan_logs esl
-        JOIN invoice_items ii ON ii.id = esl.invoice_items_id
-        WHERE esl.created_at >= :lastProcessedAt
+        SELECT iuba.invoice_id
+        FROM invoice_unit_business_attributes iuba
+        WHERE iuba.updated_at >= :lastProcessedAt
 
         UNION
 
         SELECT ebi.invoice_id
         FROM expedition_batch_invoices ebi
         WHERE ebi.created_at >= :lastProcessedAt
+
+        UNION
+
+        SELECT ebi.invoice_id
+        FROM batch_invoice_items bii
+        JOIN expedition_batch_invoices ebi ON ebi.id = bii.expedition_batch_invoice_id
+        WHERE bii.updated_at >= :lastProcessedAt
 
         UNION
 
@@ -191,14 +203,28 @@ export class DailyOperationReportRepository {
       WITH affected(invoice_id) AS (
         SELECT unnest(ARRAY[:invoiceIds]::uuid[])
       ),
-      item_totals AS (
+      -- Esperado por invoice continua vindo da nota (invoice_items.quantity_expected),
+      -- que é a fonte de verdade do que foi declarado na NF.
+      item_expected AS (
         SELECT
           ii.invoice_id,
-          COALESCE(SUM(ii.quantity_expected), 0)::integer AS total_expected,
-          COALESCE(SUM(ii.quantity_received), 0)::integer AS total_received
+          COALESCE(SUM(ii.quantity_expected), 0)::integer AS total_expected
         FROM invoice_items ii
         JOIN affected a ON a.invoice_id = ii.invoice_id
         GROUP BY ii.invoice_id
+      ),
+      -- Recebido/lido agora vem do batch: invoice -> expedition_batch_invoices ->
+      -- batch_invoice_items, somando quantity_read. Sem batch vinculado, não há leitura
+      -- registrada (total_received = 0), o que é uma mudança de comportamento em relação
+      -- ao schema antigo (onde quantity_received vivia direto em invoice_items).
+      batch_item_totals AS (
+        SELECT
+          ebi.invoice_id,
+          COALESCE(SUM(bii.quantity_read), 0)::integer AS total_received
+        FROM expedition_batch_invoices ebi
+        JOIN batch_invoice_items bii ON bii.expedition_batch_invoice_id = ebi.id
+        JOIN affected a ON a.invoice_id = ebi.invoice_id
+        GROUP BY ebi.invoice_id
       ),
       scan_bounds AS (
         SELECT
@@ -221,16 +247,32 @@ export class DailyOperationReportRepository {
         JOIN affected a ON a.invoice_id = ebi.invoice_id
         ORDER BY ebi.invoice_id, ebi.created_at ASC
       ),
+      -- type/status/batch_generated agora vêm de invoice_unit_business_attributes,
+      -- casada por (invoice_id, unit_business_id) com a própria invoice — assume-se
+      -- que uma invoice só tem attributes na sua própria unit_business_id.
+      invoice_attrs AS (
+        SELECT
+          iuba.invoice_id,
+          iuba.type,
+          iuba.status,
+          iuba.batch_generated
+        FROM invoice_unit_business_attributes iuba
+        JOIN invoices i ON i.id = iuba.invoice_id AND i.unit_business_id = iuba.unit_business_id
+        JOIN affected a ON a.invoice_id = iuba.invoice_id
+      ),
       -- Identifica se a invoice é devolução de fornecedor:
-      -- INCOMING onde sender_cnpj bate com algum CNPJ de unit_business cadastrado no sistema.
+      -- INCOMING (via invoice_attrs) onde sender_cnpj bate com algum CNPJ de
+      -- unit_business cadastrado no sistema. Mesma regra de CNPJ de antes, só
+      -- trocando a fonte do "type".
       supplier_returns AS (
         SELECT
           i.id AS invoice_id,
           TRUE AS is_supplier_return
         FROM invoices i
         JOIN affected a ON a.invoice_id = i.id
+        JOIN invoice_attrs ia ON ia.invoice_id = i.id
         JOIN unit_businesses ub ON ub.cnpj = i.sender_cnpj
-        WHERE i.type = 'INCOMING'
+        WHERE ia.type = 'INCOMING'
       ),
       -- Identifica notas de adiantamento:
       -- Notas cuja transportadora efetiva (batch tem precedência sobre a nota)
@@ -258,29 +300,29 @@ export class DailyOperationReportRepository {
             WHEN bd.invoice_id IS NOT NULL THEN bd.batch_transporter_id
             ELSE i.transporter_id
           END AS transporter_id,
-          i.type,
+          ia.type,
           DATE(COALESCE(i.emitted_at, i.created_at)) AS invoice_date,
           i.emitted_at,
           bd.delivery_note_generated_at,
           sb.first_scan_at,
           sb.last_scan_at,
-          COALESCE(it.total_expected, 0) AS total_items_expected,
-          COALESCE(it.total_received, 0) AS total_items_received,
+          COALESCE(ie.total_expected, 0) AS total_items_expected,
+          COALESCE(bit.total_received, 0) AS total_items_received,
           CASE
-            WHEN COALESCE(it.total_expected, 0) = 0 THEN 0
-            ELSE ROUND((COALESCE(it.total_received, 0)::numeric / it.total_expected::numeric) * 100, 2)
+            WHEN COALESCE(ie.total_expected, 0) = 0 THEN 0
+            ELSE ROUND((COALESCE(bit.total_received, 0)::numeric / ie.total_expected::numeric) * 100, 2)
           END AS scan_completion_pct,
           CASE
-            WHEN i.type = 'INCOMING'
-              AND COALESCE(it.total_expected, 0) > 0
-              AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
+            WHEN ia.type = 'INCOMING'
+              AND COALESCE(ie.total_expected, 0) > 0
+              AND COALESCE(bit.total_received, 0) >= COALESCE(ie.total_expected, 0)
               THEN sb.last_scan_at
-            WHEN i.type = 'OUTGOING' AND bd.delivery_note_generated_at IS NOT NULL
+            WHEN ia.type = 'OUTGOING' AND bd.delivery_note_generated_at IS NOT NULL
               THEN bd.delivery_note_generated_at
             ELSE NULL
           END AS fully_processed_at,
           CASE
-            WHEN i.type = 'OUTGOING'
+            WHEN ia.type = 'OUTGOING'
               AND i.emitted_at IS NOT NULL
               AND bd.delivery_note_generated_at IS NOT NULL
               -- Convertido de minutos para horas decimais (/ 60)
@@ -288,18 +330,18 @@ export class DailyOperationReportRepository {
             ELSE NULL
           END AS hours_emission_to_delivery_note,
           CASE
-            WHEN i.type = 'INCOMING'
-              AND COALESCE(it.total_expected, 0) > 0
-              AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
+            WHEN ia.type = 'INCOMING'
+              AND COALESCE(ie.total_expected, 0) > 0
+              AND COALESCE(bit.total_received, 0) >= COALESCE(ie.total_expected, 0)
               AND sb.last_scan_at IS NOT NULL
               -- Convertido de minutos para horas decimais (/ 60)
               THEN ROUND((EXTRACT(EPOCH FROM (sb.last_scan_at - COALESCE(i.received_at, i.emitted_at)::timestamptz)) / 3600)::numeric, 2)
             ELSE NULL
           END AS hours_batch_to_fully_scanned,
           CASE
-            WHEN i.status = 'CANCELLED'                THEN 'cancelled'
-            WHEN i.status = 'PENDING_CANCELLED_SYSTEM' THEN 'pending_cancelled'
-            WHEN i.status = 'FINISHED'                 THEN 'completed'
+            WHEN ia.status = 'CANCELLED'                THEN 'cancelled'
+            WHEN ia.status = 'PENDING_CANCELLED_SYSTEM' THEN 'pending_cancelled'
+            WHEN ia.status = 'FINISHED'                 THEN 'completed'
             ELSE 'open'
           END AS snapshot_status,
           -- Flag de devolução de fornecedor: INCOMING cujo sender_cnpj é de uma filial
@@ -308,11 +350,13 @@ export class DailyOperationReportRepository {
           COALESCE(ap.is_advance_payment, FALSE) AS is_advance_payment
         FROM invoices i
         JOIN affected a ON a.invoice_id = i.id
-        LEFT JOIN item_totals it      ON it.invoice_id = i.id
-        LEFT JOIN scan_bounds sb      ON sb.invoice_id = i.id
-        LEFT JOIN batch_data bd       ON bd.invoice_id = i.id
-        LEFT JOIN supplier_returns sr ON sr.invoice_id = i.id
-        LEFT JOIN advance_payments ap ON ap.invoice_id = i.id
+        JOIN invoice_attrs ia            ON ia.invoice_id = i.id
+        LEFT JOIN item_expected ie       ON ie.invoice_id = i.id
+        LEFT JOIN batch_item_totals bit  ON bit.invoice_id = i.id
+        LEFT JOIN scan_bounds sb         ON sb.invoice_id = i.id
+        LEFT JOIN batch_data bd          ON bd.invoice_id = i.id
+        LEFT JOIN supplier_returns sr    ON sr.invoice_id = i.id
+        LEFT JOIN advance_payments ap    ON ap.invoice_id = i.id
         -- Sem filtro de exclusão aqui: adiantamentos são gravados com flag, não descartados
       )
       INSERT INTO invoice_operation_snapshots (
