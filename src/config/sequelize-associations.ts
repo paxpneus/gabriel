@@ -206,16 +206,6 @@ export function setupAssociations() {
     as: "unitBusiness",
   });
 
-  // Unit Business -> Invoices
-  UnitBusiness.hasMany(Invoice, {
-    foreignKey: "unit_business_id",
-    as: "invoices",
-  });
-  Invoice.belongsTo(UnitBusiness, {
-    foreignKey: "unit_business_id",
-    as: "unitBusiness",
-  });
-
   // Unit Business -> Integration Mappings
   UnitBusiness.hasMany(IntegrationMapping, {
     foreignKey: "unit_business_id",

@@ -51,7 +51,6 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       // Campos permitidos para filtros exatos (WHERE field = value)
       // ADICIONADO: 'type' e 'customer_name' aqui
       filterableFields: [
-        "unit_business_id",
         "transporter_id",
         "receiver_cnpj",
         "receiver_name",
@@ -147,6 +146,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
         batch_generated: (value) => ({
           "$unitBusinessAttributes.batch_generated$": value === "true",
+        }),
+
+        unit_business_id: (value) => ({
+          "$unitBusinessAttributes.unit_business_id$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
         }),
       },
     };

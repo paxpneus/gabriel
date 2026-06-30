@@ -71,13 +71,15 @@ export class InvoiceItemsService extends BaseService<
       // Aqui apenas registramos o item fiscal para rastreabilidade interna.
       // Impostos ficam zerados — sem XML completo neste fluxo manual;
       // serão preenchidos quando o XML for reprocessado pelo Bling.
+      const unitBusinessId = invoice.unitBusinessAttributes?.[0]?.unit_business_id;
+
       const product = await Product.findByPk(invoiceItemDto.product_id, {
         include: [
           {
             model: ProductConfig,
             as: "productConfigs",
             required: false,
-            where: { unit_business_id: invoice.unit_business_id },
+            where: unitBusinessId ? { unit_business_id: unitBusinessId } : undefined,
           },
         ],
         transaction: t,
