@@ -148,37 +148,12 @@ export class ExpeditionScanLogService extends BaseService<
       this.assertTransshipment(batchInvoice.invoice, unitBusiness);
 
       // ── Busca o produto primeiro (raiz correta, sem include aninhado) ──
-      let matchedSupplierCode: string | null = null;
+      const { product, matchedCode } = await this.findProductByCode(
+        productcode,
+        t,
+      );
 
-      let product = await Product.findOne({
-        where: {
-          [Op.or]: [{ ean: productcode }, { ean_tribut: productcode }],
-        },
-        transaction: t,
-      });
-
-      if (!product) {
-        const supplierMapping = await SupplierMapping.findOne({
-          where: { supplier_product_code: productcode },
-          include: [
-            {
-              model: Product,
-              as: "product",
-            },
-          ],
-          transaction: t,
-        });
-
-        if (supplierMapping?.product) {
-          product = supplierMapping.product;
-          matchedSupplierCode = supplierMapping.supplier_product_code;
-        }
-      }
-
-      if (!product) throw Error("Produto não encontrado");
-
-      // ── Busca o item do lote vinculado a esse produto ───────────────────
-      let productRead = await ExpeditionBatchItems.findOne({
+      const productRead = await batchItemsService.findOne({
         where: {
           expedition_batch_id: batchid,
           product_id: product.id,
@@ -188,7 +163,7 @@ export class ExpeditionScanLogService extends BaseService<
 
       if (!productRead) throw Error("Produto não encontrado no lote");
 
-      const productReadLocked = (await ExpeditionBatchItems.findOne({
+      const productReadLocked = (await batchItemsService.findOne({
         where: { id: productRead.id },
         transaction: t,
         lock: t.LOCK.UPDATE,
@@ -200,16 +175,27 @@ export class ExpeditionScanLogService extends BaseService<
         throw Error("Produto já totalmente bipado");
       }
 
-      const eanExistsOnLabel = product.ean && labelcode.includes(product.ean);
+      const stripLeadingZeros = (v: string) => v.replace(/^0+/, "");
+
+      const eanExistsOnLabel =
+        product.ean &&
+        (labelcode.includes(product.ean) ||
+          labelcode.includes(stripLeadingZeros(product.ean)));
+
       const eanTributExistsOnLabel =
-        product.ean_tribut && labelcode.includes(product.ean_tribut);
-      const supplierCodeExistsOnLabel =
-        matchedSupplierCode && labelcode.includes(matchedSupplierCode);
+        product.ean_tribut &&
+        (labelcode.includes(product.ean_tribut) ||
+          labelcode.includes(stripLeadingZeros(product.ean_tribut)));
+
+      const matchedCodeExistsOnLabel =
+        matchedCode &&
+        (labelcode.includes(matchedCode) ||
+          labelcode.includes(stripLeadingZeros(matchedCode)));
 
       if (
         !eanExistsOnLabel &&
         !eanTributExistsOnLabel &&
-        !supplierCodeExistsOnLabel
+        !matchedCodeExistsOnLabel
       ) {
         throw Error("Etiqueta não pertencente ao produto lido!");
       }
