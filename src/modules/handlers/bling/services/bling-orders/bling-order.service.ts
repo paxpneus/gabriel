@@ -53,17 +53,17 @@ export class BlingOrderService {
   }
 
   private async resolveInvoiceId(
-  notaFiscalId: string | number | undefined,
-): Promise<string | null> {
-  if (!notaFiscalId) return null;
+    notaFiscalId: string | number | undefined,
+  ): Promise<string | null> {
+    if (!notaFiscalId) return null;
 
-  const invoice = await Invoice.findOne({
-    where: { id_system: String(notaFiscalId) },
-    attributes: ["id"],
-  });
+    const invoice = await Invoice.findOne({
+      where: { id_system: String(notaFiscalId) },
+      attributes: ["id"],
+    });
 
-  return invoice?.id ?? null;
-}
+    return invoice?.id ?? null;
+  }
 
   private async resolveProductId(
     externalProductId: string | undefined,
@@ -367,22 +367,24 @@ export class BlingOrderService {
     try {
       const integration = await getBlingIntegration("Bling");
 
+      const { data } = await this.blingGet(`/pedidos/vendas/${body.data.id}`);
+      const orderData = data.data;
+
       const existingOrder = await ordersService.findOne({
         where: {
           integrations_id: integration.id,
-          number_order_system: String(body.data.numero),
+          number_order_system: String(orderData.numero),
         },
       });
 
       if (existingOrder) {
         console.log(
-          `[BlingOrderService] Pedido ${body.data.numero} já cadastrado. Pulando...`,
+          `[BlingOrderService] Pedido ${orderData.numero} já cadastrado. Pulando...`,
         );
-        return await this.updateOrderFromBling(body as any);
+        return await this.updateOrderFromBling({
+          data: orderData,
+        } as any);
       }
-
-      const { data } = await this.blingGet(`/pedidos/vendas/${body.data.id}`);
-      const orderData = data.data;
 
       let store = null;
 
