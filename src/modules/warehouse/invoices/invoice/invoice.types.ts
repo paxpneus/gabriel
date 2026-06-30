@@ -3,7 +3,7 @@ import { ExpeditionBatchInvoiceAttributes } from "../../expedition/batch-invoice
 import Transporter from "../../transporter/transporter.model";
 import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 import InvoiceItems from "../invoice-items/invoice-items.model";
-import { InvoiceItemsAttributes } from "../invoice-items/invoice-items.types";
+import { InvoiceItemsAttributes, InvoiceItemsWithBatchAttributes } from "../invoice-items/invoice-items.types";
 import { InvoiceUnitBusinessAttributesAttributes } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import Invoice from "./invoice.model";
 
@@ -205,6 +205,11 @@ export type InvoiceCreationData = Omit<InvoiceAttributes, "id" | "createdAt" | "
 export interface FullInvoice extends FullInvoiceAttributes {
   unmappedProducts?: UnmappedInvoiceProduct[];
   items: InvoiceItems[];
+}
+
+export interface FullInvoiceMappedForFrontend extends FullInvoiceAttributes {
+  unmappedProducts?: UnmappedInvoiceProduct[];
+  items: InvoiceItemsWithBatchAttributes[];
 }
 
 export interface FullInvoiceForAllUnits extends FullInvoiceAttributesForAllUnits {

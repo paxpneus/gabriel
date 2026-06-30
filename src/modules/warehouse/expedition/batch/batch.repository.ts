@@ -12,6 +12,11 @@ import { ExpeditionBatchFull } from "./batch.types";
 import User from "../../users/users/user.model";
 import BatchInvoiceItems from "../batch-invoice-items/batch-invoice-items.model";
 import InvoiceUnitBusinessAttributes from "../../invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import {
+  totalExpectedLiteral,
+  totalReadLiteral,
+} from "../../invoices/invoice/helpers/totals";
+import { Literal } from "sequelize/lib/utils";
 
 export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
   constructor() {
@@ -28,7 +33,13 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
         {
           model: Invoice,
           as: "invoice",
-          attributes: { exclude: ["xml_path", "source_payload"] },
+          attributes: {
+            exclude: ["xml_path", "source_payload"],
+            include: [
+              [totalExpectedLiteral("invoice"), "total_expected"],
+              [totalReadLiteral(unitBusinessId, "invoice"), "total_read"],
+            ] as [Literal, string][],
+          },
           include: [
             {
               model: InvoiceUnitBusinessAttributes,
@@ -99,19 +110,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
 
     const plain = data.get({ plain: true }) as any;
 
-    return {
-      ...plain,
-      batchInvoices: plain.batchInvoices?.map((bi: any) => ({
-        ...bi,
-        invoice: bi.invoice
-          ? {
-              ...bi.invoice,
-              unitBusinessAttributes:
-                bi.invoice.unitBusinessAttributes?.[0] ?? null,
-            }
-          : bi.invoice,
-      })),
-    } as ExpeditionBatchFull;
+    return this.normalizeBatchPlain(plain);
   }
 
   async getFullBatches(
@@ -172,6 +171,17 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                 bi.invoice.unitBusinessAttributes?.[0] ?? null,
             }
           : bi.invoice,
+        items: bi.items?.map((item: any) => ({
+          ...item,
+          product: item.batchItem?.product
+            ? {
+                ...item.batchItem.product,
+                sku: item.batchItem.product.productConfigs?.[0]?.sku ?? null,
+                price:
+                  item.batchItem.product.productConfigs?.[0]?.price ?? null,
+              }
+            : null,
+        })),
       })),
     } as ExpeditionBatchFull;
   }

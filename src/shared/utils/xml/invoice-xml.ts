@@ -619,7 +619,6 @@ export async function upsertInvoiceFromXml(
       invoiceItemsForCreate.push({
         product_id: product.id,
         quantity_expected: Math.trunc(qty),
-        status: "PENDING",
         fiscal: {
           product_id: product.id,
           item_number: idx + 1,
