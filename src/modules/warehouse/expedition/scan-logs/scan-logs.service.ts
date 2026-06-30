@@ -133,6 +133,8 @@ export class ExpeditionScanLogService extends BaseService<
 
       this.assertTransshipment(batchInvoice.invoice, unitBusiness);
 
+      let matchedSupplierCode: string | null = null;
+
       let productRead = await ExpeditionBatchItems.findOne({
         where: { expedition_batch_id: batchid },
         include: [
@@ -159,14 +161,19 @@ export class ExpeditionScanLogService extends BaseService<
                   model: SupplierMapping,
                   as: "supplierMappings",
                   where: {
-                    supplier_product_code: productcode
-                  }
+                    supplier_product_code: productcode,
+                  },
                 },
               ],
             },
           ],
           transaction: t,
         });
+
+        if (productRead?.product?.supplierMappings?.length) {
+          matchedSupplierCode =
+            productRead.product.supplierMappings[0].supplier_product_code;
+        }
       }
 
       if (!productRead?.product) throw Error("Produto não encontrado");
@@ -188,11 +195,16 @@ export class ExpeditionScanLogService extends BaseService<
       const eanTributExistsOnLabel =
         productRead.product.ean_tribut &&
         labelcode.includes(productRead.product.ean_tribut);
+      const supplierCodeExistsOnLabel =
+        matchedSupplierCode && labelcode.includes(matchedSupplierCode);
 
-      if (!eanExistsOnLabel && !eanTributExistsOnLabel) {
+      if (
+        !eanExistsOnLabel &&
+        !eanTributExistsOnLabel &&
+        !supplierCodeExistsOnLabel
+      ) {
         throw Error("Etiqueta não pertencente ao produto lido!");
       }
-
       try {
         await ExpeditionScanLog.create(
           {
