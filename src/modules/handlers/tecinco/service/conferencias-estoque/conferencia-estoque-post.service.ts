@@ -1,29 +1,27 @@
-import { Op } from "sequelize";
 import Invoice from "../../../../warehouse/invoices/invoice/invoice.model";
-import InvoiceItems from "../../../../warehouse/invoices/invoice-items/invoice-items.model";
+import InvoiceUnitBusinessAttributes from "../../../../warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import ExpeditionBatch from "../../../../warehouse/expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../../../warehouse/expedition/batch-invoices/batch-invoices.model";
+import BatchInvoiceItems from "../../../../warehouse/expedition/batch-invoice-items/batch-invoice-items.model";
 import ExpeditionBatchItems from "../../../../warehouse/expedition/batch-items/batch-items.model";
+import UnitBusiness from "../../../../warehouse/unit-business/unit-business.model";
 import {
-  // TCarConferenciaEstoqueService,
   TCarConferenciaTipo,
   TCarNotaFiscalQueryParams,
 } from "../../../../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
 import { Product, ProductConfig, SupplierMapping } from "../../../../inventory";
 import { TCarConferenciaEstoqueService } from "./conferencias-estoque.service";
 import { cleanDocument } from "../../../../../shared/utils/normalizers/document";
+import {
+  normalizeEan,
+  resolveProduct,
+} from "../../queues/helpers/product.helpers";
+import TCarProdutoService from "../produtos/produtos.service";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 
-export interface TCarConferenciaUnitBusiness {
-  id: string;
-  cnpj: string;
-  /** Número da filial (ex: "01"), usado para determinar o branchId se necessário */
-  number?: string;
-}
-
 /**
- * Resultado da comparação entre o estado local (ExpeditionBatchItems)
+ * Resultado da comparação entre o estado local (BatchInvoiceItems)
  * e o estado remoto (Tecinco).
  */
 export interface TCarConferenciaItemDiff {
@@ -35,7 +33,7 @@ export interface TCarConferenciaItemDiff {
   qtde_solicitada: number;
   /** Quantidade já conferida registrada na Tecinco */
   qtde_conferida_tecinco: number;
-  /** Quantidade scaneada localmente (quantity_scanned do BatchItem) */
+  /** Quantidade lida localmente (quantity_read do BatchInvoiceItem, escopado pela invoice) */
   qtde_scaneada_local: number;
   /**
    * true  → há diferença entre o que temos localmente e o que está na Tecinco
@@ -43,7 +41,7 @@ export interface TCarConferenciaItemDiff {
    */
   divergente: boolean;
   /**
-   * true  → SKU local não encontrado no ProductConfig/EAN para este produto
+   * true  → SKU local não encontrado no ProductConfig/SupplierMapping/EAN para este produto
    */
   nao_encontrado_local: boolean;
 }
@@ -70,11 +68,73 @@ export interface TCarConferenciaPostResult {
   resposta_tecinco: unknown;
 }
 
+/**
+ * Contexto totalmente resolvido de uma invoice dentro de um lote:
+ * a junção (batchInvoice), a invoice, a unit_business (vinda do batch)
+ * e o type da nota (vindo de invoice_unit_business_attributes).
+ */
+interface TCarConferenciaContexto {
+  batchInvoiceId: string;
+  invoiceId: string;
+  numero: string;
+  chaveNfe: string | null;
+  senderCnpj: string;
+  receiverCnpj: string;
+  invoiceType: "INCOMING" | "OUTGOING" | null;
+  unitBusiness: { id: string; cnpj: string; number?: string };
+}
+
 // ─── Helpers internos ──────────────────────────────────────────────────────────
+
+async function findProductIdByTecincoCodigo(
+  produtoCodigo: string,
+  branchId: number,
+  produtoService: TCarProdutoService,
+  cache: Map<string, string | null>,
+): Promise<string | null> {
+  if (cache.has(produtoCodigo)) return cache.get(produtoCodigo)!;
+
+  let productId: string | null = null;
+
+  try {
+    const resultado = await produtoService.obterProduto(
+      branchId,
+      produtoCodigo,
+    );
+    const tcarPayload: any = resultado?.data ?? resultado;
+
+    const codigoFabrica = tcarPayload?.epctb_codigofabrica
+      ? String(tcarPayload.epctb_codigofabrica).trim()
+      : undefined;
+    const ean = normalizeEan(tcarPayload?.epctb_ean);
+
+    const product = await resolveProduct({
+      systemId: produtoCodigo,
+      codigoFabrica,
+      ean,
+      logPrefix: `[TCarConferenciaPostService] produto_codigo=${produtoCodigo}`,
+    });
+
+    productId = product?.id ?? null;
+
+    if (!productId) {
+      console.warn(
+        `[TCarConferenciaPostService] Produto Tecinco ${produtoCodigo} encontrado na API mas não resolvido localmente | codigoFabrica=${codigoFabrica} | ean=${ean}`,
+      );
+    }
+  } catch (err: any) {
+    console.warn(
+      `[TCarConferenciaPostService] Falha ao buscar produto ${produtoCodigo} na Tecinco: ${err?.message ?? err}`,
+    );
+  }
+
+  cache.set(produtoCodigo, productId);
+  return productId;
+}
 
 /**
  * Dado um product_id local, resolve o SKU que a Tecinco conhece para ele.
- * Ordem: ProductConfig da unidade → EAN do produto como fallback.
+ * Ordem: ProductConfig da unidade → SupplierMapping → EAN do produto como fallback.
  */
 async function findSkuByProductId(
   productId: string,
@@ -105,19 +165,14 @@ async function findSkuByProductId(
   return null;
 }
 
-function notaPertenceAFilial(
-  invoice: {
-    type: "INCOMING" | "OUTGOING";
-    sender_cnpj: string;
-    receiver_cnpj: string;
-  },
-  unitBusiness: TCarConferenciaUnitBusiness,
-): boolean {
-  const cnpjFilial = cleanDocument(unitBusiness.cnpj);
+function notaPertenceAFilial(ctx: TCarConferenciaContexto): boolean {
+  if (!ctx.invoiceType) return false;
+
+  const cnpjFilial = cleanDocument(ctx.unitBusiness.cnpj);
   const cnpjRelevante =
-    invoice.type === "OUTGOING"
-      ? cleanDocument(invoice.sender_cnpj)
-      : cleanDocument(invoice.receiver_cnpj);
+    ctx.invoiceType === "OUTGOING"
+      ? cleanDocument(ctx.senderCnpj)
+      : cleanDocument(ctx.receiverCnpj);
 
   return cnpjRelevante === cnpjFilial;
 }
@@ -131,15 +186,95 @@ export class TCarConferenciaPostService {
     this.conferenciaService = new TCarConferenciaEstoqueService();
   }
 
+  // ─── Contexto ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Resolve, a partir de batchId + invoiceId, a junção exata em
+   * expedition_batch_invoices (não confia em association singular do Invoice,
+   * já que uma invoice pode ter passado por mais de um lote ao longo do tempo),
+   * a unit_business (vinda do batch) e o type da nota (invoice_unit_business_attributes).
+   */
+  private async carregarContexto(
+    batchId: string,
+    invoiceId: string,
+  ): Promise<TCarConferenciaContexto> {
+    const batchInvoice = (await ExpeditionBatchInvoice.findOne({
+      where: { expedition_batch_id: batchId, invoice_id: invoiceId },
+      include: [
+        {
+          model: Invoice,
+          as: "invoice",
+          attributes: [
+            "id",
+            "number_system",
+            "sender_cnpj",
+            "receiver_cnpj",
+            "xml_key",
+          ],
+          required: true,
+        },
+        {
+          model: ExpeditionBatch,
+          as: "batch",
+          required: true,
+          include: [
+            {
+              model: UnitBusiness,
+              as: "unitBusiness",
+              required: true,
+            },
+          ],
+        },
+      ],
+    })) as any;
+
+    if (!batchInvoice) {
+      throw new Error(
+        `[TCarConferenciaPostService] Junção batch/invoice não encontrada | batch=${batchId} | invoice=${invoiceId}`,
+      );
+    }
+
+    const invoice = batchInvoice.invoice;
+    const unitBusiness = batchInvoice.batch.unitBusiness;
+
+    const numero = invoice.number_system;
+    if (!numero) {
+      throw new Error(
+        `[TCarConferenciaPostService] Invoice ${invoiceId} sem number_system`,
+      );
+    }
+
+    const attrs = await InvoiceUnitBusinessAttributes.findOne({
+      where: { invoice_id: invoiceId, unit_business_id: unitBusiness.id },
+      attributes: ["type"],
+    });
+
+    return {
+      batchInvoiceId: batchInvoice.id,
+      invoiceId,
+      numero,
+      chaveNfe: invoice.xml_key ?? null,
+      senderCnpj: invoice.sender_cnpj,
+      receiverCnpj: invoice.receiver_cnpj,
+      invoiceType: (attrs?.type as "INCOMING" | "OUTGOING" | undefined) ?? null,
+      unitBusiness: {
+        id: unitBusiness.id,
+        cnpj: unitBusiness.cnpj,
+        number: unitBusiness.number,
+      },
+    };
+  }
+
   // ─── Verificação ─────────────────────────────────────────────────────────────
 
   /**
    * Lê o estado atual da conferência na Tecinco e compara com os
-   * ExpeditionBatchItems do lote local.
+   * BatchInvoiceItems da junção lote+invoice local.
    *
    * A comparação é feita do lado local para o remoto:
-   * para cada BatchItem do lote, resolve o SKU via ProductConfig/EAN
-   * e cruza com o que a Tecinco retornou no carregarDocumento.
+   * para cada BatchInvoiceItem da invoice dentro do lote, resolve o SKU via
+   * ProductConfig/SupplierMapping/EAN e cruza com o que a Tecinco retornou
+   * no carregarDocumento.
    *
    * Não escreve nada — apenas retorna o diff para que o caller decida
    * se deve prosseguir com o post.
@@ -147,45 +282,42 @@ export class TCarConferenciaPostService {
   async verificarConferencia(
     batchId: string,
     invoiceId: string,
-    unitBusiness: TCarConferenciaUnitBusiness,
     branchId: number,
     tipo: TCarConferenciaTipo = "nota-fiscal",
   ): Promise<TCarConferenciaVerificacaoResult> {
-    const invoice = await Invoice.findByPk(invoiceId, {
-      attributes: ["id", "number_system", "type", "sender_cnpj", "receiver_cnpj"],
-    });
+    const ctx = await this.carregarContexto(batchId, invoiceId);
+    return this.montarVerificacao(ctx, branchId, tipo);
+  }
 
-    if (!invoice) {
-      throw new Error(
-        `[TCarConferenciaPostService] Invoice não encontrada: ${invoiceId}`,
+  /**
+   * Núcleo da verificação, já a partir de um contexto resolvido.
+   * Separado para que postarConferenciaPorLote possa reaproveitar o contexto
+   * (unit_business é a mesma para o lote inteiro) sem re-buscar a junção.
+   */
+  private async montarVerificacao(
+    ctx: TCarConferenciaContexto,
+    branchId: number,
+    tipo: TCarConferenciaTipo,
+  ): Promise<TCarConferenciaVerificacaoResult> {
+    const { numero } = ctx;
+
+    if (!notaPertenceAFilial(ctx)) {
+      console.warn(
+        `[TCarConferenciaPostService] Invoice ignorada — não pertence à filial | invoice=${ctx.invoiceId} | numero=${numero} | type=${ctx.invoiceType} | sender_cnpj=${ctx.senderCnpj} | receiver_cnpj=${ctx.receiverCnpj} | unit_business_cnpj=${ctx.unitBusiness.cnpj}`,
       );
+      return {
+        numero,
+        sincronizado: true,
+        itens: [],
+        itens_a_conferir: [],
+        extraParams: {},
+      };
     }
-
-    const numero = invoice.number_system;
-
-    if (!numero) {
-      throw new Error(
-        `[TCarConferenciaPostService] Invoice ${invoiceId} sem number_system`,
-      );
-    }
-
-    // if (!notaPertenceAFilial(invoice, unitBusiness)) {
-    //   console.warn(
-    //     `[TCarConferenciaPostService] Invoice ignorada — não pertence à filial | invoice=${invoiceId} | numero=${numero} | type=${invoice.type} | sender_cnpj=${invoice.sender_cnpj} | receiver_cnpj=${invoice.receiver_cnpj} | unit_business_cnpj=${unitBusiness.cnpj}`,
-    //   );
-    //   return {
-    //     numero,
-    //     sincronizado: true,
-    //     itens: [],
-    //     itens_a_conferir: [],
-    //     extraParams: {},
-    //   };
-    // }
 
     // ── Resolve extra params da Tecinco (obrigatórios para nota-fiscal) ────────
     const extraParams =
       tipo === "nota-fiscal"
-        ? await this.resolveExtraParams(branchId, numero)
+        ? await this.resolveExtraParams(branchId, ctx.numero, ctx.chaveNfe)
         : {};
 
     const documento = await this.conferenciaService.carregarDocumento(
@@ -214,37 +346,57 @@ export class TCarConferenciaPostService {
       };
     }
 
-    // ── 3. Carrega BatchItems do lote ─────────────────────────────────────────
-    const batchItems = await ExpeditionBatchItems.findAll({
-      where: { expedition_batch_id: batchId },
-    });
+    // ── Carrega BatchInvoiceItems da junção (escopados por essa invoice) ──────
+    const batchInvoiceItems = (await BatchInvoiceItems.findAll({
+      where: { expedition_batch_invoice_id: ctx.batchInvoiceId },
+      include: [
+        {
+          model: ExpeditionBatchItems,
+          as: "batchItem",
+          attributes: ["product_id"],
+          required: true,
+        },
+      ],
+    })) as any[];
 
-    // ── 4. Monta mapa SKU → quantity_scanned a partir dos BatchItems ──────────
-    // Resolve o SKU de cada BatchItem via ProductConfig da unidade / EAN.
-    const scannedBySku = new Map<string, number>();
-    const tecincoCodigosValidos = new Set(
-      itensTecinco.map((i) => i.produto_codigo),
+    // ── Monta mapa product_id → quantity_read a partir dos BatchInvoiceItems ──
+    const scannedByProductId = new Map<string, number>();
+    for (const bii of batchInvoiceItems) {
+      const productId = bii.batchItem?.product_id;
+      if (!productId) continue;
+      scannedByProductId.set(
+        productId,
+        (scannedByProductId.get(productId) ?? 0) +
+          Number(bii.quantity_read ?? 0),
+      );
+    }
+
+    // ── Resolve, para cada produto_codigo da Tecinco, o product_id local ──────
+    // O produto_codigo retornado pela conferência (epctb_codigo) não é salvo
+    // localmente — busca na API da Tecinco pra obter codigofabrica/ean e
+    // cruzar com o produto local
+    const produtoService = new TCarProdutoService();
+    const tecincoCodigoParaProductId = new Map<string, string | null>();
+    for (const itemTecinco of itensTecinco) {
+      await findProductIdByTecincoCodigo(
+        itemTecinco.produto_codigo,
+        branchId,
+        produtoService,
+        tecincoCodigoParaProductId,
+      );
+    }
+
+    console.log("[DEBUG] batchInvoiceItems count:", batchInvoiceItems.length);
+    console.log(
+      "[DEBUG] scannedByProductId:",
+      Object.fromEntries(scannedByProductId),
+    );
+    console.log(
+      "[DEBUG] tecincoCodigoParaProductId:",
+      Object.fromEntries(tecincoCodigoParaProductId),
     );
 
-    for (const bi of batchItems) {
-      const sku = await findSkuByProductId(
-        bi.product_id,
-        unitBusiness.id,
-        tecincoCodigosValidos,
-      );
-      if (!sku) {
-        console.warn(
-          `[TCarConferenciaPostService] Código Tecinco não resolvido | product_id=${bi.product_id} | unit_business=${unitBusiness.id}`,
-        );
-        continue;
-      }
-      scannedBySku.set(sku, (scannedBySku.get(sku) ?? 0) + bi.quantity_scanned);
-    }
-    console.log("[DEBUG] batchItems count:", batchItems.length);
-    console.log("[DEBUG] scannedBySku:", Object.fromEntries(scannedBySku));
-    console.log("[DEBUG] tecincoCodigosValidos:", [...tecincoCodigosValidos]);
-
-    // ── 5. Compara item a item (usando os itens da Tecinco como referência) ───
+    // ── Compara item a item (usando os itens da Tecinco como referência) ──────
     const itens: TCarConferenciaItemDiff[] = [];
     const itens_a_conferir: Array<{
       seq: number;
@@ -257,8 +409,11 @@ export class TCarConferenciaPostService {
       const qtde_solicitada = Number(itemTecinco.qtde_solicitada ?? 0);
       const qtde_conferida_tecinco = Number(itemTecinco.qtde_conferida ?? 0);
 
-      const qtde_scaneada_local = scannedBySku.get(produto_codigo) ?? 0;
-      const nao_encontrado_local = !scannedBySku.has(produto_codigo);
+      const productId = tecincoCodigoParaProductId.get(produto_codigo) ?? null;
+      const qtde_scaneada_local = productId
+        ? (scannedByProductId.get(productId) ?? 0)
+        : 0;
+      const nao_encontrado_local = !productId;
 
       // Divergente = local diferente do que está na Tecinco
       const divergente = qtde_scaneada_local !== qtde_conferida_tecinco;
@@ -285,6 +440,25 @@ export class TCarConferenciaPostService {
 
     const sincronizado = itens_a_conferir.length === 0;
 
+    console.log(
+      `[TCarConferenciaPostService] Resultado da verificação | invoice=${ctx.invoiceId} | numero=${numero} | sincronizado=${sincronizado}`,
+    );
+    console.table(
+      itens.map((i) => ({
+        seq: i.seq,
+        produto_codigo: i.produto_codigo,
+        qtde_solicitada: i.qtde_solicitada,
+        qtde_conferida_tecinco: i.qtde_conferida_tecinco,
+        qtde_scaneada_local: i.qtde_scaneada_local,
+        divergente: i.divergente,
+        nao_encontrado_local: i.nao_encontrado_local,
+      })),
+    );
+    console.log(
+      `[TCarConferenciaPostService] Payload que seria enviado pra Tecinco (itens_a_conferir):`,
+      JSON.stringify(itens_a_conferir, null, 2),
+    );
+
     return {
       numero,
       sincronizado,
@@ -305,7 +479,6 @@ export class TCarConferenciaPostService {
   async postarConferencia(
     batchId: string,
     invoiceId: string,
-    unitBusiness: TCarConferenciaUnitBusiness,
     branchId: number,
     userId: number,
     tipo: TCarConferenciaTipo = "nota-fiscal",
@@ -313,7 +486,6 @@ export class TCarConferenciaPostService {
     const verificacao = await this.verificarConferencia(
       batchId,
       invoiceId,
-      unitBusiness,
       branchId,
       tipo,
     );
@@ -341,7 +513,7 @@ export class TCarConferenciaPostService {
       tipo,
       numero,
       {
-        usuario_id: userId,
+        usuario_id: '1',
         itens: itens_a_conferir,
       },
       verificacao.extraParams,
@@ -371,20 +543,39 @@ export class TCarConferenciaPostService {
    */
   async postarConferenciaPorLote(
     batchId: string,
-    unitBusiness: TCarConferenciaUnitBusiness,
     branchId: number,
     userId: number,
     tipo: TCarConferenciaTipo = "nota-fiscal",
   ): Promise<TCarConferenciaPostResult[]> {
-    console.log("ENVIANDO CONFERENCIA PARA TECINCO")
+    console.log("ENVIANDO CONFERENCIA PARA TECINCO");
+    console.log("USER", userId)
+
     const batchInvoices = (await ExpeditionBatchInvoice.findAll({
       where: { expedition_batch_id: batchId },
       include: [
         {
           model: Invoice,
           as: "invoice",
-          attributes: ["id", "number_system"],
+          attributes: [
+            "id",
+            "number_system",
+            "sender_cnpj",
+            "receiver_cnpj",
+            "xml_key",
+          ],
           required: true,
+        },
+        {
+          model: ExpeditionBatch,
+          as: "batch",
+          required: true,
+          include: [
+            {
+              model: UnitBusiness,
+              as: "unitBusiness",
+              required: true,
+            },
+          ],
         },
       ],
     })) as any[];
@@ -403,13 +594,30 @@ export class TCarConferenciaPostService {
 
     for (const batchInvoice of batchInvoices) {
       const invoice = batchInvoice.invoice;
-      const verificacao = await this.verificarConferencia(
-        batchId,
-        invoice.id,
-        unitBusiness,
-        branchId,
-        tipo,
-      );
+      const unitBusiness = batchInvoice.batch.unitBusiness;
+
+      const attrs = await InvoiceUnitBusinessAttributes.findOne({
+        where: { invoice_id: invoice.id, unit_business_id: unitBusiness.id },
+        attributes: ["type"],
+      });
+
+      const ctx: TCarConferenciaContexto = {
+        batchInvoiceId: batchInvoice.id,
+        invoiceId: invoice.id,
+        numero: invoice.number_system,
+        chaveNfe: invoice.xml_key ?? null,
+        senderCnpj: invoice.sender_cnpj,
+        receiverCnpj: invoice.receiver_cnpj,
+        invoiceType:
+          (attrs?.type as "INCOMING" | "OUTGOING" | undefined) ?? null,
+        unitBusiness: {
+          id: unitBusiness.id,
+          cnpj: unitBusiness.cnpj,
+          number: unitBusiness.number,
+        },
+      };
+
+      const verificacao = await this.montarVerificacao(ctx, branchId, tipo);
       verificacoes.push({ invoiceId: invoice.id, verificacao });
     }
 
@@ -437,7 +645,7 @@ export class TCarConferenciaPostService {
         branchId,
         tipo,
         numero,
-        { usuario_id: userId, itens: itens_a_conferir },
+        { usuario_id: '1', itens: itens_a_conferir },
         verificacao.extraParams,
       );
 
@@ -459,24 +667,27 @@ export class TCarConferenciaPostService {
   private async resolveExtraParams(
     branchId: number,
     numero: string,
+    chaveNfe: string | null,
   ): Promise<TCarNotaFiscalQueryParams> {
-    const resultado = await this.conferenciaService.listarNotasFiscais(
-      branchId,
-      {
-        nota: numero,
-        entrada_saida: "E", // expedição = saída
-      },
-    );
-
-    const nf = resultado?.data?.[0];
-
-    if (!nf) {
+    if (!chaveNfe) {
       throw new Error(
-        `[TCarConferenciaPostService] NF não encontrada na Tecinco | numero=${numero} | branchId=${branchId}`,
+        `[TCarConferenciaPostService] Invoice sem xml_key — impossível identificar a NF na Tecinco de forma inequívoca | numero=${numero}`,
       );
     }
 
-    const chave = nf.chave;
+    const resultado = await this.conferenciaService.getNotaFiscal(
+      numero,
+      branchId,
+      { chave_nfe: chaveNfe },
+    );
+
+    const chave = resultado?.data?.chave;
+
+    if (!chave) {
+      throw new Error(
+        `[TCarConferenciaPostService] NF não encontrada na Tecinco pela chave de acesso | numero=${numero} | chave_nfe=${chaveNfe} | branchId=${branchId}`,
+      );
+    }
 
     return {
       CLN_CODIGO: chave.cln_codigo,

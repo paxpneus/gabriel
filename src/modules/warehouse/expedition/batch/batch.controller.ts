@@ -6,6 +6,7 @@ import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
 import User from "../../users/users/user.model";
 import UnitBusiness from "../../unit-business/unit-business.model";
+import { getUserContext } from "../../../../shared/query/get-logged-user";
 
 export class ExpeditionBatchController extends BaseController<
   ExpeditionBatch,
@@ -256,23 +257,13 @@ export class ExpeditionBatchController extends BaseController<
     try {
       const { batchId } = req.params;
       const { justification } = req.body;
-      const userId = (req as any).user?.id;
-      if (!userId) {
-        return res.status(401).json({ error: "Usuário não autenticado" });
-      }
+      const context = await getUserContext(req);
 
-      const user = await User.findByPk(userId, {
+      const user = await User.findByPk(context.userId, {
         include: [{ model: UnitBusiness, as: "unitBusiness" }],
       });
 
-      if (!user?.unitBusiness?.integrations_id) {
-        return res
-          .status(400)
-          .json({
-            error:
-              "Unidade de negócio ou integração não encontrada para o usuário",
-          });
-      }
+      console.log("USER ACHADO", user)
 
       await this.service.finishBatch(batchId as string, justification, user);
 

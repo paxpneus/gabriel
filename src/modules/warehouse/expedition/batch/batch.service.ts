@@ -1,7 +1,4 @@
-import {
-  TCarConferenciaUnitBusiness,
-  TCarConferenciaPostService,
-} from "./../../../handlers/tecinco/service/conferencias-estoque/conferencia-estoque-post.service";
+import { TCarConferenciaPostService } from "./../../../handlers/tecinco/service/conferencias-estoque/conferencia-estoque-post.service";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import ExpeditionBatch from "./batch.model";
 import expeditionBatchRepository, {
@@ -279,7 +276,7 @@ export class ExpeditionBatchService extends BaseService<
       await invoiceService.updateInvoices(
         notBatched.map((i) => i.id),
         unitBusinessId,
-        { batch_generated: true, status: 'PENDING' },
+        { batch_generated: true, status: "PENDING" },
       );
 
       batchId = batch.id;
@@ -308,6 +305,8 @@ export class ExpeditionBatchService extends BaseService<
       if (!(invoice as any).items?.length)
         throw new Error("Nota não possui itens");
 
+      const plainInvoice = invoice.get({ plain: true }) as any;
+
       const unitBusiness = await unitBusinessService.findOne({
         where: { id: unitBusinessId },
         transaction: t,
@@ -315,8 +314,17 @@ export class ExpeditionBatchService extends BaseService<
 
       assertTransshipment(invoice, unitBusiness);
 
+      // ── Verifica se já existe um batch_invoice para essa nota NESSA unit_business ──
       const alreadyInBatch = await batchInvoicesService.findOne({
         where: { invoice_id: invoice.id },
+        include: [
+          {
+            model: ExpeditionBatch,
+            as: "batch",
+            where: { unit_business_id: unitBusinessId },
+            required: true,
+          },
+        ],
         transaction: t,
       });
 
@@ -326,7 +334,7 @@ export class ExpeditionBatchService extends BaseService<
           return;
         }
         throw new Error(
-          `Nota ${invoice.number_system} já pertence a outro lote`,
+          `Nota ${invoice.number_system} já pertence a outro lote nesta unidade`,
         );
       }
 
@@ -354,7 +362,7 @@ export class ExpeditionBatchService extends BaseService<
         const { volumesAdded } =
           await batchInvoicesService.createBatchInvoiceWithItems(
             batchId,
-            invoice as any,
+            [plainInvoice] as any,
             t,
           );
 
@@ -394,7 +402,7 @@ export class ExpeditionBatchService extends BaseService<
 
         const { batch } = await this.createBatchStructure(
           batchData,
-          [invoice as any],
+          [plainInvoice as any],
           t,
         );
 
@@ -514,14 +522,27 @@ export class ExpeditionBatchService extends BaseService<
   }
 
   async finishBatch(batchId: string, justification: string, user: any) {
-    const fullBatch = await this.finishBatchTransaction(batchId, justification);
+    const fullBatch = await sequelize.transaction(async (t) => {
+      const batch = await this.finishBatchTransaction(
+        batchId,
+        justification,
+        t,
+      );
 
-    await this.postTecincoConferencia(fullBatch, batchId, user).catch((err) =>
-      console.error(
-        `[finishBatch] Erro ao postar conferência Tecinco | batch=${batchId}`,
-        err,
-      ),
-    );
+      try {
+        await this.postTecincoConferencia(batch, batchId, user);
+      } catch (err: any) {
+        console.error(
+          `[finishBatch] Erro ao postar conferência Tecinco | batch=${batchId}`,
+          err,
+        );
+        throw new Error(
+          "Erro ao sincronizar com a Tecinco. O lote não foi finalizado.",
+        );
+      }
+
+      return batch;
+    });
 
     return this.findByIdFullBatch(batchId);
   }
@@ -529,46 +550,49 @@ export class ExpeditionBatchService extends BaseService<
   private async finishBatchTransaction(
     batchId: string,
     justification: string,
+    t: Transaction,
   ): Promise<ExpeditionBatchFull> {
-    return sequelize.transaction(async (t) => {
-      const fullBatch = await this.findByIdFullBatch(batchId);
+    const fullBatch = await this.findByIdFullBatch(batchId);
 
-      if (!fullBatch.batchInvoices?.length) {
-        throw new Error("Não é possível finalizar um lote sem notas");
-      }
+    if (!fullBatch.batchInvoices?.length) {
+      throw new Error("Não é possível finalizar um lote sem notas");
+    }
 
-      if (!fullBatch.batchInvoices.some((s) => s.items?.length)) {
-        throw new Error("Não é possível finalizar um lote sem itens");
-      }
+    if (!fullBatch.batchInvoices.some((s) => s.items?.length)) {
+      throw new Error("Não é possível finalizar um lote sem itens");
+    }
 
-      const invoicesIds = fullBatch.batchInvoices!.map((s) => s.invoice_id);
+    const invoicesIds = fullBatch.batchInvoices!.map((s) => s.invoice_id);
 
-      const batchInvoiceItemsIds = fullBatch.batchInvoices!.flatMap((s) =>
-        s.items!.map((i) => i.id),
-      );
+    const batchInvoiceItemsIds = fullBatch.batchInvoices!.flatMap((s) =>
+      s.items!.map((i) => i.id),
+    );
 
-      await Promise.all([
-        this.bulkUpdate(
-          {
-            status: "FINISHED",
-            justification,
-            finished_at: sequelize.literal(
-              "COALESCE(finished_at, NOW())",
-            ) as unknown as Date,
-          },
-          { where: { id: batchId }, transaction: t },
-        ),
-        invoiceService.updateInvoices(invoicesIds, fullBatch.unit_business_id, {
+    await Promise.all([
+      this.bulkUpdate(
+        {
           status: "FINISHED",
-        }),
-        batchInvoiceItemsService.bulkUpdate(
-          { status: "FINISHED" },
-          { where: { id: batchInvoiceItemsIds }, transaction: t },
-        ),
-      ]);
+          justification,
+          finished_at: sequelize.literal(
+            "COALESCE(finished_at, NOW())",
+          ) as unknown as Date,
+        },
+        { where: { id: batchId }, transaction: t },
+      ),
+      invoiceService.updateInvoices(
+        invoicesIds,
+        fullBatch.unit_business_id,
+        { status: "FINISHED" },
+        undefined,
+        t,
+      ),
+      batchInvoiceItemsService.bulkUpdate(
+        { status: "FINISHED" },
+        { where: { id: batchInvoiceItemsIds }, transaction: t },
+      ),
+    ]);
 
-      return fullBatch;
-    });
+    return fullBatch;
   }
 
   private async postTecincoConferencia(
@@ -576,22 +600,14 @@ export class ExpeditionBatchService extends BaseService<
     batchId: string,
     user: any,
   ) {
-    const { integrations_id } = fullBatch;
-    if (!integrations_id) return;
-
-    const integration = await integrationsService.findById(integrations_id);
-    if (integration?.name !== "Tecinco") return;
-
+    console.log(
+      `[postTecincoConferencia] user.unitBusiness=`,
+      user?.unitBusiness,
+    );
     const branchId = parseInt(user.unitBusiness.number, 10);
-    const unitBusiness: TCarConferenciaUnitBusiness = {
-      id: user.unitBusiness.id,
-      cnpj: user.unitBusiness.cnpj,
-      number: user.unitBusiness.number,
-    };
 
     await new TCarConferenciaPostService().postarConferenciaPorLote(
       batchId,
-      unitBusiness,
       branchId,
       user.id_system,
     );
