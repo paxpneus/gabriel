@@ -652,6 +652,20 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     });
   }
 
+  async findInvoiceAttribute(
+  invoiceId: string,
+  unitBusinessId: string,
+  transaction?: Transaction,
+): Promise<InvoiceUnitBusinessAttributes | null> {
+  return InvoiceUnitBusinessAttributes.findOne({
+    where: {
+      invoice_id: invoiceId,
+      unit_business_id: unitBusinessId,
+    },
+    transaction,
+  });
+}
+
   async createInvoiceAttributes(
     attributes: InvoiceUnitBusinessAttributesCreationAttributes[],
     transaction?: Transaction,

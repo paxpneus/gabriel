@@ -232,7 +232,7 @@ export class ExpeditionScanLogService extends BaseService<
         throw new Error("Nota fiscal não carregada corretamente");
       }
 
-      assertTransshipment(batchInvoice.invoice, unitBusiness);
+      await assertTransshipment(batchInvoice.invoice, unitBusiness);
 
       // ── Busca produto centralizada (EAN + supplier mapping) ───────────────
       const { product, matchedCode } = await this.findProductByCode(
@@ -388,7 +388,7 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      assertTransshipment(batchInvoices[0].invoice, unitBusiness);
+      await assertTransshipment(batchInvoices[0].invoice, unitBusiness);
 
       let remaining = quantity;
       const scanLogs: any[] = [];
@@ -530,7 +530,7 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      assertTransshipment(batchInvoice.invoice, unitBusiness);
+      await assertTransshipment(batchInvoice.invoice, unitBusiness);
 
       // ── 5. Cria os ScanLogs ────────────────────────────────────────────────
       const scanLogs = Array.from({ length: quantity }, () => ({
