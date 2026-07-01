@@ -214,7 +214,7 @@ async function migrateClientes(opts: Required<RunMigrationOptions>): Promise<voi
 }
 
 async function migrateNotasFiscais(opts: Required<RunMigrationOptions>): Promise<void> {
-  const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun } = opts;
+  const { branchIds, companyId, upsertQueue, dryRun } = opts;
 
   console.log("─".repeat(55));
   console.log("🧾  Notas Fiscais via XML");
@@ -222,53 +222,56 @@ async function migrateNotasFiscais(opts: Required<RunMigrationOptions>): Promise
 
   const service = new TCarConferenciaEstoqueService();
 
+  const TIPOS: Array<"E" | "S"> = ["E", "S"];
+
   for (const branchId of branchIds) {
     console.log(`\n  🏢 Filial ${branchId}`);
 
-    // alterado_desde não é suportado diretamente — data_movimento_inicio serve como proxy
-    const dataInicio = alteradoDesde?.split(" ")[0];
+    for (const tipo of TIPOS) {
+      // Sempre busca as 50 notas mais recentes (ordenação padrão EPENF_DTAINS DESC),
+      // sem filtro de data — dedup por jobId evita reprocessamento das já enfileiradas.
+      const resultado = await service.listarNotasFiscais(branchId, {
+        modelo_documento: 55,
+        situacao: "A",
+        entrada_saida: tipo,
+        limit: 50,
+        offset: 0,
+      });
 
-    const resultado = await service.listarNotasFiscais(branchId, {
-      modelo_documento: 55,
-      situacao: "A",
-      entrada_saida: "E",
-      ...(dataInicio ? { data_movimento_inicio: dataInicio } : {}),
-      limit: 500,
-    });
-
-    const notas: any[] = (resultado?.data ?? []).filter(
-      (n: any) => n.entrada_saida === "E" && n.chave_nfe,
-    );
-
-    console.log(`  → ${notas.length} nota(s) encontrada(s)`);
-
-    for (const nota of notas) {
-      const { chave } = nota;
-
-      await enqueue(
-        upsertQueue,
-        {
-          eventId: `invoice-xml-${branchId}-${chave.nota}-${uuidv4()}`,
-          resource: "invoice_xml",
-          action: "sync",
-          companyId,
-          branchId,
-          data: {
-            numero: chave.nota,
-            entrada_saida: nota.entrada_saida,
-            cln_codigo: chave.cln_codigo,
-            tpneg_codigo: chave.tpneg_codigo,
-            ntz_codigo: chave.ntz_codigo,
-            opr_codigo: chave.opr_codigo,
-            serie: chave.serie,
-            seq_cancelamento: chave.seq_cancelamento ?? "0",
-          },
-        },
-        `invoice-xml-${branchId}-${chave.nota}`,
-        dryRun,
+      const notas: any[] = (resultado?.data ?? []).filter(
+        (n: any) => n.entrada_saida === tipo && n.chave_nfe,
       );
 
-      console.log(`  [NF nota=${chave.nota}] enfileirada`);
+      console.log(`  → [${tipo}] ${notas.length} nota(s) encontrada(s)`);
+
+      for (const nota of notas) {
+        const { chave } = nota;
+
+        await enqueue(
+          upsertQueue,
+          {
+            eventId: `invoice-xml-${branchId}-${tipo}-${chave.nota}-${uuidv4()}`,
+            resource: "invoice_xml",
+            action: "sync",
+            companyId,
+            branchId,
+            data: {
+              numero: chave.nota,
+              entrada_saida: nota.entrada_saida,
+              cln_codigo: chave.cln_codigo,
+              tpneg_codigo: chave.tpneg_codigo,
+              ntz_codigo: chave.ntz_codigo,
+              opr_codigo: chave.opr_codigo,
+              serie: chave.serie,
+              seq_cancelamento: chave.seq_cancelamento ?? "0",
+            },
+          },
+          `invoice-xml-${branchId}-${tipo}-${chave.nota}`,
+          dryRun,
+        );
+
+        console.log(`  [NF ${tipo} nota=${chave.nota}] enfileirada`);
+      }
     }
   }
 

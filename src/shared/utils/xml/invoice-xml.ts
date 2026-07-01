@@ -33,6 +33,25 @@ const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const NO_TRANSPORTER_NAME = "Sem transporte";
 const NO_TRANSPORTER_DOCUMENT = "0000000";
 
+export interface InvoiceOperationalItemFromXml {
+  product_id: string;
+  quantity_expected: number;
+  item_number?: number;
+  sku?: string | null;
+  gtin?: string | null;
+  description?: string | null;
+  unit_price?: number;
+  total_value?: number;
+}
+
+export interface UnmappedInvoiceItemFromXml {
+  sku: string | null;
+  gtin: string | null;
+  qty: number;
+  xProd: string | null;
+  reason: string;
+}
+
 // ─── Helpers privados ─────────────────────────────────────────────────────────
 
 function parseBlingDate(date: string): Date {
@@ -390,6 +409,205 @@ async function upsertFiscalItems(
   );
 }
 
+function buildFiscalItemFromXml(params: {
+  xmlItem: any;
+  productId: string;
+  itemNumber: number;
+  sku?: string | null;
+  gtin?: string | null;
+  description?: string | null;
+  quantityFallback?: number;
+  unitPriceFallback?: number;
+  totalValueFallback?: number;
+}): ItemWithFiscal["fiscal"] {
+  const prod = params.xmlItem?.prod ?? {};
+  const imposto = params.xmlItem?.imposto ?? {};
+
+  const icmsGroup: any =
+    imposto?.ICMS?.ICMS00 ??
+    imposto?.ICMS?.ICMS10 ??
+    imposto?.ICMS?.ICMS20 ??
+    imposto?.ICMS?.ICMS40 ??
+    imposto?.ICMS?.ICMS51 ??
+    imposto?.ICMS?.ICMS60 ??
+    imposto?.ICMS?.ICMS70 ??
+    imposto?.ICMS?.ICMS90 ??
+    imposto?.ICMS?.ICMSSN101 ??
+    imposto?.ICMS?.ICMSSN102 ??
+    imposto?.ICMS?.ICMSSN201 ??
+    imposto?.ICMS?.ICMSSN202 ??
+    imposto?.ICMS?.ICMSSN500 ??
+    imposto?.ICMS?.ICMSSN900 ??
+    {};
+
+  const ipiGroup: any = imposto?.IPI?.IPITrib ?? imposto?.IPI?.IPINT ?? {};
+  const pisGroup: any =
+    imposto?.PIS?.PISAliq ??
+    imposto?.PIS?.PISQtde ??
+    imposto?.PIS?.PISNT ??
+    imposto?.PIS?.PISOutr ??
+    {};
+  const cofinsGroup: any =
+    imposto?.COFINS?.COFINSAliq ??
+    imposto?.COFINS?.COFINSQtde ??
+    imposto?.COFINS?.COFINSNT ??
+    imposto?.COFINS?.COFINSOutr ??
+    {};
+  const ibsCbsGroup: any = imposto?.IBSCBS?.gIBSCBS ?? {};
+
+  const sku =
+    params.sku ?? (prod.cProd ? String(prod.cProd).trim() : null);
+  const gtin =
+    params.gtin ??
+    (prod.cEAN && prod.cEAN !== "SEM GTIN" ? String(prod.cEAN).trim() : null);
+
+  return {
+    product_id: params.productId,
+    item_number: params.itemNumber,
+    sku,
+    description:
+      String(prod.xProd ?? params.description ?? "").slice(0, 255) || null,
+    quantity: Number(prod.qCom ?? params.quantityFallback ?? 0),
+    unit_price: Number(prod.vUnCom ?? params.unitPriceFallback ?? 0),
+    total_value: Number(prod.vProd ?? params.totalValueFallback ?? 0),
+    ncm: prod.NCM ? String(prod.NCM) : null,
+    cest: prod.CEST ? String(prod.CEST) : null,
+    cfop: prod.CFOP ? String(prod.CFOP) : null,
+    gtin,
+    approx_tax_value: Number(imposto?.vTotTrib ?? 0),
+    icms_rate: Number(icmsGroup?.pICMS ?? 0),
+    icms_value: Number(icmsGroup?.vICMS ?? 0),
+    ipi_value: Number(ipiGroup?.vIPI ?? 0),
+    pis_value: Number(pisGroup?.vPIS ?? 0),
+    cofins_value: Number(cofinsGroup?.vCOFINS ?? 0),
+    difal_value: Number(
+      imposto?.ICMSUFDest?.vICMSUFDest ?? imposto?.ICMSUFDest?.vICMSDest ?? 0,
+    ),
+    ibs_value:
+      Number(ibsCbsGroup?.gIBSUF?.vIBSUF ?? 0) +
+      Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0),
+    cbs_value: Number(ibsCbsGroup?.gCBS?.vCBS ?? 0),
+  };
+}
+
+function normalizeMatchValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim().toUpperCase();
+  return normalized || null;
+}
+
+function numbersAreClose(a?: number, b?: number): boolean {
+  if (a === undefined || b === undefined) return false;
+  return Math.abs(Number(a) - Number(b)) < 0.01;
+}
+
+function toIntegerQuantity(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.trunc(parsed);
+}
+
+function findXmlItemForOperationalItem(params: {
+  det: any[];
+  operationalItem: InvoiceOperationalItemFromXml;
+  fallbackIndex: number;
+}): { xmlItem: any | null; itemNumber: number } {
+  const { det, operationalItem, fallbackIndex } = params;
+  const fallbackItemNumber = operationalItem.item_number ?? fallbackIndex + 1;
+  const fallbackXmlItem = det[fallbackItemNumber - 1] ?? det[fallbackIndex];
+
+  const sku = normalizeMatchValue(operationalItem.sku);
+  const description = normalizeMatchValue(operationalItem.description);
+  const quantity = Number(operationalItem.quantity_expected ?? 0);
+  const unitPrice =
+    operationalItem.unit_price === undefined
+      ? undefined
+      : Number(operationalItem.unit_price);
+  const totalValue =
+    operationalItem.total_value === undefined
+      ? undefined
+      : Number(operationalItem.total_value);
+
+  const cProdMatches = det
+    .map((xmlItem, idx) => {
+      const prod = xmlItem?.prod ?? {};
+      const xmlSku = normalizeMatchValue(prod.cProd);
+      const xmlDescription = normalizeMatchValue(prod.xProd);
+      const xmlQuantity = Number(prod.qCom ?? 0);
+      const xmlUnitPrice = Number(prod.vUnCom ?? 0);
+      const xmlTotalValue = Number(prod.vProd ?? 0);
+
+      let score = 0;
+      if (sku && xmlSku === sku) score += 100;
+      if (numbersAreClose(quantity, xmlQuantity)) score += 10;
+      if (numbersAreClose(unitPrice, xmlUnitPrice)) score += 8;
+      if (numbersAreClose(totalValue, xmlTotalValue)) score += 8;
+      if (description && xmlDescription === description) score += 5;
+
+      return { xmlItem, idx, score };
+    })
+    .filter((match) => match.score >= 100)
+    .sort((a, b) => b.score - a.score);
+
+  const match = cProdMatches[0];
+  if (match) return { xmlItem: match.xmlItem, itemNumber: match.idx + 1 };
+
+  return {
+    xmlItem: fallbackXmlItem ?? null,
+    itemNumber: fallbackItemNumber,
+  };
+}
+
+function isInvoiceCancellationStatus(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  const normalized = String(value).trim().toUpperCase();
+  return [
+    "2",
+    "C",
+    "CANCELADA",
+    "CANCELADO",
+    "CANCELLED",
+    "101",
+    "135",
+    "151",
+    "155",
+  ].includes(normalized);
+}
+
+function isCancelledInvoice(params: {
+  parsedXml: any;
+  nfe: any;
+  sourcePayload?: Record<string, unknown>;
+  explicitCancelled?: boolean;
+}): boolean {
+  if (params.explicitCancelled !== undefined) return params.explicitCancelled;
+
+  const sourcePayload = params.sourcePayload as any;
+  const seqCancelamento =
+    sourcePayload?.chave?.seq_cancelamento ?? sourcePayload?.seq_cancelamento;
+  if (
+    seqCancelamento !== null &&
+    seqCancelamento !== undefined &&
+    String(seqCancelamento).trim() !== "" &&
+    String(seqCancelamento).trim() !== "0"
+  ) {
+    return true;
+  }
+
+  const statusCandidates = [
+    sourcePayload?.cabecalho?.situacao,
+    sourcePayload?.fiscal?.situacao_nfe,
+    sourcePayload?.situacao,
+    params.parsedXml?.nfeProc?.protNFe?.infProt?.cStat,
+    params.parsedXml?.procNFe?.protNFe?.infProt?.cStat,
+    params.parsedXml?.procEventoNFe?.evento?.infEvento?.cStat,
+    params.parsedXml?.procEventoNFe?.retEvento?.infEvento?.cStat,
+    params.nfe?.protNFe?.infProt?.cStat,
+  ];
+
+  return statusCandidates.some(isInvoiceCancellationStatus);
+}
+
 // ─── Export público ───────────────────────────────────────────────────────────
 
 export async function upsertInvoiceFromXml(
@@ -400,6 +618,10 @@ export async function upsertInvoiceFromXml(
     updateStatus?: InvoiceUnitBusinessAttributesStatus;
     skipCrossConfig?: boolean;
     allowUpdateFromAnyIntegration?: boolean;
+    operationalItems?: InvoiceOperationalItemFromXml[];
+    unmappedItems?: UnmappedInvoiceItemFromXml[];
+    sourcePayload?: Record<string, unknown>;
+    isCancelled?: boolean;
   },
 ): Promise<void> {
   const {
@@ -421,6 +643,16 @@ export async function upsertInvoiceFromXml(
 
   const ide = nfe.ide ?? {};
   const det = nfe.det ? (Array.isArray(nfe.det) ? nfe.det : [nfe.det]) : [];
+  const cancelledInvoice = isCancelledInvoice({
+    parsedXml: parsed,
+    nfe,
+    sourcePayload: options?.sourcePayload,
+    explicitCancelled: options?.isCancelled,
+  });
+  const resolvedInitialStatus: InvoiceUnitBusinessAttributesStatus =
+    cancelledInvoice ? "PENDING_CANCELLED_SYSTEM" : initialStatus;
+  const resolvedUpdateStatus: InvoiceUnitBusinessAttributesStatus | undefined =
+    cancelledInvoice ? "PENDING_CANCELLED_SYSTEM" : options?.updateStatus;
 
   // ─── Chave de acesso ───────────────────────────────────────────────────────
 
@@ -535,6 +767,7 @@ export async function upsertInvoiceFromXml(
     difal_value: fiscalTotals.difalValue,
     ibs_value: fiscalTotals.ibsValue,
     cbs_value: fiscalTotals.cbsValue,
+    ...(options?.sourcePayload ? { source_payload: options.sourcePayload } : {}),
   };
 
   // ─── Monta invoice items + fiscal items a partir do det ───────────────────
@@ -542,19 +775,41 @@ export async function upsertInvoiceFromXml(
   // Unmapped só pode ser registrado após ter o invoice.id, então é tratado depois.
 
   const invoiceItemsForCreate: ItemWithFiscal[] = [];
-  const unmappedDet: Array<{
-    sku: string | null;
-    gtin: string | null;
-    qty: number;
-    xProd: string | null;
-    reason: string;
-  }> = [];
+  const unmappedDet: UnmappedInvoiceItemFromXml[] = [
+    ...(options?.unmappedItems ?? []),
+  ];
 
-  if (det.length && !existingInvoice) {
+  if (Array.isArray(options?.operationalItems) && !existingInvoice) {
+    for (let idx = 0; idx < options.operationalItems.length; idx++) {
+      const item = options.operationalItems[idx];
+      const { xmlItem, itemNumber } = findXmlItemForOperationalItem({
+        det,
+        operationalItem: item,
+        fallbackIndex: idx,
+      });
+
+      invoiceItemsForCreate.push({
+        product_id: item.product_id,
+        quantity_expected: Math.trunc(Number(item.quantity_expected ?? 0)),
+        fiscal: xmlItem
+          ? buildFiscalItemFromXml({
+              xmlItem,
+              productId: item.product_id,
+              itemNumber,
+              sku: item.sku,
+              gtin: item.gtin,
+              description: item.description,
+              quantityFallback: Number(item.quantity_expected ?? 0),
+              unitPriceFallback: item.unit_price,
+              totalValueFallback: item.total_value,
+            })
+          : undefined,
+      });
+    }
+  } else if (det.length && !existingInvoice) {
     for (let idx = 0; idx < det.length; idx++) {
       const item = det[idx];
       const prod = item.prod ?? {};
-      const imposto = item.imposto ?? {};
 
       const sku = prod.cProd ? String(prod.cProd).trim() : null;
       const gtin =
@@ -582,71 +837,17 @@ export async function upsertInvoiceFromXml(
         continue;
       }
 
-      // ─── Fiscal item ─────────────────────────────────────────────────────
-
-      const icmsGroup: any =
-        imposto?.ICMS?.ICMS00 ??
-        imposto?.ICMS?.ICMS10 ??
-        imposto?.ICMS?.ICMS20 ??
-        imposto?.ICMS?.ICMS40 ??
-        imposto?.ICMS?.ICMS51 ??
-        imposto?.ICMS?.ICMS60 ??
-        imposto?.ICMS?.ICMS70 ??
-        imposto?.ICMS?.ICMS90 ??
-        imposto?.ICMS?.ICMSSN101 ??
-        imposto?.ICMS?.ICMSSN102 ??
-        imposto?.ICMS?.ICMSSN201 ??
-        imposto?.ICMS?.ICMSSN202 ??
-        imposto?.ICMS?.ICMSSN500 ??
-        imposto?.ICMS?.ICMSSN900 ??
-        {};
-
-      const ipiGroup: any = imposto?.IPI?.IPITrib ?? imposto?.IPI?.IPINT ?? {};
-      const pisGroup: any =
-        imposto?.PIS?.PISAliq ??
-        imposto?.PIS?.PISQtde ??
-        imposto?.PIS?.PISNT ??
-        imposto?.PIS?.PISOutr ??
-        {};
-      const cofinsGroup: any =
-        imposto?.COFINS?.COFINSAliq ??
-        imposto?.COFINS?.COFINSQtde ??
-        imposto?.COFINS?.COFINSNT ??
-        imposto?.COFINS?.COFINSOutr ??
-        {};
-      const ibsCbsGroup: any = imposto?.IBSCBS?.gIBSCBS ?? {};
-
       invoiceItemsForCreate.push({
         product_id: product.id,
         quantity_expected: Math.trunc(qty),
-        fiscal: {
-          product_id: product.id,
-          item_number: idx + 1,
+        fiscal: buildFiscalItemFromXml({
+          xmlItem: item,
+          productId: product.id,
+          itemNumber: idx + 1,
           sku,
-          description: String(prod.xProd ?? "").slice(0, 255) || null,
-          quantity: qty,
-          unit_price: Number(prod.vUnCom ?? 0),
-          total_value: Number(prod.vProd ?? 0),
-          ncm: prod.NCM ? String(prod.NCM) : null,
-          cest: prod.CEST ? String(prod.CEST) : null,
-          cfop: prod.CFOP ? String(prod.CFOP) : null,
           gtin,
-          approx_tax_value: Number(imposto?.vTotTrib ?? 0),
-          icms_rate: Number(icmsGroup?.pICMS ?? 0),
-          icms_value: Number(icmsGroup?.vICMS ?? 0),
-          ipi_value: Number(ipiGroup?.vIPI ?? 0),
-          pis_value: Number(pisGroup?.vPIS ?? 0),
-          cofins_value: Number(cofinsGroup?.vCOFINS ?? 0),
-          difal_value: Number(
-            imposto?.ICMSUFDest?.vICMSUFDest ??
-              imposto?.ICMSUFDest?.vICMSDest ??
-              0,
-          ),
-          ibs_value:
-            Number(ibsCbsGroup?.gIBSUF?.vIBSUF ?? 0) +
-            Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0),
-          cbs_value: Number(ibsCbsGroup?.gCBS?.vCBS ?? 0),
-        },
+          quantityFallback: qty,
+        }),
       });
     }
   }
@@ -664,7 +865,7 @@ export async function upsertInvoiceFromXml(
         },
         invoiceItemsForCreate,
         {
-          initialStatus: "WAITING_SCHEDULE_SALES",
+          initialStatus: resolvedInitialStatus,
         },
       )
       .catch((error: any) => {
@@ -681,6 +882,13 @@ export async function upsertInvoiceFromXml(
     if (!invoice) {
       throw new Error("Invoice não encontrada.");
     }
+
+    if (cancelledInvoice) {
+      await invoiceService.updateInvoicesForAllUnitBusiness([invoice.id], {
+        status: "PENDING_CANCELLED_SYSTEM",
+      });
+      invoice = await invoiceService.findByIdFullForAllUnits(invoice.id);
+    }
   } else {
     if (
       !allowUpdateFromAnyIntegration &&
@@ -693,7 +901,7 @@ export async function upsertInvoiceFromXml(
       [existingInvoice.id],
       {
         ...invoiceBaseData,
-        ...(options ? options.updateStatus ? { status: options.updateStatus } : {} : {}),
+        ...(resolvedUpdateStatus ? { status: resolvedUpdateStatus } : {}),
       },
     );
 
@@ -704,11 +912,17 @@ export async function upsertInvoiceFromXml(
     }
   }
 
+  if (!invoice) {
+    throw new Error("Invoice não encontrada.");
+  }
+
   console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
 
   // ─── Unmapped products (requer invoice.id) ─────────────────────────────────
 
   for (const u of unmappedDet) {
+    const quantity = toIntegerQuantity(u.qty);
+
     const existing = await UnmappedInvoiceProduct.findOne({
       where: {
         invoice_id: invoice.id,
@@ -723,13 +937,13 @@ export async function upsertInvoiceFromXml(
         ean: u.gtin ?? null,
         sku: u.sku ?? null,
         product_name: u.xProd,
-        quantity: u.qty,
+        quantity,
         reason: u.reason,
         status: "UNMAPPED",
       });
     } else {
       await existing.update({
-        quantity: u.qty,
+        quantity,
         integrations_id: integration.id,
       });
     }
