@@ -15,10 +15,16 @@ export class DailyOperationReportService {
     try {
       await dailyOperationReportRepository.markRunning();
 
-      const invoiceIds =
-        await dailyOperationReportRepository.findAffectedInvoiceIds(
+      // Pares (invoice_id, unit_business_id): uma invoice pode ter várias
+      // linhas de invoice_unit_business_attributes, uma por unit_business.
+      const affectedKeys =
+        await dailyOperationReportRepository.findAffectedInvoiceUnitBusinessKeys(
           lastProcessedAt,
         );
+
+      // invoiceIds "achatado" e sem duplicatas, usado onde só o id importa
+      // (busca de fact keys, contagem de processados).
+      const invoiceIds = this.uniqueInvoiceIds(affectedKeys);
 
       const previousFactKeys =
         await dailyOperationReportRepository.findAffectedFactKeys(invoiceIds);
@@ -27,7 +33,7 @@ export class DailyOperationReportService {
           invoiceIds,
         );
 
-      await dailyOperationReportRepository.upsertSnapshots(invoiceIds);
+      await dailyOperationReportRepository.upsertSnapshots(affectedKeys);
 
       const currentFactKeys =
         await dailyOperationReportRepository.findAffectedFactKeys(invoiceIds);
@@ -51,7 +57,7 @@ export class DailyOperationReportService {
 
       await dailyOperationReportRepository.markSuccess(
         jobStartTime,
-        invoiceIds.length,
+        affectedKeys.length,
       );
 
       return {
@@ -73,6 +79,12 @@ export class DailyOperationReportService {
     }
 
     return dailyOperationReportRepository.getReport(filters);
+  }
+
+  private uniqueInvoiceIds<T extends { invoice_id: string }>(
+    keys: T[],
+  ): string[] {
+    return Array.from(new Set(keys.map((key) => key.invoice_id)));
   }
 
   private uniqueFactKeys<T extends { fact_date: string; unit_business_id: string }>(

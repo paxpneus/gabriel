@@ -138,7 +138,7 @@ export class UnmappedInvoiceProductService extends BaseService<
 
   async delete(id: string, options?: DestroyOptions) {
     const unMapped = await this.repository.findById(id)
-    await uploaderService.delete?.(unMapped!.image_path);
+    // await uploaderService.delete?.(unMapped!.image_path);
     return this.repository.delete(id, options);
   }
 }

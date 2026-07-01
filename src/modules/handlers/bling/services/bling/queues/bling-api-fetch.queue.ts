@@ -1355,6 +1355,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Unmapped products (requer invoice.id) ────────────────────────────────
 
     for (const u of unmappedItems) {
+      const quantity = Math.trunc(Number.isFinite(Number(u.qty)) ? Number(u.qty) : 0);
+
       const existing = await UnmappedInvoiceProduct.findOne({
         where: {
           invoice_id: invoice.id,
@@ -1369,13 +1371,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           ean: u.ean ?? null,
           sku: u.sku ?? null,
           product_name: u.descricao,
-          quantity: u.qty,
+          quantity,
           reason: u.reason,
           status: "UNMAPPED",
         });
       } else {
         await existing.update({
-          quantity: u.qty,
+          quantity,
           integrations_id: unit_business.integrations_id ?? integration.id,
         });
       }
