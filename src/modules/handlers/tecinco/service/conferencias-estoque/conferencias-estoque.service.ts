@@ -44,7 +44,7 @@ export interface TCarConferirItemBody {
 
 export interface TCarConferirBody {
   /** ID do usuário responsável pela conferência. */
-  usuario_id?: number;
+  usuario_id?: string;
   itens: TCarConferirItemBody[];
 }
 

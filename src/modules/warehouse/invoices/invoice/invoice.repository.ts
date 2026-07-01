@@ -563,6 +563,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       }
     >,
     attrWhere?: WhereOptions,
+    transaction?: Transaction,
   ): Promise<void> {
     const { status, batch_generated, ...invoiceData } = data;
 
@@ -570,6 +571,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       Object.keys(invoiceData).length > 0
         ? Invoice.update(invoiceData, {
             where: { id: { [Op.in]: invoiceIds } },
+            transaction,
           })
         : Promise.resolve(),
 
@@ -585,6 +587,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                 unit_business_id: unitBusinessId,
                 ...attrWhere,
               },
+              transaction,
             },
           )
         : Promise.resolve(),

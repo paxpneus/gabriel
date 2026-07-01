@@ -308,12 +308,14 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       }
     >,
     attrWhere?: WhereOptions,
+    transaction?: Transaction,
   ): Promise<void> {
     return this.repository.updateWithAttributes(
       invoiceIds,
       unitBusinessId,
       data,
       attrWhere,
+      transaction,
     );
   }
 
