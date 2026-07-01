@@ -1,4 +1,8 @@
-import { InvoiceStatus } from "./../../../../../warehouse/entrance/invoice/invoice.types";
+import {
+  FullInvoiceForAllUnits,
+  InvoiceStatus,
+  ItemWithFiscal,
+} from "../../../../../warehouse/invoices/invoice/invoice.types";
 import { Job } from "bullmq";
 import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
@@ -28,7 +32,7 @@ import Store from "../../../../../sales/stores/stores.model";
 import Contact from "../../../../../sales/contacts/contacts.model";
 import { Op } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
-import InvoiceFiscalItem from "../../../../../warehouse/entrance/invoice-fiscal-item/invoice-fiscal-item.model";
+import InvoiceFiscalItem from "../../../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import {
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,
@@ -40,6 +44,10 @@ import {
   rethrowWithLog,
 } from "../../../../../../shared/utils/logging/db-errors-logs";
 import magentoCatalogService from "../../../../magentoV2/service/catalog/products/products.service";
+import invoiceService from "../../../../../warehouse/invoices/invoice/invoice.service";
+import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
+import invoiceItemsService from "../../../../../warehouse/invoices/invoice-items/invoice-items.service";
+import { upsertInvoiceFromXml } from "../../../../../../shared/utils/xml/invoice-xml";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -259,7 +267,7 @@ interface BlingApiInvoice {
   contato?: {
     id: number;
     nome?: string;
-    numeroDocumento?: number;
+    numeroDocumento?: string;
     endereco?: {
       uf?: string;
       municipio?: string;
@@ -691,7 +699,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingProduct.marca,
     );
 
-    let product: Product
+    let product: Product;
 
     try {
       [product] = await Product.upsert(
@@ -957,48 +965,26 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const invoiceType: "INCOMING" | "OUTGOING" =
       nf.tipo === 0 ? "INCOMING" : "OUTGOING";
 
-    const existingInvoice = await Invoice.findOne({
-      where: { id_system: String(nf.id) },
-      attributes: ["status"],
-    });
+    // ─── XML ──────────────────────────────────────────────────────────────────
 
-    const resolveOutgoingStatus = ():
-      | "OPEN"
-      | "PENDING"
-      | "FINISHED"
-      | "PENDING_CANCELLED_SYSTEM" => {
-      if (nf.situacao === 2) return "PENDING_CANCELLED_SYSTEM";
-      return (existingInvoice?.status as any) ?? "PENDING";
-    };
-
-    const invoiceStatus = resolveOutgoingStatus();
-
-    console.log("INVOICE STATUS", invoiceStatus, nf, apiFetch);
-
-    const incomingStatus = existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
-    const encryptedKey = nf.chaveAcesso ?? null;
-
+    let xmlContent: string | null = null;
     let senderCnpj = String(nf.emitente?.cnpj ?? "");
     let senderName = nf.emitente?.nome ?? "";
     let receiverCnpj = String(
       nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "",
     );
     let receiverName = nf.destinatario?.nome ?? "";
-    let xmlContent: string | null = null;
     let transporter_name: string | null = null;
     let transporter_document: string | null = null;
     let transporter_city: string | null = null;
     let transporter_uf: string | null = null;
     let nfeRef: string | null = null;
-
-    // CORREÇÃO 1: variáveis para UF/cidade do destinatário vindas do XML
     let destinationUfFromXml: string | null = null;
     let destinationCityFromXml: string | null = null;
-
-    // CORREÇÃO 2: variáveis para totais fiscais vindos do XML
     let fiscalTotals: ReturnType<
       typeof extractInvoiceFiscalTotalsFromXml
     > | null = null;
+    let xmlDet: any[] = [];
 
     if (nf.xml) {
       try {
@@ -1015,33 +1001,37 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           transporter_city = extracted.transporterCity;
           transporter_uf = extracted.transporterUf;
           nfeRef = extracted.refNFe;
-
-          // CORREÇÃO 1: captura UF/cidade do XML (fonte confiável)
           destinationUfFromXml = extracted.destinationUf || null;
           destinationCityFromXml = extracted.destinationCity || null;
-
-          // CORREÇÃO 2: captura totais fiscais do XML
           fiscalTotals = extractInvoiceFiscalTotalsFromXml(xmlContent);
+
+          // Extrai det do XML para montar fiscal items
+          const parsed = parser.parse(xmlContent);
+          const nfeXml =
+            parsed?.nfeProc?.NFe?.infNFe ||
+            parsed?.procNFe?.NFe?.infNFe ||
+            parsed?.NFe?.infNFe;
+          if (nfeXml?.det) {
+            xmlDet = Array.isArray(nfeXml.det) ? nfeXml.det : [nfeXml.det];
+          }
         }
       } catch (err) {
         console.warn("[XML PARSE ERROR]", { blingId: apiFetch.blingId, err });
       }
     }
 
-    // CORREÇÃO 1: fallback para o campo do contato da API Bling quando XML não tiver UF
     const destinationUf =
       destinationUfFromXml || nf.contato?.endereco?.uf || null;
     const destinationCity =
       destinationCityFromXml || nf.contato?.endereco?.municipio || null;
-
-    const customerDoc = nf.contato
-      ? (nf.destinatario?.cnpj ?? nf.destinatario?.cpf ?? "")
-      : "";
+    const customerDoc =
+      nf.contato?.numeroDocumento ?? nf.destinatario?.nome ?? "";
     const customerName = nf.contato?.nome ?? nf.destinatario?.nome ?? "";
     const key = nf.chaveAcesso ?? `PENDING-KEY-${nf.id}`;
 
-    const unit_business = await UnitBusiness.findByPk(BLING_UNIT_BUSINESS_ID);
+    // ─── UnitBusiness + Store + Integration ───────────────────────────────────
 
+    const unit_business = await UnitBusiness.findByPk(BLING_UNIT_BUSINESS_ID);
     if (!unit_business) {
       throw new Error(
         `[ERRO NO MAPEAMENTO DE NFE] - UnitBusiness padrão Bling não encontrada | id=${BLING_UNIT_BUSINESS_ID}`,
@@ -1051,12 +1041,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     let store_id = await Store.findOne({
       where: { id_store_system: String(nf?.loja?.id) },
     });
-
     if (!store_id) {
       store_id = await Store.findOne({ where: { name: "Outros" } });
     }
 
     const integration = await getBlingIntegration("Bling");
+
+    // ─── Seller ───────────────────────────────────────────────────────────────
 
     let sellerId: string | null = null;
     if (nf.vendedor?.id) {
@@ -1067,9 +1058,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           integrations_id: integration.id,
         },
       });
-
       sellerId = seller?.id ?? null;
-
       if (!sellerId) {
         console.warn(
           `[BLING_API_FETCH] Vendedor Bling ${nf.vendedor.id} não encontrado em contacts. Invoice será gravada sem seller_id.`,
@@ -1077,12 +1066,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
     }
 
+    // ─── Transportador ────────────────────────────────────────────────────────
+
     if (!transporter_document) {
       const blingDoc = String(
         nf.transporte?.transportador?.numeroDocumento ?? "",
       ).trim();
       const blingName = String(nf.transporte?.transportador?.nome ?? "").trim();
-
       if (blingDoc) {
         transporter_document = blingDoc;
         transporter_name = transporter_name || blingName || null;
@@ -1106,8 +1096,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       uf: transporter_uf,
     });
 
-    // CORREÇÃO 2: monta campos fiscais para o upsert da invoice
-    // Prioridade: XML (mais confiável) > API Bling > 0
+    // ─── Totais fiscais ───────────────────────────────────────────────────────
+
     const invoiceValue =
       fiscalTotals?.invoiceValue ?? Number(nf.valorNota ?? 0);
     const invoiceFreightValue =
@@ -1126,206 +1116,279 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const ibsValue = fiscalTotals?.ibsValue ?? 0;
     const cbsValue = fiscalTotals?.cbsValue ?? 0;
 
-    const invoiceFound = await Invoice.findOne({
-      where: { id_system: String(nf.id) },
-    });
+    // ─── Invoice existente ────────────────────────────────────────────────────
 
-    const [invoice] = await Invoice.upsert(
-      {
-        id_system: String(nf.id),
-        customer_name: customerName,
-        customer_document: customerDoc,
-        type: invoiceType,
-        status: invoiceType === "OUTGOING" ? invoiceStatus : incomingStatus,
-        sender_cnpj: senderCnpj,
-        sender_name: senderName,
-        receiver_cnpj: receiverCnpj,
-        receiver_name: receiverName,
-        unit_business_id: unit_business.id,
-        danfe_path: "",
-        xml_path: xmlContent ? encryptXml(xmlContent) : null,
-        xml_key: encryptedKey,
-        // CORREÇÃO 1: UF/cidade do XML com fallback para API
-        destination_uf: destinationUf,
-        destination_city: destinationCity,
-        xml_url: nf.xml ?? null,
-        source_payload: nf as unknown as Record<string, unknown>,
-        emitted_at: emittedAt,
-        number_system: String(nf.numero),
-        integrations_id: integration.id,
-        store_id: store_id!.id ?? null,
-        seller_id: sellerId,
-        transporter_id: transporter?.id ?? null,
-        transporter_document: transporter_document ?? null,
-        transporter_name: transporter_name ?? null,
-        description: invoiceFound?.description ? invoiceFound.description : `REF: ${nfeRef}`,
-        // CORREÇÃO 2: campos fiscais populados
-        invoice_value: invoiceValue,
-        invoice_products_value: invoiceProductsValue,
-        invoice_freight_value: invoiceFreightValue,
-        invoice_discount_value: invoiceDiscountValue,
-        invoice_total_tax_value: invoiceTotalTaxValue,
-        icms_value: icmsValue,
-        ipi_value: ipiValue,
-        pis_value: pisValue,
-        cofins_value: cofinsValue,
-        difal_value: difalValue,
-        ibs_value: ibsValue,
-        cbs_value: cbsValue,
-      },
-      { conflictFields: ["id_system"] },
-    ).catch((error) => {
-      logDbError("[INVOICE UPSERT ERROR DETAIL]", error, {
-        blingId: nf.id,
-        numero: nf.numero,
-        id_system: String(nf.id),
-      });
-      throw error;
-    });
+    const existingInvoice = await invoiceService.findByIdFullForAllUnits(
+      undefined,
+      nf.chaveAcesso ?? undefined,
+    );
+
+    const invoiceFound = existingInvoice;
+
+    const invoiceBaseData = {
+      id_system: String(nf.id),
+      customer_name: customerName,
+      customer_document: customerDoc,
+      sender_cnpj: senderCnpj,
+      sender_name: senderName,
+      receiver_cnpj: receiverCnpj,
+      receiver_name: receiverName,
+      danfe_path: "",
+      xml_path: xmlContent ? encryptXml(xmlContent) : null,
+      xml_key: nf.chaveAcesso ?? null,
+      xml_url: nf.xml ?? null,
+      source_payload: nf as unknown as Record<string, unknown>,
+      emitted_at: emittedAt,
+      number_system: String(nf.numero),
+      integrations_id: integration.id,
+      store_id: store_id!.id ?? null,
+      seller_id: sellerId,
+      transporter_id: transporter?.id ?? null,
+      transporter_document: transporter_document ?? null,
+      transporter_name: transporter_name ?? null,
+      description: invoiceFound?.description
+        ? invoiceFound.description
+        : nfeRef
+          ? `REF: ${nfeRef}`
+          : null,
+      destination_uf: destinationUf,
+      destination_city: destinationCity,
+      invoice_value: invoiceValue,
+      invoice_products_value: invoiceProductsValue,
+      invoice_freight_value: invoiceFreightValue,
+      invoice_discount_value: invoiceDiscountValue,
+      invoice_total_tax_value: invoiceTotalTaxValue,
+      icms_value: icmsValue,
+      ipi_value: ipiValue,
+      pis_value: pisValue,
+      cofins_value: cofinsValue,
+      difal_value: difalValue,
+      ibs_value: ibsValue,
+      cbs_value: cbsValue,
+    };
+
+    // ─── Resolve initialStatus para novas invoices ────────────────────────────
+
+    const resolveInitialStatus = (): InvoiceUnitBusinessAttributesStatus => {
+      if (invoiceType === "OUTGOING") {
+        if (nf.situacao === 2) return "PENDING_CANCELLED_SYSTEM";
+        return "PENDING";
+      }
+      return "WAITING_SCHEDULE_SALES";
+    };
+
+    // ─── Monta ItemWithFiscal[] antes do create ───────────────────────────────
+    // Usa nf.itens para invoice items operacionais e xmlDet para fiscal items.
+    // Unmapped só é registrado depois que invoice.id existir.
+
+    const invoiceItemsForCreate: ItemWithFiscal[] = [];
+    const unmappedItems: Array<{
+      sku: string | null;
+      ean: string | null;
+      qty: number;
+      descricao: string | null;
+      reason: string;
+    }> = [];
+
+    if (nf.itens?.length && !existingInvoice) {
+      // Monta mapa de fiscal data por sku/gtin a partir do xmlDet
+      const fiscalByItemNumber = new Map<number, any>();
+      for (let idx = 0; idx < xmlDet.length; idx++) {
+        fiscalByItemNumber.set(idx, xmlDet[idx]);
+      }
+
+      for (let idx = 0; idx < nf.itens.length; idx++) {
+        const item = nf.itens[idx];
+        const sku = item.codigo?.trim() ?? null;
+        const ean = item.gtin ? String(item.gtin).trim() : null;
+        const qty = item.quantidade ?? 0;
+
+        const product = await this.findProductForInvoiceItem({
+          sku,
+          ean,
+          supplierCnpj: senderCnpj,
+          logPrefix: "[BLING_API_FETCH]",
+        });
+
+        if (!product) {
+          const reason =
+            !sku && !ean
+              ? "SKU e EAN ausentes no XML"
+              : !sku
+                ? "SKU ausente — apenas EAN salvo"
+                : !ean
+                  ? "EAN ausente — apenas SKU salvo"
+                  : "SKU e EAN presentes mas sem produto correspondente no banco";
+
+          unmappedItems.push({
+            sku,
+            ean,
+            qty,
+            descricao: (item as any).descricao ?? null,
+            reason,
+          });
+          continue;
+        }
+
+        // ─── Fiscal item do XML correspondente ──────────────────────────────
+        let fiscal: ItemWithFiscal["fiscal"] = undefined;
+        const xmlItem = fiscalByItemNumber.get(idx);
+
+        if (xmlItem) {
+          const prod = xmlItem.prod ?? {};
+          const imposto = xmlItem.imposto ?? {};
+
+          const icmsGroup: any =
+            imposto?.ICMS?.ICMS00 ??
+            imposto?.ICMS?.ICMS10 ??
+            imposto?.ICMS?.ICMS20 ??
+            imposto?.ICMS?.ICMS40 ??
+            imposto?.ICMS?.ICMS51 ??
+            imposto?.ICMS?.ICMS60 ??
+            imposto?.ICMS?.ICMS70 ??
+            imposto?.ICMS?.ICMS90 ??
+            imposto?.ICMS?.ICMSSN101 ??
+            imposto?.ICMS?.ICMSSN102 ??
+            imposto?.ICMS?.ICMSSN201 ??
+            imposto?.ICMS?.ICMSSN202 ??
+            imposto?.ICMS?.ICMSSN500 ??
+            imposto?.ICMS?.ICMSSN900 ??
+            {};
+
+          const ipiGroup: any =
+            imposto?.IPI?.IPITrib ?? imposto?.IPI?.IPINT ?? {};
+          const pisGroup: any =
+            imposto?.PIS?.PISAliq ??
+            imposto?.PIS?.PISQtde ??
+            imposto?.PIS?.PISNT ??
+            imposto?.PIS?.PISOutr ??
+            {};
+          const cofinsGroup: any =
+            imposto?.COFINS?.COFINSAliq ??
+            imposto?.COFINS?.COFINSQtde ??
+            imposto?.COFINS?.COFINSNT ??
+            imposto?.COFINS?.COFINSOutr ??
+            {};
+          const ibsCbsGroup: any = imposto?.IBSCBS?.gIBSCBS ?? {};
+
+          fiscal = {
+            product_id: product.id,
+            item_number: idx + 1,
+            sku,
+            description: String(prod.xProd ?? "").slice(0, 255) || null,
+            quantity: Number(prod.qCom ?? qty),
+            unit_price: Number(prod.vUnCom ?? item.valor ?? 0),
+            total_value: Number(prod.vProd ?? 0),
+            ncm: prod.NCM ? String(prod.NCM) : null,
+            cest: prod.CEST ? String(prod.CEST) : null,
+            cfop: prod.CFOP ? String(prod.CFOP) : null,
+            gtin: ean,
+            approx_tax_value: Number(imposto?.vTotTrib ?? 0),
+            icms_rate: Number(icmsGroup?.pICMS ?? 0),
+            icms_value: Number(icmsGroup?.vICMS ?? 0),
+            ipi_value: Number(ipiGroup?.vIPI ?? 0),
+            pis_value: Number(pisGroup?.vPIS ?? 0),
+            cofins_value: Number(cofinsGroup?.vCOFINS ?? 0),
+            difal_value: Number(
+              imposto?.ICMSUFDest?.vICMSUFDest ??
+                imposto?.ICMSUFDest?.vICMSDest ??
+                0,
+            ),
+            ibs_value:
+              Number(ibsCbsGroup?.gIBSUF?.vIBSUF ?? 0) +
+              Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0),
+            cbs_value: Number(ibsCbsGroup?.gCBS?.vCBS ?? 0),
+          };
+        }
+
+        invoiceItemsForCreate.push({
+          product_id: product.id,
+          quantity_expected: Math.trunc(qty),
+          fiscal,
+        });
+      }
+    }
+
+    // ─── Create ou Update ──────────────────────────────────────────────────────
+
+    let invoice: FullInvoiceForAllUnits | null;
+
+    if (!existingInvoice) {
+      const created = await invoiceService
+        .createWithRelations(invoiceBaseData, invoiceItemsForCreate, {
+          initialStatus: resolveInitialStatus(),
+        })
+        .catch((error) => {
+          logDbError("[INVOICE CREATE ERROR DETAIL]", error, {
+            blingId: nf.id,
+            numero: nf.numero,
+            id_system: String(nf.id),
+          });
+          throw error;
+        });
+
+      invoice = await invoiceService.findByIdFullForAllUnits(created.id);
+    } else {
+      await invoiceService.updateInvoicesForAllUnitBusiness(
+        [existingInvoice.id],
+        {
+          ...invoiceBaseData,
+          ...(nf.situacao === 2 ? { status: "PENDING_CANCELLED_SYSTEM" } : {}),
+        },
+      );
+
+      invoice = await invoiceService.findByIdFullForAllUnits(
+        existingInvoice.id,
+      );
+    }
+
+    if (!invoice) {
+      throw new Error(
+        `[BLING_API_FETCH] Invoice não encontrada após upsert | blingId=${nf.id}`,
+      );
+    }
 
     console.log(
       `[BLING_API_FETCH] Invoice upsertada: id_system=${nf.id}, key=${key}`,
     );
 
-    // CORREÇÃO 3: upsert dos itens fiscais a partir do XML
-    if (xmlContent) {
-      try {
-        await this.upsertFiscalItems(
-          invoice.id,
-          xmlContent,
-          senderCnpj,
-          "[BLING_API_FETCH]",
-        );
-      } catch (err) {
-        logDbError(
-          "[BLING_API_FETCH] Falha ao upsert fiscal items",
-          err as Error,
-          {
-            invoiceId: invoice.id,
-            blingId: nf.id,
-          },
-        );
-      }
-    }
+    // ─── Unmapped products (requer invoice.id) ────────────────────────────────
 
-    // ─── Itens operacionais da nota ───────────────────────────────────────────
+    for (const u of unmappedItems) {
+      const quantity = Math.trunc(Number.isFinite(Number(u.qty)) ? Number(u.qty) : 0);
 
-    if (!nf.itens?.length) return;
-
-    const quantityByProduct = new Map<string, number>();
-
-    for (const item of nf.itens) {
-      const sku = item.codigo?.trim();
-      const product = await this.findProductForInvoiceItem({
-        sku,
-        ean: item.gtin,
-        supplierCnpj: senderCnpj,
-        logPrefix: "[BLING_API_FETCH]",
+      const existing = await UnmappedInvoiceProduct.findOne({
+        where: {
+          invoice_id: invoice.id,
+          ...(u.ean ? { ean: u.ean } : { sku: u.sku ?? null }),
+        },
       });
 
-      if (!product) {
-        const reason =
-          !sku && !item.gtin
-            ? "SKU e EAN ausentes no XML"
-            : !sku
-              ? "SKU ausente — apenas EAN salvo"
-              : !item.gtin
-                ? "EAN ausente — apenas SKU salvo"
-                : "SKU e EAN presentes mas sem produto correspondente no banco";
-
-        const existing = await UnmappedInvoiceProduct.findOne({
-          where: {
-            invoice_id: invoice.id,
-            ...(item.gtin ? { ean: String(item.gtin) } : { sku: sku ?? null }),
-          },
+      if (!existing) {
+        await UnmappedInvoiceProduct.create({
+          invoice_id: invoice.id,
+          integrations_id: unit_business.integrations_id ?? integration.id,
+          ean: u.ean ?? null,
+          sku: u.sku ?? null,
+          product_name: u.descricao,
+          quantity,
+          reason: u.reason,
+          status: "UNMAPPED",
         });
-
-        if (!existing) {
-          await UnmappedInvoiceProduct.create({
-            invoice_id: invoice.id,
-            integrations_id: unit_business.integrations_id ?? integration.id,
-            ean: item.gtin ? String(item.gtin) : null,
-            sku: sku ?? null,
-            product_name: (item as any).descricao ?? null,
-            quantity: item.quantidade ?? 0,
-            reason,
-            status: "UNMAPPED",
-          });
-        } else {
-          await existing.update({
-            quantity: item.quantidade ?? 0,
-            integrations_id: unit_business.integrations_id ?? integration.id,
-          });
-        }
-
-        console.warn(
-          `[BLING_API_FETCH] Produto não mapeado | invoice=${invoice.id} | sku=${sku} | ean=${item.gtin} | motivo=${reason}`,
-        );
-        continue;
+      } else {
+        await existing.update({
+          quantity,
+          integrations_id: unit_business.integrations_id ?? integration.id,
+        });
       }
 
-      const current = quantityByProduct.get(String(product.id)) ?? 0;
-      quantityByProduct.set(
-        String(product.id),
-        current + (item.quantidade ?? 0),
+      console.warn(
+        `[BLING_API_FETCH] Produto não mapeado | invoice=${invoice.id} | sku=${u.sku} | ean=${u.ean} | motivo=${u.reason}`,
       );
     }
 
-    for (const [productId, quantity] of quantityByProduct) {
-      const existingItem = await InvoiceItems.findOne({
-        where: { invoice_id: invoice.id, product_id: productId },
-      });
-
-      if (existingItem) {
-        await existingItem.update({ quantity_expected: quantity });
-      } else {
-        await InvoiceItems.create({
-          product_id: productId,
-          invoice_id: invoice.id,
-          quantity_expected: quantity,
-          status: "PENDING",
-        });
-      }
-    }
-
-    const invoiceItems = await InvoiceItems.findAll({
-      where: { invoice_id: invoice.id },
-      include: [{ model: Product, as: "product" }],
-    });
-
-    const mappedEans = new Set(
-      invoiceItems.map((i) => i.product?.ean).filter(Boolean),
-    );
-    const productIds = invoiceItems.map((i) => i.product_id).filter(Boolean);
-    const configs = await ProductConfig.findAll({
-      where: {
-        product_id: productIds,
-        unit_business_id: BLING_UNIT_BUSINESS_ID,
-      },
-    });
-    const mappedSkus = new Set(configs.map((c) => c.sku).filter(Boolean));
-
-    for (const item of nf.itens) {
-      const sku = item.codigo?.trim();
-      const ean = item.gtin ? String(item.gtin).trim() : null;
-
-      const wasMapped = ean
-        ? mappedEans.has(ean)
-        : sku
-          ? mappedSkus.has(sku)
-          : false;
-      if (!wasMapped) continue;
-
-      await UnmappedInvoiceProduct.destroy({
-        where: {
-          invoice_id: invoice.id,
-          ...(ean ? { ean } : { sku: sku ?? null }),
-        },
-      });
-    }
-
     console.log(
-      `[BLING_API_FETCH] ${nf.itens?.length} item(ns) upsertado(s) para invoice ${nf.id}`,
+      `[BLING_API_FETCH] ${nf.itens?.length ?? 0} item(ns) processado(s) para invoice ${nf.id}`,
     );
 
     // ─── Sincroniza batch se a invoice já pertencer a um ─────────────────────
@@ -1335,48 +1398,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
 
     if (batchInvoice) {
-      let volumesAdded = 0;
-
-      for (const item of nf.itens) {
-        const sku = item.codigo?.trim();
-        const product = await this.findProductForInvoiceItem({
-          sku,
-          ean: item.gtin,
-          supplierCnpj: senderCnpj,
-          logPrefix: "[BLING_API_FETCH]",
-        });
-
-        if (!product) continue;
-
-        const existingBatchItem = await ExpeditionBatchItems.findOne({
-          where: {
-            expedition_batch_id: batchInvoice.expedition_batch_id,
-            product_id: product.id,
-          },
-        });
-
-        if (existingBatchItem) continue;
-
-        await ExpeditionBatchItems.create({
-          expedition_batch_id: batchInvoice.expedition_batch_id,
-          product_id: product.id,
-          quantity: item.quantidade ?? 0,
-          quantity_scanned: 0,
-        });
-
-        volumesAdded += item.quantidade ?? 0;
-      }
-
-      if (volumesAdded > 0) {
-        await ExpeditionBatch.increment("total_volumes", {
-          by: volumesAdded,
-          where: { id: batchInvoice.expedition_batch_id },
-        });
-
-        console.log(
-          `[BLING_API_FETCH] Batch ${batchInvoice.expedition_batch_id} sincronizado | +${volumesAdded} volumes novos`,
-        );
-      }
+      await invoiceItemsService.syncBatchFromInvoice(batchInvoice);
     }
   }
 
@@ -1388,349 +1410,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     xmlContent: string,
     status?: InvoiceStatus,
   ): Promise<void> {
-    const parsed = parser.parse(xmlContent);
-
-    const nfe =
-      parsed?.nfeProc?.NFe?.infNFe ||
-      parsed?.procNFe?.NFe?.infNFe ||
-      parsed?.NFe?.infNFe;
-
-    if (!nfe) {
-      throw new Error("XML inválido: estrutura de NF-e não reconhecida");
-    }
-
-    const ide = nfe.ide ?? {};
-    const det = nfe.det ? (Array.isArray(nfe.det) ? nfe.det : [nfe.det]) : [];
-
-    // ─── Chave de acesso ─────────────────────────────────────────────────────
-
-    const rawId: string = nfe["@_Id"] ?? "";
-    let chaveAcesso = rawId.replace(/^NFe/, "");
-
-    if (!chaveAcesso) {
-      chaveAcesso =
-        parsed?.nfeProc?.protNFe?.infProt?.chNFe ??
-        parsed?.procNFe?.protNFe?.infProt?.chNFe ??
-        "";
-    }
-
-    if (!chaveAcesso) {
-      const emit = nfe.emit ?? {};
-      const cuf = String(ide.cUF ?? "");
-      const aamm =
-        String(ide.dhEmi ?? "").slice(2, 4) +
-        String(ide.dhEmi ?? "").slice(5, 7);
-      const cnpj = String(emit.CNPJ ?? "").replace(/\D/g, "");
-      const mod = String(ide.mod ?? "55").padStart(2, "0");
-      const serie = String(ide.serie ?? "").padStart(3, "0");
-      const nnf = String(ide.nNF ?? "").padStart(9, "0");
-      const tpemis = String(ide.tpEmis ?? "1");
-      const cnf = String(ide.cNF ?? "").padStart(8, "0");
-      const cdv = String(ide.cDV ?? "");
-
-      const candidate = `${cuf}${aamm}${cnpj}${mod}${serie}${nnf}${tpemis}${cnf}${cdv}`;
-      if (candidate.length === 44) chaveAcesso = candidate;
-    }
-
-    const numero = String(ide.nNF ?? "");
-    const idSystem = chaveAcesso || `MANUAL-${Date.now()}`;
-
-    // ─── Partes ──────────────────────────────────────────────────────────────
-
-    const extracted = extractPartiesFromXml(xmlContent);
-    const senderCnpj = cleanDocument(extracted.senderCnpj);
-    const senderName = extracted.senderName;
-    const receiverCnpj = cleanDocument(extracted.receiverCnpj);
-    const receiverName = extracted.receiverName;
-    let transporterName = extracted.transporterName || null;
-    let transporterDocument = extracted.transporterDocument || null;
-    let nfeRef = extracted.refNFe || null;
-
-    // CORREÇÃO 1: UF/cidade do XML
-    const destinationUf = extracted.destinationUf || null;
-    const destinationCity = extracted.destinationCity || null;
-
-    // CORREÇÃO 2: totais fiscais do XML
-    const fiscalTotals = extractInvoiceFiscalTotalsFromXml(xmlContent);
-
-    // ─── Tipo ────────────────────────────────────────────────────────────────
-
-    const senderUnit = await UnitBusiness.findOne({
-      where: { cnpj: senderCnpj },
+    await upsertInvoiceFromXml(xmlContent, {
+      integrationName: "Bling",
+      initialStatus:
+        status === "CANCELLED"
+          ? "PENDING_CANCELLED_SYSTEM"
+          : "WAITING_SCHEDULE_SALES",
+      updateStatus:
+        status === "CANCELLED" ? "PENDING_CANCELLED_SYSTEM" : undefined,
+      skipCrossConfig: true,
+      allowUpdateFromAnyIntegration: true,
     });
-    const invoiceType: "INCOMING" | "OUTGOING" = senderUnit
-      ? "OUTGOING"
-      : "INCOMING";
-
-    // ─── UnitBusiness ────────────────────────────────────────────────────────
-
-    let unit_business: UnitBusiness | null = null;
-
-    if (invoiceType === "INCOMING") {
-      unit_business = await UnitBusiness.findOne({
-        where: { cnpj: receiverCnpj },
-      });
-      if (!unit_business) {
-        unit_business = await UnitBusiness.findOne({
-          where: { cnpj: senderCnpj },
-        });
-      }
-    } else {
-      unit_business = await UnitBusiness.findOne({
-        where: { cnpj: senderCnpj },
-      });
-    }
-
-    if (!unit_business) {
-      console.warn(
-        `[IMPORT_XML] UnitBusiness não encontrada | type=${invoiceType} | sender=${senderCnpj} | receiver=${receiverCnpj} | fallback padrão`,
-      );
-      unit_business = await UnitBusiness.findByPk(BLING_UNIT_BUSINESS_ID);
-    }
-
-    if (!unit_business) {
-      throw new Error(
-        `UnitBusiness não encontrada | id=${BLING_UNIT_BUSINESS_ID}`,
-      );
-    }
-
-    const integration = await getBlingIntegration("Bling");
-
-    if (!transporterDocument) {
-      transporterName = NO_TRANSPORTER_NAME;
-      transporterDocument = NO_TRANSPORTER_DOCUMENT;
-    } else if (!transporterName) {
-      transporterName = NO_TRANSPORTER_NAME;
-    }
-
-    const transporter = await this.findOrCreateTransporter({
-      document: transporterDocument,
-      name: transporterName,
-      city: extracted.transporterCity,
-      uf: extracted.transporterUf,
-    });
-
-    // ─── Upsert Invoice ──────────────────────────────────────────────────────
-
-    const existingInvoice = await Invoice.findOne({
-      where: { xml_key: chaveAcesso },
-      attributes: ["status", "store_id", "id_system"],
-    });
-
-    const incomingStatus =
-      status ?? existingInvoice?.status ?? "WAITING_SCHEDULE_SALES";
-    const outgoingStatus = status ?? existingInvoice?.status ?? "PENDING";
-
-    let store_id: Store | null = null;
-
-    if (existingInvoice?.store_id) {
-      store_id = await Store.findOne({
-        where: { id: existingInvoice.store_id },
-      });
-    }
-
-    if (!store_id) {
-      store_id = await Store.findOne({ where: { name: "Outros" } });
-    }
-    const conflictFields = chaveAcesso ? ["xml_key"] : ["id_system"];
-
-    const invoiceFound = await Invoice.findOne({
-      where: { xml_key: chaveAcesso },
-    });
-
-
-    const [invoice] = await Invoice.upsert(
-      {
-        ...(existingInvoice ? {} : { id_system: idSystem }),
-        customer_name: receiverName,
-        customer_document: receiverCnpj,
-        type: invoiceType,
-        status: invoiceType === "OUTGOING" ? outgoingStatus : incomingStatus,
-        sender_cnpj: senderCnpj,
-        sender_name: senderName,
-        receiver_cnpj: receiverCnpj,
-        receiver_name: receiverName,
-        unit_business_id: unit_business.id,
-        danfe_path: "",
-        xml_path: encryptXml(xmlContent),
-        xml_key: chaveAcesso || null,
-        emitted_at: ide.dhEmi ? parseBlingDate(ide.dhEmi) : new Date(),
-        number_system: numero,
-        integrations_id: integration.id,
-        store_id: store_id?.id ?? "",
-        transporter_id: transporter?.id ?? null,
-        transporter_document: transporterDocument,
-        transporter_name: transporterName,
-        description: invoiceFound?.description ? invoiceFound.description : `REF: ${nfeRef}`,
-        // CORREÇÃO 1: UF/cidade do XML
-        destination_uf: destinationUf,
-        destination_city: destinationCity,
-        // CORREÇÃO 2: campos fiscais
-        invoice_value: fiscalTotals.invoiceValue,
-        invoice_products_value: fiscalTotals.invoiceProductsValue,
-        invoice_freight_value: fiscalTotals.invoiceFreightValue,
-        invoice_discount_value: fiscalTotals.invoiceDiscountValue,
-        invoice_total_tax_value: fiscalTotals.invoiceTotalTaxValue,
-        icms_value: fiscalTotals.icmsValue,
-        ipi_value: fiscalTotals.ipiValue,
-        pis_value: fiscalTotals.pisValue,
-        cofins_value: fiscalTotals.cofinsValue,
-        difal_value: fiscalTotals.difalValue,
-        ibs_value: fiscalTotals.ibsValue,
-        cbs_value: fiscalTotals.cbsValue,
-      },
-      { conflictFields: conflictFields as any },
-    ).catch((error: any) => {
-      logDbError("[IMPORT_XML UPSERT ERROR DETAIL]", error, {
-        idSystem,
-        numero,
-        chaveAcesso,
-      });
-      throw error;
-    });
-
-    console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
-
-    // CORREÇÃO 3: upsert dos itens fiscais
-    try {
-      await this.upsertFiscalItems(
-        invoice.id,
-        xmlContent,
-        senderCnpj,
-        "[IMPORT_XML]",
-      );
-    } catch (err) {
-      logDbError("[IMPORT_XML] Falha ao upsert fiscal items", err as Error, {
-        invoiceId: invoice.id,
-        idSystem,
-      });
-    }
-
-    // ─── Itens operacionais ───────────────────────────────────────────────────
-
-    if (!det.length) return;
-
-    const quantityByProduct = new Map<string, number>();
-
-    for (const item of det) {
-      const prod = item.prod ?? {};
-      const sku = prod.cProd ? String(prod.cProd).trim() : undefined;
-      const gtin =
-        prod.cEAN && prod.cEAN !== "SEM GTIN" ? prod.cEAN : undefined;
-      const qty = Number(prod.qCom ?? 0);
-
-      const product = await this.findProductForInvoiceItem({
-        sku,
-        ean: gtin,
-        supplierCnpj: senderCnpj,
-        logPrefix: "[IMPORT_XML]",
-      });
-
-      if (!product) {
-        const reason =
-          !sku && !gtin
-            ? "SKU e EAN ausentes no XML"
-            : !sku
-              ? "SKU ausente — apenas EAN salvo"
-              : !gtin
-                ? "EAN ausente — apenas SKU salvo"
-                : "SKU e EAN presentes mas sem produto correspondente no banco";
-
-        const existing = await UnmappedInvoiceProduct.findOne({
-          where: {
-            invoice_id: invoice.id,
-            ...(gtin ? { ean: String(gtin) } : { sku: sku ?? null }),
-          },
-        });
-
-        if (!existing) {
-          await UnmappedInvoiceProduct.create({
-            invoice_id: invoice.id,
-            integrations_id: unit_business.integrations_id ?? integration.id,
-            ean: gtin ?? null,
-            sku: sku ?? null,
-            product_name: prod.xProd ?? null,
-            quantity: qty,
-            reason,
-            status: "UNMAPPED",
-          });
-        } else {
-          await existing.update({
-            quantity: qty,
-            integrations_id: unit_business.integrations_id ?? integration.id,
-          });
-        }
-
-        console.warn(
-          `[IMPORT_XML] Produto não mapeado | invoice=${invoice.id} | sku=${sku} | ean=${gtin} | motivo=${reason}`,
-        );
-        continue;
-      }
-
-      const current = quantityByProduct.get(String(product.id)) ?? 0;
-      quantityByProduct.set(String(product.id), current + qty);
-    }
-
-    for (const [productId, quantity] of quantityByProduct) {
-      const existingItem = await InvoiceItems.findOne({
-        where: { invoice_id: invoice.id, product_id: productId },
-      });
-
-      if (existingItem) {
-        await existingItem.update({ quantity_expected: quantity });
-      } else {
-        await InvoiceItems.create({
-          product_id: productId,
-          invoice_id: invoice.id,
-          quantity_expected: quantity,
-          status: "PENDING",
-        });
-      }
-    }
-
-    const invoiceItemsXml = await InvoiceItems.findAll({
-      where: { invoice_id: invoice.id },
-      include: [{ model: Product, as: "product" }],
-    });
-
-    const mappedEansXml = new Set(
-      invoiceItemsXml.map((i) => i.product?.ean).filter(Boolean),
-    );
-    const productIdsXml = invoiceItemsXml
-      .map((i) => i.product_id)
-      .filter(Boolean);
-    const configsXml = await ProductConfig.findAll({
-      where: {
-        product_id: productIdsXml,
-        unit_business_id: BLING_UNIT_BUSINESS_ID,
-      },
-    });
-    const mappedSkusXml = new Set(configsXml.map((c) => c.sku).filter(Boolean));
-
-    for (const item of det) {
-      const prod = item.prod ?? {};
-      const sku = prod.cProd ? String(prod.cProd).trim() : null;
-      const gtin =
-        prod.cEAN && prod.cEAN !== "SEM GTIN" ? String(prod.cEAN).trim() : null;
-
-      const wasMapped = gtin
-        ? mappedEansXml.has(gtin)
-        : sku
-          ? mappedSkusXml.has(sku)
-          : false;
-      if (!wasMapped) continue;
-
-      await UnmappedInvoiceProduct.destroy({
-        where: {
-          invoice_id: invoice.id,
-          ...(gtin ? { ean: gtin } : { sku: sku ?? null }),
-        },
-      });
-    }
-
-    console.log(
-      `[IMPORT_XML] ${det.length} item(ns) processado(s) para invoice ${idSystem}`,
-    );
   }
 
   protected override onFailed(

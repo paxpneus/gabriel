@@ -32,33 +32,40 @@ export class QueryParser {
     const offset = (page - 1) * perPage;
 
     // ── Ordenação ──────────────────────────────────────────────────────────
-   const rawSortBy = params.sortBy ?? defaults.sortBy;
-const rawSortDir = params.sortDir ?? defaults.sortDir;
+    const rawSortBy = params.sortBy ?? defaults.sortBy;
+    const rawSortDir = params.sortDir ?? defaults.sortDir;
 
-const sortByList = Array.isArray(rawSortBy)
-  ? rawSortBy
-  : rawSortBy.split(",").map((s) => s.trim());
+    const sortByList = Array.isArray(rawSortBy)
+      ? rawSortBy
+      : rawSortBy.split(",").map((s) => s.trim());
 
-const sortDirList = Array.isArray(rawSortDir)
-  ? rawSortDir
-  : String(rawSortDir).split(",").map((s) => s.trim().toUpperCase());
+    const sortDirList = Array.isArray(rawSortDir)
+      ? rawSortDir
+      : String(rawSortDir)
+          .split(",")
+          .map((s) => s.trim().toUpperCase());
 
-// Fallback sempre como string simples
-const fallbackSortBy = Array.isArray(defaults.sortBy)
-  ? defaults.sortBy[0]
-  : defaults.sortBy ?? DEFAULTS.sortBy;
+    const fallbackSortBy = Array.isArray(defaults.sortBy)
+      ? defaults.sortBy[0]
+      : (defaults.sortBy ?? DEFAULTS.sortBy);
 
-const order: OrderItem[] = sortByList.map((field, i) => {
-  const allowed = config.sortableFields;
-  const resolvedField: string =
-    allowed?.length && !allowed.includes(field) ? fallbackSortBy : field;
+    const order: OrderItem[] = sortByList.map((field, i) => {
+      const dir = (
+        ["ASC", "DESC"].includes(sortDirList[i] ?? "")
+          ? sortDirList[i]
+          : (sortDirList[0] ?? defaults.sortDir)
+      ) as "ASC" | "DESC";
 
-  const dir = (["ASC", "DESC"].includes(sortDirList[i] ?? "")
-    ? sortDirList[i]
-    : sortDirList[0] ?? defaults.sortDir) as "ASC" | "DESC";
+      if (config.customSort?.[field]) {
+        return config.customSort[field](dir);
+      }
 
-  return [resolvedField, dir] as [string, "ASC" | "DESC"];
-});
+      const allowed = config.sortableFields;
+      const resolvedField: string =
+        allowed?.length && !allowed.includes(field) ? fallbackSortBy : field;
+
+      return [resolvedField, dir] as [string, "ASC" | "DESC"];
+    });
 
     // ── Where ──────────────────────────────────────────────────────────────
     const conditions: WhereOptions[] = [];
@@ -68,8 +75,7 @@ const order: OrderItem[] = sortByList.map((field, i) => {
     // 1. Filtros por campo exato (filters[key]=value ou filters[key][]=v1&filters[key][]=v2)
     if (params.filters) {
       for (const [field, value] of Object.entries(params.filters)) {
-
-          if (config.customFields?.[field]) {
+        if (config.customFields?.[field]) {
           if (value && !(Array.isArray(value) && value.length === 0)) {
             const resolved = config.customFields[field](
               value as string | string[],
@@ -78,7 +84,7 @@ const order: OrderItem[] = sortByList.map((field, i) => {
           }
           continue;
         }
-        
+
         if (
           config.filterableFields?.length &&
           !config.filterableFields.includes(field)
@@ -140,14 +146,11 @@ const order: OrderItem[] = sortByList.map((field, i) => {
           if (field === "emitted_at") {
             where[Op.and] = [
               ...(where[Op.and] ?? []),
-              sequelizeWhere(
-                literal(`"emitted_at"`),
-                {
-                  [Op.gte]: literal(
-                    `('${value}'::date AT TIME ZONE 'America/Sao_Paulo')`,
-                  ),
-                },
-              ),
+              sequelizeWhere(literal(`"emitted_at"`), {
+                [Op.gte]: literal(
+                  `('${value}'::date AT TIME ZONE 'America/Sao_Paulo')`,
+                ),
+              }),
             ];
             continue;
           }

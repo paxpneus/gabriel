@@ -1,4 +1,10 @@
-import { FindOptions, Op, Sequelize } from "sequelize";
+import {
+  FindOptions,
+  Op,
+  Sequelize,
+  Transaction,
+  WhereOptions,
+} from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -10,7 +16,12 @@ import UnitBusiness from "../../unit-business/unit-business.model";
 import Transporter from "../../transporter/transporter.model";
 import ExpeditionBatch from "../../expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
-import { InvoiceAttributes } from "./invoice.types";
+import {
+  FullInvoiceAttributes,
+  InvoiceAttributes,
+  InvoiceCreationData,
+  ItemWithFiscal,
+} from "./invoice.types";
 import Store from "../../../sales/stores/stores.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import { getBrazilDate } from "../../../../shared/utils/normalizers/date";
@@ -19,6 +30,11 @@ import batchInvoicesService from "../../expedition/batch-invoices/batch-invoices
 import { Product, ProductConfig, Supplier } from "../../../inventory";
 import Contact from "../../../sales/contacts/contacts.model";
 import Order from "../../../sales/orders/order/orders.model";
+import {
+  InvoiceUnitBusinessAttributesCreationAttributes,
+  InvoiceUnitBusinessAttributesStatus,
+} from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
+import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -27,7 +43,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       stringFields: ["receiver_cnpj", "sender_cnpj", "customer_document"],
       defaults: {
         perPage: 20,
-        sortBy: ["status", "number_system"],
+        sortBy: ["number_system"],
         sortDir: ["ASC", "ASC"],
       },
       // Campos para busca textual (LIKE)
@@ -35,17 +51,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       // Campos permitidos para filtros exatos (WHERE field = value)
       // ADICIONADO: 'type' e 'customer_name' aqui
       filterableFields: [
-        "type",
-        "unit_business_id",
         "transporter_id",
         "receiver_cnpj",
         "receiver_name",
         "sender_name",
         "sender_cnpj",
-        "batch_generated",
         "printed_label",
         "emitted_at",
-        "status",
         "store_id",
         "supplier_id",
       ],
@@ -55,12 +67,20 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "emitted_at",
         "received_at",
         "expected_receiving",
-        "batch_generated",
+
         "printed_label",
-        "type",
-        "status",
+
         "number_system",
       ],
+      customSort: {
+        status: (dir) => ["unitBusinessAttributes", "status", dir],
+        type: (dir) => ["unitBusinessAttributes", "type", dir],
+        batch_generated: (dir) => [
+          "unitBusinessAttributes",
+          "batch_generated",
+          dir,
+        ],
+      },
       customFields: {
         brand: (value) => ({
           [Op.and]: Sequelize.literal(`EXISTS (
@@ -112,126 +132,212 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
           return {};
         },
+        status: (value) => ({
+          "$unitBusinessAttributes.status$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
+        }),
+
+        type: (value) => ({
+          "$unitBusinessAttributes.type$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
+        }),
+
+        batch_generated: (value) => ({
+          "$unitBusinessAttributes.batch_generated$": value === "true",
+        }),
+
+        unit_business_id: (value) => ({
+          "$unitBusinessAttributes.unit_business_id$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
+        }),
       },
     };
   }
 
-  async findByIdFull(id: string, unitBusinessId?: string) {
+  async createWithRelations(
+    invoiceData: InvoiceCreationData,
+    items: ItemWithFiscal[],
+    {
+      transaction,
+      initialStatus = "OPEN",
+    }: {
+      transaction?: Transaction;
+      initialStatus?: InvoiceUnitBusinessAttributesStatus;
+      mainUnitBusinessId?: string;
+    } = {},
+  ): Promise<Invoice> {
+    const t = transaction ?? (await sequelize.transaction());
+    const isExternalTransaction = !!transaction;
+
+    try {
+      // ─── 1. Resolve unit businesses ──────────────────────────────────────
+      const unitBusinesses = await this.repository.findUnitBusinessesByCnpj(
+        [invoiceData.sender_cnpj, invoiceData.receiver_cnpj].filter(
+          Boolean,
+        ) as string[],
+        t,
+      );
+
+      const cnpjMap = new Map(unitBusinesses.map((ub) => [ub.cnpj, ub.id]));
+      const senderUbId = cnpjMap.get(invoiceData.sender_cnpj);
+      const receiverUbId = cnpjMap.get(invoiceData.receiver_cnpj);
+
+      // ─── 2. Cria a invoice ───────────────────────────────────────────────
+      const invoice = await this.repository.createInvoice(
+        { ...invoiceData },
+        t,
+      );
+
+      // ─── 3. Cria items e fiscal items ─────────────────────
+      const deduplicatedItems = items.reduce<ItemWithFiscal[]>((acc, item) => {
+        const existing = acc.find((i) => i.product_id === item.product_id);
+        if (existing) {
+          existing.quantity_expected = Math.trunc(
+            existing.quantity_expected + item.quantity_expected,
+          );
+        } else {
+          acc.push({ ...item });
+        }
+        return acc;
+      }, []);
+
+      const invoiceItems = deduplicatedItems.map(
+        ({ fiscal: _, ...itemData }) => ({
+          ...itemData,
+          invoice_id: invoice.id,
+        }),
+      );
+
+      await this.repository.createInvoiceItems(invoiceItems, t);
+
+      const fiscalItems = deduplicatedItems
+        .map(({ fiscal, ...itemData }, index) =>
+          fiscal
+            ? {
+                ...fiscal,
+                invoice_id: invoice.id,
+                item_number: fiscal.item_number ?? index + 1,
+              }
+            : null,
+        )
+        .filter(Boolean) as InvoiceFiscalItemCreationAttributes[];
+
+      if (fiscalItems.length > 0) {
+        await this.repository.createInvoiceFiscalItems(fiscalItems, t);
+      }
+
+      // ─── 4. Resolve attributes por cnpj ──────────────────────────────────
+      const seen = new Set<string>();
+      const attributes: InvoiceUnitBusinessAttributesCreationAttributes[] = [];
+
+      const addAttr = (
+        unitBusinessId: string,
+        type: "INCOMING" | "OUTGOING",
+        status: InvoiceUnitBusinessAttributesStatus,
+      ) => {
+        const key = `${invoice.id}:${unitBusinessId}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        attributes.push({
+          invoice_id: invoice.id,
+          unit_business_id: unitBusinessId,
+          type,
+          status,
+          batch_generated: false,
+        });
+      };
+
+      if (senderUbId) addAttr(senderUbId, "OUTGOING", "OPEN");
+      if (receiverUbId)
+        addAttr(receiverUbId, "INCOMING", initialStatus ?? "OPEN");
+
+      if (attributes.length > 0) {
+        await this.repository.createInvoiceAttributes(attributes, t);
+      }
+
+      if (!isExternalTransaction) await t.commit();
+      return invoice;
+    } catch (err) {
+      if (!isExternalTransaction) await t.rollback();
+      throw err;
+    }
+  }
+
+  async findByIdFull(id: string, unitBusinessId: string) {
     return this.repository.getFullInvoice(id, unitBusinessId);
   }
 
-  async paginate(
+  async findByIdFullWithBatch(id: string, unitBusinessId: string) {
+    return this.repository.getFullInvoiceWithBatch(id, unitBusinessId);
+  }
+
+  async findByIdFullForAllUnits(id?: string, xml_key?: string) {
+    return this.repository.getFullInvoiceForAllUnits(id, xml_key);
+  }
+
+  async listInvoices(
     params: QueryParams,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-  ): Promise<PaginatedResult<Invoice>> {
-    const hasBatchFilter = !!params.filters?.batchStatus;
-    const hasProductBrandFilter = !!params.filters?.brand; // 👈
-
-    const invoices = await super.paginate(params, {
-      ...extraOptions,
-      subQuery: false,
-      include: [
-        {
-          model: ExpeditionBatchInvoice,
-          as: "batchInvoice",
-          required: hasBatchFilter,
-          attributes: ["id"],
-          include: [
-            {
-              model: ExpeditionBatch,
-              as: "batch",
-              required: hasBatchFilter,
-              attributes: ["number", "status", "mode", "id"],
-            },
-          ],
-        },
-        {
-          model: UnitBusiness,
-          as: "unitBusiness",
-          attributes: ["number", "name"],
-        },
-        {
-          model: Store,
-          as: "store",
-          attributes: ["name"],
-        },
-        {
-          model: Transporter,
-          as: "transporter",
-          attributes: ["name", "uf", "cnpj"],
-        },
-        {
-          model: Supplier,
-          as: "supplier",
-          attributes: ["name"],
-        },
-      ],
-      attributes: {
-        exclude: ["source_payload"],
-        include: [
-          [
-            Sequelize.literal(`(
-              SELECT ARRAY_AGG(DISTINCT p.brand)
-              FROM invoice_items ii
-              JOIN products p ON p.id = ii.product_id
-              WHERE ii.invoice_id = "Invoice"."id"
-                AND p.brand IS NOT NULL
-            )`),
-            "product_brands",
-          ] as [ReturnType<typeof Sequelize.literal>, string],
-
-          [
-            Sequelize.literal(`(
-            SELECT COALESCE(SUM(quantity_expected), 0)
-            FROM invoice_items
-            WHERE invoice_items.invoice_id = "Invoice"."id"
-          )`),
-            "total_expected",
-          ],
-          [
-            Sequelize.literal(`(
-            SELECT COALESCE(SUM(quantity_received), 0)
-            FROM invoice_items
-            WHERE invoice_items.invoice_id = "Invoice"."id"
-          )`),
-            "total_received",
-          ],
-        ],
-      },
-    });
-
-    return {
-      ...invoices,
-      data: invoices.data.map((invoice) => {
-        const plain = invoice.get({ plain: true });
-
-        return {
-          ...plain,
-          product_brands: (plain as any).product_brands ?? [],
-          transporter: plain.transporter
-            ? {
-                ...plain.transporter,
-                name: [
-                  plain.transporter.name,
-                  plain.transporter.uf,
-                  plain.transporter.cnpj,
-                ]
-                  .filter(Boolean)
-                  .join(" | "),
-              }
-            : plain.transporter,
-        };
-      }) as unknown as Invoice[],
-    };
+    unitBusinessId: string,
+  ): Promise<PaginatedResult<FullInvoiceAttributes>> {
+    return this.repository.listInvoices(
+      params,
+      unitBusinessId,
+      this.queryConfig,
+    );
   }
 
-  async updateInvoicesOpen(ids: string[], data: Partial<InvoiceAttributes>) {
-    return await Invoice.update(data, {
-      where: { id: ids, status: "OPEN" },
-    });
+  async updateInvoicesOpen(ids: string[], unitBusinessId: string) {
+    return this.repository.updateWithAttributes(
+      ids,
+      unitBusinessId,
+      { status: "PENDING" },
+      { status: "OPEN" },
+    );
   }
 
-  async scheduleInvoice(id: string, expectedDate: string) {
+  async updateInvoices(
+    invoiceIds: string[],
+    unitBusinessId: string,
+    data: Partial<
+      InvoiceAttributes & {
+        status: InvoiceUnitBusinessAttributesStatus;
+        batch_generated: boolean;
+      }
+    >,
+    attrWhere?: WhereOptions,
+    transaction?: Transaction,
+  ): Promise<void> {
+    return this.repository.updateWithAttributes(
+      invoiceIds,
+      unitBusinessId,
+      data,
+      attrWhere,
+      transaction,
+    );
+  }
+
+  async updateInvoicesForAllUnitBusiness(
+    invoiceIds: string[],
+    data: Partial<
+      InvoiceAttributes & { status: string; batch_generated: boolean }
+    >,
+    attrWhere?: WhereOptions,
+  ): Promise<void> {
+    return this.repository.updateWithAttributesForAllUnits(
+      invoiceIds,
+      data,
+      attrWhere,
+    );
+  }
+
+  async scheduleInvoice(
+    id: string,
+    expectedDate: string,
+    unitBusinessId: string,
+  ) {
     if (!expectedDate) {
       throw new Error("Data inválida");
     }
@@ -250,60 +356,60 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     //   );
     // }
 
-    const invoice = await this.findById(id);
+    const invoice = await this.repository.getInvoice(id, unitBusinessId);
     if (!invoice) {
       throw new Error("Nota fiscal não encontrada");
     }
 
-    if (["LATE", "FINISHED", "CANCELLED"].includes(invoice.status)) {
+    if (
+      ["LATE", "FINISHED", "CANCELLED"].includes(
+        invoice.unitBusinessAttributes?.status!,
+      )
+    ) {
       throw new Error(
         "Status não permitido para alterar data prevista de entrega",
       );
     }
 
-    await invoice.update({
+    await this.repository.updateWithAttributes([id], unitBusinessId, {
       status: "SCHEDULED",
       expected_receiving: expectedDate,
     });
   }
 
-  async bondInvoice(id: string, bondedInvoiceId: string) {
+  async bondInvoice(
+    id: string,
+    bondedInvoiceId: string,
+    unitBusinessId: string,
+  ) {
     return sequelize.transaction(async (t) => {
-      const invoice = await this.findById(id, {
-        include: [
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoice",
-          },
-        ],
-        transaction: t,
-      });
+      const invoice = await this.repository.getFullInvoiceWithBatch(
+        id,
+        unitBusinessId,
+      );
 
       if (!invoice) {
         throw new Error("Nota fiscal não encontrada!");
       }
 
-      const invoiceToBond = await this.findById(bondedInvoiceId, {
-        include: [
-          {
-            model: ExpeditionBatchInvoice,
-            as: "batchInvoice",
-          },
-        ],
-        transaction: t,
-      });
+      const invoiceToBond = await this.repository.getFullInvoiceWithBatch(
+        bondedInvoiceId,
+        unitBusinessId,
+      );
 
       if (!invoiceToBond) {
         throw new Error("Nota fiscal vinculada não encontrada!");
       }
 
-      if (invoice.status != "PENDING_CANCELLED_SYSTEM") {
+      if (
+        invoice.unitBusinessAttributes?.status != "PENDING_CANCELLED_SYSTEM"
+      ) {
         throw new Error(
           "Status não permitido para vincular nota, apenas status CANCELAMENTO PENDENTE NA PLATAFORMA permitido!",
         );
       }
 
-      await this.update(id, {
+      await this.repository.updateWithAttributes([id], unitBusinessId, {
         bonded_invoice: invoiceToBond.number_system,
         status: "CANCELLED",
       });
@@ -551,7 +657,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           date: invoice.emitted_at ?? null,
           xml_key: invoice.xml_key ?? null,
           sku: productConfig?.sku ?? null,
-          description: product?.name ?? '',
+          description: product?.name ?? "",
           quantity: item.quantity_expected,
           brand: product?.brand ?? null,
         });

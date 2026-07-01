@@ -6,6 +6,7 @@ import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
 import User from "../../users/users/user.model";
 import UnitBusiness from "../../unit-business/unit-business.model";
+import { getUserContext } from "../../../../shared/query/get-logged-user";
 
 export class ExpeditionBatchController extends BaseController<
   ExpeditionBatch,
@@ -28,7 +29,6 @@ export class ExpeditionBatchController extends BaseController<
       getBatches: [authenticate, userPermissions],
       getFullBatch: [authenticate, userPermissions],
       addInvoiceToBatch: [authenticate, userPermissions],
-      addInvoicesToBatch: [authenticate, userPermissions],
       finishBatch: [authenticate, userPermissions],
       getMultiplierScan: [authenticate, userPermissions],
       generateDeliveryNote: [authenticate, userPermissions],
@@ -70,12 +70,6 @@ export class ExpeditionBatchController extends BaseController<
       "/add-invoice",
       ...this.mw("addInvoiceToBatch"),
       (req, res) => this.addInvoiceToBatch(req, res),
-    );
-
-    this.router.post(
-      "/add-invoices",
-      ...this.mw("addInvoicesToBatch"),
-      (req, res) => this.addInvoicesToBatch(req, res),
     );
 
     this.router.put("/finish/:batchId", ...this.mw("finishBatch"), (req, res) =>
@@ -136,25 +130,6 @@ export class ExpeditionBatchController extends BaseController<
 
       const batches = await ExpeditionBatchService.addInvoiceToBatch(
         invoiceKey,
-        unitBusinessId,
-        type,
-        batchId,
-      );
-      return res.status(201).json(batches);
-    } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
-  };
-
-  addInvoicesToBatch = async (
-    req: Request,
-    res: Response,
-  ): Promise<Response> => {
-    try {
-      const { invoicesKey, unitBusinessId, type, batchId } = req.body;
-
-      const batches = await ExpeditionBatchService.addInvoicesToBatch(
-        invoicesKey,
         unitBusinessId,
         type,
         batchId,
@@ -282,23 +257,13 @@ export class ExpeditionBatchController extends BaseController<
     try {
       const { batchId } = req.params;
       const { justification } = req.body;
-      const userId = (req as any).user?.id;
-      if (!userId) {
-        return res.status(401).json({ error: "Usuário não autenticado" });
-      }
+      const context = await getUserContext(req);
 
-      const user = await User.findByPk(userId, {
+      const user = await User.findByPk(context.userId, {
         include: [{ model: UnitBusiness, as: "unitBusiness" }],
       });
 
-      if (!user?.unitBusiness?.integrations_id) {
-        return res
-          .status(400)
-          .json({
-            error:
-              "Unidade de negócio ou integração não encontrada para o usuário",
-          });
-      }
+      console.log("USER ACHADO", user)
 
       await this.service.finishBatch(batchId as string, justification, user);
 

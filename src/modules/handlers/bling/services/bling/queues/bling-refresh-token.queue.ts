@@ -4,52 +4,78 @@ import { BaseQueueService } from "../../../../../../shared/utils/base-models/bas
 import { doRefreshToken } from "../../../api/bling_api.service";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { Invoice } from "../../../../../warehouse";
+import invoiceService from "../../../../../warehouse/invoices/invoice/invoice.service";
 
 export class BlingTokenRefreshQueue extends BaseQueueService<void> {
+  constructor(options: { workless?: boolean } = {}) {
+    super("BLING_TOKEN_REFRESH", {
+      concurrency: 1,
+      lockDuration: 60_000,
+      workless: options.workless,
+    });
+  }
 
-    constructor(options: { workless?: boolean } = {}) {
-        super('BLING_TOKEN_REFRESH', {
-            concurrency: 1,
-             lockDuration: 60_000,
-            workless: options.workless
-        })
+  async process(job: Job<void, void, string>): Promise<void> {
+    console.log(`[BlingTokenRefreshQueue] Renovando token... jobId=${job.id}`);
+
+    try {
+      await doRefreshToken();
+      console.log(
+        `[BlingTokenRefreshQueue] Token renovado com sucesso em ${new Date().toISOString()}`,
+      );
+    } catch (err) {
+      alertService.sendAlert({
+        severity: "CRITICAL",
+        title: "Bling — refresh proativo falhou",
+        message: `Erro ao renovar token automaticamente: ${err}`,
+      });
+      throw err;
     }
 
-    async process(job: Job<void, void, string>): Promise<void> {
-        console.log(`[BlingTokenRefreshQueue] Renovando token... jobId=${job.id}`)
+    try {
+      const today = new Date().toISOString().split("T")[0];
 
-        try {
-            await doRefreshToken()
-            console.log(`[BlingTokenRefreshQueue] Token renovado com sucesso em ${new Date().toISOString()}`)
-        } catch (err) {
-            alertService.sendAlert({
-                severity: 'CRITICAL',
-                title: 'Bling — refresh proativo falhou',
-                message: `Erro ao renovar token automaticamente: ${err}`,
-            })
-            throw err
-        }
+      const invoices = await Invoice.findAll({
+        where: {
+          expected_receiving: { [Op.lt]: today },
+        },
+        include: [
+          {
+            association: "unitBusinessAttributes",
+            where: {
+              batch_generated: false,
+              type: "INCOMING",
+              status: {
+                [Op.notIn]: [
+                  "FINISHED",
+                  "CANCELLED",
+                  "LATE",
+                  "OPEN",
+                  "PENDING",
+                ],
+              },
+            },
+            required: true,
+          },
+        ],
+      });
 
-        try {
-            const today = new Date().toISOString().split('T')[0]; 
+      if (invoices.length > 0) {
+        await invoiceService.updateInvoicesForAllUnitBusiness(
+          invoices.map((i) => i.id),
+          { status: "LATE" },
+          { type: "INCOMING" }, 
+        );
 
-            const [updated] = await Invoice.update(
-                { status: 'LATE' },
-                {
-                    where: {
-                        type: 'INCOMING',
-                        status: { [Op.notIn]: ['FINISHED', 'CANCELLED', 'LATE', 'OPEN', 'PENDING'] },
-                        expected_receiving: { [Op.lt]: today },
-                        batch_generated: false,
-                    },
-                }
-            );
-
-            if (updated > 0) {
-                console.log(`[BlingTokenRefreshQueue] ${updated} invoice(s) marcada(s) como LATE`)
-            }
-        } catch (err) {
-            console.error(`[BlingTokenRefreshQueue] Erro ao marcar invoices como LATE:`, err)
-        }
+        console.log(
+          `[BlingTokenRefreshQueue] ${invoices.length} invoice(s) marcada(s) como LATE`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        `[BlingTokenRefreshQueue] Erro ao marcar invoices como LATE:`,
+        err,
+      );
     }
+  }
 }

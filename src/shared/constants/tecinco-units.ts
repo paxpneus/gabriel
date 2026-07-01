@@ -1,0 +1,1 @@
+export const tecincoUnitBusinessForPopulate: string[] = ['12', '17']

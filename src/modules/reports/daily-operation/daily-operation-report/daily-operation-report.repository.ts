@@ -24,6 +24,11 @@ interface InvoiceIdRow {
   invoice_id: string;
 }
 
+interface InvoiceUnitBusinessKeyRow {
+  invoice_id: string;
+  unit_business_id: string;
+}
+
 export class DailyOperationReportRepository {
   async getCheckpoint(): Promise<Date> {
     await this.ensureCheckpoint();
@@ -130,6 +135,12 @@ export class DailyOperationReportRepository {
     );
   }
 
+  /**
+   * Notas afetadas desde o checkpoint. Agora também observa mudanças em
+   * invoice_unit_business_attributes (status/type/batch_generated) e em
+   * batch_invoice_items (quantity_read/status), que substituíram os campos
+   * equivalentes que existiam direto em invoices/invoice_items.
+   */
   async findAffectedInvoiceIds(lastProcessedAt: Date): Promise<string[]> {
     const rows = await sequelize.query<InvoiceIdRow>(
       `
@@ -147,16 +158,22 @@ export class DailyOperationReportRepository {
 
         UNION
 
-        SELECT ii.invoice_id
-        FROM entrance_scan_logs esl
-        JOIN invoice_items ii ON ii.id = esl.invoice_items_id
-        WHERE esl.created_at >= :lastProcessedAt
+        SELECT iuba.invoice_id
+        FROM invoice_unit_business_attributes iuba
+        WHERE iuba.updated_at >= :lastProcessedAt
 
         UNION
 
         SELECT ebi.invoice_id
         FROM expedition_batch_invoices ebi
         WHERE ebi.created_at >= :lastProcessedAt
+
+        UNION
+
+        SELECT ebi.invoice_id
+        FROM batch_invoice_items bii
+        JOIN expedition_batch_invoices ebi ON ebi.id = bii.expedition_batch_invoice_id
+        WHERE bii.updated_at >= :lastProcessedAt
 
         UNION
 
@@ -183,66 +200,112 @@ export class DailyOperationReportRepository {
     return rows.map((row) => row.invoice_id);
   }
 
-  async upsertSnapshots(invoiceIds: string[]): Promise<void> {
-    if (!invoiceIds.length) return;
+  async upsertSnapshots(keys: InvoiceUnitBusinessKeyRow[]): Promise<void> {
+    if (!keys.length) return;
+
+    const invoiceIds = keys.map((k) => k.invoice_id);
+    const unitBusinessIds = keys.map((k) => k.unit_business_id);
 
     await sequelize.query(
       `
-      WITH affected(invoice_id) AS (
-        SELECT unnest(ARRAY[:invoiceIds]::uuid[])
+      WITH affected(invoice_id, unit_business_id) AS (
+        SELECT * FROM unnest(
+          ARRAY[:invoiceIds]::uuid[],
+          ARRAY[:unitBusinessIds]::uuid[]
+        )
       ),
-      item_totals AS (
+      item_expected AS (
         SELECT
           ii.invoice_id,
-          COALESCE(SUM(ii.quantity_expected), 0)::integer AS total_expected,
-          COALESCE(SUM(ii.quantity_received), 0)::integer AS total_received
+          COALESCE(SUM(ii.quantity_expected), 0)::integer AS total_expected
         FROM invoice_items ii
-        JOIN affected a ON a.invoice_id = ii.invoice_id
+        JOIN (SELECT DISTINCT invoice_id FROM affected) a ON a.invoice_id = ii.invoice_id
         GROUP BY ii.invoice_id
       ),
+      -- Agora recebido vem de batch_invoice_items, mas casado pelo par
+      -- (invoice_id, unit_business_id) via expedition_batches.unit_business_id.
+      -- Sem isso, um batch de OUTRA unit_business para a mesma invoice
+      -- "vazava" quantidade recebida para esta unit_business.
+      batch_item_totals AS (
+        SELECT
+          ebi.invoice_id,
+          eb.unit_business_id,
+          COALESCE(SUM(bii.quantity_read), 0)::integer AS total_received
+        FROM expedition_batch_invoices ebi
+        JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
+        JOIN batch_invoice_items bii ON bii.expedition_batch_invoice_id = ebi.id
+        JOIN affected a
+          ON a.invoice_id = ebi.invoice_id
+         AND a.unit_business_id = eb.unit_business_id
+        GROUP BY ebi.invoice_id, eb.unit_business_id
+      ),
+      -- Mesma correção: scans só contam para o par (invoice_id, unit_business_id)
+      -- cujo batch pertence a essa unit_business.
       scan_bounds AS (
         SELECT
           ebi.invoice_id,
+          eb.unit_business_id,
           MIN(esl.created_at) AS first_scan_at,
           MAX(esl.created_at) AS last_scan_at
         FROM expedition_scan_logs esl
         JOIN expedition_batch_invoices ebi ON ebi.id = esl.expedition_batch_invoices_id
-        JOIN affected a ON a.invoice_id = ebi.invoice_id
-        GROUP BY ebi.invoice_id
+        JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
+        JOIN affected a
+          ON a.invoice_id = ebi.invoice_id
+         AND a.unit_business_id = eb.unit_business_id
+        GROUP BY ebi.invoice_id, eb.unit_business_id
       ),
+      -- batch_data também precisa ser por (invoice_id, unit_business_id):
+      -- pega o batch mais antigo dessa invoice DENTRO dessa unit_business.
       batch_data AS (
-        SELECT DISTINCT ON (ebi.invoice_id)
+        SELECT DISTINCT ON (ebi.invoice_id, eb.unit_business_id)
           ebi.invoice_id,
+          eb.unit_business_id,
           eb.delivery_note_generated_at,
           eb.created_at AS batch_created_at,
           eb.transporters_id AS batch_transporter_id
         FROM expedition_batch_invoices ebi
         JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
-        JOIN affected a ON a.invoice_id = ebi.invoice_id
-        ORDER BY ebi.invoice_id, ebi.created_at ASC
+        JOIN affected a
+          ON a.invoice_id = ebi.invoice_id
+         AND a.unit_business_id = eb.unit_business_id
+        ORDER BY ebi.invoice_id, eb.unit_business_id, ebi.created_at ASC
       ),
-      -- Identifica se a invoice é devolução de fornecedor:
-      -- INCOMING onde sender_cnpj bate com algum CNPJ de unit_business cadastrado no sistema.
+      invoice_attrs AS (
+        SELECT
+          iuba.invoice_id,
+          iuba.unit_business_id,
+          iuba.type,
+          iuba.status,
+          iuba.batch_generated
+        FROM invoice_unit_business_attributes iuba
+        JOIN affected a
+          ON a.invoice_id = iuba.invoice_id
+         AND a.unit_business_id = iuba.unit_business_id
+      ),
       supplier_returns AS (
         SELECT
-          i.id AS invoice_id,
+          ia.invoice_id,
+          ia.unit_business_id,
           TRUE AS is_supplier_return
-        FROM invoices i
-        JOIN affected a ON a.invoice_id = i.id
-        JOIN unit_businesses ub ON ub.cnpj = i.sender_cnpj
-        WHERE i.type = 'INCOMING'
+        FROM invoice_attrs ia
+        JOIN invoices i ON i.id = ia.invoice_id
+        JOIN unit_businesses ub
+          ON ub.id = ia.unit_business_id
+         AND ub.cnpj = i.sender_cnpj
+        WHERE ia.type = 'INCOMING'
       ),
-      -- Identifica notas de adiantamento:
-      -- Notas cuja transportadora efetiva (batch tem precedência sobre a nota)
-      -- pertence às transportadoras internas (CD 12 ou CD 17).
-      -- Essas notas são gravadas no snapshot mas ficam fora dos KPIs principais.
+      -- advance_payments agora casa batch_data pelo par completo também
       advance_payments AS (
         SELECT
-          i.id AS invoice_id,
+          ia.invoice_id,
+          ia.unit_business_id,
           TRUE AS is_advance_payment
-        FROM invoices i
-        JOIN affected a ON a.invoice_id = i.id
-        LEFT JOIN batch_data bd ON bd.invoice_id = i.id
+        FROM invoice_attrs ia
+        JOIN invoices i ON i.id = ia.invoice_id
+        LEFT JOIN batch_data bd
+          ON bd.invoice_id = ia.invoice_id
+         AND bd.unit_business_id = ia.unit_business_id
         LEFT JOIN transporters t_eff ON t_eff.id = CASE
           WHEN bd.invoice_id IS NOT NULL THEN bd.batch_transporter_id
           ELSE i.transporter_id
@@ -250,71 +313,72 @@ export class DailyOperationReportRepository {
         WHERE t_eff.id_system = ANY(ARRAY[:excludedTransporterIdSystems])
       ),
       snapshot_source AS (
-        SELECT
-          i.id AS invoice_id,
-          i.unit_business_id,
-          -- Transporter efetivo: batch tem precedência sobre a nota
-          CASE
-            WHEN bd.invoice_id IS NOT NULL THEN bd.batch_transporter_id
-            ELSE i.transporter_id
-          END AS transporter_id,
-          i.type,
-          DATE(COALESCE(i.emitted_at, i.created_at)) AS invoice_date,
-          i.emitted_at,
-          bd.delivery_note_generated_at,
-          sb.first_scan_at,
-          sb.last_scan_at,
-          COALESCE(it.total_expected, 0) AS total_items_expected,
-          COALESCE(it.total_received, 0) AS total_items_received,
-          CASE
-            WHEN COALESCE(it.total_expected, 0) = 0 THEN 0
-            ELSE ROUND((COALESCE(it.total_received, 0)::numeric / it.total_expected::numeric) * 100, 2)
-          END AS scan_completion_pct,
-          CASE
-            WHEN i.type = 'INCOMING'
-              AND COALESCE(it.total_expected, 0) > 0
-              AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
-              THEN sb.last_scan_at
-            WHEN i.type = 'OUTGOING' AND bd.delivery_note_generated_at IS NOT NULL
-              THEN bd.delivery_note_generated_at
-            ELSE NULL
-          END AS fully_processed_at,
-          CASE
-            WHEN i.type = 'OUTGOING'
-              AND i.emitted_at IS NOT NULL
-              AND bd.delivery_note_generated_at IS NOT NULL
-              -- Convertido de minutos para horas decimais (/ 60)
-              THEN ROUND((EXTRACT(EPOCH FROM (bd.delivery_note_generated_at - i.emitted_at::timestamptz)) / 3600)::numeric, 2)
-            ELSE NULL
-          END AS hours_emission_to_delivery_note,
-          CASE
-            WHEN i.type = 'INCOMING'
-              AND COALESCE(it.total_expected, 0) > 0
-              AND COALESCE(it.total_received, 0) >= COALESCE(it.total_expected, 0)
-              AND sb.last_scan_at IS NOT NULL
-              -- Convertido de minutos para horas decimais (/ 60)
-              THEN ROUND((EXTRACT(EPOCH FROM (sb.last_scan_at - COALESCE(i.received_at, i.emitted_at)::timestamptz)) / 3600)::numeric, 2)
-            ELSE NULL
-          END AS hours_batch_to_fully_scanned,
-          CASE
-            WHEN i.status = 'CANCELLED'                THEN 'cancelled'
-            WHEN i.status = 'PENDING_CANCELLED_SYSTEM' THEN 'pending_cancelled'
-            WHEN i.status = 'FINISHED'                 THEN 'completed'
-            ELSE 'open'
-          END AS snapshot_status,
-          -- Flag de devolução de fornecedor: INCOMING cujo sender_cnpj é de uma filial
-          COALESCE(sr.is_supplier_return, FALSE) AS is_supplier_return,
-          -- Flag de adiantamento: nota cuja transportadora efetiva é interna (CD 12 / CD 17)
-          COALESCE(ap.is_advance_payment, FALSE) AS is_advance_payment
-        FROM invoices i
-        JOIN affected a ON a.invoice_id = i.id
-        LEFT JOIN item_totals it      ON it.invoice_id = i.id
-        LEFT JOIN scan_bounds sb      ON sb.invoice_id = i.id
-        LEFT JOIN batch_data bd       ON bd.invoice_id = i.id
-        LEFT JOIN supplier_returns sr ON sr.invoice_id = i.id
-        LEFT JOIN advance_payments ap ON ap.invoice_id = i.id
-        -- Sem filtro de exclusão aqui: adiantamentos são gravados com flag, não descartados
-      )
+  SELECT
+    i.id AS invoice_id,
+    ia.unit_business_id,
+    CASE
+      WHEN bd.invoice_id IS NOT NULL THEN bd.batch_transporter_id
+      ELSE i.transporter_id
+    END AS transporter_id,
+    ia.type,
+    DATE(i.created_at) AS invoice_date,
+    i.emitted_at,
+    bd.delivery_note_generated_at,
+    sb.first_scan_at,
+    sb.last_scan_at,
+    COALESCE(ie.total_expected, 0) AS total_items_expected,
+    COALESCE(bit.total_received, 0) AS total_items_received,
+    CASE
+      WHEN COALESCE(ie.total_expected, 0) = 0 THEN 0
+      ELSE ROUND((COALESCE(bit.total_received, 0)::numeric / ie.total_expected::numeric) * 100, 2)
+    END AS scan_completion_pct,
+    CASE
+      WHEN ia.type = 'INCOMING'
+        AND COALESCE(ie.total_expected, 0) > 0
+        AND COALESCE(bit.total_received, 0) >= COALESCE(ie.total_expected, 0)
+        THEN sb.last_scan_at
+      WHEN ia.type = 'OUTGOING' AND bd.delivery_note_generated_at IS NOT NULL
+        THEN bd.delivery_note_generated_at
+      ELSE NULL
+    END AS fully_processed_at,
+    CASE
+      WHEN ia.type = 'OUTGOING'
+        AND i.emitted_at IS NOT NULL
+        AND bd.delivery_note_generated_at IS NOT NULL
+        THEN ROUND((EXTRACT(EPOCH FROM (bd.delivery_note_generated_at - i.emitted_at::timestamptz)) / 3600)::numeric, 2)
+      ELSE NULL
+    END AS hours_emission_to_delivery_note,
+    CASE
+      WHEN ia.type = 'INCOMING'
+        AND COALESCE(ie.total_expected, 0) > 0
+        AND COALESCE(bit.total_received, 0) >= COALESCE(ie.total_expected, 0)
+        AND sb.last_scan_at IS NOT NULL
+        THEN ROUND((EXTRACT(EPOCH FROM (sb.last_scan_at - COALESCE(i.received_at, i.emitted_at)::timestamptz)) / 3600)::numeric, 2)
+      ELSE NULL
+    END AS hours_batch_to_fully_scanned,
+    CASE
+      WHEN ia.status = 'CANCELLED'                THEN 'cancelled'
+      WHEN ia.status = 'PENDING_CANCELLED_SYSTEM' THEN 'pending_cancelled'
+      WHEN ia.status = 'FINISHED'                 THEN 'completed'
+      ELSE 'open'
+    END AS snapshot_status,
+    COALESCE(sr.is_supplier_return, FALSE) AS is_supplier_return,
+    COALESCE(ap.is_advance_payment, FALSE) AS is_advance_payment
+  FROM invoices i
+  JOIN invoice_attrs ia
+    ON ia.invoice_id = i.id
+  LEFT JOIN item_expected ie ON ie.invoice_id = i.id
+  LEFT JOIN batch_item_totals bit
+    ON bit.invoice_id = i.id AND bit.unit_business_id = ia.unit_business_id
+  LEFT JOIN scan_bounds sb
+    ON sb.invoice_id = i.id AND sb.unit_business_id = ia.unit_business_id
+  LEFT JOIN batch_data bd
+    ON bd.invoice_id = i.id AND bd.unit_business_id = ia.unit_business_id
+  LEFT JOIN supplier_returns sr
+    ON sr.invoice_id = ia.invoice_id AND sr.unit_business_id = ia.unit_business_id
+  LEFT JOIN advance_payments ap
+    ON ap.invoice_id = ia.invoice_id AND ap.unit_business_id = ia.unit_business_id
+)
       INSERT INTO invoice_operation_snapshots (
         invoice_id,
         unit_business_id,
@@ -361,8 +425,7 @@ export class DailyOperationReportRepository {
         NOW(),
         NOW()
       FROM snapshot_source
-      ON CONFLICT (invoice_id) DO UPDATE SET
-        unit_business_id                 = EXCLUDED.unit_business_id,
+      ON CONFLICT (invoice_id, unit_business_id) DO UPDATE SET
         transporter_id                   = EXCLUDED.transporter_id,
         type                             = EXCLUDED.type,
         invoice_date                     = EXCLUDED.invoice_date,
@@ -385,6 +448,7 @@ export class DailyOperationReportRepository {
       {
         replacements: {
           invoiceIds,
+          unitBusinessIds,
           excludedTransporterIdSystems: EXCLUDED_TRANSPORTER_ID_SYSTEMS,
         },
       },
@@ -659,6 +723,77 @@ export class DailyOperationReportRepository {
         },
       );
     }
+  }
+
+  /**
+   * Notas afetadas desde o checkpoint, já resolvidas para pares
+   * (invoice_id, unit_business_id). Como invoice_unit_business_attributes
+   * agora é a única fonte de unit_business_id — e uma invoice pode ter
+   * várias linhas de attributes, uma por unit_business — qualquer mudança
+   * detectada por invoice_id precisa ser expandida (fan-out) para todos os
+   * unit_business_id daquela invoice em invoice_unit_business_attributes.
+   */
+  async findAffectedInvoiceUnitBusinessKeys(
+    lastProcessedAt: Date,
+  ): Promise<InvoiceUnitBusinessKeyRow[]> {
+    const rows = await sequelize.query<InvoiceUnitBusinessKeyRow>(
+      `
+      SELECT DISTINCT iuba.invoice_id, iuba.unit_business_id
+      FROM (
+        SELECT i.id AS invoice_id
+        FROM invoices i
+        WHERE i.updated_at >= :lastProcessedAt
+
+        UNION
+
+        SELECT ii.invoice_id
+        FROM invoice_items ii
+        WHERE ii.updated_at >= :lastProcessedAt
+
+        UNION
+
+        SELECT iuba2.invoice_id
+        FROM invoice_unit_business_attributes iuba2
+        WHERE iuba2.updated_at >= :lastProcessedAt
+
+        UNION
+
+        SELECT ebi.invoice_id
+        FROM expedition_batch_invoices ebi
+        WHERE ebi.created_at >= :lastProcessedAt
+
+        UNION
+
+        SELECT ebi.invoice_id
+        FROM batch_invoice_items bii
+        JOIN expedition_batch_invoices ebi ON ebi.id = bii.expedition_batch_invoice_id
+        WHERE bii.updated_at >= :lastProcessedAt
+
+        UNION
+
+        SELECT ebi.invoice_id
+        FROM expedition_scan_logs esl
+        JOIN expedition_batch_invoices ebi ON ebi.id = esl.expedition_batch_invoices_id
+        WHERE esl.created_at >= :lastProcessedAt
+
+        UNION
+
+        SELECT ebi.invoice_id
+        FROM expedition_batches eb
+        JOIN expedition_batch_invoices ebi ON ebi.expedition_batch_id = eb.id
+        WHERE eb.updated_at >= :lastProcessedAt
+      ) affected
+      JOIN invoice_unit_business_attributes iuba
+        ON iuba.invoice_id = affected.invoice_id
+      WHERE affected.invoice_id IS NOT NULL
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: { lastProcessedAt },
+      },
+    );
+
+    return rows;
   }
 
   async findAffectedTransporterFactKeys(

@@ -4,6 +4,8 @@ import { alertService } from "../../../../shared/providers/mail-provider/nodemai
 import { TCarUpsertQueue } from "./tecinco-api-fetch.queue";
 import { runMigration } from "../../../../scripts/tecinco/tecinco-migration.runner";
 import { UnitBusiness } from "../../../../modules/warehouse";
+import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
+import { Op } from "sequelize";
 
 export interface TCarSyncJobPayload {
   branchId: number;
@@ -24,13 +26,16 @@ function formatAlteradoDesde(date: Date): string {
 export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
   private readonly upsertQueue: TCarUpsertQueue;
 
-  constructor(options: { workless?: boolean } = {}) {
+  constructor(
+    upsertQueue: TCarUpsertQueue,
+    options: { workless?: boolean } = {},
+  ) {
     super("TCAR_SYNC", {
       concurrency: 2,
       limiter: { max: 5, duration: 1000 },
       workless: options.workless,
     });
-    this.upsertQueue = new TCarUpsertQueue({ workless: false });
+    this.upsertQueue = upsertQueue; 
   }
 
   async process(job: Job<TCarSyncJobPayload>): Promise<void> {
@@ -59,29 +64,28 @@ export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
   }
 }
 
-export async function scheduleTCarSync() {
-  const units = await UnitBusiness.findAll({ attributes: ["number"] });
+export async function scheduleTCarSync(syncQueue: TCarSyncQueue) {
+ const units = await UnitBusiness.findAll({
+    attributes: ["id", "id_system", "number"],
+    where: {
+      number: {
+        [Op.in]: tecincoUnitBusinessForPopulate,
+      },
+    },
+  });
   const branchIds: number[] = units.map((u) => Number(u.number));
 
-  const syncQueue = new TCarSyncQueue();
-
   const dispatchSync = async () => {
-    const alteradoDesde = formatAlteradoDesde(
-      new Date(Date.now() - 2 * 60 * 60 * 1000),
-    );
-
+    const alteradoDesde = formatAlteradoDesde(new Date(Date.now() - 2 * 60 * 60 * 1000));
     for (const branchId of branchIds) {
       await syncQueue.add(
         { branchId, companyId: COMPANY_ID, alteradoDesde },
-        `tcar-sync-${branchId}-${Date.now()}`,
+        `tcar-sync-${branchId}`, 
       );
-
-      console.log(
-        `[TCAR_SYNC] Job agendado | branchId=${branchId} | alterado_desde=${alteradoDesde}`,
-      );
+      console.log(`[TCAR_SYNC] Job agendado | branchId=${branchId}`);
     }
   };
 
   dispatchSync();
-  setInterval(dispatchSync, 2 * 60 * 60 * 1000);
+  setInterval(dispatchSync, 10 * 60 * 1000);
 }
