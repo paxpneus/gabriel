@@ -315,17 +315,37 @@ export class TCarConferenciaPostService {
     }
 
     // ── Resolve extra params da Tecinco (obrigatórios para nota-fiscal) ────────
-    const extraParams =
-      tipo === "nota-fiscal"
-        ? await this.resolveExtraParams(branchId, ctx.numero, ctx.chaveNfe)
-        : {};
+    let extraParams: Partial<TCarNotaFiscalQueryParams> = {};
+    let documento: any;
 
-    const documento = await this.conferenciaService.carregarDocumento(
-      branchId,
-      tipo,
-      numero,
-      extraParams,
-    );
+    try {
+      extraParams =
+        tipo === "nota-fiscal"
+          ? await this.resolveExtraParams(branchId, ctx.numero, ctx.chaveNfe)
+          : {};
+
+      documento = await this.conferenciaService.carregarDocumento(
+        branchId,
+        tipo,
+        numero,
+        extraParams,
+      );
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        console.warn(
+          `[TCarConferenciaPostService] Nota não encontrada na Tecinco — pulando | invoice=${ctx.invoiceId} | numero=${numero}`,
+        );
+        return {
+          numero,
+          sincronizado: true,
+          itens: [],
+          itens_a_conferir: [],
+          extraParams: {},
+        };
+      }
+      // Qualquer outro erro (500, timeout, etc.) continua propagando
+      throw err;
+    }
 
     const itensTecinco: Array<{
       seq: number;
@@ -513,7 +533,7 @@ export class TCarConferenciaPostService {
       tipo,
       numero,
       {
-        usuario_id: '1',
+        usuario_id: "1",
         itens: itens_a_conferir,
       },
       verificacao.extraParams,
@@ -548,7 +568,7 @@ export class TCarConferenciaPostService {
     tipo: TCarConferenciaTipo = "nota-fiscal",
   ): Promise<TCarConferenciaPostResult[]> {
     console.log("ENVIANDO CONFERENCIA PARA TECINCO");
-    console.log("USER", userId)
+    console.log("USER", userId);
 
     const batchInvoices = (await ExpeditionBatchInvoice.findAll({
       where: { expedition_batch_id: batchId },
@@ -645,7 +665,7 @@ export class TCarConferenciaPostService {
         branchId,
         tipo,
         numero,
-        { usuario_id: '1', itens: itens_a_conferir },
+        { usuario_id: "1", itens: itens_a_conferir },
         verificacao.extraParams,
       );
 
