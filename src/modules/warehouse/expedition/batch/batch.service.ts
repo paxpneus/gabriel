@@ -237,7 +237,7 @@ export class ExpeditionBatchService extends BaseService<
       }
 
       for (const invoice of notBatched) {
-        assertTransshipment(invoice, unitBusiness);
+        await assertTransshipment(invoice, unitBusiness);
       }
 
       const batchType = type == "OUTGOING" ? "EXPEDITION" : "ENTRANCE";
@@ -312,7 +312,7 @@ export class ExpeditionBatchService extends BaseService<
         transaction: t,
       });
 
-      assertTransshipment(invoice, unitBusiness);
+      await assertTransshipment(invoice, unitBusiness);
 
       // ── Verifica se já existe um batch_invoice para essa nota NESSA unit_business ──
       const alreadyInBatch = await batchInvoicesService.findOne({
