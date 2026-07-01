@@ -24,6 +24,7 @@ import {
 } from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { upsertInvoiceFromXml } from "../../../../shared/utils/xml/invoice-xml";
 import UnitBusiness from "../../unit-business/unit-business.model";
+import { getUserContext } from "../../../../shared/query/get-logged-user";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -96,6 +97,15 @@ export class InvoiceController extends BaseController<
     );
   }
 
+  private resolveUnitBusinessId(
+    req: Request,
+    contextUnitBusinessId: string,
+  ): string {
+    const fromParams = (req.params.unitBusinessId ??
+      req.query.unitBusinessId) as string | undefined;
+    return fromParams && fromParams.trim() ? fromParams : contextUnitBusinessId;
+  }
+
   protected registerCustomRoutes(): void {}
 
   protected middlewaresFor() {
@@ -123,18 +133,48 @@ export class InvoiceController extends BaseController<
     };
   }
 
+  index = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      const result = await this.service.listInvoices(params, unitBusinessId);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  update = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      await this.service.updateInvoices(
+        [req.params.id as string],
+        unitBusinessId,
+        req.body,
+      );
+      return res.json({ success: true });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
   getFullInvoice = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { id } = req.params;
-      const userId = (req as any).user?.id;
-
-      // pega unit_business_id do usuário logado
-      const user = await User.findByPk(userId, {
-        attributes: ["unit_business_id"],
-      });
-      const unitBusinessId = user?.unit_business_id ?? undefined;
-
-      const data = await this.service.findByIdFull(
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      const data = await this.service.findByIdFullWithBatch(
         id as string,
         unitBusinessId,
       );
@@ -323,18 +363,14 @@ export class InvoiceController extends BaseController<
   };
 
   updateInvoicesOpen = async (req: Request, res: Response): Promise<void> => {
-    console.log(req.body);
     try {
       const ids = req.body;
-      await Invoice.update(
-        { status: "PENDING" },
-        {
-          where: {
-            id: { [Op.in]: ids },
-            status: "OPEN",
-          },
-        },
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
       );
+      await this.service.updateInvoicesOpen(ids, unitBusinessId);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -348,7 +384,16 @@ export class InvoiceController extends BaseController<
     try {
       const { id } = req.params;
       const { bondedInvoiceId } = req.body;
-      await this.service.bondInvoice(id as string, bondedInvoiceId);
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      await this.service.bondInvoice(
+        id as string,
+        bondedInvoiceId,
+        unitBusinessId,
+      );
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -359,8 +404,16 @@ export class InvoiceController extends BaseController<
     try {
       const { expectedDate } = req.body;
       const { id } = req.params;
-
-      await this.service.scheduleInvoice(id as string, expectedDate);
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      await this.service.scheduleInvoice(
+        id as string,
+        expectedDate,
+        unitBusinessId,
+      );
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -368,60 +421,58 @@ export class InvoiceController extends BaseController<
   };
 
   importXML = async (req: Request, res: Response): Promise<void> => {
-  const { integration } = req.body;
-  try {
-    if (!req.file) {
-      res.status(400).json({ error: "Nenhum arquivo XML enviado" });
-      return;
+    const { integration } = req.body;
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: "Nenhum arquivo XML enviado" });
+        return;
+      }
+
+      const xmlContent = req.file.buffer.toString("utf-8");
+
+      if (!xmlContent.trim()) {
+        res.status(400).json({ error: "Arquivo XML vazio" });
+        return;
+      }
+
+      if (integration === "bling") {
+        console.log("IMPORT BLING");
+        const queue = req.app.locals.BlingApiFetchQueue as BlingApiFetchQueue;
+        await queue.upsertInvoiceFromXml(xmlContent);
+      } else if (integration === "tecinco") {
+        const userId = (req as any).user?.id;
+        const user = await User.findByPk(userId, {
+          attributes: ["unit_business_id"],
+        });
+
+        const unitBusiness = user?.unit_business_id
+          ? await UnitBusiness.findByPk(user.unit_business_id, {
+              attributes: ["number"],
+            })
+          : null;
+
+        const branchId = unitBusiness?.number
+          ? Number(unitBusiness.number)
+          : undefined;
+
+        const queue = req.app.locals.TCarUpsertQueue as TCarUpsertQueue;
+        await queue.add({
+          eventId: `manual-xml-${Date.now()}`,
+          resource: "invoice_xml",
+          action: "created",
+          companyId: "",
+          branchId,
+          data: { xml: xmlContent },
+        } satisfies TCarUpsertJobPayload);
+      } else {
+        await upsertInvoiceFromXml(xmlContent);
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const xmlContent = req.file.buffer.toString("utf-8");
-
-    if (!xmlContent.trim()) {
-      res.status(400).json({ error: "Arquivo XML vazio" });
-      return;
-    }
-
-    if (integration === "bling") {
-      console.log("IMPORT BLING")
-      const queue = req.app.locals.BlingApiFetchQueue as BlingApiFetchQueue;
-      await queue.upsertInvoiceFromXml(xmlContent);
-
-    } else if (integration === "tecinco") {
-      const userId = (req as any).user?.id;
-      const user = await User.findByPk(userId, {
-        attributes: ["unit_business_id"],
-      });
-
-      const unitBusiness = user?.unit_business_id
-        ? await UnitBusiness.findByPk(user.unit_business_id, {
-            attributes: ["number"],
-          })
-        : null;
-
-      const branchId = unitBusiness?.number
-        ? Number(unitBusiness.number)
-        : undefined;
-
-      const queue = req.app.locals.TCarUpsertQueue as TCarUpsertQueue;
-      await queue.add({
-        eventId: `manual-xml-${Date.now()}`,
-        resource: "invoice_xml",
-        action: "created",
-        companyId: "",
-        branchId,
-        data: { xml: xmlContent },
-      } satisfies TCarUpsertJobPayload);
-
-    } else {
-      await upsertInvoiceFromXml(xmlContent);
-    }
-
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-};
+  };
 
   getInvoiceProductReport = async (
     req: Request,
@@ -442,11 +493,14 @@ export class InvoiceController extends BaseController<
   ): Promise<Response> => {
     try {
       const params = this.extractQueryParams(req);
-      const { unitBusinessId } = req.params;
-
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
       const data = await this.service.getInvoiceSupplierReport(
         params,
-        unitBusinessId as string,
+        unitBusinessId,
       );
       return res.json({ data });
     } catch (err: any) {

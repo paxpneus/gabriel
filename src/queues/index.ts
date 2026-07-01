@@ -28,7 +28,10 @@ import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/que
 import { BlingTokenRefreshQueue } from "./../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 import { TCarUpsertQueue } from "../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
-import { TCarSyncQueue } from "../modules/handlers/tecinco/queues/tecinco-sync-queue";
+import {
+  scheduleTCarSync,
+  TCarSyncQueue,
+} from "../modules/handlers/tecinco/queues/tecinco-sync-queue";
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation/daily-operation-report/daily-operation-report.queue";
 import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
 
@@ -102,14 +105,26 @@ function buildQueues(activeWorkers: QueueName[]) {
     { workless: w("BLING_RECONCILER") },
   );
 
-  const blingDirectUpsertQueue = new BlingDirectUpsertQueue({ workless: w("BLING_DIRECT_UPSERT") });
-  const blingApiFetchQueue = new BlingApiFetchQueue({ workless: w("BLING_API_FETCH") });
-  const blingTokenRefreshQueue = new BlingTokenRefreshQueue({ workless: w("BLING_TOKEN_REFRESH") });
-  const blingDailyReconciler = new BlingMigrationQueue({ workless: w("BLING_MIGRATION") });
+  const blingDirectUpsertQueue = new BlingDirectUpsertQueue({
+    workless: w("BLING_DIRECT_UPSERT"),
+  });
+  const blingApiFetchQueue = new BlingApiFetchQueue({
+    workless: w("BLING_API_FETCH"),
+  });
+  const blingTokenRefreshQueue = new BlingTokenRefreshQueue({
+    workless: w("BLING_TOKEN_REFRESH"),
+  });
+  const blingDailyReconciler = new BlingMigrationQueue({
+    workless: w("BLING_MIGRATION"),
+  });
   const tcarUpsertQueue = new TCarUpsertQueue({ workless: w("TCAR_UPSERT") });
-  const tcarSyncQueue = new TCarSyncQueue({ workless: w("TCAR_SYNC") });
-  const dailyOperationReportQueue = new DailyOperationReportQueue({ workless: w("DAILY_OPERATION_REPORT") });
-  const dailySalesReportQueue = new SalesReportQueue({ workless: w("DAILY_SALES_REPORT") });
+  const tcarSyncQueue = new TCarSyncQueue(tcarUpsertQueue, { workless: w("TCAR_SYNC") });
+  const dailyOperationReportQueue = new DailyOperationReportQueue({
+    workless: w("DAILY_OPERATION_REPORT"),
+  });
+  const dailySalesReportQueue = new SalesReportQueue({
+    workless: w("DAILY_SALES_REPORT"),
+  });
   const autoBackupQueue = new AutoBackupQueue({ workless: w("AUTO_BACKUP") });
 
   return {
@@ -148,7 +163,7 @@ export function registerQueues(app: Express) {
     autoBackupQueue,
     tcarUpsertQueue,
     tcarSyncQueue,
-  } = buildQueues([]); 
+  } = buildQueues([]);
 
   const blingOrderQueue = new BlingOrderQueue(
     new BlingOrderService(blingApi),
@@ -222,7 +237,6 @@ export function startBlingWorkers() {
     "BLING_DIRECT_UPSERT",
     "BLING_TOKEN_REFRESH",
     "BLING_MIGRATION",
-    "TCAR_UPSERT",
     "BLING_ORDER_INGESTION",
   ]);
 
@@ -234,7 +248,9 @@ export function startBlingWorkers() {
   void tcarUpsertQueue;
   void blingOrderQueue;
 
-  console.log("------------------- QUEUE: Bling Workers Ativos! -------------------");
+  console.log(
+    "------------------- QUEUE: Bling Workers Ativos! -------------------",
+  );
   console.log("  → BLING_API_FETCH");
   console.log("  → BLING_DIRECT_UPSERT");
   console.log("  → BLING_TOKEN_REFRESH (1h)");
@@ -269,7 +285,9 @@ export function startAutomationWorkers() {
   void reconcilerQueue;
   void blingReconcilerQueue;
 
-  console.log("------------------- QUEUE: Automation Workers Ativos! -------------------");
+  console.log(
+    "------------------- QUEUE: Automation Workers Ativos! -------------------",
+  );
   console.log("  → BLING_ORDER_INGESTION");
   console.log("  → CNPJ_VERIFY_CNAE");
   console.log("  → ML_ORDER_SYNC");
@@ -284,10 +302,14 @@ export function startWorkers() {
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
+    tcarUpsertQueue,
+    tcarSyncQueue,
   } = buildQueues([
     "DAILY_OPERATION_REPORT",
     "DAILY_SALES_REPORT",
     "AUTO_BACKUP",
+    "TCAR_UPSERT",
+    "TCAR_SYNC",
   ]);
 
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
@@ -295,14 +317,20 @@ export function startWorkers() {
     cron: "0 19 * * *",
     tz: "America/Sao_Paulo",
   });
+  scheduleTCarSync(tcarSyncQueue);
 
-  setTimeout(() => {
-    dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-    console.log("  → DAILY_SALES_REPORT (offset 30min)");
-  }, 30 * 60 * 1000);
+  setTimeout(
+    () => {
+      dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+      console.log("  → DAILY_SALES_REPORT (offset 30min)");
+    },
+    30 * 60 * 1000,
+  );
 
   void dailyOperationReportQueue;
   void autoBackupQueue;
+  void tcarUpsertQueue;
+  void tcarSyncQueue;
 
   console.log("🚀 Workers de relatórios/backup ativos:");
   console.log("  → DAILY_OPERATION_REPORT (1h)");
@@ -321,9 +349,11 @@ export function startScrapingWorker() {
     { workless: false },
   );
 
-  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 }); 
+  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
 
   void mlScrapingQueue;
 
-  console.log("------------------- QUEUE: Scraping Worker Ativo! -------------------");
+  console.log(
+    "------------------- QUEUE: Scraping Worker Ativo! -------------------",
+  );
 }

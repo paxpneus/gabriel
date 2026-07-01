@@ -5,7 +5,7 @@ import { Op } from "sequelize";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { sefazApiService } from "../api/sefaz_api.service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
-import Invoice from "../../../warehouse/entrance/invoice/invoice.model";
+import Invoice from "../../../warehouse/invoices/invoice/invoice.model";
 import { BlingApiFetchQueue } from "./../../bling/services/bling/queues/bling-api-fetch.queue";
 
 export type SefazProcNFeRetryJobData = Record<string, never>;

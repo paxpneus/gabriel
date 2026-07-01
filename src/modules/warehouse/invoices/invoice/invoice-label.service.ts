@@ -78,7 +78,7 @@ export class LabelService {
   async getLabelData(invoiceIds: string[]): Promise<LabelData[]> {
   const invoices = await (Invoice as any).findAll({
     where: { id: { [Op.in]: invoiceIds } },
-    include: ["transporter", "unitBusiness"],
+    include: ["transporter"],
   });
 
   const CONCURRENCY = 10;

@@ -17,6 +17,6 @@ export { default as ExpeditionBatchInvoice } from './expedition/batch-invoices/b
 export { default as ExpeditionScanLog } from './expedition/scan-logs/scan-logs.model';
 
 // Entrance Models
-export { default as Invoice } from './entrance/invoice/invoice.model';
-export { default as InvoiceItems } from './entrance/invoice-items/invoice-items.model';
-export { default as EntranceScanLog } from './entrance/entrance-scan-logs/entrance-scan-logs.model';
+export { default as Invoice } from './invoices/invoice/invoice.model';
+export { default as InvoiceItems } from './invoices/invoice-items/invoice-items.model';
+

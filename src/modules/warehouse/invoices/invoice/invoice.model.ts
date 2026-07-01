@@ -8,6 +8,8 @@ import {
 import { v4 as uuidv4 } from "uuid";
 import { ExpeditionBatchInvoiceAttributes } from "../../expedition/batch-invoices/batch-invoices.types";
 import Transporter from "../../transporter/transporter.model";
+import { InvoiceUnitBusinessAttributesAttributes } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
+import InvoiceItems from "../invoice-items/invoice-items.model";
 
 class Invoice
   extends Model<InvoiceAttributes, InvoiceCreationAttributes>
@@ -18,7 +20,6 @@ class Invoice
   public customer_document!: string;
   public xml_path?: string;
   public danfe_path?: string;
-  public unit_business_id!: string;
   public store_id!: string;
   public sender_cnpj!: string;
   public sender_name!: string;
@@ -29,18 +30,6 @@ class Invoice
   public transporter_id?: string;
   public seller_id?: string | null;
   public supplier_id?: string | null;
-  public type!: "INCOMING" | "OUTGOING";
-  public status!:
-    | "OPEN"
-    | "PENDING"
-    | "FINISHED"
-    | "CANCELLED"
-    | "FREE_TO_SCHEDULE"
-    | "WAITING_SCHEDULE_SALES"
-    | "SCHEDULED"
-    | "LATE"
-    | "PENDING_CANCELLED_SYSTEM";
-  public batch_generated!: boolean;
   public printed_label!: boolean;
   public emitted_at?: Date;
   public received_at?: string;
@@ -119,14 +108,6 @@ Invoice.init(
     danfe_path: {
       type: DataTypes.TEXT,
     },
-    unit_business_id: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: "unit_businesses",
-        key: "id",
-      },
-    },
     store_id: {
       type: DataTypes.UUID,
       allowNull: false,
@@ -197,29 +178,6 @@ Invoice.init(
     transporter_document: {
       type: DataTypes.STRING(20),
       allowNull: true,
-    },
-    type: {
-      type: DataTypes.ENUM("INCOMING", "OUTGOING"),
-      allowNull: false,
-    },
-    status: {
-      type: DataTypes.ENUM(
-        "OPEN",
-        "PENDING",
-        "FINISHED",
-        "FREE_TO_SCHEDULE",
-        "WAITING_SCHEDULE_SALES",
-        "SCHEDULED",
-        "LATE",
-        "CANCELLED",
-        "PENDING_CANCELLED_SYSTEM",
-      ),
-      defaultValue: "PENDING",
-      allowNull: false,
-    },
-    batch_generated: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
     },
     printed_label: {
       type: DataTypes.BOOLEAN,
