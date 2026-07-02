@@ -17,6 +17,7 @@ export interface SellerSalesOrderItemSnapshotAttributes {
   total_cost?: number | string;
   commission_rate?: number | string;
   commission_value?: number | string;
+  commission_base?: number | string;
   markup_value?: number | string;
   markup_pct?: number | string;
   contribution_value?: number | string;

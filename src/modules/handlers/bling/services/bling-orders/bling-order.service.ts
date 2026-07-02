@@ -22,6 +22,9 @@ const BLING_ORDER_REQUEST_DELAY_MS = Number(
   process.env.BLING_ORDER_REQUEST_DELAY_MS ?? 0,
 );
 
+// Detecta sufixo de KIT no SKU, ex: "15409210000K2" -> kit de 2 unidades
+const KIT_SKU_REGEX = /K(\d+)$/i;
+
 export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService;
@@ -166,34 +169,63 @@ export class BlingOrderService {
     return { product: config.product as ProductAttributes & { brandRegister?: Brand }, config };
   }
 
+  // ─── Detecta se o SKU é um KIT (sufixo K{n}) e retorna o multiplicador ─────
+  // "15409210000K2" -> kit de 2 unidades reais por "quantidade" do item.
+  // SKU sem sufixo K{n} -> multiplicador 1 (item unitário).
+  private getKitMultiplier(sku: string | undefined): number {
+    if (!sku) return 1;
+    const match = sku.match(KIT_SKU_REGEX);
+    if (!match) return 1;
+    const n = Number(match[1]);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  }
+
+  // ─── Calcula os campos financeiros de um item de pedido ────────────────────
+  // Regra:
+  //   average_cost_snapshot = product_config.average_cost (valor unitário puro)
+  //   unidades_reais        = (n do KIT, se houver) × quantidade do item
+  //   custo_medio_total     = average_cost_snapshot × unidades_reais
+  //   commission_base       = itens.valor (valor bruto do item no pedido)
+  //   commission_rate       = brand.seller_comission_tax_rate
+  //   commission_value      = commission_base × (commission_rate / 100)
+  //   total_cost_snapshot   = custo_medio_total + commission_value
+  //   comission_manager_rate = brand.manager_comission_tax_rate (apenas salvo, não usado em cálculo)
   private buildItemFinancialFields(
     product: ProductAttributes & { brandRegister?: Brand },
     config: ProductConfig,
+    sku: string | undefined,
     quantity: number,
-    netTotal: number,
+    itemValue: number,
   ) {
     const brand = product.brandRegister;
-    const averageCost = Number(config.average_cost ?? 0);
-    const blingUnitCost = Number(
-      config.supplier_cost_price ??
-        config.supplier_purchase_price ??
-        config.average_cost ??
-        0,
-    );
-    const commissionBase = netTotal;
+    const averageCostSnapshot = Number(config.average_cost ?? 0);
+
+    const kitMultiplier = this.getKitMultiplier(sku);
+    const unidadesReais = kitMultiplier * quantity;
+
+    const custoMedioTotal = averageCostSnapshot * unidadesReais;
+
     const sellerRate = Number(
       brand?.seller_comission_tax_rate ?? product.commission ?? 0,
     );
     const managerRate = Number(brand?.manager_comission_tax_rate ?? 0);
 
+    // itens.valor já é o valor total daquela linha do pedido (contempla o kit
+    // inteiro quando aplicável), então a comissão calculada sobre ele já é o
+    // total da linha — não precisa de nova multiplicação por unidades_reais.
+    const commissionBase = itemValue;
+    const commissionValue = (commissionBase * sellerRate) / 100;
+
+    const totalCostSnapshot = custoMedioTotal + commissionValue;
+
     return {
       commission_base: commissionBase,
       commission_rate: sellerRate,
       comission_manager_rate: managerRate,
-      commission_value: (commissionBase * sellerRate) / 100,
-      average_cost_snapshot: averageCost,
-      total_cost_snapshot: blingUnitCost * quantity,
-      cost_source: "bling_supplier_cost",
+      commission_value: commissionValue,
+      average_cost_snapshot: averageCostSnapshot,
+      total_cost_snapshot: totalCostSnapshot,
+      cost_source: "average_cost_plus_commission",
     };
   }
 
@@ -258,28 +290,31 @@ export class BlingOrderService {
     }
   }
 
-  // ─── Extrai campos fiscais do payload de pedido da Bling ───────────────────
+  // ─── Resolve a alíquota de ICMS (%) do estado de destino ────────────────────
+  // Retorna 0 quando não há UF de destino ou o estado não é encontrado — nesse
+  // caso icms_value acaba ficando 0 e total_cost não é penalizado indevidamente.
+  private async resolveIcmsRate(destinationUf: string | undefined): Promise<number> {
+    if (!destinationUf) return 0;
+
+    const state = await stateService.findOne({
+      where: { acronym: destinationUf.trim().toUpperCase() },
+    });
+
+    return Number(state?.icms_rate ?? 0);
+  }
+
+  // ─── Extrai campos fiscais "estáticos" do payload de pedido da Bling ───────
   // PIS, COFINS, DIFAL, IBS e CBS não estão disponíveis no payload de pedido
   // da Bling — ficam zerados e podem ser enriquecidos via NF-e futuramente.
-  // destination_uf e destination_city são resolvidos separadamente via contato.
-  private async extractFiscalFields(
+  // icms_value NÃO é calculado aqui — depende de total_price, que só existe
+  // depois que os itens são processados (ver computeOrderFinancials).
+  private extractFiscalFields(
     orderData: any,
     destination: { destination_uf?: string; destination_city?: string },
   ) {
-    const fallbackIcmsValue = Number(orderData.tributacao?.totalICMS ?? 0);
-    let icmsValue = fallbackIcmsValue;
-
-    if (destination.destination_uf) {
-      const state = await stateService.findOne({
-        where: { acronym: destination.destination_uf.trim().toUpperCase() },
-      });
-      icmsValue = Number(state?.icms_rate ?? fallbackIcmsValue);
-    }
-
     return {
       destination_uf: destination.destination_uf,
       destination_city: destination.destination_city,
-      icms_value: icmsValue,
       ipi_value: Number(orderData.tributacao?.totalIPI ?? 0),
       pis_value: 0,
       cofins_value: 0,
@@ -290,16 +325,46 @@ export class BlingOrderService {
     };
   }
 
-  // ─── Monta payload de itens com product_id resolvido ───────────────────────
+  // ─── Calcula os totais financeiros do pedido ────────────────────────────────
+  // Regra:
+  //   total_price = total - taxas.taxaComissao (loja online tem taxa; PDV tem
+  //                 taxaComissao = 0, então a mesma fórmula serve para os dois)
+  //   icms_value  = total_price × state.icms_rate%
+  //   total_cost  = total_price - icms_value - custo_total_produtos
+  private async computeOrderFinancials(
+  orderData: any,
+  destinationUf: string | undefined,
+  custoTotalProdutos: number,
+): Promise<{ total_price: number; icms_value: number; total_cost: number }> {
+  const total = Number(orderData.total ?? 0);
+  const taxaComissao = Number(orderData.taxas?.taxaComissao ?? 0);
+  const custoFrete = Number(orderData.taxas?.custoFrete ?? 0);
+
+  // total_price agora já desconta comissão E custo de frete — essa é a base
+  // sobre a qual o ICMS é calculado, e é o que sobra pra comparar com o
+  // custo dos produtos.
+  const totalPrice = total - taxaComissao - custoFrete;
+
+  const icmsRate = await this.resolveIcmsRate(destinationUf);
+  const icmsValue = totalPrice * (icmsRate / 100);
+
+  const totalCost = totalPrice - icmsValue - custoTotalProdutos;
+
+  return { total_price: totalPrice, icms_value: icmsValue, total_cost: totalCost };
+}
+  // ─── Monta payload de itens (com product_id e campos financeiros já resolvidos) ─
+  // Retorna também a soma de total_cost_snapshot, usada em computeOrderFinancials.
   private async buildItemsPayload(
-    orderId: string,
     integrationId: string,
     blingItems: any[],
-  ): Promise<orderItemsCreationAttributes[]> {
-    return Promise.all(
+  ): Promise<{
+    items: Omit<orderItemsCreationAttributes, "order_id">[];
+    custoTotalProdutos: number;
+  }> {
+    const items = await Promise.all(
       blingItems.map(async (i: any) => {
         const quantity = Number(i.quantidade ?? i.quantity ?? 0);
-        const unitPrice = Number(i.valor ?? 0);
+        const itemValue = Number(i.valor ?? 0);
         const discountValue = Number(i.desconto ?? 0);
         const externalProductId = i.produto?.id
           ? String(i.produto.id)
@@ -311,31 +376,39 @@ export class BlingOrderService {
           sku,
         );
 
-        const netTotal = unitPrice * quantity - discountValue;
+        const netTotal = itemValue - discountValue;
         const financialFields = this.buildItemFinancialFields(
           product,
           config,
+          sku,
           quantity,
-          netTotal,
+          itemValue,
         );
 
         return {
           name: i.descricao,
-          order_id: orderId,
           sku: sku ?? "",
           unit: i.unidade,
           quantity,
-          price: unitPrice,
+          price: itemValue,
           product_id: product.id,
+          integrations_id: integrationId,
           source_payload: i,
-          unit_price: unitPrice,
-          gross_total: unitPrice * quantity,
+          unit_price: itemValue,
+          gross_total: itemValue,
           discount_value: discountValue,
           net_total: netTotal,
           ...financialFields,
         };
       }),
     );
+
+    const custoTotalProdutos = items.reduce(
+      (acc, item) => acc + Number(item.total_cost_snapshot ?? 0),
+      0,
+    );
+
+    return { items, custoTotalProdutos };
   }
 
   async updateOrderFromBling(body: blingOrderWebHookData): Promise<null> {
@@ -372,10 +445,7 @@ export class BlingOrderService {
 
       const internalStatus = mapOrder(orderData.situacao.id);
       const destination = await this.resolveDestination(orderData.contato?.id);
-      const fiscalFields = await this.extractFiscalFields(
-        orderData,
-        destination,
-      );
+      const fiscalFields = this.extractFiscalFields(orderData, destination);
       const sellerId = await this.upsertSellerContact(
         orderData.vendedor,
         integration.id,
@@ -393,12 +463,21 @@ export class BlingOrderService {
 
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
 
+      // ─── Processa itens primeiro para obter custo_total_produtos ──────────
+      const { items: itemsPayload, custoTotalProdutos } =
+        await this.buildItemsPayload(integration.id, orderData.itens ?? []);
+
+      const orderFinancials = await this.computeOrderFinancials(
+        orderData,
+        fiscalFields.destination_uf,
+        custoTotalProdutos,
+      );
+
       await ordersService.update(existingOrder.id, {
         unit_business_id: unitBusinessId,
         invoice_id: invoiceId,
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
-        totalPrice: Number(orderData.total),
         date: new Date(orderData.data),
         internal_status: internalStatus,
         source_payload: orderData,
@@ -420,29 +499,14 @@ export class BlingOrderService {
         tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
         ...(sellerId ? { seller_id: sellerId } : {}),
         ...fiscalFields,
+        ...orderFinancials,
       });
 
       if (orderData.itens?.length) {
-        for (const i of orderData.itens) {
-          const quantity = Number(i.quantidade ?? 0);
-          const unitPrice = Number(i.valor ?? 0);
-          const discountValue = Number(i.desconto ?? 0);
-          const externalProductId = i.produto?.id
-            ? String(i.produto.id)
-            : undefined;
-          const sku = i.codigo ? String(i.codigo) : undefined;
-
-          const { product, config } = await this.resolveProductWithConfig(
-            externalProductId,
-            sku,
-          );
-          const netTotal = unitPrice * quantity - discountValue;
-          const financialFields = this.buildItemFinancialFields(
-            product,
-            config,
-            quantity,
-            netTotal,
-          );
+        for (let idx = 0; idx < orderData.itens.length; idx++) {
+          const i = orderData.itens[idx];
+          const computedItem = itemsPayload[idx];
+          const sku = computedItem.sku || undefined;
 
           const existingItem = sku
             ? await orderItemsService.findOne({
@@ -452,35 +516,28 @@ export class BlingOrderService {
 
           if (existingItem) {
             await orderItemsService.update(existingItem.id, {
-              quantity,
-              price: unitPrice,
-              unit_price: unitPrice,
-              gross_total: unitPrice * quantity,
-              discount_value: discountValue,
-              net_total: netTotal,
-              ...this.appendMissingFinancialFields(
-                existingItem,
-                financialFields,
-              ),
-              product_id: product.id,
+              quantity: computedItem.quantity,
+              price: computedItem.price,
+              unit_price: computedItem.unit_price,
+              gross_total: computedItem.gross_total,
+              discount_value: computedItem.discount_value,
+              net_total: computedItem.net_total,
+              ...this.appendMissingFinancialFields(existingItem, {
+                commission_base: computedItem!.commission_base!,
+                commission_rate: computedItem!.commission_rate!,
+                comission_manager_rate: computedItem!.comission_manager_rate!,
+                commission_value: computedItem!.commission_value!,
+                average_cost_snapshot: computedItem!.average_cost_snapshot!,
+                total_cost_snapshot: computedItem!.total_cost_snapshot!,
+                cost_source: computedItem!.cost_source!,
+              }),
+              product_id: computedItem.product_id,
               source_payload: i,
             });
           } else {
             await orderItemsService.create({
-              name: i.descricao,
+              ...computedItem,
               order_id: existingOrder.id,
-              sku: sku ?? "",
-              unit: i.unidade,
-              quantity,
-              price: unitPrice,
-              product_id: product.id,
-              integrations_id: integration.id,
-              source_payload: i,
-              unit_price: unitPrice,
-              gross_total: unitPrice * quantity,
-              discount_value: discountValue,
-              net_total: netTotal,
-              ...financialFields,
             });
           }
         }
@@ -616,14 +673,21 @@ export class BlingOrderService {
         orderData.contato,
       );
       const destination = await this.resolveDestination(orderData.contato?.id);
-      const fiscalFields = await this.extractFiscalFields(
-        orderData,
-        destination,
-      );
+      const fiscalFields = this.extractFiscalFields(orderData, destination);
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
       const sellerId = await this.upsertSellerContact(
         orderData.vendedor,
         integration.id,
+      );
+
+      // ─── Processa itens primeiro para obter custo_total_produtos ──────────
+      const { items: itemsPayloadWithoutOrderId, custoTotalProdutos } =
+        await this.buildItemsPayload(integration.id, orderData.itens ?? []);
+
+      const orderFinancials = await this.computeOrderFinancials(
+        orderData,
+        fiscalFields.destination_uf,
+        custoTotalProdutos,
       );
 
       const ordersPayload: orderCreationAttributes = {
@@ -636,7 +700,6 @@ export class BlingOrderService {
         number_order_system: String(orderData.numero),
         number_order_channel: String(orderData.numeroLoja),
         date: new Date(orderData.data),
-        totalPrice: Number(orderData.total),
         store_id: store?.id ?? null,
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
@@ -657,15 +720,16 @@ export class BlingOrderService {
         tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
         ...(sellerId ? { seller_id: sellerId } : {}),
         ...fiscalFields,
+        ...orderFinancials,
       };
 
       const createdOrder = await ordersService.create(ordersPayload);
 
-      const itemsPayload = await this.buildItemsPayload(
-        createdOrder.id,
-        integration.id,
-        orderData.itens ?? [],
-      );
+      const itemsPayload: orderItemsCreationAttributes[] =
+        itemsPayloadWithoutOrderId.map((item) => ({
+          ...item,
+          order_id: createdOrder.id,
+        }));
 
       const createdItems = await orderItemsService.bulkCreate(itemsPayload);
 

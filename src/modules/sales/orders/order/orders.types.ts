@@ -13,7 +13,8 @@ export interface orderAttributes {
     actual_situation?: string;
     collection_date?: Date;
     date?: Date;
-    totalPrice?: number;
+    total_price?: number;
+    total_cost?: number;
     nfe_emitted?: boolean;
     internal_status?: string;
     store_id?: string | null;

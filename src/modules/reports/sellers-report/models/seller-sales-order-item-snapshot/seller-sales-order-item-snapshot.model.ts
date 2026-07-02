@@ -31,6 +31,7 @@ class SellerSalesOrderItemSnapshot
   public total_cost?: number | string;
   public commission_rate?: number | string;
   public commission_value?: number | string;
+  public commission_base?: number | string;
   public markup_value?: number | string;
   public markup_pct?: number | string;
   public contribution_value?: number | string;
@@ -61,6 +62,11 @@ SellerSalesOrderItemSnapshot.init(
     total_cost: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     commission_rate: { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
     commission_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    commission_base: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
     markup_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     markup_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
     contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
