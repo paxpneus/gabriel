@@ -195,6 +195,8 @@ snapshot_source AS (
     o.customer_id,
     oi.product_id,
     o.unit_business_id,
+    o.total_price AS order_total_price,
+    o.icms_value  AS order_icms_value,
 
     DATE(o.date) AS order_date,
     p.name AS product_name,
@@ -203,15 +205,11 @@ snapshot_source AS (
 
     oi.quantity,
     oi.unit_price,
-    COALESCE(oi.net_total, 0)::numeric AS net_total,
+    COALESCE(oi.net_total, 0)::numeric AS net_total_raw,
 
-    -- custo médio unitário puro (não multiplicado por qtd/kit)
-    COALESCE(oi.average_cost_snapshot, 0)::numeric AS average_cost,
-
-    -- custo total do item = custo_medio_total (já considera kit) + comissão da marca
-    -- ICMS NÃO entra mais aqui: ele só existe no nível do pedido (order.total_cost),
-    -- que é um resultado final do pedido inteiro, não um custo por item.
-    COALESCE(oi.total_cost_snapshot, 0)::numeric AS total_cost,
+    oi.average_cost_snapshot::numeric AS average_cost,
+    oi.total_cost_snapshot::numeric   AS total_cost,
+    (oi.average_cost_snapshot IS NOT NULL) AS has_cost_data,
 
     COALESCE(oi.commission_base, 0)::numeric AS commission_base,
     COALESCE(oi.commission_rate, 0)::numeric AS commission_rate,
@@ -225,29 +223,56 @@ snapshot_source AS (
   LEFT JOIN products p ON p.id = oi.product_id
   LEFT JOIN contacts sc ON sc.id = o.seller_id
   WHERE COALESCE(sc.name, '') <> 'Vendedor 0'
-     OR o.seller_id <> 'a87c73c2-0054-46b3-b78c-ff681f141d6e'::uuid
+),
+snapshot_weighted AS (
+  SELECT
+    *,
+    CASE
+      WHEN SUM(net_total_raw) OVER (PARTITION BY order_id) = 0 THEN 0
+      ELSE net_total_raw / SUM(net_total_raw) OVER (PARTITION BY order_id)
+    END AS item_weight
+  FROM snapshot_source
+),
+snapshot_final AS (
+  SELECT
+    *,
+    ROUND(item_weight * order_total_price, 2) AS net_total_allocated,
+    ROUND(item_weight * COALESCE(order_icms_value, 0), 2) AS icms_value_allocated
+  FROM snapshot_weighted
 ),
 snapshot_calc AS (
   SELECT
     *,
-    (net_total - total_cost) AS markup_value,
+    CASE WHEN total_cost IS NULL THEN NULL
+         ELSE total_cost + icms_value_allocated
+    END AS total_cost_with_icms,
+
+    CASE WHEN total_cost IS NULL THEN NULL
+         ELSE net_total_allocated - (total_cost + icms_value_allocated)
+    END AS markup_value,
+
     CASE
-      WHEN total_cost = 0 THEN 0
-      ELSE ROUND((((net_total - total_cost) / total_cost) * 100)::numeric, 2)
+      WHEN total_cost IS NULL THEN NULL
+      WHEN (total_cost + icms_value_allocated) = 0 THEN 0
+      ELSE ROUND((((net_total_allocated - (total_cost + icms_value_allocated)) / (total_cost + icms_value_allocated)) * 100)::numeric, 2)
     END AS markup_pct,
-    -- comissão já está embutida em total_cost_snapshot (product_cost), então aqui
-    -- NÃO subtrai commission_value de novo, senão conta a comissão duas vezes
-    (net_total - total_cost) AS contribution_value,
+
+    CASE WHEN total_cost IS NULL THEN NULL
+         ELSE net_total_allocated - (total_cost + icms_value_allocated)
+    END AS contribution_value,
+
     CASE
-      WHEN net_total = 0 THEN 0
-      ELSE ROUND((((net_total - total_cost) / net_total) * 100)::numeric, 2)
+      WHEN total_cost IS NULL THEN NULL
+      WHEN net_total_allocated = 0 THEN 0
+      ELSE ROUND((((net_total_allocated - (total_cost + icms_value_allocated)) / net_total_allocated) * 100)::numeric, 2)
     END AS contribution_pct
-  FROM snapshot_source
+  FROM snapshot_final
 )
 INSERT INTO seller_sales_order_item_snapshots (
   order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
   order_date, product_name, product_brand, product_measure,
-  quantity, unit_price, net_total, average_cost, total_cost,
+  quantity, unit_price, net_total, average_cost, total_cost, has_cost_data,
+  icms_value_allocated, total_cost_with_icms,
   commission_base, commission_rate, commission_value, markup_value, markup_pct,
   contribution_value, contribution_pct, is_valid_sale,
   last_updated_at, created_at, updated_at
@@ -255,35 +280,41 @@ INSERT INTO seller_sales_order_item_snapshots (
 SELECT
   order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
   order_date, product_name, product_brand, product_measure,
-  quantity, unit_price, net_total, average_cost, total_cost,
+  quantity, unit_price,
+  net_total_allocated AS net_total,   -- ✅ alias aqui
+  average_cost, total_cost, has_cost_data,
+  icms_value_allocated, total_cost_with_icms,
   commission_base, commission_rate, commission_value, markup_value, markup_pct,
   contribution_value, contribution_pct, is_valid_sale,
   NOW(), NOW(), NOW()
 FROM snapshot_calc
 ON CONFLICT (order_item_id) DO UPDATE SET
-  seller_id           = EXCLUDED.seller_id,
-  customer_id         = EXCLUDED.customer_id,
-  product_id          = EXCLUDED.product_id,
-  unit_business_id    = EXCLUDED.unit_business_id,
-  order_date          = EXCLUDED.order_date,
-  product_name        = EXCLUDED.product_name,
-  product_brand       = EXCLUDED.product_brand,
-  product_measure     = EXCLUDED.product_measure,
-  quantity            = EXCLUDED.quantity,
-  unit_price          = EXCLUDED.unit_price,
-  net_total           = EXCLUDED.net_total,
-  average_cost        = EXCLUDED.average_cost,
-  total_cost          = EXCLUDED.total_cost,
-  commission_base     = EXCLUDED.commission_base,
-  commission_rate     = EXCLUDED.commission_rate,
-  commission_value    = EXCLUDED.commission_value,
-  markup_value        = EXCLUDED.markup_value,
-  markup_pct          = EXCLUDED.markup_pct,
-  contribution_value  = EXCLUDED.contribution_value,
-  contribution_pct    = EXCLUDED.contribution_pct,
-  is_valid_sale       = EXCLUDED.is_valid_sale,
-  last_updated_at     = NOW(),
-  updated_at          = NOW()
+  seller_id             = EXCLUDED.seller_id,
+  customer_id           = EXCLUDED.customer_id,
+  product_id            = EXCLUDED.product_id,
+  unit_business_id      = EXCLUDED.unit_business_id,
+  order_date            = EXCLUDED.order_date,
+  product_name          = EXCLUDED.product_name,
+  product_brand         = EXCLUDED.product_brand,
+  product_measure       = EXCLUDED.product_measure,
+  quantity               = EXCLUDED.quantity,
+  unit_price              = EXCLUDED.unit_price,
+  net_total               = EXCLUDED.net_total,
+  average_cost            = EXCLUDED.average_cost,
+  total_cost               = EXCLUDED.total_cost,
+  has_cost_data            = EXCLUDED.has_cost_data,
+  icms_value_allocated     = EXCLUDED.icms_value_allocated,
+  total_cost_with_icms     = EXCLUDED.total_cost_with_icms,
+  commission_base          = EXCLUDED.commission_base,
+  commission_rate          = EXCLUDED.commission_rate,
+  commission_value         = EXCLUDED.commission_value,
+  markup_value             = EXCLUDED.markup_value,
+  markup_pct               = EXCLUDED.markup_pct,
+  contribution_value       = EXCLUDED.contribution_value,
+  contribution_pct         = EXCLUDED.contribution_pct,
+  is_valid_sale            = EXCLUDED.is_valid_sale,
+  last_updated_at          = NOW(),
+  updated_at               = NOW()
     `,
       {
         replacements: {
