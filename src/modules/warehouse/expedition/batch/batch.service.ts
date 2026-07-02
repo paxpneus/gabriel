@@ -606,6 +606,17 @@ export class ExpeditionBatchService extends BaseService<
     );
     const branchId = parseInt(user.unitBusiness.number, 10);
 
+    const tecincoIntegration = await integrationsService.getFullIntegration({
+      where: {
+        name: 'Tecinco'
+      }
+    })
+
+    if (fullBatch.integrations_id != tecincoIntegration.id) {
+      console.log("Lote não pertence a tecinco! Ignorado.")
+      return
+    }
+
     await new TCarConferenciaPostService().postarConferenciaPorLote(
       batchId,
       branchId,
