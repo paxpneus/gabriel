@@ -29,7 +29,7 @@ const JOB_NAME = "seller_sales_report";
  * (ver migration). Não confundir as duas.
  */
 const VALID_ACTUAL_SITUATIONS = ["6", "9"];
-const INVALID_INVOICE_STATUSES = ["CANCELLED", "PENDING_CANCELLED_SYSTEM"];
+const INVALID_ORDER_STATUSES = ["CANCELLED"];
 
 interface CheckpointRow {
   last_processed_at: Date;
@@ -149,29 +149,20 @@ export class SellerSalesReportRepository {
   async findAffectedOrderIds(lastProcessedAt: Date): Promise<string[]> {
     const rows: OrderIdRow[] = await sequelize.query<OrderIdRow>(
       `
-      SELECT DISTINCT order_id
-      FROM (
-        SELECT o.id AS order_id
-        FROM orders o
-        WHERE o.updated_at >= :lastProcessedAt
-
-        UNION
-
-        SELECT oi.order_id
-        FROM order_items oi
-        WHERE oi.updated_at >= :lastProcessedAt
-
-       UNION
-
+    SELECT DISTINCT order_id
+    FROM (
       SELECT o.id AS order_id
       FROM orders o
-      JOIN invoice_unit_business_attributes iuba
-        ON iuba.invoice_id = o.invoice_id
-      AND iuba.unit_business_id = o.unit_business_id
-      WHERE iuba.updated_at >= :lastProcessedAt
-      ) affected
-      WHERE order_id IS NOT NULL
-      `,
+      WHERE o.updated_at >= :lastProcessedAt
+
+      UNION
+
+      SELECT oi.order_id
+      FROM order_items oi
+      WHERE oi.updated_at >= :lastProcessedAt
+    ) affected
+    WHERE order_id IS NOT NULL
+    `,
       {
         type: QueryTypes.SELECT,
         replacements: { lastProcessedAt },
@@ -186,174 +177,133 @@ export class SellerSalesReportRepository {
 
     await sequelize.query(
       `
-      WITH affected(order_id) AS (
-        SELECT unnest(ARRAY[:orderIds]::uuid[])
-      ),
-      -- Vendedor: orders -> invoices (orders.invoice_id) -> invoices.seller_id -> contacts
-      order_seller AS (
+    WITH affected(order_id) AS (
+      SELECT unnest(ARRAY[:orderIds]::uuid[])
+    ),
+    -- Venda válida = orders.internal_status diferente de CANCELLED.
+    -- Não depende mais de invoices/invoice_unit_business_attributes.
+    valid_orders AS (
       SELECT
         o.id AS order_id,
-        o.invoice_id,
-        inv.seller_id,
-        iuba.status AS invoice_status
+        COALESCE(o.internal_status, '')::text <> ALL(ARRAY[:invalidOrderStatuses]) AS is_valid_sale
       FROM orders o
       JOIN affected a ON a.order_id = o.id
-      LEFT JOIN invoices inv ON inv.id = o.invoice_id
-      LEFT JOIN invoice_unit_business_attributes iuba
-        ON iuba.invoice_id = o.invoice_id
-      AND iuba.unit_business_id = o.unit_business_id
     ),
-      -- Regra de venda válida:
-      -- 1) Se orders.actual_situation in ('6','9') -> válida
-      -- 2) Se actual_situation vazio/nulo -> usa invoices.status,
-      --    válida se for diferente de CANCELLED e PENDING_CANCELLED_SYSTEM
-      valid_orders AS (
-        SELECT
-          o.id AS order_id,
-          CASE
-            WHEN o.actual_situation IS NOT NULL AND o.actual_situation <> ''
-              THEN o.actual_situation = ANY(ARRAY[:validActualSituations])
-            ELSE
-              os.invoice_status IS NULL
-              OR os.invoice_status::text <> ALL(ARRAY[:invalidInvoiceStatuses])
-          END AS is_valid_sale
-        FROM orders o
-        JOIN affected a ON a.order_id = o.id
-        LEFT JOIN order_seller os ON os.order_id = o.id
-      ),
-      snapshot_source AS (
-        SELECT
-          oi.id AS order_item_id,
-          o.id AS order_id,
-          os.seller_id,
-          o.customer_id,
-          oi.product_id,
-          o.unit_business_id,
-
-          DATE(o.date) AS order_date,
-          p.name AS product_name,
-          p.brand AS product_brand,
-          p.measure AS product_measure,
-
-          oi.quantity,
-          oi.unit_price,
-          COALESCE(oi.net_total, 0)::numeric AS net_total,
-
-          COALESCE(pc.average_cost, 0)::numeric AS average_cost,
-          COALESCE(pc.average_cost, 0)::numeric * COALESCE(oi.quantity, 0)::numeric AS total_cost,
-
-          COALESCE(p.commission, 0)::numeric AS commission_rate,
-          COALESCE(oi.net_total, 0)::numeric * COALESCE(p.commission, 0)::numeric AS commission_value,
-
-          vo.is_valid_sale
-        FROM order_items oi
-        JOIN orders o ON o.id = oi.order_id
-        JOIN affected a ON a.order_id = o.id
-        JOIN order_seller os ON os.order_id = o.id
-        JOIN valid_orders vo ON vo.order_id = o.id
-        LEFT JOIN products p ON p.id = oi.product_id
-        LEFT JOIN product_configs pc
-          ON pc.product_id = oi.product_id
-         AND pc.unit_business_id = o.unit_business_id
-      ),
-      snapshot_calc AS (
-        SELECT
-          *,
-          (net_total - total_cost) AS markup_value,
-          CASE
-            WHEN total_cost = 0 THEN 0
-            ELSE ROUND((((net_total - total_cost) / total_cost) * 100)::numeric, 2)
-          END AS markup_pct,
-          (net_total - total_cost - commission_value) AS contribution_value,
-          CASE
-            WHEN net_total = 0 THEN 0
-            ELSE ROUND((((net_total - total_cost - commission_value) / net_total) * 100)::numeric, 2)
-          END AS contribution_pct
-        FROM snapshot_source
-      )
-      INSERT INTO seller_sales_order_item_snapshots (
-        order_item_id,
-        order_id,
-        seller_id,
-        customer_id,
-        product_id,
-        unit_business_id,
-        order_date,
-        product_name,
-        product_brand,
-        product_measure,
-        quantity,
-        unit_price,
-        net_total,
-        average_cost,
-        total_cost,
-        commission_rate,
-        commission_value,
-        markup_value,
-        markup_pct,
-        contribution_value,
-        contribution_pct,
-        is_valid_sale,
-        last_updated_at,
-        created_at,
-        updated_at
-      )
+    order_totals AS (
       SELECT
-        order_item_id,
-        order_id,
-        seller_id,
-        customer_id,
-        product_id,
-        unit_business_id,
-        order_date,
-        product_name,
-        product_brand,
-        product_measure,
-        quantity,
-        unit_price,
-        net_total,
-        average_cost,
-        total_cost,
-        commission_rate,
-        commission_value,
-        markup_value,
-        markup_pct,
-        contribution_value,
-        contribution_pct,
-        is_valid_sale,
-        NOW(),
-        NOW(),
-        NOW()
-      FROM snapshot_calc
-      ON CONFLICT (order_item_id) DO UPDATE SET
-        seller_id           = EXCLUDED.seller_id,
-        customer_id         = EXCLUDED.customer_id,
-        product_id          = EXCLUDED.product_id,
-        unit_business_id    = EXCLUDED.unit_business_id,
-        order_date          = EXCLUDED.order_date,
-        product_name        = EXCLUDED.product_name,
-        product_brand       = EXCLUDED.product_brand,
-        product_measure     = EXCLUDED.product_measure,
-        quantity            = EXCLUDED.quantity,
-        unit_price          = EXCLUDED.unit_price,
-        net_total           = EXCLUDED.net_total,
-        average_cost        = EXCLUDED.average_cost,
-        total_cost          = EXCLUDED.total_cost,
-        commission_rate     = EXCLUDED.commission_rate,
-        commission_value    = EXCLUDED.commission_value,
-        markup_value        = EXCLUDED.markup_value,
-        markup_pct          = EXCLUDED.markup_pct,
-        contribution_value  = EXCLUDED.contribution_value,
-        contribution_pct    = EXCLUDED.contribution_pct,
-        is_valid_sale       = EXCLUDED.is_valid_sale,
-        last_updated_at     = NOW(),
-        updated_at          = NOW()
-      `,
+        oi.order_id,
+        SUM(COALESCE(oi.net_total, 0)) AS order_net_total
+      FROM order_items oi
+      JOIN affected a ON a.order_id = oi.order_id
+      GROUP BY oi.order_id
+    ),
+    snapshot_source AS (
+      SELECT
+        oi.id AS order_item_id,
+        o.id AS order_id,
+        o.seller_id,
+        o.customer_id,
+        oi.product_id,
+        o.unit_business_id,
+
+        DATE(o.date) AS order_date,
+        p.name AS product_name,
+        p.brand AS product_brand,
+        p.measure AS product_measure,
+
+        oi.quantity,
+        oi.unit_price,
+        COALESCE(oi.net_total, 0)::numeric AS net_total,
+
+        -- Custo médio e custo total: SEMPRE o valor congelado no item,
+        -- nunca o custo atual de product_configs.
+        COALESCE(oi.average_cost_snapshot, 0)::numeric AS average_cost,
+        COALESCE(oi.total_cost_snapshot, 0)::numeric AS product_cost,
+
+        -- ICMS congelado do pedido (orders.icms_value), rateado por item
+        -- proporcionalmente ao net_total do item dentro do pedido.
+        CASE
+          WHEN COALESCE(ot.order_net_total, 0) = 0 THEN 0
+          ELSE ROUND(
+            COALESCE(o.icms_value, 0) * (COALESCE(oi.net_total, 0) / ot.order_net_total),
+            2
+          )
+        END AS icms_allocated,
+
+        -- Comissão do vendedor: já congelada em order_items, calculada
+        -- em cima da taxa da BRAND (seller_comission_tax_rate).
+        -- comission_manager_rate NÃO entra em nenhum cálculo de custo.
+        COALESCE(oi.commission_rate, 0)::numeric AS commission_rate,
+        COALESCE(oi.commission_value, 0)::numeric AS commission_value,
+
+        vo.is_valid_sale
+      FROM order_items oi
+      JOIN orders o ON o.id = oi.order_id
+      JOIN affected a ON a.order_id = o.id
+      JOIN valid_orders vo ON vo.order_id = o.id
+      LEFT JOIN order_totals ot ON ot.order_id = o.id
+      LEFT JOIN products p ON p.id = oi.product_id
+    ),
+    snapshot_calc AS (
+      SELECT
+        *,
+        (product_cost + icms_allocated) AS total_cost,
+        (net_total - (product_cost + icms_allocated)) AS markup_value,
+        CASE
+          WHEN (product_cost + icms_allocated) = 0 THEN 0
+          ELSE ROUND((((net_total - (product_cost + icms_allocated)) / (product_cost + icms_allocated)) * 100)::numeric, 2)
+        END AS markup_pct,
+        (net_total - (product_cost + icms_allocated) - commission_value) AS contribution_value,
+        CASE
+          WHEN net_total = 0 THEN 0
+          ELSE ROUND((((net_total - (product_cost + icms_allocated) - commission_value) / net_total) * 100)::numeric, 2)
+        END AS contribution_pct
+      FROM snapshot_source
+    )
+    INSERT INTO seller_sales_order_item_snapshots (
+      order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
+      order_date, product_name, product_brand, product_measure,
+      quantity, unit_price, net_total, average_cost, total_cost,
+      commission_rate, commission_value, markup_value, markup_pct,
+      contribution_value, contribution_pct, is_valid_sale,
+      last_updated_at, created_at, updated_at
+    )
+    SELECT
+      order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
+      order_date, product_name, product_brand, product_measure,
+      quantity, unit_price, net_total, average_cost, total_cost,
+      commission_rate, commission_value, markup_value, markup_pct,
+      contribution_value, contribution_pct, is_valid_sale,
+      NOW(), NOW(), NOW()
+    FROM snapshot_calc
+    ON CONFLICT (order_item_id) DO UPDATE SET
+      seller_id           = EXCLUDED.seller_id,
+      customer_id         = EXCLUDED.customer_id,
+      product_id          = EXCLUDED.product_id,
+      unit_business_id    = EXCLUDED.unit_business_id,
+      order_date          = EXCLUDED.order_date,
+      product_name        = EXCLUDED.product_name,
+      product_brand       = EXCLUDED.product_brand,
+      product_measure     = EXCLUDED.product_measure,
+      quantity            = EXCLUDED.quantity,
+      unit_price          = EXCLUDED.unit_price,
+      net_total           = EXCLUDED.net_total,
+      average_cost        = EXCLUDED.average_cost,
+      total_cost          = EXCLUDED.total_cost,
+      commission_rate     = EXCLUDED.commission_rate,
+      commission_value    = EXCLUDED.commission_value,
+      markup_value        = EXCLUDED.markup_value,
+      markup_pct          = EXCLUDED.markup_pct,
+      contribution_value  = EXCLUDED.contribution_value,
+      contribution_pct    = EXCLUDED.contribution_pct,
+      is_valid_sale       = EXCLUDED.is_valid_sale,
+      last_updated_at     = NOW(),
+      updated_at          = NOW()
+    `,
       {
         replacements: {
           orderIds,
-          validActualSituations: VALID_ACTUAL_SITUATIONS,
-          invalidInvoiceStatuses: INVALID_INVOICE_STATUSES,
+          invalidOrderStatuses: INVALID_ORDER_STATUSES,
         },
       },
     );

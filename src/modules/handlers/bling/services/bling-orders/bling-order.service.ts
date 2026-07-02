@@ -11,6 +11,7 @@ import { StoreService } from "../../../../sales/stores/stores.service";
 import { mapOrder } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import { Product, ProductConfig } from "../../../../inventory";
 import { Invoice, UnitBusiness } from "../../../../warehouse";
+import Contact from "../../../../sales/contacts/contacts.model";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import { ProductAttributes } from "../../../../inventory/products/product.types";
 import Brand from "../../../../inventory/brands/brands.model";
@@ -65,6 +66,49 @@ export class BlingOrderService {
     });
 
     return invoice?.id ?? null;
+  }
+
+  private async upsertSellerContact(
+    seller: { id?: number | string | null; nome?: string | null } | null | undefined,
+    integrationId: string,
+  ): Promise<string | null> {
+    const sellerSystemId = seller?.id != null ? String(seller.id) : null;
+
+    if (!sellerSystemId) return null;
+
+    const existing = await Contact.findOne({
+      where: {
+        id_system: sellerSystemId,
+        type: "SELLER",
+        integrations_id: integrationId,
+      },
+    });
+
+    const sellerName = seller?.nome ? String(seller.nome).trim() : null;
+
+    if (existing) {
+      const needsUpdate =
+        (sellerName && existing.name !== sellerName) ||
+        existing.integrations_id !== integrationId;
+
+      if (needsUpdate) {
+        await existing.update({
+          name: sellerName ?? existing.name,
+          integrations_id: integrationId,
+        });
+      }
+      return existing.id;
+    }
+
+    const created = await Contact.create({
+      id_system: sellerSystemId,
+      name: sellerName ?? `Vendedor ${sellerSystemId}`,
+      type: "SELLER",
+      integrations_id: integrationId,
+      unit_business_id: null,
+    });
+
+    return created.id;
   }
 
   private async resolveProductWithConfig(
@@ -332,6 +376,10 @@ export class BlingOrderService {
         orderData,
         destination,
       );
+      const sellerId = await this.upsertSellerContact(
+        orderData.vendedor,
+        integration.id,
+      );
 
       // ─── Resolve unit_business_id se ainda estiver nulo ──────────────────
       let unitBusinessId: string | null =
@@ -370,6 +418,7 @@ export class BlingOrderService {
         gross_weight: Number(orderData.transporte?.pesoBruto ?? 0),
         tax_commission: Number(orderData.taxas?.taxaComissao ?? 0),
         tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
+        ...(sellerId ? { seller_id: sellerId } : {}),
         ...fiscalFields,
       });
 
@@ -572,6 +621,10 @@ export class BlingOrderService {
         destination,
       );
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
+      const sellerId = await this.upsertSellerContact(
+        orderData.vendedor,
+        integration.id,
+      );
 
       const ordersPayload: orderCreationAttributes = {
         integrations_id: integration.id,
@@ -602,6 +655,7 @@ export class BlingOrderService {
         gross_weight: Number(orderData.transporte?.pesoBruto ?? 0),
         tax_commission: Number(orderData.taxas?.taxaComissao ?? 0),
         tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
+        ...(sellerId ? { seller_id: sellerId } : {}),
         ...fiscalFields,
       };
 

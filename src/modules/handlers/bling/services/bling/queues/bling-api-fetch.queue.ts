@@ -48,6 +48,7 @@ import invoiceService from "../../../../../warehouse/invoices/invoice/invoice.se
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import invoiceItemsService from "../../../../../warehouse/invoices/invoice-items/invoice-items.service";
 import { upsertInvoiceFromXml } from "../../../../../../shared/utils/xml/invoice-xml";
+import brandsService from "../../../../../inventory/brands/brands.service";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -689,7 +690,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingProduct.fornecedor?.precoCusto ?? blingProduct.precoCusto ?? 0,
     );
 
-    // Busca produto e estoque atuais antes do upsert para calcular CMP
     const existingProduct = await Product.findOne({
       where: { id_system: String(blingProduct.id) },
     });
@@ -698,6 +698,20 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingProduct.nome,
       blingProduct.marca,
     );
+
+    // Resolve a Brand cadastrada mais parecida com o nome vindo da Bling
+    // (ex: "Conti" -> "Continental"). Se não achar nada parecido o suficiente,
+    // segue sem brand_id — o produto não fica travado por isso, mas fica sem
+    // taxa de comissão de brand até alguém cadastrar/ajustar manualmente.
+    const matchedBrand = await brandsService.findSimilarBrand(
+      blingProduct.marca,
+    );
+
+    if (!matchedBrand && blingProduct.marca) {
+      console.warn(
+        `[BLING_API_FETCH] Marca "${blingProduct.marca}" não encontrada no cadastro de brands (produto=${blingProduct.codigo}). Produto salvo sem brand_id.`,
+      );
+    }
 
     let product: Product;
 
@@ -713,6 +727,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           source_payload: blingProduct as unknown as Record<string, unknown>,
           unit: blingProduct.unidade,
           brand: blingProduct.marca,
+          brand_id: matchedBrand?.id ?? null,
           line,
           measure,
           gross_weight: Number(blingProduct.pesoBruto ?? 0),
@@ -1355,7 +1370,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Unmapped products (requer invoice.id) ────────────────────────────────
 
     for (const u of unmappedItems) {
-      const quantity = Math.trunc(Number.isFinite(Number(u.qty)) ? Number(u.qty) : 0);
+      const quantity = Math.trunc(
+        Number.isFinite(Number(u.qty)) ? Number(u.qty) : 0,
+      );
 
       const existing = await UnmappedInvoiceProduct.findOne({
         where: {

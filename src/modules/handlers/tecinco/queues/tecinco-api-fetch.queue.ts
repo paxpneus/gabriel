@@ -36,6 +36,7 @@ import {
   resolveProduct,
 } from "./helpers/product.helpers";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
+import brandsService from "../../../inventory/brands/brands.service";
 export interface TCarUpsertJobPayload {
   eventId: string;
   resource: TCarResource;
@@ -127,6 +128,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       !product || product.integrations_id === integrations.id;
 
     // ─── Produto de outra integração → apenas vincula, não sobrescreve ────────
+    // (brand_id não é tocado aqui de propósito: o produto pertence a outra
+    // integração, então não sobrescrevemos os dados "donos" dele, só o
+    // ProductConfig/SupplierMapping relativos a esta filial.)
     if (product && !isOwnProduct) {
       console.log(
         `${logPrefix} — produto pertence a outra integração (id=${product.integrations_id}) — apenas vinculando`,
@@ -171,6 +175,19 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       data.marca_descricao,
     );
 
+    // Resolve a Brand cadastrada mais parecida com o nome vindo da TCar
+    // (ex: "Conti" -> "Continental"). Se não achar nada parecido o
+    // suficiente, segue sem brand_id — não trava o upsert do produto.
+    const matchedBrand = await brandsService.findSimilarBrand(
+      data.marca_descricao,
+    );
+
+    if (!matchedBrand && data.marca_descricao) {
+      console.warn(
+        `${logPrefix} — marca "${data.marca_descricao}" não encontrada no cadastro de brands. Produto salvo sem brand_id.`,
+      );
+    }
+
     const [upsertedProduct] = await Product.upsert(
       {
         id_system: systemId,
@@ -183,6 +200,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         measure,
         line,
         brand: data.marca_descricao,
+        brand_id: matchedBrand?.id ?? null,
         integrations_id: integrations.id,
         source_payload: data as unknown as Record<string, unknown>,
       },
