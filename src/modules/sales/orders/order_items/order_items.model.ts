@@ -23,6 +23,7 @@ class OrderItems
   public net_total?: number;
   public commission_base?: number;
   public commission_rate?: number;
+  public comission_manager_rate?: number;
   public commission_value?: number;
   public average_cost_snapshot?: number;
   public total_cost_snapshot?: number;
@@ -107,6 +108,11 @@ OrderItems.init(
       defaultValue: 0,
     },
     commission_rate: {
+      type: DataTypes.DECIMAL(8, 4),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    comission_manager_rate: {
       type: DataTypes.DECIMAL(8, 4),
       allowNull: true,
       defaultValue: 0,

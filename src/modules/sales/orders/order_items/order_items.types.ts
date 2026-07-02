@@ -15,6 +15,7 @@ export interface orderItemsAttributes {
     net_total?: number;
     commission_base?: number;
     commission_rate?: number;
+    comission_manager_rate?: number;
     commission_value?: number;
     average_cost_snapshot?: number;
     total_cost_snapshot?: number;

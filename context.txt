@@ -4,6 +4,8 @@ Backend Node.js/TypeScript/Express da PAX Pneus, rede com 30+ filiais. O sistema
 
 Este arquivo e o guia operacional para outra IA trabalhar no projeto sem quebrar os padroes existentes.
 
+> **Atualizacao:** a modelagem de invoice/expedicao mudou. Leia a secao 10-A antes de mexer em qualquer fluxo de entrada, expedicao ou devolucao de nota.
+
 ---
 
 ## 1. Arquivos que devem ser lidos antes de implementar
@@ -19,8 +21,9 @@ Os arquivos base atuais ficam em:
 - `src/shared/query/query.types.ts`
 - `src/config/routes.ts`
 - `src/config/sequelize-associations.ts`
-- `modelagem_banco_dados.txt`
 - `package.json`
+
+Sempre que precisar mexer com uma tabela, verifique a estrutura dela (`\d <tabela>` no banco ou a migration mais recente) antes de assumir colunas — nao confiar de memoria.
 
 Observacao: caminhos antigos como `src/shared/base/*` estao desatualizados.
 
@@ -101,6 +104,14 @@ Nem todos os modulos seguem o mesmo nome de arquivo no singular/plural, mas a se
 - Service: regra de negocio, cache, filas, orquestracao.
 - Controller: HTTP, extracao de `req`, chamada de service e resposta.
 - Routes: exporta o router do controller ou um router manual quando o modulo nao usa `BaseController`.
+
+**Regra fixa para tabela nova ou alterada (sempre, sem excecao):**
+
+1. Criar a migration com `sequelize-cli`, seguindo exatamente o padrao das migrations ja existentes no projeto (nome de arquivo com timestamp, `up`/`down`, tipos e defaults compativeis com o que ja esta em uso, `underscored`, UUID `DataTypes.UUIDV4`). Nao alterar tabela direto no banco sem migration.
+2. Registrar/atualizar as associacoes correspondentes em `src/config/sequelize-associations.ts`, dentro de `setupAssociations()` — toda tabela nova, FK nova ou relacionamento novo precisa entrar la, nao deixar associacao implicita so no model.
+3. So depois disso seguir para repository/service/controller/routes.
+
+Isso vale tanto para modulos novos quanto para qualquer mudanca de schema em tabela existente (ex.: as mudancas de `batch_invoice_items` e `invoice_unit_business_attributes` descritas na secao 10-A).
 
 Associacoes ficam centralizadas em `src/config/sequelize-associations.ts`, dentro de `setupAssociations()`.
 
@@ -325,19 +336,102 @@ Dominios atuais:
 - Vendas: `customers`, `contacts`, `stores`, `orders`, `order_items`, `steps`, `order_histories`, `integration_order_status_mappings`
 - Warehouse: `unit_businesses`, `unit_business_tax_configs`, `transporters`, `carrier_label_ranges`, `carrier_import_layouts`, `printer_configs`
 - Usuarios: `roles`, `users`, `user_config`, `user_unit_business`
-- Entrada/notas: `invoices`, `invoice_items`, `invoice_fiscal_items`, `entrance_scan_logs`, `unmapped_invoice_products`
-- Expedicao: `expedition_batches`, `expedition_batch_items`, `expedition_batch_invoices`, `expedition_scan_logs`
+- Entrada/notas: `invoices`, `invoice_items`, `invoice_fiscal_items`, `invoice_unit_business_attributes`, `entrance_scan_logs`, `unmapped_invoice_products`
+- Expedicao: `expedition_batches`, `expedition_batch_items`, `expedition_batch_invoices`, `batch_invoice_items`, `expedition_scan_logs`
 - Estoque/inventario: `products`, `suppliers`, `product_supplier_maps`, `stocks`, `inventory_batches`, `inventory_batch_items`, `inventory_batch_logs`
 - Operacoes: `operations`, `operations_itens`, `operation_comments`
 - Analitico: `report_job_checkpoints`, `invoice_operation_snapshots`, `daily_operation_facts`, `daily_transporter_facts`, `daily_sales_facts`, `daily_sales_product_facts`, `daily_sales_state_facts`, `daily_sales_status_facts`, `daily_sales_store_facts`, `sales_order_snapshots`, `sales_order_item_snapshots`
 
-Regras importantes:
+> `invoice_unit_business_attributes` e `batch_invoice_items` sao tabelas novas em relacao a modelagem anterior. Ver secao 10-A para detalhes. Se voce for criar/ajustar essas tabelas via migration, siga a regra fixa da secao 4 (migration no padrao existente + registrar em `setupAssociations()`).
 
-- `Invoice.total_read` e `Invoice.total_expected` nao existem no banco.
-- Calcular total lido por `SUM(invoice_items.quantity_received)`.
-- Calcular total esperado por `SUM(invoice_items.quantity_expected)`.
-- Entrada (`INCOMING`) completa quando soma recebida = soma esperada.
-- Saida (`OUTGOING`) completa quando `expedition_batches.delivery_note_generated_at IS NOT NULL` no batch vinculado.
+---
+
+## 10-A. Nova modelagem de invoice / expedicao (ATUALIZADO)
+
+Esta secao substitui a antiga regra unica de "total lido / total esperado" da nota. Houve uma migracao de responsabilidade de colunas:
+
+- **O que era `invoice_items.quantity_received` (quantidade lida) e o "status" por item de nota** passou a viver em `batch_invoice_items` (quantidade lida e status por combinacao invoice x batch x item).
+- **O que era `status`, `batch_generated` e `type` diretamente em `invoices`** passou a viver em `invoice_unit_business_attributes` (um registro por combinacao invoice x unit_business).
+- **Devolucoes/retornos de nota** (fluxo de "retorno") passam a usar em conjunto: `expedition_batch_invoices` (batch invoice), `batch_invoice_items` (batch invoice item) e `invoice_unit_business_attributes` (invoice atributes). Nao usar mais campos soltos em `invoices` ou `invoice_items` para esse fluxo.
+
+### 10-A.1 `invoices`
+
+Tabela apenas com dados fiscais/cadastrais da nota (sem status, sem type, sem batch_generated, sem total_read/total_expected). Colunas relevantes atuais:
+
+- Identificacao/fiscal: `customer_name`, `customer_document`, `sender_cnpj`, `sender_name`, `receiver_cnpj`, `receiver_name`, `xml_path`, `xml_url`, `xml_key` (unique), `danfe_path`, `invoice_series`, `bonded_invoice`, `description`
+- Valores: `invoice_value`, `invoice_products_value`, `invoice_freight_value`, `invoice_discount_value`, `invoice_other_value`, `invoice_total_tax_value`, `icms_value`, `ipi_value`, `pis_value`, `cofins_value`, `difal_value`, `ibs_value`, `cbs_value`
+- Relacionamentos: `unit_business_id`, `transporter_id` (+ `transporter_name`, `transporter_document`), `integrations_id`, `store_id`, `seller_id` -> `contacts`, `supplier_id` -> `suppliers`
+- Datas/operacionais: `received_at`, `expected_receiving`, `emitted_at`, `printed_label`, `destination_uf`, `destination_city`
+- SEFAZ (manifestacao/consulta XML completo): `sefaz_manifestation_status`, `sefaz_n_seq_evento`, `sefaz_nsu`, `sefaz_full_xml_attempts`, `sefaz_full_xml_last_query_at`
+- Outros: `id_system` (unique), `number_system`, `source_payload` (jsonb)
+
+**Nao existem mais em `invoices`:** `status`, `type`, `batch_generated`, `total_read`, `total_expected`. Nao inventar essas colunas.
+
+### 10-A.2 `invoice_items`
+
+Continua existindo, mas apenas com o esperado por produto da nota:
+
+- `product_id`, `invoice_id`, `quantity_expected` (integer, default 0)
+- unique em `(invoice_id, product_id)`
+
+**Nao possui mais** `quantity_received`/`quantity_read` nem `status`. Isso foi movido para `batch_invoice_items`.
+
+### 10-A.3 `invoice_unit_business_attributes`
+
+Substitui o antigo status/type/batch_generated que ficava direto em `invoices`. Um invoice pode ter um registro de atributos por unit_business (unique em `invoice_id, unit_business_id`):
+
+- `invoice_id`, `unit_business_id`
+- `type` (enum `enum_invoice_unit_business_attributes_type`) — equivalente ao antigo `type` da invoice (ex.: incoming/outgoing/devolucao)
+- `status` (enum `enum_invoice_unit_business_attributes_status`, default `PENDING`)
+- `batch_generated` (boolean, default `false`)
+
+Qualquer logica que antes lia `invoice.status`, `invoice.type` ou `invoice.batch_generated` deve agora buscar o registro correspondente em `invoice_unit_business_attributes` filtrando por `invoice_id` + `unit_business_id`.
+
+### 10-A.4 `expedition_batches`
+
+Batch de expedicao/entrada. Colunas: `id`, `number` (unique), `status` (enum `enum_expedition_batches_status`, default `OPEN`), `integrations_id`, `id_system`, `unit_business_id`, `total_volumes`, `total_volumes_received`, `type` (enum `enum_expedition_batches_type`, default `OUTGOING`), `transporters_id`, `justification`, `description`, `mode` (enum `enum_expedition_batches_mode`, default `REGULAR`), `delivery_note_generated_at`, `finished_at`, `operator_id`.
+
+### 10-A.5 `expedition_batch_items`
+
+Item do batch por produto (agregado, sem vinculo direto com uma invoice especifica): `expedition_batch_id`, `product_id`, `quantity` (integer, default 0), `quantity_scanned` (integer, default 0).
+
+### 10-A.6 `expedition_batch_invoices`
+
+Vinculo entre um batch e uma invoice (uma invoice pode estar em um batch): `id`, `expedition_batch_id`, `invoice_id`. Referenciada por `batch_invoice_items` e por `expedition_scan_logs`.
+
+### 10-A.7 `batch_invoice_items` (NOVA)
+
+Granularidade fina: quantidade esperada/lida e status **por invoice, por item do batch**. E aqui que fica o que antes era `invoice_items.quantity_received`/`status`:
+
+- `expedition_batch_item_id` -> `expedition_batch_items`
+- `expedition_batch_invoice_id` -> `expedition_batch_invoices`
+- `quantity_expected` (numeric 10,2, default 0)
+- `quantity_read` (numeric 10,2, default 0)
+- `status` (enum `enum_batch_invoice_items_status`, default `PENDING`)
+- unique em `(expedition_batch_invoice_id, expedition_batch_item_id)`
+
+### 10-A.8 `expedition_scan_logs`
+
+Log de cada bipagem/leitura de volume, agora vinculado tambem a invoice do batch:
+
+- `expedition_batch_id`, `expedition_batch_items_id`, `expedition_batch_invoices_id`
+- `label_full_code` (varchar 255), `vol_number` (varchar 6)
+- `user_id`
+- FKs de `expedition_batch_items_id` e `expedition_batch_invoices_id` com `ON DELETE CASCADE`; `expedition_batch_id` com `ON DELETE SET NULL`
+
+### 10-A.9 Regras de calculo atualizadas
+
+- **Total esperado da nota:** continua sendo `SUM(invoice_items.quantity_expected)`.
+- **Total lido da nota:** deixou de ser `SUM(invoice_items.quantity_received)` (coluna nao existe mais). Agora e `SUM(batch_invoice_items.quantity_read)` juntando por `expedition_batch_invoices.invoice_id = invoice.id` (join `batch_invoice_items -> expedition_batch_invoices -> invoices`).
+- **Status/tipo da nota por filial:** consultar `invoice_unit_business_attributes` (`invoice_id` + `unit_business_id`), nao mais `invoices.status`/`invoices.type`.
+- **Entrada (INCOMING) completa:** soma lida (via `batch_invoice_items.quantity_read`) = soma esperada (via `invoice_items.quantity_expected`).
+- **Saida (OUTGOING) completa:** `expedition_batches.delivery_note_generated_at IS NOT NULL` no batch vinculado (regra inalterada).
+- **Retorno/devolucao de nota:** usar em conjunto `expedition_batch_invoices` + `batch_invoice_items` + `invoice_unit_business_attributes`; nao usar mais campos soltos em `invoices`/`invoice_items` para esse fluxo.
+- `Invoice.total_read` e `Invoice.total_expected` continuam nao existindo como colunas no banco — sempre calcular via `SUM`, nunca assumir coluna direta.
+
+### 10-A.10 Se for preciso alterar/criar essas tabelas
+
+Seguir a regra fixa da secao 4: migration `sequelize-cli` no padrao existente (up/down, `underscored`, UUID) **e** atualizacao correspondente em `setupAssociations()` (`src/config/sequelize-associations.ts`) para `batch_invoice_items`, `invoice_unit_business_attributes`, `expedition_batch_invoices`, `expedition_batch_items` e `expedition_scan_logs`. Nao deixar FK sem associacao Sequelize registrada.
 
 ---
 
@@ -409,6 +503,8 @@ Rotas manuais/nao BaseController:
 - `GET /api/bling-orders/auth/bling`
 - `GET /api/bling-orders/callback`
 
+> Se `batch_invoice_items` e `invoice_unit_business_attributes` ganharem modulo/rota propria, confirmar no `src/config/routes.ts` (nome da pasta define a rota) e atualizar esta lista — na ultima verificacao esses dados ainda nao tinham CRUD base mapeado aqui.
+
 Consultar `API_ROUTES_DOCUMENTATION.md` para parametros de cada rota.
 
 ---
@@ -421,7 +517,9 @@ Consultar `API_ROUTES_DOCUMENTATION.md` para parametros de cada rota.
 - Algumas controllers ainda usam apenas `authenticate` sem `userPermissions`; preserve o padrao existente ao alterar.
 - Nao mover logica de negocio para controller ou repository.
 - Nao alterar model para adicionar coluna sem migration Sequelize.
+- Toda tabela nova, coluna nova ou FK nova precisa: (1) migration `sequelize-cli` no padrao ja existente no repo e (2) entrada correspondente em `setupAssociations()` em `src/config/sequelize-associations.ts`. Isso vale mesmo para ajustes pontuais — nunca alterar schema so no banco/model sem os dois passos.
 - Usar `underscored: true`, `tableName` explicito e UUID com `DataTypes.UUIDV4` em novos models.
 - Usar snake_case no TypeScript e snake_case no banco via Sequelize.
 - Para upsert/idempotencia, usar `ON CONFLICT DO UPDATE`, `upsert` ou `bulkCreate` com `updateOnDuplicate`.
 - Para webhooks e integracoes externas, preferir jobs idempotentes com `jobId` deterministico.
+- **Cuidado com codigo legado**: qualquer trecho ainda lendo `invoice_items.quantity_received`, `invoice_items.status`, `invoices.status`, `invoices.type` ou `invoices.batch_generated` esta desatualizado e precisa ser migrado para `batch_invoice_items` / `invoice_unit_business_attributes` conforme secao 10-A. Nao assumir que essas colunas existem sem conferir a migration/model atual.
