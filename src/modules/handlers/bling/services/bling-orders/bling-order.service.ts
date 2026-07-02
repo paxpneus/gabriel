@@ -72,7 +72,10 @@ export class BlingOrderService {
   }
 
   private async upsertSellerContact(
-    seller: { id?: number | string | null; nome?: string | null } | null | undefined,
+    seller:
+      | { id?: number | string | null; nome?: string | null }
+      | null
+      | undefined,
     integrationId: string,
   ): Promise<string | null> {
     const sellerSystemId = seller?.id != null ? String(seller.id) : null;
@@ -87,7 +90,13 @@ export class BlingOrderService {
       },
     });
 
-    const sellerName = seller?.nome ? String(seller.nome).trim() : null;
+    const isUnassignedSeller = sellerSystemId === "0";
+
+    const sellerName = isUnassignedSeller
+      ? "Vendedor 0"
+      : seller?.nome
+        ? String(seller.nome).trim()
+        : null;
 
     if (existing) {
       const needsUpdate =
@@ -117,7 +126,10 @@ export class BlingOrderService {
   private async resolveProductWithConfig(
     externalProductId: string | undefined,
     sku: string | undefined,
-  ): Promise<{ product: ProductAttributes & { brandRegister?: Brand }; config: ProductConfig }> {
+  ): Promise<{
+    product: ProductAttributes & { brandRegister?: Brand };
+    averageCost: number | null;
+  }> {
     if (!externalProductId && !sku) {
       throw new Error(
         `[BlingOrderService] Item sem id externo e sem sku, impossível resolver product config`,
@@ -166,7 +178,27 @@ export class BlingOrderService {
       );
     }
 
-    return { product: config.product as ProductAttributes & { brandRegister?: Brand }, config };
+    let averageCost: number | null = Number(config.average_cost ?? 0);
+
+    if (config.product.type === "KIT") {
+      averageCost = null;
+
+      if (sku) {
+        const unitSku = sku.replace(KIT_SKU_REGEX, "");
+        const unitConfig = await ProductConfig.findOne({
+          where: { sku: unitSku },
+        });
+
+        if (unitConfig) {
+          averageCost = Number(unitConfig.average_cost ?? 0);
+        }
+      }
+    }
+
+    return {
+      product: config.product as ProductAttributes & { brandRegister?: Brand },
+      averageCost,
+    };
   }
 
   // ─── Detecta se o SKU é um KIT (sufixo K{n}) e retorna o multiplicador ─────
@@ -192,31 +224,33 @@ export class BlingOrderService {
   //   comission_manager_rate = brand.manager_comission_tax_rate (apenas salvo, não usado em cálculo)
   private buildItemFinancialFields(
     product: ProductAttributes & { brandRegister?: Brand },
-    config: ProductConfig,
+    averageCostUnit: number | null,
     sku: string | undefined,
     quantity: number,
     itemValue: number,
+    hasSellerCommission: boolean,
   ) {
     const brand = product.brandRegister;
-    const averageCostSnapshot = Number(config.average_cost ?? 0);
-
     const kitMultiplier = this.getKitMultiplier(sku);
-    const unidadesReais = kitMultiplier * quantity;
 
-    const custoMedioTotal = averageCostSnapshot * unidadesReais;
+    const averageCostSnapshot =
+      averageCostUnit == null ? null : averageCostUnit * kitMultiplier;
 
-    const sellerRate = Number(
-      brand?.seller_comission_tax_rate ?? product.commission ?? 0,
-    );
-    const managerRate = Number(brand?.manager_comission_tax_rate ?? 0);
+    const custoMedioTotal =
+      averageCostSnapshot == null ? null : averageCostSnapshot * quantity;
 
-    // itens.valor já é o valor total daquela linha do pedido (contempla o kit
-    // inteiro quando aplicável), então a comissão calculada sobre ele já é o
-    // total da linha — não precisa de nova multiplicação por unidades_reais.
-    const commissionBase = itemValue;
+    const sellerRate = hasSellerCommission
+      ? Number(brand?.seller_comission_tax_rate ?? product.commission ?? 0)
+      : 0;
+    const managerRate = hasSellerCommission
+      ? Number(brand?.manager_comission_tax_rate ?? 0)
+      : 0;
+
+    const commissionBase = hasSellerCommission ? itemValue : 0;
     const commissionValue = (commissionBase * sellerRate) / 100;
 
-    const totalCostSnapshot = custoMedioTotal + commissionValue;
+    const totalCostSnapshot =
+      custoMedioTotal == null ? null : custoMedioTotal + commissionValue;
 
     return {
       commission_base: commissionBase,
@@ -293,7 +327,9 @@ export class BlingOrderService {
   // ─── Resolve a alíquota de ICMS (%) do estado de destino ────────────────────
   // Retorna 0 quando não há UF de destino ou o estado não é encontrado — nesse
   // caso icms_value acaba ficando 0 e total_cost não é penalizado indevidamente.
-  private async resolveIcmsRate(destinationUf: string | undefined): Promise<number> {
+  private async resolveIcmsRate(
+    destinationUf: string | undefined,
+  ): Promise<number> {
     if (!destinationUf) return 0;
 
     const state = await stateService.findOne({
@@ -332,31 +368,36 @@ export class BlingOrderService {
   //   icms_value  = total_price × state.icms_rate%
   //   total_cost  = total_price - icms_value - custo_total_produtos
   private async computeOrderFinancials(
-  orderData: any,
-  destinationUf: string | undefined,
-  custoTotalProdutos: number,
-): Promise<{ total_price: number; icms_value: number; total_cost: number }> {
-  const total = Number(orderData.total ?? 0);
-  const taxaComissao = Number(orderData.taxas?.taxaComissao ?? 0);
-  const custoFrete = Number(orderData.taxas?.custoFrete ?? 0);
+    orderData: any,
+    destinationUf: string | undefined,
+    custoTotalProdutos: number,
+  ): Promise<{ total_price: number; icms_value: number; total_cost: number }> {
+    const total = Number(orderData.total ?? 0);
+    const taxaComissao = Number(orderData.taxas?.taxaComissao ?? 0);
+    const custoFrete = Number(orderData.taxas?.custoFrete ?? 0);
 
-  // total_price agora já desconta comissão E custo de frete — essa é a base
-  // sobre a qual o ICMS é calculado, e é o que sobra pra comparar com o
-  // custo dos produtos.
-  const totalPrice = total - taxaComissao - custoFrete;
+    // total_price agora já desconta comissão E custo de frete — essa é a base
+    // sobre a qual o ICMS é calculado, e é o que sobra pra comparar com o
+    // custo dos produtos.
+    const totalPrice = total - taxaComissao - custoFrete;
 
-  const icmsRate = await this.resolveIcmsRate(destinationUf);
-  const icmsValue = totalPrice * (icmsRate / 100);
+    const icmsRate = await this.resolveIcmsRate(destinationUf);
+    const icmsValue = totalPrice * (icmsRate / 100);
 
-  const totalCost = totalPrice - icmsValue - custoTotalProdutos;
+    const totalCost = icmsValue + custoTotalProdutos;
 
-  return { total_price: totalPrice, icms_value: icmsValue, total_cost: totalCost };
-}
+    return {
+      total_price: totalPrice,
+      icms_value: icmsValue,
+      total_cost: totalCost,
+    };
+  }
   // ─── Monta payload de itens (com product_id e campos financeiros já resolvidos) ─
   // Retorna também a soma de total_cost_snapshot, usada em computeOrderFinancials.
   private async buildItemsPayload(
     integrationId: string,
     blingItems: any[],
+    hasSellerCommission: boolean,
   ): Promise<{
     items: Omit<orderItemsCreationAttributes, "order_id">[];
     custoTotalProdutos: number;
@@ -371,7 +412,7 @@ export class BlingOrderService {
           : undefined;
         const sku = i.codigo ? String(i.codigo) : undefined;
 
-        const { product, config } = await this.resolveProductWithConfig(
+        const { product, averageCost } = await this.resolveProductWithConfig(
           externalProductId,
           sku,
         );
@@ -379,10 +420,11 @@ export class BlingOrderService {
         const netTotal = itemValue - discountValue;
         const financialFields = this.buildItemFinancialFields(
           product,
-          config,
+          averageCost,
           sku,
           quantity,
           itemValue,
+          hasSellerCommission,
         );
 
         return {
@@ -464,8 +506,16 @@ export class BlingOrderService {
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
 
       // ─── Processa itens primeiro para obter custo_total_produtos ──────────
+
+      const hasSellerCommission =
+        !!orderData.vendedor?.id && Number(orderData.vendedor.id) !== 0;
+
       const { items: itemsPayload, custoTotalProdutos } =
-        await this.buildItemsPayload(integration.id, orderData.itens ?? []);
+        await this.buildItemsPayload(
+          integration.id,
+          orderData.itens ?? [],
+          hasSellerCommission,
+        );
 
       const orderFinancials = await this.computeOrderFinancials(
         orderData,
@@ -681,8 +731,16 @@ export class BlingOrderService {
       );
 
       // ─── Processa itens primeiro para obter custo_total_produtos ──────────
+
+      const hasSellerCommission =
+        !!orderData.vendedor?.id && Number(orderData.vendedor.id) !== 0;
+
       const { items: itemsPayloadWithoutOrderId, custoTotalProdutos } =
-        await this.buildItemsPayload(integration.id, orderData.itens ?? []);
+        await this.buildItemsPayload(
+          integration.id,
+          orderData.itens ?? [],
+          hasSellerCommission,
+        );
 
       const orderFinancials = await this.computeOrderFinancials(
         orderData,
