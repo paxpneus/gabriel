@@ -58,7 +58,12 @@ import DailySellerProductFact from "../modules/reports/sellers-report/models/dai
 import DailySellerCustomerFact from "../modules/reports/sellers-report/models/daily-seller-customer-fact/daily-seller-customer-fact.model";
 import BatchInvoiceItems from "../modules/warehouse/expedition/batch-invoice-items/batch-invoice-items.model";
 import InvoiceUnitBusinessAttributes from "../modules/warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import State from "../modules/warehouse/address/state/state.model";
+import Brand from "../modules/inventory/brands/brands.model";
 export function setupAssociations() {
+  // Standalone lookup table; no FK associations declared yet.
+  void State;
+
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
 
   Order.belongsTo(Integration, {
@@ -290,6 +295,9 @@ export function setupAssociations() {
 
   Supplier.hasMany(Product, { foreignKey: "supplier_id", as: "products" });
   Product.belongsTo(Supplier, { foreignKey: "supplier_id", as: "supplier" });
+
+  Brand.hasMany(Product, { foreignKey: "brand_id", as: "products" });
+  Product.belongsTo(Brand, { foreignKey: "brand_id", as: "brandRegister" });
 
   // Product -> Product Config
   Product.hasMany(ProductConfig, {

@@ -16,6 +16,7 @@ class Product
   public category?: string;
   public integrations_id?: string;
   public supplier_id?: string;
+  public brand_id?: string;
   public source_payload?: Record<string, unknown>;
   public unit?: string;
   public brand?: string;
@@ -67,6 +68,13 @@ Product.init(
       type: DataTypes.UUID,
       allowNull: true,
       references: { model: "suppliers", key: "id" },
+    },
+    brand_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "brands", key: "id" },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
     },
     source_payload: { type: DataTypes.JSONB, allowNull: true },
     unit: { type: DataTypes.STRING(20), allowNull: true },

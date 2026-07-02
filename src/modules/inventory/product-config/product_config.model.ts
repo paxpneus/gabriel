@@ -5,6 +5,7 @@ import {
   ProductConfigCreationAttributes,
 } from './product_config.types';
 import { v4 as uuidv4 } from 'uuid';
+import { ProductAttributes } from '../products/product.types';
 
 class ProductConfig
   extends Model<ProductConfigAttributes, ProductConfigCreationAttributes>
@@ -27,6 +28,7 @@ class ProductConfig
   public gtin?: string;
   public gtin_package?: string;
 
+  public product?: ProductAttributes
 }
 
 ProductConfig.init(

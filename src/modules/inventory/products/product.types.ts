@@ -12,6 +12,7 @@ export interface ProductAttributes {
   category?: string;
   integrations_id?: string;
   supplier_id?: string;
+  brand_id?: string;
   source_payload?: Record<string, unknown>;
   unit?: string;
   brand?: string;

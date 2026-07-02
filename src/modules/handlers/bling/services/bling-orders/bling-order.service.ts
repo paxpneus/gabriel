@@ -10,9 +10,11 @@ import { orderItemsCreationAttributes } from "../../../../sales/orders/order_ite
 import { StoreService } from "../../../../sales/stores/stores.service";
 import { mapOrder } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import { Product, ProductConfig } from "../../../../inventory";
-import { Op } from "sequelize";
 import { Invoice, UnitBusiness } from "../../../../warehouse";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
+import { ProductAttributes } from "../../../../inventory/products/product.types";
+import Brand from "../../../../inventory/brands/brands.model";
+import stateService from "../../../../warehouse/address/state/state.service";
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
@@ -65,31 +67,121 @@ export class BlingOrderService {
     return invoice?.id ?? null;
   }
 
-  private async resolveProductId(
+  private async resolveProductWithConfig(
     externalProductId: string | undefined,
     sku: string | undefined,
-  ): Promise<string | undefined> {
-    if (!externalProductId && !sku) return undefined;
+  ): Promise<{ product: ProductAttributes & { brandRegister?: Brand }; config: ProductConfig }> {
+    if (!externalProductId && !sku) {
+      throw new Error(
+        `[BlingOrderService] Item sem id externo e sem sku, impossível resolver product config`,
+      );
+    }
 
-    // Tenta pelo id_system primeiro (sem depender de sku na tabela Product)
+    let config: ProductConfig | null = null;
+
+    // Tenta via id_system do produto primeiro
     if (externalProductId) {
       const product = await Product.findOne({
         where: { id_system: externalProductId },
         attributes: ["id"],
       });
-      if (product) return product.id;
+
+      if (product) {
+        config = await ProductConfig.findOne({
+          where: { product_id: product.id },
+          include: [
+            {
+              model: Product,
+              as: "product",
+              include: [{ model: Brand, as: "brandRegister", required: false }],
+            },
+          ],
+        });
+      }
     }
 
-    // Fallback: busca via ProductConfig (sku mora aqui agora)
-    if (sku) {
-      const config = await ProductConfig.findOne({
+    if (!config && sku) {
+      config = await ProductConfig.findOne({
         where: { sku },
-        attributes: ["product_id"],
+        include: [
+          {
+            model: Product,
+            as: "product",
+            include: [{ model: Brand, as: "brandRegister", required: false }],
+          },
+        ],
       });
-      if (config) return config.product_id;
     }
 
-    return undefined;
+    if (!config || !config.product) {
+      throw new Error(
+        `[BlingOrderService] ProductConfig não encontrado (externalProductId=${externalProductId ?? "-"}, sku=${sku ?? "-"}). Item não pode ser criado sem custo médio.`,
+      );
+    }
+
+    return { product: config.product as ProductAttributes & { brandRegister?: Brand }, config };
+  }
+
+  private buildItemFinancialFields(
+    product: ProductAttributes & { brandRegister?: Brand },
+    config: ProductConfig,
+    quantity: number,
+    netTotal: number,
+  ) {
+    const brand = product.brandRegister;
+    const averageCost = Number(config.average_cost ?? 0);
+    const blingUnitCost = Number(
+      config.supplier_cost_price ??
+        config.supplier_purchase_price ??
+        config.average_cost ??
+        0,
+    );
+    const commissionBase = netTotal;
+    const sellerRate = Number(
+      brand?.seller_comission_tax_rate ?? product.commission ?? 0,
+    );
+    const managerRate = Number(brand?.manager_comission_tax_rate ?? 0);
+
+    return {
+      commission_base: commissionBase,
+      commission_rate: sellerRate,
+      comission_manager_rate: managerRate,
+      commission_value: (commissionBase * sellerRate) / 100,
+      average_cost_snapshot: averageCost,
+      total_cost_snapshot: blingUnitCost * quantity,
+      cost_source: "bling_supplier_cost",
+    };
+  }
+
+  private appendMissingFinancialFields(
+    existingItem: any,
+    fields: ReturnType<BlingOrderService["buildItemFinancialFields"]>,
+  ) {
+    const update: Partial<orderItemsCreationAttributes> = {};
+
+    if (existingItem.commission_base == null) {
+      update.commission_base = fields.commission_base;
+    }
+    if (existingItem.commission_rate == null) {
+      update.commission_rate = fields.commission_rate;
+    }
+    if (existingItem.comission_manager_rate == null) {
+      update.comission_manager_rate = fields.comission_manager_rate;
+    }
+    if (existingItem.commission_value == null) {
+      update.commission_value = fields.commission_value;
+    }
+    if (existingItem.average_cost_snapshot == null) {
+      update.average_cost_snapshot = fields.average_cost_snapshot;
+    }
+    if (existingItem.total_cost_snapshot == null) {
+      update.total_cost_snapshot = fields.total_cost_snapshot;
+    }
+    if (existingItem.cost_source == null) {
+      update.cost_source = fields.cost_source;
+    }
+
+    return update;
   }
 
   // ─── Busca UF e cidade do destinatário via contato da Bling ────────────────
@@ -126,14 +218,24 @@ export class BlingOrderService {
   // PIS, COFINS, DIFAL, IBS e CBS não estão disponíveis no payload de pedido
   // da Bling — ficam zerados e podem ser enriquecidos via NF-e futuramente.
   // destination_uf e destination_city são resolvidos separadamente via contato.
-  private extractFiscalFields(
+  private async extractFiscalFields(
     orderData: any,
     destination: { destination_uf?: string; destination_city?: string },
   ) {
+    const fallbackIcmsValue = Number(orderData.tributacao?.totalICMS ?? 0);
+    let icmsValue = fallbackIcmsValue;
+
+    if (destination.destination_uf) {
+      const state = await stateService.findOne({
+        where: { acronym: destination.destination_uf.trim().toUpperCase() },
+      });
+      icmsValue = Number(state?.icms_rate ?? fallbackIcmsValue);
+    }
+
     return {
       destination_uf: destination.destination_uf,
       destination_city: destination.destination_city,
-      icms_value: Number(orderData.tributacao?.totalICMS ?? 0),
+      icms_value: icmsValue,
       ipi_value: Number(orderData.tributacao?.totalIPI ?? 0),
       pis_value: 0,
       cofins_value: 0,
@@ -160,7 +262,18 @@ export class BlingOrderService {
           : undefined;
         const sku = i.codigo ? String(i.codigo) : undefined;
 
-        const productId = await this.resolveProductId(externalProductId, sku);
+        const { product, config } = await this.resolveProductWithConfig(
+          externalProductId,
+          sku,
+        );
+
+        const netTotal = unitPrice * quantity - discountValue;
+        const financialFields = this.buildItemFinancialFields(
+          product,
+          config,
+          quantity,
+          netTotal,
+        );
 
         return {
           name: i.descricao,
@@ -169,15 +282,13 @@ export class BlingOrderService {
           unit: i.unidade,
           quantity,
           price: unitPrice,
-          product_id: productId,
+          product_id: product.id,
           source_payload: i,
           unit_price: unitPrice,
           gross_total: unitPrice * quantity,
           discount_value: discountValue,
-          net_total: unitPrice * quantity - discountValue,
-          commission_base: Number(i.comissao?.base ?? 0),
-          commission_rate: Number(i.comissao?.aliquota ?? 0),
-          commission_value: Number(i.comissao?.valor ?? 0),
+          net_total: netTotal,
+          ...financialFields,
         };
       }),
     );
@@ -217,7 +328,10 @@ export class BlingOrderService {
 
       const internalStatus = mapOrder(orderData.situacao.id);
       const destination = await this.resolveDestination(orderData.contato?.id);
-      const fiscalFields = this.extractFiscalFields(orderData, destination);
+      const fiscalFields = await this.extractFiscalFields(
+        orderData,
+        destination,
+      );
 
       // ─── Resolve unit_business_id se ainda estiver nulo ──────────────────
       let unitBusinessId: string | null =
@@ -269,7 +383,17 @@ export class BlingOrderService {
             : undefined;
           const sku = i.codigo ? String(i.codigo) : undefined;
 
-          const productId = await this.resolveProductId(externalProductId, sku);
+          const { product, config } = await this.resolveProductWithConfig(
+            externalProductId,
+            sku,
+          );
+          const netTotal = unitPrice * quantity - discountValue;
+          const financialFields = this.buildItemFinancialFields(
+            product,
+            config,
+            quantity,
+            netTotal,
+          );
 
           const existingItem = sku
             ? await orderItemsService.findOne({
@@ -284,11 +408,12 @@ export class BlingOrderService {
               unit_price: unitPrice,
               gross_total: unitPrice * quantity,
               discount_value: discountValue,
-              net_total: unitPrice * quantity - discountValue,
-              commission_base: Number(i.comissao?.base ?? 0),
-              commission_rate: Number(i.comissao?.aliquota ?? 0),
-              commission_value: Number(i.comissao?.valor ?? 0),
-              ...(productId ? { product_id: productId } : {}),
+              net_total: netTotal,
+              ...this.appendMissingFinancialFields(
+                existingItem,
+                financialFields,
+              ),
+              product_id: product.id,
               source_payload: i,
             });
           } else {
@@ -299,16 +424,14 @@ export class BlingOrderService {
               unit: i.unidade,
               quantity,
               price: unitPrice,
-              product_id: productId,
+              product_id: product.id,
               integrations_id: integration.id,
               source_payload: i,
               unit_price: unitPrice,
               gross_total: unitPrice * quantity,
               discount_value: discountValue,
-              net_total: unitPrice * quantity - discountValue,
-              commission_base: Number(i.comissao?.base ?? 0),
-              commission_rate: Number(i.comissao?.aliquota ?? 0),
-              commission_value: Number(i.comissao?.valor ?? 0),
+              net_total: netTotal,
+              ...financialFields,
             });
           }
         }
@@ -444,7 +567,10 @@ export class BlingOrderService {
         orderData.contato,
       );
       const destination = await this.resolveDestination(orderData.contato?.id);
-      const fiscalFields = this.extractFiscalFields(orderData, destination);
+      const fiscalFields = await this.extractFiscalFields(
+        orderData,
+        destination,
+      );
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
 
       const ordersPayload: orderCreationAttributes = {

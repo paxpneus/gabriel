@@ -14,6 +14,7 @@ type Scopes =
   | 'Perfis'
   | 'Unidades de Negócio'
   | 'Transportadoras'
+  | 'Estados'
   | 'Integrações'
   | 'Aplicativos'
   | 'Impressoras'
@@ -72,6 +73,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
     permissions: all,
     type: 'REGULAR',
     children: [
+      { entity: 'brands', label: 'Marcas' },
       { entity: 'supplier_mappings',    label: 'Mapeamento de Fornecedores' },
       { entity: 'integration_mappings', label: 'Mapeamento de Integração' },
       { entity: 'unmapped_invoice_products', label: 'Produtos Não Mapeados' },
@@ -136,6 +138,13 @@ export const ROLE_PERMISSIONS: Roles[] = [
     scope: 'Transportadoras',
     entity: 'transporters',
     route: 'transporter',
+    type: 'REGULAR',
+    permissions: all,
+  },
+  {
+    scope: 'Estados',
+    entity: 'states',
+    route: 'state',
     type: 'REGULAR',
     permissions: all,
   },
