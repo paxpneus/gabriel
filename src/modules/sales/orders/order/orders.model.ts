@@ -10,6 +10,7 @@ class Order
   public id!: string;
   public integrations_id!: string;
   public customer_id!: string;
+  public seller_id!: string;
   public id_order_system?: string;
   public number_order_system!: string;
   public number_order_channel!: string;
@@ -72,6 +73,16 @@ Order.init(
       type: DataTypes.UUID,
       allowNull: false,
       references: { model: "customers", key: "id" },
+    },
+    seller_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "contacts",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
     },
     store_id: {
       type: DataTypes.UUID,
