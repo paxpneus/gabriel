@@ -17,12 +17,15 @@ export interface SellerSalesOrderItemSnapshotAttributes {
   total_cost?: number | string;
   commission_rate?: number | string;
   commission_value?: number | string;
+  commission_base?: number | string;
   markup_value?: number | string;
   markup_pct?: number | string;
   contribution_value?: number | string;
   contribution_pct?: number | string;
   is_valid_sale: boolean;
   last_updated_at?: Date;
+  has_cost_data: boolean;
+  icms_value_allocated?: number | string;
   createdAt?: Date;
   updatedAt?: Date;
 }

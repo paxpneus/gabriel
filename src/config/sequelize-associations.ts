@@ -75,6 +75,9 @@ export function setupAssociations() {
   Customer.hasMany(Order, { foreignKey: "customer_id", as: "orders" });
   Order.belongsTo(Customer, { foreignKey: "customer_id", as: "customer" });
 
+  Contact.hasMany(Order, { foreignKey: "seller_id", as: 'orders'});
+  Order.belongsTo(Contact, { foreignKey: "seller_id", as: "seller"});
+
   // Contacts -> Integration / Unit Business
   Contact.belongsTo(Integration, {
     foreignKey: "integrations_id",
@@ -133,6 +136,9 @@ export function setupAssociations() {
   // OrderItems N:1 Orders (Itens do pedido e pedido)
   OrderItems.belongsTo(Order, { foreignKey: "order_id", as: "order" });
   Order.hasMany(OrderItems, { foreignKey: "order_id", as: "items" });
+
+  OrderItems.belongsTo(Product, {foreignKey: "product_id", as: "product"});
+  Product.hasMany(OrderItems, {foreignKey: "product_id", as: 'orderItems'})
 
   // Store 1:N Orders (loja e pedido)
   Order.belongsTo(Store, { foreignKey: "store_id", as: "store" });
