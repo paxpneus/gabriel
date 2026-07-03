@@ -29,8 +29,11 @@ class SellerSalesOrderItemSnapshot
   public net_total?: number | string;
   public average_cost?: number | string;
   public total_cost?: number | string;
+  public has_cost_data!: boolean;
+  public icms_value_allocated?: number | string;
   public commission_rate?: number | string;
   public commission_value?: number | string;
+  public commission_base?: number | string;
   public markup_value?: number | string;
   public markup_pct?: number | string;
   public contribution_value?: number | string;
@@ -59,8 +62,23 @@ SellerSalesOrderItemSnapshot.init(
     net_total: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     average_cost: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
     total_cost: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    has_cost_data: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    icms_value_allocated: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
     commission_rate: { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
     commission_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    commission_base: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
     markup_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     markup_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
     contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
@@ -78,6 +96,7 @@ SellerSalesOrderItemSnapshot.init(
     timestamps: true,
     underscored: true,
   },
+
 );
 
 export default SellerSalesOrderItemSnapshot;

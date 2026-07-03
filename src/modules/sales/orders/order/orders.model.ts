@@ -18,7 +18,8 @@ class Order
   public actual_situation!: string;
   public collection_date?: Date;
   public date?: Date;
-  public totalPrice?: number;
+  public total_price?: number;
+  public total_cost?: number;
   public nfe_emitted?: boolean;
   public internal_status?: string;
   public store_id?: string;
@@ -129,7 +130,11 @@ Order.init(
       type: DataTypes.DATE,
       allowNull: true,
     },
-    totalPrice: {
+    total_price: {
+      type: DataTypes.DECIMAL,
+      allowNull: true,
+    },
+    total_cost: {
       type: DataTypes.DECIMAL,
       allowNull: true,
     },
