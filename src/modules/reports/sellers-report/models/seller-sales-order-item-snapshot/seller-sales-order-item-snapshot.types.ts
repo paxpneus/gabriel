@@ -24,6 +24,8 @@ export interface SellerSalesOrderItemSnapshotAttributes {
   contribution_pct?: number | string;
   is_valid_sale: boolean;
   last_updated_at?: Date;
+  has_cost_data: boolean;
+  icms_value_allocated?: number | string;
   createdAt?: Date;
   updatedAt?: Date;
 }

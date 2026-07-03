@@ -395,63 +395,66 @@ export class BlingOrderService {
   // ─── Monta payload de itens (com product_id e campos financeiros já resolvidos) ─
   // Retorna também a soma de total_cost_snapshot, usada em computeOrderFinancials.
   private async buildItemsPayload(
-    integrationId: string,
-    blingItems: any[],
-    hasSellerCommission: boolean,
-  ): Promise<{
-    items: Omit<orderItemsCreationAttributes, "order_id">[];
-    custoTotalProdutos: number;
-  }> {
-    const items = await Promise.all(
-      blingItems.map(async (i: any) => {
-        const quantity = Number(i.quantidade ?? i.quantity ?? 0);
-        const itemValue = Number(i.valor ?? 0);
-        const discountValue = Number(i.desconto ?? 0);
-        const externalProductId = i.produto?.id
-          ? String(i.produto.id)
-          : undefined;
-        const sku = i.codigo ? String(i.codigo) : undefined;
+  integrationId: string,
+  blingItems: any[],
+  hasSellerCommission: boolean,
+): Promise<{
+  items: Omit<orderItemsCreationAttributes, "order_id">[];
+  custoTotalProdutos: number;
+}> {
+  const items = await Promise.all(
+    blingItems.map(async (i: any) => {
+      const quantity = Number(i.quantidade ?? i.quantity ?? 0);
+      const itemValue = Number(i.valor ?? 0); // valor UNITÁRIO
+      const discountValue = Number(i.desconto ?? 0);
+      const externalProductId = i.produto?.id
+        ? String(i.produto.id)
+        : undefined;
+      const sku = i.codigo ? String(i.codigo) : undefined;
 
-        const { product, averageCost } = await this.resolveProductWithConfig(
-          externalProductId,
-          sku,
-        );
+      const { product, averageCost } = await this.resolveProductWithConfig(
+        externalProductId,
+        sku,
+      );
 
-        const netTotal = itemValue - discountValue;
-        const financialFields = this.buildItemFinancialFields(
-          product,
-          averageCost,
-          sku,
-          quantity,
-          itemValue,
-          hasSellerCommission,
-        );
+      // valor total da linha = unitário x quantidade
+      const grossTotalLine = itemValue * quantity;
+      const netTotal = grossTotalLine - discountValue;
 
-        return {
-          name: i.descricao,
-          sku: sku ?? "",
-          unit: i.unidade,
-          quantity,
-          price: itemValue,
-          product_id: product.id,
-          integrations_id: integrationId,
-          source_payload: i,
-          unit_price: itemValue,
-          gross_total: itemValue,
-          discount_value: discountValue,
-          net_total: netTotal,
-          ...financialFields,
-        };
-      }),
-    );
+      const financialFields = this.buildItemFinancialFields(
+        product,
+        averageCost,
+        sku,
+        quantity,
+        grossTotalLine, 
+        hasSellerCommission,
+      );
 
-    const custoTotalProdutos = items.reduce(
-      (acc, item) => acc + Number(item.total_cost_snapshot ?? 0),
-      0,
-    );
+      return {
+        name: i.descricao,
+        sku: sku ?? "",
+        unit: i.unidade,
+        quantity,
+        price: itemValue,        
+        product_id: product.id,
+        integrations_id: integrationId,
+        source_payload: i,
+        unit_price: itemValue,   
+        gross_total: grossTotalLine, 
+        discount_value: discountValue,
+        net_total: netTotal,     
+        ...financialFields,
+      };
+    }),
+  );
 
-    return { items, custoTotalProdutos };
-  }
+  const custoTotalProdutos = items.reduce(
+    (acc, item) => acc + Number(item.total_cost_snapshot ?? 0),
+    0,
+  );
+
+  return { items, custoTotalProdutos };
+}
 
   async updateOrderFromBling(body: blingOrderWebHookData): Promise<null> {
     try {

@@ -19,31 +19,34 @@ class SellerSalesReportController {
   }
 
   index = async (req: Request, res: Response): Promise<Response> => {
-    try {
-      const report = await SellerSalesReportService.getReport({
-        startDate: String(req.query.startDate ?? req.query.start_date ?? ""),
-        endDate: String(req.query.endDate ?? req.query.end_date ?? ""),
-        sellerId: (req.query.sellerId ?? req.query.seller_id) as
-          | string
-          | undefined,
-        productId: (req.query.productId ?? req.query.product_id) as
-          | string
-          | undefined,
-        brand: req.query.brand as string | undefined,
-        tireMeasure: (req.query.tireMeasure ?? req.query.tire_measure) as
-          | string
-          | undefined,
-        customerId: (req.query.customerId ?? req.query.customer_id) as
-          | string
-          | undefined,
-        drillDown: req.query.drillDown === "true",
-      });
+  try {
+    const report = await SellerSalesReportService.getReport({
+      startDate: String(req.query.startDate ?? req.query.start_date ?? ""),
+      endDate: String(req.query.endDate ?? req.query.end_date ?? ""),
+      sellerId: (req.query.sellerId ?? req.query.seller_id) as
+        | string
+        | undefined,
+      productId: (req.query.productId ?? req.query.product_id) as
+        | string
+        | undefined,
+      brand: req.query.brand as string | undefined,
+      tireMeasure: (req.query.tireMeasure ?? req.query.tire_measure) as
+        | string
+        | undefined,
+      customerId: (req.query.customerId ?? req.query.customer_id) as
+        | string
+        | undefined,
+      unitBusinessId: (req.query.unitBusinessId ?? req.query.unit_business_id) as
+        | string
+        | undefined,
+      drillDown: req.query.drillDown === "true",
+    });
 
-      return res.json(report);
-    } catch (error: any) {
-      return res.status(400).json({ error: error.message });
-    }
-  };
+    return res.json(report);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
+};
 
   jobStatus = async (_req: Request, res: Response): Promise<Response> => {
     try {
