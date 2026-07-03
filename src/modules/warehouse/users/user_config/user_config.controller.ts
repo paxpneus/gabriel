@@ -1,6 +1,7 @@
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
 import { ROLE_PERMISSIONS } from "../../../../shared/constants/roles";
+import { USER_TYPES } from "../../../../shared/constants/user-types";
 import BaseController from "../../../../shared/utils/base-models/base-controller";
 import UserConfig from "./user_config.model";
 import UserConfigService from "./user_config.service";
@@ -30,7 +31,7 @@ export class UserConfigController extends BaseController<
   }
 
   async getUserTypes(req: Request, res: Response,) {
-    return res.status(200).json(ROLE_PERMISSIONS)
+    return res.status(200).json(USER_TYPES)
   }
 }
 

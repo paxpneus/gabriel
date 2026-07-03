@@ -16,28 +16,37 @@ export interface PermissionNode {
 
 export interface Module {
   module: ModulesOptions;
+  label: string;
   permissions?: PermissionNode[];
 }
 
 export interface USER_TYPE_CONFIG {
   type: UserType;
+  label: string;
+  description?: string;
   modules: Module[] | "*";
-  initialPage: string; 
+  initialPage: string;
 }
 
 export const USER_TYPES: USER_TYPE_CONFIG[] = [
   {
     type: "admin",
+    label: "Administrador",
+    description: "Acesso completo a todos os módulos e telas do sistema.",
     modules: "*",
     initialPage: "operation-report",
   },
 
   {
     type: "operator",
+    label: "Operador",
+    description:
+      "Acesso operacional a vendas, expedição, estoque, logística, relatórios e transferências.",
     initialPage: "home",
     modules: [
       {
         module: "sales",
+        label: "Vendas",
         permissions: [
           {
             id: "sales_invoice",
@@ -54,6 +63,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
 
       {
         module: "expedition",
+        label: "Expedição",
         permissions: [
           {
             id: "expedition_batches",
@@ -68,6 +78,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
 
       {
         module: "logistics",
+        label: "Logística",
         permissions: [
           {
             id: "transporters",
@@ -78,6 +89,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
 
       {
         module: "stock",
+        label: "Estoque",
         permissions: [
           {
             id: "incoming_invoices_group",
@@ -122,6 +134,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
 
       {
         module: "reports",
+        label: "Relatórios",
         permissions: [
           {
             id: "invoices-report",
@@ -132,6 +145,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
 
       {
         module: "transfers",
+        label: "Transferências",
         permissions: [
           {
             id: "unit-business-request",
@@ -144,10 +158,13 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
 
   {
     type: "stock-requester",
+    label: "Solicitante de Estoque",
+    description: "Acesso restrito à solicitação de transferências de estoque.",
     initialPage: "/unit-business-request",
     modules: [
       {
         module: "transfers",
+        label: "Transferências",
         permissions: [
           {
             id: "unit-business-request",

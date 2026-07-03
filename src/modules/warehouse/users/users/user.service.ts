@@ -64,8 +64,10 @@ export class UserService extends BaseService<User, UserRepository> {
   async createUserWithValidation(userDto: CreateUserInput): Promise<User> {
     try {
       return await sequelize.transaction(async (t) => {
+        const { type, ...userData } = userDto;
+
         const existingUser = await this.repository.findOne({
-          where: { email: userDto.email },
+          where: { email: userData.email },
           transaction: t,
         });
         if (existingUser) {
@@ -73,23 +75,30 @@ export class UserService extends BaseService<User, UserRepository> {
         }
 
         const cpfExists = await this.repository.findOne({
-          where: { cpf: userDto.cpf },
+          where: { cpf: userData.cpf },
           transaction: t,
         });
         if (cpfExists) {
           throw new Error("Usuário com este CPF já existe");
         }
 
-        userDto.cpf = cleanDocument(userDto.cpf);
+        userData.cpf = cleanDocument(userData.cpf);
 
-        const user = await this.repository.create(userDto, { transaction: t });
-        await UserConfig.create({ user_id: user.id }, { transaction: t });
+        const user = await this.repository.create(userData, { transaction: t });
+
+        await UserConfig.create(
+          {
+            user_id: user.id,
+            ...(type !== undefined && { type }),
+          },
+          { transaction: t },
+        );
 
         if (
-          userDto.user_unit_business &&
-          userDto.user_unit_business?.length > 1
+          userData.user_unit_business &&
+          userData.user_unit_business?.length > 1
         ) {
-          let unitBusinessPayload = userDto.user_unit_business?.map((v) => ({
+          let unitBusinessPayload = userData.user_unit_business?.map((v) => ({
             user_id: user.id,
             unit_business_id: v,
           }));
@@ -97,13 +106,13 @@ export class UserService extends BaseService<User, UserRepository> {
           if (
             !unitBusinessPayload
               .map((s) => s.unit_business_id)
-              .includes(userDto.unit_business_id)
+              .includes(userData.unit_business_id)
           ) {
             unitBusinessPayload = [
               ...unitBusinessPayload,
               {
                 user_id: user.id,
-                unit_business_id: userDto.unit_business_id,
+                unit_business_id: userData.unit_business_id,
               },
             ];
           }
@@ -125,7 +134,6 @@ export class UserService extends BaseService<User, UserRepository> {
       });
     } catch (err: any) {
       if (err instanceof UniqueConstraintError) {
-        // Identifica qual campo violou a constraint
         const field = err.errors?.[0]?.path;
         if (field === "email")
           throw new Error("Usuário com este email já existe");
@@ -156,6 +164,7 @@ export class UserService extends BaseService<User, UserRepository> {
         visualize_only_current_unit_business,
         compact_mode,
         id_system,
+        type,
         ...userPayload
       } = userDto;
 
@@ -170,6 +179,7 @@ export class UserService extends BaseService<User, UserRepository> {
           visualize_only_current_unit_business,
         }),
         ...(compact_mode !== undefined && { compact_mode }),
+        ...(type !== undefined && { type }),
         ...config,
       };
 
@@ -264,8 +274,8 @@ export class UserService extends BaseService<User, UserRepository> {
         },
         {
           model: Contact,
-          as: 'contact'
-        }
+          as: "contact",
+        },
       ],
     });
 
@@ -317,10 +327,10 @@ export class UserService extends BaseService<User, UserRepository> {
           model: UserConfig,
           as: "config",
         },
-         {
+        {
           model: Contact,
-          as: 'contact'
-        }
+          as: "contact",
+        },
       ],
     });
 
