@@ -221,7 +221,18 @@ export class SellerSalesReportRepository {
 valid_orders AS (
   SELECT
     o.id AS order_id,
-    COALESCE(o.internal_status::text, '') <> ALL(ARRAY[:invalidOrderStatuses]) AS is_valid_sale
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM order_items cost_check
+        WHERE cost_check.order_id = o.id
+          AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
+      ) THEN FALSE
+      WHEN NULLIF(o.internal_status::text, '') IS NOT NULL THEN
+        o.internal_status::text NOT IN ('CANCELLED', 'UNKNOWN')
+      ELSE
+        o.actual_situation IN ('6', '9', '748748', '748743')
+    END AS is_valid_sale
   FROM orders o
   JOIN affected a ON a.order_id = o.id
 ),
@@ -249,8 +260,8 @@ snapshot_source AS (
     -- diretamente como net_total.
     COALESCE(oi.net_total, 0)::numeric AS net_total_raw,
 
-    -- custo do produto já congelado (kit + comissão), pode ser NULL quando
-    -- o SKU unitário do KIT não foi encontrado no momento do processamento.
+    -- custo do produto já congelado (kit + comissão). Quando o total não
+    -- veio pronto, seguimos o sales_report e derivamos de average_cost * qty.
     oi.average_cost_snapshot::numeric AS average_cost,
     oi.total_cost_snapshot::numeric   AS total_cost_product,
     (oi.average_cost_snapshot IS NOT NULL) AS has_cost_data,
@@ -290,41 +301,46 @@ snapshot_final AS (
 snapshot_calc AS (
   SELECT
     *,
-    -- custo do item = custo de produto (congelado) + fatia de ICMS do
-    -- pedido. Se o custo do produto for NULL (KIT sem match), o total
-    -- também fica NULL — não mascaramos "não sei o custo" como zero.
-    CASE WHEN total_cost_product IS NULL THEN NULL
-         ELSE total_cost_product + icms_value_allocated
+    COALESCE(total_cost_product, ROUND((average_cost * quantity)::numeric, 2)) AS total_cost_product_resolved
+  FROM snapshot_final
+),
+snapshot_metrics AS (
+  SELECT
+    *,
+    -- custo do item = custo de produto resolvido + fatia de ICMS do pedido,
+    -- mesma base usada no sales_report.
+    CASE WHEN total_cost_product_resolved IS NULL THEN NULL
+         ELSE total_cost_product_resolved + icms_value_allocated
     END AS total_cost_with_icms,
 
-    CASE WHEN total_cost_product IS NULL THEN NULL
-         ELSE net_total_allocated - (total_cost_product + icms_value_allocated)
+    CASE WHEN total_cost_product_resolved IS NULL THEN NULL
+         ELSE net_total_allocated - (total_cost_product_resolved + icms_value_allocated)
     END AS markup_value,
 
     CASE
-      WHEN total_cost_product IS NULL THEN NULL
-      WHEN (total_cost_product + icms_value_allocated) = 0 THEN 0
+      WHEN total_cost_product_resolved IS NULL THEN NULL
+      WHEN (total_cost_product_resolved + icms_value_allocated) = 0 THEN 0
       ELSE ROUND(
-        (((net_total_allocated - (total_cost_product + icms_value_allocated))
-          / (total_cost_product + icms_value_allocated)) * 100)::numeric,
+        (((net_total_allocated - (total_cost_product_resolved + icms_value_allocated))
+          / (total_cost_product_resolved + icms_value_allocated)) * 100)::numeric,
         2
       )
     END AS markup_pct,
 
-    CASE WHEN total_cost_product IS NULL THEN NULL
-         ELSE net_total_allocated - (total_cost_product + icms_value_allocated)
+    CASE WHEN total_cost_product_resolved IS NULL THEN NULL
+         ELSE net_total_allocated - (total_cost_product_resolved + icms_value_allocated)
     END AS contribution_value,
 
     CASE
-      WHEN total_cost_product IS NULL THEN NULL
+      WHEN total_cost_product_resolved IS NULL THEN NULL
       WHEN net_total_allocated = 0 THEN 0
       ELSE ROUND(
-        (((net_total_allocated - (total_cost_product + icms_value_allocated))
+        (((net_total_allocated - (total_cost_product_resolved + icms_value_allocated))
           / net_total_allocated) * 100)::numeric,
         2
       )
     END AS contribution_pct
-  FROM snapshot_final
+  FROM snapshot_calc
 )
 INSERT INTO seller_sales_order_item_snapshots (
   order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
@@ -347,7 +363,7 @@ SELECT
   commission_base, commission_rate, commission_value, markup_value, markup_pct,
   contribution_value, contribution_pct, is_valid_sale,
   NOW(), NOW(), NOW()
-FROM snapshot_calc
+FROM snapshot_metrics
 ON CONFLICT (order_item_id) DO UPDATE SET
   seller_id             = EXCLUDED.seller_id,
   customer_id           = EXCLUDED.customer_id,
@@ -454,6 +470,12 @@ ON CONFLICT (order_item_id) DO UPDATE SET
             AND seller_id = CAST(:sellerId AS uuid)
             AND product_id = CAST(:productId AS uuid)
             AND is_valid_sale = TRUE
+            AND NOT EXISTS (
+              SELECT 1
+              FROM seller_sales_order_item_snapshots cost_check
+              WHERE cost_check.order_id = seller_sales_order_item_snapshots.order_id
+                AND COALESCE(cost_check.average_cost, 0) <= 0
+            )
         )
         INSERT INTO daily_seller_product_facts (
           fact_date,
@@ -537,6 +559,12 @@ ON CONFLICT (order_item_id) DO UPDATE SET
             AND s.seller_id = CAST(:sellerId AS uuid)
             AND s.customer_id = CAST(:customerId AS uuid)
             AND s.is_valid_sale = TRUE
+            AND NOT EXISTS (
+              SELECT 1
+              FROM seller_sales_order_item_snapshots cost_check
+              WHERE cost_check.order_id = s.order_id
+                AND COALESCE(cost_check.average_cost, 0) <= 0
+            )
         )
         INSERT INTO daily_seller_customer_facts (
           fact_date,
@@ -603,8 +631,49 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     // sales_count usa COUNT(DISTINCT order_id) direto, sem risco de contar
     // o mesmo pedido mais de uma vez quando ele tem múltiplos produtos.
     // -------------------------------------------------------------
+    const reportRowsCte = `
+      report_rows AS (
+        SELECT
+          s.*,
+          COALESCE(
+            NULLIF(s.total_cost, 0),
+            ROUND((s.average_cost * s.quantity)::numeric, 2)
+              + COALESCE(s.icms_value_allocated, 0)
+          ) AS report_total_cost
+        FROM seller_sales_order_item_snapshots s
+        WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
+          AND s.is_valid_sale = TRUE
+          AND NOT EXISTS (
+            SELECT 1
+            FROM seller_sales_order_item_snapshots cost_check
+            WHERE cost_check.order_id = s.order_id
+              AND COALESCE(cost_check.average_cost, 0) <= 0
+          )
+          AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
+          AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
+          AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
+          AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
+          AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
+          AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
+      ),
+      report_metrics AS (
+        SELECT
+          *,
+          CASE
+            WHEN report_total_cost IS NULL THEN NULL
+            ELSE net_total - report_total_cost
+          END AS report_markup_value,
+          CASE
+            WHEN report_total_cost IS NULL THEN NULL
+            ELSE net_total - report_total_cost
+          END AS report_contribution_value
+        FROM report_rows
+      )
+    `;
+
     const [summary] = await sequelize.query(
       `
+      WITH ${reportRowsCte}
       SELECT
         COALESCE(SUM(s.net_total), 0) AS total_sold,
         COUNT(DISTINCT s.order_id) AS sales_count,
@@ -614,26 +683,18 @@ ON CONFLICT (order_item_id) DO UPDATE SET
           ELSE ROUND(SUM(s.net_total) / COUNT(DISTINCT s.order_id), 2)
         END AS average_ticket,
         COALESCE(SUM(s.commission_value), 0) AS total_commission,
-        COALESCE(SUM(s.total_cost), 0) AS total_cost,
-        COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
+        COALESCE(SUM(s.report_total_cost), 0) AS total_cost,
+        COALESCE(SUM(s.report_markup_value), 0) AS total_markup_value,
         CASE
-          WHEN COALESCE(SUM(s.total_cost), 0) = 0 THEN 0
-          ELSE ROUND((SUM(s.markup_value) / SUM(s.total_cost)) * 100, 2)
+          WHEN COALESCE(SUM(s.report_total_cost), 0) = 0 THEN 0
+          ELSE ROUND((SUM(s.report_markup_value) / SUM(s.report_total_cost)) * 100, 2)
         END AS average_markup_pct,
-        COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
+        COALESCE(SUM(s.report_contribution_value), 0) AS total_contribution_value,
         CASE
           WHEN COALESCE(SUM(s.net_total), 0) = 0 THEN 0
-          ELSE ROUND((SUM(s.contribution_value) / SUM(s.net_total)) * 100, 2)
+          ELSE ROUND((SUM(s.report_contribution_value) / SUM(s.net_total)) * 100, 2)
         END AS average_contribution_pct
-      FROM seller_sales_order_item_snapshots s
-      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND s.is_valid_sale = TRUE
-        AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-        AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-        AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-        AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-        AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-        AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
+      FROM report_metrics s
       `,
       {
         type: QueryTypes.SELECT,
@@ -646,6 +707,7 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     // -------------------------------------------------------------
     const products = await sequelize.query(
       `
+      WITH ${reportRowsCte}
       SELECT
         s.product_id,
         MAX(s.product_name) AS product_name,
@@ -659,22 +721,14 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         SUM(s.net_total) AS sale_value,
         SUM(s.commission_value) AS commission_value,
         CASE
-          WHEN SUM(s.total_cost) = 0 THEN 0
-          ELSE ROUND((SUM(s.markup_value) / SUM(s.total_cost)) * 100, 2)
+          WHEN SUM(s.report_total_cost) = 0 THEN 0
+          ELSE ROUND((SUM(s.report_markup_value) / SUM(s.report_total_cost)) * 100, 2)
         END AS markup_pct,
         CASE
           WHEN SUM(s.net_total) = 0 THEN 0
-          ELSE ROUND((SUM(s.contribution_value) / SUM(s.net_total)) * 100, 2)
+          ELSE ROUND((SUM(s.report_contribution_value) / SUM(s.net_total)) * 100, 2)
         END AS contribution_pct
-      FROM seller_sales_order_item_snapshots s
-      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND s.is_valid_sale = TRUE
-        AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-        AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-        AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-        AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-        AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-        AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
+      FROM report_metrics s
       GROUP BY s.product_id
       ORDER BY sale_value DESC
       `,
@@ -689,23 +743,16 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     // -------------------------------------------------------------
     const ranking = await sequelize.query(
       `
-      WITH grouped AS (
+      WITH ${reportRowsCte},
+      grouped AS (
         SELECT
           s.product_id,
           MAX(s.product_name) AS product_name,
           SUM(s.quantity) AS quantity,
           SUM(s.net_total) AS sale_value,
-          SUM(s.contribution_value) AS contribution_value,
+          SUM(s.report_contribution_value) AS contribution_value,
           SUM(s.commission_value) AS commission_value
-        FROM seller_sales_order_item_snapshots s
-        WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-          AND s.is_valid_sale = TRUE
-          AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-          AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-          AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-          AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-          AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-          AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
+        FROM report_metrics s
         GROUP BY s.product_id
       )
       SELECT
@@ -725,6 +772,7 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     // -------------------------------------------------------------
     const byStore = await sequelize.query(
       `
+      WITH ${reportRowsCte}
       SELECT
         s.unit_business_id,
         MAX(ub.name) AS unit_business_name,
@@ -736,28 +784,20 @@ ON CONFLICT (order_item_id) DO UPDATE SET
           WHEN COUNT(DISTINCT s.order_id) = 0 THEN 0
           ELSE ROUND(SUM(s.net_total) / COUNT(DISTINCT s.order_id), 2)
         END AS average_ticket,
-        COALESCE(SUM(s.total_cost), 0) AS total_cost,
+        COALESCE(SUM(s.report_total_cost), 0) AS total_cost,
         COALESCE(SUM(s.commission_value), 0) AS total_commission,
-        COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
+        COALESCE(SUM(s.report_markup_value), 0) AS total_markup_value,
         CASE
-          WHEN SUM(s.total_cost) = 0 THEN 0
-          ELSE ROUND((SUM(s.markup_value) / SUM(s.total_cost)) * 100, 2)
+          WHEN SUM(s.report_total_cost) = 0 THEN 0
+          ELSE ROUND((SUM(s.report_markup_value) / SUM(s.report_total_cost)) * 100, 2)
         END AS markup_pct,
-        COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
+        COALESCE(SUM(s.report_contribution_value), 0) AS total_contribution_value,
         CASE
           WHEN SUM(s.net_total) = 0 THEN 0
-          ELSE ROUND((SUM(s.contribution_value) / SUM(s.net_total)) * 100, 2)
+          ELSE ROUND((SUM(s.report_contribution_value) / SUM(s.net_total)) * 100, 2)
         END AS contribution_pct
-      FROM seller_sales_order_item_snapshots s
+      FROM report_metrics s
       LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
-      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND s.is_valid_sale = TRUE
-        AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-        AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-        AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-        AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-        AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-        AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
       GROUP BY s.unit_business_id
       ORDER BY total_sold DESC
       `,
@@ -772,6 +812,7 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     // -------------------------------------------------------------
     const bySeller = await sequelize.query(
       `
+      WITH ${reportRowsCte}
       SELECT
         s.seller_id,
         MAX(ct.name) AS seller_name,
@@ -782,28 +823,20 @@ ON CONFLICT (order_item_id) DO UPDATE SET
           WHEN COUNT(DISTINCT s.order_id) = 0 THEN 0
           ELSE ROUND(SUM(s.net_total) / COUNT(DISTINCT s.order_id), 2)
         END AS average_ticket,
-        COALESCE(SUM(s.total_cost), 0) AS total_cost,
+        COALESCE(SUM(s.report_total_cost), 0) AS total_cost,
         COALESCE(SUM(s.commission_value), 0) AS total_commission,
-        COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
+        COALESCE(SUM(s.report_markup_value), 0) AS total_markup_value,
         CASE
-          WHEN SUM(s.total_cost) = 0 THEN 0
-          ELSE ROUND((SUM(s.markup_value) / SUM(s.total_cost)) * 100, 2)
+          WHEN SUM(s.report_total_cost) = 0 THEN 0
+          ELSE ROUND((SUM(s.report_markup_value) / SUM(s.report_total_cost)) * 100, 2)
         END AS markup_pct,
-        COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
+        COALESCE(SUM(s.report_contribution_value), 0) AS total_contribution_value,
         CASE
           WHEN SUM(s.net_total) = 0 THEN 0
-          ELSE ROUND((SUM(s.contribution_value) / SUM(s.net_total)) * 100, 2)
+          ELSE ROUND((SUM(s.report_contribution_value) / SUM(s.net_total)) * 100, 2)
         END AS contribution_pct
-      FROM seller_sales_order_item_snapshots s
+      FROM report_metrics s
       LEFT JOIN contacts ct ON ct.id = s.seller_id
-      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND s.is_valid_sale = TRUE
-        AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-        AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-        AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-        AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-        AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-        AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
       GROUP BY s.seller_id
       ORDER BY total_sold DESC
       `,
@@ -819,17 +852,17 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     // -------------------------------------------------------------
     const customers = await sequelize.query(
       `
+      WITH ${reportRowsCte}
       SELECT
-        dscf.customer_id,
-        MAX(dscf.customer_name) AS customer_name,
-        SUM(dscf.orders_count) AS purchases_count,
-        SUM(dscf.total_purchased) AS total_purchased,
-        SUM(dscf.total_commission) AS commission_generated
-      FROM daily_seller_customer_facts dscf
-      WHERE dscf.fact_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND (CAST(:sellerId AS uuid) IS NULL OR dscf.seller_id = CAST(:sellerId AS uuid))
-        AND (CAST(:customerId AS uuid) IS NULL OR dscf.customer_id = CAST(:customerId AS uuid))
-      GROUP BY dscf.customer_id
+        s.customer_id,
+        MAX(c.name) AS customer_name,
+        COUNT(DISTINCT s.order_id) AS purchases_count,
+        COALESCE(SUM(s.net_total), 0) AS total_purchased,
+        COALESCE(SUM(s.commission_value), 0) AS commission_generated
+      FROM report_metrics s
+      LEFT JOIN customers c ON c.id = s.customer_id
+      WHERE s.customer_id IS NOT NULL
+      GROUP BY s.customer_id
       ORDER BY total_purchased DESC
       `,
       {
@@ -843,19 +876,12 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     // -------------------------------------------------------------
     const evolutionDaily = await sequelize.query(
       `
+      WITH ${reportRowsCte}
       SELECT
         s.order_date AS period,
         COALESCE(SUM(s.net_total), 0) AS total_sold,
         COUNT(DISTINCT s.order_id) AS sales_count
-      FROM seller_sales_order_item_snapshots s
-      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND s.is_valid_sale = TRUE
-        AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-        AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-        AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-        AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-        AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-        AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
+      FROM report_metrics s
       GROUP BY s.order_date
       ORDER BY s.order_date ASC
       `,
@@ -867,19 +893,12 @@ ON CONFLICT (order_item_id) DO UPDATE SET
 
     const evolutionWeekly = await sequelize.query(
       `
+      WITH ${reportRowsCte}
       SELECT
         DATE_TRUNC('week', s.order_date)::date AS period,
         COALESCE(SUM(s.net_total), 0) AS total_sold,
         COUNT(DISTINCT s.order_id) AS sales_count
-      FROM seller_sales_order_item_snapshots s
-      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND s.is_valid_sale = TRUE
-        AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-        AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-        AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-        AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-        AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-        AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
+      FROM report_metrics s
       GROUP BY DATE_TRUNC('week', s.order_date)
       ORDER BY period ASC
       `,
@@ -891,19 +910,12 @@ ON CONFLICT (order_item_id) DO UPDATE SET
 
     const evolutionMonthly = await sequelize.query(
       `
+      WITH ${reportRowsCte}
       SELECT
         DATE_TRUNC('month', s.order_date)::date AS period,
         COALESCE(SUM(s.net_total), 0) AS total_sold,
         COUNT(DISTINCT s.order_id) AS sales_count
-      FROM seller_sales_order_item_snapshots s
-      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-        AND s.is_valid_sale = TRUE
-        AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-        AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-        AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-        AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-        AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-        AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
+      FROM report_metrics s
       GROUP BY DATE_TRUNC('month', s.order_date)
       ORDER BY period ASC
       `,
@@ -919,19 +931,12 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     const items = filters.drillDown
       ? await sequelize.query(
           `
+          WITH ${reportRowsCte}
           SELECT
             s.*,
             ct.name AS seller_name
-          FROM seller_sales_order_item_snapshots s
+          FROM report_metrics s
           LEFT JOIN contacts ct ON ct.id = s.seller_id
-          WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-            AND s.is_valid_sale = TRUE
-            AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-            AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-            AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-            AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-            AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-            AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
           ORDER BY s.order_date DESC, s.last_updated_at DESC
           `,
           {

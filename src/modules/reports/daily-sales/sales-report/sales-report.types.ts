@@ -2,6 +2,7 @@ export interface SalesReportFilters {
   dateFrom: string;
   dateTo: string;
   unitBusinessId?: string;
+  unitBusinessIds?: string[];
   storeId?: string;
   state?: string;
   productId?: string;
