@@ -170,10 +170,18 @@ export class SalesReportRepository {
           o.destination_city,
           COALESCE(iosm.normalized_status, o.actual_situation)  AS status_snapshot,
           CASE
-            WHEN COALESCE(iosm.is_cancelled, FALSE)             THEN 'cancelled'
-            WHEN COALESCE(iosm.is_final, FALSE)
-              OR o.internal_status::text = 'EMITTED'            THEN 'completed'
-            ELSE 'open'
+            WHEN EXISTS (
+              SELECT 1
+              FROM order_items cost_check
+              WHERE cost_check.order_id = o.id
+                AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
+            ) THEN 'ignored_missing_cost'
+            WHEN NULLIF(o.internal_status::text, '') IS NOT NULL THEN
+              CASE WHEN o.internal_status::text IN ('CANCELLED', 'UNKNOWN')
+                THEN 'cancelled' ELSE 'completed' END
+            ELSE
+              CASE WHEN o.actual_situation IN ('6', '9', '748748', '748743')
+                THEN 'completed' ELSE 'cancelled' END
           END                                                   AS snapshot_status,
           COALESCE(o.total_products, o.total_price, 0)          AS total_products,
           COALESCE(o.total_order,    o.total_price, 0)          AS total_order,
@@ -297,15 +305,17 @@ export class SalesReportRepository {
           difal_value,
           ibs_value,
           cbs_value,
+          approx_tax_value,
           tax_commission,
           marketplace_fee,
           payment_fee
       ),
 
      -- ------------------------------------------------------------------
--- 3. Fonte de dados dos itens
+-- 3. Fonte de dados dos itens (valores BRUTOS/próprios do item, ainda sem
+--    ratear nada do pedido — net_total_raw só serve pra calcular o peso).
 -- ------------------------------------------------------------------
-item_source AS (
+item_source_raw AS (
   SELECT
     io.id                                                 AS order_snapshot_id,
     oi.order_id,
@@ -327,24 +337,22 @@ item_source AS (
         * COALESCE(oi.quantity, 0)::numeric
     )                                                     AS gross_total,
     COALESCE(oi.discount_value, 0)                        AS discount_value,
+    -- net_total_raw: valor bruto do item (Bling), sem descontar taxa de
+    -- marketplace/frete e sem ratear ICMS/IPI/etc. do pedido. É usado
+    -- SÓ pra calcular o peso do item dentro do pedido (item_weight),
+    -- igual ao seller_sales_report.
     COALESCE(
       oi.net_total,
       (COALESCE(oi.unit_price, oi.price, 0)::numeric
         * COALESCE(oi.quantity, 0)::numeric)
         - COALESCE(oi.discount_value, 0)
-    )                                                     AS net_total,
+    )                                                     AS net_total_raw,
+    COALESCE(oi.average_cost_snapshot, 0)::numeric         AS average_cost_snapshot,
+    oi.total_cost_snapshot::numeric                        AS total_cost_snapshot_raw,
     CASE
-      WHEN pc.supplier_cost_price IS NOT NULL
-        THEN pc.supplier_cost_price
-      WHEN st.quantity > 0
-        THEN ROUND((st.total_price::numeric / st.quantity::numeric), 4)
-      ELSE 0
-    END                                                   AS average_cost_snapshot,
-    CASE
-      WHEN pc.supplier_cost_price IS NOT NULL THEN 'PRODUCT_CONFIG_COST'
-      WHEN st.quantity > 0                    THEN 'STOCK_AVERAGE'
+      WHEN oi.average_cost_snapshot IS NOT NULL THEN 'ORDER_ITEM_SNAPSHOT'
       ELSE 'UNKNOWN'
-    END                                                   AS cost_source,
+    END                                                     AS cost_source,
     COALESCE(oi.commission_base, 0)                       AS commission_base,
     COALESCE(oi.commission_rate, 0)                       AS commission_rate,
     COALESCE(oi.commission_value, 0)                      AS commission_value,
@@ -352,15 +360,17 @@ item_source AS (
     pc.cest                                               AS cest,
     NULL::varchar                                         AS cfop,
     COALESCE(pc.gtin, p.ean)                              AS gtin,
-    0::numeric                                            AS approx_tax_value,
-    0::numeric                                            AS icms_rate,
-    0::numeric                                            AS icms_value,
-    0::numeric                                            AS ipi_value,
-    0::numeric                                            AS pis_value,
-    0::numeric                                            AS cofins_value,
-    0::numeric                                            AS difal_value,
-    0::numeric                                            AS ibs_value,
-    0::numeric                                            AS cbs_value,
+    -- valores do PEDIDO (mesmos para todos os itens do mesmo pedido),
+    -- carregados aqui só pra servir de base do rateio na próxima CTE.
+    io.total_order                                        AS order_total_order,
+    io.icms_value                                         AS order_icms_value,
+    io.ipi_value                                          AS order_ipi_value,
+    io.pis_value                                          AS order_pis_value,
+    io.cofins_value                                       AS order_cofins_value,
+    io.difal_value                                        AS order_difal_value,
+    io.ibs_value                                          AS order_ibs_value,
+    io.cbs_value                                          AS order_cbs_value,
+    io.approx_tax_value                                   AS order_approx_tax_value,
     oi.source_payload
   FROM order_items oi
   JOIN inserted_orders io ON io.order_id = oi.order_id
@@ -395,6 +405,44 @@ item_source AS (
     LIMIT 1
   ) st ON TRUE
 ),
+
+-- ------------------------------------------------------------------
+-- 3b. Peso do item dentro do pedido — mesma lógica do seller_sales_report:
+--     item_weight = net_total_raw do item / SUM(net_total_raw) do pedido.
+--     A soma dos pesos de todos os itens de um pedido é sempre 1.
+-- ------------------------------------------------------------------
+item_weighted AS (
+  SELECT
+    *,
+    CASE
+      WHEN SUM(net_total_raw) OVER (PARTITION BY order_id) = 0 THEN 0
+      ELSE net_total_raw / SUM(net_total_raw) OVER (PARTITION BY order_id)
+    END AS item_weight
+  FROM item_source_raw
+),
+
+-- ------------------------------------------------------------------
+-- 3c. Rateio: tudo que só existe no nível do pedido (receita líquida real,
+--     ICMS, IPI, PIS, COFINS, DIFAL, IBS, CBS, imposto aproximado) é
+--     distribuído entre os itens proporcionalmente ao item_weight. Como os
+--     pesos somam 1 por pedido, somando os itens de volta bate exatamente
+--     com o valor do pedido.
+-- ------------------------------------------------------------------
+item_calc AS (
+  SELECT
+    *,
+    ROUND(item_weight * order_total_order, 2)         AS net_total_allocated,
+    ROUND(item_weight * order_icms_value, 2)           AS icms_value_allocated,
+    ROUND(item_weight * order_ipi_value, 2)            AS ipi_value_allocated,
+    ROUND(item_weight * order_pis_value, 2)            AS pis_value_allocated,
+    ROUND(item_weight * order_cofins_value, 2)         AS cofins_value_allocated,
+    ROUND(item_weight * order_difal_value, 2)          AS difal_value_allocated,
+    ROUND(item_weight * order_ibs_value, 2)            AS ibs_value_allocated,
+    ROUND(item_weight * order_cbs_value, 2)            AS cbs_value_allocated,
+    ROUND(item_weight * order_approx_tax_value, 2)     AS approx_tax_value_allocated
+  FROM item_weighted
+),
+
       -- ------------------------------------------------------------------
       -- 4. Upsert dos snapshots de item
       --    RETURNING expande os campos necessários para item_totals.
@@ -415,22 +463,31 @@ item_source AS (
           order_snapshot_id, order_id, order_item_id, product_id,
           store_id, unit_business_id, integration_id, order_date, destination_uf,
           sku, description, unit, quantity, unit_price, gross_total, discount_value,
-          net_total, average_cost_snapshot,
-          ROUND((average_cost_snapshot * quantity)::numeric, 2),
+          -- net_total gravado é o valor ALOCADO (rateado do pedido), não o bruto.
+          net_total_allocated,
+          average_cost_snapshot,
+          COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2)) + icms_value_allocated,
           cost_source,
           CASE
-            WHEN (average_cost_snapshot * quantity) = 0 THEN 0
+            WHEN (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity) + icms_value_allocated) = 0 THEN 0
             ELSE ROUND(
-              ((net_total - (average_cost_snapshot * quantity))
-                / (average_cost_snapshot * quantity) * 100)::numeric, 2
+              ((net_total_allocated - (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity) + icms_value_allocated))
+                / (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity) + icms_value_allocated) * 100)::numeric, 2
             )
           END,
           commission_base, commission_rate, commission_value,
           ncm, cest, cfop, gtin,
-          approx_tax_value, icms_rate, icms_value, ipi_value, pis_value,
-          cofins_value, difal_value, ibs_value, cbs_value,
+          approx_tax_value_allocated,
+          0::numeric AS icms_rate,
+          icms_value_allocated,
+          ipi_value_allocated,
+          pis_value_allocated,
+          cofins_value_allocated,
+          difal_value_allocated,
+          ibs_value_allocated,
+          cbs_value_allocated,
           source_payload, NOW(), NOW(), NOW()
-        FROM item_source
+        FROM item_calc
         ON CONFLICT (order_item_id) DO UPDATE SET
           order_snapshot_id     = EXCLUDED.order_snapshot_id,
           product_id            = EXCLUDED.product_id,
@@ -511,13 +568,11 @@ item_source AS (
                           + COALESCE(sos.marketplace_fee, 0)
                           + COALESCE(sos.payment_fee,     0),
 
-        contribution_value =
+         contribution_value =
           COALESCE(sos.total_order, 0)
           - COALESCE(it.total_cost, 0)
           - CASE WHEN sos.freight_paid_by_company
               THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-          - COALESCE(sos.approx_tax_value, 0)
-             
           - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
              + COALESCE(sos.payment_fee,     0)),
 
@@ -528,11 +583,6 @@ item_source AS (
             - COALESCE(it.total_cost, 0)
             - CASE WHEN sos.freight_paid_by_company
                 THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-            - (  COALESCE(sos.icms_value,   0) + COALESCE(sos.ipi_value,    0)
-               + COALESCE(sos.pis_value,    0) + COALESCE(sos.cofins_value, 0)
-               + COALESCE(sos.difal_value,  0) + COALESCE(sos.ibs_value,    0)
-               
-               + COALESCE(sos.cbs_value,    0) + COALESCE(sos.approx_tax_value, 0))
             - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
                + COALESCE(sos.payment_fee,     0))
           ) / sos.total_order * 100)::numeric, 2)
@@ -543,7 +593,7 @@ CASE
   WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
   ELSE ROUND((
     (COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0))
-    / NULLIF(COALESCE(sos.total_order, 0), 0)
+    / NULLIF(COALESCE(it.total_cost, 0), 0)
     * 100
   )::numeric, 2)
 END,
@@ -673,6 +723,12 @@ END,
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
             AND snapshot_status IN ('open', 'completed')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM sales_order_item_snapshots cost_check
+              WHERE cost_check.order_snapshot_id = sales_order_snapshots.id
+                AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
+            )
         )
         INSERT INTO daily_sales_facts (
           fact_date, unit_business_id,
@@ -695,7 +751,7 @@ END,
           CASE WHEN total_value = 0 THEN 0
             ELSE ROUND((contribution_value / NULLIF(total_value, 0) * 100)::numeric, 2) END,
           CASE WHEN total_value = 0 THEN 0
-            ELSE ROUND(((total_value - total_cost) / NULLIF(total_value, 0) * 100)::numeric, 2)
+            ELSE ROUND(((total_value - total_cost) / NULLIF(total_cost, 0) * 100)::numeric, 2)
  END,
           NOW(), NOW(), NOW()
         FROM metrics
@@ -743,6 +799,12 @@ END,
             AND unit_business_id = :unitBusinessId
             AND destination_uf   = :destinationUf
             AND snapshot_status IN ('open', 'completed')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM sales_order_item_snapshots cost_check
+              WHERE cost_check.order_snapshot_id = sales_order_snapshots.id
+                AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
+            )
 
         )
         INSERT INTO daily_sales_state_facts (
@@ -804,6 +866,12 @@ END,
             AND unit_business_id = :unitBusinessId
             AND store_id         = :storeId
             AND snapshot_status IN ('open', 'completed')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM sales_order_item_snapshots cost_check
+              WHERE cost_check.order_snapshot_id = sales_order_snapshots.id
+                AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
+            )
         )
         INSERT INTO daily_sales_store_facts (
           fact_date, unit_business_id, store_id,
@@ -823,7 +891,7 @@ END,
           CASE
   WHEN total_value = 0 THEN 0
   ELSE ROUND(
-    ((total_value - total_cost) / NULLIF(total_value, 0) * 100)::numeric,
+    ((total_value - total_cost) / NULLIF(total_cost, 0) * 100)::numeric,
     2
   )
 END,
@@ -881,6 +949,12 @@ END,
     AND sois.unit_business_id = :unitBusinessId
     AND sois.sku              = :sku
     AND sos.snapshot_status IN ('open', 'completed')  
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sales_order_item_snapshots cost_check
+      WHERE cost_check.order_snapshot_id = sos.id
+        AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
+    )
 )
         INSERT INTO daily_sales_product_facts (
           fact_date, unit_business_id, product_id, sku, description,
@@ -893,7 +967,7 @@ END,
           CASE
   WHEN total_value = 0 THEN 0
   ELSE ROUND(
-    ((total_value - total_cost) / NULLIF(total_value, 0) * 100)::numeric,
+    ((total_value - total_cost) / NULLIF(total_cost, 0) * 100)::numeric,
     2
   )
 END,
@@ -980,6 +1054,13 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
       WHERE sos.order_date       = CAST(:factDate AS date)
         AND sos.unit_business_id = CAST(:unitBusinessId AS uuid)
         AND sos.integration_id   = CAST(:integrationId AS uuid)
+        AND sos.snapshot_status <> 'ignored_missing_cost'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM sales_order_item_snapshots cost_check
+          WHERE cost_check.order_snapshot_id = sos.id
+            AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
+        )
       GROUP BY sos.status_snapshot
       `,
       {
@@ -1001,7 +1082,8 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
     const replacements = {
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
-      unitBusinessId: filters.unitBusinessId ?? null,
+      // aceita um array de unit_business_id (vazio/undefined = sem filtro)
+      unitBusinessIds: filters.unitBusinessIds ?? [],
       storeId: filters.storeId ?? null,
       state: filters.state ?? null,
       productId: filters.productId ?? null,
@@ -1009,8 +1091,9 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
       statusNormalized: filters.statusId ?? null,
     };
 
+    // array vazio (ou não informado) = não filtra por unit_business_id
     const unitFilter =
-      "(:unitBusinessId IS NULL OR unit_business_id = CAST(:unitBusinessId AS uuid))";
+      "(COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0 OR unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))";
 
     const [general] = await sequelize.query<ReportRow>(
       `
@@ -1034,7 +1117,7 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
         END AS contribution_pct,
         CASE WHEN SUM(total_value) = 0 THEN 0
   ELSE ROUND(
-    ((SUM(total_value) - SUM(total_cost)) / NULLIF(SUM(total_value), 0) * 100)::numeric,
+    ((SUM(total_value) - SUM(total_cost)) / NULLIF(SUM(total_cost), 0) * 100)::numeric,
     2
   )
 END AS markup_pct
@@ -1080,7 +1163,7 @@ END AS markup_pct
       COALESCE(SUM(total_value),0) AS total_value,
       CASE WHEN SUM(total_value) = 0 THEN 0
   ELSE ROUND(
-    ((SUM(total_value) - SUM(total_cost)) / NULLIF(SUM(total_value), 0) * 100)::numeric,
+    ((SUM(total_value) - SUM(total_cost)) / NULLIF(SUM(total_cost), 0) * 100)::numeric,
     2
   )
 END AS markup_pct
@@ -1090,7 +1173,7 @@ END AS markup_pct
       AND (:productId IS NULL OR product_id = CAST(:productId AS uuid))
       AND (:sku IS NULL OR sku = :sku)
     GROUP BY product_id, sku
-    ORDER BY quantity DESC          -- ✅ era total_value DESC
+    ORDER BY quantity DESC
     `,
       { type: QueryTypes.SELECT, replacements },
     );
@@ -1112,7 +1195,7 @@ END AS markup_pct
         ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.items_quantity))::numeric, 2)
       END AS piece_average_value,
       CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
-  ELSE ROUND(((SUM(dsf.total_value) - SUM(dsf.total_cost)) / NULLIF(SUM(dsf.total_value), 0) * 100)::numeric, 2)
+  ELSE ROUND(((SUM(dsf.total_value) - SUM(dsf.total_cost)) / NULLIF(SUM(dsf.total_cost), 0) * 100)::numeric, 2)
 END AS markup_pct,
       COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
       COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
@@ -1120,10 +1203,13 @@ END AS markup_pct,
       CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
         ELSE ROUND((SUM(dsf.contribution_value) / NULLIF(SUM(dsf.total_value), 0) * 100)::numeric, 2)
       END AS contribution_pct
-    FROM daily_sales_facts dsf                    -- ✅ era daily_sales_store_facts
+    FROM daily_sales_facts dsf
     LEFT JOIN unit_businesses ub ON ub.id = dsf.unit_business_id
     WHERE dsf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-      AND (:unitBusinessId IS NULL OR dsf.unit_business_id = CAST(:unitBusinessId AS uuid))
+      AND (
+        COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
+        OR dsf.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[])
+      )
     GROUP BY dsf.unit_business_id, ub.name
     ORDER BY total_value DESC
     `,
@@ -1140,7 +1226,6 @@ END AS markup_pct,
     )
     SELECT
       dssf.status_normalized,
-      -- ✅ usa display_name da tabela de mapeamento; fallback para status_normalized
       COALESCE(
         MAX(iosm.display_name),
         MAX(dssf.status_display_name),
@@ -1151,11 +1236,13 @@ END AS markup_pct,
       COALESCE(SUM(dssf.total_value),  0)           AS total_value
     FROM daily_sales_status_facts dssf
     CROSS JOIN total
-    -- ✅ JOIN direto na tabela de mapeamento para garantir display_name correto
     LEFT JOIN integration_order_status_mappings iosm 
   ON iosm.normalized_status = dssf.status_normalized
     WHERE dssf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-      AND (:unitBusinessId IS NULL OR dssf.unit_business_id = CAST(:unitBusinessId AS uuid))
+      AND (
+        COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
+        OR dssf.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[])
+      )
       AND (:statusNormalized IS NULL OR dssf.status_normalized = :statusNormalized)
     GROUP BY dssf.status_normalized, total.orders_count
     ORDER BY orders_count DESC
@@ -1214,11 +1301,6 @@ END AS markup_pct,
         - COALESCE(it.total_cost, 0)
         - CASE WHEN sos.freight_paid_by_company
             THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-            - COALESCE(sos.approx_tax_value, 0) 
-        - (  COALESCE(sos.icms_value,   0) + COALESCE(sos.ipi_value,    0)
-           + COALESCE(sos.pis_value,    0) + COALESCE(sos.cofins_value, 0)
-           + COALESCE(sos.difal_value,  0) + COALESCE(sos.ibs_value,    0)
-           + COALESCE(sos.cbs_value,    0))
         - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
            + COALESCE(sos.payment_fee,     0)),
 
@@ -1229,10 +1311,6 @@ END AS markup_pct,
           - COALESCE(it.total_cost, 0)
           - CASE WHEN sos.freight_paid_by_company
               THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-          - (  COALESCE(sos.icms_value,   0) + COALESCE(sos.ipi_value,    0)
-             + COALESCE(sos.pis_value,    0) + COALESCE(sos.cofins_value, 0)
-             + COALESCE(sos.difal_value,  0) + COALESCE(sos.ibs_value,    0)
-             + COALESCE(sos.cbs_value,    0) + COALESCE(sos.approx_tax_value, 0))
           - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
              + COALESCE(sos.payment_fee,     0))
         ) / NULLIF(sos.total_order, 0) * 100)::numeric, 2)
@@ -1240,7 +1318,7 @@ END AS markup_pct,
 
       markup_pct = CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
   ELSE ROUND((
-    (COALESCE(sos.total_order, 0) - it.total_cost) / NULLIF(sos.total_order, 0) * 100
+    (COALESCE(sos.total_order, 0) - it.total_cost) / NULLIF(it.total_cost, 0) * 100
   )::numeric, 2) END,
 
       has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
