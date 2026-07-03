@@ -262,8 +262,7 @@ export class BlingOrderService {
       cost_source: "average_cost_plus_commission",
     };
   }
-
-  private appendMissingFinancialFields(
+private appendMissingFinancialFields(
     existingItem: any,
     fields: ReturnType<BlingOrderService["buildItemFinancialFields"]>,
   ) {
@@ -293,7 +292,6 @@ export class BlingOrderService {
 
     return update;
   }
-
   // ─── Busca UF e cidade do destinatário via contato da Bling ────────────────
   // Usa endereco.geral como fonte primária.
   // Não lança erro — se o contato não tiver endereço válido retorna campos
@@ -575,15 +573,13 @@ export class BlingOrderService {
               gross_total: computedItem.gross_total,
               discount_value: computedItem.discount_value,
               net_total: computedItem.net_total,
-              ...this.appendMissingFinancialFields(existingItem, {
-                commission_base: computedItem!.commission_base!,
-                commission_rate: computedItem!.commission_rate!,
-                comission_manager_rate: computedItem!.comission_manager_rate!,
-                commission_value: computedItem!.commission_value!,
-                average_cost_snapshot: computedItem!.average_cost_snapshot!,
-                total_cost_snapshot: computedItem!.total_cost_snapshot!,
-                cost_source: computedItem!.cost_source!,
-              }),
+              commission_base: computedItem.commission_base,
+              commission_rate: computedItem.commission_rate,
+              comission_manager_rate: computedItem.comission_manager_rate,
+              commission_value: computedItem.commission_value,
+              average_cost_snapshot: computedItem.average_cost_snapshot,
+              total_cost_snapshot: computedItem.total_cost_snapshot,
+              cost_source: computedItem.cost_source,
               product_id: computedItem.product_id,
               source_payload: i,
             });
