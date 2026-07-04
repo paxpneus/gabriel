@@ -63,17 +63,19 @@ export const CreateUserSchema = z.object({
 
   type: z.string().optional(), // <-- Adicionado aqui como string opcional
   id_system: z
-  .number()
-  .int("ID do sistema deve ser um número inteiro")
-  .positive("ID do sistema deve ser positivo")
-  .nullable()
-  .optional(),
+    .number()
+    .int("ID do sistema deve ser um número inteiro")
+    .positive("ID do sistema deve ser positivo")
+    .nullable()
+    .optional(),
 
   user_unit_business: z
     .array(z.string().uuid("IDs da unidade devem ser UUIDs válidos"))
     .nullable()
     .optional()
     .transform((val) => val ?? []),
+
+  main_unit_business_id: z.string().nullable().optional(),
 
   unit_business_id: z
     .string({ error: "ID da unidade de negócio é obrigatório" })
@@ -122,16 +124,18 @@ export const UpdateUserSchema = z
 
     type: z.string().optional(), // <-- Adicionado aqui também para o fluxo de update
     id_system: z
-  .number()
-  .int("ID do sistema deve ser um número inteiro")
-  .positive("ID do sistema deve ser positivo")
-  .nullable()
-  .optional(),
+      .number()
+      .int("ID do sistema deve ser um número inteiro")
+      .positive("ID do sistema deve ser positivo")
+      .nullable()
+      .optional(),
 
     unit_business_id: z
       .string()
       .uuid("ID da unidade deve ser um UUID válido")
       .optional(),
+
+    main_unit_business_id: z.string().nullable().optional(),
 
     user_unit_business: z
       .array(z.string().uuid("IDs da unidade devem ser UUIDs válidos"))

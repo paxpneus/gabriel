@@ -13,6 +13,7 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   public name!: string;
   public cpf!: string;
   public unit_business_id!: string;
+  public main_unit_business_id?: string;
   public role_id!: string;
   public email!: string;
   public password!: string;
@@ -50,6 +51,14 @@ User.init(
     unit_business_id: {
       type: DataTypes.UUID,
       allowNull: false,
+      references: {
+        model: 'unit_businesses',
+        key: 'id',
+      },
+    },
+    main_unit_business_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
       references: {
         model: 'unit_businesses',
         key: 'id',

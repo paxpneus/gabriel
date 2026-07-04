@@ -8,6 +8,7 @@ export interface UserAttributes {
   name: string;
   cpf: string;
   unit_business_id: string;
+  main_unit_business_id?: string | null;
   role_id: string;
   email: string;
   password: string;
