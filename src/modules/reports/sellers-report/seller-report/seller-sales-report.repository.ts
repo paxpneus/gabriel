@@ -65,6 +65,28 @@ const JOB_NAME = "seller_sales_report";
  *       dentro do mesmo produto, não entre produtos do mesmo pedido).
  * Lendo direto do snapshot (que já tem unit_business_id e customer_id por
  * linha, e nunca é pré-agrupado por produto) os três problemas somem.
+ *
+ * NOTA SOBRE O BUG DE CONTRIBUIÇÃO ≠ (total_sold - total_cost) NO getReport:
+ * `report_total_cost` (calculado em `report_rows`) podia virar SQL NULL em
+ * duas situações:
+ *   1. `s.total_cost` NULL ou 0 E `s.average_cost` NULL ao mesmo tempo
+ *      (o COALESCE(NULLIF(total_cost,0), average_cost*qty + icms) não tinha
+ *      fallback final, então se o segundo termo também fosse NULL o
+ *      resultado inteiro era NULL);
+ *   2. Qualquer linha onde `average_cost` fosse NULL mas `total_cost` fosse
+ *      0 (não NULL) — o NULLIF(total_cost, 0) zera para NULL e cai no
+ *      fallback quebrado do item 1.
+ * Como `report_markup_value`/`report_contribution_value` são calculados com
+ * `CASE WHEN report_total_cost IS NULL THEN NULL ELSE ...`, essas linhas
+ * problemáticas ficavam de fora do SUM() de custo e de contribuição — mas
+ * o `net_total` delas (nunca NULL) continuava entrando no SUM() de
+ * total_sold. Resultado: total_sold - total_cost (somados) ficava maior
+ * que total_contribution_value, porque cada soma "perdia" linhas diferentes.
+ * Correção: `report_total_cost` agora tem um COALESCE final para 0, e o
+ * fallback usa COALESCE(average_cost, 0) em vez de average_cost puro, então
+ * `report_total_cost` NUNCA é NULL — toda linha entra em todas as somas de
+ * forma consistente, e total_sold - total_cost bate exatamente com
+ * total_contribution_value (e o mesmo vale para markup_value).
  */
 const VALID_ACTUAL_SITUATIONS = ["6", "9"];
 const INVALID_ORDER_STATUSES = ["CANCELLED"];
@@ -269,6 +291,8 @@ snapshot_source AS (
     COALESCE(oi.commission_base, 0)::numeric AS commission_base,
     COALESCE(oi.commission_rate, 0)::numeric AS commission_rate,
     COALESCE(oi.commission_value, 0)::numeric AS commission_value,
+    COALESCE(oi.comission_manager_rate, 0)::numeric AS manager_commission_rate,
+
 
     vo.is_valid_sale
   FROM order_items oi
@@ -339,7 +363,12 @@ snapshot_metrics AS (
           / net_total_allocated) * 100)::numeric,
         2
       )
-    END AS contribution_pct
+    END AS contribution_pct,
+
+    -- comissão do gerente = net_total já rateado do pedido (net_total_allocated)
+    -- multiplicado pela taxa de comissão de gerente vigente no item (vinda da
+    -- brand do produto, congelada em order_items.comission_manager_rate).
+    ROUND(net_total_allocated * manager_commission_rate / 100, 2) AS manager_commission_value
   FROM snapshot_calc
 )
 INSERT INTO seller_sales_order_item_snapshots (
@@ -347,7 +376,9 @@ INSERT INTO seller_sales_order_item_snapshots (
   order_date, product_name, product_brand, product_measure,
   quantity, unit_price, net_total, average_cost, total_cost, has_cost_data,
   icms_value_allocated,
-  commission_base, commission_rate, commission_value, markup_value, markup_pct,
+  commission_base, commission_rate, commission_value,
+  manager_commission_rate, manager_commission_value,
+  markup_value, markup_pct,
   contribution_value, contribution_pct, is_valid_sale,
   last_updated_at, created_at, updated_at
 )
@@ -360,29 +391,33 @@ SELECT
   total_cost_with_icms AS total_cost,
   has_cost_data,
   icms_value_allocated,
-  commission_base, commission_rate, commission_value, markup_value, markup_pct,
+  commission_base, commission_rate, commission_value,
+  manager_commission_rate, manager_commission_value,
+  markup_value, markup_pct,
   contribution_value, contribution_pct, is_valid_sale,
   NOW(), NOW(), NOW()
 FROM snapshot_metrics
 ON CONFLICT (order_item_id) DO UPDATE SET
-  seller_id             = EXCLUDED.seller_id,
-  customer_id           = EXCLUDED.customer_id,
-  product_id            = EXCLUDED.product_id,
-  unit_business_id      = EXCLUDED.unit_business_id,
-  order_date            = EXCLUDED.order_date,
-  product_name          = EXCLUDED.product_name,
-  product_brand         = EXCLUDED.product_brand,
-  product_measure       = EXCLUDED.product_measure,
-  quantity               = EXCLUDED.quantity,
-  unit_price              = EXCLUDED.unit_price,
-  net_total               = EXCLUDED.net_total,
-  average_cost            = EXCLUDED.average_cost,
+  seller_id                = EXCLUDED.seller_id,
+  customer_id              = EXCLUDED.customer_id,
+  product_id               = EXCLUDED.product_id,
+  unit_business_id         = EXCLUDED.unit_business_id,
+  order_date               = EXCLUDED.order_date,
+  product_name             = EXCLUDED.product_name,
+  product_brand            = EXCLUDED.product_brand,
+  product_measure          = EXCLUDED.product_measure,
+  quantity                 = EXCLUDED.quantity,
+  unit_price               = EXCLUDED.unit_price,
+  net_total                = EXCLUDED.net_total,
+  average_cost             = EXCLUDED.average_cost,
   total_cost               = EXCLUDED.total_cost,
   has_cost_data            = EXCLUDED.has_cost_data,
   icms_value_allocated     = EXCLUDED.icms_value_allocated,
   commission_base          = EXCLUDED.commission_base,
   commission_rate          = EXCLUDED.commission_rate,
   commission_value         = EXCLUDED.commission_value,
+  manager_commission_rate  = EXCLUDED.manager_commission_rate,
+  manager_commission_value = EXCLUDED.manager_commission_value,
   markup_value             = EXCLUDED.markup_value,
   markup_pct               = EXCLUDED.markup_pct,
   contribution_value       = EXCLUDED.contribution_value,
@@ -630,6 +665,14 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     // funcionam sem precisar de EXISTS contra orders/invoices, e
     // sales_count usa COUNT(DISTINCT order_id) direto, sem risco de contar
     // o mesmo pedido mais de uma vez quando ele tem múltiplos produtos.
+    //
+    // FIX: report_total_cost agora tem COALESCE final para 0 e usa
+    // COALESCE(s.average_cost, 0) no fallback, garantindo que NUNCA seja
+    // SQL NULL. Antes, quando total_cost era NULL/0 E average_cost também
+    // era NULL, report_total_cost virava NULL, o que fazia essa linha ser
+    // ignorada no SUM() de custo e de contribuição — mas não no SUM() de
+    // net_total (nunca NULL) — quebrando a consistência
+    // total_sold - total_cost == total_contribution_value.
     // -------------------------------------------------------------
     const reportRowsCte = `
       report_rows AS (
@@ -637,8 +680,9 @@ ON CONFLICT (order_item_id) DO UPDATE SET
           s.*,
           COALESCE(
             NULLIF(s.total_cost, 0),
-            ROUND((s.average_cost * s.quantity)::numeric, 2)
-              + COALESCE(s.icms_value_allocated, 0)
+            ROUND((COALESCE(s.average_cost, 0) * s.quantity)::numeric, 2)
+              + COALESCE(s.icms_value_allocated, 0),
+            0
           ) AS report_total_cost
         FROM seller_sales_order_item_snapshots s
         WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
@@ -659,14 +703,8 @@ ON CONFLICT (order_item_id) DO UPDATE SET
       report_metrics AS (
         SELECT
           *,
-          CASE
-            WHEN report_total_cost IS NULL THEN NULL
-            ELSE net_total - report_total_cost
-          END AS report_markup_value,
-          CASE
-            WHEN report_total_cost IS NULL THEN NULL
-            ELSE net_total - report_total_cost
-          END AS report_contribution_value
+          net_total - report_total_cost AS report_markup_value,
+          net_total - report_total_cost AS report_contribution_value
         FROM report_rows
       )
     `;
@@ -946,12 +984,51 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         )
       : undefined;
 
+    // -------------------------------------------------------------
+    // Comissão de Gerente por Filial
+    // Regra: user com user_config.type = 'manager' e main_unit_business_id
+    // preenchido (cada user tem exatamente 1 user_config, 1:1 via user_id).
+    // A comissão já vem calculada por item (manager_commission_value,
+    // baseada na manager_commission_rate congelada do order_item, vinda da
+    // brand do produto), aqui só agregamos por filial e juntamos com o
+    // gerente responsável por ela.
+    // -------------------------------------------------------------
+    const byManager = await sequelize.query(
+      `
+      WITH ${reportRowsCte}
+      SELECT
+        u.id AS manager_id,
+        u.name AS manager_name,
+        s.unit_business_id,
+        MAX(ub.name) AS unit_business_name,
+        MAX(ub.number) AS unit_business_number,
+        COALESCE(SUM(s.net_total), 0) AS branch_total_sold,
+        COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission,
+        COALESCE(SUM(s.net_total), 0) - COALESCE(SUM(s.manager_commission_value), 0)
+          AS branch_net_after_manager_commission
+      FROM report_metrics s
+      JOIN users u
+        ON u.main_unit_business_id = s.unit_business_id
+      JOIN user_config uc
+        ON uc.user_id = u.id
+       AND uc.type = 'manager'
+      LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
+      GROUP BY u.id, u.name, s.unit_business_id
+      ORDER BY branch_total_sold DESC
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: baseFilterReplacements,
+      },
+    );
+
     return {
       filters,
       summary,
       products,
       ranking: ranking[0],
       byStore,
+      byManager,
       bySeller,
       customers,
       evolution: {

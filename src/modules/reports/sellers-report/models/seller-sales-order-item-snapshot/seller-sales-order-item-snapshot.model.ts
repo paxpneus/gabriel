@@ -79,6 +79,16 @@ SellerSalesOrderItemSnapshot.init(
       allowNull: true,
       defaultValue: 0,
     },
+     manager_comission_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+     manager_comission_rate: {
+      type: DataTypes.DECIMAL(8, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
     markup_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     markup_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
     contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
@@ -96,7 +106,6 @@ SellerSalesOrderItemSnapshot.init(
     timestamps: true,
     underscored: true,
   },
-
 );
 
 export default SellerSalesOrderItemSnapshot;
