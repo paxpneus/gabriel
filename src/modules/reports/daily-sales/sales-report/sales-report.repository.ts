@@ -22,7 +22,308 @@ interface OrderIdRow {
 
 type ReportRow = Record<string, unknown>;
 
+type SqlExpression = string;
+
+interface DecimalAndPercentSql {
+  decimal: SqlExpression;
+  percent: SqlExpression;
+}
+
+export interface SalesReportOrderItemInput {
+  sku: string;
+  quantity: number;
+  average_cost_snapshot: number | null;
+  commission_base?: number | null;
+  commission_rate?: number | null;
+  commission_value?: number | null;
+  total_cost_snapshot?: number | null;
+  net_total: number;
+}
+
+export interface SalesReportOrderInput {
+  id: string;
+  total_price: number;
+  total_order?: number | null;
+  tax_commission?: number | null;
+  marketplace_fee?: number | null;
+  payment_fee?: number | null;
+  freight_cost?: number | null;
+  freight_charged?: number | null;
+  icms_value?: number | null;
+  total_cost?: number | null;
+  seller?: { name?: string | null } | null;
+  items: SalesReportOrderItemInput[];
+}
+
+export interface SalesReportItemFinancialMetrics {
+  sku: string;
+  quantity: number;
+  productCost: number;
+  commission: number;
+  orderItemTotalCost: number;
+  allocatedMarketplaceFee: number;
+  allocatedFreightCost: number;
+  productProfit: number;
+}
+
+export interface SalesReportOrderFinancialMetrics {
+  orderId: string;
+  revenue: number;
+  totalCost: number;
+  profit: number;
+  contributionValue: number;
+  contributionPct: number;
+  markup: number;
+  markupPct: number;
+  totalCommission: number;
+  totalTaxes: number;
+  totalFees: number;
+  itemsQuantity: number;
+  items: SalesReportItemFinancialMetrics[];
+}
+
+export interface SalesReportAggregateFinancialMetrics {
+  orders_count: number;
+  items_quantity: number;
+  total_value: number;
+  total_cost: number;
+  total_profit: number;
+  total_commission: number;
+  total_taxes: number;
+  total_fees: number;
+  contribution_value: number;
+  contribution_pct: number;
+  markup: number;
+  markup_pct: number;
+  average_ticket: number;
+}
+
+// FUTURO constants: nomes de jobs, status e aliases SQL podem sair para constants.
+const COMPLETED_SALES_STATUSES = "('open', 'completed')";
+
+// FUTURO helpers/calculators: este bloco concentra regras reutilizadas do relatório.
+// Mantemos aqui nesta refatoração para facilitar revisão, mas ele é candidato direto
+// para um arquivo de calculators SQL do relatório.
+const coalesceNumberSql = (expression: SqlExpression): SqlExpression =>
+  `COALESCE(${expression}, 0)`;
+
+const roundSql = (
+  expression: SqlExpression,
+  decimalPlaces = 2,
+): SqlExpression => `ROUND((${expression})::numeric, ${decimalPlaces})`;
+
+const calculateSafeDivisionSql = (
+  numerator: SqlExpression,
+  denominator: SqlExpression,
+  decimalPlaces = 2,
+): SqlExpression => `
+CASE
+  WHEN ${coalesceNumberSql(denominator)} = 0 THEN 0
+  ELSE ${roundSql(
+    `(${numerator}) / NULLIF((${denominator}), 0)`,
+    decimalPlaces,
+  )}
+END`;
+
+const calculateProfitSql = (
+  revenue: SqlExpression,
+  cost: SqlExpression,
+): SqlExpression => `${coalesceNumberSql(revenue)} - ${coalesceNumberSql(cost)}`;
+
+const calculatePercentageSql = (
+  numerator: SqlExpression,
+  denominator: SqlExpression,
+): SqlExpression =>
+  calculateSafeDivisionSql(`(${numerator}) * 100`, denominator, 2);
+
+const calculateAverageTicketSql = (
+  totalRevenue: SqlExpression,
+  totalOrders: SqlExpression,
+): SqlExpression => calculateSafeDivisionSql(totalRevenue, totalOrders, 2);
+
+const calculateAverageValueSql = (
+  totalValue: SqlExpression,
+  quantity: SqlExpression,
+): SqlExpression => calculateSafeDivisionSql(totalValue, quantity, 2);
+
+const calculateContributionSql = (
+  revenue: SqlExpression,
+  cost: SqlExpression,
+): SqlExpression => calculateProfitSql(revenue, cost);
+
+const calculateContributionPercentageSql = (
+  revenue: SqlExpression,
+  cost: SqlExpression,
+): SqlExpression =>
+  calculatePercentageSql(calculateContributionSql(revenue, cost), revenue);
+
+const calculateMarginSql = (
+  revenue: SqlExpression,
+  cost: SqlExpression,
+): DecimalAndPercentSql => {
+  const profit = calculateProfitSql(revenue, cost);
+
+  return {
+    decimal: calculateSafeDivisionSql(profit, revenue, 4),
+    percent: calculatePercentageSql(profit, revenue),
+  };
+};
+
+const calculateMarkupSql = (
+  revenue: SqlExpression,
+  cost: SqlExpression,
+): DecimalAndPercentSql => {
+  const profit = calculateProfitSql(revenue, cost);
+
+  return {
+    // Markup representa o quanto o lucro acrescenta sobre o custo.
+    decimal: calculateSafeDivisionSql(profit, cost, 4),
+    percent: calculatePercentageSql(profit, cost),
+  };
+};
+
+const calculateTotalTaxesSql = (alias: string): SqlExpression => `
+  ${coalesceNumberSql(`${alias}.icms_value`)}
++ ${coalesceNumberSql(`${alias}.ipi_value`)}
++ ${coalesceNumberSql(`${alias}.pis_value`)}
++ ${coalesceNumberSql(`${alias}.cofins_value`)}
++ ${coalesceNumberSql(`${alias}.difal_value`)}
++ ${coalesceNumberSql(`${alias}.ibs_value`)}
++ ${coalesceNumberSql(`${alias}.cbs_value`)}
++ ${coalesceNumberSql(`${alias}.approx_tax_value`)}`;
+
+const calculateTotalFeesSql = (alias: string): SqlExpression => `
+  ${coalesceNumberSql(`${alias}.tax_commission`)}
++ ${coalesceNumberSql(`${alias}.marketplace_fee`)}
++ ${coalesceNumberSql(`${alias}.payment_fee`)}`;
+
+const hasCompleteCostSql = (snapshotAlias: string): SqlExpression => `
+NOT EXISTS (
+  SELECT 1
+  FROM sales_order_item_snapshots cost_check
+  WHERE cost_check.order_snapshot_id = ${snapshotAlias}.id
+    AND ${coalesceNumberSql("cost_check.average_cost_snapshot")} <= 0
+)`;
+
+const isCompletedSaleSql = (snapshotAlias: string): SqlExpression =>
+  `${snapshotAlias}.snapshot_status IN ${COMPLETED_SALES_STATUSES}
+            AND ${hasCompleteCostSql(snapshotAlias)}`;
+
+const toNumber = (value: number | string | null | undefined): number =>
+  value == null ? 0 : Number(value);
+
+const divide = (numerator: number, denominator: number): number =>
+  denominator === 0 ? 0 : numerator / denominator;
+
+const isMarketplaceOrder = (order: SalesReportOrderInput): boolean =>
+  (order.seller?.name ?? "").trim() === "Vendedor 0";
+
+export const calculateSalesReportOrderFinancials = (
+  order: SalesReportOrderInput,
+): SalesReportOrderFinancialMetrics | null => {
+  if (
+    order.items.some((item) => toNumber(item.average_cost_snapshot) <= 0)
+  ) {
+    return null;
+  }
+
+  const revenue = toNumber(order.total_price);
+
+  const items = order.items.map((item) => {
+    const quantity = toNumber(item.quantity);
+    const averageCost = toNumber(item.average_cost_snapshot);
+    const productCost = averageCost * quantity;
+    const commission =
+      item.commission_value != null
+        ? toNumber(item.commission_value)
+        : toNumber(item.commission_base) * toNumber(item.commission_rate);
+    const orderItemTotalCost =
+      item.total_cost_snapshot != null
+        ? toNumber(item.total_cost_snapshot)
+        : productCost + commission;
+    const productProfit = toNumber(item.net_total) - orderItemTotalCost;
+
+    return {
+      sku: item.sku,
+      quantity,
+      productCost,
+      commission,
+      orderItemTotalCost,
+      allocatedMarketplaceFee: 0,
+      allocatedFreightCost: 0,
+      productProfit,
+    };
+  });
+
+  const productsCost = items.reduce(
+    (sum, item) => sum + item.orderItemTotalCost,
+    0,
+  );
+  const totalTaxes = toNumber(order.icms_value);
+  const totalCost =
+    order.total_cost != null
+      ? toNumber(order.total_cost)
+      : productsCost + totalTaxes;
+  const profit = revenue - totalCost;
+
+  return {
+    orderId: order.id,
+    revenue,
+    totalCost,
+    profit,
+    contributionValue: profit,
+    contributionPct: divide(profit, revenue),
+    markup: divide(profit, totalCost),
+    markupPct: divide(profit, totalCost) * 100,
+    totalCommission: items.reduce((sum, item) => sum + item.commission, 0),
+    totalTaxes,
+    totalFees:
+      toNumber(order.tax_commission) +
+      toNumber(order.marketplace_fee) +
+      toNumber(order.payment_fee),
+    itemsQuantity: items.reduce((sum, item) => sum + item.quantity, 0),
+    items,
+  };
+};
+
+export const calculateSalesReportAggregateFinancials = (
+  orders: SalesReportOrderInput[],
+): SalesReportAggregateFinancialMetrics => {
+  const validOrders = orders
+    .map(calculateSalesReportOrderFinancials)
+    .filter(Boolean) as SalesReportOrderFinancialMetrics[];
+
+  const totalValue = validOrders.reduce((sum, order) => sum + order.revenue, 0);
+  const totalCost = validOrders.reduce((sum, order) => sum + order.totalCost, 0);
+  const totalProfit = validOrders.reduce((sum, order) => sum + order.profit, 0);
+
+  return {
+    orders_count: validOrders.length,
+    items_quantity: validOrders.reduce(
+      (sum, order) => sum + order.itemsQuantity,
+      0,
+    ),
+    total_value: totalValue,
+    total_cost: totalCost,
+    total_profit: totalProfit,
+    total_commission: validOrders.reduce(
+      (sum, order) => sum + order.totalCommission,
+      0,
+    ),
+    total_taxes: validOrders.reduce((sum, order) => sum + order.totalTaxes, 0),
+    total_fees: validOrders.reduce((sum, order) => sum + order.totalFees, 0),
+    contribution_value: totalProfit,
+    contribution_pct: divide(totalProfit, totalValue),
+    markup: divide(totalProfit, totalCost),
+    markup_pct: divide(totalProfit, totalCost) * 100,
+    average_ticket: divide(totalValue, validOrders.length),
+  };
+};
+
 export class SalesReportRepository {
+  // FUTURO repositories/services:
+  // Checkpoint e estado do job podem virar um repository próprio de jobs e
+  // serem orquestrados pelo service, deixando este arquivo só com analytics.
   async getCheckpoint(): Promise<Date> {
     await this.ensureCheckpoint();
 
@@ -156,11 +457,10 @@ export class SalesReportRepository {
    * exclui pedidos do contato "Vendedor 0" — é intencional e continua
    * existindo; o que não devia divergir era a FÓRMULA).
    *
-   * Alinhado com seller_sales_report: contribution_value agora é
-   * total_order - total_cost, o mesmo "receita - custo total" usado lá.
-   * Frete e taxas continuam disponíveis como campos separados
-   * (total_freight, total_fees, total_taxes) pra quem quiser compor a
-   * conta de outro jeito — só não entram mais dentro de contribution.
+   * Regra do OrderService: a receita do relatório é sempre orders.total_price.
+   * Esse valor já vem líquido de frete de custo e comissão marketplace quando
+   * aplicável, então o relatório não recalcula essa liquidação nem usa
+   * orders.total_order como receita.
    *
    * NOTA SOBRE comissão de seller (nova):
    * A comissão do vendedor (commission_value, calculada por item a partir
@@ -175,6 +475,11 @@ export class SalesReportRepository {
    */
   async upsertSnapshots(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
+
+    const itemTotalCostSql =
+      "COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value) + icms_value_allocated";
+    const snapshotRevenueSql = "sos.total_order";
+    const snapshotCostSql = "it.total_cost";
 
     await sequelize.query(
       `
@@ -212,8 +517,8 @@ export class SalesReportRepository {
               CASE WHEN o.actual_situation IN ('6', '9', '748748', '748743')
                 THEN 'completed' ELSE 'cancelled' END
           END                                                   AS snapshot_status,
-          COALESCE(o.total_products, o.total_price, 0)          AS total_products,
-          COALESCE(o.total_order,    o.total_price, 0)          AS total_order,
+          COALESCE(o.total_products, 0)                         AS total_products,
+          COALESCE(o.total_price, 0)                            AS total_order,
           COALESCE(o.discount_value, 0)                         AS discount_value,
           COALESCE(o.other_expenses, 0)                         AS other_expenses,
           COALESCE(o.freight_charged, 0)                        AS freight_charged,
@@ -230,7 +535,7 @@ export class SalesReportRepository {
           COALESCE(o.ibs_value, 0)                              AS ibs_value,
           COALESCE(o.cbs_value, 0)                              AS cbs_value,
           ROUND(
-  COALESCE(o.total_products, o.total_price, 0) 
+  COALESCE(o.total_price, 0)
   * COALESCE(ubtc.approx_tax_rate, 0), 
   2
 ) AS approx_tax_value,
@@ -391,7 +696,7 @@ item_source_raw AS (
     COALESCE(pc.gtin, p.ean)                              AS gtin,
     -- valores do PEDIDO (mesmos para todos os itens do mesmo pedido),
     -- carregados aqui só pra servir de base do rateio na próxima CTE.
-    io.total_order                                        AS order_total_order,
+    io.total_order                                        AS order_total_price,
     io.icms_value                                         AS order_icms_value,
     io.ipi_value                                          AS order_ipi_value,
     io.pis_value                                          AS order_pis_value,
@@ -462,7 +767,7 @@ item_weighted AS (
 item_calc AS (
   SELECT
     *,
-    ROUND(item_weight * order_total_order, 2)         AS net_total_allocated,
+    ROUND(item_weight * order_total_price, 2)         AS net_total_allocated,
     ROUND(item_weight * order_icms_value, 2)           AS icms_value_allocated,
     ROUND(item_weight * order_ipi_value, 2)            AS ipi_value_allocated,
     ROUND(item_weight * order_pis_value, 2)            AS pis_value_allocated,
@@ -512,13 +817,7 @@ item_calc AS (
           -- comissão contada em dobro no custo sempre que o raw estava populado.
           COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value) + icms_value_allocated,
           cost_source,
-          CASE
-            WHEN (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value) + icms_value_allocated) = 0 THEN 0
-            ELSE ROUND(
-              ((net_total_allocated - (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value) + icms_value_allocated))
-                / (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value) + icms_value_allocated) * 100)::numeric, 2
-            )
-          END,
+          ${calculateMarkupSql("net_total_allocated", itemTotalCostSql).percent},
           commission_base, commission_rate, commission_value,
           ncm, cest, cfop, gtin,
           approx_tax_value_allocated,
@@ -610,39 +909,17 @@ item_calc AS (
         total_cost        = COALESCE(it.total_cost, 0),
         total_commission  = COALESCE(it.total_commission, 0),
 
-        total_taxes       = COALESCE(sos.icms_value,   0)
-                          + COALESCE(sos.ipi_value,    0)
-                          + COALESCE(sos.pis_value,    0)
-                          + COALESCE(sos.cofins_value, 0)
-                          + COALESCE(sos.difal_value,  0)
-                          + COALESCE(sos.ibs_value,    0)
-                          + COALESCE(sos.cbs_value,    0)
-                          + COALESCE(sos.approx_tax_value,0),
+        total_taxes       = ${calculateTotalTaxesSql("sos")},
 
-        total_fees        = COALESCE(sos.tax_commission,  0)
-                          + COALESCE(sos.marketplace_fee, 0)
-                          + COALESCE(sos.payment_fee,     0),
+        total_fees        = ${calculateTotalFeesSql("sos")},
 
         contribution_value =
-          COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0),
+          ${calculateContributionSql(snapshotRevenueSql, snapshotCostSql)},
 
         contribution_pct  =
-          CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
-          ELSE ROUND((
-            (COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0))
-            / sos.total_order * 100
-          )::numeric, 2)
-          END,
+          ${calculateContributionPercentageSql(snapshotRevenueSql, snapshotCostSql)},
 
-        markup_pct =
-CASE
-  WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
-  ELSE ROUND((
-    (COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0))
-    / NULLIF(COALESCE(it.total_cost, 0), 0)
-    * 100
-  )::numeric, 2)
-END,
+        markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
 
         has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
         last_updated_at   = NOW(),
@@ -656,7 +933,7 @@ END,
   }
 
   // ---------------------------------------------------------------------------
-  // Helpers para buscar chaves afetadas (usadas para recalcular facts)
+  // FUTURO repositories: queries de descoberta das chaves afetadas.
   // ---------------------------------------------------------------------------
 
   async findAffectedFactKeys(orderIds: string[]): Promise<SalesFactKey[]> {
@@ -746,7 +1023,7 @@ END,
   }
 
   // ---------------------------------------------------------------------------
-  // Upsert das tabelas de facts
+  // FUTURO repositories/calculators: materialização das tabelas de facts.
   // ---------------------------------------------------------------------------
 
   async upsertDailySalesFacts(keys: SalesFactKey[]): Promise<void> {
@@ -769,13 +1046,7 @@ END,
           FROM sales_order_snapshots
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
-            AND snapshot_status IN ('open', 'completed')
-            AND NOT EXISTS (
-              SELECT 1
-              FROM sales_order_item_snapshots cost_check
-              WHERE cost_check.order_snapshot_id = sales_order_snapshots.id
-                AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
-            )
+            AND ${isCompletedSaleSql("sales_order_snapshots")}
         )
         INSERT INTO daily_sales_facts (
           fact_date, unit_business_id,
@@ -789,17 +1060,12 @@ END,
           fact_date, unit_business_id,
           orders_count, items_quantity,
           total_value, total_freight,
-          CASE WHEN orders_count = 0 THEN 0
-            ELSE ROUND((total_freight / orders_count)::numeric, 2) END,
-          CASE WHEN orders_count = 0 THEN 0
-            ELSE ROUND((total_value  / orders_count)::numeric, 2) END,
+          ${calculateAverageTicketSql("total_freight", "orders_count")},
+          ${calculateAverageTicketSql("total_value", "orders_count")},
           total_cost, total_taxes, total_fees, total_commission,
           contribution_value,
-          CASE WHEN total_value = 0 THEN 0
-            ELSE ROUND((contribution_value / NULLIF(total_value, 0) * 100)::numeric, 2) END,
-          CASE WHEN total_value = 0 THEN 0
-            ELSE ROUND(((total_value - total_cost) / NULLIF(total_cost, 0) * 100)::numeric, 2)
- END,
+          ${calculatePercentageSql("contribution_value", "total_value")},
+          ${calculateMarkupSql("total_value", "total_cost").percent},
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id) DO UPDATE SET
@@ -846,13 +1112,7 @@ END,
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
             AND destination_uf   = :destinationUf
-            AND snapshot_status IN ('open', 'completed')
-            AND NOT EXISTS (
-              SELECT 1
-              FROM sales_order_item_snapshots cost_check
-              WHERE cost_check.order_snapshot_id = sales_order_snapshots.id
-                AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
-            )
+            AND ${isCompletedSaleSql("sales_order_snapshots")}
 
         )
         INSERT INTO daily_sales_state_facts (
@@ -865,10 +1125,8 @@ END,
           fact_date, unit_business_id, destination_uf,
           orders_count, items_quantity, total_value,
           total_freight,
-          CASE WHEN orders_count = 0 THEN 0
-            ELSE ROUND((total_freight / orders_count)::numeric, 2) END,
-          CASE WHEN orders_count = 0 THEN 0
-            ELSE ROUND((total_value  / orders_count)::numeric, 2) END,
+          ${calculateAverageTicketSql("total_freight", "orders_count")},
+          ${calculateAverageTicketSql("total_value", "orders_count")},
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, destination_uf) DO UPDATE SET
@@ -914,13 +1172,7 @@ END,
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
             AND store_id         = :storeId
-            AND snapshot_status IN ('open', 'completed')
-            AND NOT EXISTS (
-              SELECT 1
-              FROM sales_order_item_snapshots cost_check
-              WHERE cost_check.order_snapshot_id = sales_order_snapshots.id
-                AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
-            )
+            AND ${isCompletedSaleSql("sales_order_snapshots")}
         )
         INSERT INTO daily_sales_store_facts (
           fact_date, unit_business_id, store_id,
@@ -932,21 +1184,12 @@ END,
         SELECT
           fact_date, unit_business_id, store_id,
           orders_count, items_quantity, total_value, total_freight,
-          CASE WHEN orders_count  = 0 THEN 0
-            ELSE ROUND((total_value / orders_count)::numeric, 2) END,
+          ${calculateAverageTicketSql("total_value", "orders_count")},
           total_cost,
-          CASE WHEN items_quantity = 0 THEN 0
-            ELSE ROUND((total_value / items_quantity)::numeric, 2) END,
-          CASE
-  WHEN total_value = 0 THEN 0
-  ELSE ROUND(
-    ((total_value - total_cost) / NULLIF(total_cost, 0) * 100)::numeric,
-    2
-  )
-END,
+          ${calculateAverageValueSql("total_value", "items_quantity")},
+          ${calculateMarkupSql("total_value", "total_cost").percent},
           total_taxes, total_fees, total_commission, contribution_value,
-          CASE WHEN total_value    = 0 THEN 0
-            ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
+          ${calculatePercentageSql("contribution_value", "total_value")},
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, store_id) DO UPDATE SET
@@ -999,13 +1242,7 @@ END,
   WHERE sois.order_date       = CAST(:factDate AS date)
     AND sois.unit_business_id = :unitBusinessId
     AND sois.sku              = :sku
-    AND sos.snapshot_status IN ('open', 'completed')  
-    AND NOT EXISTS (
-      SELECT 1
-      FROM sales_order_item_snapshots cost_check
-      WHERE cost_check.order_snapshot_id = sos.id
-        AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
-    )
+    AND ${isCompletedSaleSql("sos")}
 )
         INSERT INTO daily_sales_product_facts (
           fact_date, unit_business_id, product_id, sku, description,
@@ -1015,13 +1252,7 @@ END,
         SELECT
           fact_date, unit_business_id, product_id, sku, description,
           quantity, total_cost, total_commission, total_value,
-          CASE
-  WHEN total_value = 0 THEN 0
-  ELSE ROUND(
-    ((total_value - total_cost) / NULLIF(total_cost, 0) * 100)::numeric,
-    2
-  )
-END,
+          ${calculateMarkupSql("total_value", "total_cost").percent},
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, sku) DO UPDATE SET
@@ -1106,13 +1337,7 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
       WHERE sos.order_date       = CAST(:factDate AS date)
         AND sos.unit_business_id = CAST(:unitBusinessId AS uuid)
         AND sos.integration_id   = CAST(:integrationId AS uuid)
-        AND sos.snapshot_status <> 'ignored_missing_cost'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM sales_order_item_snapshots cost_check
-          WHERE cost_check.order_snapshot_id = sos.id
-            AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
-        )
+        AND ${hasCompleteCostSql("sos")}
       GROUP BY sos.status_snapshot
       `,
       {
@@ -1127,7 +1352,7 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
 }
 
   // ---------------------------------------------------------------------------
-  // Consulta do relatório
+  // FUTURO mappers/utils: consulta e montagem do DTO final do relatório.
   // ---------------------------------------------------------------------------
 
   async getReport(filters: SalesReportFilters) {
@@ -1154,26 +1379,16 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
         COALESCE(SUM(items_quantity),  0) AS items_quantity,
         COALESCE(SUM(total_value),     0) AS total_value,
         COALESCE(SUM(total_freight),   0) AS total_freight,
-        CASE WHEN COALESCE(SUM(orders_count), 0) = 0 THEN 0
-          ELSE ROUND((SUM(total_value)   / SUM(orders_count))::numeric, 2)
-        END AS average_ticket,
-        CASE WHEN COALESCE(SUM(orders_count), 0) = 0 THEN 0
-          ELSE ROUND((SUM(total_freight) / SUM(orders_count))::numeric, 2)
-        END AS average_freight,
+        ${calculateAverageTicketSql("SUM(total_value)", "SUM(orders_count)")} AS average_ticket,
+        ${calculateAverageTicketSql("SUM(total_freight)", "SUM(orders_count)")} AS average_freight,
         COALESCE(SUM(total_cost),        0) AS total_cost,
         COALESCE(SUM(total_taxes),       0) AS total_taxes,
         COALESCE(SUM(total_fees),        0) AS total_fees,
         COALESCE(SUM(total_commission),  0) AS total_commission,
         COALESCE(SUM(contribution_value),0) AS contribution_value,
-        CASE WHEN COALESCE(SUM(total_value), 0) = 0 THEN 0
-          ELSE ROUND((SUM(contribution_value) / NULLIF(SUM(total_value), 0) * 100)::numeric, 2)
-        END AS contribution_pct,
-        CASE WHEN SUM(total_value) = 0 THEN 0
-  ELSE ROUND(
-    ((SUM(total_value) - SUM(total_cost)) / NULLIF(SUM(total_cost), 0) * 100)::numeric,
-    2
-  )
-END AS markup_pct
+        ${calculatePercentageSql("SUM(contribution_value)", "SUM(total_value)")} AS contribution_pct,
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
       FROM daily_sales_facts
       WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
         AND ${unitFilter}
@@ -1189,12 +1404,8 @@ END AS markup_pct
         COALESCE(SUM(items_quantity), 0) AS items_quantity,
         COALESCE(SUM(total_value),    0) AS total_value,
         COALESCE(SUM(total_freight),  0) AS total_freight,
-        CASE WHEN COALESCE(SUM(orders_count), 0) = 0 THEN 0
-          ELSE ROUND((SUM(total_freight) / SUM(orders_count))::numeric, 2)
-        END AS average_freight,
-        CASE WHEN COALESCE(SUM(orders_count), 0) = 0 THEN 0
-          ELSE ROUND((SUM(total_value)   / SUM(orders_count))::numeric, 2)
-        END AS average_ticket
+        ${calculateAverageTicketSql("SUM(total_freight)", "SUM(orders_count)")} AS average_freight,
+        ${calculateAverageTicketSql("SUM(total_value)", "SUM(orders_count)")} AS average_ticket
       FROM daily_sales_state_facts
       WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
         AND ${unitFilter}
@@ -1215,12 +1426,8 @@ END AS markup_pct
       COALESCE(SUM(total_cost), 0) AS total_cost,
       COALESCE(SUM(total_commission), 0) AS total_commission,
       COALESCE(SUM(total_value),0) AS total_value,
-      CASE WHEN SUM(total_value) = 0 THEN 0
-  ELSE ROUND(
-    ((SUM(total_value) - SUM(total_cost)) / NULLIF(SUM(total_cost), 0) * 100)::numeric,
-    2
-  )
-END AS markup_pct
+      ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
+      ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
     FROM daily_sales_product_facts
     WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
       AND ${unitFilter}
@@ -1241,23 +1448,16 @@ END AS markup_pct
       COALESCE(SUM(dsf.items_quantity),     0) AS items_quantity,
       COALESCE(SUM(dsf.total_value),        0) AS total_value,
       COALESCE(SUM(dsf.total_freight),      0) AS total_freight,
-      CASE WHEN COALESCE(SUM(dsf.orders_count), 0) = 0 THEN 0
-        ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.orders_count))::numeric, 2)
-      END AS average_ticket,
+      ${calculateAverageTicketSql("SUM(dsf.total_value)", "SUM(dsf.orders_count)")} AS average_ticket,
       COALESCE(SUM(dsf.total_cost),         0) AS total_cost,
-      CASE WHEN COALESCE(SUM(dsf.items_quantity), 0) = 0 THEN 0
-        ELSE ROUND((SUM(dsf.total_value) / SUM(dsf.items_quantity))::numeric, 2)
-      END AS piece_average_value,
-      CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
-  ELSE ROUND(((SUM(dsf.total_value) - SUM(dsf.total_cost)) / NULLIF(SUM(dsf.total_cost), 0) * 100)::numeric, 2)
-END AS markup_pct,
+      ${calculateAverageValueSql("SUM(dsf.total_value)", "SUM(dsf.items_quantity)")} AS piece_average_value,
+      ${calculateMarkupSql("SUM(dsf.total_value)", "SUM(dsf.total_cost)").decimal} AS markup_decimal,
+      ${calculateMarkupSql("SUM(dsf.total_value)", "SUM(dsf.total_cost)").percent} AS markup_pct,
       COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
       COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
       COALESCE(SUM(dsf.total_commission),   0) AS total_commission,
       COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
-      CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
-        ELSE ROUND((SUM(dsf.contribution_value) / NULLIF(SUM(dsf.total_value), 0) * 100)::numeric, 2)
-      END AS contribution_pct
+      ${calculatePercentageSql("SUM(dsf.contribution_value)", "SUM(dsf.total_value)")} AS contribution_pct
     FROM daily_sales_facts dsf
     LEFT JOIN unit_businesses ub ON ub.id = dsf.unit_business_id
     WHERE dsf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
@@ -1319,17 +1519,16 @@ END AS markup_pct,
   }
 
   /**
-   * NOTA: duplica a lógica de contribution/markup do passo 6 de
-   * upsertSnapshots. Mantenha as duas em sincronia — idealmente extrair
-   * pra uma função/CTE compartilhada num refactor futuro, pra não
-   * depender de lembrar de editar os dois lugares toda vez que a fórmula
-   * mudar (foi exatamente esse tipo de divergência que causou a
-   * diferença de contribution entre sales_report e seller_sales_report).
-   * total_commission também é recalculado aqui a partir da soma dos
-   * commission_value dos itens, em sincronia com upsertSnapshots.
+   * FUTURO repositories/calculators:
+   * Este método recalcula totais derivados quando o snapshot de item já existe.
+   * Ele usa os mesmos calculators SQL do upsert principal, então mudanças em
+   * lucro, margem/markup, impostos ou taxas passam por um único ponto.
    */
   async updateSnapshotTotals(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
+
+    const snapshotRevenueSql = "sos.total_order";
+    const snapshotCostSql = "it.total_cost";
 
     await sequelize.query(
       `
@@ -1350,34 +1549,17 @@ END AS markup_pct,
       total_cost        = COALESCE(it.total_cost, 0),
       total_commission  = COALESCE(it.total_commission, 0),
 
-      total_taxes       = COALESCE(sos.icms_value,   0)
-                        + COALESCE(sos.ipi_value,    0)
-                        + COALESCE(sos.pis_value,    0)
-                        + COALESCE(sos.cofins_value, 0)
-                        + COALESCE(sos.difal_value,  0)
-                        + COALESCE(sos.ibs_value,    0)
-                        + COALESCE(sos.cbs_value,    0)
-                        + COALESCE(sos.approx_tax_value,0),
+      total_taxes       = ${calculateTotalTaxesSql("sos")},
 
-      total_fees        = COALESCE(sos.tax_commission,  0)
-                        + COALESCE(sos.marketplace_fee, 0)
-                        + COALESCE(sos.payment_fee,     0),
+      total_fees        = ${calculateTotalFeesSql("sos")},
 
       contribution_value =
-        COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0),
+        ${calculateContributionSql(snapshotRevenueSql, snapshotCostSql)},
 
       contribution_pct  =
-        CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
-        ELSE ROUND((
-          (COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0))
-          / NULLIF(sos.total_order, 0) * 100
-        )::numeric, 2)
-        END,
+        ${calculateContributionPercentageSql(snapshotRevenueSql, snapshotCostSql)},
 
-      markup_pct = CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
-  ELSE ROUND((
-    (COALESCE(sos.total_order, 0) - it.total_cost) / NULLIF(it.total_cost, 0) * 100
-  )::numeric, 2) END,
+      markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
 
       has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
       last_updated_at   = NOW(),
