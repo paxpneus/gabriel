@@ -123,6 +123,26 @@ export class BlingOrderService {
     return created.id;
   }
 
+  private costUnitBusinessId: string | null = null;
+
+  private async resolveCostUnitBusinessId(): Promise<string> {
+    if (this.costUnitBusinessId) return this.costUnitBusinessId;
+
+    const unitBusiness = await UnitBusiness.findOne({
+      where: { cnpj: "02316749002111" },
+      attributes: ["id"],
+    });
+
+    if (!unitBusiness) {
+      throw new Error(
+        `[BlingOrderService] UnitBusiness com CNPJ 02316749002111 não encontrada. Impossível resolver custo do produto.`,
+      );
+    }
+
+    this.costUnitBusinessId = unitBusiness.id;
+    return this.costUnitBusinessId;
+  }
+
   private async resolveProductWithConfig(
     externalProductId: string | undefined,
     sku: string | undefined,
@@ -136,6 +156,8 @@ export class BlingOrderService {
       );
     }
 
+    const costUnitBusinessId = await this.resolveCostUnitBusinessId();
+
     let config: ProductConfig | null = null;
 
     // Tenta via id_system do produto primeiro
@@ -147,7 +169,10 @@ export class BlingOrderService {
 
       if (product) {
         config = await ProductConfig.findOne({
-          where: { product_id: product.id },
+          where: {
+            product_id: product.id,
+            unit_business_id: costUnitBusinessId,
+          },
           include: [
             {
               model: Product,
@@ -161,7 +186,7 @@ export class BlingOrderService {
 
     if (!config && sku) {
       config = await ProductConfig.findOne({
-        where: { sku },
+        where: { sku, unit_business_id: costUnitBusinessId },
         include: [
           {
             model: Product,
@@ -174,7 +199,7 @@ export class BlingOrderService {
 
     if (!config || !config.product) {
       throw new Error(
-        `[BlingOrderService] ProductConfig não encontrado (externalProductId=${externalProductId ?? "-"}, sku=${sku ?? "-"}). Item não pode ser criado sem custo médio.`,
+        `[BlingOrderService] ProductConfig não encontrado (externalProductId=${externalProductId ?? "-"}, sku=${sku ?? "-"}) na unit_business de custo. Item não pode ser criado sem custo médio.`,
       );
     }
 
@@ -186,7 +211,7 @@ export class BlingOrderService {
       if (sku) {
         const unitSku = sku.replace(KIT_SKU_REGEX, "");
         const unitConfig = await ProductConfig.findOne({
-          where: { sku: unitSku },
+          where: { sku: unitSku, unit_business_id: costUnitBusinessId },
         });
 
         if (unitConfig) {
@@ -262,7 +287,7 @@ export class BlingOrderService {
       cost_source: "average_cost_plus_commission",
     };
   }
-private appendMissingFinancialFields(
+  private appendMissingFinancialFields(
     existingItem: any,
     fields: ReturnType<BlingOrderService["buildItemFinancialFields"]>,
   ) {
@@ -393,66 +418,66 @@ private appendMissingFinancialFields(
   // ─── Monta payload de itens (com product_id e campos financeiros já resolvidos) ─
   // Retorna também a soma de total_cost_snapshot, usada em computeOrderFinancials.
   private async buildItemsPayload(
-  integrationId: string,
-  blingItems: any[],
-  hasSellerCommission: boolean,
-): Promise<{
-  items: Omit<orderItemsCreationAttributes, "order_id">[];
-  custoTotalProdutos: number;
-}> {
-  const items = await Promise.all(
-    blingItems.map(async (i: any) => {
-      const quantity = Number(i.quantidade ?? i.quantity ?? 0);
-      const itemValue = Number(i.valor ?? 0); // valor UNITÁRIO
-      const discountValue = Number(i.desconto ?? 0);
-      const externalProductId = i.produto?.id
-        ? String(i.produto.id)
-        : undefined;
-      const sku = i.codigo ? String(i.codigo) : undefined;
+    integrationId: string,
+    blingItems: any[],
+    hasSellerCommission: boolean,
+  ): Promise<{
+    items: Omit<orderItemsCreationAttributes, "order_id">[];
+    custoTotalProdutos: number;
+  }> {
+    const items = await Promise.all(
+      blingItems.map(async (i: any) => {
+        const quantity = Number(i.quantidade ?? i.quantity ?? 0);
+        const itemValue = Number(i.valor ?? 0); // valor UNITÁRIO
+        const discountValue = Number(i.desconto ?? 0);
+        const externalProductId = i.produto?.id
+          ? String(i.produto.id)
+          : undefined;
+        const sku = i.codigo ? String(i.codigo) : undefined;
 
-      const { product, averageCost } = await this.resolveProductWithConfig(
-        externalProductId,
-        sku,
-      );
+        const { product, averageCost } = await this.resolveProductWithConfig(
+          externalProductId,
+          sku,
+        );
 
-      // valor total da linha = unitário x quantidade
-      const grossTotalLine = itemValue * quantity;
-      const netTotal = grossTotalLine - discountValue;
+        // valor total da linha = unitário x quantidade
+        const grossTotalLine = itemValue * quantity;
+        const netTotal = grossTotalLine - discountValue;
 
-      const financialFields = this.buildItemFinancialFields(
-        product,
-        averageCost,
-        sku,
-        quantity,
-        grossTotalLine, 
-        hasSellerCommission,
-      );
+        const financialFields = this.buildItemFinancialFields(
+          product,
+          averageCost,
+          sku,
+          quantity,
+          grossTotalLine,
+          hasSellerCommission,
+        );
 
-      return {
-        name: i.descricao,
-        sku: sku ?? "",
-        unit: i.unidade,
-        quantity,
-        price: itemValue,        
-        product_id: product.id,
-        integrations_id: integrationId,
-        source_payload: i,
-        unit_price: itemValue,   
-        gross_total: grossTotalLine, 
-        discount_value: discountValue,
-        net_total: netTotal,     
-        ...financialFields,
-      };
-    }),
-  );
+        return {
+          name: i.descricao,
+          sku: sku ?? "",
+          unit: i.unidade,
+          quantity,
+          price: itemValue,
+          product_id: product.id,
+          integrations_id: integrationId,
+          source_payload: i,
+          unit_price: itemValue,
+          gross_total: grossTotalLine,
+          discount_value: discountValue,
+          net_total: netTotal,
+          ...financialFields,
+        };
+      }),
+    );
 
-  const custoTotalProdutos = items.reduce(
-    (acc, item) => acc + Number(item.total_cost_snapshot ?? 0),
-    0,
-  );
+    const custoTotalProdutos = items.reduce(
+      (acc, item) => acc + Number(item.total_cost_snapshot ?? 0),
+      0,
+    );
 
-  return { items, custoTotalProdutos };
-}
+    return { items, custoTotalProdutos };
+  }
 
   async updateOrderFromBling(body: blingOrderWebHookData): Promise<null> {
     try {

@@ -240,6 +240,15 @@ interface BlingApiProduct {
     ncm?: string;
     cest?: string;
   };
+  // ─── NOVO: estrutura de KIT (formato === "E") ──────────────────────────────
+  estrutura?: {
+    tipoEstoque?: string;
+    lancamentoEstoque?: string;
+    componentes?: Array<{
+      produto: { id: number };
+      quantidade: number;
+    }>;
+  };
 }
 
 interface BlingApiSupplier {
@@ -360,6 +369,37 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
 
     this.api = blingApi;
+  }
+
+  private async resolveKitComponentSku(
+    componentBlingId: number,
+    logPrefix: string,
+  ): Promise<string | null> {
+    const localProduct = await Product.findOne({
+      where: { id_system: String(componentBlingId) },
+    });
+
+    if (localProduct) {
+      const localConfig = await ProductConfig.findOne({
+        where: {
+          product_id: localProduct.id,
+          unit_business_id: BLING_UNIT_BUSINESS_ID,
+        },
+      });
+      if (localConfig?.sku) return localConfig.sku;
+    }
+
+    try {
+      const { data } = await this.api.get<{ data: BlingApiProduct }>(
+        `/produtos/${componentBlingId}`,
+      );
+      return data.data?.codigo ?? null;
+    } catch (error: any) {
+      console.warn(
+        `${logPrefix} Não foi possível resolver componente do KIT | componentBlingId=${componentBlingId} | erro=${error.response?.data ?? error.message}`,
+      );
+      return null;
+    }
   }
 
   // ─── Helper: busca ou cria transportadora ────────────────────────────────────
@@ -669,7 +709,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
   // ─── Handlers por recurso ─────────────────────────────────────────────────
 
-  private async fetchAndUpsertProduct(
+    private async fetchAndUpsertProduct(
     apiFetch: ApiFetchRequest,
   ): Promise<void> {
     const { data } = await this.api.get<{ data: BlingApiProduct }>(
@@ -699,10 +739,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingProduct.marca,
     );
 
-    // Resolve a Brand cadastrada mais parecida com o nome vindo da Bling
-    // (ex: "Conti" -> "Continental"). Se não achar nada parecido o suficiente,
-    // segue sem brand_id — o produto não fica travado por isso, mas fica sem
-    // taxa de comissão de brand até alguém cadastrar/ajustar manualmente.
     const matchedBrand = await brandsService.findSimilarBrand(
       blingProduct.marca,
     );
@@ -711,6 +747,33 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       console.warn(
         `[BLING_API_FETCH] Marca "${blingProduct.marca}" não encontrada no cadastro de brands (produto=${blingProduct.codigo}). Produto salvo sem brand_id.`,
       );
+    }
+
+    const isKit = blingProduct.formato === "E";
+
+    let configSku = blingProduct.codigo;
+
+    if (isKit) {
+      const component = blingProduct.estrutura?.componentes?.[0];
+
+      if (component?.produto?.id) {
+        const componentSku = await this.resolveKitComponentSku(
+          component.produto.id,
+          "[BLING_API_FETCH]",
+        );
+
+        if (componentSku) {
+          configSku = `${componentSku}K${component.quantidade}`;
+        } else {
+          console.warn(
+            `[BLING_API_FETCH] KIT ${blingProduct.codigo} sem SKU de componente resolvível (componentBlingId=${component.produto.id}). Mantendo codigo original: ${blingProduct.codigo}`,
+          );
+        }
+      } else {
+        console.warn(
+          `[BLING_API_FETCH] KIT ${blingProduct.codigo} sem estrutura.componentes[0]. Mantendo codigo original.`,
+        );
+      }
     }
 
     let product: Product;
@@ -722,7 +785,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           id_system: String(blingProduct.id),
           ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
           ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
-          type: blingProduct.formato === "E" ? "KIT" : "UNIT",
+          type: isKit ? "KIT" : "UNIT",
           integrations_id: integration.id,
           source_payload: blingProduct as unknown as Record<string, unknown>,
           unit: blingProduct.unidade,
@@ -743,7 +806,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         {
           product_id: product.id,
           unit_business_id: unitBusiness.id,
-          sku: blingProduct.codigo,
+          sku: configSku, // ← antes era blingProduct.codigo direto
           price: blingProduct.preco,
           gtin: blingProduct.gtin,
           gtin_package: blingProduct.gtinEmbalagem,
