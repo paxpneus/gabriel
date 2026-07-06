@@ -63,6 +63,7 @@ class SalesOrderSnapshot
   public ibs_value?: number | string;
   public cbs_value?: number | string;
   public approx_tax_value?: number | string;
+  public total_commission?: number | string;
 
   public contribution_value?: number | string;
   public contribution_pct?: number | string;
@@ -139,6 +140,10 @@ SalesOrderSnapshot.init(
     has_invoice_data: { type: DataTypes.BOOLEAN, defaultValue: false },
     source_payload: { type: DataTypes.JSONB, allowNull: true },
     last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+    total_commission: {
+      type: DataTypes.DECIMAL(14, 4),
+      allowNull: true,
+    },
   },
   {
     sequelize,

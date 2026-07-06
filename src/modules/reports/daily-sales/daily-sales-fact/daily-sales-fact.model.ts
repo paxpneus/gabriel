@@ -21,6 +21,7 @@ class DailySalesFact
   public total_freight?: number | string;
   public average_freight?: number | string;
   public average_ticket?: number | string;
+  public total_commission?: number | string;
 
   public total_cost?: number | string;
   public total_taxes?: number | string;
@@ -56,6 +57,10 @@ DailySalesFact.init(
     contribution_value: money,
     contribution_pct:   { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
     markup_pct:         { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
+    total_commission: {
+      type: DataTypes.DECIMAL(14, 4),
+      allowNull: true,
+    },
 
     last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },

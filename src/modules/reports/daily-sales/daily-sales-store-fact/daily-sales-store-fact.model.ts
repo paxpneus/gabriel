@@ -29,6 +29,7 @@ class DailySalesStoreFact
   public total_fees?: number | string;
   public contribution_value?: number | string;
   public contribution_pct?: number | string;
+  public total_commission?: number | string;
   public last_updated_at?: Date;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -54,6 +55,10 @@ DailySalesStoreFact.init(
     total_fees: money,
     contribution_value: money,
     contribution_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
+    total_commission: {
+      type: DataTypes.DECIMAL(14, 4),
+      allowNull: true,
+    },
     last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },
   {

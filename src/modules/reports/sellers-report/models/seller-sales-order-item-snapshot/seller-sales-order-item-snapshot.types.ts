@@ -18,8 +18,8 @@ export interface SellerSalesOrderItemSnapshotAttributes {
   commission_rate?: number | string;
   commission_value?: number | string;
   commission_base?: number | string;
-  manager_comission_rate?: number | string;
-  manager_comission_value?: number | string;
+  manager_commission_rate?: number | string;
+  manager_commission_value?: number | string;
   markup_value?: number | string;
   markup_pct?: number | string;
   contribution_value?: number | string;
