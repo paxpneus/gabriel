@@ -9,6 +9,7 @@ export interface DailySalesProductFactAttributes {
   total_cost?: number | string;
   total_value?: number | string;
   markup_pct?: number | string;
+  total_commission?: number | string;
   last_updated_at?: Date;
   createdAt?: Date;
   updatedAt?: Date;

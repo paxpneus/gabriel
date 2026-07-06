@@ -1,3 +1,4 @@
+// sales report
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import {
@@ -144,6 +145,34 @@ export class SalesReportRepository {
     return [...new Set(rows.map((row) => row.order_id))];
   }
 
+  /**
+   * NOTA SOBRE contribution_value/contribution_pct (revisão):
+   * Antes, contribution_value descontava, além do custo, frete pago pela
+   * empresa (freight_paid_by_company) e taxas de comissão/marketplace/
+   * pagamento. Isso fazia sales_report e seller_sales_report reportarem
+   * contribuição com definições diferentes pro mesmo conceito de venda,
+   * mesmo os dois lendo essencialmente a mesma base de pedidos (a diferença
+   * de ESCOPO entre os dois — sales_report traz tudo, seller_sales_report
+   * exclui pedidos do contato "Vendedor 0" — é intencional e continua
+   * existindo; o que não devia divergir era a FÓRMULA).
+   *
+   * Alinhado com seller_sales_report: contribution_value agora é
+   * total_order - total_cost, o mesmo "receita - custo total" usado lá.
+   * Frete e taxas continuam disponíveis como campos separados
+   * (total_freight, total_fees, total_taxes) pra quem quiser compor a
+   * conta de outro jeito — só não entram mais dentro de contribution.
+   *
+   * NOTA SOBRE comissão de seller (nova):
+   * A comissão do vendedor (commission_value, calculada por item a partir
+   * de commission_base/commission_rate) agora soma DENTRO do custo total
+   * do item (total_cost_snapshot), junto com o custo médio do produto e o
+   * ICMS rateado. Isso faz total_cost (e, por consequência,
+   * contribution_value/markup_pct) já refletirem a comissão paga.
+   * Além disso, o valor de comissão é somado à parte em total_commission
+   * (por pedido, por dia/unidade, por loja e por produto) para exibição
+   * separada nos totais do relatório — sem isso não dá pra ver quanto foi
+   * pago em comissão sem re-somar item a item.
+   */
   async upsertSnapshots(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
 
@@ -426,7 +455,9 @@ item_weighted AS (
 --     ICMS, IPI, PIS, COFINS, DIFAL, IBS, CBS, imposto aproximado) é
 --     distribuído entre os itens proporcionalmente ao item_weight. Como os
 --     pesos somam 1 por pedido, somando os itens de volta bate exatamente
---     com o valor do pedido.
+--     com o valor do pedido. Comissão NÃO é rateada — ela já vem por item
+--     (commission_value calculado a partir de commission_base/rate do
+--     próprio item), então entra direto no custo sem passar pelo rateio.
 -- ------------------------------------------------------------------
 item_calc AS (
   SELECT
@@ -446,6 +477,13 @@ item_calc AS (
       -- ------------------------------------------------------------------
       -- 4. Upsert dos snapshots de item
       --    RETURNING expande os campos necessários para item_totals.
+      --    total_cost_snapshot soma custo médio + ICMS rateado + comissão
+      --    de seller (commission_value), pra fechar com o custo total real
+      --    da venda — mas a comissão só é somada quando o custo vem do
+      --    fallback (average_cost_snapshot * quantity). Quando existe
+      --    total_cost_snapshot_raw (oi.total_cost_snapshot, populado por
+      --    fora, inclusive pelo backfill manual de custo histórico), ele é
+      --    usado como está, sem somar comissão de novo por cima.
       -- ------------------------------------------------------------------
       inserted_items AS (
         INSERT INTO sales_order_item_snapshots (
@@ -466,13 +504,19 @@ item_calc AS (
           -- net_total gravado é o valor ALOCADO (rateado do pedido), não o bruto.
           net_total_allocated,
           average_cost_snapshot,
-          COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2)) + icms_value_allocated,
+          -- IMPORTANTE: a comissão só é somada no fallback (average_cost * quantity).
+          -- Quando total_cost_snapshot_raw (oi.total_cost_snapshot, vindo de fora —
+          -- inclusive do backfill manual de custo histórico) já existe, ele é usado
+          -- como base SEM somar commission_value de novo, porque esse raw pode já
+          -- vir com a comissão embutida. Somar sempre e incondicionalmente causava
+          -- comissão contada em dobro no custo sempre que o raw estava populado.
+          COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value) + icms_value_allocated,
           cost_source,
           CASE
-            WHEN (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity) + icms_value_allocated) = 0 THEN 0
+            WHEN (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value) + icms_value_allocated) = 0 THEN 0
             ELSE ROUND(
-              ((net_total_allocated - (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity) + icms_value_allocated))
-                / (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity) + icms_value_allocated) * 100)::numeric, 2
+              ((net_total_allocated - (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value) + icms_value_allocated))
+                / (COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value) + icms_value_allocated) * 100)::numeric, 2
             )
           END,
           commission_base, commission_rate, commission_value,
@@ -531,17 +575,22 @@ item_calc AS (
           order_snapshot_id,
           quantity,
           total_cost_snapshot,
-          cost_source
+          cost_source,
+          commission_value
       ),
 
       -- ------------------------------------------------------------------
       -- 5. Agrega totais dos itens via inserted_items (RETURNING)
+      --    total_commission soma a comissão de todos os itens do pedido,
+      --    pra exibir separada dos totais (total_cost já inclui a
+      --    comissão embutida via total_cost_snapshot).
       -- ------------------------------------------------------------------
       item_totals AS (
         SELECT
           ii.order_snapshot_id,
           SUM(ii.quantity)                                          AS items_quantity,
           SUM(ii.total_cost_snapshot)                               AS total_cost,
+          SUM(ii.commission_value)                                  AS total_commission,
           BOOL_OR(ii.cost_source IS DISTINCT FROM 'STOCK_AVERAGE') AS has_cost_fallback
         FROM inserted_items ii
         GROUP BY ii.order_snapshot_id
@@ -549,11 +598,17 @@ item_calc AS (
 
       -- ------------------------------------------------------------------
       -- 6. Atualiza campos derivados no snapshot do pedido
+      --
+      -- contribution_value/contribution_pct: receita - custo total, mesma
+      -- definição usada no seller_sales_report. Frete e taxas continuam
+      -- disponíveis separadamente em total_freight/total_taxes/total_fees.
+      -- total_commission é só exibição — já está embutida em total_cost.
       -- ------------------------------------------------------------------
       UPDATE sales_order_snapshots sos
       SET
         items_quantity    = COALESCE(it.items_quantity, 0),
         total_cost        = COALESCE(it.total_cost, 0),
+        total_commission  = COALESCE(it.total_commission, 0),
 
         total_taxes       = COALESCE(sos.icms_value,   0)
                           + COALESCE(sos.ipi_value,    0)
@@ -568,24 +623,15 @@ item_calc AS (
                           + COALESCE(sos.marketplace_fee, 0)
                           + COALESCE(sos.payment_fee,     0),
 
-         contribution_value =
-          COALESCE(sos.total_order, 0)
-          - COALESCE(it.total_cost, 0)
-          - CASE WHEN sos.freight_paid_by_company
-              THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-          - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
-             + COALESCE(sos.payment_fee,     0)),
+        contribution_value =
+          COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0),
 
         contribution_pct  =
           CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
-          ELSE ROUND(((
-            COALESCE(sos.total_order, 0)
-            - COALESCE(it.total_cost, 0)
-            - CASE WHEN sos.freight_paid_by_company
-                THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-            - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
-               + COALESCE(sos.payment_fee,     0))
-          ) / sos.total_order * 100)::numeric, 2)
+          ELSE ROUND((
+            (COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0))
+            / sos.total_order * 100
+          )::numeric, 2)
           END,
 
         markup_pct =
@@ -718,6 +764,7 @@ END,
             COALESCE(SUM(total_cost),        0) AS total_cost,
             COALESCE(SUM(total_taxes),       0) AS total_taxes,
             COALESCE(SUM(total_fees),        0) AS total_fees,
+            COALESCE(SUM(total_commission),  0) AS total_commission,
             COALESCE(SUM(contribution_value),0) AS contribution_value
           FROM sales_order_snapshots
           WHERE order_date       = CAST(:factDate AS date)
@@ -734,7 +781,7 @@ END,
           fact_date, unit_business_id,
           orders_count, items_quantity,
           total_value, total_freight, average_freight, average_ticket,
-          total_cost, total_taxes, total_fees,
+          total_cost, total_taxes, total_fees, total_commission,
           contribution_value, contribution_pct, markup_pct,
           last_updated_at, created_at, updated_at
         )
@@ -746,7 +793,7 @@ END,
             ELSE ROUND((total_freight / orders_count)::numeric, 2) END,
           CASE WHEN orders_count = 0 THEN 0
             ELSE ROUND((total_value  / orders_count)::numeric, 2) END,
-          total_cost, total_taxes, total_fees,
+          total_cost, total_taxes, total_fees, total_commission,
           contribution_value,
           CASE WHEN total_value = 0 THEN 0
             ELSE ROUND((contribution_value / NULLIF(total_value, 0) * 100)::numeric, 2) END,
@@ -765,6 +812,7 @@ END,
           total_cost         = EXCLUDED.total_cost,
           total_taxes        = EXCLUDED.total_taxes,
           total_fees         = EXCLUDED.total_fees,
+          total_commission   = EXCLUDED.total_commission,
           contribution_value = EXCLUDED.contribution_value,
           contribution_pct   = EXCLUDED.contribution_pct,
           markup_pct         = EXCLUDED.markup_pct,
@@ -860,6 +908,7 @@ END,
             COALESCE(SUM(total_cost),      0) AS total_cost,
             COALESCE(SUM(total_taxes),     0) AS total_taxes,
             COALESCE(SUM(total_fees),      0) AS total_fees,
+            COALESCE(SUM(total_commission),0) AS total_commission,
             COALESCE(SUM(contribution_value),0) AS contribution_value
           FROM sales_order_snapshots
           WHERE order_date       = CAST(:factDate AS date)
@@ -877,7 +926,7 @@ END,
           fact_date, unit_business_id, store_id,
           orders_count, items_quantity, total_value, total_freight,
           average_ticket, total_cost, piece_average_value, markup_pct,
-          total_taxes, total_fees, contribution_value, contribution_pct,
+          total_taxes, total_fees, total_commission, contribution_value, contribution_pct,
           last_updated_at, created_at, updated_at
         )
         SELECT
@@ -895,7 +944,7 @@ END,
     2
   )
 END,
-          total_taxes, total_fees, contribution_value,
+          total_taxes, total_fees, total_commission, contribution_value,
           CASE WHEN total_value    = 0 THEN 0
             ELSE ROUND((contribution_value / total_value * 100)::numeric, 2) END,
           NOW(), NOW(), NOW()
@@ -911,6 +960,7 @@ END,
           markup_pct          = EXCLUDED.markup_pct,
           total_taxes         = EXCLUDED.total_taxes,
           total_fees          = EXCLUDED.total_fees,
+          total_commission    = EXCLUDED.total_commission,
           contribution_value  = EXCLUDED.contribution_value,
           contribution_pct    = EXCLUDED.contribution_pct,
           last_updated_at     = NOW(),
@@ -942,6 +992,7 @@ END,
             MAX(description)                  AS description,
             COALESCE(SUM(quantity),           0) AS quantity,
             COALESCE(SUM(total_cost_snapshot),0) AS total_cost,
+            COALESCE(SUM(commission_value),   0) AS total_commission,
             COALESCE(SUM(net_total),          0) AS total_value
           FROM sales_order_item_snapshots sois
           JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
@@ -958,12 +1009,12 @@ END,
 )
         INSERT INTO daily_sales_product_facts (
           fact_date, unit_business_id, product_id, sku, description,
-          quantity, total_cost, total_value, markup_pct,
+          quantity, total_cost, total_commission, total_value, markup_pct,
           last_updated_at, created_at, updated_at
         )
         SELECT
           fact_date, unit_business_id, product_id, sku, description,
-          quantity, total_cost, total_value,
+          quantity, total_cost, total_commission, total_value,
           CASE
   WHEN total_value = 0 THEN 0
   ELSE ROUND(
@@ -974,14 +1025,15 @@ END,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, sku) DO UPDATE SET
-          product_id      = EXCLUDED.product_id,
-          description     = EXCLUDED.description,
-          quantity        = EXCLUDED.quantity,
-          total_cost      = EXCLUDED.total_cost,
-          total_value     = EXCLUDED.total_value,
-          markup_pct      = EXCLUDED.markup_pct,
-          last_updated_at = NOW(),
-          updated_at      = NOW()
+          product_id       = EXCLUDED.product_id,
+          description      = EXCLUDED.description,
+          quantity         = EXCLUDED.quantity,
+          total_cost       = EXCLUDED.total_cost,
+          total_commission = EXCLUDED.total_commission,
+          total_value      = EXCLUDED.total_value,
+          markup_pct       = EXCLUDED.markup_pct,
+          last_updated_at  = NOW(),
+          updated_at       = NOW()
         `,
         {
           replacements: {
@@ -1111,6 +1163,7 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
         COALESCE(SUM(total_cost),        0) AS total_cost,
         COALESCE(SUM(total_taxes),       0) AS total_taxes,
         COALESCE(SUM(total_fees),        0) AS total_fees,
+        COALESCE(SUM(total_commission),  0) AS total_commission,
         COALESCE(SUM(contribution_value),0) AS contribution_value,
         CASE WHEN COALESCE(SUM(total_value), 0) = 0 THEN 0
           ELSE ROUND((SUM(contribution_value) / NULLIF(SUM(total_value), 0) * 100)::numeric, 2)
@@ -1160,6 +1213,7 @@ END AS markup_pct
       MAX(description)          AS description,
       COALESCE(SUM(quantity),   0) AS quantity,
       COALESCE(SUM(total_cost), 0) AS total_cost,
+      COALESCE(SUM(total_commission), 0) AS total_commission,
       COALESCE(SUM(total_value),0) AS total_value,
       CASE WHEN SUM(total_value) = 0 THEN 0
   ELSE ROUND(
@@ -1199,6 +1253,7 @@ END AS markup_pct
 END AS markup_pct,
       COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
       COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
+      COALESCE(SUM(dsf.total_commission),   0) AS total_commission,
       COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
       CASE WHEN COALESCE(SUM(dsf.total_value), 0) = 0 THEN 0
         ELSE ROUND((SUM(dsf.contribution_value) / NULLIF(SUM(dsf.total_value), 0) * 100)::numeric, 2)
@@ -1263,6 +1318,16 @@ END AS markup_pct,
     };
   }
 
+  /**
+   * NOTA: duplica a lógica de contribution/markup do passo 6 de
+   * upsertSnapshots. Mantenha as duas em sincronia — idealmente extrair
+   * pra uma função/CTE compartilhada num refactor futuro, pra não
+   * depender de lembrar de editar os dois lugares toda vez que a fórmula
+   * mudar (foi exatamente esse tipo de divergência que causou a
+   * diferença de contribution entre sales_report e seller_sales_report).
+   * total_commission também é recalculado aqui a partir da soma dos
+   * commission_value dos itens, em sincronia com upsertSnapshots.
+   */
   async updateSnapshotTotals(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
 
@@ -1273,6 +1338,7 @@ END AS markup_pct,
         sois.order_snapshot_id,
         SUM(sois.quantity)                                           AS items_quantity,
         SUM(sois.total_cost_snapshot)                                AS total_cost,
+        SUM(sois.commission_value)                                   AS total_commission,
         BOOL_OR(sois.cost_source IS DISTINCT FROM 'STOCK_AVERAGE')  AS has_cost_fallback
       FROM sales_order_item_snapshots sois
       WHERE sois.order_id IN (:orderIds)
@@ -1282,6 +1348,7 @@ END AS markup_pct,
     SET
       items_quantity    = COALESCE(it.items_quantity, 0),
       total_cost        = COALESCE(it.total_cost, 0),
+      total_commission  = COALESCE(it.total_commission, 0),
 
       total_taxes       = COALESCE(sos.icms_value,   0)
                         + COALESCE(sos.ipi_value,    0)
@@ -1297,23 +1364,14 @@ END AS markup_pct,
                         + COALESCE(sos.payment_fee,     0),
 
       contribution_value =
-        COALESCE(sos.total_order, 0)
-        - COALESCE(it.total_cost, 0)
-        - CASE WHEN sos.freight_paid_by_company
-            THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-        - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
-           + COALESCE(sos.payment_fee,     0)),
+        COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0),
 
       contribution_pct  =
         CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0
-        ELSE ROUND(((
-          COALESCE(sos.total_order, 0)
-          - COALESCE(it.total_cost, 0)
-          - CASE WHEN sos.freight_paid_by_company
-              THEN COALESCE(sos.freight_cost, 0) ELSE 0 END
-          - (  COALESCE(sos.tax_commission,  0) + COALESCE(sos.marketplace_fee, 0)
-             + COALESCE(sos.payment_fee,     0))
-        ) / NULLIF(sos.total_order, 0) * 100)::numeric, 2)
+        ELSE ROUND((
+          (COALESCE(sos.total_order, 0) - COALESCE(it.total_cost, 0))
+          / NULLIF(sos.total_order, 0) * 100
+        )::numeric, 2)
         END,
 
       markup_pct = CASE WHEN COALESCE(sos.total_order, 0) = 0 THEN 0

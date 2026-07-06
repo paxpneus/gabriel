@@ -34,6 +34,8 @@ class SellerSalesOrderItemSnapshot
   public commission_rate?: number | string;
   public commission_value?: number | string;
   public commission_base?: number | string;
+  public manager_commission_value?: number | string;
+  public manager_commission_rate?: number | string;
   public markup_value?: number | string;
   public markup_pct?: number | string;
   public contribution_value?: number | string;
@@ -79,13 +81,13 @@ SellerSalesOrderItemSnapshot.init(
       allowNull: true,
       defaultValue: 0,
     },
-     manager_comission_value: {
+    manager_commission_value: {
       type: DataTypes.DECIMAL(14, 2),
       allowNull: true,
       defaultValue: 0,
     },
-     manager_comission_rate: {
-      type: DataTypes.DECIMAL(8, 2),
+    manager_commission_rate: {
+      type: DataTypes.DECIMAL(8, 4),
       allowNull: true,
       defaultValue: 0,
     },

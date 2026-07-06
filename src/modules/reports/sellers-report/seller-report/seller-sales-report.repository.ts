@@ -1,3 +1,4 @@
+//seller report
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import {
@@ -87,6 +88,12 @@ const JOB_NAME = "seller_sales_report";
  * `report_total_cost` NUNCA é NULL — toda linha entra em todas as somas de
  * forma consistente, e total_sold - total_cost bate exatamente com
  * total_contribution_value (e o mesmo vale para markup_value).
+ *
+ * NOTA SOBRE total_manager_commission NO summary:
+ * manager_commission_value já é calculado por item (net_total_allocated *
+ * manager_commission_rate) e já era somado em byManager. Faltava agregar
+ * o total geral no summary — adicionado via SUM(s.manager_commission_value),
+ * disponível em report_rows/report_metrics através do s.* do snapshot.
  */
 const VALID_ACTUAL_SITUATIONS = ["6", "9"];
 const INVALID_ORDER_STATUSES = ["CANCELLED"];
@@ -731,7 +738,11 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         CASE
           WHEN COALESCE(SUM(s.net_total), 0) = 0 THEN 0
           ELSE ROUND((SUM(s.report_contribution_value) / SUM(s.net_total)) * 100, 2)
-        END AS average_contribution_pct
+        END AS average_contribution_pct,
+        -- NOVO: total geral de comissão de gerente no período/filtros.
+        -- manager_commission_value já vem por item (calculado em
+        -- upsertSnapshots) e chega aqui via s.* de report_rows.
+        COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission
       FROM report_metrics s
       `,
       {

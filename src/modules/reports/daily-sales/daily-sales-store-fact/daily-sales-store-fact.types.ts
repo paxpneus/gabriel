@@ -15,6 +15,7 @@ export interface DailySalesStoreFactAttributes {
   total_fees?: number | string;
   contribution_value?: number | string;
   contribution_pct?: number | string;
+  total_commission?: number | string;
   last_updated_at?: Date;
   createdAt?: Date;
   updatedAt?: Date;
