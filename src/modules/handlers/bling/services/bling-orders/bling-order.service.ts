@@ -370,7 +370,7 @@ private appendMissingFinancialFields(
     destinationUf: string | undefined,
     custoTotalProdutos: number,
   ): Promise<{ total_price: number; icms_value: number; total_cost: number }> {
-    const total = Number(orderData.total ?? 0);
+    const total = Number(orderData.totalProdutos ?? 0);
     const taxaComissao = Number(orderData.taxas?.taxaComissao ?? 0);
     const custoFrete = Number(orderData.taxas?.custoFrete ?? 0);
 
@@ -533,7 +533,7 @@ private appendMissingFinancialFields(
         internal_status: internalStatus,
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
-        total_order: Number(orderData.total ?? 0),
+        total_order: Number(orderData.totalProdutos ?? 0),
         discount_value: Number(orderData.desconto?.valor ?? 0),
         discount_type: orderData.desconto?.unidade
           ? String(orderData.desconto.unidade)
@@ -760,7 +760,7 @@ private appendMissingFinancialFields(
         store_id: store?.id ?? null,
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
-        total_order: Number(orderData.total ?? 0),
+        total_order: Number(orderData.totalProdutos ?? 0),
         discount_value: Number(orderData.desconto?.valor ?? 0),
         discount_type: orderData.desconto?.unidade
           ? String(orderData.desconto.unidade)
