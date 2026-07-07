@@ -446,115 +446,230 @@ export class SalesReportRepository {
     return [...new Set(rows.map((row) => row.order_id))];
   }
 
-  /**
-   * NOTA SOBRE contribution_value/contribution_pct (revisão):
-   * Antes, contribution_value descontava, além do custo, frete pago pela
-   * empresa (freight_paid_by_company) e taxas de comissão/marketplace/
-   * pagamento. Isso fazia sales_report e seller_sales_report reportarem
-   * contribuição com definições diferentes pro mesmo conceito de venda,
-   * mesmo os dois lendo essencialmente a mesma base de pedidos (a diferença
-   * de ESCOPO entre os dois — sales_report traz tudo, seller_sales_report
-   * exclui pedidos do contato "Vendedor 0" — é intencional e continua
-   * existindo; o que não devia divergir era a FÓRMULA).
-   *
-   * Regra do OrderService: a receita do relatório é sempre orders.total_price.
-   * Esse valor já vem líquido de frete de custo e comissão marketplace quando
-   * aplicável, então o relatório não recalcula essa liquidação nem usa
-   * orders.total_order como receita.
-   *
-   * NOTA SOBRE comissão de seller (nova):
-   * A comissão do vendedor (commission_value, calculada por item a partir
-   * de commission_base/commission_rate) agora soma DENTRO do custo total
-   * do item (total_cost_snapshot), junto com o custo médio do produto e o
-   * ICMS rateado. Isso faz total_cost (e, por consequência,
-   * contribution_value/markup_pct) já refletirem a comissão paga.
-   * Além disso, o valor de comissão é somado à parte em total_commission
-   * (por pedido, por dia/unidade, por loja e por produto) para exibição
-   * separada nos totais do relatório — sem isso não dá pra ver quanto foi
-   * pago em comissão sem re-somar item a item.
-   */
   async upsertSnapshots(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
 
     const itemTotalCostSql =
-      "COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value) + icms_value_allocated";
+      "ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value + icms_value_allocated";
     const snapshotRevenueSql = "sos.total_order";
     const snapshotCostSql = "it.total_cost";
 
     await sequelize.query(
       `
       WITH affected(order_id) AS (
-  SELECT DISTINCT unnest(ARRAY[:orderIds]::uuid[])
-),
-
-      -- ------------------------------------------------------------------
-      -- 1. Fonte de dados do pedido
-      -- ------------------------------------------------------------------
-      order_source AS (
-        SELECT
-          o.id                                                  AS order_id,
-          o.integrations_id                                     AS integration_id,
-          o.customer_id,
-          o.store_id,
-          o.unit_business_id,
-          o.number_order_system                                 AS order_number_system,
-          o.number_order_channel                                AS order_number_channel,
-          DATE(COALESCE(o.date, o.created_at))                  AS order_date,
-          o.destination_uf,
-          o.destination_city,
-          COALESCE(iosm.normalized_status, o.actual_situation)  AS status_snapshot,
-          CASE
-            WHEN EXISTS (
-              SELECT 1
-              FROM order_items cost_check
-              WHERE cost_check.order_id = o.id
-                AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
-            ) THEN 'ignored_missing_cost'
-            WHEN o.actual_situation IN ('6', '9') THEN 'completed'
-            ELSE 'cancelled'
-          END                                                   AS snapshot_status,
-          COALESCE(o.total_products, 0)                         AS total_products,
-          COALESCE(o.total_price, 0)                            AS total_order,
-          COALESCE(o.discount_value, 0)                         AS discount_value,
-          COALESCE(o.other_expenses, 0)                         AS other_expenses,
-          COALESCE(o.freight_charged, 0)                        AS freight_charged,
-          COALESCE(o.freight_cost, 0)                           AS freight_cost,
-          COALESCE(o.freight_by_account, 0)                     AS freight_by_account,
-          COALESCE(o.tax_commission, 0)                         AS tax_commission,
-          COALESCE(o.marketplace_fee, 0)                        AS marketplace_fee,
-          COALESCE(o.payment_fee, 0)                            AS payment_fee,
-          COALESCE(o.icms_value, 0)                             AS icms_value,
-          COALESCE(o.ipi_value, 0)                              AS ipi_value,
-          COALESCE(o.pis_value, 0)                              AS pis_value,
-          COALESCE(o.cofins_value, 0)                           AS cofins_value,
-          COALESCE(o.difal_value, 0)                            AS difal_value,
-          COALESCE(o.ibs_value, 0)                              AS ibs_value,
-          COALESCE(o.cbs_value, 0)                              AS cbs_value,
-          ROUND(
-  COALESCE(o.total_price, 0)
-  * COALESCE(ubtc.approx_tax_rate, 0), 
-  2
-) AS approx_tax_value,
-          FALSE                                                 AS has_invoice_data,
-          o.source_payload
-          
-
-        FROM orders o
-        JOIN affected a ON a.order_id = o.id
-        LEFT JOIN integration_order_status_mappings iosm ON (
-          iosm.integration_id     = o.integrations_id
-          AND iosm.external_status_id = o.actual_situation
-        )
-          LEFT JOIN unit_business_tax_configs ubtc 
-  ON ubtc.unit_business_id = o.unit_business_id
+        SELECT DISTINCT unnest(ARRAY[:orderIds]::uuid[])
       ),
 
-      -- ------------------------------------------------------------------
-      -- 2. Upsert dos snapshots de pedido
-      --    RETURNING expande todos os campos necessários pelo item_source,
-      --    evitando joins com a tabela base dentro da mesma query CTE
-      --    (que não enxergaria rows recém-inseridos via DML CTE).
-      -- ------------------------------------------------------------------
+      order_base AS (
+        SELECT
+          o.id               AS order_id,
+          o.integrations_id  AS integration_id,
+          o.customer_id,
+          o.store_id,
+          o.source_payload,
+          ub.id              AS unit_business_id
+        FROM orders o
+        JOIN affected a ON a.order_id = o.id
+        LEFT JOIN unit_businesses ub
+          ON ub.id_system = (o.source_payload -> 'loja' ->> 'id')
+      ),
+
+      -- Unit business de CUSTO (fixa, CNPJ 02316749002111) — é nela que
+      -- product_configs.average_cost é buscado, igual o BlingOrderService faz
+      -- em resolveCostUnitBusinessId(). NÃO é a unit_business do pedido/loja.
+      cost_unit_business AS (
+        SELECT id
+        FROM unit_businesses
+        WHERE cnpj = '02316749002111'
+        LIMIT 1
+      ),
+
+      item_source_raw AS (
+        SELECT
+          oi.id                                                   AS order_item_id,
+          oi.order_id,
+          ob.unit_business_id,
+          ob.store_id,
+          ob.integration_id,
+          (ob.source_payload ->> 'data')::date                    AS order_date,
+          NULLIF(ob.source_payload -> 'transporte' -> 'etiqueta' ->> 'uf', '')
+                                                                    AS destination_uf,
+          (oi.source_payload ->> 'codigo')                        AS sku,
+          (oi.source_payload ->> 'descricao')                     AS description,
+          (oi.source_payload ->> 'unidade')                       AS unit,
+          COALESCE((oi.source_payload ->> 'quantidade')::numeric, 0) AS quantity,
+          COALESCE((oi.source_payload ->> 'valor')::numeric, 0)      AS unit_price,
+          ROUND(
+            COALESCE((oi.source_payload ->> 'valor')::numeric, 0)
+            * COALESCE((oi.source_payload ->> 'quantidade')::numeric, 0),
+            2
+          )                                                        AS gross_total,
+          COALESCE((oi.source_payload ->> 'desconto')::numeric, 0) AS discount_value,
+          ROUND(
+            COALESCE((oi.source_payload ->> 'valor')::numeric, 0)
+            * COALESCE((oi.source_payload ->> 'quantidade')::numeric, 0),
+            2
+          )                                                        AS net_total_raw,
+          COALESCE(resolved.average_cost, 0)::numeric               AS average_cost_snapshot,
+          resolved.cost_source,
+          resolved.ncm,
+          resolved.cest,
+          COALESCE(resolved.gtin, prod.ean)                         AS gtin,
+
+          -- Comissão NÃO vem da Bling (itens.comissao não é confiável).
+          -- Replica a mesma regra do BlingOrderService: só existe comissão
+          -- se houver vendedor atribuído (vendedor.id != 0), e a alíquota
+          -- vem da BRAND do produto (fallback: products.commission).
+          CASE
+  WHEN COALESCE(ob.source_payload -> 'vendedor' ->> 'id', '0') <> '0'
+  THEN ROUND(
+    (
+      COALESCE((oi.source_payload ->> 'valor')::numeric, 0)
+      * COALESCE((oi.source_payload ->> 'quantidade')::numeric, 0)
+    ) * COALESCE(br.seller_comission_tax_rate, prod.commission::numeric, 0) / 100,
+    2
+  )
+  ELSE 0
+END                                                      AS commission_value,
+CASE
+  WHEN COALESCE(ob.source_payload -> 'vendedor' ->> 'id', '0') <> '0'
+  THEN COALESCE(br.seller_comission_tax_rate, prod.commission::numeric, 0)
+  ELSE 0
+END                                                      AS commission_rate,
+          CASE
+            WHEN COALESCE(ob.source_payload -> 'vendedor' ->> 'id', '0') <> '0'
+            THEN ROUND(
+              COALESCE((oi.source_payload ->> 'valor')::numeric, 0)
+              * COALESCE((oi.source_payload ->> 'quantidade')::numeric, 0),
+              2
+            )
+            ELSE 0
+          END                                                      AS commission_base,
+
+          oi.source_payload
+        FROM order_items oi
+        JOIN order_base ob ON ob.order_id = oi.order_id
+        LEFT JOIN cost_unit_business cub ON TRUE
+        LEFT JOIN LATERAL (
+          -- Resolve o product_config NA UNIT_BUSINESS DE CUSTO (cub.id),
+          -- nunca na unit_business do pedido. Primeiro por SKU (itens.codigo),
+          -- se não achar, tenta pelo nome do produto (itens.descricao).
+          SELECT
+            pcf.product_id,
+            pcf.average_cost,
+            pcf.ncm,
+            pcf.cest,
+            pcf.gtin,
+            CASE
+              WHEN pcf.id IS NULL THEN 'MISSING_COST'
+              WHEN pcf.matched_by_sku THEN 'SKU_MATCH'
+              ELSE 'NAME_FALLBACK'
+            END AS cost_source
+          FROM (
+            SELECT
+              pc0.id, pc0.product_id, pc0.average_cost, pc0.ncm, pc0.cest, pc0.gtin,
+              TRUE AS matched_by_sku
+            FROM product_configs pc0
+            WHERE pc0.sku = (oi.source_payload ->> 'codigo')
+              AND pc0.unit_business_id = cub.id
+
+            UNION ALL
+
+            SELECT
+              pc1.id, pc1.product_id, pc1.average_cost, pc1.ncm, pc1.cest, pc1.gtin,
+              FALSE AS matched_by_sku
+            FROM products p1
+            JOIN product_configs pc1 ON (
+              pc1.product_id = p1.id
+              AND pc1.unit_business_id = cub.id
+            )
+            WHERE p1.name = (oi.source_payload ->> 'descricao')
+              AND NOT EXISTS (
+                SELECT 1
+                FROM product_configs pcx
+                WHERE pcx.sku = (oi.source_payload ->> 'codigo')
+                  AND pcx.unit_business_id = cub.id
+              )
+          ) pcf
+          LIMIT 1
+        ) resolved ON TRUE
+        LEFT JOIN products prod ON prod.id = resolved.product_id
+        LEFT JOIN brands br ON br.id = prod.brand_id
+      ),
+
+      order_cost_check AS (
+        SELECT
+          order_id,
+          BOOL_OR(average_cost_snapshot <= 0) AS has_missing_cost
+        FROM item_source_raw
+        GROUP BY order_id
+      ),
+
+      order_source AS (
+        SELECT
+          ob.order_id,
+          ob.integration_id,
+          ob.customer_id,
+          ob.store_id,
+          ob.unit_business_id,
+          (ob.source_payload ->> 'numero')                         AS order_number_system,
+          (ob.source_payload ->> 'numeroLoja')                      AS order_number_channel,
+          (ob.source_payload ->> 'data')::date                      AS order_date,
+          NULLIF(ob.source_payload -> 'transporte' -> 'etiqueta' ->> 'uf', '')
+                                                                     AS destination_uf,
+          NULLIF(ob.source_payload -> 'transporte' -> 'etiqueta' ->> 'municipio', '')
+                                                                     AS destination_city,
+          COALESCE(
+            iosm.normalized_status,
+            (ob.source_payload -> 'situacao' ->> 'id')
+          )                                                         AS status_snapshot,
+          CASE
+            WHEN COALESCE(occ.has_missing_cost, FALSE) THEN 'ignored_missing_cost'
+            WHEN (ob.source_payload -> 'situacao' ->> 'id') IN ('6', '9') THEN 'completed'
+            ELSE 'cancelled'
+          END                                                       AS snapshot_status,
+          COALESCE((ob.source_payload ->> 'totalProdutos')::numeric, 0) AS total_products,
+          COALESCE((ob.source_payload ->> 'totalProdutos')::numeric, 0) AS total_order,
+          COALESCE((ob.source_payload -> 'desconto' ->> 'valor')::numeric, 0)
+                                                                     AS discount_value,
+          COALESCE((ob.source_payload ->> 'outrasDespesas')::numeric, 0)
+                                                                     AS other_expenses,
+          COALESCE((ob.source_payload -> 'transporte' ->> 'frete')::numeric, 0)
+                                                                     AS freight_charged,
+          COALESCE((ob.source_payload -> 'taxas' ->> 'custoFrete')::numeric, 0)
+                                                                     AS freight_cost,
+          COALESCE((ob.source_payload -> 'transporte' ->> 'fretePorConta')::numeric, 0)
+                                                                     AS freight_by_account,
+          COALESCE((ob.source_payload -> 'taxas' ->> 'taxaComissao')::numeric, 0)
+                                                                     AS tax_commission,
+          0::numeric                                                AS marketplace_fee,
+          0::numeric                                                AS payment_fee,
+          COALESCE((ob.source_payload -> 'tributacao' ->> 'totalICMS')::numeric, 0)
+                                                                     AS icms_value,
+          COALESCE((ob.source_payload -> 'tributacao' ->> 'totalIPI')::numeric, 0)
+                                                                     AS ipi_value,
+          0::numeric                                                AS pis_value,
+          0::numeric                                                AS cofins_value,
+          0::numeric                                                AS difal_value,
+          0::numeric                                                AS ibs_value,
+          0::numeric                                                AS cbs_value,
+                    ROUND(
+            COALESCE((ob.source_payload ->> 'totalProdutos')::numeric, 0)
+            * COALESCE(ubtc.approx_tax_rate::numeric, 0),
+            2
+          )                                                         AS approx_tax_value,                                                  
+          FALSE                                                     AS has_invoice_data,
+          ob.source_payload
+        FROM order_base ob
+        LEFT JOIN order_cost_check occ ON occ.order_id = ob.order_id
+        LEFT JOIN integration_order_status_mappings iosm ON (
+          iosm.integration_id     = ob.integration_id
+          AND iosm.external_status_id = (ob.source_payload -> 'situacao' ->> 'id')
+        )
+        LEFT JOIN unit_business_tax_configs ubtc
+          ON ubtc.unit_business_id = ob.unit_business_id
+      ),
+
       inserted_orders AS (
         INSERT INTO sales_order_snapshots (
           order_id, integration_id, customer_id, store_id, unit_business_id,
@@ -618,175 +733,52 @@ export class SalesReportRepository {
           last_updated_at         = NOW(),
           updated_at              = NOW()
         RETURNING
-          id,
-          order_id,
-          store_id,
-          unit_business_id,
-          integration_id,
-          order_date,
-          destination_uf,
-          total_order,
-          freight_paid_by_company,
-          freight_cost,
-          icms_value,
-          ipi_value,
-          pis_value,
-          cofins_value,
-          difal_value,
-          ibs_value,
-          cbs_value,
-          approx_tax_value,
-          tax_commission,
-          marketplace_fee,
-          payment_fee
+          id, order_id, total_order, icms_value, ipi_value, pis_value,
+          cofins_value, difal_value, ibs_value, cbs_value, approx_tax_value
       ),
 
-     -- ------------------------------------------------------------------
--- 3. Fonte de dados dos itens (valores BRUTOS/próprios do item, ainda sem
---    ratear nada do pedido — net_total_raw só serve pra calcular o peso).
--- ------------------------------------------------------------------
-item_source_raw AS (
-  SELECT
-    io.id                                                 AS order_snapshot_id,
-    oi.order_id,
-    oi.id                                                 AS order_item_id,
-    COALESCE(oi.product_id, p.id)                         AS product_id,
-    io.store_id,
-    io.unit_business_id,
-    io.integration_id,
-    io.order_date,
-    io.destination_uf,
-    COALESCE(pc.sku, oi.sku)                              AS sku,
-    oi.name                                               AS description,
-    oi.unit,
-    COALESCE(oi.quantity, 0)::numeric                     AS quantity,
-    COALESCE(oi.unit_price, oi.price, 0)::numeric         AS unit_price,
-    COALESCE(
-      oi.gross_total,
-      COALESCE(oi.unit_price, oi.price, 0)::numeric
-        * COALESCE(oi.quantity, 0)::numeric
-    )                                                     AS gross_total,
-    COALESCE(oi.discount_value, 0)                        AS discount_value,
-    -- net_total_raw: valor bruto do item (Bling), sem descontar taxa de
-    -- marketplace/frete e sem ratear ICMS/IPI/etc. do pedido. É usado
-    -- SÓ pra calcular o peso do item dentro do pedido (item_weight),
-    -- igual ao seller_sales_report.
-    -- net_total_raw: valor bruto do item (sem descontar desconto do item).
-    -- Antes subtraíamos discount_value aqui; para cálculo de byproducts
-    -- e rateio queremos o preço bruto: quantidade * valor unitário.
-    COALESCE(
-      oi.net_total,
-      COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))
-    )                                                     AS net_total_raw,
-    COALESCE(oi.average_cost_snapshot, 0)::numeric         AS average_cost_snapshot,
-    oi.total_cost_snapshot::numeric                        AS total_cost_snapshot_raw,
-    CASE
-      WHEN oi.average_cost_snapshot IS NOT NULL THEN 'ORDER_ITEM_SNAPSHOT'
-      ELSE 'UNKNOWN'
-    END                                                     AS cost_source,
-    COALESCE(oi.commission_base, 0)                       AS commission_base,
-    COALESCE(oi.commission_rate, 0)                       AS commission_rate,
-    COALESCE(oi.commission_value, 0)                      AS commission_value,
-    pc.ncm                                                AS ncm,
-    pc.cest                                               AS cest,
-    NULL::varchar                                         AS cfop,
-    COALESCE(pc.gtin, p.ean)                              AS gtin,
-    -- valores do PEDIDO (mesmos para todos os itens do mesmo pedido),
-    -- carregados aqui só pra servir de base do rateio na próxima CTE.
-    io.total_order                                        AS order_total_price,
-    io.icms_value                                         AS order_icms_value,
-    io.ipi_value                                          AS order_ipi_value,
-    io.pis_value                                          AS order_pis_value,
-    io.cofins_value                                       AS order_cofins_value,
-    io.difal_value                                        AS order_difal_value,
-    io.ibs_value                                          AS order_ibs_value,
-    io.cbs_value                                          AS order_cbs_value,
-    io.approx_tax_value                                   AS order_approx_tax_value,
-    oi.source_payload
-  FROM order_items oi
-  JOIN inserted_orders io ON io.order_id = oi.order_id
+      item_with_order AS (
+        SELECT
+          isr.*,
+          io.id                     AS order_snapshot_id,
+          io.total_order            AS order_total_price,
+          io.icms_value             AS order_icms_value,
+          io.ipi_value              AS order_ipi_value,
+          io.pis_value              AS order_pis_value,
+          io.cofins_value           AS order_cofins_value,
+          io.difal_value            AS order_difal_value,
+          io.ibs_value              AS order_ibs_value,
+          io.cbs_value              AS order_cbs_value,
+          io.approx_tax_value       AS order_approx_tax_value
+        FROM item_source_raw isr
+        JOIN inserted_orders io ON io.order_id = isr.order_id
+      ),
 
-  -- tenta resolver pelo sku quando não há product_id no item
-  LEFT JOIN product_configs pc_by_sku ON (
-    oi.product_id IS NULL
-    AND pc_by_sku.sku = oi.sku
-    AND pc_by_sku.unit_business_id = io.unit_business_id
-  )
+      item_weighted AS (
+        SELECT
+          *,
+          CASE
+            WHEN SUM(net_total_raw) OVER (PARTITION BY order_id) = 0 THEN 0
+            ELSE net_total_raw / SUM(net_total_raw) OVER (PARTITION BY order_id)
+          END AS item_weight
+        FROM item_with_order
+      ),
 
-  -- produto resolvido por id direto ou via pc_by_sku
-  LEFT JOIN products p ON (
-    p.id = oi.product_id
-    OR p.id = pc_by_sku.product_id
-  )
-
-  -- product_config definitivo para custo, preço, ncm, gtin etc.
-  LEFT JOIN product_configs pc ON (
-    pc.product_id = COALESCE(oi.product_id, p.id)
-    AND pc.unit_business_id = io.unit_business_id
-  )
-
-  LEFT JOIN LATERAL (
-    SELECT s.total_price, s.quantity
-    FROM stocks s
-    WHERE s.product_id = COALESCE(oi.product_id, p.id)
-      AND s.quantity > 0
-    ORDER BY
-      CASE WHEN s.unit_business_id = io.unit_business_id THEN 0 ELSE 1 END,
-      s.updated_at DESC
-    LIMIT 1
-  ) st ON TRUE
-),
-
--- ------------------------------------------------------------------
--- 3b. Peso do item dentro do pedido — mesma lógica do seller_sales_report:
---     item_weight = net_total_raw do item / SUM(net_total_raw) do pedido.
---     A soma dos pesos de todos os itens de um pedido é sempre 1.
--- ------------------------------------------------------------------
-item_weighted AS (
+      item_calc AS (
   SELECT
     *,
-    CASE
-      WHEN SUM(net_total_raw) OVER (PARTITION BY order_id) = 0 THEN 0
-      ELSE net_total_raw / SUM(net_total_raw) OVER (PARTITION BY order_id)
-    END AS item_weight
-  FROM item_source_raw
-),
-
--- ------------------------------------------------------------------
--- 3c. Rateio: tudo que só existe no nível do pedido (receita líquida real,
---     ICMS, IPI, PIS, COFINS, DIFAL, IBS, CBS, imposto aproximado) é
---     distribuído entre os itens proporcionalmente ao item_weight. Como os
---     pesos somam 1 por pedido, somando os itens de volta bate exatamente
---     com o valor do pedido. Comissão NÃO é rateada — ela já vem por item
---     (commission_value calculado a partir de commission_base/rate do
---     próprio item), então entra direto no custo sem passar pelo rateio.
--- ------------------------------------------------------------------
-item_calc AS (
-  SELECT
-    *,
-    ROUND(item_weight * order_total_price, 2)         AS net_total_allocated,
-    ROUND(item_weight * order_icms_value, 2)           AS icms_value_allocated,
-    ROUND(item_weight * order_ipi_value, 2)            AS ipi_value_allocated,
-    ROUND(item_weight * order_pis_value, 2)            AS pis_value_allocated,
-    ROUND(item_weight * order_cofins_value, 2)         AS cofins_value_allocated,
-    ROUND(item_weight * order_difal_value, 2)          AS difal_value_allocated,
-    ROUND(item_weight * order_ibs_value, 2)            AS ibs_value_allocated,
-    ROUND(item_weight * order_cbs_value, 2)            AS cbs_value_allocated,
-    ROUND(item_weight * order_approx_tax_value, 2)     AS approx_tax_value_allocated
+    ROUND((item_weight * order_total_price)::numeric, 2)         AS net_total_allocated,
+    ROUND((item_weight * order_icms_value)::numeric, 2)          AS icms_value_allocated,
+    ROUND((item_weight * order_ipi_value)::numeric, 2)           AS ipi_value_allocated,
+    ROUND((item_weight * order_pis_value)::numeric, 2)           AS pis_value_allocated,
+    ROUND((item_weight * order_cofins_value)::numeric, 2)        AS cofins_value_allocated,
+    ROUND((item_weight * order_difal_value)::numeric, 2)         AS difal_value_allocated,
+    ROUND((item_weight * order_ibs_value)::numeric, 2)           AS ibs_value_allocated,
+    ROUND((item_weight * order_cbs_value)::numeric, 2)           AS cbs_value_allocated,
+    ROUND((item_weight * order_approx_tax_value)::numeric, 2)    AS approx_tax_value_allocated
   FROM item_weighted
 ),
 
-      -- ------------------------------------------------------------------
-      -- 4. Upsert dos snapshots de item
-      --    RETURNING expande os campos necessários para item_totals.
-      --    total_cost_snapshot soma custo médio + ICMS rateado + comissão
-      --    de seller (commission_value), pra fechar com o custo total real
-      --    da venda — mas a comissão só é somada quando o custo vem do
-      --    fallback (average_cost_snapshot * quantity). Quando existe
-      --    total_cost_snapshot_raw (oi.total_cost_snapshot, populado por
-      --    fora, inclusive pelo backfill manual de custo histórico), ele é
-      --    usado como está, sem somar comissão de novo por cima.
-      -- ------------------------------------------------------------------
       inserted_items AS (
         INSERT INTO sales_order_item_snapshots (
           order_snapshot_id, order_id, order_item_id, product_id,
@@ -800,23 +792,18 @@ item_calc AS (
           source_payload, last_updated_at, created_at, updated_at
         )
         SELECT
-          order_snapshot_id, order_id, order_item_id, product_id,
+          order_snapshot_id, order_id, order_item_id, NULL,
           store_id, unit_business_id, integration_id, order_date, destination_uf,
           sku, description, unit, quantity, unit_price, gross_total, discount_value,
-          -- net_total gravado é o valor ALOCADO (rateado do pedido), não o bruto.
           net_total_allocated,
           average_cost_snapshot,
-          -- IMPORTANTE: a comissão só é somada no fallback (average_cost * quantity).
-          -- Quando total_cost_snapshot_raw (oi.total_cost_snapshot, vindo de fora —
-          -- inclusive do backfill manual de custo histórico) já existe, ele é usado
-          -- como base SEM somar commission_value de novo, porque esse raw pode já
-          -- vir com a comissão embutida. Somar sempre e incondicionalmente causava
-          -- comissão contada em dobro no custo sempre que o raw estava populado.
-          COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value) + icms_value_allocated,
+          ROUND((average_cost_snapshot * quantity)::numeric, 2)
+            + commission_value
+            + icms_value_allocated,
           cost_source,
           ${calculateMarkupSql("net_total_allocated", itemTotalCostSql).percent},
           commission_base, commission_rate, commission_value,
-          ncm, cest, cfop, gtin,
+          ncm, cest, NULL, gtin,
           approx_tax_value_allocated,
           0::numeric AS icms_rate,
           icms_value_allocated,
@@ -830,7 +817,6 @@ item_calc AS (
         FROM item_calc
         ON CONFLICT (order_item_id) DO UPDATE SET
           order_snapshot_id     = EXCLUDED.order_snapshot_id,
-          product_id            = EXCLUDED.product_id,
           store_id              = EXCLUDED.store_id,
           unit_business_id      = EXCLUDED.unit_business_id,
           integration_id        = EXCLUDED.integration_id,
@@ -853,7 +839,6 @@ item_calc AS (
           commission_value      = EXCLUDED.commission_value,
           ncm                   = EXCLUDED.ncm,
           cest                  = EXCLUDED.cest,
-          cfop                  = EXCLUDED.cfop,
           gtin                  = EXCLUDED.gtin,
           approx_tax_value      = EXCLUDED.approx_tax_value,
           icms_rate             = EXCLUDED.icms_rate,
@@ -868,60 +853,35 @@ item_calc AS (
           last_updated_at       = NOW(),
           updated_at            = NOW()
         RETURNING
-          order_snapshot_id,
-          quantity,
-          total_cost_snapshot,
-          cost_source,
-          commission_value
+          order_snapshot_id, quantity, total_cost_snapshot, cost_source, commission_value
       ),
 
-      -- ------------------------------------------------------------------
-      -- 5. Agrega totais dos itens via inserted_items (RETURNING)
-      --    total_commission soma a comissão de todos os itens do pedido,
-      --    pra exibir separada dos totais (total_cost já inclui a
-      --    comissão embutida via total_cost_snapshot).
-      -- ------------------------------------------------------------------
       item_totals AS (
         SELECT
           ii.order_snapshot_id,
-          SUM(ii.quantity)                                          AS items_quantity,
-          SUM(ii.total_cost_snapshot)                               AS total_cost,
-          SUM(ii.commission_value)                                  AS total_commission,
-          BOOL_OR(ii.cost_source IS DISTINCT FROM 'STOCK_AVERAGE') AS has_cost_fallback
+          SUM(ii.quantity)                          AS items_quantity,
+          SUM(ii.total_cost_snapshot)               AS total_cost,
+          SUM(ii.commission_value)                  AS total_commission,
+          BOOL_OR(ii.cost_source = 'MISSING_COST')  AS has_cost_fallback
         FROM inserted_items ii
         GROUP BY ii.order_snapshot_id
       )
 
-      -- ------------------------------------------------------------------
-      -- 6. Atualiza campos derivados no snapshot do pedido
-      --
-      -- contribution_value/contribution_pct: receita - custo total, mesma
-      -- definição usada no seller_sales_report. Frete e taxas continuam
-      -- disponíveis separadamente em total_freight/total_taxes/total_fees.
-      -- total_commission é só exibição — já está embutida em total_cost.
-      -- ------------------------------------------------------------------
       UPDATE sales_order_snapshots sos
       SET
         items_quantity    = COALESCE(it.items_quantity, 0),
         total_cost        = COALESCE(it.total_cost, 0),
         total_commission  = COALESCE(it.total_commission, 0),
-
         total_taxes       = ${calculateTotalTaxesSql("sos")},
-
         total_fees        = ${calculateTotalFeesSql("sos")},
-
         contribution_value =
           ${calculateContributionSql(snapshotRevenueSql, snapshotCostSql)},
-
         contribution_pct  =
           ${calculateContributionPercentageSql(snapshotRevenueSql, snapshotCostSql)},
-
         markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
-
         has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
         last_updated_at   = NOW(),
         updated_at        = NOW()
-
       FROM item_totals it
       WHERE sos.id = it.order_snapshot_id
       `,
