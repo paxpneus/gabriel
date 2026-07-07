@@ -510,12 +510,8 @@ export class SalesReportRepository {
               WHERE cost_check.order_id = o.id
                 AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
             ) THEN 'ignored_missing_cost'
-            WHEN NULLIF(o.internal_status::text, '') IS NOT NULL THEN
-              CASE WHEN o.internal_status::text IN ('CANCELLED', 'UNKNOWN')
-                THEN 'cancelled' ELSE 'completed' END
-            ELSE
-              CASE WHEN o.actual_situation IN ('6', '9', '748748', '748743')
-                THEN 'completed' ELSE 'cancelled' END
+            WHEN o.actual_situation IN ('6', '9') THEN 'completed'
+            ELSE 'cancelled'
           END                                                   AS snapshot_status,
           COALESCE(o.total_products, 0)                         AS total_products,
           COALESCE(o.total_price, 0)                            AS total_order,
