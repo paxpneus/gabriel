@@ -149,13 +149,16 @@ const calculateAverageValueSql = (
 const calculateContributionSql = (
   revenue: SqlExpression,
   cost: SqlExpression,
-): SqlExpression => calculateProfitSql(revenue, cost);
+  fees: SqlExpression,
+): SqlExpression =>
+  `${coalesceNumberSql(revenue)} - ${coalesceNumberSql(cost)} - ${coalesceNumberSql(fees)}`;
 
 const calculateContributionPercentageSql = (
   revenue: SqlExpression,
   cost: SqlExpression,
+  fees: SqlExpression,
 ): SqlExpression =>
-  calculatePercentageSql(calculateContributionSql(revenue, cost), revenue);
+  calculatePercentageSql(calculateContributionSql(revenue, cost, fees), revenue);
 
 const calculateMarginSql = (
   revenue: SqlExpression,
@@ -875,9 +878,9 @@ END                                                      AS commission_rate,
         total_taxes       = ${calculateTotalTaxesSql("sos")},
         total_fees        = ${calculateTotalFeesSql("sos")},
         contribution_value =
-          ${calculateContributionSql(snapshotRevenueSql, snapshotCostSql)},
+          ${calculateContributionSql(snapshotRevenueSql, snapshotCostSql, "sos.tax_commission + sos.marketplace_fee + sos.payment_fee")},
         contribution_pct  =
-          ${calculateContributionPercentageSql(snapshotRevenueSql, snapshotCostSql)},
+          ${calculateContributionPercentageSql(snapshotRevenueSql, snapshotCostSql, "sos.tax_commission + sos.marketplace_fee + sos.payment_fee")},
         markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
         has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
         last_updated_at   = NOW(),
@@ -1517,10 +1520,10 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
       total_fees        = ${calculateTotalFeesSql("sos")},
 
       contribution_value =
-        ${calculateContributionSql(snapshotRevenueSql, snapshotCostSql)},
+        ${calculateContributionSql(snapshotRevenueSql, snapshotCostSql, "sos.tax_commission + sos.marketplace_fee + sos.payment_fee")},
 
       contribution_pct  =
-        ${calculateContributionPercentageSql(snapshotRevenueSql, snapshotCostSql)},
+        ${calculateContributionPercentageSql(snapshotRevenueSql, snapshotCostSql, "sos.tax_commission + sos.marketplace_fee + sos.payment_fee")},
 
       markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
 
