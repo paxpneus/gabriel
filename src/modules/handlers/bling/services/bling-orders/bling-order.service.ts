@@ -150,6 +150,7 @@ export class BlingOrderService {
   ): Promise<{
     product: ProductAttributes & { brandRegister?: Brand };
     averageCost: number | null;
+    resolvedSku: string;
   }> {
     if (!externalProductId && !sku) {
       throw new Error(
@@ -221,24 +222,31 @@ export class BlingOrderService {
 
     let averageCost: number | null = Number(config.average_cost ?? 0);
 
-    if (config.product.type === "KIT") {
+    if (config.product.type === "KIT" && config.sku) {
       averageCost = null;
 
-      if (sku) {
-        const unitSku = sku.replace(KIT_SKU_REGEX, "");
-        const unitConfig = await ProductConfig.findOne({
-          where: { sku: unitSku, unit_business_id: costUnitBusinessId },
-        });
+      const unitSku = config.sku.replace(KIT_SKU_REGEX, "");
+      const unitConfig = await ProductConfig.findOne({
+        where: { sku: unitSku, unit_business_id: costUnitBusinessId },
+        include: [
+          {
+            model: Product,
+            as: "product",
+            attributes: ["id", "type"],
+            where: { type: "UNIT" },
+            required: true,
+          },
+        ],
+      });
 
-        if (unitConfig) {
-          averageCost = Number(unitConfig.average_cost ?? 0);
-        }
+      if (unitConfig) {
+        averageCost = Number(unitConfig.average_cost ?? 0);
       }
     }
-
     return {
       product: config.product as ProductAttributes & { brandRegister?: Brand },
       averageCost,
+      resolvedSku: config.sku!,
     };
   }
 
@@ -452,11 +460,8 @@ export class BlingOrderService {
           : undefined;
         const sku = i.codigo ? String(i.codigo) : undefined;
 
-        const { product, averageCost } = await this.resolveProductWithConfig(
-          externalProductId,
-          sku,
-          itemName,
-        );
+        const { product, averageCost, resolvedSku } =
+          await this.resolveProductWithConfig(externalProductId, sku, itemName);
 
         // valor total da linha = unitário x quantidade
         const grossTotalLine = itemValue * quantity;
@@ -465,7 +470,7 @@ export class BlingOrderService {
         const financialFields = this.buildItemFinancialFields(
           product,
           averageCost,
-          sku,
+          resolvedSku,
           quantity,
           grossTotalLine,
           hasSellerCommission,
@@ -473,7 +478,7 @@ export class BlingOrderService {
 
         return {
           name: i.descricao,
-          sku: sku ?? "",
+          sku: resolvedSku ?? "",
           unit: i.unidade,
           quantity,
           price: itemValue,
