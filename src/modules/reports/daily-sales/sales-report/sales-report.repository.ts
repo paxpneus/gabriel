@@ -1233,7 +1233,11 @@ item_calc AS (
             COALESCE(SUM(quantity),           0) AS quantity,
             COALESCE(SUM(total_cost_snapshot),0) AS total_cost,
             COALESCE(SUM(commission_value),   0) AS total_commission,
-            COALESCE(SUM(net_total),          0) AS total_value
+            -- gross_total = quantidade * oi.unit_price, sem rateio do pedido e
+            -- sem desconto. Comparável ao Bling; evita markup negativo
+            -- artificial quando net_total_allocated (rateio) fica menor que
+            -- o custo real do item.
+            COALESCE(SUM(gross_total),        0) AS total_value
           FROM sales_order_item_snapshots sois
           JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
   WHERE sois.order_date       = CAST(:factDate AS date)
