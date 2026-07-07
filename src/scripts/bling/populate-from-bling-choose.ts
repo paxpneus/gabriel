@@ -383,7 +383,7 @@ async function migrateOrders() {
 
   let totalCount = 0;
 
-  for (const { dataInicial, dataFinal } of months) {
+  for (const { dataInicial, dataFinal } of months.reverse()) {
     console.log(`\n  📅 Período: ${dataInicial} → ${dataFinal}`);
     let count = 0;
 

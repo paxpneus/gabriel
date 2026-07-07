@@ -55,6 +55,7 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
       roleId,
       email,
       password,
+      type
     }: {
       sellerName: string;
       sellerCpf: string;
@@ -62,6 +63,7 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
       roleId: string;
       email: string;
       password: string;
+      type: string;
     },
     t: Transaction
   ): Promise<{ url: string; user: User }> {
@@ -79,6 +81,7 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
         unit_business_id: unitBusinessId,
         user_unit_business: [unitBusinessId],
         role_id: roleId,
+        type
       });
     }
 
@@ -143,6 +146,7 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
           roleId: role.id,
           email,
           password,
+          type: 'seller'
         },
         t
       );
