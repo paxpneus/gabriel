@@ -44,6 +44,15 @@ export interface SalesReportOrderInput {
   id: string;
   total_price: number;
   total_order?: number | null;
+  // Receita bruta do pedido. TODAS as contas de markup/receita usam este
+  // campo, sem descontar tax_commission, freight_cost ou ICMS.
+  total_products: number;
+  discount_value?: number | null;
+  destination_uf?: string | null;
+  // Alíquota de ICMS do estado de destino, em decimal (ex: 0.148 = 14.8%).
+  // Deve ser resolvida pelo chamador via tabela states (acronym = destination_uf)
+  // antes de montar este input.
+  icms_rate?: number | null;
   tax_commission?: number | null;
   marketplace_fee?: number | null;
   payment_fee?: number | null;
@@ -76,8 +85,13 @@ export interface SalesReportOrderFinancialMetrics {
   markup: number;
   markupPct: number;
   totalCommission: number;
+  // totalTaxes/totalFees/totalFreight abaixo são valores extraídos deste
+  // pedido especificamente para efeito de CONTRIBUTION (icms calculado,
+  // tax_commission e freight_cost). Servem apenas para acumular nos totais
+  // do summary — não retroalimentam o cálculo de nenhum outro pedido.
   totalTaxes: number;
   totalFees: number;
+  totalFreight: number;
   itemsQuantity: number;
   items: SalesReportItemFinancialMetrics[];
 }
@@ -91,6 +105,7 @@ export interface SalesReportAggregateFinancialMetrics {
   total_commission: number;
   total_taxes: number;
   total_fees: number;
+  total_freight: number;
   contribution_value: number;
   contribution_pct: number;
   markup: number;
@@ -146,29 +161,6 @@ const calculateAverageValueSql = (
   quantity: SqlExpression,
 ): SqlExpression => calculateSafeDivisionSql(totalValue, quantity, 2);
 
-const calculateContributionSql = (
-  revenue: SqlExpression,
-  cost: SqlExpression,
-): SqlExpression => calculateProfitSql(revenue, cost);
-
-const calculateContributionPercentageSql = (
-  revenue: SqlExpression,
-  cost: SqlExpression,
-): SqlExpression =>
-  calculatePercentageSql(calculateContributionSql(revenue, cost), revenue);
-
-const calculateMarginSql = (
-  revenue: SqlExpression,
-  cost: SqlExpression,
-): DecimalAndPercentSql => {
-  const profit = calculateProfitSql(revenue, cost);
-
-  return {
-    decimal: calculateSafeDivisionSql(profit, revenue, 4),
-    percent: calculatePercentageSql(profit, revenue),
-  };
-};
-
 const calculateMarkupSql = (
   revenue: SqlExpression,
   cost: SqlExpression,
@@ -177,20 +169,48 @@ const calculateMarkupSql = (
 
   return {
     // Markup representa o quanto o lucro acrescenta sobre o custo.
+    // revenue = SEMPRE valor bruto (total_products / gross_total), sem
+    // descontar tax_commission, freight_cost ou ICMS.
+    // cost    = SEMPRE soma bruta de total_cost_snapshot, sem ICMS somado.
     decimal: calculateSafeDivisionSql(profit, cost, 4),
     percent: calculatePercentageSql(profit, cost),
   };
 };
 
-const calculateTotalTaxesSql = (alias: string): SqlExpression => `
-  ${coalesceNumberSql(`${alias}.icms_value`)}
-+ ${coalesceNumberSql(`${alias}.ipi_value`)}
-+ ${coalesceNumberSql(`${alias}.pis_value`)}
-+ ${coalesceNumberSql(`${alias}.cofins_value`)}
-+ ${coalesceNumberSql(`${alias}.difal_value`)}
-+ ${coalesceNumberSql(`${alias}.ibs_value`)}
-+ ${coalesceNumberSql(`${alias}.cbs_value`)}
-+ ${coalesceNumberSql(`${alias}.approx_tax_value`)}`;
+/**
+ * Contribution (lucro real do pedido) — ÚNICO lugar do relatório onde
+ * tax_commission, freight_cost e o ICMS calculado via alíquota do estado de
+ * destino entram na conta. Fórmula (por pedido):
+ *
+ *   temp_icms    = (total_products - discount_value) * state.icms_rate
+ *   contribution = total_products - tax_commission - freight_cost
+ *                  - temp_icms - SUM(order_item.total_cost_snapshot)
+ *
+ * temp_icms é calculado e persistido em sales_order_snapshots.computed_icms_value
+ * (ver order_source/inserted_orders em upsertSnapshots). A partir daí, tanto
+ * upsertSnapshots quanto updateSnapshotTotals só leem essa coluna já pronta.
+ */
+const calculateOrderContributionValueSql = (
+  snapshotAlias: string,
+  costExpression: SqlExpression,
+): SqlExpression => `
+  ${coalesceNumberSql(`${snapshotAlias}.total_products`)}
+- ${coalesceNumberSql(`${snapshotAlias}.tax_commission`)}
+- ${coalesceNumberSql(`${snapshotAlias}.freight_cost`)}
+- ${coalesceNumberSql(`${snapshotAlias}.computed_icms_value`)}
+- ${coalesceNumberSql(costExpression)}`;
+
+const calculateOrderContributionPctSql = (
+  snapshotAlias: string,
+  costExpression: SqlExpression,
+): SqlExpression =>
+  calculatePercentageSql(
+    calculateOrderContributionValueSql(snapshotAlias, costExpression),
+    `${snapshotAlias}.total_products`,
+  );
+
+const calculateTotalTaxesSql = (alias: string): SqlExpression =>
+  coalesceNumberSql(`${alias}.computed_icms_value`);
 
 const calculateTotalFeesSql = (alias: string): SqlExpression => `
   ${coalesceNumberSql(`${alias}.tax_commission`)}
@@ -227,7 +247,10 @@ export const calculateSalesReportOrderFinancials = (
     return null;
   }
 
-  const revenue = toNumber(order.total_price);
+  // Receita bruta: SEMPRE total_products. Não descontamos tax_commission,
+  // freight_cost nem ICMS aqui — essa é a base pra markup, receita de loja e
+  // receita de produto.
+  const revenue = toNumber(order.total_products);
 
   const items = order.items.map((item) => {
     const quantity = toNumber(item.quantity);
@@ -237,6 +260,9 @@ export const calculateSalesReportOrderFinancials = (
       item.commission_value != null
         ? toNumber(item.commission_value)
         : toNumber(item.commission_base) * toNumber(item.commission_rate);
+    // Custo do item: SEMPRE total_cost_snapshot quando existir (valor bruto
+    // já gravado no snapshot). Sem somar ICMS aqui — ICMS não compõe custo,
+    // só entra na conta de contribution lá embaixo.
     const orderItemTotalCost =
       item.total_cost_snapshot != null
         ? toNumber(item.total_cost_snapshot)
@@ -255,32 +281,46 @@ export const calculateSalesReportOrderFinancials = (
     };
   });
 
-  const productsCost = items.reduce(
+  // Custo total = soma bruta do total_cost_snapshot de todos os itens.
+  const totalCost = items.reduce(
     (sum, item) => sum + item.orderItemTotalCost,
     0,
   );
-  const totalTaxes = toNumber(order.icms_value);
-  const totalCost =
-    order.total_cost != null
-      ? toNumber(order.total_cost)
-      : productsCost + totalTaxes;
+
+  // "Lucro" de markup: puramente receita bruta - custo bruto, sem descontar
+  // comissão/frete/ICMS. É o que mede quanto se joga acima do custo.
   const profit = revenue - totalCost;
+
+  // ------------------------------------------------------------------
+  // Contribution: único cálculo que usa tax_commission, freight_cost e o
+  // ICMS calculado via alíquota do estado de destino.
+  // ------------------------------------------------------------------
+  const discountValue = toNumber(order.discount_value);
+  const icmsRate = toNumber(order.icms_rate);
+  const taxCommission = toNumber(order.tax_commission);
+  const freightCost = toNumber(order.freight_cost);
+
+  const tempIcms = (revenue - discountValue) * icmsRate;
+
+  const contributionValue =
+    revenue - taxCommission - freightCost - tempIcms - totalCost;
 
   return {
     orderId: order.id,
     revenue,
     totalCost,
     profit,
-    contributionValue: profit,
-    contributionPct: divide(profit, revenue),
+    contributionValue,
+    contributionPct: divide(contributionValue, revenue),
     markup: divide(profit, totalCost),
     markupPct: divide(profit, totalCost) * 100,
     totalCommission: items.reduce((sum, item) => sum + item.commission, 0),
-    totalTaxes,
-    totalFees:
-      toNumber(order.tax_commission) +
-      toNumber(order.marketplace_fee) +
-      toNumber(order.payment_fee),
+    // Acumuladores "apenas guardando": extraídos deste pedido durante o
+    // cálculo de contribution, somados no summary — não influenciam de
+    // volta o cálculo de nenhum outro pedido.
+    totalTaxes: tempIcms,
+    totalFees: taxCommission,
+    totalFreight: freightCost,
     itemsQuantity: items.reduce((sum, item) => sum + item.quantity, 0),
     items,
   };
@@ -296,6 +336,10 @@ export const calculateSalesReportAggregateFinancials = (
   const totalValue = validOrders.reduce((sum, order) => sum + order.revenue, 0);
   const totalCost = validOrders.reduce((sum, order) => sum + order.totalCost, 0);
   const totalProfit = validOrders.reduce((sum, order) => sum + order.profit, 0);
+  const totalContribution = validOrders.reduce(
+    (sum, order) => sum + order.contributionValue,
+    0,
+  );
 
   return {
     orders_count: validOrders.length,
@@ -312,8 +356,12 @@ export const calculateSalesReportAggregateFinancials = (
     ),
     total_taxes: validOrders.reduce((sum, order) => sum + order.totalTaxes, 0),
     total_fees: validOrders.reduce((sum, order) => sum + order.totalFees, 0),
-    contribution_value: totalProfit,
-    contribution_pct: divide(totalProfit, totalValue),
+    total_freight: validOrders.reduce(
+      (sum, order) => sum + order.totalFreight,
+      0,
+    ),
+    contribution_value: totalContribution,
+    contribution_pct: divide(totalContribution, totalValue),
     markup: divide(totalProfit, totalCost),
     markup_pct: divide(totalProfit, totalCost) * 100,
     average_ticket: divide(totalValue, validOrders.length),
@@ -447,38 +495,47 @@ export class SalesReportRepository {
   }
 
   /**
-   * NOTA SOBRE contribution_value/contribution_pct (revisão):
-   * Antes, contribution_value descontava, além do custo, frete pago pela
-   * empresa (freight_paid_by_company) e taxas de comissão/marketplace/
-   * pagamento. Isso fazia sales_report e seller_sales_report reportarem
-   * contribuição com definições diferentes pro mesmo conceito de venda,
-   * mesmo os dois lendo essencialmente a mesma base de pedidos (a diferença
-   * de ESCOPO entre os dois — sales_report traz tudo, seller_sales_report
-   * exclui pedidos do contato "Vendedor 0" — é intencional e continua
-   * existindo; o que não devia divergir era a FÓRMULA).
+   * NOTA SOBRE contribution_value/contribution_pct (revisão 2):
    *
-   * Regra do OrderService: a receita do relatório é sempre orders.total_price.
-   * Esse valor já vem líquido de frete de custo e comissão marketplace quando
-   * aplicável, então o relatório não recalcula essa liquidação nem usa
-   * orders.total_order como receita.
+   * Regra de receita/custo bruto: markup, receita de loja/produto/estado e
+   * qualquer conta que dependa do "preço" do pedido usam SEMPRE
+   * orders.total_products, sem descontar tax_commission, freight_cost ou
+   * ICMS. Custo total é SEMPRE a soma bruta de order_items.total_cost_snapshot
+   * — nada mais é somado a ele (nem ICMS, nem comissão de novo).
    *
-   * NOTA SOBRE comissão de seller (nova):
-   * A comissão do vendedor (commission_value, calculada por item a partir
-   * de commission_base/commission_rate) agora soma DENTRO do custo total
-   * do item (total_cost_snapshot), junto com o custo médio do produto e o
-   * ICMS rateado. Isso faz total_cost (e, por consequência,
-   * contribution_value/markup_pct) já refletirem a comissão paga.
-   * Além disso, o valor de comissão é somado à parte em total_commission
-   * (por pedido, por dia/unidade, por loja e por produto) para exibição
-   * separada nos totais do relatório — sem isso não dá pra ver quanto foi
-   * pago em comissão sem re-somar item a item.
+   * contribution_value/contribution_pct são o ÚNICO lugar do relatório onde
+   * tax_commission, freight_cost e um ICMS calculado (não o de nota fiscal)
+   * entram na conta, por pedido:
+   *
+   *   temp_icms    = (total_products - discount_value) * state.icms_rate
+   *   contribution = total_products - tax_commission - freight_cost
+   *                  - temp_icms - SUM(order_items.total_cost_snapshot)
+   *
+   * temp_icms é calculado em order_source (join com a tabela states por
+   * acronym = destination_uf) e persistido em
+   * sales_order_snapshots.computed_icms_value — separado do icms_value de
+   * nota fiscal, que continua existindo e sendo apenas armazenado.
+   *
+   * total_taxes/total_fees continuam sendo somados e armazenados no
+   * snapshot/facts para exibição (não retroalimentam markup/receita/custo).
+   *
+   * NOTA SOBRE comissão de seller:
+   * A comissão do vendedor (commission_value) soma dentro do custo do item
+   * (total_cost_snapshot) apenas no fallback (quando não veio um
+   * total_cost_snapshot já pronto de fora). Além disso é somada à parte em
+   * total_commission (por pedido, por dia/unidade, por loja e por produto)
+   * pra exibição separada.
    */
   async upsertSnapshots(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
 
+    // Custo do item: SEMPRE bruto (average_cost_snapshot * quantity + comissão
+    // no fallback, ou o total_cost_snapshot já pronto vindo de fora). NUNCA
+    // soma ICMS aqui — ICMS não é custo, só entra em contribution.
     const itemTotalCostSql =
-      "COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value) + icms_value_allocated";
-    const snapshotRevenueSql = "sos.total_order";
+      "COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value)";
+    // Receita usada em markup/facts: SEMPRE total_products (bruto).
+    const snapshotRevenueSql = "sos.total_products";
     const snapshotCostSql = "it.total_cost";
 
     await sequelize.query(
@@ -489,6 +546,11 @@ export class SalesReportRepository {
 
       -- ------------------------------------------------------------------
       -- 1. Fonte de dados do pedido
+      --    Join com states pra resolver a alíquota de ICMS do destino e
+      --    calcular computed_icms_value = (total_products - discount_value)
+      --    * icms_rate. Esse valor é o único usado em contribution — o
+      --    icms_value de nota fiscal (o.icms_value) continua sendo lido
+      --    e guardado à parte, sem entrar nessa conta.
       -- ------------------------------------------------------------------
       order_source AS (
         SELECT
@@ -535,6 +597,12 @@ export class SalesReportRepository {
   * COALESCE(ubtc.approx_tax_rate, 0), 
   2
 ) AS approx_tax_value,
+          -- ICMS calculado (NÃO o de nota fiscal): base pra contribution.
+          ROUND(
+            (COALESCE(o.total_products, 0) - COALESCE(o.discount_value, 0))
+            * COALESCE(st.icms_rate, 0),
+            2
+          )                                                     AS computed_icms_value,
           FALSE                                                 AS has_invoice_data,
           o.source_payload
           
@@ -547,6 +615,8 @@ export class SalesReportRepository {
         )
           LEFT JOIN unit_business_tax_configs ubtc 
   ON ubtc.unit_business_id = o.unit_business_id
+          LEFT JOIN states st
+  ON st.acronym = o.destination_uf
       ),
 
       -- ------------------------------------------------------------------
@@ -564,7 +634,7 @@ export class SalesReportRepository {
           freight_charged, freight_cost, freight_paid_by_company, freight_by_account,
           tax_commission, marketplace_fee, payment_fee,
           icms_value, ipi_value, pis_value, cofins_value, difal_value,
-          ibs_value, cbs_value, approx_tax_value,
+          ibs_value, cbs_value, approx_tax_value, computed_icms_value,
           has_invoice_data, source_payload,
           last_updated_at, created_at, updated_at
         )
@@ -578,7 +648,7 @@ export class SalesReportRepository {
           freight_by_account,
           tax_commission, marketplace_fee, payment_fee,
           icms_value, ipi_value, pis_value, cofins_value, difal_value,
-          ibs_value, cbs_value, approx_tax_value,
+          ibs_value, cbs_value, approx_tax_value, computed_icms_value,
           has_invoice_data, source_payload,
           NOW(), NOW(), NOW()
         FROM order_source
@@ -613,6 +683,7 @@ export class SalesReportRepository {
           ibs_value               = EXCLUDED.ibs_value,
           cbs_value               = EXCLUDED.cbs_value,
           approx_tax_value        = EXCLUDED.approx_tax_value,
+          computed_icms_value     = EXCLUDED.computed_icms_value,
           has_invoice_data        = EXCLUDED.has_invoice_data,
           source_payload          = EXCLUDED.source_payload,
           last_updated_at         = NOW(),
@@ -625,6 +696,7 @@ export class SalesReportRepository {
           integration_id,
           order_date,
           destination_uf,
+          total_products,
           total_order,
           freight_paid_by_company,
           freight_cost,
@@ -636,6 +708,7 @@ export class SalesReportRepository {
           ibs_value,
           cbs_value,
           approx_tax_value,
+          computed_icms_value,
           tax_commission,
           marketplace_fee,
           payment_fee
@@ -693,7 +766,8 @@ item_source_raw AS (
     COALESCE(pc.gtin, p.ean)                              AS gtin,
     -- valores do PEDIDO (mesmos para todos os itens do mesmo pedido),
     -- carregados aqui só pra servir de base do rateio na próxima CTE.
-    io.total_order                                        AS order_total_price,
+    -- receita bruta usada pro rateio de item: SEMPRE total_products.
+    io.total_products                                     AS order_total_products,
     io.icms_value                                         AS order_icms_value,
     io.ipi_value                                          AS order_ipi_value,
     io.pis_value                                          AS order_pis_value,
@@ -753,18 +827,18 @@ item_weighted AS (
 ),
 
 -- ------------------------------------------------------------------
--- 3c. Rateio: tudo que só existe no nível do pedido (receita líquida real,
---     ICMS, IPI, PIS, COFINS, DIFAL, IBS, CBS, imposto aproximado) é
---     distribuído entre os itens proporcionalmente ao item_weight. Como os
---     pesos somam 1 por pedido, somando os itens de volta bate exatamente
---     com o valor do pedido. Comissão NÃO é rateada — ela já vem por item
---     (commission_value calculado a partir de commission_base/rate do
---     próprio item), então entra direto no custo sem passar pelo rateio.
+-- 3c. Rateio: tudo que só existe no nível do pedido (receita bruta,
+--     ICMS/IPI/PIS/COFINS/DIFAL/IBS/CBS/imposto aproximado de nota fiscal —
+--     estes são só pra exibição, não entram em custo/contribution) é
+--     distribuído entre os itens proporcionalmente ao item_weight.
+--     A receita rateada (net_total_allocated) agora usa total_products
+--     (bruto), não mais o valor líquido do pedido. Comissão NÃO é rateada —
+--     já vem por item.
 -- ------------------------------------------------------------------
 item_calc AS (
   SELECT
     *,
-    ROUND(item_weight * order_total_price, 2)         AS net_total_allocated,
+    ROUND(item_weight * order_total_products, 2)      AS net_total_allocated,
     ROUND(item_weight * order_icms_value, 2)           AS icms_value_allocated,
     ROUND(item_weight * order_ipi_value, 2)            AS ipi_value_allocated,
     ROUND(item_weight * order_pis_value, 2)            AS pis_value_allocated,
@@ -779,13 +853,9 @@ item_calc AS (
       -- ------------------------------------------------------------------
       -- 4. Upsert dos snapshots de item
       --    RETURNING expande os campos necessários para item_totals.
-      --    total_cost_snapshot soma custo médio + ICMS rateado + comissão
-      --    de seller (commission_value), pra fechar com o custo total real
-      --    da venda — mas a comissão só é somada quando o custo vem do
-      --    fallback (average_cost_snapshot * quantity). Quando existe
-      --    total_cost_snapshot_raw (oi.total_cost_snapshot, populado por
-      --    fora, inclusive pelo backfill manual de custo histórico), ele é
-      --    usado como está, sem somar comissão de novo por cima.
+      --    total_cost_snapshot = custo médio (ou raw) + comissão de seller
+      --    no fallback. NÃO soma mais ICMS — ICMS não é custo, só entra em
+      --    contribution no nível do pedido.
       -- ------------------------------------------------------------------
       inserted_items AS (
         INSERT INTO sales_order_item_snapshots (
@@ -803,16 +873,13 @@ item_calc AS (
           order_snapshot_id, order_id, order_item_id, product_id,
           store_id, unit_business_id, integration_id, order_date, destination_uf,
           sku, description, unit, quantity, unit_price, gross_total, discount_value,
-          -- net_total gravado é o valor ALOCADO (rateado do pedido), não o bruto.
+          -- net_total gravado é o valor ALOCADO (rateado do pedido a partir
+          -- de total_products), não o líquido.
           net_total_allocated,
           average_cost_snapshot,
-          -- IMPORTANTE: a comissão só é somada no fallback (average_cost * quantity).
-          -- Quando total_cost_snapshot_raw (oi.total_cost_snapshot, vindo de fora —
-          -- inclusive do backfill manual de custo histórico) já existe, ele é usado
-          -- como base SEM somar commission_value de novo, porque esse raw pode já
-          -- vir com a comissão embutida. Somar sempre e incondicionalmente causava
-          -- comissão contada em dobro no custo sempre que o raw estava populado.
-          COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value) + icms_value_allocated,
+          -- Custo bruto do item: raw (se existir) OU average_cost*quantity +
+          -- comissão no fallback. Sem somar ICMS.
+          COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value),
           cost_source,
           ${calculateMarkupSql("net_total_allocated", itemTotalCostSql).percent},
           commission_base, commission_rate, commission_value,
@@ -877,9 +944,9 @@ item_calc AS (
 
       -- ------------------------------------------------------------------
       -- 5. Agrega totais dos itens via inserted_items (RETURNING)
-      --    total_commission soma a comissão de todos os itens do pedido,
-      --    pra exibir separada dos totais (total_cost já inclui a
-      --    comissão embutida via total_cost_snapshot).
+      --    total_cost aqui é a soma bruta de total_cost_snapshot — usada
+      --    tanto em markup_pct (com total_products) quanto no custo dentro
+      --    da fórmula de contribution.
       -- ------------------------------------------------------------------
       item_totals AS (
         SELECT
@@ -895,10 +962,11 @@ item_calc AS (
       -- ------------------------------------------------------------------
       -- 6. Atualiza campos derivados no snapshot do pedido
       --
-      -- contribution_value/contribution_pct: receita - custo total, mesma
-      -- definição usada no seller_sales_report. Frete e taxas continuam
-      -- disponíveis separadamente em total_freight/total_taxes/total_fees.
-      -- total_commission é só exibição — já está embutida em total_cost.
+      -- markup_pct: total_products (bruto) vs total_cost (bruto).
+      -- contribution_value/contribution_pct: fórmula própria (ver
+      -- calculateOrderContributionValueSql) usando tax_commission,
+      -- freight_cost, computed_icms_value e total_cost.
+      -- total_taxes/total_fees continuam só pra exibição.
       -- ------------------------------------------------------------------
       UPDATE sales_order_snapshots sos
       SET
@@ -910,11 +978,9 @@ item_calc AS (
 
         total_fees        = ${calculateTotalFeesSql("sos")},
 
-        contribution_value =
-          ${calculateContributionSql(snapshotRevenueSql, snapshotCostSql)},
+        contribution_value = ${calculateOrderContributionValueSql("sos", snapshotCostSql)},
 
-        contribution_pct  =
-          ${calculateContributionPercentageSql(snapshotRevenueSql, snapshotCostSql)},
+        contribution_pct  = ${calculateOrderContributionPctSql("sos", snapshotCostSql)},
 
         markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
 
@@ -1033,8 +1099,9 @@ item_calc AS (
             CAST(:unitBusinessId AS uuid)  AS unit_business_id,
             COUNT(*)::integer              AS orders_count,
             COALESCE(SUM(items_quantity),    0) AS items_quantity,
-            COALESCE(SUM(total_order),       0) AS total_value,
-            COALESCE(SUM(freight_charged),   0) AS total_freight,
+            -- total_value = receita bruta (total_products), não mais total_order.
+            COALESCE(SUM(total_products),    0) AS total_value,
+            COALESCE(SUM(freight_cost),   0) AS total_freight,
             COALESCE(SUM(total_cost),        0) AS total_cost,
             COALESCE(SUM(total_taxes),       0) AS total_taxes,
             COALESCE(SUM(total_fees),        0) AS total_fees,
@@ -1103,8 +1170,9 @@ item_calc AS (
             CAST(:destinationUf AS varchar)  AS destination_uf,
             COUNT(*)::integer                AS orders_count,
             COALESCE(SUM(items_quantity), 0) AS items_quantity,
-            COALESCE(SUM(total_order),    0) AS total_value,
-            COALESCE(SUM(freight_charged),0) AS total_freight
+            -- total_value = receita bruta (total_products), não mais total_order.
+            COALESCE(SUM(total_products), 0) AS total_value,
+            COALESCE(SUM(freight_cost),0) AS total_freight
           FROM sales_order_snapshots
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
@@ -1158,8 +1226,9 @@ item_calc AS (
             CAST(:storeId AS uuid)            AS store_id,
             COUNT(*)::integer                 AS orders_count,
             COALESCE(SUM(items_quantity),  0) AS items_quantity,
-            COALESCE(SUM(total_order),     0) AS total_value,
-            COALESCE(SUM(freight_charged), 0) AS total_freight,
+            -- total_value = receita bruta (total_products), não mais total_order.
+            COALESCE(SUM(total_products),  0) AS total_value,
+            COALESCE(SUM(freight_cost), 0) AS total_freight,
             COALESCE(SUM(total_cost),      0) AS total_cost,
             COALESCE(SUM(total_taxes),     0) AS total_taxes,
             COALESCE(SUM(total_fees),      0) AS total_fees,
@@ -1233,10 +1302,9 @@ item_calc AS (
             COALESCE(SUM(quantity),           0) AS quantity,
             COALESCE(SUM(total_cost_snapshot),0) AS total_cost,
             COALESCE(SUM(commission_value),   0) AS total_commission,
-            -- gross_total = quantidade * oi.unit_price, sem rateio do pedido e
-            -- sem desconto. Comparável ao Bling; evita markup negativo
-            -- artificial quando net_total_allocated (rateio) fica menor que
-            -- o custo real do item.
+            -- gross_total = quantidade * oi.unit_price, já bruto, sem rateio
+            -- do pedido e sem desconto — consistente com a regra de receita
+            -- bruta.
             COALESCE(SUM(gross_total),        0) AS total_value
           FROM sales_order_item_snapshots sois
           JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
@@ -1328,7 +1396,8 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
         sos.status_snapshot,
         COALESCE(MAX(iosm.display_name), sos.status_snapshot),
         COUNT(*)::integer,
-        COALESCE(SUM(sos.total_order), 0),
+        -- total_value = receita bruta (total_products), não mais total_order.
+        COALESCE(SUM(sos.total_products), 0),
         NOW(), NOW(), NOW()
       FROM sales_order_snapshots sos
       LEFT JOIN integration_order_status_mappings iosm ON (
@@ -1380,7 +1449,7 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
         COALESCE(SUM(items_quantity),  0) AS items_quantity,
         COALESCE(SUM(total_value),     0) AS total_value,
         COALESCE(SUM(total_freight),   0) AS total_freight,
-        -- gross_total: soma do valor líquido + frete + impostos + comissões (visão bruta)
+        -- gross_total: soma do valor bruto + frete + impostos + comissões (visão bruta)
         COALESCE(SUM(total_value), 0) + COALESCE(SUM(total_freight), 0) + COALESCE(SUM(total_taxes), 0) + COALESCE(SUM(total_commission), 0) AS gross_total,
         ${calculateAverageTicketSql("SUM(total_value)", "SUM(orders_count)")} AS average_ticket,
         ${calculateAverageTicketSql("SUM(total_freight)", "SUM(orders_count)")} AS average_freight,
@@ -1526,11 +1595,14 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
    * Este método recalcula totais derivados quando o snapshot de item já existe.
    * Ele usa os mesmos calculators SQL do upsert principal, então mudanças em
    * lucro, margem/markup, impostos ou taxas passam por um único ponto.
+   *
+   * computed_icms_value já está persistido no snapshot do pedido (calculado
+   * em upsertSnapshots via join com states) — aqui só lemos a coluna, não
+   * recalculamos a alíquota.
    */
   async updateSnapshotTotals(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
 
-    const snapshotRevenueSql = "sos.total_order";
     const snapshotCostSql = "it.total_cost";
 
     await sequelize.query(
@@ -1556,13 +1628,11 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
 
       total_fees        = ${calculateTotalFeesSql("sos")},
 
-      contribution_value =
-        ${calculateContributionSql(snapshotRevenueSql, snapshotCostSql)},
+      contribution_value = ${calculateOrderContributionValueSql("sos", snapshotCostSql)},
 
-      contribution_pct  =
-        ${calculateContributionPercentageSql(snapshotRevenueSql, snapshotCostSql)},
+      contribution_pct  = ${calculateOrderContributionPctSql("sos", snapshotCostSql)},
 
-      markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
+      markup_pct = ${calculateMarkupSql("sos.total_products", snapshotCostSql).percent},
 
       has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
       last_updated_at   = NOW(),
