@@ -64,6 +64,7 @@ class SalesOrderSnapshot
   public cbs_value?: number | string;
   public approx_tax_value?: number | string;
   public total_commission?: number | string;
+  public computed_icms_value?: number | string;
 
   public contribution_value?: number | string;
   public contribution_pct?: number | string;
@@ -142,6 +143,11 @@ SalesOrderSnapshot.init(
     last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
     total_commission: {
       type: DataTypes.DECIMAL(14, 4),
+      allowNull: true,
+    },
+    computed_icms_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      defaultValue: 0,
       allowNull: true,
     },
   },
