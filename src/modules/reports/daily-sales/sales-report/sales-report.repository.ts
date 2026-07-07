@@ -629,7 +629,7 @@ END                                                      AS commission_rate,
             ELSE 'cancelled'
           END                                                       AS snapshot_status,
           COALESCE((ob.source_payload ->> 'totalProdutos')::numeric, 0) AS total_products,
-          COALESCE((ob.source_payload ->> 'totalProdutos')::numeric, 0) AS total_order,
+          COALESCE((ob.source_payload ->> 'total')::numeric, 0) AS total_order,
           COALESCE((ob.source_payload -> 'desconto' ->> 'valor')::numeric, 0)
                                                                      AS discount_value,
           COALESCE((ob.source_payload ->> 'outrasDespesas')::numeric, 0)
