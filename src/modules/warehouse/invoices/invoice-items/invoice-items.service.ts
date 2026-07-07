@@ -71,7 +71,8 @@ export class InvoiceItemsService extends BaseService<
       // Aqui apenas registramos o item fiscal para rastreabilidade interna.
       // Impostos ficam zerados — sem XML completo neste fluxo manual;
       // serão preenchidos quando o XML for reprocessado pelo Bling.
-      const unitBusinessId = invoice.unitBusinessAttributes?.[0]?.unit_business_id;
+      const unitBusinessId =
+        invoice.unitBusinessAttributes?.[0]?.unit_business_id;
 
       const product = await Product.findByPk(invoiceItemDto.product_id, {
         include: [
@@ -79,7 +80,9 @@ export class InvoiceItemsService extends BaseService<
             model: ProductConfig,
             as: "productConfigs",
             required: false,
-            where: unitBusinessId ? { unit_business_id: unitBusinessId } : undefined,
+            where: unitBusinessId
+              ? { unit_business_id: unitBusinessId }
+              : undefined,
           },
         ],
         transaction: t,
@@ -281,6 +284,40 @@ export class InvoiceItemsService extends BaseService<
 
       if (!invoice) {
         throw new Error("Invoice não encontrada!");
+      }
+
+      const batch = await batchService.findById(
+        batchInvoice.expedition_batch_id,
+        { transaction: t },
+      );
+
+      if (!batch) {
+        throw new Error("Batch não encontrado!");
+      }
+
+      if (batch.status === "FINISHED") {
+        console.log(
+          `[SYNC_BATCH] Batch ${batch.id} já finalizado, sync ignorado.`,
+        );
+        return;
+      }
+
+      const invoiceUnitBusinessAttr = invoice.unitBusinessAttributes?.find(
+        (uba) => uba.unit_business_id === batch.unit_business_id,
+      );
+
+      if (!invoiceUnitBusinessAttr) {
+        console.log(
+          `[SYNC_BATCH] Nenhum InvoiceUnitBusinessAttributes encontrado para unit_business ${batch.unit_business_id}, sync ignorado.`,
+        );
+        return;
+      }
+
+      if (invoiceUnitBusinessAttr.status === "FINISHED") {
+        console.log(
+          `[SYNC_BATCH] Invoice ${batchInvoice.invoice_id} já finalizada para unit_business ${batch.unit_business_id}, sync ignorado.`,
+        );
+        return;
       }
 
       const invoiceItems = await this.findAll({
