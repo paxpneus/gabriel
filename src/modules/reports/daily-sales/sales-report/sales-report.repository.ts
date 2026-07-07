@@ -296,7 +296,7 @@ export const calculateSalesReportOrderFinancials = (
   // ICMS calculado via alíquota do estado de destino.
   // ------------------------------------------------------------------
   const discountValue = toNumber(order.discount_value);
-  const icmsRate = toNumber(order.icms_rate);
+  const icmsRate = toNumber(order.icms_rate) / 100;
   const taxCommission = toNumber(order.tax_commission);
   const freightCost = toNumber(order.freight_cost);
 
@@ -598,9 +598,9 @@ export class SalesReportRepository {
   2
 ) AS approx_tax_value,
           -- ICMS calculado (NÃO o de nota fiscal): base pra contribution.
-          ROUND(
+                    ROUND(
             (COALESCE(o.total_products, 0) - COALESCE(o.discount_value, 0))
-            * COALESCE(st.icms_rate, 0),
+            * (COALESCE(st.icms_rate, 0) / 100),
             2
           )                                                     AS computed_icms_value,
           FALSE                                                 AS has_invoice_data,
