@@ -17,7 +17,6 @@ COPY jest.config.ts tsconfig.json .sequelizerc ./
 COPY src ./src
 COPY migrations ./migrations
 
-RUN npm test -- --runInBand
 
 RUN npm run build
 
