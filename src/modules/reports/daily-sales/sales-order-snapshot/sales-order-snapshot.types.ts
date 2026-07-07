@@ -50,6 +50,7 @@ export interface SalesOrderSnapshotAttributes {
   cbs_value?: number | string;
   approx_tax_value?: number | string;
   total_commission?: number | string;
+  computed_icms_value?: number | string;
 
   contribution_value?: number | string;
   contribution_pct?: number | string;
