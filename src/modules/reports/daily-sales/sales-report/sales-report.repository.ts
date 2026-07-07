@@ -671,11 +671,12 @@ item_source_raw AS (
     -- marketplace/frete e sem ratear ICMS/IPI/etc. do pedido. É usado
     -- SÓ pra calcular o peso do item dentro do pedido (item_weight),
     -- igual ao seller_sales_report.
+    -- net_total_raw: valor bruto do item (sem descontar desconto do item).
+    -- Antes subtraíamos discount_value aqui; para cálculo de byproducts
+    -- e rateio queremos o preço bruto: quantidade * valor unitário.
     COALESCE(
       oi.net_total,
-      (COALESCE(oi.unit_price, oi.price, 0)::numeric
-        * COALESCE(oi.quantity, 0)::numeric)
-        - COALESCE(oi.discount_value, 0)
+      COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))
     )                                                     AS net_total_raw,
     COALESCE(oi.average_cost_snapshot, 0)::numeric         AS average_cost_snapshot,
     oi.total_cost_snapshot::numeric                        AS total_cost_snapshot_raw,
@@ -1375,6 +1376,8 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
         COALESCE(SUM(items_quantity),  0) AS items_quantity,
         COALESCE(SUM(total_value),     0) AS total_value,
         COALESCE(SUM(total_freight),   0) AS total_freight,
+        -- gross_total: soma do valor líquido + frete + impostos + comissões (visão bruta)
+        COALESCE(SUM(total_value), 0) + COALESCE(SUM(total_freight), 0) + COALESCE(SUM(total_taxes), 0) + COALESCE(SUM(total_commission), 0) AS gross_total,
         ${calculateAverageTicketSql("SUM(total_value)", "SUM(orders_count)")} AS average_ticket,
         ${calculateAverageTicketSql("SUM(total_freight)", "SUM(orders_count)")} AS average_freight,
         COALESCE(SUM(total_cost),        0) AS total_cost,
