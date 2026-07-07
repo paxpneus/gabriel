@@ -146,6 +146,7 @@ export class BlingOrderService {
   private async resolveProductWithConfig(
     externalProductId: string | undefined,
     sku: string | undefined,
+    name: string | undefined,
   ): Promise<{
     product: ProductAttributes & { brandRegister?: Brand };
     averageCost: number | null;
@@ -160,28 +161,43 @@ export class BlingOrderService {
 
     let config: ProductConfig | null = null;
 
-    // Tenta via id_system do produto primeiro
+    let product: Product | null = null;
+
+    // Tenta localizar pelo id_system primeiro
     if (externalProductId) {
-      const product = await Product.findOne({
+      product = await Product.findOne({
         where: { id_system: externalProductId },
         attributes: ["id"],
       });
+    }
 
-      if (product) {
-        config = await ProductConfig.findOne({
-          where: {
-            product_id: product.id,
-            unit_business_id: costUnitBusinessId,
+    // Se não encontrou, tenta pelo nome
+    if (!product && name) {
+      product = await Product.findOne({
+        where: { name },
+        attributes: ["id"],
+      });
+    }
+
+    if (product) {
+      config = await ProductConfig.findOne({
+        where: {
+          product_id: product.id,
+          unit_business_id: costUnitBusinessId,
+        },
+        include: [
+          {
+            model: Product,
+            as: "product",
+            include: [
+              {
+                model: Brand,
+                as: "brandRegister",
+              },
+            ],
           },
-          include: [
-            {
-              model: Product,
-              as: "product",
-              include: [{ model: Brand, as: "brandRegister", required: false }],
-            },
-          ],
-        });
-      }
+        ],
+      });
     }
 
     if (!config && sku) {
@@ -429,6 +445,7 @@ export class BlingOrderService {
       blingItems.map(async (i: any) => {
         const quantity = Number(i.quantidade ?? i.quantity ?? 0);
         const itemValue = Number(i.valor ?? 0); // valor UNITÁRIO
+        const itemName = i.descricao;
         const discountValue = Number(i.desconto ?? 0);
         const externalProductId = i.produto?.id
           ? String(i.produto.id)
@@ -438,6 +455,7 @@ export class BlingOrderService {
         const { product, averageCost } = await this.resolveProductWithConfig(
           externalProductId,
           sku,
+          itemName,
         );
 
         // valor total da linha = unitário x quantidade
