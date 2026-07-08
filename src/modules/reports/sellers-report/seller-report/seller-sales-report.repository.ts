@@ -11,96 +11,152 @@ import {
 const JOB_NAME = "seller_sales_report";
 
 /**
- * Situações de pedido consideradas "venda válida" (actual_situation):
- * 6 e 9. Quando orders.actual_situation está vazio/nulo, cai-se para o
- * status da invoice associada: qualquer status diferente de CANCELLED
- * e PENDING_CANCELLED_SYSTEM é considerado válido.
+ * =====================================================================
+ * ALINHAMENTO COM sales_report (revisão desta versão)
+ * =====================================================================
+ * Esta versão troca a lógica de cálculo financeiro deste repository para
+ * ser EXATAMENTE a mesma usada em sales_report (sales-report.repository.ts).
+ * A ÚNICA diferença de comportamento entre os dois relatórios continua
+ * sendo o filtro de vendedor: aqui só entram itens de pedidos cujo
+ * vendedor (contacts.name) é DIFERENTE de 'Vendedor 0' (marketplace).
+ * Fora isso, todas as regras abaixo são idênticas às de sales_report:
  *
- * NOTA: a coluna `invoices.status` e `invoices.seller_id` são assumidas
- * com base no padrão visto em invoices (usadas no daily_operation_report
- * e mencionadas na FK invoices_seller_id_fkey -> contacts). Validar nome
- * exato da coluna de status em invoices antes de rodar em produção.
+ * 1. Receita bruta: SEMPRE orders.total_products. Nunca orders.total_price
+ *    e nunca nada líquido de tax_commission/freight_cost/ICMS. É a base de
+ *    markup, do rateio de item (net_total_allocated) e de contribution.
  *
- * NOTA SOBRE A TABELA `seller_sales_order_item_snapshots`:
- * Existe no banco uma tabela `sales_order_item_snapshots` que pertence a
- * OUTRO relatório (snapshot fiscal/operacional por loja, com order_snapshot_id
- * obrigatório e colunas de imposto — icms, ipi, pis, cofins, ncm, cest, cfop).
- * Para não acoplar o seller_sales_report a uma estrutura de outro domínio,
- * este job usa sua PRÓPRIA tabela, `seller_sales_order_item_snapshots`
- * (ver migration). Não confundir as duas.
+ * 2. Custo do item: SEMPRE bruto — order_items.total_cost_snapshot quando
+ *    existir, senão average_cost_snapshot * quantity + commission_value
+ *    (fallback). ICMS NUNCA entra no custo do item nem no custo do pedido.
  *
- * NOTA SOBRE ICMS E "total_cost":
- * order_items não tem ICMS por linha — ICMS só existe no nível do pedido
- * (orders.icms_value), calculado sobre orders.total_price. Para o relatório
- * de vendedor (que agrega por item) fazer sentido item a item, o ICMS do
- * pedido é rateado entre os itens proporcionalmente ao peso de cada item
- * dentro do pedido (net_total_raw do item / soma de net_total_raw do pedido).
+ * 3. ICMS: não usamos mais orders.icms_value (nota fiscal) para ratear.
+ *    Usamos o MESMO cálculo de sales_report — computed_icms_value =
+ *    (total_products - discount_value) * (states.icms_rate / 100), com
+ *    a alíquota resolvida via states.acronym = orders.destination_uf.
+ *    Esse valor é calculado no nível do pedido e rateado por item pelo
+ *    mesmo item_weight usado para ratear a receita.
  *
- * Esse mesmo peso também é usado para "desfazer" o problema de que
- * order_items.net_total vem BRUTO da Bling (sem descontar taxa de
- * comissão do ML nem frete) — só orders.total_price já vem líquido desses
- * descontos. net_total_allocated = peso do item * orders.total_price, e é
- * esse valor (não o bruto) que é gravado como `net_total` na snapshot.
+ * 4. Contribution (lucro real): ÚNICO lugar onde tax_commission,
+ *    freight_cost e o ICMS computado entram na conta — exatamente como em
+ *    sales_report, só que aqui rateados por item (pois esta tabela é por
+ *    item, enquanto sales_report só calcula contribution no nível do
+ *    pedido). Por item:
  *
- * A coluna `total_cost` gravada e usada em toda a cadeia (snapshots,
- * fact tables, getReport) é `total_cost_with_icms` = custo do produto
- * (já com kit/comissão, vindo de order_items.total_cost_snapshot) + ICMS
- * rateado do pedido. Isso garante que, somando os itens de um pedido,
- * total_cost bate com orders.total_cost, e que markup/contribution
- * (calculados a partir desse total_cost) sejam consistentes com o valor
- * de custo exibido ao lado no relatório.
+ *      contribution_value = net_total_allocated
+ *                            - tax_commission_allocated
+ *                            - freight_cost_allocated
+ *                            - icms_value_allocated
+ *                            - total_cost (produto, sem ICMS)
  *
- * NOTA SOBRE A FONTE DE DADOS DO getReport (revisão):
- * summary, products, ranking e evolution (daily/weekly/monthly) passaram
- * a ler diretamente de seller_sales_order_item_snapshots, assim como
- * byStore e bySeller já faziam. Antes eles liam de daily_seller_product_facts,
- * que:
- *   (a) não tem unit_business_id nem customer_id, exigindo um EXISTS pesado
- *       e incorreto contra orders/order_items/invoices para filtrar por loja
- *       (o EXISTS comparava invoices.seller_id com o seller_id do pedido,
- *       colunas que não têm por que bater 1:1, zerando o filtro na prática);
- *   (b) não permitia filtrar por customerId de forma alguma;
- *   (c) somava orders_count por linha de (fact_date, seller_id, product_id),
- *       contando o mesmo pedido mais de uma vez quando ele tinha múltiplos
- *       produtos diferentes (COUNT(DISTINCT order_id) só evita duplicar
- *       dentro do mesmo produto, não entre produtos do mesmo pedido).
- * Lendo direto do snapshot (que já tem unit_business_id e customer_id por
- * linha, e nunca é pré-agrupado por produto) os três problemas somem.
+ *    Somando os itens de um mesmo pedido, contribution_value bate
+ *    exatamente com a fórmula de contribution de sales_report para aquele
+ *    pedido, pois todos os componentes são rateados pelo mesmo peso e a
+ *    soma dos pesos de um pedido é sempre 1.
  *
- * NOTA SOBRE O BUG DE CONTRIBUIÇÃO ≠ (total_sold - total_cost) NO getReport:
- * `report_total_cost` (calculado em `report_rows`) podia virar SQL NULL em
- * duas situações:
- *   1. `s.total_cost` NULL ou 0 E `s.average_cost` NULL ao mesmo tempo
- *      (o COALESCE(NULLIF(total_cost,0), average_cost*qty + icms) não tinha
- *      fallback final, então se o segundo termo também fosse NULL o
- *      resultado inteiro era NULL);
- *   2. Qualquer linha onde `average_cost` fosse NULL mas `total_cost` fosse
- *      0 (não NULL) — o NULLIF(total_cost, 0) zera para NULL e cai no
- *      fallback quebrado do item 1.
- * Como `report_markup_value`/`report_contribution_value` são calculados com
- * `CASE WHEN report_total_cost IS NULL THEN NULL ELSE ...`, essas linhas
- * problemáticas ficavam de fora do SUM() de custo e de contribuição — mas
- * o `net_total` delas (nunca NULL) continuava entrando no SUM() de
- * total_sold. Resultado: total_sold - total_cost (somados) ficava maior
- * que total_contribution_value, porque cada soma "perdia" linhas diferentes.
- * Correção: `report_total_cost` agora tem um COALESCE final para 0, e o
- * fallback usa COALESCE(average_cost, 0) em vez de average_cost puro, então
- * `report_total_cost` NUNCA é NULL — toda linha entra em todas as somas de
- * forma consistente, e total_sold - total_cost bate exatamente com
- * total_contribution_value (e o mesmo vale para markup_value).
+ * 5. Peso do item (item_weight): idêntico a sales_report — net_total_raw
+ *    do item (valor bruto vindo da Bling, só para peso) dividido pela soma
+ *    de net_total_raw de todos os itens do pedido.
  *
- * NOTA SOBRE total_manager_commission NO summary:
- * manager_commission_value já é calculado por item (net_total_allocated *
- * manager_commission_rate) e já era somado em byManager. Faltava agregar
- * o total geral no summary — adicionado via SUM(s.manager_commission_value),
- * disponível em report_rows/report_metrics através do s.* do snapshot.
+ * 6. Validade da venda (is_valid_sale): idêntica a sales_report —
+ *    snapshot_status = 'ignored_missing_cost' se qualquer item do pedido
+ *    tiver average_cost_snapshot <= 0; senão 'completed' se
+ *    actual_situation IN ('6','9'); senão 'cancelled'. is_valid_sale é
+ *    TRUE apenas quando snapshot_status = 'completed'.
+ *
+ * 7. Comissão de vendedor (commission_value) e de gerente
+ *    (manager_commission_value): não fazem parte da lógica de sales_report
+ *    (são específicas deste relatório) e permanecem como antes — comissão
+ *    de vendedor vem por item de order_items; comissão de gerente é
+ *    net_total_allocated * manager_commission_rate / 100.
+ *
+ * ATENÇÃO / MIGRAÇÃO NECESSÁRIA:
+ * Esta versão passa a gravar tax_commission_allocated e
+ * freight_cost_allocated por item (necessários para reproduzir a fórmula
+ * de contribution acima no nível do item). Se essas colunas ainda não
+ * existirem em `seller_sales_order_item_snapshots`, é necessário criar uma
+ * migration adicionando:
+ *   - tax_commission_allocated numeric NOT NULL DEFAULT 0
+ *   - freight_cost_allocated   numeric NOT NULL DEFAULT 0
+ * `total_cost` passa a significar APENAS custo de produto (sem ICMS) —
+ * antes incluía o ICMS rateado (total_cost_with_icms). Qualquer consumidor
+ * fora deste repository que leia `total_cost` esperando o ICMS embutido
+ * precisa ser revisado.
+ *
+ * NOTA (mantida): existe no banco uma tabela `sales_order_item_snapshots`
+ * que pertence ao OUTRO relatório (sales_report). Este job usa sua PRÓPRIA
+ * tabela, `seller_sales_order_item_snapshots`. Não confundir as duas.
  */
-const VALID_ACTUAL_SITUATIONS = ["6", "9"];
-const INVALID_ORDER_STATUSES = ["CANCELLED"];
 
 interface CheckpointRow {
   last_processed_at: Date;
 }
+
+type SqlExpression = string;
+
+// ---------------------------------------------------------------------
+// Calculators SQL — cópia fiel dos helpers de sales_report. Mantidos
+// duplicados aqui (em vez de importados) para não acoplar os dois
+// repositories; qualquer mudança de regra deve ser replicada nos dois
+// arquivos até que exista um módulo compartilhado de calculators.
+// ---------------------------------------------------------------------
+const coalesceNumberSql = (expression: SqlExpression): SqlExpression =>
+  `COALESCE(${expression}, 0)`;
+
+const roundSql = (
+  expression: SqlExpression,
+  decimalPlaces = 2,
+): SqlExpression => `ROUND((${expression})::numeric, ${decimalPlaces})`;
+
+const calculateSafeDivisionSql = (
+  numerator: SqlExpression,
+  denominator: SqlExpression,
+  decimalPlaces = 2,
+): SqlExpression => `
+CASE
+  WHEN ${coalesceNumberSql(denominator)} = 0 THEN 0
+  ELSE ${roundSql(
+    `(${numerator}) / NULLIF((${denominator}), 0)`,
+    decimalPlaces,
+  )}
+END`;
+
+const calculateProfitSql = (
+  revenue: SqlExpression,
+  cost: SqlExpression,
+): SqlExpression => `${coalesceNumberSql(revenue)} - ${coalesceNumberSql(cost)}`;
+
+const calculatePercentageSql = (
+  numerator: SqlExpression,
+  denominator: SqlExpression,
+): SqlExpression =>
+  calculateSafeDivisionSql(`(${numerator}) * 100`, denominator, 2);
+
+const calculateAverageTicketSql = (
+  totalRevenue: SqlExpression,
+  totalOrders: SqlExpression,
+): SqlExpression => calculateSafeDivisionSql(totalRevenue, totalOrders, 2);
+
+const calculateMarkupSql = (
+  revenue: SqlExpression,
+  cost: SqlExpression,
+): { decimal: SqlExpression; percent: SqlExpression } => {
+  const profit = calculateProfitSql(revenue, cost);
+
+  return {
+    decimal: calculateSafeDivisionSql(profit, cost, 4),
+    percent: calculatePercentageSql(profit, cost),
+  };
+};
+
+// Mesma checagem de sales_report: pedido só é "custo completo" se NENHUM
+// item dele tem average_cost_snapshot <= 0.
+const hasCompleteCostSql = (orderAlias: string): SqlExpression => `
+NOT EXISTS (
+  SELECT 1
+  FROM order_items cost_check
+  WHERE cost_check.order_id = ${orderAlias}.id
+    AND ${coalesceNumberSql("cost_check.average_cost_snapshot")} <= 0
+)`;
 
 export class SellerSalesReportRepository {
   async getCheckpoint(): Promise<Date> {
@@ -209,9 +265,8 @@ export class SellerSalesReportRepository {
   }
 
   /**
-   * Pedidos afetados desde o último checkpoint: pelo próprio order,
-   * pelos seus items, ou pela invoice associada (já que o status de
-   * venda válida pode depender de invoices.status).
+   * Fontes de alteração: idêntico a sales_report — apenas orders e
+   * order_items.
    */
   async findAffectedOrderIds(lastProcessedAt: Date): Promise<string[]> {
     const rows: OrderIdRow[] = await sequelize.query<OrderIdRow>(
@@ -242,201 +297,216 @@ export class SellerSalesReportRepository {
   async upsertSnapshots(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
 
+    // Custo do item: SEMPRE bruto — total_cost_snapshot quando existir, ou
+    // average_cost_snapshot * quantity + commission_value no fallback.
+    // NUNCA soma ICMS aqui — idêntico a sales_report.
+    const itemCostSql =
+      "COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value)";
+
     await sequelize.query(
       `
-    WITH affected(order_id) AS (
-  SELECT unnest(ARRAY[:orderIds]::uuid[])
-),
-valid_orders AS (
-  SELECT
-    o.id AS order_id,
-    CASE
-      WHEN EXISTS (
-        SELECT 1
-        FROM order_items cost_check
-        WHERE cost_check.order_id = o.id
-          AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
-      ) THEN FALSE
-      WHEN NULLIF(o.internal_status::text, '') IS NOT NULL THEN
-        o.internal_status::text NOT IN ('CANCELLED', 'UNKNOWN')
-      ELSE
-        o.actual_situation IN ('6', '9', '748748', '748743')
-    END AS is_valid_sale
-  FROM orders o
-  JOIN affected a ON a.order_id = o.id
-),
-snapshot_source AS (
-  SELECT
-    oi.id AS order_item_id,
-    o.id AS order_id,
-    o.seller_id,
-    o.customer_id,
-    oi.product_id,
-    o.unit_business_id,
-    o.total_price AS order_total_price,
-    o.icms_value  AS order_icms_value,
+      WITH affected(order_id) AS (
+        SELECT DISTINCT unnest(ARRAY[:orderIds]::uuid[])
+      ),
 
-    DATE(o.date) AS order_date,
-    p.name AS product_name,
-    p.brand AS product_brand,
-    p.measure AS product_measure,
+      -- ------------------------------------------------------------------
+      -- 1. Fonte de dados do pedido — mesma base de sales_report:
+      --    join com states para resolver a alíquota de ICMS do destino e
+      --    calcular computed_icms_value = (total_products - discount_value)
+      --    * icms_rate. snapshot_status segue a MESMA regra de sales_report.
+      --    Filtro de vendedor (única diferença deste relatório): só entram
+      --    pedidos cujo contacts.name é diferente de 'Vendedor 0'.
+      -- ------------------------------------------------------------------
+      order_source AS (
+        SELECT
+          o.id                        AS order_id,
+          o.seller_id,
+          o.customer_id,
+          o.unit_business_id,
+          DATE(COALESCE(o.date, o.created_at)) AS order_date,
+          o.destination_uf,
+          COALESCE(o.total_products, 0)  AS total_products,
+          COALESCE(o.discount_value, 0)  AS discount_value,
+          COALESCE(o.tax_commission, 0)  AS tax_commission,
+          COALESCE(o.freight_cost, 0)    AS freight_cost,
+          CASE
+            WHEN ${hasCompleteCostSql("o")} = FALSE THEN 'ignored_missing_cost'
+            WHEN o.actual_situation IN ('6', '9') THEN 'completed'
+            ELSE 'cancelled'
+          END AS snapshot_status,
+          -- ICMS calculado (NÃO o de nota fiscal): idêntico a sales_report.
+          ROUND(
+            (COALESCE(o.total_products, 0) - COALESCE(o.discount_value, 0))
+            * (COALESCE(st.icms_rate, 0) / 100),
+            2
+          ) AS computed_icms_value
+        FROM orders o
+        JOIN affected a ON a.order_id = o.id
+        LEFT JOIN states st ON st.acronym = o.destination_uf
+        LEFT JOIN contacts sc ON sc.id = o.seller_id
+        WHERE COALESCE(sc.name, '') <> 'Vendedor 0'
+      ),
 
-    oi.quantity,
-    oi.unit_price,
+      -- ------------------------------------------------------------------
+      -- 2. Fonte de dados dos itens (valores brutos do item, ainda sem
+      --    ratear nada do pedido — net_total_raw só serve para calcular o
+      --    peso do item). Idêntico à lógica de item_source_raw/item_weighted
+      --    de sales_report.
+      -- ------------------------------------------------------------------
+      item_source_raw AS (
+        SELECT
+          oi.id                              AS order_item_id,
+          oi.order_id,
+          os.seller_id,
+          os.customer_id,
+          oi.product_id,
+          os.unit_business_id,
+          os.order_date,
+          os.destination_uf,
+          p.name    AS product_name,
+          p.brand   AS product_brand,
+          p.measure AS product_measure,
+          COALESCE(oi.quantity, 0)::numeric      AS quantity,
+          COALESCE(oi.unit_price, oi.price, 0)::numeric AS unit_price,
+          COALESCE(
+            oi.net_total,
+            COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))
+          )::numeric AS net_total_raw,
+          oi.average_cost_snapshot::numeric      AS average_cost_snapshot,
+          oi.total_cost_snapshot::numeric         AS total_cost_snapshot_raw,
+          COALESCE(oi.commission_base, 0)::numeric  AS commission_base,
+          COALESCE(oi.commission_rate, 0)::numeric  AS commission_rate,
+          COALESCE(oi.commission_value, 0)::numeric AS commission_value,
+          COALESCE(oi.comission_manager_rate, 0)::numeric AS manager_commission_rate,
+          os.total_products     AS order_total_products,
+          os.tax_commission     AS order_tax_commission,
+          os.freight_cost       AS order_freight_cost,
+          os.computed_icms_value AS order_computed_icms_value,
+          os.snapshot_status
+        FROM order_items oi
+        JOIN order_source os ON os.order_id = oi.order_id
+        LEFT JOIN products p ON p.id = oi.product_id
+      ),
 
-    -- valor BRUTO vindo da Bling (sem desconto de taxa ML/frete) — usado
-    -- apenas para calcular o PESO do item dentro do pedido, nunca gravado
-    -- diretamente como net_total.
-    COALESCE(oi.net_total, 0)::numeric AS net_total_raw,
+      -- ------------------------------------------------------------------
+      -- 3. Peso do item dentro do pedido — idêntico a sales_report.
+      -- ------------------------------------------------------------------
+      item_weighted AS (
+        SELECT
+          *,
+          CASE
+            WHEN SUM(net_total_raw) OVER (PARTITION BY order_id) = 0 THEN 0
+            ELSE net_total_raw / SUM(net_total_raw) OVER (PARTITION BY order_id)
+          END AS item_weight
+        FROM item_source_raw
+      ),
 
-    -- custo do produto já congelado (kit + comissão). Quando o total não
-    -- veio pronto, seguimos o sales_report e derivamos de average_cost * qty.
-    oi.average_cost_snapshot::numeric AS average_cost,
-    oi.total_cost_snapshot::numeric   AS total_cost_product,
-    (oi.average_cost_snapshot IS NOT NULL) AS has_cost_data,
+      -- ------------------------------------------------------------------
+      -- 4. Rateio: receita (total_products), ICMS computado, tax_commission
+      --    e freight_cost são distribuídos entre os itens proporcionalmente
+      --    ao item_weight — mesma mecânica de rateio de sales_report,
+      --    estendida para permitir contribution por item (sales_report só
+      --    calcula contribution no nível do pedido, pois não é por item).
+      -- ------------------------------------------------------------------
+      item_calc AS (
+        SELECT
+          *,
+          ROUND(item_weight * order_total_products, 2)      AS net_total_allocated,
+          ROUND(item_weight * order_computed_icms_value, 2) AS icms_value_allocated,
+          ROUND(item_weight * order_tax_commission, 2)      AS tax_commission_allocated,
+          ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated
+        FROM item_weighted
+      ),
 
-    COALESCE(oi.commission_base, 0)::numeric AS commission_base,
-    COALESCE(oi.commission_rate, 0)::numeric AS commission_rate,
-    COALESCE(oi.commission_value, 0)::numeric AS commission_value,
-    COALESCE(oi.comission_manager_rate, 0)::numeric AS manager_commission_rate,
+      -- ------------------------------------------------------------------
+      -- 5. Métricas finais do item. total_cost = SOMENTE custo de produto
+      --    (sem ICMS), idêntico a sales_report. Contribution é o único
+      --    lugar que soma tax_commission_allocated + freight_cost_allocated
+      --    + icms_value_allocated, também idêntico a sales_report.
+      -- ------------------------------------------------------------------
+      item_metrics AS (
+        SELECT
+          *,
+          ${itemCostSql} AS total_cost,
+          (average_cost_snapshot IS NOT NULL) AS has_cost_data,
+          (snapshot_status = 'completed') AS is_valid_sale,
+          ROUND(net_total_allocated * manager_commission_rate / 100, 2) AS manager_commission_value
+        FROM item_calc
+      ),
 
-
-    vo.is_valid_sale
-  FROM order_items oi
-  JOIN orders o ON o.id = oi.order_id
-  JOIN affected a ON a.order_id = o.id
-  JOIN valid_orders vo ON vo.order_id = o.id
-  LEFT JOIN products p ON p.id = oi.product_id
-  LEFT JOIN contacts sc ON sc.id = o.seller_id
-  WHERE COALESCE(sc.name, '') <> 'Vendedor 0'
-),
-snapshot_weighted AS (
-  SELECT
-    *,
-    -- peso do item dentro do pedido: soma dos pesos de todos os itens de
-    -- um mesmo pedido é sempre 1, então tudo que é rateado por esse peso
-    -- (receita líquida, ICMS) fecha exatamente com o total do pedido.
-    CASE
-      WHEN SUM(net_total_raw) OVER (PARTITION BY order_id) = 0 THEN 0
-      ELSE net_total_raw / SUM(net_total_raw) OVER (PARTITION BY order_id)
-    END AS item_weight
-  FROM snapshot_source
-),
-snapshot_final AS (
-  SELECT
-    *,
-    ROUND(item_weight * order_total_price, 2) AS net_total_allocated,
-    ROUND(item_weight * COALESCE(order_icms_value, 0), 2) AS icms_value_allocated
-  FROM snapshot_weighted
-),
-snapshot_calc AS (
-  SELECT
-    *,
-    COALESCE(total_cost_product, ROUND((average_cost * quantity)::numeric, 2)) AS total_cost_product_resolved
-  FROM snapshot_final
-),
-snapshot_metrics AS (
-  SELECT
-    *,
-    -- custo do item = custo de produto resolvido + fatia de ICMS do pedido,
-    -- mesma base usada no sales_report.
-    CASE WHEN total_cost_product_resolved IS NULL THEN NULL
-         ELSE total_cost_product_resolved + icms_value_allocated
-    END AS total_cost_with_icms,
-
-    CASE WHEN total_cost_product_resolved IS NULL THEN NULL
-         ELSE net_total_allocated - (total_cost_product_resolved + icms_value_allocated)
-    END AS markup_value,
-
-    CASE
-      WHEN total_cost_product_resolved IS NULL THEN NULL
-      WHEN (total_cost_product_resolved + icms_value_allocated) = 0 THEN 0
-      ELSE ROUND(
-        (((net_total_allocated - (total_cost_product_resolved + icms_value_allocated))
-          / (total_cost_product_resolved + icms_value_allocated)) * 100)::numeric,
-        2
+      item_final AS (
+        SELECT
+          *,
+          calculateProfit_placeholder AS placeholder
+        FROM item_metrics
       )
-    END AS markup_pct,
 
-    CASE WHEN total_cost_product_resolved IS NULL THEN NULL
-         ELSE net_total_allocated - (total_cost_product_resolved + icms_value_allocated)
-    END AS contribution_value,
-
-    CASE
-      WHEN total_cost_product_resolved IS NULL THEN NULL
-      WHEN net_total_allocated = 0 THEN 0
-      ELSE ROUND(
-        (((net_total_allocated - (total_cost_product_resolved + icms_value_allocated))
-          / net_total_allocated) * 100)::numeric,
-        2
+      INSERT INTO seller_sales_order_item_snapshots (
+        order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
+        order_date, product_name, product_brand, product_measure,
+        quantity, unit_price, net_total, average_cost, total_cost, has_cost_data,
+        icms_value_allocated, tax_commission_allocated, freight_cost_allocated,
+        commission_base, commission_rate, commission_value,
+        manager_commission_rate, manager_commission_value,
+        markup_value, markup_pct,
+        contribution_value, contribution_pct, is_valid_sale,
+        last_updated_at, created_at, updated_at
       )
-    END AS contribution_pct,
-
-    -- comissão do gerente = net_total já rateado do pedido (net_total_allocated)
-    -- multiplicado pela taxa de comissão de gerente vigente no item (vinda da
-    -- brand do produto, congelada em order_items.comission_manager_rate).
-    ROUND(net_total_allocated * manager_commission_rate / 100, 2) AS manager_commission_value
-  FROM snapshot_calc
-)
-INSERT INTO seller_sales_order_item_snapshots (
-  order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
-  order_date, product_name, product_brand, product_measure,
-  quantity, unit_price, net_total, average_cost, total_cost, has_cost_data,
-  icms_value_allocated,
-  commission_base, commission_rate, commission_value,
-  manager_commission_rate, manager_commission_value,
-  markup_value, markup_pct,
-  contribution_value, contribution_pct, is_valid_sale,
-  last_updated_at, created_at, updated_at
-)
-SELECT
-  order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
-  order_date, product_name, product_brand, product_measure,
-  quantity, unit_price,
-  net_total_allocated AS net_total,
-  average_cost,
-  total_cost_with_icms AS total_cost,
-  has_cost_data,
-  icms_value_allocated,
-  commission_base, commission_rate, commission_value,
-  manager_commission_rate, manager_commission_value,
-  markup_value, markup_pct,
-  contribution_value, contribution_pct, is_valid_sale,
-  NOW(), NOW(), NOW()
-FROM snapshot_metrics
-ON CONFLICT (order_item_id) DO UPDATE SET
-  seller_id                = EXCLUDED.seller_id,
-  customer_id              = EXCLUDED.customer_id,
-  product_id               = EXCLUDED.product_id,
-  unit_business_id         = EXCLUDED.unit_business_id,
-  order_date               = EXCLUDED.order_date,
-  product_name             = EXCLUDED.product_name,
-  product_brand            = EXCLUDED.product_brand,
-  product_measure          = EXCLUDED.product_measure,
-  quantity                 = EXCLUDED.quantity,
-  unit_price               = EXCLUDED.unit_price,
-  net_total                = EXCLUDED.net_total,
-  average_cost             = EXCLUDED.average_cost,
-  total_cost               = EXCLUDED.total_cost,
-  has_cost_data            = EXCLUDED.has_cost_data,
-  icms_value_allocated     = EXCLUDED.icms_value_allocated,
-  commission_base          = EXCLUDED.commission_base,
-  commission_rate          = EXCLUDED.commission_rate,
-  commission_value         = EXCLUDED.commission_value,
-  manager_commission_rate  = EXCLUDED.manager_commission_rate,
-  manager_commission_value = EXCLUDED.manager_commission_value,
-  markup_value             = EXCLUDED.markup_value,
-  markup_pct               = EXCLUDED.markup_pct,
-  contribution_value       = EXCLUDED.contribution_value,
-  contribution_pct         = EXCLUDED.contribution_pct,
-  is_valid_sale            = EXCLUDED.is_valid_sale,
-  last_updated_at          = NOW(),
-  updated_at               = NOW()
-    `,
+      SELECT
+        order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
+        order_date, product_name, product_brand, product_measure,
+        quantity, unit_price,
+        net_total_allocated AS net_total,
+        average_cost_snapshot AS average_cost,
+        total_cost,
+        has_cost_data,
+        icms_value_allocated, tax_commission_allocated, freight_cost_allocated,
+        commission_base, commission_rate, commission_value,
+        manager_commission_rate, manager_commission_value,
+        (net_total_allocated - total_cost) AS markup_value,
+        ${calculateMarkupSql("net_total_allocated", "total_cost").percent} AS markup_pct,
+        (net_total_allocated - tax_commission_allocated - freight_cost_allocated - icms_value_allocated - total_cost) AS contribution_value,
+        ${calculatePercentageSql(
+          "net_total_allocated - tax_commission_allocated - freight_cost_allocated - icms_value_allocated - total_cost",
+          "net_total_allocated",
+        )} AS contribution_pct,
+        is_valid_sale,
+        NOW(), NOW(), NOW()
+      FROM item_metrics
+      ON CONFLICT (order_item_id) DO UPDATE SET
+        seller_id                  = EXCLUDED.seller_id,
+        customer_id                = EXCLUDED.customer_id,
+        product_id                 = EXCLUDED.product_id,
+        unit_business_id           = EXCLUDED.unit_business_id,
+        order_date                 = EXCLUDED.order_date,
+        product_name               = EXCLUDED.product_name,
+        product_brand              = EXCLUDED.product_brand,
+        product_measure            = EXCLUDED.product_measure,
+        quantity                   = EXCLUDED.quantity,
+        unit_price                 = EXCLUDED.unit_price,
+        net_total                  = EXCLUDED.net_total,
+        average_cost               = EXCLUDED.average_cost,
+        total_cost                 = EXCLUDED.total_cost,
+        has_cost_data              = EXCLUDED.has_cost_data,
+        icms_value_allocated       = EXCLUDED.icms_value_allocated,
+        tax_commission_allocated   = EXCLUDED.tax_commission_allocated,
+        freight_cost_allocated     = EXCLUDED.freight_cost_allocated,
+        commission_base            = EXCLUDED.commission_base,
+        commission_rate            = EXCLUDED.commission_rate,
+        commission_value           = EXCLUDED.commission_value,
+        manager_commission_rate    = EXCLUDED.manager_commission_rate,
+        manager_commission_value   = EXCLUDED.manager_commission_value,
+        markup_value               = EXCLUDED.markup_value,
+        markup_pct                 = EXCLUDED.markup_pct,
+        contribution_value         = EXCLUDED.contribution_value,
+        contribution_pct           = EXCLUDED.contribution_pct,
+        is_valid_sale               = EXCLUDED.is_valid_sale,
+        last_updated_at            = NOW(),
+        updated_at                 = NOW()
+      `,
       {
         replacements: {
           orderIds,
-          invalidOrderStatuses: INVALID_ORDER_STATUSES,
         },
       },
     );
@@ -501,8 +571,8 @@ ON CONFLICT (order_item_id) DO UPDATE SET
             COALESCE(SUM(quantity), 0)::integer AS quantity_sold,
             COUNT(DISTINCT order_id)::integer AS orders_count,
             COALESCE(SUM(net_total), 0) AS total_sold,
-            -- total_cost já é total_cost_with_icms (produto + ICMS rateado),
-            -- gravado como "total_cost" na tabela de snapshot.
+            -- total_cost agora é SOMENTE custo de produto (sem ICMS),
+            -- idêntico à regra de custo de sales_report.
             COALESCE(SUM(total_cost), 0) AS total_cost,
             COALESCE(SUM(commission_value), 0) AS total_commission,
             COALESCE(SUM(markup_value), 0) AS total_markup_value,
@@ -512,12 +582,6 @@ ON CONFLICT (order_item_id) DO UPDATE SET
             AND seller_id = CAST(:sellerId AS uuid)
             AND product_id = CAST(:productId AS uuid)
             AND is_valid_sale = TRUE
-            AND NOT EXISTS (
-              SELECT 1
-              FROM seller_sales_order_item_snapshots cost_check
-              WHERE cost_check.order_id = seller_sales_order_item_snapshots.order_id
-                AND COALESCE(cost_check.average_cost, 0) <= 0
-            )
         )
         INSERT INTO daily_seller_product_facts (
           fact_date,
@@ -601,12 +665,6 @@ ON CONFLICT (order_item_id) DO UPDATE SET
             AND s.seller_id = CAST(:sellerId AS uuid)
             AND s.customer_id = CAST(:customerId AS uuid)
             AND s.is_valid_sale = TRUE
-            AND NOT EXISTS (
-              SELECT 1
-              FROM seller_sales_order_item_snapshots cost_check
-              WHERE cost_check.order_id = s.order_id
-                AND COALESCE(cost_check.average_cost, 0) <= 0
-            )
         )
         INSERT INTO daily_seller_customer_facts (
           fact_date,
@@ -664,55 +722,25 @@ ON CONFLICT (order_item_id) DO UPDATE SET
     };
 
     // -------------------------------------------------------------
-    // Indicadores Gerais
-    //
-    // Lê direto de seller_sales_order_item_snapshots (mesma fonte de
-    // byStore/bySeller) em vez de daily_seller_product_facts: essa tabela
-    // já tem unit_business_id e customer_id por linha, então os filtros
-    // funcionam sem precisar de EXISTS contra orders/invoices, e
-    // sales_count usa COUNT(DISTINCT order_id) direto, sem risco de contar
-    // o mesmo pedido mais de uma vez quando ele tem múltiplos produtos.
-    //
-    // FIX: report_total_cost agora tem COALESCE final para 0 e usa
-    // COALESCE(s.average_cost, 0) no fallback, garantindo que NUNCA seja
-    // SQL NULL. Antes, quando total_cost era NULL/0 E average_cost também
-    // era NULL, report_total_cost virava NULL, o que fazia essa linha ser
-    // ignorada no SUM() de custo e de contribuição — mas não no SUM() de
-    // net_total (nunca NULL) — quebrando a consistência
-    // total_sold - total_cost == total_contribution_value.
+    // report_rows agora só filtra e lê os campos já persistidos pelo
+    // upsertSnapshots (total_cost, markup_value, contribution_value).
+    // O workaround de recalcular custo aqui deixou de ser necessário: como
+    // em sales_report, total_cost nunca é NULL (sempre COALESCE), então
+    // total_sold - total_cost bate exatamente com total_contribution_value
+    // sem precisar de nenhum fallback nesta camada.
     // -------------------------------------------------------------
     const reportRowsCte = `
       report_rows AS (
-        SELECT
-          s.*,
-          COALESCE(
-            NULLIF(s.total_cost, 0),
-            ROUND((COALESCE(s.average_cost, 0) * s.quantity)::numeric, 2)
-              + COALESCE(s.icms_value_allocated, 0),
-            0
-          ) AS report_total_cost
+        SELECT s.*
         FROM seller_sales_order_item_snapshots s
         WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
           AND s.is_valid_sale = TRUE
-          AND NOT EXISTS (
-            SELECT 1
-            FROM seller_sales_order_item_snapshots cost_check
-            WHERE cost_check.order_id = s.order_id
-              AND COALESCE(cost_check.average_cost, 0) <= 0
-          )
           AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
           AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
           AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
           AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
           AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
           AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
-      ),
-      report_metrics AS (
-        SELECT
-          *,
-          net_total - report_total_cost AS report_markup_value,
-          net_total - report_total_cost AS report_contribution_value
-        FROM report_rows
       )
     `;
 
@@ -723,27 +751,15 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         COALESCE(SUM(s.net_total), 0) AS total_sold,
         COUNT(DISTINCT s.order_id) AS sales_count,
         COALESCE(SUM(s.quantity), 0) AS items_sold_count,
-        CASE
-          WHEN COUNT(DISTINCT s.order_id) = 0 THEN 0
-          ELSE ROUND(SUM(s.net_total) / COUNT(DISTINCT s.order_id), 2)
-        END AS average_ticket,
+        ${calculateAverageTicketSql("SUM(s.net_total)", "COUNT(DISTINCT s.order_id)")} AS average_ticket,
         COALESCE(SUM(s.commission_value), 0) AS total_commission,
-        COALESCE(SUM(s.report_total_cost), 0) AS total_cost,
-        COALESCE(SUM(s.report_markup_value), 0) AS total_markup_value,
-        CASE
-          WHEN COALESCE(SUM(s.report_total_cost), 0) = 0 THEN 0
-          ELSE ROUND((SUM(s.report_markup_value) / SUM(s.report_total_cost)) * 100, 2)
-        END AS average_markup_pct,
-        COALESCE(SUM(s.report_contribution_value), 0) AS total_contribution_value,
-        CASE
-          WHEN COALESCE(SUM(s.net_total), 0) = 0 THEN 0
-          ELSE ROUND((SUM(s.report_contribution_value) / SUM(s.net_total)) * 100, 2)
-        END AS average_contribution_pct,
-        -- NOVO: total geral de comissão de gerente no período/filtros.
-        -- manager_commission_value já vem por item (calculado em
-        -- upsertSnapshots) e chega aqui via s.* de report_rows.
+        COALESCE(SUM(s.total_cost), 0) AS total_cost,
+        COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
+        ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS average_markup_pct,
+        COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
+        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS average_contribution_pct,
         COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission
-      FROM report_metrics s
+      FROM report_rows s
       `,
       {
         type: QueryTypes.SELECT,
@@ -763,21 +779,12 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         MAX(s.product_brand) AS product_brand,
         MAX(s.product_measure) AS product_measure,
         SUM(s.quantity) AS quantity,
-        CASE
-          WHEN SUM(s.quantity) = 0 THEN 0
-          ELSE ROUND(SUM(s.net_total) / SUM(s.quantity), 4)
-        END AS unit_value,
+        ${calculateSafeDivisionSql("SUM(s.net_total)", "SUM(s.quantity)", 4)} AS unit_value,
         SUM(s.net_total) AS sale_value,
         SUM(s.commission_value) AS commission_value,
-        CASE
-          WHEN SUM(s.report_total_cost) = 0 THEN 0
-          ELSE ROUND((SUM(s.report_markup_value) / SUM(s.report_total_cost)) * 100, 2)
-        END AS markup_pct,
-        CASE
-          WHEN SUM(s.net_total) = 0 THEN 0
-          ELSE ROUND((SUM(s.report_contribution_value) / SUM(s.net_total)) * 100, 2)
-        END AS contribution_pct
-      FROM report_metrics s
+        ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS markup_pct,
+        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct
+      FROM report_rows s
       GROUP BY s.product_id
       ORDER BY sale_value DESC
       `,
@@ -799,9 +806,9 @@ ON CONFLICT (order_item_id) DO UPDATE SET
           MAX(s.product_name) AS product_name,
           SUM(s.quantity) AS quantity,
           SUM(s.net_total) AS sale_value,
-          SUM(s.report_contribution_value) AS contribution_value,
+          SUM(s.contribution_value) AS contribution_value,
           SUM(s.commission_value) AS commission_value
-        FROM report_metrics s
+        FROM report_rows s
         GROUP BY s.product_id
       )
       SELECT
@@ -829,23 +836,14 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         COUNT(DISTINCT s.order_id) AS sales_count,
         COALESCE(SUM(s.quantity), 0) AS items_sold_count,
         COALESCE(SUM(s.net_total), 0) AS total_sold,
-        CASE
-          WHEN COUNT(DISTINCT s.order_id) = 0 THEN 0
-          ELSE ROUND(SUM(s.net_total) / COUNT(DISTINCT s.order_id), 2)
-        END AS average_ticket,
-        COALESCE(SUM(s.report_total_cost), 0) AS total_cost,
+        ${calculateAverageTicketSql("SUM(s.net_total)", "COUNT(DISTINCT s.order_id)")} AS average_ticket,
+        COALESCE(SUM(s.total_cost), 0) AS total_cost,
         COALESCE(SUM(s.commission_value), 0) AS total_commission,
-        COALESCE(SUM(s.report_markup_value), 0) AS total_markup_value,
-        CASE
-          WHEN SUM(s.report_total_cost) = 0 THEN 0
-          ELSE ROUND((SUM(s.report_markup_value) / SUM(s.report_total_cost)) * 100, 2)
-        END AS markup_pct,
-        COALESCE(SUM(s.report_contribution_value), 0) AS total_contribution_value,
-        CASE
-          WHEN SUM(s.net_total) = 0 THEN 0
-          ELSE ROUND((SUM(s.report_contribution_value) / SUM(s.net_total)) * 100, 2)
-        END AS contribution_pct
-      FROM report_metrics s
+        COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
+        ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS markup_pct,
+        COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
+        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct
+      FROM report_rows s
       LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
       GROUP BY s.unit_business_id
       ORDER BY total_sold DESC
@@ -868,23 +866,14 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         COUNT(DISTINCT s.order_id) AS sales_count,
         COALESCE(SUM(s.quantity), 0) AS items_sold_count,
         COALESCE(SUM(s.net_total), 0) AS total_sold,
-        CASE
-          WHEN COUNT(DISTINCT s.order_id) = 0 THEN 0
-          ELSE ROUND(SUM(s.net_total) / COUNT(DISTINCT s.order_id), 2)
-        END AS average_ticket,
-        COALESCE(SUM(s.report_total_cost), 0) AS total_cost,
+        ${calculateAverageTicketSql("SUM(s.net_total)", "COUNT(DISTINCT s.order_id)")} AS average_ticket,
+        COALESCE(SUM(s.total_cost), 0) AS total_cost,
         COALESCE(SUM(s.commission_value), 0) AS total_commission,
-        COALESCE(SUM(s.report_markup_value), 0) AS total_markup_value,
-        CASE
-          WHEN SUM(s.report_total_cost) = 0 THEN 0
-          ELSE ROUND((SUM(s.report_markup_value) / SUM(s.report_total_cost)) * 100, 2)
-        END AS markup_pct,
-        COALESCE(SUM(s.report_contribution_value), 0) AS total_contribution_value,
-        CASE
-          WHEN SUM(s.net_total) = 0 THEN 0
-          ELSE ROUND((SUM(s.report_contribution_value) / SUM(s.net_total)) * 100, 2)
-        END AS contribution_pct
-      FROM report_metrics s
+        COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
+        ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS markup_pct,
+        COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
+        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct
+      FROM report_rows s
       LEFT JOIN contacts ct ON ct.id = s.seller_id
       GROUP BY s.seller_id
       ORDER BY total_sold DESC
@@ -897,7 +886,6 @@ ON CONFLICT (order_item_id) DO UPDATE SET
 
     // -------------------------------------------------------------
     // Clientes Atendidos
-    // (daily_seller_customer_facts não possui unit_business_id — sem filtro aqui)
     // -------------------------------------------------------------
     const customers = await sequelize.query(
       `
@@ -908,7 +896,7 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         COUNT(DISTINCT s.order_id) AS purchases_count,
         COALESCE(SUM(s.net_total), 0) AS total_purchased,
         COALESCE(SUM(s.commission_value), 0) AS commission_generated
-      FROM report_metrics s
+      FROM report_rows s
       LEFT JOIN customers c ON c.id = s.customer_id
       WHERE s.customer_id IS NOT NULL
       GROUP BY s.customer_id
@@ -930,7 +918,7 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         s.order_date AS period,
         COALESCE(SUM(s.net_total), 0) AS total_sold,
         COUNT(DISTINCT s.order_id) AS sales_count
-      FROM report_metrics s
+      FROM report_rows s
       GROUP BY s.order_date
       ORDER BY s.order_date ASC
       `,
@@ -947,7 +935,7 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         DATE_TRUNC('week', s.order_date)::date AS period,
         COALESCE(SUM(s.net_total), 0) AS total_sold,
         COUNT(DISTINCT s.order_id) AS sales_count
-      FROM report_metrics s
+      FROM report_rows s
       GROUP BY DATE_TRUNC('week', s.order_date)
       ORDER BY period ASC
       `,
@@ -964,7 +952,7 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         DATE_TRUNC('month', s.order_date)::date AS period,
         COALESCE(SUM(s.net_total), 0) AS total_sold,
         COUNT(DISTINCT s.order_id) AS sales_count
-      FROM report_metrics s
+      FROM report_rows s
       GROUP BY DATE_TRUNC('month', s.order_date)
       ORDER BY period ASC
       `,
@@ -984,7 +972,7 @@ ON CONFLICT (order_item_id) DO UPDATE SET
           SELECT
             s.*,
             ct.name AS seller_name
-          FROM report_metrics s
+          FROM report_rows s
           LEFT JOIN contacts ct ON ct.id = s.seller_id
           ORDER BY s.order_date DESC, s.last_updated_at DESC
           `,
@@ -996,13 +984,8 @@ ON CONFLICT (order_item_id) DO UPDATE SET
       : undefined;
 
     // -------------------------------------------------------------
-    // Comissão de Gerente por Filial
-    // Regra: user com user_config.type = 'manager' e main_unit_business_id
-    // preenchido (cada user tem exatamente 1 user_config, 1:1 via user_id).
-    // A comissão já vem calculada por item (manager_commission_value,
-    // baseada na manager_commission_rate congelada do order_item, vinda da
-    // brand do produto), aqui só agregamos por filial e juntamos com o
-    // gerente responsável por ela.
+    // Comissão de Gerente por Filial (regra específica deste relatório,
+    // sem equivalente em sales_report — mantida como antes)
     // -------------------------------------------------------------
     const byManager = await sequelize.query(
       `
@@ -1017,7 +1000,7 @@ ON CONFLICT (order_item_id) DO UPDATE SET
         COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission,
         COALESCE(SUM(s.net_total), 0) - COALESCE(SUM(s.manager_commission_value), 0)
           AS branch_net_after_manager_commission
-      FROM report_metrics s
+      FROM report_rows s
       JOIN users u
         ON u.main_unit_business_id = s.unit_business_id
       JOIN user_config uc
