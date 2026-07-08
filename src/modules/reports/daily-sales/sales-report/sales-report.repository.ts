@@ -52,6 +52,8 @@ export interface SalesReportOrderInput {
   // Alíquota de ICMS do estado de destino, em decimal (ex: 0.148 = 14.8%).
   // Deve ser resolvida pelo chamador via tabela states (acronym = destination_uf)
   // antes de montar este input.
+  unit_business?: { name?: string | null } | null;
+
   icms_rate?: number | null;
   tax_commission?: number | null;
   marketplace_fee?: number | null;
@@ -119,6 +121,10 @@ const COMPLETED_SALES_STATUSES = "('open', 'completed')";
 // FUTURO helpers/calculators: este bloco concentra regras reutilizadas do relatório.
 // Mantemos aqui nesta refatoração para facilitar revisão, mas ele é candidato direto
 // para um arquivo de calculators SQL do relatório.
+
+const isShopeeOrder = (order: SalesReportOrderInput): boolean =>
+  (order.unit_business?.name ?? "").trim() === "Shopee";
+
 const coalesceNumberSql = (expression: SqlExpression): SqlExpression =>
   `COALESCE(${expression}, 0)`;
 
@@ -143,7 +149,8 @@ END`;
 const calculateProfitSql = (
   revenue: SqlExpression,
   cost: SqlExpression,
-): SqlExpression => `${coalesceNumberSql(revenue)} - ${coalesceNumberSql(cost)}`;
+): SqlExpression =>
+  `${coalesceNumberSql(revenue)} - ${coalesceNumberSql(cost)}`;
 
 const calculatePercentageSql = (
   numerator: SqlExpression,
@@ -241,9 +248,7 @@ const isMarketplaceOrder = (order: SalesReportOrderInput): boolean =>
 export const calculateSalesReportOrderFinancials = (
   order: SalesReportOrderInput,
 ): SalesReportOrderFinancialMetrics | null => {
-  if (
-    order.items.some((item) => toNumber(item.average_cost_snapshot) <= 0)
-  ) {
+  if (order.items.some((item) => toNumber(item.average_cost_snapshot) <= 0)) {
     return null;
   }
 
@@ -298,7 +303,7 @@ export const calculateSalesReportOrderFinancials = (
   const discountValue = toNumber(order.discount_value);
   const icmsRate = toNumber(order.icms_rate) / 100;
   const taxCommission = toNumber(order.tax_commission);
-  const freightCost = toNumber(order.freight_cost);
+  const freightCost = isShopeeOrder(order) ? 0 : toNumber(order.freight_cost);
 
   const tempIcms = (revenue - discountValue) * icmsRate;
 
@@ -334,7 +339,10 @@ export const calculateSalesReportAggregateFinancials = (
     .filter(Boolean) as SalesReportOrderFinancialMetrics[];
 
   const totalValue = validOrders.reduce((sum, order) => sum + order.revenue, 0);
-  const totalCost = validOrders.reduce((sum, order) => sum + order.totalCost, 0);
+  const totalCost = validOrders.reduce(
+    (sum, order) => sum + order.totalCost,
+    0,
+  );
   const totalProfit = validOrders.reduce((sum, order) => sum + order.profit, 0);
   const totalContribution = validOrders.reduce(
     (sum, order) => sum + order.contributionValue,
@@ -580,7 +588,10 @@ export class SalesReportRepository {
           COALESCE(o.discount_value, 0)                         AS discount_value,
           COALESCE(o.other_expenses, 0)                         AS other_expenses,
           COALESCE(o.freight_charged, 0)                        AS freight_charged,
-          COALESCE(o.freight_cost, 0)                           AS freight_cost,
+                    CASE
+            WHEN ub.name = 'Shopee' THEN 0
+            ELSE COALESCE(o.freight_cost, 0)
+          END                                                   AS freight_cost,
           COALESCE(o.freight_by_account, 0)                     AS freight_by_account,
           COALESCE(o.tax_commission, 0)                         AS tax_commission,
           COALESCE(o.marketplace_fee, 0)                        AS marketplace_fee,
@@ -617,6 +628,7 @@ export class SalesReportRepository {
   ON ubtc.unit_business_id = o.unit_business_id
           LEFT JOIN states st
   ON st.acronym = o.destination_uf
+  LEFT JOIN unit_businesses ub ON ub.id = o.unit_business_id
       ),
 
       -- ------------------------------------------------------------------
@@ -1346,43 +1358,43 @@ item_calc AS (
     }
   }
 
-async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
-  if (!keys.length) return;
+  async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
+    if (!keys.length) return;
 
-  const dayKeys = [
-    ...new Map(
-      keys.map((k) => [
-        `${k.fact_date}|${k.unit_business_id}|${k.integration_id}`,
-        {
-          fact_date: k.fact_date,
-          unit_business_id: k.unit_business_id,
-          integration_id: k.integration_id,
-        },
-      ]),
-    ).values(),
-  ];
+    const dayKeys = [
+      ...new Map(
+        keys.map((k) => [
+          `${k.fact_date}|${k.unit_business_id}|${k.integration_id}`,
+          {
+            fact_date: k.fact_date,
+            unit_business_id: k.unit_business_id,
+            integration_id: k.integration_id,
+          },
+        ]),
+      ).values(),
+    ];
 
-  for (const key of dayKeys) {
-    // 1. Deleta TODAS as linhas do dia para essa combinação
-    await sequelize.query(
-      `
+    for (const key of dayKeys) {
+      // 1. Deleta TODAS as linhas do dia para essa combinação
+      await sequelize.query(
+        `
       DELETE FROM daily_sales_status_facts
       WHERE fact_date        = CAST(:factDate AS date)
         AND unit_business_id = CAST(:unitBusinessId AS uuid)
         AND integration_id   = CAST(:integrationId AS uuid)
       `,
-      {
-        replacements: {
-          factDate: key.fact_date,
-          unitBusinessId: key.unit_business_id,
-          integrationId: key.integration_id,
+        {
+          replacements: {
+            factDate: key.fact_date,
+            unitBusinessId: key.unit_business_id,
+            integrationId: key.integration_id,
+          },
         },
-      },
-    );
+      );
 
-    // 2. Reinsere a partir dos snapshots atuais
-    await sequelize.query(
-      `
+      // 2. Reinsere a partir dos snapshots atuais
+      await sequelize.query(
+        `
       INSERT INTO daily_sales_status_facts (
         fact_date, unit_business_id, integration_id,
         status_normalized, status_display_name,
@@ -1410,16 +1422,16 @@ async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
         AND ${hasCompleteCostSql("sos")}
       GROUP BY sos.status_snapshot
       `,
-      {
-        replacements: {
-          factDate: key.fact_date,
-          unitBusinessId: key.unit_business_id,
-          integrationId: key.integration_id,
+        {
+          replacements: {
+            factDate: key.fact_date,
+            unitBusinessId: key.unit_business_id,
+            integrationId: key.integration_id,
+          },
         },
-      },
-    );
+      );
+    }
   }
-}
 
   // ---------------------------------------------------------------------------
   // FUTURO mappers/utils: consulta e montagem do DTO final do relatório.
