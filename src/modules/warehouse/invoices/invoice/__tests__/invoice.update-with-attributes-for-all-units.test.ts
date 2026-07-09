@@ -1,262 +1,145 @@
-// import { InvoiceUnitBusinessAttributesCreationAttributes } from "../../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
-// import { InvoiceCreationData, ItemWithFiscal } from "./../invoice.types";
+// // ─── Mocks dos models Sequelize ───────────────────────────────────────────────
 
-// // ─── Mocks dos módulos externos ───────────────────────────────────────────────
-
-// jest.mock("../../../../../config/sequelize", () => ({
+// jest.mock("../invoice.model", () => ({
 //   __esModule: true,
 //   default: {
-//     transaction: jest.fn(),
+//     update: jest.fn(),
 //   },
 // }));
 
-// jest.mock("../invoice.repository", () => ({
-//   __esModule: true,
-//   default: {
-//     findUnitBusinessesByCnpj: jest.fn(),
-//     createInvoice: jest.fn(),
-//     createInvoiceItems: jest.fn(),
-//     createInvoiceFiscalItems: jest.fn(),
-//     createInvoiceAttributes: jest.fn(),
-//   },
-// }));
+// jest.mock(
+//   "../../invoice-unit-business-attributes/invoice-unit-business-attributes.model",
+//   () => ({
+//     __esModule: true,
+//     default: {
+//       update: jest.fn(),
+//     },
+//   }),
+// );
 
-// import sequelize from "../../../../../config/sequelize";
-// import mockedRepository from "../invoice.repository";
-// import invoiceService from "../invoice.service";
 
-// const repo = mockedRepository as unknown as {
-//   findUnitBusinessesByCnpj: jest.Mock;
-//   createInvoice: jest.Mock;
-//   createInvoiceItems: jest.Mock;
-//   createInvoiceFiscalItems: jest.Mock;
-//   createInvoiceAttributes: jest.Mock;
-// };
+// import Invoice from "../invoice.model";
+// import InvoiceUnitBusinessAttributes from "../../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+// import { InvoiceRepository } from "../invoice.repository";
 
-// // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// const UNIT_A = "unit-business-a"; // ex: matriz — sempre unit business conhecida
-// const UNIT_B = "unit-business-b"; // ex: filial — também unit business conhecida
-// const EXTERNAL_CNPJ = "11222333000144"; // cliente/fornecedor externo, nunca é unit business
+// const invoiceUpdateMock = Invoice.update as jest.Mock;
+// const attrsUpdateMock = InvoiceUnitBusinessAttributes.update as jest.Mock;
 
-// const fakeTransaction = { commit: jest.fn(), rollback: jest.fn() };
 
-// const baseInvoiceData: InvoiceCreationData = {
-//   sender_cnpj: "",
-//   receiver_cnpj: "",
-// } as InvoiceCreationData;
+// const repository = new InvoiceRepository();
 
-// const items: ItemWithFiscal[] = [
-//   { product_id: "prod-1", quantity_expected: 2, fiscal: undefined },
+// const INVOICE_IDS = [
+//   "invoice-1",
+//   "invoice-2",
 // ];
 
-// // Extrai as attributes que foram efetivamente passadas pro bulkCreate,
-// // pra não depender de mockar retorno de createInvoice em cada teste.
-// const getCreatedAttributes = ():
-//   | InvoiceUnitBusinessAttributesCreationAttributes[]
-//   | undefined => repo.createInvoiceAttributes.mock.calls[0]?.[0];
 
 // beforeEach(() => {
 //   jest.clearAllMocks();
-//   (sequelize.transaction as jest.Mock).mockResolvedValue(fakeTransaction);
-//   repo.createInvoice.mockResolvedValue({ id: "invoice-1" });
-//   repo.createInvoiceItems.mockResolvedValue(undefined);
-//   repo.createInvoiceFiscalItems.mockResolvedValue(undefined);
-//   repo.createInvoiceAttributes.mockResolvedValue(undefined);
+
+//   invoiceUpdateMock.mockResolvedValue([1]);
+//   attrsUpdateMock.mockResolvedValue([1]);
 // });
 
 // // ─── Suite ────────────────────────────────────────────────────────────────────
 
-// describe("InvoiceService.createWithRelations — resolução de type por cnpj", () => {
-//   describe("caso 1: transferência interna (sender e receiver são unit business conhecidas)", () => {
-//     it("cria dois attributes: sender OUTGOING/OPEN e receiver INCOMING/initialStatus, ignorando invoiceType", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([
-//         { id: UNIT_A, cnpj: "sender-cnpj" },
-//         { id: UNIT_B, cnpj: "receiver-cnpj" },
-//       ]);
+// describe("InvoiceRepository.updateWithAttributesForAllUnits", () => {
+//   it("atualiza somente status, sem tocar em Invoice nem em type", async () => {
+//     await repository.updateWithAttributesForAllUnits(INVOICE_IDS, {
+//       status: "PENDING",
+//     });
 
-//       await invoiceService.createWithRelations(
-//         { ...baseInvoiceData, sender_cnpj: "sender-cnpj", receiver_cnpj: "receiver-cnpj" },
-//         items,
-//         { initialStatus: "WAITING_SCHEDULE_SALES", invoiceType: "INCOMING" }, // mesmo passando invoiceType, deve ser ignorado quando os dois lados batem
-//       );
+//     expect(invoiceUpdateMock).not.toHaveBeenCalled();
+//     expect(attrsUpdateMock).toHaveBeenCalledTimes(1);
+//     expect(attrsUpdateMock).toHaveBeenCalledWith(
+//       { status: "PENDING" },
+//       { where: { invoice_id: { [Symbol.for("in") as any]: INVOICE_IDS } } },
+//     );
+//   });
 
-//       const attrs = getCreatedAttributes();
-//       expect(attrs).toHaveLength(2);
-//       expect(attrs).toContainEqual(
-//         expect.objectContaining({
-//           unit_business_id: UNIT_A,
-//           type: "OUTGOING",
-//           status: "OPEN",
-//         }),
-//       );
-//       expect(attrs).toContainEqual(
-//         expect.objectContaining({
-//           unit_business_id: UNIT_B,
-//           type: "INCOMING",
-//           status: "WAITING_SCHEDULE_SALES",
-//         }),
-//       );
+//   it("atualiza somente batch_generated", async () => {
+//     await repository.updateWithAttributesForAllUnits(INVOICE_IDS, {
+//       batch_generated: true,
+//     });
+
+//     expect(invoiceUpdateMock).not.toHaveBeenCalled();
+//     const [payload] = attrsUpdateMock.mock.calls[0];
+//     expect(payload).toEqual({ batch_generated: true });
+//   });
+
+//   it("atualiza status e batch_generated juntos", async () => {
+//     await repository.updateWithAttributesForAllUnits(INVOICE_IDS, {
+//       status: "FINISHED",
+//       batch_generated: true,
+//     });
+
+//     const [payload] = attrsUpdateMock.mock.calls[0];
+//     expect(payload).toEqual({ status: "FINISHED", batch_generated: true });
+//   });
+
+//   it("atualiza campos da invoice (ex: reprocesso via Bling) sem tocar em attributes", async () => {
+//     await repository.updateWithAttributesForAllUnits(INVOICE_IDS, {
+//       sender_cnpj: "novo-cnpj",
+//       invoice_value: 100,
+//     } as any);
+
+//     expect(attrsUpdateMock).not.toHaveBeenCalled();
+//     const [payload] = invoiceUpdateMock.mock.calls[0];
+//     expect(payload).toEqual({
+//       sender_cnpj: "novo-cnpj",
+//       invoice_value: 100,
 //     });
 //   });
 
-//   describe("caso 2: só sender é unit business conhecida (nota de saída normal)", () => {
-//     it("sem invoiceType, assume OUTGOING por padrão (comportamento normal)", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([
-//         { id: UNIT_A, cnpj: "sender-cnpj" },
-//       ]);
+//   it("não chama nenhum update se data vier vazio", async () => {
+//     await repository.updateWithAttributesForAllUnits(INVOICE_IDS, {});
 
-//       await invoiceService.createWithRelations(
-//         { ...baseInvoiceData, sender_cnpj: "sender-cnpj", receiver_cnpj: EXTERNAL_CNPJ },
-//         items,
-//       );
-
-//       const attrs = getCreatedAttributes();
-//       expect(attrs).toHaveLength(1);
-//       expect(attrs![0]).toMatchObject({
-//         unit_business_id: UNIT_A,
-//         type: "OUTGOING",
-//         status: "OPEN",
-//       });
-//     });
-
-//     it("com invoiceType=INCOMING (nota de retorno), grava INCOMING mesmo sendo o sender — é o bug original que estamos corrigindo", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([
-//         { id: UNIT_A, cnpj: "sender-cnpj" },
-//       ]);
-
-//       await invoiceService.createWithRelations(
-//         { ...baseInvoiceData, sender_cnpj: "sender-cnpj", receiver_cnpj: EXTERNAL_CNPJ },
-//         items,
-//         { invoiceType: "INCOMING" },
-//       );
-
-//       const attrs = getCreatedAttributes();
-//       expect(attrs).toHaveLength(1);
-//       expect(attrs![0]).toMatchObject({
-//         unit_business_id: UNIT_A,
-//         type: "INCOMING", // nota de retorno: mesmo sendo sender, o Bling diz que é entrada
-//         status: "OPEN",
-//       });
-//     });
+//     expect(invoiceUpdateMock).not.toHaveBeenCalled();
+//     expect(attrsUpdateMock).not.toHaveBeenCalled();
 //   });
 
-//   describe("caso 3: só receiver é unit business conhecida (nota de entrada normal)", () => {
-//     it("sem invoiceType, assume INCOMING por padrão", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([
-//         { id: UNIT_B, cnpj: "receiver-cnpj" },
-//       ]);
+//   it("respeita attrWhere adicional (ex: unit_business_id específico)", async () => {
+//     await repository.updateWithAttributesForAllUnits(
+//       INVOICE_IDS,
+//       { status: "OPEN" },
+//       { unit_business_id: "unit-business-a" },
+//     );
 
-//       await invoiceService.createWithRelations(
-//         { ...baseInvoiceData, sender_cnpj: EXTERNAL_CNPJ, receiver_cnpj: "receiver-cnpj" },
-//         items,
-//         { initialStatus: "WAITING_SCHEDULE_SALES" },
-//       );
-
-//       const attrs = getCreatedAttributes();
-//       expect(attrs).toHaveLength(1);
-//       expect(attrs![0]).toMatchObject({
-//         unit_business_id: UNIT_B,
-//         type: "INCOMING",
-//         status: "WAITING_SCHEDULE_SALES",
-//       });
-//     });
-
-//     it("com invoiceType=OUTGOING (caso simétrico ao de retorno, do lado do destinatário), respeita o tipo vindo da fonte", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([
-//         { id: UNIT_B, cnpj: "receiver-cnpj" },
-//       ]);
-
-//       await invoiceService.createWithRelations(
-//         { ...baseInvoiceData, sender_cnpj: EXTERNAL_CNPJ, receiver_cnpj: "receiver-cnpj" },
-//         items,
-//         { invoiceType: "OUTGOING" },
-//       );
-
-//       const attrs = getCreatedAttributes();
-//       expect(attrs![0]).toMatchObject({
-//         unit_business_id: UNIT_B,
-//         type: "OUTGOING",
-//       });
-//     });
+//     const [, options] = attrsUpdateMock.mock.calls[0];
+//     expect(options.where).toMatchObject({ unit_business_id: "unit-business-a" });
 //   });
 
-//   describe("caso 4: nem sender nem receiver são unit business conhecidas", () => {
-//     it("não cria nenhum attribute e não chama createInvoiceAttributes", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([]);
+//   // ─── Regressão: update jamais deve tocar em type ──────────────────────────
+//   // Mesmo que alguém force `type` no payload via `as any` (bypass do TS),
+//   // a função precisa descartar o campo — nem manda pro Invoice.update
+//   // (que não deveria ter esse campo) nem pro attributes.update (onde
+//   // sobrescrever type sem saber se a invoice tem 1 ou 2 unit business
+//   // associadas quebraria o par INCOMING/OUTGOING de transferências internas).
+//   it("descarta 'type' mesmo se vier junto de status/batch_generated, forçado via as any", async () => {
+//     await repository.updateWithAttributesForAllUnits(INVOICE_IDS, {
+//       status: "PENDING",
+//       batch_generated: false,
+//       type: "INCOMING",
+//     } as any);
 
-//       await invoiceService.createWithRelations(
-//         { ...baseInvoiceData, sender_cnpj: EXTERNAL_CNPJ, receiver_cnpj: "outro-externo" },
-//         items,
-//       );
-
-//       expect(repo.createInvoiceAttributes).not.toHaveBeenCalled();
-//     });
+//     const [attrsPayload] = attrsUpdateMock.mock.calls[0];
+//     expect(attrsPayload).not.toHaveProperty("type");
+//     expect(attrsPayload).toEqual({ status: "PENDING", batch_generated: false });
 //   });
 
-//   describe("deduplicação de items", () => {
-//     it("soma quantity_expected de items com mesmo product_id antes de criar", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([
-//         { id: UNIT_A, cnpj: "sender-cnpj" },
-//       ]);
+//   it("descarta 'type' mesmo quando é o único campo além de dados de invoice — não gera update de attributes", async () => {
+//     await repository.updateWithAttributesForAllUnits(INVOICE_IDS, {
+//       sender_cnpj: "novo-cnpj",
+//       type: "OUTGOING",
+//     } as any);
 
-//       await invoiceService.createWithRelations(
-//         { ...baseInvoiceData, sender_cnpj: "sender-cnpj", receiver_cnpj: EXTERNAL_CNPJ },
-//         [
-//           { product_id: "prod-1", quantity_expected: 2.4, fiscal: undefined },
-//           { product_id: "prod-1", quantity_expected: 1.4, fiscal: undefined },
-//           { product_id: "prod-2", quantity_expected: 5, fiscal: undefined },
-//         ],
-//       );
+//     // status e batch_generated continuam undefined -> não deve chamar attrs.update
+//     expect(attrsUpdateMock).not.toHaveBeenCalled();
 
-//       const createdItems = repo.createInvoiceItems.mock.calls[0][0];
-//       expect(createdItems).toHaveLength(2);
-//       const prod1 = createdItems.find((i: any) => i.product_id === "prod-1");
-//       // Math.trunc(2.4 + 1.4) = Math.trunc(3.8) = 3
-//       expect(prod1.quantity_expected).toBe(3);
-//     });
-//   });
-
-//   describe("transação", () => {
-//     it("usa transação externa quando fornecida e não faz commit/rollback próprio", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([]);
-//       const externalTx = { commit: jest.fn(), rollback: jest.fn() };
-
-//       await invoiceService.createWithRelations(
-//         { ...baseInvoiceData, sender_cnpj: EXTERNAL_CNPJ, receiver_cnpj: "outro" },
-//         items,
-//         { transaction: externalTx as any },
-//       );
-
-//       expect(externalTx.commit).not.toHaveBeenCalled();
-//       expect(sequelize.transaction).not.toHaveBeenCalled();
-//     });
-
-//     it("cria e comita própria transação quando nenhuma é fornecida", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([]);
-
-//       await invoiceService.createWithRelations(
-//         { ...baseInvoiceData, sender_cnpj: EXTERNAL_CNPJ, receiver_cnpj: "outro" },
-//         items,
-//       );
-
-//       expect(fakeTransaction.commit).toHaveBeenCalledTimes(1);
-//       expect(fakeTransaction.rollback).not.toHaveBeenCalled();
-//     });
-
-//     it("faz rollback da própria transação se algo falhar, e propaga o erro", async () => {
-//       repo.findUnitBusinessesByCnpj.mockResolvedValue([]);
-//       repo.createInvoice.mockRejectedValue(new Error("db error"));
-
-//       await expect(
-//         invoiceService.createWithRelations(
-//           { ...baseInvoiceData, sender_cnpj: EXTERNAL_CNPJ, receiver_cnpj: "outro" },
-//           items,
-//         ),
-//       ).rejects.toThrow("db error");
-
-//       expect(fakeTransaction.rollback).toHaveBeenCalledTimes(1);
-//       expect(fakeTransaction.commit).not.toHaveBeenCalled();
-//     });
+//     // e 'type' também não pode vazar pro Invoice.update
+//     const [invoicePayload] = invoiceUpdateMock.mock.calls[0];
+//     expect(invoicePayload).not.toHaveProperty("type");
+//     expect(invoicePayload).toEqual({ sender_cnpj: "novo-cnpj" });
 //   });
 // });
