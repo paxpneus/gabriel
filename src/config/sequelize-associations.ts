@@ -60,6 +60,7 @@ import BatchInvoiceItems from "../modules/warehouse/expedition/batch-invoice-ite
 import InvoiceUnitBusinessAttributes from "../modules/warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import State from "../modules/warehouse/address/state/state.model";
 import Brand from "../modules/inventory/brands/brands.model";
+import SellerSalesOrderItemSnapshot from "../modules/reports/sellers-report/models/seller-sales-order-item-snapshot/seller-sales-order-item-snapshot.model";
 export function setupAssociations() {
   // Standalone lookup table; no FK associations declared yet.
   void State;
@@ -1068,4 +1069,64 @@ Customer.hasMany(DailySellerCustomerFact, {
 DailySellerCustomerFact.belongsTo(Customer, {
   foreignKey: "customer_id",
   as: "customer",
+});
+
+// OrderItems <-> SellerSalesOrderItemSnapshot (1:1, por order_item_id)
+OrderItems.hasOne(SellerSalesOrderItemSnapshot, {
+  foreignKey: "order_item_id",
+  as: "sellerSnapshot",
+});
+SellerSalesOrderItemSnapshot.belongsTo(OrderItems, {
+  foreignKey: "order_item_id",
+  as: "orderItem",
+});
+
+// Order -> SellerSalesOrderItemSnapshot (1:N, usado para agregação por pedido)
+Order.hasMany(SellerSalesOrderItemSnapshot, {
+  foreignKey: "order_id",
+  as: "sellerItemSnapshots",
+});
+SellerSalesOrderItemSnapshot.belongsTo(Order, {
+  foreignKey: "order_id",
+  as: "order",
+});
+
+// Product -> SellerSalesOrderItemSnapshot
+Product.hasMany(SellerSalesOrderItemSnapshot, {
+  foreignKey: "product_id",
+  as: "sellerItemSnapshots",
+});
+SellerSalesOrderItemSnapshot.belongsTo(Product, {
+  foreignKey: "product_id",
+  as: "product",
+});
+
+// Contact (seller) -> SellerSalesOrderItemSnapshot
+Contact.hasMany(SellerSalesOrderItemSnapshot, {
+  foreignKey: "seller_id",
+  as: "sellerItemSnapshots",
+});
+SellerSalesOrderItemSnapshot.belongsTo(Contact, {
+  foreignKey: "seller_id",
+  as: "seller",
+});
+
+// Customer -> SellerSalesOrderItemSnapshot
+Customer.hasMany(SellerSalesOrderItemSnapshot, {
+  foreignKey: "customer_id",
+  as: "sellerItemSnapshots",
+});
+SellerSalesOrderItemSnapshot.belongsTo(Customer, {
+  foreignKey: "customer_id",
+  as: "customer",
+});
+
+// UnitBusiness -> SellerSalesOrderItemSnapshot
+UnitBusiness.hasMany(SellerSalesOrderItemSnapshot, {
+  foreignKey: "unit_business_id",
+  as: "sellerItemSnapshots",
+});
+SellerSalesOrderItemSnapshot.belongsTo(UnitBusiness, {
+  foreignKey: "unit_business_id",
+  as: "unitBusiness",
 });

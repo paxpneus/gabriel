@@ -10,13 +10,14 @@ import orderItemsRepository, {
 } from "./order_items.repository";
 import Order from "../order/orders.model";
 import { UnitBusiness, Invoice } from "../../../warehouse";
-import { Product, ProductConfig } from "../../../inventory";
+import { Product } from "../../../inventory";
 import Contact from "../../contacts/contacts.model";
 import Customer from "../../customers/customers.model"; // ajustar path/nome se diferente
 import { OrderSalesDetailRow, SalesDetailFilters } from "./order_items.types";
 import Brand from "../../../inventory/brands/brands.model";
-import { ProductConfigAttributes } from "../../../inventory/product-config/product_config.types";
-import { formatToBRDate, formatToBRISOString } from "../../../../shared/utils/normalizers/date";
+import { formatToBRISOString } from "../../../../shared/utils/normalizers/date";
+// Ajustar o path abaixo para o local real do model
+import SellerSalesOrderItemSnapshot from "../../../reports/sellers-report/models/seller-sales-order-item-snapshot/seller-sales-order-item-snapshot.model";
 
 export class OrderItemsService extends BaseService<
   OrderItems,
@@ -116,20 +117,21 @@ export class OrderItemsService extends BaseService<
           model: Product,
           as: "product",
           attributes: ["id", "name", "ean", "ean_tribut", "line", "measure"],
-          include: [
-            { model: Brand, as: "brandRegister" },
-            {
-              model: ProductConfig,
-              as: "productConfigs",
-              separate: true,
-              include: [
-                {
-                  model: UnitBusiness,
-                  as: "unitBusiness",
-                  where: { type: "PHYSICAL" },
-                },
-              ],
-            },
+          include: [{ model: Brand, as: "brandRegister" }],
+        },
+        
+        {
+          model: SellerSalesOrderItemSnapshot,
+          as: "sellerSnapshot",
+          required: false,
+          attributes: [
+            "average_cost",
+            "total_cost",
+            "net_total",
+            "icms_value_allocated",
+            "tax_commission_allocated",
+            "freight_cost_allocated",
+            "contribution_value",
           ],
         },
       ],
@@ -146,58 +148,52 @@ export class OrderItemsService extends BaseService<
       } as unknown as PaginatedResult<OrderSalesDetailRow>;
     }
 
-    const orderTotalsRaw = await this.repository.findAll({
-      attributes: ["order_id", [fn("SUM", col("net_total")), "net_total_sum"]],
+ 
+    const orderAggregatesRaw = await SellerSalesOrderItemSnapshot.findAll({
+      attributes: [
+        "order_id",
+        [fn("SUM", col("contribution_value")), "contribution_sum"],
+        [fn("SUM", col("freight_cost_allocated")), "freight_sum"],
+        [fn("SUM", col("icms_value_allocated")), "icms_sum"],
+      ],
       where: { order_id: orderIds },
       group: ["order_id"],
       raw: true,
     });
 
-    const orderTotalsMap = new Map<string, number>(
-      orderTotalsRaw.map((row: any) => [
+    const orderAggregatesMap = new Map<
+      string,
+      { contribution: number; freight: number; icms: number }
+    >(
+      orderAggregatesRaw.map((row: any) => [
         row.order_id,
-        Number(row.net_total_sum ?? 0),
+        {
+          contribution: Number(row.contribution_sum ?? 0),
+          freight: Number(row.freight_sum ?? 0),
+          icms: Number(row.icms_sum ?? 0),
+        },
       ]),
     );
 
     const data: OrderSalesDetailRow[] = result.data.map((item: any) => {
       const order = item.order;
-      const netTotalSum = orderTotalsMap.get(item.order_id) ?? 0;
-      const weight =
-        netTotalSum === 0 ? 0 : Number(item.net_total ?? 0) / netTotalSum;
-
-      const icmsAllocated = Number(
-        (weight * Number(order?.icms_value ?? 0)).toFixed(2),
-      );
-      const marketplaceTaxAllocated = Number(
-        (weight * Number(order?.tax_commission ?? 0)).toFixed(2),
-      );
-      const freightAllocated = Number(
-        (weight * Number(order?.freight_cost ?? 0)).toFixed(2),
-      );
-      const saleValueAllocated = Number(
-        (weight * Number(order?.total_price ?? 0)).toFixed(2),
-      );
-      const cost = Number(item.total_cost_snapshot ?? 0);
-
-      const profit = Number(
-        (saleValueAllocated - cost - icmsAllocated).toFixed(2),
-      );
+      const snapshot = item.sellerSnapshot;
+      const orderAggregates = orderAggregatesMap.get(item.order_id) ?? {
+        contribution: 0,
+        freight: 0,
+        icms: 0,
+      };
 
       const sellerName = order?.seller?.name ?? null;
       const commissionValue =
         sellerName === "Vendedor 0" ? null : Number(item.commission_value ?? 0);
 
-      console.log(order?.updatedAt);
-
       const measure = item.product?.measure ?? "";
       const [, largura, perfil, aro] =
         measure.match(/^(\d+)\/(\d+)R(\d+)$/i) ?? [];
 
-      const productConfig = item.product?.productConfigs.find(
-        (s: ProductConfigAttributes) =>
-          s.unit_business_id == order?.unitBusiness?.id,
-      );
+      const averageCost =
+        snapshot?.average_cost != null ? Number(snapshot.average_cost) : null;
 
       return {
         pedido: {
@@ -207,6 +203,9 @@ export class OrderItemsService extends BaseService<
           valor_total_pedido: Number(order?.total_products ?? 0),
           custo_total_pedido: Number(order.total_cost),
           numero_nota_fiscal: order?.invoice?.number_system ?? null,
+          lucro_pedido: Number(orderAggregates.contribution.toFixed(2)),
+          total_frete_pedido: Number(orderAggregates.freight.toFixed(2)),
+          total_icms_pedido: Number(orderAggregates.icms.toFixed(2)),
         },
         vendedor: {
           id_vendedor_tecinco: "",
@@ -222,7 +221,6 @@ export class OrderItemsService extends BaseService<
           identificacao: {
             nome: item.product?.name ?? null,
             ean: item.product?.ean ?? null,
-            sku_tecinco: productConfig?.sku ?? null,
             sku_bling: item.sku,
             linha: item.product?.line ?? null,
           },
@@ -236,9 +234,21 @@ export class OrderItemsService extends BaseService<
 
           precos: {
             quantidade: item.quantity,
+            // padrão, igual tem hoje
             valor_venda_item: Number(item.price ?? 0),
-            custo_medio: Number(item.average_cost_snapshot) ?? null,
-            custo_total_item_pedido: cost,
+            // já rateado por item (net_total_allocated do snapshot)
+            valor_venda_item_liquido_rateado: Number(snapshot?.net_total ?? 0),
+            custo_medio: averageCost,
+            // igual tem hoje: custo_medio * quantidade
+            custo_total_item_pedido:
+              averageCost != null
+                ? Number((averageCost * Number(item.quantity ?? 0)).toFixed(2))
+                : null,
+            // custo já rateado/consolidado do snapshot (total_cost por item)
+            custo_total_item_pedido_rateado: Number(snapshot?.total_cost ?? 0),
+            // lucro do item, já pronto no snapshot — soma dos itens de um
+            // pedido bate com lucro_pedido acima
+            lucro_item: Number(snapshot?.contribution_value ?? 0),
             valor_premiacao_vendedor_item_pedido: commissionValue,
           },
 

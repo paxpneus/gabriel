@@ -1395,6 +1395,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       const created = await invoiceService
         .createWithRelations(invoiceBaseData, invoiceItemsForCreate, {
           initialStatus: resolveInitialStatus(),
+          invoiceType,
         })
         .catch((error) => {
           logDbError("[INVOICE CREATE ERROR DETAIL]", error, {
@@ -1407,6 +1408,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
       invoice = await invoiceService.findByIdFullForAllUnits(created.id);
     } else {
+      
       await invoiceService.updateInvoicesForAllUnitBusiness(
         [existingInvoice.id],
         {
