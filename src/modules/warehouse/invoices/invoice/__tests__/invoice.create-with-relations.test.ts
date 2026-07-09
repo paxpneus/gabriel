@@ -3,12 +3,22 @@
 
 // // ─── Mocks dos módulos externos ───────────────────────────────────────────────
 
+// const fakeTransaction = {
+//   commit: jest.fn(),
+//   rollback: jest.fn(),
+// };
+
 // jest.mock("../../../../../config/sequelize", () => ({
 //   __esModule: true,
 //   default: {
-//     transaction: jest.fn(),
+//     transaction: jest.fn().mockResolvedValue(fakeTransaction),
+//     where: jest.fn(),
+//     fn: jest.fn(),
+//     col: jest.fn(),
 //   },
 // }));
+
+
 
 // jest.mock("../invoice.repository", () => ({
 //   __esModule: true,
@@ -20,6 +30,61 @@
 //     createInvoiceAttributes: jest.fn(),
 //   },
 // }));
+
+// // ─── Mock Models importados pelo InvoiceService ──────────────────────────────
+
+// jest.mock("../invoice.model", () => ({
+//   __esModule: true,
+//   default: class Invoice {},
+// }));
+
+// jest.mock("../../invoice-items/invoice-items.model", () => ({
+//   __esModule: true,
+//   default: class InvoiceItems {},
+// }));
+
+// jest.mock("../../unit-business/unit-business.model", () => ({
+//   __esModule: true,
+//   default: class UnitBusiness {},
+// }));
+
+// jest.mock("../../transporter/transporter.model", () => ({
+//   __esModule: true,
+//   default: class Transporter {},
+// }));
+
+// jest.mock("../../expedition/batch/batch.model", () => ({
+//   __esModule: true,
+//   default: class ExpeditionBatch {},
+// }));
+
+// jest.mock("../../expedition/batch-invoices/batch-invoices.model", () => ({
+//   __esModule: true,
+//   default: class ExpeditionBatchInvoice {},
+// }));
+
+// jest.mock("../../../sales/stores/stores.model", () => ({
+//   __esModule: true,
+//   default: class Store {},
+// }));
+
+// jest.mock("../../../sales/contacts/contacts.model", () => ({
+//   __esModule: true,
+//   default: class Contact {},
+// }));
+
+// jest.mock("../../../sales/orders/order/orders.model", () => ({
+//   __esModule: true,
+//   default: class Order {},
+// }));
+
+// // inventory exporta vários
+// jest.mock("../../../inventory", () => ({
+//   Product: class Product {},
+//   ProductConfig: class ProductConfig {},
+//   Supplier: class Supplier {},
+// }));
+
 
 // import sequelize from "../../../../../config/sequelize";
 // import mockedRepository from "../invoice.repository";
@@ -39,7 +104,6 @@
 // const UNIT_B = "unit-business-b"; // ex: filial — também unit business conhecida
 // const EXTERNAL_CNPJ = "11222333000144"; // cliente/fornecedor externo, nunca é unit business
 
-// const fakeTransaction = { commit: jest.fn(), rollback: jest.fn() };
 
 // const baseInvoiceData: InvoiceCreationData = {
 //   sender_cnpj: "",
@@ -58,7 +122,10 @@
 
 // beforeEach(() => {
 //   jest.clearAllMocks();
-//   (sequelize.transaction as jest.Mock).mockResolvedValue(fakeTransaction);
+
+//   (sequelize.transaction as jest.Mock)
+//     .mockResolvedValue(fakeTransaction);
+
 //   repo.createInvoice.mockResolvedValue({ id: "invoice-1" });
 //   repo.createInvoiceItems.mockResolvedValue(undefined);
 //   repo.createInvoiceFiscalItems.mockResolvedValue(undefined);
