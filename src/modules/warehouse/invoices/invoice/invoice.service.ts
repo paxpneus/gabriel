@@ -163,10 +163,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     {
       transaction,
       initialStatus = "OPEN",
+      invoiceType,
     }: {
       transaction?: Transaction;
       initialStatus?: InvoiceUnitBusinessAttributesStatus;
       mainUnitBusinessId?: string;
+      invoiceType?: "INCOMING" | "OUTGOING";
     } = {},
   ): Promise<Invoice> {
     const t = transaction ?? (await sequelize.transaction());
@@ -250,9 +252,18 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         });
       };
 
-      if (senderUbId) addAttr(senderUbId, "OUTGOING", "OPEN");
-      if (receiverUbId)
+      if (senderUbId && receiverUbId) {
+        addAttr(senderUbId, "OUTGOING", "OPEN");
         addAttr(receiverUbId, "INCOMING", initialStatus ?? "OPEN");
+      } else if (senderUbId) {
+        addAttr(senderUbId, invoiceType ?? "OUTGOING", initialStatus ?? "OPEN");
+      } else if (receiverUbId) {
+        addAttr(
+          receiverUbId,
+          invoiceType ?? "INCOMING",
+          initialStatus ?? "OPEN",
+        );
+      }
 
       if (attributes.length > 0) {
         await this.repository.createInvoiceAttributes(attributes, t);

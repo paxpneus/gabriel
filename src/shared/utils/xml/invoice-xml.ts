@@ -622,6 +622,7 @@ export async function upsertInvoiceFromXml(
     unmappedItems?: UnmappedInvoiceItemFromXml[];
     sourcePayload?: Record<string, unknown>;
     isCancelled?: boolean;
+    invoiceType?: "INCOMING" | "OUTGOING";
   },
 ): Promise<void> {
   const {
@@ -866,6 +867,7 @@ export async function upsertInvoiceFromXml(
         invoiceItemsForCreate,
         {
           initialStatus: resolvedInitialStatus,
+          invoiceType: options?.invoiceType,
         },
       )
       .catch((error: any) => {

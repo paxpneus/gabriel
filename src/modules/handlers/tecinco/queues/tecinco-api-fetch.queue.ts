@@ -311,7 +311,18 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
   // ─── Invoice XML ───────────────────────────────────────────────────────────
 
-  // ─── Invoice XML ───────────────────────────────────────────────────────────────
+  private resolveInvoiceTypeFromEntradaSaida(
+    entradaSaida: string | null | undefined,
+  ): "INCOMING" | "OUTGOING" | undefined {
+    const normalized = entradaSaida?.trim().toLowerCase();
+    if (normalized === "e") return "INCOMING";
+    if (normalized === "s") return "OUTGOING";
+
+    console.warn(
+      `[TCAR_UPSERT] entrada_saida inesperado: "${entradaSaida}" — tipo não resolvido`,
+    );
+    return undefined;
+  }
 
   private async processInvoiceXml(
     data: TCarInvoiceXmlPayload,
@@ -323,6 +334,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
     const { numero, entrada_saida, ...identificacao } = data;
     const logPrefix = `[TCAR_UPSERT] invoice_xml numero=${numero} branchId=${branchId}`;
+
+    const invoiceType = this.resolveInvoiceTypeFromEntradaSaida(entrada_saida);
 
     const conferenciaService = new TCarConferenciaEstoqueService();
     const chaveComposta = identificacao as TCarNotaFiscalXmlByChaveComposta;
@@ -398,13 +411,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       operationalItems,
       unmappedItems,
       sourcePayload: notaFiscal?.data ?? notaFiscal ?? null,
+      invoiceType,
     });
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
   }
-
-  // ─── Upsert customer a partir da TeCinco ─────────────────────────────────────
-
-  // ─── Garante produtos a partir dos itens da nota fiscal ─────────────────────
 
   private async ensureProductsFromInvoiceItems(
     itens: TCarNotaFiscalItem[],

@@ -35,6 +35,9 @@ export interface OrderSalesDetailRow {
     valor_total_pedido: number;
     custo_total_pedido: number;
     numero_nota_fiscal: string | null;
+    lucro_pedido: number;
+    total_frete_pedido: number;
+    total_icms_pedido: number;
   };
 
   vendedor: {
@@ -53,7 +56,6 @@ export interface OrderSalesDetailRow {
     identificacao: {
       nome: string | null;
       ean: string | null;
-      sku_tecinco: string | null;
       sku_bling: string | null;
       linha: string | null;
     };
@@ -68,8 +70,11 @@ export interface OrderSalesDetailRow {
     precos: {
       quantidade: number;
       valor_venda_item: number;
+      valor_venda_item_liquido_rateado: number;
       custo_medio: number | null;
-      custo_total_item_pedido: number;
+      custo_total_item_pedido: number | null;
+      custo_total_item_pedido_rateado: number;
+      lucro_item: number;
       valor_premiacao_vendedor_item_pedido: number | null;
     };
 
