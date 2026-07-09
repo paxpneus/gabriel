@@ -49,6 +49,47 @@ export class BlingOrderService {
     return await executeWebhookAction(action, body, handlers);
   }
 
+  private appendMissingOrderFiscalFields(
+    existingOrder: any,
+    fiscalFields: ReturnType<BlingOrderService["extractFiscalFields"]>,
+    icmsValue: number,
+  ) {
+    const update: Record<string, any> = {};
+
+    if (existingOrder.destination_uf == null) {
+      update.destination_uf = fiscalFields.destination_uf;
+    }
+    if (existingOrder.destination_city == null) {
+      update.destination_city = fiscalFields.destination_city;
+    }
+    if (existingOrder.ipi_value == null) {
+      update.ipi_value = fiscalFields.ipi_value;
+    }
+    if (existingOrder.pis_value == null) {
+      update.pis_value = fiscalFields.pis_value;
+    }
+    if (existingOrder.cofins_value == null) {
+      update.cofins_value = fiscalFields.cofins_value;
+    }
+    if (existingOrder.difal_value == null) {
+      update.difal_value = fiscalFields.difal_value;
+    }
+    if (existingOrder.ibs_value == null) {
+      update.ibs_value = fiscalFields.ibs_value;
+    }
+    if (existingOrder.cbs_value == null) {
+      update.cbs_value = fiscalFields.cbs_value;
+    }
+    if (existingOrder.approx_tax_value == null) {
+      update.approx_tax_value = fiscalFields.approx_tax_value;
+    }
+    if (existingOrder.icms_value == null) {
+      update.icms_value = icmsValue;
+    }
+
+    return update;
+  }
+
   private async blingGet(url: string): Promise<any> {
     if (BLING_ORDER_REQUEST_DELAY_MS > 0) {
       await new Promise<void>((resolve) =>
@@ -313,29 +354,55 @@ export class BlingOrderService {
   }
   private appendMissingFinancialFields(
     existingItem: any,
-    fields: ReturnType<BlingOrderService["buildItemFinancialFields"]>,
+    fields: {
+      commission_base?: number;
+      commission_rate?: number;
+      comission_manager_rate?: number;
+      commission_value?: number;
+      average_cost_snapshot?: number | null;
+      total_cost_snapshot?: number | null;
+      cost_source?: string;
+    },
   ) {
     const update: Partial<orderItemsCreationAttributes> = {};
 
-    if (existingItem.commission_base == null) {
+    if (
+      existingItem.commission_base == null &&
+      fields.commission_base !== undefined
+    ) {
       update.commission_base = fields.commission_base;
     }
-    if (existingItem.commission_rate == null) {
+    if (
+      existingItem.commission_rate == null &&
+      fields.commission_rate !== undefined
+    ) {
       update.commission_rate = fields.commission_rate;
     }
-    if (existingItem.comission_manager_rate == null) {
+    if (
+      existingItem.comission_manager_rate == null &&
+      fields.comission_manager_rate !== undefined
+    ) {
       update.comission_manager_rate = fields.comission_manager_rate;
     }
-    if (existingItem.commission_value == null) {
+    if (
+      existingItem.commission_value == null &&
+      fields.commission_value !== undefined
+    ) {
       update.commission_value = fields.commission_value;
     }
-    if (existingItem.average_cost_snapshot == null) {
+    if (
+      existingItem.average_cost_snapshot == null &&
+      fields.average_cost_snapshot !== undefined
+    ) {
       update.average_cost_snapshot = fields.average_cost_snapshot;
     }
-    if (existingItem.total_cost_snapshot == null) {
+    if (
+      existingItem.total_cost_snapshot == null &&
+      fields.total_cost_snapshot !== undefined
+    ) {
       update.total_cost_snapshot = fields.total_cost_snapshot;
     }
-    if (existingItem.cost_source == null) {
+    if (existingItem.cost_source == null && fields.cost_source !== undefined) {
       update.cost_source = fields.cost_source;
     }
 
@@ -572,6 +639,12 @@ export class BlingOrderService {
         custoTotalProdutos,
       );
 
+      const orderFiscalFieldsToUpdate = this.appendMissingOrderFiscalFields(
+        existingOrder,
+        fiscalFields,
+        orderFinancials.icms_value,
+      );
+
       await ordersService.update(existingOrder.id, {
         unit_business_id: unitBusinessId,
         invoice_id: invoiceId,
@@ -596,9 +669,10 @@ export class BlingOrderService {
         gross_weight: Number(orderData.transporte?.pesoBruto ?? 0),
         tax_commission: Number(orderData.taxas?.taxaComissao ?? 0),
         tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
+        total_price: orderFinancials.total_price,
+        total_cost: orderFinancials.total_cost,
         ...(sellerId ? { seller_id: sellerId } : {}),
-        ...fiscalFields,
-        ...orderFinancials,
+        ...orderFiscalFieldsToUpdate,
       });
 
       if (orderData.itens?.length) {
@@ -614,6 +688,11 @@ export class BlingOrderService {
             : null;
 
           if (existingItem) {
+            const financialFieldsUpdate = this.appendMissingFinancialFields(
+              existingItem,
+              computedItem,
+            );
+
             await orderItemsService.update(existingItem.id, {
               quantity: computedItem.quantity,
               price: computedItem.price,
@@ -621,15 +700,9 @@ export class BlingOrderService {
               gross_total: computedItem.gross_total,
               discount_value: computedItem.discount_value,
               net_total: computedItem.net_total,
-              commission_base: computedItem.commission_base,
-              commission_rate: computedItem.commission_rate,
-              comission_manager_rate: computedItem.comission_manager_rate,
-              commission_value: computedItem.commission_value,
-              average_cost_snapshot: computedItem.average_cost_snapshot,
-              total_cost_snapshot: computedItem.total_cost_snapshot,
-              cost_source: computedItem.cost_source,
               product_id: computedItem.product_id,
               source_payload: i,
+              ...financialFieldsUpdate,
             });
           } else {
             await orderItemsService.create({
