@@ -15,8 +15,8 @@ export class UnitBusinessService extends BaseService<UnitBusiness, UnitBusinessR
     super(unitBusinessRepository);
 
        this.queryConfig = {
-      filterableFields: ['id', 'head_office'], 
-      sortableFields: ['name', 'number', 'createdAt'],
+      filterableFields: ['id', 'head_office', 'type'], 
+      sortableFields: ['name', 'number', 'createdAt', 'type'],
       searchFields: ['name', 'cnpj'],
       defaults: {
         perPage: 20,
