@@ -265,18 +265,8 @@ export class UserService extends BaseService<User, UserRepository> {
   }
 
   async login(email: string, password: string) {
-    const user = await this.repository.findOne({
+    let user = await this.repository.getFullUser({
       where: { email },
-      include: [
-        {
-          model: Role,
-          as: "role",
-        },
-        {
-          model: Contact,
-          as: "contact",
-        },
-      ],
     });
 
     if (!user) throw new Error("Usuário não encontrado");
@@ -287,6 +277,7 @@ export class UserService extends BaseService<User, UserRepository> {
     const token = jwt.sign({ id: user.id, role: user.role_id }, SECRET, {
       expiresIn: "8h",
     });
+
 
     return { token, user };
   }
@@ -306,56 +297,15 @@ export class UserService extends BaseService<User, UserRepository> {
       return user;
     }
 
-    user = await this.repository.findOne({
-      where: { id: decoded.id },
-      include: [
-        {
-          model: Role,
-          as: "role",
-        },
-        {
-          model: UnitBusiness,
-          as: "unitBusiness",
-          attributes: ["id", "name", "number", "id_system", "cnpj"],
-        },
-        {
-          model: UnitBusiness,
-          as: "availableUnitBusinesses",
-          attributes: ["id", "name", "number", "id_system", "cnpj"],
-        },
-        {
-          model: UserConfig,
-          as: "config",
-        },
-        {
-          model: Contact,
-          as: "contact",
-        },
-      ],
-    });
+    user = await this.repository.getFullUser({where: { id: decoded.id}})
 
     if (!user) throw new Error("Usuário não encontrado");
 
-    const plainUser = user.get({ plain: true });
-    const unitBusiness = plainUser.config!.visualize_only_current_unit_business
-      ? plainUser.unit_business_id
-      : plainUser.availableUnitBusinesses;
+    
 
-    const allowedModules = USER_TYPES.find(
-      (tp) => tp.type === plainUser.config?.type,
-    );
+    await redisService.set(`user:${decoded.id}`, user);
 
-    const userWithBusinessToView = {
-      ...plainUser,
-      businessToView: Array.isArray(unitBusiness)
-        ? unitBusiness.map((s) => s.id)
-        : unitBusiness,
-      allowedModules: allowedModules,
-    };
-
-    await redisService.set(`user:${decoded.id}`, userWithBusinessToView);
-
-    return userWithBusinessToView;
+    return user;
   }
 }
 

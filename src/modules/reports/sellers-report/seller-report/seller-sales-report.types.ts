@@ -1,13 +1,13 @@
 export interface SellerSalesReportFilters {
-  startDate: string; // YYYY-MM-DD
-  endDate: string; // YYYY-MM-DD
-  sellerId?: string;
-  productId?: string;
-  brand?: string;
-  tireMeasure?: string; // "Aro do Pneu" -> products.measure
-  customerId?: string;
-  unitBusinessId?: string;
-  /** Quando true, retorna também os order_items detalhados (drill-down). */
+  startDate: string;
+  endDate: string;
+  userId?: string;
+  sellerIds?: string[];
+  productIds?: string[];
+  brandIds?: string[];       
+  tireMeasure?: string;
+  customerIds?: string[];
+  unitBusinessIds?: string[];
   drillDown?: boolean;
 }
 

@@ -34,7 +34,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
     label: "Administrador",
     description: "Acesso completo a todos os módulos e telas do sistema.",
     modules: "*",
-    initialPage: "operation-report",
+    initialPage: "daily-operation-report",
   },
 
   {
@@ -42,7 +42,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
     label: "Operador",
     description:
       "Acesso operacional a vendas, expedição, estoque, logística, relatórios e transferências.",
-    initialPage: "home",
+    initialPage: "invoices-list",
     modules: [
       {
         module: "sales",
@@ -169,6 +169,43 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
           {
             id: "unit-business-request",
             label: "Transferências",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    type: "manager",
+    label: "Gerente",
+    description: "Acesso ao relatório de vendedores - visão gerencial.",
+    initialPage: "sellers-manager-report",
+    modules: [
+      {
+        module: "reports",
+        label: "Relatórios",
+        permissions: [
+          {
+            id: "seller-manager-report",
+            label: "Relatório de Vendedor - Visão Gerencial",
+          },
+        ],
+      },
+    ],
+  },
+
+  {
+    type: "seller",
+    label: "Vendedor",
+    description: "Acesso ao relatório de vendedores - visão vendedor.",
+    initialPage: "sellers-report",
+    modules: [
+      {
+        module: "reports",
+        label: "Relatórios",
+        permissions: [
+          {
+            id: "seller-report",
+            label: "Relatório de Vendedor - Visão Vendedor",
           },
         ],
       },

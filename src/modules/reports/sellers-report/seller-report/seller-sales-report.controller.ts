@@ -3,6 +3,24 @@ import { authenticate } from "../../../../middlewares/auth-token";
 import SellerSalesReportService from "./seller-sales-report.service";
 import { userPermissions } from "../../../../middlewares/user-permissions";
 
+// Normaliza um valor de query string em array de strings.
+// Aceita: undefined, string única, "a,b,c" (CSV) ou array já parseado pelo qs
+// (ex: ?sellerIds=a&sellerIds=b ou ?sellerIds[]=a&sellerIds[]=b).
+function toQueryArray(value: unknown): string[] | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+
+  if (Array.isArray(value)) {
+    return value.map(String).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    const parts = value.split(",").map((v) => v.trim()).filter(Boolean);
+    return parts.length ? parts : undefined;
+  }
+
+  return undefined;
+}
+
 class SellerSalesReportController {
   public router: Router;
 
@@ -19,34 +37,29 @@ class SellerSalesReportController {
   }
 
   index = async (req: Request, res: Response): Promise<Response> => {
-  try {
-    const report = await SellerSalesReportService.getReport({
-      startDate: String(req.query.startDate ?? req.query.start_date ?? ""),
-      endDate: String(req.query.endDate ?? req.query.end_date ?? ""),
-      sellerId: (req.query.sellerId ?? req.query.seller_id) as
-        | string
-        | undefined,
-      productId: (req.query.productId ?? req.query.product_id) as
-        | string
-        | undefined,
-      brand: req.query.brand as string | undefined,
-      tireMeasure: (req.query.tireMeasure ?? req.query.tire_measure) as
-        | string
-        | undefined,
-      customerId: (req.query.customerId ?? req.query.customer_id) as
-        | string
-        | undefined,
-      unitBusinessId: (req.query.unitBusinessId ?? req.query.unit_business_id) as
-        | string
-        | undefined,
-      drillDown: req.query.drillDown === "true",
-    });
+    try {
+      const report = await SellerSalesReportService.getReport({
+        startDate: String(req.query.startDate ?? req.query.start_date ?? ""),
+        endDate: String(req.query.endDate ?? req.query.end_date ?? ""),
+        userId: (req.query.userId ?? undefined) as string | undefined,
+        sellerIds: toQueryArray(req.query.sellerIds ?? req.query.seller_ids),
+        productIds: toQueryArray(req.query.productIds ?? req.query.product_ids),
+        brandIds: toQueryArray(req.query.brandIds ?? req.query.brand_ids),
+        tireMeasure: (req.query.tireMeasure ?? req.query.tire_measure) as
+          | string
+          | undefined,
+        customerIds: toQueryArray(req.query.customerIds ?? req.query.customer_ids),
+        unitBusinessIds: toQueryArray(
+          req.query.unitBusinessIds ?? req.query.unit_business_ids,
+        ),
+        drillDown: req.query.drillDown === "true",
+      });
 
-    return res.json(report);
-  } catch (error: any) {
-    return res.status(400).json({ error: error.message });
-  }
-};
+      return res.json(report);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
 
   jobStatus = async (_req: Request, res: Response): Promise<Response> => {
     try {

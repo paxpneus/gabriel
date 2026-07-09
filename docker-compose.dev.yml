@@ -1,0 +1,280 @@
+services:
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - backend
+    depends_on:
+      - api
+
+  # ── 1. PostgreSQL ─────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 2. Redis ──────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 3. Migrate ────────────────────────────────────────────────────────────
+  migrate:
+    build:
+      context: .
+      target: app
+    command: npx sequelize-cli db:migrate
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: "no"
+
+  # ── 4. API ────────────────────────────────────────────────────────────────
+  api:
+    command: npm run dev
+
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      MAILER_HOST: ${MAILER_HOST}
+      MAILER_PORT: ${MAILER_PORT}
+      MAILER_SECURE: ${MAILER_SECURE}
+      MAILER_USER: ${MAILER_USER}
+      MAILER_PASS: ${MAILER_PASS}
+      MAILER_FROM: ${MAILER_FROM}
+      MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      JWT_SECRET: ${JWT_SECRET}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+      BLING_UNIT_BUSINESS_ID: ${BLING_UNIT_BUSINESS_ID}
+      UPLOADER_EMAIL: ${UPLOADER_EMAIL}
+      UPLOADER_PASSWORD: ${UPLOADER_PASSWORD}
+      UPLOADER_URL: ${UPLOADER_URL}
+      CERT_ENCRYPTION_KEY: ${CERT_ENCRYPTION_KEY}
+      SEFAZ_CERT_ENCRYPTED: ${SEFAZ_CERT_ENCRYPTED}
+      SEFAZ_CERT_PASSPHRASE: ${SEFAZ_CERT_PASSPHRASE}
+      SEFAZ_CNPJ: ${SEFAZ_CNPJ}
+      SEFAZ_UF: ${SEFAZ_UF}
+      SEFAZ_AMBIENTE: ${SEFAZ_AMBIENTE}
+      TCAR_COMPANY_ID: ${TCAR_COMPANY_ID}
+      TCAR_PASSWORD: ${TCAR_PASSWORD}
+      TCAR_429_MAX_RETRIES: ${TCAR_429_MAX_RETRIES}
+      TCAR_429_BASE_DELAY: ${TCAR_429_BASE_DELAY}
+      TCAR_429_MAX_DELAY: ${TCAR_429_MAX_DELAY}
+      TCAR_TLS_REJECT_UNAUTHORIZED: ${TCAR_TLS_REJECT_UNAUTHORIZED}
+
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── 5. Workers gerais ─────────────────────────────────────────────────────
+  workers:
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      MAILER_HOST: ${MAILER_HOST}
+      MAILER_PORT: ${MAILER_PORT}
+      MAILER_SECURE: ${MAILER_SECURE}
+      MAILER_USER: ${MAILER_USER}
+      MAILER_PASS: ${MAILER_PASS}
+      MAILER_FROM: ${MAILER_FROM}
+      MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+      JWT_SECRET: ${JWT_SECRET}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+      BLING_UNIT_BUSINESS_ID: ${BLING_UNIT_BUSINESS_ID}
+      UPLOADER_EMAIL: ${UPLOADER_EMAIL}
+      UPLOADER_PASSWORD: ${UPLOADER_PASSWORD}
+      UPLOADER_URL: ${UPLOADER_URL}
+      CERT_ENCRYPTION_KEY: ${CERT_ENCRYPTION_KEY}
+      SEFAZ_CERT_ENCRYPTED: ${SEFAZ_CERT_ENCRYPTED}
+      SEFAZ_CERT_PASSPHRASE: ${SEFAZ_CERT_PASSPHRASE}
+      SEFAZ_CNPJ: ${SEFAZ_CNPJ}
+      SEFAZ_UF: ${SEFAZ_UF}
+      SEFAZ_AMBIENTE: ${SEFAZ_AMBIENTE}
+      TCAR_COMPANY_ID: ${TCAR_COMPANY_ID}
+      TCAR_PASSWORD: ${TCAR_PASSWORD}
+      TCAR_429_MAX_RETRIES: ${TCAR_429_MAX_RETRIES}
+      TCAR_429_BASE_DELAY: ${TCAR_429_BASE_DELAY}
+      TCAR_429_MAX_DELAY: ${TCAR_429_MAX_DELAY}
+      TCAR_TLS_REJECT_UNAUTHORIZED: ${TCAR_TLS_REJECT_UNAUTHORIZED}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  # ── 6. Worker Scraping ────────────────────────────────────────────────────
+  worker-scraping:
+    build:
+      context: .
+      target: worker-scraping
+    restart: unless-stopped
+    command: ["node", "dist/worker-scraping.js"]
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      ML_HEADLESS: "false"
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+    volumes:
+      - ml_session:/app/ml_session
+      - ml_downloads:/app/ml_downloads
+    cap_add:
+      - SYS_ADMIN
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+    # ── 7. Worker Automation ──────────────────────────────────────────────────
+  worker-automation:
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    command: ["node", "dist/worker-automation.js"]
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      MAILER_HOST: ${MAILER_HOST}
+      MAILER_PORT: ${MAILER_PORT}
+      MAILER_SECURE: ${MAILER_SECURE}
+      MAILER_USER: ${MAILER_USER}
+      MAILER_PASS: ${MAILER_PASS}
+      MAILER_FROM: ${MAILER_FROM}
+      MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+      BLING_UNIT_BUSINESS_ID: ${BLING_UNIT_BUSINESS_ID}
+      CERT_ENCRYPTION_KEY: ${CERT_ENCRYPTION_KEY}
+      SEFAZ_CERT_ENCRYPTED: ${SEFAZ_CERT_ENCRYPTED}
+      SEFAZ_CERT_PASSPHRASE: ${SEFAZ_CERT_PASSPHRASE}
+      SEFAZ_CNPJ: ${SEFAZ_CNPJ}
+      SEFAZ_UF: ${SEFAZ_UF}
+      SEFAZ_AMBIENTE: ${SEFAZ_AMBIENTE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  ml_session:
+  ml_downloads:
+  caddy_data:
+  caddy_config:
+
+networks:
+  backend:
+    driver: bridge

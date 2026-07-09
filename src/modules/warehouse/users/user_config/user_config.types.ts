@@ -1,12 +1,15 @@
+import { USER_TYPE_CONFIG } from "../../../../shared/constants/user-types";
+
 export type UserTheme = "dark" | "light";
 
-export type UserType = "admin" | "stock-requester" | "operator" | (string & {});
+export type UserType = "admin" | "stock-requester" | "operator" | "manager" | "seller" | (string & {});
 
 export interface UserConfigAttributes {
   id: string;
   user_id: string;
   theme: UserTheme;
   type?: UserType
+  type_permissions?: USER_TYPE_CONFIG
   profile_photo?: string | null;
   language: string;
   timezone: string;
