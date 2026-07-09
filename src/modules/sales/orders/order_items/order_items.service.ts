@@ -1,4 +1,4 @@
-import { FindOptions, Op, WhereOptions, fn, col } from "sequelize";
+import { FindOptions, Op, WhereOptions, fn, col, OrderItem } from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -10,13 +10,13 @@ import orderItemsRepository, {
 } from "./order_items.repository";
 import Order from "../order/orders.model";
 import { UnitBusiness, Invoice } from "../../../warehouse";
-import { Product } from "../../../inventory";
+import { Product, ProductConfig } from "../../../inventory";
 import Contact from "../../contacts/contacts.model";
 import Customer from "../../customers/customers.model"; // ajustar path/nome se diferente
-import {
-  OrderSalesDetailRow,
-  SalesDetailFilters,
-} from "./order_items.types";
+import { OrderSalesDetailRow, SalesDetailFilters } from "./order_items.types";
+import Brand from "../../../inventory/brands/brands.model";
+import { ProductConfigAttributes } from "../../../inventory/product-config/product_config.types";
+import { formatToBRDate, formatToBRISOString } from "../../../../shared/utils/normalizers/date";
 
 export class OrderItemsService extends BaseService<
   OrderItems,
@@ -30,6 +30,16 @@ export class OrderItemsService extends BaseService<
       searchFields: ["sku", "name"],
       filterableFields: ["product_id", "order_id"],
       sortableFields: ["quantity", "net_total", "createdAt"],
+      customSort: {
+        "order.updated_at": (dir: "ASC" | "DESC") =>
+          [{ model: Order, as: "order" }, "updated_at", dir] as OrderItem,
+        "order.number_order_system": (dir: "ASC" | "DESC") =>
+          [
+            { model: Order, as: "order" },
+            "number_order_system",
+            dir,
+          ] as OrderItem,
+      },
     };
   }
 
@@ -39,28 +49,19 @@ export class OrderItemsService extends BaseService<
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<OrderSalesDetailRow>> {
     const orderWhere: WhereOptions = {};
-
     if (filters.startDate && filters.endDate) {
-      orderWhere.date = {
-        [Op.between]: [filters.startDate, filters.endDate],
-      };
+      orderWhere.date = { [Op.between]: [filters.startDate, filters.endDate] };
     }
-    if (filters.unitBusinessId) {
+    if (filters.unitBusinessId)
       orderWhere.unit_business_id = filters.unitBusinessId;
-    }
-    if (filters.sellerId) {
-      orderWhere.seller_id = filters.sellerId;
-    }
-    if (filters.customerId) {
-      orderWhere.customer_id = filters.customerId;
-    }
-
-    if (filters.orderId) {
-        orderWhere.id = filters.orderId
-    }
+    if (filters.sellerId) orderWhere.seller_id = filters.sellerId;
+    if (filters.customerId) orderWhere.customer_id = filters.customerId;
+    if (filters.orderId) orderWhere.id = filters.orderId;
 
     const mergedParams: QueryParams = {
       ...params,
+      sortBy: params.sortBy ?? "order.updated_at,order.number_order_system",
+      sortDir: params.sortDir ?? "DESC,DESC",
       filters: {
         ...(params.filters ?? {}),
         ...(filters.productId ? { product_id: filters.productId } : {}),
@@ -80,6 +81,8 @@ export class OrderItemsService extends BaseService<
             "date",
             "number_order_system",
             "total_price",
+            "total_cost",
+            "total_products",
             "icms_value",
             "tax_commission",
             "freight_cost",
@@ -87,18 +90,16 @@ export class OrderItemsService extends BaseService<
             "seller_id",
             "customer_id",
             "invoice_id",
+            "updatedAt",
           ],
           include: [
             {
               model: UnitBusiness,
+              where: { number: { [Op.ne]: null } },
               as: "unitBusiness",
               attributes: ["id", "name", "number", "cnpj"],
             },
-            {
-              model: Contact,
-              as: "seller",
-              attributes: ["id", "name"],
-            },
+            { model: Contact, as: "seller", attributes: ["id", "name"] },
             {
               model: Customer,
               as: "customer",
@@ -114,7 +115,22 @@ export class OrderItemsService extends BaseService<
         {
           model: Product,
           as: "product",
-          attributes: ["id", "name", "ean"],
+          attributes: ["id", "name", "ean", "ean_tribut", "line", "measure"],
+          include: [
+            { model: Brand, as: "brandRegister" },
+            {
+              model: ProductConfig,
+              as: "productConfigs",
+              separate: true,
+              include: [
+                {
+                  model: UnitBusiness,
+                  as: "unitBusiness",
+                  where: { type: "PHYSICAL" },
+                },
+              ],
+            },
+          ],
         },
       ],
     });
@@ -124,14 +140,14 @@ export class OrderItemsService extends BaseService<
     ];
 
     if (!orderIds.length) {
-      return { ...result, data: [] } as unknown as PaginatedResult<OrderSalesDetailRow>;
+      return {
+        ...result,
+        data: [],
+      } as unknown as PaginatedResult<OrderSalesDetailRow>;
     }
 
     const orderTotalsRaw = await this.repository.findAll({
-      attributes: [
-        "order_id",
-        [fn("SUM", col("net_total")), "net_total_sum"],
-      ],
+      attributes: ["order_id", [fn("SUM", col("net_total")), "net_total_sum"]],
       where: { order_id: orderIds },
       group: ["order_id"],
       raw: true,
@@ -170,48 +186,81 @@ export class OrderItemsService extends BaseService<
 
       const sellerName = order?.seller?.name ?? null;
       const commissionValue =
-        sellerName === "Vendedor 0"
-          ? null
-          : Number(item.commission_value ?? 0);
+        sellerName === "Vendedor 0" ? null : Number(item.commission_value ?? 0);
+
+      console.log(order?.updatedAt);
+
+      const measure = item.product?.measure ?? "";
+      const [, largura, perfil, aro] =
+        measure.match(/^(\d+)\/(\d+)R(\d+)$/i) ?? [];
+
+      const productConfig = item.product?.productConfigs.find(
+        (s: ProductConfigAttributes) =>
+          s.unit_business_id == order?.unitBusiness?.id,
+      );
 
       return {
-        data_pedido: order?.date,
-        numero_pedido: order?.number_order_system ?? null,
+        pedido: {
+          data_atualizacao: formatToBRISOString(order?.updatedAt),
+          data_pedido: order?.date,
+          numero_pedido: order?.number_order_system ?? null,
+          valor_total_pedido: Number(order?.total_products ?? 0),
+          custo_total_pedido: Number(order.total_cost),
+          numero_nota_fiscal: order?.invoice?.number_system ?? null,
+        },
+        vendedor: {
+          id_vendedor_tecinco: "",
+          nome_vendedor: sellerName,
+        },
+        loja: {
+          id_loja_tecinco: Number(order?.unitBusiness?.number) ?? null,
+          nome_loja: order?.unitBusiness?.name ?? null,
+          numero_loja: order?.unitBusiness?.number ?? null,
+          cnpj_loja: order?.unitBusiness?.cnpj ?? null,
+        },
+        produto: {
+          identificacao: {
+            nome: item.product?.name ?? null,
+            ean: item.product?.ean ?? null,
+            sku_tecinco: productConfig?.sku ?? null,
+            sku_bling: item.sku,
+            linha: item.product?.line ?? null,
+          },
 
-        nome_unidade_negocio: order?.unitBusiness?.name ?? null,
-        numero_unidade_negocio: order?.unitBusiness?.number ?? null,
-        cnpj_unidade_negocio: order?.unitBusiness?.cnpj ?? null,
+          medida: {
+            completa: item.product?.measure ?? null,
+            largura,
+            perfil,
+            aro,
+          },
 
-        nome_produto: item.product?.name ?? null,
-        ean_produto: item.product?.ean ?? null,
-        sku: item.sku ?? null,
+          precos: {
+            quantidade: item.quantity,
+            valor_venda_item: Number(item.price ?? 0),
+            custo_medio: Number(item.average_cost_snapshot) ?? null,
+            custo_total_item_pedido: cost,
+            valor_premiacao_vendedor_item_pedido: commissionValue,
+          },
 
-        quantidade: item.quantity,
-
-        nome_vendedor: sellerName,
-
-        nome_cliente: order?.customer?.name ?? null,
-        documento_cliente: order?.customer?.document ?? null,
-
-        valor_venda_item: Number(item.net_total ?? 0),
-        valor_total_pedido: Number(order?.total_price ?? 0),
-
-        custo: cost,
-        custo_medio: item.average_cost_snapshot ?? null,
-        valor_comissao: commissionValue,
-
-        icms_rateado: icmsAllocated,
-        taxa_marketplace_rateada: marketplaceTaxAllocated,
-        frete_rateado: freightAllocated,
-        valor_venda_rateado: saleValueAllocated,
-
-        lucro: profit,
-
-        numero_nota_fiscal: order?.invoice?.number_system ?? null,
+          marca: {
+            nome: item.product?.brandRegister?.name ?? null,
+            premiacao_vendedor_pct:
+              item.product?.brandRegister?.seller_comission_tax_rate ?? null,
+            premiacao_gerente_pct:
+              item.product?.brandRegister?.manager_comission_tax_rate ?? null,
+          },
+        },
+        cliente: {
+          nome_cliente: order?.customer?.name ?? null,
+          documento_cliente: order?.customer?.document ?? null,
+        },
       };
     });
 
-    return { ...result, data } as unknown as PaginatedResult<OrderSalesDetailRow>;
+    return {
+      ...result,
+      data,
+    } as unknown as PaginatedResult<OrderSalesDetailRow>;
   }
 }
 

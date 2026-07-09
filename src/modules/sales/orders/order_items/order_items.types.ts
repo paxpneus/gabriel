@@ -28,39 +28,62 @@ export interface orderItemsAttributes {
 export type orderItemsCreationAttributes = Omit<orderItemsAttributes, 'id' | 'createdAt' | 'updatedAt'>
 
 export interface OrderSalesDetailRow {
-  data_pedido: Date | string;
-  numero_pedido: string | null;
+  pedido: {
+    data_atualizacao: Date | string | null;
+    data_pedido: Date | string;
+    numero_pedido: string | null;
+    valor_total_pedido: number;
+    custo_total_pedido: number;
+    numero_nota_fiscal: string | null;
+  };
 
-  nome_unidade_negocio: string | null;
-  numero_unidade_negocio: string | null;
-  cnpj_unidade_negocio: string | null;
+  vendedor: {
+    id_vendedor_tecinco: string;
+    nome_vendedor: string | null;
+  };
 
-  nome_produto: string | null;
-  ean_produto: string | null;
-  sku: string | null;
+  loja: {
+    id_loja_tecinco: number | null;
+    nome_loja: string | null;
+    numero_loja: string | null;
+    cnpj_loja: string | null;
+  };
 
-  quantidade: number;
+  produto: {
+    identificacao: {
+      nome: string | null;
+      ean: string | null;
+      sku_tecinco: string | null;
+      sku_bling: string | null;
+      linha: string | null;
+    };
 
-  nome_vendedor: string | null;
+    medida: {
+      completa: string | null;
+      largura: number | null;
+      perfil: number | null;
+      aro: number | null;
+    };
 
-  nome_cliente: string | null;
-  documento_cliente: string | null;
+    precos: {
+      quantidade: number;
+      valor_venda_item: number;
+      custo_medio: number | null;
+      custo_total_item_pedido: number;
+      valor_premiacao_vendedor_item_pedido: number | null;
+    };
 
-  valor_venda_item: number;
-  valor_total_pedido: number;
+    marca: {
+      nome: string | null;
+      premiacao_vendedor_pct: number | null;
+      premiacao_gerente_pct: number | null;
+    };
+  };
 
-  custo: number;
-  custo_medio: number | null;
-  valor_comissao: number | null;
-
-  icms_rateado: number;
-  taxa_marketplace_rateada: number;
-  frete_rateado: number;
-  valor_venda_rateado: number;
-
-  lucro: number;
-
-  numero_nota_fiscal: string | null;
+  cliente: {
+    nome_cliente: string | null;
+    documento_cliente: string | null;
+  };
 }
 
 export interface SalesDetailFilters {

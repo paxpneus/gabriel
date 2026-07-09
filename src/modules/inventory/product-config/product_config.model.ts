@@ -55,7 +55,6 @@ ProductConfig.init(
         key: 'id',
       },
     },
-
     sku: {
       type: DataTypes.STRING(100),
       allowNull: true,
