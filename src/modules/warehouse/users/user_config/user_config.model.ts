@@ -7,6 +7,7 @@ import {
   UserType,
 } from "./user_config.types";
 import { v4 as uuidv4 } from "uuid";
+import { USER_TYPE_CONFIG } from "../../../../shared/constants/user-types";
 class UserConfig
   extends Model<UserConfigAttributes, UserConfigCreationAttributes>
   implements UserConfigAttributes
@@ -22,6 +23,7 @@ class UserConfig
   public notifications_enabled!: boolean;
   public compact_mode!: boolean;
   public visualize_only_current_unit_business!: boolean;
+  public type_permissions?: USER_TYPE_CONFIG
   public auto_advance_collector!: boolean;
 
   public readonly createdAt!: Date;

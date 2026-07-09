@@ -123,7 +123,8 @@ END`;
 const calculateProfitSql = (
   revenue: SqlExpression,
   cost: SqlExpression,
-): SqlExpression => `${coalesceNumberSql(revenue)} - ${coalesceNumberSql(cost)}`;
+): SqlExpression =>
+  `${coalesceNumberSql(revenue)} - ${coalesceNumberSql(cost)}`;
 
 const calculatePercentageSql = (
   numerator: SqlExpression,
@@ -317,7 +318,7 @@ export class SellerSalesReportRepository {
       --    Filtro de vendedor (única diferença deste relatório): só entram
       --    pedidos cujo contacts.name é diferente de 'Vendedor 0'.
       -- ------------------------------------------------------------------
-      order_source AS (
+        order_source AS (
         SELECT
           o.id                        AS order_id,
           o.seller_id,
@@ -328,23 +329,29 @@ export class SellerSalesReportRepository {
           COALESCE(o.total_products, 0)  AS total_products,
           COALESCE(o.discount_value, 0)  AS discount_value,
           COALESCE(o.tax_commission, 0)  AS tax_commission,
-          COALESCE(o.freight_cost, 0)    AS freight_cost,
+          CASE
+            WHEN ub.name = 'Shopee' THEN 0
+            ELSE COALESCE(o.freight_cost, 0)
+          END                              AS freight_cost,
           CASE
             WHEN ${hasCompleteCostSql("o")} = FALSE THEN 'ignored_missing_cost'
             WHEN o.actual_situation IN ('6', '9') THEN 'completed'
             ELSE 'cancelled'
           END AS snapshot_status,
-          -- ICMS calculado (NÃO o de nota fiscal): idêntico a sales_report.
           ROUND(
             (COALESCE(o.total_products, 0) - COALESCE(o.discount_value, 0))
             * (COALESCE(st.icms_rate, 0) / 100),
             2
           ) AS computed_icms_value
-        FROM orders o
-        JOIN affected a ON a.order_id = o.id
-        LEFT JOIN states st ON st.acronym = o.destination_uf
-        LEFT JOIN contacts sc ON sc.id = o.seller_id
-        WHERE COALESCE(sc.name, '') <> 'Vendedor 0'
+             FROM orders o
+JOIN affected a ON a.order_id = o.id
+LEFT JOIN states st ON st.acronym = o.destination_uf
+LEFT JOIN contacts sc ON sc.id = o.seller_id
+LEFT JOIN unit_businesses ub ON ub.id = o.unit_business_id
+WHERE o.seller_id IS NOT NULL
+  AND COALESCE(sc.name, '') <> 'Vendedor 0'
+  AND COALESCE(ub.number::varchar, '') <> '0'
+
       ),
 
       -- ------------------------------------------------------------------
@@ -424,7 +431,7 @@ export class SellerSalesReportRepository {
       --    lugar que soma tax_commission_allocated + freight_cost_allocated
       --    + icms_value_allocated, também idêntico a sales_report.
       -- ------------------------------------------------------------------
-      item_metrics AS (
+            item_metrics AS (
         SELECT
           *,
           ${itemCostSql} AS total_cost,
@@ -432,13 +439,6 @@ export class SellerSalesReportRepository {
           (snapshot_status = 'completed') AS is_valid_sale,
           ROUND(net_total_allocated * manager_commission_rate / 100, 2) AS manager_commission_value
         FROM item_calc
-      ),
-
-      item_final AS (
-        SELECT
-          *,
-          calculateProfit_placeholder AS placeholder
-        FROM item_metrics
       )
 
       INSERT INTO seller_sales_order_item_snapshots (
@@ -708,41 +708,127 @@ export class SellerSalesReportRepository {
       );
     }
   }
+  
+  /**
+ * Resolve o escopo de acesso a partir do userId:
+ * - type === 'seller': restringe a UM seller_id (o contact do próprio user,
+ *   onde contacts.type = 'seller') e à unit_business do usuário
+ *   (users.unit_business_id — a "casa" do user, não main_unit_business_id,
+ *   que é usado especificamente para managers).
+ * - type === 'manager': restringe apenas à unit_business do usuário
+ *   (main_unit_business_id — mesma coluna já usada em byManager — com
+ *   fallback pra unit_business_id caso main_unit_business_id seja NULL).
+ * - qualquer outro type (ou sem userId): sem restrição adicional, filtro
+ *   padrão de sempre.
+ *
+ * Retorna null quando não há restrição a aplicar.
+ */
 
-  async getReport(filters: SellerSalesReportFilters) {
-    const baseFilterReplacements = {
-      startDate: filters.startDate,
-      endDate: filters.endDate,
-      sellerId: filters.sellerId ?? null,
-      productId: filters.productId ?? null,
-      brand: filters.brand ?? null,
-      tireMeasure: filters.tireMeasure ?? null,
-      customerId: filters.customerId ?? null,
-      unitBusinessId: filters.unitBusinessId ?? null,
+  private async resolveUserScope(
+  userId: string,
+): Promise<{ sellerId: string | null; unitBusinessId: string | null } | null> {
+  const [row] = await sequelize.query<{
+    user_id: string;
+    unit_business_id: string;
+    main_unit_business_id: string | null;
+    config_type: string | null;
+    contact_id: string | null;
+  }>(
+    `
+    SELECT
+      u.id                     AS user_id,
+      u.unit_business_id       AS unit_business_id,
+      u.main_unit_business_id  AS main_unit_business_id,
+      uc.type                  AS config_type,
+      c.id                     AS contact_id
+    FROM users u
+    LEFT JOIN user_config uc ON uc.user_id = u.id
+    LEFT JOIN contacts c ON c.user_id = u.id AND c.type = 'SELLER'
+    WHERE u.id = :userId
+    LIMIT 1
+    `,
+    { type: QueryTypes.SELECT, replacements: { userId } },
+  );
+
+  if (!row) return null;
+
+  if (row.config_type === "seller") {
+    return {
+      sellerId: row.contact_id ?? "00000000-0000-0000-0000-000000000000",
+      unitBusinessId: row.unit_business_id,
     };
+  }
 
-    // -------------------------------------------------------------
-    // report_rows agora só filtra e lê os campos já persistidos pelo
-    // upsertSnapshots (total_cost, markup_value, contribution_value).
-    // O workaround de recalcular custo aqui deixou de ser necessário: como
-    // em sales_report, total_cost nunca é NULL (sempre COALESCE), então
-    // total_sold - total_cost bate exatamente com total_contribution_value
-    // sem precisar de nenhum fallback nesta camada.
-    // -------------------------------------------------------------
-    const reportRowsCte = `
-      report_rows AS (
-        SELECT s.*
-        FROM seller_sales_order_item_snapshots s
-        WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
-          AND s.is_valid_sale = TRUE
-          AND (CAST(:sellerId AS uuid) IS NULL OR s.seller_id = CAST(:sellerId AS uuid))
-          AND (CAST(:productId AS uuid) IS NULL OR s.product_id = CAST(:productId AS uuid))
-          AND (CAST(:brand AS varchar) IS NULL OR s.product_brand = CAST(:brand AS varchar))
-          AND (CAST(:tireMeasure AS varchar) IS NULL OR s.product_measure = CAST(:tireMeasure AS varchar))
-          AND (CAST(:customerId AS uuid) IS NULL OR s.customer_id = CAST(:customerId AS uuid))
-          AND (CAST(:unitBusinessId AS uuid) IS NULL OR s.unit_business_id = CAST(:unitBusinessId AS uuid))
-      )
-    `;
+  if (row.config_type === "manager") {
+    return {
+      sellerId: null,
+      unitBusinessId: row.main_unit_business_id,
+    };
+  }
+
+  // type padrão/standard/desconhecido: sem restrição
+  return null;
+}
+
+async getReport(filters: SellerSalesReportFilters) {
+  const userScope = filters.userId
+    ? await this.resolveUserScope(filters.userId)
+    : null;
+
+  const toArray = (values?: string[] | null): string[] =>
+    values && values.length ? values : [];
+
+  // Escopo do usuário (seller/manager) tem prioridade e força um único id,
+  // ignorando o array vindo dos filtros.
+  const sellerIds = userScope?.sellerId
+    ? [userScope.sellerId]
+    : toArray(filters.sellerIds);
+
+  const unitBusinessIds = userScope?.unitBusinessId
+    ? [userScope.unitBusinessId]
+    : toArray(filters.unitBusinessIds);
+
+ const baseFilterReplacements = {
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+    sellerIds,
+    productIds: toArray(filters.productIds),
+    brandIds: toArray(filters.brandIds),
+    tireMeasure: filters.tireMeasure ?? null,
+    customerIds: toArray(filters.customerIds),
+    unitBusinessIds,
+  };
+
+  // -------------------------------------------------------------
+  // report_rows: todos os filtros de "único valor" viraram arrays.
+  // Array vazio ([]) = sem restrição (cardinality = 0).
+  // brandIds filtra via JOIN em products.brand_id, não pelo texto
+  // denormalizado product_brand do snapshot.
+  // -------------------------------------------------------------
+  const reportRowsCte = `
+    report_rows AS (
+      SELECT s.*
+      FROM seller_sales_order_item_snapshots s
+      LEFT JOIN products p ON p.id = s.product_id
+      LEFT JOIN contacts sc ON sc.id = s.seller_id
+      WHERE s.order_date BETWEEN CAST(:startDate AS date) AND CAST(:endDate AS date)
+        AND s.is_valid_sale = TRUE
+        AND COALESCE(sc.name, '') <> 'Vendedor 0'
+        AND (cardinality(ARRAY[:sellerIds]::uuid[]) = 0
+             OR s.seller_id = ANY(ARRAY[:sellerIds]::uuid[]))
+        AND (cardinality(ARRAY[:productIds]::uuid[]) = 0
+             OR s.product_id = ANY(ARRAY[:productIds]::uuid[]))
+        AND (cardinality(ARRAY[:brandIds]::uuid[]) = 0
+             OR p.brand_id = ANY(ARRAY[:brandIds]::uuid[]))
+        AND (CAST(:tireMeasure AS varchar) IS NULL
+             OR s.product_measure = CAST(:tireMeasure AS varchar))
+        AND (cardinality(ARRAY[:customerIds]::uuid[]) = 0
+             OR s.customer_id = ANY(ARRAY[:customerIds]::uuid[]))
+        AND (cardinality(ARRAY[:unitBusinessIds]::uuid[]) = 0
+             OR s.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))
+    )
+  `;
+
 
     const [summary] = await sequelize.query(
       `
@@ -989,32 +1075,42 @@ export class SellerSalesReportRepository {
     // -------------------------------------------------------------
     const byManager = await sequelize.query(
       `
-      WITH ${reportRowsCte}
-      SELECT
-        u.id AS manager_id,
-        u.name AS manager_name,
-        s.unit_business_id,
-        MAX(ub.name) AS unit_business_name,
-        MAX(ub.number) AS unit_business_number,
-        COALESCE(SUM(s.net_total), 0) AS branch_total_sold,
-        COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission,
-        COALESCE(SUM(s.net_total), 0) - COALESCE(SUM(s.manager_commission_value), 0)
-          AS branch_net_after_manager_commission
-      FROM report_rows s
-      JOIN users u
-        ON u.main_unit_business_id = s.unit_business_id
-      JOIN user_config uc
-        ON uc.user_id = u.id
-       AND uc.type = 'manager'
-      LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
-      GROUP BY u.id, u.name, s.unit_business_id
-      ORDER BY branch_total_sold DESC
-      `,
-      {
-        type: QueryTypes.SELECT,
-        replacements: baseFilterReplacements,
-      },
+  WITH ${reportRowsCte}
+  SELECT
+    u.id AS manager_id,
+    u.name AS manager_name,
+    s.unit_business_id,
+    MAX(ub.name) AS unit_business_name,
+    MAX(ub.number) AS unit_business_number,
+    COALESCE(SUM(s.net_total), 0) AS branch_total_sold,
+    COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission
+  FROM report_rows s
+  JOIN users u
+    ON u.main_unit_business_id = s.unit_business_id
+  JOIN user_config uc
+    ON uc.user_id = u.id
+   AND uc.type = 'manager'
+  LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
+  GROUP BY u.id, u.name, s.unit_business_id
+  ORDER BY branch_total_sold DESC
+  `,
+      { type: QueryTypes.SELECT, replacements: baseFilterReplacements },
     );
+
+    const managerCommissionByBrand = await sequelize.query(
+  `
+  WITH ${reportRowsCte}
+  SELECT
+    s.product_brand,
+    COALESCE(SUM(s.net_total), 0) AS total_revenue,
+    COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission
+  FROM report_rows s
+  WHERE s.product_brand IS NOT NULL
+  GROUP BY s.product_brand
+  ORDER BY total_revenue DESC
+  `,
+  { type: QueryTypes.SELECT, replacements: baseFilterReplacements },
+);
 
     return {
       filters,
@@ -1023,6 +1119,7 @@ export class SellerSalesReportRepository {
       ranking: ranking[0],
       byStore,
       byManager,
+      managerCommissionByBrand,
       bySeller,
       customers,
       evolution: {

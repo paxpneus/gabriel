@@ -7,6 +7,7 @@ import sequelize from "../../../config/sequelize";
 import roleService from "../../warehouse/users/roles/role.service";
 import { Transaction } from "sequelize";
 import User from "../../warehouse/users/users/user.model";
+import { UserAttributes } from "../../warehouse/users/users/user.types";
 
 const SELLER_REPORT_PATH = "/reports/sales/seller";
 
@@ -66,7 +67,7 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
       type: string;
     },
     t: Transaction
-  ): Promise<{ url: string; user: User }> {
+  ): Promise<{ url: string; user: UserAttributes }> {
     const existingUser = await userService.findOne({
       where: { email },
       transaction: t,

@@ -1,6 +1,8 @@
+import { USER_TYPE_CONFIG } from "../../../../shared/constants/user-types";
 import UnitBusiness from "../../unit-business/unit-business.model";
 import Role from "../roles/role.model";
 import UserConfig from "../user_config/user_config.model";
+import { UserConfigAttributes } from "../user_config/user_config.types";
 
 export interface UserAttributes {
   id: string;
@@ -12,7 +14,9 @@ export interface UserAttributes {
   role_id: string;
   email: string;
   password: string;
-  config?: UserConfig;
+  config?: UserConfigAttributes;
+  businessToView?: string | string[]
+  allowedModules?: USER_TYPE_CONFIG
   availableUnitBusinesses?: UnitBusiness[]
   role?: Role;
   createdAt?: Date;

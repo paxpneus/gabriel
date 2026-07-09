@@ -28,6 +28,8 @@ export interface SellerSalesOrderItemSnapshotAttributes {
   last_updated_at?: Date;
   has_cost_data: boolean;
   icms_value_allocated?: number | string;
+  tax_commission_allocated?: number | string;
+  freight_cost_allocated?: number | string;
   createdAt?: Date;
   updatedAt?: Date;
 }

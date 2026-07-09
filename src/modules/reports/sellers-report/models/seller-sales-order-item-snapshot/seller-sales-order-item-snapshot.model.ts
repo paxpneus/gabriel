@@ -31,6 +31,8 @@ class SellerSalesOrderItemSnapshot
   public total_cost?: number | string;
   public has_cost_data!: boolean;
   public icms_value_allocated?: number | string;
+  public tax_commission_allocated?: number | string;
+  public freight_cost_allocated?: number | string;
   public commission_rate?: number | string;
   public commission_value?: number | string;
   public commission_base?: number | string;
@@ -70,6 +72,16 @@ SellerSalesOrderItemSnapshot.init(
       defaultValue: false,
     },
     icms_value_allocated: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    tax_commission_allocated: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    freight_cost_allocated: {
       type: DataTypes.DECIMAL(14, 2),
       allowNull: true,
       defaultValue: 0,
