@@ -1,4 +1,4 @@
-import { Job } from "bullmq";
+import { Job, Queue } from "bullmq";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import { TCarUpsertQueue } from "./tecinco-api-fetch.queue";
@@ -14,6 +14,9 @@ export interface TCarSyncJobPayload {
 }
 
 const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? "default";
+const SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const SYNC_RETRY_MS = 20 * 60 * 1000;
+
 
 function formatAlteradoDesde(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -65,7 +68,7 @@ export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
 }
 
 export async function scheduleTCarSync(syncQueue: TCarSyncQueue) {
- const units = await UnitBusiness.findAll({
+  const units = await UnitBusiness.findAll({
     attributes: ["id", "id_system", "number"],
     where: {
       number: {
@@ -75,17 +78,31 @@ export async function scheduleTCarSync(syncQueue: TCarSyncQueue) {
   });
   const branchIds: number[] = units.map((u) => Number(u.number));
 
+  const bullQueue: Queue = (syncQueue as any).queue;
+
   const dispatchSync = async () => {
+    const counts = await bullQueue.getJobCounts("active", "waiting", "delayed");
+    const pending = (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
+
+    if (pending > 0) {
+      console.log(
+        `[TCAR_SYNC] Fila ainda com ${pending} job(s) pendente(s) — pulando dispatch, tentando de novo em 20min`,
+      );
+      setTimeout(dispatchSync, SYNC_RETRY_MS);
+      return;
+    }
+
     const alteradoDesde = formatAlteradoDesde(new Date(Date.now() - 2 * 60 * 60 * 1000));
     for (const branchId of branchIds) {
       await syncQueue.add(
         { branchId, companyId: COMPANY_ID, alteradoDesde },
-        `tcar-sync-${branchId}`, 
+        `tcar-sync-${branchId}`,
       );
       console.log(`[TCAR_SYNC] Job agendado | branchId=${branchId}`);
     }
+
+    setTimeout(dispatchSync, SYNC_INTERVAL_MS);
   };
 
   dispatchSync();
-  setInterval(dispatchSync, 10 * 60 * 1000);
 }
