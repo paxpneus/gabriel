@@ -3,6 +3,7 @@
  *
  * Script de migração/sincronização: busca dados da Bling e enfileira
  * nas filas existentes (BlingDirectUpsertQueue e BlingApiFetchQueue).
+
  */
 
 import { v4 as uuidv4 } from "uuid";
@@ -192,12 +193,47 @@ async function enqueueApiFetch(payload: ApiFetchJobPayload, jobId: string) {
   await apiFetchQueue.add(payload, jobId);
 }
 
+/**
+ * Serializa os params sempre com %20 para espaço (nunca "+").
+ * O serializer padrão do axios usa URLSearchParams por baixo dos panos, que
+ * codifica espaço como "+" — e a Bling não faz o unescape de "+" de volta
+ * pra espaço ao parsear datas em query string de GET (isso só é padrão em
+ * bodies application/x-www-form-urlencoded). Resultado: filtros como
+ * `dataAlteracaoInicial=2026-09-07 10:00:00` chegavam como
+ * `...2026-09-07+10:00:00`, a Bling não conseguia parsear a data e
+ * simplesmente ignorava o filtro, devolvendo tudo sem filtrar.
+ *
+ * Arrays (ex: idsContatos) são unidos por vírgula, conforme o formato que a
+ * documentação da Bling exige ("separados com vírgula, sem espaços").
+ */
+function serializeBlingParams(params: Record<string, any>): string {
+  return Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => {
+      const stringValue = Array.isArray(value)
+        ? value.join(",")
+        : String(value);
+      return `${encodeURIComponent(key)}=${encodeURIComponent(stringValue)}`;
+    })
+    .join("&");
+}
+
 async function blingGet<T>(
   endpoint: string,
   params?: Record<string, string | number>,
 ) {
   await sleep(PAGE_DELAY_MS);
-  return blingApi.get<T>(endpoint, params ? { params } : undefined);
+  if (process.env.BLING_DEBUG_PARAMS === "true" && params) {
+    console.log(
+      `  🔍 [DEBUG] GET ${endpoint} → ?${serializeBlingParams(params)}`,
+    );
+  }
+  return blingApi.get<T>(
+    endpoint,
+    params
+      ? { params, paramsSerializer: { serialize: serializeBlingParams } }
+      : undefined,
+  );
 }
 
 /**
