@@ -1,20 +1,8 @@
 /**
  * bling-migration.script.ts
  *
- * Script de migração inicial: busca todos os dados da Bling e enfileira
+ * Script de migração/sincronização: busca dados da Bling e enfileira
  * nas filas existentes (BlingDirectUpsertQueue e BlingApiFetchQueue).
- *
- * ⚠️  ORDEM GARANTIDA — cada etapa espera as filas esvaziarem antes de avançar:
- *   1. Produtos          (DirectUpsert + ApiFetch)
- *   2. Fornecedores      (ApiFetch)
- *   3. Produto-Fornecedor (DirectUpsert + ApiFetch) — precisa de produto pronto
- *   4. Estoques          (DirectUpsert)             — precisa de produto pronto
- *   5. Notas Fiscais NF-e  (ApiFetch)
- *   6. Notas Fiscais NFC-e (ApiFetch)
- *
- * Uso:
- *   npx ts-node bling-migration.script.ts
- *   DRY_RUN=true npx ts-node bling-migration.script.ts
  */
 
 import { v4 as uuidv4 } from "uuid";
@@ -29,7 +17,6 @@ import { UnitBusiness } from "../../modules/warehouse";
 import { setupAssociations } from "../../config/sequelize-associations";
 import sequelize from "../../config/sequelize";
 import {
-  BLING_INVOICE_CUTOFF_DATE_PARAM,
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,
   isKnownBlingInvoiceBeforeCutoff,
@@ -58,12 +45,71 @@ const MAX_PER_ENTITY = Number(process.env.MAX_PER_ENTITY ?? 0);
  */
 const QUEUE_POLL_MS = 5_000;
 
+/**
+ * Quantos dias para trás considerar no filtro incremental `dataAlteracaoInicial`.
+ * Todas as entidades (exceto Estoques) só buscam registros criados/alterados
+ * dentro desta janela.
+ */
+const INCREMENTAL_LOOKBACK_DAYS = Number(
+  process.env.BLING_INCREMENTAL_LOOKBACK_DAYS ?? 2,
+);
+
 // ─── Data de corte ────────────────────────────────────────────────────────────
 
 const DATA_INICIAL =
   process.env.BLING_MIGRATION_START_DATE ?? `${new Date().getFullYear()}-01-01`;
 
-// ─── UnitBusiness padrão Bling ────────────────────────────────────────────────
+// ─── Filtro incremental por data de alteração ────────────────────────────────
+
+/** Formata uma data no padrão exigido pela API da Bling: "YYYY-MM-DD HH:mm:ss" */
+function formatBlingDateTime(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate(),
+  )} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/**
+ * Retorna a string de `dataAlteracaoInicial` representando "N dias atrás, à meia-noite".
+ * Calculada uma única vez no início da execução do script.
+ */
+function computeIncrementalFilterDate(): string {
+  const date = new Date();
+  date.setDate(date.getDate() - INCREMENTAL_LOOKBACK_DAYS);
+  date.setHours(0, 0, 0, 0);
+  return formatBlingDateTime(date);
+}
+
+/** Data mínima de alteração usada nos filtros `dataAlteracaoInicial` (produtos, contatos, vendedores) */
+const DATA_ALTERACAO_INICIAL = computeIncrementalFilterDate();
+
+/** Formata uma data no padrão "YYYY-MM-DD" (sem horário) */
+function formatBlingDateOnly(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function daysAgo(days: number): Date {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date;
+}
+
+/** Janela usada em /pedidos/vendas → dataInicial / dataFinal (formato "YYYY-MM-DD") */
+const ORDERS_DATA_INICIAL = formatBlingDateOnly(daysAgo(INCREMENTAL_LOOKBACK_DAYS));
+const ORDERS_DATA_FINAL = formatBlingDateOnly(new Date());
+
+/** Janela usada em /nfe e /nfce → dataEmissaoInicial / dataEmissaoFinal (formato completo com horário) */
+const INVOICE_DATA_EMISSAO_INICIAL = (() => {
+  const d = daysAgo(INCREMENTAL_LOOKBACK_DAYS);
+  d.setHours(0, 0, 0, 0);
+  return formatBlingDateTime(d);
+})();
+const INVOICE_DATA_EMISSAO_FINAL = (() => {
+  const d = new Date();
+  d.setHours(23, 59, 59, 0);
+  return formatBlingDateTime(d);
+})();
 
 // ─── Instâncias das filas (workless = só enfileira, não processa aqui) ────────
 
@@ -230,16 +276,17 @@ async function waitForQueuesToDrain(label: string) {
 async function migrateProducts() {
   console.log("─".repeat(55));
   console.log("📦  ETAPA 1 — Produtos");
+  console.log(`  🔄 Filtro: alterados desde ${DATA_ALTERACAO_INICIAL}`);
   console.log("─".repeat(55));
 
-  // ── 1a. Coleta todos os produtos da Bling primeiro ────────────────────────
+  // ── 1a. Coleta produtos alterados/criados na janela incremental ──────────
   const allProducts: { id: number; nome: string; codigo: string }[] = [];
 
   for await (const page of paginateBling<{
     id: number;
     nome: string;
     codigo: string;
-  }>("/produtos")) {
+  }>("/produtos", { dataAlteracaoInicial: DATA_ALTERACAO_INICIAL })) {
     for (const product of page) {
       allProducts.push(product);
       if (MAX_PER_ENTITY && allProducts.length >= MAX_PER_ENTITY) break;
@@ -278,6 +325,7 @@ async function migrateProducts() {
 async function migrateSuppliers() {
   console.log("─".repeat(55));
   console.log("🏭  ETAPA 2 — Fornecedores");
+  console.log(`  🔄 Filtro: alterados desde ${DATA_ALTERACAO_INICIAL}`);
   console.log("─".repeat(55));
 
   let count = 0;
@@ -291,6 +339,7 @@ async function migrateSuppliers() {
     {
       tipoContato: 1, // 1 costuma ser Fornecedor no Bling V3
       idsContatos: idsParaFiltrar as any,
+      dataAlteracaoInicial: DATA_ALTERACAO_INICIAL,
     },
   )) {
     for (const supplier of page) {
@@ -335,6 +384,7 @@ async function migrateSuppliers() {
 async function migrateSellers() {
   console.log("─".repeat(55));
   console.log("👤  ETAPA 2.1 — Vendedores");
+  console.log(`  🔄 Filtro: alterados desde ${DATA_ALTERACAO_INICIAL}`);
   console.log("─".repeat(55));
 
   let count = 0;
@@ -343,7 +393,7 @@ async function migrateSellers() {
     id: number;
     loja?: { id?: number };
     contato?: { id?: number; nome?: string; situacao?: string };
-  }>("/vendedores")) {
+  }>("/vendedores", { dataAlteracaoInicial: DATA_ALTERACAO_INICIAL })) {
     for (const seller of page) {
       const blingId = seller.id;
       const jobBase = basePayload("seller", blingId);
@@ -382,6 +432,7 @@ async function migrateSellers() {
 async function migrateProductSuppliers() {
   console.log("─".repeat(55));
   console.log("🔗  ETAPA 3 — Produto-Fornecedor");
+  console.log(`  🔄 Filtro: alterados desde ${DATA_ALTERACAO_INICIAL}`);
   console.log("─".repeat(55));
 
   let count = 0;
@@ -391,7 +442,9 @@ async function migrateProductSuppliers() {
     codigo?: string;
     produto: { id: number };
     fornecedor: { id: number };
-  }>("/produtos/fornecedores")) {
+  }>("/produtos/fornecedores", {
+    dataAlteracaoInicial: DATA_ALTERACAO_INICIAL,
+  })) {
     for (const ps of page) {
       const blingId = ps.id;
       const jobBase = basePayload("product_supplier", blingId);
@@ -441,13 +494,15 @@ async function migrateProductSuppliers() {
 }
 
 // ─── 4. Estoques ──────────────────────────────────────────────────────────────
+// ⚠️  Única entidade que busca TODOS os produtos (sem filtro de data), pois o
+//     saldo em estoque pode mudar sem que o produto em si seja "alterado".
 
 async function migrateStocks() {
   console.log("─".repeat(55));
-  console.log("📊  ETAPA 4 — Estoques");
+  console.log("📊  ETAPA 4 — Estoques (busca completa, sem filtro de data)");
   console.log("─".repeat(55));
 
-  // Coleta todos os blingIds do período
+  // Coleta TODOS os blingIds — sem filtro de dataAlteracao de propósito
   const allBlingIds: number[] = [];
 
   for await (const page of paginateBling<{ id: number }>("/produtos")) {
@@ -517,70 +572,39 @@ async function migrateStocks() {
 async function migrateOrders() {
   console.log("─".repeat(55));
   console.log("🛒  ETAPA — Pedidos");
+  console.log(
+    `  🔄 Filtro: dataInicial=${ORDERS_DATA_INICIAL} | dataFinal=${ORDERS_DATA_FINAL}`,
+  );
   console.log("─".repeat(55));
-
-  const startDate = new Date(`${DATA_INICIAL}T00:00:00-03:00`);
-  const today = new Date();
-
-  const months = [];
-  for (
-    let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-    cursor <= today;
-    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
-  ) {
-    const isFirstMonth =
-      cursor.getFullYear() === startDate.getFullYear() &&
-      cursor.getMonth() === startDate.getMonth();
-    const isCurrentMonth =
-      cursor.getFullYear() === today.getFullYear() &&
-      cursor.getMonth() === today.getMonth();
-
-    const start = isFirstMonth
-      ? startDate
-      : new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-    const end = isCurrentMonth
-      ? today
-      : new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-
-    months.push({
-      dataInicial: start.toISOString().split("T")[0],
-      dataFinal: end.toISOString().split("T")[0],
-    });
-  }
 
   let totalCount = 0;
 
-  for (const { dataInicial, dataFinal } of months) {
-    console.log(`\n  📅 Período: ${dataInicial} → ${dataFinal}`);
-    let count = 0;
+  for await (const page of paginateBling<{
+    id: number;
+    numero?: string;
+    situacao?: string;
+    data?: string;
+    loja?: { id: number };
+  }>("/pedidos/vendas", {
+    dataInicial: ORDERS_DATA_INICIAL,
+    dataFinal: ORDERS_DATA_FINAL,
+  })) {
+    for (const order of page) {
+      const blingId = order.id;
 
-    for await (const page of paginateBling<{
-      id: number;
-      numero?: string;
-      situacao?: string;
-      data?: string;
-      loja?: { id: number };
-    }>("/pedidos/vendas", { dataInicial, dataFinal })) {
-      for (const order of page) {
-        const blingId = order.id;
+      await (DRY_RUN
+        ? Promise.resolve(
+            console.log(`[DRY_RUN] OrderQueue: migration-order-${blingId}`),
+          )
+        : orderQueue.add(
+            { event: "order.created", data: { id: blingId } },
+            `migration-order-${blingId}`,
+          ));
 
-        await (DRY_RUN
-          ? Promise.resolve(
-              console.log(`[DRY_RUN] OrderQueue: migration-order-${blingId}`),
-            )
-          : orderQueue.add(
-              { event: "order.created", data: { id: blingId } },
-              `migration-order-${blingId}`,
-            ));
-
-        count++;
-        totalCount++;
-        if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
-      }
-      console.log(`  → ${count} pedido(s) neste mês...`);
+      totalCount++;
       if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
     }
-
+    console.log(`  → ${totalCount} pedido(s) enfileirado(s)...`);
     if (MAX_PER_ENTITY && totalCount >= MAX_PER_ENTITY) break;
   }
 
@@ -612,6 +636,9 @@ async function migrateInvoices(
 
   console.log("─".repeat(55));
   console.log(`${icon}  ETAPA ${etapa} — Notas Fiscais ${type}`);
+  console.log(
+    `  🔄 Filtro: dataEmissaoInicial=${INVOICE_DATA_EMISSAO_INICIAL} | dataEmissaoFinal=${INVOICE_DATA_EMISSAO_FINAL}`,
+  );
   console.log("─".repeat(55));
 
   let count = 0;
@@ -626,7 +653,8 @@ async function migrateInvoices(
     dataOperacao?: string;
     loja?: { id: number };
   }>(endpoint, {
-    dataEmissaoInicial: BLING_INVOICE_CUTOFF_DATE_PARAM,
+    dataEmissaoInicial: INVOICE_DATA_EMISSAO_INICIAL,
+    dataEmissaoFinal: INVOICE_DATA_EMISSAO_FINAL,
     tipo: invoiceDirection,
   })) {
     for (const invoice of page) {
@@ -680,6 +708,9 @@ async function migrateCancelledInvoices(type: "NF-e" | "NFC-e") {
 
   console.log("─".repeat(55));
   console.log(`🚫  ETAPA — Notas Fiscais ${label}`);
+  console.log(
+    `  🔄 Filtro: dataEmissaoInicial=${INVOICE_DATA_EMISSAO_INICIAL} | dataEmissaoFinal=${INVOICE_DATA_EMISSAO_FINAL}`,
+  );
   console.log("─".repeat(55));
 
   let count = 0;
@@ -691,7 +722,8 @@ async function migrateCancelledInvoices(type: "NF-e" | "NFC-e") {
     dataEmissao?: string;
     dataOperacao?: string;
   }>(endpoint, {
-    dataEmissaoInicial: BLING_INVOICE_CUTOFF_DATE_PARAM,
+    dataEmissaoInicial: INVOICE_DATA_EMISSAO_INICIAL,
+    dataEmissaoFinal: INVOICE_DATA_EMISSAO_FINAL,
     situacao: 2,
   })) {
     for (const invoice of page) {
@@ -737,8 +769,11 @@ async function migrateCancelledInvoices(type: "NF-e" | "NFC-e") {
 
 async function main() {
   console.log("═".repeat(55));
-  console.log("  🚀 Bling → Filas — Script de Migração Inicial");
+  console.log("  🚀 Bling → Filas — Script de Migração/Sincronização");
   console.log(`  📅 Período: desde ${DATA_INICIAL}`);
+  console.log(
+    `  🔄 Filtro incremental (dataAlteracaoInicial): ${DATA_ALTERACAO_INICIAL}`,
+  );
   console.log(
     `  🧾 NF somente a partir de ${formatBlingInvoiceCutoffForLog()}`,
   );
@@ -760,7 +795,7 @@ async function main() {
     await migrateSuppliers(); // 2 — sem dependências
     await migrateSellers(); // 2.1 — sem dependências
     // await migrateProductSuppliers();  // 3 — depende de produto + fornecedor
-    await migrateStocks(); // 4 — depende de produto
+    await migrateStocks(); // 4 — depende de produto (única etapa sem filtro de data)
     await migrateInvoices("NF-e", 0); // 6 — depende de UnitBusiness
     await migrateInvoices("NF-e", 1); // 5 — depende de UnitBusiness
     await migrateCancelledInvoices("NF-e");
