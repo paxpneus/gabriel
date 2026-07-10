@@ -1,4 +1,5 @@
 import { Job } from "bullmq";
+import { Op } from "sequelize";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import {
@@ -37,6 +38,83 @@ import {
 } from "./helpers/product.helpers";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
 import brandsService from "../../../inventory/brands/brands.service";
+import Group from "../../../inventory/groups/group/group.model";
+import Subgroup from "../../../inventory/groups/subgroup/subgroup.model";
+import { GroupType } from "../../../inventory/groups/group/group.types";
+
+function normalizeTCarDescription(value?: string | null): string {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+async function findProductGroupByName(name: string): Promise<Group | null> {
+  return Group.findOne({
+    where: {
+      type: GroupType.PRODUCTS,
+      name: { [Op.iLike]: name },
+    },
+  });
+}
+
+async function findProductSubgroupByName(
+  groupId: string,
+  name: string,
+): Promise<Subgroup | null> {
+  return Subgroup.findOne({
+    where: {
+      group_id: groupId,
+      name: { [Op.iLike]: name },
+    },
+  });
+}
+
+async function resolveTecincoProductGroup(
+  data: TCarProdutoPayload,
+  logPrefix: string,
+): Promise<{ group: Group; subgroup: Subgroup | null } | null> {
+  const groupName = normalizeTCarDescription(data.grupo_descricao);
+
+  if (!groupName) {
+    console.warn(
+      `${logPrefix} — grupo_descricao não informado pela Tecinco; produto salvo sem subgroup_id.`,
+    );
+    return null;
+  }
+
+  let group = await findProductGroupByName(groupName);
+
+  if (!group) {
+    group = await Group.create({
+      name: groupName,
+      type: GroupType.PRODUCTS,
+    });
+    console.log(`${logPrefix} — grupo Tecinco criado: ${group.name}`);
+  }
+
+  const subgroupName = normalizeTCarDescription(data.subgrupo_descricao);
+
+  if (!subgroupName) {
+    console.warn(
+      `${logPrefix} — subgrupo_descricao não informado pela Tecinco; grupo=${group.name}`,
+    );
+    return { group, subgroup: null };
+  }
+
+  let subgroup = await findProductSubgroupByName(group.id, subgroupName);
+
+  if (!subgroup) {
+    subgroup = await Subgroup.create({
+      name: subgroupName,
+      group_id: group.id,
+    });
+    console.log(
+      `${logPrefix} — subgrupo Tecinco criado: ${group.name} > ${subgroup.name}`,
+    );
+  }
+
+  return { group, subgroup };
+}
 export interface TCarUpsertJobPayload {
   eventId: string;
   resource: TCarResource;
@@ -115,6 +193,49 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     const codigoFabrica = data.epctb_codigofabrica
       ? String(data.epctb_codigofabrica).trim()
       : undefined;
+    
+      let productDataForGroup: TCarProdutoPayload = data;
+
+    if (!data.grupo_descricao || !data.subgrupo_descricao) {
+      const resolvedBranchId = branchId ?? Number(data.fll_codigo);
+
+      if (resolvedBranchId) {
+        try {
+          const produtoService = new TCarProdutoService();
+          const detalhe = await produtoService.obterProduto(
+            resolvedBranchId,
+            systemId,
+          );
+          const detalheData = (detalhe?.data ?? detalhe) as
+            | TCarProdutoPayload
+            | undefined;
+
+                  console.log(`${logPrefix} — DEBUG detalhe bruto:`, JSON.stringify(detalhe));
+
+
+          if (detalheData) {
+            productDataForGroup = { ...data, ...detalheData };
+          } else {
+            console.warn(
+              `${logPrefix} — detalhe do produto veio vazio, grupo/subgrupo não resolvido`,
+            );
+          }
+        } catch (err: any) {
+          console.warn(
+            `${logPrefix} — falha ao buscar detalhe do produto para resolver grupo/subgrupo: ${err?.message ?? err}`,
+          );
+        }
+      } else {
+        console.warn(
+          `${logPrefix} — branchId não resolvido, não foi possível buscar detalhe do produto para grupo/subgrupo`,
+        );
+      }
+    }
+
+    const tecincoProductGroup = await resolveTecincoProductGroup(
+      productDataForGroup,
+      logPrefix,
+    );
 
     // ─── Resolve produto pelos identificadores ────────────────────────────────
     let product = await resolveProduct({
@@ -201,6 +322,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         line,
         brand: data.marca_descricao,
         brand_id: matchedBrand?.id ?? null,
+        subgroup_id: tecincoProductGroup?.subgroup?.id,
         integrations_id: integrations.id,
         source_payload: data as unknown as Record<string, unknown>,
       },

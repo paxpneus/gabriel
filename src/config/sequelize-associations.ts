@@ -61,6 +61,9 @@ import InvoiceUnitBusinessAttributes from "../modules/warehouse/invoices/invoice
 import State from "../modules/warehouse/address/state/state.model";
 import Brand from "../modules/inventory/brands/brands.model";
 import SellerSalesOrderItemSnapshot from "../modules/reports/sellers-report/models/seller-sales-order-item-snapshot/seller-sales-order-item-snapshot.model";
+import Group from "../modules/inventory/groups/group/group.model";
+import Subgroup from "../modules/inventory/groups/subgroup/subgroup.model";
+import InventorySubgroup from "../modules/inventory/stock-inventory/inventory-subgroups/inventory-subgroups.model";
 export function setupAssociations() {
   // Standalone lookup table; no FK associations declared yet.
   void State;
@@ -305,6 +308,41 @@ export function setupAssociations() {
 
   Brand.hasMany(Product, { foreignKey: "brand_id", as: "products" });
   Product.belongsTo(Brand, { foreignKey: "brand_id", as: "brandRegister" });
+
+  Group.hasMany(Subgroup, { foreignKey: "group_id", as: "subgroups" });
+  Subgroup.belongsTo(Group, { foreignKey: "group_id", as: "group" });
+
+  Subgroup.hasMany(Product, { foreignKey: "subgroup_id", as: "products" });
+  Product.belongsTo(Subgroup, { foreignKey: "subgroup_id", as: "subgroup" });
+
+  InventoryBatch.hasMany(InventorySubgroup, {
+    foreignKey: "inventory_batch_id",
+    as: "inventorySubgroups",
+  });
+  InventorySubgroup.belongsTo(InventoryBatch, {
+    foreignKey: "inventory_batch_id",
+    as: "inventoryBatch",
+  });
+  Subgroup.hasMany(InventorySubgroup, {
+    foreignKey: "subgroup_id",
+    as: "inventorySubgroups",
+  });
+  InventorySubgroup.belongsTo(Subgroup, {
+    foreignKey: "subgroup_id",
+    as: "subgroup",
+  });
+  InventoryBatch.belongsToMany(Subgroup, {
+    through: InventorySubgroup,
+    foreignKey: "inventory_batch_id",
+    otherKey: "subgroup_id",
+    as: "subgroups",
+  });
+  Subgroup.belongsToMany(InventoryBatch, {
+    through: InventorySubgroup,
+    foreignKey: "subgroup_id",
+    otherKey: "inventory_batch_id",
+    as: "inventoryBatches",
+  });
 
   // Product -> Product Config
   Product.hasMany(ProductConfig, {

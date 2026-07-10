@@ -17,6 +17,7 @@ import {
 } from "../../../../shared/query/query.types";
 import { ProductWithStock } from "../../products/product.types";
 import { InventoryBatchItemsCreationAttributes } from "../inventory-batch-items/inventory-batch-items.types";
+import InventorySubgroup from "../inventory-subgroups/inventory-subgroups.model";
 
 export class InventoryBatchService extends BaseService<
   InventoryBatch,
@@ -37,6 +38,12 @@ export class InventoryBatchService extends BaseService<
       ],
       sortableFields: ["number", "createdAt", "status", "updatedAt"],
     };
+  }
+
+  private normalizeSubgroupIds(subgroupIds?: string[]): string[] {
+    if (!Array.isArray(subgroupIds)) return [];
+
+    return [...new Set(subgroupIds.filter(Boolean).map(String))];
   }
 
   private calculateDivergencyTotals(items: any[] = []) {
@@ -60,8 +67,10 @@ export class InventoryBatchService extends BaseService<
   async createInventoryBatch(
     unitBusinessId: string,
     mode: string,
+    subgroupIds?: string[],
   ): Promise<InventoryBatch> {
     let batchId: string;
+    const normalizedSubgroupIds = this.normalizeSubgroupIds(subgroupIds);
 
     await sequelize.transaction(async (t) => {
       const unitBusiness = await UnitBusiness.findOne({
@@ -88,13 +97,31 @@ export class InventoryBatchService extends BaseService<
 
       batchId = batch.id;
 
+      if (normalizedSubgroupIds.length) {
+        await InventorySubgroup.bulkCreate(
+          normalizedSubgroupIds.map((subgroupId) => ({
+            inventory_batch_id: batch.id,
+            subgroup_id: subgroupId,
+          })),
+          {
+            transaction: t,
+            ignoreDuplicates: true,
+          },
+        );
+      }
+
       if (mode == "FIXED") {
         let totalPrice: number;
         let totalQuantity: number;
 
         // Pega todos produtos que tem estoque na unidade escolhida
         const products = (await Product.findAll({
-          where: { type: "UNIT" },
+          where: {
+            type: "UNIT",
+            ...(normalizedSubgroupIds.length
+              ? { subgroup_id: normalizedSubgroupIds }
+              : {}),
+          },
           include: [
             {
               model: Stock,

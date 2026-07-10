@@ -49,6 +49,9 @@ export interface TCarProdutoPayload {
   epcte_custcont?: number;
   epprc_preco?: number;
   epprc_precorevenda?: number;
+  grupo_descricao?: string;
+  subgrupo_descricao?: string;
+  aplicacao_descricao?: string;
   marca_descricao?: string;
 }
 

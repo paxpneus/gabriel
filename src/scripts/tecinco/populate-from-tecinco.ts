@@ -8,6 +8,7 @@ import { tecincoUnitBusinessForPopulate } from "../../shared/constants/tecinco-u
 
 const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? "default";
 const ALTERADO_DESDE = process.env.TCAR_ALTERADO_DESDE;
+const GRUPOS = ['10', '1', '12', '18'];
 
 async function main() {
   await sequelize.authenticate();
@@ -40,6 +41,7 @@ async function main() {
       companyId: COMPANY_ID,
       alteradoDesde: ALTERADO_DESDE,
       upsertQueue,
+      grupos: GRUPOS,
     });
   } catch (err: any) {
     console.error("\n❌ Erro durante a migração:", err.message);

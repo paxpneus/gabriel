@@ -12,6 +12,7 @@ import inventoryBatchLogsRepository, {
 } from "./inventory-batch-logs.repository";
 import inventoryBatchItemsRepository from "../inventory-batch-items/inventory-batch-items.repository";
 import ProductConfig from "../../product-config/product_config.model";
+import inventorySubgroupsService from "../inventory-subgroups/inventory-subgroups.service";
 
 export class InventoryBatchLogsService extends BaseService<
   InventoryBatchLogs,
@@ -88,6 +89,27 @@ export class InventoryBatchLogsService extends BaseService<
         throw new Error("Produto não encontrado no estoque da loja");
       const stock = productFound.stocks[0];
       const config = (productFound as any).productConfigs?.[0];
+
+      // ── 3.5 Valida subgroup do produto (só se o lote tiver subgroups configurados) ──
+      const batchSubgroups = await inventorySubgroupsService.findAll({
+        where: { inventory_batch_id: inventoryBatchId },
+        attributes: ["subgroup_id"],
+        transaction: t,
+      });
+
+      if (batchSubgroups.length > 0) {
+        const allowedSubgroupIds = batchSubgroups.map((s) => s.subgroup_id);
+        const productSubgroupId = (productFound as any).subgroup_id;
+
+        if (
+          !productSubgroupId ||
+          !allowedSubgroupIds.includes(productSubgroupId)
+        ) {
+          throw new Error(
+            "Produto não pertence a nenhum subgrupo permitido neste lote de inventário",
+          );
+        }
+      }
 
       // ── 4. Upsert do batch item (centralizado) ────────────────────────────────
       const inventoryBatchItem = await inventoryBatchItemsRepository.upsertItem(

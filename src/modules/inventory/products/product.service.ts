@@ -17,6 +17,8 @@ import Stock from "../stock/stock.model";
 import ProductConfig from "../product-config/product_config.model";
 import { ProductCreationAttributes } from "./product.types";
 import supplierMappingService from "../supplier-mapping/supplier-mapping.service";
+import Group from "../groups/group/group.model";
+import Subgroup from "../groups/subgroup/subgroup.model";
 
 type StockUnitFilter = {
   unitBusinessId?: string;
@@ -84,6 +86,16 @@ export class ProductService extends BaseService<Product, ProductRepository> {
           where: Object.keys(stockWhere).length ? stockWhere : undefined,
           required: !!stockFilter?.stockUnit,
           attributes: ["id", "quantity", "unit_business_id", "total_price"],
+        },
+        {
+          model: Subgroup,
+          as: 'subgroup',
+          include: [
+            {
+              model: Group,
+              as: 'group'
+            }
+          ]
         },
         {
           model: ProductConfig,

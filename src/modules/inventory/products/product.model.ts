@@ -26,6 +26,7 @@ class Product
   public stock_virtual_total?: number;
   public line?: string;
   public measure?: string;
+  public subgroup_id?: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -44,20 +45,12 @@ Product.init(
     ean: { type: DataTypes.STRING(20), allowNull: true },
     ean_tribut: { type: DataTypes.STRING(20), allowNull: true },
     type: { type: DataTypes.ENUM("UNIT", "KIT"), defaultValue: "UNIT" },
-    category: {
-      type: DataTypes.ENUM(
-        "TIRE",
-        "PART",
-        "OIL",
-        "BATTERY",
-        "ACCESSORY",
-        "WHEEL",
-        "TUBE",
-        "SERVICE",
-        "OTHER",
-      ),
+    subgroup_id: {
+      type: DataTypes.UUID,
       allowNull: true,
-      defaultValue: "TIRE",
+      references: { model: "subgroups", key: "id" },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
     },
     integrations_id: {
       type: DataTypes.UUID,
@@ -79,13 +72,12 @@ Product.init(
     source_payload: { type: DataTypes.JSONB, allowNull: true },
     unit: { type: DataTypes.STRING(20), allowNull: true },
     brand: { type: DataTypes.STRING(100), allowNull: true },
-     commission: { type: DataTypes.FLOAT, allowNull: true },
+    commission: { type: DataTypes.FLOAT, allowNull: true },
     line: { type: DataTypes.STRING(100), allowNull: true },
     measure: { type: DataTypes.STRING(50), allowNull: true },
     gross_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     net_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     stock_virtual_total: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
-   
   },
   {
     sequelize,

@@ -49,11 +49,15 @@ import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/in
 import invoiceItemsService from "../../../../../warehouse/invoices/invoice-items/invoice-items.service";
 import { upsertInvoiceFromXml } from "../../../../../../shared/utils/xml/invoice-xml";
 import brandsService from "../../../../../inventory/brands/brands.service";
+import Group from "../../../../../inventory/groups/group/group.model";
+import Subgroup from "../../../../../inventory/groups/subgroup/subgroup.model";
+import { GroupType } from "../../../../../inventory/groups/group/group.types";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
 const NO_TRANSPORTER_NAME = "Sem transporte";
 const NO_TRANSPORTER_DOCUMENT = "0000000";
+const BLING_IMPORTED_TIRE_GROUP_NAME = "PNEUS IMPORTADOS";
 
 function parseBlingDate(date: string) {
   if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(date)) {
@@ -108,6 +112,58 @@ export function extractProductMeasureAndLine(
   const line = lineTokens.length ? lineTokens.join(" ") : null;
 
   return { measure, line };
+}
+
+function extractRimFromMeasure(measure?: string | null): string | null {
+  const match = measure?.match(/R\s*(\d{1,2})/i);
+  return match?.[1] ?? null;
+}
+
+async function resolveBlingImportedTireSubgroup(
+  measure?: string | null,
+  logPrefix = "[BLING_API_FETCH]",
+): Promise<Subgroup | null> {
+  let group = await Group.findOne({
+    where: {
+      type: GroupType.PRODUCTS,
+      name: { [Op.iLike]: BLING_IMPORTED_TIRE_GROUP_NAME },
+    },
+  });
+
+  if (!group) {
+    group = await Group.create({
+      name: BLING_IMPORTED_TIRE_GROUP_NAME,
+      type: GroupType.PRODUCTS,
+    });
+    console.log(`${logPrefix} Grupo criado: ${group.name}`);
+  }
+
+  const rim = extractRimFromMeasure(measure);
+
+  if (!rim) {
+    console.warn(
+      `${logPrefix} Aro não resolvido para measure=${measure ?? "N/A"}; produto salvo sem subgroup_id.`,
+    );
+    return null;
+  }
+
+  const subgroupName = `ARO ${rim}`;
+  let subgroup = await Subgroup.findOne({
+    where: {
+      group_id: group.id,
+      name: { [Op.iLike]: subgroupName },
+    },
+  });
+
+  if (!subgroup) {
+    subgroup = await Subgroup.create({
+      name: subgroupName,
+      group_id: group.id,
+    });
+    console.log(`${logPrefix} Subgrupo criado: ${group.name} > ${subgroup.name}`);
+  }
+
+  return subgroup;
 }
 
 // ─── Extrai partes da NF-e do XML ─────────────────────────────────────────────
@@ -738,6 +794,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingProduct.nome,
       blingProduct.marca,
     );
+    const importedTireSubgroup = await resolveBlingImportedTireSubgroup(
+      measure,
+      `[BLING_API_FETCH] Produto ${blingProduct.codigo}`,
+    );
 
     const matchedBrand = await brandsService.findSimilarBrand(
       blingProduct.marca,
@@ -791,6 +851,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           unit: blingProduct.unidade,
           brand: blingProduct.marca,
           brand_id: matchedBrand?.id ?? null,
+          subgroup_id: importedTireSubgroup?.id,
           line,
           measure,
           gross_weight: Number(blingProduct.pesoBruto ?? 0),

@@ -31,6 +31,7 @@ export interface RunMigrationOptions {
    * Padrão: process.env.DRY_RUN === "true"
    */
   dryRun?: boolean;
+  grupos?: string[];
 }
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ const PAGE_SIZE = 50;
 const PAGE_DELAY_MS = Number(process.env.TCAR_PAGE_DELAY_MS ?? 300);
 const MAX_ITEMS = Number(process.env.TCAR_MAX_ITEMS ?? Infinity);
 const QUEUE_POLL_MS = 5_000;
+
 
 // ─── Helpers internos ─────────────────────────────────────────────────────────
 
@@ -60,7 +62,11 @@ async function enqueue(
   console.log(`enfileirado: ${job?.id ?? "DUPLICADO/IGNORADO"}`);
 }
 
-async function waitForQueueToDrain(upsertQueue: TCarUpsertQueue, label: string, dryRun: boolean) {
+async function waitForQueueToDrain(
+  upsertQueue: TCarUpsertQueue,
+  label: string,
+  dryRun: boolean,
+) {
   if (dryRun) {
     console.log(`[DRY_RUN] Pulando espera após: ${label}`);
     return;
@@ -71,9 +77,12 @@ async function waitForQueueToDrain(upsertQueue: TCarUpsertQueue, label: string, 
 
   while (true) {
     const counts = await queue.getJobCounts("active", "waiting", "delayed");
-    const total = (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
+    const total =
+      (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
     if (total === 0) break;
-    console.log(`  ↻ Jobs pendentes: ${total} — checando em ${QUEUE_POLL_MS / 1000}s...`);
+    console.log(
+      `  ↻ Jobs pendentes: ${total} — checando em ${QUEUE_POLL_MS / 1000}s...`,
+    );
     await sleep(QUEUE_POLL_MS);
   }
 
@@ -113,8 +122,11 @@ async function* paginateTCar<T>(
 
 // ─── Etapas ───────────────────────────────────────────────────────────────────
 
-async function migrateProdutos(opts: Required<RunMigrationOptions>): Promise<void> {
-  const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun } = opts;
+async function migrateProdutos(
+  opts: Required<RunMigrationOptions>,
+): Promise<void> {
+  const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun, grupos } =
+    opts;
 
   console.log("─".repeat(55));
   console.log("📦  Produtos");
@@ -122,39 +134,52 @@ async function migrateProdutos(opts: Required<RunMigrationOptions>): Promise<voi
 
   const service = new TCarProdutoService();
 
+  // Se não vier grupos, mantém o comportamento antigo (sem filtro),
+  // representado aqui por um array com "undefined".
+  const gruposParaBuscar: Array<string | undefined> = grupos?.length
+    ? grupos
+    : [undefined];
+
   for (const branchId of branchIds) {
     console.log(`\n  🏢 Filial ${branchId}`);
     let count = 0;
 
-    for await (const page of paginateTCar((offset, limit) =>
-      service.listarProdutos(branchId, {
-        offset,
-        limit,
-        ...(alteradoDesde ? { alterado_desde: alteradoDesde } : {}),
-      }),
-    )) {
-      for (const produto of page) {
-        const p = produto as any;
-        const systemId = String(p.epctb_codigo);
-
-        await enqueue(
-          upsertQueue,
-          {
-            eventId: `product-${branchId}-${systemId}-${Date.now()}`,
-            resource: "product",
-            action: "sync",
-            companyId,
-            branchId,
-            data: p,
-          },
-          `product-${branchId}-${systemId}`,
-          dryRun,
-        );
-
-        count++;
+    for (const grupo of gruposParaBuscar) {
+      if (grupo !== undefined) {
+        console.log(`    🔖 Grupo ${grupo}`);
       }
 
-      console.log(`  → ${count} produto(s) enfileirado(s)...`);
+      for await (const page of paginateTCar((offset, limit) =>
+        service.listarProdutos(branchId, {
+          offset,
+          limit,
+          ...(alteradoDesde ? { alterado_desde: alteradoDesde } : {}),
+          ...(grupo !== undefined ? { grupo } : {}),
+        }),
+      )) {
+        for (const produto of page) {
+          const p = produto as any;
+          const systemId = String(p.epctb_codigo);
+
+          await enqueue(
+            upsertQueue,
+            {
+              eventId: `product-${branchId}-${systemId}-${Date.now()}`,
+              resource: "product",
+              action: "sync",
+              companyId,
+              branchId,
+              data: p,
+            },
+            `product-${branchId}-${systemId}`,
+            dryRun,
+          );
+
+          count++;
+        }
+
+        console.log(`  → ${count} produto(s) enfileirado(s)...`);
+      }
     }
 
     console.log(`  ✅ Filial ${branchId}: ${count} produtos`);
@@ -163,7 +188,9 @@ async function migrateProdutos(opts: Required<RunMigrationOptions>): Promise<voi
   await waitForQueueToDrain(upsertQueue, "Produtos", dryRun);
 }
 
-async function migrateClientes(opts: Required<RunMigrationOptions>): Promise<void> {
+async function migrateClientes(
+  opts: Required<RunMigrationOptions>,
+): Promise<void> {
   const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun } = opts;
 
   console.log("─".repeat(55));
@@ -213,7 +240,9 @@ async function migrateClientes(opts: Required<RunMigrationOptions>): Promise<voi
   await waitForQueueToDrain(upsertQueue, "Clientes", dryRun);
 }
 
-async function migrateNotasFiscais(opts: Required<RunMigrationOptions>): Promise<void> {
+async function migrateNotasFiscais(
+  opts: Required<RunMigrationOptions>,
+): Promise<void> {
   const { branchIds, companyId, upsertQueue, dryRun } = opts;
 
   console.log("─".repeat(55));
@@ -283,7 +312,9 @@ async function migrateNotasFiscais(opts: Required<RunMigrationOptions>): Promise
 export async function runMigration(opts: RunMigrationOptions): Promise<void> {
   const resolved: Required<RunMigrationOptions> = {
     dryRun: process.env.DRY_RUN === "true",
-    alteradoDesde: "",   // string vazia = sem filtro (full)
+    alteradoDesde: "", // string vazia = sem filtro (full)
+    grupos: [],
+
     ...opts,
   };
 
@@ -292,12 +323,14 @@ export async function runMigration(opts: RunMigrationOptions): Promise<void> {
   }
 
   if (resolved.alteradoDesde) {
-    console.log(`🔄  Sync incremental | alterado_desde=${resolved.alteradoDesde}\n`);
+    console.log(
+      `🔄  Sync incremental | alterado_desde=${resolved.alteradoDesde}\n`,
+    );
   } else {
     console.log("🚀  Migração full — sem filtro de data\n");
   }
 
-  // await migrateProdutos(resolved);
+  await migrateProdutos(resolved);
   // await migrateClientes(resolved);
-  await migrateNotasFiscais(resolved);
+  // await migrateNotasFiscais(resolved);
 }
