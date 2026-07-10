@@ -309,7 +309,7 @@ export function startWorkers() {
     "DAILY_SALES_REPORT",
     "AUTO_BACKUP",
     "TCAR_UPSERT",
-    // "TCAR_SYNC",
+    "TCAR_SYNC",
   ]);
 
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
