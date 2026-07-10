@@ -22,6 +22,7 @@ export interface ProductAttributes {
   gross_weight?: number;
   net_weight?: number;
   stock_virtual_total?: number;
+  subgroup_id?: string;
   createdAt?: Date;
   updatedAt?: Date;
 
