@@ -74,15 +74,22 @@ function formatBlingDateTime(date: Date): string {
  * Retorna a string de `dataAlteracaoInicial` representando "N dias atrás, à meia-noite".
  * Calculada uma única vez no início da execução do script.
  */
-function computeIncrementalFilterDate(): string {
+function computeIncrementalFilterDateInicial(): string {
   const date = new Date();
   date.setDate(date.getDate() - INCREMENTAL_LOOKBACK_DAYS);
-  date.setHours(0, 0, 0, 0);
+  date.setHours(5, 0, 0, 0);
+  return formatBlingDateTime(date);
+}
+
+function computeIncrementalFilterDateFinal(): string {
+  const date = new Date();
+  date.setHours(21, 0, 0, 0);
   return formatBlingDateTime(date);
 }
 
 /** Data mínima de alteração usada nos filtros `dataAlteracaoInicial` (produtos, contatos, vendedores) */
-const DATA_ALTERACAO_INICIAL = computeIncrementalFilterDate();
+const DATA_ALTERACAO_INICIAL = computeIncrementalFilterDateInicial();
+const DATA_ALTERACAO_FINAL = computeIncrementalFilterDateFinal();
 
 /** Formata uma data no padrão "YYYY-MM-DD" (sem horário) */
 function formatBlingDateOnly(date: Date): string {
@@ -97,18 +104,20 @@ function daysAgo(days: number): Date {
 }
 
 /** Janela usada em /pedidos/vendas → dataInicial / dataFinal (formato "YYYY-MM-DD") */
-const ORDERS_DATA_INICIAL = formatBlingDateOnly(daysAgo(INCREMENTAL_LOOKBACK_DAYS));
+const ORDERS_DATA_INICIAL = formatBlingDateOnly(
+  daysAgo(INCREMENTAL_LOOKBACK_DAYS),
+);
 const ORDERS_DATA_FINAL = formatBlingDateOnly(new Date());
 
 /** Janela usada em /nfe e /nfce → dataEmissaoInicial / dataEmissaoFinal (formato completo com horário) */
 const INVOICE_DATA_EMISSAO_INICIAL = (() => {
   const d = daysAgo(INCREMENTAL_LOOKBACK_DAYS);
-  d.setHours(0, 0, 0, 0);
+  d.setHours(5, 0, 0, 0);
   return formatBlingDateTime(d);
 })();
 const INVOICE_DATA_EMISSAO_FINAL = (() => {
   const d = new Date();
-  d.setHours(23, 59, 59, 0);
+  d.setHours(21, 0, 0, 0);
   return formatBlingDateTime(d);
 })();
 
@@ -243,7 +252,7 @@ async function blingGet<T>(
 async function* paginateBling<T>(
   endpoint: string,
   params: Record<string, string | number> = {},
-  limitPerPage = 100,
+  limitPerPage = 500,
 ): AsyncGenerator<T[]> {
   let page = 1;
 
@@ -322,7 +331,10 @@ async function migrateProducts() {
     id: number;
     nome: string;
     codigo: string;
-  }>("/produtos", { dataAlteracaoInicial: DATA_ALTERACAO_INICIAL })) {
+  }>("/produtos", {
+    dataAlteracaoInicial: DATA_ALTERACAO_INICIAL,
+    dataAlteracaoFinal: DATA_ALTERACAO_FINAL,
+  })) {
     for (const product of page) {
       allProducts.push(product);
       if (MAX_PER_ENTITY && allProducts.length >= MAX_PER_ENTITY) break;
@@ -373,9 +385,10 @@ async function migrateSuppliers() {
   for await (const page of paginateBling<{ id: number; nome: string }>(
     "/contatos",
     {
-      tipoContato: 1, // 1 costuma ser Fornecedor no Bling V3
+      tipoContato: 1,
       idsContatos: idsParaFiltrar as any,
       dataAlteracaoInicial: DATA_ALTERACAO_INICIAL,
+      dataAlteracaoFinal: DATA_ALTERACAO_FINAL,
     },
   )) {
     for (const supplier of page) {
@@ -429,7 +442,10 @@ async function migrateSellers() {
     id: number;
     loja?: { id?: number };
     contato?: { id?: number; nome?: string; situacao?: string };
-  }>("/vendedores", { dataAlteracaoInicial: DATA_ALTERACAO_INICIAL })) {
+  }>("/vendedores", {
+    dataAlteracaoInicial: DATA_ALTERACAO_INICIAL,
+    dataAlteracaoFinal: DATA_ALTERACAO_FINAL,
+  })) {
     for (const seller of page) {
       const blingId = seller.id;
       const jobBase = basePayload("seller", blingId);
@@ -480,6 +496,7 @@ async function migrateProductSuppliers() {
     fornecedor: { id: number };
   }>("/produtos/fornecedores", {
     dataAlteracaoInicial: DATA_ALTERACAO_INICIAL,
+    dataAlteracaoFinal: DATA_ALTERACAO_FINAL,
   })) {
     for (const ps of page) {
       const blingId = ps.id;
