@@ -5,6 +5,7 @@ import BaseController from '../../../shared/utils/base-models/base-controller';
 import User from '../../warehouse/users/users/user.model';
 import Product from './product.model';
 import ProductService from './product.service';
+import { userPermissions } from '../../../middlewares/user-permissions';
 
 type StockUnitFilter = {
   unitBusinessId?: string;
@@ -24,15 +25,20 @@ type AuthenticatedRequest = Request & {
 
 export class ProductController extends BaseController<Product, typeof ProductService> {
   constructor() {
-    super(ProductService);
+    super(ProductService);    
+
+    this.router.get("/report/get", ...this.mw("productReport"), this.productReport)
+    
 
     this.router.get("/:id/full", ...this.mw("findByIdFull"), this.findByIdFull)
+
   }
 
   protected middlewaresFor() {
     return {
       index: [authenticate],
-      findByIdFull: [authenticate]
+      findByIdFull: [authenticate],
+      productReport: [authenticate, userPermissions]
     };
   }
 
@@ -78,6 +84,34 @@ export class ProductController extends BaseController<Product, typeof ProductSer
       }
 
       const result = await this.service.paginate(params as unknown as QueryParams);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  productReport = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req) as ProductQueryParams;
+      const userId = (req as AuthenticatedRequest).user?.id;
+      const user = userId
+        ? await User.findByPk(userId, { attributes: ['unit_business_id'] })
+        : null;
+      const unitBusinessId = user?.unit_business_id;
+
+      if (unitBusinessId) {
+        params.filters = params.filters ?? {};
+        const stockUnit = Array.isArray(params.filters.stockUnit)
+          ? params.filters.stockUnit[0]
+          : params.filters.stockUnit;
+
+        params.filters.stockUnit = {
+          unitBusinessId,
+          stockUnit: stockUnit === 'positive' || stockUnit === 'zero' ? stockUnit : undefined,
+        };
+      }
+
+      const result = await this.service.productReport(params as unknown as QueryParams);
       return res.json(result);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
