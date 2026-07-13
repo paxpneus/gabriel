@@ -529,16 +529,18 @@ export class ExpeditionBatchService extends BaseService<
         t,
       );
 
-      try {
-        await this.postTecincoConferencia(batch, batchId, user);
-      } catch (err: any) {
-        console.error(
-          `[finishBatch] Erro ao postar conferência Tecinco | batch=${batchId}`,
-          err,
-        );
-        throw new Error(
-          "Erro ao sincronizar com a Tecinco. O lote não foi finalizado.",
-        );
+      if (batch.integration?.name == "Tecinco") {
+        try {
+          await this.postTecincoConferencia(batch, batchId, user);
+        } catch (err: any) {
+          console.error(
+            `[finishBatch] Erro ao postar conferência Tecinco | batch=${batchId}`,
+            err,
+          );
+          throw new Error(
+            "Erro ao sincronizar com a Tecinco. O lote não foi finalizado.",
+          );
+        }
       }
 
       return batch;
@@ -608,13 +610,13 @@ export class ExpeditionBatchService extends BaseService<
 
     const tecincoIntegration = await integrationsService.getFullIntegration({
       where: {
-        name: 'Tecinco'
-      }
-    })
+        name: "Tecinco",
+      },
+    });
 
     if (fullBatch.integrations_id != tecincoIntegration.id) {
-      console.log("Lote não pertence a tecinco! Ignorado.")
-      return
+      console.log("Lote não pertence a tecinco! Ignorado.");
+      return;
     }
 
     await new TCarConferenciaPostService().postarConferenciaPorLote(

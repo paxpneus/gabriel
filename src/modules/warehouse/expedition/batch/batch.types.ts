@@ -1,3 +1,4 @@
+import Integration from "../../../integrations/integrations/integrations.model";
 import { InvoiceItemsAttributes } from "../../invoices/invoice-items/invoice-items.types";
 import { InvoiceAttributes } from "../../invoices/invoice/invoice.types";
 import { BatchInvoiceItemsAttributes } from "../batch-invoice-items/batch-invoice-items.types";
@@ -53,6 +54,7 @@ export interface ExpeditionBatchFull {
   updatedAt?: Date;
   batchWithTotalVolumes?: EnrichedBatchInvoice[];
   batchInvoices?: ExpeditionBatchInvoiceFull[];
+  integration?: Integration;
 }
 
 export interface ExpeditionBatchCreationAttributes extends Omit<
