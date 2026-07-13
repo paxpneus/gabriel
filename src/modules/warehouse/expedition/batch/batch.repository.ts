@@ -17,6 +17,7 @@ import {
   totalReadLiteral,
 } from "../../invoices/invoice/helpers/totals";
 import { Literal } from "sequelize/lib/utils";
+import Integration from "../../../integrations/integrations/integrations.model";
 
 export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
   constructor() {
@@ -139,6 +140,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
 
   private buildFullIncludes(unitBusinessId: string) {
     return [
+      { model: Integration, as: 'integration'},
       { model: User, as: "operator" },
       { model: UnitBusiness, as: "unitBusiness" },
       { model: Transporter, as: "transporter" },
