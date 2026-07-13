@@ -19,6 +19,7 @@ import { ProductCreationAttributes } from "./product.types";
 import supplierMappingService from "../supplier-mapping/supplier-mapping.service";
 import Group from "../groups/group/group.model";
 import Subgroup from "../groups/subgroup/subgroup.model";
+import Brand from "../brands/brands.model";
 
 type StockUnitFilter = {
   unitBusinessId?: string;
@@ -40,6 +41,15 @@ export class ProductService extends BaseService<Product, ProductRepository> {
       customFields: {
         sku: (value) => ({
           "$productConfigs.sku$": value,
+        }),
+        subgroup_id: (value) => ({
+          "$subgroup.id$": value,
+        }),
+        group_id: (value) => ({
+          "$subgroup.group_id$": value,
+        }),
+        brand_id: (value) => ({
+          "$brandRegister.id$": value,
         }),
       },
     };
@@ -96,6 +106,11 @@ export class ProductService extends BaseService<Product, ProductRepository> {
               as: 'group'
             }
           ]
+        },
+        {
+          model: Brand,
+          as: 'brandRegister',
+          required: false,
         },
         {
           model: ProductConfig,
@@ -261,6 +276,74 @@ export class ProductService extends BaseService<Product, ProductRepository> {
       throw err;
     }
   }
+
+  async productReport(
+  params: QueryParams,
+  extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+): Promise<Product[]> {
+  const stockFilter =
+    params.filters?.stockUnit &&
+    typeof params.filters.stockUnit === "object" &&
+    !Array.isArray(params.filters.stockUnit)
+      ? (params.filters.stockUnit as StockUnitFilter)
+      : undefined;
+
+  const stockWhere: Record<string, unknown> = {};
+
+  if (stockFilter?.unitBusinessId) {
+    stockWhere.unit_business_id = stockFilter.unitBusinessId;
+  }
+
+  if (stockFilter?.stockUnit) {
+    stockWhere.quantity =
+      stockFilter.stockUnit === "positive" ? { [Op.gt]: 0 } : { [Op.lte]: 0 };
+  }
+
+  const filters = { ...params.filters };
+  delete filters.stockUnit;
+
+  const paramsWithoutStockFilter: QueryParams = {
+    ...params,
+    filters: Object.keys(filters).length ? filters : undefined,
+  };
+
+  return super.findAll(
+    {
+      subQuery: false,
+      attributes: { exclude: ["source_payload"] },
+      ...extraOptions, 
+      include: [
+        {
+          model: Stock,
+          as: "stocks",
+          where: Object.keys(stockWhere).length ? stockWhere : undefined,
+          required: !!stockFilter?.stockUnit,
+          attributes: ["id", "quantity", "unit_business_id", "total_price"],
+        },
+        {
+          model: Brand,
+          as: "brandRegister",
+        },
+        {
+          model: Subgroup,
+          as: "subgroup",
+          include: [{ model: Group, as: "group" }],
+        },
+        {
+          model: ProductConfig,
+          as: "productConfigs",
+          where: stockFilter?.unitBusinessId
+            ? { unit_business_id: stockFilter.unitBusinessId }
+            : undefined,
+          required: false,
+        },
+      ],
+    },
+    paramsWithoutStockFilter, 
+    this.queryConfig,          
+  );
+}
+
 }
 
 export default new ProductService();

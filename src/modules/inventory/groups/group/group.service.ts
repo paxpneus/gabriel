@@ -22,7 +22,6 @@ export class GroupService extends BaseService<Group, GroupRepository> {
   }
 
   async paginate(params: QueryParams, extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">): Promise<PaginatedResult<Group>> {
-    console.log("PAGINATE CUSTOM")
     return super.paginate(params, {
       ...extraOptions,
       include: [
