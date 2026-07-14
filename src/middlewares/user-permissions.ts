@@ -1,7 +1,7 @@
 import { Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import redisService from "../shared/utils/base-models/base-redis";
-import userService from "../modules/warehouse/users/users/user.service";
+import userService from "../modules/company/users/users/user.service";
 import { AuthRequest } from "./auth-token";
 import { ROLE_PERMISSIONS, RoleType } from "../shared/constants/roles";
 import { resolveEntityFromRoute } from "../config/routes";

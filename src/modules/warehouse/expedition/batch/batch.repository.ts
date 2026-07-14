@@ -4,12 +4,12 @@ import { Product, ProductConfig, Stock } from "../../../inventory";
 import InvoiceItems from "../../invoices/invoice-items/invoice-items.model";
 import Invoice from "../../invoices/invoice/invoice.model";
 import Transporter from "../../transporter/transporter.model";
-import UnitBusiness from "../../unit-business/unit-business.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import ExpeditionBatch from "./batch.model";
 import { ExpeditionBatchFull } from "./batch.types";
-import User from "../../users/users/user.model";
+import User from "../../../company/users/users/user.model";
 import BatchInvoiceItems from "../batch-invoice-items/batch-invoice-items.model";
 import InvoiceUnitBusinessAttributes from "../../invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import {

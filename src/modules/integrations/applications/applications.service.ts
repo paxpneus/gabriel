@@ -6,7 +6,7 @@ import jwt from "jsonwebtoken";
 import { DestroyOptions, FindOptions, Op, UpdateOptions } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import redisService from "../../../shared/utils/base-models/base-redis";
-import Role from "../../warehouse/users/roles/role.model";
+import Role from "../../company/users/roles/role.model";
 import {
   PaginatedResult,
   QueryConfig,

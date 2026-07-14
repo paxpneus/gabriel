@@ -1,13 +1,13 @@
 import BaseService from "../../../shared/utils/base-models/base-service";
-import unitBusinessService from "../../warehouse/unit-business/unit-business.service";
-import userService from "../../warehouse/users/users/user.service";
+import unitBusinessService from "../../company/unit-business/unit-business.service";
+import userService from "../../company/users/users/user.service";
 import Contact from "./contacts.model";
 import contactRepository, { ContactRepository } from "./contacts.repository";
 import sequelize from "../../../config/sequelize";
-import roleService from "../../warehouse/users/roles/role.service";
+import roleService from "../../company/users/roles/role.service";
 import { Transaction } from "sequelize";
-import User from "../../warehouse/users/users/user.model";
-import { UserAttributes } from "../../warehouse/users/users/user.types";
+import User from "../../company/users/users/user.model";
+import { UserAttributes } from "../../company/users/users/user.types";
 
 const SELLER_REPORT_PATH = "/reports/sales/seller";
 

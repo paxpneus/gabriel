@@ -5,7 +5,7 @@ import {
   PaginatedResult,
 } from "../../../../shared/query/query.types";
 import BaseService from "../../../../shared/utils/base-models/base-service";
-import UnitBusiness from "../../unit-business/unit-business.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import OperationsItens from "../operations-itens/operations-itens.model";
 import Operations from "./operations.model";
 import operationsRepository, {
@@ -24,7 +24,7 @@ import {
 } from "sequelize";
 import { Product, ProductConfig } from "../../../inventory";
 import Invoice from "../../invoices/invoice/invoice.model";
-import User from "../../users/users/user.model";
+import User from "../../../company/users/users/user.model";
 import type {
   InvoiceLinkedEmailPayload,
   OperationRequestEmailPayload,

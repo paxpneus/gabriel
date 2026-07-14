@@ -1,5 +1,5 @@
 import { Product } from "../../../inventory";
-import User from "../../users/users/user.model";
+import User from "../../../company/users/users/user.model";
 import { OperationsItensAttributes } from "../operations-itens/operations-itens.types";
 
 export type OperationStatus = "OPEN" | "PENDING" | "FINISHED" | "CANCELLED";

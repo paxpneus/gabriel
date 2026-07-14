@@ -12,7 +12,7 @@ import {
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import Invoice from "./invoice.model";
 import invoiceRepository, { InvoiceRepository } from "./invoice.repository";
-import UnitBusiness from "../../unit-business/unit-business.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import Transporter from "../../transporter/transporter.model";
 import ExpeditionBatch from "../../expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
