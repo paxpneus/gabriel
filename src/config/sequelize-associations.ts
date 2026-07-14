@@ -5,11 +5,11 @@
  * e chame setupAssociations() após a inicialização do Sequelize
  */
 
-import UnitBusiness from "../modules/warehouse/unit-business/unit-business.model";
-import User from "../modules/warehouse/users/users/user.model";
-import UserConfig from "../modules/warehouse/users/user_config/user_config.model";
-import UserUnitBusiness from "../modules/warehouse/users/user_unit_business/user_unit_business.model";
-import Role from "../modules/warehouse/users/roles/role.model";
+import UnitBusiness from "../modules/company/unit-business/unit-business.model";
+import User from "../modules/company/users/users/user.model";
+import UserConfig from "../modules/company/users/user_config/user_config.model";
+import UserUnitBusiness from "../modules/company/users/user_unit_business/user_unit_business.model";
+import Role from "../modules/company/users/roles/role.model";
 import Transporter from "../modules/warehouse/transporter/transporter.model";
 import CarrierLabelRange from "../modules/warehouse/transporter/carrier-label-ranges/carrier-label-ranges.model";
 import CarrierImportLayout from "../modules/warehouse/transporter/carrier-import-layouts/carrier-import-layouts.model";

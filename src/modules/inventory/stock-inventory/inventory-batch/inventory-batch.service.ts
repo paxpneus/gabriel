@@ -7,7 +7,7 @@ import InventoryBatchItems from "../inventory-batch-items/inventory-batch-items.
 import InventoryBatchLogs from "../inventory-batch-logs/inventory-batch-logs.model";
 import sequelize from "../../../../config/sequelize";
 import { Product, ProductConfig, Stock } from "../../../inventory";
-import User from "../../../warehouse/users/users/user.model";
+import User from "../../../company/users/users/user.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import { UnitBusiness } from "../../../warehouse";
 import { FindOptions } from "sequelize";

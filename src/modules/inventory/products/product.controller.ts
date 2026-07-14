@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { authenticate } from '../../../middlewares/auth-token';
 import { QueryParams } from '../../../shared/query/query.types';
 import BaseController from '../../../shared/utils/base-models/base-controller';
-import User from '../../warehouse/users/users/user.model';
+import User from '../../company/users/users/user.model';
 import Product from './product.model';
 import ProductService from './product.service';
 import { userPermissions } from '../../../middlewares/user-permissions';

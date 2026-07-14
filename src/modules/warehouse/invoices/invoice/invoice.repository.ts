@@ -24,7 +24,7 @@ import BatchInvoiceItems from "../../expedition/batch-invoice-items/batch-invoic
 import ExpeditionBatchItems from "../../expedition/batch-items/batch-items.model";
 import ExpeditionBatch from "../../expedition/batch/batch.model";
 import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
-import UnitBusiness from "../../unit-business/unit-business.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import Transporter from "../../transporter/transporter.model";
 import Store from "../../../sales/stores/stores.model";
 import {

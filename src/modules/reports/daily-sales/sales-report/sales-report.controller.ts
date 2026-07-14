@@ -2,7 +2,7 @@ import { Request, Response, Router } from "express";
 import { authenticate } from "../../../../middlewares/auth-token";
 import SalesReportService from "./sales-report.service";
 import { userPermissions } from "../../../../middlewares/user-permissions";
-import User from "../../../warehouse/users/users/user.model";
+import User from "../../../company/users/users/user.model";
 
 class SalesReportController {
   public router: Router;

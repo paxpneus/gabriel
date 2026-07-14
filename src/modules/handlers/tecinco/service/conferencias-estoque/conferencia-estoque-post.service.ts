@@ -4,7 +4,7 @@ import ExpeditionBatch from "../../../../warehouse/expedition/batch/batch.model"
 import ExpeditionBatchInvoice from "../../../../warehouse/expedition/batch-invoices/batch-invoices.model";
 import BatchInvoiceItems from "../../../../warehouse/expedition/batch-invoice-items/batch-invoice-items.model";
 import ExpeditionBatchItems from "../../../../warehouse/expedition/batch-items/batch-items.model";
-import UnitBusiness from "../../../../warehouse/unit-business/unit-business.model";
+import UnitBusiness from "../../../../company/unit-business/unit-business.model";
 import {
   TCarConferenciaTipo,
   TCarNotaFiscalQueryParams,

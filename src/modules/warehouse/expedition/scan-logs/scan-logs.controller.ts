@@ -1,8 +1,8 @@
 import { authenticate, AuthRequest } from '../../../../middlewares/auth-token';
 import { userPermissions } from '../../../../middlewares/user-permissions';
 import BaseController from '../../../../shared/utils/base-models/base-controller';
-import UnitBusiness from '../../unit-business/unit-business.model';
-import User from '../../users/users/user.model';
+import UnitBusiness from '../../../company/unit-business/unit-business.model';
+import User from '../../../company/users/users/user.model';
 import ExpeditionScanLog from './scan-logs.model';
 import ExpeditionScanLogService from './scan-logs.service';
 import { Request, Response } from 'express';

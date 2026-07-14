@@ -1,4 +1,4 @@
-import { UserType } from "../../modules/warehouse/users/user_config/user_config.types";
+import { UserType } from "../../modules/company/users/user_config/user_config.types";
 
 export type ModulesOptions =
   | "sales"

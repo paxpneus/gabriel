@@ -46,9 +46,9 @@ jest.mock("../contacts.repository", () => ({
 }));
 
 import sequelize from "../../../../config/sequelize";
-import unitBusinessService from "../../../warehouse/unit-business/unit-business.service";
-import userService from "../../../warehouse/users/users/user.service";
-import roleService from "../../../warehouse/users/roles/role.service";
+import unitBusinessService from "../../../company/unit-business/unit-business.service";
+import userService from "../../../company/users/users/user.service";
+import roleService from "../../../company/users/roles/role.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

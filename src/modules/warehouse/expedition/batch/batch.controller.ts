@@ -4,8 +4,8 @@ import ExpeditionBatch from "./batch.model";
 import ExpeditionBatchService from "./batch.service";
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
-import User from "../../users/users/user.model";
-import UnitBusiness from "../../unit-business/unit-business.model";
+import User from "../../../company/users/users/user.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { getUserContext } from "../../../../shared/query/get-logged-user";
 
 export class ExpeditionBatchController extends BaseController<
