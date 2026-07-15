@@ -126,13 +126,14 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoiceKey, unitBusinessId, type, batchId } = req.body;
+      const { invoiceKey, unitBusinessId, type, batchId, description } = req.body;
 
       const batches = await ExpeditionBatchService.addInvoiceToBatch(
         invoiceKey,
         unitBusinessId,
         type,
         batchId,
+        description
       );
       return res.status(201).json(batches);
     } catch (error: any) {

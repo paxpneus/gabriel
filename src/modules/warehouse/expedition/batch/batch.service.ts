@@ -290,6 +290,7 @@ export class ExpeditionBatchService extends BaseService<
     unitBusinessId: string,
     type: string,
     batchId?: string,
+    description?: string,
   ): Promise<ExpeditionBatch> {
     let resultBatchId: string;
 
@@ -372,6 +373,8 @@ export class ExpeditionBatchService extends BaseService<
           transaction: t,
         });
 
+        if (description) await invoiceService.update(invoice.id, { description }, { transaction: t });
+
         resultBatchId = batchId;
       } else {
         // ── Lote não existe: cria do zero via createBatchStructure ─────────
@@ -413,7 +416,7 @@ export class ExpeditionBatchService extends BaseService<
         batch_generated: true,
         status: "OPEN",
         received_at: new Date().toLocaleDateString("en-CA"),
-      });
+      }, undefined, t);
     });
 
     return (await this.repository.getFullBatch(
