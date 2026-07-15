@@ -25,7 +25,7 @@ import { logDbError } from "../logging/db-errors-logs";
 import { Op } from "sequelize";
 import invoiceService from "../../../modules/warehouse/invoices/invoice/invoice.service";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
-import unitBusinessService from "../../../modules/warehouse/unit-business/unit-business.service";
+import unitBusinessService from "../../../modules/company/unit-business/unit-business.service";
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";
 

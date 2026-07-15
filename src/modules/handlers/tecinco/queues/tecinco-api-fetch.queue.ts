@@ -9,7 +9,7 @@ import {
   Stock,
 } from "../../../inventory";
 import Customer from "../../../sales/customers/customers.model";
-import UnitBusiness from "../../../warehouse/unit-business/unit-business.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import {
   TCarProdutoPayload,
   TCarClientePayload,

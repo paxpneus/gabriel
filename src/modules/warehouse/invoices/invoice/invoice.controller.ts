@@ -17,13 +17,13 @@ import { Op } from "sequelize";
 import { InvoiceAttributes } from "./invoice.types";
 import multer from "multer";
 import { BlingApiFetchQueue } from "../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
-import User from "../../users/users/user.model";
+import User from "../../../company/users/users/user.model";
 import {
   TCarUpsertJobPayload,
   TCarUpsertQueue,
 } from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { upsertInvoiceFromXml } from "../../../../shared/utils/xml/invoice-xml";
-import UnitBusiness from "../../unit-business/unit-business.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { getUserContext } from "../../../../shared/query/get-logged-user";
 
 const upload = multer({ storage: multer.memoryStorage() });

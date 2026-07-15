@@ -4,8 +4,8 @@ import ExpeditionBatch from "./batch.model";
 import ExpeditionBatchService from "./batch.service";
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
-import User from "../../users/users/user.model";
-import UnitBusiness from "../../unit-business/unit-business.model";
+import User from "../../../company/users/users/user.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { getUserContext } from "../../../../shared/query/get-logged-user";
 
 export class ExpeditionBatchController extends BaseController<
@@ -126,13 +126,14 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoiceKey, unitBusinessId, type, batchId } = req.body;
+      const { invoiceKey, unitBusinessId, type, batchId, description } = req.body;
 
       const batches = await ExpeditionBatchService.addInvoiceToBatch(
         invoiceKey,
         unitBusinessId,
         type,
         batchId,
+        description
       );
       return res.status(201).json(batches);
     } catch (error: any) {

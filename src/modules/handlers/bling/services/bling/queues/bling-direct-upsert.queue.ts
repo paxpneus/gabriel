@@ -17,8 +17,8 @@ import { Op, UniqueConstraintError } from "sequelize";
 import Contact from "../../../../../sales/contacts/contacts.model";
 import { logDbError } from "../../../../../../shared/utils/logging/db-errors-logs";
 import productController from "../../../../../inventory/products/product.controller";
-import unitBusinessController from "../../../../../warehouse/unit-business/unit-business.controller";
-import unitBusinessService from "../../../../../warehouse/unit-business/unit-business.service";
+import unitBusinessController from "../../../../../company/unit-business/unit-business.controller";
+import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }

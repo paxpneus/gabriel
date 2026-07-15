@@ -7,7 +7,7 @@ import {
 } from "../../../invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import invoiceService from "../../../invoices/invoice/invoice.service";
 import invoiceRepository from "../../../invoices/invoice/invoice.repository";
-import unitBusinessService from "../../../unit-business/unit-business.service";
+import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 
 export async function assertTransshipment(
   invoice: {

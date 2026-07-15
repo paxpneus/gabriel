@@ -23,7 +23,7 @@ import {
   QueryParams,
 } from "../../../../shared/query/query.types";
 import { FindOptions, Op, Transaction } from "sequelize";
-import UnitBusiness from "../../unit-business/unit-business.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import invoiceService from "../../invoices/invoice/invoice.service";
 import invoiceItemsService from "../../invoices/invoice-items/invoice-items.service";
@@ -36,7 +36,7 @@ import batchInvoicesService from "../batch-invoices/batch-invoices.service";
 import batchItemsService from "../batch-items/batch-items.service";
 import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items.service";
 import InvoiceUnitBusinessAttributes from "../../invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
-import unitBusinessService from "../../unit-business/unit-business.service";
+import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import { FullInvoice } from "../../invoices/invoice/invoice.types";
 
 export class ExpeditionBatchService extends BaseService<
@@ -290,6 +290,7 @@ export class ExpeditionBatchService extends BaseService<
     unitBusinessId: string,
     type: string,
     batchId?: string,
+    description?: string,
   ): Promise<ExpeditionBatch> {
     let resultBatchId: string;
 
@@ -372,6 +373,8 @@ export class ExpeditionBatchService extends BaseService<
           transaction: t,
         });
 
+        if (description) await invoiceService.update(invoice.id, { description }, { transaction: t });
+
         resultBatchId = batchId;
       } else {
         // ── Lote não existe: cria do zero via createBatchStructure ─────────
@@ -413,7 +416,7 @@ export class ExpeditionBatchService extends BaseService<
         batch_generated: true,
         status: "OPEN",
         received_at: new Date().toLocaleDateString("en-CA"),
-      });
+      }, undefined, t);
     });
 
     return (await this.repository.getFullBatch(

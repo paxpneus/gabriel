@@ -5,9 +5,9 @@ import OperationComment from "./operation-comment.model";
 import operationCommentRepository, {
   OperationCommentRepository,
 } from "./operation-comment.repository";
-import User from "../../users/users/user.model";
+import User from "../../../company/users/users/user.model";
 import Operations from "../operation/operations.model";
-import UnitBusiness from "../../unit-business/unit-business.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import type { NewMessageEmailPayload } from "../../../../shared/providers/mail-provider/operations/templates/operation.templates";
 import nodemailerOperationService from "../../../../shared/providers/mail-provider/operations/nodemailer-operation.service";
 
