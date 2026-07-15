@@ -39,8 +39,8 @@ class SellerSalesReportController {
   index = async (req: Request, res: Response): Promise<Response> => {
     try {
       const report = await SellerSalesReportService.getReport({
-        startDate: String(req.query.startDate ?? req.query.start_date ?? ""),
-        endDate: String(req.query.endDate ?? req.query.end_date ?? ""),
+        startDate: String(req.query.dateFrom ?? req.query.start_date ?? ""),
+        endDate: String(req.query.dateTo ?? req.query.end_date ?? ""),
         userId: (req.query.userId ?? undefined) as string | undefined,
         sellerIds: toQueryArray(req.query.sellerIds ?? req.query.seller_ids),
         productIds: toQueryArray(req.query.productIds ?? req.query.product_ids),
