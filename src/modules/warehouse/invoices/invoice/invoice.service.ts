@@ -276,41 +276,17 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         receiverUbId ??
         (senderUbId && invoiceType === "INCOMING" ? senderUbId : undefined);
 
-      let notification: { eventId: string; userIds: string[] } | undefined;
+       if (incomingUbId) {
+      await eventService.notifyByRoles({
+        types: ["operator", "admin"],
+        unitBusinessId: incomingUbId,
+        title: "Nova nota fiscal recebida",
+        description: `Nota ${invoice.number_system} foi recebida e aguarda agendamento.`,
+        transaction: t,
+      });
+    }
 
-      console.log("Nota de entrada?", incomingUbId)
-
-      if (incomingUbId) {
-        notification = await eventService.notifyByRoles({
-          types: ["operator", "admin"],
-          unitBusinessId: incomingUbId,
-          title: "Nova nota fiscal recebida",
-          description: `Nota ${invoice.number_system} foi recebida e aguarda agendamento.`,
-          socketEvent: "event:created",
-          payload: { invoiceId: invoice.id },
-          transaction: t,
-        });
-
-          console.log("Notification result:", notification); 
-
-      }
-
-      if (!isExternalTransaction) {
-        await t.commit();
-
-        if (notification && notification.userIds.length > 0) {
-          await eventService.dispatchNotification(notification.userIds, "event:created", {
-            event: {
-              id: notification.eventId,
-              title: "Nova nota fiscal recebida",
-              description: `Nota ${invoice.number_system} foi recebida e aguarda agendamento.`,
-              createdAt: new Date(),
-              read_at: null,
-            },
-            invoiceId: invoice.id,
-          });
-        }
-      }
+    if (!isExternalTransaction) await t.commit();
 
       return invoice;
     } catch (err) {

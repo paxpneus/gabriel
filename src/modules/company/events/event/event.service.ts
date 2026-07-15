@@ -8,6 +8,7 @@ import { Op, Transaction } from 'sequelize';
 import socketService from '../../../handlers/socket/services/socket.service';
 import { EventAttributes, EventWithReadStatus, NotifyByUserTypeParams } from './event.types';
 import redisService from '../../../../shared/utils/base-models/base-redis';
+const NOTIFICATION_SOCKET_EVENT = 'event:created' as const;
 
 export class EventService extends BaseService<Event, EventRepository> {
   constructor() {
@@ -105,8 +106,6 @@ export class EventService extends BaseService<Event, EventRepository> {
     unitBusinessId,
     title,
     description,
-    socketEvent,
-    payload,
     transaction,
   }: NotifyByUserTypeParams): Promise<{ eventId: string; userIds: string[] }> {
     const isExternalTransaction = !!transaction;
@@ -133,11 +132,8 @@ export class EventService extends BaseService<Event, EventRepository> {
         { transaction: t },
       );
 
-      if (!isExternalTransaction) {
-        await t.commit();
-
-        // aqui ele controla o próprio commit, então pode emitir com segurança
-        await this.dispatchNotification(userIds, socketEvent, {
+      t.afterCommit(() => {
+        this.dispatchNotification(userIds, NOTIFICATION_SOCKET_EVENT, {
           event: {
             id: event.id,
             title: event.title,
@@ -145,9 +141,11 @@ export class EventService extends BaseService<Event, EventRepository> {
             createdAt: event.createdAt,
             read_at: null,
           },
-          ...payload,
-        });
-      }
+        }).catch((err) => console.error('[EventService] Falha ao despachar notificação:', err));
+      });
+
+      if (!isExternalTransaction) await t.commit();
+
 
       return { eventId: event.id, userIds };
     } catch (err) {
