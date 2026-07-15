@@ -5,7 +5,7 @@ import {
   ApplicationAttributes,
   ApplicationCreationAttributes,
 } from "./applications.types";
-import Role from "../../warehouse/users/roles/role.model";
+import Role from "../../company/users/roles/role.model";
 
 class Application
   extends Model<ApplicationAttributes, ApplicationCreationAttributes>

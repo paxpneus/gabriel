@@ -5,11 +5,11 @@
  * e chame setupAssociations() após a inicialização do Sequelize
  */
 
-import UnitBusiness from "../modules/warehouse/unit-business/unit-business.model";
-import User from "../modules/warehouse/users/users/user.model";
-import UserConfig from "../modules/warehouse/users/user_config/user_config.model";
-import UserUnitBusiness from "../modules/warehouse/users/user_unit_business/user_unit_business.model";
-import Role from "../modules/warehouse/users/roles/role.model";
+import UnitBusiness from "../modules/company/unit-business/unit-business.model";
+import User from "../modules/company/users/users/user.model";
+import UserConfig from "../modules/company/users/user_config/user_config.model";
+import UserUnitBusiness from "../modules/company/users/user_unit_business/user_unit_business.model";
+import Role from "../modules/company/users/roles/role.model";
 import Transporter from "../modules/warehouse/transporter/transporter.model";
 import CarrierLabelRange from "../modules/warehouse/transporter/carrier-label-ranges/carrier-label-ranges.model";
 import CarrierImportLayout from "../modules/warehouse/transporter/carrier-import-layouts/carrier-import-layouts.model";
@@ -64,6 +64,9 @@ import SellerSalesOrderItemSnapshot from "../modules/reports/sellers-report/mode
 import Group from "../modules/inventory/groups/group/group.model";
 import Subgroup from "../modules/inventory/groups/subgroup/subgroup.model";
 import InventorySubgroup from "../modules/inventory/stock-inventory/inventory-subgroups/inventory-subgroups.model";
+import Event from "../modules/company/events/event/event.model";
+import UserEvent from "../modules/company/events/users-event/users-event.model";
+
 export function setupAssociations() {
   // Standalone lookup table; no FK associations declared yet.
   void State;
@@ -1168,3 +1171,22 @@ SellerSalesOrderItemSnapshot.belongsTo(UnitBusiness, {
   foreignKey: "unit_business_id",
   as: "unitBusiness",
 });
+
+  // Event & User Associations
+  Event.belongsToMany(User, {
+    through: UserEvent,
+    foreignKey: "event_id",
+    otherKey: "user_id",
+    as: "users",
+  });
+  User.belongsToMany(Event, {
+    through: UserEvent,
+    foreignKey: "user_id",
+    otherKey: "event_id",
+    as: "events",
+  });
+  UserEvent.belongsTo(User, { foreignKey: "user_id", as: "user" });
+  UserEvent.belongsTo(Event, { foreignKey: "event_id", as: "event" });
+  User.hasMany(UserEvent, { foreignKey: "user_id", as: "userEvents" });
+  Event.hasMany(UserEvent, { foreignKey: "event_id", as: "userEvents" });
+

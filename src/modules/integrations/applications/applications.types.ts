@@ -1,4 +1,4 @@
-import Role from "../../warehouse/users/roles/role.model";
+import Role from "../../company/users/roles/role.model";
 
 export interface ApplicationAttributes {
   id: string;

@@ -1,9 +1,9 @@
 // Warehouse Models
-export { default as UnitBusiness } from './unit-business/unit-business.model';
-export { default as User } from './users/users/user.model';
-export { default as UserConfig } from './users/user_config/user_config.model';
-export { default as UserUnitBusiness } from './users/user_unit_business/user_unit_business.model';
-export { default as Role } from './users/roles/role.model';
+export { default as UnitBusiness } from '../company/unit-business/unit-business.model';
+export { default as User } from '../company/users/users/user.model';
+export { default as UserConfig } from '../company/users/user_config/user_config.model';
+export { default as UserUnitBusiness } from '../company/users/user_unit_business/user_unit_business.model';
+export { default as Role } from '../company/users/roles/role.model';
 export { default as Transporter } from './transporter/transporter.model';
 export { default as CarrierLabelRange } from './transporter/carrier-label-ranges/carrier-label-ranges.model';
 export { default as CarrierImportLayout } from './transporter/carrier-import-layouts/carrier-import-layouts.model';

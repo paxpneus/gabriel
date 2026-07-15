@@ -4,7 +4,7 @@ import { userPermissions } from "../../../../middlewares/user-permissions";
 import BaseController from "../../../../shared/utils/base-models/base-controller";
 import Operations from "./operations.model";
 import OperationsService from "./operations.service";
-import User from "../../users/users/user.model";
+import User from "../../../company/users/users/user.model";
 
 export class OperationsController extends BaseController<
   Operations,
