@@ -15,8 +15,6 @@ export interface NotifyByUserTypeParams {
   unitBusinessId: string;
   title: string;
   description?: string;
-  socketEvent: string; // ex: 'invoice:created'
-  payload: Record<string, unknown>;
   transaction?: Transaction;
 }
 
