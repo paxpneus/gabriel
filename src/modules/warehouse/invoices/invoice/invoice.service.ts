@@ -35,6 +35,8 @@ import {
   InvoiceUnitBusinessAttributesStatus,
 } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
+import eventService from "../../../company/events/event/event.service";
+import redisService from "../../../../shared/utils/base-models/base-redis";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -88,11 +90,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     FROM invoice_items ii
     JOIN products p ON p.id = ii.product_id
     WHERE ii.invoice_id = "Invoice"."id"
-      AND p.brand ${
-        Array.isArray(value)
-          ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
-          : `= '${String(value).replace(/'/g, "''")}'`
-      }
+      AND p.brand ${Array.isArray(value)
+              ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
+              : `= '${String(value).replace(/'/g, "''")}'`
+            }
   )`),
         }),
         batchStatus: (value) => ({
@@ -219,10 +220,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         .map(({ fiscal, ...itemData }, index) =>
           fiscal
             ? {
-                ...fiscal,
-                invoice_id: invoice.id,
-                item_number: fiscal.item_number ?? index + 1,
-              }
+              ...fiscal,
+              invoice_id: invoice.id,
+              item_number: fiscal.item_number ?? index + 1,
+            }
             : null,
         )
         .filter(Boolean) as InvoiceFiscalItemCreationAttributes[];
@@ -269,7 +270,48 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         await this.repository.createInvoiceAttributes(attributes, t);
       }
 
-      if (!isExternalTransaction) await t.commit();
+      // ─── 5. Notifica operadores e admins
+
+      const incomingUbId =
+        receiverUbId ??
+        (senderUbId && invoiceType === "INCOMING" ? senderUbId : undefined);
+
+      let notification: { eventId: string; userIds: string[] } | undefined;
+
+      console.log("Nota de entrada?", incomingUbId)
+
+      if (incomingUbId) {
+        notification = await eventService.notifyByRoles({
+          types: ["operator", "admin"],
+          unitBusinessId: incomingUbId,
+          title: "Nova nota fiscal recebida",
+          description: `Nota ${invoice.number_system} foi recebida e aguarda agendamento.`,
+          socketEvent: "event:created",
+          payload: { invoiceId: invoice.id },
+          transaction: t,
+        });
+
+          console.log("Notification result:", notification); 
+
+      }
+
+      if (!isExternalTransaction) {
+        await t.commit();
+
+        if (notification && notification.userIds.length > 0) {
+          await eventService.dispatchNotification(notification.userIds, "event:created", {
+            event: {
+              id: notification.eventId,
+              title: "Nova nota fiscal recebida",
+              description: `Nota ${invoice.number_system} foi recebida e aguarda agendamento.`,
+              createdAt: new Date(),
+              read_at: null,
+            },
+            invoiceId: invoice.id,
+          });
+        }
+      }
+
       return invoice;
     } catch (err) {
       if (!isExternalTransaction) await t.rollback();
@@ -489,13 +531,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             : []),
           ...(invoiceSystemIds.length
             ? [
-                Sequelize.where(
-                  Sequelize.literal(
-                    `"Order"."source_payload" #>> '{notaFiscal,id}'`,
-                  ),
-                  { [Op.in]: invoiceSystemIds },
+              Sequelize.where(
+                Sequelize.literal(
+                  `"Order"."source_payload" #>> '{notaFiscal,id}'`,
                 ),
-              ]
+                { [Op.in]: invoiceSystemIds },
+              ),
+            ]
             : []),
         ],
       };
@@ -566,19 +608,19 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           city: invoice.destination_city ?? null,
           seller: invoiceWithRelations.seller
             ? {
-                id: invoiceWithRelations.seller.id,
-                name: invoiceWithRelations.seller.name,
-                id_system: invoiceWithRelations.seller.id_system,
-              }
+              id: invoiceWithRelations.seller.id,
+              name: invoiceWithRelations.seller.name,
+              id_system: invoiceWithRelations.seller.id_system,
+            }
             : null,
           order: order
             ? {
-                id: order.id,
-                date: order.date ?? null,
-                id_order_system: order.id_order_system,
-                number_order_system: order.number_order_system,
-                number_order_channel: order.number_order_channel,
-              }
+              id: order.id,
+              date: order.date ?? null,
+              id_order_system: order.id_order_system,
+              number_order_system: order.number_order_system,
+              number_order_channel: order.number_order_channel,
+            }
             : null,
           measure: item.product?.measure ?? null,
           quantity: item.quantity_expected,
@@ -647,12 +689,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       const invoiceWithRelations = invoice as Invoice & {
         items?: (InvoiceItems & {
           product?:
-            | (Product & {
-                productConfigs?: ProductConfig[];
-                brand?: string | null;
-                source_payload?: { descricaoCurta?: string } | null;
-              })
-            | null;
+          | (Product & {
+            productConfigs?: ProductConfig[];
+            brand?: string | null;
+            source_payload?: { descricaoCurta?: string } | null;
+          })
+          | null;
         })[];
       };
 
