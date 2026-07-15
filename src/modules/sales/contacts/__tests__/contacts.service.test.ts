@@ -14,14 +14,14 @@ jest.mock("../../../../config/sequelize", () => ({
   },
 }));
 
-jest.mock("../../../warehouse/unit-business/unit-business.service", () => ({
+jest.mock("../../../company/unit-business/unit-business.service", () => ({
   __esModule: true,
   default: {
     findOne: jest.fn(),
   },
 }));
 
-jest.mock("../../../warehouse/users/users/user.service", () => ({
+jest.mock("../../../company/users/users/user.service", () => ({
   __esModule: true,
   default: {
     findOne: jest.fn(),
@@ -30,7 +30,7 @@ jest.mock("../../../warehouse/users/users/user.service", () => ({
   },
 }));
 
-jest.mock("../../../warehouse/users/roles/role.service", () => ({
+jest.mock("../../../company/users/roles/role.service", () => ({
   __esModule: true,
   default: {
     findOne: jest.fn(),
