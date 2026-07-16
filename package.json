@@ -50,7 +50,7 @@
     "pdf-to-printer": "^5.7.0",
     "pg": "^8.20.0",
     "pg-hstore": "^2.3.4",
-    "playwright": "^1.58.2",
+    "playwright": "^1.61.1",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "qrcode": "^1.5.4",

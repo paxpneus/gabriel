@@ -113,6 +113,10 @@ services:
       TCAR_429_BASE_DELAY: ${TCAR_429_BASE_DELAY}
       TCAR_429_MAX_DELAY: ${TCAR_429_MAX_DELAY}
       TCAR_TLS_REJECT_UNAUTHORIZED: ${TCAR_TLS_REJECT_UNAUTHORIZED}
+      BLING_EMAIL: ${BLING_EMAIL}
+      BLING_PASSWORD: ${BLING_PASSWORD}
+      BLING_HEADLESS: ${BLING_HEADLESS}
+      
 
     depends_on:
       postgres:
@@ -173,6 +177,9 @@ services:
       TCAR_429_BASE_DELAY: ${TCAR_429_BASE_DELAY}
       TCAR_429_MAX_DELAY: ${TCAR_429_MAX_DELAY}
       TCAR_TLS_REJECT_UNAUTHORIZED: ${TCAR_TLS_REJECT_UNAUTHORIZED}
+      BLING_EMAIL: ${BLING_EMAIL}
+      BLING_PASSWORD: ${BLING_PASSWORD}
+      BLING_HEADLESS: ${BLING_HEADLESS}
     depends_on:
       postgres:
         condition: service_healthy
@@ -203,6 +210,9 @@ services:
       REDIS_PORT: ${REDIS_PORT}
       REDIS_DB: ${REDIS_DB}
       XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+      BLING_EMAIL: ${BLING_EMAIL}
+      BLING_PASSWORD: ${BLING_PASSWORD}
+      BLING_HEADLESS: ${BLING_HEADLESS}
     volumes:
       - ml_session:/app/ml_session
       - ml_downloads:/app/ml_downloads
