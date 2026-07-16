@@ -67,7 +67,10 @@ export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
   }
 }
 
-export async function scheduleTCarSync(syncQueue: TCarSyncQueue) {
+export async function scheduleTCarSync(
+  syncQueue: TCarSyncQueue,
+  upsertQueue: TCarUpsertQueue, 
+) {
   const units = await UnitBusiness.findAll({
     attributes: ["id", "id_system", "number"],
     where: {
@@ -78,15 +81,25 @@ export async function scheduleTCarSync(syncQueue: TCarSyncQueue) {
   });
   const branchIds: number[] = units.map((u) => Number(u.number));
 
-  const bullQueue: Queue = (syncQueue as any).queue;
+  const syncBullQueue: Queue = (syncQueue as any).queue;
+  const upsertBullQueue: Queue = (upsertQueue as any).queue;
+
+  const getPendingCount = async (queue: Queue) => {
+    const counts = await queue.getJobCounts("active", "waiting", "delayed");
+    return (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
+  };
 
   const dispatchSync = async () => {
-    const counts = await bullQueue.getJobCounts("active", "waiting", "delayed");
-    const pending = (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
+    const [syncPending, upsertPending] = await Promise.all([
+      getPendingCount(syncBullQueue),
+      getPendingCount(upsertBullQueue),
+    ]);
+
+    const pending = syncPending + upsertPending;
 
     if (pending > 0) {
       console.log(
-        `[TCAR_SYNC] Fila ainda com ${pending} job(s) pendente(s) — pulando dispatch, tentando de novo em 20min`,
+        `[TCAR_SYNC] Fila ainda ocupada (sync=${syncPending}, upsert=${upsertPending}) — pulando dispatch, tentando de novo em 20min`,
       );
       setTimeout(dispatchSync, SYNC_RETRY_MS);
       return;
