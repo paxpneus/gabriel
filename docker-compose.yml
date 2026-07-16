@@ -53,6 +53,7 @@ services:
     build:
       context: .
       target: app
+    image: autoinvoice_node-app
     command: npx sequelize-cli db:migrate
     environment:
       NODE_ENV: production
@@ -73,6 +74,7 @@ services:
     build:
       context: .
       target: app
+    image: autoinvoice_node-app
     restart: unless-stopped
     expose:
       - "3000"
@@ -138,6 +140,7 @@ services:
     build:
       context: .
       target: app
+    image: autoinvoice_node-app
     restart: unless-stopped
     command: ["node", "dist/worker.js"]
     environment:
@@ -233,6 +236,7 @@ services:
     build:
       context: .
       target: app
+    image: autoinvoice_node-app
     restart: unless-stopped
     command: ["node", "dist/worker-automation.js"]
     environment:
