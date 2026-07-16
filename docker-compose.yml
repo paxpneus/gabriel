@@ -229,7 +229,7 @@ services:
       - backend
 
     # ── 7. Worker Automation ──────────────────────────────────────────────────
-worker-automation:
+  worker-automation:
     build:
       context: .
       target: app
