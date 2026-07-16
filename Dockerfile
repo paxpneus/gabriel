@@ -70,7 +70,7 @@ RUN mkdir -p /app/ml_session /app/ml_downloads
 CMD ["node", "dist/server.js"]
 
 # ─── Stage 4: Worker de Scraping (com Playwright + Chromium) ──────────────────
-FROM mcr.microsoft.com/playwright:v1.58.2-noble AS worker-scraping
+FROM mcr.microsoft.com/playwright:v1.61.1-noble AS worker-scraping
 
 WORKDIR /app
 
