@@ -35,6 +35,9 @@ import {
 import { DailyOperationReportQueue } from "../modules/reports/daily-operation/daily-operation-report/daily-operation-report.queue";
 import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
 
+import { BlingManifestacaoService } from "../modules/handlers/bling/services/bling-nfe/automations/auto-manifest/nfe-manifest-web-scraping.service";
+import { BlingNfeScrapingQueue } from "../modules/handlers/bling/services/bling-nfe/automations/auto-manifest/nfe-manifest-web-scraping.queue";
+
 export const serverAdapter = new ExpressAdapter();
 
 // ─── Nomes canônicos de todas as filas ───────────────────────────────────────
@@ -118,7 +121,9 @@ function buildQueues(activeWorkers: QueueName[]) {
     workless: w("BLING_MIGRATION"),
   });
   const tcarUpsertQueue = new TCarUpsertQueue({ workless: w("TCAR_UPSERT") });
-  const tcarSyncQueue = new TCarSyncQueue(tcarUpsertQueue, { workless: w("TCAR_SYNC") });
+  const tcarSyncQueue = new TCarSyncQueue(tcarUpsertQueue, {
+    workless: w("TCAR_SYNC"),
+  });
   const dailyOperationReportQueue = new DailyOperationReportQueue({
     workless: w("DAILY_OPERATION_REPORT"),
   });
@@ -126,6 +131,11 @@ function buildQueues(activeWorkers: QueueName[]) {
     workless: w("DAILY_SALES_REPORT"),
   });
   const autoBackupQueue = new AutoBackupQueue({ workless: w("AUTO_BACKUP") });
+
+  const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
+    new BlingManifestacaoService(),
+    { workless: true },
+  );
 
   return {
     nfeQueue,
@@ -143,6 +153,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     autoBackupQueue,
     tcarUpsertQueue,
     tcarSyncQueue,
+    blingNfeScrapingQueue,
   };
 }
 
@@ -163,6 +174,7 @@ export function registerQueues(app: Express) {
     autoBackupQueue,
     tcarUpsertQueue,
     tcarSyncQueue,
+    blingNfeScrapingQueue,
   } = buildQueues(["BLING_ORDER_INGESTION", "BLING_API_FETCH"]);
 
   const blingOrderQueue = new BlingOrderQueue(
@@ -212,6 +224,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(autoBackupQueue.queue),
       new BullMQAdapter(tcarUpsertQueue.queue),
       new BullMQAdapter(tcarSyncQueue.queue),
+      new BullMQAdapter(blingNfeScrapingQueue.queue),
     ],
     serverAdapter,
   });
@@ -349,9 +362,19 @@ export function startScrapingWorker() {
     { workless: false },
   );
 
-  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
+  // mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
+
+  const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
+    new BlingManifestacaoService(),
+    { workless: false },
+  );
+
+  blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 60 * 1000 });
+    // blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 1000 });
+
 
   void mlScrapingQueue;
+  void blingNfeScrapingQueue;
 
   console.log(
     "------------------- QUEUE: Scraping Worker Ativo! -------------------",
