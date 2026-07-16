@@ -1311,7 +1311,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const resolveInitialStatus = (): InvoiceUnitBusinessAttributesStatus => {
       if (invoiceType === "OUTGOING") {
         if (nf.situacao === 2) return "PENDING_CANCELLED_SYSTEM";
-        return "PENDING";
+        return "OPEN";
       }
       return "WAITING_SCHEDULE_SALES";
     };
