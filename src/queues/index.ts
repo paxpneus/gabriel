@@ -330,7 +330,7 @@ export function startWorkers() {
     cron: "0 19 * * *",
     tz: "America/Sao_Paulo",
   });
-  scheduleTCarSync(tcarSyncQueue);
+  scheduleTCarSync(tcarSyncQueue, tcarUpsertQueue);
 
   setTimeout(
     () => {

@@ -189,23 +189,22 @@ export class BlingOrderService {
     sku: string | undefined,
     name: string | undefined,
   ): Promise<{
-    product: ProductAttributes & { brandRegister?: Brand };
+    product: (ProductAttributes & { brandRegister?: Brand }) | null;
     averageCost: number | null;
     resolvedSku: string;
   }> {
     if (!externalProductId && !sku) {
-      throw new Error(
-        `[BlingOrderService] Item sem id externo e sem sku, impossível resolver product config`,
+      console.warn(
+        `[BlingOrderService] Item sem id externo e sem sku — seguindo sem custo/product_id.`,
       );
+      return { product: null, averageCost: null, resolvedSku: sku ?? "" };
     }
 
     const costUnitBusinessId = await this.resolveCostUnitBusinessId();
 
     let config: ProductConfig | null = null;
-
     let product: Product | null = null;
 
-    // Tenta localizar pelo id_system primeiro
     if (externalProductId) {
       product = await Product.findOne({
         where: { id_system: externalProductId },
@@ -213,30 +212,18 @@ export class BlingOrderService {
       });
     }
 
-    // Se não encontrou, tenta pelo nome
     if (!product && name) {
-      product = await Product.findOne({
-        where: { name },
-        attributes: ["id"],
-      });
+      product = await Product.findOne({ where: { name }, attributes: ["id"] });
     }
 
     if (product) {
       config = await ProductConfig.findOne({
-        where: {
-          product_id: product.id,
-          unit_business_id: costUnitBusinessId,
-        },
+        where: { product_id: product.id, unit_business_id: costUnitBusinessId },
         include: [
           {
             model: Product,
             as: "product",
-            include: [
-              {
-                model: Brand,
-                as: "brandRegister",
-              },
-            ],
+            include: [{ model: Brand, as: "brandRegister" }],
           },
         ],
       });
@@ -256,16 +243,16 @@ export class BlingOrderService {
     }
 
     if (!config || !config.product) {
-      throw new Error(
-        `[BlingOrderService] ProductConfig não encontrado (externalProductId=${externalProductId ?? "-"}, sku=${sku ?? "-"}) na unit_business de custo. Item não pode ser criado sem custo médio.`,
+      console.warn(
+        `[BlingOrderService] ProductConfig não encontrado (externalProductId=${externalProductId ?? "-"}, sku=${sku ?? "-"}). Item será salvo sem custo/comissão.`,
       );
+      return { product: null, averageCost: null, resolvedSku: sku ?? "" };
     }
 
     let averageCost: number | null = Number(config.average_cost ?? 0);
 
     if (config.product.type === "KIT" && config.sku) {
       averageCost = null;
-
       const unitSku = config.sku.replace(KIT_SKU_REGEX, "");
       const unitConfig = await ProductConfig.findOne({
         where: { sku: unitSku, unit_business_id: costUnitBusinessId },
@@ -279,15 +266,13 @@ export class BlingOrderService {
           },
         ],
       });
-
-      if (unitConfig) {
-        averageCost = Number(unitConfig.average_cost ?? 0);
-      }
+      if (unitConfig) averageCost = Number(unitConfig.average_cost ?? 0);
     }
+
     return {
       product: config.product as ProductAttributes & { brandRegister?: Brand },
       averageCost,
-      resolvedSku: config.sku!,
+      resolvedSku: config.sku ?? sku ?? "",
     };
   }
 
@@ -312,15 +297,16 @@ export class BlingOrderService {
   //   commission_value      = commission_base × (commission_rate / 100)
   //   total_cost_snapshot   = custo_medio_total + commission_value
   //   comission_manager_rate = brand.manager_comission_tax_rate (apenas salvo, não usado em cálculo)
+  // 2) buildItemFinancialFields: product agora pode ser null
   private buildItemFinancialFields(
-    product: ProductAttributes & { brandRegister?: Brand },
+    product: (ProductAttributes & { brandRegister?: Brand }) | null,
     averageCostUnit: number | null,
     sku: string | undefined,
     quantity: number,
     itemValue: number,
     hasSellerCommission: boolean,
   ) {
-    const brand = product.brandRegister;
+    const brand = product?.brandRegister;
     const kitMultiplier = this.getKitMultiplier(sku);
 
     const averageCostSnapshot =
@@ -330,7 +316,7 @@ export class BlingOrderService {
       averageCostSnapshot == null ? null : averageCostSnapshot * quantity;
 
     const sellerRate = hasSellerCommission
-      ? Number(brand?.seller_comission_tax_rate ?? product.commission ?? 0)
+      ? Number(brand?.seller_comission_tax_rate ?? product?.commission ?? 0)
       : 0;
     const managerRate = hasSellerCommission
       ? Number(brand?.manager_comission_tax_rate ?? 0)
@@ -349,7 +335,9 @@ export class BlingOrderService {
       commission_value: commissionValue,
       average_cost_snapshot: averageCostSnapshot,
       total_cost_snapshot: totalCostSnapshot,
-      cost_source: "average_cost_plus_commission",
+      cost_source: product
+        ? "average_cost_plus_commission"
+        : "product_config_not_found",
     };
   }
   private appendMissingFinancialFields(
@@ -508,6 +496,7 @@ export class BlingOrderService {
   }
   // ─── Monta payload de itens (com product_id e campos financeiros já resolvidos) ─
   // Retorna também a soma de total_cost_snapshot, usada em computeOrderFinancials.
+  // 3) buildItemsPayload: try/catch por item, product_id vira nullable
   private async buildItemsPayload(
     integrationId: string,
     blingItems: any[],
@@ -519,18 +508,36 @@ export class BlingOrderService {
     const items = await Promise.all(
       blingItems.map(async (i: any) => {
         const quantity = Number(i.quantidade ?? i.quantity ?? 0);
-        const itemValue = Number(i.valor ?? 0); // valor UNITÁRIO
-        const itemName = i.descricao;
+        const itemValue = Number(i.valor ?? 0);
         const discountValue = Number(i.desconto ?? 0);
         const externalProductId = i.produto?.id
           ? String(i.produto.id)
           : undefined;
         const sku = i.codigo ? String(i.codigo) : undefined;
 
-        const { product, averageCost, resolvedSku } =
-          await this.resolveProductWithConfig(externalProductId, sku, itemName);
+        let product: (ProductAttributes & { brandRegister?: Brand }) | null =
+          null;
+        let averageCost: number | null = null;
+        let resolvedSku = sku ?? "";
 
-        // valor total da linha = unitário x quantidade
+        try {
+          const resolved = await this.resolveProductWithConfig(
+            externalProductId,
+            sku,
+            i.descricao,
+          );
+          product = resolved.product;
+          averageCost = resolved.averageCost;
+          resolvedSku = resolved.resolvedSku;
+        } catch (error: any) {
+          // Falha inesperada (ex.: banco fora do ar) — não derruba o pedido,
+          // só esse item fica sem custo/comissão.
+          console.error(
+            `[BlingOrderService] Falha ao resolver produto do item (sku=${sku ?? "-"}):`,
+            error.message,
+          );
+        }
+
         const grossTotalLine = itemValue * quantity;
         const netTotal = grossTotalLine - discountValue;
 
@@ -549,7 +556,7 @@ export class BlingOrderService {
           unit: i.unidade,
           quantity,
           price: itemValue,
-          product_id: product.id,
+          product_id: product?.id ?? undefined,
           integrations_id: integrationId,
           source_payload: i,
           unit_price: itemValue,
