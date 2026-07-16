@@ -362,7 +362,7 @@ export function startScrapingWorker() {
     { workless: false },
   );
 
-  // mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
+  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
 
   const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
     new BlingManifestacaoService(),
@@ -370,7 +370,7 @@ export function startScrapingWorker() {
   );
 
   blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 60 * 1000 });
-    // blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 1000 });
+    blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 1000 });
 
 
   void mlScrapingQueue;

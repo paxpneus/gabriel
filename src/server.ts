@@ -3,7 +3,7 @@ import { createServer } from "http";
 
 import app from "./app";
 import sequelize from "./config/sequelize";
-import { registerQueues, startScrapingWorker } from "./queues";
+import { registerQueues } from "./queues";
 import { setupAssociations } from "./config/sequelize-associations";
 import { redisConnection } from "./shared/utils/base-models/base-redis";
 import socketService from "./modules/handlers/socket/services/socket.service";
@@ -31,7 +31,6 @@ async function start(): Promise<void> {
   setupAssociations();
   registerQueues(app);
 
-  startScrapingWorker()
 
   httpServer.listen(PORT, HOST, () => {
     console.log(`Servidor rodando em http://187.50.246.187:${PORT}`);
