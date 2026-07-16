@@ -630,6 +630,7 @@ export async function upsertInvoiceFromXml(
     initialStatus = "WAITING_SCHEDULE_SALES",
     skipCrossConfig = false,
     allowUpdateFromAnyIntegration = false,
+    invoiceType
   } = options ?? {};
   const parsed = parser.parse(xmlContent);
 
@@ -650,10 +651,18 @@ export async function upsertInvoiceFromXml(
     sourcePayload: options?.sourcePayload,
     explicitCancelled: options?.isCancelled,
   });
-  const resolvedInitialStatus: InvoiceUnitBusinessAttributesStatus =
-    cancelledInvoice ? "PENDING_CANCELLED_SYSTEM" : initialStatus;
+ 
   const resolvedUpdateStatus: InvoiceUnitBusinessAttributesStatus | undefined =
     cancelledInvoice ? "PENDING_CANCELLED_SYSTEM" : options?.updateStatus;
+
+
+  const resolveInitialStatus = (): InvoiceUnitBusinessAttributesStatus => {
+    if (invoiceType === 'OUTGOING') {
+      if (cancelledInvoice) return "PENDING_CANCELLED_SYSTEM"
+      return "OPEN";
+    }
+    return "WAITING_SCHEDULE_SALES"
+  }
 
   // ─── Chave de acesso ───────────────────────────────────────────────────────
 
@@ -866,7 +875,7 @@ export async function upsertInvoiceFromXml(
         },
         invoiceItemsForCreate,
         {
-          initialStatus: resolvedInitialStatus,
+          initialStatus: resolveInitialStatus(),
           invoiceType: options?.invoiceType,
         },
       )
