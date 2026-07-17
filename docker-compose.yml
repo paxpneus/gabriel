@@ -118,6 +118,8 @@ services:
       BLING_EMAIL: ${BLING_EMAIL}
       BLING_PASSWORD: ${BLING_PASSWORD}
       BLING_HEADLESS: ${BLING_HEADLESS}
+      ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
+      ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
       
 
     depends_on:
@@ -183,6 +185,8 @@ services:
       BLING_EMAIL: ${BLING_EMAIL}
       BLING_PASSWORD: ${BLING_PASSWORD}
       BLING_HEADLESS: ${BLING_HEADLESS}
+      ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
+      ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
     depends_on:
       postgres:
         condition: service_healthy
@@ -216,6 +220,8 @@ services:
       BLING_EMAIL: ${BLING_EMAIL}
       BLING_PASSWORD: ${BLING_PASSWORD}
       BLING_HEADLESS: ${BLING_HEADLESS}
+      ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
+      ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
     volumes:
       - ml_session:/app/ml_session
       - ml_downloads:/app/ml_downloads
@@ -279,6 +285,8 @@ services:
       BLING_EMAIL: ${BLING_EMAIL}
       BLING_PASSWORD: ${BLING_PASSWORD}
       BLING_HEADLESS: ${BLING_HEADLESS}
+      ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
+      ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
     depends_on:
       postgres:
         condition: service_healthy
