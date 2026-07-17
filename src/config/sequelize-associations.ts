@@ -66,6 +66,7 @@ import Subgroup from "../modules/inventory/groups/subgroup/subgroup.model";
 import InventorySubgroup from "../modules/inventory/stock-inventory/inventory-subgroups/inventory-subgroups.model";
 import Event from "../modules/company/events/event/event.model";
 import UserEvent from "../modules/company/events/users-event/users-event.model";
+import InvoiceLogisticOccurrences from "../modules/warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
 
 export function setupAssociations() {
   // Standalone lookup table; no FK associations declared yet.
@@ -506,6 +507,16 @@ export function setupAssociations() {
   });
 
   // ===== INVOICES =====
+
+  Invoice.hasMany(InvoiceLogisticOccurrences, {
+    foreignKey: 'invoice_id',
+    as: 'occurrences'
+  })
+
+  InvoiceLogisticOccurrences.belongsTo(InvoiceLogisticOccurrences, {
+    foreignKey: 'invoice_id',
+    as: 'invoice'
+  })
 
   // Invoice -> Batch Invoices
   Invoice.hasOne(ExpeditionBatchInvoice, {

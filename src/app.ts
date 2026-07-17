@@ -10,6 +10,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') ?? []
 const app = express()
 import crypto from 'crypto'
 import qs from 'qs'
+import { setupAdminJS } from './admin'
 
 
 app.use(cors({
@@ -48,8 +49,15 @@ app.use(cors({
 //   res.sendStatus(200)
 // })
 
-app.use(express.json())
-app.use(express.urlencoded({extended: true}))
+app.use((req, res, next) => {
+  if (req.originalUrl.startsWith('/admin')) {
+    return next(); 
+  }
+  express.json()(req, res, () => {
+    express.urlencoded({ extended: true })(req, res, next);
+  });
+});
+
 app.use(cookieParser());
 app.set('query parser', (str: string) => {
   return qs.parse(str, {
@@ -60,8 +68,13 @@ app.set('query parser', (str: string) => {
 
 app.get('/health', (_, res) => res.json({status: 'ok'}))
 
-app.use('/api', externalApiAccess, applicationRateLimit, applicationWebhookEvents, router)
+export const initApp = async () => {
+  await setupAdminJS(app)
 
+  app.use('/api', externalApiAccess, applicationRateLimit, applicationWebhookEvents, router)
+
+  return app
+}
 
 
 export default app

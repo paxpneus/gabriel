@@ -1,7 +1,8 @@
+import { setupAdminJS } from './admin';
 import "dotenv/config";
 import { createServer } from "http";
 
-import app from "./app";
+import app, {initApp} from "./app";
 import sequelize from "./config/sequelize";
 import { registerQueues } from "./queues";
 import { setupAssociations } from "./config/sequelize-associations";
@@ -18,6 +19,8 @@ async function start(): Promise<void> {
   console.log("------------------- DB: Banco Conectado! ------------------- ");
   // await sequelize.sync({ alter: true })
 
+  await initApp();
+
   const httpServer = createServer(app);
 
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") ?? [];
@@ -30,7 +33,6 @@ async function start(): Promise<void> {
 
   setupAssociations();
   registerQueues(app);
-
 
   httpServer.listen(PORT, HOST, () => {
     console.log(`Servidor rodando em http://187.50.246.187:${PORT}`);
