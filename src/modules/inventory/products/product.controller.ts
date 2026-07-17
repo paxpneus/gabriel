@@ -28,7 +28,7 @@ export class ProductController extends BaseController<Product, typeof ProductSer
     super(ProductService);    
 
     this.router.get("/report/get", ...this.mw("productReport"), this.productReport)
-    
+    this.router.get("/by-unit-business/get", ...this.mw("productByUnit"), this.productByUnit)
 
     this.router.get("/:id/full", ...this.mw("findByIdFull"), this.findByIdFull)
 
@@ -38,7 +38,8 @@ export class ProductController extends BaseController<Product, typeof ProductSer
     return {
       index: [authenticate],
       findByIdFull: [authenticate],
-      productReport: [authenticate, userPermissions]
+      productReport: [authenticate, userPermissions],
+      productByUnit: [authenticate, userPermissions]
     };
   }
 
