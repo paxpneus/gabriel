@@ -18,18 +18,22 @@ import OrderItems from "../../../../sales/orders/order_items/order_items.model";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 
-export type NFeReconcilerJobData = Record<string, never>; // job sem payload, só disparo periódico
+export type NFeReconcilerJobData = Record<string, never>;
 
-/**
- * NFeReconcilerQueue — orquestrador de resiliência.
- *
- * Roda a cada 5 minutos. Busca todos os pedidos com:
- *   - internal_status = 'WAITING FOR NFE EMISSION' (collection_date definida)
- *   - nfe_emitted = false
- *
- * Para cada um, verifica se o job delayed existe no Redis (NFeQueue).
- * Se não existir (sumiu por restart/crash), recria o job com o delay correto.
- */
+function mapSituacaoToInternalStatus(
+  situacaoId: number | string | undefined | null,
+): string {
+  const id = Number(situacaoId);
+
+  if (id === 9) return "EMITTED";
+  if (id === 748772) return "UNKNOWN";
+  if (id === 748748) return "WAITING FOR NFE EMISSION";
+  if (id === 12 || id === 21) return "CANCELLED";
+  if (id === 748743) return "WAITING CHANNEL VALIDATION";
+
+  return "OPEN";
+}
+
 export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   private blingApi: AxiosInstance;
   private cnpjNext: nextStepOnQueue | getJob;
@@ -80,8 +84,6 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     });
   }
 
-  // Pedidos que estavam agurdando geração de nota fiscal no dia agendado, mas foram perdidos
-
   private async reconcileWaitingNfe(): Promise<void> {
     const integration = await getBlingIntegration("Bling");
     const waiting_acceptance = integration.lock_today_orders
@@ -104,7 +106,6 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
     for (const order of orders) {
       if (!order.id_order_system || !order.collection_date) continue;
-      // Pula pedidos ainda aguardando aceite manual
 
       const jobId = `nfe-generation-${order.id_order_system}`;
       const existingJob = await (this.nfeNext as getJob).getJob(jobId);
@@ -131,8 +132,6 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
     console.log(`[GlobalReconciler][NFE] ${recreated} job(s) recriado(s).`);
   }
-
-  // Pedidos que chegaram no sistema e pararam seu processo antes de entrar na pipeline
 
   private async reconcileOpenOrders(): Promise<void> {
     const integration = await getBlingIntegration("Bling");
@@ -200,11 +199,28 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
     if (stuckOrders.length === 0) return;
 
+    let synced = 0;
+
     for (const order of stuckOrders) {
       try {
         const { data } = await this.blingApi.get(
           `/pedidos/vendas/${order.id_order_system}`,
         );
+
+        const currentSituacaoId = data?.data?.situacao?.id;
+        const mappedStatus = mapSituacaoToInternalStatus(currentSituacaoId);
+
+        // Pedido já mudou de situação na Bling por fora do reconciler
+        if (mappedStatus !== "WAITING CHANNEL VALIDATION") {
+          console.log(
+            `[NFeReconciler] Pedido ${order.id_order_system} já mudou de situação na Bling (situacao ${currentSituacaoId} -> ${mappedStatus}). Sincronizando sem editar.`,
+          );
+          await ordersService.update(order.id, {
+            internal_status: mappedStatus,
+          });
+          synced++;
+          continue;
+        }
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -220,7 +236,9 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
           { id: 748772 },
         );
 
-        await ordersService.update(order.id, { internal_status: "CANCELLED" });
+        await ordersService.update(order.id, {
+          internal_status: mapSituacaoToInternalStatus(748772),
+        });
 
         console.log(
           `[NFeReconciler] Pedido ${order.id_order_system} marcado como verificação humana.`,
@@ -236,7 +254,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     alertService.sendAlert({
       severity: "MEDIUM",
       title: "ML Sync — pedidos presos sem coleta",
-      message: `${stuckOrders.length} pedido(s) em WAITING CHANNEL VALIDATION há mais de 2h sem match no scraping.`,
+      message: `${stuckOrders.length} pedido(s) em WAITING CHANNEL VALIDATION há mais de 2h sem match no scraping. ${synced} tiveram o internal_status apenas sincronizado (já haviam mudado de situação na Bling).`,
     });
   }
 }
