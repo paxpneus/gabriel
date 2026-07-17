@@ -1,6 +1,6 @@
 import IntegrationOrderStatusMapping from "./integration-order-status-mapping.model";
 //AJUSTAR DEPOIS QUANDO AUTOMACAO VOLTAR NA BLING E AQUI PARA OS STATUS QUE ESTAO COMO CANCELADOS ANALISAR QUAIS DEVEM IR PARA EM OPEN COMPLETED E CANCELLED
-const BLING_STATUS_DEFAULTS = [
+export const BLING_STATUS_DEFAULTS = [
   { external_status_id: "6",      external_status_value: "Em aberto",                   normalized_status: "EM_ABERTO",                    display_name: "Em Aberto",                    is_cancelled: false, is_final: false },
   { external_status_id: "9",      external_status_value: "Atendido",                    normalized_status: "ATENDIDO",                     display_name: "Atendido",                     is_cancelled: false, is_final: true  },
   { external_status_id: "12",     external_status_value: "Cancelado",                   normalized_status: "CANCELADO",                    display_name: "Cancelado",                    is_cancelled: true,  is_final: false },
