@@ -20,7 +20,7 @@ export const setupAdminJS = async (app: Express) => {
 
   const admin = new AdminJS({
     databases: [sequelize],
-    rootPath: "/admin",
+    rootPath: "/dev-panel",
   });
 
   if (process.env.NODE_ENV !== "production") {
