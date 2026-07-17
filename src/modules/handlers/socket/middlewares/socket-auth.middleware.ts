@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 import { Socket } from "socket.io";
-import cookie from "cookie";
+import * as cookie from "cookie";
 import "dotenv/config";
 
 interface SocketUserPayload {
