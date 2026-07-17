@@ -83,8 +83,10 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   // Pedidos que estavam agurdando geração de nota fiscal no dia agendado, mas foram perdidos
 
   private async reconcileWaitingNfe(): Promise<void> {
-    const integration = await getBlingIntegration("Bling")
-    const waiting_acceptance = integration.lock_today_orders ? false : [true, false];
+    const integration = await getBlingIntegration("Bling");
+    const waiting_acceptance = integration.lock_today_orders
+      ? false
+      : [true, false];
     const orders = await ordersService.findAll({
       where: {
         internal_status: "WAITING FOR NFE EMISSION",
@@ -226,7 +228,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
       } catch (error: any) {
         console.error(
           `[NFeReconciler] Erro ao processar pedido preso ${order.id_order_system}:`,
-          error.response?.data ?? error.message,
+          JSON.stringify(error.response?.data, null, 2),
         );
       }
     }
