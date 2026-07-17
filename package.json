@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/server.ts",
+    "dev": "nodemon --exec tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "docker": "./dev.sh",
@@ -21,6 +21,8 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@adminjs/express": "^6.1.1",
+    "@adminjs/sequelize": "^4.1.1",
     "@alexssmusica/node-pdf-nfe": "^1.2.19",
     "@bull-board/api": "^6.20.6",
     "@bull-board/express": "^6.20.6",
@@ -28,6 +30,7 @@
     "@socket.io/redis-emitter": "^5.1.0",
     "@types/archiver": "^7.0.0",
     "@types/cookie-parser": "^1.4.10",
+    "adminjs": "^7.8.17",
     "archiver": "^7.0.1",
     "axios": "^1.14.0",
     "bcrypt": "^6.0.0",
@@ -38,6 +41,8 @@
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "express-formidable": "^1.2.0",
+    "express-session": "^1.19.0",
     "fast-xml-parser": "^5.6.0",
     "ioredis": "^5.10.1",
     "ipp": "^1.1.0",
@@ -67,6 +72,8 @@
     "@types/cookie": "^0.6.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/express-formidable": "^1.2.4",
+    "@types/express-session": "^1.19.0",
     "@types/ipp": "^2.0.5",
     "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "^9.0.10",
@@ -79,6 +86,7 @@
     "sequelize-cli": "^6.6.5",
     "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
+    "tsx": "^4.23.1",
     "typescript": "^6.0.2"
   }
 }
