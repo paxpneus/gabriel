@@ -90,6 +90,34 @@ export class ProductController extends BaseController<Product, typeof ProductSer
     }
   };
 
+    productByUnit = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req) as ProductQueryParams;
+      const unitBusinessId = req.query.unitBusinessId as string | undefined;
+
+      if (!unitBusinessId) {
+        throw new Error("Erro: Loja (parâmetro unitBusinessId) não informada")
+      }
+
+      if (unitBusinessId) {
+        params.filters = params.filters ?? {};
+        const stockUnit = Array.isArray(params.filters.stockUnit)
+          ? params.filters.stockUnit[0]
+          : params.filters.stockUnit;
+
+        params.filters.stockUnit = {
+          unitBusinessId,
+          stockUnit: stockUnit === 'positive' || stockUnit === 'zero' ? stockUnit : undefined,
+        };
+      }
+
+      const result = await this.service.paginate(params as unknown as QueryParams);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
   productReport = async (req: Request, res: Response): Promise<Response> => {
     try {
       const params = this.extractQueryParams(req) as ProductQueryParams;

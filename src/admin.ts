@@ -1,10 +1,9 @@
 import { Express } from "express";
 import sequelize from "./config/sequelize";
 
-const loadESM = new Function(
-  "modulePath",
-  "return import(modulePath)"
-) as (modulePath: string) => Promise<any>;
+const loadESM = new Function("modulePath", "return import(modulePath)") as (
+  modulePath: string,
+) => Promise<any>;
 
 export const setupAdminJS = async (app: Express) => {
   const { default: AdminJS, DefaultAuthProvider } = await loadESM("adminjs");
@@ -19,8 +18,10 @@ export const setupAdminJS = async (app: Express) => {
   });
 
   const admin = new AdminJS({
-    databases: [sequelize],
     rootPath: "/dev-panel",
+    loginPath: "/dev-panel/login",
+    logoutPath: "/dev-panel/logout",
+    databases: [sequelize],
   });
 
   if (process.env.NODE_ENV !== "production") {
@@ -30,7 +31,13 @@ export const setupAdminJS = async (app: Express) => {
   const authProvider = new DefaultAuthProvider({
     componentLoader: admin.componentLoader,
 
-    authenticate: async ({ email, password}: { email: string; password: string }) => {
+    authenticate: async ({
+      email,
+      password,
+    }: {
+      email: string;
+      password: string;
+    }) => {
       const adminEmail = process.env.DB_USER || "admin@paxhub.com";
       const adminPassword = process.env.DB_PASS;
 
@@ -66,10 +73,10 @@ export const setupAdminJS = async (app: Express) => {
       cookie: {
         secure: process.env.NODE_ENV === "production",
       },
-    }
+    },
   );
 
   app.use(admin.options.rootPath, router);
 
-  console.log("🚀 Painel AdminJS carregado em /admin");
+  console.log("🚀 Painel AdminJS carregado em /dev-panel");
 };
