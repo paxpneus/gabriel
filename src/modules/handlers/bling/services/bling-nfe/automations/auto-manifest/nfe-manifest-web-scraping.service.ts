@@ -1,4 +1,4 @@
-import { alertService } from './../../../../../../../shared/providers/mail-provider/nodemailer.alert';
+import { alertService } from "./../../../../../../../shared/providers/mail-provider/nodemailer.alert";
 // bling-manifestacao.service.ts
 import * as path from "path";
 import * as fs from "fs";
@@ -24,7 +24,8 @@ const BLING_PASSWORD = process.env.BLING_PASSWORD ?? "";
 const MAX_ATTEMPTS = 3;
 
 const IS_HEADLESS =
-  process.env.NODE_ENV === "production" || process.env.BLING_HEADLESS === "true";
+  process.env.NODE_ENV === "production" ||
+  process.env.BLING_HEADLESS === "true";
 
 export interface ManifestacaoResult {
   success: boolean;
@@ -50,7 +51,9 @@ export class BlingManifestacaoService {
 
   async manifestarNotasComoOperacaoRealizada(): Promise<ManifestacaoResult> {
     if (this.isRunning) {
-      console.log("[BlingManifest] Já existe uma execução em andamento — pulando");
+      console.log(
+        "[BlingManifest] Já existe uma execução em andamento — pulando",
+      );
       return { success: false };
     }
     this.isRunning = true;
@@ -81,6 +84,13 @@ export class BlingManifestacaoService {
       console.log("[BlingManifest] Fluxo concluído com sucesso");
       return { success: true };
     } catch (err) {
+      if (err instanceof NotasNaoManifestadasError) {
+        console.warn(
+          `[BlingManifest] Encerrando ciclo sem sucesso (não é erro de automação): ${err.message}`,
+        );
+        return { success: false };
+      }
+
       alertService.sendAlert({
         severity: "CRITICAL",
         title: "Bling Manifestação — falha na automação",
@@ -98,7 +108,9 @@ export class BlingManifestacaoService {
   // Browser
   // ─────────────────────────────────────────────────────────────────────────
 
-  private async launchContext(forceHeadless?: boolean): Promise<BrowserContext> {
+  private async launchContext(
+    forceHeadless?: boolean,
+  ): Promise<BrowserContext> {
     const headless = forceHeadless ?? IS_HEADLESS;
 
     console.log(
@@ -123,7 +135,10 @@ export class BlingManifestacaoService {
   // Login
   // ─────────────────────────────────────────────────────────────────────────
 
-  private async ensureLoggedIn(context: BrowserContext, page: Page): Promise<boolean> {
+  private async ensureLoggedIn(
+    context: BrowserContext,
+    page: Page,
+  ): Promise<boolean> {
     await page.goto(NOTAS_ENTRADA_URL, {
       waitUntil: "domcontentloaded",
       timeout: 30_000,
@@ -141,7 +156,9 @@ export class BlingManifestacaoService {
       return false;
     }
 
-    console.log("[BlingManifest] Sessão expirada — fazendo login com email/senha");
+    console.log(
+      "[BlingManifest] Sessão expirada — fazendo login com email/senha",
+    );
     return this.doAutoLogin(page);
   }
 
@@ -150,7 +167,10 @@ export class BlingManifestacaoService {
   }
 
   private async doAutoLogin(page: Page): Promise<boolean> {
-    await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(LOGIN_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
 
     await page.fill("#username", BLING_EMAIL);
 
@@ -163,14 +183,19 @@ export class BlingManifestacaoService {
     }
 
     await page
-      .waitForSelector('input[type="password"].InputText-input', { timeout: 10_000 })
+      .waitForSelector('input[type="password"].InputText-input', {
+        timeout: 10_000,
+      })
       .catch(() => {});
 
     await page.fill('input[type="password"].InputText-input', BLING_PASSWORD);
     await page.click(".login-button-submit");
 
     await page.waitForTimeout(4_000);
-    await page.goto(NOTAS_ENTRADA_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(NOTAS_ENTRADA_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
 
     if (this.isLoginWall(page)) {
       console.error(
@@ -253,9 +278,9 @@ export class BlingManifestacaoService {
     // Se existir um modal de confirmação intermediário (abrirManifestar() pode
     // abrir um popup de confirmação), tenta confirmar. Ajuste o seletor abaixo
     // caso o seu ambiente tenha um botão de confirmação com texto diferente.
-    const confirmarBtn = page.locator(
-      'button:has-text("Confirmar"), button:has-text("Manifestar")',
-    ).last();
+    const confirmarBtn = page
+      .locator('button:has-text("Confirmar"), button:has-text("Manifestar")')
+      .last();
     await confirmarBtn.click({ timeout: 5_000 }).catch(() => {
       console.log(
         "[BlingManifest] Nenhum modal de confirmação adicional detectado — seguindo",
@@ -294,11 +319,13 @@ export class BlingManifestacaoService {
     await page.waitForTimeout(500);
 
     const nenhumaLabel = page.locator('label#lbl0[for="ckb0"]');
-    await nenhumaLabel.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {
-      console.warn(
-        "[BlingManifest] Opção 'Nenhuma' loja não apareceu — verifique se o treeselect precisa de outro trigger",
-      );
-    });
+    await nenhumaLabel
+      .waitFor({ state: "visible", timeout: 10_000 })
+      .catch(() => {
+        console.warn(
+          "[BlingManifest] Opção 'Nenhuma' loja não apareceu — verifique se o treeselect precisa de outro trigger",
+        );
+      });
     await nenhumaLabel.click({ timeout: 5_000 }).catch(() => {});
     await page.waitForTimeout(500);
   }
