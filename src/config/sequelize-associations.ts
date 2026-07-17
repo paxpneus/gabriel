@@ -247,6 +247,16 @@ export function setupAssociations() {
 
   // ===== TRANSPORTER =====
 
+  Transporter.belongsTo(Integration, {
+    foreignKey: "integrations_id",
+    as: "integration"
+  })
+
+  Integration.hasMany(Transporter, {
+    foreignKey: "integrations_id",
+    as: "transporters"
+  })
+
   // Transporter -> Invoices
   Transporter.hasMany(Invoice, {
     foreignKey: "transporter_id",

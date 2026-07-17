@@ -5,6 +5,7 @@ export interface TransporterAttributes {
   city?: string;
   uf?: string;
   id_system?: string;
+  integrations_id?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }

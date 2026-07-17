@@ -11,6 +11,7 @@ class Transporter extends Model<TransporterAttributes, TransporterCreationAttrib
   public city?: string;
   public uf?: string;
   public id_system?: string;
+  public integrations_id?: string;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -27,6 +28,13 @@ Transporter.init(
      id_system: {
       type: DataTypes.STRING(100),
       allowNull: true
+    },
+    integrations_id: {
+      type: DataTypes.UUID,
+      references: {
+        model: "integrations",
+        key: "id",
+      },
     },
     name: {
       type: DataTypes.STRING(255),
