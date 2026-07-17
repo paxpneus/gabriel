@@ -50,7 +50,7 @@ app.use(cors({
 // })
 
 app.use((req, res, next) => {
-  if (req.originalUrl.startsWith('/admin')) {
+  if (req.originalUrl.startsWith('/dev-panel')) {
     return next(); 
   }
   express.json()(req, res, () => {
