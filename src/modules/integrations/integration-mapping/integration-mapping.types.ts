@@ -1,4 +1,5 @@
-export type EntityType = 'PRODUCT' | 'INVOICE';
+export const ENTITY_TYPES = ["PRODUCT", "INVOICE", "CONTACT"] as const;
+export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export interface IntegrationMappingAttributes {
   id: string;
@@ -6,7 +7,6 @@ export interface IntegrationMappingAttributes {
   internal_id: string;
   integrations_id: string;
   external_id: string;
-  unit_business_id: string;
   createdAt?: Date;
   updatedAt?: Date;
 }

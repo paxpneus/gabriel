@@ -225,16 +225,6 @@ export function setupAssociations() {
     as: "unitBusiness",
   });
 
-  // Unit Business -> Integration Mappings
-  UnitBusiness.hasMany(IntegrationMapping, {
-    foreignKey: "unit_business_id",
-    as: "integrationMappings",
-  });
-  IntegrationMapping.belongsTo(UnitBusiness, {
-    foreignKey: "unit_business_id",
-    as: "unitBusiness",
-  });
-
   // Unit Business -> Integrations
   UnitBusiness.belongsTo(Integration, {
     foreignKey: "integrations_id",

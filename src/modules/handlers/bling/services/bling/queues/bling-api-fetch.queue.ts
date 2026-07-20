@@ -52,6 +52,7 @@ import brandsService from "../../../../../inventory/brands/brands.service";
 import Group from "../../../../../inventory/groups/group/group.model";
 import Subgroup from "../../../../../inventory/groups/subgroup/subgroup.model";
 import { GroupType } from "../../../../../inventory/groups/group/group.types";
+import { resolveProductWithMapping } from "../../../../tecinco/queues/helpers/product.helpers";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -160,7 +161,9 @@ async function resolveBlingImportedTireSubgroup(
       name: subgroupName,
       group_id: group.id,
     });
-    console.log(`${logPrefix} Subgrupo criado: ${group.name} > ${subgroup.name}`);
+    console.log(
+      `${logPrefix} Subgrupo criado: ${group.name} > ${subgroup.name}`,
+    );
   }
 
   return subgroup;
@@ -765,7 +768,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
   // ─── Handlers por recurso ─────────────────────────────────────────────────
 
-    private async fetchAndUpsertProduct(
+  private async fetchAndUpsertProduct(
     apiFetch: ApiFetchRequest,
   ): Promise<void> {
     const { data } = await this.api.get<{ data: BlingApiProduct }>(
@@ -786,8 +789,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingProduct.fornecedor?.precoCusto ?? blingProduct.precoCusto ?? 0,
     );
 
-    const existingProduct = await Product.findOne({
-      where: { id_system: String(blingProduct.id) },
+    const logPrefix = `[BLING_API_FETCH] fetchAndUpsertProduct blingId=${blingProduct.id}`;
+
+    const existingProduct = await resolveProductWithMapping({
+      integrationsId: integration.id,
+      systemId: String(blingProduct.id),
+      codigoFabrica: blingProduct.codigo, 
+      ean: blingProduct.gtin,
+      logPrefix,
     });
 
     const { measure, line } = extractProductMeasureAndLine(
@@ -1469,7 +1478,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
       invoice = await invoiceService.findByIdFullForAllUnits(created.id);
     } else {
-      
       await invoiceService.updateInvoicesForAllUnitBusiness(
         [existingInvoice.id],
         {
