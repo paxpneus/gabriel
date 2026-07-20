@@ -77,6 +77,28 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     }
   }
 
+  // ─── Guarda: só segue se o pedido ainda estiver de fato aguardando validação de canal ──
+
+  /**
+   * Rebusca o pedido só com internal_status e source_payload para confirmar
+   * que ele ainda está em WAITING CHANNEL VALIDATION (748743 na Bling).
+   * Evita processar pedido que já mudou de situação entre o enqueue e o processamento.
+   */
+  private async isEligibleForSync(orderId: string): Promise<boolean> {
+    const orderData = await ordersService.findById(orderId, {
+      attributes: ["internal_status", "source_payload"],
+    });
+
+    if (!orderData) return false;
+
+    const situacaoId = (orderData as any).source_payload?.situacao?.id;
+
+    return (
+      orderData.internal_status === "WAITING CHANNEL VALIDATION" &&
+      String(situacaoId) === "748743"
+    );
+  }
+
   // ─── Fluxo vindo do scraping ────────────────────────────────────────────
 
   /**
@@ -153,6 +175,14 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     if (!orderSystem) {
       console.warn(
         `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} não encontrado no banco via webhook. Ignorando.`,
+      );
+      return;
+    }
+
+    const isEligible = await this.isEligibleForSync(orderSystem.id);
+    if (!isEligible) {
+      console.log(
+        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} não está mais em WAITING CHANNEL VALIDATION (internal_status/situacao.id divergente). Ignorando.`,
       );
       return;
     }
@@ -240,12 +270,20 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-     if (order.internal_status === 'EMITTED') {
-    console.log(
-      `[MLOrderSyncQueue] Pedido ${order.number_order_channel} já emitido — ignorando scraping.`,
-    );
-    return;
-  }
+    if (order.internal_status === "EMITTED") {
+      console.log(
+        `[MLOrderSyncQueue] Pedido ${order.number_order_channel} já emitido — ignorando scraping.`,
+      );
+      return;
+    }
+
+    const isEligible = await this.isEligibleForSync(order.id);
+    if (!isEligible) {
+      console.log(
+        `[MLOrderSyncQueue] Pedido ${order.number_order_channel} não está mais em WAITING CHANNEL VALIDATION (internal_status/situacao.id divergente). Ignorando.`,
+      );
+      return;
+    }
 
     // Valida SKU na Bling antes de confirmar
     const skuValid = order.items.some((item) => item.sku == row.sku);
@@ -322,6 +360,14 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     if (orderSystem.internal_status == "EMITTED") {
       console.log(
         `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já em status final (${orderSystem.internal_status}). Ignorando.`,
+      );
+      return;
+    }
+
+    const isEligible = await this.isEligibleForSync(orderSystem.id);
+    if (!isEligible) {
+      console.log(
+        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} não está mais em WAITING CHANNEL VALIDATION (internal_status/situacao.id divergente) — não agenda NFe.`,
       );
       return;
     }

@@ -17,6 +17,7 @@ import { FullOrder } from "../../../../sales/orders/order/orders.types";
 import OrderItems from "../../../../sales/orders/order_items/order_items.model";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
+import Store from "../../../../sales/stores/stores.model";
 
 export type NFeReconcilerJobData = Record<string, never>;
 
@@ -195,6 +196,15 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
         internal_status: "WAITING CHANNEL VALIDATION",
         updatedAt: { [Op.lt]: new Date(Date.now() - 0.5 * 60 * 60 * 1000) },
       },
+      include: [
+        {
+          model: Store,
+          as: "store",
+          where: { name: "MercadoLivre" },
+          required: true,
+          attributes: ["id", "name"],
+        },
+      ],
     });
 
     if (stuckOrders.length === 0) return;

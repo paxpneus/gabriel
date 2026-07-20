@@ -1,3 +1,4 @@
+import { StoreService } from "./../../../../sales/stores/stores.service";
 // src/.../nfe/nfe.queue.ts
 
 import { Job } from "bullmq";
@@ -8,6 +9,8 @@ import { AxiosInstance } from "axios";
 import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
+
+const ALLOWED_STORE_NAME = "MercadoLivre";
 
 const STATUS = {
   NFE_AGENDADA: 748748,
@@ -30,6 +33,7 @@ const NFE_ERRORS = {
 export class NFeQueue extends BaseQueueService<NFeJobData> {
   private blingApi: AxiosInstance;
   private validationService: NFeValidationService;
+  private storeService: StoreService;
 
   constructor(
     validationService: NFeValidationService,
@@ -47,6 +51,18 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     });
     this.blingApi = blingApi;
     this.validationService = validationService;
+    this.storeService = new StoreService();
+  }
+
+  private async isMercadoLivreOrder(order: any): Promise<boolean> {
+    const storeSystemId = order.loja?.id;
+    if (!storeSystemId) return false;
+
+    const store = await this.storeService.findOne({
+      where: { id_store_system: String(storeSystemId) },
+    });
+
+    return store?.name === ALLOWED_STORE_NAME;
   }
 
   private async markOrderCancelled(
@@ -55,15 +71,15 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
   ): Promise<void> {
     const { data } = await this.blingApi.get(`/pedidos/vendas/${orderId}`);
 
-     await new Promise(r => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000));
 
     await this.blingApi.put(`/pedidos/vendas/${orderId}`, {
       ...data.data,
       observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`,
     });
 
-     await new Promise(r => setTimeout(r, 3000));
-     
+    await new Promise((r) => setTimeout(r, 3000));
+
     await this.blingApi.patch(
       `/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`,
       {
@@ -92,6 +108,15 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     // 1. Busca o pedido fresco na Bling
     const { data } = await this.blingApi.get(`/pedidos/vendas/${order_id}`);
     const order = data.data;
+
+       // 1.1 Filtra por loja — só Mercado Livre passa daqui pra frente
+    const isML = await this.isMercadoLivreOrder(order);
+    if (!isML) {
+      console.log(
+        `[NFeQueue] Pedido ${order_id} não é da loja Mercado Livre (loja=${order.loja?.nome ?? order.loja?.id ?? "desconhecida"}). Ignorando — sem update na Bling, sem update no sistema.`,
+      );
+      return;
+    }
 
     // 2. Verifica se ainda está em nfe agendada (status 748748)
     if (order.situacao?.id !== STATUS.NFE_AGENDADA) {
@@ -166,30 +191,30 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         internal_status: "EMITTED",
       });
     } catch (error: any) {
-  const fields = error.response?.data?.error?.fields ?? [];
-  const noStock = fields.some((f: any) => f.code === 74);
+      const fields = error.response?.data?.error?.fields ?? [];
+      const noStock = fields.some((f: any) => f.code === 74);
 
-  console.error(
-    `[NFeQueue] Erro ao emitir NFe para pedido ${order_id}:`,
-    JSON.stringify(error.response?.data) ?? error.message,
-  );
+      console.error(
+        `[NFeQueue] Erro ao emitir NFe para pedido ${order_id}:`,
+        JSON.stringify(error.response?.data) ?? error.message,
+      );
 
-  if (noStock) {
-    await this.markOrderCancelled(
-    order_id,
-    "Item(s) sem estoque disponível na Bling. Requer reposição manual."
-  );
-    alertService.sendAlert({
-      severity: "HIGH",
-      title: "NFe — Sem estoque",
-      message: `Pedido ${order_id} não pode emitir NFe: item sem estoque disponível na Bling. Requer reposição manual.`,
-    });
-    
-    return;
-  }
+      if (noStock) {
+        await this.markOrderCancelled(
+          order_id,
+          "Item(s) sem estoque disponível na Bling. Requer reposição manual.",
+        );
+        alertService.sendAlert({
+          severity: "HIGH",
+          title: "NFe — Sem estoque",
+          message: `Pedido ${order_id} não pode emitir NFe: item sem estoque disponível na Bling. Requer reposição manual.`,
+        });
 
-  throw error; 
-}
+        return;
+      }
+
+      throw error;
+    }
   }
 
   protected onFailed(job: Job<NFeJobData>, error: Error): void {
