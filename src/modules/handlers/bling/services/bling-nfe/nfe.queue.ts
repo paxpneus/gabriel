@@ -70,7 +70,10 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     orderId: number,
     message: string,
   ): Promise<void> {
-    const { data } = await blingGet(`/pedidos/vendas/${orderId}`, this.blingApi);
+    const { data } = await blingGet(
+      `/pedidos/vendas/${orderId}`,
+      this.blingApi,
+    );
 
     await new Promise((r) => setTimeout(r, 1000));
 
@@ -110,7 +113,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     const { data } = await this.blingApi.get(`/pedidos/vendas/${order_id}`);
     const order = data.data;
 
-       // 1.1 Filtra por loja — só Mercado Livre passa daqui pra frente
+    // 1.1 Filtra por loja — só Mercado Livre passa daqui pra frente
     const isML = await this.isMercadoLivreOrder(order);
     if (!isML) {
       console.log(
@@ -220,8 +223,15 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
   protected onFailed(job: Job<NFeJobData>, error: Error): void {
     const { order_id } = job.data;
-    this.markOrderCancelled(order_id, `${NFE_ERRORS.EMISSION_FAILED}`);
 
+    if (error.message?.includes("Timeout aguardando lock compartilhado")) {
+      console.warn(
+        `[NFeQueue] Job ${job.id} (pedido ${order_id}) falhou por timeout de lock (>24h), não por erro de emissão. Pedido NÃO foi cancelado.`,
+      );
+      return;
+    }
+
+    this.markOrderCancelled(order_id, `${NFE_ERRORS.EMISSION_FAILED}`);
     alertService.sendAlert({
       severity: "CRITICAL",
       title: "NFe — falha após todos os retries",
