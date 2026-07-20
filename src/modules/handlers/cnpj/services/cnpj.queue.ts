@@ -6,6 +6,11 @@ import { nextStepOnQueue } from "../../../../shared/types/queue/base-queue";
 import ordersService from "../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/bling-queue-lock";
+import { StoreService } from "../../../sales/stores/stores.service";
+import { blingGet } from "../../bling/services/bling/helpers/get-with-sleep";
+
+const ALLOWED_STORE_NAME = "MercadoLivre";
+const STATUS_EM_ABERTO = 6;
 
 const ErrorValues = [
   { id: 1, error: "Documento não informado ou inválido " },
@@ -14,8 +19,9 @@ const ErrorValues = [
 
 export class CNPJQueue extends BaseQueueService<any> {
   private CNPJService;
-  private blingApi;
+  private blingApi: AxiosInstance;
   private next: nextStepOnQueue;
+  private storeService: StoreService;
 
   constructor(
     cnpjService: CNPJService,
@@ -32,11 +38,26 @@ export class CNPJQueue extends BaseQueueService<any> {
     this.CNPJService = cnpjService;
     this.blingApi = blingApi;
     this.next = next;
+    this.storeService = new StoreService();
+  }
+
+  private async isMercadoLivreOrder(loja: any): Promise<boolean> {
+    const storeSystemId = loja?.id;
+    if (!storeSystemId) return false;
+
+    const store = await this.storeService.findOne({
+      where: { id_store_system: String(storeSystemId) },
+    });
+
+    return store?.name === ALLOWED_STORE_NAME;
   }
 
   private async markOrderError(order: any, errorId: number): Promise<void> {
     const errorMessage = ErrorValues.find((e) => e.id === errorId)?.error;
-    const { data } = await this.blingApi.get(`/pedidos/vendas/${order.id_order_system}`);
+    const { data } = await blingGet(
+      `/pedidos/vendas/${order.id_order_system}`,
+      this.blingApi,
+    );
 
     await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
       ...data.data,
@@ -53,12 +74,6 @@ export class CNPJQueue extends BaseQueueService<any> {
     console.log(`[CNPJQueue] Pedido ${order.id} marcado com erro: ${errorMessage}`);
   }
 
-  /**
-   * Aplica o status "Aguardando NFe" (748743) na Bling.
-   * Retorna false se a transição não for permitida (400) sem lançar —
-   * a Bling rejeita 400 quando o pedido já está num status que não permite
-   * essa transição. O fluxo da fila não deve ser bloqueado por isso.
-   */
   private async applyWaitingNfeStatus(orderSystem: any): Promise<boolean> {
     try {
       await this.blingApi.patch(
@@ -74,7 +89,7 @@ export class CNPJQueue extends BaseQueueService<any> {
         );
         return false;
       }
-      throw err; // 401, 5xx, rede → BullMQ retry
+      throw err;
     }
   }
 
@@ -82,6 +97,28 @@ export class CNPJQueue extends BaseQueueService<any> {
     console.log(`[QUEUE] Processando verificação de documento ${job.id}`);
 
     const { customer, cnaes, orderSystem } = job.data;
+
+    const { data } = await blingGet(
+      `/pedidos/vendas/${orderSystem.id_order_system}`,
+      this.blingApi,
+    );
+    const freshOrder = data.data;
+
+    const isML = await this.isMercadoLivreOrder(freshOrder.loja);
+    if (!isML) {
+      console.log(
+        `[CNPJQueue] Pedido ${orderSystem.id_order_system} não é da loja Mercado Livre (loja=${freshOrder.loja?.nome ?? freshOrder.loja?.id ?? "desconhecida"}). Ignorando — sem alteração na Bling, sem update no sistema.`,
+      );
+      return;
+    }
+
+    if (freshOrder.situacao?.id !== STATUS_EM_ABERTO) {
+      console.log(
+        `[CNPJQueue] Pedido ${orderSystem.id_order_system} não está mais em "Em Aberto" (situação atual=${freshOrder.situacao?.id}). Ignorando — fora do momento da automação.`,
+      );
+      return;
+    }
+
     const document = String(customer.document);
 
     // 1. Documento inválido
@@ -106,13 +143,11 @@ export class CNPJQueue extends BaseQueueService<any> {
       const cnaeApproved = await this.CNPJService.checkCNAE(cnaes, document);
 
       if (!cnaeApproved) {
-        // CNAE não está na lista de bloqueados → empresa pode atender, segue
         console.log(`[CNPJQueue] CNAE liberado para pedido ${orderSystem.id_order_system} — seguindo para data de coleta`);
         await this.applyWaitingNfeStatus(orderSystem);
         await ordersService.update(orderSystem.id, { internal_status: "WAITING CHANNEL VALIDATION" });
         await this.next.add({ orderSystem, customer }, `ml-check-${orderSystem.id}`);
       } else {
-        // CNAE está na lista de bloqueados → empresa não pode atender, cancela
         console.log(`[CNPJQueue] CNAE bloqueado para pedido ${orderSystem.id_order_system} — cancelando`);
         await this.markOrderError(orderSystem, 2);
       }
@@ -122,7 +157,6 @@ export class CNPJQueue extends BaseQueueService<any> {
         error.message,
       );
 
-      // Só dispara alerta de "providers falharam" se for realmente falha da API de CNPJ
       if (error.message?.includes("[CNPJ]")) {
         alertService.sendAlert({
           severity: "HIGH",
@@ -131,7 +165,7 @@ export class CNPJQueue extends BaseQueueService<any> {
         });
       }
 
-      throw error; // BullMQ retry com backoff exponencial
+      throw error;
     }
   }
 }

@@ -16,6 +16,7 @@ import integrationOrderStatusMappingService from "../../../../sales/orders/integ
 import { ProductAttributes } from "../../../../inventory/products/product.types";
 import Brand from "../../../../inventory/brands/brands.model";
 import stateService from "../../../../warehouse/address/state/state.service";
+import { blingGet } from "../bling/helpers/get-with-sleep";
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
@@ -88,15 +89,6 @@ export class BlingOrderService {
     }
 
     return update;
-  }
-
-  private async blingGet(url: string): Promise<any> {
-    if (BLING_ORDER_REQUEST_DELAY_MS > 0) {
-      await new Promise<void>((resolve) =>
-        setTimeout(resolve, BLING_ORDER_REQUEST_DELAY_MS),
-      );
-    }
-    return this.blingApi.get(url);
   }
 
   private async resolveInvoiceId(
@@ -406,7 +398,7 @@ export class BlingOrderService {
     if (!contatoId) return {};
 
     try {
-      const { data } = await this.blingGet(`/contatos/${contatoId}`);
+      const { data } = await blingGet(`/contatos/${contatoId}`, this.blingApi);
       const endereco = data?.data?.endereco?.geral;
 
       if (!endereco) return {};
@@ -589,7 +581,7 @@ export class BlingOrderService {
         return null;
       }
 
-      const { data } = await this.blingGet(`/pedidos/vendas/${body.data.id}`);
+      const { data } = await blingGet(`/pedidos/vendas/${body.data.id}`, this.blingApi);
       const orderData = data.data;
 
       const existingOrder = await ordersService.findOne({
@@ -773,7 +765,7 @@ export class BlingOrderService {
     try {
       const integration = await getBlingIntegration("Bling");
 
-      const { data } = await this.blingGet(`/pedidos/vendas/${body.data.id}`);
+      const { data } = await blingGet(`/pedidos/vendas/${body.data.id}`, this.blingApi);
       const orderData = data.data;
 
       const existingOrder = await ordersService.findOne({
@@ -800,8 +792,9 @@ export class BlingOrderService {
         });
 
         if (!store) {
-          const blingStore = await this.blingGet(
+          const blingStore = await blingGet(
             `/canais-venda/${orderData.loja.id}`,
+            this.blingApi
           );
           const tipo = blingStore.data.data.tipo;
 

@@ -9,6 +9,7 @@ import { AxiosInstance } from "axios";
 import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
+import { blingGet } from "../bling/helpers/get-with-sleep";
 
 const ALLOWED_STORE_NAME = "MercadoLivre";
 
@@ -69,7 +70,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     orderId: number,
     message: string,
   ): Promise<void> {
-    const { data } = await this.blingApi.get(`/pedidos/vendas/${orderId}`);
+    const { data } = await blingGet(`/pedidos/vendas/${orderId}`, this.blingApi);
 
     await new Promise((r) => setTimeout(r, 1000));
 
