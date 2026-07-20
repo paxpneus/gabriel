@@ -12,9 +12,10 @@ export const BLING_SHARED_QUEUE_LOCK: NonNullable<baseQueueOptions["sharedLock"]
       BLING_ORDER_INGESTION:2, // criação/atualização de pedidos
       CNPJ_VERIFY_CNAE:     3, // verificação de CNAE
       ML_ORDER_SYNC:        4, // sincronização mercado livre
-      NFE_EMISSION:         5, // emissão de notas com data próxima
-      NFE_RECONCILER:       6, // busca notas perdidas
-      BLING_RECONCILER:     7, // busca pedidos perdidos
+      NFE_RECONCILER:       5, // busca notas perdidas
+      BLING_RECONCILER:     6, // busca pedidos perdidos
+      NFE_EMISSION:         7, // emissão de notas com data próxima
+      
     },
     defaultRank: 10,
   },

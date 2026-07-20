@@ -2,6 +2,7 @@ import { redisConfig } from "./../../../config/redis";
 import { Queue, Worker, QueueEvents, Job } from "bullmq";
 import { redisConnection } from "./base-redis";
 import { randomUUID } from "crypto";
+import { alertService } from "../../providers/mail-provider/nodemailer.alert";
 
 export type baseQueueOptions = {
   concurrency?: number;
@@ -13,6 +14,7 @@ export type baseQueueOptions = {
     key: string;
     ttlMs?: number;
     retryDelayMs?: number;
+    maxWaitMs?: number;
     priority?: {
       enabled?: boolean;
       ranks?: Record<string, number>;
@@ -200,15 +202,26 @@ export abstract class BaseQueueService<T> {
     retryDelayMs: number,
     priorityTicket?: SharedLockPriorityTicket,
   ): Promise<void> {
-    const maxWaitMs =
-      (sharedLock as any).maxWaitMs ??
-      Math.max(this.workerLockDuration - 30_000, 60_000);
+    // Semáforo: enquanto houver alguém à frente (ativo ou com prioridade
+    // maior aguardando), o job espera indefinidamente — isso NÃO é falha,
+    // é comportamento esperado de tráfego. Só entra "ativo" quando for
+    // realmente a vez dele. Sem timeout artificial de espera.
+    const maxWaitMs = sharedLock.maxWaitMs ?? 24 * 60 * 60 * 1000; // 1 dia
     const startedAt = Date.now();
+    let lastLogAt = 0;
+    const LOG_INTERVAL_MS = 60_000;
 
     while (true) {
-      if (Date.now() - startedAt > maxWaitMs) {
+      const waitedMs = Date.now() - startedAt;
+
+      if (waitedMs > maxWaitMs) {
+        alertService.sendAlert({
+          severity: "CRITICAL",
+          title: `Lock compartilhado "${sharedLock.key}" — espera excedeu 1 dia`,
+          message: `Fila ${this.queueName} esperou ${Math.round(waitedMs / 3_600_000)}h pelo lock e desistiu. Provável lock travado ou fome severa — investigar filas concorrentes.`,
+        });
         throw new Error(
-          `[QUEUE] Timeout aguardando lock compartilhado "${sharedLock.key}" (esperou ${Date.now() - startedAt}ms)`,
+          `[QUEUE] Timeout aguardando lock compartilhado "${sharedLock.key}" (esperou ${waitedMs}ms, limite ${maxWaitMs}ms)`,
         );
       }
 
@@ -216,7 +229,14 @@ export abstract class BaseQueueService<T> {
         await this.cleanupSharedLockPriorityQueue(priorityTicket.waitKey);
         const isNext =
           await this.isNextSharedLockPriorityTicket(priorityTicket);
+
         if (!isNext) {
+          if (waitedMs - lastLogAt >= LOG_INTERVAL_MS) {
+            lastLogAt = waitedMs;
+            console.log(
+              `[QUEUE] ${this.queueName} (rank ${priorityTicket.rank}) aguardando vez no lock "${sharedLock.key}" há ${Math.round(waitedMs / 1000)}s — filas de maior prioridade na frente.`,
+            );
+          }
           await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
           continue;
         }
@@ -265,8 +285,8 @@ export abstract class BaseQueueService<T> {
   }
 
   private resolveSharedLockResource(job: Job<T>): string {
-  return this.queueName;
-}
+    return this.queueName;
+  }
 
   private resolveSharedLockResourceFromData(data: unknown): string {
     const payload = data as Record<string, any> | undefined;
@@ -372,7 +392,6 @@ export abstract class BaseQueueService<T> {
         }
       }
     }
-
 
     return this.queue.add(this.queueName, data, {
       jobId,
