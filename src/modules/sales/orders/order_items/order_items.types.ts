@@ -41,7 +41,7 @@ export interface OrderSalesDetailRow {
   };
 
   vendedor: {
-    id_vendedor_tecinco: string;
+    id_vendedor_tecinco: string | null;
     nome_vendedor: string | null;
   };
 
@@ -54,6 +54,7 @@ export interface OrderSalesDetailRow {
 
   produto: {
     identificacao: {
+      id_produto_tecinco: string | null;
       nome: string | null;
       ean: string | null;
       sku_bling: string | null;

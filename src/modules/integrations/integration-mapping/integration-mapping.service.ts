@@ -1,4 +1,4 @@
-import { Transaction } from "sequelize";
+import { Op, Transaction } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import IntegrationMapping from "./integration-mapping.model";
 import integrationMappingRepository, {
@@ -23,14 +23,12 @@ export class IntegrationMappingService extends BaseService<
     mappingDto: IntegrationMappingCreationAttributes,
     transaction?: Transaction
   ) {
-    this.repository.upsertByFind(
+    await this.repository.upsertByFind(
       {
-        where: {
           external_id: mappingDto.external_id,
           internal_id: mappingDto.internal_id,
           entity_type: mappingDto.entity_type,
           integrations_id: mappingDto.integrations_id
-        },
       },
       mappingDto,
       mappingDto,
@@ -52,6 +50,24 @@ export class IntegrationMappingService extends BaseService<
 
     const repository = entityRepositoryMap[entityType];
     return repository.findById(mapping.internal_id);
+  }
+
+  async findExternalIdsMap(
+    entityType: EntityType,
+    integrations_id: string,
+    internalIds: string[],
+  ): Promise<Map<string, string>> {
+    if (!internalIds.length) return new Map();
+
+    const mappings = await this.repository.findAll({
+      where: {
+        entity_type: entityType,
+        integrations_id,
+        internal_id: { [Op.in]: internalIds },
+      },
+    });
+
+    return new Map(mappings.map((m) => [m.internal_id, m.external_id]));
   }
 
 }
