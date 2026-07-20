@@ -331,7 +331,7 @@ export async function runMigration(opts: RunMigrationOptions): Promise<void> {
   }
 
   // await migrateClientes(resolved);
-  await migrateNotasFiscais(resolved);
+  // await migrateNotasFiscais(resolved);
   await migrateProdutos(resolved);
 
 }
