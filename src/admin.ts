@@ -24,7 +24,13 @@ export const setupAdminJS = async (app: Express) => {
     databases: [sequelize],
   });
 
-  if (process.env.NODE_ENV !== "production") {
+  // ─── Produção: monta o bundle uma única vez na subida (initialize).
+  // Dev: recompila a cada mudança (watch). Sem isso, em produção o AdminJS
+  // nunca gera os assets do frontend e todo GET de JS/CSS do painel
+  // retorna 404 (NotFoundError no sendFile do buildRouter).
+  if (process.env.NODE_ENV === "production") {
+    await admin.initialize();
+  } else {
     admin.watch();
   }
 
