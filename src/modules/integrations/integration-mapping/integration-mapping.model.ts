@@ -4,6 +4,7 @@ import {
   IntegrationMappingAttributes,
   IntegrationMappingCreationAttributes,
   EntityType,
+  ENTITY_TYPES,
 } from "./integration-mapping.types";
 import { v4 as uuidv4 } from "uuid";
 
@@ -34,7 +35,7 @@ IntegrationMapping.init(
       allowNull: false,
     },
     entity_type: {
-      type: DataTypes.ENUM("PRODUCT", "INVOICE"),
+      type: DataTypes.ENUM(...ENTITY_TYPES),
       allowNull: false,
     },
     internal_id: {
@@ -51,14 +52,6 @@ IntegrationMapping.init(
     external_id: {
       type: DataTypes.STRING(100),
       allowNull: false,
-    },
-    unit_business_id: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      references: {
-        model: "unit_businesses",
-        key: "id",
-      },
     },
   },
   {

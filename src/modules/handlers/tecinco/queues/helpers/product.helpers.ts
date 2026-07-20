@@ -5,6 +5,7 @@ import {
   SupplierMapping,
   Stock,
 } from "../../../../inventory";
+import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 
 export function normalizeEan(ean?: string): string | undefined {
   if (!ean || ean.trim() === "" || ean.trim().toUpperCase() === "SEM GTIN")
@@ -79,6 +80,48 @@ export async function resolveProduct(params: {
   return null;
 }
 
+export async function resolveProductWithMapping(params: {
+  integrationsId: string;
+  systemId: string;
+  codigoFabrica?: string;
+  ean?: string;
+  logPrefix: string;
+}): Promise<typeof Product.prototype | null> {
+  const { integrationsId, systemId, codigoFabrica, ean, logPrefix } = params;
+
+  // 1) tenta achar direto pelo integration mapping (fast path)
+  const mappedProduct = await integrationMappingService.findEntityByMapping(
+    "PRODUCT",
+    integrationsId,
+    systemId,
+  );
+
+  if (mappedProduct) {
+    console.log(
+      `${logPrefix} — produto resolvido via integration mapping (external_id=${systemId})`,
+    );
+    return mappedProduct as typeof Product.prototype;
+  }
+
+  // 2) fallback: Busca detalhada dentro do sistema
+  const product = await resolveProduct({ systemId, codigoFabrica, ean, logPrefix });
+
+  // 3) achou pelo fallback? garante o mapping pra próxima vez não precisar dele
+  if (product) {
+    await integrationMappingService.createOrUpdateIntegrationMapping({
+      entity_type: "PRODUCT",
+      internal_id: product.id,
+      external_id: systemId,
+      integrations_id: integrationsId,
+    });
+    console.log(
+      `${logPrefix} — integration mapping criado/atualizado (external_id=${systemId})`,
+    );
+  }
+
+  return product;
+}
+
 export async function ensureSupplierMappings(params: {
   productId: string;
   supplierCnpj: string;
@@ -109,3 +152,5 @@ export async function ensureSupplierMappings(params: {
     }
   }
 }
+
+
