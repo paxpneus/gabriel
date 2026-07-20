@@ -49,8 +49,6 @@ class OrderItemsController extends BaseController<
         customerId,
       } = req.query;
 
-      console.log("order-id", orderId)
-
       const params: QueryParams = {
         page: page ? Number(page) : undefined,
         perPage: perPage ? Number(perPage) : undefined,

@@ -35,12 +35,15 @@ import {
   normalizeEan,
   ensureSupplierMappings,
   resolveProduct,
+  resolveProductWithMapping,
 } from "./helpers/product.helpers";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
 import brandsService from "../../../inventory/brands/brands.service";
 import Group from "../../../inventory/groups/group/group.model";
 import Subgroup from "../../../inventory/groups/subgroup/subgroup.model";
 import { GroupType } from "../../../inventory/groups/group/group.types";
+import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
+import { IntegrationMappingCreationAttributes } from "../../../integrations/integration-mapping/integration-mapping.types";
 
 function normalizeTCarDescription(value?: string | null): string {
   return String(value ?? "")
@@ -193,8 +196,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     const codigoFabrica = data.epctb_codigofabrica
       ? String(data.epctb_codigofabrica).trim()
       : undefined;
-    
-      let productDataForGroup: TCarProdutoPayload = data;
+
+    let productDataForGroup: TCarProdutoPayload = data;
 
     if (!data.grupo_descricao || !data.subgrupo_descricao) {
       const resolvedBranchId = branchId ?? Number(data.fll_codigo);
@@ -210,8 +213,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             | TCarProdutoPayload
             | undefined;
 
-                  console.log(`${logPrefix} — DEBUG detalhe bruto:`, JSON.stringify(detalhe));
-
+          console.log(
+            `${logPrefix} — DEBUG detalhe bruto:`,
+            JSON.stringify(detalhe),
+          );
 
           if (detalheData) {
             productDataForGroup = { ...data, ...detalheData };
@@ -238,7 +243,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     );
 
     // ─── Resolve produto pelos identificadores ────────────────────────────────
-    let product = await resolveProduct({
+    let product = await resolveProductWithMapping({
+      integrationsId: integrations.id,
       systemId,
       codigoFabrica,
       ean,
@@ -545,6 +551,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     operationalItems: InvoiceOperationalItemFromXml[];
     unmappedItems: UnmappedInvoiceItemFromXml[];
   }> {
+    const integrations = await getTCarIntegration("Tecinco");
+
     const operationalItems: InvoiceOperationalItemFromXml[] = [];
     const unmappedItems: UnmappedInvoiceItemFromXml[] = [];
     const unitBusiness = await UnitBusiness.findOne({
@@ -594,7 +602,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       }
 
       // ─── Resolve produto pelos identificadores ────────────────────────────────
-      const product = await resolveProduct({
+      const product = await resolveProductWithMapping({
+        integrationsId: integrations.id,
         systemId,
         codigoFabrica,
         ean,

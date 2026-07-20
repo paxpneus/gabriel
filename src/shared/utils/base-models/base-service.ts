@@ -7,6 +7,7 @@ import {
   CreationAttributes,
   BulkCreateOptions,
   Op,
+  WhereOptions,
 } from "sequelize";
 import BaseRepository from "./base-repository";
 import {
@@ -75,11 +76,13 @@ class BaseService<
   paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<T>> {
     return this.repository.findPaginated(
       params,
       this.queryConfig,
       extraOptions,
+      forcedWhere,
     );
   }
 

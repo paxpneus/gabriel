@@ -12,12 +12,15 @@ import Order from "../order/orders.model";
 import { UnitBusiness, Invoice } from "../../../warehouse";
 import { Product } from "../../../inventory";
 import Contact from "../../contacts/contacts.model";
-import Customer from "../../customers/customers.model"; // ajustar path/nome se diferente
+import Customer from "../../customers/customers.model";
 import { OrderSalesDetailRow, SalesDetailFilters } from "./order_items.types";
 import Brand from "../../../inventory/brands/brands.model";
 import { formatToBRISOString } from "../../../../shared/utils/normalizers/date";
-// Ajustar o path abaixo para o local real do model
 import SellerSalesOrderItemSnapshot from "../../../reports/sellers-report/models/seller-sales-order-item-snapshot/seller-sales-order-item-snapshot.model";
+import integrationsService from "../../../integrations/integrations/integrations.service";
+import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
+
+const VENDEDOR_NAO_ATRIBUIDO = "Vendedor 0";
 
 export class OrderItemsService extends BaseService<
   OrderItems,
@@ -44,32 +47,58 @@ export class OrderItemsService extends BaseService<
     };
   }
 
-  async paginateSalesDetail(
-    params: QueryParams,
-    filters: SalesDetailFilters,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-  ): Promise<PaginatedResult<OrderSalesDetailRow>> {
-    const orderWhere: WhereOptions = {};
-    if (filters.startDate && filters.endDate) {
-      orderWhere.date = { [Op.between]: [filters.startDate, filters.endDate] };
+  // ─── Integração Tecinco: cacheia o id pra não buscar toda vez ───────────
+  private tecincoIntegrationId: string | null = null;
+
+  private async resolveTecincoIntegrationId(): Promise<string | null> {
+    if (this.tecincoIntegrationId) return this.tecincoIntegrationId;
+
+    const integration = await integrationsService.getFullIntegration({
+      where: { name: "Tecinco" },
+    });
+
+    if (!integration) {
+      console.warn(
+        `[OrderItemsService] Integração "Tecinco" não encontrada — id_produto_tecinco/id_vendedor_tecinco ficarão null.`,
+      );
+      return null;
     }
-    if (filters.unitBusinessId)
-      orderWhere.unit_business_id = filters.unitBusinessId;
-    if (filters.sellerId) orderWhere.seller_id = filters.sellerId;
-    if (filters.customerId) orderWhere.customer_id = filters.customerId;
-    if (filters.orderId) orderWhere.id = filters.orderId;
 
-    const mergedParams: QueryParams = {
-      ...params,
-      sortBy: params.sortBy ?? "order.updated_at,order.number_order_system",
-      sortDir: params.sortDir ?? "DESC,DESC",
-      filters: {
-        ...(params.filters ?? {}),
-        ...(filters.productId ? { product_id: filters.productId } : {}),
-      },
-    };
+    this.tecincoIntegrationId = integration.id;
+    return this.tecincoIntegrationId;
+  }
 
-    const result = await super.paginate(mergedParams, {
+ async paginateSalesDetail(
+  params: QueryParams,
+  filters: SalesDetailFilters,
+  extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+): Promise<PaginatedResult<OrderSalesDetailRow>> {
+  const orderWhere: WhereOptions = {
+    // ─── Regra fixa: pedido sem NFe vinculada não entra no relatório.
+    invoice_id: { [Op.ne]: null },
+  };
+  if (filters.startDate && filters.endDate) {
+    orderWhere.date = { [Op.between]: [filters.startDate, filters.endDate] };
+  }
+  if (filters.unitBusinessId)
+    orderWhere.unit_business_id = filters.unitBusinessId;
+  if (filters.sellerId) orderWhere.seller_id = filters.sellerId;
+  if (filters.customerId) orderWhere.customer_id = filters.customerId;
+  if (filters.orderId) orderWhere.id = filters.orderId;
+
+  const mergedParams: QueryParams = {
+    ...params,
+    sortBy: params.sortBy ?? "order.updated_at,order.number_order_system",
+    sortDir: params.sortDir ?? "DESC,DESC",
+    filters: {
+      ...(params.filters ?? {}),
+      ...(filters.productId ? { product_id: filters.productId } : {}),
+    },
+  };
+
+  const result = await super.paginate(
+    mergedParams,
+    {
       ...extraOptions,
       include: [
         {
@@ -100,7 +129,13 @@ export class OrderItemsService extends BaseService<
               as: "unitBusiness",
               attributes: ["id", "name", "number", "cnpj"],
             },
-            { model: Contact, as: "seller", attributes: ["id", "name"] },
+            {
+              model: Contact,
+              as: "seller",
+              attributes: ["id", "name"],
+              required: true,
+              where: { name: { [Op.ne]: VENDEDOR_NAO_ATRIBUIDO } },
+            },
             {
               model: Customer,
               as: "customer",
@@ -119,11 +154,10 @@ export class OrderItemsService extends BaseService<
           attributes: ["id", "name", "ean", "ean_tribut", "line", "measure"],
           include: [{ model: Brand, as: "brandRegister" }],
         },
-        
         {
           model: SellerSalesOrderItemSnapshot,
           as: "sellerSnapshot",
-          required: false,
+          required: true,
           attributes: [
             "average_cost",
             "total_cost",
@@ -135,7 +169,16 @@ export class OrderItemsService extends BaseService<
           ],
         },
       ],
-    });
+    },
+    {
+       average_cost_snapshot: {
+    [Op.and]: [
+      { [Op.ne]: null },
+      { [Op.ne]: 0 },
+    ],
+  },
+    },
+  );
 
     const orderIds = [
       ...new Set(result.data.map((item: any) => item.order_id)),
@@ -148,7 +191,6 @@ export class OrderItemsService extends BaseService<
       } as unknown as PaginatedResult<OrderSalesDetailRow>;
     }
 
- 
     const orderAggregatesRaw = await SellerSalesOrderItemSnapshot.findAll({
       attributes: [
         "order_id",
@@ -175,6 +217,40 @@ export class OrderItemsService extends BaseService<
       ]),
     );
 
+    // ─── Resolve external_id (Tecinco) de produto e vendedor em lote ──────
+    const tecincoIntegrationId = await this.resolveTecincoIntegrationId();
+
+    const productIds = [
+      ...new Set(
+        result.data
+          .map((item: any) => item.product_id)
+          .filter((id: any) => !!id),
+      ),
+    ] as string[];
+
+    const sellerContactIds = [
+      ...new Set(
+        result.data
+          .map((item: any) => item.order?.seller?.id)
+          .filter((id: any) => !!id),
+      ),
+    ] as string[];
+
+    const [productExternalIdsMap, sellerExternalIdsMap] = tecincoIntegrationId
+      ? await Promise.all([
+          integrationMappingService.findExternalIdsMap(
+            "PRODUCT",
+            tecincoIntegrationId,
+            productIds,
+          ),
+          integrationMappingService.findExternalIdsMap(
+            "CONTACT",
+            tecincoIntegrationId,
+            sellerContactIds,
+          ),
+        ])
+      : [new Map<string, string>(), new Map<string, string>()];
+
     const data: OrderSalesDetailRow[] = result.data.map((item: any) => {
       const order = item.order;
       const snapshot = item.sellerSnapshot;
@@ -186,7 +262,9 @@ export class OrderItemsService extends BaseService<
 
       const sellerName = order?.seller?.name ?? null;
       const commissionValue =
-        sellerName === "Vendedor 0" ? null : Number(item.commission_value ?? 0);
+        sellerName === VENDEDOR_NAO_ATRIBUIDO
+          ? null
+          : Number(item.commission_value ?? 0);
 
       const measure = item.product?.measure ?? "";
       const [, largura, perfil, aro] =
@@ -194,6 +272,14 @@ export class OrderItemsService extends BaseService<
 
       const averageCost =
         snapshot?.average_cost != null ? Number(snapshot.average_cost) : null;
+
+      const idVendedorTecinco = order?.seller?.id
+        ? sellerExternalIdsMap.get(order.seller.id) ?? null
+        : null;
+
+      const idProdutoTecinco = item.product_id
+        ? productExternalIdsMap.get(item.product_id) ?? null
+        : null;
 
       return {
         pedido: {
@@ -208,7 +294,7 @@ export class OrderItemsService extends BaseService<
           total_icms_pedido: Number(orderAggregates.icms.toFixed(2)),
         },
         vendedor: {
-          id_vendedor_tecinco: "",
+          id_vendedor_tecinco: idVendedorTecinco,
           nome_vendedor: sellerName,
         },
         loja: {
@@ -219,6 +305,7 @@ export class OrderItemsService extends BaseService<
         },
         produto: {
           identificacao: {
+            id_produto_tecinco: idProdutoTecinco,
             nome: item.product?.name ?? null,
             ean: item.product?.ean ?? null,
             sku_bling: item.sku,
@@ -234,20 +321,14 @@ export class OrderItemsService extends BaseService<
 
           precos: {
             quantidade: item.quantity,
-            // padrão, igual tem hoje
             valor_venda_item: Number(item.price ?? 0),
-            // já rateado por item (net_total_allocated do snapshot)
             valor_venda_item_liquido_rateado: Number(snapshot?.net_total ?? 0),
             custo_medio: averageCost,
-            // igual tem hoje: custo_medio * quantidade
             custo_total_item_pedido:
               averageCost != null
                 ? Number((averageCost * Number(item.quantity ?? 0)).toFixed(2))
                 : null,
-            // custo já rateado/consolidado do snapshot (total_cost por item)
             custo_total_item_pedido_rateado: Number(snapshot?.total_cost ?? 0),
-            // lucro do item, já pronto no snapshot — soma dos itens de um
-            // pedido bate com lucro_pedido acima
             lucro_item: Number(snapshot?.contribution_value ?? 0),
             valor_premiacao_vendedor_item_pedido: commissionValue,
           },
