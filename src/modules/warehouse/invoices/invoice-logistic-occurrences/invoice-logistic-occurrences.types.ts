@@ -14,3 +14,8 @@ export interface InvoiceLogisticOcurrencesAttributes {
 
 export interface InvoiceLogisticOcurrencesCreationAttributesAttributes extends Omit<InvoiceLogisticOcurrencesAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
 
+export interface listInvoiceOccurrencesByTransporterDto {
+  invoice_number: string,
+  transporter_integration_name: string,
+  unit_business_document: string,
+}

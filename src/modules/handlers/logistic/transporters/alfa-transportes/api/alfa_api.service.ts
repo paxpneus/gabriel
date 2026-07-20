@@ -1,8 +1,8 @@
 import axios, { AxiosInstance } from "axios";
-import { createAxiosInstance } from "../../../../../config/axios";
-import integrationsService from "../../../../integrations/integrations/integrations.service";
-import ConfigToken from "../../../../integrations/config_tokens/config_tokens.model";
-import { FullIntegration } from "../../../../integrations/integrations/integrations.types";
+import { createAxiosInstance } from "../../../../../../config/axios";
+import integrationsService from "../../../../../integrations/integrations/integrations.service";
+import ConfigToken from "../../../../../integrations/config_tokens/config_tokens.model";
+import { FullIntegration } from "../../../../../integrations/integrations/integrations.types";
 
 
 export const getAlfaIntegration = async (

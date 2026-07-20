@@ -1,9 +1,9 @@
 import axios, { AxiosInstance, AxiosRequestConfig, InternalAxiosRequestConfig } from "axios";
-import { createAxiosInstance } from "../../../../../config/axios";
-import integrationsService from "../../../../integrations/integrations/integrations.service";
-import ConfigToken from "../../../../integrations/config_tokens/config_tokens.model";
-import { FullIntegration } from "../../../../integrations/integrations/integrations.types";
-import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
+import { createAxiosInstance } from "../../../../../../config/axios";
+import integrationsService from "../../../../../integrations/integrations/integrations.service";
+import ConfigToken from "../../../../../integrations/config_tokens/config_tokens.model";
+import { FullIntegration } from "../../../../../integrations/integrations/integrations.types";
+import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────

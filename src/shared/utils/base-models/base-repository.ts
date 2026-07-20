@@ -7,6 +7,8 @@ import {
   DestroyOptions,
   CreationAttributes,
   BulkCreateOptions,
+  WhereOptions,
+  Op,
 } from "sequelize";
 import { QueryParser } from "./../../query/query.parser";
 import type {
@@ -39,6 +41,10 @@ class BaseRepository<T extends Model> {
     return this.model.findAll(options);
   }
 
+  // ─── forcedWhere: condição SEMPRE aplicada, independente dos filtros
+  // dinâmicos que o QueryParser monta a partir de params.filters. Usado
+  // pra regras de negócio fixas (ex.: "só retorna item com custo != null"),
+  // que não devem depender de query params vindos do cliente.
   async findPaginated(
     params: QueryParams,
     config: QueryConfig = {},
@@ -46,12 +52,19 @@ class BaseRepository<T extends Model> {
       FindOptions,
       "where" | "limit" | "offset" | "order"
     > = {},
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<T>> {
     const resolved = QueryParser.parse(params, config);
 
+    const where = forcedWhere
+      ? resolved.where
+        ? { [Op.and]: [resolved.where, forcedWhere] }
+        : forcedWhere
+      : resolved.where;
+
     const { rows, count } = await this.model.findAndCountAll({
       ...extraOptions,
-      where: resolved.where,
+      where,
       limit: resolved.limit,
       offset: resolved.offset,
       order: resolved.order,

@@ -225,16 +225,6 @@ export function setupAssociations() {
     as: "unitBusiness",
   });
 
-  // Unit Business -> Integration Mappings
-  UnitBusiness.hasMany(IntegrationMapping, {
-    foreignKey: "unit_business_id",
-    as: "integrationMappings",
-  });
-  IntegrationMapping.belongsTo(UnitBusiness, {
-    foreignKey: "unit_business_id",
-    as: "unitBusiness",
-  });
-
   // Unit Business -> Integrations
   UnitBusiness.belongsTo(Integration, {
     foreignKey: "integrations_id",
@@ -246,6 +236,16 @@ export function setupAssociations() {
   });
 
   // ===== TRANSPORTER =====
+
+  Transporter.belongsTo(Integration, {
+    foreignKey: "integrations_id",
+    as: "integration"
+  })
+
+  Integration.hasMany(Transporter, {
+    foreignKey: "integrations_id",
+    as: "transporters"
+  })
 
   // Transporter -> Invoices
   Transporter.hasMany(Invoice, {

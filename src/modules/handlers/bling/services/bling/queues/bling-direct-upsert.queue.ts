@@ -19,6 +19,7 @@ import { logDbError } from "../../../../../../shared/utils/logging/db-errors-log
 import productController from "../../../../../inventory/products/product.controller";
 import unitBusinessController from "../../../../../company/unit-business/unit-business.controller";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
+import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
@@ -164,7 +165,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         title: "Estoque negativo",
         message: `Estoque bling negativo para o produto ${product.name}`,
       });
-      unitBusinessService.shutdownRedis()
+      unitBusinessService.shutdownRedis();
       throw new Error(
         "[BLING_DIRECT_UPSERT] Stock com quantidade negativa, mandando alerta!",
       );
@@ -351,15 +352,28 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     const integrationsId =
       data.integrations_id ?? (await getBlingIntegration("Bling")).id;
     const unitBusinessId = data.unit_business_id ?? null;
+    const logPrefix = `[BLING_DIRECT_UPSERT] upsertContact id_system=${data.id_system} type=${data.type}`;
 
-    const existing = await Contact.findOne({
-      where: {
-        id_system: data.id_system,
-        type: data.type,
-        integrations_id: integrationsId,
-        unit_business_id: unitBusinessId,
-      },
-    });
+    let existing = (await integrationMappingService.findEntityByMapping(
+      "CONTACT",
+      integrationsId,
+      data.id_system,
+    )) as Contact | null;
+
+    if (existing) {
+      console.log(`${logPrefix} — contato resolvido via integration mapping`);
+    } else {
+      existing = await Contact.findOne({
+        where: {
+          id_system: data.id_system,
+          type: data.type,
+          integrations_id: integrationsId,
+          unit_business_id: unitBusinessId,
+        },
+      });
+    }
+
+    let contact: Contact;
 
     if (existing) {
       await existing.update({
@@ -367,8 +381,9 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         integrations_id: integrationsId,
         unit_business_id: unitBusinessId,
       });
+      contact = existing;
     } else {
-      await Contact.create({
+      contact = await Contact.create({
         id_system: data.id_system,
         name: data.name,
         type: data.type,
@@ -377,8 +392,15 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       });
     }
 
+    await integrationMappingService.createOrUpdateIntegrationMapping({
+      entity_type: "CONTACT",
+      internal_id: contact.id,
+      external_id: data.id_system,
+      integrations_id: integrationsId,
+    });
+
     console.log(
-      `[BLING_DIRECT_UPSERT] Contact ${existing ? "atualizado" : "criado"}: type=${data.type}, id_system=${data.id_system}`,
+      `${logPrefix} — Contact ${existing ? "atualizado" : "criado"}, integration mapping garantido`,
     );
   }
 
