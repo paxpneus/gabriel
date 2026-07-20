@@ -155,6 +155,13 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
           as: "items",
           attributes: ["sku"],
         },
+        {
+        model: Store,
+        as: "store",
+        where: { name: "MercadoLivre" },
+        required: true,
+        attributes: ["id", "name"],
+      },
       ],
     });
 
