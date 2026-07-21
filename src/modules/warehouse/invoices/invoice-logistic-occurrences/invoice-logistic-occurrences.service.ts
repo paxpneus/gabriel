@@ -98,7 +98,7 @@ export class InvoiceLogisticOccurrencesService extends BaseService<
         occurrency_code: o.occurrency_code,
         description: o.description,
         proof_link: o.proof_link,
-        date: o.date ? o.date.toISOString() : undefined,
+        date: o.date,
       })),
     };
 

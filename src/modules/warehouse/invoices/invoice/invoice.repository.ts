@@ -61,26 +61,37 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     )`);
   }
 
-  private noDeliveredOccurrenceLiteral() {
-    return Sequelize.literal(`NOT EXISTS (
-      SELECT 1
-      FROM invoice_logistic_occurrences ilo
-      WHERE ilo.invoice_id = "Invoice"."id"
-        AND ilo.occurrency_code = '${LOGISTIC_OCCURRENCE_CODES.DELIVERED}'
-    )`);
+  private hasOccurrenceButNotDeliveredLiteral() {
+    return Sequelize.literal(`EXISTS (
+    SELECT 1
+    FROM invoice_logistic_occurrences ilo
+    WHERE ilo.invoice_id = "Invoice"."id"
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM invoice_logistic_occurrences ilo
+    WHERE ilo.invoice_id = "Invoice"."id"
+      AND ilo.occurrency_code = '${LOGISTIC_OCCURRENCE_CODES.DELIVERED}'
+  )`);
   }
 
   async findInvoicesPendingLogisticOccurrence(): Promise<Invoice[]> {
     const now = new Date();
 
-    const fiveDaysAgo = new Date(now);
-    fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+    const twentyDaysAgo = new Date(now);
+    twentyDaysAgo.setDate(twentyDaysAgo.getDate() - 20);
 
     const fortyFiveDaysAgo = new Date(now);
     fortyFiveDaysAgo.setDate(fortyFiveDaysAgo.getDate() - 45);
 
     return Invoice.findAll({
       subQuery: false,
+      attributes: [
+        "id",
+        "xml_key",
+        "number_system",
+        "transporter_id",
+        "integrations_id",
+      ],
       include: [
         {
           model: InvoiceUnitBusinessAttributes,
@@ -100,11 +111,11 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
             },
           ],
         },
-         {
+        {
           model: Transporter,
           as: "transporter",
-          required: true, 
-          attributes: ["id", "name", "integration_id"],
+          required: true,
+          attributes: ["id", "name", "integrations_id"],
         },
         {
           model: ExpeditionBatchInvoice,
@@ -122,6 +133,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                 "status",
                 "mode",
                 "unit_business_id",
+                "delivery_note_generated_at",
               ],
             },
           ],
@@ -144,13 +156,17 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
             [Op.or]: [
               // 1. Romaneio gerado nos últimos 5 dias, sem nenhuma ocorrência
               {
-                "$batchInvoice.created_at$": { [Op.gte]: fiveDaysAgo },
+                "$batchInvoice.batch.delivery_note_generated_at$": {
+                  [Op.gte]: twentyDaysAgo,
+                },
                 [Op.and]: this.noLogisticOccurrenceAtAllLiteral(),
               },
-              // 2. Romaneio gerado nos últimos 45 dias, sem ocorrência "Entregue"
+              // 2. Romaneio gerado nos últimos 45 dias, sem ocorrência "Entregue", porém que tenha alguma ocorrência
               {
-                "$batchInvoice.created_at$": { [Op.gte]: fortyFiveDaysAgo },
-                [Op.and]: this.noDeliveredOccurrenceLiteral(),
+                "$batchInvoice.batch.delivery_note_generated_at$": {
+                  [Op.gte]: fortyFiveDaysAgo,
+                },
+                [Op.and]: this.hasOccurrenceButNotDeliveredLiteral(),
               },
             ],
           },

@@ -4,7 +4,7 @@ export interface InvoiceOccurrences {
   occurrency_code: string;
   proof_link?: string;
   description?: string;
-  date?: string;
+  date?: Date;
 }
 
 /**

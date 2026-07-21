@@ -1,6 +1,7 @@
 import { alfaTransportesApi } from '../../../api/alfa_api.service';
 import { GenericOccurrenceParams, InvoiceOccurrences, TransporterHandler } from '../../../../../helpers/mappers/map-transporter-api.types';
 import { AlfaRastreamentoRequest, AlfaRastreamentoResponse } from './occurrences.types';
+import { parseAlfaDate } from '../../../helpers/date';
 
 const mapParams = (params: GenericOccurrenceParams): AlfaRastreamentoRequest => ({
   merNF: params.invoiceNumber,
@@ -19,7 +20,7 @@ const mapOccurrences = (response: AlfaRastreamentoResponse): InvoiceOccurrences[
     occurrency_code: String(ocorrencia.codigoOcorrencia),
     description: ocorrencia.descricaoOcorrencia,
     proof_link: response.dadosEntrega?.urlComprovante,
-    date: ocorrencia.dataOcorrencia
+    date: parseAlfaDate(ocorrencia.dataOcorrencia) ?? undefined
   }));
 };
 

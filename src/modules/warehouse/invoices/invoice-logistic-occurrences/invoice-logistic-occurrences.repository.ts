@@ -1,4 +1,6 @@
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
+import Transporter from "../../transporter/transporter.model";
+import Invoice from "../invoice/invoice.model";
 import InvoiceLogisticOccurrences from "./invoice-logistic-occurrences.model";
 import { InvoiceLogisticOcurrencesCreationAttributesAttributes } from "./invoice-logistic-occurrences.types";
 
@@ -27,11 +29,13 @@ export class InvoiceLogisticOccurrencesRepository extends BaseRepository<Invoice
     where: { status: "PENDING" },
     include: [
       {
-        association: "invoice",
+        model: Invoice,
+        as: 'invoice',
         required: true,
         include: [
           {
-            association: "transporter",
+            model: Transporter,
+            as: 'transporter',
             required: true,
           },
         ],
