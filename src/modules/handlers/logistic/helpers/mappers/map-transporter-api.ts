@@ -1,11 +1,13 @@
 import { TransporterHandler } from './map-transporter-api.types';
 import { alfaTransportesHandler } from '../../transporters/alfa-transportes/services/invoices/occurrences/occurrences.service';
+import { datafreteHandler } from '../../transporters/data-frete/services/invoices/occurrences/occurrences.service';
 
 /**
  * Registry central: cada transportadora nova só precisa de uma entrada aqui.
  */
 const transporterHandlers: Record<string, TransporterHandler> = {
   'Alfa-Transportes': alfaTransportesHandler,
+  'Datafrete': datafreteHandler,
 };
 
 /**

@@ -1,45 +1,81 @@
-// // modules/handlers/logistics/services/datafrete.service.ts
+import invoiceLogisticOccurrencesService from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.service";
+import invoiceLogisticOccurrencesRepository, {
+  InvoiceLogisticOccurrencesRepository,
+} from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository";
+import InvoiceLogisticOccurrences from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
+import { InvoiceForOccurrencePost } from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.types";
 
-// import { formatToBRDate } from "../../../../shared/utils/normalizers/date";
+export interface SyncPendingOccurrencesResult {
+  invoicesProcessed: number;
+  occurrencesSynced: number;
+  failed: number;
+}
 
-// interface DatafreteOcorrencia {
-//   codigo_ocorrencia: string;
-//   link_comprovante?: string;
-//   descricao_ocorrencia?: string;
-//   data_ocorrencia: string; // "YYYY-MM-DD HH:mm:ss"
-// }
+export class SyncInvoiceOccurrencesService {
+  constructor(
+    private readonly repository: InvoiceLogisticOccurrencesRepository = invoiceLogisticOccurrencesRepository,
+  ) {}
 
-// interface DatafreteDocumento {
-//   transportador_cnpj: string;
-//   empresa_cnpj: string;
-//   chave_nf: string; // fallback: numero+serie quando não houver chave
-//   ocorrencias: DatafreteOcorrencia[];
-// }
+  async syncPendingOccurrences(): Promise<SyncPendingOccurrencesResult> {
+    const result: SyncPendingOccurrencesResult = {
+      invoicesProcessed: 0,
+      occurrencesSynced: 0,
+      failed: 0,
+    };
 
-// export class DatafreteService {
-//   async sync(pendingByInvoice: Map<string, { invoice: any; occurrences: any[] }>) {
-//     const documentos: DatafreteDocumento[] = [];
+    const pending = (await this.repository.findPendingWithInvoiceAndTransporter()) as Array<
+      InvoiceLogisticOccurrences & { invoice: any }
+    >;
 
-//     for (const [, { invoice, occurrences }] of pendingByInvoice) {
-//       documentos.push({
-//         transportador_cnpj: invoice.transportadorCnpj,
-//         empresa_cnpj: invoice.empresaCnpj,
-//         chave_nf: invoice.chaveNf ?? `${invoice.numeroNf}${invoice.serieNf}`,
-//         ocorrencias: occurrences.map((o) => ({
-//           codigo_ocorrencia: o.occurrenceCode,
-//           link_comprovante: o.proofLink,
-//           descricao_ocorrencia: o.description,
-//           data_ocorrencia: formatToBRDate(o.occurredAt), 
-//         })),
-//       });
-//     }
+    if (!pending.length) return result;
 
-//     const response = await fetch("https://api.datafrete.com/.../ocorrencias", {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json", Authorization: `Bearer ${DATAFRETE_TOKEN}` },
-//       body: JSON.stringify({ documentos }),
-//     });
+    // agrupa as ocorrências pendentes por nota fiscal
+    const byInvoice = new Map<string, typeof pending>();
+    for (const occurrence of pending) {
+      const list = byInvoice.get(occurrence.invoice_id) ?? [];
+      list.push(occurrence);
+      byInvoice.set(occurrence.invoice_id, list);
+    }
 
-//     return { ok: response.status === 200 || response.status === 201, status: response.status };
-//   }
-// }
+    for (const [invoiceId, occurrences] of byInvoice) {
+      const invoice = occurrences[0].invoice;
+      const transporter = invoice?.transporter;
+
+      if (!transporter?.integration_id || !transporter?.cnpj) {
+        console.warn(
+          `[SyncInvoiceOccurrences] Nota ${invoiceId} sem transportadora/integration_id/cnpj vinculado. Pulando.`,
+        );
+        result.failed++;
+        continue;
+      }
+
+      const invoiceForPost: InvoiceForOccurrencePost = {
+        xml_key: invoice.xml_key,
+        number_system: invoice.number_system,
+        sender_cnpj: invoice.sender_cnpj,
+      };
+
+      try {
+        await invoiceLogisticOccurrencesService.postOccurrencesByTransporter(
+          transporter.integration_id,
+          invoiceForPost,
+          transporter.cnpj,
+          occurrences,
+        );
+
+        result.invoicesProcessed++;
+        result.occurrencesSynced += occurrences.length;
+      } catch (error: any) {
+        result.failed++;
+        console.error(
+          `[SyncInvoiceOccurrences] Falha ao sincronizar nota ${invoiceId}:`,
+          error?.message ?? error,
+        );
+      }
+    }
+
+    return result;
+  }
+}
+
+export default new SyncInvoiceOccurrencesService();
