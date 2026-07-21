@@ -19,6 +19,7 @@ class Application
   public api_secret_hash!: string;
   public allowed_routes!: string[];
   public webhook_url?: string | null;
+  public ignore_token?: boolean;
   public rate_limit_max_requests!: number;
   public rate_limit_window_seconds!: number;
   public token_version!: number;
@@ -120,6 +121,11 @@ Application.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,
+    },
+    ignore_token: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
   },
   {

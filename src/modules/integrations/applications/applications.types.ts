@@ -8,6 +8,7 @@ export interface ApplicationAttributes {
   api_key: string;
   api_secret_hash: string;
   allowed_routes: string[];
+  ignore_token?: boolean;
   webhook_url?: string | null;
   rate_limit_max_requests: number;
   rate_limit_window_seconds: number;

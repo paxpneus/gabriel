@@ -28,6 +28,7 @@ export function externalApiAccess(
   if (PUBLIC_API_ROUTES.has(apiPath)) return next();
   if (EXTERNAL_ROUTE_PREFIXES.includes(baseSegment)) return next();
   if (req.headers.authorization?.startsWith("Bearer ")) return next();
+  if (req.headers["x-api-key"] && req.headers["x-api-secret"]) return next();
 
   return res.status(401).json({
     error: "Aplicativo não autenticado para acessar a API.",
