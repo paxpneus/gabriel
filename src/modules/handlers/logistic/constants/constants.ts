@@ -1,4 +1,4 @@
 
 export const LOGISTIC_OCCURRENCE_CODES = {
-  DELIVERED: "0",
+  DELIVERED: "1",
 } as const;

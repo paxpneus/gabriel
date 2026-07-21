@@ -267,6 +267,126 @@ services:
     networks:
       - backend
 
+# ── 8. Worker Bling ───────────────────────────────────────────────────────
+  worker-bling:
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    command: ["node", "dist/workers/worker-bling.js"]
+    environment:
+      NODE_ENV: production
+      PORT: 3004
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      MAILER_HOST: ${MAILER_HOST}
+      MAILER_PORT: ${MAILER_PORT}
+      MAILER_SECURE: ${MAILER_SECURE}
+      MAILER_USER: ${MAILER_USER}
+      MAILER_PASS: ${MAILER_PASS}
+      MAILER_FROM: ${MAILER_FROM}
+      MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
+      JWT_SECRET: ${JWT_SECRET}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+      BLING_UNIT_BUSINESS_ID: ${BLING_UNIT_BUSINESS_ID}
+      CERT_ENCRYPTION_KEY: ${CERT_ENCRYPTION_KEY}
+      SEFAZ_CERT_ENCRYPTED: ${SEFAZ_CERT_ENCRYPTED}
+      SEFAZ_CERT_PASSPHRASE: ${SEFAZ_CERT_PASSPHRASE}
+      SEFAZ_CNPJ: ${SEFAZ_CNPJ}
+      SEFAZ_UF: ${SEFAZ_UF}
+      SEFAZ_AMBIENTE: ${SEFAZ_AMBIENTE}
+      MAX_PER_ENTITY: ${MAX_PER_ENTITY}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      UPLOADER_EMAIL: ${UPLOADER_EMAIL}
+      UPLOADER_URL: ${UPLOADER_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  # ── 9. Worker Tecinco ─────────────────────────────────────────────────────
+  worker-tecinco:
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    command: ["node", "dist/workers/worker-tecinco.js"]
+    environment:
+      NODE_ENV: production
+      PORT: 3005
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      TCAR_COMPANY_ID: ${TCAR_COMPANY_ID}
+      TCAR_PASSWORD: ${TCAR_PASSWORD}
+      TCAR_429_MAX_RETRIES: ${TCAR_429_MAX_RETRIES}
+      TCAR_429_BASE_DELAY: ${TCAR_429_BASE_DELAY}
+      TCAR_429_MAX_DELAY: ${TCAR_429_MAX_DELAY}
+      TCAR_TLS_REJECT_UNAUTHORIZED: ${TCAR_TLS_REJECT_UNAUTHORIZED}
+      MAX_PER_ENTITY: ${MAX_PER_ENTITY}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      UPLOADER_EMAIL: ${UPLOADER_EMAIL}
+      UPLOADER_URL: ${UPLOADER_URL}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  # ── 10. Worker Logistic ───────────────────────────────────────────────────
+  worker-logistic:
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    command: ["node", "dist/workers/worker-logistic.js"]
+    environment:
+      NODE_ENV: production
+      PORT: 3006
+      DB_HOST: postgres
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      MAX_PER_ENTITY: ${MAX_PER_ENTITY}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      UPLOADER_EMAIL: ${UPLOADER_EMAIL}
+      UPLOADER_URL: ${UPLOADER_URL}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:

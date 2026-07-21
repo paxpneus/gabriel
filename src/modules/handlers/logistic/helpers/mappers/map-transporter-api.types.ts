@@ -14,6 +14,22 @@ export interface InvoiceOccurrences {
 export interface GenericOccurrenceParams {
   invoiceNumber: number;
   cnpj?: string;
+  chaveNf?: string;
+  serieNf?: string;
+}
+
+/**
+ * Parâmetros genéricos para envio (POST) de ocorrências à transportadora,
+ * usados por transportadoras que atuam como plataforma centralizadora
+ * (ex: Datafrete), onde nós enviamos os dados em vez de só consultá-los.
+ */
+export interface GenericPostOccurrenceParams {
+  invoiceNumber: number;
+  cnpj?: string;
+  chaveNf?: string;
+  serieNf?: string;
+  transporterCnpj: string;
+  occurrences: InvoiceOccurrences[];
 }
 
 /**
@@ -21,7 +37,7 @@ export interface GenericOccurrenceParams {
  * TParams  -> formato de request específico da transportadora
  * TResponse -> formato de response específico da transportadora
  */
-export interface TransporterHandler<TParams = any, TResponse = any> {
+export interface TransporterHandler<TParams = any, TResponse = any, TPostParams = any, TPostResponse = any,> {
   api: AxiosInstance;
   /** Converte os parâmetros genéricos da aplicação para o formato da transportadora */
   mapParams: (params: GenericOccurrenceParams) => TParams;
@@ -29,4 +45,7 @@ export interface TransporterHandler<TParams = any, TResponse = any> {
   fetchOccurrences: (params: TParams) => Promise<TResponse>;
   /** Normaliza a response da transportadora para o formato padrão da aplicação */
   mapOccurrences: (response: TResponse) => InvoiceOccurrences[];
+
+  mapPostParams?: (params: GenericPostOccurrenceParams) => TPostParams;
+  postOccurrences?: (params: TPostParams) => Promise<TPostResponse>;
 }

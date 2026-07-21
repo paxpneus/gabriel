@@ -1,3 +1,4 @@
+import { InvoiceAttributes } from './../invoice/invoice.types';
 export type InvoiceLogisticOcurrencesStatus = 'PENDING' | 'SYNCHRONIZED'
 
 export interface InvoiceLogisticOcurrencesAttributes {
@@ -19,3 +20,6 @@ export interface listInvoiceOccurrencesByTransporterDto {
   transporter_integration_name: string,
   unit_business_document: string,
 }
+
+
+export type InvoiceForOccurrencePost = Partial<Pick<InvoiceAttributes, 'xml_key' | 'number_system' | 'sender_cnpj'>> 

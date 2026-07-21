@@ -21,6 +21,25 @@ export class InvoiceLogisticOccurrencesRepository extends BaseRepository<Invoice
     if (!items.length) return;
     await InvoiceLogisticOccurrences.bulkCreate(items as any);
   }
+
+  async findPendingWithInvoiceAndTransporter(): Promise<InvoiceLogisticOccurrences[]> {
+  return InvoiceLogisticOccurrences.findAll({
+    where: { status: "PENDING" },
+    include: [
+      {
+        association: "invoice",
+        required: true,
+        include: [
+          {
+            association: "transporter",
+            required: true,
+          },
+        ],
+      },
+    ],
+    order: [["invoice_id", "ASC"]],
+  });
+}
 }
 
 export default new InvoiceLogisticOccurrencesRepository();

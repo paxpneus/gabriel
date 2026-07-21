@@ -1,7 +1,7 @@
 import "dotenv/config";
-import sequelize from "./config/sequelize";
-import { setupAssociations } from "./config/sequelize-associations";
-import { startAutomationWorkers } from "./queues";
+import sequelize from "../config/sequelize";
+import { setupAssociations } from "../config/sequelize-associations";
+import { startAutomationWorkers } from "../queues";
 
 async function start(): Promise<void> {
   await sequelize.authenticate();
