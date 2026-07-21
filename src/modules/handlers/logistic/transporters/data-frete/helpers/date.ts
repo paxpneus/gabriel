@@ -5,13 +5,16 @@
  * Combina dt_ocorrencia ("DD/MM/YYYY") + hora_ocorrencia ("HH:mm:ss") do GET
  * num ISO string com offset fixo de Brasília (-03:00, sem horário de verão).
  */
-export function parseDatafreteDateTime(dtOcorrencia: string, horaOcorrencia: string): string | undefined {
+export function parseDatafreteDateTime(dtOcorrencia: string, horaOcorrencia: string): Date | undefined {
   if (!dtOcorrencia || !horaOcorrencia) return undefined;
 
   const [day, month, year] = dtOcorrencia.split('/');
   if (!day || !month || !year) return undefined;
 
-  return `${year}-${month}-${day}T${horaOcorrencia}-03:00`;
+  const isoWithOffset = `${year}-${month}-${day}T${horaOcorrencia}-03:00`;
+  const date = new Date(isoWithOffset);
+
+  return isNaN(date.getTime()) ? undefined : date;
 }
 
 /**

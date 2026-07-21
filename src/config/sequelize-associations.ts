@@ -513,7 +513,7 @@ export function setupAssociations() {
     as: 'occurrences'
   })
 
-  InvoiceLogisticOccurrences.belongsTo(InvoiceLogisticOccurrences, {
+  InvoiceLogisticOccurrences.belongsTo(Invoice, {
     foreignKey: 'invoice_id',
     as: 'invoice'
   })

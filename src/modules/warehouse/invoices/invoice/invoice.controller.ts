@@ -95,6 +95,8 @@ export class InvoiceController extends BaseController<
       ...this.mw("getInvoiceSupplierReport"),
       this.getInvoiceSupplierReport,
     );
+
+    this.router.get("/pending-occurrences/get", ...this.mw("listInvoicesPendingLogisticOccurrence"), this.listInvoicesPendingLogisticOccurrence)
   }
 
   private resolveUnitBusinessId(
@@ -130,6 +132,7 @@ export class InvoiceController extends BaseController<
       downloadXmlBatch: [authenticate, userPermissions],
       getInvoiceProductReport: [authenticate, userPermissions],
       getInvoiceSupplierReport: [authenticate, userPermissions],
+      listInvoicesPendingLogisticOccurrence: [authenticate, userPermissions]
     };
   }
 
@@ -142,6 +145,16 @@ export class InvoiceController extends BaseController<
         context.unitBusinessId,
       );
       const result = await this.service.listInvoices(params, unitBusinessId);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+    listInvoicesPendingLogisticOccurrence = async (req: Request, res: Response): Promise<Response> => {
+    try {
+    
+      const result = await this.service.listInvoicesPendingLogisticOccurrence();
       return res.json(result);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

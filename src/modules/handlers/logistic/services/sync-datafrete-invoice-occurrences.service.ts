@@ -4,6 +4,7 @@ import invoiceLogisticOccurrencesRepository, {
 } from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository";
 import InvoiceLogisticOccurrences from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
 import { InvoiceForOccurrencePost } from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.types";
+import { getDatafreteIntegration } from "../transporters/data-frete/api/data-frete_api.service";
 
 export interface SyncPendingOccurrencesResult {
   invoicesProcessed: number;
@@ -23,11 +24,14 @@ export class SyncInvoiceOccurrencesService {
       failed: 0,
     };
 
-    const pending = (await this.repository.findPendingWithInvoiceAndTransporter()) as Array<
-      InvoiceLogisticOccurrences & { invoice: any }
-    >;
+    const pending =
+      (await this.repository.findPendingWithInvoiceAndTransporter()) as Array<
+        InvoiceLogisticOccurrences & { invoice: any }
+      >;
 
     if (!pending.length) return result;
+
+    const datafreteIntegration = await getDatafreteIntegration();
 
     // agrupa as ocorrências pendentes por nota fiscal
     const byInvoice = new Map<string, typeof pending>();
@@ -41,7 +45,7 @@ export class SyncInvoiceOccurrencesService {
       const invoice = occurrences[0].invoice;
       const transporter = invoice?.transporter;
 
-      if (!transporter?.integration_id || !transporter?.cnpj) {
+      if (!transporter?.integrations_id || !transporter?.cnpj) {
         console.warn(
           `[SyncInvoiceOccurrences] Nota ${invoiceId} sem transportadora/integration_id/cnpj vinculado. Pulando.`,
         );
@@ -56,11 +60,17 @@ export class SyncInvoiceOccurrencesService {
       };
 
       try {
-        await invoiceLogisticOccurrencesService.postOccurrencesByTransporter(
-          transporter.integration_id,
-          invoiceForPost,
-          transporter.cnpj,
-          occurrences,
+        const response =
+          await invoiceLogisticOccurrencesService.postOccurrencesByTransporter(
+            datafreteIntegration.id,
+            invoiceForPost,
+            transporter.cnpj,
+            occurrences,
+          );
+
+        console.log(
+          `[SyncInvoiceOccurrences] Resposta Datafrete nota ${invoiceId}:`,
+          JSON.stringify(response, null, 2),
         );
 
         result.invoicesProcessed++;

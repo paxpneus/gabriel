@@ -57,7 +57,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Notas Fiscais',
     entity: 'invoices',
-    route: 'invoices',
+    route: 'invoice',
     permissions: all,
     type: 'REGULAR',
     children: [

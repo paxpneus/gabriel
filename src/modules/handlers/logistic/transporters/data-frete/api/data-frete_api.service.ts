@@ -43,6 +43,14 @@ export const datafreteApi: AxiosInstance = createAxiosInstance({
     return config;
   },
 
+  onResponse: async (response) => {
+    console.log(
+      `[DatafreteApi] ${response.config.method?.toUpperCase()} ${response.config.url} → status=${response.status}`,
+      JSON.stringify(response.data, null, 2),
+    );
+    return response;
+  },
+
   onResponseError: async (error: unknown) => {
     if (!axios.isAxiosError(error)) return Promise.reject(error);
 

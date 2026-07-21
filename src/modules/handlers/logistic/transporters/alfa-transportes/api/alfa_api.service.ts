@@ -31,7 +31,7 @@ export const alfaTransportesApi: AxiosInstance = createAxiosInstance({
   onRequest: async (config) => {
     const integration = await getAlfaIntegration();
 
-    const apiKey = integration.tokens.access_token;
+    const apiKey = integration.tokens.api_key;
 
     if (!apiKey) {
       throw new Error("[AlfaTransportesApi] API key não configurada");

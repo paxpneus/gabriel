@@ -29,12 +29,13 @@ export class InvoiceLogisticOccurrencesIngestionService {
 
     for (const invoice of invoices) {
       result.processed++;
+      console.log("INVOICE", invoice.transporter?.integrations_id, invoice.transporter)
 
       const transporter = (invoice as any).transporter as
-        | { id: string; name: string; integration_id?: string }
+        | { id: string; name: string; integrations_id?: string }
         | undefined;
 
-      if (!transporter?.integration_id) {
+      if (!transporter?.integrations_id) {
         console.warn(
           `[LogisticOccurrencesIngestion] Nota ${invoice.number_system} sem transportadora/integration_id vinculado. Pulando.`,
         );
@@ -43,7 +44,7 @@ export class InvoiceLogisticOccurrencesIngestionService {
 
       try {
         const occurrences = await invoiceLogisticOccurrencesService.listOccurrencyByTransporter(
-          transporter.integration_id,
+          transporter.integrations_id,
           {
             invoiceNumber: Number(invoice.number_system),
             cnpj: invoice.sender_cnpj,
@@ -63,7 +64,7 @@ export class InvoiceLogisticOccurrencesIngestionService {
               description: o.description ?? "",
               proof_link: o.proof_link ?? "",
               status: "PENDING",
-              date: o.date ? new Date(o.date) : undefined,
+              date: o.date,
             }));
 
         if (newOccurrences.length > 0) {
