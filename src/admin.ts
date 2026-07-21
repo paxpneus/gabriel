@@ -73,6 +73,7 @@ export const setupAdminJS = async (app: Express) => {
     {
       resave: false,
       saveUninitialized: true,
+      proxy: true,
       secret:
         process.env.ADMIN_COOKIE_SECRET ||
         "uma-chave-longa-e-estatica-com-pelo-menos-32-caracteres",

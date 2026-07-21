@@ -49,6 +49,8 @@ app.use(cors({
 //   res.sendStatus(200)
 // })
 
+app.set("trust proxy", 1);
+
 app.use((req, res, next) => {
   if (req.originalUrl.startsWith('/dev-panel')) {
     return next(); 
