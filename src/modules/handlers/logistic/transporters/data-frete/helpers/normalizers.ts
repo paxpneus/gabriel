@@ -1,2 +1,2 @@
-const onlyDigits = (value?: string): string | undefined =>
+export const onlyDigits = (value?: string): string | undefined =>
   value ? value.replace(/\D/g, '') : undefined;
