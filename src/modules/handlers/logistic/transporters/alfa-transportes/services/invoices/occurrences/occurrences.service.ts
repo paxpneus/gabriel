@@ -19,6 +19,7 @@ const mapOccurrences = (response: AlfaRastreamentoResponse): InvoiceOccurrences[
     occurrency_code: String(ocorrencia.codigoOcorrencia),
     description: ocorrencia.descricaoOcorrencia,
     proof_link: response.dadosEntrega?.urlComprovante,
+    date: ocorrencia.dataOcorrencia
   }));
 };
 
