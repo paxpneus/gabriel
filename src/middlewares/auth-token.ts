@@ -61,6 +61,15 @@ function getBearerToken(req: Request): string | null {
   return authorization.replace("Bearer ", "").trim();
 }
 
+function getApiKeyHeaders(req: Request): {
+  apiKey: string | null;
+  apiSecret: string | null;
+} {
+  const apiKey = (req.headers["x-api-key"] as string | undefined) ?? null;
+  const apiSecret = (req.headers["x-api-secret"] as string | undefined) ?? null;
+  return { apiKey, apiSecret };
+}
+
 function applicationRouteAllowed(
   req: Request,
   allowedRoutes: string[]
@@ -85,11 +94,72 @@ function applicationRouteAllowed(
   });
 }
 
+async function authorizeApplication(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+  application: ApplicationRequestAttributes
+) {
+  const rolePermissions = application.role?.permissions || [];
+  const roleRoutes = getRoutesFromRole(rolePermissions);
+
+  const mergedRoutes = [
+    ...new Set([...(application.allowed_routes || []), ...roleRoutes]),
+  ];
+
+  const expandedRoutes = expandAllowedRoutes(mergedRoutes);
+
+  if (!applicationRouteAllowed(req, expandedRoutes)) {
+    return res.status(403).json({
+      error: "Rota não liberada para este aplicativo.",
+    });
+  }
+
+  req.application = application;
+  req.user = { id: application.id, role: application.role_id };
+
+  const rateLimit = await enforceApplicationRateLimit(req);
+  if (!rateLimit.allowed) {
+    return res.status(429).json(rateLimit.body);
+  }
+
+  return next();
+}
+
 export async function authenticate(
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ) {
+  const { apiKey, apiSecret } = getApiKeyHeaders(req);
+
+  // Fluxo de aplicações com ignore_token=true: autenticação via API key/secret,
+  // sem passar por JWT. Se a aplicação usar esse modo, os headers são obrigatórios.
+  if (apiKey || apiSecret) {
+    if (!apiKey || !apiSecret) {
+      return res.status(401).json({
+        error: "Cabeçalhos x-api-key e x-api-secret são obrigatórios.",
+      });
+    }
+
+    const application = (await applicationService.authenticateWithApiKey(
+      apiKey,
+      apiSecret
+    )) as ApplicationRequestAttributes | null;
+
+    if (!application) {
+      return res.status(401).json({ error: "API key ou secret inválidos" });
+    }
+
+    if (!application.ignore_token) {
+      return res.status(401).json({
+        error: "Este aplicativo não está habilitado para autenticação via API key/secret.",
+      });
+    }
+
+    return authorizeApplication(req, res, next, application);
+  }
+
   const token = req.cookies?.token ?? getBearerToken(req);
 
   if (!token) {
@@ -118,38 +188,17 @@ export async function authenticate(
           .json({ error: "Aplicativo inválido ou inativo" });
       }
 
+      if (application.ignore_token) {
+        return res.status(401).json({
+          error: "Este aplicativo deve se autenticar via API key/secret.",
+        });
+      }
+
       if (application.token_version !== appPayload.tokenVersion) {
         return res.status(401).json({ error: "Token de aplicativo revogado" });
       }
 
-     
-      const rolePermissions = application.role?.permissions || [];
-      const roleRoutes = getRoutesFromRole(rolePermissions);
-
-    
-      const mergedRoutes = [
-        ...new Set([...(application.allowed_routes || []), ...roleRoutes]),
-      ];
-
-     
-      const expandedRoutes = expandAllowedRoutes(mergedRoutes);
-
-   
-      if (!applicationRouteAllowed(req, expandedRoutes)) {
-        return res.status(403).json({
-          error: "Rota não liberada para este aplicativo.",
-        });
-      }
-
-      req.application = application;
-      req.user = { id: application.id, role: application.role_id };
-
-      const rateLimit = await enforceApplicationRateLimit(req);
-      if (!rateLimit.allowed) {
-        return res.status(429).json(rateLimit.body);
-      }
-
-      return next();
+      return authorizeApplication(req, res, next, application);
     }
 
     req.user = payload;

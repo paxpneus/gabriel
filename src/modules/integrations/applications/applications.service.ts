@@ -192,6 +192,40 @@ async delete(id: string, options?: DestroyOptions): Promise<boolean> {
     };
   }
 
+  /**
+   * Autentica uma aplicação diretamente via API key + secret, sem emitir/exigir
+   * um JWT. Usado no fluxo de aplicações com `ignore_token: true`, onde a
+   * própria key/secret já são consideradas credencial suficiente por request.
+   *
+   * Retorna a aplicação (sem o hash do secret) em caso de sucesso, ou null se
+   * a key não existir, a aplicação estiver inativa, ou o secret não bater.
+   * Não faz cache: como não há emissão de token, cada request revalida o
+   * secret contra o hash atual (garante que rotateSecret/revokeTokens
+   * invalidem o acesso imediatamente, sem depender do deleteByPattern do
+   * cache de auth).
+   */
+  async authenticateWithApiKey(api_key: string, api_secret: string) {
+    const application = await this.repository.findOne({
+      where: { api_key },
+      include: [{ model: Role, as: "role" }],
+    });
+
+    if (!application || !application.is_active) {
+      return null;
+    }
+
+    const secretHash = this.hashApiSecretSync(api_secret);
+    const validSecret = await bcrypt.compare(
+      secretHash,
+      application.api_secret_hash,
+    );
+    if (!validSecret) return null;
+
+    await application.update({ last_login_at: new Date() });
+
+    return this.safeApplication(application);
+  }
+
   async getAuthenticatedApplication(applicationId: string) {
     const cached = await redisService.get(`application:${applicationId}:auth`);
     if (cached) return cached;
