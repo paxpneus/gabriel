@@ -141,7 +141,7 @@ services:
       context: .
       target: app
     restart: unless-stopped
-    command: ["node", "dist/worker.js"]
+    command: ["node", "dist/workers/worker.js"]
     environment:
       NODE_ENV: production
       PORT: 3001
@@ -195,7 +195,7 @@ services:
       context: .
       target: worker-scraping
     restart: unless-stopped
-    command: ["node", "dist/worker-scraping.js"]
+    command: ["node", "dist/workers/worker-scraping.js"]
     environment:
       NODE_ENV: production
       PORT: 3002
@@ -230,7 +230,7 @@ services:
       context: .
       target: app
     restart: unless-stopped
-    command: ["node", "dist/worker-automation.js"]
+    command: ["node", "dist/workers/worker-automation.js"]
     environment:
       NODE_ENV: production
       PORT: 3003
