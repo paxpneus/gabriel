@@ -44,6 +44,7 @@ import {
 } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 import { BatchInvoiceItemsAttributes } from "../../expedition/batch-invoice-items/batch-invoice-items.types";
 import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
+import { LOGISTIC_OCCURRENCE_CODES } from "../../../handlers/logistic/constants/constants";
 
 export class InvoiceRepository extends BaseRepository<Invoice> {
   constructor() {
@@ -51,6 +52,112 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   }
 
   // ─── Subqueries reutilizáveis ────────────────────────────────────────────────
+
+  private noLogisticOccurrenceAtAllLiteral() {
+    return Sequelize.literal(`NOT EXISTS (
+      SELECT 1
+      FROM invoice_logistic_occurrences ilo
+      WHERE ilo.invoice_id = "Invoice"."id"
+    )`);
+  }
+
+  private noDeliveredOccurrenceLiteral() {
+    return Sequelize.literal(`NOT EXISTS (
+      SELECT 1
+      FROM invoice_logistic_occurrences ilo
+      WHERE ilo.invoice_id = "Invoice"."id"
+        AND ilo.occurrency_code = '${LOGISTIC_OCCURRENCE_CODES.DELIVERED}'
+    )`);
+  }
+
+  async findInvoicesPendingLogisticOccurrence(): Promise<Invoice[]> {
+    const now = new Date();
+
+    const fiveDaysAgo = new Date(now);
+    fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+
+    const fortyFiveDaysAgo = new Date(now);
+    fortyFiveDaysAgo.setDate(fortyFiveDaysAgo.getDate() - 45);
+
+    return Invoice.findAll({
+      subQuery: false,
+      include: [
+        {
+          model: InvoiceUnitBusinessAttributes,
+          as: "unitBusinessAttributes",
+          required: true,
+          where: {
+            type: "OUTGOING",
+            batch_generated: true,
+          },
+          attributes: ["status", "type", "batch_generated", "unit_business_id"],
+          include: [
+            {
+              model: UnitBusiness,
+              as: "unitBusiness",
+              required: true,
+              attributes: ["id", "cnpj"],
+            },
+          ],
+        },
+         {
+          model: Transporter,
+          as: "transporter",
+          required: true, 
+          attributes: ["id", "name", "integration_id"],
+        },
+        {
+          model: ExpeditionBatchInvoice,
+          as: "batchInvoice",
+          required: true,
+          attributes: ["id", "createdAt"],
+          include: [
+            {
+              model: ExpeditionBatch,
+              as: "batch",
+              required: true,
+              attributes: [
+                "id",
+                "number",
+                "status",
+                "mode",
+                "unit_business_id",
+              ],
+            },
+          ],
+        },
+      ],
+      where: {
+        [Op.and]: [
+          // A unit business "dona" (OUTGOING) precisa ser a mesma cujo cnpj
+          // emitiu a nota (sender_cnpj)
+          Sequelize.where(
+            Sequelize.col("unitBusinessAttributes->unitBusiness.cnpj"),
+            Sequelize.col("Invoice.sender_cnpj"),
+          ),
+          // O romaneio precisa ter sido gerado pela mesma unit business
+          Sequelize.where(
+            Sequelize.col("batchInvoice->batch.unit_business_id"),
+            Sequelize.col("unitBusinessAttributes.unit_business_id"),
+          ),
+          {
+            [Op.or]: [
+              // 1. Romaneio gerado nos últimos 5 dias, sem nenhuma ocorrência
+              {
+                "$batchInvoice.created_at$": { [Op.gte]: fiveDaysAgo },
+                [Op.and]: this.noLogisticOccurrenceAtAllLiteral(),
+              },
+              // 2. Romaneio gerado nos últimos 45 dias, sem ocorrência "Entregue"
+              {
+                "$batchInvoice.created_at$": { [Op.gte]: fortyFiveDaysAgo },
+                [Op.and]: this.noDeliveredOccurrenceLiteral(),
+              },
+            ],
+          },
+        ],
+      },
+    });
+  }
 
   private productBrandsLiteral() {
     return Sequelize.literal(`(
@@ -653,18 +760,18 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   }
 
   async findInvoiceAttribute(
-  invoiceId: string,
-  unitBusinessId: string,
-  transaction?: Transaction,
-): Promise<InvoiceUnitBusinessAttributes | null> {
-  return InvoiceUnitBusinessAttributes.findOne({
-    where: {
-      invoice_id: invoiceId,
-      unit_business_id: unitBusinessId,
-    },
-    transaction,
-  });
-}
+    invoiceId: string,
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<InvoiceUnitBusinessAttributes | null> {
+    return InvoiceUnitBusinessAttributes.findOne({
+      where: {
+        invoice_id: invoiceId,
+        unit_business_id: unitBusinessId,
+      },
+      transaction,
+    });
+  }
 
   async createInvoiceAttributes(
     attributes: InvoiceUnitBusinessAttributesCreationAttributes[],

@@ -158,6 +158,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     };
   }
 
+    async listInvoicesPendingLogisticOccurrence(): Promise<Invoice[]> {
+    return this.repository.findInvoicesPendingLogisticOccurrence();
+  }
+
   async createWithRelations(
     invoiceData: InvoiceCreationData,
     items: ItemWithFiscal[],

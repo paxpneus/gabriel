@@ -37,6 +37,7 @@ import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
 
 import { BlingManifestacaoService } from "../modules/handlers/bling/services/bling-nfe/automations/auto-manifest/nfe-manifest-web-scraping.service";
 import { BlingNfeScrapingQueue } from "../modules/handlers/bling/services/bling-nfe/automations/auto-manifest/nfe-manifest-web-scraping.queue";
+import { LogisticOccurrencesIngestionQueue } from "../modules/handlers/logistic/queues/fetch-invoice-occurrences.queue";
 
 export const serverAdapter = new ExpressAdapter();
 
@@ -56,7 +57,8 @@ export type QueueName =
   | "TCAR_SYNC"
   | "DAILY_OPERATION_REPORT"
   | "DAILY_SALES_REPORT"
-  | "AUTO_BACKUP";
+  | "AUTO_BACKUP"
+  | "LOGISTIC_OCCURRENCES_INGESTION";
 
 // ─── buildQueues: só ativa worker nas filas explicitamente listadas ───────────
 function buildQueues(activeWorkers: QueueName[]) {
@@ -137,6 +139,11 @@ function buildQueues(activeWorkers: QueueName[]) {
     { workless: true },
   );
 
+  const logisticOccurrencesIngestionQueue =
+    new LogisticOccurrencesIngestionQueue({
+      workless: w("LOGISTIC_OCCURRENCES_INGESTION"),
+    });
+
   return {
     nfeQueue,
     mlOrderSyncQueue,
@@ -154,6 +161,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     tcarUpsertQueue,
     tcarSyncQueue,
     blingNfeScrapingQueue,
+    logisticOccurrencesIngestionQueue,
   };
 }
 
@@ -175,7 +183,8 @@ export function registerQueues(app: Express) {
     tcarUpsertQueue,
     tcarSyncQueue,
     blingNfeScrapingQueue,
-  } = buildQueues(["BLING_ORDER_INGESTION", "BLING_API_FETCH"]);
+    logisticOccurrencesIngestionQueue,
+  } = buildQueues([]);
 
   const blingOrderQueue = new BlingOrderQueue(
     new BlingOrderService(blingApi),
@@ -225,6 +234,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(tcarUpsertQueue.queue),
       new BullMQAdapter(tcarSyncQueue.queue),
       new BullMQAdapter(blingNfeScrapingQueue.queue),
+      new BullMQAdapter(logisticOccurrencesIngestionQueue.queue),
     ],
     serverAdapter,
   });
@@ -317,12 +327,14 @@ export function startWorkers() {
     autoBackupQueue,
     tcarUpsertQueue,
     tcarSyncQueue,
+    logisticOccurrencesIngestionQueue,
   } = buildQueues([
     "DAILY_OPERATION_REPORT",
     "DAILY_SALES_REPORT",
     "AUTO_BACKUP",
     "TCAR_UPSERT",
     "TCAR_SYNC",
+    "LOGISTIC_OCCURRENCES_INGESTION",
   ]);
 
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
@@ -331,6 +343,10 @@ export function startWorkers() {
     tz: "America/Sao_Paulo",
   });
   scheduleTCarSync(tcarSyncQueue, tcarUpsertQueue);
+
+  logisticOccurrencesIngestionQueue.scheduleRepeat({
+    every: 1 * 60 * 60 * 1000,
+  });
 
   setTimeout(
     () => {
@@ -344,6 +360,7 @@ export function startWorkers() {
   void autoBackupQueue;
   void tcarUpsertQueue;
   void tcarSyncQueue;
+  void logisticOccurrencesIngestionQueue;
 
   console.log("🚀 Workers de relatórios/backup ativos:");
   console.log("  → DAILY_OPERATION_REPORT (1h)");
@@ -370,8 +387,7 @@ export function startScrapingWorker() {
   );
 
   blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 60 * 1000 });
-    blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 1000 });
-
+  blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 1000 });
 
   void mlScrapingQueue;
   void blingNfeScrapingQueue;
