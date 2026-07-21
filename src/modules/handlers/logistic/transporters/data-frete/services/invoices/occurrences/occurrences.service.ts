@@ -1,3 +1,4 @@
+
 import { datafreteApi } from '../../../api/data-frete_api.service';
 import {
   GenericOccurrenceParams,
@@ -12,6 +13,8 @@ import {
   DatafreteImportOcorrenciasResponse,
   DatafreteDocumentoImport,
 } from './occurrences.types';
+import { onlyDigits } from '../../../helpers/normalizers';
+import { formatToDatafretePayloadDate, parseDatafreteDateTime } from '../../../helpers/date';
 
 // ─── GET /ocorrencias/nota-fiscal ────────────────────────────────────────────
 

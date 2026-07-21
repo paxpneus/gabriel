@@ -5,7 +5,7 @@
  * Combina dt_ocorrencia ("DD/MM/YYYY") + hora_ocorrencia ("HH:mm:ss") do GET
  * num ISO string com offset fixo de Brasília (-03:00, sem horário de verão).
  */
-function parseDatafreteDateTime(dtOcorrencia: string, horaOcorrencia: string): string | undefined {
+export function parseDatafreteDateTime(dtOcorrencia: string, horaOcorrencia: string): string | undefined {
   if (!dtOcorrencia || !horaOcorrencia) return undefined;
 
   const [day, month, year] = dtOcorrencia.split('/');
@@ -18,7 +18,7 @@ function parseDatafreteDateTime(dtOcorrencia: string, horaOcorrencia: string): s
  * Formata uma Date do nosso banco para o formato exigido pelo POST da Datafrete:
  * "YYYY-MM-DD HH:mm:ss", sempre em horário de Brasília.
  */
-function formatToDatafretePayloadDate(date: string | Date): string {
+export function formatToDatafretePayloadDate(date: string | Date): string {
   const d = new Date(date);
 
   const parts = new Intl.DateTimeFormat('en-CA', {
