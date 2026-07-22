@@ -90,10 +90,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     FROM invoice_items ii
     JOIN products p ON p.id = ii.product_id
     WHERE ii.invoice_id = "Invoice"."id"
-      AND p.brand ${Array.isArray(value)
-              ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
-              : `= '${String(value).replace(/'/g, "''")}'`
-            }
+      AND p.brand ${
+        Array.isArray(value)
+          ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
+          : `= '${String(value).replace(/'/g, "''")}'`
+      }
   )`),
         }),
         batchStatus: (value) => ({
@@ -158,7 +159,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     };
   }
 
-    async listInvoicesPendingLogisticOccurrence(): Promise<Invoice[]> {
+  async listInvoicesPendingLogisticOccurrence(): Promise<Invoice[]> {
     return this.repository.findInvoicesPendingLogisticOccurrence();
   }
 
@@ -224,10 +225,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         .map(({ fiscal, ...itemData }, index) =>
           fiscal
             ? {
-              ...fiscal,
-              invoice_id: invoice.id,
-              item_number: fiscal.item_number ?? index + 1,
-            }
+                ...fiscal,
+                invoice_id: invoice.id,
+                item_number: fiscal.item_number ?? index + 1,
+              }
             : null,
         )
         .filter(Boolean) as InvoiceFiscalItemCreationAttributes[];
@@ -280,17 +281,17 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         receiverUbId ??
         (senderUbId && invoiceType === "INCOMING" ? senderUbId : undefined);
 
-       if (incomingUbId) {
-      await eventService.notifyByRoles({
-        types: ["operator", "admin"],
-        unitBusinessId: incomingUbId,
-        title: "Nova nota fiscal recebida",
-        description: `Nota ${invoice.number_system} foi recebida e aguarda agendamento.`,
-        transaction: t,
-      });
-    }
+      if (incomingUbId) {
+        await eventService.notifyByRoles({
+          types: ["operator", "admin"],
+          unitBusinessId: incomingUbId,
+          title: "Nova nota fiscal recebida",
+          description: `Nota ${invoice.number_system} foi recebida e aguarda agendamento.`,
+          transaction: t,
+        });
+      }
 
-    if (!isExternalTransaction) await t.commit();
+      if (!isExternalTransaction) await t.commit();
 
       return invoice;
     } catch (err) {
@@ -329,6 +330,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       { status: "PENDING" },
       { status: "OPEN" },
     );
+  }
+
+  async markAsInternalUse(ids: string[], unitBusinessId: string) {
+    return this.repository.updateWithAttributes(ids, unitBusinessId, {
+      status: "FINISHED",
+      description: "Nota de uso e consumo",
+    });
   }
 
   async updateInvoices(
@@ -511,13 +519,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             : []),
           ...(invoiceSystemIds.length
             ? [
-              Sequelize.where(
-                Sequelize.literal(
-                  `"Order"."source_payload" #>> '{notaFiscal,id}'`,
+                Sequelize.where(
+                  Sequelize.literal(
+                    `"Order"."source_payload" #>> '{notaFiscal,id}'`,
+                  ),
+                  { [Op.in]: invoiceSystemIds },
                 ),
-                { [Op.in]: invoiceSystemIds },
-              ),
-            ]
+              ]
             : []),
         ],
       };
@@ -588,19 +596,19 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           city: invoice.destination_city ?? null,
           seller: invoiceWithRelations.seller
             ? {
-              id: invoiceWithRelations.seller.id,
-              name: invoiceWithRelations.seller.name,
-              id_system: invoiceWithRelations.seller.id_system,
-            }
+                id: invoiceWithRelations.seller.id,
+                name: invoiceWithRelations.seller.name,
+                id_system: invoiceWithRelations.seller.id_system,
+              }
             : null,
           order: order
             ? {
-              id: order.id,
-              date: order.date ?? null,
-              id_order_system: order.id_order_system,
-              number_order_system: order.number_order_system,
-              number_order_channel: order.number_order_channel,
-            }
+                id: order.id,
+                date: order.date ?? null,
+                id_order_system: order.id_order_system,
+                number_order_system: order.number_order_system,
+                number_order_channel: order.number_order_channel,
+              }
             : null,
           measure: item.product?.measure ?? null,
           quantity: item.quantity_expected,
@@ -669,12 +677,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       const invoiceWithRelations = invoice as Invoice & {
         items?: (InvoiceItems & {
           product?:
-          | (Product & {
-            productConfigs?: ProductConfig[];
-            brand?: string | null;
-            source_payload?: { descricaoCurta?: string } | null;
-          })
-          | null;
+            | (Product & {
+                productConfigs?: ProductConfig[];
+                brand?: string | null;
+                source_payload?: { descricaoCurta?: string } | null;
+              })
+            | null;
         })[];
       };
 

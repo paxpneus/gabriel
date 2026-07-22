@@ -54,11 +54,19 @@ export class InvoiceController extends BaseController<
       ...this.mw("getFullInvoice"),
       this.getFullInvoice,
     );
+
     this.router.post(
       "/bulk/open",
       ...this.mw("updateInvoicesOpen"),
       this.updateInvoicesOpen,
     );
+
+      this.router.post(
+      "/bulk/mark-internal-use",
+      ...this.mw("markAsInternalUse"),
+      this.markAsInternalUse,
+    );
+
     this.router.put(
       "/schedule/invoice/:id",
       ...this.mw("scheduleInvoice"),
@@ -132,7 +140,8 @@ export class InvoiceController extends BaseController<
       downloadXmlBatch: [authenticate, userPermissions],
       getInvoiceProductReport: [authenticate, userPermissions],
       getInvoiceSupplierReport: [authenticate, userPermissions],
-      listInvoicesPendingLogisticOccurrence: [authenticate, userPermissions]
+      listInvoicesPendingLogisticOccurrence: [authenticate, userPermissions],
+      markAsInternalUse: [authenticate, userPermissions]
     };
   }
 
@@ -384,6 +393,21 @@ export class InvoiceController extends BaseController<
         context.unitBusinessId,
       );
       await this.service.updateInvoicesOpen(ids, unitBusinessId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+
+  markAsInternalUse = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const ids = req.body;
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      await this.service.markAsInternalUse(ids, unitBusinessId);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
