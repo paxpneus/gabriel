@@ -42,7 +42,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
     label: "Operador",
     description:
       "Acesso operacional a vendas, expedição, estoque, logística, relatórios e transferências.",
-    initialPage: "invoices-list",
+    initialPage: "daily-operation-report",
     modules: [
       {
         module: "sales",
@@ -139,6 +139,10 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
           {
             id: "invoices-report",
             label: "Relatório de Notas Fiscais",
+          },
+          {
+            id: "daily-operation-report",
+            label: "Relatório de Operação",
           },
         ],
       },
