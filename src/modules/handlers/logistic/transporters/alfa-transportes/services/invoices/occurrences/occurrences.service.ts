@@ -4,7 +4,7 @@ import { AlfaRastreamentoRequest, AlfaRastreamentoResponse } from './occurrences
 import { parseAlfaDate } from '../../../helpers/date';
 
 const mapParams = (params: GenericOccurrenceParams): AlfaRastreamentoRequest => ({
-  merNF: params.invoiceNumber,
+  merNF: params.invoiceNumber as number,
   tomCnpj: params.cnpj ? Number(params.cnpj) : undefined,
 });
 
