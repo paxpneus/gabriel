@@ -120,6 +120,7 @@ services:
       BLING_HEADLESS: ${BLING_HEADLESS}
       ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
       ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       
 
     depends_on:
@@ -187,6 +188,8 @@ services:
       BLING_HEADLESS: ${BLING_HEADLESS}
       ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
       ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      
     depends_on:
       postgres:
         condition: service_healthy
@@ -222,6 +225,8 @@ services:
       BLING_HEADLESS: ${BLING_HEADLESS}
       ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
       ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      
     volumes:
       - ml_session:/app/ml_session
       - ml_downloads:/app/ml_downloads
@@ -287,6 +292,8 @@ services:
       BLING_HEADLESS: ${BLING_HEADLESS}
       ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
       ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -341,6 +348,8 @@ services:
       BLING_HEADLESS: ${BLING_HEADLESS}
       ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
       ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      
     depends_on:
       postgres:
         condition: service_healthy
@@ -393,6 +402,8 @@ services:
       BLING_HEADLESS: ${BLING_HEADLESS}
       ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
       ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      
     depends_on:
       postgres:
         condition: service_healthy
@@ -439,6 +450,8 @@ services:
       BLING_HEADLESS: ${BLING_HEADLESS}
       ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
       ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      
     depends_on:
       postgres:
         condition: service_healthy
