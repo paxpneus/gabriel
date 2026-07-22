@@ -12,7 +12,7 @@ export interface InvoiceOccurrences {
  * independente de qual transportadora vai atender a chamada.
  */
 export interface GenericOccurrenceParams {
-  invoiceNumber: number;
+  invoiceNumber: number | string;
   cnpj?: string;
   chaveNf?: string;
   serieNf?: string;

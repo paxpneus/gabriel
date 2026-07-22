@@ -88,6 +88,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       attributes: [
         "id",
         "xml_key",
+        "sender_cnpj",
         "number_system",
         "transporter_id",
         "integrations_id",
@@ -171,6 +172,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
             ],
           },
         ],
+        id: 'd2bb6723-183b-43db-add9-e5485d627c9c'
       },
     });
   }
