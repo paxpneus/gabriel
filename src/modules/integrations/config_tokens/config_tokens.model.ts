@@ -1,10 +1,17 @@
 import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../config/sequelize";
-import { configTokensAtributes, configTokensCreationAtributes } from "./config_tokens.types";
-import { v4 as uuidv4 } from 'uuid';
-import bcrypt from 'bcrypt';
+import {
+  configTokensAtributes,
+  configTokensCreationAtributes,
+} from "./config_tokens.types";
+import { v4 as uuidv4 } from "uuid";
+import bcrypt from "bcrypt";
+import { encrypt } from "../../../shared/utils/normalizers/crypto/password-encrypt";
 
-class ConfigToken extends Model<configTokensAtributes, configTokensCreationAtributes> implements configTokensAtributes {
+class ConfigToken
+  extends Model<configTokensAtributes, configTokensCreationAtributes>
+  implements configTokensAtributes
+{
   public id!: string;
   public integrations_id!: string;
   public access_token!: string;
@@ -37,7 +44,7 @@ ConfigToken.init(
     integrations_id: {
       type: DataTypes.UUID,
       allowNull: false,
-      references: { model: 'integrations', key: 'id' },
+      references: { model: "integrations", key: "id" },
     },
     access_token: {
       type: DataTypes.TEXT,
@@ -86,20 +93,19 @@ ConfigToken.init(
   },
   {
     sequelize,
-    tableName: 'config_tokens',
+    tableName: "config_tokens",
     timestamps: true,
     underscored: true,
     hooks: {
       beforeCreate: async (token: ConfigToken) => {
         if (token.password) {
-          const salt = await bcrypt.genSalt(10);
-          token.password = await bcrypt.hash(token.password, salt);
+          token.password = encrypt(token.password);
         }
       },
+
       beforeUpdate: async (token: ConfigToken) => {
-        if (token.changed('password') && token.password) {
-          const salt = await bcrypt.genSalt(10);
-          token.password = await bcrypt.hash(token.password, salt);
+        if (token.changed("password") && token.password) {
+          token.password = encrypt(token.password);
         }
       },
     },

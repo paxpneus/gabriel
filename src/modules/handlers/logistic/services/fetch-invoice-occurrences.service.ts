@@ -1,8 +1,8 @@
-
 import invoiceService from "../../../warehouse/invoices/invoice/invoice.service";
 import invoiceLogisticOccurrencesService from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.service";
 import invoiceLogisticOccurrencesRepository, {
-  InvoiceLogisticOccurrencesRepository } from './../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository';
+  InvoiceLogisticOccurrencesRepository,
+} from "./../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository";
 import { InvoiceLogisticOcurrencesCreationAttributesAttributes } from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.types";
 
 export interface IngestPendingOccurrencesResult {
@@ -18,7 +18,8 @@ export class InvoiceLogisticOccurrencesIngestionService {
   ) {}
 
   async ingestPendingOccurrences(): Promise<IngestPendingOccurrencesResult> {
-    const invoices = await invoiceService.listInvoicesPendingLogisticOccurrence();
+    const invoices =
+      await invoiceService.listInvoicesPendingLogisticOccurrence();
 
     const result: IngestPendingOccurrencesResult = {
       processed: 0,
@@ -29,7 +30,6 @@ export class InvoiceLogisticOccurrencesIngestionService {
 
     for (const invoice of invoices) {
       result.processed++;
-      console.log("INVOICE", invoice.transporter?.integrations_id, invoice.transporter)
 
       const transporter = (invoice as any).transporter as
         | { id: string; name: string; integrations_id?: string }
@@ -43,17 +43,22 @@ export class InvoiceLogisticOccurrencesIngestionService {
       }
 
       try {
-        const occurrences = await invoiceLogisticOccurrencesService.listOccurrencyByTransporter(
-          transporter.integrations_id,
-          {
-            invoiceNumber: Number(invoice.number_system),
-            cnpj: invoice.sender_cnpj,
-          },
-        );
+
+        const occurrences =
+          await invoiceLogisticOccurrencesService.listOccurrencyByTransporter(
+            transporter.integrations_id,
+            {
+              invoiceNumber: Number(invoice.number_system),
+              cnpj: invoice.sender_cnpj,
+              chaveNf: invoice.xml_key
+            },
+          );
 
         if (!occurrences.length) continue;
 
-        const existingCodes = await this.repository.findExistingCodes(invoice.id);
+        const existingCodes = await this.repository.findExistingCodes(
+          invoice.id,
+        );
 
         const newOccurrences: InvoiceLogisticOcurrencesCreationAttributesAttributes[] =
           occurrences
