@@ -6,17 +6,17 @@ import ConfigToken from "../../../integrations/config_tokens/config_tokens.model
 import { FullIntegration } from "../../../integrations/integrations/integrations.types";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import { redisConnection } from "../../../../shared/utils/base-models/base-redis";
-import { randomUUID } from "crypto";
+
 let isRefreshing = false;
 let failedQueue: QueueItem[] = [];
 
-const BLING_RATE_LIMIT_MAX_REQUESTS = Number(
-  process.env.BLING_RATE_LIMIT_MAX_REQUESTS ?? 2,
+// Intervalo mínimo entre requests para a Bling (default: 1 req/s).
+// A Bling permite até 3 req/s, mas mantemos folga de segurança aqui.
+const BLING_RATE_LIMIT_INTERVAL_MS = Number(
+  process.env.BLING_RATE_LIMIT_INTERVAL_MS ?? 1000,
 );
-const BLING_RATE_LIMIT_WINDOW_MS = Number(
-  process.env.BLING_RATE_LIMIT_WINDOW_MS ?? 1000,
-);
-const BLING_RATE_LIMIT_KEY = "rate-limit:bling:api";
+const BLING_RATE_LIMIT_KEY = "rate-limit:bling:next-slot";
+
 const BLING_429_MAX_RETRIES = Number(process.env.BLING_429_MAX_RETRIES ?? 5);
 const BLING_429_BASE_DELAY_MS = Number(
   process.env.BLING_429_BASE_DELAY_MS ?? 3000,
@@ -29,49 +29,46 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForBlingRateLimit(): Promise<void> {
-  while (true) {
-    const now = Date.now();
-    const minScore = now - BLING_RATE_LIMIT_WINDOW_MS;
-    const member = `${now}:${randomUUID()}`;
+// Script Lua: reserva atomicamente o próximo slot de horário livre no Redis.
+// Cada chamada concorrente pega um slot distinto (now, now+interval, now+2*interval, ...),
+// garantindo espaçamento fixo entre requests mesmo com múltiplos processos/instâncias.
+const RESERVE_SLOT_SCRIPT = `
+  local key = KEYS[1]
+  local interval = tonumber(ARGV[1])
+  local now = tonumber(ARGV[2])
+  local ttl = tonumber(ARGV[3])
 
-    const allowed = await redisConnection.eval(
-      `
-      redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[1])
-      local count = redis.call("ZCARD", KEYS[1])
-      if count < tonumber(ARGV[2]) then
-        redis.call("ZADD", KEYS[1], ARGV[3], ARGV[4])
-        redis.call("PEXPIRE", KEYS[1], ARGV[5])
-        return 1
-      end
-      redis.call("PEXPIRE", KEYS[1], ARGV[5])
-      return 0
-      `,
+  local next_slot = tonumber(redis.call("GET", key))
+  if not next_slot or next_slot < now then
+    next_slot = now
+  end
+
+  redis.call("SET", key, next_slot + interval, "PX", ttl)
+
+  return next_slot
+`;
+
+// Enfileira (via sleep) até o horário reservado para essa chamada específica.
+// Substitui o antigo sliding-window log por um leaky-bucket com reserva de slot,
+// evitando rajadas e distribuindo as chamadas uniformemente no tempo.
+async function waitForBlingRateLimit(): Promise<void> {
+  const now = Date.now();
+
+  const reservedSlot = Number(
+    await redisConnection.eval(
+      RESERVE_SLOT_SCRIPT,
       1,
       BLING_RATE_LIMIT_KEY,
-      String(minScore),
-      String(BLING_RATE_LIMIT_MAX_REQUESTS),
+      String(BLING_RATE_LIMIT_INTERVAL_MS),
       String(now),
-      member,
-      String(BLING_RATE_LIMIT_WINDOW_MS * 2),
-    );
+      String(BLING_RATE_LIMIT_INTERVAL_MS * 1000), // TTL generoso pra não travar a chave
+    ),
+  );
 
-    if (Number(allowed) === 1) return;
-
-    await sleep(100);
+  const delayMs = reservedSlot - now;
+  if (delayMs > 0) {
+    await sleep(delayMs);
   }
-}
-
-function getRetryAfterMs(retryAfter?: string): number | null {
-  if (!retryAfter) return null;
-
-  const seconds = Number(retryAfter);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-
-  const dateMs = Date.parse(retryAfter);
-  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
-
-  return null;
 }
 
 // Fila em memória para lidar com os requests para a bling. Se caso uma falhar, não tenta enviar vários requests com o token expirado até fazer refresh, guarda todos requests numa fila, executa o refresh, pega o token novo e faz as requisições com o token novo, sem desperdiçar chamadas falhas para a bling
@@ -285,3 +282,15 @@ export const handleBlingOAuthCallback = async (code: string): Promise<void> => {
     (await tokenRes.json()) as BlingTokenResponse;
   await configToken.update({ access_token, refresh_token });
 };
+
+function getRetryAfterMs(retryAfter?: string): number | null {
+  if (!retryAfter) return null;
+
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+
+  const dateMs = Date.parse(retryAfter);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+
+  return null;
+}
