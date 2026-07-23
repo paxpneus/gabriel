@@ -3,7 +3,7 @@ export const setDelayBasedOnDate = (date: Date, daysBeforeJob: number = 1): numb
     
     target.setUTCDate(target.getUTCDate() - daysBeforeJob);
     
-    target.setUTCHours(11, 0, 0, 0); 
+    target.setUTCHours(10, 0, 0, 0); 
     
     const now = Date.now();
     const delay = target.getTime() - now;
