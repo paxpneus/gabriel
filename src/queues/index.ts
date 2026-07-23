@@ -305,7 +305,18 @@ export function startAutomationWorkers() {
   ]);
 
   reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  blingReconcilerQueue.scheduleRepeat({ every: 2 * 60 * 60 * 1000 });
+  
+    blingReconcilerQueue.scheduleRepeat({
+    every: 2 * 60 * 60 * 1000,
+    jobId: "bling-reconciler-open-orders",
+    data: { task: "reconcile-open-orders" },
+  });
+
+  blingReconcilerQueue.scheduleRepeat({
+    every: 30 * 60 * 1000,
+    jobId: "bling-reconciler-invoiced-or-collected",
+    data: { task: "sync-invoiced-or-collected" },
+  });
 
   void nfeQueue;
   void mlOrderSyncQueue;
