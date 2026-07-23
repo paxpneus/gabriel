@@ -842,14 +842,14 @@ async function main() {
   try {
     // Ordem garantida + espera entre cada etapa
     await migrateProducts(); // 1 — sem dependências
+    await migrateStocks(); // 4 — depende de produto (única etapa sem filtro de data)
     await migrateSuppliers(); // 2 — sem dependências
     await migrateSellers(); // 2.1 — sem dependências
     // await migrateProductSuppliers();  // 3 — depende de produto + fornecedor
-    await migrateStocks(); // 4 — depende de produto (única etapa sem filtro de data)
     await migrateInvoices("NF-e", 0); // 6 — depende de UnitBusiness
     await migrateInvoices("NF-e", 1); // 5 — depende de UnitBusiness
     await migrateCancelledInvoices("NF-e");
-    // await migrateOrders(); // pedidos depois de notas: mais lento e faz mais chamadas
+    await migrateOrders(); // pedidos depois de notas: mais lento e faz mais chamadas
   } catch (err: any) {
     console.error("\n❌ Erro durante a migração:", err.message);
     process.exit(1);
