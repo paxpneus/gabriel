@@ -331,10 +331,7 @@ async function migrateProducts() {
     id: number;
     nome: string;
     codigo: string;
-  }>("/produtos", {
-    dataAlteracaoInicial: DATA_ALTERACAO_INICIAL,
-    dataAlteracaoFinal: DATA_ALTERACAO_FINAL,
-  })) {
+  }>("/produtos")) {
     for (const product of page) {
       allProducts.push(product);
       if (MAX_PER_ENTITY && allProducts.length >= MAX_PER_ENTITY) break;
