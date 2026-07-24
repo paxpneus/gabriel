@@ -141,7 +141,7 @@ export async function fetchProductMappingsPage(
     FROM integration_mappings im
     JOIN products p ON p.id = im.internal_id
     WHERE im.entity_type = 'PRODUCT'
-      AND im.integrations_id = :integrationId
+      AND im.integrations_id = :integrationId::uuid
       AND p.source_payload IS NOT NULL
     ORDER BY im.id ASC
     LIMIT :limit OFFSET :offset
