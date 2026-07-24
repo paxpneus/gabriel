@@ -60,7 +60,7 @@ const DRY_RUN = process.env.DRY_RUN === "true";
 const AUTO_FALLBACK = process.env.AUTO_FALLBACK !== "false"; // default true
 const BATCH_SIZE = Number(process.env.BATCH_SIZE ?? 200);
 const PAGE_DELAY_MS = Number(process.env.BLING_SCRIPT_PAGE_DELAY_MS ?? 300);
-const MAX_PRODUCTS = Number(process.env.MAX_PRODUCTS ?? 5);
+const MAX_PRODUCTS = Number(process.env.MAX_PRODUCTS ?? 5000);
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
