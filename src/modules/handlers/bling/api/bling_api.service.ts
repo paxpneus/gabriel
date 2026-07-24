@@ -132,7 +132,7 @@ export const doRefreshToken = async (): Promise<string> => {
       grant_type: "refresh_token",
       refresh_token: configToken.refresh_token,
     }).toString(),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
