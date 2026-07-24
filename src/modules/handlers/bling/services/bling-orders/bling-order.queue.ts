@@ -9,7 +9,7 @@ import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 export class BlingOrderQueue extends BaseQueueService<any> {
   private orderService: BlingOrderService;
   private next: nextStepOnQueue;
-  private defaultsEnsured = false; 
+  private defaultsEnsured = false;
 
   constructor(
     orderService: BlingOrderService,
@@ -22,6 +22,7 @@ export class BlingOrderQueue extends BaseQueueService<any> {
         max: 2,
         duration: 1000,
       },
+      maxProcessingMs: 120_000,
       sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
@@ -35,15 +36,23 @@ export class BlingOrderQueue extends BaseQueueService<any> {
       `[1] [QUEUE] Processando Pedido ${job.data.event} - ${job.data.data.id}`,
     );
     const integration = await getBlingIntegration("Bling");
-  if (integration && !this.defaultsEnsured) {
-    await integrationOrderStatusMappingService.ensureBlingDefaults(integration.id);
-    this.defaultsEnsured = true;
-  }
+    if (integration && !this.defaultsEnsured) {
+      await integrationOrderStatusMappingService.ensureBlingDefaults(
+        integration.id,
+      );
+      this.defaultsEnsured = true;
+    }
 
-  const result = await this.orderService.processWebhook(job.data.event, job.data);
+    const result = await this.orderService.processWebhook(
+      job.data.event,
+      job.data,
+    );
 
     if (result) {
-        await this.next.add(result, `document-check-${result.orderSystem.id_order_system}`);
+      await this.next.add(
+        result,
+        `document-check-${result.orderSystem.id_order_system}`,
+      );
     }
   }
 }

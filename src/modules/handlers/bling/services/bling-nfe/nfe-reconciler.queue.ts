@@ -49,6 +49,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     super("NFE_RECONCILER", {
       concurrency: 1,
       sharedLock: BLING_SHARED_QUEUE_LOCK,
+      maxProcessingMs: 15 * 60 * 1000,
       workless: options.workless,
     });
     this.blingApi = blingApi;

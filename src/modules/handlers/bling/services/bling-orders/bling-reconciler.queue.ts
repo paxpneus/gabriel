@@ -24,12 +24,13 @@ export class BlingReconcilerQueue extends BaseQueueService<
   constructor(
     blingApi: AxiosInstance,
     blingOrderNext: { add: (data: any, jobId: string) => Promise<any> },
-    options: { workless?: boolean } = {}
+    options: { workless?: boolean } = {},
   ) {
     super("BLING_RECONCILER", {
       concurrency: 1,
       sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
+      maxProcessingMs: 15 * 60 * 1000,
     });
     this.blingApi = blingApi;
     this.blingOrderNext = blingOrderNext;

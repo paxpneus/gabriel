@@ -47,6 +47,8 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         max: 1,
         duration: 3000,
       },
+      maxProcessingMs: 60_000,
+
       sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });

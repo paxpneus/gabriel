@@ -12,12 +12,14 @@ export class BlingNfeScrapingQueue extends BaseQueueService<BlingNfeScrapingJobD
 
   constructor(
     manifestacaoService: BlingManifestacaoService,
-    options?: baseQueueOptions,
+    options: { workless?: boolean } = {}
   ) {
-    super(
-      "BLING-NFE-SCRAPING",
-      options ?? { concurrency: 1, lockDuration: 15 * 60 * 1000 },
-    );
+    super("BLING-NFE-SCRAPING", {
+      concurrency: 1,
+      lockDuration: 15 * 60 * 1000,
+      maxProcessingMs: 5 * 60 * 1000,
+      workless: options?.workless
+    });
     this.manifestacaoService = manifestacaoService;
   }
 

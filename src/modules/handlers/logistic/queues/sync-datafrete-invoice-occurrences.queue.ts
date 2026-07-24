@@ -9,6 +9,7 @@ export class LogisticOccurrencesSyncQueue extends BaseQueueService<LogisticOccur
   constructor(options: { workless?: boolean } = {}) {
     super("LOGISTIC_OCCURRENCES_SYNC", {
       concurrency: 1,
+      maxProcessingMs: 15 * 60 * 1000,
       workless: options.workless,
     });
   }

@@ -41,6 +41,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       concurrency: 1,
       limiter: { max: 1, duration: 3000 },
       sharedLock: BLING_SHARED_QUEUE_LOCK,
+      maxProcessingMs: 60_000,
       workless: options.workless,
     });
     this.blingApi = blingApi;

@@ -9,6 +9,7 @@ export class LogisticOccurrencesIngestionQueue extends BaseQueueService<Logistic
   constructor(options: { workless?: boolean } = {}) {
     super("LOGISTIC_OCCURRENCES_INGESTION", {
       concurrency: 1,
+      maxProcessingMs: 15 * 60 * 1000,
       workless: options.workless,
     });
   }

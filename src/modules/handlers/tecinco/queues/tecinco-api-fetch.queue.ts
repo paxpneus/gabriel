@@ -132,6 +132,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     super("TCAR_UPSERT", {
       concurrency: 1,
       limiter: { max: 5, duration: 1000 },
+      maxProcessingMs: 120_000,
       workless: options.workless,
     });
   }
