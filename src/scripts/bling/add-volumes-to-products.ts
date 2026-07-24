@@ -1,3 +1,43 @@
+/**
+ * update-product-volumes.script.ts
+ *
+ * Atualiza o campo `volumes` dos produtos na Bling.
+ *
+ * Regra pra calcular o novo `volumes` (a partir do `source_payload` salvo
+ * no banco, só pra decidir o valor — nunca reenviado como body):
+ *   - Produto unitário (estrutura.componentes vazio)  → volumes = 1
+ *   - Kit (estrutura.componentes com itens)            → volumes = soma das
+ *     `quantidade` de estrutura.componentes
+ *
+ * Estratégia de PUT:
+ *   1) Caminho barato (usado pra TODOS os produtos): tenta
+ *      `PUT /produtos/{id}` mandando só `{ volumes }`. Não busca nada na
+ *      Bling antes — usa o `id_system` já salvo no banco.
+ *
+ *   2) Fallback (só roda pros produtos em que o PUT mínimo falhar):
+ *      NUNCA reenvia o `source_payload` do banco (pode estar desatualizado
+ *      — preço, estoque etc. mudam na Bling sem o banco saber). Em vez
+ *      disso faz um `GET /produtos/{id}` pra pegar o payload atual e fresco
+ *      *daquele produto específico*, sobrescreve `volumes` nele e manda o
+ *      PUT completo. Ou seja, só itera produto-por-produto na Bling quando
+ *      realmente precisa mandar o objeto inteiro — nunca faz isso
+ *      preventivamente pra todos.
+ *
+ * Uso:
+ *   DRY_RUN=true npx ts-node scripts/update-product-volumes.script.ts
+ *     → só loga o que faria, não chama a Bling
+ *
+ *   npx ts-node scripts/update-product-volumes.script.ts
+ *     → roda de verdade
+ *
+ * Variáveis de ambiente:
+ *   DRY_RUN               (default: false)
+ *   AUTO_FALLBACK           (default: true)  → se o PUT mínimo falhar, busca o produto fresco na Bling e tenta com payload completo
+ *   BATCH_SIZE              (default: 200)   → produtos lidos do banco por página
+ *   BLING_SCRIPT_PAGE_DELAY_MS (default: 300) → delay entre chamadas à Bling (rate limit)
+ *   MAX_PRODUCTS            (default: 0 = sem limite) → útil pra testar com poucos produtos
+ */
+
 import { Op } from "sequelize";
 import { blingApi } from "../../modules/handlers/bling/api/bling_api.service";
 import { Product } from "../../modules/inventory";
@@ -10,7 +50,7 @@ const DRY_RUN = process.env.DRY_RUN === "true";
 const AUTO_FALLBACK = process.env.AUTO_FALLBACK !== "false"; // default true
 const BATCH_SIZE = Number(process.env.BATCH_SIZE ?? 200);
 const PAGE_DELAY_MS = Number(process.env.BLING_SCRIPT_PAGE_DELAY_MS ?? 300);
-const MAX_PRODUCTS = Number(process.env.MAX_PRODUCTS ?? 0);
+const MAX_PRODUCTS = Number(process.env.MAX_PRODUCTS ?? 5);
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -23,7 +63,7 @@ function sleep(ms: number) {
  * `{ "data": { ...produto } }`. Essa função aceita tanto esse formato quanto
  * o objeto do produto já "desembrulhado", por segurança.
  */
-function extractBlingProduct(sourcePayload: any): any | null {
+export function extractBlingProduct(sourcePayload: any): any | null {
   if (!sourcePayload) return null;
   return sourcePayload.data ?? sourcePayload;
 }
@@ -33,7 +73,7 @@ function extractBlingProduct(sourcePayload: any): any | null {
  *  - sem componentes → produto unitário → 1
  *  - com componentes → kit → soma das quantidades dos componentes
  */
-function computeVolumes(blingProduct: any): number {
+export function computeVolumes(blingProduct: any): number {
   const componentes = blingProduct?.estrutura?.componentes ?? [];
 
   if (!Array.isArray(componentes) || componentes.length === 0) {
@@ -52,8 +92,11 @@ function computeVolumes(blingProduct: any): number {
  * Busca o produto FRESCO direto na Bling (usado só no fallback, produto a
  * produto — nunca em lote/preventivamente).
  */
-async function fetchFreshBlingProduct(blingId: number): Promise<any> {
-  const { data } = await blingApi.get(`/produtos/${blingId}`);
+export async function fetchFreshBlingProduct(
+  blingId: number,
+  getFn: (url: string) => Promise<{ data: any }> = blingApi.get,
+): Promise<any> {
+  const { data } = await getFn(`/produtos/${blingId}`);
   return data?.data ?? data;
 }
 
@@ -69,12 +112,23 @@ async function fetchFreshBlingProduct(blingId: number): Promise<any> {
  * Retorna qual estratégia funcionou, pra você ver no log/resumo final
  * qual das duas formas a Bling realmente aceita.
  */
-async function updateVolumeInBling(
+export async function updateVolumeInBling(
   blingId: number,
   currentVolumes: number,
   newVolumes: number,
+  options: {
+    dryRun?: boolean;
+    autoFallback?: boolean;
+    putFn?: (url: string, body: any) => Promise<any>;
+    getFn?: (url: string) => Promise<{ data: any }>;
+  } = {},
 ): Promise<"minimal" | "full" | "dry-run"> {
-  if (DRY_RUN) {
+  const dryRun = options.dryRun ?? DRY_RUN;
+  const autoFallback = options.autoFallback ?? AUTO_FALLBACK;
+  const putFn = options.putFn ?? blingApi.put;
+  const getFn = options.getFn ?? blingApi.get;
+
+  if (dryRun) {
     console.log(
       `[DRY_RUN] PUT /produtos/${blingId} → volumes: ${currentVolumes} → ${newVolumes}`,
     );
@@ -82,19 +136,19 @@ async function updateVolumeInBling(
   }
 
   try {
-    await blingApi.put(`/produtos/${blingId}`, { volumes: newVolumes });
+    await putFn(`/produtos/${blingId}`, { volumes: newVolumes });
     return "minimal";
   } catch (err: any) {
-    if (!AUTO_FALLBACK) throw err;
+    if (!autoFallback) throw err;
     console.warn(
       `  ⚠️  PUT mínimo falhou pro produto ${blingId} (${err?.response?.status ?? err.message}). Buscando produto fresco na Bling pra reenviar completo...`,
     );
   }
 
   await sleep(PAGE_DELAY_MS);
-  const freshBlingProduct = await fetchFreshBlingProduct(blingId);
+  const freshBlingProduct = await fetchFreshBlingProduct(blingId, getFn);
 
-  await blingApi.put(`/produtos/${blingId}`, {
+  await putFn(`/produtos/${blingId}`, {
     ...freshBlingProduct,
     volumes: newVolumes,
   });
@@ -205,7 +259,9 @@ async function main() {
   process.exit(errors > 0 ? 1 : 0);
 }
 
-main().catch((err) => {
-  console.error("\n❌ Erro fatal:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("\n❌ Erro fatal:", err);
+    process.exit(1);
+  });
+}
