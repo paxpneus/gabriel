@@ -204,7 +204,7 @@ export function registerQueues(app: Express) {
     new MLScrapingService(),
     new MLOrderService(),
     { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
-    { concurrency: 1, lockDuration: 15 * 60 * 1000, workless: true },
+    { workless: true },
   );
 
   app.locals.BlingOrderQueue = blingOrderQueue;

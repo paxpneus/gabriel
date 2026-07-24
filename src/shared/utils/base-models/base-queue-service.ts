@@ -9,6 +9,7 @@ export type baseQueueOptions = {
   limiter?: { max: number; duration: number };
   lockDuration?: number;
   workless?: boolean;
+  maxProcessingMs?: number;
   backoffStrategy?: (attemptsMade: number, type: string, err: Error) => number; // ← faltou aqui
   sharedLock?: {
     key: string;
@@ -41,6 +42,7 @@ export abstract class BaseQueueService<T> {
     NonNullable<baseQueueOptions["sharedLock"]>["priority"]
   >;
   private workerLockDuration: number;
+  private maxProcessingMs?: number;
 
   constructor(
     queueName: string,
@@ -49,6 +51,7 @@ export abstract class BaseQueueService<T> {
       limiter?: { max: number; duration: number };
       lockDuration?: number;
       workless?: boolean;
+      maxProcessingMs?: number;
       backoffStrategy?: (
         attemptsMade: number,
         type: string,
@@ -70,6 +73,8 @@ export abstract class BaseQueueService<T> {
     this.hasCustomBackoff = !!options.backoffStrategy;
     this.workerLockDuration = options.lockDuration ?? 5 * 60 * 1000;
     this.queue = new Queue(this.queueName, { connection: redisConfig });
+    this.maxProcessingMs = options.maxProcessingMs;
+
     this.queueEvents = new QueueEvents(this.queueName, {
       connection: redisConfig,
     });
@@ -81,7 +86,8 @@ export abstract class BaseQueueService<T> {
             const token = `${this.queueName}:${job.id ?? "no-id"}:${randomUUID()}`;
             return this.processWithSharedLock(job, options.sharedLock!, token);
           }
-        : this.process.bind(this);
+        : (job: Job<T>) =>
+            this.runProcessWithTimeout(job, this.maxProcessingMs);
 
       this.worker = new Worker(this.queueName, processor, {
         connection: redisConnection,
@@ -115,6 +121,33 @@ export abstract class BaseQueueService<T> {
   }
 
   abstract process(job: Job<T>): Promise<void>;
+
+  private async runProcessWithTimeout(
+    job: Job<T>,
+    maxProcessingMs?: number,
+  ): Promise<void> {
+    if (!maxProcessingMs) {
+      return this.process(job);
+    }
+
+    let timeoutHandle: NodeJS.Timeout;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(
+          new Error(
+            `[QUEUE] Job "${job.id}" da fila "${this.queueName}" excedeu ${maxProcessingMs}ms ativo — abortado pela fila.`,
+          ),
+        );
+      }, maxProcessingMs);
+    });
+
+    try {
+      await Promise.race([this.process(job), timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutHandle!);
+    }
+  }
 
   private async tryAcquireOnce(
     job: Job<T>,
@@ -204,7 +237,7 @@ export abstract class BaseQueueService<T> {
     }, sharedLockRefreshMs);
 
     try {
-      await this.process(job);
+      await this.runProcessWithTimeout(job, this.maxProcessingMs);
     } finally {
       clearInterval(workerLockInterval);
       clearInterval(sharedLockInterval);

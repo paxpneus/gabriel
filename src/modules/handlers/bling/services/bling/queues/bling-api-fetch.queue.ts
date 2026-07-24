@@ -388,6 +388,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         duration: 1000,
       },
       sharedLock: BLING_SHARED_QUEUE_LOCK,
+      maxProcessingMs: 120_000,
       lockDuration: 10 * 60 * 1000,
       workless: options.workless,
       backoffStrategy: (attemptsMade, _type, err) => {

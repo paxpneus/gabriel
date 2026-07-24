@@ -34,6 +34,8 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         max: 10,
         duration: 1000,
       },
+      maxProcessingMs: 60_000,
+
       workless: options.workless,
     });
   }

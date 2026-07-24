@@ -22,12 +22,9 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
     scrapingService: MLScrapingService,
     mlOrderService: MLOrderService,
     next: nextStepOnQueue,
-    options?: baseQueueOptions,
+    options: { workless?: boolean } = {}
   ) {
-    super(
-      "ML-SCRAPING",
-      options ?? { concurrency: 1, lockDuration: 15 * 60 * 1000 },
-    );
+    super("ML-SCRAPING", { concurrency: 1, lockDuration: 15 * 60 * 1000, maxProcessingMs: 5 * 60 * 1000, workless: options?.workless });
     this.scrapingService = scrapingService;
     this.mlOrderService = mlOrderService;
     this.next = next;
@@ -105,7 +102,10 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
       order instanceof Model ? order.get({ plain: true }) : order,
     );
 
-    await redisService.set(`orders_seven_days_ago`, plainOrders, {mode: 'EX', duration: 60 * 30})
+    await redisService.set(`orders_seven_days_ago`, plainOrders, {
+      mode: "EX",
+      duration: 60 * 30,
+    });
 
     for (const row of sortedRows) {
       await this.next.add({ row }, `ml-sync-${row.order_number}`);

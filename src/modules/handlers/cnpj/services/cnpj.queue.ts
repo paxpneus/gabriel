@@ -33,6 +33,7 @@ export class CNPJQueue extends BaseQueueService<any> {
       concurrency: 1,
       limiter: { max: 1, duration: 3000 },
       sharedLock: BLING_SHARED_QUEUE_LOCK,
+      maxProcessingMs: 60_000,
       workless: options.workless,
     });
     this.CNPJService = cnpjService;

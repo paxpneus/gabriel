@@ -37,6 +37,7 @@ export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
       concurrency: 2,
       limiter: { max: 5, duration: 1000 },
       workless: options.workless,
+      maxProcessingMs: 15 * 60 * 60 * 1000
     });
     this.upsertQueue = upsertQueue; 
   }
