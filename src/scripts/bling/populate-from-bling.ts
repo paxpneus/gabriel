@@ -252,7 +252,7 @@ async function blingGet<T>(
 async function* paginateBling<T>(
   endpoint: string,
   params: Record<string, string | number> = {},
-  limitPerPage = 500,
+  limitPerPage = 100,
 ): AsyncGenerator<T[]> {
   let page = 1;
 
