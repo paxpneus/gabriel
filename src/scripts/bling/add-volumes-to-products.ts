@@ -139,7 +139,7 @@ export async function fetchProductMappingsPage(
       p.source_payload,
       p.name
     FROM integration_mappings im
-    JOIN products p ON p.id = im.internal_id
+    JOIN products p ON p.id = im.internal_id::uuid
     WHERE im.entity_type = 'PRODUCT'
       AND im.integrations_id = :integrationId::uuid
       AND p.source_payload IS NOT NULL
