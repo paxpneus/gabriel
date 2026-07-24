@@ -188,15 +188,15 @@ export async function updateVolumeInBling(
     return "dry-run";
   }
 
-  try {
-    await putFn(`/produtos/${blingId}`, { volumes: newVolumes });
-    return "minimal";
-  } catch (err: any) {
-    if (!autoFallback) throw err;
-    console.warn(
-      `  ⚠️  PUT mínimo falhou pro produto ${blingId} (${err?.response?.status ?? err.message}). Buscando produto fresco na Bling pra reenviar completo...`,
-    );
-  }
+  // try {
+  //   await putFn(`/produtos/${blingId}`, { volumes: newVolumes });
+  //   return "minimal";
+  // } catch (err: any) {
+  //   if (!autoFallback) throw err;
+  //   console.warn(
+  //     `  ⚠️  PUT mínimo falhou pro produto ${blingId} (${err?.response?.status ?? err.message}). Buscando produto fresco na Bling pra reenviar completo...`,
+  //   );
+  // }
 
   await sleep(PAGE_DELAY_MS);
   const freshBlingProduct = await fetchFreshBlingProduct(blingId, getFn);
