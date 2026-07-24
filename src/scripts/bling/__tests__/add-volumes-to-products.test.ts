@@ -242,100 +242,50 @@ describe("updateVolumeInBling", () => {
     expect(getFn).not.toHaveBeenCalled();
   });
 
-  it("caminho feliz: PUT com { volumes } funciona de primeira e não busca nada antes", async () => {
+  it("busca o produto fresco na Bling e faz PUT completo com volumes sobrescrito", async () => {
     const putFn = jest.fn().mockResolvedValue({ status: 200 });
-    const getFn = jest.fn();
-
-    const strategy = await updateVolumeInBling(16210554961, 0, 1, {
-      dryRun: false,
-      autoFallback: true,
-      putFn,
-      getFn,
-    });
-
-    expect(strategy).toBe("minimal");
-    expect(getFn).not.toHaveBeenCalled();
-    expect(putFn).toHaveBeenCalledTimes(1);
-    expect(putFn).toHaveBeenCalledWith("/produtos/16210554961", {
-      volumes: 1,
-    });
-  });
-
-  it("fallback: quando o PUT mínimo falha, busca o produto fresco (getFn) e reenvia completo", async () => {
-    const putFn = jest
-      .fn()
-      .mockRejectedValueOnce({ response: { status: 422 } }) // PUT mínimo falha
-      .mockResolvedValueOnce({ status: 200 }); // PUT completo funciona
     const getFn = jest.fn().mockResolvedValue({ data: kitProductPayload });
 
     const strategy = await updateVolumeInBling(16679114658, 0, 4, {
       dryRun: false,
-      autoFallback: true,
       putFn,
       getFn,
     });
 
     expect(strategy).toBe("full");
-
-    // busca o produto fresco (nunca usa o source_payload do banco)
     expect(getFn).toHaveBeenCalledWith("/produtos/16679114658");
-
-    // primeira tentativa: só volumes
-    expect(putFn).toHaveBeenNthCalledWith(1, "/produtos/16679114658", {
-      volumes: 4,
-    });
-
-    // segunda tentativa: payload fresco retornado por getFn + volumes sobrescrito
-    expect(putFn).toHaveBeenNthCalledWith(2, "/produtos/16679114658", {
-      ...kitProductPayload.data,
-      volumes: 4,
-    });
-  });
-
-  it("sem fallback (autoFallback: false): propaga o erro do PUT mínimo e não chama getFn", async () => {
-    const putError = { response: { status: 422 }, message: "Unprocessable" };
-    const putFn = jest.fn().mockRejectedValue(putError);
-    const getFn = jest.fn();
-
-    await expect(
-      updateVolumeInBling(16210554961, 0, 1, {
-        dryRun: false,
-        autoFallback: false,
-        putFn,
-        getFn,
-      }),
-    ).rejects.toEqual(putError);
-
-    expect(getFn).not.toHaveBeenCalled();
     expect(putFn).toHaveBeenCalledTimes(1);
+    expect(putFn).toHaveBeenCalledWith("/produtos/16679114658", {
+      ...kitProductPayload.data,
+      volumes: 4,
+    });
   });
 
-  it("fallback nunca reenvia o source_payload salvo no banco, só o payload fresco retornado por getFn", async () => {
-    const staleDbPayload = {
-      ...kitProductPayload.data,
-      preco: 1, // valor propositalmente desatualizado, simulando o banco
-    };
+  it("nunca reenvia o source_payload salvo no banco, só o payload fresco retornado por getFn", async () => {
+    const staleDbPayload = { ...kitProductPayload.data, preco: 1 };
     const freshFromBling = { ...kitProductPayload.data, preco: 9999.13 };
 
-    const putFn = jest
-      .fn()
-      .mockRejectedValueOnce({ response: { status: 422 } })
-      .mockResolvedValueOnce({ status: 200 });
+    const putFn = jest.fn().mockResolvedValue({ status: 200 });
     const getFn = jest.fn().mockResolvedValue({ data: freshFromBling });
 
     await updateVolumeInBling(16679114658, 0, 4, {
       dryRun: false,
-      autoFallback: true,
       putFn,
       getFn,
     });
 
-    const secondCallBody = putFn.mock.calls[1][1];
+    const body = putFn.mock.calls[0][1];
+    expect(body.preco).toBe(9999.13);
+    expect(body).not.toEqual(expect.objectContaining({ preco: staleDbPayload.preco }));
+  });
 
-    // o body enviado tem que vir do getFn (dado "fresco" mockado), não do staleDbPayload
-    expect(secondCallBody.preco).toBe(9999.13);
-    expect(secondCallBody).not.toEqual(
-      expect.objectContaining({ preco: staleDbPayload.preco }),
-    );
+  it("propaga erro se o PUT completo falhar", async () => {
+    const putError = { response: { status: 422 }, message: "Unprocessable" };
+    const putFn = jest.fn().mockRejectedValue(putError);
+    const getFn = jest.fn().mockResolvedValue({ data: kitProductPayload });
+
+    await expect(
+      updateVolumeInBling(16210554961, 0, 1, { dryRun: false, putFn, getFn }),
+    ).rejects.toEqual(putError);
   });
 });

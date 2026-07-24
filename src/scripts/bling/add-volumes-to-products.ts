@@ -177,7 +177,6 @@ export async function updateVolumeInBling(
   } = {},
 ): Promise<"minimal" | "full" | "dry-run"> {
   const dryRun = options.dryRun ?? DRY_RUN;
-  const autoFallback = options.autoFallback ?? AUTO_FALLBACK;
   const putFn = options.putFn ?? blingApi.put;
   const getFn = options.getFn ?? blingApi.get;
 
@@ -188,17 +187,6 @@ export async function updateVolumeInBling(
     return "dry-run";
   }
 
-  // try {
-  //   await putFn(`/produtos/${blingId}`, { volumes: newVolumes });
-  //   return "minimal";
-  // } catch (err: any) {
-  //   if (!autoFallback) throw err;
-  //   console.warn(
-  //     `  ⚠️  PUT mínimo falhou pro produto ${blingId} (${err?.response?.status ?? err.message}). Buscando produto fresco na Bling pra reenviar completo...`,
-  //   );
-  // }
-
-  await sleep(PAGE_DELAY_MS);
   const freshBlingProduct = await fetchFreshBlingProduct(blingId, getFn);
 
   await putFn(`/produtos/${blingId}`, {
