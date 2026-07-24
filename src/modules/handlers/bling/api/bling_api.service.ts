@@ -132,6 +132,7 @@ export const doRefreshToken = async (): Promise<string> => {
       grant_type: "refresh_token",
       refresh_token: configToken.refresh_token,
     }).toString(),
+      signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {
@@ -235,6 +236,7 @@ export const blingApi: AxiosInstance = createAxiosInstance({
         title: "Bling API — refresh token falhou",
         message: `Token inválido ou revogado. Nenhum pedido será processado até reautenticação. Erro: ${refreshError}`,
       });
+      
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
