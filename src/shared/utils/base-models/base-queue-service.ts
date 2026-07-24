@@ -10,7 +10,11 @@ export type baseQueueOptions = {
   lockDuration?: number;
   workless?: boolean;
   maxProcessingMs?: number;
-  backoffStrategy?: (attemptsMade: number, type: string, err: Error) => number; // ← faltou aqui
+  backoffStrategy?: (
+    attemptsMade: number,
+    type?: string,
+    err?: Error,
+  ) => number;
   sharedLock?: {
     key: string;
     ttlMs?: number;
@@ -44,31 +48,7 @@ export abstract class BaseQueueService<T> {
   private workerLockDuration: number;
   private maxProcessingMs?: number;
 
-  constructor(
-    queueName: string,
-    options: {
-      concurrency?: number;
-      limiter?: { max: number; duration: number };
-      lockDuration?: number;
-      workless?: boolean;
-      maxProcessingMs?: number;
-      backoffStrategy?: (
-        attemptsMade: number,
-        type: string,
-        err: Error,
-      ) => number;
-      sharedLock?: {
-        key: string;
-        ttlMs?: number;
-        retryDelayMs?: number;
-        priority?: {
-          enabled?: boolean;
-          ranks?: Record<string, number>;
-          defaultRank?: number;
-        };
-      };
-    } = {},
-  ) {
+  constructor(queueName: string, options: baseQueueOptions = {}) {
     this.queueName = queueName;
     this.hasCustomBackoff = !!options.backoffStrategy;
     this.workerLockDuration = options.lockDuration ?? 5 * 60 * 1000;
@@ -100,7 +80,7 @@ export abstract class BaseQueueService<T> {
           duration: 1000,
         },
         ...(options.backoffStrategy
-          ? { backoffStrategy: options.backoffStrategy }
+          ? { settings: { backoffStrategy: options.backoffStrategy } }
           : {}),
       });
 
@@ -255,7 +235,7 @@ export abstract class BaseQueueService<T> {
   private async registerSharedLockPriorityTicket(
     job: Job<T>,
     sharedLock: NonNullable<baseQueueOptions["sharedLock"]>,
-    ttlMs: number, // ← adicionar esse parâmetro
+    ttlMs: number,
   ): Promise<SharedLockPriorityTicket | undefined> {
     if (!sharedLock.priority?.enabled) return undefined;
 
