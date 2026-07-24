@@ -13,7 +13,7 @@ export interface ProductAttributes {
   integrations_id?: string;
   supplier_id?: string;
   brand_id?: string | null;
-  source_payload?: Record<string, unknown>;
+  source_payload?: Record<string, unknown> | null;
   unit?: string;
   brand?: string;
   commission?: number;
