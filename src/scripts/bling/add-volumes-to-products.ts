@@ -3,6 +3,14 @@
  *
  * Atualiza o campo `volumes` dos produtos na Bling.
  *
+ * Fonte dos produtos:
+ *   Só processa produtos que têm um `integration_mappings` do tipo PRODUCT
+ *   apontando pra integração da Bling (`integrations_id = BLING_INTEGRATION_ID`).
+ *   O `external_id` desse mapeamento é o id do produto NA BLING — é ele que
+ *   é usado nas chamadas à API, não o `id_system` do produto.
+ *   O `internal_id` do mapeamento é o id do produto no NOSSO sistema — usado
+ *   só pra buscar o `source_payload` (pra calcular o `volumes`).
+ *
  * Regra pra calcular o novo `volumes` (a partir do `source_payload` salvo
  * no banco, só pra decidir o valor — nunca reenviado como body):
  *   - Produto unitário (estrutura.componentes vazio)  → volumes = 1
@@ -11,46 +19,48 @@
  *
  * Estratégia de PUT:
  *   1) Caminho barato (usado pra TODOS os produtos): tenta
- *      `PUT /produtos/{id}` mandando só `{ volumes }`. Não busca nada na
- *      Bling antes — usa o `id_system` já salvo no banco.
+ *      `PUT /produtos/{external_id}` mandando só `{ volumes }`. Não busca
+ *      nada na Bling antes.
  *
  *   2) Fallback (só roda pros produtos em que o PUT mínimo falhar):
  *      NUNCA reenvia o `source_payload` do banco (pode estar desatualizado
  *      — preço, estoque etc. mudam na Bling sem o banco saber). Em vez
- *      disso faz um `GET /produtos/{id}` pra pegar o payload atual e fresco
- *      *daquele produto específico*, sobrescreve `volumes` nele e manda o
- *      PUT completo. Ou seja, só itera produto-por-produto na Bling quando
- *      realmente precisa mandar o objeto inteiro — nunca faz isso
+ *      disso faz um `GET /produtos/{external_id}` pra pegar o payload atual
+ *      e fresco *daquele produto específico*, sobrescreve `volumes` nele e
+ *      manda o PUT completo. Ou seja, só itera produto-por-produto na Bling
+ *      quando realmente precisa mandar o objeto inteiro — nunca faz isso
  *      preventivamente pra todos.
  *
  * Uso:
- *   DRY_RUN=true npx ts-node scripts/update-product-volumes.script.ts
+ *   BLING_INTEGRATION_ID=<uuid> DRY_RUN=true npx ts-node scripts/update-product-volumes.script.ts
  *     → só loga o que faria, não chama a Bling
  *
- *   npx ts-node scripts/update-product-volumes.script.ts
+ *   BLING_INTEGRATION_ID=<uuid> npx ts-node scripts/update-product-volumes.script.ts
  *     → roda de verdade
  *
  * Variáveis de ambiente:
- *   DRY_RUN               (default: false)
- *   AUTO_FALLBACK           (default: true)  → se o PUT mínimo falhar, busca o produto fresco na Bling e tenta com payload completo
- *   BATCH_SIZE              (default: 200)   → produtos lidos do banco por página
+ *   BLING_INTEGRATION_ID     (obrigatória) → uuid da integração Bling em `integrations`,
+ *                                            usado pra filtrar `integration_mappings.integrations_id`
+ *   DRY_RUN                  (default: false)
+ *   AUTO_FALLBACK            (default: true)  → se o PUT mínimo falhar, busca o produto fresco na Bling e tenta com payload completo
+ *   BATCH_SIZE               (default: 200)   → mapeamentos lidos do banco por página
  *   BLING_SCRIPT_PAGE_DELAY_MS (default: 300) → delay entre chamadas à Bling (rate limit)
- *   MAX_PRODUCTS            (default: 0 = sem limite) → útil pra testar com poucos produtos
+ *   MAX_PRODUCTS             (default: 0 = sem limite) → útil pra testar com poucos produtos
  */
 
-import { Op } from "sequelize";
+import { QueryTypes } from "sequelize";
 import { blingApi } from "../../modules/handlers/bling/api/bling_api.service";
-import { Product } from "../../modules/inventory";
 import sequelize from "../../config/sequelize";
 import { setupAssociations } from "../../config/sequelize-associations";
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
+const BLING_INTEGRATION_ID = process.env.BLING_INTEGRATION_ID ?? "";
 const DRY_RUN = process.env.DRY_RUN === "true";
 const AUTO_FALLBACK = process.env.AUTO_FALLBACK !== "false"; // default true
 const BATCH_SIZE = Number(process.env.BATCH_SIZE ?? 200);
 const PAGE_DELAY_MS = Number(process.env.BLING_SCRIPT_PAGE_DELAY_MS ?? 300);
-const MAX_PRODUCTS = Number(process.env.MAX_PRODUCTS ?? 5);
+const MAX_PRODUCTS = Number(process.env.MAX_PRODUCTS ?? 0);
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -98,6 +108,49 @@ export async function fetchFreshBlingProduct(
 ): Promise<any> {
   const { data } = await getFn(`/produtos/${blingId}`);
   return data?.data ?? data;
+}
+
+/**
+ * Busca uma página de produtos que têm mapeamento pra Bling, via
+ * `integration_mappings` (entity_type = 'PRODUCT', integrations_id = Bling).
+ *
+ * `external_id`  → id do produto NA BLING (usado nas chamadas à API)
+ * `source_payload` → puxado do produto local (internal_id), só pra calcular volumes
+ */
+export async function fetchProductMappingsPage(
+  integrationId: string,
+  limit: number,
+  offset: number,
+): Promise<
+  Array<{
+    mapping_id: string;
+    internal_id: string;
+    external_id: string;
+    source_payload: any;
+    name: string;
+  }>
+> {
+  return sequelize.query(
+    `
+    SELECT
+      im.id AS mapping_id,
+      im.internal_id,
+      im.external_id,
+      p.source_payload,
+      p.name
+    FROM integration_mappings im
+    JOIN products p ON p.id = im.internal_id
+    WHERE im.entity_type = 'PRODUCT'
+      AND im.integrations_id = :integrationId
+      AND p.source_payload IS NOT NULL
+    ORDER BY im.id ASC
+    LIMIT :limit OFFSET :offset
+    `,
+    {
+      replacements: { integrationId, limit, offset },
+      type: QueryTypes.SELECT,
+    },
+  );
 }
 
 /**
@@ -165,8 +218,15 @@ async function bootstrap() {
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
+  if (!BLING_INTEGRATION_ID) {
+    throw new Error(
+      "BLING_INTEGRATION_ID não definido. Passe o uuid da integração Bling (tabela `integrations`), ex: BLING_INTEGRATION_ID=9f2dad31-c321-42c0-9532-249847eb2a26",
+    );
+  }
+
   console.log("═".repeat(60));
   console.log("📦  Atualização de volumes de produtos — Bling");
+  console.log(`  Integração Bling (integrations_id): ${BLING_INTEGRATION_ID}`);
   console.log(`  Modo: ${DRY_RUN ? "DRY_RUN (nada será enviado)" : "EXECUÇÃO REAL"}`);
   console.log(
     "  Estratégia: PUT só com { volumes } pra todos" +
@@ -189,28 +249,29 @@ async function main() {
   const strategyCount = { minimal: 0, full: 0, "dry-run": 0 };
 
   outer: while (true) {
-    const products = await Product.findAll({
-      where: { source_payload: { [Op.ne]: null } },
-      limit: BATCH_SIZE,
+    const mappings = await fetchProductMappingsPage(
+      BLING_INTEGRATION_ID,
+      BATCH_SIZE,
       offset,
-      order: [["id", "ASC"]],
-    });
+    );
 
-    if (!products.length) break;
+    if (!mappings.length) break;
 
-    for (const product of products) {
+    for (const mapping of mappings) {
       processed++;
 
-      const blingProduct = extractBlingProduct(product.source_payload);
+      const blingProduct = extractBlingProduct(mapping.source_payload);
       if (!blingProduct) {
         skippedNoPayload++;
         continue;
       }
 
-      const blingId = Number(product.id_system ?? blingProduct.id);
+      const blingId = Number(mapping.external_id);
       if (!blingId) {
         skippedNoId++;
-        console.warn(`  ⚠️  Produto ${product.id} sem id_system/id da Bling — pulando`);
+        console.warn(
+          `  ⚠️  Mapeamento ${mapping.mapping_id} sem external_id válido — pulando`,
+        );
         continue;
       }
 
@@ -228,7 +289,7 @@ async function main() {
         strategyCount[strategy]++;
         updated++;
         console.log(
-          `  ✅ [${strategy}] Produto ${blingId} (${blingProduct.nome ?? product.name}): volumes ${currentVolumes} → ${newVolumes}`,
+          `  ✅ [${strategy}] Produto ${blingId} (${blingProduct.nome ?? mapping.name}): volumes ${currentVolumes} → ${newVolumes}`,
         );
       } catch (err: any) {
         errors++;

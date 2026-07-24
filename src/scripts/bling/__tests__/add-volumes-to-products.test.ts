@@ -1,29 +1,24 @@
-// src/__tests__/scripts/update-product-volumes.script.test.ts
+// src/scripts/bling/__tests__/add-volumes-to-products.test.ts
 
 // ─── Mocks só pra cortar a cadeia de import ───────────────────────────────────
-// O script importa blingApi/Product/sequelize no topo do arquivo. Isso arrasta
-// uma cadeia pesada (bling_api.service → integrations.service → ...model →
-// sequelize real), que tenta abrir conexão/dialect de verdade e quebra no
-// Jest (ex: "Please install sqlite3 package manually").
+// O script importa blingApi/sequelize/setupAssociations no topo do arquivo.
+// Isso arrasta uma cadeia pesada (bling_api.service → integrations.service →
+// ...model → sequelize real), que tenta abrir conexão/dialect de verdade e
+// quebra no Jest (ex: "Please install sqlite3 package manually").
 //
 // Esses mocks existem só pra evitar essa cadeia de import — NENHUM deles é
-// usado nas asserções dos testes abaixo. Todo o comportamento testado usa
-// putFn/getFn injetadas manualmente com dados mockados, não essas mocks de
-// módulo.
+// usado nas asserções de computeVolumes/extractBlingProduct. Todo o
+// comportamento testado usa putFn/getFn ou o retorno de sequelize.query
+// mockados manualmente com dados fixos, não chamadas reais.
 
 jest.mock("../../../modules/handlers/bling/api/bling_api.service", () => ({
   __esModule: true,
   blingApi: { get: jest.fn(), put: jest.fn() },
 }));
 
-jest.mock("../../../modules/inventory", () => ({
-  __esModule: true,
-  Product: { findAll: jest.fn() },
-}));
-
 jest.mock("../../../config/sequelize", () => ({
   __esModule: true,
-  default: { authenticate: jest.fn() },
+  default: { authenticate: jest.fn(), query: jest.fn() },
 }));
 
 jest.mock("../../../config/sequelize-associations", () => ({
@@ -31,10 +26,12 @@ jest.mock("../../../config/sequelize-associations", () => ({
   setupAssociations: jest.fn(),
 }));
 
+import sequelize from "../../../config/sequelize";
 import {
   extractBlingProduct,
   computeVolumes,
   fetchFreshBlingProduct,
+  fetchProductMappingsPage,
   updateVolumeInBling,
 } from "../add-volumes-to-products"; // ajuste o path se necessário
 
@@ -83,6 +80,16 @@ const kitMultiComponentPayload = {
       ],
     },
   },
+};
+
+// Mapeamento fictício, no mesmo formato do exemplo real que você mandou
+// (integration_mappings entity_type = 'PRODUCT')
+const fakeMappingRow = {
+  mapping_id: "00038b07-b067-47c3-a52f-e554b76dc373",
+  internal_id: "428665ea-66b5-4e3c-b6e3-00471afc5b5b",
+  external_id: "16210555464",
+  source_payload: unitProductPayload,
+  name: "Pneu 195/55R15 85H FR PowerContact 2 Continental",
 };
 
 // ─── extractBlingProduct ───────────────────────────────────────────────────────
@@ -140,6 +147,56 @@ describe("computeVolumes", () => {
       },
     };
     expect(computeVolumes(blingProduct)).toBe(1);
+  });
+});
+
+// ─── fetchProductMappingsPage ──────────────────────────────────────────────────
+// sequelize.query é mockado com um retorno de dados fixo (fakeMappingRow) —
+// não bate em banco nenhum, real ou de teste.
+
+describe("fetchProductMappingsPage", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("passa integrationId/limit/offset como replacements pro sequelize.query", async () => {
+    (sequelize.query as jest.Mock).mockResolvedValue([fakeMappingRow]);
+
+    const result = await fetchProductMappingsPage(
+      "9f2dad31-c321-42c0-9532-249847eb2a26",
+      200,
+      0,
+    );
+
+    expect(sequelize.query).toHaveBeenCalledWith(
+      expect.stringContaining("integration_mappings"),
+      expect.objectContaining({
+        replacements: {
+          integrationId: "9f2dad31-c321-42c0-9532-249847eb2a26",
+          limit: 200,
+          offset: 0,
+        },
+      }),
+    );
+    expect(result).toEqual([fakeMappingRow]);
+  });
+
+  it("a query filtra entity_type = 'PRODUCT' e source_payload não nulo", async () => {
+    (sequelize.query as jest.Mock).mockResolvedValue([]);
+
+    await fetchProductMappingsPage("qualquer-uuid", 200, 0);
+
+    const [sql] = (sequelize.query as jest.Mock).mock.calls[0];
+    expect(sql).toEqual(expect.stringContaining("entity_type = 'PRODUCT'"));
+    expect(sql).toEqual(
+      expect.stringContaining("p.source_payload IS NOT NULL"),
+    );
+  });
+
+  it("retorna array vazio quando não há mapeamentos pra essa integração", async () => {
+    (sequelize.query as jest.Mock).mockResolvedValue([]);
+
+    const result = await fetchProductMappingsPage("uuid-sem-mapeamentos", 200, 0);
+
+    expect(result).toEqual([]);
   });
 });
 
