@@ -55,7 +55,7 @@ import { setupAssociations } from "../../config/sequelize-associations";
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
-const BLING_INTEGRATION_ID = process.env.BLING_INTEGRATION_ID ?? "";
+const BLING_INTEGRATION_ID = process.env.BLING_INTEGRATION_ID ?? "9f2dad31-c321-42c0-9532-249847eb2a26";
 const DRY_RUN = process.env.DRY_RUN === "true";
 const AUTO_FALLBACK = process.env.AUTO_FALLBACK !== "false"; // default true
 const BATCH_SIZE = Number(process.env.BATCH_SIZE ?? 200);
