@@ -11,7 +11,7 @@ class UnmappedInvoiceProduct
   implements UnmappedInvoiceProductAttributes
 {
   public id!: string;
-  public invoice_id!: string;
+  public invoice_id!: string | null;
   public ean!: string | null;
   public sku!: string | null;
   public product_name!: string | null;

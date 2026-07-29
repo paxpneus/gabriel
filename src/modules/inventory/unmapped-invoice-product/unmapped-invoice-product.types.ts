@@ -1,6 +1,6 @@
 export interface UnmappedInvoiceProductAttributes {
   id: string;
-  invoice_id: string;
+  invoice_id: string | null;
   ean: string | null;
   sku: string | null;
   product_name: string | null;
