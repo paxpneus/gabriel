@@ -53,6 +53,8 @@ import Group from "../../../../../inventory/groups/group/group.model";
 import Subgroup from "../../../../../inventory/groups/subgroup/subgroup.model";
 import { GroupType } from "../../../../../inventory/groups/group/group.types";
 import { resolveProductWithMapping } from "../../../../tecinco/queues/helpers/product.helpers";
+import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
+import { getMagentoIntegration } from "../../../../magentoV2/api/magentoV2_api";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -431,6 +433,93 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     this.api = blingApi;
   }
 
+  // ─── Magento: busca produto por SKU (usado tanto pro price quanto pro mapping) ──
+  private async fetchMagentoProduct(
+    sku: string,
+    logPrefix: string,
+  ): Promise<any | null> {
+    try {
+      return await magentoCatalogService.obterProduto(sku);
+    } catch (error: any) {
+      if (error?.response?.status === 404) return null;
+
+      console.warn(
+        `${logPrefix} Falha ao consultar produto no Magento | sku=${sku} | erro=${error?.message}`,
+      );
+      return null;
+    }
+  }
+
+  // ─── Sincronização de produto com o Magento (mapping / unmapped) ──────────
+  private async syncProductWithMagento(params: {
+    product: Product;
+    sku: string | null;
+    ean?: string | null;
+    productName: string;
+    magentoProduct: any | null;
+    magentoIntegration: { id: string };
+    logPrefix: string;
+  }): Promise<void> {
+    const {
+      product,
+      sku,
+      ean,
+      productName,
+      magentoProduct,
+      magentoIntegration,
+      logPrefix,
+    } = params;
+
+    if (!sku) {
+      console.warn(
+        `${logPrefix} Sem SKU para sincronizar com Magento — ignorado.`,
+      );
+      return;
+    }
+
+    if (!magentoProduct) {
+      const existingUnmapped = await UnmappedInvoiceProduct.findOne({
+        where: {
+          invoice_id: null,
+          sku,
+        },
+      });
+
+      if (!existingUnmapped) {
+        await UnmappedInvoiceProduct.create({
+          invoice_id: null,
+          integrations_id: magentoIntegration.id,
+          sku,
+          ean: ean ?? null,
+          product_name: productName,
+          quantity: 0,
+          reason: "Produto não encontrado no Magento",
+          status: "UNMAPPED",
+        });
+        console.warn(
+          `${logPrefix} Produto não encontrado no Magento — unmapped registrado | sku=${sku}`,
+        );
+      } else {
+        console.log(
+          `${logPrefix} Produto já registrado como unmapped no Magento | sku=${sku}`,
+        );
+      }
+
+      return;
+    }
+
+    await integrationMappingService.createOrUpdateIntegrationMapping({
+      entity_type: "PRODUCT",
+      internal_id: product.id,
+      external_id: String(magentoProduct.sku ?? sku),
+      integrations_id: magentoIntegration.id,
+    });
+
+    console.log(
+      `${logPrefix} Produto mapeado no Magento | sku=${sku} | magento_sku=${magentoProduct.sku ?? sku}`,
+    );
+  }
+
   private async resolveKitComponentSku(
     componentBlingId: number,
     logPrefix: string,
@@ -795,7 +884,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const existingProduct = await resolveProductWithMapping({
       integrationsId: integration.id,
       systemId: String(blingProduct.id),
-      codigoFabrica: blingProduct.codigo, 
+      codigoFabrica: blingProduct.codigo,
       ean: blingProduct.gtin,
       logPrefix,
     });
@@ -846,6 +935,38 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
     }
 
+    // ─── Resolve a integration do Magento uma única vez (reaproveitada abaixo) ──
+    const magentoIntegration = await getMagentoIntegration("Magento");
+
+    // ─── Prioriza o SKU já mapeado; só cai pro código da Bling se não existir mapping ──
+    let magentoSkuFromMapping: string | null = null;
+
+    if (existingProduct) {
+      const magentoSkuMap = await integrationMappingService.findExternalIdsMap(
+        "PRODUCT",
+        magentoIntegration.id,
+        [existingProduct.id],
+      );
+      magentoSkuFromMapping = magentoSkuMap.get(existingProduct.id) ?? null;
+    }
+
+    const magentoLookupSku = magentoSkuFromMapping ?? configSku;
+
+    if (magentoSkuFromMapping) {
+      console.log(
+        `${logPrefix} SKU do Magento resolvido via integration mapping: ${magentoSkuFromMapping}`,
+      );
+    }
+
+    const magentoProduct = await this.fetchMagentoProduct(
+      magentoLookupSku,
+      logPrefix,
+    );
+    const resolvedPrice =
+      magentoProduct?.price !== undefined && magentoProduct?.price !== null
+        ? Number(magentoProduct.price)
+        : Number(blingProduct.preco);
+
     let product: Product;
 
     try {
@@ -877,8 +998,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         {
           product_id: product.id,
           unit_business_id: unitBusiness.id,
-          sku: configSku, // ← antes era blingProduct.codigo direto
-          price: blingProduct.preco,
+          sku: configSku,
+          price: resolvedPrice,
           gtin: blingProduct.gtin,
           gtin_package: blingProduct.gtinEmbalagem,
           ncm: blingProduct.tributacao?.ncm,
@@ -901,14 +1022,23 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       throw error;
     }
 
-    // Se produto já existia sem average_cost e agora temos custo do fornecedor,
-    // atualiza o total_price do estoque com o custo inicial
     const existingConfig = await ProductConfig.findOne({
       where: {
         product_id: existingProduct!.id,
         unit_business_id: BLING_UNIT_BUSINESS_ID,
       },
     });
+
+    await this.syncProductWithMagento({
+      product,
+      sku: configSku,
+      ean: blingProduct.gtin,
+      productName: blingProduct.nome,
+      magentoProduct,
+      magentoIntegration,
+      logPrefix,
+    });
+
     if (
       existingProduct &&
       !existingConfig?.average_cost &&
@@ -925,7 +1055,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         await stock.update({
           total_price: qty * newSupplierCost,
         });
-        // Agora que temos o custo, atualiza o average_cost da configuração da unidade.
         await ProductConfig.update(
           {
             average_cost: newSupplierCost,
@@ -953,15 +1082,29 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           },
         });
 
-        if (config?.average_cost && blingProduct.codigo) {
-          await magentoCatalogService.atualizarCustomAttribute(
-            blingProduct.codigo,
-            "custo_medio",
-            Number(config.average_cost).toFixed(2),
-          );
-          console.log(
-            `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${blingProduct.codigo} | average_cost=${config.average_cost}`,
-          );
+        if (config?.average_cost) {
+          const magentoSkuMap =
+            await integrationMappingService.findExternalIdsMap(
+              "PRODUCT",
+              magentoIntegration.id,
+              [product.id],
+            );
+          const magentoSku = magentoSkuMap.get(product.id);
+
+          if (magentoSku) {
+            await magentoCatalogService.atualizarCustomAttribute(
+              magentoSku,
+              "custo_medio",
+              Number(config.average_cost).toFixed(2),
+            );
+            console.log(
+              `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${magentoSku} | average_cost=${config.average_cost}`,
+            );
+          } else {
+            console.log(
+              `[BLING_API_FETCH] Produto sem mapping no Magento — custo_medio não sincronizado: sku_bling=${blingProduct.codigo}`,
+            );
+          }
         }
       }
     } catch (magentoErr: any) {
