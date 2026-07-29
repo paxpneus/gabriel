@@ -373,7 +373,12 @@ export class ExpeditionBatchService extends BaseService<
           transaction: t,
         });
 
-        if (description) await invoiceService.update(invoice.id, { description }, { transaction: t });
+        if (description)
+          await invoiceService.update(
+            invoice.id,
+            { description },
+            { transaction: t },
+          );
 
         resultBatchId = batchId;
       } else {
@@ -412,11 +417,17 @@ export class ExpeditionBatchService extends BaseService<
         resultBatchId = batch.id;
       }
 
-      await invoiceService.updateInvoices([invoice.id], unitBusinessId, {
-        batch_generated: true,
-        status: "OPEN",
-        received_at: new Date().toLocaleDateString("en-CA"),
-      }, undefined, t);
+      await invoiceService.updateInvoices(
+        [invoice.id],
+        unitBusinessId,
+        {
+          batch_generated: true,
+          status: "OPEN",
+          received_at: new Date().toLocaleDateString("en-CA"),
+        },
+        undefined,
+        t,
+      );
     });
 
     return (await this.repository.getFullBatch(
@@ -657,33 +668,14 @@ export class ExpeditionBatchService extends BaseService<
     return batches;
   }
 
-  async batchReport(
-    params: QueryParams,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-  ): Promise<ExpeditionBatchFull[]> {
-    const unitBusinessId = params.filters?.unit_business_id as
-      | string
-      | undefined;
-
-    if (!unitBusinessId) {
-      throw new Error(
-        "batchReport requer o filtro unit_business_id — os totais das notas (total_expected/total_read) são calculados para uma unidade de negócio específica.",
-      );
+  async batchReport(id: string): Promise<ExpeditionBatchFull> {
+    if (!id) {
+      throw new Error("Id do lode não informado!")
     }
+    
+    const data = await this.repository.getFullBatch(id);
 
-    const data = await super.findAll(
-      {
-        ...extraOptions,
-        subQuery: false,
-        include: this.repository.buildFullIncludes(unitBusinessId),
-      },
-      params,
-      this.queryConfig,
-    );
-
-    return data.map((item) =>
-      this.repository.normalizeBatchPlain(item.get({ plain: true })),
-    ) as ExpeditionBatchFull[];
+    return data;
   }
 }
 
