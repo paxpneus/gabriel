@@ -283,8 +283,8 @@ export class ExpeditionBatchController extends BaseController<
 
   batchReport = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const params = this.extractQueryParams(req)
-      const result = await this.service.batchReport(params)
+      const {id} = req.query
+      const result = await this.service.batchReport(id as string)
       return res.json(result);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
