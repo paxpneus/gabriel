@@ -656,6 +656,35 @@ export class ExpeditionBatchService extends BaseService<
     const batches = await this.repository.getFullBatches(batchesId);
     return batches;
   }
+
+  async batchReport(
+    params: QueryParams,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<ExpeditionBatchFull[]> {
+    const unitBusinessId = params.filters?.unit_business_id as
+      | string
+      | undefined;
+
+    if (!unitBusinessId) {
+      throw new Error(
+        "batchReport requer o filtro unit_business_id — os totais das notas (total_expected/total_read) são calculados para uma unidade de negócio específica.",
+      );
+    }
+
+    const data = await super.findAll(
+      {
+        ...extraOptions,
+        subQuery: false,
+        include: this.repository.buildFullIncludes(unitBusinessId),
+      },
+      params,
+      this.queryConfig,
+    );
+
+    return data.map((item) =>
+      this.repository.normalizeBatchPlain(item.get({ plain: true })),
+    ) as ExpeditionBatchFull[];
+  }
 }
 
 export default new ExpeditionBatchService();

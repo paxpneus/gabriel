@@ -56,13 +56,23 @@ export class InvoiceItemsService extends BaseService<
         invoiceItemDto.invoice_id!,
       );
 
-      await invoiceService.updateInvoicesForAllUnitBusiness(
-        [invoiceItemDto.invoice_id!],
-        { status: "OPEN" },
-      );
-
       if (!invoice) {
         throw new Error("Invoice não encontrada!");
+      }
+
+      const incomingAttr = invoice.unitBusinessAttributes?.find(
+        (attr) => attr.type === "INCOMING",
+      );
+
+      if (incomingAttr?.status !== "WAITING_SCHEDULE_SALES") {
+        await invoiceService.updateInvoicesForAllUnitBusiness(
+          [invoiceItemDto.invoice_id!],
+          { status: "OPEN" },
+        );
+      } else {
+        console.log(
+          `[INVOICE_ITEMS] Invoice ${invoice.id} está em WAITING_SCHEDULE_SALES na unit business de entrada, status mantido.`,
+        );
       }
 
       // ─── 2. Cria o InvoiceFiscalItem ──────────────────────────────────────
@@ -242,9 +252,6 @@ export class InvoiceItemsService extends BaseService<
         );
       }
 
-      const incomingAttr = invoice.unitBusinessAttributes?.find(
-        (attr) => attr.type === "INCOMING",
-      );
       // ─── 4. Cria SupplierMapping se for nota de entrada ───────────────────
       if (incomingAttr) {
         const supplierProductCode =

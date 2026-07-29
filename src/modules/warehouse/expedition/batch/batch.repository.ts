@@ -138,7 +138,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
     ) as ExpeditionBatchFull[];
   }
 
-  private buildFullIncludes(unitBusinessId: string) {
+   buildFullIncludes(unitBusinessId: string) {
     return [
       { model: Integration, as: 'integration'},
       { model: User, as: "operator" },
@@ -161,7 +161,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
     ];
   }
 
-  private normalizeBatchPlain(plain: any): ExpeditionBatchFull {
+  normalizeBatchPlain(plain: any): ExpeditionBatchFull {
     return {
       ...plain,
       batchInvoices: plain.batchInvoices?.map((bi: any) => ({

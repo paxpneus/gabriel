@@ -34,6 +34,7 @@ export class ExpeditionBatchController extends BaseController<
       generateDeliveryNote: [authenticate, userPermissions],
       downloadDeliveryNotes: [authenticate, userPermissions],
       isComplete: [authenticate, userPermissions],
+      batchReport: [authenticate, userPermissions]
     };
   }
 
@@ -87,6 +88,8 @@ export class ExpeditionBatchController extends BaseController<
       ...this.mw("getMultiplierScan"),
       (req, res) => this.getMultiplierScan(req, res),
     );
+
+    this.router.get("/report/get", ...this.mw("batchReport"), (req, res) => this.batchReport(req, res))
   }
 
   /**
@@ -113,8 +116,8 @@ export class ExpeditionBatchController extends BaseController<
       );
       return res.status(201).json(batches);
     } catch (error: any) {
-      console.error("ERRO DETALHADO:", JSON.stringify(error, null, 2)); // <- adiciona isso
-      console.error("ERRORS ARRAY:", error?.errors); // <- e isso
+      console.error("ERRO DETALHADO:", JSON.stringify(error, null, 2)); 
+      console.error("ERRORS ARRAY:", error?.errors); 
       return res
         .status(500)
         .json({ error: error.message, details: error?.errors });
@@ -276,6 +279,16 @@ export class ExpeditionBatchController extends BaseController<
 
   getMultiplierScan(req: Request, res: Response) {
     return res.json(true);
+  }
+
+  batchReport = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req)
+      const result = await this.service.batchReport(params)
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
   }
 }
 
