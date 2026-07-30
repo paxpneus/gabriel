@@ -589,19 +589,17 @@ async function migrateStocks() {
       const blingId = stock.produto.id;
       const jobBase = basePayload("stock", blingId);
 
-      await enqueueDirectUpsert(
+      await enqueueApiFetch(
         {
           ...jobBase,
-          directUpsert: {
-            table: "stocks",
-            data: {
-              productBlingId: blingId,
-              quantity: stock.saldoFisicoTotal ?? 0,
-              unit_business_id: "RESOLVE_NO_WORKER",
-            },
+          apiFetch: {
+            resource: "product",
+            blingId,
+            action: "created",
+            companyId: "",
           },
         },
-        `migration-stock-${blingId}`,
+        `migration-stock-fetch-${blingId}`,
       );
 
       count++;

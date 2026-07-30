@@ -68,6 +68,7 @@ class Invoice
   public transporter?: Transporter;
 
   public batchInvoice?: ExpeditionBatchInvoiceAttributes;
+  public unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[]
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;

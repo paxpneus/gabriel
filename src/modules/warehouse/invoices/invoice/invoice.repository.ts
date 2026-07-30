@@ -381,7 +381,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
               }
             : plain.transporter,
         };
-      }) as unknown as Invoice[],
+      }) as unknown as FullInvoiceAttributes[],
     };
   }
 
