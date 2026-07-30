@@ -83,30 +83,14 @@ function mapStock(
   action: BlingAction,
   data: BlingStockPayload,
 ): MappedWebhookResult {
-  if (action === "deleted") {
-    // No delete de lançamento de estoque usamos saldoFisicoTotal já informado
-    return {
-      directUpsert: {
-        table: "stocks",
-        data: {
-          productBlingId: data.produto.id,
-          quantity: data.saldoFisicoTotal ?? 0,
-          unit_business_id: "RESOLVE_NO_WORKER",
-        }
-      },
-    };
-  }
-
-  // created / updated → usa saldoFisicoTotal do deposito
+  // Estoque agora centraliza no ApiFetch de produto — o upsert de produto já
+  // traz o saldo (estoque.saldoVirtualTotal) e atualiza tudo de uma vez.
   return {
-    directUpsert: {
-      table: "stocks",
-      data: {
-        productBlingId: data.produto.id,
-        // saldo físico total do depósito; unit_business_id será resolvido
-        // pelo worker via depósito → empresa → unit_business
-        quantity: data.deposito?.saldoFisico ?? data.saldoFisicoTotal ?? 0,unit_business_id: "RESOLVE_NO_WORKER",
-      },
+    requiresApiFetch: {
+      resource: "product",
+      blingId: data.produto.id,
+      action,
+      companyId: "", // preenchido pelo orquestrador
     },
   };
 }

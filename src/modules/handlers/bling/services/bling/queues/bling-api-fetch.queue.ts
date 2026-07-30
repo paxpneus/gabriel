@@ -55,6 +55,9 @@ import { GroupType } from "../../../../../inventory/groups/group/group.types";
 import { resolveProductWithMapping } from "../../../../tecinco/queues/helpers/product.helpers";
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
 import { getMagentoIntegration } from "../../../../magentoV2/api/magentoV2_api";
+import stockMovementsService from "../../../../../inventory/stock/stock-movements/stock-movements.service";
+import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
+import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -433,6 +436,109 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     this.api = blingApi;
   }
 
+  private async fetchPhysicalStock(blingId: number): Promise<number> {
+    const params = new URLSearchParams();
+    params.append("idsProdutos[]", String(blingId));
+    params.append("filtroSaldoEstoque", "1");
+
+    const { data } = await this.api.get<{
+      data: Array<{ produto: { id: number }; saldoFisicoTotal: number }>;
+    }>(`/estoques/saldos?${params.toString()}`);
+
+    const saldo = data?.data?.find((s) => s.produto.id === blingId);
+    return Number(saldo?.saldoFisicoTotal ?? 0);
+  }
+
+  private async syncStockAndBatches(params: {
+    product: Product;
+    unitBusiness: UnitBusiness;
+    newQuantity: number;
+    averageCost: number;
+  }): Promise<void> {
+    const { product, unitBusiness, newQuantity, averageCost } = params;
+    const logPrefix = `[BLING_API_FETCH] syncStockAndBatches product=${product.id}`;
+
+    if (newQuantity < 0) {
+      alertService.sendAlert({
+        severity: "CRITICAL",
+        title: "Estoque negativo",
+        message: `Estoque bling negativo para o produto ${product.name}`,
+      });
+      throw new Error(
+        `${logPrefix} Stock com quantidade negativa, mandando alerta!`,
+      );
+    }
+
+    const newTotalPrice = newQuantity * averageCost;
+
+    await Stock.upsert(
+      {
+        product_id: product.id,
+        quantity: newQuantity,
+        unit_business_id: unitBusiness.id,
+        total_price: newTotalPrice,
+      },
+      { conflictFields: ["product_id", "unit_business_id"] },
+    );
+
+    const savedStock = await Stock.findOne({
+      where: { product_id: product.id, unit_business_id: unitBusiness.id },
+    });
+
+    if (savedStock && Number(savedStock.quantity) < 0) {
+      alertService.sendAlert({
+        severity: "CRITICAL",
+        title: "Estoque negativo após upsert",
+        message: `Produto: ${product.name} | Qty no banco: ${savedStock.quantity}`,
+      });
+      throw new Error(
+        `${logPrefix} Stock com quantidade negativa após upsert, mandando alerta!`,
+      );
+    }
+
+    console.log(
+      `${logPrefix} Stock upsertado: ean=${product.ean} | qty=${newQuantity} | avg_cost=${averageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
+    );
+
+    // ─── Sincroniza InventoryBatches ────────────────────────────────────────
+    const affectedBatches = await InventoryBatch.findAll({
+      where: {
+        mode: "CYCLIC",
+        status: { [Op.in]: ["OPEN", "PENDING"] },
+      },
+      include: [
+        {
+          model: InventoryBatchItems,
+          as: "items",
+          where: { product_id: product.id },
+          required: true,
+        },
+      ],
+    });
+
+    for (const batch of affectedBatches) {
+      await InventoryBatchItems.update(
+        { quantity_stock: newQuantity },
+        { where: { inventory_batch_id: batch.id, product_id: product.id } },
+      );
+
+      const newTotalQuantityStock =
+        (await InventoryBatchItems.sum("quantity_stock", {
+          where: { inventory_batch_id: batch.id },
+        })) ?? 0;
+
+      await batch.update({ total_quantity_stock: newTotalQuantityStock });
+
+      console.log(
+        `${logPrefix} InventoryBatch ${batch.id} atualizado | total_quantity_stock=${newTotalQuantityStock}`,
+      );
+    }
+
+    console.log(
+      `${logPrefix} ${affectedBatches.length} batch(es) sincronizado(s)`,
+    );
+  }
+
   // ─── Magento: busca produto por SKU (usado tanto pro price quanto pro mapping) ──
   private async fetchMagentoProduct(
     sku: string,
@@ -478,6 +584,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     if (!magentoProduct) {
+      const normalizedEan = ean && ean.trim() !== "" ? ean : null;
+
       const existingUnmapped = await UnmappedInvoiceProduct.findOne({
         where: {
           invoice_id: null,
@@ -490,7 +598,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           invoice_id: null,
           integrations_id: magentoIntegration.id,
           sku,
-          ean: ean ?? null,
+          ean: normalizedEan,
           product_name: productName,
           quantity: 0,
           reason: "Produto não encontrado no Magento",
@@ -830,6 +938,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           await this.fetchAndUpsertProduct(apiFetch);
           break;
 
+        case "stock":
+          await this.fetchAndUpsertProduct(apiFetch);
+          break;
+
         case "product_supplier":
           // await this.fetchAndUpsertProductSupplier(apiFetch);
           break;
@@ -1022,13 +1134,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       throw error;
     }
 
-    const existingConfig = await ProductConfig.findOne({
-      where: {
-        product_id: existingProduct!.id,
-        unit_business_id: BLING_UNIT_BUSINESS_ID,
-      },
-    });
-
     await this.syncProductWithMagento({
       product,
       sku: configSku,
@@ -1039,38 +1144,49 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       logPrefix,
     });
 
-    if (
-      existingProduct &&
-      !existingConfig?.average_cost &&
-      newSupplierCost > 0
-    ) {
-      const stock = await Stock.findOne({
-        where: {
-          product_id: existingProduct.id,
-          unit_business_id: unitBusiness.id,
-        },
-      });
-      if (stock && Number(stock.quantity) > 0) {
-        const qty = Number(stock.quantity);
-        await stock.update({
-          total_price: qty * newSupplierCost,
-        });
+    // ─── Sincroniza o Kardex (stock_movements) e atualiza o average_cost ──────
+    let averageCostResolved: number | undefined;
+    try {
+      const { average_cost, created } =
+        await stockMovementsService.syncProductStockMovements(
+          product.id,
+          unitBusiness.id,
+        );
+      averageCostResolved = average_cost;
+
+      if (created > 0) {
         await ProductConfig.update(
-          {
-            average_cost: newSupplierCost,
-            average_cost_updated_at: new Date(),
-          },
+          { average_cost, average_cost_updated_at: new Date() },
           {
             where: {
-              product_id: existingProduct.id,
+              product_id: product.id,
               unit_business_id: unitBusiness.id,
             },
           },
         );
         console.log(
-          `[BLING_API_FETCH] average_cost inicializado: sku=${blingProduct.codigo} | custo=${newSupplierCost} | qty=${qty} | total_price=${qty * newSupplierCost}`,
+          `[BLING_API_FETCH] Kardex sincronizado: sku=${configSku} | movimentos_criados=${created} | average_cost=${average_cost}`,
+        );
+      } else {
+        console.log(
+          `[BLING_API_FETCH] Kardex já atualizado, nenhum movimento novo: sku=${configSku}`,
         );
       }
+    } catch (syncErr: any) {
+      console.warn(
+        `[BLING_API_FETCH] Falha ao sincronizar stock movements | sku=${configSku} | erro=${syncErr?.message}`,
+      );
+    }
+
+    if (averageCostResolved !== undefined) {
+      const physicalQuantity = await this.fetchPhysicalStock(blingProduct.id);
+
+      await this.syncStockAndBatches({
+        product,
+        unitBusiness,
+        newQuantity: physicalQuantity,
+        averageCost: averageCostResolved,
+      });
     }
 
     try {
