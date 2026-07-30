@@ -26,7 +26,7 @@ export class StockMovementService extends BaseService<
 
   /**
    * Calcula o novo estado (saldo, CMP, valor total) a partir do estado anterior
-   * e do tipo de movimento, conforme a especificação do Kardex.
+   * e do tipo de movimento, considerando o desconto manual imutável na entrada.
    */
   private calculateNextState(
     previous: {
@@ -35,7 +35,7 @@ export class StockMovementService extends BaseService<
     } | null,
     input: Pick<
       ReindexProductPayload,
-      "movement_type" | "movement_quantity" | "unit_cost_invoice"
+      "movement_type" | "movement_quantity" | "unit_cost_invoice" | "manual_discount_value"
     >,
   ): {
     balance_quantity: number;
@@ -53,13 +53,17 @@ export class StockMovementService extends BaseService<
       case "PURCHASE_ENTRY": {
         newQuantity = previousQuantity + input.movement_quantity;
 
+        // 💡 Abatimento do desconto manual por unidade no custo de entrada da nota
+        const manualDiscount = input.manual_discount_value ?? 0;
+        const rawUnitCost = input.unit_cost_invoice ?? 0;
+        const effectiveUnitCost = Math.max(0, rawUnitCost - manualDiscount);
+
         if (previousQuantity <= 0) {
-          newAverageCost = input.unit_cost_invoice ?? 0;
+          newAverageCost = effectiveUnitCost;
         } else {
-          const newEntryValue =
-            input.movement_quantity * (input.unit_cost_invoice ?? 0);
+          const newEntryValue = input.movement_quantity * effectiveUnitCost;
           const newTotalValue = previousTotalValue + newEntryValue;
-          newAverageCost = newTotalValue / newQuantity;
+          newAverageCost = newQuantity > 0 ? newTotalValue / newQuantity : 0;
         }
         break;
       }
@@ -88,8 +92,7 @@ export class StockMovementService extends BaseService<
   }
 
   /**
-   * Processamento em tempo real: busca o último movimento do produto,
-   * calcula o novo estado e grava a nova linha.
+   * Processamento em tempo real
    */
   async processMovement(
     input: ReindexProductPayload & { unit_business_id: string },
@@ -113,6 +116,7 @@ export class StockMovementService extends BaseService<
 
     const payload: StockMovementCreationAttributes = {
       ...input,
+      manual_discount_value: input.manual_discount_value ?? 0,
       ...nextState,
     };
 
@@ -120,8 +124,7 @@ export class StockMovementService extends BaseService<
   }
 
   /**
-   * Backfill / Re-indexação: recebe a lista de NFs (já ordenadas ASC) de um produto
-   * e reprocessa sequencialmente a partir do zero, substituindo o histórico.
+   * Backfill / Re-indexação: Preserva o `manual_discount_value` gravado previamente no banco.
    */
   async reindexProduct(
     productId: string,
@@ -133,6 +136,19 @@ export class StockMovementService extends BaseService<
       (a, b) => a.movement_date.getTime() - b.movement_date.getTime(),
     );
 
+    const existingMovements = await this.repository.findHistoryByProduct(
+      productId,
+      unitBusinessId,
+      transaction,
+    );
+
+    const discountMap = new Map<string, number>();
+    for (const m of existingMovements) {
+      if (m.manual_discount_value != null) {
+        discountMap.set(m.invoice_id, Number(m.manual_discount_value));
+      }
+    }
+
     let previousState: {
       balance_quantity: number;
       resulting_average_cost: number;
@@ -140,7 +156,18 @@ export class StockMovementService extends BaseService<
     const results: StockMovementCreationAttributes[] = [];
 
     for (const movement of sorted) {
-      const nextState = this.calculateNextState(previousState, movement);
+      // Prioriza o valor enviado no payload; se não houver, recupera o que já estava salvo no banco
+      const preservedDiscount =
+        movement.manual_discount_value ??
+        discountMap.get(movement.invoice_id) ??
+        0;
+
+      const movementWithDiscount = {
+        ...movement,
+        manual_discount_value: preservedDiscount,
+      };
+
+      const nextState = this.calculateNextState(previousState, movementWithDiscount);
 
       results.push({
         unit_business_id: unitBusinessId,
@@ -151,18 +178,14 @@ export class StockMovementService extends BaseService<
         movement_date: movement.movement_date,
         movement_quantity: movement.movement_quantity,
         unit_cost_invoice: movement.unit_cost_invoice,
+        manual_discount_value: preservedDiscount, // mantém valor imutável
         ...nextState,
       });
 
       previousState = nextState;
     }
 
-    const existing = await this.repository.findHistoryByProduct(
-      productId,
-      unitBusinessId,
-      transaction,
-    );
-    if (existing.length > 0) {
+    if (existingMovements.length > 0) {
       await this.repository.bulkDelete({
         where: { product_id: productId, unit_business_id: unitBusinessId },
         transaction,
@@ -173,16 +196,13 @@ export class StockMovementService extends BaseService<
   }
 
   /**
-   * Busca as NFs (entrada, saída, retorno) vinculadas a uma unit business E a um
-   * produto específico, classifica cada uma pelo tipo de movimento e retorna os
-   * itens já no formato pronto para alimentar o processamento do Kardex.
+   * Busca as NFs relevantes do Kardex
    */
   async findStockMovementSourceData(
     unitBusinessId: string,
     productId: string,
     transaction?: Transaction,
   ): Promise<ListSourceDataFromInvoices[]> {
-    // ─── 1. Identifica a unit business e seu CNPJ ─────────────────────────
     const unitBusiness = await UnitBusiness.findByPk(unitBusinessId, {
       transaction,
     });
@@ -193,7 +213,6 @@ export class StockMovementService extends BaseService<
 
     const unitBusinessCnpj = unitBusiness.cnpj;
 
-    // ─── 2. Busca APENAS os invoice items desse produto ────────────────────
     const invoiceItems = await invoiceItemsService.findAll({
       where: { product_id: productId },
       transaction,
@@ -205,7 +224,6 @@ export class StockMovementService extends BaseService<
       ...new Set(invoiceItems.map((item) => item.invoice_id)),
     ];
 
-    // ─── 3. Busca só as invoices envolvidas, com uba da unit business filtrada ───
     const invoices = await Invoice.findAll({
       where: { id: { [Op.in]: invoiceIds } },
       include: [
@@ -238,7 +256,6 @@ export class StockMovementService extends BaseService<
 
     const validInvoiceIds = validInvoices.map((inv) => inv.id);
 
-    // ─── 4. Busca os fiscal items só do produto + invoices válidas ─────────
     const fiscalItems = await InvoiceFiscalItem.findAll({
       where: {
         invoice_id: { [Op.in]: validInvoiceIds },
@@ -260,7 +277,6 @@ export class StockMovementService extends BaseService<
       invoiceItemsByInvoice.set(item.invoice_id, list);
     }
 
-    // ─── 5. Classifica cada invoice e monta o resultado ────────────────────
     const result: ListSourceDataFromInvoices[] = [];
 
     for (const invoice of validInvoices) {
@@ -329,13 +345,7 @@ export class StockMovementService extends BaseService<
   }
 
   /**
-   * Sincroniza o Kardex de UM produto: busca as NFs relevantes, identifica quais
-   * ainda não têm registro em stock_movements, cria só essas (encadeando a partir
-   * do último estado salvo) e retorna o CMP resultante ao final do processamento.
-   *
-   * Caso alguma NF pendente seja retroativa (anterior ao último movimento já
-   * gravado), delega para reindexProduct, que reprocessa o histórico inteiro
-   * na ordem cronológica correta.
+   * Sincroniza o Kardex e preserva os descontos manuais previamente inseridos no banco.
    */
   async syncProductStockMovements(
     productId: string,
@@ -390,10 +400,10 @@ export class StockMovementService extends BaseService<
       !!lastExisting &&
       sortedPending[0].movement_date.getTime() <
         new Date(lastExisting.movement_date).getTime();
+
     if (isRetroactive) {
       console.warn(
-        `[STOCK_MOVEMENT] Produto ${productId}: NF pendente com data anterior ao último movimento registrado. ` +
-          `Executando reindexProduct para reprocessar o histórico completo.`,
+        `[STOCK_MOVEMENT] Produto ${productId}: NF pendente com data anterior ao último movimento registrado. Executando reindexProduct.`,
       );
 
       const existingAsInput: ReindexProductPayload[] = existingMovements.map(
@@ -408,6 +418,10 @@ export class StockMovementService extends BaseService<
             m.unit_cost_invoice != null
               ? Number(m.unit_cost_invoice)
               : undefined,
+          manual_discount_value:
+            m.manual_discount_value != null
+              ? Number(m.manual_discount_value)
+              : 0,
         }),
       );
 
@@ -462,6 +476,7 @@ export class StockMovementService extends BaseService<
         movement_date: movement.movement_date,
         movement_quantity: movement.movement_quantity,
         unit_cost_invoice: movement.unit_cost_invoice,
+        manual_discount_value: movement.manual_discount_value ?? 0,
         ...nextState,
       });
 
@@ -478,9 +493,6 @@ export class StockMovementService extends BaseService<
     };
   }
 
-  /**
-   * Retorna o histórico completo (kardex) de um produto, para telas de auditoria.
-   */
   async getProductHistory(
     productId: string,
     unitBusinessId: string,
@@ -488,9 +500,6 @@ export class StockMovementService extends BaseService<
     return this.repository.findHistoryByProduct(productId, unitBusinessId);
   }
 
-  /**
-   * Retorna o saldo e CMP atuais de um produto (última linha do kardex).
-   */
   async getCurrentBalance(
     productId: string,
     unitBusinessId: string,

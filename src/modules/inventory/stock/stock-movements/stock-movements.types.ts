@@ -1,4 +1,7 @@
-export type StockMovementType = 'PURCHASE_ENTRY' | 'SALE_OUT' | 'CUSTOMER_RETURN';
+export type StockMovementType =
+  | "PURCHASE_ENTRY"
+  | "SALE_OUT"
+  | "CUSTOMER_RETURN";
 
 export interface StockMovementAttributes {
   id?: string;
@@ -18,32 +21,32 @@ export interface StockMovementAttributes {
   updatedAt?: Date;
 }
 
-export interface ListSourceDataFromInvoices
-  extends Pick<
-    StockMovementAttributes,
-    | 'product_id'
-    | 'movement_quantity'
-    | 'movement_date'
-    | 'invoice_id'
-    | 'invoice_number'
-  > {
-
+export interface ListSourceDataFromInvoices extends Pick<
+  StockMovementAttributes,
+  | "product_id"
+  | "movement_quantity"
+  | "movement_date"
+  | "invoice_id"
+  | "invoice_number"
+  | "manual_discount_value"
+> {
   movement_type: StockMovementType;
   unit_cost_invoice: number;
 }
 
-export interface ReindexProductPayload
-  extends Pick<
-    StockMovementAttributes,
-    | 'product_id'
-    | 'movement_type'
-    | 'movement_quantity'
-    | 'unit_cost_invoice'
-    | 'movement_date'
-    | 'invoice_id'
-    | 'invoice_number'
-  > {}
+export interface ReindexProductPayload extends Pick<
+  StockMovementAttributes,
+  | "product_id"
+  | "movement_type"
+  | "movement_quantity"
+  | "unit_cost_invoice"
+  | "movement_date"
+  | "invoice_id"
+  | "invoice_number"
+  | "manual_discount_value"
+> {}
 
-
-export interface StockMovementCreationAttributes
-  extends Omit<StockMovementAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+export interface StockMovementCreationAttributes extends Omit<
+  StockMovementAttributes,
+  "id" | "createdAt" | "updatedAt"
+> {}
