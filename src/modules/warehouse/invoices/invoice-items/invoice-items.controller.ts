@@ -19,7 +19,8 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
         return "Esse produto já está vinculado a esta nota.";
       }
 
-      if (constraint === "product_supplier_maps_product_id_supplier_cnpj_unique") {
+      if (constraint === "product_supplier_maps_product_id_supplier_product_code_unique") {
+
         return "Esse produto já possui mapeamento para este fornecedor.";
       }
 

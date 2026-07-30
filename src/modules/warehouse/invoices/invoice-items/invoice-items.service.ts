@@ -134,7 +134,7 @@ export class InvoiceItemsService extends BaseService<
           cbs_value: 0,
         },
         {
-          conflictFields: ["invoice_id", "item_number"] as any,
+          conflictFields: ["invoice_id", "product_id"] as any,
           transaction: t,
         },
       );
@@ -252,25 +252,40 @@ export class InvoiceItemsService extends BaseService<
         );
       }
 
-      // ─── 4. Cria SupplierMapping se for nota de entrada ───────────────────
+      // ─── 4. Cria ou reaproveita o SupplierMapping se for nota de entrada ──
+
       if (incomingAttr) {
         const supplierProductCode =
           newEan ?? unMappedProduct.ean ?? unMappedProduct.sku;
 
         if (supplierProductCode) {
-          const spMap = await supplierMappingService.create(
-            {
+          const existingSupplierMapping = await supplierMappingService.findOne({
+            where: {
               product_id: invoiceItemDto.product_id,
-              supplier_cnpj: invoice.sender_cnpj,
               supplier_product_code: supplierProductCode,
             },
-            { transaction: t },
-          );
+            transaction: t,
+          });
 
-          console.log(
-            `[INVOICE_ITEMS] SupplierMapping criado: product_id=${invoiceItemDto.product_id}, cnpj=${invoice.sender_cnpj}`,
-          );
-          console.log(spMap);
+          if (existingSupplierMapping) {
+            console.log(
+              `[INVOICE_ITEMS] SupplierMapping já existente reaproveitado: product_id=${invoiceItemDto.product_id}, code=${supplierProductCode}`,
+            );
+          } else {
+            const spMap = await supplierMappingService.create(
+              {
+                product_id: invoiceItemDto.product_id,
+                supplier_cnpj: invoice.sender_cnpj,
+                supplier_product_code: supplierProductCode,
+              },
+              { transaction: t },
+            );
+
+            console.log(
+              `[INVOICE_ITEMS] SupplierMapping criado: product_id=${invoiceItemDto.product_id}, cnpj=${invoice.sender_cnpj}, code=${supplierProductCode}`,
+            );
+            console.log(spMap);
+          }
         }
       }
 
