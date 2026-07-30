@@ -852,22 +852,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       // ─── Impostos por item ──────────────────────────────────────────────────
 
       // ICMS — pode estar em vários grupos: ICMS00, ICMS10, ICMS20... pegamos o primeiro
-      const icmsGroup: any =
-        imposto?.ICMS?.ICMS00 ??
-        imposto?.ICMS?.ICMS10 ??
-        imposto?.ICMS?.ICMS20 ??
-        imposto?.ICMS?.ICMS40 ??
-        imposto?.ICMS?.ICMS51 ??
-        imposto?.ICMS?.ICMS60 ??
-        imposto?.ICMS?.ICMS70 ??
-        imposto?.ICMS?.ICMS90 ??
-        imposto?.ICMS?.ICMSSN101 ??
-        imposto?.ICMS?.ICMSSN102 ??
-        imposto?.ICMS?.ICMSSN201 ??
-        imposto?.ICMS?.ICMSSN202 ??
-        imposto?.ICMS?.ICMSSN500 ??
-        imposto?.ICMS?.ICMSSN900 ??
-        {};
+      const icmsGroup: any = imposto.ICMS ? Object.values(imposto.ICMS)[0] : {};
 
       const icmsRate = Number(icmsGroup?.pICMS ?? 0);
       const icmsValue = Number(icmsGroup?.vICMS ?? 0);
@@ -1397,6 +1382,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const invoiceType: "INCOMING" | "OUTGOING" =
       nf.tipo === 0 ? "INCOMING" : "OUTGOING";
 
+    // ─── Helper de Parse Numérico Seguro ─────────────────────────────────────
+    const parseNum = (val: any): number => {
+      if (val === null || val === undefined) return 0;
+      if (typeof val === "number") return val;
+      const parsed = parseFloat(String(val).replace(",", "."));
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
     // ─── XML ──────────────────────────────────────────────────────────────────
 
     let xmlContent: string | null = null;
@@ -1530,18 +1523,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // ─── Totais fiscais ───────────────────────────────────────────────────────
 
-    const invoiceValue =
-      fiscalTotals?.invoiceValue ?? Number(nf.valorNota ?? 0);
+    const invoiceValue = fiscalTotals?.invoiceValue ?? parseNum(nf.valorNota);
     const invoiceFreightValue =
-      fiscalTotals?.invoiceFreightValue ?? Number(nf.valorFrete ?? 0);
+      fiscalTotals?.invoiceFreightValue ?? parseNum(nf.valorFrete);
     const invoiceProductsValue =
-      fiscalTotals?.invoiceProductsValue ?? Number(nf.totalProdutos ?? 0);
+      fiscalTotals?.invoiceProductsValue ?? parseNum(nf.totalProdutos);
     const invoiceDiscountValue = fiscalTotals?.invoiceDiscountValue ?? 0;
     const invoiceTotalTaxValue = fiscalTotals?.invoiceTotalTaxValue ?? 0;
     const icmsValue =
-      fiscalTotals?.icmsValue ?? Number(nf.tributacao?.totalICMS ?? 0);
+      fiscalTotals?.icmsValue ?? parseNum(nf.tributacao?.totalICMS);
     const ipiValue =
-      fiscalTotals?.ipiValue ?? Number(nf.tributacao?.totalIPI ?? 0);
+      fiscalTotals?.ipiValue ?? parseNum(nf.tributacao?.totalIPI);
     const pisValue = fiscalTotals?.pisValue ?? 0;
     const cofinsValue = fiscalTotals?.cofinsValue ?? 0;
     const difalValue = fiscalTotals?.difalValue ?? 0;
@@ -1610,8 +1602,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     };
 
     // ─── Monta ItemWithFiscal[] antes do create ───────────────────────────────
-    // Usa nf.itens para invoice items operacionais e xmlDet para fiscal items.
-    // Unmapped só é registrado depois que invoice.id existir.
 
     const invoiceItemsForCreate: ItemWithFiscal[] = [];
     const unmappedItems: Array<{
@@ -1623,7 +1613,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }> = [];
 
     if (nf.itens?.length && !existingInvoice) {
-      // Monta mapa de fiscal data por sku/gtin a partir do xmlDet
       const fiscalByItemNumber = new Map<number, any>();
       for (let idx = 0; idx < xmlDet.length; idx++) {
         fiscalByItemNumber.set(idx, xmlDet[idx]);
@@ -1633,7 +1622,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         const item = nf.itens[idx];
         const sku = item.codigo?.trim() ?? null;
         const ean = item.gtin ? String(item.gtin).trim() : null;
-        const qty = item.quantidade ?? 0;
+        const qty = parseNum(item.quantidade);
 
         const product = await this.findProductForInvoiceItem({
           sku,
@@ -1670,22 +1659,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           const prod = xmlItem.prod ?? {};
           const imposto = xmlItem.imposto ?? {};
 
-          const icmsGroup: any =
-            imposto?.ICMS?.ICMS00 ??
-            imposto?.ICMS?.ICMS10 ??
-            imposto?.ICMS?.ICMS20 ??
-            imposto?.ICMS?.ICMS40 ??
-            imposto?.ICMS?.ICMS51 ??
-            imposto?.ICMS?.ICMS60 ??
-            imposto?.ICMS?.ICMS70 ??
-            imposto?.ICMS?.ICMS90 ??
-            imposto?.ICMS?.ICMSSN101 ??
-            imposto?.ICMS?.ICMSSN102 ??
-            imposto?.ICMS?.ICMSSN201 ??
-            imposto?.ICMS?.ICMSSN202 ??
-            imposto?.ICMS?.ICMSSN500 ??
-            imposto?.ICMS?.ICMSSN900 ??
-            {};
+          // Captura dinâmica do grupo ICMS
+          const icmsGroup: any = imposto?.ICMS
+            ? Object.values(imposto.ICMS)[0]
+            : {};
 
           const ipiGroup: any =
             imposto?.IPI?.IPITrib ?? imposto?.IPI?.IPINT ?? {};
@@ -1703,16 +1680,16 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             {};
           const ibsCbsGroup: any = imposto?.IBSCBS?.gIBSCBS ?? {};
 
-          // ─── NOVO: valores de custo de aquisição por item ─────────────────────
-          const vProd = Number(prod.vProd ?? 0);
-          const vIPI = Number(ipiGroup?.vIPI ?? 0);
-          const freightValue = Number(prod.vFrete ?? 0);
-          const insuranceValue = Number(prod.vSeg ?? 0);
-          const otherExpensesValue = Number(prod.vOutro ?? 0);
-          const discountValue = Number(prod.vDesc ?? 0);
-          const icmsStValue = Number(icmsGroup?.vICMSST ?? 0);
+          // ─── Valores de Custo de Aquisição por Item ─────────────────────
+          const vProd = parseNum(prod.vProd);
+          const vIPI = parseNum(ipiGroup?.vIPI);
+          const freightValue = parseNum(prod.vFrete);
+          const insuranceValue = parseNum(prod.vSeg);
+          const otherExpensesValue = parseNum(prod.vOutro);
+          const discountValue = parseNum(prod.vDesc);
+          const icmsStValue = parseNum(icmsGroup?.vICMSST);
 
-          const itemQty = Number(prod.qCom ?? qty) || 0;
+          const itemQty = parseNum(prod.qCom) || qty || 1;
           const acquisitionTotal =
             vProd +
             freightValue +
@@ -1721,9 +1698,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             vIPI +
             icmsStValue -
             discountValue;
+
           const acquisitionUnitCost =
             itemQty > 0 ? acquisitionTotal / itemQty : 0;
-          // ────────────────────────────────────────────────────────────────────
+          // ──────────────────────────────────────────────────────────────────
 
           fiscal = {
             product_id: product.id,
@@ -1731,27 +1709,26 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             sku,
             description: String(prod.xProd ?? "").slice(0, 255) || null,
             quantity: itemQty,
-            unit_price: Number(prod.vUnCom ?? item.valor ?? 0),
+            unit_price: parseNum(prod.vUnCom) || parseNum(item.valor),
             total_value: vProd,
             ncm: prod.NCM ? String(prod.NCM) : null,
             cest: prod.CEST ? String(prod.CEST) : null,
             cfop: prod.CFOP ? String(prod.CFOP) : null,
             gtin: ean,
-            approx_tax_value: Number(imposto?.vTotTrib ?? 0),
-            icms_rate: Number(icmsGroup?.pICMS ?? 0),
-            icms_value: Number(icmsGroup?.vICMS ?? 0),
+            approx_tax_value: parseNum(imposto?.vTotTrib),
+            icms_rate: parseNum(icmsGroup?.pICMS),
+            icms_value: parseNum(icmsGroup?.vICMS),
             ipi_value: vIPI,
-            pis_value: Number(pisGroup?.vPIS ?? 0),
-            cofins_value: Number(cofinsGroup?.vCOFINS ?? 0),
-            difal_value: Number(
+            pis_value: parseNum(pisGroup?.vPIS),
+            cofins_value: parseNum(cofinsGroup?.vCOFINS),
+            difal_value: parseNum(
               imposto?.ICMSUFDest?.vICMSUFDest ??
-                imposto?.ICMSUFDest?.vICMSDest ??
-                0,
+                imposto?.ICMSUFDest?.vICMSDest,
             ),
             ibs_value:
-              Number(ibsCbsGroup?.gIBSUF?.vIBSUF ?? 0) +
-              Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0),
-            cbs_value: Number(ibsCbsGroup?.gCBS?.vCBS ?? 0),
+              parseNum(ibsCbsGroup?.gIBSUF?.vIBSUF) +
+              parseNum(ibsCbsGroup?.gIBSMun?.vIBSMun),
+            cbs_value: parseNum(ibsCbsGroup?.gCBS?.vCBS),
             freight_value: freightValue,
             insurance_value: insuranceValue,
             other_expenses_value: otherExpensesValue,
@@ -1816,9 +1793,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Unmapped products (requer invoice.id) ────────────────────────────────
 
     for (const u of unmappedItems) {
-      const quantity = Math.trunc(
-        Number.isFinite(Number(u.qty)) ? Number(u.qty) : 0,
-      );
+      const quantity = Math.trunc(parseNum(u.qty));
 
       const existing = await UnmappedInvoiceProduct.findOne({
         where: {
