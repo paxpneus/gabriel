@@ -569,7 +569,7 @@ describe("StockMovementService", () => {
 
       expect(result).toEqual([]);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("PURCHASE_ENTRY sem unit_price"),
+        expect.stringContaining("PURCHASE_ENTRY sem custo definido"),
       );
 
       warnSpy.mockRestore();
