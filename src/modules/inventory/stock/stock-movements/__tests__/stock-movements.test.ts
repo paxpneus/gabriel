@@ -1,5 +1,4 @@
-import { StockMovementService } from './../stock-movements.service';
-
+import { StockMovementService } from "./../stock-movements.service";
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
 
@@ -103,7 +102,9 @@ describe("StockMovementService", () => {
     (service as any).repository = {
       findLastMovement: jest.fn(),
       findHistoryByProduct: jest.fn().mockResolvedValue([]),
-      bulkCreate: jest.fn().mockImplementation((rows: any[]) => Promise.resolve(rows)),
+      bulkCreate: jest
+        .fn()
+        .mockImplementation((rows: any[]) => Promise.resolve(rows)),
       bulkDelete: jest.fn().mockResolvedValue(0),
       create: jest.fn(),
     };
@@ -255,7 +256,11 @@ describe("StockMovementService", () => {
     ];
 
     it("ordena os movimentos por data antes de processar, independente da ordem de entrada", async () => {
-      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, movements as any);
+      await service.reindexProduct(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        movements as any,
+      );
 
       const created = (service as any).repository.bulkCreate.mock.calls[0][0];
 
@@ -264,7 +269,11 @@ describe("StockMovementService", () => {
     });
 
     it("calcula o estado encadeado corretamente (entrada seguida de saída)", async () => {
-      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, movements as any);
+      await service.reindexProduct(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        movements as any,
+      );
 
       const created = (service as any).repository.bulkCreate.mock.calls[0][0];
 
@@ -283,7 +292,11 @@ describe("StockMovementService", () => {
         { id: "old-1" },
       ]);
 
-      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, movements as any);
+      await service.reindexProduct(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        movements as any,
+      );
 
       expect((service as any).repository.bulkDelete).toHaveBeenCalledWith({
         where: { product_id: PRODUCT_ID, unit_business_id: UNIT_BUSINESS_ID },
@@ -293,7 +306,11 @@ describe("StockMovementService", () => {
     it("NÃO chama bulkDelete quando não há histórico existente", async () => {
       (service as any).repository.findHistoryByProduct.mockResolvedValue([]);
 
-      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, movements as any);
+      await service.reindexProduct(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        movements as any,
+      );
 
       expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
     });
@@ -309,6 +326,74 @@ describe("StockMovementService", () => {
       );
 
       expect(result).toEqual(fakeCreated);
+    });
+
+    it("no caso retroativo, inclui TODOS os movimentos existentes (não só o mais recente) junto com os pendentes", async () => {
+      const existingMovements = [
+        {
+          invoice_id: "inv-1",
+          invoice_number: "1",
+          movement_type: "PURCHASE_ENTRY",
+          movement_date: new Date("2026-01-01"),
+          movement_quantity: 10,
+          unit_cost_invoice: 10,
+          balance_quantity: 10,
+          resulting_average_cost: 10,
+        },
+        {
+          invoice_id: "inv-2",
+          invoice_number: "2",
+          movement_type: "SALE_OUT",
+          movement_date: new Date("2026-02-01"),
+          movement_quantity: 3,
+          unit_cost_invoice: null,
+          balance_quantity: 7,
+          resulting_average_cost: 10,
+        },
+        {
+          invoice_id: "inv-3",
+          invoice_number: "3",
+          movement_type: "CUSTOMER_RETURN",
+          movement_date: new Date("2026-03-01"),
+          movement_quantity: 2,
+          unit_cost_invoice: null,
+          balance_quantity: 9,
+          resulting_average_cost: 10,
+        },
+      ];
+
+      jest.spyOn(service, "findStockMovementSourceData").mockResolvedValue([
+        {
+          product_id: PRODUCT_ID,
+          invoice_id: "inv-0", // retroativa: anterior a TODOS os existentes
+          invoice_number: "0",
+          movement_type: "PURCHASE_ENTRY",
+          movement_date: new Date("2025-12-01"),
+          movement_quantity: 5,
+          unit_cost_invoice: 8,
+        },
+      ]);
+      (service as any).repository.findHistoryByProduct.mockResolvedValue(
+        existingMovements,
+      );
+
+      const reindexSpy = jest
+        .spyOn(service, "reindexProduct")
+        .mockResolvedValue([{ resulting_average_cost: 9 }] as any);
+
+      jest.spyOn(console, "warn").mockImplementation(() => {});
+
+      await service.syncProductStockMovements(PRODUCT_ID, UNIT_BUSINESS_ID);
+
+      const allMovementsPassed = reindexSpy.mock.calls[0][2];
+
+      expect(allMovementsPassed).toHaveLength(4);
+      expect(allMovementsPassed.map((m: any) => m.invoice_id).sort()).toEqual([
+        "inv-0",
+        "inv-1",
+        "inv-2",
+        "inv-3",
+      ]);
     });
   });
 
@@ -580,15 +665,16 @@ describe("StockMovementService", () => {
       );
 
       expect(reindexSpy).not.toHaveBeenCalled();
-      expect((service as any).repository.bulkCreate).toHaveBeenCalledWith([
-        expect.objectContaining({
-          invoice_id: "inv-2",
-          balance_quantity: 7,
-          resulting_average_cost: 10,
-        }),
-      ],
-    { transaction: undefined },
-    );
+      expect((service as any).repository.bulkCreate).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            invoice_id: "inv-2",
+            balance_quantity: 7,
+            resulting_average_cost: 10,
+          }),
+        ],
+        { transaction: undefined },
+      );
       expect(result).toEqual({ average_cost: 10, created: 1 });
     });
 
