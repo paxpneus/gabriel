@@ -586,7 +586,9 @@ describe("StockMovementService", () => {
           balance_quantity: 7,
           resulting_average_cost: 10,
         }),
-      ]);
+      ],
+    { transaction: undefined },
+    );
       expect(result).toEqual({ average_cost: 10, created: 1 });
     });
 
@@ -639,6 +641,7 @@ describe("StockMovementService", () => {
           expect.objectContaining({ invoice_id: "inv-2" }),
           expect.objectContaining({ invoice_id: "inv-1" }),
         ]),
+        undefined,
       );
       expect(result).toEqual({ average_cost: 12, created: 1 });
 
