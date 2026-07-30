@@ -163,12 +163,13 @@ export class StockMovementService extends BaseService<
       transaction,
     );
     if (existing.length > 0) {
-      await this.repository.bulkDelete(
-        { where: { product_id: productId, unit_business_id: unitBusinessId }, transaction },
-      );
+      await this.repository.bulkDelete({
+        where: { product_id: productId, unit_business_id: unitBusinessId },
+        transaction,
+      });
     }
 
-    return this.repository.bulkCreate(results as any, {transaction});
+    return this.repository.bulkCreate(results as any, { transaction });
   }
 
   /**
@@ -284,18 +285,33 @@ export class StockMovementService extends BaseService<
 
       for (const item of items) {
         const fiscalItem = fiscalItemsMap.get(invoice.id);
+        const hasAcquisitionCost =
+          fiscalItem?.acquisition_unit_cost !== null &&
+          fiscalItem?.acquisition_unit_cost !== undefined;
+
         const hasUnitPrice =
           fiscalItem?.unit_price !== null &&
           fiscalItem?.unit_price !== undefined;
 
-        if (movementType === "PURCHASE_ENTRY" && !hasUnitPrice) {
+        if (
+          movementType === "PURCHASE_ENTRY" &&
+          !hasAcquisitionCost &&
+          !hasUnitPrice
+        ) {
           console.warn(
-            `[STOCK_MOVEMENT] Item ignorado (invoice=${invoice.id}, product=${productId}): PURCHASE_ENTRY sem unit_price.`,
+            `[STOCK_MOVEMENT] Item ignorado (invoice=${invoice.id}, product=${productId}): PURCHASE_ENTRY sem custo definido.`,
           );
           continue;
         }
 
-        const unitCost = hasUnitPrice ? Number(fiscalItem!.unit_price) : 0;
+        let unitCost = 0;
+
+        if (fiscalItem) {
+          unitCost =
+            Number(fiscalItem.acquisition_unit_cost) ||
+            Number(fiscalItem.unit_price) ||
+            0;
+        }
 
         result.push({
           product_id: item.product_id,
@@ -372,7 +388,7 @@ export class StockMovementService extends BaseService<
 
     const isRetroactive =
       !!lastExisting &&
-      sortedPending[0].movement_date.getTime() < 
+      sortedPending[0].movement_date.getTime() <
         new Date(lastExisting.movement_date).getTime();
     if (isRetroactive) {
       console.warn(
@@ -452,10 +468,9 @@ export class StockMovementService extends BaseService<
       previousState = nextState;
     }
 
-    const created = await this.repository.bulkCreate(
-      toCreate as any,
-      {transaction}
-    );
+    const created = await this.repository.bulkCreate(toCreate as any, {
+      transaction,
+    });
 
     return {
       average_cost: previousState!.resulting_average_cost,

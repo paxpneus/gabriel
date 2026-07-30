@@ -23,6 +23,7 @@ class StockMovement
   public balance_quantity!: number;
   public resulting_average_cost!: number;
   public total_stock_value!: number;
+  public manual_discount_value?: number;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -90,6 +91,11 @@ StockMovement.init(
     total_stock_value: {
       type: DataTypes.DECIMAL(12, 4),
       allowNull: false,
+    },
+    manual_discount_value: {
+      type: DataTypes.DECIMAL(12, 4),
+      allowNull: true,
+      defaultValue: 0,
     },
   },
   {

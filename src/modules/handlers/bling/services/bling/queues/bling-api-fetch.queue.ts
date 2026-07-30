@@ -993,7 +993,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   ): Promise<void> {
     const { data } = await blingGet<{ data: BlingApiProduct }>(
       `/produtos/${apiFetch.blingId}`,
-      blingApi
+      blingApi,
     );
 
     const blingProduct = data.data;
@@ -1267,7 +1267,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     apiFetch: ApiFetchRequest,
   ): Promise<void> {
     const { data } = await blingGet<{ data: BlingApiProductSupplier }>(
-      `/produtos/fornecedores/${apiFetch.blingId}`, blingApi
+      `/produtos/fornecedores/${apiFetch.blingId}`,
+      blingApi,
     );
 
     const ps = data.data;
@@ -1702,14 +1703,36 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             {};
           const ibsCbsGroup: any = imposto?.IBSCBS?.gIBSCBS ?? {};
 
+          // ─── NOVO: valores de custo de aquisição por item ─────────────────────
+          const vProd = Number(prod.vProd ?? 0);
+          const vIPI = Number(ipiGroup?.vIPI ?? 0);
+          const freightValue = Number(prod.vFrete ?? 0);
+          const insuranceValue = Number(prod.vSeg ?? 0);
+          const otherExpensesValue = Number(prod.vOutro ?? 0);
+          const discountValue = Number(prod.vDesc ?? 0);
+          const icmsStValue = Number(icmsGroup?.vICMSST ?? 0);
+
+          const itemQty = Number(prod.qCom ?? qty) || 0;
+          const acquisitionTotal =
+            vProd +
+            freightValue +
+            insuranceValue +
+            otherExpensesValue +
+            vIPI +
+            icmsStValue -
+            discountValue;
+          const acquisitionUnitCost =
+            itemQty > 0 ? acquisitionTotal / itemQty : 0;
+          // ────────────────────────────────────────────────────────────────────
+
           fiscal = {
             product_id: product.id,
             item_number: idx + 1,
             sku,
             description: String(prod.xProd ?? "").slice(0, 255) || null,
-            quantity: Number(prod.qCom ?? qty),
+            quantity: itemQty,
             unit_price: Number(prod.vUnCom ?? item.valor ?? 0),
-            total_value: Number(prod.vProd ?? 0),
+            total_value: vProd,
             ncm: prod.NCM ? String(prod.NCM) : null,
             cest: prod.CEST ? String(prod.CEST) : null,
             cfop: prod.CFOP ? String(prod.CFOP) : null,
@@ -1717,7 +1740,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             approx_tax_value: Number(imposto?.vTotTrib ?? 0),
             icms_rate: Number(icmsGroup?.pICMS ?? 0),
             icms_value: Number(icmsGroup?.vICMS ?? 0),
-            ipi_value: Number(ipiGroup?.vIPI ?? 0),
+            ipi_value: vIPI,
             pis_value: Number(pisGroup?.vPIS ?? 0),
             cofins_value: Number(cofinsGroup?.vCOFINS ?? 0),
             difal_value: Number(
@@ -1729,6 +1752,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
               Number(ibsCbsGroup?.gIBSUF?.vIBSUF ?? 0) +
               Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0),
             cbs_value: Number(ibsCbsGroup?.gCBS?.vCBS ?? 0),
+            freight_value: freightValue,
+            insurance_value: insuranceValue,
+            other_expenses_value: otherExpensesValue,
+            discount_value: discountValue,
+            icms_st_value: icmsStValue,
+            acquisition_unit_cost: acquisitionUnitCost,
           };
         }
 

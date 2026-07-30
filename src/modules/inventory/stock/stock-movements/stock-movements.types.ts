@@ -13,6 +13,7 @@ export interface StockMovementAttributes {
   balance_quantity: number;
   resulting_average_cost: number;
   total_stock_value: number;
+  manual_discount_value?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
