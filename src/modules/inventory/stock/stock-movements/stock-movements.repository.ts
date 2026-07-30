@@ -1,6 +1,6 @@
-import { Op } from 'sequelize';
-import BaseRepository from '../../../../shared/utils/base-models/base-repository';
-import StockMovement from './stock-movements.model';
+import { Op, Transaction } from "sequelize";
+import BaseRepository from "../../../../shared/utils/base-models/base-repository";
+import StockMovement from "./stock-movements.model";
 
 export class StockMovementRepository extends BaseRepository<StockMovement> {
   constructor() {
@@ -14,10 +14,15 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
   async findLastMovement(
     productId: string,
     unitBusinessId: string,
+    transaction?: Transaction,
   ): Promise<StockMovement | null> {
     return this.model.findOne({
       where: { product_id: productId, unit_business_id: unitBusinessId },
-      order: [['movement_date', 'DESC'], ['created_at', 'DESC']],
+      order: [
+        ["movement_date", "DESC"],
+        ["created_at", "DESC"],
+      ],
+      transaction,
     });
   }
 
@@ -36,7 +41,10 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
         unit_business_id: unitBusinessId,
         movement_date: { [Op.lt]: date },
       },
-      order: [['movement_date', 'DESC'], ['created_at', 'DESC']],
+      order: [
+        ["movement_date", "DESC"],
+        ["created_at", "DESC"],
+      ],
     });
   }
 
@@ -55,7 +63,10 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
         unit_business_id: unitBusinessId,
         movement_date: { [Op.gte]: date },
       },
-      order: [['movement_date', 'ASC'], ['created_at', 'ASC']],
+      order: [
+        ["movement_date", "ASC"],
+        ["created_at", "ASC"],
+      ],
     });
   }
 
@@ -63,7 +74,10 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
    * Remove todos os movimentos de um produto vinculados a uma invoice específica.
    * Usado quando uma NF é cancelada/editada, antes de reprocessar.
    */
-  async deleteByInvoiceAndProduct(invoiceId: string, productId: string): Promise<number> {
+  async deleteByInvoiceAndProduct(
+    invoiceId: string,
+    productId: string,
+  ): Promise<number> {
     return this.bulkDelete({
       where: { invoice_id: invoiceId, product_id: productId },
     });
@@ -76,10 +90,15 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
   async findHistoryByProduct(
     productId: string,
     unitBusinessId: string,
+    transaction?: Transaction,
   ): Promise<StockMovement[]> {
     return this.model.findAll({
       where: { product_id: productId, unit_business_id: unitBusinessId },
-      order: [['movement_date', 'ASC'], ['created_at', 'ASC']],
+      order: [
+        ["movement_date", "ASC"],
+        ["created_at", "ASC"],
+      ],
+      transaction
     });
   }
 }

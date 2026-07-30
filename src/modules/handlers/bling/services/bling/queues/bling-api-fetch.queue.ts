@@ -30,7 +30,7 @@ import { cleanDocument } from "../../../../../../shared/utils/normalizers/docume
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
 import Contact from "../../../../../sales/contacts/contacts.model";
-import { Op } from "sequelize";
+import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import InvoiceFiscalItem from "../../../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import {
@@ -58,6 +58,8 @@ import { getMagentoIntegration } from "../../../../magentoV2/api/magentoV2_api";
 import stockMovementsService from "../../../../../inventory/stock/stock-movements/stock-movements.service";
 import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
+import sequelize from "../../../../../../config/sequelize";
+import { blingGet } from "../helpers/get-with-sleep";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -441,9 +443,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     params.append("idsProdutos[]", String(blingId));
     params.append("filtroSaldoEstoque", "1");
 
-    const { data } = await this.api.get<{
+    const { data } = await blingGet<{
       data: Array<{ produto: { id: number }; saldoFisicoTotal: number }>;
-    }>(`/estoques/saldos?${params.toString()}`);
+    }>(`/estoques/saldos?${params.toString()}`, blingApi);
 
     const saldo = data?.data?.find((s) => s.produto.id === blingId);
     return Number(saldo?.saldoFisicoTotal ?? 0);
@@ -454,8 +456,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     unitBusiness: UnitBusiness;
     newQuantity: number;
     averageCost: number;
+    transaction: Transaction;
   }): Promise<void> {
-    const { product, unitBusiness, newQuantity, averageCost } = params;
+    const { product, unitBusiness, newQuantity, averageCost, transaction } =
+      params;
     const logPrefix = `[BLING_API_FETCH] syncStockAndBatches product=${product.id}`;
 
     if (newQuantity < 0) {
@@ -478,11 +482,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         unit_business_id: unitBusiness.id,
         total_price: newTotalPrice,
       },
-      { conflictFields: ["product_id", "unit_business_id"] },
+      { conflictFields: ["product_id", "unit_business_id"], transaction },
     );
 
     const savedStock = await Stock.findOne({
       where: { product_id: product.id, unit_business_id: unitBusiness.id },
+      transaction,
     });
 
     if (savedStock && Number(savedStock.quantity) < 0) {
@@ -500,7 +505,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       `${logPrefix} Stock upsertado: ean=${product.ean} | qty=${newQuantity} | avg_cost=${averageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
     );
 
-    // ─── Sincroniza InventoryBatches ────────────────────────────────────────
     const affectedBatches = await InventoryBatch.findAll({
       where: {
         mode: "CYCLIC",
@@ -514,20 +518,28 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           required: true,
         },
       ],
+      transaction,
     });
 
     for (const batch of affectedBatches) {
       await InventoryBatchItems.update(
         { quantity_stock: newQuantity },
-        { where: { inventory_batch_id: batch.id, product_id: product.id } },
+        {
+          where: { inventory_batch_id: batch.id, product_id: product.id },
+          transaction,
+        },
       );
 
       const newTotalQuantityStock =
         (await InventoryBatchItems.sum("quantity_stock", {
           where: { inventory_batch_id: batch.id },
+          transaction,
         })) ?? 0;
 
-      await batch.update({ total_quantity_stock: newTotalQuantityStock });
+      await batch.update(
+        { total_quantity_stock: newTotalQuantityStock },
+        { transaction },
+      );
 
       console.log(
         `${logPrefix} InventoryBatch ${batch.id} atualizado | total_quantity_stock=${newTotalQuantityStock}`,
@@ -565,6 +577,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     magentoProduct: any | null;
     magentoIntegration: { id: string };
     logPrefix: string;
+    transaction: Transaction;
   }): Promise<void> {
     const {
       product,
@@ -574,6 +587,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       magentoProduct,
       magentoIntegration,
       logPrefix,
+      transaction,
     } = params;
 
     if (!sku) {
@@ -587,23 +601,24 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       const normalizedEan = ean && ean.trim() !== "" ? ean : null;
 
       const existingUnmapped = await UnmappedInvoiceProduct.findOne({
-        where: {
-          invoice_id: null,
-          sku,
-        },
+        where: { invoice_id: null, sku },
+        transaction,
       });
 
       if (!existingUnmapped) {
-        await UnmappedInvoiceProduct.create({
-          invoice_id: null,
-          integrations_id: magentoIntegration.id,
-          sku,
-          ean: normalizedEan,
-          product_name: productName,
-          quantity: 0,
-          reason: "Produto não encontrado no Magento",
-          status: "UNMAPPED",
-        });
+        await UnmappedInvoiceProduct.create(
+          {
+            invoice_id: null,
+            integrations_id: magentoIntegration.id,
+            sku,
+            ean: normalizedEan,
+            product_name: productName,
+            quantity: 0,
+            reason: "Produto não encontrado no Magento",
+            status: "UNMAPPED",
+          },
+          { transaction },
+        );
         console.warn(
           `${logPrefix} Produto não encontrado no Magento — unmapped registrado | sku=${sku}`,
         );
@@ -616,12 +631,15 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       return;
     }
 
-    await integrationMappingService.createOrUpdateIntegrationMapping({
-      entity_type: "PRODUCT",
-      internal_id: product.id,
-      external_id: String(magentoProduct.sku ?? sku),
-      integrations_id: magentoIntegration.id,
-    });
+    await integrationMappingService.createOrUpdateIntegrationMapping(
+      {
+        entity_type: "PRODUCT",
+        internal_id: product.id,
+        external_id: String(magentoProduct.sku ?? sku),
+        integrations_id: magentoIntegration.id,
+      },
+      transaction,
+    );
 
     console.log(
       `${logPrefix} Produto mapeado no Magento | sku=${sku} | magento_sku=${magentoProduct.sku ?? sku}`,
@@ -973,8 +991,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   private async fetchAndUpsertProduct(
     apiFetch: ApiFetchRequest,
   ): Promise<void> {
-    const { data } = await this.api.get<{ data: BlingApiProduct }>(
+    const { data } = await blingGet<{ data: BlingApiProduct }>(
       `/produtos/${apiFetch.blingId}`,
+      blingApi
     );
 
     const blingProduct = data.data;
@@ -1070,6 +1089,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       );
     }
 
+    // ─── Chamadas externas (Magento/Bling) — sempre FORA da transaction ────────
     const magentoProduct = await this.fetchMagentoProduct(
       magentoLookupSku,
       logPrefix,
@@ -1079,148 +1099,151 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         ? Number(magentoProduct.price)
         : Number(blingProduct.preco);
 
+    const physicalQuantity = await this.fetchPhysicalStock(blingProduct.id);
+
+    // ─── A partir daqui, tudo é escrita em banco → uma única transaction ───────
     let product: Product;
+    let averageCostResolved: number | undefined;
 
     try {
-      [product] = await Product.upsert(
-        {
-          name: blingProduct.nome,
-          id_system: String(blingProduct.id),
-          ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
-          ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
-          type: isKit ? "KIT" : "UNIT",
-          integrations_id: integration.id,
-          source_payload: blingProduct as unknown as Record<string, unknown>,
-          unit: blingProduct.unidade,
-          brand: blingProduct.marca,
-          brand_id: matchedBrand?.id ?? null,
-          subgroup_id: importedTireSubgroup?.id,
-          line,
-          measure,
-          gross_weight: Number(blingProduct.pesoBruto ?? 0),
-          net_weight: Number(blingProduct.pesoLiquido ?? 0),
-          stock_virtual_total: Number(
-            blingProduct.estoque?.saldoVirtualTotal ?? 0,
-          ),
-        },
-        { conflictFields: ["id_system"] },
-      );
+      await sequelize.transaction(async (transaction) => {
+        [product] = await Product.upsert(
+          {
+            name: blingProduct.nome,
+            id_system: String(blingProduct.id),
+            ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
+            ean_tribut:
+              blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
+            type: isKit ? "KIT" : "UNIT",
+            integrations_id: integration.id,
+            source_payload: blingProduct as unknown as Record<string, unknown>,
+            unit: blingProduct.unidade,
+            brand: blingProduct.marca,
+            brand_id: matchedBrand?.id ?? null,
+            subgroup_id: importedTireSubgroup?.id,
+            line,
+            measure,
+            gross_weight: Number(blingProduct.pesoBruto ?? 0),
+            net_weight: Number(blingProduct.pesoLiquido ?? 0),
+            stock_virtual_total: Number(
+              blingProduct.estoque?.saldoVirtualTotal ?? 0,
+            ),
+          },
+          { conflictFields: ["id_system"], transaction },
+        );
 
-      await ProductConfig.upsert(
-        {
-          product_id: product.id,
-          unit_business_id: unitBusiness.id,
+        await ProductConfig.upsert(
+          {
+            product_id: product.id,
+            unit_business_id: unitBusiness.id,
+            sku: configSku,
+            price: resolvedPrice,
+            gtin: blingProduct.gtin,
+            gtin_package: blingProduct.gtinEmbalagem,
+            ncm: blingProduct.tributacao?.ncm,
+            cest: blingProduct.tributacao?.cest,
+            supplier_cost_price: newSupplierCost,
+            supplier_purchase_price: Number(
+              blingProduct.fornecedor?.precoCompra ??
+                blingProduct.precoCompra ??
+                0,
+            ),
+          },
+          { conflictFields: ["product_id", "unit_business_id"], transaction },
+        );
+
+        await this.syncProductWithMagento({
+          product,
           sku: configSku,
-          price: resolvedPrice,
-          gtin: blingProduct.gtin,
-          gtin_package: blingProduct.gtinEmbalagem,
-          ncm: blingProduct.tributacao?.ncm,
-          cest: blingProduct.tributacao?.cest,
-          supplier_cost_price: newSupplierCost,
-          supplier_purchase_price: Number(
-            blingProduct.fornecedor?.precoCompra ??
-              blingProduct.precoCompra ??
-              0,
-          ),
-        },
-        { conflictFields: ["product_id", "unit_business_id"] },
-      );
-    } catch (error: any) {
-      logDbError("[BLING_API_FETCH] Erro no upsert do produto", error, {
-        blingId: apiFetch.blingId,
-        sku: blingProduct?.codigo,
-        ean: blingProduct?.gtin,
+          ean: blingProduct.gtin,
+          productName: blingProduct.nome,
+          magentoProduct,
+          magentoIntegration,
+          logPrefix,
+          transaction,
+        });
+
+        // ─── Kardex + estoque físico + batches, tudo atômico ─────────────────
+        const { average_cost, created } =
+          await stockMovementsService.syncProductStockMovements(
+            product.id,
+            unitBusiness.id,
+            transaction,
+          );
+        averageCostResolved = average_cost;
+
+        if (created > 0) {
+          await ProductConfig.update(
+            { average_cost, average_cost_updated_at: new Date() },
+            {
+              where: {
+                product_id: product.id,
+                unit_business_id: unitBusiness.id,
+              },
+              transaction,
+            },
+          );
+          console.log(
+            `[BLING_API_FETCH] Kardex sincronizado: sku=${configSku} | movimentos_criados=${created} | average_cost=${average_cost}`,
+          );
+        } else {
+          console.log(
+            `[BLING_API_FETCH] Kardex já atualizado, nenhum movimento novo: sku=${configSku}`,
+          );
+        }
+
+        await this.syncStockAndBatches({
+          product,
+          unitBusiness,
+          newQuantity: physicalQuantity,
+          averageCost: average_cost,
+          transaction,
+        });
       });
+    } catch (error: any) {
+      logDbError(
+        "[BLING_API_FETCH] Transaction falhou — rollback completo do produto",
+        error,
+        {
+          blingId: apiFetch.blingId,
+          sku: blingProduct?.codigo,
+          ean: blingProduct?.gtin,
+        },
+      );
       throw error;
     }
 
-    await this.syncProductWithMagento({
-      product,
-      sku: configSku,
-      ean: blingProduct.gtin,
-      productName: blingProduct.nome,
-      magentoProduct,
-      magentoIntegration,
-      logPrefix,
-    });
-
-    // ─── Sincroniza o Kardex (stock_movements) e atualiza o average_cost ──────
-    let averageCostResolved: number | undefined;
+    // ─── custo_medio no Magento — best effort, fora da transaction ────────────
     try {
-      const { average_cost, created } =
-        await stockMovementsService.syncProductStockMovements(
-          product.id,
-          unitBusiness.id,
-        );
-      averageCostResolved = average_cost;
-
-      if (created > 0) {
-        await ProductConfig.update(
-          { average_cost, average_cost_updated_at: new Date() },
-          {
-            where: {
-              product_id: product.id,
-              unit_business_id: unitBusiness.id,
-            },
-          },
-        );
-        console.log(
-          `[BLING_API_FETCH] Kardex sincronizado: sku=${configSku} | movimentos_criados=${created} | average_cost=${average_cost}`,
-        );
-      } else {
-        console.log(
-          `[BLING_API_FETCH] Kardex já atualizado, nenhum movimento novo: sku=${configSku}`,
-        );
-      }
-    } catch (syncErr: any) {
-      console.warn(
-        `[BLING_API_FETCH] Falha ao sincronizar stock movements | sku=${configSku} | erro=${syncErr?.message}`,
-      );
-    }
-
-    if (averageCostResolved !== undefined) {
-      const physicalQuantity = await this.fetchPhysicalStock(blingProduct.id);
-
-      await this.syncStockAndBatches({
-        product,
-        unitBusiness,
-        newQuantity: physicalQuantity,
-        averageCost: averageCostResolved,
+      const config = await ProductConfig.findOne({
+        where: {
+          product_id: product!.id,
+          unit_business_id: BLING_UNIT_BUSINESS_ID,
+        },
       });
-    }
 
-    try {
-      if (product) {
-        const config = await ProductConfig.findOne({
-          where: {
-            product_id: product.id,
-            unit_business_id: BLING_UNIT_BUSINESS_ID,
-          },
-        });
+      if (config?.average_cost) {
+        const magentoSkuMap =
+          await integrationMappingService.findExternalIdsMap(
+            "PRODUCT",
+            magentoIntegration.id,
+            [product!.id],
+          );
+        const magentoSku = magentoSkuMap.get(product!.id);
 
-        if (config?.average_cost) {
-          const magentoSkuMap =
-            await integrationMappingService.findExternalIdsMap(
-              "PRODUCT",
-              magentoIntegration.id,
-              [product.id],
-            );
-          const magentoSku = magentoSkuMap.get(product.id);
-
-          if (magentoSku) {
-            await magentoCatalogService.atualizarCustomAttribute(
-              magentoSku,
-              "custo_medio",
-              Number(config.average_cost).toFixed(2),
-            );
-            console.log(
-              `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${magentoSku} | average_cost=${config.average_cost}`,
-            );
-          } else {
-            console.log(
-              `[BLING_API_FETCH] Produto sem mapping no Magento — custo_medio não sincronizado: sku_bling=${blingProduct.codigo}`,
-            );
-          }
+        if (magentoSku) {
+          await magentoCatalogService.atualizarCustomAttribute(
+            magentoSku,
+            "custo_medio",
+            Number(config.average_cost).toFixed(2),
+          );
+          console.log(
+            `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${magentoSku} | average_cost=${config.average_cost}`,
+          );
+        } else {
+          console.log(
+            `[BLING_API_FETCH] Produto sem mapping no Magento — custo_medio não sincronizado: sku_bling=${blingProduct.codigo}`,
+          );
         }
       }
     } catch (magentoErr: any) {
@@ -1243,8 +1266,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   private async fetchAndUpsertProductSupplier(
     apiFetch: ApiFetchRequest,
   ): Promise<void> {
-    const { data } = await this.api.get<{ data: BlingApiProductSupplier }>(
-      `/produtos/fornecedores/${apiFetch.blingId}`,
+    const { data } = await blingGet<{ data: BlingApiProductSupplier }>(
+      `/produtos/fornecedores/${apiFetch.blingId}`, blingApi
     );
 
     const ps = data.data;

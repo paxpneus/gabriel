@@ -1,4 +1,4 @@
-import { Op } from "sequelize";
+import { Op, Transaction } from "sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import { Invoice, InvoiceItems, UnitBusiness } from "../../../warehouse";
 import InvoiceUnitBusinessAttributes from "../../../warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
@@ -54,7 +54,6 @@ export class StockMovementService extends BaseService<
         newQuantity = previousQuantity + input.movement_quantity;
 
         if (previousQuantity <= 0) {
-          // Estoque zerado (ou sem histórico): novo CMP é 100% o custo da nova NF
           newAverageCost = input.unit_cost_invoice ?? 0;
         } else {
           const newEntryValue =
@@ -67,13 +66,13 @@ export class StockMovementService extends BaseService<
 
       case "SALE_OUT": {
         newQuantity = previousQuantity - input.movement_quantity;
-        newAverageCost = previousAverageCost; // mantém, mesmo se zerar
+        newAverageCost = previousAverageCost;
         break;
       }
 
       case "CUSTOMER_RETURN": {
         newQuantity = previousQuantity + input.movement_quantity;
-        newAverageCost = previousAverageCost; // mantém (usa o CMP congelado, se houver)
+        newAverageCost = previousAverageCost;
         break;
       }
 
@@ -94,10 +93,12 @@ export class StockMovementService extends BaseService<
    */
   async processMovement(
     input: ReindexProductPayload & { unit_business_id: string },
+    transaction?: Transaction,
   ): Promise<StockMovement> {
     const lastMovement = await this.repository.findLastMovement(
       input.product_id,
       input.unit_business_id,
+      transaction,
     );
 
     const nextState = this.calculateNextState(
@@ -115,7 +116,7 @@ export class StockMovementService extends BaseService<
       ...nextState,
     };
 
-    return this.repository.create(payload);
+    return this.repository.create(payload, { transaction } as any);
   }
 
   /**
@@ -126,6 +127,7 @@ export class StockMovementService extends BaseService<
     productId: string,
     unitBusinessId: string,
     movements: ReindexProductPayload[],
+    transaction?: Transaction,
   ): Promise<StockMovement[]> {
     const sorted = [...movements].sort(
       (a, b) => a.movement_date.getTime() - b.movement_date.getTime(),
@@ -155,18 +157,18 @@ export class StockMovementService extends BaseService<
       previousState = nextState;
     }
 
-    // Remove o histórico atual do produto e recria do zero
     const existing = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
+      transaction,
     );
     if (existing.length > 0) {
-      await this.repository.bulkDelete({
-        where: { product_id: productId, unit_business_id: unitBusinessId },
-      });
+      await this.repository.bulkDelete(
+        { where: { product_id: productId, unit_business_id: unitBusinessId }, transaction },
+      );
     }
 
-    return this.repository.bulkCreate(results as any);
+    return this.repository.bulkCreate(results as any, {transaction});
   }
 
   /**
@@ -177,9 +179,12 @@ export class StockMovementService extends BaseService<
   async findStockMovementSourceData(
     unitBusinessId: string,
     productId: string,
+    transaction?: Transaction,
   ): Promise<ListSourceDataFromInvoices[]> {
     // ─── 1. Identifica a unit business e seu CNPJ ─────────────────────────
-    const unitBusiness = await UnitBusiness.findByPk(unitBusinessId);
+    const unitBusiness = await UnitBusiness.findByPk(unitBusinessId, {
+      transaction,
+    });
 
     if (!unitBusiness) {
       throw new Error("Unit business não encontrada!");
@@ -190,6 +195,7 @@ export class StockMovementService extends BaseService<
     // ─── 2. Busca APENAS os invoice items desse produto ────────────────────
     const invoiceItems = await invoiceItemsService.findAll({
       where: { product_id: productId },
+      transaction,
     });
 
     if (!invoiceItems.length) return [];
@@ -212,6 +218,7 @@ export class StockMovementService extends BaseService<
           },
         },
       ],
+      transaction,
     });
 
     if (!invoices.length) return [];
@@ -236,6 +243,7 @@ export class StockMovementService extends BaseService<
         invoice_id: { [Op.in]: validInvoiceIds },
         product_id: productId,
       },
+      transaction,
     });
 
     const fiscalItemsMap = new Map<string, InvoiceFiscalItem>();
@@ -243,7 +251,6 @@ export class StockMovementService extends BaseService<
       fiscalItemsMap.set(fi.invoice_id, fi);
     }
 
-    // Mapa invoice_id -> itens desse produto (pode haver mais de 1 linha por invoice_id)
     const invoiceItemsByInvoice = new Map<string, InvoiceItems[]>();
     for (const item of invoiceItems) {
       if (!validInvoiceIds.includes(item.invoice_id)) continue;
@@ -317,15 +324,18 @@ export class StockMovementService extends BaseService<
   async syncProductStockMovements(
     productId: string,
     unitBusinessId: string,
+    transaction?: Transaction,
   ): Promise<{ average_cost: number; created: number }> {
     const sourceData = await this.findStockMovementSourceData(
       unitBusinessId,
       productId,
+      transaction,
     );
 
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
+      transaction,
     );
 
     const lastExisting =
@@ -340,7 +350,6 @@ export class StockMovementService extends BaseService<
       };
     }
 
-    // ─── Filtra só as NFs que ainda não foram registradas ───────────────────
     const existingInvoiceIds = new Set(
       existingMovements.map((m) => m.invoice_id),
     );
@@ -361,10 +370,9 @@ export class StockMovementService extends BaseService<
       (a, b) => a.movement_date.getTime() - b.movement_date.getTime(),
     );
 
-    // ─── Detecta NF retroativa: pendente mais antiga que o último movimento gravado ───
     const isRetroactive =
       !!lastExisting &&
-      sortedPending[0].movement_date.getTime() <
+      sortedPending[0].movement_date.getTime() < 
         new Date(lastExisting.movement_date).getTime();
     if (isRetroactive) {
       console.warn(
@@ -372,8 +380,6 @@ export class StockMovementService extends BaseService<
           `Executando reindexProduct para reprocessar o histórico completo.`,
       );
 
-      // Converte os movimentos já existentes de volta pro formato de input,
-      // junta com os pendentes, e deixa o reindexProduct recalcular tudo do zero.
       const existingAsInput: ReindexProductPayload[] = existingMovements.map(
         (m) => ({
           product_id: productId,
@@ -406,6 +412,7 @@ export class StockMovementService extends BaseService<
         productId,
         unitBusinessId,
         allMovements,
+        transaction,
       );
       const last = reindexed[reindexed.length - 1];
 
@@ -415,7 +422,6 @@ export class StockMovementService extends BaseService<
       };
     }
 
-    // ─── Caso normal: só adiciona as pendentes ao final ─────────────────────
     let previousState: {
       balance_quantity: number;
       resulting_average_cost: number;
@@ -446,7 +452,10 @@ export class StockMovementService extends BaseService<
       previousState = nextState;
     }
 
-    const created = await this.repository.bulkCreate(toCreate as any);
+    const created = await this.repository.bulkCreate(
+      toCreate as any,
+      {transaction}
+    );
 
     return {
       average_cost: previousState!.resulting_average_cost,
