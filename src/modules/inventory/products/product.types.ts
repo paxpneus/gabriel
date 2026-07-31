@@ -1,4 +1,4 @@
-import Stock from "../stock/stock.model";
+import Stock from "../stock/stock/stock.model";
 import { SupplierMappingAttributes } from "../supplier-mapping/supplier-mapping.types";
 import Product from "./product.model";
 

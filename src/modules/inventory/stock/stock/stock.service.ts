@@ -1,4 +1,4 @@
-import BaseService from '../../../shared/utils/base-models/base-service';
+import BaseService from '../../../../shared/utils/base-models/base-service';
 import Stock from './stock.model';
 import stockRepository, { StockRepository } from './stock.repository';
 
