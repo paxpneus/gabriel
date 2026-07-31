@@ -121,7 +121,7 @@ const ordersFromDatabase: SalesReportOrderInput[] = [
 
 describe("SalesReport financial calculations (regra nova: receita/custo bruto + contribution isolado)", () => {
   describe("itens de pedido", () => {
-    it("usa total_cost_snapshot do banco como custo do item, sem somar ICMS", () => {
+    it("calcula o custo do item como average_cost_snapshot*quantity + commission_value (nunca total_cost_snapshot)", () => {
       for (const order of ordersFromDatabase) {
         const result = calculateSalesReportOrderFinancials(order);
         expect(result).not.toBeNull();
@@ -135,10 +135,11 @@ describe("SalesReport financial calculations (regra nova: receita/custo bruto + 
             item.quantity,
           );
           const commission = item.commission_value ?? 0;
-          // orderItemTotalCost deve vir do total_cost_snapshot já gravado,
-          // NÃO recalculado a partir de productCost + commission, já que
-          // ambos batem neste fixture (só confirma que a função usa o raw).
-          const orderItemTotalCost = item.total_cost_snapshot!;
+          // orderItemTotalCost é SEMPRE recalculado a partir de
+          // average_cost_snapshot (stock_movements) * quantity + commission_value.
+          // total_cost_snapshot é campo deprecated e não é mais lido como fonte
+          // de custo — por isso NÃO comparamos contra item.total_cost_snapshot.
+          const orderItemTotalCost = productCost + commission;
           const productProfit = item.net_total - orderItemTotalCost;
 
           expectClose(actual!.productCost, productCost);
@@ -156,19 +157,18 @@ describe("SalesReport financial calculations (regra nova: receita/custo bruto + 
     const order = ordersFromDatabase[0];
     const result = calculateSalesReportOrderFinancials(order);
 
-    it("receita e custo são sempre os valores brutos (total_products / soma de total_cost_snapshot)", () => {
+    it("receita e custo são sempre os valores brutos (total_products / soma de average_cost_snapshot*quantity+commission)", () => {
       expect(result).not.toBeNull();
       expectClose(result!.revenue, 1750.68);
-      expectClose(result!.totalCost, 1322.97);
+      expectClose(result!.totalCost, 1322.9696);
     });
 
     it("markup mede lucro bruto (receita - custo), sem descontar comissão/frete/ICMS", () => {
-      const profit = calculateProfit(1750.68, 1322.97);
+      const profit = calculateProfit(1750.68, 1322.9696);
       expectClose(result!.profit, profit);
-      expectClose(result!.markup, calculateMarkup(profit, 1322.97));
-      expectClose(result!.markupPct, calculateMarkup(profit, 1322.97) * 100);
-      // markup esperado ~32.33%, igual ao relatório de origem
-      expect(result!.markupPct).toBeCloseTo(32.32, 1);
+      expectClose(result!.markup, calculateMarkup(profit, 1322.9696));
+      expectClose(result!.markupPct, calculateMarkup(profit, 1322.9696) * 100);
+      expect(result!.markupPct).toBeCloseTo(32.33, 1);
     });
 
     it("contribution desconta tax_commission, freight_cost e ICMS calculado via alíquota do estado", () => {
@@ -178,7 +178,7 @@ describe("SalesReport financial calculations (regra nova: receita/custo bruto + 
         0,
         0,
         tempIcms,
-        1322.97,
+        1322.9696,
       );
 
       expectClose(result!.contributionValue, contributionValue);
@@ -186,11 +186,8 @@ describe("SalesReport financial calculations (regra nova: receita/custo bruto + 
         result!.contributionPct,
         calculatePct(contributionValue, 1750.68),
       );
-      // com icms_rate=7.30 corretamente dividido por 100, o pedido deve dar
-      // lucro positivo (~299.91) — é o caso que estava estourando pra -12mil
-      // quando icms_rate era usado sem dividir por 100.
       expect(result!.contributionValue).toBeGreaterThan(0);
-      expectClose(result!.contributionValue, 299.91036);
+      expectClose(result!.contributionValue, 299.91076);
     });
 
     it("acumula temp_icms/tax_commission/freight_cost nos campos 'apenas guardando'", () => {
@@ -205,17 +202,16 @@ describe("SalesReport financial calculations (regra nova: receita/custo bruto + 
     const order = ordersFromDatabase[1];
     const result = calculateSalesReportOrderFinancials(order);
 
-    it("receita e custo são sempre os valores brutos (total_products / soma de total_cost_snapshot)", () => {
+    it("receita e custo são sempre os valores brutos (total_products / soma de average_cost_snapshot*quantity+commission)", () => {
       expect(result).not.toBeNull();
       expectClose(result!.revenue, 779.9);
-      expectClose(result!.totalCost, 541.79);
+      expectClose(result!.totalCost, 541.7875);
     });
 
     it("markup mede lucro bruto, ignorando desconto/comissão/frete/ICMS", () => {
-      const profit = calculateProfit(779.9, 541.79);
+      const profit = calculateProfit(779.9, 541.7875);
       expectClose(result!.profit, profit);
-      expectClose(result!.markup, calculateMarkup(profit, 541.79));
-      // markup esperado ~43.95%
+      expectClose(result!.markup, calculateMarkup(profit, 541.7875));
       expect(result!.markupPct).toBeCloseTo(43.95, 1);
     });
 
@@ -226,13 +222,12 @@ describe("SalesReport financial calculations (regra nova: receita/custo bruto + 
         89.69,
         78.65,
         tempIcms,
-        541.79,
+        541.7875,
       );
 
       expectClose(result!.contributionValue, contributionValue);
-      // contribution esperado ~ -22.57 (prejuízo), enquanto markup é +43.95%
       expect(result!.contributionValue).toBeLessThan(0);
-      expectClose(result!.contributionValue, -22.57016);
+      expectClose(result!.contributionValue, -22.56766);
     });
 
     it("acumula temp_icms/tax_commission/freight_cost nos campos 'apenas guardando'", () => {
