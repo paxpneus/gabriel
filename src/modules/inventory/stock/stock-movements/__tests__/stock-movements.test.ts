@@ -1,3 +1,4 @@
+import { Op } from "sequelize";
 import { StockMovementService } from "./../stock-movements.service";
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
@@ -41,15 +42,24 @@ jest.mock("../stock-movements.repository", () => ({
     findMovementsFrom: jest.fn(),
     deleteByInvoiceAndProduct: jest.fn(),
     findHistoryByProduct: jest.fn(),
+    setActiveStatus: jest.fn(),
     create: jest.fn(),
     bulkCreate: jest.fn(),
     bulkDelete: jest.fn(),
   },
 }));
 
+// StockMovement (model) é usado diretamente por updateManualAverageCost
+// (busca por id da linha, não mais por invoice_id).
+jest.mock("../stock-movements.model", () => ({
+  __esModule: true,
+  default: { findOne: jest.fn() },
+}));
+
 import { Invoice, UnitBusiness } from "../../../../warehouse";
 import InvoiceFiscalItem from "../../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import invoiceItemsService from "../../../../warehouse/invoices/invoice-items/invoice-items.service";
+import StockMovement from "../stock-movements.model";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -89,6 +99,31 @@ function makeFiscalItem(overrides: Partial<any> = {}) {
   };
 }
 
+// Simula uma linha já persistida (StockMovement instance), com .update()
+// mockado, útil pros testes de upsert/reindex/updateManualAverageCost.
+function makeExistingMovement(overrides: Partial<any> = {}) {
+  const movement: any = {
+    id: "mov-id",
+    invoice_id: "inv-1",
+    invoice_number: "1",
+    movement_type: "PURCHASE_ENTRY",
+    movement_date: new Date("2026-01-01"),
+    movement_quantity: 10,
+    unit_cost_invoice: 10,
+    balance_quantity: 10,
+    resulting_average_cost: 10,
+    manual_average_cost_value: null,
+    is_active: true,
+    direction: null,
+    ...overrides,
+  };
+  movement.update = jest.fn().mockImplementation((patch) => {
+    Object.assign(movement, patch);
+    return Promise.resolve(movement);
+  });
+  return movement;
+}
+
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
 describe("StockMovementService", () => {
@@ -101,12 +136,16 @@ describe("StockMovementService", () => {
     // Repositório interno do service
     (service as any).repository = {
       findLastMovement: jest.fn(),
+      findLastMovementBefore: jest.fn(),
       findHistoryByProduct: jest.fn().mockResolvedValue([]),
       bulkCreate: jest
         .fn()
         .mockImplementation((rows: any[]) => Promise.resolve(rows)),
       bulkDelete: jest.fn().mockResolvedValue(0),
-      create: jest.fn(),
+      setActiveStatus: jest.fn().mockResolvedValue(undefined),
+      create: jest.fn().mockImplementation((row: any) =>
+        Promise.resolve({ ...row, update: jest.fn() }),
+      ),
     };
 
     (UnitBusiness.findByPk as jest.Mock).mockResolvedValue(mockUnitBusiness);
@@ -152,9 +191,6 @@ describe("StockMovementService", () => {
     });
 
     it("PURCHASE_ENTRY com estoque anterior positivo: calcula média ponderada", () => {
-      // anterior: 10 un a custo médio 10 (valor total = 100)
-      // entrada: 10 un a custo 20 (valor entrada = 200)
-      // novo total = 300 / 20 un = 15
       const result = (service as any).calculateNextState(
         { balance_quantity: 10, resulting_average_cost: 10 },
         {
@@ -177,7 +213,7 @@ describe("StockMovementService", () => {
         {
           movement_type: "SALE_OUT",
           movement_quantity: 4,
-          unit_cost_invoice: 999, // não deve influenciar
+          unit_cost_invoice: 999,
         },
       );
 
@@ -188,7 +224,7 @@ describe("StockMovementService", () => {
       });
     });
 
-    it("SALE_OUT: permite saldo negativo (não há trava aqui, é responsabilidade de outra camada)", () => {
+    it("SALE_OUT: permite saldo negativo", () => {
       const result = (service as any).calculateNextState(
         { balance_quantity: 2, resulting_average_cost: 10 },
         {
@@ -208,7 +244,7 @@ describe("StockMovementService", () => {
         {
           movement_type: "CUSTOMER_RETURN",
           movement_quantity: 2,
-          unit_cost_invoice: 999, // não deve influenciar
+          unit_cost_invoice: 999,
         },
       );
 
@@ -217,6 +253,68 @@ describe("StockMovementService", () => {
         resulting_average_cost: 15,
         total_stock_value: 120,
       });
+    });
+
+    it("MANUAL_ADJUSTMENT com direction IN: soma ao saldo e mantém o CMP anterior", () => {
+      const result = (service as any).calculateNextState(
+        { balance_quantity: 10, resulting_average_cost: 8 },
+        {
+          movement_type: "MANUAL_ADJUSTMENT",
+          movement_quantity: 5,
+          direction: "IN",
+        },
+      );
+
+      expect(result).toEqual({
+        balance_quantity: 15,
+        resulting_average_cost: 8,
+        total_stock_value: 120,
+      });
+    });
+
+    it("MANUAL_ADJUSTMENT com direction OUT: subtrai do saldo e mantém o CMP anterior", () => {
+      const result = (service as any).calculateNextState(
+        { balance_quantity: 10, resulting_average_cost: 8 },
+        {
+          movement_type: "MANUAL_ADJUSTMENT",
+          movement_quantity: 3,
+          direction: "OUT",
+        },
+      );
+
+      expect(result).toEqual({
+        balance_quantity: 7,
+        resulting_average_cost: 8,
+        total_stock_value: 56,
+      });
+    });
+
+    it("MANUAL_ADJUSTMENT sem histórico anterior e direction IN: parte de saldo/custo zero", () => {
+      const result = (service as any).calculateNextState(null, {
+        movement_type: "MANUAL_ADJUSTMENT",
+        movement_quantity: 5,
+        direction: "IN",
+      });
+
+      expect(result).toEqual({
+        balance_quantity: 5,
+        resulting_average_cost: 0,
+        total_stock_value: 0,
+      });
+    });
+
+    it("manual_average_cost_value, quando presente, sobrescreve o CMP calculado (qualquer tipo)", () => {
+      const result = (service as any).calculateNextState(
+        { balance_quantity: 10, resulting_average_cost: 10 },
+        {
+          movement_type: "SALE_OUT",
+          movement_quantity: 2,
+          manual_average_cost_value: 99,
+        },
+      );
+
+      expect(result.resulting_average_cost).toBe(99);
+      expect(result.total_stock_value).toBe(8 * 99);
     });
 
     it("lança erro para movement_type desconhecido", () => {
@@ -255,6 +353,19 @@ describe("StockMovementService", () => {
       },
     ];
 
+    it("busca o histórico incluindo inativos (activeOnly = false)", async () => {
+      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, movements as any);
+
+      expect(
+        (service as any).repository.findHistoryByProduct,
+      ).toHaveBeenCalledWith(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        undefined,
+        false,
+      );
+    });
+
     it("ordena os movimentos por data antes de processar, independente da ordem de entrada", async () => {
       await service.reindexProduct(
         PRODUCT_ID,
@@ -264,11 +375,11 @@ describe("StockMovementService", () => {
 
       const created = (service as any).repository.bulkCreate.mock.calls[0][0];
 
-      expect(created[0].invoice_id).toBe("inv-1"); // entrada, mais antiga, processada primeiro
-      expect(created[1].invoice_id).toBe("inv-2"); // saída, processada depois
+      expect(created[0].invoice_id).toBe("inv-1");
+      expect(created[1].invoice_id).toBe("inv-2");
     });
 
-    it("calcula o estado encadeado corretamente (entrada seguida de saída)", async () => {
+    it("calcula o estado encadeado corretamente (entrada seguida de saída) e marca is_active true", async () => {
       await service.reindexProduct(
         PRODUCT_ID,
         UNIT_BUSINESS_ID,
@@ -280,17 +391,22 @@ describe("StockMovementService", () => {
       expect(created[0]).toMatchObject({
         balance_quantity: 10,
         resulting_average_cost: 10,
+        is_active: true,
       });
       expect(created[1]).toMatchObject({
         balance_quantity: 7,
         resulting_average_cost: 10,
+        is_active: true,
       });
     });
 
-    it("remove o histórico existente antes de recriar, quando já existem movimentos", async () => {
-      (service as any).repository.findHistoryByProduct.mockResolvedValue([
-        { id: "old-1" },
-      ]);
+    it("apaga (hard delete) somente as linhas NÃO protegidas, via id", async () => {
+      const existing = [
+        makeExistingMovement({ id: "old-1", invoice_id: "inv-1" }),
+      ];
+      (service as any).repository.findHistoryByProduct.mockResolvedValue(
+        existing,
+      );
 
       await service.reindexProduct(
         PRODUCT_ID,
@@ -299,11 +415,12 @@ describe("StockMovementService", () => {
       );
 
       expect((service as any).repository.bulkDelete).toHaveBeenCalledWith({
-        where: { product_id: PRODUCT_ID, unit_business_id: UNIT_BUSINESS_ID },
+        where: { id: { [Op.in]: ["old-1"] } },
+        transaction: undefined,
       });
     });
 
-    it("NÃO chama bulkDelete quando não há histórico existente", async () => {
+    it("NÃO chama bulkDelete quando não há linhas deletáveis", async () => {
       (service as any).repository.findHistoryByProduct.mockResolvedValue([]);
 
       await service.reindexProduct(
@@ -315,85 +432,556 @@ describe("StockMovementService", () => {
       expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
     });
 
-    it("retorna o resultado de bulkCreate", async () => {
-      const fakeCreated = [{ id: "new-1" }, { id: "new-2" }];
-      (service as any).repository.bulkCreate.mockResolvedValue(fakeCreated);
+    it("preserva um MANUAL_ADJUSTMENT existente: não é deletado, não é recriado, e serve de base para a cadeia", async () => {
+      const manualAdjustment = makeExistingMovement({
+        id: "manual-1",
+        invoice_id: null,
+        movement_type: "MANUAL_ADJUSTMENT",
+        movement_date: new Date("2026-01-15"),
+        balance_quantity: 50,
+        resulting_average_cost: 12,
+        is_active: true,
+      });
+
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        manualAdjustment,
+      ]);
+
+      // movimento novo posterior ao ajuste manual
+      const incoming = [
+        {
+          product_id: PRODUCT_ID,
+          invoice_id: "inv-9",
+          invoice_number: "9",
+          movement_type: "SALE_OUT" as const,
+          movement_date: new Date("2026-02-01"),
+          movement_quantity: 5,
+        },
+      ];
 
       const result = await service.reindexProduct(
         PRODUCT_ID,
         UNIT_BUSINESS_ID,
-        movements as any,
+        incoming as any,
       );
 
-      expect(result).toEqual(fakeCreated);
+      expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
+
+      const created = (service as any).repository.bulkCreate.mock.calls[0][0];
+      expect(created).toHaveLength(1);
+      expect(created[0]).toMatchObject({
+        invoice_id: "inv-9",
+        balance_quantity: 45, // 50 - 5, encadeado a partir do manual adjustment
+        resulting_average_cost: 12,
+      });
+
+      // resultado final inclui o manual adjustment intocado + o novo criado
+      expect(result.map((m: any) => m.id ?? m.invoice_id)).toEqual(
+        expect.arrayContaining(["manual-1", "inv-9"]),
+      );
     });
 
-    it("no caso retroativo, inclui TODOS os movimentos existentes (não só o mais recente) junto com os pendentes", async () => {
-      const existingMovements = [
+    it("preserva uma linha com manual_average_cost_value preenchido (mesmo não sendo MANUAL_ADJUSTMENT)", async () => {
+      const overridden = makeExistingMovement({
+        id: "override-1",
+        invoice_id: "inv-override",
+        movement_type: "PURCHASE_ENTRY",
+        manual_average_cost_value: 77,
+        balance_quantity: 20,
+        resulting_average_cost: 77,
+        is_active: true,
+      });
+
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        overridden,
+      ]);
+
+      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, [] as any);
+
+      expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
+      expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    it("ignora, da fonte nova, qualquer invoice_id que já corresponda a uma linha protegida", async () => {
+      const manualAdjustment = makeExistingMovement({
+        id: "manual-1",
+        invoice_id: "inv-protected",
+        movement_type: "MANUAL_ADJUSTMENT",
+        movement_date: new Date("2026-01-15"),
+        balance_quantity: 50,
+        resulting_average_cost: 12,
+        is_active: true,
+      });
+
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        manualAdjustment,
+      ]);
+
+      const incoming = [
         {
-          invoice_id: "inv-1",
-          invoice_number: "1",
-          movement_type: "PURCHASE_ENTRY",
-          movement_date: new Date("2026-01-01"),
-          movement_quantity: 10,
-          unit_cost_invoice: 10,
-          balance_quantity: 10,
-          resulting_average_cost: 10,
-        },
-        {
-          invoice_id: "inv-2",
-          invoice_number: "2",
-          movement_type: "SALE_OUT",
-          movement_date: new Date("2026-02-01"),
-          movement_quantity: 3,
-          unit_cost_invoice: null,
-          balance_quantity: 7,
-          resulting_average_cost: 10,
-        },
-        {
-          invoice_id: "inv-3",
-          invoice_number: "3",
-          movement_type: "CUSTOMER_RETURN",
-          movement_date: new Date("2026-03-01"),
-          movement_quantity: 2,
-          unit_cost_invoice: null,
-          balance_quantity: 9,
-          resulting_average_cost: 10,
+          product_id: PRODUCT_ID,
+          invoice_id: "inv-protected", // tenta reintroduzir o mesmo invoice_id
+          invoice_number: "x",
+          movement_type: "PURCHASE_ENTRY" as const,
+          movement_date: new Date("2026-01-20"),
+          movement_quantity: 100,
+          unit_cost_invoice: 1,
         },
       ];
 
-      jest.spyOn(service, "findStockMovementSourceData").mockResolvedValue([
+      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, incoming as any);
+
+      expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    it("linha protegida INATIVA é preservada (não apagada) mas NÃO entra na cadeia de cálculo", async () => {
+      const inactiveManual = makeExistingMovement({
+        id: "manual-inactive",
+        invoice_id: null,
+        movement_type: "MANUAL_ADJUSTMENT",
+        movement_date: new Date("2026-01-15"),
+        balance_quantity: 999,
+        resulting_average_cost: 999,
+        is_active: false,
+      });
+
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        inactiveManual,
+      ]);
+
+      const incoming = [
         {
           product_id: PRODUCT_ID,
-          invoice_id: "inv-0", // retroativa: anterior a TODOS os existentes
-          invoice_number: "0",
-          movement_type: "PURCHASE_ENTRY",
-          movement_date: new Date("2025-12-01"),
-          movement_quantity: 5,
-          unit_cost_invoice: 8,
+          invoice_id: "inv-10",
+          invoice_number: "10",
+          movement_type: "PURCHASE_ENTRY" as const,
+          movement_date: new Date("2026-02-01"),
+          movement_quantity: 10,
+          unit_cost_invoice: 5,
         },
+      ];
+
+      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, incoming as any);
+
+      expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
+
+      const created = (service as any).repository.bulkCreate.mock.calls[0][0];
+      // parte do zero, ignorando o saldo absurdo do manual inativo
+      expect(created[0]).toMatchObject({
+        balance_quantity: 10,
+        resulting_average_cost: 5,
+      });
+    });
+
+    it("retorna protegidos + recriados, ordenados por data", async () => {
+      const fakeCreated = [
+        { id: "new-1", movement_date: new Date("2026-02-01") },
+      ];
+      (service as any).repository.bulkCreate.mockResolvedValue(fakeCreated);
+
+      const manualAdjustment = makeExistingMovement({
+        id: "manual-1",
+        invoice_id: null,
+        movement_type: "MANUAL_ADJUSTMENT",
+        movement_date: new Date("2026-01-01"),
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        manualAdjustment,
       ]);
-      (service as any).repository.findHistoryByProduct.mockResolvedValue(
-        existingMovements,
+
+      const result = await service.reindexProduct(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [
+          {
+            product_id: PRODUCT_ID,
+            invoice_id: "inv-2",
+            invoice_number: "2",
+            movement_type: "SALE_OUT",
+            movement_date: new Date("2026-02-01"),
+            movement_quantity: 1,
+          },
+        ] as any,
       );
 
-      const reindexSpy = jest
-        .spyOn(service, "reindexProduct")
-        .mockResolvedValue([{ resulting_average_cost: 9 }] as any);
+      expect(result.map((m: any) => m.id)).toEqual(["manual-1", "new-1"]);
+    });
+  });
 
-      jest.spyOn(console, "warn").mockImplementation(() => {});
+  // ══════════════════════════════════════════════════════════════════════════
+  // upsertProductStockMovements
+  // ══════════════════════════════════════════════════════════════════════════
 
-      await service.syncProductStockMovements(PRODUCT_ID, UNIT_BUSINESS_ID);
+  describe("upsertProductStockMovements", () => {
+    it("cria uma linha nova quando o invoice_id ainda não existe", async () => {
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([]);
 
-      const allMovementsPassed = reindexSpy.mock.calls[0][2];
+      const incoming = [
+        {
+          product_id: PRODUCT_ID,
+          invoice_id: "inv-1",
+          invoice_number: "1",
+          movement_type: "PURCHASE_ENTRY" as const,
+          movement_date: new Date("2026-01-01"),
+          movement_quantity: 10,
+          unit_cost_invoice: 10,
+        },
+      ];
 
-      expect(allMovementsPassed).toHaveLength(4);
-      expect(allMovementsPassed.map((m: any) => m.invoice_id).sort()).toEqual([
-        "inv-0",
-        "inv-1",
-        "inv-2",
-        "inv-3",
+      await service.upsertProductStockMovements(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        incoming as any,
+      );
+
+      expect((service as any).repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoice_id: "inv-1",
+          balance_quantity: 10,
+          resulting_average_cost: 10,
+          is_active: true,
+        }),
+        { transaction: undefined },
+      );
+    });
+
+    it("atualiza (update) uma linha existente, recalculando balance/CMP, sem tocar em manual_average_cost_value", async () => {
+      const existing = makeExistingMovement({
+        invoice_id: "inv-1",
+        manual_average_cost_value: 50,
+        balance_quantity: 10,
+        resulting_average_cost: 50,
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        existing,
       ]);
+
+      const incoming = [
+        {
+          product_id: PRODUCT_ID,
+          invoice_id: "inv-1",
+          invoice_number: "1",
+          movement_type: "PURCHASE_ENTRY" as const,
+          movement_date: new Date("2026-01-01"),
+          movement_quantity: 20,
+          unit_cost_invoice: 999, // deve ser irrelevante: override manda
+        },
+      ];
+
+      await service.upsertProductStockMovements(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        incoming as any,
+      );
+
+      expect(existing.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          movement_quantity: 20,
+          resulting_average_cost: 50, // override preservado
+        }),
+        { transaction: undefined },
+      );
+      expect(existing.update.mock.calls[0][0]).not.toHaveProperty(
+        "manual_average_cost_value",
+      );
+    });
+
+    it("MANUAL_ADJUSTMENT existente participa da cadeia mas nunca sofre update", async () => {
+      const manualAdjustment = makeExistingMovement({
+        id: "manual-1",
+        invoice_id: null,
+        movement_type: "MANUAL_ADJUSTMENT",
+        movement_date: new Date("2026-01-15"),
+        balance_quantity: 50,
+        resulting_average_cost: 12,
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        manualAdjustment,
+      ]);
+
+      const incoming = [
+        {
+          product_id: PRODUCT_ID,
+          invoice_id: "inv-9",
+          invoice_number: "9",
+          movement_type: "SALE_OUT" as const,
+          movement_date: new Date("2026-02-01"),
+          movement_quantity: 5,
+        },
+      ];
+
+      const result = await service.upsertProductStockMovements(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        incoming as any,
+      );
+
+      expect(manualAdjustment.update).not.toHaveBeenCalled();
+      expect((service as any).repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoice_id: "inv-9",
+          balance_quantity: 45,
+          resulting_average_cost: 12,
+        }),
+        { transaction: undefined },
+      );
+      expect(result).toEqual(
+        expect.arrayContaining([manualAdjustment]),
+      );
+    });
+
+    it("movimentos recebidos sem invoice_id (que não sejam via createManualAdjustment) são ignorados no merge", async () => {
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([]);
+
+      const incoming = [
+        {
+          product_id: PRODUCT_ID,
+          invoice_id: undefined,
+          movement_type: "PURCHASE_ENTRY" as const,
+          movement_date: new Date("2026-01-01"),
+          movement_quantity: 10,
+          unit_cost_invoice: 10,
+        },
+      ];
+
+      await service.upsertProductStockMovements(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        incoming as any,
+      );
+
+      expect((service as any).repository.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // createManualAdjustment
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("createManualAdjustment", () => {
+    it("cria um MANUAL_ADJUSTMENT com direction IN para PURCHASE_ENTRY, sem invoice_id, e recalcula a cadeia", async () => {
+      (service as any).repository.findLastMovementBefore.mockResolvedValue(
+        null,
+      );
+      const upsertSpy = jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      await service.createManualAdjustment(PRODUCT_ID, UNIT_BUSINESS_ID, {
+        movement_quantity: 8,
+        direction_type: "PURCHASE_ENTRY",
+        manual_average_cost_value: 30,
+      });
+
+      expect((service as any).repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          movement_type: "MANUAL_ADJUSTMENT",
+          direction: "IN",
+          invoice_id: null,
+          movement_quantity: 8,
+          manual_average_cost_value: 30,
+          balance_quantity: 8,
+          resulting_average_cost: 30,
+          is_active: true,
+        }),
+        { transaction: undefined },
+      );
+      expect(upsertSpy).toHaveBeenCalledWith(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [],
+        undefined,
+      );
+    });
+
+    it("cria um MANUAL_ADJUSTMENT com direction OUT para SALE_OUT, encadeando a partir do movimento anterior à data informada", async () => {
+      (service as any).repository.findLastMovementBefore.mockResolvedValue({
+        balance_quantity: 20,
+        resulting_average_cost: 10,
+      });
+      jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      const movementDate = new Date("2026-03-01");
+
+      await service.createManualAdjustment(PRODUCT_ID, UNIT_BUSINESS_ID, {
+        movement_quantity: 5,
+        direction_type: "SALE_OUT",
+        movement_date: movementDate,
+      });
+
+      expect(
+        (service as any).repository.findLastMovementBefore,
+      ).toHaveBeenCalledWith(PRODUCT_ID, UNIT_BUSINESS_ID, movementDate);
+
+      expect((service as any).repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          direction: "OUT",
+          movement_date: movementDate,
+          balance_quantity: 15, // 20 - 5
+          resulting_average_cost: 10,
+          manual_average_cost_value: null,
+        }),
+        { transaction: undefined },
+      );
+    });
+
+    it("usa a data atual quando movement_date não é informado", async () => {
+      (service as any).repository.findLastMovementBefore.mockResolvedValue(
+        null,
+      );
+      jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      const before = Date.now();
+      await service.createManualAdjustment(PRODUCT_ID, UNIT_BUSINESS_ID, {
+        movement_quantity: 1,
+        direction_type: "PURCHASE_ENTRY",
+      });
+      const after = Date.now();
+
+      const created = (service as any).repository.create.mock.calls[0][0];
+      expect(created.movement_date.getTime()).toBeGreaterThanOrEqual(before);
+      expect(created.movement_date.getTime()).toBeLessThanOrEqual(after);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // updateManualAverageCost
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("updateManualAverageCost", () => {
+    it("lança erro quando o movimento (por id) não é encontrado", async () => {
+      (StockMovement.findOne as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.updateManualAverageCost(
+          PRODUCT_ID,
+          UNIT_BUSINESS_ID,
+          "movement-id-x",
+          100,
+        ),
+      ).rejects.toThrow(/movement-id-x/);
+    });
+
+    it("busca por id (não mais por invoice_id), atualiza o valor e recalcula a cadeia via upsert", async () => {
+      const movement = makeExistingMovement({ id: "movement-id-x" });
+      (StockMovement.findOne as jest.Mock).mockResolvedValue(movement);
+
+      const upsertSpy = jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      await service.updateManualAverageCost(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        "movement-id-x",
+        123,
+      );
+
+      expect(StockMovement.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: "movement-id-x",
+            product_id: PRODUCT_ID,
+            unit_business_id: UNIT_BUSINESS_ID,
+          },
+        }),
+      );
+      expect(movement.update).toHaveBeenCalledWith(
+        { manual_average_cost_value: 123 },
+        { transaction: undefined },
+      );
+      expect(upsertSpy).toHaveBeenCalledWith(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [],
+        undefined,
+      );
+    });
+
+    it("aceita null para remover o override", async () => {
+      const movement = makeExistingMovement({ id: "movement-id-x" });
+      (StockMovement.findOne as jest.Mock).mockResolvedValue(movement);
+      jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      await service.updateManualAverageCost(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        "movement-id-x",
+        null,
+      );
+
+      expect(movement.update).toHaveBeenCalledWith(
+        { manual_average_cost_value: null },
+        { transaction: undefined },
+      );
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // deactivateStockMovements / reactivateStockMovements
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("deactivateStockMovements", () => {
+    it("marca is_active = false em lote e recalcula a cadeia via upsert", async () => {
+      const upsertSpy = jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      const ids = ["mov-1", "mov-2"];
+      await service.deactivateStockMovements(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        ids,
+      );
+
+      expect((service as any).repository.setActiveStatus).toHaveBeenCalledWith(
+        ids,
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        false,
+        undefined,
+      );
+      expect(upsertSpy).toHaveBeenCalledWith(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [],
+        undefined,
+      );
+    });
+  });
+
+  describe("reactivateStockMovements", () => {
+    it("marca is_active = true em lote e recalcula a cadeia via upsert", async () => {
+      const upsertSpy = jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      const ids = ["mov-1"];
+      await service.reactivateStockMovements(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        ids,
+      );
+
+      expect((service as any).repository.setActiveStatus).toHaveBeenCalledWith(
+        ids,
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        true,
+        undefined,
+      );
+      expect(upsertSpy).toHaveBeenCalledWith(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [],
+        undefined,
+      );
     });
   });
 
@@ -636,14 +1224,14 @@ describe("StockMovementService", () => {
       expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
     });
 
-    it("cria apenas os movimentos pendentes, encadeando a partir do último estado salvo (caso normal)", async () => {
+    it("cria apenas os movimentos pendentes, encadeando a partir do último estado salvo (caso normal), com is_active true", async () => {
       jest.spyOn(service, "findStockMovementSourceData").mockResolvedValue([
         {
           product_id: PRODUCT_ID,
           invoice_id: "inv-2",
           invoice_number: "2",
           movement_type: "SALE_OUT",
-          movement_date: new Date("2026-02-01"), // posterior ao último existente
+          movement_date: new Date("2026-02-01"),
           movement_quantity: 3,
           unit_cost_invoice: 0,
         },
@@ -657,20 +1245,21 @@ describe("StockMovementService", () => {
         },
       ]);
 
-      const reindexSpy = jest.spyOn(service, "reindexProduct");
+      const upsertSpy = jest.spyOn(service, "upsertProductStockMovements");
 
       const result = await service.syncProductStockMovements(
         PRODUCT_ID,
         UNIT_BUSINESS_ID,
       );
 
-      expect(reindexSpy).not.toHaveBeenCalled();
+      expect(upsertSpy).not.toHaveBeenCalled();
       expect((service as any).repository.bulkCreate).toHaveBeenCalledWith(
         [
           expect.objectContaining({
             invoice_id: "inv-2",
             balance_quantity: 7,
             resulting_average_cost: 10,
+            is_active: true,
           }),
         ],
         { transaction: undefined },
@@ -678,7 +1267,7 @@ describe("StockMovementService", () => {
       expect(result).toEqual({ average_cost: 10, created: 1 });
     });
 
-    it("delega para reindexProduct quando a NF pendente é retroativa (anterior ao último movimento gravado)", async () => {
+    it("delega para upsertProductStockMovements (não mais reindexProduct) quando a NF pendente é retroativa", async () => {
       const existingMovement = {
         invoice_id: "inv-2",
         invoice_number: "2",
@@ -705,13 +1294,14 @@ describe("StockMovementService", () => {
         existingMovement,
       ]);
 
-      const reindexedResult = [
+      const upsertedResult = [
         { resulting_average_cost: 10 },
         { resulting_average_cost: 12 },
       ];
-      const reindexSpy = jest
-        .spyOn(service, "reindexProduct")
-        .mockResolvedValue(reindexedResult as any);
+      const upsertSpy = jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue(upsertedResult as any);
+      const reindexSpy = jest.spyOn(service, "reindexProduct");
 
       const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -720,11 +1310,11 @@ describe("StockMovementService", () => {
         UNIT_BUSINESS_ID,
       );
 
-      expect(reindexSpy).toHaveBeenCalledWith(
+      expect(reindexSpy).not.toHaveBeenCalled();
+      expect(upsertSpy).toHaveBeenCalledWith(
         PRODUCT_ID,
         UNIT_BUSINESS_ID,
         expect.arrayContaining([
-          expect.objectContaining({ invoice_id: "inv-2" }),
           expect.objectContaining({ invoice_id: "inv-1" }),
         ]),
         undefined,
