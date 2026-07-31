@@ -1,14 +1,18 @@
 export type StockMovementType =
   | "PURCHASE_ENTRY"
   | "SALE_OUT"
-  | "CUSTOMER_RETURN";
+  | "CUSTOMER_RETURN"
+  | "MANUAL_ADJUSTMENT";
+
+export type StockDirectionType = "IN" | "OUT"
 
 export interface StockMovementAttributes {
   id?: string;
   unit_business_id: string;
   product_id: string;
-  invoice_id: string;
+  invoice_id: string | null;
   invoice_number?: string;
+  direction?: StockDirectionType;
   movement_type: StockMovementType;
   movement_date: Date;
   movement_quantity: number;
@@ -16,7 +20,8 @@ export interface StockMovementAttributes {
   balance_quantity: number;
   resulting_average_cost: number;
   total_stock_value: number;
-  manual_discount_value?: number;
+  manual_average_cost_value?: number | null;
+  is_active: Boolean; 
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -28,7 +33,7 @@ export interface ListSourceDataFromInvoices extends Pick<
   | "movement_date"
   | "invoice_id"
   | "invoice_number"
-  | "manual_discount_value"
+  | "manual_average_cost_value"
 > {
   movement_type: StockMovementType;
   unit_cost_invoice: number;
@@ -43,7 +48,7 @@ export interface ReindexProductPayload extends Pick<
   | "movement_date"
   | "invoice_id"
   | "invoice_number"
-  | "manual_discount_value"
+  | "manual_average_cost_value"
 > {}
 
 export interface StockMovementCreationAttributes extends Omit<
