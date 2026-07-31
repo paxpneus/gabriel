@@ -5,7 +5,7 @@ import { inventoryBatchItemFull, Operation } from "./inventory-batch-items.types
 import inventoryBatchRepository from "../inventory-batch/inventory-batch.repository";
 import InventoryBatchLogs from "../inventory-batch-logs/inventory-batch-logs.model";
 import Product from "../../products/product.model";
-import Stock from "../../stock/stock.model";
+import Stock from "../../stock/stock/stock.model";
 import sequelize from "../../../../config/sequelize";
 import inventoryBatchService from "../inventory-batch/inventory-batch.service";
 

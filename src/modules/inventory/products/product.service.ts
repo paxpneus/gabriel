@@ -13,7 +13,7 @@ import {
 import BaseService from "../../../shared/utils/base-models/base-service";
 import Product from "./product.model";
 import productRepository, { ProductRepository } from "./product.repository";
-import Stock from "../stock/stock.model";
+import Stock from "../stock/stock/stock.model";
 import ProductConfig from "../product-config/product_config.model";
 import { ProductCreationAttributes } from "./product.types";
 import supplierMappingService from "../supplier-mapping/supplier-mapping.service";

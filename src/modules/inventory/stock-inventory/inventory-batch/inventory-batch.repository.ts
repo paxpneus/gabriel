@@ -1,6 +1,6 @@
 import { Transaction } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
-import Stock from "../../stock/stock.model";
+import Stock from "../../stock/stock/stock.model";
 import InventoryBatchItems from "../inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "./inventory-batch.model";
 
