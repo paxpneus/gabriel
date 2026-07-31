@@ -838,7 +838,7 @@ export class StockMovementService extends BaseService<
     );
 
     const isRetroactive =
-      !!lastExisting && sortedPending[0].movement_date.getTime();
+      !!lastExisting && sortedPending[0].movement_date.getTime() <
     new Date(lastExisting.movement_date).getTime();
 
     if (isRetroactive) {
