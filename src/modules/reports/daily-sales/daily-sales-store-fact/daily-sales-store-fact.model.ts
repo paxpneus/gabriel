@@ -35,8 +35,6 @@ class DailySalesStoreFact
   public readonly updatedAt!: Date;
 }
 
-const money = { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 };
-
 DailySalesStoreFact.init(
   {
     id: { type: DataTypes.UUID, defaultValue: uuidv4, primaryKey: true },
@@ -45,15 +43,15 @@ DailySalesStoreFact.init(
     store_id: { type: DataTypes.UUID, allowNull: false },
     orders_count: { type: DataTypes.INTEGER, defaultValue: 0 },
     items_quantity: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
-    total_value: money,
-    total_freight: money,
-    average_ticket: money,
-    total_cost: money,
-    piece_average_value: money,
+    total_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    total_freight: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    average_ticket: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    total_cost: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    piece_average_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     markup_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
-    total_taxes: money,
-    total_fees: money,
-    contribution_value: money,
+    total_taxes: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    total_fees: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     contribution_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
     total_commission: {
       type: DataTypes.DECIMAL(14, 4),

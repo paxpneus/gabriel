@@ -665,8 +665,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     try {
-      const { data } = await this.api.get<{ data: BlingApiProduct }>(
-        `/produtos/${componentBlingId}`,
+      const { data } = await blingGet<{ data: BlingApiProduct }>(
+        `/produtos/${componentBlingId}`, blingApi
       );
       return data.data?.codigo ?? null;
     } catch (error: any) {

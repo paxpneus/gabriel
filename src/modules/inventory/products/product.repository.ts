@@ -1,7 +1,7 @@
 import { FindOptions } from 'sequelize';
 import BaseRepository from '../../../shared/utils/base-models/base-repository';
 import Product from './product.model';
-import Stock from '../stock/stock.model';
+import Stock from '../stock/stock/stock.model';
 import ProductConfig from '../product-config/product_config.model';
 
 export class ProductRepository extends BaseRepository<Product> {

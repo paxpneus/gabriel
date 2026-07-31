@@ -28,8 +28,6 @@ class DailySalesStateFact
   public readonly updatedAt!: Date;
 }
 
-const money = { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 };
-
 DailySalesStateFact.init(
   {
     id: { type: DataTypes.UUID, defaultValue: uuidv4, primaryKey: true },
@@ -38,10 +36,10 @@ DailySalesStateFact.init(
     destination_uf: { type: DataTypes.STRING(2), allowNull: false },
     orders_count: { type: DataTypes.INTEGER, defaultValue: 0 },
     items_quantity: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
-    total_value: money,
-    total_freight: money,
-    average_freight: money,
-    average_ticket: money,
+    total_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    total_freight: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    average_freight: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    average_ticket: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },
   {

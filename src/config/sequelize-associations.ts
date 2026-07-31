@@ -21,7 +21,7 @@ import Invoice from "../modules/warehouse/invoices/invoice/invoice.model";
 import InvoiceItems from "../modules/warehouse/invoices/invoice-items/invoice-items.model";
 import Product from "../modules/inventory/products/product.model";
 import ProductConfig from "../modules/inventory/product-config/product_config.model";
-import Stock from "../modules/inventory/stock/stock.model";
+import Stock from "../modules/inventory/stock/stock/stock.model";
 import SupplierMapping from "../modules/inventory/supplier-mapping/supplier-mapping.model";
 import IntegrationMapping from "../modules/integrations/integration-mapping/integration-mapping.model";
 import Integration from "../modules/integrations/integrations/integrations.model";

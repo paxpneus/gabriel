@@ -66,9 +66,6 @@ class SalesOrderItemSnapshot
   public readonly updatedAt!: Date;
 }
 
-const money = { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 };
-const qty   = { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 };
-
 SalesOrderItemSnapshot.init(
   {
     id:                { type: DataTypes.UUID, defaultValue: uuidv4, primaryKey: true },
@@ -87,36 +84,36 @@ SalesOrderItemSnapshot.init(
     description: { type: DataTypes.STRING(255), allowNull: true },
     unit:        { type: DataTypes.STRING(20),  allowNull: true },
 
-    quantity:       qty,
+    quantity:       { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
     unit_price:     { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
-    gross_total:    money,
-    discount_value: money,
-    net_total:      money,
+    gross_total:    { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    discount_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    net_total:      { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
     average_cost_snapshot: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
-    total_cost_snapshot:   money,
+    total_cost_snapshot:   { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     cost_source:           { type: DataTypes.STRING(30), allowNull: true },
 
     markup_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
 
-    commission_base:  money,
+    commission_base:  { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     commission_rate:  { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
-    commission_value: money,
+    commission_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
     ncm:  { type: DataTypes.STRING(20), allowNull: true },
     cest: { type: DataTypes.STRING(20), allowNull: true },
     cfop: { type: DataTypes.STRING(20), allowNull: true },
     gtin: { type: DataTypes.STRING(20), allowNull: true },
 
-    approx_tax_value: money,
+    approx_tax_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     icms_rate:        { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
-    icms_value:       money,
-    ipi_value:        money,
-    pis_value:        money,
-    cofins_value:     money,
-    difal_value:      money,
-    ibs_value:        money,
-    cbs_value:        money,
+    icms_value:       { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    ipi_value:        { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    pis_value:        { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    cofins_value:     { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    difal_value:      { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    ibs_value:        { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    cbs_value:        { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
     source_payload:  { type: DataTypes.JSONB, allowNull: true },
     last_updated_at: { type: DataTypes.DATE,  defaultValue: DataTypes.NOW },

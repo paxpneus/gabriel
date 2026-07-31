@@ -3,7 +3,7 @@ import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import Product from "../../products/product.model";
 import { ProductWithStock } from "../../products/product.types";
-import Stock from "../../stock/stock.model";
+import Stock from "../../stock/stock/stock.model";
 import InventoryBatchItems from "../inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "../inventory-batch/inventory-batch.model";
 import InventoryBatchLogs from "./inventory-batch-logs.model";

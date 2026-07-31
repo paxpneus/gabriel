@@ -12,7 +12,7 @@ import inventoryBatchItemsRepository, {
 } from "./inventory-batch-items.repository";
 import Product from "../../products/product.model";
 import { inventoryBatchItemFull } from "./inventory-batch-items.types";
-import Stock from "../../stock/stock.model";
+import Stock from "../../stock/stock/stock.model";
 import scanLogsService from "../../../warehouse/expedition/scan-logs/scan-logs.service";
 import InventoryBatchLogs from "../inventory-batch-logs/inventory-batch-logs.model";
 
