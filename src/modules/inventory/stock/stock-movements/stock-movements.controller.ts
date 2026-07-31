@@ -2,14 +2,38 @@ import { Request, Response, NextFunction } from 'express';
 import BaseController from '../../../../shared/utils/base-models/base-controller';
 import StockMovement from './stock-movements.model';
 import StockMovementService from './stock-movements.service';
+import { authenticate } from '../../../../middlewares/auth-token';
+import { userPermissions } from '../../../../middlewares/user-permissions';
+import stockMovementsService from './stock-movements.service';
 
 export class StockMovementController extends BaseController<
   StockMovement,
   typeof StockMovementService
 > {
   constructor() {
-    super(StockMovementService);
+    super(stockMovementsService);
+
+    this.router.get("/:productId/history", ...this.mw("getHistory"), this.getHistory)
+    
+    this.router.post("/reindex", ...this.mw("reindex"), this.reindex)
   }
+
+     protected middlewaresFor() {
+        return {
+          index: [authenticate, userPermissions],
+          create: [authenticate, userPermissions],
+          update: [
+            authenticate,
+            userPermissions
+          ],
+          show: [authenticate, userPermissions],
+          destroy: [authenticate, userPermissions],
+          getHistory: [authenticate, userPermissions],
+          getBalance: [authenticate, userPermissions],
+          process: [authenticate, userPermissions],
+          reindex: [authenticate, userPermissions],
+        };
+      }
 
   /**
    * GET /stock-movements/:productId/history?unit_business_id=...

@@ -32,10 +32,19 @@ interface DecimalAndPercentSql {
 export interface SalesReportOrderItemInput {
   sku: string;
   quantity: number;
+  // average_cost_snapshot: DEVE ser resolvido pelo chamador a partir de
+  // stock_movements (product_id + unit_business_id), buscando o
+  // resulting_average_cost do movimento com movement_date mais próximo,
+  // igual ou anterior à data do pedido. Se não existir movimento anterior,
+  // o chamador deve passar null/0 aqui — isso descarta o pedido inteiro
+  // (ver calculateSalesReportOrderFinancials).
   average_cost_snapshot: number | null;
   commission_base?: number | null;
   commission_rate?: number | null;
   commission_value?: number | null;
+  // DEPRECATED: não é mais usado como fonte de custo no cálculo. O custo do
+  // item agora é SEMPRE average_cost_snapshot * quantity + commission_value.
+  // Mantido apenas para não quebrar tipos existentes.
   total_cost_snapshot?: number | null;
   net_total: number;
 }
@@ -259,19 +268,20 @@ export const calculateSalesReportOrderFinancials = (
 
   const items = order.items.map((item) => {
     const quantity = toNumber(item.quantity);
+    // average_cost_snapshot: agora vem SEMPRE de stock_movements
+    // (resulting_average_cost do movimento mais próximo, igual ou anterior
+    // à data do pedido, resolvido pelo chamador). É a fonte da verdade —
+    // não há mais fallback para nenhum custo gravado em order_items.
     const averageCost = toNumber(item.average_cost_snapshot);
     const productCost = averageCost * quantity;
     const commission =
       item.commission_value != null
         ? toNumber(item.commission_value)
         : toNumber(item.commission_base) * toNumber(item.commission_rate);
-    // Custo do item: SEMPRE total_cost_snapshot quando existir (valor bruto
-    // já gravado no snapshot). Sem somar ICMS aqui — ICMS não compõe custo,
-    // só entra na conta de contribution lá embaixo.
-    const orderItemTotalCost =
-      item.total_cost_snapshot != null
-        ? toNumber(item.total_cost_snapshot)
-        : productCost + commission;
+    // Custo do item: SEMPRE average_cost_snapshot (stock_movements) * quantity
+    // + comissão. total_cost_snapshot pré-gravado NÃO é mais usado como fonte
+    // de custo (ver comentário no tipo SalesReportOrderItemInput).
+    const orderItemTotalCost = productCost + commission;
     const productProfit = toNumber(item.net_total) - orderItemTotalCost;
 
     return {
@@ -286,7 +296,8 @@ export const calculateSalesReportOrderFinancials = (
     };
   });
 
-  // Custo total = soma bruta do total_cost_snapshot de todos os itens.
+  // Custo total = soma bruta de average_cost_snapshot(stock_movements) * quantity
+  // + comissão, de todos os itens.
   const totalCost = items.reduce(
     (sum, item) => sum + item.orderItemTotalCost,
     0,
@@ -533,15 +544,39 @@ export class SalesReportRepository {
    * total_cost_snapshot já pronto de fora). Além disso é somada à parte em
    * total_commission (por pedido, por dia/unidade, por loja e por produto)
    * pra exibição separada.
+   *
+   * NOTA SOBRE average_cost_snapshot / total_cost_snapshot (revisão 3 —
+   * custo agora vem de stock_movements):
+   *
+   * average_cost_snapshot deixou de vir de order_items.average_cost_snapshot
+   * e passou a ser resolvido em tempo real, por item, a partir de
+   * stock_movements: pegamos o resulting_average_cost do stock_movement de
+   * mesmo product_id + unit_business_id cujo movement_date seja o mais
+   * próximo, igual ou anterior à data do pedido (empate de data+hora é
+   * resolvido por created_at mais recente). Isso é feito via LEFT JOIN
+   * LATERAL em item_source_raw.
+   *
+   * Se não existir nenhum stock_movement anterior/igual à data do pedido
+   * para aquele produto, average_cost_snapshot fica 0 e o item (e,
+   * consequentemente, o pedido inteiro) é tratado como sem custo completo
+   * — mesma regra de exclusão de sempre, via hasCompleteCostSql, que agora
+   * reflete essa nova fonte porque lê o valor já resolvido gravado em
+   * sales_order_item_snapshots.average_cost_snapshot.
+   *
+   * total_cost_snapshot NÃO é mais lido de order_items — é SEMPRE recalculado
+   * como average_cost_snapshot(stock_movements) * quantity + commission_value.
+   * order_items.total_cost_snapshot/average_cost_snapshot (gravados por outras
+   * integrações, ex: BlingOrderService) deixaram de ser fonte de verdade para
+   * este relatório.
    */
   async upsertSnapshots(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
 
-    // Custo do item: SEMPRE bruto (average_cost_snapshot * quantity + comissão
-    // no fallback, ou o total_cost_snapshot já pronto vindo de fora). NUNCA
-    // soma ICMS aqui — ICMS não é custo, só entra em contribution.
+    // Custo do item: SEMPRE average_cost_snapshot (resolvido via
+    // stock_movements em item_source_raw) * quantity + commission_value.
+    // NUNCA soma ICMS aqui — ICMS não é custo, só entra em contribution.
     const itemTotalCostSql =
-      "COALESCE(total_cost_snapshot_raw, average_cost_snapshot * quantity + commission_value)";
+      "average_cost_snapshot * quantity + commission_value";
     // Receita usada em markup/facts: SEMPRE total_products (bruto).
     const snapshotRevenueSql = "sos.total_products";
     const snapshotCostSql = "it.total_cost";
@@ -559,6 +594,15 @@ export class SalesReportRepository {
       --    * icms_rate. Esse valor é o único usado em contribution — o
       --    icms_value de nota fiscal (o.icms_value) continua sendo lido
       --    e guardado à parte, sem entrar nessa conta.
+      --
+      --    NOTA: o CASE de snapshot_status abaixo é um flag inicial/melhor
+      --    esforço (compara order_items.product_id direto contra
+      --    stock_movements, sem os fallbacks de resolução de produto via SKU
+      --    que só acontecem em item_source_raw). A exclusão realmente
+      --    autoritativa de pedidos sem custo continua sendo feita via
+      --    hasCompleteCostSql, que lê o average_cost_snapshot já resolvido
+      --    em sales_order_item_snapshots — este CASE aqui não afeta cálculo
+      --    financeiro, só o rótulo de status guardado no snapshot.
       -- ------------------------------------------------------------------
       order_source AS (
         SELECT
@@ -578,7 +622,13 @@ export class SalesReportRepository {
               SELECT 1
               FROM order_items cost_check
               WHERE cost_check.order_id = o.id
-                AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM stock_movements cost_sm
+                  WHERE cost_sm.product_id = cost_check.product_id
+                    AND cost_sm.unit_business_id = o.unit_business_id
+                    AND cost_sm.movement_date <= COALESCE(o.date, o.created_at)
+                )
             ) THEN 'ignored_missing_cost'
             WHEN o.actual_situation IN ('6', '9') THEN 'completed'
             ELSE 'cancelled'
@@ -729,6 +779,14 @@ export class SalesReportRepository {
      -- ------------------------------------------------------------------
 -- 3. Fonte de dados dos itens (valores BRUTOS/próprios do item, ainda sem
 --    ratear nada do pedido — net_total_raw só serve pra calcular o peso).
+--
+--    average_cost_snapshot NÃO vem mais de order_items — vem do
+--    stock_movement (product_id + unit_business_id) com movement_date mais
+--    próximo, igual ou anterior à data do pedido (ord.date/created_at),
+--    resolvido via LEFT JOIN LATERAL (scm). Empate de data+hora é
+--    desempatado por created_at mais recente. Se não houver stock_movement
+--    anterior/igual, average_cost_snapshot fica 0 (mesmo comportamento de
+--    "custo ausente" de antes, agora vindo de outra fonte).
 -- ------------------------------------------------------------------
 item_source_raw AS (
   SELECT
@@ -763,10 +821,13 @@ item_source_raw AS (
       oi.net_total,
       COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))
     )                                                     AS net_total_raw,
-    COALESCE(oi.average_cost_snapshot, 0)::numeric         AS average_cost_snapshot,
-    oi.total_cost_snapshot::numeric                        AS total_cost_snapshot_raw,
+    -- Custo médio: SEMPRE resolvido via stock_movements (ver LATERAL scm
+    -- abaixo). 0 quando não há stock_movement anterior/igual à data do
+    -- pedido para o produto — nesse caso o item/pedido é descartado a
+    -- jusante (hasCompleteCostSql).
+    COALESCE(scm.resulting_average_cost, 0)::numeric       AS average_cost_snapshot,
     CASE
-      WHEN oi.average_cost_snapshot IS NOT NULL THEN 'ORDER_ITEM_SNAPSHOT'
+      WHEN scm.resulting_average_cost IS NOT NULL THEN 'STOCK_AVERAGE'
       ELSE 'UNKNOWN'
     END                                                     AS cost_source,
     COALESCE(oi.commission_base, 0)                       AS commission_base,
@@ -791,6 +852,11 @@ item_source_raw AS (
     oi.source_payload
   FROM order_items oi
   JOIN inserted_orders io ON io.order_id = oi.order_id
+
+  -- data/hora real do pedido (io.order_date só guarda a DATE truncada;
+  -- aqui buscamos o timestamp completo para achar o stock_movement mais
+  -- próximo com precisão de hora, não só de dia).
+  JOIN orders ord ON ord.id = oi.order_id
 
   -- tenta resolver pelo sku quando não há product_id no item
   LEFT JOIN product_configs pc_by_sku ON (
@@ -821,6 +887,19 @@ item_source_raw AS (
       s.updated_at DESC
     LIMIT 1
   ) st ON TRUE
+
+  -- Custo médio real do produto: stock_movement de mesmo produto +
+  -- unit_business com movement_date mais próximo, igual ou anterior à data
+  -- do pedido. Empate de data+hora desempatado por created_at desc.
+  LEFT JOIN LATERAL (
+    SELECT sm.resulting_average_cost
+    FROM stock_movements sm
+    WHERE sm.product_id = COALESCE(oi.product_id, p.id)
+      AND sm.unit_business_id = io.unit_business_id
+      AND sm.movement_date <= COALESCE(ord.date, ord.created_at)
+    ORDER BY sm.movement_date DESC, sm.created_at DESC
+    LIMIT 1
+  ) scm ON TRUE
 ),
 
 -- ------------------------------------------------------------------
@@ -865,9 +944,9 @@ item_calc AS (
       -- ------------------------------------------------------------------
       -- 4. Upsert dos snapshots de item
       --    RETURNING expande os campos necessários para item_totals.
-      --    total_cost_snapshot = custo médio (ou raw) + comissão de seller
-      --    no fallback. NÃO soma mais ICMS — ICMS não é custo, só entra em
-      --    contribution no nível do pedido.
+      --    total_cost_snapshot = average_cost_snapshot(stock_movements) *
+      --    quantity + commission_value. NÃO soma mais ICMS — ICMS não é
+      --    custo, só entra em contribution no nível do pedido.
       -- ------------------------------------------------------------------
       inserted_items AS (
         INSERT INTO sales_order_item_snapshots (
@@ -889,9 +968,10 @@ item_calc AS (
           -- de total_products), não o líquido.
           net_total_allocated,
           average_cost_snapshot,
-          -- Custo bruto do item: raw (se existir) OU average_cost*quantity +
-          -- comissão no fallback. Sem somar ICMS.
-          COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value),
+          -- Custo bruto do item: SEMPRE average_cost_snapshot (stock_movements)
+          -- * quantity + comissão. Sem fallback pra total_cost_snapshot de
+          -- order_items e sem somar ICMS.
+          ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value,
           cost_source,
           ${calculateMarkupSql("net_total_allocated", itemTotalCostSql).percent},
           commission_base, commission_rate, commission_value,
@@ -1611,6 +1691,11 @@ item_calc AS (
    * computed_icms_value já está persistido no snapshot do pedido (calculado
    * em upsertSnapshots via join com states) — aqui só lemos a coluna, não
    * recalculamos a alíquota.
+   *
+   * total_cost_snapshot (por item) já está gravado em
+   * sales_order_item_snapshots com a fórmula nova (average_cost_snapshot via
+   * stock_movements * quantity + commission_value) desde o upsertSnapshots —
+   * este método só re-soma o que já está lá, sem recalcular custo do zero.
    */
   async updateSnapshotTotals(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
