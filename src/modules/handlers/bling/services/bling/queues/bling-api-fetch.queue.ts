@@ -666,7 +666,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     try {
       const { data } = await blingGet<{ data: BlingApiProduct }>(
-        `/produtos/${componentBlingId}`, blingApi
+        `/produtos/${componentBlingId}`,
+        blingApi,
       );
       return data.data?.codigo ?? null;
     } catch (error: any) {
@@ -1153,6 +1154,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           await stockMovementsService.syncProductStockMovements(
             product.id,
             unitBusiness.id,
+            undefined,
             transaction,
           );
         averageCostResolved = average_cost;
@@ -1837,6 +1839,45 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     if (batchInvoice) {
       await invoiceItemsService.syncBatchFromInvoice(batchInvoice);
+    }
+
+    // ─── Garante que o Kardex reflete essa NF e reconcilia com o saldo
+    // local já conhecido (sem chamar a Bling — o estoque físico já foi
+    // atualizado há tempos pelo webhook de stock/product) ────────────────
+    const affectedProductIds = [
+      ...new Set(invoiceItemsForCreate.map((i) => i.product_id)),
+    ];
+
+    for (const productId of affectedProductIds) {
+      try {
+        const localStock = await Stock.findOne({
+          where: {
+            product_id: productId,
+            unit_business_id: unit_business.id,
+          },
+        });
+
+        if (!localStock) {
+          console.warn(
+            `[BLING_API_FETCH] Sem registro de Stock local para reconciliar | invoice=${invoice.id} | product=${productId} — sync sem reconciliação.`,
+          );
+          await stockMovementsService.syncProductStockMovements(
+            productId,
+            unit_business.id,
+          );
+          continue;
+        }
+
+        await stockMovementsService.syncProductStockMovements(
+          productId,
+          unit_business.id,
+          Number(localStock.quantity),
+        );
+      } catch (err: any) {
+        console.warn(
+          `[BLING_API_FETCH] Falha ao sincronizar/reconciliar Kardex pontualmente | invoice=${invoice.id} | product=${productId} | erro=${err?.message}`,
+        );
+      }
     }
   }
 

@@ -52,6 +52,52 @@ export class StockMovementService extends BaseService<
   }
 
   /**
+   * Reconcilia a QUANTIDADE do saldo do sistema com o saldo real conhecido
+   * (ex: saldoFisicoTotal da Bling). Cria um MANUAL_ADJUSTMENT com a
+   * diferença — NUNCA escreve manual_average_cost_value, então o custo
+   * médio é preservado automaticamente (calculateNextState já herda o
+   * previousAverageCost pra MANUAL_ADJUSTMENT por padrão).
+   *
+   * Se o saldo já bate, não faz nada (retorna null).
+   */
+  private async reconcileProductBalance(
+    productId: string,
+    unitBusinessId: string,
+    actualQuantity: number,
+    transaction?: Transaction,
+  ): Promise<StockMovement[] | null> {
+    const lastMovement = await this.repository.findLastMovement(
+      productId,
+      unitBusinessId,
+      transaction,
+    );
+
+    const currentBalance = lastMovement
+      ? Number(lastMovement.balance_quantity)
+      : 0;
+
+    const delta = actualQuantity - currentBalance;
+
+    if (delta === 0) return null;
+
+    console.warn(
+      `[STOCK_MOVEMENT] Reconciliação produto=${productId}: saldo sistema=${currentBalance}, saldo real=${actualQuantity}, delta=${delta}.`,
+    );
+
+    return this.createManualAdjustment(
+      productId,
+      unitBusinessId,
+      {
+        movement_quantity: Math.abs(delta),
+        direction_type: delta > 0 ? "PURCHASE_ENTRY" : "SALE_OUT",
+        manual_average_cost_value: null,
+        movement_date: new Date(),
+      },
+      transaction,
+    );
+  }
+
+  /**
    * Calcula o novo estado (saldo, CMP, valor total) a partir do estado anterior
    * e do tipo de movimento.
    *
@@ -788,11 +834,33 @@ export class StockMovementService extends BaseService<
    * e faz UPDATE/CREATE ponto a ponto, sem apagar histórico —
    * reindexProduct fica reservado só pra acionamento manual via controller.
    */
+  /**
+   * Sincroniza o Kardex.
+   *
+   * Fluxo normal (NF nova, data >= último movimento): cria em sequência,
+   * sem tocar em nada existente.
+   *
+   * Fluxo retroativo (NF pendente com data anterior ao último movimento já
+   * processado): chama upsertProductStockMovements, que recalcula a cadeia
+   * e faz UPDATE/CREATE ponto a ponto, sem apagar histórico —
+   * reindexProduct fica reservado só pra acionamento manual via controller.
+   *
+   * `actualQuantity`, se informado (saldo real vindo da Bling), roda por
+   * ÚLTIMO — depois de processar todas as NFs pendentes — e reconcilia
+   * qualquer diferença residual (vendas ainda sem nota, estoque inicial
+   * não documentado, etc.) via MANUAL_ADJUSTMENT, preservando o custo
+   * médio vigente.
+   */
   async syncProductStockMovements(
     productId: string,
     unitBusinessId: string,
+    actualQuantity?: number,
     transaction?: Transaction,
-  ): Promise<{ average_cost: number; created: number }> {
+  ): Promise<{
+    average_cost: number;
+    created: number;
+    balance_quantity: number;
+  }> {
     const sourceData = await this.findStockMovementSourceData(
       unitBusinessId,
       productId,
@@ -808,14 +876,13 @@ export class StockMovementService extends BaseService<
     const lastExisting =
       existingMovements[existingMovements.length - 1] ?? null;
 
-    if (!sourceData.length) {
-      return {
-        average_cost: lastExisting
-          ? Number(lastExisting.resulting_average_cost)
-          : 0,
-        created: 0,
-      };
-    }
+    let averageCost = lastExisting
+      ? Number(lastExisting.resulting_average_cost)
+      : 0;
+    let balanceQuantity = lastExisting
+      ? Number(lastExisting.balance_quantity)
+      : 0;
+    let created = 0;
 
     const existingInvoiceIds = new Set(
       existingMovements.map((m) => m.invoice_id),
@@ -824,78 +891,97 @@ export class StockMovementService extends BaseService<
       (item) => !existingInvoiceIds.has(item.invoice_id),
     );
 
-    if (!pending.length) {
-      return {
-        average_cost: lastExisting
-          ? Number(lastExisting.resulting_average_cost)
-          : 0,
-        created: 0,
-      };
-    }
-
-    const sortedPending = [...pending].sort(
-      (a, b) => a.movement_date.getTime() - b.movement_date.getTime(),
-    );
-
-    const isRetroactive =
-      !!lastExisting && sortedPending[0].movement_date.getTime() <
-    new Date(lastExisting.movement_date).getTime();
-
-    if (isRetroactive) {
-      console.warn(
-        `[STOCK_MOVEMENT] Produto ${productId}: NF pendente com data anterior ao último movimento registrado. Recalculando via upsert (sem apagar histórico).`,
+    if (pending.length) {
+      const sortedPending = [...pending].sort(
+        (a, b) => a.movement_date.getTime() - b.movement_date.getTime(),
       );
 
-      const upserted = await this.upsertProductStockMovements(
+      const isRetroactive =
+        !!lastExisting && sortedPending[0].movement_date.getTime();
+      new Date(lastExisting.movement_date).getTime();
+
+      if (isRetroactive) {
+        console.warn(
+          `[STOCK_MOVEMENT] Produto ${productId}: NF pendente com data anterior ao último movimento registrado. Recalculando via upsert (sem apagar histórico).`,
+        );
+
+        const upserted = await this.upsertProductStockMovements(
+          productId,
+          unitBusinessId,
+          sortedPending,
+          transaction,
+        );
+
+        const last = upserted[upserted.length - 1];
+        averageCost = last ? Number(last.resulting_average_cost) : averageCost;
+        balanceQuantity = last
+          ? Number(last.balance_quantity)
+          : balanceQuantity;
+        created = sortedPending.length;
+      } else {
+        let previousState: BalanceState | null = lastExisting
+          ? {
+              balance_quantity: Number(lastExisting.balance_quantity),
+              resulting_average_cost: Number(
+                lastExisting.resulting_average_cost,
+              ),
+            }
+          : null;
+
+        const toCreate: StockMovementCreationAttributes[] = [];
+
+        for (const movement of sortedPending) {
+          const nextState = this.calculateNextState(previousState, movement);
+
+          toCreate.push({
+            unit_business_id: unitBusinessId,
+            product_id: productId,
+            invoice_id: movement.invoice_id,
+            invoice_number: movement.invoice_number,
+            movement_type: movement.movement_type,
+            movement_date: movement.movement_date,
+            movement_quantity: movement.movement_quantity,
+            unit_cost_invoice: movement.unit_cost_invoice,
+            is_active: true,
+            ...nextState,
+          } as StockMovementCreationAttributes);
+
+          previousState = nextState;
+        }
+
+        const createdMovements = await this.repository.bulkCreate(
+          toCreate as any,
+          { transaction },
+        );
+
+        averageCost = previousState!.resulting_average_cost;
+        balanceQuantity = previousState!.balance_quantity;
+        created = createdMovements.length;
+      }
+    }
+
+    // Reconciliação por último, sempre — mesmo sem pendências, o saldo
+    // pode ter divergido (venda física sem nota ainda, ajuste de
+    // inventário na Bling, etc.).
+    if (actualQuantity != null) {
+      const reconciled = await this.reconcileProductBalance(
         productId,
         unitBusinessId,
-        sortedPending,
+        actualQuantity,
         transaction,
       );
 
-      const last = upserted[upserted.length - 1];
-
-      return {
-        average_cost: last ? Number(last.resulting_average_cost) : 0,
-        created: sortedPending.length,
-      };
+      if (reconciled) {
+        const last = reconciled[reconciled.length - 1];
+        averageCost = Number(last.resulting_average_cost);
+        balanceQuantity = Number(last.balance_quantity);
+      }
     }
-
-    let previousState: BalanceState | null = lastExisting
-      ? {
-          balance_quantity: Number(lastExisting.balance_quantity),
-          resulting_average_cost: Number(lastExisting.resulting_average_cost),
-        }
-      : null;
-
-    const toCreate: StockMovementCreationAttributes[] = [];
-
-    for (const movement of sortedPending) {
-      const nextState = this.calculateNextState(previousState, movement);
-
-      toCreate.push({
-        unit_business_id: unitBusinessId,
-        product_id: productId,
-        invoice_id: movement.invoice_id,
-        invoice_number: movement.invoice_number,
-        movement_type: movement.movement_type,
-        movement_date: movement.movement_date,
-        movement_quantity: movement.movement_quantity,
-        unit_cost_invoice: movement.unit_cost_invoice,
-        is_active: true,
-        ...nextState,
-      } as StockMovementCreationAttributes);
-
-      previousState = nextState;
-    }
-
-    const created = await this.repository.bulkCreate(toCreate as any, {
-      transaction,
-    });
 
     return {
-      average_cost: previousState!.resulting_average_cost,
-      created: created.length,
+      average_cost: averageCost,
+      created,
+      balance_quantity: balanceQuantity,
     };
   }
 
@@ -911,6 +997,117 @@ export class StockMovementService extends BaseService<
     unitBusinessId: string,
   ): Promise<StockMovement | null> {
     return this.repository.findLastMovement(productId, unitBusinessId);
+  }
+
+  /**
+   * Varre todos os produtos de UM unit_business e cria os stock_movements
+   * que estão faltando (NFs sem movimento correspondente).
+   *
+   * Não mexe em nada que já existe — só detecta o que falta (por
+   * invoice_id) e delega pro upsertProductStockMovements, que já sabe
+   * inserir no ponto certo da timeline e recalcular a cadeia de
+   * saldo/custo médio a partir dali.
+   *
+   * Uso: job de manutenção/backfill, não faz parte do fluxo automático
+   * (emissão de NF continua usando processMovement/syncProductStockMovements).
+   */
+  async syncAllProductsStockMovements(
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<{ product_id: string; created: number }[]> {
+    const unitBusiness = await UnitBusiness.findByPk(unitBusinessId, {
+      transaction,
+    });
+
+    if (!unitBusiness) {
+      throw new Error("Unit business não encontrada!");
+    }
+
+    const invoiceAttrs = await InvoiceUnitBusinessAttributes.findAll({
+      where: {
+        unit_business_id: unitBusinessId,
+        status: { [Op.notIn]: ["CANCELLED", "PENDING_CANCELLED_SYSTEM"] },
+      },
+      transaction,
+    });
+
+    const invoiceIds = invoiceAttrs.map((a) => a.invoice_id);
+    if (!invoiceIds.length) return [];
+
+    const invoiceItems = await InvoiceItems.findAll({
+      where: { invoice_id: { [Op.in]: invoiceIds } },
+      transaction,
+    });
+
+    const productIds = [...new Set(invoiceItems.map((i) => i.product_id))];
+
+    const results: { product_id: string; created: number }[] = [];
+
+    for (const productId of productIds) {
+      const created = await this.backfillProductStockMovements(
+        productId,
+        unitBusinessId,
+        transaction,
+      );
+
+      if (created > 0) {
+        results.push({ product_id: productId, created });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Backfill de UM produto: acha as NFs que ainda não têm stock_movement
+   * (comparando por invoice_id) e chama upsertProductStockMovements só com
+   * elas. Retorna quantos movimentos foram criados.
+   *
+   * activeOnly = false ao buscar o histórico existente: se uma NF já tem
+   * movimento só que desativado, isso conta como "já existe" — não deve
+   * ser recriado.
+   */
+  private async backfillProductStockMovements(
+    productId: string,
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<number> {
+    const sourceData = await this.findStockMovementSourceData(
+      unitBusinessId,
+      productId,
+      transaction,
+    );
+
+    if (!sourceData.length) return 0;
+
+    const existingMovements = await this.repository.findHistoryByProduct(
+      productId,
+      unitBusinessId,
+      transaction,
+      false,
+    );
+
+    const existingInvoiceIds = new Set(
+      existingMovements
+        .filter((m) => m.invoice_id != null)
+        .map((m) => m.invoice_id as string),
+    );
+
+    const missing = sourceData.filter(
+      (item) =>
+        item.invoice_id != null && !existingInvoiceIds.has(item.invoice_id),
+    );
+
+    if (!missing.length) return 0;
+
+    await this.upsertProductStockMovements(
+      productId,
+      unitBusinessId,
+      missing,
+      transaction,
+    );
+
+    return missing.length;
   }
 }
 

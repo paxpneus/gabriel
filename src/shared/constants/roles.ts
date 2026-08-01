@@ -85,6 +85,10 @@ export const ROLE_PERMISSIONS: Roles[] = [
     route: 'stocks',
     type: 'REGULAR',
     permissions: all,
+    children: [
+      
+      { entity: 'stock_movements', label: 'Movimentações de Estoque' },
+    ]
   },
   {
     scope: 'Inventário',
