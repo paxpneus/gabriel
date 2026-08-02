@@ -5,6 +5,7 @@ import StockMovementService from "./stock-movements.service";
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
 import stockMovementsService from "./stock-movements.service";
+import { QueryParams } from "../../../../shared/query/query.types";
 
 export class StockMovementController extends BaseController<
   StockMovement,
@@ -96,9 +97,12 @@ export class StockMovementController extends BaseController<
       const { productId } = req.params;
       const { unit_business_id } = req.query;
 
+      const params = this.extractQueryParams(req) as QueryParams;
+
       const history = await this.service.getProductHistory(
         productId as string,
         unit_business_id as string,
+        params,
       );
 
       return res.status(200).json(history);
