@@ -1,6 +1,7 @@
 import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../../../config/sequelize';
 import {
+  StockDirectionType,
   StockMovementAttributes,
   StockMovementCreationAttributes,
   StockMovementType,
@@ -14,8 +15,9 @@ class StockMovement
   public id!: string;
   public unit_business_id!: string;
   public product_id!: string;
-  public invoice_id!: string;
+  public invoice_id!: string | null;
   public invoice_number?: string;
+  public direction?: StockDirectionType;
   public movement_type!: StockMovementType;
   public movement_date!: Date;
   public movement_quantity!: number;
@@ -23,7 +25,8 @@ class StockMovement
   public balance_quantity!: number;
   public resulting_average_cost!: number;
   public total_stock_value!: number;
-  public manual_discount_value?: number;
+  public manual_average_cost_value?: number;
+  public is_active!: boolean;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -54,7 +57,7 @@ StockMovement.init(
     },
     invoice_id: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true,
       references: {
         model: 'invoices',
         key: 'id',
@@ -65,8 +68,12 @@ StockMovement.init(
       allowNull: true,
     },
     movement_type: {
-      type: DataTypes.ENUM('PURCHASE_ENTRY', 'SALE_OUT', 'CUSTOMER_RETURN'),
+      type: DataTypes.ENUM('PURCHASE_ENTRY', 'SALE_OUT', 'CUSTOMER_RETURN', 'MANUAL_ADJUSTMENT'),
       allowNull: false,
+    },
+    direction: {
+      type: DataTypes.ENUM('IN', 'OUT'),
+      allowNull: true,
     },
     movement_date: {
       type: DataTypes.DATE,
@@ -92,11 +99,16 @@ StockMovement.init(
       type: DataTypes.DECIMAL(12, 4),
       allowNull: false,
     },
-    manual_discount_value: {
+    manual_average_cost_value: {
       type: DataTypes.DECIMAL(12, 4),
       allowNull: true,
-      defaultValue: 0,
+      defaultValue: null,
     },
+    is_active: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    }
   },
   {
     sequelize,
