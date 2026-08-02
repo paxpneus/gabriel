@@ -56,6 +56,11 @@ jest.mock("../stock-movements.model", () => ({
   default: { findOne: jest.fn() },
 }));
 
+jest.mock("../../../product-config/product_config.model", () => ({
+  __esModule: true,
+  default: { findOne: jest.fn() },
+}));
+
 import { Invoice, UnitBusiness } from "../../../../warehouse";
 import InvoiceFiscalItem from "../../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import invoiceItemsService from "../../../../warehouse/invoices/invoice-items/invoice-items.service";
@@ -143,9 +148,11 @@ describe("StockMovementService", () => {
         .mockImplementation((rows: any[]) => Promise.resolve(rows)),
       bulkDelete: jest.fn().mockResolvedValue(0),
       setActiveStatus: jest.fn().mockResolvedValue(undefined),
-      create: jest.fn().mockImplementation((row: any) =>
-        Promise.resolve({ ...row, update: jest.fn() }),
-      ),
+      create: jest
+        .fn()
+        .mockImplementation((row: any) =>
+          Promise.resolve({ ...row, update: jest.fn() }),
+        ),
     };
 
     (UnitBusiness.findByPk as jest.Mock).mockResolvedValue(mockUnitBusiness);
@@ -354,16 +361,18 @@ describe("StockMovementService", () => {
     ];
 
     it("busca o histórico incluindo inativos (activeOnly = false)", async () => {
-      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, movements as any);
+      await service.reindexProduct(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        movements as any,
+      );
 
       expect(
         (service as any).repository.findHistoryByProduct,
-      ).toHaveBeenCalledWith(
-        PRODUCT_ID,
-        UNIT_BUSINESS_ID,
-        undefined,
-        false,
-      );
+      ).toHaveBeenCalledWith(PRODUCT_ID, UNIT_BUSINESS_ID, {
+        transaction: undefined,
+        activeOnly: false,
+      });
     });
 
     it("ordena os movimentos por data antes de processar, independente da ordem de entrada", async () => {
@@ -440,6 +449,8 @@ describe("StockMovementService", () => {
         movement_date: new Date("2026-01-15"),
         balance_quantity: 50,
         resulting_average_cost: 12,
+        manual_average_cost_value: 12,
+
         is_active: true,
       });
 
@@ -529,7 +540,11 @@ describe("StockMovementService", () => {
         },
       ];
 
-      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, incoming as any);
+      await service.reindexProduct(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        incoming as any,
+      );
 
       expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
     });
@@ -561,7 +576,11 @@ describe("StockMovementService", () => {
         },
       ];
 
-      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, incoming as any);
+      await service.reindexProduct(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        incoming as any,
+      );
 
       expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
 
@@ -692,8 +711,12 @@ describe("StockMovementService", () => {
         invoice_id: null,
         movement_type: "MANUAL_ADJUSTMENT",
         movement_date: new Date("2026-01-15"),
+        direction: "IN",
         balance_quantity: 50,
+        movement_quantity: 50,
         resulting_average_cost: 12,
+        manual_average_cost_value: 12,
+        total_stock_value: 600,
       });
       (service as any).repository.findHistoryByProduct.mockResolvedValue([
         manualAdjustment,
@@ -725,9 +748,7 @@ describe("StockMovementService", () => {
         }),
         { transaction: undefined },
       );
-      expect(result).toEqual(
-        expect.arrayContaining([manualAdjustment]),
-      );
+      expect(result).toEqual(expect.arrayContaining([manualAdjustment]));
     });
 
     it("movimentos recebidos sem invoice_id (que não sejam via createManualAdjustment) são ignorados no merge", async () => {
@@ -867,7 +888,10 @@ describe("StockMovementService", () => {
     });
 
     it("busca por id (não mais por invoice_id), atualiza o valor e recalcula a cadeia via upsert", async () => {
-      const movement = makeExistingMovement({ id: "movement-id-x" });
+      const movement = makeExistingMovement({
+        id: "movement-id-x",
+        movement_type: "MANUAL_ADJUSTMENT",
+      });
       (StockMovement.findOne as jest.Mock).mockResolvedValue(movement);
 
       const upsertSpy = jest
@@ -903,7 +927,10 @@ describe("StockMovementService", () => {
     });
 
     it("aceita null para remover o override", async () => {
-      const movement = makeExistingMovement({ id: "movement-id-x" });
+      const movement = makeExistingMovement({
+        id: "movement-id-x",
+        movement_type: "MANUAL_ADJUSTMENT",
+      });
       (StockMovement.findOne as jest.Mock).mockResolvedValue(movement);
       jest
         .spyOn(service, "upsertProductStockMovements")
@@ -934,11 +961,7 @@ describe("StockMovementService", () => {
         .mockResolvedValue([] as any);
 
       const ids = ["mov-1", "mov-2"];
-      await service.deactivateStockMovements(
-        PRODUCT_ID,
-        UNIT_BUSINESS_ID,
-        ids,
-      );
+      await service.deactivateStockMovements(PRODUCT_ID, UNIT_BUSINESS_ID, ids);
 
       expect((service as any).repository.setActiveStatus).toHaveBeenCalledWith(
         ids,
@@ -963,11 +986,7 @@ describe("StockMovementService", () => {
         .mockResolvedValue([] as any);
 
       const ids = ["mov-1"];
-      await service.reactivateStockMovements(
-        PRODUCT_ID,
-        UNIT_BUSINESS_ID,
-        ids,
-      );
+      await service.reactivateStockMovements(PRODUCT_ID, UNIT_BUSINESS_ID, ids);
 
       expect((service as any).repository.setActiveStatus).toHaveBeenCalledWith(
         ids,
@@ -1178,13 +1197,17 @@ describe("StockMovementService", () => {
         UNIT_BUSINESS_ID,
       );
 
-      expect(result).toEqual({ average_cost: 0, created: 0 });
+      expect(result).toEqual({
+        average_cost: 0,
+        created: 0,
+        balance_quantity: 0,
+      });
     });
 
     it("retorna o CMP do último movimento existente quando não há sourceData", async () => {
       jest.spyOn(service, "findStockMovementSourceData").mockResolvedValue([]);
       (service as any).repository.findHistoryByProduct.mockResolvedValue([
-        { resulting_average_cost: 42 },
+        { resulting_average_cost: 42, balance_quantity: 5 },
       ]);
 
       const result = await service.syncProductStockMovements(
@@ -1192,7 +1215,11 @@ describe("StockMovementService", () => {
         UNIT_BUSINESS_ID,
       );
 
-      expect(result).toEqual({ average_cost: 42, created: 0 });
+      expect(result).toEqual({
+        average_cost: 42,
+        created: 0,
+        balance_quantity: 5,
+      });
     });
 
     it("retorna created 0 quando todas as NFs do sourceData já foram registradas", async () => {
@@ -1211,6 +1238,7 @@ describe("StockMovementService", () => {
         {
           invoice_id: "inv-1",
           resulting_average_cost: 10,
+          balance_quantity: 8,
           movement_date: new Date("2026-01-01"),
         },
       ]);
@@ -1220,7 +1248,11 @@ describe("StockMovementService", () => {
         UNIT_BUSINESS_ID,
       );
 
-      expect(result).toEqual({ average_cost: 10, created: 0 });
+      expect(result).toEqual({
+        average_cost: 10,
+        created: 0,
+        balance_quantity: 8,
+      });
       expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
     });
 
@@ -1264,7 +1296,11 @@ describe("StockMovementService", () => {
         ],
         { transaction: undefined },
       );
-      expect(result).toEqual({ average_cost: 10, created: 1 });
+      expect(result).toEqual({
+        average_cost: 10,
+        created: 1,
+        balance_quantity: 7,
+      });
     });
 
     it("delega para upsertProductStockMovements (não mais reindexProduct) quando a NF pendente é retroativa", async () => {
@@ -1295,8 +1331,8 @@ describe("StockMovementService", () => {
       ]);
 
       const upsertedResult = [
-        { resulting_average_cost: 10 },
-        { resulting_average_cost: 12 },
+        { resulting_average_cost: 10, balance_quantity: 12 },
+        { resulting_average_cost: 12, balance_quantity: 15 },
       ];
       const upsertSpy = jest
         .spyOn(service, "upsertProductStockMovements")
@@ -1319,7 +1355,11 @@ describe("StockMovementService", () => {
         ]),
         undefined,
       );
-      expect(result).toEqual({ average_cost: 12, created: 1 });
+      expect(result).toEqual({
+        average_cost: 12,
+        created: 1,
+        balance_quantity: 15,
+      });
 
       warnSpy.mockRestore();
     });
