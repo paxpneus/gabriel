@@ -395,7 +395,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         duration: 1000,
       },
       sharedLock: BLING_SHARED_QUEUE_LOCK,
-      maxProcessingMs: 120_000,
+      maxProcessingMs: 600_000,
       lockDuration: 10 * 60 * 1000,
       workless: options.workless,
       backoffStrategy: (attemptsMade, _type, err) => {
@@ -438,17 +438,25 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     this.api = blingApi;
   }
 
-  private async fetchPhysicalStock(blingId: number): Promise<number> {
+  private async fetchPhysicalStock(
+    blingIds: number[],
+  ): Promise<Map<number, number>> {
+    const map = new Map<number, number>();
+
+    if (!blingIds.length) return map;
+
     const params = new URLSearchParams();
-    params.append("idsProdutos[]", String(blingId));
-    params.append("filtroSaldoEstoque", "1");
+    blingIds.forEach((id) => params.append("idsProdutos[]", String(id)));
 
     const { data } = await blingGet<{
       data: Array<{ produto: { id: number }; saldoFisicoTotal: number }>;
     }>(`/estoques/saldos?${params.toString()}`, blingApi);
 
-    const saldo = data?.data?.find((s) => s.produto.id === blingId);
-    return Number(saldo?.saldoFisicoTotal ?? 0);
+    for (const s of data?.data ?? []) {
+      map.set(s.produto.id, Number(s.saldoFisicoTotal ?? 0));
+    }
+
+    return map;
   }
 
   private async syncStockAndBatches(params: {
@@ -1085,7 +1093,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         ? Number(magentoProduct.price)
         : Number(blingProduct.preco);
 
-    const physicalQuantity = await this.fetchPhysicalStock(blingProduct.id);
+    const physicalQuantity =
+      (await this.fetchPhysicalStock([blingProduct.id])).get(blingProduct.id) ??
+      0;
 
     // ─── A partir daqui, tudo é escrita em banco → uma única transaction ───────
     let product: Product;
@@ -1848,18 +1858,51 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       ...new Set(invoiceItemsForCreate.map((i) => i.product_id)),
     ];
 
+    const affectedProducts = await Product.findAll({
+      where: { id: { [Op.in]: affectedProductIds } },
+    });
+
+    const mappingBlingIds = await integrationMappingService.findExternalIdsMap(
+      "PRODUCT",
+      integration.id,
+      affectedProductIds,
+    );
+
+    const blingIdByProductId = new Map<string, number>();
+
+    for (const p of affectedProducts) {
+      const mapped = mappingBlingIds.get(p.id);
+      const resolved = mapped ?? p.id_system;
+
+      if (resolved) {
+        blingIdByProductId.set(p.id, Number(resolved));
+      }
+    }
+
+    const physicalStockMap = await this.fetchPhysicalStock([
+      ...new Set(blingIdByProductId.values()),
+    ]);
+
     for (const productId of affectedProductIds) {
       try {
-        const localStock = await Stock.findOne({
-          where: {
-            product_id: productId,
-            unit_business_id: unit_business.id,
-          },
-        });
+        const blingId = blingIdByProductId.get(productId);
 
-        if (!localStock) {
+        if (!blingId) {
           console.warn(
-            `[BLING_API_FETCH] Sem registro de Stock local para reconciliar | invoice=${invoice.id} | product=${productId} — sync sem reconciliação.`,
+            `[BLING_API_FETCH] Produto sem blingId resolvível (nem mapping, nem id_system) — sync sem reconciliação | invoice=${invoice.id} | product=${productId}.`,
+          );
+          await stockMovementsService.syncProductStockMovements(
+            productId,
+            unit_business.id,
+          );
+          continue;
+        }
+
+        const actualQuantity = physicalStockMap.get(blingId);
+
+        if (actualQuantity == null) {
+          console.warn(
+            `[BLING_API_FETCH] Saldo físico não retornado pela Bling para blingId=${blingId} — sync sem reconciliação | invoice=${invoice.id} | product=${productId}.`,
           );
           await stockMovementsService.syncProductStockMovements(
             productId,
@@ -1871,7 +1914,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         await stockMovementsService.syncProductStockMovements(
           productId,
           unit_business.id,
-          Number(localStock.quantity),
+          actualQuantity,
         );
       } catch (err: any) {
         console.warn(
