@@ -1,6 +1,12 @@
 import { Op, Transaction, WhereOptions } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import StockMovement from "./stock-movements.model";
+import {
+  PaginatedResult,
+  QueryConfig,
+  QueryParams,
+} from "../../../../shared/query/query.types";
+import { QueryParser } from "../../../../shared/query/query.parser";
 
 export class StockMovementRepository extends BaseRepository<StockMovement> {
   constructor() {
@@ -101,12 +107,12 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
    * Passe `activeOnly = false` pra trazer tudo, inclusive os desativados
    * (usado quando o usuário pede explicitamente pra ver os inativos).
    */
-  async findHistoryByProduct(
+
+  private buildHistoryWhere(
     productId: string,
     unitBusinessId: string,
-    transaction?: Transaction,
-    activeOnly: boolean = true,
-  ): Promise<StockMovement[]> {
+    activeOnly: boolean,
+  ): WhereOptions {
     const where: WhereOptions = {
       product_id: productId,
       unit_business_id: unitBusinessId,
@@ -116,16 +122,83 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
       where.is_active = true;
     }
 
+    return where;
+  }
+
+  private buildHistoryConfig(config: QueryConfig): QueryConfig {
+    return {
+      ...config,
+      defaults: {
+        perPage: 20,
+        sortBy: ["movement_date", "created_at"],
+        sortDir: "ASC",
+        ...config.defaults,
+      },
+    };
+  }
+
+  async findHistoryByProduct(
+    productId: string,
+    unitBusinessId: string,
+    options: {
+      transaction?: Transaction;
+      activeOnly?: boolean;
+      config?: QueryConfig;
+      params?: QueryParams;
+    } = {},
+  ): Promise<StockMovement[]> {
+    const {
+      transaction,
+      activeOnly = true,
+      config = {},
+      params = {},
+    } = options;
+
+    const where = this.buildHistoryWhere(productId, unitBusinessId, activeOnly);
+    const mergedConfig = this.buildHistoryConfig(config);
+
+    const resolved = QueryParser.parse(params, mergedConfig);
+    const finalWhere = resolved.where
+      ? ({ [Op.and]: [where, resolved.where] } as WhereOptions)
+      : where;
+
     return this.model.findAll({
-      where,
-      order: [
-        ["movement_date", "ASC"],
-        ["created_at", "ASC"],
-      ],
+      where: finalWhere,
+      order: resolved.order,
       transaction,
     });
   }
 
+  /**
+   * Versão PAGINADA do histórico — uso exclusivo do front (ex.: tela de
+   * Kardex). Aplica limit/offset/page vindos de `params`. Mesmo default de
+   * ordenação (movement_date ASC, created_at ASC).
+   *
+   * Não é usado por nenhum fluxo de cálculo interno — só por
+   * StockMovementService.getProductHistory.
+   */
+  async findHistoryByProductPaginated(
+    productId: string,
+    unitBusinessId: string,
+    options: {
+      transaction?: Transaction;
+      activeOnly?: boolean;
+      config?: QueryConfig;
+      params?: QueryParams;
+    } = {},
+  ): Promise<PaginatedResult<StockMovement>> {
+    const {
+      transaction,
+      activeOnly = true,
+      config = {},
+      params = {},
+    } = options;
+
+    const where = this.buildHistoryWhere(productId, unitBusinessId, activeOnly);
+    const mergedConfig = this.buildHistoryConfig(config);
+
+    return this.findPaginated(params, mergedConfig, { transaction }, where);
+  }
   /**
    * Busca movimentos por id, sempre escopado a product_id + unit_business_id
    * (nunca confia só no id vindo do payload).

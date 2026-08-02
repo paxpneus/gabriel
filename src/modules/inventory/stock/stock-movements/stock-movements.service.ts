@@ -15,6 +15,7 @@ import {
 } from "./stock-movements.types";
 import InvoiceFiscalItem from "../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import invoiceItemsService from "../../../warehouse/invoices/invoice-items/invoice-items.service";
+import { PaginatedResult, QueryParams } from "../../../../shared/query/query.types";
 
 // Estado de saldo/custo usado para encadear um movimento a partir do anterior.
 type BalanceState = {
@@ -49,6 +50,15 @@ export class StockMovementService extends BaseService<
 > {
   constructor() {
     super(stockMovementRepository);
+
+     this.queryConfig = {
+      defaults: {
+        perPage: 20,
+        sortBy: ["created_at"],
+        sortDir: "ASC",
+      },
+      filterableFields: ["type", "date"],
+    };
   }
 
   /**
@@ -241,9 +251,8 @@ export class StockMovementService extends BaseService<
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
-      transaction,
-      false,
-    );
+      {transaction, activeOnly: false}
+    )
 
     const isProtected = (m: StockMovement) =>
       m.movement_type === "MANUAL_ADJUSTMENT" ||
@@ -351,10 +360,18 @@ export class StockMovementService extends BaseService<
    *
    * MANUAL_ADJUSTMENT participa normalmente da cadeia (soma/subtrai do
    * saldo via `direction`, pode sobrescrever o custo médio via
-   * manual_average_cost_value), mas a própria linha NUNCA sofre update
-   * aqui — só empresta seu estado já gravado pro próximo elo. As únicas
-   * formas de alterar essa linha são updateManualAverageCost e
-   * deactivate/reactivateStockMovements.
+   * manual_average_cost_value) — e, diferente de reindexProduct, a própria
+   * linha AQUI é recalculada (balance_quantity/resulting_average_cost/
+   * total_stock_value) a cada passagem, via calculateNextState, usando o
+   * manual_average_cost_value atualmente gravado nela. Isso é essencial
+   * pra updateManualAverageCost funcionar: sem recalcular a própria linha,
+   * um novo override gravado nunca chegaria a aparecer no
+   * resulting_average_cost (nem se propagaria pros movimentos seguintes).
+   * O que NUNCA é alterado aqui é o "fato" do ajuste manual em si
+   * (movement_quantity, direction, movement_date, invoice linkage) — só o
+   * resultado calculado da cadeia. As únicas formas de alterar o fato em
+   * si são updateManualAverageCost (que edita manual_average_cost_value
+   * antes de chamar esta função) e deactivate/reactivateStockMovements.
    *
    * Pra linhas normais (com invoice_id): funde o que já está no banco com
    * os movimentos novos recebidos (`incomingMovements`) por invoice_id —
@@ -369,7 +386,7 @@ export class StockMovementService extends BaseService<
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
-      transaction,
+      {transaction}
     );
 
     const manualAdjustments = existingMovements.filter(
@@ -427,11 +444,46 @@ export class StockMovementService extends BaseService<
 
     for (const entry of timeline) {
       if (entry.kind === "manual") {
+        const movement = entry.movement;
+
+        // Recalcula a PRÓPRIA linha manual a cada passagem — é o que faz
+        // um manual_average_cost_value recém-gravado (via
+        // updateManualAverageCost) efetivamente aparecer no
+        // resulting_average_cost e se propagar pra frente na cadeia.
+        // O "fato" do movimento (quantidade/direção/data) nunca muda aqui,
+        // só o resultado calculado.
+        const nextState = this.calculateNextState(previousState, {
+          movement_type: "MANUAL_ADJUSTMENT",
+          movement_quantity: Number(movement.movement_quantity),
+          manual_average_cost_value:
+            movement.manual_average_cost_value != null
+              ? Number(movement.manual_average_cost_value)
+              : null,
+          direction: (movement.direction as "IN" | "OUT" | null) ?? "IN",
+        });
+
+        const hasDrifted =
+          Number(movement.balance_quantity) !== nextState.balance_quantity ||
+          Number(movement.resulting_average_cost) !==
+            nextState.resulting_average_cost ||
+          Number(movement.total_stock_value) !== nextState.total_stock_value;
+
+        if (hasDrifted) {
+          await movement.update(
+            {
+              balance_quantity: nextState.balance_quantity,
+              resulting_average_cost: nextState.resulting_average_cost,
+              total_stock_value: nextState.total_stock_value,
+            } as Partial<StockMovementAttributes>,
+            { transaction },
+          );
+        }
+
         previousState = {
-          balance_quantity: Number(entry.movement.balance_quantity),
-          resulting_average_cost: Number(entry.movement.resulting_average_cost),
+          balance_quantity: nextState.balance_quantity,
+          resulting_average_cost: nextState.resulting_average_cost,
         };
-        results.push(entry.movement);
+        results.push(movement);
         continue;
       }
 
@@ -579,7 +631,11 @@ export class StockMovementService extends BaseService<
    * função serve tanto pra linhas de NF quanto pra ajustes manuais.
    *
    * Recalcula toda a cadeia de saldo/custo médio do produto a partir daí,
-   * via upsertProductStockMovements — sem apagar nenhum registro.
+   * via upsertProductStockMovements — sem apagar nenhum registro. Como
+   * upsertProductStockMovements agora recalcula a própria linha manual em
+   * cada passagem (ver comentário lá), o novo manual_average_cost_value
+   * setado aqui já aparece corretamente no resulting_average_cost dela e
+   * se propaga pros movimentos seguintes.
    *
    * Passar `null` remove o override e volta a cadeia a usar o custo médio
    * calculado normalmente a partir desse ponto em diante.
@@ -603,6 +659,12 @@ export class StockMovementService extends BaseService<
     if (!movement) {
       throw new Error(
         `[STOCK_MOVEMENT] Movimento não encontrado (id=${movementId}, product_id=${productId}, unit_business_id=${unitBusinessId}) — não é possível setar manual_average_cost_value.`,
+      );
+    }
+
+    if (movement.movement_type !== "MANUAL_ADJUSTMENT") {
+      throw new Error(
+        `[STOCK_MOVEMENT] Movimento ${movementId} não é MANUAL_ADJUSTMENT — não é possível setar manual_average_cost_value.`,
       );
     }
 
@@ -833,17 +895,6 @@ export class StockMovementService extends BaseService<
    * processado): chama upsertProductStockMovements, que recalcula a cadeia
    * e faz UPDATE/CREATE ponto a ponto, sem apagar histórico —
    * reindexProduct fica reservado só pra acionamento manual via controller.
-   */
-  /**
-   * Sincroniza o Kardex.
-   *
-   * Fluxo normal (NF nova, data >= último movimento): cria em sequência,
-   * sem tocar em nada existente.
-   *
-   * Fluxo retroativo (NF pendente com data anterior ao último movimento já
-   * processado): chama upsertProductStockMovements, que recalcula a cadeia
-   * e faz UPDATE/CREATE ponto a ponto, sem apagar histórico —
-   * reindexProduct fica reservado só pra acionamento manual via controller.
    *
    * `actualQuantity`, se informado (saldo real vindo da Bling), roda por
    * ÚLTIMO — depois de processar todas as NFs pendentes — e reconcilia
@@ -870,7 +921,7 @@ export class StockMovementService extends BaseService<
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
-      transaction,
+      {transaction}
     );
 
     const lastExisting =
@@ -897,8 +948,9 @@ export class StockMovementService extends BaseService<
       );
 
       const isRetroactive =
-        !!lastExisting && sortedPending[0].movement_date.getTime();
-      new Date(lastExisting.movement_date).getTime();
+        !!lastExisting &&
+        sortedPending[0].movement_date.getTime() <
+          new Date(lastExisting.movement_date).getTime();
 
       if (isRetroactive) {
         console.warn(
@@ -986,11 +1038,16 @@ export class StockMovementService extends BaseService<
   }
 
   async getProductHistory(
-    productId: string,
-    unitBusinessId: string,
-  ): Promise<StockMovement[]> {
-    return this.repository.findHistoryByProduct(productId, unitBusinessId);
-  }
+  productId: string,
+  unitBusinessId: string,
+  params?: QueryParams,
+): Promise<PaginatedResult<StockMovement>> {
+  return this.repository.findHistoryByProductPaginated(
+    productId,
+    unitBusinessId,
+    { params },
+  );
+}
 
   async getCurrentBalance(
     productId: string,
@@ -1083,8 +1140,7 @@ export class StockMovementService extends BaseService<
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
-      transaction,
-      false,
+      {transaction, activeOnly: false}
     );
 
     const existingInvoiceIds = new Set(
