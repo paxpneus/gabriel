@@ -15,7 +15,11 @@ import {
 } from "./stock-movements.types";
 import InvoiceFiscalItem from "../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import invoiceItemsService from "../../../warehouse/invoices/invoice-items/invoice-items.service";
-import { PaginatedResult, QueryParams } from "../../../../shared/query/query.types";
+import {
+  PaginatedResult,
+  QueryParams,
+} from "../../../../shared/query/query.types";
+import product_configService from "../../product-config/product_config.service";
 
 // Estado de saldo/custo usado para encadear um movimento a partir do anterior.
 type BalanceState = {
@@ -51,7 +55,7 @@ export class StockMovementService extends BaseService<
   constructor() {
     super(stockMovementRepository);
 
-     this.queryConfig = {
+    this.queryConfig = {
       defaults: {
         perPage: 20,
         sortBy: ["created_at"],
@@ -59,6 +63,30 @@ export class StockMovementService extends BaseService<
       },
       filterableFields: ["type", "date"],
     };
+  }
+
+  // Atualiza custo médio do produto considerando o custo médio da ultima movimentação de estoque
+  private async syncProductAverageCostConfig(
+    productId: string,
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<void> {
+    const lastMovement = await this.repository.findLastMovement(
+      productId,
+      unitBusinessId,
+      transaction,
+    );
+
+    if (!lastMovement) return;
+
+    await product_configService.findOneAndUpdate(
+    { product_id: productId, unit_business_id: unitBusinessId },
+    {
+      average_cost: Number(lastMovement.resulting_average_cost),
+      average_cost_updated_at: new Date(),
+    },
+    { transaction },
+  );
   }
 
   /**
@@ -172,10 +200,13 @@ export class StockMovementService extends BaseService<
         throw new Error(`Tipo de movimento inválido: ${input.movement_type}`);
     }
 
+    const isOutwardManualAdjustment =
+      input.movement_type === "MANUAL_ADJUSTMENT" && input.direction === "OUT";
+
     // Override manual: substitui completamente o custo médio calculado para
     // este movimento. Ex.: resulting calculado = 500, manual = 600 → o
     // movimento fica com 600, e os próximos movimentos usam 600 como base.
-    if (input.manual_average_cost_value != null) {
+    if (input.manual_average_cost_value != null && !isOutwardManualAdjustment) {
       newAverageCost = input.manual_average_cost_value;
     }
 
@@ -217,6 +248,12 @@ export class StockMovementService extends BaseService<
       ...nextState,
     } as StockMovementCreationAttributes;
 
+    await this.syncProductAverageCostConfig(
+      input.product_id,
+      input.unit_business_id,
+      transaction,
+    );
+
     return this.repository.create(payload, { transaction } as any);
   }
 
@@ -251,8 +288,8 @@ export class StockMovementService extends BaseService<
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
-      {transaction, activeOnly: false}
-    )
+      { transaction, activeOnly: false },
+    );
 
     const isProtected = (m: StockMovement) =>
       m.movement_type === "MANUAL_ADJUSTMENT" ||
@@ -345,6 +382,12 @@ export class StockMovementService extends BaseService<
       ? await this.repository.bulkCreate(toCreate as any, { transaction })
       : [];
 
+    await this.syncProductAverageCostConfig(
+      productId,
+      unitBusinessId,
+      transaction,
+    );
+
     return [...protectedMovements, ...created].sort(
       (a, b) =>
         new Date(a.movement_date).getTime() -
@@ -386,7 +429,7 @@ export class StockMovementService extends BaseService<
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
-      {transaction}
+      { transaction },
     );
 
     const manualAdjustments = existingMovements.filter(
@@ -546,6 +589,12 @@ export class StockMovementService extends BaseService<
         resulting_average_cost: nextState.resulting_average_cost,
       };
     }
+
+    await this.syncProductAverageCostConfig(
+      productId,
+      unitBusinessId,
+      transaction,
+    );
 
     return results;
   }
@@ -921,7 +970,7 @@ export class StockMovementService extends BaseService<
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
-      {transaction}
+      { transaction },
     );
 
     const lastExisting =
@@ -1030,6 +1079,12 @@ export class StockMovementService extends BaseService<
       }
     }
 
+    await this.syncProductAverageCostConfig(
+      productId,
+      unitBusinessId,
+      transaction,
+    );
+
     return {
       average_cost: averageCost,
       created,
@@ -1038,16 +1093,16 @@ export class StockMovementService extends BaseService<
   }
 
   async getProductHistory(
-  productId: string,
-  unitBusinessId: string,
-  params?: QueryParams,
-): Promise<PaginatedResult<StockMovement>> {
-  return this.repository.findHistoryByProductPaginated(
-    productId,
-    unitBusinessId,
-    { params },
-  );
-}
+    productId: string,
+    unitBusinessId: string,
+    params?: QueryParams,
+  ): Promise<PaginatedResult<StockMovement>> {
+    return this.repository.findHistoryByProductPaginated(
+      productId,
+      unitBusinessId,
+      { params },
+    );
+  }
 
   async getCurrentBalance(
     productId: string,
@@ -1140,7 +1195,7 @@ export class StockMovementService extends BaseService<
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
-      {transaction, activeOnly: false}
+      { transaction, activeOnly: false },
     );
 
     const existingInvoiceIds = new Set(
