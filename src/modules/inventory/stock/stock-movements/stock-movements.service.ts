@@ -717,10 +717,12 @@ export class StockMovementService extends BaseService<
       );
     }
 
+    if (manualAverageCostValue) {
     await movement.update(
       { manual_average_cost_value: manualAverageCostValue },
       { transaction },
     );
+    }
 
     return this.upsertProductStockMovements(
       productId,
