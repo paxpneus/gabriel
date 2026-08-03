@@ -280,9 +280,18 @@ export class StockMovementService extends BaseService<
   async reindexProduct(
     productId: string,
     unitBusinessId: string,
-    movements: ReindexProductPayload[],
+    movements?: ReindexProductPayload[],
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
+    
+    const incomingSource =
+      movements ??
+      (await this.findStockMovementSourceData(
+        unitBusinessId,
+        productId,
+        transaction,
+      ));
+
     // activeOnly = false: reindex precisa enxergar tudo, inclusive
     // inativos, pra não apagar por engano uma linha protegida desativada.
     const existingMovements = await this.repository.findHistoryByProduct(
@@ -304,7 +313,7 @@ export class StockMovementService extends BaseService<
         .map((m) => m.invoice_id as string | null),
     );
 
-    const incomingMovements = movements.filter(
+    const incomingMovements = incomingSource.filter(
       (m) => !protectedInvoiceIds.has(m.invoice_id),
     );
 
