@@ -1148,16 +1148,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           { conflictFields: ["product_id", "unit_business_id"], transaction },
         );
 
-        await this.syncProductWithMagento({
-          product,
-          sku: configSku,
-          ean: blingProduct.gtin,
-          productName: blingProduct.nome,
-          magentoProduct,
-          magentoIntegration,
-          logPrefix,
-          transaction,
-        });
+        try {
+          await this.syncProductWithMagento({
+            product,
+            sku: configSku,
+            ean: blingProduct.gtin,
+            productName: blingProduct.nome,
+            magentoProduct,
+            magentoIntegration,
+            logPrefix,
+            transaction,
+          });
+        } catch (magentoSyncErr: any) {
+          console.warn(
+            `${logPrefix} Falha ao sincronizar com Magento (produto será salvo normalmente) | erro=${magentoSyncErr?.message}`,
+          );
+        }
 
         // ─── Kardex + estoque físico + batches, tudo atômico ─────────────────
         const { average_cost, created } =
@@ -1301,8 +1307,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     if (!cnpj && supplierId) {
       try {
-        const { data: contatoRes } = await this.api.get<{ data: any }>(
-          `/contatos/${supplierId}`,
+        const { data: contatoRes } = await blingGet<{ data: any }>(
+          `/contatos/${supplierId}`, blingApi
         );
         const contato = contatoRes.data;
         cnpj = contato?.numeroDocumento ?? "";
@@ -1349,11 +1355,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       });
     } else {
       if (ps.codigo) {
-      await SupplierMapping.create({
-        product_id: product.id,
-        supplier_cnpj: cleanCnpj,
-        supplier_product_code: ps.codigo,
-      });
+        await SupplierMapping.create({
+          product_id: product.id,
+          supplier_cnpj: cleanCnpj,
+          supplier_product_code: ps.codigo,
+        });
       }
     }
 
@@ -1371,7 +1377,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         ? `/nfe/${apiFetch.blingId}`
         : `/nfce/${apiFetch.blingId}`;
 
-    const { data } = await this.api.get<{ data: BlingApiInvoice }>(endpoint);
+    const { data } = await blingGet<{ data: BlingApiInvoice }>(endpoint, blingApi);
     const nf = data.data;
     const invoiceReferenceDate = getBlingInvoiceReferenceDate(nf);
 
