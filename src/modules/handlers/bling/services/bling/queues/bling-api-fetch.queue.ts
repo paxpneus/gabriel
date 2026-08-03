@@ -1348,11 +1348,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         supplier_product_code: ps.codigo ?? existing.supplier_product_code,
       });
     } else {
+      if (ps.codigo) {
       await SupplierMapping.create({
         product_id: product.id,
         supplier_cnpj: cleanCnpj,
-        supplier_product_code: ps.codigo ?? "",
+        supplier_product_code: ps.codigo,
       });
+      }
     }
 
     console.log(
