@@ -216,11 +216,13 @@ async function upsertTecincoCrossConfig(
         supplier_product_code: supplierProductCode,
       });
     } else {
+      if (supplierProductCode) {
       await SupplierMapping.create({
         product_id: product.id,
         supplier_cnpj: senderCnpj,
         supplier_product_code: supplierProductCode,
       });
+    }
     }
 
     // ─── ProductConfig ──────────────────────────────────────────────────────

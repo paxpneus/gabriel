@@ -143,11 +143,13 @@ export async function ensureSupplierMappings(params: {
       where: { supplier_product_code: code },
     });
     if (!existing) {
+      if (code) {
       await SupplierMapping.create({
         product_id: productId,
         supplier_cnpj: supplierCnpj,
         supplier_product_code: code,
       });
+      }
       console.log(`${logPrefix} — SupplierMapping criado: ${label}=${code}`);
     }
   }

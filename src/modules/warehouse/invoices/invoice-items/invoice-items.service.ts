@@ -272,6 +272,7 @@ export class InvoiceItemsService extends BaseService<
               `[INVOICE_ITEMS] SupplierMapping já existente reaproveitado: product_id=${invoiceItemDto.product_id}, code=${supplierProductCode}`,
             );
           } else {
+            if (supplierProductCode) {
             const spMap = await supplierMappingService.create(
               {
                 product_id: invoiceItemDto.product_id,
@@ -280,11 +281,14 @@ export class InvoiceItemsService extends BaseService<
               },
               { transaction: t },
             );
+            
 
             console.log(
               `[INVOICE_ITEMS] SupplierMapping criado: product_id=${invoiceItemDto.product_id}, cnpj=${invoice.sender_cnpj}, code=${supplierProductCode}`,
             );
             console.log(spMap);
+
+            }
           }
         }
       }
