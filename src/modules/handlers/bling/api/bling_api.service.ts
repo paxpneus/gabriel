@@ -13,7 +13,7 @@ let failedQueue: QueueItem[] = [];
 // Intervalo mínimo entre requests para a Bling (default: 1 req/s).
 // A Bling permite até 3 req/s, mas mantemos folga de segurança aqui.
 const BLING_RATE_LIMIT_INTERVAL_MS = Number(
-  process.env.BLING_RATE_LIMIT_INTERVAL_MS ?? 1000,
+  process.env.BLING_RATE_LIMIT_INTERVAL_MS ?? 400,
 );
 const BLING_RATE_LIMIT_KEY = "rate-limit:bling:next-slot";
 
