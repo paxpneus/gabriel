@@ -78,6 +78,8 @@ services:
     restart: unless-stopped
     expose:
       - "3000"
+    volumes:
+      - ./data/imports:/app/data/imports:ro
     environment:
       NODE_ENV: production
       PORT: 3000
