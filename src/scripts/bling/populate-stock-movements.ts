@@ -11,35 +11,65 @@
  *
  * REGRAS DE NEGÓCIO (confirmadas com o time):
  *
- * 1. Linhas com origem "Nota fiscal" ou "Pedido de venda":
- *    NUNCA criamos MANUAL_ADJUSTMENT pra elas. Presumimos que já estão
- *    cobertas pelo fluxo normal (Invoice -> findStockMovementSourceData).
- *    Só verificamos, via invoice_number normalizado (zeros à esquerda
- *    removidos), se a NF realmente existe no sistema — se não existir,
- *    é só LOGADA como pendência, nunca criada automaticamente.
+ * 1. Por produto, ANTES de qualquer coisa, apagamos (hard delete) todo
+ *    MANUAL_ADJUSTMENT que NÃO tenha manual_average_cost_value preenchido.
+ *    Os que têm manual_average_cost_value preenchido são IMUTÁVEIS — nunca
+ *    são apagados nem editados por este script, em nenhuma hipótese.
+ *    Rodamos um reindexProduct logo em seguida (só com a sourceData real)
+ *    pra deixar a cadeia de saldo/custo médio limpa e consistente antes de
+ *    montar o plano a partir do CSV. Isso evita ter que ficar comparando
+ *    "o que já foi ajustado antes" — sempre reconstruímos os ajustes
+ *    mutáveis do zero a partir do CSV a cada execução.
  *
- * 2. Qualquer outra linha (es=B sem origem, ou es=E/S sem origem de NF):
- *    vira MANUAL_ADJUSTMENT.
- *      - es === "B": delta = balanco - saldo_anterior
+ * 2. Linhas com origem "Pedido de venda":
+ *    NUNCA criamos MANUAL_ADJUSTMENT pra elas — presumimos que ficam de
+ *    resíduo e são cobertas pela reconciliação final (passo 6).
+ *
+ * 3. Linhas com origem "Nota fiscal":
+ *    - Se a NF já existe no sistema (via invoice_number normalizado, zeros
+ *      à esquerda removidos) -> nada a fazer, ela já está coberta pelo
+ *      fluxo normal (Invoice -> findStockMovementSourceData).
+ *    - Se a NF NÃO existe no sistema -> criamos um MANUAL_ADJUSTMENT com a
+ *      quantidade/direção da linha, e preenchemos `invoice_number` com o
+ *      número da nota (SEM vincular invoice_id — é só texto).
+ *
+ * 4. Notas "fantasma" — NFs que existem no NOSSO sistema (sourceData) mas
+ *    cujo número não aparece em nenhuma linha "Nota fiscal" do CSV daquele
+ *    produto:
+ *      - Se a data do movimento da NF no sistema for POSTERIOR à última
+ *        linha do CSV daquele produto específico -> é só nota emitida
+ *        depois da extração do CSV, IGNORAMOS (não corrige nada).
+ *      - Caso contrário -> a nota não deveria estar ali. Não mexemos na
+ *        NF, mas lançamos um MANUAL_ADJUSTMENT de compensação na direção
+ *        oposta e mesma quantidade (entrada -> ajuste de saída, saída ->
+ *        ajuste de entrada), verificando antes se já não existe um ajuste
+ *        imutável cobrindo isso.
+ *
+ * 5. Qualquer outra linha do CSV sem NF/Pedido de origem (es=B sem
+ *    origem, ou es=E/S sem origem) vira MANUAL_ADJUSTMENT:
+ *      - es === "B": delta = balanco - saldo_calculado_andando_pelo_csv
  *          - delta === 0  -> só LOG (sync de cadastro, sem efeito real)
  *          - delta !== 0  -> quantidade = abs(delta), direção pelo sinal
  *      - es === "E": quantidade = entrada, direção IN
  *      - es === "S": quantidade = saida,   direção OUT
  *
- * 3. manual_average_cost_value do MANUAL_ADJUSTMENT criado:
+ * 6. manual_average_cost_value dos MANUAL_ADJUSTMENT criados (regras 3 e 5,
+ *    entradas em geral):
  *      - se já existe alguma PURCHASE_ENTRY real (nota de entrada) ANTES
  *        da data dessa linha -> null (herda o CMP corrente da cadeia)
  *      - senão, se custo_lancamento > 0 -> usa custo_lancamento como override
  *      - senão -> null (fica 0 até a próxima entrada real, mesmo
  *        comportamento que o sistema já tem hoje pra saldo negativo)
+ *    Ajustes de compensação de nota fantasma (regra 4) e de saída (regra 5,
+ *    es="S") NUNCA recebem manual_average_cost_value (sempre null).
  *
- * 4. unit_business_id é FIXO: 361b5640-ec04-4b3f-8191-fe3ac5f134c4
+ * 7. unit_business_id é FIXO: 361b5640-ec04-4b3f-8191-fe3ac5f134c4
  *
- * 5. Depois do reindexProduct, roda `syncProductStockMovements` com o
- *    saldo atual conhecido pela Bling (última linha cronológica do CSV)
- *    pra reconciliar qualquer resíduo (ex: vendas via "Pedido de venda"
- *    que ficaram sem nota) — mesma função que o sistema já usa hoje,
- *    sem duplicar lógica.
+ * 8. Depois do reindexProduct final, roda `syncProductStockMovements`
+ *    reconciliando contra o saldo cadastrado na tabela `stocks` (produto +
+ *    unit_business padrão) — NÃO contra a última linha do CSV, porque o
+ *    CSV pode estar um dia desatualizado (ex: notas emitidas de madrugada
+ *    entre a extração e a execução do script).
  *
  * SEGURANÇA:
  *   reindexProduct APAGA (hard delete) todo o histórico não-protegido do
@@ -72,6 +102,7 @@ import sequelize from "../../config/sequelize";
 import { setupAssociations } from "../../config/sequelize-associations";
 import stockMovementService from "../../modules/inventory/stock/stock-movements/stock-movements.service";
 import { ReindexProductPayload } from "../../modules/inventory/stock/stock-movements/stock-movements.types";
+import Stock from "../../modules/inventory/stock/stock/stock.model";
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
@@ -246,7 +277,17 @@ interface ManualAdjustmentDraft {
   direction: "IN" | "OUT";
   movement_date: Date;
   manual_average_cost_value: number | null;
+  invoice_number?: string;
   source_lancamento_id: string;
+}
+
+interface GhostCompensationDraft {
+  movement_quantity: number;
+  direction: "IN" | "OUT";
+  movement_date: Date;
+  manual_average_cost_value: null;
+  source_invoice_id: string | null;
+  source_invoice_number: string;
 }
 
 interface ExistingManualAdjustment {
@@ -259,57 +300,23 @@ interface ProductPlan {
   productInternalId: string;
   productName: string;
   manualAdjustments: ManualAdjustmentDraft[];
-  missingInvoices: { origem_tipo: string; origem_numero: string; lancamento_id: string }[];
   zeroDeltaBalances: { lancamento_id: string; data: Date }[];
   skippedAsAlreadyCovered: { lancamento_id: string; data: Date; qty: number }[];
-  actualQuantity: number;
+}
+
+interface GhostInvoicePlan {
+  compensations: GhostCompensationDraft[];
+  skippedFutureDated: { invoice_number: string; movement_date: Date }[];
+  skippedAsAlreadyCovered: { invoice_number: string; movement_date: Date; qty: number }[];
 }
 
 /**
- * Quando a própria linha que gera o MANUAL_ADJUSTMENT vem com
- * custo_lancamento=0, a Bling às vezes registra o custo médio real do
- * produto numa linha de sincronismo de cadastro (delta=0) LOGO DEPOIS,
- * dentro do mesmo "platô" de saldo (nenhuma entrada/saída real entre elas).
- * Ex: saldo criado em 03/08/2025 (custo=0), custo real (285.38) só aparece
- * na linha de 03/09/2025, que tem delta=0 e é puramente sync de cadastro.
- * Sem esse fallback, o ajuste manual fica com custo 0 pra sempre (produto
- * sem PURCHASE_ENTRY anterior).
- *
- * Procura, a partir da linha do gatilho (exclusive), a primeira linha "B"
- * com custo_lancamento > 0, parando assim que encontrar qualquer linha
- * que altere o saldo de fato (ou seja, saímos do platô).
- */
-function findFallbackCostInSameBalancePlateau(
-  sorted: CsvRow[],
-  triggerIndex: number,
-  balanceAfterTrigger: number,
-): number | null {
-  let runningBalance = balanceAfterTrigger;
-
-  for (let i = triggerIndex + 1; i < sorted.length; i++) {
-    const row = sorted[i];
-
-    if (row.es === "B") {
-      const delta = row.balanco - runningBalance;
-      if (delta !== 0) return null; // saldo mudou de verdade, saiu do platô
-      if (row.custo_lancamento > 0) return row.custo_lancamento;
-      continue;
-    }
-
-    // "E"/"S" reais (não NF/pedido) também alteram o saldo -> saiu do platô
-    if (row.entrada !== 0 || row.saida !== 0) return null;
-  }
-
-  return null;
-}
-
-/**
- * Compara um lançamento do CSV com os MANUAL_ADJUSTMENT já existentes no
- * sistema (legado/gambiarra). Não temos o id do lançamento da Bling salvo
- * no banco, então a melhor aproximação possível é: mesma quantidade, mesma
- * direção, e data dentro de uma janela de 1 dia (cobre pequenas diferenças
- * de fuso/horário entre o que a Bling mostra na listagem e o que foi
- * gravado originalmente).
+ * Compara um lançamento do CSV (ou um movimento de invoice) com os
+ * MANUAL_ADJUSTMENT IMUTÁVEIS já existentes no sistema (com
+ * manual_average_cost_value preenchido). Não temos o id do lançamento da
+ * Bling salvo no banco, então a melhor aproximação possível é: mesma
+ * quantidade, mesma direção, e data dentro de uma janela de 1 dia (cobre
+ * pequenas diferenças de fuso/horário).
  */
 function isAlreadyCoveredByExisting(
   date: Date,
@@ -373,7 +380,6 @@ function buildProductPlan(
   const sorted = collapseConsecutiveBalanceRuns(chronological);
 
   const manualAdjustments: ManualAdjustmentDraft[] = [];
-  const missingInvoices: ProductPlan["missingInvoices"] = [];
   const zeroDeltaBalances: ProductPlan["zeroDeltaBalances"] = [];
   const skippedAsAlreadyCovered: ProductPlan["skippedAsAlreadyCovered"] = [];
 
@@ -393,6 +399,7 @@ function buildProductPlan(
     quantity: number,
     direction: "IN" | "OUT",
     manualAverageCostValue: number | null,
+    invoiceNumber?: string,
   ) => {
     if (isAlreadyCoveredByExisting(row.data, quantity, direction, existingManualAdjustments)) {
       skippedAsAlreadyCovered.push({ lancamento_id: row.lancamento_id, data: row.data, qty: quantity });
@@ -403,29 +410,58 @@ function buildProductPlan(
       direction,
       movement_date: row.data,
       manual_average_cost_value: manualAverageCostValue,
+      invoice_number: invoiceNumber,
       source_lancamento_id: row.lancamento_id,
     });
   };
 
   for (const row of sorted) {
     if (isInvoiceBacked(row)) {
+      let deltaForBalanceRow: number | null = null;
+
       if (row.es === "B") {
+        deltaForBalanceRow = row.balanco - balance.current;
         balance.reset(row.balanco);
       } else {
         balance.applyEntry(row.entrada);
         balance.applyExit(row.saida);
       }
 
-      if (row.origem_tipo === "Nota fiscal") {
-        const normalized = normalizeInvoiceNumber(row.origem_numero);
-        if (!existingInvoiceNumbers.has(normalized)) {
-          missingInvoices.push({
-            origem_tipo: row.origem_tipo,
-            origem_numero: row.origem_numero,
-            lancamento_id: row.lancamento_id,
-          });
-        }
+      // "Pedido de venda" nunca gera ajuste — segue igual ao comportamento
+      // já existente (resíduo coberto pela reconciliação final).
+      if (row.origem_tipo !== "Nota fiscal") continue;
+
+      const normalized = normalizeInvoiceNumber(row.origem_numero);
+      if (existingInvoiceNumbers.has(normalized)) continue; // NF já existe no sistema, nada a fazer
+
+      // NF referenciada pela Bling mas ausente no nosso sistema -> cria
+      // MANUAL_ADJUSTMENT com invoice_number preenchido (sem invoice_id).
+      let quantity = 0;
+      let direction: "IN" | "OUT" = "IN";
+
+      if (row.es === "E") {
+        quantity = row.entrada;
+        direction = "IN";
+      } else if (row.es === "S") {
+        quantity = row.saida;
+        direction = "OUT";
+      } else if (row.es === "B" && deltaForBalanceRow !== null) {
+        quantity = Math.abs(deltaForBalanceRow);
+        direction = deltaForBalanceRow > 0 ? "IN" : "OUT";
       }
+
+      if (quantity === 0) {
+        zeroDeltaBalances.push({ lancamento_id: row.lancamento_id, data: row.data });
+        continue;
+      }
+
+      tryCreateAdjustment(
+        row,
+        quantity,
+        direction,
+        direction === "IN" ? resolveManualAverageCost(row) : null,
+        row.origem_numero,
+      );
       continue;
     }
 
@@ -457,17 +493,94 @@ function buildProductPlan(
     }
   }
 
-  const actualQuantity = balance.current;
-
   return {
     productInternalId,
     productName,
     manualAdjustments,
-    missingInvoices,
     zeroDeltaBalances,
     skippedAsAlreadyCovered,
-    actualQuantity,
   };
+}
+
+/**
+ * Detecta notas fiscais que existem no NOSSO sistema (sourceData) mas não
+ * aparecem em nenhuma linha "Nota fiscal" do CSV daquele produto — ou seja,
+ * a Bling não reconhece essa nota como pertencente a esse produto.
+ *
+ * Regra de corte por data: como o CSV tem uma data de corte (gerado antes
+ * de hoje), uma NF do sistema com data POSTERIOR à última linha do CSV
+ * daquele produto é simplesmente uma nota emitida depois da extração — não
+ * é uma nota "errada", só não deu tempo de aparecer no CSV ainda.
+ */
+function buildGhostInvoicePlan(
+  rows: CsvRow[],
+  sourceData: { invoice_id: string; invoice_number?: string | null; movement_type: string; movement_quantity: number; movement_date: Date }[],
+  existingManualAdjustments: ExistingManualAdjustment[],
+): GhostInvoicePlan {
+  const csvInvoiceNumbers = new Set(
+    rows
+      .filter((r) => r.origem_tipo === "Nota fiscal")
+      .map((r) => normalizeInvoiceNumber(r.origem_numero)),
+  );
+
+  const lastCsvDate = rows.reduce(
+    (max, r) => (r.data.getTime() > max.getTime() ? r.data : max),
+    new Date(0),
+  );
+
+  const compensations: GhostCompensationDraft[] = [];
+  const skippedFutureDated: GhostInvoicePlan["skippedFutureDated"] = [];
+  const skippedAsAlreadyCovered: GhostInvoicePlan["skippedAsAlreadyCovered"] = [];
+
+  for (const movement of sourceData) {
+    if (!movement.invoice_number) continue;
+
+    const normalized = normalizeInvoiceNumber(movement.invoice_number);
+    if (csvInvoiceNumbers.has(normalized)) continue; // existe no CSV, não é fantasma
+
+    const movementDate = new Date(movement.movement_date);
+
+    if (movementDate.getTime() > lastCsvDate.getTime()) {
+      skippedFutureDated.push({
+        invoice_number: movement.invoice_number,
+        movement_date: movementDate,
+      });
+      continue;
+    }
+
+    const isInbound =
+      movement.movement_type === "PURCHASE_ENTRY" ||
+      movement.movement_type === "CUSTOMER_RETURN";
+    const compensationDirection: "IN" | "OUT" = isInbound ? "OUT" : "IN";
+    const quantity = Number(movement.movement_quantity);
+
+    if (
+      isAlreadyCoveredByExisting(
+        movementDate,
+        quantity,
+        compensationDirection,
+        existingManualAdjustments,
+      )
+    ) {
+      skippedAsAlreadyCovered.push({
+        invoice_number: movement.invoice_number,
+        movement_date: movementDate,
+        qty: quantity,
+      });
+      continue;
+    }
+
+    compensations.push({
+      movement_quantity: quantity,
+      direction: compensationDirection,
+      movement_date: movementDate,
+      manual_average_cost_value: null,
+      source_invoice_id: movement.invoice_id ?? null,
+      source_invoice_number: movement.invoice_number,
+    });
+  }
+
+  return { compensations, skippedFutureDated, skippedAsAlreadyCovered };
 }
 
 // ─── Processamento por produto ───────────────────────────────────────────────
@@ -475,8 +588,9 @@ function buildProductPlan(
 interface ProcessResult {
   productInternalId: string;
   productName: string;
-  manualAdjustmentsCreated: number;
-  missingInvoicesLogged: number;
+  manualAdjustmentsFromCsvCreated: number;
+  ghostCompensationsCreated: number;
+  ghostSkippedFutureDated: number;
   zeroDeltaLogged: number;
   reconciliationDelta: number | null;
   error?: string;
@@ -487,9 +601,9 @@ async function processProduct(
   productName: string,
   rows: CsvRow[],
 ): Promise<ProcessResult> {
-  // 1. Fonte "real" (nota fiscal) já existente/derivável do sistema —
-  //    usada tanto pra saber quais notas já existem quanto pra decidir se
-  //    já há PURCHASE_ENTRY antes de uma data.
+  // 1. Fonte "real" (nota fiscal) já existente/derivável do sistema — usada
+  //    tanto pra saber quais notas já existem quanto pra decidir se já há
+  //    PURCHASE_ENTRY antes de uma data, e pra detectar notas fantasma.
   const sourceData = await stockMovementService.findStockMovementSourceData(
     UNIT_BUSINESS_ID,
     productInternalId,
@@ -505,17 +619,21 @@ async function processProduct(
       .map((m) => normalizeInvoiceNumber(m.invoice_number)),
   );
 
-  // 2. Ajustes manuais já existentes no sistema (incluindo "gambiarras"
-  //    antigas) — o reindexProduct NUNCA apaga nenhum MANUAL_ADJUSTMENT,
-  //    então precisamos evitar criar um novo pro mesmo evento que uma
-  //    linha antiga já cobre (senão o saldo fica duplicado).
+  // 2. MANUAL_ADJUSTMENT IMUTÁVEIS já existentes (com manual_average_cost_value
+  //    preenchido) — são os únicos que sobrevivem à limpeza do passo 1 e os
+  //    únicos usados em isAlreadyCoveredByExisting.
   const existingHistory = await stockMovementService.getProductHistory(
     productInternalId,
     UNIT_BUSINESS_ID,
     { page: 1, perPage: 5000 } as any,
   );
-  const existingManualAdjustments: ExistingManualAdjustment[] = existingHistory.data
-    .filter((m) => m.movement_type === "MANUAL_ADJUSTMENT" && m.is_active)
+  const immutableManualAdjustments: ExistingManualAdjustment[] = existingHistory.data
+    .filter(
+      (m) =>
+        m.movement_type === "MANUAL_ADJUSTMENT" &&
+        m.is_active &&
+        m.manual_average_cost_value != null,
+    )
     .map((m) => ({
       movement_date: new Date(m.movement_date),
       movement_quantity: Number(m.movement_quantity),
@@ -528,24 +646,23 @@ async function processProduct(
     rows,
     purchaseEntryDates,
     existingInvoiceNumbers,
-    existingManualAdjustments,
+    immutableManualAdjustments,
+  );
+
+  const ghostPlan = buildGhostInvoicePlan(
+    rows,
+    sourceData as any,
+    immutableManualAdjustments,
   );
 
   console.log(
     `\n[SyncStock] Produto ${productInternalId} (${productName}): ` +
-      `${plan.manualAdjustments.length} ajuste(s) manual(is) a criar, ` +
-      `${plan.missingInvoices.length} NF pendente(s), ` +
+      `${plan.manualAdjustments.length} ajuste(s) manual(is) a criar a partir do CSV, ` +
+      `${ghostPlan.compensations.length} compensação(ões) de nota fantasma a criar, ` +
+      `${ghostPlan.skippedFutureDated.length} nota(s) fantasma ignorada(s) (emitida(s) após o CSV), ` +
       `${plan.zeroDeltaBalances.length} balanço(s) com delta zero (ignorados), ` +
-      `${plan.skippedAsAlreadyCovered.length} evento(s) já coberto(s) por ajuste existente (pulados), ` +
-      `saldo Bling reconstruído = ${plan.actualQuantity}`,
+      `${plan.skippedAsAlreadyCovered.length + ghostPlan.skippedAsAlreadyCovered.length} evento(s) já coberto(s) por ajuste imutável (pulados)`,
   );
-
-  for (const missing of plan.missingInvoices) {
-    console.log(
-      `  ⚠️  NF não encontrada no sistema — lancamento_id=${missing.lancamento_id} ` +
-        `origem_numero=${missing.origem_numero}. NÃO foi criada automaticamente.`,
-    );
-  }
 
   for (const zero of plan.zeroDeltaBalances) {
     console.log(
@@ -557,7 +674,7 @@ async function processProduct(
   for (const skipped of plan.skippedAsAlreadyCovered) {
     console.log(
       `  ⏭️  lancamento_id=${skipped.lancamento_id} data=${skipped.data.toISOString()} ` +
-        `qty=${skipped.qty} já parece coberto por um MANUAL_ADJUSTMENT existente — não criado de novo.`,
+        `qty=${skipped.qty} já parece coberto por um MANUAL_ADJUSTMENT imutável — não criado de novo.`,
     );
   }
 
@@ -566,7 +683,30 @@ async function processProduct(
       `  ${DRY_RUN ? "🔎 [DRY_RUN] criaria" : "✏️  criando"} MANUAL_ADJUSTMENT — ` +
         `lancamento_id=${adj.source_lancamento_id} data=${adj.movement_date.toISOString()} ` +
         `qty=${adj.movement_quantity} direction=${adj.direction} ` +
+        `invoice_number=${adj.invoice_number ?? "-"} ` +
         `manual_average_cost_value=${adj.manual_average_cost_value ?? "null (herda)"}`,
+    );
+  }
+
+  for (const future of ghostPlan.skippedFutureDated) {
+    console.log(
+      `  🕒 NF ${future.invoice_number} não está no CSV mas tem data ` +
+        `${future.movement_date.toISOString()}, posterior ao corte do CSV — ignorada (provável nota emitida depois da extração).`,
+    );
+  }
+
+  for (const skipped of ghostPlan.skippedAsAlreadyCovered) {
+    console.log(
+      `  ⏭️  Compensação da NF fantasma ${skipped.invoice_number} (data=${skipped.movement_date.toISOString()}, ` +
+        `qty=${skipped.qty}) já parece coberta por um MANUAL_ADJUSTMENT imutável — não criada de novo.`,
+    );
+  }
+
+  for (const comp of ghostPlan.compensations) {
+    console.log(
+      `  ${DRY_RUN ? "🔎 [DRY_RUN] criaria" : "✏️  criando"} MANUAL_ADJUSTMENT de compensação — ` +
+        `NF fantasma ${comp.source_invoice_number} (invoice_id=${comp.source_invoice_id}) ` +
+        `data=${comp.movement_date.toISOString()} qty=${comp.movement_quantity} direction=${comp.direction}`,
     );
   }
 
@@ -574,8 +714,9 @@ async function processProduct(
     return {
       productInternalId,
       productName,
-      manualAdjustmentsCreated: plan.manualAdjustments.length,
-      missingInvoicesLogged: plan.missingInvoices.length,
+      manualAdjustmentsFromCsvCreated: plan.manualAdjustments.length,
+      ghostCompensationsCreated: ghostPlan.compensations.length,
+      ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
       zeroDeltaLogged: plan.zeroDeltaBalances.length,
       reconciliationDelta: null,
     };
@@ -583,23 +724,63 @@ async function processProduct(
 
   const transaction = await sequelize.transaction();
   try {
-    const manualMovements: ReindexProductPayload[] = plan.manualAdjustments.map(
-      (adj) =>
-        ({
-          product_id: productInternalId,
-          movement_type: "MANUAL_ADJUSTMENT",
-          movement_quantity: adj.movement_quantity,
-          movement_date: adj.movement_date,
-          invoice_id: null,
-          invoice_number: undefined,
-          direction: adj.direction,
-          manual_average_cost_value: adj.manual_average_cost_value,
-        }) as unknown as ReindexProductPayload,
+    // Passo 1: apaga (hard delete) todo MANUAL_ADJUSTMENT mutável (sem
+    // manual_average_cost_value) desse produto. Os imutáveis nunca entram
+    // nesse where (manual_average_cost_value: null exclui exatamente os
+    // que têm valor preenchido).
+    await stockMovementService.bulkDelete({
+      where: {
+        product_id: productInternalId,
+        unit_business_id: UNIT_BUSINESS_ID,
+        movement_type: "MANUAL_ADJUSTMENT",
+        manual_average_cost_value: null,
+      },
+      transaction,
+    });
+
+    // Passo 2: reindex "base" — só com a sourceData real (notas do
+    // sistema) + os imutáveis que sobreviveram, deixando a cadeia limpa.
+    await stockMovementService.reindexProduct(
+      productInternalId,
+      UNIT_BUSINESS_ID,
+      sourceData,
+      transaction,
     );
+
+    // Passo 3/4/5: monta os novos ajustes (CSV + compensações de nota
+    // fantasma) e reindexa de novo, junto com a sourceData.
+    const newManualMovements: ReindexProductPayload[] = [
+      ...plan.manualAdjustments.map(
+        (adj) =>
+          ({
+            product_id: productInternalId,
+            movement_type: "MANUAL_ADJUSTMENT",
+            movement_quantity: adj.movement_quantity,
+            movement_date: adj.movement_date,
+            invoice_id: null,
+            invoice_number: adj.invoice_number,
+            direction: adj.direction,
+            manual_average_cost_value: adj.manual_average_cost_value,
+          }) as unknown as ReindexProductPayload,
+      ),
+      ...ghostPlan.compensations.map(
+        (comp) =>
+          ({
+            product_id: productInternalId,
+            movement_type: "MANUAL_ADJUSTMENT",
+            movement_quantity: comp.movement_quantity,
+            movement_date: comp.movement_date,
+            invoice_id: null,
+            invoice_number: undefined,
+            direction: comp.direction,
+            manual_average_cost_value: null,
+          }) as unknown as ReindexProductPayload,
+      ),
+    ];
 
     const mergedMovements: ReindexProductPayload[] = [
       ...sourceData,
-      ...manualMovements,
+      ...newManualMovements,
     ];
 
     await stockMovementService.reindexProduct(
@@ -609,11 +790,18 @@ async function processProduct(
       transaction,
     );
 
-    // Reconciliação final — cobre resíduos (ex: "Pedido de venda" sem NF
-    // ainda, contagens físicas não capturadas no CSV). Reaproveita a mesma
-    // função que o sistema já usa hoje; como todas as NFs já foram
-    // reindexadas acima, `pending` aqui deve vir vazio — só executa a
-    // reconciliação de saldo por baixo dos panos.
+    // Passo 6: reconciliação final — contra o saldo CADASTRADO na tabela
+    // `stocks` (produto + unit business padrão), não contra a última
+    // linha do CSV (que pode estar um dia desatualizada).
+    const stockRow = await Stock.findOne({
+      where: {
+        product_id: productInternalId,
+        unit_business_id: UNIT_BUSINESS_ID,
+      },
+      transaction,
+    });
+    const targetQuantity = stockRow ? Number((stockRow as any).quantity) : 0;
+
     const before = await stockMovementService.getCurrentBalance(
       productInternalId,
       UNIT_BUSINESS_ID,
@@ -623,15 +811,15 @@ async function processProduct(
     await stockMovementService.syncProductStockMovements(
       productInternalId,
       UNIT_BUSINESS_ID,
-      plan.actualQuantity,
+      targetQuantity,
       transaction,
     );
 
-    const reconciliationDelta = plan.actualQuantity - balanceBefore;
+    const reconciliationDelta = targetQuantity - balanceBefore;
     if (reconciliationDelta !== 0) {
       console.log(
         `  🧮 Reconciliação final aplicada — delta=${reconciliationDelta} ` +
-          `(saldo sistema pós-reindex=${balanceBefore} -> saldo Bling=${plan.actualQuantity})`,
+          `(saldo sistema pós-reindex=${balanceBefore} -> saldo stocks=${targetQuantity})`,
       );
     }
 
@@ -640,8 +828,9 @@ async function processProduct(
     return {
       productInternalId,
       productName,
-      manualAdjustmentsCreated: plan.manualAdjustments.length,
-      missingInvoicesLogged: plan.missingInvoices.length,
+      manualAdjustmentsFromCsvCreated: plan.manualAdjustments.length,
+      ghostCompensationsCreated: ghostPlan.compensations.length,
+      ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
       zeroDeltaLogged: plan.zeroDeltaBalances.length,
       reconciliationDelta,
     };
@@ -723,8 +912,9 @@ async function main() {
     }
   }
 
-  const totalAdjustments = results.reduce((s, r) => s + r.manualAdjustmentsCreated, 0);
-  const totalMissingInvoices = results.reduce((s, r) => s + r.missingInvoicesLogged, 0);
+  const totalCsvAdjustments = results.reduce((s, r) => s + r.manualAdjustmentsFromCsvCreated, 0);
+  const totalGhostCompensations = results.reduce((s, r) => s + r.ghostCompensationsCreated, 0);
+  const totalGhostFuture = results.reduce((s, r) => s + r.ghostSkippedFutureDated, 0);
   const totalZeroDelta = results.reduce((s, r) => s + r.zeroDeltaLogged, 0);
   const totalReconciled = results.filter((r) => (r.reconciliationDelta ?? 0) !== 0).length;
 
@@ -732,8 +922,9 @@ async function main() {
   console.log("  ✅ Finalizado");
   console.log(`  Modo: ${DRY_RUN ? "DRY_RUN (nada escrito)" : "EXECUÇÃO REAL"}`);
   console.log(`  Produtos processados: ${results.length}`);
-  console.log(`  MANUAL_ADJUSTMENT ${DRY_RUN ? "que seriam criados" : "criados"}: ${totalAdjustments}`);
-  console.log(`  NFs pendentes logadas (não criadas): ${totalMissingInvoices}`);
+  console.log(`  MANUAL_ADJUSTMENT a partir do CSV ${DRY_RUN ? "que seriam criados" : "criados"}: ${totalCsvAdjustments}`);
+  console.log(`  Compensações de nota fantasma ${DRY_RUN ? "que seriam criadas" : "criadas"}: ${totalGhostCompensations}`);
+  console.log(`  Notas fantasma ignoradas (emitidas após o corte do CSV): ${totalGhostFuture}`);
   console.log(`  Balanços com delta zero (ignorados): ${totalZeroDelta}`);
   if (!DRY_RUN) {
     console.log(`  Produtos com reconciliação final aplicada: ${totalReconciled}`);
