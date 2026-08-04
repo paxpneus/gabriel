@@ -70,7 +70,7 @@ import * as path from "path";
 
 import sequelize from "../../config/sequelize";
 import { setupAssociations } from "../../config/sequelize-associations";
-import stockMovementsService from "../../modules/inventory/stock/stock-movements/stock-movements.service";
+import stockMovementService from "../../modules/inventory/stock/stock-movements/stock-movements.service";
 import { ReindexProductPayload } from "../../modules/inventory/stock/stock-movements/stock-movements.types";
 
 // ─── Configuração ───────────────────────────────────────────────────────────
@@ -205,13 +205,38 @@ function isInvoiceBacked(row: CsvRow): boolean {
 }
 
 /**
- * Saldo resultante APÓS esse lançamento, na visão da Bling.
- * Pra "B" o próprio campo `balanco` já é o saldo resultante.
- * Pra "E"/"S" é saldo_anterior + entrada - saida.
+ * ⚠️ IMPORTANTE: o endpoint interno da Bling (/Api/v3/estoques/list/lancamentos)
+ * NÃO preenche `saldoAnterior` de forma confiável pra lançamentos "E"/"S" — na
+ * prática ele quase sempre vem 0, mesmo quando o saldo real não era zero.
+ * Confirmado em produção: isso já gerou um MANUAL_ADJUSTMENT de -195 num
+ * produto, porque o "saldo atual" calculado a partir da última linha (que
+ * tinha saldo_anterior=0) ficou negativo.
+ *
+ * Por isso NUNCA usamos `saldo_anterior` pra decidir saldo. Em vez disso,
+ * reconstruímos o saldo andando cronologicamente pelas próprias linhas:
+ *   - "B" (balanço): é um RESET ABSOLUTO — saldo passa a ser `balanco`,
+ *     não importa o que veio antes.
+ *   - "E"/"S": soma/subtrai `entrada`/`saida` do saldo acumulado.
+ * Isso não depende de nenhum campo que a Bling possa deixar zerado.
  */
-function resultingBalance(row: CsvRow): number {
-  if (row.es === "B") return row.balanco;
-  return row.saldo_anterior + row.entrada - row.saida;
+class RunningBalance {
+  private value = 0;
+
+  applyEntry(qty: number) {
+    this.value += qty;
+  }
+
+  applyExit(qty: number) {
+    this.value -= qty;
+  }
+
+  reset(newValue: number) {
+    this.value = newValue;
+  }
+
+  get current(): number {
+    return this.value;
+  }
 }
 
 // ─── Construção dos MANUAL_ADJUSTMENT a partir do CSV ───────────────────────
@@ -224,13 +249,116 @@ interface ManualAdjustmentDraft {
   source_lancamento_id: string;
 }
 
+interface ExistingManualAdjustment {
+  movement_date: Date;
+  movement_quantity: number;
+  direction: "IN" | "OUT";
+}
+
 interface ProductPlan {
   productInternalId: string;
   productName: string;
   manualAdjustments: ManualAdjustmentDraft[];
   missingInvoices: { origem_tipo: string; origem_numero: string; lancamento_id: string }[];
   zeroDeltaBalances: { lancamento_id: string; data: Date }[];
+  skippedAsAlreadyCovered: { lancamento_id: string; data: Date; qty: number }[];
   actualQuantity: number;
+}
+
+/**
+ * Quando a própria linha que gera o MANUAL_ADJUSTMENT vem com
+ * custo_lancamento=0, a Bling às vezes registra o custo médio real do
+ * produto numa linha de sincronismo de cadastro (delta=0) LOGO DEPOIS,
+ * dentro do mesmo "platô" de saldo (nenhuma entrada/saída real entre elas).
+ * Ex: saldo criado em 03/08/2025 (custo=0), custo real (285.38) só aparece
+ * na linha de 03/09/2025, que tem delta=0 e é puramente sync de cadastro.
+ * Sem esse fallback, o ajuste manual fica com custo 0 pra sempre (produto
+ * sem PURCHASE_ENTRY anterior).
+ *
+ * Procura, a partir da linha do gatilho (exclusive), a primeira linha "B"
+ * com custo_lancamento > 0, parando assim que encontrar qualquer linha
+ * que altere o saldo de fato (ou seja, saímos do platô).
+ */
+function findFallbackCostInSameBalancePlateau(
+  sorted: CsvRow[],
+  triggerIndex: number,
+  balanceAfterTrigger: number,
+): number | null {
+  let runningBalance = balanceAfterTrigger;
+
+  for (let i = triggerIndex + 1; i < sorted.length; i++) {
+    const row = sorted[i];
+
+    if (row.es === "B") {
+      const delta = row.balanco - runningBalance;
+      if (delta !== 0) return null; // saldo mudou de verdade, saiu do platô
+      if (row.custo_lancamento > 0) return row.custo_lancamento;
+      continue;
+    }
+
+    // "E"/"S" reais (não NF/pedido) também alteram o saldo -> saiu do platô
+    if (row.entrada !== 0 || row.saida !== 0) return null;
+  }
+
+  return null;
+}
+
+/**
+ * Compara um lançamento do CSV com os MANUAL_ADJUSTMENT já existentes no
+ * sistema (legado/gambiarra). Não temos o id do lançamento da Bling salvo
+ * no banco, então a melhor aproximação possível é: mesma quantidade, mesma
+ * direção, e data dentro de uma janela de 1 dia (cobre pequenas diferenças
+ * de fuso/horário entre o que a Bling mostra na listagem e o que foi
+ * gravado originalmente).
+ */
+function isAlreadyCoveredByExisting(
+  date: Date,
+  quantity: number,
+  direction: "IN" | "OUT",
+  existing: ExistingManualAdjustment[],
+): boolean {
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  return existing.some(
+    (m) =>
+      m.direction === direction &&
+      Math.abs(m.movement_quantity - quantity) < 0.0001 &&
+      Math.abs(m.movement_date.getTime() - date.getTime()) <= ONE_DAY_MS,
+  );
+}
+
+/**
+ * Colapsa sequências de linhas "B" consecutivas (sem nenhuma linha E/S no
+ * meio, seja ela invoice-backed ou não) numa única linha: a ÚLTIMA
+ * (cronologicamente mais recente) da sequência.
+ *
+ * Motivo: o saldo/custo que realmente "vale" antes do próximo evento real
+ * (nota, pedido, entrada avulsa) é sempre o do balanço mais recente da
+ * sequência — balanços mais antigos são só ruído de sincronismo de
+ * cadastro da Bling (o custo registrado neles pode estar zerado ou
+ * desatualizado). Se dois balanços estiverem separados por um evento real
+ * no meio, cada um é mantido separadamente (a sequência quebra ali).
+ *
+ * Ex.: nota_entrada / balanço A / balanço B  (ordem cronológica) ->
+ *      só o balanço B é mantido.
+ * Ex.: balanço A / nota_entrada / balanço B  -> os 2 são mantidos.
+ */
+function collapseConsecutiveBalanceRuns(chronological: CsvRow[]): CsvRow[] {
+  const result: CsvRow[] = [];
+  let i = 0;
+  while (i < chronological.length) {
+    if (chronological[i].es !== "B") {
+      result.push(chronological[i]);
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < chronological.length && chronological[j + 1].es === "B") {
+      j++;
+    }
+    result.push(chronological[j]); // mantém só o último "B" da sequência
+    i = j + 1;
+  }
+  return result;
 }
 
 function buildProductPlan(
@@ -239,12 +367,15 @@ function buildProductPlan(
   rows: CsvRow[],
   purchaseEntryDates: Date[],
   existingInvoiceNumbers: Set<string>,
+  existingManualAdjustments: ExistingManualAdjustment[],
 ): ProductPlan {
-  const sorted = [...rows].sort((a, b) => a.data.getTime() - b.data.getTime());
+  const chronological = [...rows].sort((a, b) => a.data.getTime() - b.data.getTime());
+  const sorted = collapseConsecutiveBalanceRuns(chronological);
 
   const manualAdjustments: ManualAdjustmentDraft[] = [];
   const missingInvoices: ProductPlan["missingInvoices"] = [];
   const zeroDeltaBalances: ProductPlan["zeroDeltaBalances"] = [];
+  const skippedAsAlreadyCovered: ProductPlan["skippedAsAlreadyCovered"] = [];
 
   const hasEarlierPurchaseEntry = (date: Date): boolean =>
     purchaseEntryDates.some((d) => d.getTime() < date.getTime());
@@ -255,10 +386,36 @@ function buildProductPlan(
     return null;
   };
 
+  const balance = new RunningBalance();
+
+  const tryCreateAdjustment = (
+    row: CsvRow,
+    quantity: number,
+    direction: "IN" | "OUT",
+    manualAverageCostValue: number | null,
+  ) => {
+    if (isAlreadyCoveredByExisting(row.data, quantity, direction, existingManualAdjustments)) {
+      skippedAsAlreadyCovered.push({ lancamento_id: row.lancamento_id, data: row.data, qty: quantity });
+      return;
+    }
+    manualAdjustments.push({
+      movement_quantity: quantity,
+      direction,
+      movement_date: row.data,
+      manual_average_cost_value: manualAverageCostValue,
+      source_lancamento_id: row.lancamento_id,
+    });
+  };
+
   for (const row of sorted) {
     if (isInvoiceBacked(row)) {
-      // Só verificamos NF (pedido de venda já vem coberto pela NF vinculada,
-      // conforme confirmado — não checamos pedido isoladamente).
+      if (row.es === "B") {
+        balance.reset(row.balanco);
+      } else {
+        balance.applyEntry(row.entrada);
+        balance.applyExit(row.saida);
+      }
+
       if (row.origem_tipo === "Nota fiscal") {
         const normalized = normalizeInvoiceNumber(row.origem_numero);
         if (!existingInvoiceNumbers.has(normalized)) {
@@ -273,47 +430,34 @@ function buildProductPlan(
     }
 
     if (row.es === "B") {
-      const delta = row.balanco - row.saldo_anterior;
+      const delta = row.balanco - balance.current;
+      balance.reset(row.balanco);
       if (delta === 0) {
         zeroDeltaBalances.push({ lancamento_id: row.lancamento_id, data: row.data });
         continue;
       }
-      manualAdjustments.push({
-        movement_quantity: Math.abs(delta),
-        direction: delta > 0 ? "IN" : "OUT",
-        movement_date: row.data,
-        manual_average_cost_value: resolveManualAverageCost(row),
-        source_lancamento_id: row.lancamento_id,
-      });
+      tryCreateAdjustment(
+        row,
+        Math.abs(delta),
+        delta > 0 ? "IN" : "OUT",
+        resolveManualAverageCost(row),
+      );
       continue;
     }
 
     if (row.es === "E" && row.entrada !== 0) {
-      manualAdjustments.push({
-        movement_quantity: row.entrada,
-        direction: "IN",
-        movement_date: row.data,
-        manual_average_cost_value: resolveManualAverageCost(row),
-        source_lancamento_id: row.lancamento_id,
-      });
+      balance.applyEntry(row.entrada);
+      tryCreateAdjustment(row, row.entrada, "IN", resolveManualAverageCost(row));
       continue;
     }
 
     if (row.es === "S" && row.saida !== 0) {
-      manualAdjustments.push({
-        movement_quantity: row.saida,
-        direction: "OUT",
-        movement_date: row.data,
-        // Saída não deve "criar" custo médio novo — mantém o comportamento
-        // padrão (herda o CMP corrente). Só entradas usam custo_lancamento.
-        manual_average_cost_value: null,
-        source_lancamento_id: row.lancamento_id,
-      });
+      balance.applyExit(row.saida);
+      tryCreateAdjustment(row, row.saida, "OUT", null);
     }
   }
 
-  const lastRow = sorted[sorted.length - 1];
-  const actualQuantity = lastRow ? resultingBalance(lastRow) : 0;
+  const actualQuantity = balance.current;
 
   return {
     productInternalId,
@@ -321,6 +465,7 @@ function buildProductPlan(
     manualAdjustments,
     missingInvoices,
     zeroDeltaBalances,
+    skippedAsAlreadyCovered,
     actualQuantity,
   };
 }
@@ -345,7 +490,7 @@ async function processProduct(
   // 1. Fonte "real" (nota fiscal) já existente/derivável do sistema —
   //    usada tanto pra saber quais notas já existem quanto pra decidir se
   //    já há PURCHASE_ENTRY antes de uma data.
-  const sourceData = await stockMovementsService.findStockMovementSourceData(
+  const sourceData = await stockMovementService.findStockMovementSourceData(
     UNIT_BUSINESS_ID,
     productInternalId,
   );
@@ -360,12 +505,30 @@ async function processProduct(
       .map((m) => normalizeInvoiceNumber(m.invoice_number)),
   );
 
+  // 2. Ajustes manuais já existentes no sistema (incluindo "gambiarras"
+  //    antigas) — o reindexProduct NUNCA apaga nenhum MANUAL_ADJUSTMENT,
+  //    então precisamos evitar criar um novo pro mesmo evento que uma
+  //    linha antiga já cobre (senão o saldo fica duplicado).
+  const existingHistory = await stockMovementService.getProductHistory(
+    productInternalId,
+    UNIT_BUSINESS_ID,
+    { page: 1, perPage: 5000 } as any,
+  );
+  const existingManualAdjustments: ExistingManualAdjustment[] = existingHistory.data
+    .filter((m) => m.movement_type === "MANUAL_ADJUSTMENT" && m.is_active)
+    .map((m) => ({
+      movement_date: new Date(m.movement_date),
+      movement_quantity: Number(m.movement_quantity),
+      direction: (m.direction as "IN" | "OUT") ?? "IN",
+    }));
+
   const plan = buildProductPlan(
     productInternalId,
     productName,
     rows,
     purchaseEntryDates,
     existingInvoiceNumbers,
+    existingManualAdjustments,
   );
 
   console.log(
@@ -373,7 +536,8 @@ async function processProduct(
       `${plan.manualAdjustments.length} ajuste(s) manual(is) a criar, ` +
       `${plan.missingInvoices.length} NF pendente(s), ` +
       `${plan.zeroDeltaBalances.length} balanço(s) com delta zero (ignorados), ` +
-      `saldo Bling atual = ${plan.actualQuantity}`,
+      `${plan.skippedAsAlreadyCovered.length} evento(s) já coberto(s) por ajuste existente (pulados), ` +
+      `saldo Bling reconstruído = ${plan.actualQuantity}`,
   );
 
   for (const missing of plan.missingInvoices) {
@@ -387,6 +551,13 @@ async function processProduct(
     console.log(
       `  ℹ️  Balanço sem efeito (delta=0) — lancamento_id=${zero.lancamento_id} ` +
         `data=${zero.data.toISOString()}. Ignorado.`,
+    );
+  }
+
+  for (const skipped of plan.skippedAsAlreadyCovered) {
+    console.log(
+      `  ⏭️  lancamento_id=${skipped.lancamento_id} data=${skipped.data.toISOString()} ` +
+        `qty=${skipped.qty} já parece coberto por um MANUAL_ADJUSTMENT existente — não criado de novo.`,
     );
   }
 
@@ -431,7 +602,7 @@ async function processProduct(
       ...manualMovements,
     ];
 
-    await stockMovementsService.reindexProduct(
+    await stockMovementService.reindexProduct(
       productInternalId,
       UNIT_BUSINESS_ID,
       mergedMovements,
@@ -443,13 +614,13 @@ async function processProduct(
     // função que o sistema já usa hoje; como todas as NFs já foram
     // reindexadas acima, `pending` aqui deve vir vazio — só executa a
     // reconciliação de saldo por baixo dos panos.
-    const before = await stockMovementsService.getCurrentBalance(
+    const before = await stockMovementService.getCurrentBalance(
       productInternalId,
       UNIT_BUSINESS_ID,
     );
     const balanceBefore = before ? Number(before.balance_quantity) : 0;
 
-    await stockMovementsService.syncProductStockMovements(
+    await stockMovementService.syncProductStockMovements(
       productInternalId,
       UNIT_BUSINESS_ID,
       plan.actualQuantity,
