@@ -11,6 +11,7 @@ import {
 } from "./sales-report.types";
 
 const JOB_NAME = "sales_report";
+const STOCK_MOVEMENTS_UNIT_BUSINESS_ID = "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
 
 interface CheckpointRow {
   last_processed_at: Date;
@@ -618,21 +619,21 @@ export class SalesReportRepository {
           o.destination_city,
           COALESCE(iosm.normalized_status, o.actual_situation)  AS status_snapshot,
           CASE
-            WHEN EXISTS (
-              SELECT 1
-              FROM order_items cost_check
-              WHERE cost_check.order_id = o.id
-                AND NOT EXISTS (
-                  SELECT 1
-                  FROM stock_movements cost_sm
-                  WHERE cost_sm.product_id = cost_check.product_id
-                    AND cost_sm.unit_business_id = o.unit_business_id
-                    AND cost_sm.movement_date <= COALESCE(o.date, o.created_at)
-                )
-            ) THEN 'ignored_missing_cost'
-            WHEN o.actual_situation IN ('6', '9') THEN 'completed'
-            ELSE 'cancelled'
-          END                                                   AS snapshot_status,
+          WHEN EXISTS (
+            SELECT 1
+            FROM order_items cost_check
+            WHERE cost_check.order_id = o.id
+              AND NOT EXISTS (
+                SELECT 1
+                FROM stock_movements cost_sm
+                WHERE cost_sm.product_id = cost_check.product_id
+                  AND cost_sm.unit_business_id = :stockUnitBusinessId
+                  AND cost_sm.movement_date <= COALESCE(o.date, o.created_at)
+              )
+          ) THEN 'ignored_missing_cost'
+          WHEN o.actual_situation IN ('6', '9') THEN 'completed'
+          ELSE 'cancelled'
+        END                                                   AS snapshot_status,
           COALESCE(o.total_products, 0)                         AS total_products,
           COALESCE(o.total_price, 0)                            AS total_order,
           COALESCE(o.discount_value, 0)                         AS discount_value,
@@ -895,7 +896,7 @@ item_source_raw AS (
     SELECT sm.resulting_average_cost
     FROM stock_movements sm
     WHERE sm.product_id = COALESCE(oi.product_id, p.id)
-      AND sm.unit_business_id = io.unit_business_id
+      AND sm.unit_business_id = :stockUnitBusinessId
       AND sm.movement_date <= COALESCE(ord.date, ord.created_at)
     ORDER BY sm.movement_date DESC, sm.created_at DESC
     LIMIT 1
@@ -1083,7 +1084,7 @@ item_calc AS (
       FROM item_totals it
       WHERE sos.id = it.order_snapshot_id
       `,
-      { replacements: { orderIds } },
+     { replacements: { orderIds, stockUnitBusinessId: STOCK_MOVEMENTS_UNIT_BUSINESS_ID } },
     );
   }
 
