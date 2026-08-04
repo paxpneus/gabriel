@@ -619,21 +619,9 @@ export class SalesReportRepository {
           o.destination_city,
           COALESCE(iosm.normalized_status, o.actual_situation)  AS status_snapshot,
           CASE
-          WHEN EXISTS (
-            SELECT 1
-            FROM order_items cost_check
-            WHERE cost_check.order_id = o.id
-              AND NOT EXISTS (
-                SELECT 1
-                FROM stock_movements cost_sm
-                WHERE cost_sm.product_id = cost_check.product_id
-                  AND cost_sm.unit_business_id = :stockUnitBusinessId
-                  AND cost_sm.movement_date <= COALESCE(o.date, o.created_at)
-              )
-          ) THEN 'ignored_missing_cost'
-          WHEN o.actual_situation IN ('6', '9') THEN 'completed'
-          ELSE 'cancelled'
-        END                                                   AS snapshot_status,
+            WHEN o.actual_situation IN ('6', '9') THEN 'completed'
+            ELSE 'cancelled'
+          END AS snapshot_status,
           COALESCE(o.total_products, 0)                         AS total_products,
           COALESCE(o.total_price, 0)                            AS total_order,
           COALESCE(o.discount_value, 0)                         AS discount_value,
@@ -811,26 +799,36 @@ item_source_raw AS (
         * COALESCE(oi.quantity, 0)::numeric
     )                                                     AS gross_total,
     COALESCE(oi.discount_value, 0)                        AS discount_value,
-    -- net_total_raw: valor bruto do item (Bling), sem descontar taxa de
-    -- marketplace/frete e sem ratear ICMS/IPI/etc. do pedido. É usado
-    -- SÓ pra calcular o peso do item dentro do pedido (item_weight),
-    -- igual ao seller_sales_report.
-    -- net_total_raw: valor bruto do item (sem descontar desconto do item).
-    -- Antes subtraíamos discount_value aqui; para cálculo de byproducts
-    -- e rateio queremos o preço bruto: quantidade * valor unitário.
     COALESCE(
       oi.net_total,
       COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))
     )                                                     AS net_total_raw,
-    -- Custo médio: SEMPRE resolvido via stock_movements (ver LATERAL scm
-    -- abaixo). 0 quando não há stock_movement anterior/igual à data do
-    -- pedido para o produto — nesse caso o item/pedido é descartado a
-    -- jusante (hasCompleteCostSql).
-    COALESCE(scm.resulting_average_cost, 0)::numeric       AS average_cost_snapshot,
+
+    -- ------------------------------------------------------------------
+    -- KIT: mesma regra do getKitMultiplier em JS (/K(\d+)$/i no sku).
+    -- kit_multiplier = quantas unidades reais tem 1 kit.
+    -- unit_sku       = sku do produto unitário (sufixo Kn removido).
+    -- ------------------------------------------------------------------
+    COALESCE(
+      (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
+      1
+    )                                                     AS kit_multiplier,
+    regexp_replace(COALESCE(pc.sku, oi.sku), 'K[0-9]+$', '', 'i') AS unit_sku,
+
+    -- average_cost_snapshot = custo médio unitário (via stock_movements do
+    -- produto certo — UNIT se for kit, o próprio se não for) × kit_multiplier.
+    -- Isso reproduz o "custo médio do kit" que o buildItemFinancialFields
+    -- calculava em JS.
+    COALESCE(scm.resulting_average_cost, 0)::numeric
+      * COALESCE(
+          (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
+          1
+        )                                                 AS average_cost_snapshot,
     CASE
       WHEN scm.resulting_average_cost IS NOT NULL THEN 'STOCK_AVERAGE'
       ELSE 'UNKNOWN'
     END                                                     AS cost_source,
+
     COALESCE(oi.commission_base, 0)                       AS commission_base,
     COALESCE(oi.commission_rate, 0)                       AS commission_rate,
     COALESCE(oi.commission_value, 0)                      AS commission_value,
@@ -838,9 +836,6 @@ item_source_raw AS (
     pc.cest                                               AS cest,
     NULL::varchar                                         AS cfop,
     COALESCE(pc.gtin, p.ean)                              AS gtin,
-    -- valores do PEDIDO (mesmos para todos os itens do mesmo pedido),
-    -- carregados aqui só pra servir de base do rateio na próxima CTE.
-    -- receita bruta usada pro rateio de item: SEMPRE total_products.
     io.total_products                                     AS order_total_products,
     io.icms_value                                         AS order_icms_value,
     io.ipi_value                                          AS order_ipi_value,
@@ -853,26 +848,17 @@ item_source_raw AS (
     oi.source_payload
   FROM order_items oi
   JOIN inserted_orders io ON io.order_id = oi.order_id
-
-  -- data/hora real do pedido (io.order_date só guarda a DATE truncada;
-  -- aqui buscamos o timestamp completo para achar o stock_movement mais
-  -- próximo com precisão de hora, não só de dia).
   JOIN orders ord ON ord.id = oi.order_id
 
-  -- tenta resolver pelo sku quando não há product_id no item
   LEFT JOIN product_configs pc_by_sku ON (
     oi.product_id IS NULL
     AND pc_by_sku.sku = oi.sku
     AND pc_by_sku.unit_business_id = io.unit_business_id
   )
-
-  -- produto resolvido por id direto ou via pc_by_sku
   LEFT JOIN products p ON (
     p.id = oi.product_id
     OR p.id = pc_by_sku.product_id
   )
-
-  -- product_config definitivo para custo, preço, ncm, gtin etc.
   LEFT JOIN product_configs pc ON (
     pc.product_id = COALESCE(oi.product_id, p.id)
     AND pc.unit_business_id = io.unit_business_id
@@ -889,13 +875,26 @@ item_source_raw AS (
     LIMIT 1
   ) st ON TRUE
 
-  -- Custo médio real do produto: stock_movement de mesmo produto +
-  -- unit_business com movement_date mais próximo, igual ou anterior à data
-  -- do pedido. Empate de data+hora desempatado por created_at desc.
+  -- ------------------------------------------------------------------
+  -- Resolve o product_id "de custo": se o item vendido é KIT (sku com
+  -- sufixo Kn), busca o product_config do produto UNITÁRIO (sku sem o
+  -- sufixo) no MESMO unit_business usado pra achar stock_movements. Se
+  -- não for kit, mantém o product_id original.
+  -- ------------------------------------------------------------------
+  LEFT JOIN LATERAL (
+    SELECT pc_unit.product_id
+    FROM product_configs pc_unit
+    WHERE pc_unit.unit_business_id = :stockUnitBusinessId
+      AND pc_unit.sku = regexp_replace(COALESCE(pc.sku, oi.sku), 'K[0-9]+$', '', 'i')
+    LIMIT 1
+  ) pc_unit_lookup ON (
+    regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i') IS NOT NULL
+  )
+
   LEFT JOIN LATERAL (
     SELECT sm.resulting_average_cost
     FROM stock_movements sm
-    WHERE sm.product_id = COALESCE(oi.product_id, p.id)
+    WHERE sm.product_id = COALESCE(pc_unit_lookup.product_id, oi.product_id, p.id)
       AND sm.unit_business_id = :stockUnitBusinessId
       AND sm.movement_date <= COALESCE(ord.date, ord.created_at)
     ORDER BY sm.movement_date DESC, sm.created_at DESC
@@ -1068,14 +1067,19 @@ item_calc AS (
         total_commission  = COALESCE(it.total_commission, 0),
 
         total_taxes       = ${calculateTotalTaxesSql("sos")},
-
         total_fees        = ${calculateTotalFeesSql("sos")},
 
         contribution_value = ${calculateOrderContributionValueSql("sos", snapshotCostSql)},
-
         contribution_pct  = ${calculateOrderContributionPctSql("sos", snapshotCostSql)},
-
         markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
+
+        -- snapshot_status recalculado com o custo JÁ resolvido (KIT incluído),
+        -- não mais com o EXISTS ingênuo de order_source.
+        snapshot_status = CASE
+          WHEN sos.snapshot_status = 'cancelled' THEN 'cancelled'
+          WHEN ${hasCompleteCostSql("sos")} THEN 'completed'
+          ELSE 'ignored_missing_cost'
+        END,
 
         has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
         last_updated_at   = NOW(),
