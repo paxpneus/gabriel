@@ -10,6 +10,11 @@ import {
 
 const JOB_NAME = "seller_sales_report";
 
+// Mesma unit_business "de custo" usada em sales_report — é onde os
+// stock_movements de referência (custo médio real) são resolvidos,
+// independente da unit_business em que o pedido foi vendido.
+const STOCK_MOVEMENTS_UNIT_BUSINESS_ID = "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
+
 /**
  * =====================================================================
  * ALINHAMENTO COM sales_report (revisão desta versão)
@@ -25,9 +30,25 @@ const JOB_NAME = "seller_sales_report";
  *    e nunca nada líquido de tax_commission/freight_cost/ICMS. É a base de
  *    markup, do rateio de item (net_total_allocated) e de contribution.
  *
- * 2. Custo do item: SEMPRE bruto — order_items.total_cost_snapshot quando
- *    existir, senão average_cost_snapshot * quantity + commission_value
- *    (fallback). ICMS NUNCA entra no custo do item nem no custo do pedido.
+ * 2. Custo do item (revisão desta versão — igual a sales_report revisão 3):
+ *    average_cost_snapshot NÃO vem mais de order_items — é resolvido em
+ *    tempo real, por item, a partir de stock_movements: pegamos o
+ *    resulting_average_cost do stock_movement de mesmo product_id +
+ *    unit_business_id = STOCK_MOVEMENTS_UNIT_BUSINESS_ID cujo movement_date
+ *    seja o mais próximo, igual ou anterior à data do pedido (empate de
+ *    data+hora desempatado por created_at mais recente).
+ *
+ *    KIT: se o SKU vendido tem sufixo Kn (ex: "ABC123K4"), o custo médio é
+ *    resolvido a partir do produto UNITÁRIO (SKU sem o sufixo, buscado em
+ *    product_configs na mesma STOCK_MOVEMENTS_UNIT_BUSINESS_ID) e depois
+ *    multiplicado por N (kit_multiplier) — exatamente a mesma regra usada
+ *    em sales_report.
+ *
+ *    total_cost do item = average_cost_snapshot(stock_movements) * quantity
+ *    + commission_value. order_items.total_cost_snapshot/average_cost_snapshot
+ *    (gravados por outras integrações, ex: BlingOrderService) DEIXARAM de
+ *    ser fonte de verdade para este relatório — não há mais fallback para
+ *    eles.
  *
  * 3. ICMS: não usamos mais orders.icms_value (nota fiscal) para ratear.
  *    Usamos o MESMO cálculo de sales_report — computed_icms_value =
@@ -57,11 +78,17 @@ const JOB_NAME = "seller_sales_report";
  *    do item (valor bruto vindo da Bling, só para peso) dividido pela soma
  *    de net_total_raw de todos os itens do pedido.
  *
- * 6. Validade da venda (is_valid_sale): idêntica a sales_report —
- *    snapshot_status = 'ignored_missing_cost' se qualquer item do pedido
- *    tiver average_cost_snapshot <= 0; senão 'completed' se
- *    actual_situation IN ('6','9'); senão 'cancelled'. is_valid_sale é
- *    TRUE apenas quando snapshot_status = 'completed'.
+ * 6. Validade da venda (is_valid_sale — revisão desta versão): antes essa
+ *    checagem usava um CASE em order_source baseado em
+ *    order_items.average_cost_snapshot (a coluna antiga, gravada por outra
+ *    integração). Como o custo agora é resolvido por item via
+ *    stock_movements, essa checagem deixou de ser confiável e foi movida
+ *    para dentro de item_metrics: is_valid_sale só é TRUE quando (a) o
+ *    pedido está com actual_situation IN ('6','9') E (b) TODOS os itens do
+ *    pedido têm average_cost_snapshot(stock_movements) > 0 — verificado via
+ *    BOOL_AND(...) OVER (PARTITION BY order_id), equivalente ao
+ *    hasCompleteCostSql de sales_report (que confere o custo já resolvido
+ *    de cada item, não um flag prévio).
  *
  * 7. Comissão de vendedor (commission_value) e de gerente
  *    (manager_commission_value): não fazem parte da lógica de sales_report
@@ -69,18 +96,15 @@ const JOB_NAME = "seller_sales_report";
  *    de vendedor vem por item de order_items; comissão de gerente é
  *    net_total_allocated * manager_commission_rate / 100.
  *
- * ATENÇÃO / MIGRAÇÃO NECESSÁRIA:
- * Esta versão passa a gravar tax_commission_allocated e
- * freight_cost_allocated por item (necessários para reproduzir a fórmula
- * de contribution acima no nível do item). Se essas colunas ainda não
- * existirem em `seller_sales_order_item_snapshots`, é necessário criar uma
- * migration adicionando:
+ * ATENÇÃO / MIGRAÇÃO NECESSÁRIA (mantida de revisão anterior):
+ * Esta versão grava tax_commission_allocated e freight_cost_allocated por
+ * item (necessários para reproduzir a fórmula de contribution acima no
+ * nível do item). Se essas colunas ainda não existirem em
+ * `seller_sales_order_item_snapshots`, é necessário criar uma migration
+ * adicionando:
  *   - tax_commission_allocated numeric NOT NULL DEFAULT 0
  *   - freight_cost_allocated   numeric NOT NULL DEFAULT 0
- * `total_cost` passa a significar APENAS custo de produto (sem ICMS) —
- * antes incluía o ICMS rateado (total_cost_with_icms). Qualquer consumidor
- * fora deste repository que leia `total_cost` esperando o ICMS embutido
- * precisa ser revisado.
+ * `total_cost` passa a significar APENAS custo de produto (sem ICMS).
  *
  * NOTA (mantida): existe no banco uma tabela `sales_order_item_snapshots`
  * que pertence ao OUTRO relatório (sales_report). Este job usa sua PRÓPRIA
@@ -148,16 +172,6 @@ const calculateMarkupSql = (
     percent: calculatePercentageSql(profit, cost),
   };
 };
-
-// Mesma checagem de sales_report: pedido só é "custo completo" se NENHUM
-// item dele tem average_cost_snapshot <= 0.
-const hasCompleteCostSql = (orderAlias: string): SqlExpression => `
-NOT EXISTS (
-  SELECT 1
-  FROM order_items cost_check
-  WHERE cost_check.order_id = ${orderAlias}.id
-    AND ${coalesceNumberSql("cost_check.average_cost_snapshot")} <= 0
-)`;
 
 export class SellerSalesReportRepository {
   async getCheckpoint(): Promise<Date> {
@@ -298,11 +312,13 @@ export class SellerSalesReportRepository {
   async upsertSnapshots(orderIds: string[]): Promise<void> {
     if (!orderIds.length) return;
 
-    // Custo do item: SEMPRE bruto — total_cost_snapshot quando existir, ou
-    // average_cost_snapshot * quantity + commission_value no fallback.
-    // NUNCA soma ICMS aqui — idêntico a sales_report.
+    // Custo do item: SEMPRE average_cost_snapshot (resolvido via
+    // stock_movements, com resolução de KIT pelo produto unitário) *
+    // quantity + commission_value. Sem fallback para o total_cost_snapshot
+    // pré-gravado em order_items — idêntico a sales_report revisão 3.
+    // NUNCA soma ICMS aqui.
     const itemCostSql =
-      "COALESCE(total_cost_snapshot_raw, ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value)";
+      "ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value";
 
     await sequelize.query(
       `
@@ -314,9 +330,15 @@ export class SellerSalesReportRepository {
       -- 1. Fonte de dados do pedido — mesma base de sales_report:
       --    join com states para resolver a alíquota de ICMS do destino e
       --    calcular computed_icms_value = (total_products - discount_value)
-      --    * icms_rate. snapshot_status segue a MESMA regra de sales_report.
-      --    Filtro de vendedor (única diferença deste relatório): só entram
-      --    pedidos cujo contacts.name é diferente de 'Vendedor 0'.
+      --    * icms_rate. Filtro de vendedor (única diferença deste
+      --    relatório): só entram pedidos cujo contacts.name é diferente de
+      --    'Vendedor 0'.
+      --
+      --    snapshot_status aqui reflete SOMENTE o status do pedido
+      --    (completed/cancelled pela actual_situation) — a checagem de
+      --    custo completo NÃO é mais feita aqui (ver item_metrics), pois o
+      --    custo agora é resolvido por item via stock_movements, não mais
+      --    lido de order_items.average_cost_snapshot.
       -- ------------------------------------------------------------------
         order_source AS (
         SELECT
@@ -334,7 +356,6 @@ export class SellerSalesReportRepository {
             ELSE COALESCE(o.freight_cost, 0)
           END                              AS freight_cost,
           CASE
-            WHEN ${hasCompleteCostSql("o")} = FALSE THEN 'ignored_missing_cost'
             WHEN o.actual_situation IN ('6', '9') THEN 'completed'
             ELSE 'cancelled'
           END AS snapshot_status,
@@ -357,8 +378,15 @@ WHERE o.seller_id IS NOT NULL
       -- ------------------------------------------------------------------
       -- 2. Fonte de dados dos itens (valores brutos do item, ainda sem
       --    ratear nada do pedido — net_total_raw só serve para calcular o
-      --    peso do item). Idêntico à lógica de item_source_raw/item_weighted
-      --    de sales_report.
+      --    peso do item). average_cost_snapshot agora é resolvido via
+      --    stock_movements (com resolução de KIT), exatamente igual a
+      --    sales_report: pegamos o sku efetivo (product_configs ou o sku
+      --    do próprio order_item), detectamos sufixo Kn para achar o
+      --    kit_multiplier e o sku unitário, resolvemos o product_id de
+      --    custo (unitário, se for kit) via product_configs na
+      --    STOCK_MOVEMENTS_UNIT_BUSINESS_ID, e então buscamos o
+      --    resulting_average_cost do stock_movement mais próximo, igual ou
+      --    anterior à data do pedido para esse produto nessa unit_business.
       -- ------------------------------------------------------------------
       item_source_raw AS (
         SELECT
@@ -366,7 +394,7 @@ WHERE o.seller_id IS NOT NULL
           oi.order_id,
           os.seller_id,
           os.customer_id,
-          oi.product_id,
+          COALESCE(oi.product_id, p.id)      AS product_id,
           os.unit_business_id,
           os.order_date,
           os.destination_uf,
@@ -379,8 +407,25 @@ WHERE o.seller_id IS NOT NULL
             oi.net_total,
             COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))
           )::numeric AS net_total_raw,
-          oi.average_cost_snapshot::numeric      AS average_cost_snapshot,
-          oi.total_cost_snapshot::numeric         AS total_cost_snapshot_raw,
+
+          -- KIT: mesma regra de sales_report (/K(\\d+)$/i no sku efetivo).
+          -- kit_multiplier = quantas unidades reais tem 1 kit.
+          COALESCE(
+            (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
+            1
+          ) AS kit_multiplier,
+
+          -- average_cost_snapshot = custo médio unitário (via
+          -- stock_movements do produto certo — UNIT se for kit, o próprio
+          -- se não for) × kit_multiplier. Se não existir stock_movement
+          -- anterior/igual à data do pedido, fica 0 (mesma regra de "custo
+          -- ausente" de sales_report).
+          COALESCE(scm.resulting_average_cost, 0)::numeric
+            * COALESCE(
+                (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
+                1
+              ) AS average_cost_snapshot,
+
           COALESCE(oi.commission_base, 0)::numeric  AS commission_base,
           COALESCE(oi.commission_rate, 0)::numeric  AS commission_rate,
           COALESCE(oi.commission_value, 0)::numeric AS commission_value,
@@ -392,7 +437,45 @@ WHERE o.seller_id IS NOT NULL
           os.snapshot_status
         FROM order_items oi
         JOIN order_source os ON os.order_id = oi.order_id
-        LEFT JOIN products p ON p.id = oi.product_id
+        JOIN orders ord ON ord.id = oi.order_id
+
+        LEFT JOIN product_configs pc_by_sku ON (
+          oi.product_id IS NULL
+          AND pc_by_sku.sku = oi.sku
+          AND pc_by_sku.unit_business_id = os.unit_business_id
+        )
+        LEFT JOIN products p ON (
+          p.id = oi.product_id
+          OR p.id = pc_by_sku.product_id
+        )
+        LEFT JOIN product_configs pc ON (
+          pc.product_id = COALESCE(oi.product_id, p.id)
+          AND pc.unit_business_id = os.unit_business_id
+        )
+
+        -- Resolve o product_id "de custo": se o item vendido é KIT (sku com
+        -- sufixo Kn), busca o product_config do produto UNITÁRIO (sku sem o
+        -- sufixo) no MESMO unit_business usado para achar stock_movements.
+        -- Se não for kit, mantém o product_id original.
+        LEFT JOIN LATERAL (
+          SELECT pc_unit.product_id
+          FROM product_configs pc_unit
+          WHERE pc_unit.unit_business_id = :stockUnitBusinessId
+            AND pc_unit.sku = regexp_replace(COALESCE(pc.sku, oi.sku), 'K[0-9]+$', '', 'i')
+          LIMIT 1
+        ) pc_unit_lookup ON (
+          regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i') IS NOT NULL
+        )
+
+        LEFT JOIN LATERAL (
+          SELECT sm.resulting_average_cost
+          FROM stock_movements sm
+          WHERE sm.product_id = COALESCE(pc_unit_lookup.product_id, oi.product_id, p.id)
+            AND sm.unit_business_id = :stockUnitBusinessId
+            AND sm.movement_date <= COALESCE(ord.date, ord.created_at)
+          ORDER BY sm.movement_date DESC, sm.created_at DESC
+          LIMIT 1
+        ) scm ON TRUE
       ),
 
       -- ------------------------------------------------------------------
@@ -430,13 +513,24 @@ WHERE o.seller_id IS NOT NULL
       --    (sem ICMS), idêntico a sales_report. Contribution é o único
       --    lugar que soma tax_commission_allocated + freight_cost_allocated
       --    + icms_value_allocated, também idêntico a sales_report.
+      --
+      --    is_valid_sale (revisão desta versão): TRUE apenas quando o
+      --    pedido está 'completed' E TODOS os itens do pedido têm
+      --    average_cost_snapshot > 0 — checagem autoritativa feita aqui via
+      --    BOOL_AND(...) OVER (PARTITION BY order_id), pois o custo agora é
+      --    resolvido por item via stock_movements (equivalente ao
+      --    hasCompleteCostSql de sales_report, que também confere o custo
+      --    já resolvido, não um flag prévio do pedido).
       -- ------------------------------------------------------------------
             item_metrics AS (
         SELECT
           *,
           ${itemCostSql} AS total_cost,
-          (average_cost_snapshot IS NOT NULL) AS has_cost_data,
-          (snapshot_status = 'completed') AS is_valid_sale,
+          (average_cost_snapshot > 0) AS has_cost_data,
+          (
+            snapshot_status = 'completed'
+            AND BOOL_AND(average_cost_snapshot > 0) OVER (PARTITION BY order_id)
+          ) AS is_valid_sale,
           ROUND(net_total_allocated * manager_commission_rate / 100, 2) AS manager_commission_value
         FROM item_calc
       )
@@ -507,6 +601,7 @@ WHERE o.seller_id IS NOT NULL
       {
         replacements: {
           orderIds,
+          stockUnitBusinessId: STOCK_MOVEMENTS_UNIT_BUSINESS_ID,
         },
       },
     );
