@@ -71,6 +71,22 @@
  *    CSV pode estar um dia desatualizado (ex: notas emitidas de madrugada
  *    entre a extração e a execução do script).
  *
+ * 9. CORREÇÃO DE DATAS dos movimentos vindos do sistema (sourceData):
+ *    Além dos MANUAL_ADJUSTMENT criados a partir do CSV (que já usam a
+ *    data da linha do CSV), os movimentos que já existem no sistema
+ *    (PURCHASE_ENTRY, SALE_OUT, CUSTOMER_RETURN etc., vindos de
+ *    findStockMovementSourceData) passam a ter sua `movement_date`
+ *    SOBRESCRITA pela data do lançamento correspondente no CSV, casando
+ *    por invoice_number normalizado com as linhas "Nota fiscal" do CSV
+ *    daquele produto. A data gravada hoje no sistema pra esses movimentos
+ *    não é confiável o suficiente pra reconstrução cronológica do estoque.
+ *    EXCEÇÃO: produtos que já têm algum MANUAL_ADJUSTMENT imutável
+ *    (manual_average_cost_value preenchido) NÃO têm essas datas
+ *    corrigidas nesta execução — mantemos o comportamento de hoje (datas
+ *    originais do sistema), porque mexer na cronologia de um histórico
+ *    que sustenta um ajuste imutável pode invalidar esse ajuste. Esses
+ *    produtos são apenas LOGADOS pra revisão manual posterior.
+ *
  * SEGURANÇA:
  *   reindexProduct APAGA (hard delete) todo o histórico não-protegido do
  *   produto e recria do zero. Por isso:
@@ -233,6 +249,28 @@ function toCsvRow(raw: Record<string, string>): CsvRow {
 
 function isInvoiceBacked(row: CsvRow): boolean {
   return row.origem_tipo === "Nota fiscal" || row.origem_tipo === "Pedido de venda";
+}
+
+/**
+ * Monta um mapa invoice_number normalizado -> data do lançamento no CSV,
+ * a partir das linhas "Nota fiscal" do produto. Usado pra corrigir a
+ * movement_date dos movimentos de sourceData (regra 9), casando pelo
+ * mesmo número de nota.
+ *
+ * Se por algum motivo houver mais de uma linha "Nota fiscal" no CSV com o
+ * mesmo número pra este produto (ex: nota com múltiplos lançamentos),
+ * fica a última encontrada — não deveria acontecer na prática, mas não é
+ * motivo pra quebrar o script.
+ */
+function buildCsvInvoiceDateMap(rows: CsvRow[]): Map<string, Date> {
+  const map = new Map<string, Date>();
+  for (const row of rows) {
+    if (row.origem_tipo !== "Nota fiscal") continue;
+    const normalized = normalizeInvoiceNumber(row.origem_numero);
+    if (!normalized || normalized === "0") continue;
+    map.set(normalized, row.data);
+  }
+  return map;
 }
 
 /**
@@ -593,6 +631,8 @@ interface ProcessResult {
   ghostSkippedFutureDated: number;
   zeroDeltaLogged: number;
   reconciliationDelta: number | null;
+  hasImmutableManualAdjustments: boolean;
+  sourceDataDateCorrections: number;
   error?: string;
 }
 
@@ -609,19 +649,11 @@ async function processProduct(
     productInternalId,
   );
 
-  const purchaseEntryDates = sourceData
-    .filter((m) => m.movement_type === "PURCHASE_ENTRY")
-    .map((m) => new Date(m.movement_date));
-
-  const existingInvoiceNumbers = new Set(
-    sourceData
-      .filter((m) => m.invoice_number != null)
-      .map((m) => normalizeInvoiceNumber(m.invoice_number)),
-  );
-
   // 2. MANUAL_ADJUSTMENT IMUTÁVEIS já existentes (com manual_average_cost_value
   //    preenchido) — são os únicos que sobrevivem à limpeza do passo 1 e os
-  //    únicos usados em isAlreadyCoveredByExisting.
+  //    únicos usados em isAlreadyCoveredByExisting. Também definem se este
+  //    produto entra na exceção da regra 9 (datas de sourceData NÃO
+  //    corrigidas pelo CSV).
   const existingHistory = await stockMovementService.getProductHistory(
     productInternalId,
     UNIT_BUSINESS_ID,
@@ -640,6 +672,56 @@ async function processProduct(
       direction: (m.direction as "IN" | "OUT") ?? "IN",
     }));
 
+  const hasImmutableManualAdjustments = immutableManualAdjustments.length > 0;
+
+  // 3. Regra 9 — corrige a movement_date dos movimentos de sourceData
+  //    (PURCHASE_ENTRY, SALE_OUT, CUSTOMER_RETURN etc.) pra data do
+  //    lançamento correspondente no CSV, casando por invoice_number
+  //    normalizado com as linhas "Nota fiscal". Produtos com
+  //    MANUAL_ADJUSTMENT imutável ficam FORA dessa correção — só logamos
+  //    pra revisão manual depois, e seguimos com as datas originais
+  //    (comportamento de hoje).
+  let sourceDataDateCorrections = 0;
+  let correctedSourceData = sourceData;
+
+  if (hasImmutableManualAdjustments) {
+    console.log(
+      `  ⚠️  Produto ${productInternalId} (${productName}) tem MANUAL_ADJUSTMENT imutável — ` +
+        `datas do histórico do sistema NÃO serão corrigidas pelo CSV nesta execução ` +
+        `(mantendo a lógica de hoje). Revisar manualmente depois.`,
+    );
+  } else {
+    const csvInvoiceDateByNumber = buildCsvInvoiceDateMap(rows);
+    correctedSourceData = sourceData.map((movement: any) => {
+      if (!movement.invoice_number) return movement;
+      const normalized = normalizeInvoiceNumber(movement.invoice_number);
+      const csvDate = csvInvoiceDateByNumber.get(normalized);
+      if (!csvDate) return movement;
+
+      const originalDate = new Date(movement.movement_date);
+      if (originalDate.getTime() === csvDate.getTime()) return movement;
+
+      sourceDataDateCorrections++;
+      console.log(
+        `  📅 Corrigindo data do movimento ${movement.movement_type} ` +
+          `(invoice_number=${movement.invoice_number}) de ${originalDate.toISOString()} ` +
+          `para ${csvDate.toISOString()} conforme lançamento do CSV.`,
+      );
+
+      return { ...movement, movement_date: csvDate };
+    });
+  }
+
+  const purchaseEntryDates = correctedSourceData
+    .filter((m: any) => m.movement_type === "PURCHASE_ENTRY")
+    .map((m: any) => new Date(m.movement_date));
+
+  const existingInvoiceNumbers = new Set(
+    correctedSourceData
+      .filter((m: any) => m.invoice_number != null)
+      .map((m: any) => normalizeInvoiceNumber(m.invoice_number)),
+  );
+
   const plan = buildProductPlan(
     productInternalId,
     productName,
@@ -651,7 +733,7 @@ async function processProduct(
 
   const ghostPlan = buildGhostInvoicePlan(
     rows,
-    sourceData as any,
+    correctedSourceData as any,
     immutableManualAdjustments,
   );
 
@@ -661,7 +743,9 @@ async function processProduct(
       `${ghostPlan.compensations.length} compensação(ões) de nota fantasma a criar, ` +
       `${ghostPlan.skippedFutureDated.length} nota(s) fantasma ignorada(s) (emitida(s) após o CSV), ` +
       `${plan.zeroDeltaBalances.length} balanço(s) com delta zero (ignorados), ` +
-      `${plan.skippedAsAlreadyCovered.length + ghostPlan.skippedAsAlreadyCovered.length} evento(s) já coberto(s) por ajuste imutável (pulados)`,
+      `${plan.skippedAsAlreadyCovered.length + ghostPlan.skippedAsAlreadyCovered.length} evento(s) já coberto(s) por ajuste imutável (pulados), ` +
+      `${sourceDataDateCorrections} data(s) de sourceData corrigida(s) pelo CSV` +
+      `${hasImmutableManualAdjustments ? " [PULADO: produto tem ajuste imutável]" : ""}`,
   );
 
   for (const zero of plan.zeroDeltaBalances) {
@@ -719,6 +803,8 @@ async function processProduct(
       ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
       zeroDeltaLogged: plan.zeroDeltaBalances.length,
       reconciliationDelta: null,
+      hasImmutableManualAdjustments,
+      sourceDataDateCorrections,
     };
   }
 
@@ -738,17 +824,18 @@ async function processProduct(
       transaction,
     });
 
-    // Passo 2: reindex "base" — só com a sourceData real (notas do
-    // sistema) + os imutáveis que sobreviveram, deixando a cadeia limpa.
+    // Passo 2: reindex "base" — só com a sourceData (já com as datas
+    // corrigidas pelo CSV, exceto se o produto tiver ajuste imutável) +
+    // os imutáveis que sobreviveram, deixando a cadeia limpa.
     await stockMovementService.reindexProduct(
       productInternalId,
       UNIT_BUSINESS_ID,
-      sourceData,
+      correctedSourceData,
       transaction,
     );
 
     // Passo 3/4/5: monta os novos ajustes (CSV + compensações de nota
-    // fantasma) e reindexa de novo, junto com a sourceData.
+    // fantasma) e reindexa de novo, junto com a sourceData corrigida.
     const newManualMovements: ReindexProductPayload[] = [
       ...plan.manualAdjustments.map(
         (adj) =>
@@ -779,7 +866,7 @@ async function processProduct(
     ];
 
     const mergedMovements: ReindexProductPayload[] = [
-      ...sourceData,
+      ...correctedSourceData,
       ...newManualMovements,
     ];
 
@@ -833,6 +920,8 @@ async function processProduct(
       ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
       zeroDeltaLogged: plan.zeroDeltaBalances.length,
       reconciliationDelta,
+      hasImmutableManualAdjustments,
+      sourceDataDateCorrections,
     };
   } catch (err) {
     await transaction.rollback();
@@ -917,6 +1006,8 @@ async function main() {
   const totalGhostFuture = results.reduce((s, r) => s + r.ghostSkippedFutureDated, 0);
   const totalZeroDelta = results.reduce((s, r) => s + r.zeroDeltaLogged, 0);
   const totalReconciled = results.filter((r) => (r.reconciliationDelta ?? 0) !== 0).length;
+  const totalSourceDateCorrections = results.reduce((s, r) => s + r.sourceDataDateCorrections, 0);
+  const productsWithImmutableAdjustments = results.filter((r) => r.hasImmutableManualAdjustments);
 
   console.log("\n" + "═".repeat(60));
   console.log("  ✅ Finalizado");
@@ -926,6 +1017,7 @@ async function main() {
   console.log(`  Compensações de nota fantasma ${DRY_RUN ? "que seriam criadas" : "criadas"}: ${totalGhostCompensations}`);
   console.log(`  Notas fantasma ignoradas (emitidas após o corte do CSV): ${totalGhostFuture}`);
   console.log(`  Balanços com delta zero (ignorados): ${totalZeroDelta}`);
+  console.log(`  Datas de sourceData ${DRY_RUN ? "que seriam corrigidas" : "corrigidas"} conforme CSV: ${totalSourceDateCorrections}`);
   if (!DRY_RUN) {
     console.log(`  Produtos com reconciliação final aplicada: ${totalReconciled}`);
   }
@@ -933,6 +1025,16 @@ async function main() {
   if (errors.length) {
     console.log("  Produtos com erro:");
     for (const e of errors) console.log(`    - ${e.productInternalId}: ${e.error}`);
+  }
+  console.log(
+    `  Produtos com MANUAL_ADJUSTMENT imutável (datas NÃO corrigidas — revisar manualmente): ` +
+      `${productsWithImmutableAdjustments.length}`,
+  );
+  if (productsWithImmutableAdjustments.length) {
+    console.log("  ⚠️  Lista de produtos a revisar:");
+    for (const p of productsWithImmutableAdjustments) {
+      console.log(`    - ${p.productInternalId} (${p.productName})`);
+    }
   }
   console.log("═".repeat(60));
 

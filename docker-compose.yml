@@ -427,55 +427,6 @@ services:
     networks:
       - backend
 
-  # ── 10. Worker Logistic ───────────────────────────────────────────────────
-  worker-logistic:
-    build:
-      context: .
-      target: app
-    restart: unless-stopped
-    command: ["node", "dist/workers/worker-logistic.js"]
-    environment:
-      NODE_ENV: production
-      PORT: 3006
-      DB_HOST: postgres
-      DB_PORT: ${DB_PORT}
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASS: ${DB_PASS}
-      REDIS_HOST: redis
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_DB: ${REDIS_DB}
-      MAILER_HOST: ${MAILER_HOST}
-      MAILER_PORT: ${MAILER_PORT}
-      MAILER_SECURE: ${MAILER_SECURE}
-      MAILER_USER: ${MAILER_USER}
-      MAILER_PASS: ${MAILER_PASS}
-      MAILER_FROM: ${MAILER_FROM}
-      MAILER_ALERT_EMAIL: ${MAILER_ALERT_EMAIL}
-      JWT_SECRET: ${JWT_SECRET}
-      MAX_PER_ENTITY: ${MAX_PER_ENTITY}
-      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
-      UPLOADER_EMAIL: ${UPLOADER_EMAIL}
-      UPLOADER_URL: ${UPLOADER_URL}
-      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
-      BLING_EMAIL: ${BLING_EMAIL}
-      BLING_PASSWORD: ${BLING_PASSWORD}
-      BLING_HEADLESS: ${BLING_HEADLESS}
-      ADMIN_COOKIE_PASSWORD: ${ADMIN_COOKIE_PASSWORD}
-      ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      BLING_ORDER_REQUEST_DELAY_MS: ${BLING_ORDER_REQUEST_DELAY_MS}
-      
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    networks:
-      - backend
-
 volumes:
   postgres_data:
   redis_data:

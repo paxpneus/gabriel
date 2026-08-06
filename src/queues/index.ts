@@ -59,8 +59,6 @@ export type QueueName =
   | "DAILY_OPERATION_REPORT"
   | "DAILY_SALES_REPORT"
   | "AUTO_BACKUP"
-  | "LOGISTIC_OCCURRENCES_INGESTION"
-  | "LOGISTIC_OCCURRENCES_SYNC";
 
 // ─── buildQueues: só ativa worker nas filas explicitamente listadas ───────────
 function buildQueues(activeWorkers: QueueName[]) {
@@ -140,16 +138,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     new BlingManifestacaoService(),
     { workless: true },
   );
-
-  const logisticOccurrencesIngestionQueue =
-    new LogisticOccurrencesIngestionQueue({
-      workless: w("LOGISTIC_OCCURRENCES_INGESTION"),
-    });
-
-  const logisticOccurrencesSyncQueue = new LogisticOccurrencesSyncQueue({
-    workless: w("LOGISTIC_OCCURRENCES_SYNC"),
-  });
-
+  
   return {
     nfeQueue,
     mlOrderSyncQueue,
@@ -167,8 +156,6 @@ function buildQueues(activeWorkers: QueueName[]) {
     tcarUpsertQueue,
     tcarSyncQueue,
     blingNfeScrapingQueue,
-    logisticOccurrencesIngestionQueue,
-    logisticOccurrencesSyncQueue,
   };
 }
 
@@ -190,8 +177,6 @@ export function registerQueues(app: Express) {
     tcarUpsertQueue,
     tcarSyncQueue,
     blingNfeScrapingQueue,
-    logisticOccurrencesIngestionQueue,
-    logisticOccurrencesSyncQueue,
   } = buildQueues([]);
 
   const blingOrderQueue = new BlingOrderQueue(
@@ -242,8 +227,6 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(tcarUpsertQueue.queue),
       new BullMQAdapter(tcarSyncQueue.queue),
       new BullMQAdapter(blingNfeScrapingQueue.queue),
-      new BullMQAdapter(logisticOccurrencesIngestionQueue.queue),
-      new BullMQAdapter(logisticOccurrencesSyncQueue.queue),
     ],
     serverAdapter,
   });
@@ -368,36 +351,6 @@ export function startWorkers() {
   console.log("  → DAILY_OPERATION_REPORT (1h)");
   console.log("  → DAILY_SALES_REPORT (1h, offset 30min)");
   console.log("  → AUTO_BACKUP (19h BRT)");
-}
-
-export function startLogisticWorkers() {
-  const {
-    logisticOccurrencesIngestionQueue,
-    logisticOccurrencesSyncQueue,
-  } = buildQueues([
-    "LOGISTIC_OCCURRENCES_INGESTION",
-    "LOGISTIC_OCCURRENCES_SYNC",
-  ]);
-
-
-  logisticOccurrencesIngestionQueue.scheduleRepeat({
-    every: 1 * 60 * 60 * 1000,
-  });
-
-  setTimeout(
-    () => {
-      logisticOccurrencesSyncQueue.scheduleRepeat({ every: 1 * 60 * 60 * 100 });
-      console.log("  → LOGISTIC_OCCURRENCES_SYNC (offset 10min)");
-    },
-    10 * 60 * 1000,
-  );
-
-  void logisticOccurrencesIngestionQueue;
-  void logisticOccurrencesSyncQueue;
-
-  console.log("🚀 Workers de relatórios/backup ativos:");
-  console.log("  → LOGISTIC_OCCURRENCES_INGESTION (1h)");
-  console.log("  → LOGISTIC_OCCURRENCES_SYNC (1h, offset 10min)");
 }
 
 export function startTecincoWorkers() {
