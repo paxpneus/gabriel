@@ -1893,36 +1893,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     for (const productId of affectedProductIds) {
       try {
-        const blingId = blingIdByProductId.get(productId);
-
-        if (!blingId) {
-          console.warn(
-            `[BLING_API_FETCH] Produto sem blingId resolvível (nem mapping, nem id_system) — sync sem reconciliação | invoice=${invoice.id} | product=${productId}.`,
-          );
-          await stockMovementsService.syncProductStockMovements(
-            productId,
-            unit_business.id,
-          );
-          continue;
-        }
-
-        const actualQuantity = physicalStockMap.get(blingId);
-
-        if (actualQuantity == null) {
-          console.warn(
-            `[BLING_API_FETCH] Saldo físico não retornado pela Bling para blingId=${blingId} — sync sem reconciliação | invoice=${invoice.id} | product=${productId}.`,
-          );
-          await stockMovementsService.syncProductStockMovements(
-            productId,
-            unit_business.id,
-          );
-          continue;
-        }
 
         await stockMovementsService.syncProductStockMovements(
           productId,
           unit_business.id,
-          actualQuantity,
         );
       } catch (err: any) {
         console.warn(
