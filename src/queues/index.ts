@@ -27,6 +27,7 @@ import { BlingDirectUpsertQueue } from "./../modules/handlers/bling/services/bli
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { BlingTokenRefreshQueue } from "./../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
+import { BlingStockMovementsScrapingQueue } from "../modules/handlers/bling/services/bling/queues/bling-stock-movements-scraping.queue";
 import { TCarUpsertQueue } from "../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
 import {
   scheduleTCarSync,
@@ -54,6 +55,7 @@ export type QueueName =
   | "BLING_API_FETCH"
   | "BLING_TOKEN_REFRESH"
   | "BLING_MIGRATION"
+  | "BLING_STOCK_MOVEMENTS_SCRAPING"
   | "TCAR_UPSERT"
   | "TCAR_SYNC"
   | "DAILY_OPERATION_REPORT"
@@ -122,6 +124,10 @@ function buildQueues(activeWorkers: QueueName[]) {
   const blingDailyReconciler = new BlingMigrationQueue({
     workless: w("BLING_MIGRATION"),
   });
+  const blingStockMovementsScrapingQueue =
+    new BlingStockMovementsScrapingQueue({
+      workless: w("BLING_STOCK_MOVEMENTS_SCRAPING"),
+    });
   const tcarUpsertQueue = new TCarUpsertQueue({ workless: w("TCAR_UPSERT") });
   const tcarSyncQueue = new TCarSyncQueue(tcarUpsertQueue, {
     workless: w("TCAR_SYNC"),
@@ -150,6 +156,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     blingApiFetchQueue,
     blingTokenRefreshQueue,
     blingDailyReconciler,
+    blingStockMovementsScrapingQueue,
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
@@ -171,6 +178,7 @@ export function registerQueues(app: Express) {
     blingApiFetchQueue,
     blingTokenRefreshQueue,
     blingDailyReconciler,
+    blingStockMovementsScrapingQueue,
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
@@ -200,6 +208,7 @@ export function registerQueues(app: Express) {
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
   app.locals.BlingMigrationQueue = blingDailyReconciler;
+  app.locals.BlingStockMovementsScrapingQueue = blingStockMovementsScrapingQueue;
   app.locals.TCarUpsertQueue = tcarUpsertQueue;
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
   app.locals.DailySalesReportQueue = dailySalesReportQueue;
@@ -221,6 +230,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(blingApiFetchQueue.queue),
       new BullMQAdapter(blingTokenRefreshQueue.queue),
       new BullMQAdapter(blingDailyReconciler.queue),
+      new BullMQAdapter(blingStockMovementsScrapingQueue.queue),
       new BullMQAdapter(dailyOperationReportQueue.queue),
       new BullMQAdapter(dailySalesReportQueue.queue),
       new BullMQAdapter(autoBackupQueue.queue),
@@ -370,7 +380,9 @@ export function startTecincoWorkers() {
 
 // ─── container: worker-scraping ───────────────────────────────────────────────
 export function startScrapingWorker() {
-  const { mlOrderSyncQueue } = buildQueues([]);
+  const { mlOrderSyncQueue, blingStockMovementsScrapingQueue } = buildQueues([
+    "BLING_STOCK_MOVEMENTS_SCRAPING",
+  ]);
 
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
@@ -388,11 +400,18 @@ export function startScrapingWorker() {
 
   blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 60 * 1000 });
   blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 1000 });
+  blingStockMovementsScrapingQueue.scheduleRepeat({
+    cron: "0 5 * * *",
+    tz: "America/Sao_Paulo",
+    jobId: "bling-stock-movements-daily",
+  });
 
   void mlScrapingQueue;
   void blingNfeScrapingQueue;
+  void blingStockMovementsScrapingQueue;
 
   console.log(
     "------------------- QUEUE: Scraping Worker Ativo! -------------------",
   );
+  console.log("  → BLING_STOCK_MOVEMENTS_SCRAPING (05:00 BRT)");
 }

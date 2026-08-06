@@ -177,6 +177,8 @@ export class StockMovementController extends BaseController<
         productId as string,
         unit_business_id,
         movements,
+        undefined,
+        false,
       );
       return res.status(200).json(result);
     } catch (error) {

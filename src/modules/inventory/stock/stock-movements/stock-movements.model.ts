@@ -1,12 +1,13 @@
-import { Model, DataTypes } from 'sequelize';
-import sequelize from '../../../../config/sequelize';
+import { Model, DataTypes } from "sequelize";
+import sequelize from "../../../../config/sequelize";
 import {
   StockDirectionType,
   StockMovementAttributes,
   StockMovementCreationAttributes,
+  StockMovementStatus,
   StockMovementType,
-} from './stock-movements.types';
-import { v4 as uuidv4 } from 'uuid';
+} from "./stock-movements.types";
+import { v4 as uuidv4 } from "uuid";
 
 class StockMovement
   extends Model<StockMovementAttributes, StockMovementCreationAttributes>
@@ -27,6 +28,7 @@ class StockMovement
   public total_stock_value!: number;
   public manual_average_cost_value?: number;
   public is_active!: boolean;
+  public status!: StockMovementStatus;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -43,24 +45,24 @@ StockMovement.init(
       type: DataTypes.UUID,
       allowNull: false,
       references: {
-        model: 'unit_businesses',
-        key: 'id',
+        model: "unit_businesses",
+        key: "id",
       },
     },
     product_id: {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
-        model: 'products',
-        key: 'id',
+        model: "products",
+        key: "id",
       },
     },
     invoice_id: {
       type: DataTypes.UUID,
       allowNull: true,
       references: {
-        model: 'invoices',
-        key: 'id',
+        model: "invoices",
+        key: "id",
       },
     },
     invoice_number: {
@@ -68,12 +70,22 @@ StockMovement.init(
       allowNull: true,
     },
     movement_type: {
-      type: DataTypes.ENUM('PURCHASE_ENTRY', 'SALE_OUT', 'CUSTOMER_RETURN', 'MANUAL_ADJUSTMENT'),
+      type: DataTypes.ENUM(
+        "PURCHASE_ENTRY",
+        "SALE_OUT",
+        "CUSTOMER_RETURN",
+        "MANUAL_ADJUSTMENT",
+      ),
       allowNull: false,
     },
     direction: {
-      type: DataTypes.ENUM('IN', 'OUT'),
+      type: DataTypes.ENUM("IN", "OUT"),
       allowNull: true,
+    },
+    status: {
+      type: DataTypes.ENUM("PENDING", "SYNCHED"),
+      allowNull: false,
+      defaultValue: "PENDING",
     },
     movement_date: {
       type: DataTypes.DATE,
@@ -108,24 +120,24 @@ StockMovement.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,
-    }
+    },
   },
   {
     sequelize,
-    tableName: 'stock_movements',
+    tableName: "stock_movements",
     timestamps: true,
     underscored: true,
     indexes: [
       {
-        fields: ['product_id', 'movement_date'],
-        name: 'stock_movements_product_date_idx',
+        fields: ["product_id", "movement_date"],
+        name: "stock_movements_product_date_idx",
       },
       {
-        fields: ['invoice_id', 'product_id'],
-        name: 'stock_movements_invoice_product_idx',
+        fields: ["invoice_id", "product_id"],
+        name: "stock_movements_invoice_product_idx",
       },
     ],
-  }
+  },
 );
 
 export default StockMovement;

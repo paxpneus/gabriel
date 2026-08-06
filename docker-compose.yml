@@ -236,10 +236,12 @@ services:
       ADMIN_COOKIE_SECRET: ${ADMIN_COOKIE_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       BLING_ORDER_REQUEST_DELAY_MS: ${BLING_ORDER_REQUEST_DELAY_MS}
+      STOCK_MOVEMENTS_CSV_DIR: ${STOCK_MOVEMENTS_CSV_DIR}
       
     volumes:
       - ml_session:/app/ml_session
       - ml_downloads:/app/ml_downloads
+      - stock_movement_csv:/app/data/stock-movements
     cap_add:
       - SYS_ADMIN
     depends_on:
@@ -432,6 +434,7 @@ volumes:
   redis_data:
   ml_session:
   ml_downloads:
+  stock_movement_csv:
   caddy_data:
   caddy_config:
 

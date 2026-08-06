@@ -56,6 +56,14 @@ jest.mock("../stock-movements.model", () => ({
   default: { findOne: jest.fn() },
 }));
 
+jest.mock(
+  "../../stock-movement-source-data/stock-movement-source-data.service",
+  () => ({
+    __esModule: true,
+    default: { findOne: jest.fn() },
+  }),
+);
+
 jest.mock("../../../product-config/product_config.model", () => ({
   __esModule: true,
   default: { findOne: jest.fn() },
@@ -65,6 +73,7 @@ import { Invoice, UnitBusiness } from "../../../../warehouse";
 import InvoiceFiscalItem from "../../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import invoiceItemsService from "../../../../warehouse/invoices/invoice-items/invoice-items.service";
 import StockMovement from "../stock-movements.model";
+import stockMovementSourceDataService from "../../stock-movement-source-data/stock-movement-source-data.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -159,6 +168,9 @@ describe("StockMovementService", () => {
     (invoiceItemsService.findAll as jest.Mock).mockResolvedValue([]);
     (Invoice.findAll as jest.Mock).mockResolvedValue([]);
     (InvoiceFiscalItem.findAll as jest.Mock).mockResolvedValue([]);
+    (stockMovementSourceDataService.findOne as jest.Mock).mockResolvedValue(
+      null,
+    );
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -662,6 +674,38 @@ describe("StockMovementService", () => {
         }),
         { transaction: undefined },
       );
+    });
+
+    it("não recria nem recalcula movimentos cobertos pela última extração CSV", async () => {
+      const consolidated = makeExistingMovement({
+        status: "SYNCHED",
+        movement_date: new Date("2026-01-10"),
+      });
+      (stockMovementSourceDataService.findOne as jest.Mock).mockResolvedValue({
+        extraction_date: new Date("2026-01-31T23:59:59Z"),
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        consolidated,
+      ]);
+
+      await service.upsertProductStockMovements(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [
+          {
+            product_id: PRODUCT_ID,
+            invoice_id: "inv-1",
+            invoice_number: "1",
+            movement_type: "PURCHASE_ENTRY",
+            movement_date: new Date("2026-01-10"),
+            movement_quantity: 99,
+            unit_cost_invoice: 99,
+          },
+        ] as any,
+      );
+
+      expect(consolidated.update).not.toHaveBeenCalled();
+      expect((service as any).repository.create).not.toHaveBeenCalled();
     });
 
     it("atualiza (update) uma linha existente, recalculando balance/CMP, sem tocar em manual_average_cost_value", async () => {
@@ -1188,6 +1232,26 @@ describe("StockMovementService", () => {
   // ══════════════════════════════════════════════════════════════════════════
 
   describe("syncProductStockMovements", () => {
+    it("consulta a fonte somente após a última extração de CSV", async () => {
+      const extractionDate = new Date("2026-01-31T23:59:59Z");
+      (stockMovementSourceDataService.findOne as jest.Mock).mockResolvedValue({
+        extraction_date: extractionDate,
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([]);
+      const sourceSpy = jest
+        .spyOn(service, "findStockMovementSourceData")
+        .mockResolvedValue([]);
+
+      await service.syncProductStockMovements(PRODUCT_ID, UNIT_BUSINESS_ID);
+
+      expect(sourceSpy).toHaveBeenCalledWith(
+        UNIT_BUSINESS_ID,
+        PRODUCT_ID,
+        undefined,
+        extractionDate,
+      );
+    });
+
     it("retorna average_cost 0 e created 0 quando não há sourceData nem histórico", async () => {
       jest.spyOn(service, "findStockMovementSourceData").mockResolvedValue([]);
       (service as any).repository.findHistoryByProduct.mockResolvedValue([]);
@@ -1254,6 +1318,77 @@ describe("StockMovementService", () => {
         balance_quantity: 8,
       });
       expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    it("não duplica NF já consolidada pelo CSV sem invoice_id", async () => {
+      jest.spyOn(service, "findStockMovementSourceData").mockResolvedValue([
+        {
+          product_id: PRODUCT_ID,
+          invoice_id: "inv-1",
+          invoice_number: "000123",
+          movement_type: "PURCHASE_ENTRY",
+          movement_date: new Date("2026-01-01"),
+          movement_quantity: 10,
+          unit_cost_invoice: 10,
+        },
+      ]);
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        {
+          invoice_id: null,
+          invoice_number: "123",
+          movement_type: "PURCHASE_ENTRY",
+          status: "SYNCHED",
+          resulting_average_cost: 10,
+          balance_quantity: 10,
+          movement_date: new Date("2026-01-01"),
+        },
+      ]);
+
+      const result = await service.syncProductStockMovements(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+      );
+
+      expect(result).toEqual({
+        average_cost: 10,
+        created: 0,
+        balance_quantity: 10,
+      });
+      expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    it("não considera ajuste manual SYNCHED como NF já consolidada", async () => {
+      jest.spyOn(service, "findStockMovementSourceData").mockResolvedValue([
+        {
+          product_id: PRODUCT_ID,
+          invoice_id: "inv-1",
+          invoice_number: "123",
+          movement_type: "PURCHASE_ENTRY",
+          movement_date: new Date("2026-01-01"),
+          movement_quantity: 10,
+          unit_cost_invoice: 10,
+        },
+      ]);
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        {
+          invoice_id: null,
+          invoice_number: "123",
+          movement_type: "MANUAL_ADJUSTMENT",
+          status: "SYNCHED",
+          resulting_average_cost: 0,
+          balance_quantity: 0,
+          movement_date: new Date("2025-12-31"),
+        },
+      ]);
+      (service as any).repository.bulkCreate.mockResolvedValue([{}]);
+
+      const result = await service.syncProductStockMovements(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+      );
+
+      expect(result.created).toBe(1);
+      expect((service as any).repository.bulkCreate).toHaveBeenCalled();
     });
 
     it("cria apenas os movimentos pendentes, encadeando a partir do último estado salvo (caso normal), com is_active true", async () => {

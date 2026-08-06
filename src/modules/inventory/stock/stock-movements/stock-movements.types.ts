@@ -6,6 +6,9 @@ export type StockMovementType =
 
 export type StockDirectionType = "IN" | "OUT"
 
+export type StockMovementStatus = "PENDING" | "SYNCHED";
+
+
 export interface StockMovementAttributes {
   id?: string;
   unit_business_id: string;
@@ -22,6 +25,7 @@ export interface StockMovementAttributes {
   total_stock_value: number;
   manual_average_cost_value?: number | null;
   is_active: Boolean; 
+  status: StockMovementStatus;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -49,6 +53,7 @@ export interface ReindexProductPayload extends Pick<
   | "invoice_id"
   | "invoice_number"
   | "manual_average_cost_value"
+  | "direction"
 > {}
 
 export interface StockMovementCreationAttributes extends Omit<

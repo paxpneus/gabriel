@@ -20,6 +20,7 @@ import {
   QueryParams,
 } from "../../../../shared/query/query.types";
 import product_configService from "../../product-config/product_config.service";
+import stockMovementSourceDataService from "../stock-movement-source-data/stock-movement-source-data.service";
 
 // Estado de saldo/custo usado para encadear um movimento a partir do anterior.
 type BalanceState = {
@@ -48,6 +49,20 @@ type CreateManualAdjustmentPayload = {
   movement_date?: Date;
 };
 
+/**
+ * O CSV da Bling pode trazer o número da NF sem os zeros à esquerda usados
+ * pelo sistema. A normalização permite identificar o mesmo documento sem
+ * precisar atribuir um invoice_id a um movimento consolidado pelo CSV.
+ */
+function normalizeInvoiceNumber(
+  value: string | number | null | undefined,
+): string | null {
+  if (value == null) return null;
+
+  const normalized = String(value).trim().replace(/^0+/, "");
+  return normalized || "0";
+}
+
 export class StockMovementService extends BaseService<
   StockMovement,
   StockMovementRepository
@@ -63,6 +78,56 @@ export class StockMovementService extends BaseService<
       },
       filterableFields: ["type", "date"],
     };
+  }
+
+  /**
+   * O CSV consolidado é o limite do histórico que os fluxos automáticos
+   * podem tocar. `extraction_date` é global e prevalece; em instalações
+   * antigas, sem registro da fonte, usa-se a última linha SYNCHED do próprio
+   * produto como fallback.
+   */
+  private async getAutomaticSyncCutoff(
+    productId: string,
+    unitBusinessId: string,
+    transaction?: Transaction,
+    existingMovements?: StockMovement[],
+  ): Promise<Date | null> {
+    const latestSource = await stockMovementSourceDataService.findOne({
+      order: [["extraction_date", "DESC"]],
+      transaction,
+    } as any);
+
+    if (latestSource?.extraction_date) {
+      return new Date(latestSource.extraction_date);
+    }
+
+    const history =
+      existingMovements ??
+      (await this.repository.findHistoryByProduct(productId, unitBusinessId, {
+        transaction,
+      }));
+    const latestSynched = history
+      .filter((movement) => movement.status === "SYNCHED")
+      .sort(
+        (a, b) =>
+          new Date(b.movement_date).getTime() -
+          new Date(a.movement_date).getTime(),
+      )[0];
+
+    return latestSynched ? new Date(latestSynched.movement_date) : null;
+  }
+
+  private async getLatestCsvExtractionDate(
+    transaction?: Transaction,
+  ): Promise<Date | null> {
+    const latestSource = await stockMovementSourceDataService.findOne({
+      order: [["extraction_date", "DESC"]],
+      transaction,
+    } as any);
+
+    return latestSource?.extraction_date
+      ? new Date(latestSource.extraction_date)
+      : null;
   }
 
   // Atualiza custo médio do produto considerando o custo médio da ultima movimentação de estoque
@@ -218,6 +283,204 @@ export class StockMovementService extends BaseService<
   }
 
   /**
+   * Consolida a janela temporal de um CSV. O CSV é a fonte de verdade apenas
+   * entre o corte da extração anterior e a extração atual; movimentos do
+   * fluxo normal fora dessa janela permanecem PENDING.
+   */
+  async syncCsvBaseline(
+    productId: string,
+    unitBusinessId: string,
+    csvMovements: ReindexProductPayload[],
+    cutoffDate: Date | null,
+    extractionDate: Date,
+    transaction?: Transaction,
+  ): Promise<StockMovement[]> {
+    if (cutoffDate && cutoffDate.getTime() > extractionDate.getTime()) {
+      throw new Error("cutoffDate não pode ser posterior a extractionDate.");
+    }
+
+    await this.repository.deletePendingInCsvWindow(
+      productId,
+      unitBusinessId,
+      cutoffDate,
+      extractionDate,
+      transaction,
+    );
+
+    const remaining = await this.repository.findHistoryByProduct(
+      productId,
+      unitBusinessId,
+      { transaction },
+    );
+
+    const isProtected = (m: StockMovement) =>
+      m.manual_average_cost_value != null;
+    const isBeforeOrAtCutoff = (m: StockMovement) =>
+      cutoffDate != null &&
+      new Date(m.movement_date).getTime() <= cutoffDate.getTime();
+
+    // O estado anterior ao início da janela já foi consolidado e não deve ser
+    // recalculado por esta execução.
+    const baseline = remaining.filter(isBeforeOrAtCutoff);
+    const lastBaseline = baseline[baseline.length - 1] ?? null;
+    let previousState: BalanceState | null = lastBaseline
+      ? {
+          balance_quantity: Number(lastBaseline.balance_quantity),
+          resulting_average_cost: Number(lastBaseline.resulting_average_cost),
+        }
+      : null;
+
+    const pendingAfterExtraction = remaining.filter(
+      (m) =>
+        !isProtected(m) &&
+        new Date(m.movement_date).getTime() > extractionDate.getTime(),
+    );
+    const protectedAfterCutoff = remaining.filter(
+      (m) => !isBeforeOrAtCutoff(m) && isProtected(m),
+    );
+    const newCsvEntries = csvMovements.filter((m) => {
+      const date = new Date(m.movement_date).getTime();
+      return (
+        (!cutoffDate || date > cutoffDate.getTime()) &&
+        date <= extractionDate.getTime()
+      );
+    });
+
+    type TimelineEntry =
+      | { kind: "csv"; date: Date; payload: ReindexProductPayload }
+      | { kind: "protected"; date: Date; movement: StockMovement }
+      | { kind: "pending"; date: Date; movement: StockMovement };
+
+    const timeline: TimelineEntry[] = [
+      ...newCsvEntries.map((payload) => ({
+        kind: "csv" as const,
+        date: new Date(payload.movement_date),
+        payload,
+      })),
+      ...protectedAfterCutoff.map((movement) => ({
+        kind: "protected" as const,
+        date: new Date(movement.movement_date),
+        movement,
+      })),
+      ...pendingAfterExtraction.map((movement) => ({
+        kind: "pending" as const,
+        date: new Date(movement.movement_date),
+        movement,
+      })),
+    ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    const toCreate: StockMovementCreationAttributes[] = [];
+    const toUpdate: {
+      movement: StockMovement;
+      nextState: ReturnType<StockMovementService["calculateNextState"]>;
+    }[] = [];
+
+    for (const entry of timeline) {
+      if (entry.kind === "protected") {
+        previousState = {
+          balance_quantity: Number(entry.movement.balance_quantity),
+          resulting_average_cost: Number(entry.movement.resulting_average_cost),
+        };
+        continue;
+      }
+
+      if (entry.kind === "csv") {
+        const movement = entry.payload;
+        const nextState = this.calculateNextState(previousState, {
+          ...movement,
+          manual_average_cost_value: movement.manual_average_cost_value ?? null,
+        });
+
+        toCreate.push({
+          unit_business_id: unitBusinessId,
+          product_id: productId,
+          invoice_id: movement.invoice_id,
+          invoice_number: movement.invoice_number,
+          movement_type: movement.movement_type,
+          movement_date: movement.movement_date,
+          movement_quantity: movement.movement_quantity,
+          unit_cost_invoice: movement.unit_cost_invoice,
+          direction: (movement as any).direction ?? null,
+          manual_average_cost_value: movement.manual_average_cost_value ?? null,
+          status: "SYNCHED",
+          is_active: true,
+          ...nextState,
+        } as StockMovementCreationAttributes);
+
+        previousState = {
+          balance_quantity: nextState.balance_quantity,
+          resulting_average_cost: nextState.resulting_average_cost,
+        };
+        continue;
+      }
+
+      // PENDING pós-cutoff: preserva o "fato" (quantidade/direção/invoice),
+      // só recalcula o resultado — igual upsertProductStockMovements faz.
+      const movement = entry.movement;
+      const direction = movement.direction as "IN" | "OUT" | null;
+      const nextState = this.calculateNextState(previousState, {
+        movement_type: movement.movement_type,
+        movement_quantity: Number(movement.movement_quantity),
+        unit_cost_invoice:
+          movement.unit_cost_invoice != null
+            ? Number(movement.unit_cost_invoice)
+            : undefined,
+        manual_average_cost_value:
+          movement.manual_average_cost_value != null
+            ? Number(movement.manual_average_cost_value)
+            : null,
+        direction,
+      });
+
+      toUpdate.push({ movement, nextState });
+      previousState = {
+        balance_quantity: nextState.balance_quantity,
+        resulting_average_cost: nextState.resulting_average_cost,
+      };
+    }
+
+    const created = toCreate.length
+      ? await this.repository.bulkCreate(toCreate as any, { transaction })
+      : [];
+
+    for (const { movement, nextState } of toUpdate) {
+      const hasDrifted =
+        Number(movement.balance_quantity) !== nextState.balance_quantity ||
+        Number(movement.resulting_average_cost) !==
+          nextState.resulting_average_cost ||
+        Number(movement.total_stock_value) !== nextState.total_stock_value;
+
+      if (hasDrifted) {
+        await movement.update(
+          {
+            balance_quantity: nextState.balance_quantity,
+            resulting_average_cost: nextState.resulting_average_cost,
+            total_stock_value: nextState.total_stock_value,
+          } as Partial<StockMovementAttributes>,
+          { transaction },
+        );
+      }
+    }
+
+    await this.syncProductAverageCostConfig(
+      productId,
+      unitBusinessId,
+      transaction,
+    );
+
+    return [
+      ...baseline,
+      ...protectedAfterCutoff,
+      ...created,
+      ...toUpdate.map((u) => u.movement),
+    ].sort(
+      (a, b) =>
+        new Date(a.movement_date).getTime() -
+        new Date(b.movement_date).getTime(),
+    );
+  }
+
+  /**
    * Processamento em tempo real de UM movimento novo (fluxo normal do
    * sistema quando uma NF é emitida/confirmada). manual_average_cost_value
    * nunca é setado aqui — fica NULL até alguém setar manualmente depois.
@@ -226,6 +489,20 @@ export class StockMovementService extends BaseService<
     input: ReindexProductPayload & { unit_business_id: string },
     transaction?: Transaction,
   ): Promise<StockMovement> {
+    const cutoff = await this.getAutomaticSyncCutoff(
+      input.product_id,
+      input.unit_business_id,
+      transaction,
+    );
+    if (
+      cutoff &&
+      new Date(input.movement_date).getTime() <= cutoff.getTime()
+    ) {
+      throw new Error(
+        `[STOCK_MOVEMENT] Movimento emitido em ${new Date(input.movement_date).toISOString()} já está coberto pelo CSV extraído em ${cutoff.toISOString()}.`,
+      );
+    }
+
     const lastMovement = await this.repository.findLastMovement(
       input.product_id,
       input.unit_business_id,
@@ -245,6 +522,7 @@ export class StockMovementService extends BaseService<
     const payload: StockMovementCreationAttributes = {
       ...input,
       is_active: true,
+      status: "PENDING",
       ...nextState,
     } as StockMovementCreationAttributes;
 
@@ -282,15 +560,8 @@ export class StockMovementService extends BaseService<
     unitBusinessId: string,
     movements?: ReindexProductPayload[],
     transaction?: Transaction,
+    preserveCsvBaseline = true,
   ): Promise<StockMovement[]> {
-    const incomingSource =
-      movements ??
-      (await this.findStockMovementSourceData(
-        unitBusinessId,
-        productId,
-        transaction,
-      ));
-
     // activeOnly = false: reindex precisa enxergar tudo, inclusive
     // inativos, pra não apagar por engano uma linha protegida desativada.
     const existingMovements = await this.repository.findHistoryByProduct(
@@ -298,13 +569,43 @@ export class StockMovementService extends BaseService<
       unitBusinessId,
       { transaction, activeOnly: false },
     );
+    const cutoff = preserveCsvBaseline
+      ? await this.getAutomaticSyncCutoff(
+          productId,
+          unitBusinessId,
+          transaction,
+          existingMovements,
+        )
+      : null;
+    const isAfterCutoff = (date: Date) =>
+      !cutoff || new Date(date).getTime() > cutoff.getTime();
+    const incomingSource =
+      movements ??
+      (await this.findStockMovementSourceData(
+        unitBusinessId,
+        productId,
+        transaction,
+        cutoff,
+      ));
+
+    // A baseline CSV não participa da reconstrução automática. Ela fornece
+    // somente o estado inicial da cauda que ainda é responsabilidade do
+    // sistema, sem ser apagada ou recalculada.
+    const baselineMovements = existingMovements.filter(
+      (movement) => !isAfterCutoff(new Date(movement.movement_date)),
+    );
+    const mutableExistingMovements = existingMovements.filter((movement) =>
+      isAfterCutoff(new Date(movement.movement_date)),
+    );
 
     const isProtected = (m: StockMovement) =>
       m.movement_type === "MANUAL_ADJUSTMENT" ||
       m.manual_average_cost_value != null;
 
-    const protectedMovements = existingMovements.filter(isProtected);
-    const deletableMovements = existingMovements.filter((m) => !isProtected(m));
+    const protectedMovements = mutableExistingMovements.filter(isProtected);
+    const deletableMovements = mutableExistingMovements.filter(
+      (movement) => !isProtected(movement),
+    );
 
     const protectedInvoiceIds = new Set(
       protectedMovements
@@ -313,7 +614,9 @@ export class StockMovementService extends BaseService<
     );
 
     const incomingMovements = incomingSource.filter(
-      (m) => !protectedInvoiceIds.has(m.invoice_id),
+      (movement) =>
+        isAfterCutoff(new Date(movement.movement_date)) &&
+        !protectedInvoiceIds.has(movement.invoice_id),
     );
 
     // Só linhas protegidas ATIVAS entram na timeline de cálculo — as
@@ -339,7 +642,21 @@ export class StockMovementService extends BaseService<
       })),
     ].sort((a, b) => a.date.getTime() - b.date.getTime());
 
-    let previousState: BalanceState | null = null;
+    const activeBaselineMovements = [...baselineMovements]
+      .filter((movement) => movement.is_active)
+      .sort(
+        (a, b) =>
+          new Date(a.movement_date).getTime() -
+          new Date(b.movement_date).getTime(),
+      );
+    const lastBaseline =
+      activeBaselineMovements[activeBaselineMovements.length - 1];
+    let previousState: BalanceState | null = lastBaseline
+      ? {
+          balance_quantity: Number(lastBaseline.balance_quantity),
+          resulting_average_cost: Number(lastBaseline.resulting_average_cost),
+        }
+      : null;
     const toCreate: StockMovementCreationAttributes[] = [];
 
     for (const entry of timeline) {
@@ -370,6 +687,7 @@ export class StockMovementService extends BaseService<
         unit_cost_invoice: movement.unit_cost_invoice,
         direction: (movement as any).direction ?? null,
         manual_average_cost_value: movement.manual_average_cost_value ?? null,
+        status: 'PENDING',
         is_active: true,
         ...nextState,
       } as StockMovementCreationAttributes);
@@ -397,7 +715,7 @@ export class StockMovementService extends BaseService<
       transaction,
     );
 
-    return [...protectedMovements, ...created].sort(
+    return [...baselineMovements, ...protectedMovements, ...created].sort(
       (a, b) =>
         new Date(a.movement_date).getTime() -
         new Date(b.movement_date).getTime(),
@@ -441,10 +759,33 @@ export class StockMovementService extends BaseService<
       { transaction },
     );
 
-    const manualAdjustments = existingMovements.filter(
+    const cutoff = await this.getAutomaticSyncCutoff(
+      productId,
+      unitBusinessId,
+      transaction,
+      existingMovements,
+    );
+    const isAfterCutoff = (date: Date) =>
+      !cutoff || new Date(date).getTime() > cutoff.getTime();
+
+    // A parte consolidada pelo CSV é imutável para fluxos automáticos. Só a
+    // cauda posterior é fundida/recalculada, usando o último estado
+    // consolidado como ponto de partida.
+    const baselineMovements = existingMovements.filter(
+      (movement) => !isAfterCutoff(new Date(movement.movement_date)),
+    );
+    const lastBaseline = baselineMovements[baselineMovements.length - 1];
+    const mutableMovements = existingMovements.filter((movement) =>
+      isAfterCutoff(new Date(movement.movement_date)),
+    );
+    const eligibleIncomingMovements = incomingMovements.filter((movement) =>
+      isAfterCutoff(new Date(movement.movement_date)),
+    );
+
+    const manualAdjustments = mutableMovements.filter(
       (m) => m.movement_type === "MANUAL_ADJUSTMENT",
     );
-    const invoiceBackedExisting = existingMovements.filter(
+    const invoiceBackedExisting = mutableMovements.filter(
       (m) => m.movement_type !== "MANUAL_ADJUSTMENT",
     );
 
@@ -468,7 +809,7 @@ export class StockMovementService extends BaseService<
             : undefined,
       });
     }
-    for (const incoming of incomingMovements) {
+    for (const incoming of eligibleIncomingMovements) {
       if (!incoming.invoice_id) continue;
 
       mergedByInvoiceId.set(incoming.invoice_id, incoming);
@@ -491,7 +832,12 @@ export class StockMovementService extends BaseService<
       })),
     ].sort((a, b) => a.date.getTime() - b.date.getTime());
 
-    let previousState: BalanceState | null = null;
+    let previousState: BalanceState | null = lastBaseline
+      ? {
+          balance_quantity: Number(lastBaseline.balance_quantity),
+          resulting_average_cost: Number(lastBaseline.resulting_average_cost),
+        }
+      : null;
     const results: StockMovement[] = [];
 
     for (const entry of timeline) {
@@ -591,6 +937,7 @@ export class StockMovementService extends BaseService<
             movement_date: movement.movement_date,
             movement_quantity: movement.movement_quantity,
             unit_cost_invoice: movement.unit_cost_invoice,
+            status: "PENDING",
             is_active: true,
             ...nextState,
           } as StockMovementCreationAttributes,
@@ -670,6 +1017,7 @@ export class StockMovementService extends BaseService<
         movement_quantity: payload.movement_quantity,
         unit_cost_invoice: undefined,
         manual_average_cost_value: payload.manual_average_cost_value ?? null,
+        status: "PENDING",
         is_active: true,
         ...nextState,
       } as StockMovementCreationAttributes,
@@ -807,6 +1155,7 @@ export class StockMovementService extends BaseService<
     unitBusinessId: string,
     productId: string,
     transaction?: Transaction,
+    emittedAfter?: Date | null,
   ): Promise<ListSourceDataFromInvoices[]> {
     const unitBusiness = await UnitBusiness.findByPk(unitBusinessId, {
       transaction,
@@ -829,8 +1178,13 @@ export class StockMovementService extends BaseService<
       ...new Set(invoiceItems.map((item) => item.invoice_id)),
     ];
 
+    const invoiceWhere: any = { id: { [Op.in]: invoiceIds } };
+    if (emittedAfter) {
+      invoiceWhere.emitted_at = { [Op.gt]: emittedAfter };
+    }
+
     const invoices = await Invoice.findAll({
-      where: { id: { [Op.in]: invoiceIds } },
+      where: invoiceWhere,
       include: [
         {
           model: InvoiceUnitBusinessAttributes,
@@ -976,16 +1330,22 @@ export class StockMovementService extends BaseService<
     created: number;
     balance_quantity: number;
   }> {
-    const sourceData = await this.findStockMovementSourceData(
-      unitBusinessId,
-      productId,
-      transaction,
-    );
-
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
       { transaction },
+    );
+    const cutoff = await this.getAutomaticSyncCutoff(
+      productId,
+      unitBusinessId,
+      transaction,
+      existingMovements,
+    );
+    const sourceData = await this.findStockMovementSourceData(
+      unitBusinessId,
+      productId,
+      transaction,
+      cutoff,
     );
 
     const lastExisting =
@@ -1000,10 +1360,31 @@ export class StockMovementService extends BaseService<
     let created = 0;
 
     const existingInvoiceIds = new Set(
-      existingMovements.map((m) => m.invoice_id),
+      existingMovements
+        .map((movement) => movement.invoice_id)
+        .filter((invoiceId): invoiceId is string => !!invoiceId),
+    );
+
+    // As NFs consolidadas pelo CSV são propositalmente gravadas sem
+    // invoice_id. Quando a NF correspondente chegar pelo fluxo normal, ela
+    // não pode gerar um segundo movimento PENDING. O número só é usado para
+    // esse caso SYNCHED e não para MANUAL_ADJUSTMENT (pedido de venda pode
+    // reutilizar a mesma numeração de uma NF).
+    const synchedInvoiceNumbers = new Set(
+      existingMovements
+        .filter(
+          (movement) =>
+            movement.status === "SYNCHED" &&
+            movement.movement_type !== "MANUAL_ADJUSTMENT" &&
+            !movement.invoice_id,
+        )
+        .map((movement) => normalizeInvoiceNumber(movement.invoice_number))
+        .filter((invoiceNumber): invoiceNumber is string => !!invoiceNumber),
     );
     const pending = sourceData.filter(
-      (item) => !existingInvoiceIds.has(item.invoice_id),
+      (item) =>
+        (!item.invoice_id || !existingInvoiceIds.has(item.invoice_id)) &&
+        !synchedInvoiceNumbers.has(normalizeInvoiceNumber(item.invoice_number) ?? ""),
     );
 
     if (pending.length) {
@@ -1058,6 +1439,7 @@ export class StockMovementService extends BaseService<
             movement_date: movement.movement_date,
             movement_quantity: movement.movement_quantity,
             unit_cost_invoice: movement.unit_cost_invoice,
+            status: "PENDING",
             is_active: true,
             ...nextState,
           } as StockMovementCreationAttributes);
@@ -1150,6 +1532,8 @@ export class StockMovementService extends BaseService<
       throw new Error("Unit business não encontrada!");
     }
 
+    const cutoff = await this.getLatestCsvExtractionDate(transaction);
+
     const invoiceAttrs = await InvoiceUnitBusinessAttributes.findAll({
       where: {
         unit_business_id: unitBusinessId,
@@ -1161,8 +1545,21 @@ export class StockMovementService extends BaseService<
     const invoiceIds = invoiceAttrs.map((a) => a.invoice_id);
     if (!invoiceIds.length) return [];
 
+    // Não percorre itens de NFs que já pertencem ao CSV consolidado. A
+    // filtragem é repetida no backfill por produto como defesa adicional.
+    const invoices = await Invoice.findAll({
+      where: {
+        id: { [Op.in]: invoiceIds },
+        ...(cutoff ? { emitted_at: { [Op.gt]: cutoff } } : {}),
+      },
+      attributes: ["id"],
+      transaction,
+    });
+    const eligibleInvoiceIds = invoices.map((invoice) => invoice.id);
+    if (!eligibleInvoiceIds.length) return [];
+
     const invoiceItems = await InvoiceItems.findAll({
-      where: { invoice_id: { [Op.in]: invoiceIds } },
+      where: { invoice_id: { [Op.in]: eligibleInvoiceIds } },
       transaction,
     });
 
@@ -1199,19 +1596,25 @@ export class StockMovementService extends BaseService<
     unitBusinessId: string,
     transaction?: Transaction,
   ): Promise<number> {
-    const sourceData = await this.findStockMovementSourceData(
-      unitBusinessId,
-      productId,
-      transaction,
-    );
-
-    if (!sourceData.length) return 0;
-
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
       { transaction, activeOnly: false },
     );
+    const cutoff = await this.getAutomaticSyncCutoff(
+      productId,
+      unitBusinessId,
+      transaction,
+      existingMovements,
+    );
+    const sourceData = await this.findStockMovementSourceData(
+      unitBusinessId,
+      productId,
+      transaction,
+      cutoff,
+    );
+
+    if (!sourceData.length) return 0;
 
     const existingInvoiceIds = new Set(
       existingMovements
@@ -1235,6 +1638,7 @@ export class StockMovementService extends BaseService<
 
     return missing.length;
   }
+
 }
 
 export default new StockMovementService();

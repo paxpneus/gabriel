@@ -212,6 +212,7 @@ services:
     volumes:
       - ml_session:/app/ml_session
       - ml_downloads:/app/ml_downloads
+      - stock_movement_csv:/app/data/stock-movements
     cap_add:
       - SYS_ADMIN
     depends_on:
@@ -392,6 +393,7 @@ volumes:
   redis_data:
   ml_session:
   ml_downloads:
+  stock_movement_csv:
   caddy_data:
   caddy_config:
 
