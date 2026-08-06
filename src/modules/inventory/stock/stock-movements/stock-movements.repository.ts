@@ -245,6 +245,43 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
 
     return affectedCount;
   }
+
+  /**
+   * Apaga somente movimentos provisórios cobertos pelo CSV atual. A janela
+   * é (cutoffDate, extractionDate]: o que é anterior já foi consolidado por
+   * um CSV anterior; o que é posterior ainda não apareceu no CSV.
+   *
+   * Movimentos com custo médio manual nunca são removidos.
+   */
+  async deletePendingInCsvWindow(
+    productId: string,
+    unitBusinessId: string,
+    cutoffDate: Date | null,
+    extractionDate: Date,
+    transaction?: Transaction,
+  ): Promise<string[]> {
+    const movementDate = cutoffDate
+      ? { [Op.gt]: cutoffDate, [Op.lte]: extractionDate }
+      : { [Op.lte]: extractionDate };
+
+    const candidates = await this.model.findAll({
+      where: {
+        product_id: productId,
+        unit_business_id: unitBusinessId,
+        status: "PENDING",
+        manual_average_cost_value: null,
+        movement_date: movementDate,
+        is_active: true,
+      },
+      transaction,
+    });
+
+    if (!candidates.length) return [];
+
+    const ids = candidates.map((m) => m.id);
+    await this.bulkDelete({ where: { id: { [Op.in]: ids } }, transaction });
+    return ids;
+  }
 }
 
 export default new StockMovementRepository();

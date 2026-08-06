@@ -119,12 +119,11 @@ import { setupAssociations } from "../../config/sequelize-associations";
 import stockMovementService from "../../modules/inventory/stock/stock-movements/stock-movements.service";
 import { ReindexProductPayload } from "../../modules/inventory/stock/stock-movements/stock-movements.types";
 import Stock from "../../modules/inventory/stock/stock/stock.model";
+import stockMovementSourceDataService from "../../modules/inventory/stock/stock-movement-source-data/stock-movement-source-data.service";
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
-const CSV_PATH = process.env.CSV_PATH
-  ? path.resolve(process.env.CSV_PATH)
-  : "";
+const CSV_PATH = process.env.CSV_PATH ? path.resolve(process.env.CSV_PATH) : "";
 const UNIT_BUSINESS_ID =
   process.env.UNIT_BUSINESS_ID ?? "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
 const DRY_RUN = process.env.DRY_RUN !== "false"; // default TRUE — precisa opt-out explícito
@@ -205,7 +204,9 @@ function parseBlingDate(value: string): Date {
   return new Date(year, month - 1, day, hh || 0, mm || 0, ss || 0);
 }
 
-function normalizeInvoiceNumber(value: string | number | null | undefined): string {
+function normalizeInvoiceNumber(
+  value: string | number | null | undefined,
+): string {
   const str = String(value ?? "").trim();
   const stripped = str.replace(/^0+/, "");
   return stripped.length ? stripped : "0";
@@ -227,6 +228,7 @@ interface CsvRow {
   custo_lancamento: number;
   origem_tipo: string;
   origem_numero: string;
+  origem_titulo?: string;
 }
 
 function toCsvRow(raw: Record<string, string>): CsvRow {
@@ -244,11 +246,14 @@ function toCsvRow(raw: Record<string, string>): CsvRow {
     custo_lancamento: parseNum(raw.custo_lancamento),
     origem_tipo: (raw.origem_tipo ?? "").trim(),
     origem_numero: (raw.origem_numero ?? "").trim(),
+    origem_titulo: (raw.origem_titulo ?? "").trim(),
   };
 }
 
 function isInvoiceBacked(row: CsvRow): boolean {
-  return row.origem_tipo === "Nota fiscal" || row.origem_tipo === "Pedido de venda";
+  return (
+    row.origem_tipo === "Nota fiscal" || row.origem_tipo === "Pedido de venda"
+  );
 }
 
 /**
@@ -345,7 +350,11 @@ interface ProductPlan {
 interface GhostInvoicePlan {
   compensations: GhostCompensationDraft[];
   skippedFutureDated: { invoice_number: string; movement_date: Date }[];
-  skippedAsAlreadyCovered: { invoice_number: string; movement_date: Date; qty: number }[];
+  skippedAsAlreadyCovered: {
+    invoice_number: string;
+    movement_date: Date;
+    qty: number;
+  }[];
 }
 
 /**
@@ -414,7 +423,9 @@ function buildProductPlan(
   existingInvoiceNumbers: Set<string>,
   existingManualAdjustments: ExistingManualAdjustment[],
 ): ProductPlan {
-  const chronological = [...rows].sort((a, b) => a.data.getTime() - b.data.getTime());
+  const chronological = [...rows].sort(
+    (a, b) => a.data.getTime() - b.data.getTime(),
+  );
   const sorted = collapseConsecutiveBalanceRuns(chronological);
 
   const manualAdjustments: ManualAdjustmentDraft[] = [];
@@ -439,8 +450,19 @@ function buildProductPlan(
     manualAverageCostValue: number | null,
     invoiceNumber?: string,
   ) => {
-    if (isAlreadyCoveredByExisting(row.data, quantity, direction, existingManualAdjustments)) {
-      skippedAsAlreadyCovered.push({ lancamento_id: row.lancamento_id, data: row.data, qty: quantity });
+    if (
+      isAlreadyCoveredByExisting(
+        row.data,
+        quantity,
+        direction,
+        existingManualAdjustments,
+      )
+    ) {
+      skippedAsAlreadyCovered.push({
+        lancamento_id: row.lancamento_id,
+        data: row.data,
+        qty: quantity,
+      });
       return;
     }
     manualAdjustments.push({
@@ -489,7 +511,10 @@ function buildProductPlan(
       }
 
       if (quantity === 0) {
-        zeroDeltaBalances.push({ lancamento_id: row.lancamento_id, data: row.data });
+        zeroDeltaBalances.push({
+          lancamento_id: row.lancamento_id,
+          data: row.data,
+        });
         continue;
       }
 
@@ -507,7 +532,10 @@ function buildProductPlan(
       const delta = row.balanco - balance.current;
       balance.reset(row.balanco);
       if (delta === 0) {
-        zeroDeltaBalances.push({ lancamento_id: row.lancamento_id, data: row.data });
+        zeroDeltaBalances.push({
+          lancamento_id: row.lancamento_id,
+          data: row.data,
+        });
         continue;
       }
       tryCreateAdjustment(
@@ -521,7 +549,12 @@ function buildProductPlan(
 
     if (row.es === "E" && row.entrada !== 0) {
       balance.applyEntry(row.entrada);
-      tryCreateAdjustment(row, row.entrada, "IN", resolveManualAverageCost(row));
+      tryCreateAdjustment(
+        row,
+        row.entrada,
+        "IN",
+        resolveManualAverageCost(row),
+      );
       continue;
     }
 
@@ -552,7 +585,13 @@ function buildProductPlan(
  */
 function buildGhostInvoicePlan(
   rows: CsvRow[],
-  sourceData: { invoice_id: string; invoice_number?: string | null; movement_type: string; movement_quantity: number; movement_date: Date }[],
+  sourceData: {
+    invoice_id: string;
+    invoice_number?: string | null;
+    movement_type: string;
+    movement_quantity: number;
+    movement_date: Date;
+  }[],
   existingManualAdjustments: ExistingManualAdjustment[],
 ): GhostInvoicePlan {
   const csvInvoiceNumbers = new Set(
@@ -568,7 +607,8 @@ function buildGhostInvoicePlan(
 
   const compensations: GhostCompensationDraft[] = [];
   const skippedFutureDated: GhostInvoicePlan["skippedFutureDated"] = [];
-  const skippedAsAlreadyCovered: GhostInvoicePlan["skippedAsAlreadyCovered"] = [];
+  const skippedAsAlreadyCovered: GhostInvoicePlan["skippedAsAlreadyCovered"] =
+    [];
 
   for (const movement of sourceData) {
     if (!movement.invoice_number) continue;
@@ -659,20 +699,42 @@ async function processProduct(
     UNIT_BUSINESS_ID,
     { page: 1, perPage: 5000 } as any,
   );
-  const immutableManualAdjustments: ExistingManualAdjustment[] = existingHistory.data
-    .filter(
-      (m) =>
-        m.movement_type === "MANUAL_ADJUSTMENT" &&
-        m.is_active &&
-        m.manual_average_cost_value != null,
-    )
-    .map((m) => ({
-      movement_date: new Date(m.movement_date),
-      movement_quantity: Number(m.movement_quantity),
-      direction: (m.direction as "IN" | "OUT") ?? "IN",
-    }));
+  const immutableManualAdjustments: ExistingManualAdjustment[] =
+    existingHistory.data
+      .filter(
+        (m) =>
+          m.movement_type === "MANUAL_ADJUSTMENT" &&
+          m.is_active &&
+          m.manual_average_cost_value != null,
+      )
+      .map((m) => ({
+        movement_date: new Date(m.movement_date),
+        movement_quantity: Number(m.movement_quantity),
+        direction: (m.direction as "IN" | "OUT") ?? "IN",
+      }));
 
   const hasImmutableManualAdjustments = immutableManualAdjustments.length > 0;
+
+  const activeHistorySorted = existingHistory.data
+    .filter((m: any) => m.is_active)
+    .sort((a: any, b: any) => {
+      const dateDiff =
+        new Date(a.movement_date).getTime() -
+        new Date(b.movement_date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return (
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+    });
+
+  const oldestMovement: any = activeHistorySorted[0];
+  const oldestIsImmutableManualAdjustment =
+    !!oldestMovement &&
+    oldestMovement.movement_type === "MANUAL_ADJUSTMENT" &&
+    oldestMovement.manual_average_cost_value != null;
+
+  const skipDateCorrectionDueToImmutableAdjustment =
+    hasImmutableManualAdjustments && !oldestIsImmutableManualAdjustment;
 
   // 3. Regra 9 — corrige a movement_date dos movimentos de sourceData
   //    (PURCHASE_ENTRY, SALE_OUT, CUSTOMER_RETURN etc.) pra data do
@@ -684,9 +746,10 @@ async function processProduct(
   let sourceDataDateCorrections = 0;
   let correctedSourceData = sourceData;
 
-  if (hasImmutableManualAdjustments) {
+  if (skipDateCorrectionDueToImmutableAdjustment) {
     console.log(
-      `  ⚠️  Produto ${productInternalId} (${productName}) tem MANUAL_ADJUSTMENT imutável — ` +
+      `  ⚠️  Produto ${productInternalId} (${productName}) tem MANUAL_ADJUSTMENT imutável que ` +
+        `NÃO é a movimentação mais antiga (ex: veio depois de uma entrada) — ` +
         `datas do histórico do sistema NÃO serão corrigidas pelo CSV nesta execução ` +
         `(mantendo a lógica de hoje). Revisar manualmente depois.`,
     );
@@ -745,7 +808,7 @@ async function processProduct(
       `${plan.zeroDeltaBalances.length} balanço(s) com delta zero (ignorados), ` +
       `${plan.skippedAsAlreadyCovered.length + ghostPlan.skippedAsAlreadyCovered.length} evento(s) já coberto(s) por ajuste imutável (pulados), ` +
       `${sourceDataDateCorrections} data(s) de sourceData corrigida(s) pelo CSV` +
-      `${hasImmutableManualAdjustments ? " [PULADO: produto tem ajuste imutável]" : ""}`,
+      `${skipDateCorrectionDueToImmutableAdjustment ? " [DATAS NÃO CORRIGIDAS: ajuste imutável não é o mais antigo]" : ""}`,
   );
 
   for (const zero of plan.zeroDeltaBalances) {
@@ -803,7 +866,7 @@ async function processProduct(
       ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
       zeroDeltaLogged: plan.zeroDeltaBalances.length,
       reconciliationDelta: null,
-      hasImmutableManualAdjustments,
+      hasImmutableManualAdjustments: skipDateCorrectionDueToImmutableAdjustment,
       sourceDataDateCorrections,
     };
   }
@@ -920,13 +983,219 @@ async function processProduct(
       ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
       zeroDeltaLogged: plan.zeroDeltaBalances.length,
       reconciliationDelta,
-      hasImmutableManualAdjustments,
+      hasImmutableManualAdjustments: skipDateCorrectionDueToImmutableAdjustment,
       sourceDataDateCorrections,
     };
   } catch (err) {
     await transaction.rollback();
     throw err;
   }
+}
+
+// ─── Sincronização incremental pelo CSV ────────────────────────────────────
+
+type CsvWindow = {
+  extractionDate: Date;
+  cutoffDate: Date | null;
+};
+
+type CsvSyncResult = {
+  productInternalId: string;
+  productName: string;
+  csvMovements: number;
+  usedLegacyReindex: boolean;
+};
+
+async function getLatestCsvWindow(): Promise<CsvWindow> {
+  const row = await stockMovementSourceDataService.findOne({
+    order: [["extraction_date", "DESC"]],
+  });
+  if (!row) {
+    throw new Error(
+      "Nenhuma extração encontrada em stock_movement_source_data.",
+    );
+  }
+
+  const extractionDate = new Date(row.extraction_date);
+  const cutoffDate = row.cutoff_date ? new Date(row.cutoff_date) : null;
+  if (Number.isNaN(extractionDate.getTime())) {
+    throw new Error("extraction_date inválida em stock_movement_source_data.");
+  }
+  if (cutoffDate && Number.isNaN(cutoffDate.getTime())) {
+    throw new Error("cutoff_date inválida em stock_movement_source_data.");
+  }
+
+  return { extractionDate, cutoffDate };
+}
+
+function movementFromCsvRow(
+  row: CsvRow,
+  balance: RunningBalance,
+  hasEarlierPurchaseEntry: boolean,
+): ReindexProductPayload | null {
+  let quantity = 0;
+  let direction: "IN" | "OUT" = "IN";
+
+  if (row.es === "B") {
+    const delta = row.balanco - balance.current;
+    balance.reset(row.balanco);
+    if (delta === 0) return null;
+    quantity = Math.abs(delta);
+    direction = delta > 0 ? "IN" : "OUT";
+  } else if (row.es === "E" && row.entrada !== 0) {
+    balance.applyEntry(row.entrada);
+    quantity = row.entrada;
+  } else if (row.es === "S" && row.saida !== 0) {
+    balance.applyExit(row.saida);
+    quantity = row.saida;
+    direction = "OUT";
+  } else {
+    return null;
+  }
+
+  const isInvoice = row.origem_tipo === "Nota fiscal";
+  const isSalesOrder = row.origem_tipo === "Pedido de venda";
+  const isCustomerReturn =
+    isInvoice && /devolu[cç][aã]o/i.test(row.origem_titulo ?? "");
+
+  if (isInvoice) {
+    const movement_type =
+      direction === "OUT"
+        ? "SALE_OUT"
+        : isCustomerReturn
+          ? "CUSTOMER_RETURN"
+          : "PURCHASE_ENTRY";
+
+    return {
+      product_id: row.product_internal_id,
+      invoice_id: null,
+      invoice_number: row.origem_numero || undefined,
+      movement_type,
+      movement_date: row.data,
+      movement_quantity: quantity,
+      unit_cost_invoice:
+        movement_type === "PURCHASE_ENTRY" ? row.custo_lancamento : undefined,
+      manual_average_cost_value: null,
+    };
+  }
+
+  // Pedidos de venda e qualquer lançamento sem NF são fatos do CSV, mas não
+  // têm invoice no sistema: entram como ajuste manual SYNCHED.
+  return {
+    product_id: row.product_internal_id,
+    invoice_id: null,
+    invoice_number: isSalesOrder ? row.origem_numero || undefined : undefined,
+    movement_type: "MANUAL_ADJUSTMENT",
+    movement_date: row.data,
+    movement_quantity: quantity,
+    direction,
+    manual_average_cost_value:
+      direction === "IN" && !hasEarlierPurchaseEntry && row.custo_lancamento > 0
+        ? row.custo_lancamento
+        : null,
+  };
+}
+
+function buildCsvMovements(rows: CsvRow[]): ReindexProductPayload[] {
+  const chronological = collapseConsecutiveBalanceRuns(
+    [...rows].sort((a, b) => a.data.getTime() - b.data.getTime()),
+  );
+  const balance = new RunningBalance();
+  let hasEarlierPurchaseEntry = false;
+  const movements: ReindexProductPayload[] = [];
+
+  for (const row of chronological) {
+    const movement = movementFromCsvRow(row, balance, hasEarlierPurchaseEntry);
+    if (movement) movements.push(movement);
+    if (
+      row.origem_tipo === "Nota fiscal" &&
+      row.es === "E" &&
+      !/devolu[cç][aã]o/i.test(row.origem_titulo ?? "")
+    ) {
+      hasEarlierPurchaseEntry = true;
+    }
+  }
+
+  return movements;
+}
+
+async function processCsvProduct(
+  productInternalId: string,
+  productName: string,
+  rows: CsvRow[],
+  window: CsvWindow,
+): Promise<CsvSyncResult> {
+  const existingHistory = await stockMovementService.getProductHistory(
+    productInternalId,
+    UNIT_BUSINESS_ID,
+    { page: 1, perPage: 5000 } as any,
+  );
+  const activeHistory = existingHistory.data
+    .filter((movement: any) => movement.is_active)
+    .sort((a: any, b: any) => {
+      const byDate =
+        new Date(a.movement_date).getTime() - new Date(b.movement_date).getTime();
+      return byDate || new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
+  const hasNonInitialManualAverageCost = activeHistory.some(
+    (movement: any, index: number) =>
+      index > 0 && movement.manual_average_cost_value != null,
+  );
+
+  const csvMovements = buildCsvMovements(rows);
+  console.log(
+    `\n[SyncStock] Produto ${productInternalId} (${productName}): ` +
+      `${csvMovements.length} movimento(s) lido(s) do CSV` +
+      `${hasNonInitialManualAverageCost ? " [REINDEX LEGADO: custo médio manual não é o primeiro]" : ""}`,
+  );
+
+  if (DRY_RUN) {
+    return {
+      productInternalId,
+      productName,
+      csvMovements: csvMovements.length,
+      usedLegacyReindex: hasNonInitialManualAverageCost,
+    };
+  }
+
+  const transaction = await sequelize.transaction();
+  try {
+    if (hasNonInitialManualAverageCost) {
+      // Exceção permanente: preserva a estratégia antiga, que não remove
+      // movimentos protegidos por custo médio manual.
+      const sourceData = await stockMovementService.findStockMovementSourceData(
+        UNIT_BUSINESS_ID,
+        productInternalId,
+        transaction,
+      );
+      await stockMovementService.reindexProduct(
+        productInternalId,
+        UNIT_BUSINESS_ID,
+        sourceData,
+        transaction,
+      );
+    } else {
+      await stockMovementService.syncCsvBaseline(
+        productInternalId,
+        UNIT_BUSINESS_ID,
+        csvMovements,
+        window.cutoffDate,
+        window.extractionDate,
+        transaction,
+      );
+    }
+    await transaction.commit();
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
+
+  return {
+    productInternalId,
+    productName,
+    csvMovements: csvMovements.length,
+    usedLegacyReindex: hasNonInitialManualAverageCost,
+  };
 }
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────
@@ -940,19 +1209,26 @@ async function bootstrap() {
 
 async function main() {
   if (!CSV_PATH) {
-    throw new Error("CSV_PATH não definido. Passe o caminho do CSV gerado pelo scraper.");
+    throw new Error(
+      "CSV_PATH não definido. Passe o caminho do CSV gerado pelo scraper.",
+    );
   }
   if (!fs.existsSync(CSV_PATH)) {
     throw new Error(`CSV não encontrado em: ${CSV_PATH}`);
   }
 
   await bootstrap();
+  const csvWindow = await getLatestCsvWindow();
 
   console.log("═".repeat(60));
   console.log("🔄  Sync de stock_movements a partir do CSV da Bling");
   console.log(`  CSV: ${CSV_PATH}`);
   console.log(`  unit_business_id: ${UNIT_BUSINESS_ID}`);
-  console.log(`  DRY_RUN: ${DRY_RUN}${DRY_RUN ? "  (nada será escrito no banco)" : "  ⚠️  ESCREVENDO NO BANCO"}`);
+  console.log(`  cutoff_date: ${csvWindow.cutoffDate?.toISOString() ?? "(primeira extração)"}`);
+  console.log(`  extraction_date: ${csvWindow.extractionDate.toISOString()}`);
+  console.log(
+    `  DRY_RUN: ${DRY_RUN}${DRY_RUN ? "  (nada será escrito no banco)" : "  ⚠️  ESCREVENDO NO BANCO"}`,
+  );
   console.log("═".repeat(60));
 
   const rawRows = parseCsv(CSV_PATH);
@@ -960,7 +1236,8 @@ async function main() {
 
   const byProduct = new Map<string, { name: string; rows: CsvRow[] }>();
   for (const row of rows) {
-    if (ONLY_PRODUCT_ID && row.product_internal_id !== ONLY_PRODUCT_ID) continue;
+    if (ONLY_PRODUCT_ID && row.product_internal_id !== ONLY_PRODUCT_ID)
+      continue;
     const entry = byProduct.get(row.product_internal_id);
     if (entry) {
       entry.rows.push(row);
@@ -979,7 +1256,7 @@ async function main() {
   console.log(`  Produtos a processar nesta execução: ${productIds.length}`);
   console.log("═".repeat(60));
 
-  const results: ProcessResult[] = [];
+  const results: CsvSyncResult[] = [];
   const errors: { productInternalId: string; error: string }[] = [];
 
   for (let i = 0; i < productIds.length; i++) {
@@ -987,7 +1264,12 @@ async function main() {
     const { name, rows: productRows } = byProduct.get(productId)!;
 
     try {
-      const result = await processProduct(productId, name, productRows);
+      const result = await processCsvProduct(
+        productId,
+        name,
+        productRows,
+        csvWindow,
+      );
       results.push(result);
     } catch (err: any) {
       console.error(`  ❌ Erro no produto ${productId}: ${err.message}`);
@@ -1001,38 +1283,29 @@ async function main() {
     }
   }
 
-  const totalCsvAdjustments = results.reduce((s, r) => s + r.manualAdjustmentsFromCsvCreated, 0);
-  const totalGhostCompensations = results.reduce((s, r) => s + r.ghostCompensationsCreated, 0);
-  const totalGhostFuture = results.reduce((s, r) => s + r.ghostSkippedFutureDated, 0);
-  const totalZeroDelta = results.reduce((s, r) => s + r.zeroDeltaLogged, 0);
-  const totalReconciled = results.filter((r) => (r.reconciliationDelta ?? 0) !== 0).length;
-  const totalSourceDateCorrections = results.reduce((s, r) => s + r.sourceDataDateCorrections, 0);
-  const productsWithImmutableAdjustments = results.filter((r) => r.hasImmutableManualAdjustments);
+  const totalCsvMovements = results.reduce((sum, result) => sum + result.csvMovements, 0);
+  const legacyReindexProducts = results.filter((result) => result.usedLegacyReindex);
 
   console.log("\n" + "═".repeat(60));
   console.log("  ✅ Finalizado");
-  console.log(`  Modo: ${DRY_RUN ? "DRY_RUN (nada escrito)" : "EXECUÇÃO REAL"}`);
+  console.log(
+    `  Modo: ${DRY_RUN ? "DRY_RUN (nada escrito)" : "EXECUÇÃO REAL"}`,
+  );
   console.log(`  Produtos processados: ${results.length}`);
-  console.log(`  MANUAL_ADJUSTMENT a partir do CSV ${DRY_RUN ? "que seriam criados" : "criados"}: ${totalCsvAdjustments}`);
-  console.log(`  Compensações de nota fantasma ${DRY_RUN ? "que seriam criadas" : "criadas"}: ${totalGhostCompensations}`);
-  console.log(`  Notas fantasma ignoradas (emitidas após o corte do CSV): ${totalGhostFuture}`);
-  console.log(`  Balanços com delta zero (ignorados): ${totalZeroDelta}`);
-  console.log(`  Datas de sourceData ${DRY_RUN ? "que seriam corrigidas" : "corrigidas"} conforme CSV: ${totalSourceDateCorrections}`);
-  if (!DRY_RUN) {
-    console.log(`  Produtos com reconciliação final aplicada: ${totalReconciled}`);
-  }
+  console.log(`  Movimentos do CSV ${DRY_RUN ? "a sincronizar" : "sincronizados"}: ${totalCsvMovements}`);
   console.log(`  Erros: ${errors.length}`);
   if (errors.length) {
     console.log("  Produtos com erro:");
-    for (const e of errors) console.log(`    - ${e.productInternalId}: ${e.error}`);
+    for (const e of errors)
+      console.log(`    - ${e.productInternalId}: ${e.error}`);
   }
   console.log(
-    `  Produtos com MANUAL_ADJUSTMENT imutável (datas NÃO corrigidas — revisar manualmente): ` +
-      `${productsWithImmutableAdjustments.length}`,
+    `  Produtos mantidos no reindex legado (custo médio manual não é o primeiro): ` +
+      `${legacyReindexProducts.length}`,
   );
-  if (productsWithImmutableAdjustments.length) {
-    console.log("  ⚠️  Lista de produtos a revisar:");
-    for (const p of productsWithImmutableAdjustments) {
+  if (legacyReindexProducts.length) {
+    console.log("  ⚠️  Lista de produtos no fluxo legado:");
+    for (const p of legacyReindexProducts) {
       console.log(`    - ${p.productInternalId} (${p.productName})`);
     }
   }

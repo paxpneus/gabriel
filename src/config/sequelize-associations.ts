@@ -67,10 +67,12 @@ import InventorySubgroup from "../modules/inventory/stock-inventory/inventory-su
 import Event from "../modules/company/events/event/event.model";
 import UserEvent from "../modules/company/events/users-event/users-event.model";
 import InvoiceLogisticOccurrences from "../modules/warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
+import StockMovementSourceData from "../modules/inventory/stock/stock-movement-source-data/stock-movement-source-data.model";
 
 export function setupAssociations() {
   // Standalone lookup table; no FK associations declared yet.
   void State;
+  void StockMovementSourceData;
 
   // 2. INTEGRATIONS 1:N ORDERS (PEDIDOS) ORDER SIDE
 
@@ -1200,4 +1202,3 @@ SellerSalesOrderItemSnapshot.belongsTo(UnitBusiness, {
   UserEvent.belongsTo(Event, { foreignKey: "event_id", as: "event" });
   User.hasMany(UserEvent, { foreignKey: "user_id", as: "userEvents" });
   Event.hasMany(UserEvent, { foreignKey: "event_id", as: "userEvents" });
-
