@@ -19,8 +19,8 @@ export class EventController extends BaseController<Event, EventService> {
       (req, res) => this.getUnreadEvents(req, res),
     );
 
-    this.router.patch(
-      '/:eventId/read',
+    this.router.post(
+      '/read',
       ...this.mw('markAsRead'),
       (req, res) => this.markAsRead(req, res),
     );
@@ -55,8 +55,8 @@ export class EventController extends BaseController<Event, EventService> {
       const { userId } = await getUserContext(req)
       if (!userId) return res.status(401).json({ error: 'Não autenticado.' });
 
-      const { eventId } = req.params
-      await this.service.markAsRead(eventId as string, userId);
+      const { eventIds } = req.body
+      await this.service.markAsRead(eventIds as string[], userId);
       return res.json({ success: true });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
