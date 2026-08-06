@@ -80,13 +80,13 @@ export class StockMovementService extends BaseService<
     if (!lastMovement) return;
 
     await product_configService.findOneAndUpdate(
-    { product_id: productId, unit_business_id: unitBusinessId },
-    {
-      average_cost: Number(lastMovement.resulting_average_cost),
-      average_cost_updated_at: new Date(),
-    },
-    { transaction },
-  );
+      { product_id: productId, unit_business_id: unitBusinessId },
+      {
+        average_cost: Number(lastMovement.resulting_average_cost),
+        average_cost_updated_at: new Date(),
+      },
+      { transaction },
+    );
   }
 
   /**
@@ -283,7 +283,6 @@ export class StockMovementService extends BaseService<
     movements?: ReindexProductPayload[],
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
-    
     const incomingSource =
       movements ??
       (await this.findStockMovementSourceData(
@@ -369,6 +368,7 @@ export class StockMovementService extends BaseService<
         movement_date: movement.movement_date,
         movement_quantity: movement.movement_quantity,
         unit_cost_invoice: movement.unit_cost_invoice,
+        direction: (movement as any).direction ?? null,
         manual_average_cost_value: movement.manual_average_cost_value ?? null,
         is_active: true,
         ...nextState,
@@ -504,6 +504,12 @@ export class StockMovementService extends BaseService<
         // resulting_average_cost e se propagar pra frente na cadeia.
         // O "fato" do movimento (quantidade/direção/data) nunca muda aqui,
         // só o resultado calculado.
+        const direction = movement.direction as "IN" | "OUT" | null;
+        if (direction == null) {
+          throw new Error(
+            `[STOCK_MOVEMENT] MANUAL_ADJUSTMENT ${movement.id} sem direction definida — dado corrompido, não é seguro recalcular.`,
+          );
+        }
         const nextState = this.calculateNextState(previousState, {
           movement_type: "MANUAL_ADJUSTMENT",
           movement_quantity: Number(movement.movement_quantity),
@@ -511,7 +517,7 @@ export class StockMovementService extends BaseService<
             movement.manual_average_cost_value != null
               ? Number(movement.manual_average_cost_value)
               : null,
-          direction: (movement.direction as "IN" | "OUT" | null) ?? "IN",
+          direction,
         });
 
         const hasDrifted =
