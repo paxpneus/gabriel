@@ -80,6 +80,9 @@ services:
       - "3000"
     volumes:
       - /data/compose/5/data/imports:/app/data/imports:ro
+      # Mesmo volume persistente usado pelo worker para gerar os CSVs da Bling.
+      # A API só precisa lê-lo em execuções manuais do populate.
+      - stock_movement_csv:/app/data/stock-movements:ro
     environment:
       NODE_ENV: production
       PORT: 3000
