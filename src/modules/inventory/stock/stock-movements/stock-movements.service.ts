@@ -271,8 +271,12 @@ export class StockMovementService extends BaseService<
     // Override manual: substitui completamente o custo médio calculado para
     // este movimento. Ex.: resulting calculado = 500, manual = 600 → o
     // movimento fica com 600, e os próximos movimentos usam 600 como base.
-    if (input.manual_average_cost_value != null && !isOutwardManualAdjustment) {
-      newAverageCost = input.manual_average_cost_value;
+    if (
+      ((input.manual_average_cost_value ?? 0) > 0 ||
+        input.manual_average_cost_value != null) &&
+      !isOutwardManualAdjustment
+    ) {
+      newAverageCost = input.manual_average_cost_value as number;
     }
 
     return {
@@ -314,7 +318,7 @@ export class StockMovementService extends BaseService<
     );
 
     const isProtected = (m: StockMovement) =>
-      m.manual_average_cost_value != null;
+      (m.manual_average_cost_value ?? 0) > 0 || m.manual_average_cost_value != null;
     const isBeforeOrAtCutoff = (m: StockMovement) =>
       cutoffDate != null &&
       new Date(m.movement_date).getTime() <= cutoffDate.getTime();
@@ -426,7 +430,8 @@ export class StockMovementService extends BaseService<
             ? Number(movement.unit_cost_invoice)
             : undefined,
         manual_average_cost_value:
-          movement.manual_average_cost_value != null
+          ((movement.manual_average_cost_value ?? 0) > 0 ||
+          movement.manual_average_cost_value != null)
             ? Number(movement.manual_average_cost_value)
             : null,
         direction,
@@ -860,9 +865,10 @@ export class StockMovementService extends BaseService<
           movement_type: "MANUAL_ADJUSTMENT",
           movement_quantity: Number(movement.movement_quantity),
           manual_average_cost_value:
-            movement.manual_average_cost_value != null
-              ? Number(movement.manual_average_cost_value)
-              : null,
+              ((movement.manual_average_cost_value ?? 0) > 0 ||
+              movement.manual_average_cost_value != null)
+                ? Number(movement.manual_average_cost_value)
+                : null,
           direction,
         });
 
@@ -902,8 +908,9 @@ export class StockMovementService extends BaseService<
       // partir do payload de origem (source de NF) — só o que já está
       // gravado no banco para esse invoice_id entra na conta.
       const manualAverageCostValue =
-        existing?.manual_average_cost_value != null
-          ? Number(existing.manual_average_cost_value)
+        ((existing?.manual_average_cost_value ?? 0) > 0 ||
+        existing?.manual_average_cost_value != null)
+          ? Number(existing!.manual_average_cost_value)
           : null;
 
       const nextState = this.calculateNextState(previousState, {

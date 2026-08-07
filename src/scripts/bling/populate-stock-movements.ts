@@ -708,9 +708,9 @@ async function processProduct(
     existingHistory.data
       .filter(
         (m) =>
-          m.movement_type === "MANUAL_ADJUSTMENT" &&
-          m.is_active &&
-          m.manual_average_cost_value != null,
+              m.movement_type === "MANUAL_ADJUSTMENT" &&
+                m.is_active &&
+                ((m.manual_average_cost_value ?? 0) > 0 || m.manual_average_cost_value != null),
       )
       .map((m) => ({
         movement_date: new Date(m.movement_date),
@@ -736,7 +736,8 @@ async function processProduct(
   const oldestIsImmutableManualAdjustment =
     !!oldestMovement &&
     oldestMovement.movement_type === "MANUAL_ADJUSTMENT" &&
-    oldestMovement.manual_average_cost_value != null;
+    ((oldestMovement.manual_average_cost_value ?? 0) > 0 ||
+      oldestMovement.manual_average_cost_value != null);
 
   const skipDateCorrectionDueToImmutableAdjustment =
     hasImmutableManualAdjustments && !oldestIsImmutableManualAdjustment;
@@ -1153,7 +1154,8 @@ async function processCsvProduct(
     });
   const hasNonInitialManualAverageCost = activeHistory.some(
     (movement: any, index: number) =>
-      index > 0 && movement.manual_average_cost_value != null,
+      index > 0 &&
+      ((movement.manual_average_cost_value ?? 0) > 0 || movement.manual_average_cost_value != null),
   );
 
   const csvMovements = buildCsvMovements(rows);

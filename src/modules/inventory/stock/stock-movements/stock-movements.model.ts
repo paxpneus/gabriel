@@ -26,7 +26,7 @@ class StockMovement
   public balance_quantity!: number;
   public resulting_average_cost!: number;
   public total_stock_value!: number;
-  public manual_average_cost_value?: number;
+  public manual_average_cost_value?: number | null;
   public is_active!: boolean;
   public status!: StockMovementStatus;
   public readonly createdAt!: Date;

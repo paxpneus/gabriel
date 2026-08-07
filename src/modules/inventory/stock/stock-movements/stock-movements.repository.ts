@@ -269,7 +269,10 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
         product_id: productId,
         unit_business_id: unitBusinessId,
         status: "PENDING",
-        manual_average_cost_value: null,
+        [Op.or]: [
+          { manual_average_cost_value: null },
+          { manual_average_cost_value: 0 },
+        ],
         movement_date: movementDate,
         is_active: true,
       },
