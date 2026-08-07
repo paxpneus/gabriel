@@ -86,9 +86,9 @@ export class BlingManifestacaoService {
     } catch (err) {
       if (err instanceof NotasNaoManifestadasError) {
         console.warn(
-          `[BlingManifest] Encerrando ciclo sem sucesso (não é erro de automação): ${err.message}`,
+          `[BlingManifest] Encerrando ciclo sem sucesso mas sem falhar o job, (não é erro de automação): ${err.message}`,
         );
-        return { success: false };
+        return { success: true };
       }
 
       alertService.sendAlert({
