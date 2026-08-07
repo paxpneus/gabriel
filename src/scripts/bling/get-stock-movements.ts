@@ -129,7 +129,7 @@ const BLING_DEPOSITO_IDS = (process.env.BLING_DEPOSITO_IDS ?? "")
 
 
 const CSV_STORAGE_DIR = path.resolve(
- process.env.STOCK_MOVEMENTS_CSV_DIR ?? "./data/stock-movements",
+  process.env.STOCK_MOVEMENTS_CSV_DIR?.trim() || "./data/stock-movements",
 );
 const INITIAL_CUTOFF_DATE = new Date(2024, 6, 1, 0, 0, 0);
 const MAX_PAGES = Number(process.env.MAX_PAGES ?? 0);
