@@ -104,7 +104,8 @@
  *     npx ts-node scripts/sync-stock-movements-from-bling-csv.script.ts
  *
  * Variáveis de ambiente:
- *   CSV_PATH        (obrigatória) caminho do CSV gerado pelo scraper
+ *   CSV_PATH        (opcional) override do CSV; sem ela usa `csv_path` da
+ *                   última fonte registrada pelo scraper
  *   UNIT_BUSINESS_ID (default: 361b5640-ec04-4b3f-8191-fe3ac5f134c4)
  *   DRY_RUN          (default: true)  — true = não escreve nada no banco
  *   MAX_PRODUCTS     (default: 0 = sem limite) útil pra testar
@@ -123,7 +124,11 @@ import stockMovementSourceDataService from "../../modules/inventory/stock/stock-
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
-const CSV_PATH = process.env.CSV_PATH ? path.resolve(process.env.CSV_PATH) : "";
+// Override apenas para replay/manual. No fluxo automático, o arquivo é
+// obtido da última fonte CSV que o scraper validou e registrou no banco.
+const CSV_PATH_OVERRIDE = process.env.CSV_PATH
+  ? path.resolve(process.env.CSV_PATH)
+  : "";
 const UNIT_BUSINESS_ID =
   process.env.UNIT_BUSINESS_ID ?? "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
 const DRY_RUN = process.env.DRY_RUN !== "false"; // default TRUE — precisa opt-out explícito
@@ -997,6 +1002,7 @@ async function processProduct(
 type CsvWindow = {
   extractionDate: Date;
   cutoffDate: Date | null;
+  csvPath: string;
 };
 
 type CsvSyncResult = {
@@ -1025,7 +1031,15 @@ async function getLatestCsvWindow(): Promise<CsvWindow> {
     throw new Error("cutoff_date inválida em stock_movement_source_data.");
   }
 
-  return { extractionDate, cutoffDate };
+  if (!row.csv_path) {
+    throw new Error("csv_path ausente na última stock_movement_source_data.");
+  }
+
+  return {
+    extractionDate,
+    cutoffDate,
+    csvPath: path.resolve(row.csv_path),
+  };
 }
 
 function movementFromCsvRow(
@@ -1208,21 +1222,20 @@ async function bootstrap() {
 // ─── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
-  if (!CSV_PATH) {
-    throw new Error(
-      "CSV_PATH não definido. Passe o caminho do CSV gerado pelo scraper.",
-    );
-  }
-  if (!fs.existsSync(CSV_PATH)) {
-    throw new Error(`CSV não encontrado em: ${CSV_PATH}`);
-  }
-
   await bootstrap();
   const csvWindow = await getLatestCsvWindow();
+  const csvPath = CSV_PATH_OVERRIDE || csvWindow.csvPath;
+
+  if (!fs.existsSync(csvPath)) {
+    throw new Error(`CSV não encontrado em: ${csvPath}`);
+  }
+  if (!fs.statSync(csvPath).isFile()) {
+    throw new Error(`CSV_PATH deve apontar para um arquivo, não diretório: ${csvPath}`);
+  }
 
   console.log("═".repeat(60));
   console.log("🔄  Sync de stock_movements a partir do CSV da Bling");
-  console.log(`  CSV: ${CSV_PATH}`);
+  console.log(`  CSV: ${csvPath}${CSV_PATH_OVERRIDE ? " (override manual)" : " (fonte registrada)"}`);
   console.log(`  unit_business_id: ${UNIT_BUSINESS_ID}`);
   console.log(`  cutoff_date: ${csvWindow.cutoffDate?.toISOString() ?? "(primeira extração)"}`);
   console.log(`  extraction_date: ${csvWindow.extractionDate.toISOString()}`);
@@ -1231,7 +1244,7 @@ async function main() {
   );
   console.log("═".repeat(60));
 
-  const rawRows = parseCsv(CSV_PATH);
+  const rawRows = parseCsv(csvPath);
   const rows = rawRows.map(toCsvRow);
 
   const byProduct = new Map<string, { name: string; rows: CsvRow[] }>();
