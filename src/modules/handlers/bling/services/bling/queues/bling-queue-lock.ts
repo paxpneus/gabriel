@@ -10,12 +10,13 @@ export const BLING_SHARED_QUEUE_LOCK: NonNullable<baseQueueOptions["sharedLock"]
     ranks: {
       BLING_API_FETCH:      1, // webhooks e upserts da bling
       BLING_STOCK_MOVEMENTS_SCRAPING: 2, // extração diária do CSV de estoque
-      BLING_ORDER_INGESTION:3, // criação/atualização de pedidos
+      BLING_ORDER_INGESTION: 3, // criação/atualização de pedidos
       CNPJ_VERIFY_CNAE:     4, // verificação de CNAE
       ML_ORDER_SYNC:        5, // sincronização mercado livre
-      NFE_RECONCILER:       6, // busca notas perdidas
-      BLING_RECONCILER:     7, // busca pedidos perdidos
-      NFE_EMISSION:         8, // emissão de notas com data próxima
+      BLING_NFE_SCRAPING:   6, // manifestacao automática bling
+      NFE_RECONCILER:       7, // busca notas perdidas
+      BLING_RECONCILER:     8, // busca pedidos perdidos
+      NFE_EMISSION:         9, // emissão de notas com data próxima
       
     },
     defaultRank: 10,
