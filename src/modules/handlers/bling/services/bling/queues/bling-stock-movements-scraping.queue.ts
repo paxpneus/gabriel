@@ -12,6 +12,9 @@ const CSV_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const CSV_STORAGE_DIR = path.resolve(
   process.env.STOCK_MOVEMENTS_CSV_DIR ?? "./data/stock-movements",
 );
+const AUTO_POPULATE = process.env.BLING_STOCK_MOVEMENTS_AUTO_POPULATE === "true";
+const AUTO_POPULATE_DRY_RUN =
+  process.env.BLING_STOCK_MOVEMENTS_POPULATE_DRY_RUN !== "false";
 
 /**
  * Executa a extração diária do CSV de lançamentos de estoque da Bling.
@@ -79,6 +82,36 @@ export class BlingStockMovementsScrapingQueue extends BaseQueueService<void> {
 
       if (stdout) console.log(stdout);
       if (stderr) console.error(stderr);
+
+      if (AUTO_POPULATE) {
+        console.log(
+          `[BlingStockMovementsScrapingQueue] Iniciando populate automático (DRY_RUN=${AUTO_POPULATE_DRY_RUN})...`,
+        );
+
+        const { stdout: populateStdout, stderr: populateStderr } =
+          await execFileAsync(
+            "node",
+            ["dist/scripts/bling/populate-stock-movements.js"],
+            {
+              maxBuffer: 10 * 1024 * 1024,
+              // Não permite que um CSV_PATH legado aponte para outro arquivo
+              // (ou diretório). Sem override, o populate usa a fonte recém
+              // registrada pelo scraper.
+              env: {
+                ...process.env,
+                CSV_PATH: "",
+                DRY_RUN: AUTO_POPULATE_DRY_RUN ? "true" : "false",
+              },
+            },
+          );
+
+        if (populateStdout) console.log(populateStdout);
+        if (populateStderr) console.error(populateStderr);
+      } else {
+        console.log(
+          "[BlingStockMovementsScrapingQueue] Populate automático desabilitado.",
+        );
+      }
 
       console.log(
         `[BlingStockMovementsScrapingQueue] Extração concluída em ${new Date().toISOString()}`,
