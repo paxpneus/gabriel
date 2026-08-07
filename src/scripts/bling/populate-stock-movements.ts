@@ -124,11 +124,54 @@ import stockMovementSourceDataService from "../../modules/inventory/stock/stock-
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
+function getCliArgValue(...names: string[]): string | undefined {
+  for (let i = 0; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    for (const name of names) {
+      if (arg === `--${name}`) {
+        return process.argv[i + 1];
+      }
+      const prefixed = `--${name}=`;
+      if (arg.startsWith(prefixed)) {
+        return arg.slice(prefixed.length);
+      }
+    }
+  }
+  return undefined;
+}
+
+function parseOptionalDate(value: string | undefined, label: string): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${label} inválida: ${value}`);
+  }
+  return date;
+}
+
 // Override apenas para replay/manual. No fluxo automático, o arquivo é
 // obtido da última fonte CSV que o scraper validou e registrou no banco.
-const CSV_PATH_OVERRIDE = process.env.CSV_PATH
-  ? path.resolve(process.env.CSV_PATH)
-  : "";
+const CLI_CSV_PATH = getCliArgValue("csv-path", "csvPath", "csv");
+const CLI_CUTOFF_DATE = getCliArgValue("cutoff-date", "cutoffDate", "cutoff");
+const CLI_EXTRACTION_DATE = getCliArgValue(
+  "extraction-date",
+  "extractionDate",
+  "extraction",
+);
+
+const CSV_PATH_OVERRIDE = CLI_CSV_PATH
+  ? path.resolve(CLI_CSV_PATH)
+  : process.env.CSV_PATH
+    ? path.resolve(process.env.CSV_PATH)
+    : "";
+const CUTOFF_DATE_OVERRIDE =
+  parseOptionalDate(CLI_CUTOFF_DATE ?? process.env.CUTOFF_DATE, "CUTOFF_DATE") ??
+  null;
+const EXTRACTION_DATE_OVERRIDE =
+  parseOptionalDate(
+    CLI_EXTRACTION_DATE ?? process.env.EXTRACTION_DATE,
+    "EXTRACTION_DATE",
+  ) ?? null;
 const UNIT_BUSINESS_ID =
   process.env.UNIT_BUSINESS_ID ?? "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
 const DRY_RUN = process.env.DRY_RUN !== "false"; // default TRUE — precisa opt-out explícito
@@ -360,6 +403,71 @@ interface GhostInvoicePlan {
     movement_date: Date;
     qty: number;
   }[];
+}
+
+/**
+ * Junta linhas do CSV que pertencem à MESMA NF (mesmo invoice_number
+ * normalizado) e mesma direção (es) num único lançamento. A Bling às
+ * vezes quebra uma nota em múltiplas linhas pro mesmo produto (ex: dois
+ * itens da mesma NF, mesmo produto, lotes/CFOPs diferentes) — sem isso,
+ * viram dois PURCHASE_ENTRY/SALE_OUT com mesma data, o que gera empate
+ * de ordenação indistinguível no banco (balance_quantity ambíguo).
+ *
+ * "B" nunca entra aqui — balanço não tem NF associada nesse sentido.
+ * Linhas sem origem_numero (ou não "Nota fiscal") também passam direto,
+ * uma a uma.
+ */
+function mergeSameInvoiceRows(rows: CsvRow[]): CsvRow[] {
+  const groups = new Map<string, CsvRow[]>();
+  const order: string[] = [];
+
+  for (const row of rows) {
+    const isMergeable =
+      row.origem_tipo === "Nota fiscal" &&
+      !!row.origem_numero &&
+      (row.es === "E" || row.es === "S");
+
+    const key = isMergeable
+      ? `nf:${normalizeInvoiceNumber(row.origem_numero)}:${row.es}`
+      : `solo:${row.lancamento_id}`;
+
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      order.push(key);
+    }
+    groups.get(key)!.push(row);
+  }
+
+  const merged: CsvRow[] = [];
+  for (const key of order) {
+    const group = groups.get(key)!;
+    if (group.length === 1) {
+      merged.push(group[0]);
+      continue;
+    }
+
+    const sortedGroup = [...group].sort((a, b) => a.data.getTime() - b.data.getTime());
+    const totalEntrada = sortedGroup.reduce((s, r) => s + r.entrada, 0);
+    const totalSaida = sortedGroup.reduce((s, r) => s + r.saida, 0);
+    // custo médio ponderado pelas quantidades de entrada — cobre o caso
+    // de itens da mesma NF com custo unitário diferente entre as linhas.
+    const custoTotal = sortedGroup.reduce((s, r) => s + r.entrada * r.custo_lancamento, 0);
+
+    console.log(
+      `  🔗 Mesclando ${sortedGroup.length} linha(s) da NF ${sortedGroup[0].origem_numero} ` +
+        `(product=${sortedGroup[0].product_internal_id}) em um único movimento.`,
+    );
+
+    merged.push({
+      ...sortedGroup[sortedGroup.length - 1],
+      entrada: totalEntrada,
+      saida: totalSaida,
+      custo_lancamento: totalEntrada > 0 ? custoTotal / totalEntrada : sortedGroup[sortedGroup.length - 1].custo_lancamento,
+      lancamento_id: sortedGroup.map((r) => r.lancamento_id).join("+"),
+    });
+  }
+
+  return merged.sort((a, b) => a.data.getTime() - b.data.getTime());
 }
 
 /**
@@ -1043,6 +1151,41 @@ async function getLatestCsvWindow(): Promise<CsvWindow> {
   };
 }
 
+async function resolveCsvWindow(): Promise<CsvWindow> {
+  const hasExplicitWindow =
+    !!CSV_PATH_OVERRIDE ||
+    !!(CLI_CUTOFF_DATE ?? process.env.CUTOFF_DATE) ||
+    !!(CLI_EXTRACTION_DATE ?? process.env.EXTRACTION_DATE);
+
+  if (!hasExplicitWindow) {
+    return getLatestCsvWindow();
+  }
+
+  const explicitExtractionDate =
+    EXTRACTION_DATE_OVERRIDE ??
+    parseOptionalDate(process.env.EXTRACTION_DATE, "EXTRACTION_DATE");
+  const explicitCutoffDate =
+    CUTOFF_DATE_OVERRIDE ??
+    parseOptionalDate(process.env.CUTOFF_DATE, "CUTOFF_DATE");
+
+  const resolvedCsvPath = CSV_PATH_OVERRIDE || "";
+  if (!resolvedCsvPath) {
+    return getLatestCsvWindow();
+  }
+
+  if (!explicitExtractionDate) {
+    throw new Error(
+      "Quando usar override explícito de CSV, também informe EXTRACTION_DATE (ou --extraction-date).",
+    );
+  }
+
+  return {
+    extractionDate: explicitExtractionDate,
+    cutoffDate: explicitCutoffDate,
+    csvPath: resolvedCsvPath,
+  };
+}
+
 function movementFromCsvRow(
   row: CsvRow,
   balance: RunningBalance,
@@ -1112,8 +1255,9 @@ function movementFromCsvRow(
 }
 
 function buildCsvMovements(rows: CsvRow[]): ReindexProductPayload[] {
+  const merged = mergeSameInvoiceRows(rows);
   const chronological = collapseConsecutiveBalanceRuns(
-    [...rows].sort((a, b) => a.data.getTime() - b.data.getTime()),
+    [...merged].sort((a, b) => a.data.getTime() - b.data.getTime()),
   );
   const balance = new RunningBalance();
   let hasEarlierPurchaseEntry = false;
@@ -1225,7 +1369,7 @@ async function bootstrap() {
 
 async function main() {
   await bootstrap();
-  const csvWindow = await getLatestCsvWindow();
+  const csvWindow = await resolveCsvWindow();
   const csvPath = CSV_PATH_OVERRIDE || csvWindow.csvPath;
 
   if (!fs.existsSync(csvPath)) {
