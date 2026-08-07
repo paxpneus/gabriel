@@ -56,6 +56,7 @@ export type QueueName =
   | "BLING_TOKEN_REFRESH"
   | "BLING_MIGRATION"
   | "BLING_STOCK_MOVEMENTS_SCRAPING"
+  | "BLING_NFE_SCRAPING"
   | "TCAR_UPSERT"
   | "TCAR_SYNC"
   | "DAILY_OPERATION_REPORT"
@@ -382,6 +383,7 @@ export function startTecincoWorkers() {
 export function startScrapingWorker() {
   const { mlOrderSyncQueue, blingStockMovementsScrapingQueue } = buildQueues([
     "BLING_STOCK_MOVEMENTS_SCRAPING",
+    "BLING_NFE_SCRAPING"
   ]);
 
   const mlScrapingQueue = new MLScrapingQueue(
@@ -399,7 +401,6 @@ export function startScrapingWorker() {
   );
 
   blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 60 * 1000 });
-  blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 1000 });
   blingStockMovementsScrapingQueue.scheduleRepeat({
     cron: "0 5 * * *",
     tz: "America/Sao_Paulo",
