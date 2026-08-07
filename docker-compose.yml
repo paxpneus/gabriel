@@ -241,7 +241,7 @@ services:
       # CSV completo seja registrado como fonte válida.
       BLING_INTEGRATION_ID: ${BLING_INTEGRATION_ID}
       BLING_DEPOSITO_IDS: ${BLING_DEPOSITO_IDS}
-      STOCK_MOVEMENTS_CSV_DIR: ${STOCK_MOVEMENTS_CSV_DIR:-/app/data/stock-movements}
+      STOCK_MOVEMENTS_CSV_DIR: ${STOCK_MOVEMENTS_CSV_DIR}
       MAX_PAGES: ${MAX_PAGES:-0}
       MAX_PRODUCTS: ${MAX_PRODUCTS:-0}
       PAGE_DELAY_MS: ${PAGE_DELAY_MS:-400}
