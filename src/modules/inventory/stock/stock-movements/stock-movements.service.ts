@@ -63,6 +63,33 @@ function normalizeInvoiceNumber(
   return normalized || "0";
 }
 
+/**
+ * Chave de dedupe para uma entrada de CSV/SYNCHED dentro da janela do
+ * baseline. Preferimos invoice_number normalizado (cobre tanto Nota fiscal
+ * quanto Pedido de venda, que reaproveita o mesmo campo) — só cai pro
+ * fingerprint por data/quantidade/tipo/direção quando não há
+ * invoice_number (balanço avulso, ajuste sem origem).
+ */
+function buildCsvEntryFingerprint(entry: {
+  invoice_number?: string | null;
+  movement_type: string;
+  movement_quantity: number;
+  movement_date: Date;
+  direction?: "IN" | "OUT" | null;
+}): string {
+  const normalized = normalizeInvoiceNumber(entry.invoice_number);
+  if (normalized && normalized !== "0") {
+    return `inv:${normalized}:${entry.movement_type}`;
+  }
+
+  return (
+    `fp:${new Date(entry.movement_date).getTime()}` +
+    `:${entry.movement_quantity}` +
+    `:${entry.movement_type}` +
+    `:${entry.direction ?? ""}`
+  );
+}
+
 export class StockMovementService extends BaseService<
   StockMovement,
   StockMovementRepository
@@ -318,10 +345,30 @@ export class StockMovementService extends BaseService<
     );
 
     const isProtected = (m: StockMovement) =>
-      (m.manual_average_cost_value ?? 0) > 0 || m.manual_average_cost_value != null;
+      (m.manual_average_cost_value ?? 0) > 0 ||
+      m.manual_average_cost_value != null;
     const isBeforeOrAtCutoff = (m: StockMovement) =>
       cutoffDate != null &&
       new Date(m.movement_date).getTime() <= cutoffDate.getTime();
+
+    const existingSynchedFingerprints = new Set(
+      remaining
+        .filter((m) => {
+          if (m.status !== "SYNCHED") return false;
+          const date = new Date(m.movement_date).getTime();
+          const afterCutoff = !cutoffDate || date > cutoffDate.getTime();
+          return afterCutoff && date <= extractionDate.getTime();
+        })
+        .map((m) =>
+          buildCsvEntryFingerprint({
+            invoice_number: m.invoice_number,
+            movement_type: m.movement_type,
+            movement_quantity: Number(m.movement_quantity),
+            movement_date: m.movement_date,
+            direction: m.direction as "IN" | "OUT" | null,
+          }),
+        ),
+    );
 
     // O estado anterior ao início da janela já foi consolidado e não deve ser
     // recalculado por esta execução.
@@ -344,10 +391,29 @@ export class StockMovementService extends BaseService<
     );
     const newCsvEntries = csvMovements.filter((m) => {
       const date = new Date(m.movement_date).getTime();
-      return (
+      const inWindow =
         (!cutoffDate || date > cutoffDate.getTime()) &&
-        date <= extractionDate.getTime()
-      );
+        date <= extractionDate.getTime();
+      if (!inWindow) return false;
+
+      const fingerprint = buildCsvEntryFingerprint({
+        invoice_number: m.invoice_number,
+        movement_type: m.movement_type,
+        movement_quantity: m.movement_quantity,
+        movement_date: m.movement_date,
+        direction: (m as any).direction ?? null,
+      });
+
+      if (existingSynchedFingerprints.has(fingerprint)) {
+        console.log(
+          `  ⏭️  [syncCsvBaseline] product=${productId} — lançamento já SYNCHED ` +
+            `(invoice_number=${m.invoice_number ?? "-"}, tipo=${m.movement_type}, ` +
+            `data=${new Date(m.movement_date).toISOString()}) — pulando, não recriando.`,
+        );
+        return false;
+      }
+
+      return true;
     });
 
     type TimelineEntry =
@@ -430,8 +496,8 @@ export class StockMovementService extends BaseService<
             ? Number(movement.unit_cost_invoice)
             : undefined,
         manual_average_cost_value:
-          ((movement.manual_average_cost_value ?? 0) > 0 ||
-          movement.manual_average_cost_value != null)
+          (movement.manual_average_cost_value ?? 0) > 0 ||
+          movement.manual_average_cost_value != null
             ? Number(movement.manual_average_cost_value)
             : null,
         direction,
@@ -499,10 +565,7 @@ export class StockMovementService extends BaseService<
       input.unit_business_id,
       transaction,
     );
-    if (
-      cutoff &&
-      new Date(input.movement_date).getTime() <= cutoff.getTime()
-    ) {
+    if (cutoff && new Date(input.movement_date).getTime() <= cutoff.getTime()) {
       throw new Error(
         `[STOCK_MOVEMENT] Movimento emitido em ${new Date(input.movement_date).toISOString()} já está coberto pelo CSV extraído em ${cutoff.toISOString()}.`,
       );
@@ -692,7 +755,7 @@ export class StockMovementService extends BaseService<
         unit_cost_invoice: movement.unit_cost_invoice,
         direction: (movement as any).direction ?? null,
         manual_average_cost_value: movement.manual_average_cost_value ?? null,
-        status: 'PENDING',
+        status: "PENDING",
         is_active: true,
         ...nextState,
       } as StockMovementCreationAttributes);
@@ -865,10 +928,10 @@ export class StockMovementService extends BaseService<
           movement_type: "MANUAL_ADJUSTMENT",
           movement_quantity: Number(movement.movement_quantity),
           manual_average_cost_value:
-              ((movement.manual_average_cost_value ?? 0) > 0 ||
-              movement.manual_average_cost_value != null)
-                ? Number(movement.manual_average_cost_value)
-                : null,
+            (movement.manual_average_cost_value ?? 0) > 0 ||
+            movement.manual_average_cost_value != null
+              ? Number(movement.manual_average_cost_value)
+              : null,
           direction,
         });
 
@@ -908,8 +971,8 @@ export class StockMovementService extends BaseService<
       // partir do payload de origem (source de NF) — só o que já está
       // gravado no banco para esse invoice_id entra na conta.
       const manualAverageCostValue =
-        ((existing?.manual_average_cost_value ?? 0) > 0 ||
-        existing?.manual_average_cost_value != null)
+        (existing?.manual_average_cost_value ?? 0) > 0 ||
+        existing?.manual_average_cost_value != null
           ? Number(existing!.manual_average_cost_value)
           : null;
 
@@ -1391,7 +1454,9 @@ export class StockMovementService extends BaseService<
     const pending = sourceData.filter(
       (item) =>
         (!item.invoice_id || !existingInvoiceIds.has(item.invoice_id)) &&
-        !synchedInvoiceNumbers.has(normalizeInvoiceNumber(item.invoice_number) ?? ""),
+        !synchedInvoiceNumbers.has(
+          normalizeInvoiceNumber(item.invoice_number) ?? "",
+        ),
     );
 
     if (pending.length) {
@@ -1645,7 +1710,6 @@ export class StockMovementService extends BaseService<
 
     return missing.length;
   }
-
 }
 
 export default new StockMovementService();

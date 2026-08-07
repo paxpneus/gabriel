@@ -44,8 +44,8 @@ export const setupAdminJS = async (app: Express) => {
       email: string;
       password: string;
     }) => {
-      const adminEmail = process.env.DB_USER || "admin@paxhub.com";
-      const adminPassword = process.env.DB_PASS;
+      const adminEmail = process.env.ADMINJS_USER || "admin@paxhub.com";
+      const adminPassword = process.env.ADMINJS_PASSWORD;
 
       if (!adminPassword) {
         console.warn("⚠️ DB_PASS não configurado");
