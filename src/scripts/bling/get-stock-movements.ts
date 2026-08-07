@@ -472,6 +472,69 @@ interface PageFetchResult {
  errorMessage?: string;
 }
 
+/** Retorna somente o tipo/forma do valor; nunca registra o corpo da Bling. */
+function describePayloadValue(value: unknown): string {
+ if (value === null) return "null";
+ if (Array.isArray(value)) return "array";
+ if (typeof value === "object") {
+   const keys = Object.keys(value as Record<string, unknown>).slice(0, 10);
+   return `object(chaves=${keys.length ? keys.join(",") : "nenhuma"})`;
+ }
+ return typeof value;
+}
+
+/** Resume o envelope de erro da Bling sem registrar o payload completo. */
+function describeBlingErrorEnvelope(value: unknown): string {
+ if (!value || typeof value !== "object" || Array.isArray(value)) {
+   return describePayloadValue(value);
+ }
+
+ const payload = value as Record<string, unknown>;
+ const summarize = (field: "status" | "title" | "message") => {
+   const fieldValue = payload[field];
+   if (typeof fieldValue !== "string" && typeof fieldValue !== "number") {
+     return `${field}=${describePayloadValue(fieldValue)}`;
+   }
+   const text = String(fieldValue).replace(/\s+/g, " ").slice(0, 300);
+   return `${field}=${JSON.stringify(text)}`;
+ };
+
+ return ["status", "title", "message"]
+   .map((field) => summarize(field as "status" | "title" | "message"))
+   .join(", ");
+}
+
+/**
+ * A Bling responde com este envelope, em vez de `data: []`, quando o filtro
+ * não encontra lançamentos. Só esse caso explícito pode ser tratado como
+ * lista vazia; outros objetos em `data` continuam sendo falhas.
+ */
+function isNoStockMovementsEnvelope(value: unknown): boolean {
+ if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+ const payload = value as Record<string, unknown>;
+ return (
+   String(payload.status ?? "").trim().toLowerCase() === "success" &&
+   String(payload.title ?? "").trim().toLowerCase() ===
+     "sem lançamentos de estoque"
+ );
+}
+
+function describeScrapeError(error: unknown): string {
+ if (error instanceof Error) return `${error.name}: ${error.message}`;
+ return `erro não-Error: ${String(error)}`;
+}
+
+function describeCombination(
+ produto: ProductMappingRow,
+ idDeposito: string,
+): string {
+ return (
+   `produto="${produto.name}" internal_id=${produto.internal_id} ` +
+   `bling_product_id=${produto.external_id} deposito_id=${idDeposito}`
+ );
+}
+
 
 /**
 * Faz o GET no endpoint interno rodando um `fetch()` DENTRO da própria
@@ -542,7 +605,11 @@ async function fetchLancamentosPage(
 
 
  try {
-   return { parsed: JSON.parse(raw.body) as LancamentosResponse, raw };
+   const parsed: unknown = JSON.parse(raw.body);
+   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+     return { parsed: null, raw };
+   }
+   return { parsed: parsed as LancamentosResponse, raw };
  } catch {
    return { parsed: null, raw };
  }
@@ -627,7 +694,8 @@ async function scrapeProdutoDeposito(
 
    if (!resp && !reauthAttempted) {
      console.warn(
-       `[BlingStockScrape] Sessão parece ter caído (status=${raw.status}, ` +
+       `[BlingStockScrape] Sessão parece ter caído para ${describeCombination(produto, idDeposito)} ` +
+         `(página=${pagina}, status=${raw.status}, ` +
          `content-type=${raw.contentType ?? "?"}) — re-logando...`,
      );
      reauthAttempted = true;
@@ -648,18 +716,45 @@ async function scrapeProdutoDeposito(
 
    if (!resp) {
      console.warn(
-       `[BlingStockScrape] Resposta inválida (status=${raw.status}, ` +
-         `content-type=${raw.contentType ?? "?"}) — abortando produto/depósito atual`,
+       `[BlingStockScrape] Resposta inválida para ${describeCombination(produto, idDeposito)} ` +
+         `(página=${pagina}, status=${raw.status}, ` +
+         `content-type=${raw.contentType ?? "?"}, fetch-error=${raw.errorMessage ?? "nenhum"}) ` +
+         `— abortando produto/depósito atual`,
      );
      break;
    }
 
 
-   const data = resp.data ?? [];
+   // A Bling pode representar uma lista vazia por `data: []` ou por este
+   // envelope explícito de sucesso. O segundo é auditado com os filtros da
+   // consulta, mas não bloqueia a extração nem o registro da fonte CSV.
+   if (!Array.isArray(resp.data)) {
+     if (isNoStockMovementsEnvelope(resp.data)) {
+       console.warn(
+         `[BlingStockScrape] Bling não encontrou lançamentos para os filtros: ` +
+           `${describeCombination(produto, idDeposito)} ` +
+           `período=${formatDateForBling(window.cutoffDate)} a ${formatDateForBling(window.extractionDate)}; ` +
+           `detalhes: ${describeBlingErrorEnvelope(resp.data)}. Tratando como lista vazia.`,
+       );
+       break;
+     }
+     throw new Error(
+       `Resposta da Bling inválida na página ${pagina}: data deveria ser array, ` +
+         `mas recebeu ${describePayloadValue(resp.data)}; ` +
+         `detalhes: ${describeBlingErrorEnvelope(resp.data)}`,
+     );
+   }
+   const data = resp.data;
    if (data.length === 0) break;
 
 
-   for (const lancamento of data) {
+   for (const [index, lancamento] of data.entries()) {
+     if (!lancamento || typeof lancamento !== "object") {
+       throw new Error(
+         `Resposta JSON inválida na página ${pagina}: lançamento ${index + 1} ` +
+           `deveria ser objeto, mas recebeu ${describePayloadValue(lancamento)}`,
+       );
+     }
      rows.push(lancamentoToRow(produto, idDeposito, lancamento));
    }
 
@@ -772,7 +867,7 @@ async function main() {
  let skippedResume = 0;
  let totalRowsWritten = 0;
  let errors = 0;
- const failedProducts: string[] = [];
+ const failedCombinations: string[] = [];
 
 
  try {
@@ -829,12 +924,16 @@ async function main() {
          } catch (err: any) {
            errors++;
            processed++;
-           failedProducts.push(`${processed}/${totalCombinacoes}`);
+           const combination = describeCombination(produto, idDeposito);
+           failedCombinations.push(
+             `${processed}/${totalCombinacoes} (${combination})`,
+           );
            const pct = totalCombinacoes
              ? ((processed / totalCombinacoes) * 100).toFixed(1)
              : "0.0";
            console.error(
-             `  ❌ Progresso: ${processed}/${totalCombinacoes} (${pct}%) — falha ao buscar combinação (${err?.name ?? "erro desconhecido"})`,
+             `  ❌ Progresso: ${processed}/${totalCombinacoes} (${pct}%) — ` +
+               `falha ao buscar combinação: ${combination}; erro=${describeScrapeError(err)}`,
            );
          }
 
@@ -870,8 +969,8 @@ async function main() {
  console.log(`  Pulados (resume): ${skippedResume}`);
  console.log(`  Linhas gravadas no CSV: ${totalRowsWritten}`);
  console.log(`  Erros: ${errors}`);
- if (failedProducts.length) {
-   console.log(`  Combinações com falha: ${failedProducts.join(", ")}`);
+ if (failedCombinations.length) {
+   console.log(`  Combinações com falha: ${failedCombinations.join(", ")}`);
  }
  console.log(`  CSV: ${window.csvPath}`);
  console.log("═".repeat(60));
