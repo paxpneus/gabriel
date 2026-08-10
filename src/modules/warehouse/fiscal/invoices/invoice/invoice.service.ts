@@ -38,7 +38,7 @@ import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invo
 import eventService from "../../../../company/events/event/event.service";
 import redisService from "../../../../../shared/utils/base-models/base-redis";
 import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
-import User from "../../../../company/users/users/user.model";
+import userService from "../../../../company/users/users/user.service";
 
 const default_seller = '5ff76374-4d67-4ef3-a566-349a015f86b1'
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
@@ -577,7 +577,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     }
   }
 
-  const default_report_seler = await User.findByPk(default_seller)
+  const default_report_seler = await userService.findById(default_seller)
 
   const default_seller_body = {
     id: default_report_seler!.id,
