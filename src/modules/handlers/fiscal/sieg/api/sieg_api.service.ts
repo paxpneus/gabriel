@@ -1,11 +1,11 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from "axios";
-import { createAxiosInstance } from "../../../../config/axios";
-import integrationsService from "../../../integrations/integrations/integrations.service";
+import { createAxiosInstance } from "../../../../../config/axios";
+import integrationsService from "../../../../integrations/integrations/integrations.service";
 import { QueueItem, SiegTokenResponse } from "./sieg_api.types";
-import ConfigToken from "../../../integrations/config_tokens/config_tokens.model";
-import { FullIntegration } from "../../../integrations/integrations/integrations.types";
-import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
-import { redisConnection } from "../../../../shared/utils/base-models/base-redis";
+import ConfigToken from "../../../../integrations/config_tokens/config_tokens.model";
+import { FullIntegration } from "../../../../integrations/integrations/integrations.types";
+import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
+import { redisConnection } from "../../../../../shared/utils/base-models/base-redis";
 
 let isRefreshing = false;
 let failedQueue: QueueItem[] = [];
@@ -225,7 +225,7 @@ async function ensureValidJwt(configToken: ConfigToken): Promise<string> {
 // Instancia do axios para a Sieg
 export const siegApi: AxiosInstance = createAxiosInstance({
   baseURL:
-    process.env.NODE_ENV == "development" ? "nothing" : "https://api.sieg.com",
+    process.env.NODE_ENV ?? "https://api.sieg.com/api",
 
   // Interceptor de request: garante JWT válido e injeta os dois headers exigidos pela Sieg
   onRequest: async (config) => {
