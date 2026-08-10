@@ -517,7 +517,12 @@ export class InvoiceController extends BaseController<
   ): Promise<Response> => {
     try {
       const params = this.extractQueryParams(req);
-      const data = await this.service.getInvoiceProductReport(params);
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      const data = await this.service.getInvoiceProductReport(params, unitBusinessId,);
       return res.json({ data });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

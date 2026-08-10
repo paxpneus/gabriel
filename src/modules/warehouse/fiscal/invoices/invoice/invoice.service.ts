@@ -37,6 +37,7 @@ import {
 import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 import eventService from "../../../../company/events/event/event.service";
 import redisService from "../../../../../shared/utils/base-models/base-redis";
+import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -468,245 +469,263 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     });
   }
 
-  async getInvoiceProductReport(params: QueryParams) {
-    params.filters = { ...params.filters };
+  async getInvoiceProductReport(params: QueryParams, unitBusinessId: string) {
+  const type = params.filters?.type ?? "OUTGOING";
+  params.filters = { ...params.filters };
+  delete params.filters.type;
 
-    const rows = await this.findAll(
-      {
-        attributes: [
-          "id",
-          "id_system",
-          "destination_city",
-          "number_system",
-          "seller_id",
-        ],
-        include: [
-          {
-            model: Contact,
-            as: "seller",
-            attributes: ["id", "name", "id_system"],
+  const rows = await this.findAll(
+    {
+      subQuery: false,
+      attributes: [
+        "id",
+        "id_system",
+        "destination_city",
+        "number_system",
+        "seller_id",
+      ],
+      include: [
+        {
+          model: InvoiceUnitBusinessAttributes,
+          as: "unitBusinessAttributes",
+          required: true,
+          attributes: [],
+          where: {
+            unit_business_id: unitBusinessId,
+            type,
           },
-          {
-            model: InvoiceItems,
-            as: "items",
-            attributes: ["quantity_expected"],
-            include: [
-              {
-                model: Product,
-                as: "product",
-                attributes: ["measure", "line", "brand"],
-              },
-            ],
-          },
-        ],
-      },
-      params,
-      this.queryConfig,
-    );
+        },
+        {
+          model: Contact,
+          as: "seller",
+          attributes: ["id", "name", "id_system"],
+        },
+        {
+          model: InvoiceItems,
+          as: "items",
+          attributes: ["quantity_expected"],
+          required: true,
+          include: [
+            {
+              model: Product,
+              as: "product",
+              attributes: ["measure", "line", "brand"],
+              required: true,
+            },
+          ],
+        },
+      ],
+    },
+    params,
+    this.queryConfig,
+  );
 
-    const orderByInvoiceId = new Map<string, Order>();
-    const orderByInvoiceSystemId = new Map<string, Order>();
-    const invoiceIds = rows.map((invoice) => invoice.id).filter(Boolean);
-    const invoiceSystemIds = rows
-      .map((invoice) => invoice.id_system)
-      .filter((idSystem): idSystem is string => Boolean(idSystem));
+  const orderByInvoiceId = new Map<string, Order>();
+  const orderByInvoiceSystemId = new Map<string, Order>();
+  const invoiceIds = rows.map((invoice) => invoice.id).filter(Boolean);
+  const invoiceSystemIds = rows
+    .map((invoice) => invoice.id_system)
+    .filter((idSystem): idSystem is string => Boolean(idSystem));
 
-    if (invoiceIds.length || invoiceSystemIds.length) {
-      const orderWhere: FindOptions["where"] = {
-        [Op.or]: [
-          ...(invoiceIds.length
-            ? [{ invoice_id: { [Op.in]: invoiceIds } }]
-            : []),
-          ...(invoiceSystemIds.length
-            ? [
-                Sequelize.where(
-                  Sequelize.literal(
-                    `"Order"."source_payload" #>> '{notaFiscal,id}'`,
-                  ),
-                  { [Op.in]: invoiceSystemIds },
+  if (invoiceIds.length || invoiceSystemIds.length) {
+    const orderWhere: FindOptions["where"] = {
+      [Op.or]: [
+        ...(invoiceIds.length
+          ? [{ invoice_id: { [Op.in]: invoiceIds } }]
+          : []),
+        ...(invoiceSystemIds.length
+          ? [
+              Sequelize.where(
+                Sequelize.literal(
+                  `"Order"."source_payload" #>> '{notaFiscal,id}'`,
                 ),
-              ]
-            : []),
-        ],
-      };
-
-      const orders = await Order.findAll({
-        where: orderWhere,
-        attributes: [
-          "id",
-          "invoice_id",
-          "date",
-          "id_order_system",
-          "number_order_system",
-          "number_order_channel",
-          "source_payload",
-        ],
-      });
-
-      for (const order of orders) {
-        if (order.invoice_id) {
-          orderByInvoiceId.set(order.invoice_id, order);
-        }
-
-        const sourcePayload = order.source_payload as
-          | { notaFiscal?: { id?: string | number } }
-          | undefined;
-        const sourceInvoiceId = sourcePayload?.notaFiscal?.id;
-        if (sourceInvoiceId != null) {
-          orderByInvoiceSystemId.set(String(sourceInvoiceId), order);
-        }
-      }
-    }
-
-    const result: {
-      number_system: string | undefined;
-      city: string | null;
-      seller: {
-        id: string;
-        name: string;
-        id_system: string;
-      } | null;
-      order: {
-        id: string;
-        date: Date | null;
-        id_order_system?: string;
-        number_order_system: string;
-        number_order_channel: string;
-      } | null;
-      measure: string | null;
-      quantity: number;
-      line: string | null;
-      brand: string | null;
-    }[] = [];
-
-    for (const invoice of rows) {
-      const invoiceWithRelations = invoice as Invoice & {
-        seller?: Contact | null;
-        items?: (InvoiceItems & { product?: Product | null })[];
-      };
-      const order =
-        orderByInvoiceId.get(invoice.id) ??
-        (invoice.id_system
-          ? orderByInvoiceSystemId.get(invoice.id_system)
-          : undefined);
-
-      for (const item of invoiceWithRelations.items ?? []) {
-        result.push({
-          number_system: invoice.number_system,
-          city: invoice.destination_city ?? null,
-          seller: invoiceWithRelations.seller
-            ? {
-                id: invoiceWithRelations.seller.id,
-                name: invoiceWithRelations.seller.name,
-                id_system: invoiceWithRelations.seller.id_system,
-              }
-            : null,
-          order: order
-            ? {
-                id: order.id,
-                date: order.date ?? null,
-                id_order_system: order.id_order_system,
-                number_order_system: order.number_order_system,
-                number_order_channel: order.number_order_channel,
-              }
-            : null,
-          measure: item.product?.measure ?? null,
-          quantity: item.quantity_expected,
-          line: item.product?.line ?? null,
-          brand: item.product?.brand ?? null,
-        });
-      }
-    }
-
-    return result;
-  }
-
-  async getInvoiceSupplierReport(params: QueryParams, unitBusinessId: string) {
-    params.filters = {
-      ...params.filters,
-      type: "OUTGOING", // força sempre notas de saída
+                { [Op.in]: invoiceSystemIds },
+              ),
+            ]
+          : []),
+      ],
     };
 
-    const rows = await this.findAll(
-      {
-        subQuery: false, // necessário para filtros em associations aninhadas
-        attributes: ["id", "number_system", "emitted_at", "xml_key"],
-        include: [
-          {
-            model: InvoiceItems,
-            as: "items",
-            attributes: ["quantity_expected"],
-            required: true, // só notas que têm itens
-            include: [
-              {
-                model: Product,
-                as: "product",
-                attributes: ["name", "brand"], // adicionado brand
-                required: true, // só itens que têm produto
-                include: [
-                  {
-                    model: ProductConfig,
-                    as: "productConfigs",
-                    attributes: ["sku"],
-                    where: unitBusinessId
-                      ? { unit_business_id: unitBusinessId }
-                      : undefined,
-                    required: false,
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-      params,
-      this.queryConfig,
-    );
+    const orders = await Order.findAll({
+      where: orderWhere,
+      attributes: [
+        "id",
+        "invoice_id",
+        "date",
+        "id_order_system",
+        "number_order_system",
+        "number_order_channel",
+        "source_payload",
+      ],
+    });
 
-    const result: {
-      number_system: string | undefined;
-      date: Date | null;
-      xml_key: string | null;
-      sku: string | null;
-      description: string | null;
-      quantity: number;
-      brand: string | null;
-    }[] = [];
+    for (const order of orders) {
+      if (order.invoice_id) {
+        orderByInvoiceId.set(order.invoice_id, order);
+      }
 
-    for (const invoice of rows) {
-      const invoiceWithRelations = invoice as Invoice & {
-        items?: (InvoiceItems & {
-          product?:
-            | (Product & {
-                productConfigs?: ProductConfig[];
-                brand?: string | null;
-                source_payload?: { descricaoCurta?: string } | null;
-              })
-            | null;
-        })[];
-      };
-
-      for (const item of invoiceWithRelations.items ?? []) {
-        const product = item.product;
-        const productConfig = product?.productConfigs?.[0];
-        const sourcePayload = product?.source_payload as
-          | { descricaoCurta?: string }
-          | undefined;
-
-        result.push({
-          number_system: invoice.number_system,
-          date: invoice.emitted_at ?? null,
-          xml_key: invoice.xml_key ?? null,
-          sku: productConfig?.sku ?? null,
-          description: product?.name ?? "",
-          quantity: item.quantity_expected,
-          brand: product?.brand ?? null,
-        });
+      const sourcePayload = order.source_payload as
+        | { notaFiscal?: { id?: string | number } }
+        | undefined;
+      const sourceInvoiceId = sourcePayload?.notaFiscal?.id;
+      if (sourceInvoiceId != null) {
+        orderByInvoiceSystemId.set(String(sourceInvoiceId), order);
       }
     }
-
-    return result;
   }
+
+  const result: {
+    number_system: string | undefined;
+    city: string | null;
+    seller: {
+      id: string;
+      name: string;
+      id_system: string;
+    } | null;
+    order: {
+      id: string;
+      date: Date | null;
+      id_order_system?: string;
+      number_order_system: string;
+      number_order_channel: string;
+    } | null;
+    measure: string | null;
+    quantity: number;
+    line: string | null;
+    brand: string | null;
+  }[] = [];
+
+  for (const invoice of rows) {
+    const invoiceWithRelations = invoice as Invoice & {
+      seller?: Contact | null;
+      items?: (InvoiceItems & { product?: Product | null })[];
+    };
+    const order =
+      orderByInvoiceId.get(invoice.id) ??
+      (invoice.id_system
+        ? orderByInvoiceSystemId.get(invoice.id_system)
+        : undefined);
+
+    for (const item of invoiceWithRelations.items ?? []) {
+      result.push({
+        number_system: invoice.number_system,
+        city: invoice.destination_city ?? null,
+        seller: invoiceWithRelations.seller
+          ? {
+              id: invoiceWithRelations.seller.id,
+              name: invoiceWithRelations.seller.name,
+              id_system: invoiceWithRelations.seller.id_system,
+            }
+          : null,
+        order: order
+          ? {
+              id: order.id,
+              date: order.date ?? null,
+              id_order_system: order.id_order_system,
+              number_order_system: order.number_order_system,
+              number_order_channel: order.number_order_channel,
+            }
+          : null,
+        measure: item.product?.measure ?? null,
+        quantity: item.quantity_expected,
+        line: item.product?.line ?? null,
+        brand: item.product?.brand ?? null,
+      });
+    }
+  }
+
+  return result;
+}
+
+  async getInvoiceSupplierReport(params: QueryParams, unitBusinessId: string) {
+    const type = params.filters?.type ?? "OUTGOING"; 
+  const rows = await this.findAll(
+    {
+      subQuery: false, 
+      attributes: ["id", "number_system", "emitted_at", "xml_key"],
+      include: [
+        {
+          model: InvoiceUnitBusinessAttributes,
+          as: "unitBusinessAttributes",
+          required: true,
+          attributes: [],
+          where: {
+            unit_business_id: unitBusinessId,
+            type, 
+          },
+        },
+        {
+          model: InvoiceItems,
+          as: "items",
+          attributes: ["quantity_expected"],
+          required: true,
+          include: [
+            {
+              model: Product,
+              as: "product",
+              attributes: ["name", "brand"],
+              required: true, 
+              include: [
+                {
+                  model: ProductConfig,
+                  as: "productConfigs",
+                  attributes: ["sku"],
+                  where: unitBusinessId
+                    ? { unit_business_id: unitBusinessId }
+                    : undefined,
+                  required: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    params, 
+    this.queryConfig,
+  );
+
+  const result: {
+    number_system: string | undefined;
+    date: Date | null;
+    xml_key: string | null;
+    sku: string | null;
+    description: string | null;
+    quantity: number;
+    brand: string | null;
+  }[] = [];
+
+  for (const invoice of rows) {
+    const invoiceWithRelations = invoice as Invoice & {
+      items?: (InvoiceItems & {
+        product?:
+          | (Product & {
+              productConfigs?: ProductConfig[];
+              brand?: string | null;
+              source_payload?: { descricaoCurta?: string } | null;
+            })
+          | null;
+      })[];
+    };
+
+    for (const item of invoiceWithRelations.items ?? []) {
+      const product = item.product;
+      const productConfig = product?.productConfigs?.[0];
+
+      result.push({
+        number_system: invoice.number_system,
+        date: invoice.emitted_at ?? null,
+        xml_key: invoice.xml_key ?? null,
+        sku: productConfig?.sku ?? null,
+        description: product?.name ?? "",
+        quantity: item.quantity_expected,
+        brand: product?.brand ?? null,
+      });
+    }
+  }
+
+  return result;
+}
 }
 
 export default new InvoiceService();
