@@ -253,27 +253,29 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   // ─── Helper: filtro de brand via literal SQL ─────────────────────────────────
 
   private extractBrandFilter(
-    filters: QueryParams["filters"],
-  ): WhereOptions | null {
-    if (!filters?.brand) return null;
+  filters: QueryParams["filters"],
+): WhereOptions | null {
+  if (!filters?.brand) return null;
 
-    const value = filters.brand;
-    delete filters.brand;
+  const value = filters.brand;
+  delete filters.brand;
 
-    const condition = Array.isArray(value)
-      ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
-      : `= '${String(value).replace(/'/g, "''")}'`;
+  const condition = Array.isArray(value)
+    ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
+    : `= '${String(value).replace(/'/g, "''")}'`;
 
-    return {
-      [Op.and]: Sequelize.literal(`EXISTS (
+  return {
+    [Op.and]: [
+      Sequelize.literal(`EXISTS (
         SELECT 1
         FROM invoice_items ii
         JOIN products p ON p.id = ii.product_id
         WHERE ii.invoice_id = "Invoice"."id"
           AND p.brand ${condition}
       )`),
-    } as WhereOptions;
-  }
+    ],
+  } as WhereOptions;
+}
 
   // ─── Listagem paginada ───────────────────────────────────────────────────────
 
@@ -284,7 +286,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
     const attrWhere = this.extractAttrFilters(params.filters, unitBusinessId);
     const batchStatusWhere = this.extractBatchStatusFilter(params.filters);
-    const brandWhere = this.extractBrandFilter(params.filters);
     const hasBatchFilter = !!batchStatusWhere;
 
     const extraOptions: Omit<
@@ -357,7 +358,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
     const result = await this.findPaginated(params, queryConfig, {
       ...extraOptions,
-      ...(brandWhere ? { where: brandWhere } : {}),
     });
 
     return {
