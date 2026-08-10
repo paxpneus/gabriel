@@ -2,7 +2,7 @@ import invoiceService from "../../../warehouse/invoices/invoice/invoice.service"
 import invoiceLogisticOccurrencesService from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.service";
 import invoiceLogisticOccurrencesRepository, {
   InvoiceLogisticOccurrencesRepository,
-} from "./../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository";
+} from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository";
 import { InvoiceLogisticOcurrencesCreationAttributesAttributes } from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.types";
 
 export interface IngestPendingOccurrencesResult {

@@ -1,4 +1,4 @@
-import { InvoiceAttributes } from './../invoice/invoice.types';
+import { InvoiceAttributes } from '../invoice/invoice.types';
 export type InvoiceLogisticOcurrencesStatus = 'PENDING' | 'SYNCHRONIZED'
 
 export interface InvoiceLogisticOcurrencesAttributes {

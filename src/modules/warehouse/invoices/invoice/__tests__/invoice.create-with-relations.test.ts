@@ -1,5 +1,5 @@
 import { InvoiceUnitBusinessAttributesCreationAttributes } from "../../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
-import { InvoiceCreationData, ItemWithFiscal } from './../invoice.types';
+import { InvoiceCreationData, ItemWithFiscal } from '../invoice.types';
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
 
