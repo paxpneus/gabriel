@@ -146,6 +146,13 @@ jest.mock("../../../../../company/events/event/event.service", () => ({
   },
 }));
 
+jest.mock("../../../../../company/users/users/user.service", () => ({
+  __esModule: true,
+  default: {
+    notifyByRoles: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
 
 
 // inventory exporta vários
