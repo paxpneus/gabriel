@@ -68,6 +68,7 @@ import Event from "../modules/company/events/event/event.model";
 import UserEvent from "../modules/company/events/users-event/users-event.model";
 import InvoiceLogisticOccurrences from "../modules/warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
 import StockMovementSourceData from "../modules/inventory/stock/stock-movement-source-data/stock-movement-source-data.model";
+import Cte from "../modules/warehouse/fiscal/ctes/cte/cte.model";
 
 export function setupAssociations() {
   // Standalone lookup table; no FK associations declared yet.
@@ -1202,3 +1203,100 @@ SellerSalesOrderItemSnapshot.belongsTo(UnitBusiness, {
   UserEvent.belongsTo(Event, { foreignKey: "event_id", as: "event" });
   User.hasMany(UserEvent, { foreignKey: "user_id", as: "userEvents" });
   Event.hasMany(UserEvent, { foreignKey: "event_id", as: "userEvents" });
+
+// CTE(s) 
+
+export function setupCteAssociations() {
+  // -------------------------------------------------------------
+  // 1. ISSUER (Emitente é SEMPRE a Transportadora)
+  // -------------------------------------------------------------
+  Cte.belongsTo(Transporter, {
+    foreignKey: "issuer_tax_id",
+    targetKey: "tax_id", // Assumindo que tax_id é a coluna de CNPJ na model
+    as: "issuer_transporter",
+  });
+
+  // -------------------------------------------------------------
+  // 2. SENDER (Remetente pode ser Loja, Fornecedor ou Cliente)
+  // -------------------------------------------------------------
+  Cte.belongsTo(UnitBusiness, {
+    foreignKey: "sender_tax_id",
+    targetKey: "tax_id",
+    as: "sender_unit_business",
+  });
+
+  Cte.belongsTo(Supplier, {
+    foreignKey: "sender_tax_id",
+    targetKey: "tax_id",
+    as: "sender_supplier",
+  });
+
+  Cte.belongsTo(Customer, {
+    foreignKey: "sender_tax_id",
+    targetKey: "tax_id",
+    as: "sender_customer",
+  });
+
+  // -------------------------------------------------------------
+  // 3. RECIPIENT (Destinatário pode ser Cliente, Loja ou Fornecedor)
+  // -------------------------------------------------------------
+  Cte.belongsTo(Customer, {
+    foreignKey: "recipient_tax_id",
+    targetKey: "tax_id",
+    as: "recipient_customer",
+  });
+
+  Cte.belongsTo(UnitBusiness, {
+    foreignKey: "recipient_tax_id",
+    targetKey: "tax_id",
+    as: "recipient_unit_business",
+  });
+
+  Cte.belongsTo(Supplier, {
+    foreignKey: "recipient_tax_id",
+    targetKey: "tax_id",
+    as: "recipient_supplier",
+  });
+
+  // -------------------------------------------------------------
+  // 4. EXPEDIDOR / RECEBEDOR (Geralmente são outras Transportadoras ou Lojas)
+  // -------------------------------------------------------------
+  Cte.belongsTo(Transporter, {
+    foreignKey: "dispatcher_tax_id",
+    targetKey: "tax_id",
+    as: "dispatcher_transporter",
+  });
+
+  Cte.belongsTo(Transporter, {
+    foreignKey: "receiver_tax_id",
+    targetKey: "tax_id",
+    as: "receiver_transporter",
+  });
+
+  // -------------------------------------------------------------
+  // 5. TOMADOR (Quem paga o frete)
+  // -------------------------------------------------------------
+  Cte.belongsTo(UnitBusiness, {
+    foreignKey: "taker_tax_id",
+    targetKey: "tax_id",
+    as: "taker_unit_business",
+  });
+
+  Cte.belongsTo(Customer, {
+    foreignKey: "taker_tax_id",
+    targetKey: "tax_id",
+    as: "taker_customer",
+  });
+
+  Cte.belongsTo(Supplier, {
+    foreignKey: "taker_tax_id",
+    targetKey: "tax_id",
+    as: "taker_supplier",
+  });
+
+  Cte.belongsTo(Transporter, {
+    foreignKey: "taker_tax_id",
+    targetKey: "tax_id",
+    as: "taker_transporter",
+  });
+}
