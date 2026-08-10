@@ -1,5 +1,5 @@
-import { authenticate } from '../../../../middlewares/auth-token';
-import BaseController from '../../../../shared/utils/base-models/base-controller';
+import { authenticate } from '../../../../../middlewares/auth-token';
+import BaseController from '../../../../../shared/utils/base-models/base-controller';
 import InvoiceItems from './invoice-items.model';
 import InvoiceItemsService from './invoice-items.service';
 import { Request, Response } from "express";

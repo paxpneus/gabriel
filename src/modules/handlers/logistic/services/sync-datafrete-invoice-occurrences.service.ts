@@ -1,9 +1,9 @@
-import invoiceLogisticOccurrencesService from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.service";
+import invoiceLogisticOccurrencesService from "../../../warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.service";
 import invoiceLogisticOccurrencesRepository, {
   InvoiceLogisticOccurrencesRepository,
-} from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository";
-import InvoiceLogisticOccurrences from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
-import { InvoiceForOccurrencePost } from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.types";
+} from "../../../warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository";
+import InvoiceLogisticOccurrences from "../../../warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
+import { InvoiceForOccurrencePost } from "../../../warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.types";
 import { getDatafreteIntegration } from "../transporters/data-frete/api/data-frete_api.service";
 
 export interface SyncPendingOccurrencesResult {

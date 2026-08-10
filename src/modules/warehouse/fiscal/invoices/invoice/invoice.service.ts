@@ -8,35 +8,35 @@ import {
 import {
   PaginatedResult,
   QueryParams,
-} from "../../../../shared/query/query.types";
-import BaseService from "../../../../shared/utils/base-models/base-service";
+} from "../../../../../shared/query/query.types";
+import BaseService from "../../../../../shared/utils/base-models/base-service";
 import Invoice from "./invoice.model";
 import invoiceRepository, { InvoiceRepository } from "./invoice.repository";
-import UnitBusiness from "../../../company/unit-business/unit-business.model";
-import Transporter from "../../transporter/transporter.model";
-import ExpeditionBatch from "../../expedition/batch/batch.model";
-import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
+import UnitBusiness from "../../../../company/unit-business/unit-business.model";
+import Transporter from "../../../transporter/transporter.model";
+import ExpeditionBatch from "../../../expedition/batch/batch.model";
+import ExpeditionBatchInvoice from "../../../expedition/batch-invoices/batch-invoices.model";
 import {
   FullInvoiceAttributes,
   InvoiceAttributes,
   InvoiceCreationData,
   ItemWithFiscal,
 } from "./invoice.types";
-import Store from "../../../sales/stores/stores.model";
+import Store from "../../../../sales/stores/stores.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
-import { getBrazilDate } from "../../../../shared/utils/normalizers/date";
-import sequelize from "../../../../config/sequelize";
-import batchInvoicesService from "../../expedition/batch-invoices/batch-invoices.service";
-import { Product, ProductConfig, Supplier } from "../../../inventory";
-import Contact from "../../../sales/contacts/contacts.model";
-import Order from "../../../sales/orders/order/orders.model";
+import { getBrazilDate } from "../../../../../shared/utils/normalizers/date";
+import sequelize from "../../../../../config/sequelize";
+import batchInvoicesService from "../../../expedition/batch-invoices/batch-invoices.service";
+import { Product, ProductConfig, Supplier } from "../../../../inventory";
+import Contact from "../../../../sales/contacts/contacts.model";
+import Order from "../../../../sales/orders/order/orders.model";
 import {
   InvoiceUnitBusinessAttributesCreationAttributes,
   InvoiceUnitBusinessAttributesStatus,
 } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
-import eventService from "../../../company/events/event/event.service";
-import redisService from "../../../../shared/utils/base-models/base-redis";
+import eventService from "../../../../company/events/event/event.service";
+import redisService from "../../../../../shared/utils/base-models/base-redis";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);

@@ -1,6 +1,6 @@
 import Integration from "../../../integrations/integrations/integrations.model";
-import { InvoiceItemsAttributes } from "../../invoices/invoice-items/invoice-items.types";
-import { InvoiceAttributes } from "../../invoices/invoice/invoice.types";
+import { InvoiceItemsAttributes } from "../../fiscal/invoices/invoice-items/invoice-items.types";
+import { InvoiceAttributes } from "../../fiscal/invoices/invoice/invoice.types";
 import { BatchInvoiceItemsAttributes } from "../batch-invoice-items/batch-invoice-items.types";
 import { ExpeditionBatchInvoiceAttributes } from "./../batch-invoices/batch-invoices.types";
 export interface ExpeditionBatchAttributes {

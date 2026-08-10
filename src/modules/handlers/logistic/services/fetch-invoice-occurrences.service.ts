@@ -1,9 +1,9 @@
-import invoiceService from "../../../warehouse/invoices/invoice/invoice.service";
-import invoiceLogisticOccurrencesService from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.service";
+import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import invoiceLogisticOccurrencesService from "../../../warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.service";
 import invoiceLogisticOccurrencesRepository, {
   InvoiceLogisticOccurrencesRepository,
-} from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository";
-import { InvoiceLogisticOcurrencesCreationAttributesAttributes } from "../../../warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.types";
+} from "../../../warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.repository";
+import { InvoiceLogisticOcurrencesCreationAttributesAttributes } from "../../../warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.types";
 
 export interface IngestPendingOccurrencesResult {
   processed: number;

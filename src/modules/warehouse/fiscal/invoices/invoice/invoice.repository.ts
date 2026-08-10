@@ -7,11 +7,11 @@ import {
   InvoiceCreationData,
   ItemWithFiscal,
 } from "./invoice.types";
-import BaseRepository from "../../../../shared/utils/base-models/base-repository";
-import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
+import BaseRepository from "../../../../../shared/utils/base-models/base-repository";
+import UnmappedInvoiceProduct from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import Invoice from "./invoice.model";
-import { Product, ProductConfig, Supplier } from "../../../inventory";
+import { Product, ProductConfig, Supplier } from "../../../../inventory";
 import {
   FindOptions,
   Op,
@@ -19,19 +19,19 @@ import {
   Transaction,
   WhereOptions,
 } from "sequelize";
-import ExpeditionBatchInvoice from "../../expedition/batch-invoices/batch-invoices.model";
-import BatchInvoiceItems from "../../expedition/batch-invoice-items/batch-invoice-items.model";
-import ExpeditionBatchItems from "../../expedition/batch-items/batch-items.model";
-import ExpeditionBatch from "../../expedition/batch/batch.model";
+import ExpeditionBatchInvoice from "../../../expedition/batch-invoices/batch-invoices.model";
+import BatchInvoiceItems from "../../../expedition/batch-invoice-items/batch-invoice-items.model";
+import ExpeditionBatchItems from "../../../expedition/batch-items/batch-items.model";
+import ExpeditionBatch from "../../../expedition/batch/batch.model";
 import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
-import UnitBusiness from "../../../company/unit-business/unit-business.model";
-import Transporter from "../../transporter/transporter.model";
-import Store from "../../../sales/stores/stores.model";
+import UnitBusiness from "../../../../company/unit-business/unit-business.model";
+import Transporter from "../../../transporter/transporter.model";
+import Store from "../../../../sales/stores/stores.model";
 import {
   PaginatedResult,
   QueryParams,
   QueryConfig,
-} from "../../../../shared/query/query.types";
+} from "../../../../../shared/query/query.types";
 import {
   InvoiceUnitBusinessAttributesCreationAttributes,
   InvoiceUnitBusinessAttributesStatus,
@@ -42,9 +42,9 @@ import {
   InvoiceFiscalItemAttributes,
   InvoiceFiscalItemCreationAttributes,
 } from "../invoice-fiscal-item/invoice-fiscal-item.types";
-import { BatchInvoiceItemsAttributes } from "../../expedition/batch-invoice-items/batch-invoice-items.types";
+import { BatchInvoiceItemsAttributes } from "../../../expedition/batch-invoice-items/batch-invoice-items.types";
 import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
-import { LOGISTIC_OCCURRENCE_CODES } from "../../../handlers/logistic/constants/constants";
+import { LOGISTIC_OCCURRENCE_CODES } from "../../../../handlers/logistic/constants/constants";
 
 export class InvoiceRepository extends BaseRepository<Invoice> {
   constructor() {

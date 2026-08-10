@@ -1,5 +1,5 @@
-import Invoice from "../../../../warehouse/invoices/invoice/invoice.model";
-import InvoiceUnitBusinessAttributes from "../../../../warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import Invoice from "../../../../warehouse/fiscal/invoices/invoice/invoice.model";
+import InvoiceUnitBusinessAttributes from "../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import ExpeditionBatch from "../../../../warehouse/expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../../../warehouse/expedition/batch-invoices/batch-invoices.model";
 import BatchInvoiceItems from "../../../../warehouse/expedition/batch-invoice-items/batch-invoice-items.model";

@@ -6,13 +6,13 @@ import expeditionBatchRepository, {
 } from "./batch.repository";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
-import InvoiceItems from "../../invoices/invoice-items/invoice-items.model";
-import Invoice from "../../invoices/invoice/invoice.model";
+import InvoiceItems from "../../fiscal/invoices/invoice-items/invoice-items.model";
+import Invoice from "../../fiscal/invoices/invoice/invoice.model";
 import sequelize from "../../../../config/sequelize";
 import { Product, Stock } from "../../../inventory";
 import ExpeditionScanLog from "../scan-logs/scan-logs.model";
 import { ExpeditionBatchFull } from "./batch.types";
-import { InvoiceItemsAttributes } from "../../invoices/invoice-items/invoice-items.types";
+import { InvoiceItemsAttributes } from "../../fiscal/invoices/invoice-items/invoice-items.types";
 import { extractChaveFromXml } from "../../../../shared/utils/xml/xml-parser";
 import {
   decryptXml,
@@ -25,8 +25,8 @@ import {
 import { FindOptions, Op, Transaction } from "sequelize";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
-import invoiceService from "../../invoices/invoice/invoice.service";
-import invoiceItemsService from "../../invoices/invoice-items/invoice-items.service";
+import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
+import invoiceItemsService from "../../fiscal/invoices/invoice-items/invoice-items.service";
 import { ensureSameBy } from "../../../../shared/utils/validators/same-not-allowed";
 import transporterService from "../../transporter/transporter.service";
 import Transporter from "../../transporter/transporter.model";
@@ -35,9 +35,9 @@ import { assertTransshipment } from "../utils/helpers/transshipment-resolver";
 import batchInvoicesService from "../batch-invoices/batch-invoices.service";
 import batchItemsService from "../batch-items/batch-items.service";
 import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items.service";
-import InvoiceUnitBusinessAttributes from "../../invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import InvoiceUnitBusinessAttributes from "../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
-import { FullInvoice } from "../../invoices/invoice/invoice.types";
+import { FullInvoice } from "../../fiscal/invoices/invoice/invoice.types";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,

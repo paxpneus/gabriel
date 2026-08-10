@@ -1,5 +1,5 @@
-import BaseRepository from "../../../../shared/utils/base-models/base-repository";
-import Transporter from "../../transporter/transporter.model";
+import BaseRepository from "../../../../../shared/utils/base-models/base-repository";
+import Transporter from "../../../transporter/transporter.model";
 import Invoice from "../invoice/invoice.model";
 import InvoiceLogisticOccurrences from "./invoice-logistic-occurrences.model";
 import { InvoiceLogisticOcurrencesCreationAttributesAttributes } from "./invoice-logistic-occurrences.types";

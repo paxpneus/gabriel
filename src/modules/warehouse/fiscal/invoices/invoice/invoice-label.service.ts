@@ -4,12 +4,12 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { Op } from "sequelize";
 import Invoice from "./invoice.model";
-import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
-import Transporter from "../../transporter/transporter.model";
+import { decryptXml, isEncrypted } from "../../../../../shared/utils/xml/xml-cipher";
+import Transporter from "../../../transporter/transporter.model";
 import {  InvoiceWithTransporter } from "./invoice.types";
-import CarrierLabelRange from "../../transporter/carrier-label-ranges/carrier-label-ranges.model";
+import CarrierLabelRange from "../../../transporter/carrier-label-ranges/carrier-label-ranges.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
-import { Product } from "../../../inventory";
+import { Product } from "../../../../inventory";
 
 // Importe seus modelos e a instância do sequelize se necessário
 // import { Invoice } from '../../database/models/Invoice';

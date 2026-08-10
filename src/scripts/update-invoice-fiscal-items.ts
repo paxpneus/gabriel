@@ -1,6 +1,6 @@
 import { parseStringPromise } from "xml2js";
 import { Op } from "sequelize";
-import InvoiceFiscalItem from "../modules/warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
+import InvoiceFiscalItem from "../modules/warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import { Invoice } from "../modules/warehouse";
 import { Product, ProductConfig, SupplierMapping } from "../modules/inventory";
 import { decryptXml, isEncrypted } from "../shared/utils/xml/xml-cipher";

@@ -1,6 +1,6 @@
-import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
-import { ExpeditionBatchInvoiceAttributes } from "../../expedition/batch-invoices/batch-invoices.types";
-import Transporter from "../../transporter/transporter.model";
+import UnmappedInvoiceProduct from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
+import { ExpeditionBatchInvoiceAttributes } from "../../../expedition/batch-invoices/batch-invoices.types";
+import Transporter from "../../../transporter/transporter.model";
 import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import { InvoiceItemsAttributes, InvoiceItemsWithBatchAttributes } from "../invoice-items/invoice-items.types";
