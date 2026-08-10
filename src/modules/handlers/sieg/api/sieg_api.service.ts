@@ -143,10 +143,9 @@ const getSiegToken = async (): Promise<ConfigToken> => {
   return token;
 };
 
-// Gera um novo JWT junto a Sieg usando a ApiKey fixa cadastrada na integração.
-// OBS: ajuste a URL/payload conforme o contrato real do endpoint de autenticação da Sieg
-// (aqui assumo POST em access_token_url com a ApiKey no body — troca se for diferente,
-// ex: query string, header, ou junto de email/senha).
+// Gera um novo JWT junto a Sieg usando Client-Id + Secret-Key cadastrados na integração.
+// A Sieg exige esses dois valores nos headers da própria request de autenticação
+// (não no body) — ajuste os nomes dos headers aqui se o contrato real for diferente.
 export const doGenerateJwt = async (): Promise<string> => {
   const integration = await getSiegIntegration();
 
@@ -154,18 +153,19 @@ export const doGenerateJwt = async (): Promise<string> => {
   if (!configToken)
     throw new Error("[SiegApi] ConfigToken não encontrado para gerar JWT.");
 
-  if (!configToken.api_key) {
-    throw new Error("[SiegApi] ApiKey não configurada na integração.");
+  if (!configToken.client_id || !configToken.client_secret) {
+    throw new Error(
+      "[SiegApi] Client-Id/Secret-Key não configurados na integração.",
+    );
   }
 
   const response = await fetch(configToken.access_token_url!, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "X-Client-Id": configToken.client_id,
+      "X-Secret-Key": configToken.client_secret,
     },
-    body: JSON.stringify({
-      ApiKey: configToken.api_key,
-    }),
     signal: AbortSignal.timeout(30_000),
   });
 
@@ -225,7 +225,7 @@ async function ensureValidJwt(configToken: ConfigToken): Promise<string> {
 // Instancia do axios para a Sieg
 export const siegApi: AxiosInstance = createAxiosInstance({
   baseURL:
-    process.env.NODE_ENV ?? "https://api.sieg.com",
+    process.env.NODE_ENV == "development" ? "nothing" : "https://api.sieg.com",
 
   // Interceptor de request: garante JWT válido e injeta os dois headers exigidos pela Sieg
   onRequest: async (config) => {
