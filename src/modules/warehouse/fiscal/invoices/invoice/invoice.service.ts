@@ -486,6 +486,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         "destination_city",
         "number_system",
         "seller_id",
+        "invoice_value"
       ],
       include: [
         {
@@ -605,6 +606,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     quantity: number;
     line: string | null;
     brand: string | null;
+    value: number | null;
   }[] = [];
 
   for (const invoice of rows) {
@@ -642,6 +644,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         quantity: item.quantity_expected,
         line: item.product?.line ?? null,
         brand: item.product?.brand ?? null,
+        value: invoice.invoice_value ?? null
       });
     }
   }
