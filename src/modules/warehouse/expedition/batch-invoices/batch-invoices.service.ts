@@ -1,8 +1,8 @@
 import { Op, Transaction } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
-import invoiceItemsService from "../../invoices/invoice-items/invoice-items.service";
-import invoiceService from "../../invoices/invoice/invoice.service";
+import invoiceItemsService from "../../fiscal/invoices/invoice-items/invoice-items.service";
+import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
 import ExpeditionBatchItems from "../batch-items/batch-items.model";
 import ExpeditionBatch from "../batch/batch.model";
 import scanLogsService from "../scan-logs/scan-logs.service";
@@ -10,8 +10,8 @@ import ExpeditionBatchInvoice from "./batch-invoices.model";
 import expeditionBatchInvoiceRepository, {
   ExpeditionBatchInvoiceRepository,
 } from "./batch-invoices.repository";
-import Invoice from "../../invoices/invoice/invoice.model";
-import { InvoiceItemsAttributes } from "../../invoices/invoice-items/invoice-items.types";
+import Invoice from "../../fiscal/invoices/invoice/invoice.model";
+import { InvoiceItemsAttributes } from "../../fiscal/invoices/invoice-items/invoice-items.types";
 import batchItemsService from "../batch-items/batch-items.service";
 import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items.service";
 import { BatchInvoiceItemsCreationAttributes } from "../batch-invoice-items/batch-invoice-items.types";

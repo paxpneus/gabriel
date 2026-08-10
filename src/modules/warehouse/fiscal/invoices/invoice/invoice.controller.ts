@@ -1,30 +1,30 @@
 import { LabelService } from "./invoice-label.service";
-import BaseController from "../../../../shared/utils/base-models/base-controller";
+import BaseController from "../../../../../shared/utils/base-models/base-controller";
 import Invoice from "./invoice.model";
 import InvoiceService from "./invoice.service";
 import { Request, Response } from "express";
-import { authenticate } from "../../../../middlewares/auth-token";
-import { userPermissions } from "../../../../middlewares/user-permissions";
+import { authenticate } from "../../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../../middlewares/user-permissions";
 import { gerarPDF } from "@alexssmusica/node-pdf-nfe";
 import archiver from "archiver";
 import {
   decryptXml,
   isEncrypted,
-} from "../../../../shared/utils/xml/xml-cipher";
+} from "../../../../../shared/utils/xml/xml-cipher";
 import { PassThrough } from "stream";
 import { PDFDocument, radians } from "pdf-lib";
 import { Op } from "sequelize";
 import { InvoiceAttributes } from "./invoice.types";
 import multer from "multer";
-import { BlingApiFetchQueue } from "../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
-import User from "../../../company/users/users/user.model";
+import { BlingApiFetchQueue } from "../../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
+import User from "../../../../company/users/users/user.model";
 import {
   TCarUpsertJobPayload,
   TCarUpsertQueue,
-} from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
-import { upsertInvoiceFromXml } from "../../../../shared/utils/xml/invoice-xml";
-import UnitBusiness from "../../../company/unit-business/unit-business.model";
-import { getUserContext } from "../../../../shared/query/get-logged-user";
+} from "../../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { upsertInvoiceFromXml } from "../../../../../shared/utils/xml/invoice-xml";
+import UnitBusiness from "../../../../company/unit-business/unit-business.model";
+import { getUserContext } from "../../../../../shared/query/get-logged-user";
 
 const upload = multer({ storage: multer.memoryStorage() });
 

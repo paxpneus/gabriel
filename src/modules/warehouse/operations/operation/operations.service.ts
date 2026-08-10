@@ -23,7 +23,7 @@ import {
   UpdateOptions,
 } from "sequelize";
 import { Product, ProductConfig } from "../../../inventory";
-import Invoice from "../../invoices/invoice/invoice.model";
+import Invoice from "../../fiscal/invoices/invoice/invoice.model";
 import User from "../../../company/users/users/user.model";
 import type {
   InvoiceLinkedEmailPayload,

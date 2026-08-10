@@ -1,13 +1,13 @@
-import BaseService from "../../../../shared/utils/base-models/base-service";
-import { formatToBRDate } from "../../../../shared/utils/normalizers/date";
-import { extractSerieFromChaveNfe } from "../../../../shared/utils/normalizers/nfe";
-import { resolveTransporterHandler } from "../../../handlers/logistic/helpers/mappers/map-transporter-api";
+import BaseService from "../../../../../shared/utils/base-models/base-service";
+import { formatToBRDate } from "../../../../../shared/utils/normalizers/date";
+import { extractSerieFromChaveNfe } from "../../../../../shared/utils/normalizers/nfe";
+import { resolveTransporterHandler } from "../../../../handlers/logistic/helpers/mappers/map-transporter-api";
 import {
   GenericOccurrenceParams,
   GenericPostOccurrenceParams,
   InvoiceOccurrences,
-} from "../../../handlers/logistic/helpers/mappers/map-transporter-api.types";
-import integrationsService from "../../../integrations/integrations/integrations.service";
+} from "../../../../handlers/logistic/helpers/mappers/map-transporter-api.types";
+import integrationsService from "../../../../integrations/integrations/integrations.service";
 import InvoiceLogisticOccurrences from "./invoice-logistic-occurrences.model";
 import invoiceLogisticOccurrencesRepository, {
   InvoiceLogisticOccurrencesRepository,

@@ -11,7 +11,7 @@ jest.mock("../../../../warehouse", () => ({
 }));
 
 jest.mock(
-  "../../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model",
+  "../../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model",
   () => ({
     __esModule: true,
     default: { findAll: jest.fn() },
@@ -19,7 +19,7 @@ jest.mock(
 );
 
 jest.mock(
-  "../../../../warehouse/invoices/invoice-items/invoice-items.service",
+  "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service",
   () => ({
     __esModule: true,
     default: { findAll: jest.fn() },
@@ -27,7 +27,7 @@ jest.mock(
 );
 
 jest.mock(
-  "../../../../warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model",
+  "../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model",
   () => ({
     __esModule: true,
     default: {},
@@ -70,8 +70,8 @@ jest.mock("../../../product-config/product_config.model", () => ({
 }));
 
 import { Invoice, UnitBusiness } from "../../../../warehouse";
-import InvoiceFiscalItem from "../../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
-import invoiceItemsService from "../../../../warehouse/invoices/invoice-items/invoice-items.service";
+import InvoiceFiscalItem from "../../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
+import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import StockMovement from "../stock-movements.model";
 import stockMovementSourceDataService from "../../stock-movement-source-data/stock-movement-source-data.service";
 

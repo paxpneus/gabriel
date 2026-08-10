@@ -1,7 +1,7 @@
 import { Op, Transaction } from "sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import { Invoice, InvoiceItems, UnitBusiness } from "../../../warehouse";
-import InvoiceUnitBusinessAttributes from "../../../warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import InvoiceUnitBusinessAttributes from "../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import StockMovement from "./stock-movements.model";
 import stockMovementRepository, {
   StockMovementRepository,
@@ -13,8 +13,8 @@ import {
   StockMovementCreationAttributes,
   StockMovementType,
 } from "./stock-movements.types";
-import InvoiceFiscalItem from "../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
-import invoiceItemsService from "../../../warehouse/invoices/invoice-items/invoice-items.service";
+import InvoiceFiscalItem from "../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
+import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import {
   PaginatedResult,
   QueryParams,

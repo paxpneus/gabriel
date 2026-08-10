@@ -2,7 +2,7 @@ import {
   FullInvoiceForAllUnits,
   InvoiceStatus,
   ItemWithFiscal,
-} from "../../../modules/warehouse/invoices/invoice/invoice.types";
+} from "../../../modules/warehouse/fiscal/invoices/invoice/invoice.types";
 import {
   Invoice,
   InvoiceItems,
@@ -14,7 +14,7 @@ import {
   ProductConfig,
   SupplierMapping,
 } from "../../../modules/inventory";
-import InvoiceFiscalItem from "../../../modules/warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
+import InvoiceFiscalItem from "../../../modules/warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import UnmappedInvoiceProduct from "../../../modules/inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import Store from "../../../modules/sales/stores/stores.model";
 import parser from "../../../shared/utils/xml/xml-parser";
@@ -23,8 +23,8 @@ import { encryptXml } from "../../../shared/utils/xml/xml-cipher";
 import { getBlingIntegration } from "../../../modules/handlers/bling/api/bling_api.service";
 import { logDbError } from "../logging/db-errors-logs";
 import { Op } from "sequelize";
-import invoiceService from "../../../modules/warehouse/invoices/invoice/invoice.service";
-import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
+import invoiceService from "../../../modules/warehouse/fiscal/invoices/invoice/invoice.service";
+import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import unitBusinessService from "../../../modules/company/unit-business/unit-business.service";
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";

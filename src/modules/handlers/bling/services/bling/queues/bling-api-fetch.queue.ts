@@ -2,7 +2,7 @@ import {
   FullInvoiceForAllUnits,
   InvoiceStatus,
   ItemWithFiscal,
-} from "../../../../../warehouse/invoices/invoice/invoice.types";
+} from "../../../../../warehouse/fiscal/invoices/invoice/invoice.types";
 import { Job } from "bullmq";
 import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
@@ -32,7 +32,7 @@ import Store from "../../../../../sales/stores/stores.model";
 import Contact from "../../../../../sales/contacts/contacts.model";
 import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
-import InvoiceFiscalItem from "../../../../../warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
+import InvoiceFiscalItem from "../../../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import {
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,
@@ -44,9 +44,9 @@ import {
   rethrowWithLog,
 } from "../../../../../../shared/utils/logging/db-errors-logs";
 import magentoCatalogService from "../../../../magentoV2/service/catalog/products/products.service";
-import invoiceService from "../../../../../warehouse/invoices/invoice/invoice.service";
-import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
-import invoiceItemsService from "../../../../../warehouse/invoices/invoice-items/invoice-items.service";
+import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
+import invoiceItemsService from "../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { upsertInvoiceFromXml } from "../../../../../../shared/utils/xml/invoice-xml";
 import brandsService from "../../../../../inventory/brands/brands.service";
 import Group from "../../../../../inventory/groups/group/group.model";

@@ -79,67 +79,67 @@ jest.mock("../../invoice-fiscal-item/invoice-fiscal-item.model", () => ({
   default: class InvoiceFiscalItem { },
 }));
 
-jest.mock("../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model", () => ({
+jest.mock("../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model", () => ({
   __esModule: true,
   default: class UnmappedInvoiceProduct { },
 }));
 
-jest.mock("../../../../company/unit-business/unit-business.model", () => ({
+jest.mock("../../../../../company/unit-business/unit-business.model", () => ({
   __esModule: true,
   default: class UnitBusiness { },
 }));
 
-jest.mock("../../../transporter/transporter.model", () => ({
+jest.mock("../../../../transporter/transporter.model", () => ({
   __esModule: true,
   default: class Transporter { },
 }));
 
-jest.mock("../../../expedition/batch/batch.model", () => ({
+jest.mock("../../../../expedition/batch/batch.model", () => ({
   __esModule: true,
   default: class ExpeditionBatch { },
 }));
 
-jest.mock("../../../expedition/batch-invoices/batch-invoices.model", () => ({
+jest.mock("../../../../expedition/batch-invoices/batch-invoices.model", () => ({
   __esModule: true,
   default: class ExpeditionBatchInvoice { },
 }));
 
-jest.mock("../../../expedition/batch-invoices/batch-invoices.service", () => ({
+jest.mock("../../../../expedition/batch-invoices/batch-invoices.service", () => ({
   __esModule: true,
   default: {},
 }));
 
-jest.mock("../../../expedition/batch-invoice-items/batch-invoice-items.model", () => ({
+jest.mock("../../../../expedition/batch-invoice-items/batch-invoice-items.model", () => ({
   __esModule: true,
   default: class BatchInvoiceItems { },
 }));
 
-jest.mock("../../../expedition/batch-items/batch-items.model", () => ({
+jest.mock("../../../../expedition/batch-items/batch-items.model", () => ({
   __esModule: true,
   default: class ExpeditionBatchItems { },
 }));
 
-jest.mock("../../../../sales/stores/stores.model", () => ({
+jest.mock("../../../../../sales/stores/stores.model", () => ({
   __esModule: true,
   default: class Store { },
 }));
 
-jest.mock("../../../../sales/contacts/contacts.model", () => ({
+jest.mock("../../../../../sales/contacts/contacts.model", () => ({
   __esModule: true,
   default: class Contact { },
 }));
 
-jest.mock("../../../../sales/orders/order/orders.model", () => ({
+jest.mock("../../../../../sales/orders/order/orders.model", () => ({
   __esModule: true,
   default: class Order { },
 }));
 
-jest.mock("../../../../company/events/event/event.model", () => ({
+jest.mock("../../../../../company/events/event/event.model", () => ({
   __esModule: true,
   default: class Event { },
 }));
 
-jest.mock("../../../../company/events/event/event.service", () => ({
+jest.mock("../../../../../company/events/event/event.service", () => ({
   __esModule: true,
   default: {
     notifyByRoles: jest.fn().mockResolvedValue(undefined),
@@ -149,14 +149,14 @@ jest.mock("../../../../company/events/event/event.service", () => ({
 
 
 // inventory exporta vários
-jest.mock("../../../../inventory", () => ({
+jest.mock("../../../../../inventory", () => ({
   Product: class Product { },
   ProductConfig: class ProductConfig { },
   Supplier: class Supplier { },
 }));
 
 
-import sequelize from "../../../../../config/sequelize";
+import sequelize from "../../../../../../config/sequelize";
 import mockedRepository from "../invoice.repository";
 import invoiceService from "../invoice.service";
 

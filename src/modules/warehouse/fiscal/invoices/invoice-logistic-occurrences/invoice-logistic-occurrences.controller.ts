@@ -1,5 +1,5 @@
-import { authenticate } from "../../../../middlewares/auth-token";
-import BaseController from "../../../../shared/utils/base-models/base-controller";
+import { authenticate } from "../../../../../middlewares/auth-token";
+import BaseController from "../../../../../shared/utils/base-models/base-controller";
 import InvoiceLogisticOccurrences from "./invoice-logistic-occurrences.model";
 import InvoiceLogisticOccurrencesService from "./invoice-logistic-occurrences.service";
 

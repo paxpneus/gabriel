@@ -1,13 +1,13 @@
 import { Model, DataTypes } from "sequelize";
-import sequelize from "../../../../config/sequelize";
+import sequelize from "../../../../../config/sequelize";
 import {
   InvoiceAttributes,
   InvoiceCreationAttributes,
   SefazManifestationStatus,
 } from "./invoice.types";
 import { v4 as uuidv4 } from "uuid";
-import { ExpeditionBatchInvoiceAttributes } from "../../expedition/batch-invoices/batch-invoices.types";
-import Transporter from "../../transporter/transporter.model";
+import { ExpeditionBatchInvoiceAttributes } from "../../../expedition/batch-invoices/batch-invoices.types";
+import Transporter from "../../../transporter/transporter.model";
 import { InvoiceUnitBusinessAttributesAttributes } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 

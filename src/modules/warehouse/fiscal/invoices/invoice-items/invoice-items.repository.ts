@@ -1,4 +1,4 @@
-import BaseRepository from '../../../../shared/utils/base-models/base-repository';
+import BaseRepository from '../../../../../shared/utils/base-models/base-repository';
 import InvoiceItems from './invoice-items.model';
 
 export class InvoiceItemsRepository extends BaseRepository<InvoiceItems> {

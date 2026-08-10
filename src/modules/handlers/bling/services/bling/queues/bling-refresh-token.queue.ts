@@ -4,7 +4,7 @@ import { BaseQueueService } from "../../../../../../shared/utils/base-models/bas
 import { doRefreshToken } from "../../../api/bling_api.service";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { Invoice } from "../../../../../warehouse";
-import invoiceService from "../../../../../warehouse/invoices/invoice/invoice.service";
+import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 
 export class BlingTokenRefreshQueue extends BaseQueueService<void> {
   constructor(options: { workless?: boolean } = {}) {

@@ -1,4 +1,4 @@
-import { BatchInvoiceItemsStatus } from "../../expedition/batch-invoice-items/batch-invoice-items.types";
+import { BatchInvoiceItemsStatus } from "../../../expedition/batch-invoice-items/batch-invoice-items.types";
 
 export interface InvoiceItemsAttributes {
   id: string;

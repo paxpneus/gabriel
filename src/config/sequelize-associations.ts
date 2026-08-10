@@ -17,8 +17,8 @@ import ExpeditionBatch from "../modules/warehouse/expedition/batch/batch.model";
 import ExpeditionBatchItems from "../modules/warehouse/expedition/batch-items/batch-items.model";
 import ExpeditionBatchInvoice from "../modules/warehouse/expedition/batch-invoices/batch-invoices.model";
 import ExpeditionScanLog from "../modules/warehouse/expedition/scan-logs/scan-logs.model";
-import Invoice from "../modules/warehouse/invoices/invoice/invoice.model";
-import InvoiceItems from "../modules/warehouse/invoices/invoice-items/invoice-items.model";
+import Invoice from "../modules/warehouse/fiscal/invoices/invoice/invoice.model";
+import InvoiceItems from "../modules/warehouse/fiscal/invoices/invoice-items/invoice-items.model";
 import Product from "../modules/inventory/products/product.model";
 import ProductConfig from "../modules/inventory/product-config/product_config.model";
 import Stock from "../modules/inventory/stock/stock/stock.model";
@@ -47,7 +47,7 @@ import DailySalesStateFact from "../modules/reports/daily-sales/daily-sales-stat
 import DailySalesStoreFact from "../modules/reports/daily-sales/daily-sales-store-fact/daily-sales-store-fact.model";
 import DailySalesProductFact from "../modules/reports/daily-sales/daily-sales-product-fact/daily-sales-product-fact.model";
 import DailySalesStatusFact from "../modules/reports/daily-sales/daily-sales-status-fact/daily-sales-status-fact.model";
-import InvoiceFiscalItem from "../modules/warehouse/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
+import InvoiceFiscalItem from "../modules/warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import IntegrationOrderStatusMapping from "../modules/sales/orders/integration-order-status-mapping/integration-order-status-mapping.model";
 import { Supplier } from "../modules/inventory";
 import Operations from "../modules/warehouse/operations/operation/operations.model";
@@ -57,7 +57,7 @@ import Application from "../modules/integrations/applications/applications.model
 import DailySellerProductFact from "../modules/reports/sellers-report/models/daily-seller-product-fact/daily-seller-product-fact.model";
 import DailySellerCustomerFact from "../modules/reports/sellers-report/models/daily-seller-customer-fact/daily-seller-customer-fact.model";
 import BatchInvoiceItems from "../modules/warehouse/expedition/batch-invoice-items/batch-invoice-items.model";
-import InvoiceUnitBusinessAttributes from "../modules/warehouse/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import InvoiceUnitBusinessAttributes from "../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import State from "../modules/warehouse/address/state/state.model";
 import Brand from "../modules/inventory/brands/brands.model";
 import SellerSalesOrderItemSnapshot from "../modules/reports/sellers-report/models/seller-sales-order-item-snapshot/seller-sales-order-item-snapshot.model";
@@ -66,7 +66,7 @@ import Subgroup from "../modules/inventory/groups/subgroup/subgroup.model";
 import InventorySubgroup from "../modules/inventory/stock-inventory/inventory-subgroups/inventory-subgroups.model";
 import Event from "../modules/company/events/event/event.model";
 import UserEvent from "../modules/company/events/users-event/users-event.model";
-import InvoiceLogisticOccurrences from "../modules/warehouse/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
+import InvoiceLogisticOccurrences from "../modules/warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
 import StockMovementSourceData from "../modules/inventory/stock/stock-movement-source-data/stock-movement-source-data.model";
 import Cte from "../modules/warehouse/fiscal/ctes/cte/cte.model";
 
