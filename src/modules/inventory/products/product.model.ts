@@ -26,6 +26,7 @@ class Product
   public stock_virtual_total?: number;
   public line?: string;
   public measure?: string;
+  public rim?: string | null;
   public subgroup_id?: string;
 
   public readonly createdAt!: Date;
@@ -75,6 +76,7 @@ Product.init(
     commission: { type: DataTypes.FLOAT, allowNull: true },
     line: { type: DataTypes.STRING(100), allowNull: true },
     measure: { type: DataTypes.STRING(50), allowNull: true },
+    rim: { type: DataTypes.STRING(5), allowNull: true },
     gross_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     net_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     stock_virtual_total: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
