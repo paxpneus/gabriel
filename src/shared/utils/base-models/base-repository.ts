@@ -41,6 +41,26 @@ class BaseRepository<T extends Model> {
     return this.model.findAll(options);
   }
 
+    async findAllIds(
+    params: QueryParams,
+    config: QueryConfig = {},
+    forcedWhere?: WhereOptions,
+  ): Promise<string[]> {
+    const { where, order } = QueryParser.parse(params, config);
+
+    const finalWhere = forcedWhere ? { ...where, ...forcedWhere } : where;
+
+    const rows = await this.model.findAll({
+      where: finalWhere,
+      order,
+      attributes: ["id"],
+      raw: true,
+    } as FindOptions);
+
+    return rows.map((r: any) => r.id);
+  }
+
+
   // ─── forcedWhere: condição SEMPRE aplicada, independente dos filtros
   // dinâmicos que o QueryParser monta a partir de params.filters. Usado
   // pra regras de negócio fixas (ex.: "só retorna item com custo != null"),

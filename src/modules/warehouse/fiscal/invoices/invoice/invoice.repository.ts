@@ -253,29 +253,29 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   // ─── Helper: filtro de brand via literal SQL ─────────────────────────────────
 
   private extractBrandFilter(
-  filters: QueryParams["filters"],
-): WhereOptions | null {
-  if (!filters?.brand) return null;
+    filters: QueryParams["filters"],
+  ): WhereOptions | null {
+    if (!filters?.brand) return null;
 
-  const value = filters.brand;
-  delete filters.brand;
+    const value = filters.brand;
+    delete filters.brand;
 
-  const condition = Array.isArray(value)
-    ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
-    : `= '${String(value).replace(/'/g, "''")}'`;
+    const condition = Array.isArray(value)
+      ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
+      : `= '${String(value).replace(/'/g, "''")}'`;
 
-  return {
-    [Op.and]: [
-      Sequelize.literal(`EXISTS (
+    return {
+      [Op.and]: [
+        Sequelize.literal(`EXISTS (
         SELECT 1
         FROM invoice_items ii
         JOIN products p ON p.id = ii.product_id
         WHERE ii.invoice_id = "Invoice"."id"
           AND p.brand ${condition}
       )`),
-    ],
-  } as WhereOptions;
-}
+      ],
+    } as WhereOptions;
+  }
 
   // ─── Listagem paginada ───────────────────────────────────────────────────────
 
@@ -807,6 +807,15 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       transaction,
     });
     return results.map((ub) => ({ id: ub.id, cnpj: (ub as any).cnpj }));
+  }
+
+  async findXmlPathsByIds(
+    ids: string[],
+  ): Promise<Pick<InvoiceAttributes, "id" | "xml_path" | "number_system">[]> {
+    return this.model.findAll({
+      where: { id: ids },
+      attributes: ["id", "xml_path", "number_system"],
+    });
   }
 }
 

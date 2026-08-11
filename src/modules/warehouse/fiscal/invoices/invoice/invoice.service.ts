@@ -39,6 +39,10 @@ import eventService from "../../../../company/events/event/event.service";
 import redisService from "../../../../../shared/utils/base-models/base-redis";
 import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import userService from "../../../../company/users/users/user.service";
+import {
+  decryptXml,
+  isEncrypted,
+} from "../../../../../shared/utils/xml/xml-cipher";
 
 const default_seller = "5ff76374-4d67-4ef3-a566-349a015f86b1";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
@@ -744,6 +748,35 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     }
 
     return result;
+  }
+
+  async *streamXmlEntries(
+    ids: string[],
+    chunkSize = 100,
+  ): AsyncGenerator<{ filename: string; xml: string }> {
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunkIds = ids.slice(i, i + chunkSize);
+      const invoices = await this.repository.findXmlPathsByIds(chunkIds);
+
+      for (const invoice of invoices) {
+        let xml = invoice.xml_path;
+
+        if (!xml || xml.startsWith("http")) {
+          console.warn(
+            `[XML BATCH] Invoice ${invoice.id}: XML não disponível, pulando.`,
+          );
+          continue;
+        }
+
+        try {
+          if (isEncrypted(xml)) xml = decryptXml(xml);
+          const filename = `nfe-${invoice.number_system ?? invoice.id}.xml`;
+          yield { filename, xml };
+        } catch (err: any) {
+          console.error(`[XML BATCH] Erro invoice ${invoice.id}:`, err.message);
+        }
+      }
+    }
   }
 }
 

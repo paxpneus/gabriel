@@ -15,6 +15,7 @@ class Contact
   public name!: string;
   public type!: ContactType;
   public id_system!: string;
+  public document!: string;
   public integrations_id?: string | null;
   public unit_business_id?: string | null;
   public user_id?: string | null;
@@ -42,6 +43,11 @@ Contact.init(
     id_system: {
       type: DataTypes.STRING(100),
       allowNull: false,
+    },
+    document: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      unique: true,
     },
     integrations_id: {
       type: DataTypes.UUID,
