@@ -21,7 +21,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // CNPJ de loja também opere como transportadora.
 type CteRole = "dest" | "rem" | "tom" | "emit";
 
-const ROLES_TO_QUERY: CteRole[] = ["dest", "rem", "tom", "emit"];
+const ROLES_TO_QUERY: CteRole[] = ["tom"];
 
 const buildParamsForRole = (
   role: CteRole,
