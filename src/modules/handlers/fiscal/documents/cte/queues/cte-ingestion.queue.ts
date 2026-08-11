@@ -11,7 +11,7 @@ import { fetchAndUpsertCte } from "../../../helpers/mappers/documents/cte/cte-up
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 import { getDateRangeAsDate } from "../../../../../../shared/utils/normalizers/date";
 
-const DELAY_BETWEEN_REQUESTS_MS = 10 * 1000;
+const DELAY_BETWEEN_REQUESTS_MS = 30 * 1000;
 const PROVIDER_NAME = "Sieg";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
