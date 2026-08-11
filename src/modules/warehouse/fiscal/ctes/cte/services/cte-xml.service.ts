@@ -25,7 +25,7 @@ export class CteXmlService {
 
         try {
           if (isEncrypted(xml)) xml = decryptXml(xml);
-          const filename = `cte-${cte.number ?? cte.xml_key}.xml`;
+          const filename = `cte-${cte.number}.xml`;
           yield { filename, xml };
         } catch (err: any) {
           console.error(`[XML BATCH] Erro CT-e ${cte.id}:`, err.message);
