@@ -74,56 +74,70 @@ function parseBlingDate(date: string) {
   return new Date(date.replace(" ", "T") + "-03:00");
 }
 
+// Remove índice de carga + índice de velocidade do início do line.
+// Ex: "94Y XL FR CONTINENTALSPORT CONTACT 5P MO" -> "XL FR CONTINENTALSPORT CONTACT 5P MO"
+// Padrão: 2 ou 3 dígitos seguidos de 1 ou 2 letras (load index + speed rating).
+const LOAD_INDEX_REGEX = /^\d{2,3}[A-Za-z]{1,2}$/;
+
 // ─── Extrai measure e line do nome do produto ─────────────────────────────────
 // measure: token com padrão numérico + barra + letra  ex: "165/70R14", "192/20R"
 // line:    tokens após a measure até o final, excluindo a própria marca
 export function extractProductMeasureAndLine(
   nome: string,
   marca?: string,
-): { measure: string | null; line: string | null } {
-  if (!nome) return { measure: null, line: null };
-
+): { measure: string | null; line: string | null; rim: string | null } {
+  if (!nome) return { measure: null, line: null, rim: null };
+ 
   const tokens = nome.trim().split(/\s+/);
-
+ 
   // Measure: primeiro token que começa com dígito e contém barra seguida de letra
   // Exemplos válidos: 165/70R14, 192/20R, 205/55R16, 7.50R16
   const measureIndex = tokens.findIndex((t) =>
     /^\d[\d.,]*\/\d+[A-Za-z]/i.test(t),
   );
-
-  if (measureIndex === -1) return { measure: null, line: null };
-
+ 
+  if (measureIndex === -1) return { measure: null, line: null, rim: null };
+ 
   const measure = tokens[measureIndex];
-
+  const rim = extractRimFromMeasure(measure);
+ 
   // Line: tokens após a measure
-  const afterMeasure = tokens.slice(measureIndex + 1);
-
-  if (!afterMeasure.length) return { measure, line: null };
-
+  let lineTokens = tokens.slice(measureIndex + 1);
+ 
+  if (!lineTokens.length) return { measure, line: null, rim };
+ 
+  // Remove o índice de carga + velocidade logo após a measure, se existir
+  // ex: measure="255/35R18" seguido de "94Y" -> descarta "94Y"
+  if (LOAD_INDEX_REGEX.test(lineTokens[0])) {
+    lineTokens = lineTokens.slice(1);
+  }
+ 
+  if (!lineTokens.length) return { measure, line: null, rim };
+ 
   // Remove a marca do final se bater (case-insensitive)
   // ex: "Bravuris 5HM Barum" com marca "Barum" → "Bravuris 5HM"
-  let lineTokens = [...afterMeasure];
-
   if (marca) {
     const brandTokens = marca.trim().split(/\s+/);
     const brandLen = brandTokens.length;
-
+ 
     const tailMatches = lineTokens
       .slice(-brandLen)
       .every((t, i) => t.toLowerCase() === brandTokens[i].toLowerCase());
-
+ 
     if (tailMatches) {
       lineTokens = lineTokens.slice(0, -brandLen);
     }
   }
-
+ 
   const line = lineTokens.length ? lineTokens.join(" ") : null;
-
-  return { measure, line };
+ 
+  return { measure, line, rim };
 }
 
-function extractRimFromMeasure(measure?: string | null): string | null {
-  const match = measure?.match(/R\s*(\d{1,2})/i);
+export function extractRimFromMeasure(measure?: string | null): string | null {
+  if (!measure) return null;
+ 
+  const match = measure.match(/R\s*(\d{1,2})/i);
   return match?.[1] ?? null;
 }
 
@@ -1014,7 +1028,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       logPrefix,
     });
 
-    const { measure, line } = extractProductMeasureAndLine(
+    const { measure, line, rim } = extractProductMeasureAndLine(
       blingProduct.nome,
       blingProduct.marca,
     );
@@ -1118,6 +1132,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             brand_id: matchedBrand?.id ?? null,
             subgroup_id: importedTireSubgroup?.id,
             line,
+            rim,
             measure,
             gross_weight: Number(blingProduct.pesoBruto ?? 0),
             net_weight: Number(blingProduct.pesoLiquido ?? 0),
