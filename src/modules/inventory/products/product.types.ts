@@ -19,6 +19,7 @@ export interface ProductAttributes {
   commission?: number;
   line?: string | null;
   measure?: string | null;
+  rim?: string | null;
   gross_weight?: number;
   net_weight?: number;
   stock_virtual_total?: number;

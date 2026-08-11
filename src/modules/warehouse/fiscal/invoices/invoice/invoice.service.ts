@@ -496,6 +496,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           "number_system",
           "seller_id",
           "invoice_value",
+          "emitted_at",
         ],
         include: [
           {
@@ -533,60 +534,6 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       this.queryConfig,
     );
 
-    const orderByInvoiceId = new Map<string, Order>();
-    const orderByInvoiceSystemId = new Map<string, Order>();
-    const invoiceIds = rows.map((invoice) => invoice.id).filter(Boolean);
-    const invoiceSystemIds = rows
-      .map((invoice) => invoice.id_system)
-      .filter((idSystem): idSystem is string => Boolean(idSystem));
-
-    if (invoiceIds.length || invoiceSystemIds.length) {
-      const orderWhere: FindOptions["where"] = {
-        [Op.or]: [
-          ...(invoiceIds.length
-            ? [{ invoice_id: { [Op.in]: invoiceIds } }]
-            : []),
-          ...(invoiceSystemIds.length
-            ? [
-                Sequelize.where(
-                  Sequelize.literal(
-                    `"Order"."source_payload" #>> '{notaFiscal,id}'`,
-                  ),
-                  { [Op.in]: invoiceSystemIds },
-                ),
-              ]
-            : []),
-        ],
-      };
-
-      const orders = await Order.findAll({
-        where: orderWhere,
-        attributes: [
-          "id",
-          "invoice_id",
-          "date",
-          "id_order_system",
-          "number_order_system",
-          "number_order_channel",
-          "source_payload",
-        ],
-      });
-
-      for (const order of orders) {
-        if (order.invoice_id) {
-          orderByInvoiceId.set(order.invoice_id, order);
-        }
-
-        const sourcePayload = order.source_payload as
-          | { notaFiscal?: { id?: string | number } }
-          | undefined;
-        const sourceInvoiceId = sourcePayload?.notaFiscal?.id;
-        if (sourceInvoiceId != null) {
-          orderByInvoiceSystemId.set(String(sourceInvoiceId), order);
-        }
-      }
-    }
-
     const default_report_seler = await userService.findById(default_seller);
 
     const default_seller_body = {
@@ -603,13 +550,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         name: string;
         id_system: string;
       } | null;
-      order: {
-        id: string;
-        date: Date | null;
-        id_order_system?: string;
-        number_order_system: string;
-        number_order_channel: string;
-      } | null;
+      date: Date | null;
       measure: string | null;
       quantity: number;
       line: string | null;
@@ -622,11 +563,6 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         seller?: Contact | null;
         items?: (InvoiceItems & { product?: Product | null })[];
       };
-      const order =
-        orderByInvoiceId.get(invoice.id) ??
-        (invoice.id_system
-          ? orderByInvoiceSystemId.get(invoice.id_system)
-          : undefined);
 
       for (const item of invoiceWithRelations.items ?? []) {
         result.push({
@@ -639,15 +575,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
                 id_system: invoiceWithRelations.seller.id_system,
               }
             : default_seller_body,
-          order: order
-            ? {
-                id: order.id,
-                date: order.date ?? null,
-                id_order_system: order.id_order_system,
-                number_order_system: order.number_order_system,
-                number_order_channel: order.number_order_channel,
-              }
-            : null,
+          date: invoice.emitted_at ?? null,
           measure: item.product?.measure ?? null,
           quantity: item.quantity_expected,
           line: item.product?.line ?? null,
