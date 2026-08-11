@@ -1,10 +1,11 @@
 // integrations/sieg/services/documents/xml-documents.service.ts
 import { siegApi } from '../../../api/sieg_api.service';
+import { unzipBuffer } from '../../../../../../../../shared/utils/normalizers/zip';
 import {
   DocumentSearchHandler,
   GenericXmlDocumentParams,
   XmlDocumentResult,
-} from '../../../../helpers/mappers/documents/map-fiscal-documents.types';
+} from '../../../../../helpers/mappers/documents/map-fiscal-documents.types';
 import { SiegBaixarXmlsRequest, SiegBaixarXmlsResponse, SiegTipoXml } from './cte.types';
 
 const mapParams = (params: GenericXmlDocumentParams): SiegBaixarXmlsRequest => ({
@@ -20,18 +21,29 @@ const mapParams = (params: GenericXmlDocumentParams): SiegBaixarXmlsRequest => (
 const fetchXmlDocuments = async (params: SiegBaixarXmlsRequest): Promise<SiegBaixarXmlsResponse> => {
   console.log('[Sieg Request Params]', params);
 
-  const { data } = await siegApi.post<SiegBaixarXmlsResponse>('/v1/baixar-xmls', params);
+  const { data } = await siegApi.post<ArrayBuffer | unknown[]>('/v1/baixar-xmls', params, {
+    responseType: 'arraybuffer', 
+  });
 
-  console.log('[Sieg Response] total de xmls recebidos:', data?.length ?? 0);
+  if (Array.isArray(data)) {
+    console.log('[Sieg Response] total de xmls recebidos: 0 (sem resultados)');
+    return [];
+  }
 
-  return data;
+  const zipBuffer = Buffer.from(data as ArrayBuffer);
+
+  const xmlContents = unzipBuffer(zipBuffer, { extension: 'xml' }).map((entry) => entry.content);
+
+  console.log('[Sieg Response] total de xmls recebidos:', xmlContents.length);
+
+  return xmlContents;
 };
 
 const mapXmlDocuments = (response: SiegBaixarXmlsResponse): XmlDocumentResult[] => {
   if (!response?.length) return [];
 
-  return response.map((xmlBase64) => ({
-    xmlBase64,
+  return response.map((xmlContent) => ({
+    xmlBase64: Buffer.from(xmlContent, 'utf-8').toString('base64'),
   }));
 };
 

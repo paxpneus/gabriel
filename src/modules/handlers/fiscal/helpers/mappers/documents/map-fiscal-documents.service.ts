@@ -1,6 +1,6 @@
 // helpers/mappers/map-document-api.ts
 import { DocumentSearchHandler } from "./map-fiscal-documents.types";
-import { siegDocumentHandler } from "../../../sieg/services/documents/ctes/cte.service";
+import { siegDocumentHandler } from "../../../integrations/sieg/services/documents/ctes/cte.service";
 
 /**
  * Registry central: cada provider novo de busca de XML só precisa de uma entrada aqui.
