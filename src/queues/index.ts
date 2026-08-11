@@ -38,8 +38,8 @@ import { AutoBackupQueue } from "../modules/handlers/backup/auto-backup.queue";
 
 import { BlingManifestacaoService } from "../modules/handlers/bling/services/bling-nfe/automations/auto-manifest/nfe-manifest-web-scraping.service";
 import { BlingNfeScrapingQueue } from "../modules/handlers/bling/services/bling-nfe/automations/auto-manifest/nfe-manifest-web-scraping.queue";
-import { LogisticOccurrencesIngestionQueue } from "../modules/handlers/logistic/queues/fetch-invoice-occurrences.queue";
-import { LogisticOccurrencesSyncQueue } from "../modules/handlers/logistic/queues/sync-datafrete-invoice-occurrences.queue";
+
+import { CteIngestionQueue } from "../modules/handlers/fiscal/documents/cte/queues/cte-ingestion.queue";
 
 export const serverAdapter = new ExpressAdapter();
 
@@ -62,6 +62,7 @@ export type QueueName =
   | "DAILY_OPERATION_REPORT"
   | "DAILY_SALES_REPORT"
   | "AUTO_BACKUP"
+  | "CTE_INGESTION";
 
 // ─── buildQueues: só ativa worker nas filas explicitamente listadas ───────────
 function buildQueues(activeWorkers: QueueName[]) {
@@ -145,6 +146,9 @@ function buildQueues(activeWorkers: QueueName[]) {
     new BlingManifestacaoService(),
     { workless: true },
   );
+
+  const cteIngestionQueue = new CteIngestionQueue({ workless: w("CTE_INGESTION") }); 
+
   
   return {
     nfeQueue,
@@ -164,6 +168,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     tcarUpsertQueue,
     tcarSyncQueue,
     blingNfeScrapingQueue,
+    cteIngestionQueue,
   };
 }
 
@@ -186,6 +191,7 @@ export function registerQueues(app: Express) {
     tcarUpsertQueue,
     tcarSyncQueue,
     blingNfeScrapingQueue,
+    cteIngestionQueue,
   } = buildQueues([]);
 
   const blingOrderQueue = new BlingOrderQueue(
@@ -238,6 +244,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(tcarUpsertQueue.queue),
       new BullMQAdapter(tcarSyncQueue.queue),
       new BullMQAdapter(blingNfeScrapingQueue.queue),
+      new BullMQAdapter(cteIngestionQueue.queue),
     ],
     serverAdapter,
   });
@@ -335,10 +342,12 @@ export function startWorkers() {
     dailyOperationReportQueue,
     dailySalesReportQueue,
     autoBackupQueue,
+    cteIngestionQueue,
   } = buildQueues([
     "DAILY_OPERATION_REPORT",
     "DAILY_SALES_REPORT",
     "AUTO_BACKUP",
+    "CTE_INGESTION",
   ]);
 
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
@@ -346,6 +355,7 @@ export function startWorkers() {
     cron: "0 19 * * *",
     tz: "America/Sao_Paulo",
   });
+  cteIngestionQueue.scheduleRepeat({ every: 30 * 1000 });
 
   setTimeout(
     () => {
@@ -357,11 +367,13 @@ export function startWorkers() {
 
   void dailyOperationReportQueue;
   void autoBackupQueue;
+  void cteIngestionQueue;
 
   console.log("🚀 Workers de relatórios/backup ativos:");
   console.log("  → DAILY_OPERATION_REPORT (1h)");
   console.log("  → DAILY_SALES_REPORT (1h, offset 30min)");
   console.log("  → AUTO_BACKUP (19h BRT)");
+  console.log("  → CTE_INGESTION (30min)");
 }
 
 export function startTecincoWorkers() {

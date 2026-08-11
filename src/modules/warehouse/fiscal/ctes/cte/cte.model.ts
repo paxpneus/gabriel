@@ -3,7 +3,7 @@ import sequelize from "../../../../../config/sequelize";
 import { v4 as uuidv4 } from "uuid";
 import { CteAttributes, CteCreationAttributes, CteTakerType } from "./cte.types";
 
-class Cte 
+class Cte
   extends Model<CteAttributes, CteCreationAttributes>
   implements CteAttributes
 {
@@ -14,13 +14,26 @@ class Cte
   public total_value!: number;
   public issue_date!: Date;
   public operation_date!: Date;
+
   public issuer_tax_id!: string;
+  public issuer_name!: string | null;
+
   public sender_tax_id!: string | null;
+  public sender_name!: string | null;
+
   public recipient_tax_id!: string | null;
+  public recipient_name!: string | null;
+
   public dispatcher_tax_id!: string | null;
+  public dispatcher_name!: string | null;
+
   public receiver_tax_id!: string | null;
+  public receiver_name!: string | null;
+
   public taker_type!: CteTakerType | null;
   public taker_tax_id!: string | null;
+  public taker_name!: string | null;
+
   public xml_path!: string | null;
 
   public readonly createdAt!: Date;
@@ -61,33 +74,65 @@ Cte.init(
       allowNull: false,
       defaultValue: DataTypes.NOW,
     },
+
+    // Emitente (quem emitiu o CT-e)
     issuer_tax_id: {
       type: DataTypes.STRING(14),
       allowNull: false,
     },
+    issuer_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
+    // Remetente (quem enviou a carga)
     sender_tax_id: {
       type: DataTypes.STRING(14),
       allowNull: true,
     },
+    sender_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
+    // Destinatário (quem recebe a carga)
     recipient_tax_id: {
       type: DataTypes.STRING(14),
       allowNull: true,
     },
+    recipient_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
+    // Expedidor
     dispatcher_tax_id: {
       type: DataTypes.STRING(14),
       allowNull: true,
     },
+    dispatcher_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
+    // Recebedor
     receiver_tax_id: {
       type: DataTypes.STRING(14),
       allowNull: true,
     },
+    receiver_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
+    // Tomador do serviço (pode ser qualquer um dos papéis acima — indicado por taker_type)
     taker_type: {
       type: DataTypes.ENUM(
         "ISSUER",
         "DISPATCHER",
         "RECEIVER",
         "ADDRESSEE",
-        "THIRD_PARTY"
+        "THIRD_PARTY",
       ),
       allowNull: true,
     },
@@ -95,6 +140,11 @@ Cte.init(
       type: DataTypes.STRING(14),
       allowNull: true,
     },
+    taker_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
     xml_path: {
       type: DataTypes.TEXT,
       allowNull: true,
@@ -120,7 +170,7 @@ Cte.init(
         name: "ctes_recipient_tax_id_idx",
       },
     ],
-  }
+  },
 );
 
 export default Cte;
