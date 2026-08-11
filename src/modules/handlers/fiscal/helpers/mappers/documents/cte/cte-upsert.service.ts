@@ -1,7 +1,7 @@
 // modules/.../cte/cte-upsert.service.ts
 import { XmlDocumentResult } from "../map-fiscal-documents.types";
 import { extractCteFromXml } from "./cte-xml-parser";
-import cteService from "../../../../../../warehouse/fiscal/ctes/cte/cte.service";
+import cteService from "../../../../../../warehouse/fiscal/ctes/cte/services/cte.service";
 import { resolveCteIssuerAsTransporter } from "./cte-party-resolver.service";
 import { encryptXml } from "../../../../../../../shared/utils/xml/xml-cipher";
 import { CteCreationAttributes } from "../../../../../../warehouse/fiscal/ctes/cte/cte.types";
