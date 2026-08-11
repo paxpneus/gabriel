@@ -11,10 +11,41 @@ import { fetchAndUpsertCte } from "../../../helpers/mappers/documents/cte/cte-up
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 import { getDateRangeAsDate } from "../../../../../../shared/utils/normalizers/date";
 
-const DELAY_BETWEEN_REQUESTS_MS = 30 * 1000;
+const DELAY_BETWEEN_REQUESTS_MS = 10 * 1000;
 const PROVIDER_NAME = "Sieg";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Papéis que uma loja pode assumir num CT-e. "emit" fica de fora por padrão
+// (loja nunca é transportadora), mas deixamos parametrizável caso algum
+// CNPJ de loja também opere como transportadora.
+type CteRole = "dest" | "rem" | "tom" | "emit";
+
+const ROLES_TO_QUERY: CteRole[] = ["dest", "rem", "tom", "emit"];
+
+const buildParamsForRole = (
+  role: CteRole,
+  cnpj: string,
+  dataEmissaoInicio: Date,
+  dataEmissaoFim: Date,
+): GenericXmlDocumentParams => {
+  const base: GenericXmlDocumentParams = {
+    documentType: XmlDocumentType.CTE,
+    dataEmissaoInicio,
+    dataEmissaoFim,
+  };
+
+  switch (role) {
+    case "dest":
+      return { ...base, cnpjDest: cnpj };
+    case "rem":
+      return { ...base, cnpjRem: cnpj };
+    case "tom":
+      return { ...base, cnpjTom: cnpj };
+    case "emit":
+      return { ...base, cnpjEmit: cnpj };
+  }
+};
 
 export class CteIngestionQueue extends BaseQueueService<void> {
   constructor(options: { workless?: boolean } = {}) {
@@ -30,9 +61,7 @@ export class CteIngestionQueue extends BaseQueueService<void> {
       `[CteIngestionQueue] Iniciando busca periódica de CTes. jobId=${job.id}`,
     );
 
-    const unitBusinesses = await unitBusinessService.findAll({
-      where: { type: "PHYSICAL" },
-    });
+    const unitBusinesses = await unitBusinessService.getComercialUnitBusinessOnly();
 
     if (!unitBusinesses.length) {
       console.warn(
@@ -42,7 +71,7 @@ export class CteIngestionQueue extends BaseQueueService<void> {
     }
 
     const handler = resolveDocumentHandler(PROVIDER_NAME);
-    const { inicio: dataEmissaoInicio, fim: dataEmissaoFim } = getDateRangeAsDate(5);
+    const { inicio: dataEmissaoInicio, fim: dataEmissaoFim } = getDateRangeAsDate(1);
 
     for (let i = 0; i < unitBusinesses.length; i++) {
       const unit = unitBusinesses[i];
@@ -58,35 +87,21 @@ export class CteIngestionQueue extends BaseQueueService<void> {
         `[CteIngestionQueue] (${i + 1}/${unitBusinesses.length}) loja=${unit.name} cnpj=${unit.cnpj}`,
       );
 
-      // ─── CNPJ como emitente ─────────────────────────────────────────────
-      await this.fetchAndProcess(
-        handler,
-        {
-          documentType: XmlDocumentType.CTE,
-          dataEmissaoInicio,
-          dataEmissaoFim,
-          cnpjEmit: unit.cnpj,
-        },
-        `loja=${unit.name} | emit=${unit.cnpj}`,
-      );
+      for (let r = 0; r < ROLES_TO_QUERY.length; r++) {
+        const role = ROLES_TO_QUERY[r];
+        const params = buildParamsForRole(role, unit.cnpj, dataEmissaoInicio, dataEmissaoFim);
 
-      await sleep(DELAY_BETWEEN_REQUESTS_MS);
+        await this.fetchAndProcess(
+          handler,
+          params,
+          `loja=${unit.name} | ${role}=${unit.cnpj}`,
+        );
 
-      // ─── CNPJ como destinatário ─────────────────────────────────────────
-      await this.fetchAndProcess(
-        handler,
-        {
-          documentType: XmlDocumentType.CTE,
-          dataEmissaoInicio,
-          dataEmissaoFim,
-          cnpjDest: unit.cnpj,
-        },
-        `loja=${unit.name} | dest=${unit.cnpj}`,
-      );
-
-      const isLastUnit = i === unitBusinesses.length - 1;
-      if (!isLastUnit) {
-        await sleep(DELAY_BETWEEN_REQUESTS_MS);
+        const isLastRole = r === ROLES_TO_QUERY.length - 1;
+        const isLastUnit = i === unitBusinesses.length - 1;
+        if (!isLastRole || !isLastUnit) {
+          await sleep(DELAY_BETWEEN_REQUESTS_MS);
+        }
       }
     }
 

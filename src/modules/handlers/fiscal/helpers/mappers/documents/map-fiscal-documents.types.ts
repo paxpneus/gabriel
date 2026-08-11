@@ -34,6 +34,8 @@ export interface GenericXmlDocumentParams {
   dataEmissaoFim: Date;
   cnpjEmit?: string;
   cnpjDest?: string;
+  cnpjRem?: string;
+  cnpjTom?: string;
   take?: number;
   skip?: number;
 }

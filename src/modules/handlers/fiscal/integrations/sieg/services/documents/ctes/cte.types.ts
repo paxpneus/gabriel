@@ -14,6 +14,8 @@ export interface SiegBaixarXmlsRequest {
   DataEmissaoFim: string; // ISO 8601
   CNPJemit?: string;
   CNPJdest?: string;
+  CNPJrem?: string;
+  CNPJtom?: string;
 }
 
 /**
