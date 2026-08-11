@@ -2,7 +2,11 @@
 import { XMLParser } from "fast-xml-parser";
 import { CteTakerType } from "../../../../../../warehouse/fiscal/ctes/cte/cte.types";
 
-const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  parseTagValue: false,
+});
 
 export interface CteXmlExtracted {
   chave: string | null;
@@ -72,12 +76,13 @@ export function extractCteFromXml(xmlContent: string): CteXmlExtracted {
   const emit = infCte.emit ?? {};
   const rem = infCte.rem ?? {};
   const exped = infCte.exped ?? {};
-  const receb = infCte.receb ?? {}; 
+  const receb = infCte.receb ?? {};
   const dest = infCte.dest ?? {};
   const vPrest = infCte.vPrest ?? {};
 
+
   const chave =
-    infProt?.chCTe ??
+    (infProt?.chCTe ? String(infProt.chCTe) : null) ??
     (typeof infCte["@_Id"] === "string" ? infCte["@_Id"].replace(/^CTe/i, "") : null);
 
   const issuerTaxId = cleanDocument(emit.CNPJ);
@@ -103,7 +108,7 @@ export function extractCteFromXml(xmlContent: string): CteXmlExtracted {
   } else if (ide.toma3?.toma !== undefined) {
     switch (String(ide.toma3.toma)) {
       case "0": // Remetente
-        takerType = "ISSUER";
+        takerType = "SENDER";
         takerTaxId = senderTaxId;
         break;
       case "1": // Expedidor
