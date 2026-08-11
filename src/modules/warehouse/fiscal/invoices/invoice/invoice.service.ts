@@ -493,6 +493,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           "id",
           "id_system",
           "destination_city",
+          "receiver_name",
           "number_system",
           "seller_id",
           "invoice_value",
@@ -523,7 +524,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
               {
                 model: Product,
                 as: "product",
-                attributes: ["measure", "line", "brand"],
+                attributes: ["measure", "line", "brand", "rim"],
                 required: true,
               },
             ],
@@ -544,15 +545,19 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
     const result: {
       number_system: string | undefined;
-      city: string | null;
       seller: {
         id: string;
         name: string;
         id_system: string;
       } | null;
+      customer: {
+        name: string | null;
+        city: string | null
+      };
       date: Date | null;
       measure: string | null;
       quantity: number;
+      rim: string | null;
       line: string | null;
       brand: string | null;
       value: number | null;
@@ -567,7 +572,6 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       for (const item of invoiceWithRelations.items ?? []) {
         result.push({
           number_system: invoice.number_system,
-          city: invoice.destination_city ?? null,
           seller: invoiceWithRelations.seller
             ? {
                 id: invoiceWithRelations.seller.id,
@@ -575,8 +579,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
                 id_system: invoiceWithRelations.seller.id_system,
               }
             : default_seller_body,
+          customer: {
+            name: invoice.receiver_name ?? null,
+            city: invoice.destination_city ?? null
+          },
           date: invoice.emitted_at ?? null,
           measure: item.product?.measure ?? null,
+          rim: item.product?.rim ?? null,
           quantity: item.quantity_expected,
           line: item.product?.line ?? null,
           brand: item.product?.brand ?? null,
