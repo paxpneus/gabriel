@@ -2,7 +2,7 @@ import { Optional } from "sequelize";
 
 // Tipos customizados para o CT-e
 export type CteTakerType =
-  | "ISSUER"       // 0 - Remetente
+  | "SENDER"       // 0 - Remetente
   | "DISPATCHER"   // 1 - Expedidor
   | "RECEIVER"     // 2 - Recebedor
   | "ADDRESSEE"    // 3 - Destinatário

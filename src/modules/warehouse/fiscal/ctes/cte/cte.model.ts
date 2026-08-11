@@ -128,7 +128,7 @@ Cte.init(
     // Tomador do serviço (pode ser qualquer um dos papéis acima — indicado por taker_type)
     taker_type: {
       type: DataTypes.ENUM(
-        "ISSUER",
+        "SENDER",
         "DISPATCHER",
         "RECEIVER",
         "ADDRESSEE",
