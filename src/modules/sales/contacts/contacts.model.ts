@@ -15,7 +15,7 @@ class Contact
   public name!: string;
   public type!: ContactType;
   public id_system!: string;
-  public document!: string;
+  public document?: string | null;
   public integrations_id?: string | null;
   public unit_business_id?: string | null;
   public user_id?: string | null;
