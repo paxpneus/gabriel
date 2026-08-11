@@ -6,6 +6,8 @@ import {
   OrderItem,
   where as sequelizeWhere,
   literal,
+  cast,
+  col,
 } from "sequelize";
 import type { QueryParams, ResolvedQuery, QueryConfig } from "./query.types";
 
@@ -201,16 +203,25 @@ export class QueryParser {
 
     // 3. Search global (ILIKE nos campos configurados)
     if (params.search?.trim()) {
-      if (!config.searchFields?.length) {
-        where.id = null;
-      } else {
-        const term = `%${params.search.trim()}%`;
+  if (!config.searchFields?.length) {
+    where.id = null;
+  } else {
+    const term = `%${params.search.trim()}%`;
 
-        where[Op.or] = config.searchFields.map((field) => ({
-          [field]: { [Op.iLike]: term },
-        }));
+    where[Op.or] = config.searchFields.map((field) => {
+      // Campos numéricos precisam de cast para texto antes do ILIKE
+      const isNumeric = config.numericSearchFields?.includes(field);
+
+      if (isNumeric) {
+        return sequelizeWhere(cast(col(field), "text"), {
+          [Op.iLike]: term,
+        });
       }
-    }
+
+      return { [field]: { [Op.iLike]: term } };
+    });
+  }
+}
 
     return { limit: perPage, offset, order, where, page, perPage };
   }
