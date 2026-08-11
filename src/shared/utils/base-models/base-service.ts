@@ -73,6 +73,10 @@ class BaseService<
     return this.repository.findAll(options, params, config);
   }
 
+  findAllIds(params: QueryParams, forcedWhere?: WhereOptions) {
+  return this.repository.findAllIds(params, this.queryConfig, forcedWhere);
+}
+
   paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,

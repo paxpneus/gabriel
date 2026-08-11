@@ -5,6 +5,7 @@ import cteRepository, { CteRepository } from "../cte.repository";
 export class CteService extends BaseService<Cte, CteRepository> {
   constructor() {
     super(cteRepository);
+    
 
     this.queryConfig = {
       defaults: { perPage: 50, sortBy: "createdAt", sortDir: "DESC" },

@@ -7,6 +7,8 @@ import { authenticate } from "../../../../../middlewares/auth-token";
 import { Request, Response } from "express";
 import archiver from "archiver";
 
+const MAX_XML_BATCH = 5000;
+
 export class CteController extends BaseController<Cte, typeof CteService> {
   constructor(private xmlService: CteXmlService = cteXmlService) {
     super(CteService);
@@ -30,10 +32,32 @@ export class CteController extends BaseController<Cte, typeof CteService> {
 
   downloadXmlBatch = async (req: Request, res: Response): Promise<void> => {
     try {
-      const ids = req.body.cteIds;
+      const { cteIds, filters, search } = req.body as {
+        cteIds?: string[];
+        filters?: Record<string, any>;
+        search?: string;
+      };
 
-      if (!ids?.length) {
-        res.status(400).json({ error: "Nenhum ID informado" });
+      let ids: string[];
+
+      if (cteIds?.length) {
+        ids = cteIds;
+      } else if (filters || search) {
+        ids = await CteService.findAllIds({ filters, search });
+      } else {
+        res.status(400).json({ error: "Nenhum ID ou filtro informado" });
+        return;
+      }
+
+      if (!ids.length) {
+        res.status(400).json({ error: "Nenhum CT-e encontrado para os critérios informados." });
+        return;
+      }
+
+      if (ids.length > MAX_XML_BATCH) {
+        res.status(400).json({
+          error: `Muitos resultados (${ids.length}). Refine o filtro para no máximo ${MAX_XML_BATCH} CT-e por vez.`,
+        });
         return;
       }
 
