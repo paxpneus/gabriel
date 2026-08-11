@@ -1563,7 +1563,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Invoice existente ────────────────────────────────────────────────────
 
     const existingInvoice = await invoiceService.findByIdFullForAllUnits(
-      String(nf.id),
+      undefined,
       nf.chaveAcesso ?? undefined,
     );
 
