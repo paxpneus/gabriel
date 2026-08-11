@@ -22,6 +22,7 @@ export interface QueryConfig {
   filterableFields?: string[];
   sortableFields?: string[];
   stringFields?: string[];
+  numericSearchFields?: string[];
   customFields?: Record<string, CustomFieldResolver>;
   customSort?: Record<string, (dir: "ASC" | "DESC") => OrderItem>;
   defaults?: {

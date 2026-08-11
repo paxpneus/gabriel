@@ -1,11 +1,11 @@
 export interface TransporterAttributes {
   id: string;
   name: string;
-  cnpj?: string;
-  city?: string;
-  uf?: string;
-  id_system?: string;
-  integrations_id?: string;
+  cnpj?: string | null;
+  city?: string | null;
+  uf?: string | null;
+  id_system?: string | null;
+  integrations_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }

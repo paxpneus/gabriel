@@ -1,11 +1,11 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from "axios";
-import { createAxiosInstance } from "../../../../config/axios";
-import integrationsService from "../../../integrations/integrations/integrations.service";
-import { QueueItem, SiegTokenResponse } from "./sieg_api.types";
-import ConfigToken from "../../../integrations/config_tokens/config_tokens.model";
-import { FullIntegration } from "../../../integrations/integrations/integrations.types";
-import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
-import { redisConnection } from "../../../../shared/utils/base-models/base-redis";
+import { createAxiosInstance } from "../../../../../../config/axios";
+import integrationsService from "../../../../../integrations/integrations/integrations.service";
+import { QueueItem } from "./sieg_api.types";
+import ConfigToken from "../../../../../integrations/config_tokens/config_tokens.model";
+import { FullIntegration } from "../../../../../integrations/integrations/integrations.types";
+import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
+import { redisConnection } from "../../../../../../shared/utils/base-models/base-redis";
 
 let isRefreshing = false;
 let failedQueue: QueueItem[] = [];
@@ -90,9 +90,7 @@ function decodeJwtExpiryMs(jwt: string): number | null {
     const payloadPart = jwt.split(".")[1];
     if (!payloadPart) return null;
 
-    const payloadJson = Buffer.from(payloadPart, "base64url").toString(
-      "utf-8",
-    );
+    const payloadJson = Buffer.from(payloadPart, "base64url").toString("utf-8");
     const payload = JSON.parse(payloadJson) as { exp?: number };
 
     if (!payload.exp) return null;
@@ -170,23 +168,16 @@ export const doGenerateJwt = async (): Promise<string> => {
   });
 
   if (!response.ok) {
-    throw new Error(
-      `[SiegApi] Geração de JWT falhou: ${response.status} ${response.statusText}`,
-    );
+    throw new Error(`[SiegApi] Geração de JWT falhou: ${response.status}`);
   }
 
-  const data = (await response.json()) as SiegTokenResponse;
+  const token: string = (await response.json()) as string;
 
-  if (!data.jwt) {
-    throw new Error("[SiegApi] Resposta de autenticação sem JWT.");
-  }
-
-  // Persiste o novo JWT no banco, reaproveitando o campo access_token
   await configToken.update({
-    access_token: data.jwt,
+    access_token: token,
   });
 
-  return data.jwt;
+  return token;
 };
 
 // Garante que existe um JWT válido, gerando um novo se necessário/expirado.
@@ -224,8 +215,7 @@ async function ensureValidJwt(configToken: ConfigToken): Promise<string> {
 
 // Instancia do axios para a Sieg
 export const siegApi: AxiosInstance = createAxiosInstance({
-  baseURL:
-    process.env.NODE_ENV == "development" ? "nothing" : "https://api.sieg.com",
+  baseURL: "https://api.sieg.com/api",
 
   // Interceptor de request: garante JWT válido e injeta os dois headers exigidos pela Sieg
   onRequest: async (config) => {
@@ -276,6 +266,13 @@ export const siegApi: AxiosInstance = createAxiosInstance({
 
       await sleep(delayMs);
       return siegApi(originalRequest);
+    }
+
+    if (error.response?.status === 404) {
+      return Promise.resolve({
+        ...error.response,
+        data: [], 
+      });
     }
 
     // rejeita sem tentar de novo se caso resposta for 401 ou já tentou regenerar o JWT

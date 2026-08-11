@@ -31,7 +31,7 @@ export const setupAdminJS = async (app: Express) => {
   if (process.env.NODE_ENV === "production") {
     await admin.initialize();
   } else {
-    admin.watch();
+    await admin.initialize();
   }
 
   const authProvider = new DefaultAuthProvider({

@@ -61,7 +61,7 @@ export class InvoiceController extends BaseController<
       this.updateInvoicesOpen,
     );
 
-      this.router.post(
+    this.router.post(
       "/bulk/mark-internal-use",
       ...this.mw("markAsInternalUse"),
       this.markAsInternalUse,
@@ -86,7 +86,7 @@ export class InvoiceController extends BaseController<
       this.importXML,
     );
 
-    this.router.get(
+    this.router.post(
       "/xml/batch",
       ...this.mw("downloadXmlBatch"),
       this.downloadXmlBatch,
@@ -104,7 +104,11 @@ export class InvoiceController extends BaseController<
       this.getInvoiceSupplierReport,
     );
 
-    this.router.get("/pending-occurrences/get", ...this.mw("listInvoicesPendingLogisticOccurrence"), this.listInvoicesPendingLogisticOccurrence)
+    this.router.get(
+      "/pending-occurrences/get",
+      ...this.mw("listInvoicesPendingLogisticOccurrence"),
+      this.listInvoicesPendingLogisticOccurrence,
+    );
   }
 
   private resolveUnitBusinessId(
@@ -141,7 +145,7 @@ export class InvoiceController extends BaseController<
       getInvoiceProductReport: [authenticate, userPermissions],
       getInvoiceSupplierReport: [authenticate, userPermissions],
       listInvoicesPendingLogisticOccurrence: [authenticate, userPermissions],
-      markAsInternalUse: [authenticate, userPermissions]
+      markAsInternalUse: [authenticate, userPermissions],
     };
   }
 
@@ -160,9 +164,11 @@ export class InvoiceController extends BaseController<
     }
   };
 
-    listInvoicesPendingLogisticOccurrence = async (req: Request, res: Response): Promise<Response> => {
+  listInvoicesPendingLogisticOccurrence = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
     try {
-    
       const result = await this.service.listInvoicesPendingLogisticOccurrence();
       return res.json(result);
     } catch (error: any) {
@@ -307,22 +313,12 @@ export class InvoiceController extends BaseController<
 
   downloadXmlBatch = async (req: Request, res: Response): Promise<void> => {
     try {
-      let ids: string[] = [];
-      if (Array.isArray(req.query.invoiceIds)) {
-        ids = req.query.invoiceIds as string[];
-      } else if (typeof req.query.invoiceIds === "string") {
-        ids = req.query.invoiceIds
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-      }
+      const ids = req.body.invoiceIds;
 
       if (!ids.length) {
         res.status(400).json({ error: "Nenhum ID informado" });
         return;
       }
-
-      const CHUNK_SIZE = 100;
 
       res.setHeader("Content-Type", "application/zip");
       res.setHeader(
@@ -331,56 +327,21 @@ export class InvoiceController extends BaseController<
       );
 
       const archive = archiver("zip", { zlib: { level: 6 } });
-
       archive.on("error", (err) => {
         console.error("[XML BATCH] Erro no archiver:", err);
         if (!res.headersSent) res.status(500).json({ error: err.message });
       });
-
       archive.pipe(res);
 
-      // Processa em chunks para não explodir a memória
-      for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
-        const chunkIds = ids.slice(i, i + CHUNK_SIZE);
-
-        const invoices = await Invoice.findAll({
-          where: { id: chunkIds },
-          attributes: ["id", "xml_path", "number_system"],
-        });
-
-        for (const invoice of invoices) {
-          let xml = (invoice as any).xml_path;
-
-          if (!xml || xml.startsWith("http")) {
-            console.warn(
-              `[XML BATCH] Invoice ${invoice.id}: XML não disponível, pulando.`,
-            );
-            continue;
-          }
-
-          try {
-            if (isEncrypted(xml)) xml = decryptXml(xml);
-
-            const invoiceNumber = (invoice as any).number ?? invoice.id;
-            const filename = `nfe-${invoiceNumber}.xml`;
-
-            archive.append(xml, { name: filename });
-
-            console.log(`[XML BATCH] invoice=${invoice.id} adicionada ao zip`);
-          } catch (err: any) {
-            console.error(
-              `[XML BATCH] Erro invoice ${invoice.id}:`,
-              err.message,
-            );
-          }
-        }
+      for await (const { filename, xml } of this.service.streamXmlEntries(
+        ids,
+      )) {
+        archive.append(xml, { name: filename });
       }
 
       await archive.finalize();
     } catch (err: any) {
-      if (!res.headersSent) {
-        res.status(500).json({ error: err.message });
-      }
+      if (!res.headersSent) res.status(500).json({ error: err.message });
     }
   };
 
@@ -522,7 +483,10 @@ export class InvoiceController extends BaseController<
         req,
         context.unitBusinessId,
       );
-      const data = await this.service.getInvoiceProductReport(params, unitBusinessId,);
+      const data = await this.service.getInvoiceProductReport(
+        params,
+        unitBusinessId,
+      );
       return res.json({ data });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

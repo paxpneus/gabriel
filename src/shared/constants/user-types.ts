@@ -84,6 +84,10 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
             id: "transporters",
             label: "Transportadoras",
           },
+          {
+            id: "ctes",
+            label: "Documento Fiscal CTE",
+          },
         ],
       },
 

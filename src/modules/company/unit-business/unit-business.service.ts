@@ -1,4 +1,4 @@
-import { FindOptions } from 'sequelize';
+import { FindOptions, Op } from 'sequelize';
 import { QueryParams, PaginatedResult } from '../../../shared/query/query.types';
 import BaseService from '../../../shared/utils/base-models/base-service';
 import UnitBusiness from './unit-business.model';
@@ -64,6 +64,24 @@ export class UnitBusinessService extends BaseService<UnitBusiness, UnitBusinessR
     : safeParams;
 
   return this.repository.findPaginated(finalParams, this.queryConfig, extraOptions);
+}
+
+async getComercialUnitBusinessOnly(): Promise<UnitBusinessAttributes[]> {
+
+  const result = await this.findAll({
+    where: {
+      type: "PHYSICAL",
+      number: {
+        [Op.ne]: "0",
+      }
+    },
+    order: [["number", "DESC"]]
+  })
+
+  if (!result) throw new Error("Nenhuma unit business válida para negócio cadastrada")
+  
+
+  return result
 }
 
 async shutdownRedis() {
