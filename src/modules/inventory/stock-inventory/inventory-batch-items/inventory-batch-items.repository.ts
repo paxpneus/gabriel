@@ -80,7 +80,10 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
           },
         ],
         transaction: t,
-        lock: t.LOCK.UPDATE,
+        lock: {
+          level: t.LOCK.UPDATE,
+          of: InventoryBatchItems,
+        },
       })) as unknown as inventoryBatchItemFull;
 
       if (!batchItem) throw new Error("Item não encontrado");
