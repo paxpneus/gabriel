@@ -120,4 +120,29 @@ export function startOfDayTz(date: string | Date | Dayjs = nowTz()): Dayjs {
 export function endOfDayTz(date: string | Date | Dayjs = nowTz()): Dayjs {
   return toTz(date).endOf("day");
 }
+
+export function getChunkedDateRangesAsDate(
+  startDate: string | Date | Dayjs,
+  monthsPerChunk = 2,
+  endDate: string | Date | Dayjs = nowTz(),
+): Array<{ inicio: Date; fim: Date }> {
+  const ranges: Array<{ inicio: Date; fim: Date }> = [];
+
+  let cursor = startOfDayTz(startDate);
+  const end = endOfDayTz(endDate);
+
+  while (cursor.isBefore(end) || cursor.isSame(end)) {
+    let chunkEnd = cursor.add(monthsPerChunk, "month").subtract(1, "day");
+    chunkEnd = chunkEnd.isAfter(end) ? end : endOfDayTz(chunkEnd);
+
+    ranges.push({
+      inicio: cursor.toDate(),
+      fim: chunkEnd.toDate(),
+    });
+
+    cursor = startOfDayTz(chunkEnd.add(1, "day"));
+  }
+
+  return ranges;
+}
  
