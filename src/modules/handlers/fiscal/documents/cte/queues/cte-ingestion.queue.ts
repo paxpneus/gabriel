@@ -71,7 +71,7 @@ export class CteIngestionQueue extends BaseQueueService<void> {
     }
 
     const handler = resolveDocumentHandler(PROVIDER_NAME);
-    const { inicio: dataEmissaoInicio, fim: dataEmissaoFim } = getDateRangeAsDate(1);
+    const { inicio: dataEmissaoInicio, fim: dataEmissaoFim } = getDateRangeAsDate(230);
 
     for (let i = 0; i < unitBusinesses.length; i++) {
       const unit = unitBusinesses[i];

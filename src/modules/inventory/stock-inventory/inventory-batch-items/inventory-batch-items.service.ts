@@ -25,13 +25,11 @@ export class InventoryBatchItemsService extends BaseService<
   }
 
   async removeItem(id: string, batchId: string): Promise<void> {
-    await sequelize.transaction(async (t) => {
       const inventoryBatch =
         await inventoryBatchService.findByIdFullBatch(batchId);
       if (!inventoryBatch) throw new Error("Lote não encontrado");
 
      this.repository.removeItem(id, batchId)
-    });
   }
 }
 export default new InventoryBatchItemsService();
