@@ -11,7 +11,7 @@ import cteXmlBatchQueue from './queues/cte-download.queue'
 import { JobTracker } from './helpers/cte-download.tracker';
 import uploaderService from "../../../../handlers/uploader/services/uploader.service";
 
-const SYNC_THRESHOLD = 5;
+const SYNC_THRESHOLD = 500;
 
 export class CteController extends BaseController<Cte, typeof CteService> {
   constructor(private xmlService: CteXmlService = cteXmlService) {
