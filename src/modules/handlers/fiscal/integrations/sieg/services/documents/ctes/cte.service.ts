@@ -19,7 +19,16 @@ const SIEG_XML_REQUEST_TIMEOUT_MS = Number(
   process.env.SIEG_XML_REQUEST_TIMEOUT_MS ?? 60_000,
 );
 
-const SIEG_MIN_INTERVAL_MS = Number(process.env.SIEG_MIN_INTERVAL_MS ?? 30_000);
+const SIEG_MIN_INTERVAL_MS = Number(process.env.SIEG_MIN_INTERVAL_MS ?? 35_000);
+
+// Retry específico para falha no meio da paginação: em vez de descartar
+// tudo que já foi baixado, tenta a MESMA página de novo depois de um tempo.
+const SIEG_PAGE_RETRY_DELAY_MS = Number(
+  process.env.SIEG_PAGE_RETRY_DELAY_MS ?? 35_000,
+);
+const SIEG_PAGE_MAX_RETRIES = Number(
+  process.env.SIEG_PAGE_MAX_RETRIES ?? 5,
+);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -95,6 +104,30 @@ const fetchXmlPage = async (
   }
 };
 
+// Tenta buscar uma página; se falhar, tenta de novo a MESMA página
+// (mesmo Skip) depois de SIEG_PAGE_RETRY_DELAY_MS, até SIEG_PAGE_MAX_RETRIES vezes.
+const fetchXmlPageWithRetry = async (
+  params: SiegBaixarXmlsRequest,
+  attempt = 1,
+): Promise<string[] | "no-results"> => {
+  try {
+    return await fetchXmlPage(params);
+  } catch (error: any) {
+    if (attempt > SIEG_PAGE_MAX_RETRIES) {
+      throw error;
+    }
+
+    console.warn(
+      `[SiegApi] Falha na página (Skip=${params.Skip}). ` +
+      `Retry ${attempt}/${SIEG_PAGE_MAX_RETRIES} em ${SIEG_PAGE_RETRY_DELAY_MS / 1000}s. ` +
+      `erro=${error?.message}`,
+    );
+
+    await sleep(SIEG_PAGE_RETRY_DELAY_MS);
+    return fetchXmlPageWithRetry(params, attempt + 1);
+  }
+};
+
 const fetchXmlDocuments = async (
   params: SiegBaixarXmlsRequest,
 ): Promise<SiegBaixarXmlsResponse> => {
@@ -103,7 +136,7 @@ const fetchXmlDocuments = async (
   const wantsAllPages = !params.Take || params.Take === 0;
 
   if (!wantsAllPages) {
-    const page = await fetchXmlPage(params);
+    const page = await fetchXmlPageWithRetry(params);
     const xmlContents = page === "no-results" ? [] : page;
     console.log("[Sieg Response] total de xmls recebidos:", xmlContents.length);
     return xmlContents;
@@ -121,7 +154,7 @@ const fetchXmlDocuments = async (
     };
     page_log++
 
-    const page = await fetchXmlPage(pageParams);
+    const page = await fetchXmlPageWithRetry(pageParams);
 
     if (page === "no-results") break;
 
