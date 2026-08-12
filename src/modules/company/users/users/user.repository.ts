@@ -7,6 +7,8 @@ import { USER_TYPES } from "../../../../shared/constants/user-types";
 import { UserAttributes } from "./user.types";
 import Role from "../roles/role.model";
 import Contact from "../../../sales/contacts/contacts.model";
+import UnitBusinessConfig from "../../unit-business/unit-business-config/unit-business-config.model";
+import Label from "../../../inventory/labels/labels.model";
 
 export class UserRepository extends BaseRepository<User> {
   constructor() {
@@ -25,6 +27,22 @@ export class UserRepository extends BaseRepository<User> {
           model: UnitBusiness,
           as: "unitBusiness",
           attributes: ["id", "name", "number", "id_system", "cnpj"],
+          include: [
+            {
+              model: UnitBusinessConfig,
+              as: 'config',
+              include: [
+                {
+                  model: Label,
+                  as: 'stockLabel'
+                },
+                {
+                  model: Label,
+                  as: 'shippingLabel'
+                }
+              ]
+            }
+          ]
         },
         {
           model: UnitBusiness,

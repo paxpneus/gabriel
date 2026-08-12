@@ -6,6 +6,7 @@
  */
 
 import UnitBusiness from "../modules/company/unit-business/unit-business.model";
+import UnitBusinessConfig from "../modules/company/unit-business/unit-business-config/unit-business-config.model";
 import User from "../modules/company/users/users/user.model";
 import UserConfig from "../modules/company/users/user_config/user_config.model";
 import UserUnitBusiness from "../modules/company/users/user_unit_business/user_unit_business.model";
@@ -60,6 +61,7 @@ import BatchInvoiceItems from "../modules/warehouse/expedition/batch-invoice-ite
 import InvoiceUnitBusinessAttributes from "../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import State from "../modules/warehouse/address/state/state.model";
 import Brand from "../modules/inventory/brands/brands.model";
+import Label from "../modules/inventory/labels/labels.model";
 import SellerSalesOrderItemSnapshot from "../modules/reports/sellers-report/models/seller-sales-order-item-snapshot/seller-sales-order-item-snapshot.model";
 import Group from "../modules/inventory/groups/group/group.model";
 import Subgroup from "../modules/inventory/groups/subgroup/subgroup.model";
@@ -236,6 +238,34 @@ export function setupAssociations() {
   Integration.hasMany(UnitBusiness, {
     foreignKey: "integrations_id",
     as: "unitBusiness",
+  });
+
+  // Unit Business -> Configuração de etiquetas
+  UnitBusiness.hasOne(UnitBusinessConfig, {
+    foreignKey: "unit_business_id",
+    as: "config",
+  });
+  UnitBusinessConfig.belongsTo(UnitBusiness, {
+    foreignKey: "unit_business_id",
+    as: "unitBusiness",
+  });
+
+  Label.hasMany(UnitBusinessConfig, {
+    foreignKey: "label_stock_id",
+    as: "stockConfigForUnitBusinesses",
+  });
+  UnitBusinessConfig.belongsTo(Label, {
+    foreignKey: "label_stock_id",
+    as: "stockLabel",
+  });
+
+  Label.hasMany(UnitBusinessConfig, {
+    foreignKey: "label_shipping_id",
+    as: "shippingConfigForUnitBusinesses",
+  });
+  UnitBusinessConfig.belongsTo(Label, {
+    foreignKey: "label_shipping_id",
+    as: "shippingLabel",
   });
 
   // ===== TRANSPORTER =====

@@ -1,3 +1,5 @@
+import { UnitBusinessConfigAttributes } from "./unit-business-config/unit-business-config.types";
+
 export interface UnitBusinessAttributes {
   id: string;
   number: string;
@@ -12,6 +14,7 @@ export interface UnitBusinessAttributes {
   ult_nsu?: string;
   emails?: string[] | null;
   type?: string;
+  config?: UnitBusinessConfigAttributes | null
   createdAt?: Date;
   updatedAt?: Date;
 }

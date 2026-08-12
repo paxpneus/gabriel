@@ -6,6 +6,7 @@ import {
 } from "./unit-business.types";
 import { v4 as uuidv4 } from "uuid";
 import { normalizeDocument } from "../../../shared/utils/normalizers/document";
+import { UnitBusinessConfigAttributes } from "./unit-business-config/unit-business-config.types";
 
 class UnitBusiness
   extends Model<UnitBusinessAttributes, UnitBusinessCreationAttributes>
@@ -23,6 +24,7 @@ class UnitBusiness
   public certificate_path?: string;
   public ult_nsu?: string;
   public emails?: string[] | null;
+  public config?: UnitBusinessConfigAttributes | null
   public type?: string
 
   public readonly createdAt!: Date;
