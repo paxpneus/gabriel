@@ -6,9 +6,12 @@ import Redis from "ioredis";
 
 type SocketMiddleware = (socket: Socket, next: (err?: Error) => void) => void;
 type SocketHandlerRegistrar = (io: Server, socket: Socket) => void;
+type PendingEmit = () => void;
 
 class SocketService implements ISocketEmitter {
   private io: Server | null = null;
+  private pendingEmits: PendingEmit[] = [];
+  private readyResolvers: (() => void)[] = [];
 
   init(
     httpServer: HttpServer,
@@ -22,7 +25,17 @@ class SocketService implements ISocketEmitter {
     const subClient = pubClient.duplicate();
     this.io.adapter(createAdapter(pubClient, subClient));
 
+    this.pendingEmits.forEach((emit) => emit());
+    this.pendingEmits = [];
+    this.readyResolvers.forEach((resolve) => resolve());
+    this.readyResolvers = [];
+
     return this.io;
+  }
+
+  onReady(): Promise<void> {
+    if (this.io) return Promise.resolve();
+    return new Promise((resolve) => this.readyResolvers.push(resolve));
   }
 
   useMiddleware(middleware: SocketMiddleware): void {
@@ -36,15 +49,24 @@ class SocketService implements ISocketEmitter {
   }
 
   emitToUser<T>(userId: string | number, event: string, payload: T): void {
-    this.getIo().to(`user:${userId}`).emit(event, payload);
+    this.safeEmit(() => this.getIo().to(`user:${userId}`).emit(event, payload));
   }
 
   emitToRoom<T>(room: string, event: string, payload: T): void {
-    this.getIo().to(room).emit(event, payload);
+    this.safeEmit(() => this.getIo().to(room).emit(event, payload));
   }
 
   broadcast<T>(event: string, payload: T): void {
-    this.getIo().emit(event, payload);
+    this.safeEmit(() => this.getIo().emit(event, payload));
+  }
+
+  private safeEmit(emit: PendingEmit): void {
+    if (!this.io) {
+      console.warn("[SocketService] emit chamado antes de init() — enfileirando até ficar pronto.");
+      this.pendingEmits.push(emit);
+      return;
+    }
+    emit();
   }
 
   private getIo(): Server {

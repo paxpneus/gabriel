@@ -40,6 +40,7 @@ import { BlingManifestacaoService } from "../modules/handlers/bling/services/bli
 import { BlingNfeScrapingQueue } from "../modules/handlers/bling/services/bling-nfe/automations/auto-manifest/nfe-manifest-web-scraping.queue";
 
 import { CteIngestionQueue } from "../modules/handlers/fiscal/documents/cte/queues/cte-ingestion.queue";
+import { CteXmlBatchQueue } from "../modules/warehouse/fiscal/ctes/cte/queues/cte-download.queue";
 
 export const serverAdapter = new ExpressAdapter();
 
@@ -62,7 +63,8 @@ export type QueueName =
   | "DAILY_OPERATION_REPORT"
   | "DAILY_SALES_REPORT"
   | "AUTO_BACKUP"
-  | "CTE_INGESTION";
+  | "CTE_INGESTION"
+  | "CTE_XML_BATCH";
 
 // ─── buildQueues: só ativa worker nas filas explicitamente listadas ───────────
 function buildQueues(activeWorkers: QueueName[]) {
@@ -149,6 +151,8 @@ function buildQueues(activeWorkers: QueueName[]) {
 
   const cteIngestionQueue = new CteIngestionQueue({ workless: w("CTE_INGESTION") }); 
 
+  const cteDownloadQueue = new CteXmlBatchQueue({ workless: w("CTE_XML_BATCH")})
+
   
   return {
     nfeQueue,
@@ -169,6 +173,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     tcarSyncQueue,
     blingNfeScrapingQueue,
     cteIngestionQueue,
+    cteDownloadQueue,
   };
 }
 
@@ -192,6 +197,7 @@ export function registerQueues(app: Express) {
     tcarSyncQueue,
     blingNfeScrapingQueue,
     cteIngestionQueue,
+    cteDownloadQueue
   } = buildQueues([]);
 
   const blingOrderQueue = new BlingOrderQueue(
@@ -245,6 +251,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(tcarSyncQueue.queue),
       new BullMQAdapter(blingNfeScrapingQueue.queue),
       new BullMQAdapter(cteIngestionQueue.queue),
+      new BullMQAdapter(cteDownloadQueue.queue),
     ],
     serverAdapter,
   });
@@ -343,11 +350,13 @@ export function startWorkers() {
     dailySalesReportQueue,
     autoBackupQueue,
     cteIngestionQueue,
+    cteDownloadQueue,
   } = buildQueues([
     "DAILY_OPERATION_REPORT",
     "DAILY_SALES_REPORT",
     "AUTO_BACKUP",
     "CTE_INGESTION",
+    "CTE_XML_BATCH",
   ]);
 
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
@@ -369,6 +378,7 @@ export function startWorkers() {
   void dailyOperationReportQueue;
   void autoBackupQueue;
   void cteIngestionQueue;
+  void cteDownloadQueue;
 
   console.log("🚀 Workers de relatórios/backup ativos:");
   console.log("  → DAILY_OPERATION_REPORT (1h)");
