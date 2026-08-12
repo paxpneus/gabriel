@@ -9,7 +9,10 @@ import {
 } from "../../../helpers/mappers/documents/map-fiscal-documents.types";
 import { fetchAndUpsertCte } from "../../../helpers/mappers/documents/cte/cte-upsert.service";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
-import { getDateRangeAsDate } from "../../../../../../shared/utils/normalizers/date";
+import {
+  getChunkedDateRangesAsDate,
+  getDateRangeAsDate,
+} from "../../../../../../shared/utils/normalizers/date";
 
 const DELAY_BETWEEN_REQUESTS_MS = 30 * 1000;
 const PROVIDER_NAME = "Sieg";
@@ -61,7 +64,8 @@ export class CteIngestionQueue extends BaseQueueService<void> {
       `[CteIngestionQueue] Iniciando busca periódica de CTes. jobId=${job.id}`,
     );
 
-    const unitBusinesses = await unitBusinessService.getComercialUnitBusinessOnly();
+    const unitBusinesses =
+      await unitBusinessService.getComercialUnitBusinessOnly();
 
     if (!unitBusinesses.length) {
       console.warn(
@@ -71,36 +75,56 @@ export class CteIngestionQueue extends BaseQueueService<void> {
     }
 
     const handler = resolveDocumentHandler(PROVIDER_NAME);
-    const { inicio: dataEmissaoInicio, fim: dataEmissaoFim } = getDateRangeAsDate(230);
 
-    for (let i = 0; i < unitBusinesses.length; i++) {
-      const unit = unitBusinesses[i];
+    const dateRanges = getChunkedDateRangesAsDate("2026-01-01", 2);
 
-      if (!unit.cnpj) {
-        console.warn(
-          `[CteIngestionQueue] UnitBusiness ${unit.id} (${unit.name}) sem CNPJ. Pulando.`,
-        );
-        continue;
-      }
+    console.log(
+      `[CteIngestionQueue] ${dateRanges.length} bloco(s) de 2 meses a percorrer (desde 01/2026).`,
+    );
+
+    for (let rangeIdx = 0; rangeIdx < dateRanges.length; rangeIdx++) {
+      const { inicio: dataEmissaoInicio, fim: dataEmissaoFim } =
+        dateRanges[rangeIdx];
 
       console.log(
-        `[CteIngestionQueue] (${i + 1}/${unitBusinesses.length}) loja=${unit.name} cnpj=${unit.cnpj}`,
+        `[CteIngestionQueue] Bloco ${rangeIdx + 1}/${dateRanges.length}: ${dataEmissaoInicio.toISOString()} -> ${dataEmissaoFim.toISOString()}`,
       );
 
-      for (let r = 0; r < ROLES_TO_QUERY.length; r++) {
-        const role = ROLES_TO_QUERY[r];
-        const params = buildParamsForRole(role, unit.cnpj, dataEmissaoInicio, dataEmissaoFim);
+      for (let i = 0; i < unitBusinesses.length; i++) {
+        const unit = unitBusinesses[i];
 
-        await this.fetchAndProcess(
-          handler,
-          params,
-          `loja=${unit.name} | ${role}=${unit.cnpj}`,
+        if (!unit.cnpj) {
+          console.warn(
+            `[CteIngestionQueue] UnitBusiness ${unit.id} (${unit.name}) sem CNPJ. Pulando.`,
+          );
+          continue;
+        }
+
+        console.log(
+          `[CteIngestionQueue] (${i + 1}/${unitBusinesses.length}) loja=${unit.name} cnpj=${unit.cnpj}`,
         );
 
-        const isLastRole = r === ROLES_TO_QUERY.length - 1;
-        const isLastUnit = i === unitBusinesses.length - 1;
-        if (!isLastRole || !isLastUnit) {
-          await sleep(DELAY_BETWEEN_REQUESTS_MS);
+        for (let r = 0; r < ROLES_TO_QUERY.length; r++) {
+          const role = ROLES_TO_QUERY[r];
+          const params = buildParamsForRole(
+            role,
+            unit.cnpj,
+            dataEmissaoInicio,
+            dataEmissaoFim,
+          );
+
+          await this.fetchAndProcess(
+            handler,
+            params,
+            `bloco=${rangeIdx + 1}/${dateRanges.length} | loja=${unit.name} | ${role}=${unit.cnpj}`,
+          );
+
+          const isLastRole = r === ROLES_TO_QUERY.length - 1;
+          const isLastUnit = i === unitBusinesses.length - 1;
+          const isLastRange = rangeIdx === dateRanges.length - 1;
+          if (!isLastRole || !isLastUnit || !isLastRange) {
+            await sleep(DELAY_BETWEEN_REQUESTS_MS);
+          }
         }
       }
     }
