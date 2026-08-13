@@ -103,21 +103,8 @@ export class BlingReconcilerQueue extends BaseQueueService<
       if (orders.length === 0) break;
       totalFound += orders.length;
 
-      const numbers = orders.map((o: any) => String(o.numero));
-
-      const existingOrders = await ordersService.findAll({
-        where: {
-          integrations_id: integration.id,
-          number_order_system: numbers,
-        },
-      });
-
-      const existingNumbers = new Set(
-        existingOrders.map((o) => o.number_order_system),
-      );
 
       for (const blingOrder of orders) {
-        if (existingNumbers.has(String(blingOrder.numero))) continue;
 
         console.log(
           `[BlingReconciler] Pedido ${blingOrder.numero} não encontrado. Criando...`,
