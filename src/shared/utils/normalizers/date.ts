@@ -145,4 +145,14 @@ export function getChunkedDateRangesAsDate(
 
   return ranges;
 }
+
+export function getIncrementalDateRangeAsDate(days = 2): { inicio: Date; fim: Date } {
+  const fim = nowTz();
+  const inicio = startOfDayTz(fim.subtract(days, "day"));
+
+  return {
+    inicio: inicio.toDate(),
+    fim: fim.toDate(),
+  };
+}
  

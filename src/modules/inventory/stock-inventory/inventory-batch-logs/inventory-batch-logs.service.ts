@@ -13,6 +13,7 @@ import inventoryBatchLogsRepository, {
 import inventoryBatchItemsRepository from "../inventory-batch-items/inventory-batch-items.repository";
 import ProductConfig from "../../product-config/product_config.model";
 import inventorySubgroupsService from "../inventory-subgroups/inventory-subgroups.service";
+import { resolveProductByEanWithStock } from "../../../handlers/tecinco/queues/helpers/product.helpers";
 
 export class InventoryBatchLogsService extends BaseService<
   InventoryBatchLogs,
@@ -43,6 +44,10 @@ export class InventoryBatchLogsService extends BaseService<
         lock: t.LOCK.UPDATE,
       });
       if (!inventoryBatch) throw new Error("Lote de Inventário não encontrado");
+      if (!["OPEN", "PENDING"].includes(inventoryBatch.status))
+        throw new Error(
+          "Não permitido adicionar itens de lotes com processo encerrado!",
+        );
 
       // ── 2. Valida limite de 2 usuários por batch ───────────────────────────────
       const existingUserIds = await InventoryBatchLogs.findAll({
@@ -67,26 +72,15 @@ export class InventoryBatchLogsService extends BaseService<
       }
 
       // ── 3. Busca produto + stock ──────────────────────────────────────────────
-      const productFound = (await Product.findOne({
-        where: { [Op.or]: [{ ean: productcode }, { ean_tribut: productcode }] },
-        include: [
-          {
-            model: Stock,
-            as: "stocks",
-            where: { unit_business_id: unitBusinessId },
-          },
-          {
-            model: ProductConfig,
-            as: "productConfigs",
-            required: false,
-            where: { unit_business_id: unitBusinessId },
-          },
-        ],
+      const productFound = (await resolveProductByEanWithStock({
+        ean: productcode,
+        unitBusinessId,
         transaction: t,
-      })) as ProductWithStock;
+        logPrefix: "[InventoryBatchLogsService.scanProduct]",
+      })) as ProductWithStock | null;
 
       if (!productFound?.stocks?.length)
-        throw new Error("Produto não encontrado no estoque da loja");
+        throw new Error("Produto sem estoque ou não encontrado no estoque da loja");
       const stock = productFound.stocks[0];
       const config = (productFound as any).productConfigs?.[0];
 

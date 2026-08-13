@@ -10,11 +10,6 @@ import InventoryBatchItems from "./inventory-batch-items.model";
 import inventoryBatchItemsRepository, {
   InventoryBatchItemsRepository,
 } from "./inventory-batch-items.repository";
-import Product from "../../products/product.model";
-import { inventoryBatchItemFull } from "./inventory-batch-items.types";
-import Stock from "../../stock/stock/stock.model";
-import scanLogsService from "../../../warehouse/expedition/scan-logs/scan-logs.service";
-import InventoryBatchLogs from "../inventory-batch-logs/inventory-batch-logs.model";
 
 export class InventoryBatchItemsService extends BaseService<
   InventoryBatchItems,
@@ -29,7 +24,9 @@ export class InventoryBatchItemsService extends BaseService<
         await inventoryBatchService.findByIdFullBatch(batchId);
       if (!inventoryBatch) throw new Error("Lote não encontrado");
 
-     this.repository.removeItem(id, batchId)
+      if (!["OPEN", "PENDING"].includes(inventoryBatch.status)) throw new Error("Não permitido remover itens de lotes com processo encerrado!")
+
+     await this.repository.removeItem(id, batchId)
   }
 }
 export default new InventoryBatchItemsService();

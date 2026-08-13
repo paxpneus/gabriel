@@ -1,4 +1,4 @@
-import { Op } from "sequelize";
+import { Op, Transaction } from "sequelize";
 import {
   ProductConfig,
   Product,
@@ -154,5 +154,104 @@ export async function ensureSupplierMappings(params: {
     }
   }
 }
+
+export async function resolveProductByEan(params: {
+  ean: string;
+  logPrefix: string;
+}): Promise<typeof Product.prototype | null> {
+  const { ean, logPrefix } = params;
+
+  const normalizedEan = normalizeEan(ean);
+  if (!normalizedEan) return null;
+
+  let product = await Product.findOne({
+    where: {
+      [Op.or]: [{ ean: normalizedEan }, { ean_tribut: normalizedEan }],
+    },
+  });
+  if (product) {
+    console.log(
+      `${logPrefix} — produto resolvido via Product.ean/ean_tribut (ean=${normalizedEan})`,
+    );
+    return product;
+  }
+
+  const mapping = await SupplierMapping.findOne({
+    where: { supplier_product_code: normalizedEan },
+  });
+  if (mapping) {
+    product = await Product.findByPk(mapping.product_id);
+    if (product) {
+      console.log(
+        `${logPrefix} — produto resolvido via SupplierMapping EAN=${normalizedEan}: id=${product.id}`,
+      );
+      return product;
+    }
+  }
+
+  return null;
+}
+
+export async function resolveProductByEanWithStock(params: {
+  ean: string;
+  unitBusinessId: string;
+  transaction?: Transaction;
+  logPrefix: string;
+}): Promise<typeof Product.prototype | null> {
+  const { ean, unitBusinessId, transaction, logPrefix } = params;
+
+  const normalizedEan = normalizeEan(ean);
+  if (!normalizedEan) return null;
+
+  const includeWithStock = [
+    {
+      model: Stock,
+      as: "stocks",
+      where: { unit_business_id: unitBusinessId },
+    },
+    {
+      model: ProductConfig,
+      as: "productConfigs",
+      required: false,
+      where: { unit_business_id: unitBusinessId },
+    },
+  ];
+
+  let product = await Product.findOne({
+    where: {
+      [Op.or]: [{ ean: normalizedEan }, { ean_tribut: normalizedEan }],
+    },
+    include: includeWithStock,
+    transaction,
+  });
+  if (product) {
+    console.log(
+      `${logPrefix} — produto resolvido via Product.ean/ean_tribut (ean=${normalizedEan})`,
+    );
+    return product;
+  }
+
+  // 2. fallback: SupplierMapping pelo EAN, também exigindo estoque na loja
+  const mapping = await SupplierMapping.findOne({
+    where: { supplier_product_code: normalizedEan },
+    transaction,
+  });
+  if (mapping) {
+    product = await Product.findOne({
+      where: { id: mapping.product_id },
+      include: includeWithStock,
+      transaction,
+    });
+    if (product) {
+      console.log(
+        `${logPrefix} — produto resolvido via SupplierMapping EAN=${normalizedEan}: id=${product.id}`,
+      );
+      return product;
+    }
+  }
+
+  return null;
+}
+
 
 
