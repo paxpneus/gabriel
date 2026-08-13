@@ -364,8 +364,7 @@ export function startWorkers() {
     cron: "0 19 * * *",
     tz: "America/Sao_Paulo",
   });
-  // cteIngestionQueue.scheduleRepeat({ every: 30 * 60 * 1000 });
-  cteIngestionQueue.add()
+  cteIngestionQueue.scheduleRepeat({ every: 30 * 60 * 1000 });
 
   setTimeout(
     () => {
