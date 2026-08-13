@@ -12,3 +12,8 @@ export interface IntegrationMappingAttributes {
 }
 
 export interface IntegrationMappingCreationAttributes extends Omit<IntegrationMappingAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+
+export interface GroupedIntegrationMapping {
+  integration_name: string;
+  integration_id: string;
+}

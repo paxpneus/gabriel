@@ -7,8 +7,10 @@ import integrationMappingRepository, {
 import {
   IntegrationMappingCreationAttributes,
   EntityType,
+  GroupedIntegrationMapping,
 } from "./integration-mapping.types";
 import { entityRepositoryMap } from "./helpers/map-repository";
+import Integration from "../integrations/integrations.model";
 
 export class IntegrationMappingService extends BaseService<
   IntegrationMapping,
@@ -68,6 +70,43 @@ export class IntegrationMappingService extends BaseService<
     });
 
     return new Map(mappings.map((m) => [m.internal_id, m.external_id]));
+  }
+
+  // Retorna, para cada internal_id, todas as integrações (nome + external_id) mapeadas
+  async findGroupedMappingsMap(
+    entityType: EntityType,
+    internalIds: string[],
+  ): Promise<Map<string, GroupedIntegrationMapping[]>> {
+    const map = new Map<string, GroupedIntegrationMapping[]>();
+
+    if (!internalIds.length) return map;
+
+    const mappings = await this.repository.findAll({
+      where: {
+        entity_type: entityType,
+        internal_id: { [Op.in]: internalIds },
+      },
+      attributes: ["entity_type", "external_id", "internal_id"],
+      include: [
+        {
+          model: Integration,
+          as: "integration",
+          attributes: ["name"],
+          required: true,
+        },
+      ],
+    });
+
+    for (const mapping of mappings as any[]) {
+      const list = map.get(mapping.internal_id) ?? [];
+      list.push({
+        integration_name: mapping.integration.name,
+        integration_id: mapping.external_id,
+      });
+      map.set(mapping.internal_id, list);
+    }
+
+    return map;
   }
 
 }
