@@ -1,3 +1,4 @@
+import { StockMovementAttributes } from "../stock/stock-movements/stock-movements.types";
 import Stock from "../stock/stock/stock.model";
 import { SupplierMappingAttributes } from "../supplier-mapping/supplier-mapping.types";
 import Product from "./product.model";
@@ -39,3 +40,41 @@ export interface ProductCreationAttributes extends Omit<
 export interface ProductWithStock extends Product {
   stocks: Stock[];
 }
+
+type AverageCostTrend = "INCREASED" | "DECREASED" | "UNCHANGED";
+
+export type ProductDetailedWithMovements = Product & {
+  stocks: Stock[]
+
+  subgroup: unknown | null;
+  brandRegister: unknown | null;
+
+  productConfigs: unknown[];
+
+  lastPurchaseEntries: StockMovementAttributes[];
+
+  currentAverageCost?: number;
+};
+
+export type ProductDetailedWithMovementsSummary = ProductAttributes & {
+  stocks: Stock[]
+
+  subgroup: unknown | null;
+  brandRegister: unknown | null;
+  productConfigs: unknown[];
+
+  currentAverageCost?: number;
+
+  last_movement: {
+    balance: number;
+    average_cost: number;
+  };
+
+  second_movement: {
+    balance: number;
+    average_cost: number;
+  };
+
+  average_cost_trend: AverageCostTrend;
+  average_cost_difference: number;
+};

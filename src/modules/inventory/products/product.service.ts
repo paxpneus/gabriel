@@ -15,7 +15,11 @@ import Product from "./product.model";
 import productRepository, { ProductRepository } from "./product.repository";
 import Stock from "../stock/stock/stock.model";
 import ProductConfig from "../product-config/product_config.model";
-import { ProductCreationAttributes } from "./product.types";
+import {
+  ProductCreationAttributes,
+  ProductDetailedWithMovements,
+  ProductDetailedWithMovementsSummary,
+} from "./product.types";
 import supplierMappingService from "../supplier-mapping/supplier-mapping.service";
 import Group from "../groups/group/group.model";
 import Subgroup from "../groups/subgroup/subgroup.model";
@@ -59,69 +63,29 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<Product>> {
-    const stockFilter =
-      params.filters?.stockUnit &&
-      typeof params.filters.stockUnit === "object" &&
-      !Array.isArray(params.filters.stockUnit)
-        ? (params.filters.stockUnit as StockUnitFilter)
-        : undefined;
+    return this.repository.paginateWithStock(
+      params,
+      this.queryConfig,
+      extraOptions,
+    );
+  }
 
-    const stockWhere: Record<string, unknown> = {};
+  async productDetailedWithMovementsSummary(
+    params: QueryParams,
+    unitBusinessId?: string,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<PaginatedResult<ProductDetailedWithMovementsSummary>> {
+    const response = await this.repository.paginateDetailedWithMovements(
+      params,
+      this.queryConfig,
+      unitBusinessId,
+      extraOptions,
+    );
 
-    if (stockFilter?.unitBusinessId) {
-      stockWhere.unit_business_id = stockFilter.unitBusinessId;
-    }
-
-    if (stockFilter?.stockUnit) {
-      stockWhere.quantity =
-        stockFilter.stockUnit === "positive" ? { [Op.gt]: 0 } : { [Op.lte]: 0 };
-    }
-
-    const filters = { ...params.filters };
-    delete filters.stockUnit;
-
-    const paramsWithoutStockFilter: QueryParams = {
-      ...params,
-      filters: Object.keys(filters).length ? filters : undefined,
+    return {
+      data: response.data.map((p) => this.normalizeProductWithMovements(p)),
+      meta: response.meta,
     };
-
-    return super.paginate(paramsWithoutStockFilter, {
-      ...extraOptions,
-      subQuery: false,
-      attributes: { exclude: ["source_payload"] },
-      include: [
-        {
-          model: Stock,
-          as: "stocks",
-          where: Object.keys(stockWhere).length ? stockWhere : undefined,
-          required: !!stockFilter?.stockUnit,
-          attributes: ["id", "quantity", "unit_business_id", "total_price"],
-        },
-        {
-          model: Subgroup,
-          as: 'subgroup',
-          include: [
-            {
-              model: Group,
-              as: 'group'
-            }
-          ]
-        },
-        {
-          model: Brand,
-          as: 'brandRegister',
-          required: false,
-        },
-        {
-          model: ProductConfig,
-          as: "productConfigs",
-          where: stockFilter?.unitBusinessId
-            ? { unit_business_id: stockFilter.unitBusinessId }
-            : undefined,
-          required: false,
-        },
-      ],
-    });
   }
 
   async findByIdFull(
@@ -278,72 +242,64 @@ export class ProductService extends BaseService<Product, ProductRepository> {
   }
 
   async productReport(
-  params: QueryParams,
-  extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-): Promise<Product[]> {
-  const stockFilter =
-    params.filters?.stockUnit &&
-    typeof params.filters.stockUnit === "object" &&
-    !Array.isArray(params.filters.stockUnit)
-      ? (params.filters.stockUnit as StockUnitFilter)
-      : undefined;
+    params: QueryParams,
+    unitBusinessId?: string,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<ProductDetailedWithMovementsSummary[]> {
+    const products = await this.repository.findAllDetailedWithMovements(
+      params,
+      this.queryConfig,
+      unitBusinessId,
+      extraOptions,
+    );
 
-  const stockWhere: Record<string, unknown> = {};
-
-  if (stockFilter?.unitBusinessId) {
-    stockWhere.unit_business_id = stockFilter.unitBusinessId;
+    return products.map((p) => this.normalizeProductWithMovements(p));
   }
 
-  if (stockFilter?.stockUnit) {
-    stockWhere.quantity =
-      stockFilter.stockUnit === "positive" ? { [Op.gt]: 0 } : { [Op.lte]: 0 };
+  private normalizeProductWithMovements(
+    p: ProductDetailedWithMovements,
+  ): ProductDetailedWithMovementsSummary {
+    const product = (p as any).toJSON
+      ? ((p as any).toJSON() as unknown as ProductDetailedWithMovements)
+      : p;
+
+    const lastPurchaseEntries = product.lastPurchaseEntries ?? [];
+    const hasSecondEntry = lastPurchaseEntries.length > 1;
+
+    const lastAverageCost = Number(
+      lastPurchaseEntries[0]?.resulting_average_cost ?? 0,
+    );
+
+    const secondAverageCost = hasSecondEntry
+      ? Number(lastPurchaseEntries[1].resulting_average_cost ?? 0)
+      : null;
+
+    const averageCostDifference = hasSecondEntry
+      ? lastAverageCost - (secondAverageCost as number)
+      : 0;
+
+    const averageCostTrend = !hasSecondEntry
+      ? "UNCHANGED"
+      : averageCostDifference > 0
+        ? "INCREASED"
+        : averageCostDifference < 0
+          ? "DECREASED"
+          : "UNCHANGED";
+
+    return {
+      ...product,
+      last_movement: {
+        balance: Number(lastPurchaseEntries[0]?.balance_quantity ?? 0),
+        average_cost: lastAverageCost,
+      },
+      second_movement: {
+        balance: Number(lastPurchaseEntries[1]?.balance_quantity ?? 0),
+        average_cost: secondAverageCost ?? 0,
+      },
+      average_cost_difference: averageCostDifference,
+      average_cost_trend: averageCostTrend,
+    };
   }
-
-  const filters = { ...params.filters };
-  delete filters.stockUnit;
-
-  const paramsWithoutStockFilter: QueryParams = {
-    ...params,
-    filters: Object.keys(filters).length ? filters : undefined,
-  };
-
-  return super.findAll(
-    {
-      subQuery: false,
-      attributes: { exclude: ["source_payload"] },
-      ...extraOptions, 
-      include: [
-        {
-          model: Stock,
-          as: "stocks",
-          where: Object.keys(stockWhere).length ? stockWhere : undefined,
-          required: !!stockFilter?.stockUnit,
-          attributes: ["id", "quantity", "unit_business_id", "total_price"],
-        },
-        {
-          model: Brand,
-          as: "brandRegister",
-        },
-        {
-          model: Subgroup,
-          as: "subgroup",
-          include: [{ model: Group, as: "group" }],
-        },
-        {
-          model: ProductConfig,
-          as: "productConfigs",
-          where: stockFilter?.unitBusinessId
-            ? { unit_business_id: stockFilter.unitBusinessId }
-            : undefined,
-          required: false,
-        },
-      ],
-    },
-    paramsWithoutStockFilter, 
-    this.queryConfig,          
-  );
-}
-
 }
 
 export default new ProductService();

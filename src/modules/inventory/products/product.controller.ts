@@ -31,6 +31,10 @@ export class ProductController extends BaseController<
   constructor() {
     super(ProductService);
 
+    this.router.get("/detailed/get", ...this.mw("indexDetailed"), (req, res) =>
+      this.indexDetailed(req, res),
+    );
+
     this.router.get(
       "/report/get",
       ...this.mw("productReport"),
@@ -48,6 +52,7 @@ export class ProductController extends BaseController<
   protected middlewaresFor() {
     return {
       index: [authenticate],
+      indexDetailed: [authenticate],
       findByIdFull: [authenticate],
       productReport: [authenticate, userPermissions],
       productByUnit: [authenticate, userPermissions],
@@ -102,6 +107,38 @@ export class ProductController extends BaseController<
       }
 
       const result = await this.service.paginate(
+        params as unknown as QueryParams,
+      );
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+  indexDetailed = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req) as ProductQueryParams;
+      const userId = (req as AuthenticatedRequest).user?.id;
+      const user = userId
+        ? await User.findByPk(userId, { attributes: ["unit_business_id"] })
+        : null;
+      const unitBusinessId = user?.unit_business_id;
+
+      if (unitBusinessId) {
+        params.filters = params.filters ?? {};
+        const stockUnit = Array.isArray(params.filters.stockUnit)
+          ? params.filters.stockUnit[0]
+          : params.filters.stockUnit;
+
+        params.filters.stockUnit = {
+          unitBusinessId,
+          stockUnit:
+            stockUnit === "positive" || stockUnit === "zero"
+              ? stockUnit
+              : undefined,
+        };
+      }
+
+      const result = await this.service.productDetailedWithMovementsSummary(
         params as unknown as QueryParams,
       );
       return res.json(result);

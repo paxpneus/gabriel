@@ -313,6 +313,28 @@ export class StockMovementService extends BaseService<
     };
   }
 
+  async getLastPurchaseEntries(
+    productIds: string[],
+    unitBusinessId: string,
+    limit = 2,
+  ): Promise<Map<string, StockMovement[]>> {
+    return this.repository.findLastPurchaseEntries(
+      productIds,
+      unitBusinessId,
+      limit,
+    );
+  }
+
+  async getCurrentBalances(
+    productIds: string[],
+    unitBusinessId: string,
+  ): Promise<Map<string, StockMovement>> {
+    return this.repository.findLastMovementsByProducts(
+      productIds,
+      unitBusinessId,
+    );
+  }
+
   /**
    * Consolida a janela temporal de um CSV. O CSV é a fonte de verdade apenas
    * entre o corte da extração anterior e a extração atual; movimentos do

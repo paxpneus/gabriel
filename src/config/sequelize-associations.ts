@@ -70,6 +70,7 @@ import Event from "../modules/company/events/event/event.model";
 import UserEvent from "../modules/company/events/users-event/users-event.model";
 import InvoiceLogisticOccurrences from "../modules/warehouse/fiscal/invoices/invoice-logistic-occurrences/invoice-logistic-occurrences.model";
 import StockMovementSourceData from "../modules/inventory/stock/stock-movement-source-data/stock-movement-source-data.model";
+import StockMovement from "../modules/inventory/stock/stock-movements/stock-movements.model";
 import Cte from "../modules/warehouse/fiscal/ctes/cte/cte.model";
 
 export function setupAssociations() {
@@ -741,6 +742,41 @@ Stock.belongsTo(UnitBusiness, {
   as: "unitBusiness",
 });
 UnitBusiness.hasMany(Stock, { foreignKey: "unit_business_id", as: "stocks" });
+
+// ===== STOCK MOVEMENTS =====
+
+// StockMovement -> Invoice (N:1)
+StockMovement.belongsTo(Invoice, {
+  foreignKey: "invoice_id",
+  as: "invoice",
+});
+// Invoice -> StockMovement (1:N)
+Invoice.hasMany(StockMovement, {
+  foreignKey: "invoice_id",
+  as: "stockMovements",
+});
+
+// StockMovement -> UnitBusiness (N:1)
+StockMovement.belongsTo(UnitBusiness, {
+  foreignKey: "unit_business_id",
+  as: "unitBusiness",
+});
+// UnitBusiness -> StockMovement (1:N)
+UnitBusiness.hasMany(StockMovement, {
+  foreignKey: "unit_business_id",
+  as: "stockMovements",
+});
+
+// StockMovement -> Product (N:1)
+StockMovement.belongsTo(Product, {
+  foreignKey: "product_id",
+  as: "product",
+});
+// Product -> StockMovement (1:N)
+Product.hasMany(StockMovement, {
+  foreignKey: "product_id",
+  as: "stockMovements",
+});
 
 // ===== STOCK INVENTORY =====
 

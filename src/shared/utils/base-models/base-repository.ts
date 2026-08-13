@@ -41,7 +41,7 @@ class BaseRepository<T extends Model> {
     return this.model.findAll(options);
   }
 
-    async findAllIds(
+  async findAllIds(
     params: QueryParams,
     config: QueryConfig = {},
     forcedWhere?: WhereOptions,
@@ -60,41 +60,45 @@ class BaseRepository<T extends Model> {
     return rows.map((r: any) => r.id);
   }
 
-
   // ─── forcedWhere: condição SEMPRE aplicada, independente dos filtros
   // dinâmicos que o QueryParser monta a partir de params.filters. Usado
   // pra regras de negócio fixas (ex.: "só retorna item com custo != null"),
   // que não devem depender de query params vindos do cliente.
-  async findPaginated(
-    params: QueryParams,
-    config: QueryConfig = {},
-    extraOptions: Omit<
-      FindOptions,
-      "where" | "limit" | "offset" | "order"
-    > = {},
-    forcedWhere?: WhereOptions,
-  ): Promise<PaginatedResult<T>> {
-    const resolved = QueryParser.parse(params, config);
+  async findPaginated<R = T>(
+  params: QueryParams,
+  config: QueryConfig = {},
+  extraOptions: Omit<
+    FindOptions,
+    "where" | "limit" | "offset" | "order"
+  > = {},
+  forcedWhere?: WhereOptions,
+  forcedOrder?: FindOptions["order"],
+): Promise<PaginatedResult<R>> {
+  const resolved = QueryParser.parse(params, config);
 
-    const where = forcedWhere
-      ? resolved.where
-        ? { [Op.and]: [resolved.where, forcedWhere] }
-        : forcedWhere
-      : resolved.where;
+  const where = forcedWhere
+    ? resolved.where
+      ? { [Op.and]: [resolved.where, forcedWhere] }
+      : forcedWhere
+    : resolved.where;
 
-    const { rows, count } = await this.model.findAndCountAll({
-      ...extraOptions,
-      where,
-      limit: resolved.limit,
-      offset: resolved.offset,
-      order: resolved.order,
-    });
+  const { rows, count } = await this.model.findAndCountAll({
+    ...extraOptions,
+    where,
+    limit: resolved.limit,
+    offset: resolved.offset,
+    order: forcedOrder ?? resolved.order,
+  });
 
-    return {
-      data: rows,
-      meta: QueryParser.buildMeta(count, resolved.page, resolved.perPage),
-    };
-  }
+  return {
+    data: rows as unknown as R[],
+    meta: QueryParser.buildMeta(
+      count,
+      resolved.page,
+      resolved.perPage,
+    ),
+  };
+}
 
   findOne(options?: FindOptions): Promise<T | null> {
     return this.model.findOne(options);
