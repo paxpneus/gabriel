@@ -55,7 +55,7 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
       );
     }
 
-    await  inventoryBatchRepository.syncBatchTotals(batchId, t);
+    await  inventoryBatchRepository.syncBatchTotals(batchId, true, t);
 
     return item;
   }
@@ -95,7 +95,7 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
 
       await this.delete(id, { transaction: t });
 
-      await inventoryBatchRepository.syncBatchTotals(batchId, t);
+      await inventoryBatchRepository.syncBatchTotals(batchId, false, t);
     });
   }
 

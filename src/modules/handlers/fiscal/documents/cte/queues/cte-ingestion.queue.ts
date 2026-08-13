@@ -10,8 +10,7 @@ import {
 import { fetchAndUpsertCte } from "../../../helpers/mappers/documents/cte/cte-upsert.service";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 import {
-  getChunkedDateRangesAsDate,
-  getDateRangeAsDate,
+  getIncrementalDateRangeAsDate,
 } from "../../../../../../shared/utils/normalizers/date";
 
 const DELAY_BETWEEN_REQUESTS_MS = 30 * 1000;
@@ -76,10 +75,10 @@ export class CteIngestionQueue extends BaseQueueService<void> {
 
     const handler = resolveDocumentHandler(PROVIDER_NAME);
 
-    const dateRanges = getChunkedDateRangesAsDate("2026-01-01", 2);
+    const dateRanges = [getIncrementalDateRangeAsDate(1)];
 
     console.log(
-      `[CteIngestionQueue] ${dateRanges.length} bloco(s) de 2 meses a percorrer (desde 01/2026).`,
+      `[CteIngestionQueue] ${dateRanges.length} bloco(s) a percorrer (incremental: ontem 00:00 -> agora).`,
     );
 
     for (let rangeIdx = 0; rangeIdx < dateRanges.length; rangeIdx++) {

@@ -72,8 +72,7 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
       { transaction: t },
     );
 
-    // Sync totais do batch (recalcula do zero)
-    await inventoryBatchRepository.syncBatchTotals(batchId, t); // já existe no repo
+    await inventoryBatchRepository.syncBatchTotals(batchId, false, t);
 
     return { newStatus, newUserRead };
   }

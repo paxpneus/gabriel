@@ -5,9 +5,15 @@ import InventoryBatchItems from "../inventory-batch-items/inventory-batch-items.
 import InventoryBatch from "./inventory-batch.model";
 
 export class InventoryBatchRepository extends BaseRepository<InventoryBatch> {
-    constructor() { super(InventoryBatch) }
+  constructor() {
+    super(InventoryBatch);
+  }
 
-    async syncBatchTotals(batchId: string, t: Transaction): Promise<void> {
+  async syncBatchTotals(
+    batchId: string,
+    forceBatchFinish: boolean = true,
+    t: Transaction,
+  ): Promise<void> {
     const items = await InventoryBatchItems.findAll({
       where: { inventory_batch_id: batchId },
       include: [
@@ -30,22 +36,27 @@ export class InventoryBatchRepository extends BaseRepository<InventoryBatch> {
       0,
     );
 
-    const totalPrice = items.reduce(
-      (sum, item) => sum + Number(item.price), 0
-    )
+    const totalPrice = items.reduce((sum, item) => sum + Number(item.price), 0);
 
     const allFinished =
       items.length > 0 && items.every((i) => i.status === "FINISHED");
 
-    await InventoryBatch.update(
-      {
-        total_quantity_read: totalQuantityRead,
-        total_quantity_stock: totalQuantityStock,
-        total_price: totalPrice,
-        status: allFinished ? "FINISHED" : "PENDING",
-      },
-      { where: { id: batchId }, transaction: t },
-    );
+    const payload: Partial<InventoryBatch> = {
+      total_quantity_read: totalQuantityRead,
+      total_quantity_stock: totalQuantityStock,
+      total_price: totalPrice,
+    };
+
+    if (forceBatchFinish) {
+      const allFinished =
+        items.length > 0 && items.every((i) => i.status === "FINISHED");
+      payload.status = allFinished ? "FINISHED" : "PENDING";
+    }
+
+    await InventoryBatch.update(payload, {
+      where: { id: batchId },
+      transaction: t,
+    });
   }
 }
 export default new InventoryBatchRepository();
