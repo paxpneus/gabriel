@@ -568,20 +568,18 @@ export class BlingOrderService {
     return { items, custoTotalProdutos };
   }
 
-  async updateOrderFromBling(body: blingOrderWebHookData): Promise<null> {
+  async updateOrderFromBling(
+    body: blingOrderWebHookData,
+  ): Promise<{ customer: any; cnaes: any[]; orderSystem: any } | null> {
     try {
       const integration = await getBlingIntegration("Bling");
       if (!integration)
         throw new Error("Bling Integration não encontrada no cache");
 
-      if (body.data.situacao.id === 6) {
-        console.log(
-          `[BLING ORDER SERVICE] Pedido: ${body.data.numero} com status em aberto, ignorando atualização`,
-        );
-        return null;
-      }
-
-      const { data } = await blingGet(`/pedidos/vendas/${body.data.id}`, this.blingApi);
+      const { data } = await blingGet(
+        `/pedidos/vendas/${body.data.id}`,
+        this.blingApi,
+      );
       const orderData = data.data;
 
       const existingOrder = await ordersService.findOne({
@@ -598,7 +596,9 @@ export class BlingOrderService {
         return null;
       }
 
-      await this.blingCustomerService.updateCustomer(orderData.contato);
+      const customer = await this.blingCustomerService.updateCustomer(
+        orderData.contato,
+      );
 
       const internalStatus = mapOrder(orderData.situacao.id);
       const destination = await this.resolveDestination(orderData.contato?.id);
@@ -618,10 +618,36 @@ export class BlingOrderService {
         unitBusinessId = unitBusiness?.id ?? null;
       }
 
+      
+      let store: any = null;
+      if (orderData.loja?.id) {
+        store = await this.storeService.findOne({
+          where: { id_store_system: String(orderData.loja.id) },
+        });
+
+        if (!store) {
+          const blingStore = await blingGet(
+            `/canais-venda/${orderData.loja.id}`,
+            this.blingApi,
+          );
+          const tipo = blingStore.data.data.tipo;
+
+          store = await this.storeService.findOne({
+            where: { name: tipo },
+          });
+
+          if (!store) {
+            store = await this.storeService.create({
+              name: tipo,
+              id_store_system: String(blingStore.data.data.id),
+            });
+          }
+        }
+      }
+
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
 
       // ─── Processa itens primeiro para obter custo_total_produtos ──────────
-
       const hasSellerCommission =
         !!orderData.vendedor?.id && Number(orderData.vendedor.id) !== 0;
 
@@ -644,7 +670,8 @@ export class BlingOrderService {
         orderFinancials.icms_value,
       );
 
-      await ordersService.update(existingOrder.id, {
+      // ─── Guardamos os campos atualizados numa variável pra reaproveitar no retorno ───
+      const orderUpdateFields = {
         unit_business_id: unitBusinessId,
         invoice_id: invoiceId,
         number_order_channel: String(orderData.numeroLoja),
@@ -672,7 +699,12 @@ export class BlingOrderService {
         total_cost: orderFinancials.total_cost,
         ...(sellerId ? { seller_id: sellerId } : {}),
         ...orderFiscalFieldsToUpdate,
-      });
+      };
+
+      await ordersService.update(existingOrder.id, orderUpdateFields);
+
+      // ─── NOVO: acumula os itens sincronizados pra devolver no orderSystem ────
+      const syncedItems: any[] = [];
 
       if (orderData.itens?.length) {
         for (let idx = 0; idx < orderData.itens.length; idx++) {
@@ -703,11 +735,20 @@ export class BlingOrderService {
               source_payload: i,
               ...financialFieldsUpdate,
             });
+
+            syncedItems.push({
+              id: existingItem.id,
+              order_id: existingOrder.id,
+              ...computedItem,
+              ...financialFieldsUpdate,
+              source_payload: i,
+            });
           } else {
-            await orderItemsService.create({
+            const createdItem = await orderItemsService.create({
               ...computedItem,
               order_id: existingOrder.id,
             });
+            syncedItems.push(createdItem);
           }
         }
       }
@@ -715,7 +756,31 @@ export class BlingOrderService {
       console.log(
         `[BlingOrderService] Pedido ${orderData.numero} atualizado com sucesso`,
       );
-      return null;
+
+      if (!integration.allowed_channels?.includes(store?.name ?? "")) {
+        console.log(
+          "[BLING ORDER] Pedido não originado do mercado livre, apenas atualizando no sistema, pulando etapas de automação.",
+        );
+        return null;
+      }
+
+      if (orderData.situacao.id != 6) {
+        console.log(
+          'Pedido com status diferente de "EM ABERTO", pulando etapas de automação apenas atualizando no sistema.',
+        );
+        return null;
+      }
+
+      return {
+        customer,
+        cnaes: integration.cnaes,
+        orderSystem: {
+          ...existingOrder.dataValues,
+          ...orderUpdateFields,
+          customer,
+          items: syncedItems,
+        },
+      };
     } catch (error: any) {
       console.error(
         "[BlingOrderService] Erro ao atualizar pedido:",
@@ -765,7 +830,10 @@ export class BlingOrderService {
     try {
       const integration = await getBlingIntegration("Bling");
 
-      const { data } = await blingGet(`/pedidos/vendas/${body.data.id}`, this.blingApi);
+      const { data } = await blingGet(
+        `/pedidos/vendas/${body.data.id}`,
+        this.blingApi,
+      );
       const orderData = data.data;
 
       const existingOrder = await ordersService.findOne({
@@ -794,7 +862,7 @@ export class BlingOrderService {
         if (!store) {
           const blingStore = await blingGet(
             `/canais-venda/${orderData.loja.id}`,
-            this.blingApi
+            this.blingApi,
           );
           const tipo = blingStore.data.data.tipo;
 
