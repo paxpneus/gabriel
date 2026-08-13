@@ -285,6 +285,135 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
     await this.bulkDelete({ where: { id: { [Op.in]: ids } }, transaction });
     return ids;
   }
+
+  /**
+   * Busca o último movimento ativo de cada produto informado, numa única
+   * precisam do "custo médio atual".
+   */
+  async findLastMovementsByProducts(
+    productIds: string[],
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<Map<string, StockMovement>> {
+    const result = new Map<string, StockMovement>();
+    if (!productIds.length) return result;
+
+    const movements = await this.model.findAll({
+      where: {
+        product_id: { [Op.in]: productIds },
+        unit_business_id: unitBusinessId,
+        is_active: true,
+      },
+      order: [
+        ["product_id", "ASC"],
+        ["movement_date", "DESC"],
+        ["created_at", "DESC"],
+      ],
+      transaction,
+    });
+
+    for (const movement of movements) {
+      if (!result.has(movement.product_id)) {
+        result.set(movement.product_id, movement);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Retorna as últimas `limit` entradas "efetivas" de compra por produto.
+   *
+   * "Efetiva" = PURCHASE_ENTRY, EXCETO quando existe um MANUAL_ADJUSTMENT
+   * com manual_average_cost_value preenchido logo em seguida (na timeline
+   * filtrada só a PURCHASE_ENTRY + MANUAL_ADJUSTMENT-com-custo): esse
+   * ajuste substitui a entrada, porque ele representa a correção do custo
+   * daquela compra. Ajustes encadeados (um MANUAL_ADJUSTMENT corrigindo o
+   * custo de outro) continuam substituindo o topo da pilha.
+   *
+   * MANUAL_ADJUSTMENT sem manual_average_cost_value (ajuste puro de saldo,
+   * sem relação com custo de entrada) é ignorado aqui.
+   *
+   * Retorna Map<product_id, StockMovement[]>, mais recente primeiro.
+   */
+  async findLastPurchaseEntries(
+  productIds: string[],
+  unitBusinessId: string,
+  limit = 2,
+  transaction?: Transaction,
+): Promise<Map<string, StockMovement[]>> {
+  const result = new Map<string, StockMovement[]>();
+  if (!productIds.length) return result;
+
+  // Agora busca TODOS os tipos de movimento (não só PURCHASE_ENTRY/
+  // MANUAL_ADJUSTMENT), pra saber se um MANUAL_ADJUSTMENT com custo está
+  // realmente "colado" na entrada anterior, ou se veio depois de outro
+  // evento (ex.: uma venda) — e nesse caso deve contar como entrada nova,
+  // não como correção.
+  const history = await this.model.findAll({
+    where: {
+      product_id: { [Op.in]: productIds },
+      unit_business_id: unitBusinessId,
+      is_active: true,
+    },
+    order: [
+      ["product_id", "ASC"],
+      ["movement_date", "ASC"],
+      ["created_at", "ASC"],
+    ],
+    transaction,
+  });
+
+  const stacksByProduct = new Map<string, StockMovement[]>();
+  const lastSeenByProduct = new Map<string, StockMovement>(); // último movimento visto, de qualquer tipo
+
+  for (const movement of history) {
+    const productId = movement.product_id;
+    const previous = lastSeenByProduct.get(productId);
+    lastSeenByProduct.set(productId, movement);
+
+    if (
+      movement.movement_type !== "PURCHASE_ENTRY" &&
+      movement.movement_type !== "MANUAL_ADJUSTMENT"
+    ) {
+      continue; // não é candidato a entrada, mas quebra a adjacência pros próximos
+    }
+
+    const stack = stacksByProduct.get(productId) ?? [];
+
+    if (movement.movement_type === "PURCHASE_ENTRY") {
+      stack.push(movement);
+      stacksByProduct.set(productId, stack);
+      continue;
+    }
+
+    const hasManualCost =
+      movement.manual_average_cost_value != null &&
+      Number(movement.manual_average_cost_value) > 0;
+
+    if (!hasManualCost) continue;
+
+    const top = stack[stack.length - 1];
+    // Só é "correção" se o movimento anterior na timeline REAL (não filtrada)
+    // for exatamente o item que está no topo da pilha — ou seja, nada
+    // aconteceu entre os dois.
+    const isImmediatelyAfterTop = !!top && previous?.id === top.id;
+
+    if (isImmediatelyAfterTop) {
+      stack[stack.length - 1] = movement;
+    } else {
+      stack.push(movement);
+    }
+
+    stacksByProduct.set(productId, stack);
+  }
+
+  for (const [productId, stack] of stacksByProduct) {
+    result.set(productId, stack.slice(-limit).reverse());
+  }
+
+  return result;
+}
 }
 
 export default new StockMovementRepository();
