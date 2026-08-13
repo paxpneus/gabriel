@@ -48,137 +48,130 @@ export class OrderItemsService extends BaseService<
   }
 
   // ─── Integração Tecinco: cacheia o id pra não buscar toda vez ───────────
-  private tecincoIntegrationId: string | null = null;
 
-  private async resolveTecincoIntegrationId(): Promise<string | null> {
-    if (this.tecincoIntegrationId) return this.tecincoIntegrationId;
-
+  private async resolveIntegrationId(name: string): Promise<string | null> {
     const integration = await integrationsService.getFullIntegration({
-      where: { name: "Tecinco" },
+      where: { name: name },
     });
 
-    if (!integration) {
+    if (!integration || !integration.id) {
       console.warn(
-        `[OrderItemsService] Integração "Tecinco" não encontrada — id_produto_tecinco/id_vendedor_tecinco ficarão null.`,
+        `[OrderItemsService] Integração ${name} não encontrada — id_vendedor_tecinco ficará null.`,
       );
       return null;
     }
 
-    this.tecincoIntegrationId = integration.id;
-    return this.tecincoIntegrationId;
+    return integration.id;
   }
 
- async paginateSalesDetail(
-  params: QueryParams,
-  filters: SalesDetailFilters,
-  extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-): Promise<PaginatedResult<OrderSalesDetailRow>> {
-  const orderWhere: WhereOptions = {
-    // ─── Regra fixa: pedido sem NFe vinculada não entra no relatório.
-    invoice_id: { [Op.ne]: null },
-  };
-  if (filters.startDate && filters.endDate) {
-    orderWhere.date = { [Op.between]: [filters.startDate, filters.endDate] };
-  }
-  if (filters.unitBusinessId)
-    orderWhere.unit_business_id = filters.unitBusinessId;
-  if (filters.sellerId) orderWhere.seller_id = filters.sellerId;
-  if (filters.customerId) orderWhere.customer_id = filters.customerId;
-  if (filters.orderId) orderWhere.id = filters.orderId;
+  async paginateSalesDetail(
+    params: QueryParams,
+    filters: SalesDetailFilters,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<PaginatedResult<OrderSalesDetailRow>> {
+    const orderWhere: WhereOptions = {
+      // ─── Regra fixa: pedido sem NFe vinculada não entra no relatório.
+      invoice_id: { [Op.ne]: null },
+    };
+    if (filters.startDate && filters.endDate) {
+      orderWhere.date = { [Op.between]: [filters.startDate, filters.endDate] };
+    }
+    if (filters.unitBusinessId)
+      orderWhere.unit_business_id = filters.unitBusinessId;
+    if (filters.sellerId) orderWhere.seller_id = filters.sellerId;
+    if (filters.customerId) orderWhere.customer_id = filters.customerId;
+    if (filters.orderId) orderWhere.id = filters.orderId;
 
-  const mergedParams: QueryParams = {
-    ...params,
-    sortBy: params.sortBy ?? "order.updated_at,order.number_order_system",
-    sortDir: params.sortDir ?? "DESC,DESC",
-    filters: {
-      ...(params.filters ?? {}),
-      ...(filters.productId ? { product_id: filters.productId } : {}),
-    },
-  };
+    const mergedParams: QueryParams = {
+      ...params,
+      sortBy: params.sortBy ?? "order.updated_at,order.number_order_system",
+      sortDir: params.sortDir ?? "DESC,DESC",
+      filters: {
+        ...(params.filters ?? {}),
+        ...(filters.productId ? { product_id: filters.productId } : {}),
+      },
+    };
 
-  const result = await super.paginate(
-    mergedParams,
-    {
-      ...extraOptions,
-      include: [
-        {
-          model: Order,
-          as: "order",
-          required: true,
-          where: orderWhere,
-          attributes: [
-            "id",
-            "date",
-            "number_order_system",
-            "total_price",
-            "total_cost",
-            "total_products",
-            "icms_value",
-            "tax_commission",
-            "freight_cost",
-            "unit_business_id",
-            "seller_id",
-            "customer_id",
-            "invoice_id",
-            "updatedAt",
-          ],
-          include: [
-            {
-              model: UnitBusiness,
-              where: { number: { [Op.ne]: null } },
-              as: "unitBusiness",
-              attributes: ["id", "name", "number", "cnpj"],
-            },
-            {
-              model: Contact,
-              as: "seller",
-              attributes: ["id", "name"],
-              required: true,
-              where: { name: { [Op.ne]: VENDEDOR_NAO_ATRIBUIDO } },
-            },
-            {
-              model: Customer,
-              as: "customer",
-              attributes: ["id", "name", "document"],
-            },
-            {
-              model: Invoice,
-              as: "invoice",
-              attributes: ["id", "number_system"],
-            },
-          ],
+    const result = await super.paginate(
+      mergedParams,
+      {
+        ...extraOptions,
+        include: [
+          {
+            model: Order,
+            as: "order",
+            required: true,
+            where: orderWhere,
+            attributes: [
+              "id",
+              "date",
+              "number_order_system",
+              "total_price",
+              "total_cost",
+              "total_products",
+              "icms_value",
+              "tax_commission",
+              "freight_cost",
+              "unit_business_id",
+              "seller_id",
+              "customer_id",
+              "invoice_id",
+              "updatedAt",
+            ],
+            include: [
+              {
+                model: UnitBusiness,
+                where: { number: { [Op.ne]: null } },
+                as: "unitBusiness",
+                attributes: ["id", "name", "number", "cnpj"],
+              },
+              {
+                model: Contact,
+                as: "seller",
+                attributes: ["id", "name"],
+                required: true,
+                where: { name: { [Op.ne]: VENDEDOR_NAO_ATRIBUIDO } },
+              },
+              {
+                model: Customer,
+                as: "customer",
+                attributes: ["id", "name", "document"],
+              },
+              {
+                model: Invoice,
+                as: "invoice",
+                attributes: ["id", "number_system"],
+              },
+            ],
+          },
+          {
+            model: Product,
+            as: "product",
+            attributes: ["id", "name", "ean", "ean_tribut", "line", "measure"],
+            include: [{ model: Brand, as: "brandRegister" }],
+          },
+          {
+            model: SellerSalesOrderItemSnapshot,
+            as: "sellerSnapshot",
+            required: true,
+            attributes: [
+              "average_cost",
+              "total_cost",
+              "net_total",
+              "icms_value_allocated",
+              "tax_commission_allocated",
+              "freight_cost_allocated",
+              "contribution_value",
+            ],
+          },
+        ],
+      },
+      {
+        average_cost_snapshot: {
+          [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: 0 }],
         },
-        {
-          model: Product,
-          as: "product",
-          attributes: ["id", "name", "ean", "ean_tribut", "line", "measure"],
-          include: [{ model: Brand, as: "brandRegister" }],
-        },
-        {
-          model: SellerSalesOrderItemSnapshot,
-          as: "sellerSnapshot",
-          required: true,
-          attributes: [
-            "average_cost",
-            "total_cost",
-            "net_total",
-            "icms_value_allocated",
-            "tax_commission_allocated",
-            "freight_cost_allocated",
-            "contribution_value",
-          ],
-        },
-      ],
-    },
-    {
-       average_cost_snapshot: {
-    [Op.and]: [
-      { [Op.ne]: null },
-      { [Op.ne]: 0 },
-    ],
-  },
-    },
-  );
+      },
+    );
 
     const orderIds = [
       ...new Set(result.data.map((item: any) => item.order_id)),
@@ -217,8 +210,12 @@ export class OrderItemsService extends BaseService<
       ]),
     );
 
-    // ─── Resolve external_id (Tecinco) de produto e vendedor em lote ──────
-    const tecincoIntegrationId = await this.resolveTecincoIntegrationId();
+    // ─── Resolve integrações (Tecinco p/ vendedor, todas p/ produto) ──────
+    const tecincoIntegrationId = await this.resolveIntegrationId("Tecinco");
+
+    if (!tecincoIntegrationId) {
+      throw new Error("Integração não resolvida");
+    }
 
     const productIds = [
       ...new Set(
@@ -236,20 +233,15 @@ export class OrderItemsService extends BaseService<
       ),
     ] as string[];
 
-    const [productExternalIdsMap, sellerExternalIdsMap] = tecincoIntegrationId
-      ? await Promise.all([
-          integrationMappingService.findExternalIdsMap(
-            "PRODUCT",
-            tecincoIntegrationId,
-            productIds,
-          ),
-          integrationMappingService.findExternalIdsMap(
-            "CONTACT",
-            tecincoIntegrationId,
-            sellerContactIds,
-          ),
-        ])
-      : [new Map<string, string>(), new Map<string, string>()];
+    const [productIntegrationMappingsMap, sellerExternalIdsMap] =
+      await Promise.all([
+        integrationMappingService.findGroupedMappingsMap("PRODUCT", productIds),
+        integrationMappingService.findExternalIdsMap(
+          "CONTACT",
+          tecincoIntegrationId,
+          sellerContactIds,
+        ),
+      ]);
 
     const data: OrderSalesDetailRow[] = result.data.map((item: any) => {
       const order = item.order;
@@ -274,12 +266,19 @@ export class OrderItemsService extends BaseService<
         snapshot?.average_cost != null ? Number(snapshot.average_cost) : null;
 
       const idVendedorTecinco = order?.seller?.id
-        ? sellerExternalIdsMap.get(order.seller.id) ?? null
+        ? (sellerExternalIdsMap.get(order.seller.id) ?? null)
         : null;
 
-      const idProdutoTecinco = item.product_id
-        ? productExternalIdsMap.get(item.product_id) ?? null
-        : null;
+      const integracoesProduto = item.product_id
+        ? (productIntegrationMappingsMap.get(item.product_id) ?? [])
+        : [];
+
+      const integration_data_normalized = integracoesProduto.map((i) => {
+        return {
+          nome_integracao: i.integration_name,
+          id_integracao: i.integration_id,
+        };
+      });
 
       return {
         pedido: {
@@ -305,7 +304,7 @@ export class OrderItemsService extends BaseService<
         },
         produto: {
           identificacao: {
-            id_produto_tecinco: idProdutoTecinco,
+            integracoes: integration_data_normalized,
             nome: item.product?.name ?? null,
             ean: item.product?.ean ?? null,
             sku_bling: item.sku,
