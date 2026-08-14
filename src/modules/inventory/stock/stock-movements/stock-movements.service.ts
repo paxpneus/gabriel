@@ -313,13 +313,13 @@ export class StockMovementService extends BaseService<
     };
   }
 
-  async getLastPurchaseEntries(
+  async findLastEffectiveMovements(
     productIds: string[],
     unitBusinessId: string,
     asOfDate: Date,
     limit = 2,
   ): Promise<Map<string, StockMovement[]>> {
-    return this.repository.findLastPurchaseEntries(
+    return this.repository.findLastEffectiveMovements(
       productIds,
       unitBusinessId,
       asOfDate,

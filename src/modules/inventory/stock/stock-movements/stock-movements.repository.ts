@@ -323,105 +323,132 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
     return result;
   }
 
+  private isEntryLikeMovement(movement: StockMovement): boolean {
+    if (movement.movement_type === "PURCHASE_ENTRY") return true;
+
+    return (
+      movement.movement_type === "MANUAL_ADJUSTMENT" &&
+      movement.manual_average_cost_value != null &&
+      Number(movement.manual_average_cost_value) > 0
+    );
+  }
+
   /**
-   * Retorna as últimas `limit` entradas "efetivas" de compra por produto.
+   * Retorna as últimas `limit` movimentações "efetivas" por produto.
    *
-   * "Efetiva" = PURCHASE_ENTRY, EXCETO quando existe um MANUAL_ADJUSTMENT
-   * com manual_average_cost_value preenchido logo em seguida (na timeline
-   * filtrada só a PURCHASE_ENTRY + MANUAL_ADJUSTMENT-com-custo): esse
-   * ajuste substitui a entrada, porque ele representa a correção do custo
-   * daquela compra. Ajustes encadeados (um MANUAL_ADJUSTMENT corrigindo o
-   * custo de outro) continuam substituindo o topo da pilha.
+   * REGRA DA POSIÇÃO 0 (última movimentação): precisa SEMPRE ser uma
+   * PURCHASE_ENTRY ou um MANUAL_ADJUSTMENT com manual_average_cost_value
+   * preenchido. Se o topo real da timeline for qualquer outro tipo
+   * (SALE_OUT, CUSTOMER_RETURN, MANUAL_ADJUSTMENT sem custo), esses itens
+   * são ignorados como "última movimentação" — descartamos do topo pra
+   * baixo até achar a última que seja de fato uma entrada/correção válida.
    *
-   * MANUAL_ADJUSTMENT sem manual_average_cost_value (ajuste puro de saldo,
-   * sem relação com custo de entrada) é ignorado aqui.
+   * REGRA DAS DEMAIS POSIÇÕES (penúltima em diante): qualquer tipo de
+   * movimentação conta, pegando exatamente o que vem antes na pilha geral
+   * já colapsada (cadeias de correção de PURCHASE_ENTRY continuam
+   * colapsando normalmente aqui).
+   *
+   * Uma cadeia de correção é: uma PURCHASE_ENTRY seguida (imediatamente, ou
+   * dentro de 1 dia) por um ou mais MANUAL_ADJUSTMENT com
+   * manual_average_cost_value preenchido — cada correção substitui a
+   * anterior no topo da pilha.
    *
    * Retorna Map<product_id, StockMovement[]>, mais recente primeiro.
    */
-  async findLastPurchaseEntries(
-  productIds: string[],
-  unitBusinessId: string,
-  asOfDate?: Date,
-  limit = 2,
-  transaction?: Transaction,
-): Promise<Map<string, StockMovement[]>> {
-  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  async findLastEffectiveMovements(
+    productIds: string[],
+    unitBusinessId: string,
+    asOfDate?: Date,
+    limit = 2,
+    transaction?: Transaction,
+  ): Promise<Map<string, StockMovement[]>> {
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-  const result = new Map<string, StockMovement[]>();
-  if (!productIds.length) return result;
+    const result = new Map<string, StockMovement[]>();
+    if (!productIds.length) return result;
 
-  const history = await this.model.findAll({
-    where: {
-      product_id: { [Op.in]: productIds },
-      unit_business_id: unitBusinessId,
-      is_active: true,
-      ...(asOfDate ? { movement_date: { [Op.lte]: asOfDate } } : {}),
-    },
-    order: [
-      ["product_id", "ASC"],
-      ["movement_date", "ASC"],
-      ["created_at", "ASC"],
-    ],
-    transaction,
-  });
+    const history = await this.model.findAll({
+      where: {
+        product_id: { [Op.in]: productIds },
+        unit_business_id: unitBusinessId,
+        is_active: true,
+        ...(asOfDate ? { movement_date: { [Op.lte]: asOfDate } } : {}),
+      },
+      order: [
+        ["product_id", "ASC"],
+        ["movement_date", "ASC"],
+        ["created_at", "ASC"],
+      ],
+      transaction,
+    });
 
-  const stacksByProduct = new Map<string, StockMovement[]>();
-  const lastSeenByProduct = new Map<string, StockMovement>(); 
-  for (const movement of history) {
-    const productId = movement.product_id;
-    const previous = lastSeenByProduct.get(productId);
-    lastSeenByProduct.set(productId, movement);
+    type StackItem = { movement: StockMovement; correctable: boolean };
 
-    if (
-      movement.movement_type !== "PURCHASE_ENTRY" &&
-      movement.movement_type !== "MANUAL_ADJUSTMENT"
-    ) {
-      continue; 
-    }
+    const stacksByProduct = new Map<string, StackItem[]>();
+    const lastSeenByProduct = new Map<string, StockMovement>();
 
-    const stack = stacksByProduct.get(productId) ?? [];
+    for (const movement of history) {
+      const productId = movement.product_id;
+      const previous = lastSeenByProduct.get(productId);
+      lastSeenByProduct.set(productId, movement);
 
-    if (movement.movement_type === "PURCHASE_ENTRY") {
-      stack.push(movement);
+      const stack = stacksByProduct.get(productId) ?? [];
+      const top = stack[stack.length - 1];
+
+      const hasManualCost =
+        movement.movement_type === "MANUAL_ADJUSTMENT" &&
+        movement.manual_average_cost_value != null &&
+        Number(movement.manual_average_cost_value) > 0;
+
+      if (hasManualCost && top?.correctable) {
+        const isImmediatelyAfterTop = previous?.id === top.movement.id;
+        const isWithinOneDayOfTop =
+          Math.abs(
+            new Date(movement.movement_date).getTime() -
+              new Date(top.movement.movement_date).getTime(),
+          ) <= ONE_DAY_MS;
+
+        if (isImmediatelyAfterTop || isWithinOneDayOfTop) {
+          stack[stack.length - 1] = { movement, correctable: true };
+          stacksByProduct.set(productId, stack);
+          continue;
+        }
+      }
+
+      stack.push({
+        movement,
+        correctable: movement.movement_type === "PURCHASE_ENTRY",
+      });
       stacksByProduct.set(productId, stack);
-      continue;
     }
 
-    const hasManualCost =
-      movement.manual_average_cost_value != null &&
-      Number(movement.manual_average_cost_value) > 0;
+    for (const [productId, stack] of stacksByProduct) {
+      // acha, de trás pra frente, o último item que é entry-like —
+      // esse SEMPRE precisa ser a posição 0 do resultado
+      let lastEntryIndex = -1;
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (this.isEntryLikeMovement(stack[i].movement)) {
+          lastEntryIndex = i;
+          break;
+        }
+      }
 
-    if (!hasManualCost) continue;
+      // produto sem nenhuma entrada/correção válida na timeline -> ignora
+      if (lastEntryIndex === -1) continue;
 
-    const top = stack[stack.length - 1];
+      const startIndex = Math.max(0, lastEntryIndex - limit + 1);
 
-    
-    const isImmediatelyAfterTop = !!top && previous?.id === top.id;
-
-    const isWithinOneDayOfTop =
-      !!top &&
-      Math.abs(
-        new Date(movement.movement_date).getTime() -
-          new Date(top.movement_date).getTime(),
-      ) <= ONE_DAY_MS;
-
-    const isCorrectionOfTop = isImmediatelyAfterTop || isWithinOneDayOfTop;
-
-    if (isCorrectionOfTop) {
-      stack[stack.length - 1] = movement;
-    } else {
-      stack.push(movement);
+      result.set(
+        productId,
+        stack
+          .slice(startIndex, lastEntryIndex + 1)
+          .reverse()
+          .map((item) => item.movement),
+      );
     }
 
-    stacksByProduct.set(productId, stack);
+    return result;
   }
-
-  for (const [productId, stack] of stacksByProduct) {
-    result.set(productId, stack.slice(-limit).reverse());
-  }
-
-  return result;
-}
 }
 
 export default new StockMovementRepository();
