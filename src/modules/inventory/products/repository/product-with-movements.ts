@@ -22,7 +22,11 @@ import {
 } from "../product.types";
 import { computeAverageCostTrend } from "../helpers/product-cost-trend";
 import { extractStockFilter } from "../product.query-config";
-import { buildLastMovementDateSubquery, buildLastMovementRangeWhere, extractLastMovementDateFilter } from "../helpers/product-movement-date";
+import {
+  buildLastMovementDateSubquery,
+  buildLastMovementRangeWhere,
+  extractLastMovementDateFilter,
+} from "../helpers/product-movement-date";
 
 export class ProductWithMovementsRepository extends BaseRepository<Product> {
   constructor(
@@ -76,6 +80,11 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
           where: Object.keys(stockWhere).length ? stockWhere : undefined,
           required: !!stockFilter?.stockUnit,
           attributes: [],
+        },
+        {
+          model: Brand,
+          as: "brandRegister",
+          required: false,
         },
         {
           model: ProductConfig,
@@ -217,7 +226,11 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     );
 
     if (resolvedUnitBusinessId && result.data.length) {
-      await this.attachStockCostInfo(result.data, resolvedUnitBusinessId, lastMovementRange?.end);
+      await this.attachStockCostInfo(
+        result.data,
+        resolvedUnitBusinessId,
+        lastMovementRange?.end,
+      );
     }
 
     return result;
@@ -329,7 +342,11 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     })) as unknown as ProductDetailedWithMovements[];
 
     if (resolvedUnitBusinessId && products.length) {
-      await this.attachStockCostInfo(products, resolvedUnitBusinessId, lastMovementRange?.end);
+      await this.attachStockCostInfo(
+        products,
+        resolvedUnitBusinessId,
+        lastMovementRange?.end,
+      );
     }
 
     return products;

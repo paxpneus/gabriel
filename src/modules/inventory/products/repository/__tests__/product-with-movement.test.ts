@@ -279,10 +279,7 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
       );
 
       const entries = result.get("p4");
-      // Pilha: [J-entry (idx 0), K-manual-no-cost (idx 1)]
-      // Last entry-like: J no índice 0
-      // Com limit=2: startIndex = max(0, 0 - 2 + 1) = 0, slice(0, 1) = [J]
-      // Retorna apenas J porque não há espaço antes dele na pilha
+      
       expect(entries).toHaveLength(1);
       expect(entries?.[0].id).toBe("J-entry");
       expect(entries?.[0].movement_type).toBe("PURCHASE_ENTRY");
