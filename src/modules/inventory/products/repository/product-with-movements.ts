@@ -165,6 +165,13 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
         )
       : undefined;
 
+    if (trendFilter?.length && trendProductIds?.length === 0) {
+      return {
+        data: [],
+        meta: QueryParser.buildMeta(0, (params.page as number) ?? 1, (params.perPage as number) ?? queryConfig.defaults?.perPage ?? 20),
+      };
+    }
+
     const lastMovementDateOrder = literal(`(
     SELECT MAX(sm.movement_date)
     FROM stock_movements sm

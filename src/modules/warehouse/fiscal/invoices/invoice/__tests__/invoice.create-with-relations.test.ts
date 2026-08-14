@@ -27,25 +27,6 @@ jest.mock("../../../../../config/sequelize", () => ({
   },
 }));
 
-jest.mock("../../../../config/sequelize", () => ({
-  __esModule: true,
-  default: {
-    transaction: jest.fn().mockResolvedValue(fakeTransaction),
-    where: jest.fn(),
-    fn: jest.fn(),
-    col: jest.fn(),
-    define: jest.fn(() => class { }),
-    authenticate: jest.fn(),
-    sync: jest.fn(),
-    query: jest.fn(),
-    close: jest.fn(),
-    getQueryInterface: jest.fn(),
-    models: {},
-    modelManager: { addModel: jest.fn(), getModel: jest.fn() },
-    literal: jest.fn((value: string) => value),
-  },
-}));
-
 jest.mock("../invoice.repository", () => ({
   __esModule: true,
   default: {
@@ -55,88 +36,6 @@ jest.mock("../invoice.repository", () => ({
     createInvoiceFiscalItems: jest.fn(),
     createInvoiceAttributes: jest.fn(),
   },
-}));
-
-// ─── Mock Models importados pelo InvoiceService ──────────────────────────────
-
-jest.mock("../invoice.model", () => ({
-  __esModule: true,
-  default: class Invoice { },
-}));
-
-jest.mock("../../invoice-items/invoice-items.model", () => ({
-  __esModule: true,
-  default: class InvoiceItems { },
-}));
-
-jest.mock("../../invoice-unit-business-attributes/invoice-unit-business-attributes.model", () => ({
-  __esModule: true,
-  default: class InvoiceUnitBusinessAttributes { },
-}));
-
-jest.mock("../../invoice-fiscal-item/invoice-fiscal-item.model", () => ({
-  __esModule: true,
-  default: class InvoiceFiscalItem { },
-}));
-
-jest.mock("../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model", () => ({
-  __esModule: true,
-  default: class UnmappedInvoiceProduct { },
-}));
-
-jest.mock("../../../../../company/unit-business/unit-business.model", () => ({
-  __esModule: true,
-  default: class UnitBusiness { },
-}));
-
-jest.mock("../../../../transporter/transporter.model", () => ({
-  __esModule: true,
-  default: class Transporter { },
-}));
-
-jest.mock("../../../../expedition/batch/batch.model", () => ({
-  __esModule: true,
-  default: class ExpeditionBatch { },
-}));
-
-jest.mock("../../../../expedition/batch-invoices/batch-invoices.model", () => ({
-  __esModule: true,
-  default: class ExpeditionBatchInvoice { },
-}));
-
-jest.mock("../../../../expedition/batch-invoices/batch-invoices.service", () => ({
-  __esModule: true,
-  default: {},
-}));
-
-jest.mock("../../../../expedition/batch-invoice-items/batch-invoice-items.model", () => ({
-  __esModule: true,
-  default: class BatchInvoiceItems { },
-}));
-
-jest.mock("../../../../expedition/batch-items/batch-items.model", () => ({
-  __esModule: true,
-  default: class ExpeditionBatchItems { },
-}));
-
-jest.mock("../../../../../sales/stores/stores.model", () => ({
-  __esModule: true,
-  default: class Store { },
-}));
-
-jest.mock("../../../../../sales/contacts/contacts.model", () => ({
-  __esModule: true,
-  default: class Contact { },
-}));
-
-jest.mock("../../../../../sales/orders/order/orders.model", () => ({
-  __esModule: true,
-  default: class Order { },
-}));
-
-jest.mock("../../../../../company/events/event/event.model", () => ({
-  __esModule: true,
-  default: class Event { },
 }));
 
 jest.mock("../../../../../company/events/event/event.service", () => ({
@@ -151,15 +50,6 @@ jest.mock("../../../../../company/users/users/user.service", () => ({
   default: {
     notifyByRoles: jest.fn().mockResolvedValue(undefined),
   },
-}));
-
-
-
-// inventory exporta vários
-jest.mock("../../../../../inventory", () => ({
-  Product: class Product { },
-  ProductConfig: class ProductConfig { },
-  Supplier: class Supplier { },
 }));
 
 
