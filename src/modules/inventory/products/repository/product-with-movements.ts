@@ -33,6 +33,16 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     super(Product);
   }
 
+  private parseAsOfDateEndOfDay(rawValue: unknown): Date | undefined {
+    if (!rawValue || typeof rawValue !== "string") return undefined;
+
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(rawValue);
+    const normalized = isDateOnly ? `${rawValue}T23:59:59.999Z` : rawValue;
+
+    const parsed = new Date(normalized);
+    return !isNaN(parsed.getTime()) ? parsed : undefined;
+  }
+
   private extractLastMovementDateFilter(params: QueryParams): {
     asOfDate?: Date;
     paramsWithoutDateFilter: QueryParams;
@@ -40,8 +50,7 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     const raw = params.filters?.lastMovementDate;
     const rawValue = Array.isArray(raw) ? raw[0] : raw;
 
-    const parsed = rawValue ? new Date(rawValue) : undefined;
-    const asOfDate = parsed && !isNaN(parsed.getTime()) ? parsed : undefined;
+    const asOfDate = this.parseAsOfDateEndOfDay(rawValue);
 
     const filters = { ...params.filters };
     delete filters.lastMovementDate;
