@@ -299,8 +299,6 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
     const result = new Map<string, StockMovement>();
     if (!productIds.length) return result;
 
-    console.log('findLastMovementsByProducts', asOfDate)
-
     const movements = await this.model.findAll({
       where: {
         product_id: { [Op.in]: productIds },
@@ -347,16 +345,11 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
   limit = 2,
   transaction?: Transaction,
 ): Promise<Map<string, StockMovement[]>> {
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
   const result = new Map<string, StockMovement[]>();
   if (!productIds.length) return result;
 
-  console.log('lastpurchase', asOfDate)
-
-  // Agora busca TODOS os tipos de movimento (não só PURCHASE_ENTRY/
-  // MANUAL_ADJUSTMENT), pra saber se um MANUAL_ADJUSTMENT com custo está
-  // realmente "colado" na entrada anterior, ou se veio depois de outro
-  // evento (ex.: uma venda) — e nesse caso deve contar como entrada nova,
-  // não como correção.
   const history = await this.model.findAll({
     where: {
       product_id: { [Op.in]: productIds },
@@ -373,8 +366,7 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
   });
 
   const stacksByProduct = new Map<string, StockMovement[]>();
-  const lastSeenByProduct = new Map<string, StockMovement>(); // último movimento visto, de qualquer tipo
-
+  const lastSeenByProduct = new Map<string, StockMovement>(); 
   for (const movement of history) {
     const productId = movement.product_id;
     const previous = lastSeenByProduct.get(productId);
@@ -384,7 +376,7 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
       movement.movement_type !== "PURCHASE_ENTRY" &&
       movement.movement_type !== "MANUAL_ADJUSTMENT"
     ) {
-      continue; // não é candidato a entrada, mas quebra a adjacência pros próximos
+      continue; 
     }
 
     const stack = stacksByProduct.get(productId) ?? [];
@@ -402,12 +394,20 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
     if (!hasManualCost) continue;
 
     const top = stack[stack.length - 1];
-    // Só é "correção" se o movimento anterior na timeline REAL (não filtrada)
-    // for exatamente o item que está no topo da pilha — ou seja, nada
-    // aconteceu entre os dois.
+
+    
     const isImmediatelyAfterTop = !!top && previous?.id === top.id;
 
-    if (isImmediatelyAfterTop) {
+    const isWithinOneDayOfTop =
+      !!top &&
+      Math.abs(
+        new Date(movement.movement_date).getTime() -
+          new Date(top.movement_date).getTime(),
+      ) <= ONE_DAY_MS;
+
+    const isCorrectionOfTop = isImmediatelyAfterTop || isWithinOneDayOfTop;
+
+    if (isCorrectionOfTop) {
       stack[stack.length - 1] = movement;
     } else {
       stack.push(movement);

@@ -3,34 +3,11 @@ import { StockMovementService } from "./../stock-movements.service";
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
 
-jest.mock("../../../../warehouse", () => ({
-  __esModule: true,
-  Invoice: { findAll: jest.fn() },
-  InvoiceItems: {},
-  UnitBusiness: { findByPk: jest.fn() },
-}));
-
-jest.mock(
-  "../../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model",
-  () => ({
-    __esModule: true,
-    default: { findAll: jest.fn() },
-  }),
-);
-
 jest.mock(
   "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service",
   () => ({
     __esModule: true,
     default: { findAll: jest.fn() },
-  }),
-);
-
-jest.mock(
-  "../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model",
-  () => ({
-    __esModule: true,
-    default: {},
   }),
 );
 
@@ -49,13 +26,6 @@ jest.mock("../stock-movements.repository", () => ({
   },
 }));
 
-// StockMovement (model) é usado diretamente por updateManualAverageCost
-// (busca por id da linha, não mais por invoice_id).
-jest.mock("../stock-movements.model", () => ({
-  __esModule: true,
-  default: { findOne: jest.fn() },
-}));
-
 jest.mock(
   "../../stock-movement-source-data/stock-movement-source-data.service",
   () => ({
@@ -64,10 +34,6 @@ jest.mock(
   }),
 );
 
-jest.mock("../../../product-config/product_config.model", () => ({
-  __esModule: true,
-  default: { findOne: jest.fn() },
-}));
 
 import { Invoice, UnitBusiness } from "../../../../warehouse";
 import InvoiceFiscalItem from "../../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";

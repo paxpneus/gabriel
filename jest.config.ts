@@ -15,9 +15,9 @@ const config: Config = {
       },
     ],
   },
-   moduleNameMapper: {
-  "^(.*)config/sequelize$": "<rootDir>/src/config/sequelize.test.ts",
-},
+  moduleNameMapper: {
+    "^(.*)config/sequelize$": "<rootDir>/src/config/sequelize.test.ts",
+  },
   setupFiles: ["<rootDir>/src/__tests__/setup.ts"],
   clearMocks: true,
   restoreMocks: true,
