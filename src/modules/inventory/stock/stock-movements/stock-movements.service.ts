@@ -316,11 +316,13 @@ export class StockMovementService extends BaseService<
   async getLastPurchaseEntries(
     productIds: string[],
     unitBusinessId: string,
+    asOfDate: Date,
     limit = 2,
   ): Promise<Map<string, StockMovement[]>> {
     return this.repository.findLastPurchaseEntries(
       productIds,
       unitBusinessId,
+      asOfDate,
       limit,
     );
   }
@@ -328,10 +330,12 @@ export class StockMovementService extends BaseService<
   async getCurrentBalances(
     productIds: string[],
     unitBusinessId: string,
+    asOfDate: Date
   ): Promise<Map<string, StockMovement>> {
     return this.repository.findLastMovementsByProducts(
       productIds,
       unitBusinessId,
+      asOfDate
     );
   }
 

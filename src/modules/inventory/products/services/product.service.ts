@@ -9,26 +9,18 @@ import {
 import {
   PaginatedResult,
   QueryParams,
-} from "../../../shared/query/query.types";
-import BaseService from "../../../shared/utils/base-models/base-service";
-import Product from "./product.model";
-import productRepository, { ProductRepository } from "./product.repository";
-import Stock from "../stock/stock/stock.model";
-import ProductConfig from "../product-config/product_config.model";
+} from "../../../../shared/query/query.types";
+import BaseService from "../../../../shared/utils/base-models/base-service";
+import Product from "../product.model";
+import productRepository, { ProductRepository } from "../repository/product.repository";
+import ProductConfig from "../../product-config/product_config.model";
 import {
   ProductCreationAttributes,
   ProductDetailedWithMovements,
   ProductDetailedWithMovementsSummary,
-} from "./product.types";
-import supplierMappingService from "../supplier-mapping/supplier-mapping.service";
-import Group from "../groups/group/group.model";
-import Subgroup from "../groups/subgroup/subgroup.model";
-import Brand from "../brands/brands.model";
-
-type StockUnitFilter = {
-  unitBusinessId?: string;
-  stockUnit?: "positive" | "zero";
-};
+} from "../product.types";
+import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
+import productWithMovementsRepository from '../repository/product-with-movements'
 
 export class ProductService extends BaseService<Product, ProductRepository> {
   constructor() {
@@ -54,7 +46,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         }),
         brand_id: (value) => ({
           "$brandRegister.id$": value,
-        }),
+        }),    
       },
     };
   }
@@ -68,24 +60,6 @@ export class ProductService extends BaseService<Product, ProductRepository> {
       this.queryConfig,
       extraOptions,
     );
-  }
-
-  async productDetailedWithMovementsSummary(
-    params: QueryParams,
-    unitBusinessId?: string,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-  ): Promise<PaginatedResult<ProductDetailedWithMovementsSummary>> {
-    const response = await this.repository.paginateDetailedWithMovements(
-      params,
-      this.queryConfig,
-      unitBusinessId,
-      extraOptions,
-    );
-
-    return {
-      data: response.data.map((p) => this.normalizeProductWithMovements(p)),
-      meta: response.meta,
-    };
   }
 
   async findByIdFull(
@@ -246,7 +220,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     unitBusinessId?: string,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<ProductDetailedWithMovementsSummary[]> {
-    const products = await this.repository.findAllDetailedWithMovements(
+    const products = await productWithMovementsRepository.findAllDetailedWithMovements(
       params,
       this.queryConfig,
       unitBusinessId,

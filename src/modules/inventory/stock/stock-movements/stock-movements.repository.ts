@@ -293,16 +293,20 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
   async findLastMovementsByProducts(
     productIds: string[],
     unitBusinessId: string,
+    asOfDate?: Date,
     transaction?: Transaction,
   ): Promise<Map<string, StockMovement>> {
     const result = new Map<string, StockMovement>();
     if (!productIds.length) return result;
+
+    console.log('findLastMovementsByProducts', asOfDate)
 
     const movements = await this.model.findAll({
       where: {
         product_id: { [Op.in]: productIds },
         unit_business_id: unitBusinessId,
         is_active: true,
+        ...(asOfDate ? { movement_date: { [Op.lte]: asOfDate } } : {}),
       },
       order: [
         ["product_id", "ASC"],
@@ -339,11 +343,14 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
   async findLastPurchaseEntries(
   productIds: string[],
   unitBusinessId: string,
+  asOfDate?: Date,
   limit = 2,
   transaction?: Transaction,
 ): Promise<Map<string, StockMovement[]>> {
   const result = new Map<string, StockMovement[]>();
   if (!productIds.length) return result;
+
+  console.log('lastpurchase', asOfDate)
 
   // Agora busca TODOS os tipos de movimento (não só PURCHASE_ENTRY/
   // MANUAL_ADJUSTMENT), pra saber se um MANUAL_ADJUSTMENT com custo está
@@ -355,6 +362,7 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
       product_id: { [Op.in]: productIds },
       unit_business_id: unitBusinessId,
       is_active: true,
+      ...(asOfDate ? { movement_date: { [Op.lte]: asOfDate } } : {}),
     },
     order: [
       ["product_id", "ASC"],

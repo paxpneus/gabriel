@@ -18,7 +18,7 @@ import expeditionScanLogRepository, {
   ExpeditionScanLogRepository,
 } from "./scan-logs.repository";
 import supplierMappingService from "../../../inventory/supplier-mapping/supplier-mapping.service";
-import productsService from "../../../inventory/products/product.service";
+import productsService from "../../../inventory/products/services/product.service";
 import InvoiceItems from "../../fiscal/invoices/invoice-items/invoice-items.model";
 import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items.service";
 import batchService from "../batch/batch.service";
