@@ -44,19 +44,38 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
 
     const newItemQuantityRead = Math.max(newUserRead, maxOtherRead);
 
+    const userReadsByUser = allLogs.reduce<Record<string, number>>(
+      (acc, log) => {
+        const userId = log.user_id;
+        acc[userId] = (acc[userId] ?? 0) + Number(log.quantity_read);
+        return acc;
+      },
+      {},
+    );
+
+    const userReadValues = Object.values(userReadsByUser);
+    const hasMultipleUserReads = userReadValues.length > 1;
+    const maxUserRead =
+      userReadValues.length > 0 ? Math.max(...userReadValues) : 0;
+    const minUserRead =
+      userReadValues.length > 0 ? Math.min(...userReadValues) : 0;
     const userDivergency =
-      allLogs.length === 2
-        ? Math.abs(
-            Number(allLogs[0].quantity_read) - Number(allLogs[1].quantity_read),
-          )
-        : 0;
+      hasMultipleUserReads ? Math.abs(maxUserRead - minUserRead) : 0;
 
     const hasUserDivergency = userDivergency > 0;
-    const anyUserReadEnough = allLogs.some(
-      (l) => Number(l.quantity_read) >= Number(item.quantity_stock),
+    const allUsersReadEqual = hasMultipleUserReads && maxUserRead === minUserRead;
+    const anyUserReadEnough = userReadValues.some(
+      (value) => value >= Number(item.quantity_stock),
     );
+
     const newStatus =
-      !hasUserDivergency && anyUserReadEnough ? "FINISHED" : "PENDING";
+      batchType === "DIVERGENCY"
+        ? hasMultipleUserReads && allUsersReadEqual && anyUserReadEnough
+          ? "FINISHED"
+          : "PENDING"
+        : !hasUserDivergency && anyUserReadEnough
+          ? "FINISHED"
+          : "PENDING";
 
     await item.update(
       {

@@ -235,13 +235,23 @@ export class InventoryBatchLogsService extends BaseService<
 
       // ─── Recalcula status do item ─────────────────────────────────────────────
 
-      const hasTwoUsers = allLogs.length >= 2;
+      const userReadsByUser = allLogs.reduce<Record<string, number>>(
+        (acc, log) => {
+          acc[log.user_id] = (acc[log.user_id] ?? 0) + Number(log.quantity_read);
+          return acc;
+        },
+        {},
+      );
 
-      const userDivergency = hasTwoUsers
-        ? Math.abs(
-            Number(allLogs[0].quantity_read) - Number(allLogs[1].quantity_read),
-          )
-        : null;
+      const userReadValues = Object.values(userReadsByUser);
+      const hasTwoUsers = userReadValues.length >= 2;
+      const maxUserRead =
+        userReadValues.length > 0 ? Math.max(...userReadValues) : 0;
+      const minUserRead =
+        userReadValues.length > 0 ? Math.min(...userReadValues) : 0;
+      const userDivergency =
+        hasTwoUsers ? Math.abs(maxUserRead - minUserRead) : null;
+      const allUsersReadEqual = hasTwoUsers && maxUserRead === minUserRead;
 
       await inventoryBatchItem.update(
         {
@@ -256,13 +266,18 @@ export class InventoryBatchLogsService extends BaseService<
 
       const hasUserDivergency = userDivergency !== null && userDivergency > 0;
 
-      const anyUserReadEnough = allLogs.some(
-        (l) =>
-          Number(l.quantity_read) >= Number(inventoryBatchItem.quantity_stock),
+      const anyUserReadEnough = userReadValues.some(
+        (value) => value >= Number(inventoryBatchItem.quantity_stock),
       );
 
       const newStatus =
-        !hasUserDivergency && anyUserReadEnough ? "FINISHED" : "PENDING";
+        inventoryBatch.type === "DIVERGENCY"
+          ? hasTwoUsers && allUsersReadEqual && anyUserReadEnough
+            ? "FINISHED"
+            : "PENDING"
+          : !hasUserDivergency && anyUserReadEnough
+            ? "FINISHED"
+            : "PENDING";
 
       await inventoryBatchItem.update(
         { status: newStatus },
