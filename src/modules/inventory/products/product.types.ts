@@ -78,3 +78,18 @@ export type ProductDetailedWithMovementsSummary = ProductAttributes & {
   average_cost_trend: AverageCostTrend;
   average_cost_difference: number;
 };
+
+export type StockUnitFilter = {
+  unitBusinessId?: string;
+  stockUnit?: "positive" | "zero";
+};
+
+export type LastMovementDateRangeFilter = {
+  start?: string;
+  end?: string;
+};
+
+export type LastMovementDateRangeDate = {
+  start?: Date;
+  end?: Date;
+};

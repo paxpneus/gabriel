@@ -8,11 +8,7 @@ import ProductService from "./services/product.service";
 import { userPermissions } from "../../../middlewares/user-permissions";
 import unitBusinessService from "../../company/unit-business/unit-business.service";
 import productWithMovementService from './services/product-with-movements'
-
-type StockUnitFilter = {
-  unitBusinessId?: string;
-  stockUnit?: "positive" | "zero";
-};
+import { StockUnitFilter } from "./product.types";
 
 type ProductQueryParams = Omit<QueryParams, "filters"> & {
   filters?: Record<string, string | string[] | StockUnitFilter | undefined>;

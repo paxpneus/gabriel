@@ -16,52 +16,19 @@ import { StockMovementRepository } from "../../stock/stock-movements/stock-movem
 import defaultStockMovementRepository from "../../stock/stock-movements/stock-movements.repository";
 import {
   AverageCostTrend,
+  LastMovementDateRangeFilter,
   ProductDetailedWithMovements,
+  StockUnitFilter,
 } from "../product.types";
 import { computeAverageCostTrend } from "../helpers/product-cost-trend";
 import { extractStockFilter } from "../product.query-config";
-
-type StockUnitFilter = {
-  unitBusinessId?: string;
-  stockUnit?: "positive" | "zero";
-};
+import { buildLastMovementDateSubquery, buildLastMovementRangeWhere, extractLastMovementDateFilter } from "../helpers/product-movement-date";
 
 export class ProductWithMovementsRepository extends BaseRepository<Product> {
   constructor(
     private readonly stockMovementRepository: StockMovementRepository = defaultStockMovementRepository,
   ) {
     super(Product);
-  }
-
-  private parseAsOfDateEndOfDay(rawValue: unknown): Date | undefined {
-    if (!rawValue || typeof rawValue !== "string") return undefined;
-
-    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(rawValue);
-    const normalized = isDateOnly ? `${rawValue}T23:59:59.999Z` : rawValue;
-
-    const parsed = new Date(normalized);
-    return !isNaN(parsed.getTime()) ? parsed : undefined;
-  }
-
-  private extractLastMovementDateFilter(params: QueryParams): {
-    asOfDate?: Date;
-    paramsWithoutDateFilter: QueryParams;
-  } {
-    const raw = params.filters?.lastMovementDate;
-    const rawValue = Array.isArray(raw) ? raw[0] : raw;
-
-    const asOfDate = this.parseAsOfDateEndOfDay(rawValue);
-
-    const filters = { ...params.filters };
-    delete filters.lastMovementDate;
-
-    return {
-      asOfDate,
-      paramsWithoutDateFilter: {
-        ...params,
-        filters: Object.keys(filters).length ? filters : undefined,
-      },
-    };
   }
 
   private extractAverageCostTrendFilter(params: QueryParams): {
@@ -126,7 +93,7 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     if (!productIds.length) return [];
 
     const lastEntriesByProduct =
-      await this.stockMovementRepository.findLastPurchaseEntries(
+      await this.stockMovementRepository.findLastEffectiveMovements(
         productIds,
         unitBusinessId,
         asOfDate,
@@ -153,8 +120,8 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     const { stockFilter, stockWhere, paramsWithoutStockFilter } =
       extractStockFilter(params);
 
-    const { asOfDate, paramsWithoutDateFilter } =
-      this.extractLastMovementDateFilter(paramsWithoutStockFilter);
+    const { lastMovementRange, paramsWithoutDateFilter } =
+      extractLastMovementDateFilter(paramsWithoutStockFilter);
 
     const { trendFilter, paramsWithoutTrendFilter } =
       this.extractAverageCostTrendFilter(paramsWithoutDateFilter);
@@ -169,7 +136,7 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
           stockWhere,
           stockFilter,
           resolvedUnitBusinessId,
-          asOfDate,
+          lastMovementRange?.end,
           trendFilter,
         )
       : undefined;
@@ -185,18 +152,25 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
       };
     }
 
-    const lastMovementDateOrder = literal(`(
-    SELECT MAX(sm.movement_date)
-    FROM stock_movements sm
-    WHERE sm.product_id = "Product"."id"
-      AND sm.is_active = true
-      AND (
-        sm.movement_type = 'PURCHASE_ENTRY'
-        OR (sm.movement_type = 'MANUAL_ADJUSTMENT' AND sm.manual_average_cost_value IS NOT NULL)
-      )
-      ${resolvedUnitBusinessId ? "AND sm.unit_business_id = :orderUnitBusinessId" : ""}
-      ${asOfDate ? "AND sm.movement_date <= :asOfDate" : ""}
-  ) DESC NULLS LAST`);
+    const lastMovementDateOrder = literal(
+      `${buildLastMovementDateSubquery(resolvedUnitBusinessId)} DESC NULLS LAST`,
+    );
+
+    const rangeWhere = buildLastMovementRangeWhere(
+      lastMovementRange,
+      resolvedUnitBusinessId,
+    );
+
+    const extraWhereConditions: WhereOptions[] = [];
+    if (trendProductIds) {
+      extraWhereConditions.push({ id: { [Op.in]: trendProductIds } });
+    }
+    if (rangeWhere) {
+      extraWhereConditions.push(rangeWhere);
+    }
+    const extraWhere = extraWhereConditions.length
+      ? ({ [Op.and]: extraWhereConditions } as WhereOptions)
+      : undefined;
 
     const result = await this.findPaginated<ProductDetailedWithMovements>(
       paramsWithoutTrendFilter,
@@ -209,7 +183,6 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
           ...(resolvedUnitBusinessId
             ? { orderUnitBusinessId: resolvedUnitBusinessId }
             : {}),
-          ...(asOfDate ? { asOfDate: asOfDate.toISOString() } : {}),
         },
         include: [
           {
@@ -239,16 +212,12 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
           },
         ],
       },
-      trendProductIds ? { id: { [Op.in]: trendProductIds } } : undefined,
+      extraWhere,
       [lastMovementDateOrder],
     );
 
     if (resolvedUnitBusinessId && result.data.length) {
-      await this.attachStockCostInfo(
-        result.data,
-        resolvedUnitBusinessId,
-        asOfDate,
-      );
+      await this.attachStockCostInfo(result.data, resolvedUnitBusinessId, lastMovementRange?.end);
     }
 
     return result;
@@ -270,8 +239,8 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     const resolvedUnitBusinessId =
       unitBusinessId ?? stockFilter?.unitBusinessId;
 
-    const { asOfDate, paramsWithoutDateFilter } =
-      this.extractLastMovementDateFilter(paramsWithoutStockFilter);
+    const { lastMovementRange, paramsWithoutDateFilter } =
+      extractLastMovementDateFilter(paramsWithoutStockFilter);
 
     const { trendFilter, paramsWithoutTrendFilter } =
       this.extractAverageCostTrendFilter(paramsWithoutDateFilter);
@@ -283,7 +252,7 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
           stockWhere,
           stockFilter,
           resolvedUnitBusinessId,
-          asOfDate,
+          undefined,
           trendFilter,
         )
       : undefined;
@@ -292,26 +261,26 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
       return [];
     }
 
-    const lastMovementDateOrder = literal(`(
-    SELECT MAX(sm.movement_date)
-    FROM stock_movements sm
-    WHERE sm.product_id = "Product"."id"
-      AND sm.is_active = true
-      AND (
-        sm.movement_type = 'PURCHASE_ENTRY'
-        OR (sm.movement_type = 'MANUAL_ADJUSTMENT' AND sm.manual_average_cost_value IS NOT NULL)
-      )
-      ${resolvedUnitBusinessId ? "AND sm.unit_business_id = :orderUnitBusinessId" : ""}
-      ${asOfDate ? "AND sm.movement_date <= :asOfDate" : ""}
-  ) DESC NULLS LAST`);
+    const lastMovementDateOrder = literal(
+      `${buildLastMovementDateSubquery(resolvedUnitBusinessId)} DESC NULLS LAST`,
+    );
+
+    const rangeWhere = buildLastMovementRangeWhere(
+      lastMovementRange,
+      resolvedUnitBusinessId,
+    );
 
     const resolved = QueryParser.parse(paramsWithoutTrendFilter, queryConfig);
 
-    const finalWhere = trendProductIds
-      ? ({
-          [Op.and]: [resolved.where, { id: { [Op.in]: trendProductIds } }],
-        } as WhereOptions)
-      : (resolved.where as WhereOptions);
+    const whereConditions: WhereOptions[] = [resolved.where as WhereOptions];
+    if (trendProductIds) {
+      whereConditions.push({ id: { [Op.in]: trendProductIds } });
+    }
+    if (rangeWhere) {
+      whereConditions.push(rangeWhere);
+    }
+
+    const finalWhere = { [Op.and]: whereConditions } as WhereOptions;
 
     const products = (await this.model.findAll({
       subQuery: false,
@@ -323,7 +292,12 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
         ...(resolvedUnitBusinessId
           ? { orderUnitBusinessId: resolvedUnitBusinessId }
           : {}),
-        ...(asOfDate ? { asOfDate: asOfDate.toISOString() } : {}),
+        ...(lastMovementRange?.start
+          ? { lastMovementStart: lastMovementRange.start.toISOString() }
+          : {}),
+        ...(lastMovementRange?.end
+          ? { lastMovementEnd: lastMovementRange.end.toISOString() }
+          : {}),
       },
       include: [
         {
@@ -355,11 +329,7 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     })) as unknown as ProductDetailedWithMovements[];
 
     if (resolvedUnitBusinessId && products.length) {
-      await this.attachStockCostInfo(
-        products,
-        resolvedUnitBusinessId,
-        asOfDate,
-      );
+      await this.attachStockCostInfo(products, resolvedUnitBusinessId, lastMovementRange?.end);
     }
 
     return products;
@@ -373,7 +343,7 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     const productIds = products.map((p) => p.id);
 
     const [lastEntriesByProduct, lastMovementByProduct] = await Promise.all([
-      this.stockMovementRepository.findLastPurchaseEntries(
+      this.stockMovementRepository.findLastEffectiveMovements(
         productIds,
         unitBusinessId,
         asOfDate,
