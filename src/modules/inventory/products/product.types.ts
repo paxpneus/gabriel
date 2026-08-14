@@ -41,7 +41,7 @@ export interface ProductWithStock extends Product {
   stocks: Stock[];
 }
 
-type AverageCostTrend = "INCREASED" | "DECREASED" | "UNCHANGED";
+export type AverageCostTrend = "INCREASED" | "DECREASED" | "UNCHANGED";
 
 export type ProductDetailedWithMovements = Product & {
   stocks: Stock[]

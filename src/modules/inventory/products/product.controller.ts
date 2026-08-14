@@ -4,9 +4,10 @@ import { QueryParams } from "../../../shared/query/query.types";
 import BaseController from "../../../shared/utils/base-models/base-controller";
 import User from "../../company/users/users/user.model";
 import Product from "./product.model";
-import ProductService from "./product.service";
+import ProductService from "./services/product.service";
 import { userPermissions } from "../../../middlewares/user-permissions";
 import unitBusinessService from "../../company/unit-business/unit-business.service";
+import productWithMovementService from './services/product-with-movements'
 
 type StockUnitFilter = {
   unitBusinessId?: string;
@@ -138,7 +139,7 @@ export class ProductController extends BaseController<
         };
       }
 
-      const result = await this.service.productDetailedWithMovementsSummary(
+      const result = await productWithMovementService.productDetailedWithMovementsSummary(
         params as unknown as QueryParams,
       );
       return res.json(result);
