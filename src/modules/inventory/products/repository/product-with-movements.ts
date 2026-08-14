@@ -168,7 +168,11 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     if (trendFilter?.length && trendProductIds?.length === 0) {
       return {
         data: [],
-        meta: QueryParser.buildMeta(0, (params.page as number) ?? 1, (params.perPage as number) ?? queryConfig.defaults?.perPage ?? 20),
+        meta: QueryParser.buildMeta(
+          0,
+          (params.page as number) ?? 1,
+          (params.perPage as number) ?? queryConfig.defaults?.perPage ?? 20,
+        ),
       };
     }
 
@@ -177,6 +181,10 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     FROM stock_movements sm
     WHERE sm.product_id = "Product"."id"
       AND sm.is_active = true
+      AND (
+        sm.movement_type = 'PURCHASE_ENTRY'
+        OR (sm.movement_type = 'MANUAL_ADJUSTMENT' AND sm.manual_average_cost_value IS NOT NULL)
+      )
       ${resolvedUnitBusinessId ? "AND sm.unit_business_id = :orderUnitBusinessId" : ""}
       ${asOfDate ? "AND sm.movement_date <= :asOfDate" : ""}
   ) DESC NULLS LAST`);
@@ -227,7 +235,11 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     );
 
     if (resolvedUnitBusinessId && result.data.length) {
-      await this.attachStockCostInfo(result.data, resolvedUnitBusinessId, asOfDate);
+      await this.attachStockCostInfo(
+        result.data,
+        resolvedUnitBusinessId,
+        asOfDate,
+      );
     }
 
     return result;
@@ -276,6 +288,10 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     FROM stock_movements sm
     WHERE sm.product_id = "Product"."id"
       AND sm.is_active = true
+      AND (
+        sm.movement_type = 'PURCHASE_ENTRY'
+        OR (sm.movement_type = 'MANUAL_ADJUSTMENT' AND sm.manual_average_cost_value IS NOT NULL)
+      )
       ${resolvedUnitBusinessId ? "AND sm.unit_business_id = :orderUnitBusinessId" : ""}
       ${asOfDate ? "AND sm.movement_date <= :asOfDate" : ""}
   ) DESC NULLS LAST`);
@@ -330,7 +346,11 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
     })) as unknown as ProductDetailedWithMovements[];
 
     if (resolvedUnitBusinessId && products.length) {
-      await this.attachStockCostInfo(products, resolvedUnitBusinessId, asOfDate);
+      await this.attachStockCostInfo(
+        products,
+        resolvedUnitBusinessId,
+        asOfDate,
+      );
     }
 
     return products;
