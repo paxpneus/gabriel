@@ -1,13 +1,11 @@
 import { QueueJobSummary } from "../../types/queue.types";
 
-// Espelha (frouxamente) o formato de ApiFetchRequest do bling-webhook.mapper,
-// sem acoplar diretamente ao módulo de webhook.
 interface BlingApiFetchJobData {
   resource?: string;
   blingId?: number;
   action?: string;
   companyId?: string;
-  partialData?: { number?: string; [key: string]: any };
+  partialData?: { number?: string; id?: number | string; blingId?: number; [key: string]: any };
   numero?: number | string;
   id?: number | string;
 }
@@ -18,20 +16,28 @@ export interface NormalizedBlingApiFetchJob extends QueueJobSummary {
   identifier: string | number | null;
 }
 
-function pickIdentifier(data: BlingApiFetchJobData): string | number | null {
+function pickBlingId(data: BlingApiFetchJobData): number | null {
+  const raw = data.blingId ?? data.partialData?.blingId ?? data.partialData?.id ?? null;
+  if (raw == null) return null;
+  const num = Number(raw);
+  return Number.isNaN(num) ? null : num;
+}
+
+function pickIdentifier(data: BlingApiFetchJobData, blingId: number | null): string | number | null {
   switch (data.resource) {
     case "invoice":
+      return data.partialData?.number ?? blingId ?? null;
     case "consumer_invoice":
-      return data.partialData?.number ?? data.blingId ?? null;
+      return data.partialData?.number ?? blingId ?? null;
 
     case "product":
-      return data.blingId ?? data.id ?? null;
+      return blingId ?? data.id ?? null;
 
     case "order":
-      return data.numero ?? data.blingId ?? data.id ?? null;
+      return data.numero ?? blingId ?? data.id ?? null;
 
     default:
-      return data.blingId ?? data.id ?? null;
+      return blingId ?? data.id ?? null;
   }
 }
 
@@ -39,11 +45,12 @@ export function normalizeBlingApiFetchJob(
   job: QueueJobSummary,
 ): NormalizedBlingApiFetchJob {
   const data = (job.data ?? {}) as BlingApiFetchJobData;
+  const blingId = pickBlingId(data);
 
   return {
     ...job,
     resource: data.resource ?? null,
-    blingId: data.blingId ?? null,
-    identifier: pickIdentifier(data),
+    blingId,
+    identifier: pickIdentifier(data, blingId),
   };
 }
