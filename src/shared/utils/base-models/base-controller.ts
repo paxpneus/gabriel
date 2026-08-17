@@ -1,42 +1,18 @@
 import { Request, Response, Router, RequestHandler } from "express";
 import { Model, Op } from "sequelize";
 import BaseService from "./base-service";
-import { QueryParams } from "../../query/query.types";
+import RouterController from "./base-router-controller";
 class BaseController<
   T extends Model,
   Tservice extends BaseService<T> = BaseService<T>,
-> {
-  public router: Router;
+> extends RouterController {
   protected service: Tservice;
 
   constructor(service: Tservice) {
+    super();
     this.service = service;
-    this.router = Router();
     this.registerBaseRoutes();
-  }
-
-  protected middlewaresFor(): Record<string, RequestHandler[]> {
-    return {};
-  }
-
-  protected mw(key: string): RequestHandler[] {
-    return this.middlewaresFor()[key] ?? [];
-  }
-
-  protected extractQueryParams(req: Request): QueryParams {
-    const q = req.query as Record<string, any>;
-    return {
-      page: q.page,
-      perPage: q.perPage,
-      sortBy: q.sortBy,
-      sortDir: q.sortDir,
-      search: q.search,
-      filters: q.filters,
-      dateFrom: q.dateFrom,
-      dateTo: q.dateTo,
-      dateField: q.dateField,
-      userId: q.userId,
-    };
+    
   }
 
   private registerBaseRoutes(): void {
