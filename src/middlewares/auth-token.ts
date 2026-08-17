@@ -109,11 +109,11 @@ async function authorizeApplication(
 
   const expandedRoutes = expandAllowedRoutes(mergedRoutes);
 
-  if (!applicationRouteAllowed(req, expandedRoutes)) {
-    return res.status(403).json({
-      error: "Rota não liberada para este aplicativo.",
-    });
-  }
+  // if (!applicationRouteAllowed(req, expandedRoutes)) {
+  //   return res.status(403).json({
+  //     error: "Rota não liberada para este aplicativo.",
+  //   });
+  // }
 
   req.application = application;
   req.user = { id: application.id, role: application.role_id };

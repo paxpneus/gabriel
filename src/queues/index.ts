@@ -41,6 +41,7 @@ import { BlingNfeScrapingQueue } from "../modules/handlers/bling/services/bling-
 
 import { CteIngestionQueue } from "../modules/handlers/fiscal/documents/cte/queues/cte-ingestion.queue";
 import { CteXmlBatchQueue } from "../modules/warehouse/fiscal/ctes/cte/queues/cte-download.queue";
+import queueMonitorService from "../modules/queues/services/queue.service";
 
 export const serverAdapter = new ExpressAdapter();
 
@@ -128,10 +129,11 @@ function buildQueues(activeWorkers: QueueName[]) {
   const blingDailyReconciler = new BlingMigrationQueue({
     workless: w("BLING_MIGRATION"),
   });
-  const blingStockMovementsScrapingQueue =
-    new BlingStockMovementsScrapingQueue({
+  const blingStockMovementsScrapingQueue = new BlingStockMovementsScrapingQueue(
+    {
       workless: w("BLING_STOCK_MOVEMENTS_SCRAPING"),
-    });
+    },
+  );
   const tcarUpsertQueue = new TCarUpsertQueue({ workless: w("TCAR_UPSERT") });
   const tcarSyncQueue = new TCarSyncQueue(tcarUpsertQueue, {
     workless: w("TCAR_SYNC"),
@@ -149,11 +151,14 @@ function buildQueues(activeWorkers: QueueName[]) {
     { workless: true },
   );
 
-  const cteIngestionQueue = new CteIngestionQueue({ workless: w("CTE_INGESTION") }); 
+  const cteIngestionQueue = new CteIngestionQueue({
+    workless: w("CTE_INGESTION"),
+  });
 
-  const cteDownloadQueue = new CteXmlBatchQueue({ workless: w("CTE_XML_BATCH")})
+  const cteDownloadQueue = new CteXmlBatchQueue({
+    workless: w("CTE_XML_BATCH"),
+  });
 
-  
   return {
     nfeQueue,
     mlOrderSyncQueue,
@@ -197,7 +202,7 @@ export function registerQueues(app: Express) {
     tcarSyncQueue,
     blingNfeScrapingQueue,
     cteIngestionQueue,
-    cteDownloadQueue
+    cteDownloadQueue,
   } = buildQueues([]);
 
   const blingOrderQueue = new BlingOrderQueue(
@@ -221,7 +226,8 @@ export function registerQueues(app: Express) {
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
   app.locals.BlingMigrationQueue = blingDailyReconciler;
-  app.locals.BlingStockMovementsScrapingQueue = blingStockMovementsScrapingQueue;
+  app.locals.BlingStockMovementsScrapingQueue =
+    blingStockMovementsScrapingQueue;
   app.locals.TCarUpsertQueue = tcarUpsertQueue;
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
   app.locals.DailySalesReportQueue = dailySalesReportQueue;
@@ -257,6 +263,23 @@ export function registerQueues(app: Express) {
   });
 
   app.use("/admin/queues", serverAdapter.getRouter());
+
+  queueMonitorService.registerFromLocals(app.locals, {
+    NfeQueue: "NFE_EMISSION",
+    MLOrderSyncQueue: "ML_ORDER_SYNC",
+    CNPJQueue: "CNPJ_VERIFY_CNAE",
+    BlingOrderQueue: "BLING_ORDER_INGESTION",
+    BlingDirectUpsertQueue: "BLING_DIRECT_UPSERT",
+    BlingApiFetchQueue: "BLING_API_FETCH",
+    BlingTokenRefreshQueue: "BLING_TOKEN_REFRESH",
+    BlingMigrationQueue: "BLING_MIGRATION",
+    BlingStockMovementsScrapingQueue: "BLING_STOCK_MOVEMENTS_SCRAPING",
+    TCarUpsertQueue: "TCAR_UPSERT",
+    TCarSyncQueue: "TCAR_SYNC",
+    DailyOperationReportQueue: "DAILY_OPERATION_REPORT",
+    DailySalesReportQueue: "DAILY_SALES_REPORT",
+    AutoBackupQueue: "AUTO_BACKUP",
+  });
 
   console.log(
     "------------------- QUEUE: Filas registradas na API (sem Workers)! -------------------",
@@ -313,8 +336,8 @@ export function startAutomationWorkers() {
   ]);
 
   reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-  
-    blingReconcilerQueue.scheduleRepeat({
+
+  blingReconcilerQueue.scheduleRepeat({
     every: 2 * 60 * 60 * 1000,
     jobId: "bling-reconciler-open-orders",
     data: { task: "reconcile-open-orders" },
@@ -369,7 +392,6 @@ export function startWorkers() {
   setTimeout(
     () => {
       dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
-     
     },
     30 * 60 * 1000,
   );
@@ -405,7 +427,7 @@ export function startTecincoWorkers() {
 export function startScrapingWorker() {
   const { mlOrderSyncQueue, blingStockMovementsScrapingQueue } = buildQueues([
     "BLING_STOCK_MOVEMENTS_SCRAPING",
-    "BLING_NFE_SCRAPING"
+    "BLING_NFE_SCRAPING",
   ]);
 
   const mlScrapingQueue = new MLScrapingQueue(

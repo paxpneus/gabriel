@@ -180,6 +180,7 @@ export interface MappedInvoice {
   status: 'OPEN' | 'PENDING' | 'FINISHED' | 'CANCELLED';
   /** id_system = id do Bling como string */
   id_system: string;
+  number: string;
   /** Campos extras precisam de req na Bling */
   customer_name?: string;
   customer_document?: string;

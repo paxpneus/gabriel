@@ -117,6 +117,7 @@ function mapInvoice(
       companyId: "", // preenchido pelo orquestrador
       partialData: {
         blingId: data.id,
+        number: data.numero,
         id_system: String(data.id),
         type: 'OUTGOING',
         status: mapInvoiceSituacao(data.situacao),
