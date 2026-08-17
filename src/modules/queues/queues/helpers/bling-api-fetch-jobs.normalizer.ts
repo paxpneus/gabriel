@@ -1,11 +1,21 @@
 import { QueueJobSummary } from "../../types/queue.types";
 
-interface BlingApiFetchJobData {
+interface BlingApiFetchPayload {
   resource?: string;
   blingId?: number;
   action?: string;
   companyId?: string;
   partialData?: { number?: string; id?: number | string; blingId?: number; [key: string]: any };
+  numero?: number | string;
+  id?: number | string;
+}
+
+interface BlingApiFetchJobData {
+  resource?: string;
+  apiFetch?: BlingApiFetchPayload;
+  // fallback: alguns produtores podem enviar os campos direto no raiz
+  blingId?: number;
+  partialData?: BlingApiFetchPayload["partialData"];
   numero?: number | string;
   id?: number | string;
 }
@@ -16,28 +26,30 @@ export interface NormalizedBlingApiFetchJob extends QueueJobSummary {
   identifier: string | number | null;
 }
 
-function pickBlingId(data: BlingApiFetchJobData): number | null {
-  const raw = data.blingId ?? data.partialData?.blingId ?? data.partialData?.id ?? null;
+function pickBlingId(payload: BlingApiFetchPayload): number | null {
+  const raw = payload.blingId ?? payload.partialData?.blingId ?? payload.partialData?.id ?? null;
   if (raw == null) return null;
   const num = Number(raw);
   return Number.isNaN(num) ? null : num;
 }
 
-function pickIdentifier(data: BlingApiFetchJobData, blingId: number | null): string | number | null {
-  switch (data.resource) {
+function pickIdentifier(
+  payload: BlingApiFetchPayload,
+  blingId: number | null,
+): string | number | null {
+  switch (payload.resource) {
     case "invoice":
-      return data.partialData?.number ?? blingId ?? null;
     case "consumer_invoice":
-      return data.partialData?.number ?? blingId ?? null;
+      return payload.partialData?.number ?? blingId ?? null;
 
     case "product":
-      return blingId ?? data.id ?? null;
+      return blingId ?? payload.id ?? null;
 
     case "order":
-      return data.numero ?? blingId ?? data.id ?? null;
+      return payload.numero ?? blingId ?? payload.id ?? null;
 
     default:
-      return blingId ?? data.id ?? null;
+      return blingId ?? payload.id ?? null;
   }
 }
 
@@ -45,12 +57,24 @@ export function normalizeBlingApiFetchJob(
   job: QueueJobSummary,
 ): NormalizedBlingApiFetchJob {
   const data = (job.data ?? {}) as BlingApiFetchJobData;
-  const blingId = pickBlingId(data);
+
+  // O payload real fica em data.apiFetch; fallback pro raiz caso algum
+  // produtor antigo/diferente mande os campos sem esse wrapper.
+  const payload: BlingApiFetchPayload = data.apiFetch ?? {
+    resource: data.resource,
+    blingId: data.blingId,
+    partialData: data.partialData,
+    numero: data.numero,
+    id: data.id,
+  };
+
+  const resource = payload.resource ?? data.resource ?? null;
+  const blingId = pickBlingId(payload);
 
   return {
     ...job,
-    resource: data.resource ?? null,
+    resource,
     blingId,
-    identifier: pickIdentifier(data, blingId),
+    identifier: pickIdentifier(payload, blingId),
   };
 }
