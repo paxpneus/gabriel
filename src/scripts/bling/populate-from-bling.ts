@@ -726,6 +726,7 @@ async function migrateInvoices(
             companyId: "",
             partialData: {
               blingId,
+              number: invoice.numero,
               id_system: String(blingId),
               status: mapSituacao(invoice.situacao),
             },

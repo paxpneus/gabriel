@@ -13,11 +13,12 @@ export class BlingApiFetchService extends QueueMonitorService {
     name: string = BLING_API_FETCH_QUEUE,
     status: QueueJobStatus = "waiting",
     start = 0,
-    end = 20,
+    end = -1,
   ): Promise<NormalizedBlingApiFetchJob[]> {
     const jobs = await super.getJobs(name, status, start, end);
     return jobs.map(normalizeBlingApiFetchJob);
   }
+
 }
 
 export default new BlingApiFetchService();
