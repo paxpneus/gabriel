@@ -37,7 +37,7 @@ export class BlingApiFetchController extends QueuesController {
   }
 
   async getJobs(req: Request, res: Response): Promise<Response> {
-    const { status = "waiting", start = "0", end = "20" } = req.query as Record<string, string>;
+    const { status = "waiting", start = "0", end = "-1" } = req.query as Record<string, string>;
     const jobs = await this.service.getJobs(BLING_API_FETCH_QUEUE, status as any, Number(start), Number(end));
     return res.json(jobs);
   }

@@ -64,7 +64,7 @@ export class QueueMonitorService {
     name: string,
     status: QueueJobStatus = "waiting",
     start = 0,
-    end = 20,
+    end = -1,
   ): Promise<QueueJobSummary[]> {
     const queue = this.resolveQueue(name);
     const jobs = await queue.getJobs([status], start, end);
