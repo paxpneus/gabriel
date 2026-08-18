@@ -1,5 +1,6 @@
-import { FindOptions, WhereOptions, Transaction } from "sequelize";
+import { DestroyOptions, FindOptions, Op, WhereOptions, Transaction } from "sequelize";
 import BaseService from "../../../../../../../shared/utils/base-models/base-service";
+import { throwIfEntityIsInUse } from "../../../../../../../shared/utils/validators/entity-in-use";
 import Category from "./categories.model";
 import categoryRepository, {
   CategoryRepository,
@@ -12,6 +13,7 @@ import {
 import categoryOptionService from "../category-options/category-options.service";
 import CategoryOption from "../category-options/category-options.model";
 import { CategoryOptionUpdateAttributes } from "../category-options/category-options.types";
+import TicketCategoryOption from "../../../ticket-category-options/ticket-category-options.model";
 
 export class CategoryService extends BaseService<Category, CategoryRepository> {
   constructor() {
@@ -42,6 +44,37 @@ export class CategoryService extends BaseService<Category, CategoryRepository> {
       extraOptions,
       forcedWhere,
     );
+  }
+
+  private async ensureNotUsed(categoryIds: string | string[]): Promise<void> {
+    const categoryOptionIds = await CategoryOption.findAll({
+      attributes: ["id"],
+      where: {
+        category_id: Array.isArray(categoryIds)
+          ? { [Op.in]: categoryIds }
+          : categoryIds,
+      },
+      raw: true,
+    });
+
+    const optionIds = categoryOptionIds.map((option) => option.id);
+    if (!optionIds.length) return;
+
+    await throwIfEntityIsInUse(TicketCategoryOption, {
+      category_option_id: { [Op.in]: optionIds },
+    });
+  }
+
+  async delete(id: string, options?: DestroyOptions) {
+    await this.ensureNotUsed(id);
+    return super.delete(id, options);
+  }
+
+  async bulkDelete(options: DestroyOptions) {
+    const ids = (options.where as { id?: { [Op.in]?: string[] } })?.id?.[Op.in];
+
+    if (ids?.length) await this.ensureNotUsed(ids);
+    return super.bulkDelete(options);
   }
 
   /**
