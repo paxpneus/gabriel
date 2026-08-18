@@ -13,6 +13,7 @@ class Ticket
   public priority_id!: number;
   public status_id!: number;
   public completed_at!: Date | null;
+  public is_late!: boolean;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -42,6 +43,8 @@ Ticket.init(
       references: { model: "ticket_statuses", key: "id" },
     },
     completed_at: { type: DataTypes.DATE, allowNull: true },
+    due_date: { type: DataTypes.DATE, allowNull: true },
+    is_late: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },
   { sequelize, tableName: "tickets", timestamps: true, underscored: true },
 );
