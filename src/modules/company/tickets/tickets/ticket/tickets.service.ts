@@ -41,14 +41,16 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
         "updatedAt",
       ],
       customSort: {
-        due_status: () => [
-          literal(`CASE due_status
-            WHEN 'LATE' THEN 0
-            WHEN 'SOON' THEN 1
-            WHEN 'ON_TRACK' THEN 2
-            ELSE 3 END`),
-          "ASC",
-        ],
+        due_status: () =>
+          literal(`CASE
+      WHEN due_status = 'LATE' THEN 0
+      WHEN due_status = 'SOON' THEN 1
+      WHEN due_status = 'ON_TRACK' THEN 2
+      ELSE 3
+    END ASC,
+    "status"."display_order" ASC,
+    due_date ASC`),
+
         "status.display_order": () => [
           { model: TicketStatus, as: "status" },
           "display_order",
@@ -56,6 +58,24 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
         ],
       },
       customFields: {
+        process: (value) => {
+          const status = Array.isArray(value) ? value[0] : value;
+          const statusCondition = {
+            completed: "completed = true",
+            canceled: "canceled = true",
+            pending: "completed = false AND canceled = false",
+          }[status];
+
+          if (!statusCondition) return {};
+
+          return {
+            status_id: {
+              [Op.in]: literal(
+                `(SELECT id FROM ticket_statuses WHERE ${statusCondition})`,
+              ),
+            },
+          };
+        },
         category_id: (value) => {
           const ids = (Array.isArray(value) ? value : [value]).map(Number);
           return {
@@ -103,7 +123,7 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
   }
 
   findByIdFull(id: string, options?: FindOptions): Promise<FullTicket | null> {
-      return this.repository.findByIdFull(id, options);
+    return this.repository.findByIdFull(id, options);
   }
 
   async create(
