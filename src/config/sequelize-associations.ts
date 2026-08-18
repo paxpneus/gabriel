@@ -81,6 +81,7 @@ import Ticket from "../modules/company/tickets/tickets/ticket/tickets.model";
 import TicketAssignee from "../modules/company/tickets/tickets/ticket-assignees/ticket-assignees.model";
 import TicketCategoryOption from "../modules/company/tickets/tickets/ticket-category-options/ticket-category-options.model";
 import Subtask from "../modules/company/tickets/tickets/subtasks/subtasks.model";
+import TicketStatusHistory from "../modules/company/tickets/tickets/ticket-status-histories/ticket-status-histories.model";
 
 export function setupAssociations() {
   // Standalone lookup table; no FK associations declared yet.
@@ -1308,6 +1309,13 @@ SellerSalesOrderItemSnapshot.belongsTo(UnitBusiness, {
 
   Ticket.hasMany(Subtask, { foreignKey: "ticket_id", as: "subtasks" });
   Subtask.belongsTo(Ticket, { foreignKey: "ticket_id", as: "ticket" });
+
+  Ticket.hasMany(TicketStatusHistory, { foreignKey: "ticket_id", as: "statusHistory" });
+  TicketStatusHistory.belongsTo(Ticket, { foreignKey: "ticket_id", as: "ticket" });
+  TicketStatus.hasMany(TicketStatusHistory, { foreignKey: "status_id", as: "history" });
+  TicketStatusHistory.belongsTo(TicketStatus, { foreignKey: "status_id", as: "status" });
+  User.hasMany(TicketStatusHistory, { foreignKey: "changed_by_user_id", as: "ticketStatusChanges" });
+  TicketStatusHistory.belongsTo(User, { foreignKey: "changed_by_user_id", as: "changedBy" });
 
 // CTE(s) 
 
