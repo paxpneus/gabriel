@@ -6,7 +6,6 @@ import {
   QueryParams,
 } from "../../../../../shared/query/query.types";
 import CategoryOption from "../config/categories/category_options/category-options.model";
-import Priority from "../config/priorities/priorities.model";
 import TicketStatus from "../config/ticket-statuses/ticket-statuses.model";
 import TicketAssignee from "../ticket-assignees/ticket-assignees.model";
 import TicketCategoryOption from "../ticket-category-options/ticket-category-options.model";
@@ -19,8 +18,8 @@ type TicketTrail = {
   ticket: Ticket;
   statusHistory: TicketStatusHistory[];
   resolutionTimeHours: number | null;
-  slaHours: number | null;
-  exceededSla: boolean;
+  dueDate: Date | null;
+  exceededDueDate: boolean;
 };
 
 export class TicketService extends BaseService<Ticket, TicketRepository> {
@@ -46,16 +45,8 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     };
   }
 
-  private isPastSla(
-    ticket: Ticket,
-    slaHours: number | null | undefined,
-    now = new Date(),
-  ): boolean {
-    return (
-      !!slaHours &&
-      slaHours > 0 &&
-      now.getTime() > ticket.createdAt.getTime() + slaHours * 3_600_000
-    );
+  private isPastDue(ticket: Ticket, now = new Date()): boolean {
+    return !!ticket.due_date && now.getTime() > ticket.due_date.getTime();
   }
 
   async create(
@@ -88,11 +79,9 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     return super.paginate(params);
   }
 
-  /** Atualiza a flag persistida somente em tickets que ainda estão abertos. */
   async refreshLateTickets(now = new Date()): Promise<void> {
     const tickets = await Ticket.findAll({
       include: [
-        { model: Priority, as: "priority", attributes: ["sla_hours"] },
         {
           model: TicketStatus,
           as: "status",
@@ -102,12 +91,10 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     });
     await Promise.all(
       tickets.map(async (ticket) => {
-        const priority = ticket.get("priority") as Priority | undefined;
         const status = ticket.get("status") as TicketStatus | undefined;
         const isOpen =
           !ticket.completed_at && !status?.completed && !status?.canceled;
-        const isLate =
-          isOpen && this.isPastSla(ticket, priority?.sla_hours, now);
+        const isLate = isOpen && this.isPastDue(ticket, now);
         if (ticket.is_late !== isLate) await ticket.update({ is_late: isLate });
       }),
     );
@@ -128,11 +115,7 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
       if (!status) throw new Error("Status não encontrado.");
       const now = new Date();
       const completedAt = status.completed || status.canceled ? now : null;
-      const priority = await Priority.findByPk(ticket.priority_id, {
-        transaction,
-      });
-      const isLate =
-        !completedAt && this.isPastSla(ticket, priority?.sla_hours, now);
+      const isLate = !completedAt && this.isPastDue(ticket, now);
       await ticket.update(
         { status_id: status.id, completed_at: completedAt, is_late: isLate },
         { transaction },
@@ -197,16 +180,13 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
   }
 
   async getTaskTrail(ticketId: string): Promise<TicketTrail> {
-    const ticket = await Ticket.findByPk(ticketId, {
-      include: [{ model: Priority, as: "priority", attributes: ["sla_hours"] }],
-    });
+    const ticket = await Ticket.findByPk(ticketId);
     if (!ticket) throw new Error("Ticket não encontrado.");
     const statusHistory = await TicketStatusHistory.findAll({
       where: { ticket_id: ticketId },
       include: [{ model: TicketStatus, as: "status" }],
       order: [["changed_at", "ASC"]],
     });
-    const priority = ticket.get("priority") as Priority | undefined;
     const resolutionTimeHours = ticket.completed_at
       ? Number(
           (
@@ -215,17 +195,14 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
           ).toFixed(2),
         )
       : null;
-    const elapsedHours =
-      ((ticket.completed_at ?? new Date()).getTime() -
-        ticket.createdAt.getTime()) /
-      3_600_000;
-    const slaHours = priority?.sla_hours ?? null;
+    const referenceDate = ticket.completed_at ?? new Date();
+    const dueDate = ticket.due_date ?? null;
     return {
       ticket,
       statusHistory,
       resolutionTimeHours,
-      slaHours,
-      exceededSla: !!slaHours && elapsedHours > slaHours,
+      dueDate,
+      exceededDueDate: !!dueDate && referenceDate.getTime() > dueDate.getTime(),
     };
   }
 
