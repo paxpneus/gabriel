@@ -2,6 +2,7 @@ import {
   CreateOptions,
   FindOptions,
   literal,
+  Op,
   Transaction,
   WhereOptions,
 } from "sequelize";
@@ -54,12 +55,43 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
           "ASC",
         ],
       },
+      customFields: {
+        category_id: (value) => {
+          const ids = (Array.isArray(value) ? value : [value]).map(Number);
+          return {
+            id: {
+              [Op.in]: literal(`(
+          SELECT tco.ticket_id
+          FROM ticket_category_options tco
+          INNER JOIN category_options co ON co.id = tco.category_option_id
+          WHERE co.category_id IN (${ids.join(",")})
+        )`),
+            },
+          };
+        },
+        category_option_id: (value) => {
+          const ids = (Array.isArray(value) ? value : [value]).map(Number);
+          return {
+            id: {
+              [Op.in]: literal(`(
+          SELECT tco.ticket_id
+          FROM ticket_category_options tco
+          WHERE tco.category_option_id IN (${ids.join(",")})
+        )`),
+            },
+          };
+        },
+      },
       searchFields: ["title", "description"],
       defaults: { perPage: 20, sortBy: "createdAt", sortDir: "DESC" },
     };
   }
 
-  private computeDueStatus(ticket: Ticket, isOpen: boolean, now = new Date()): DueStatus {
+  private computeDueStatus(
+    ticket: Ticket,
+    isOpen: boolean,
+    now = new Date(),
+  ): DueStatus {
     if (!isOpen || !ticket.due_date) return DueStatus.ON_TRACK;
 
     const diffMs = ticket.due_date.getTime() - now.getTime();
@@ -68,6 +100,10 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     if (diffMs <= 0) return DueStatus.LATE;
     if (diffMs <= oneDayMs) return DueStatus.SOON;
     return DueStatus.ON_TRACK;
+  }
+
+  findByIdFull(id: string, options?: FindOptions): Promise<FullTicket | null> {
+      return this.repository.findByIdFull(id, options);
   }
 
   async create(
@@ -155,7 +191,11 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
       const isOpen = !completedAt;
       const dueStatus = this.computeDueStatus(ticket, isOpen, now);
       await ticket.update(
-        { status_id: status.id, completed_at: completedAt, due_status: dueStatus },
+        {
+          status_id: status.id,
+          completed_at: completedAt,
+          due_status: dueStatus,
+        },
         { transaction },
       );
       await TicketStatusHistory.create(

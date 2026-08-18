@@ -40,7 +40,7 @@ export interface FullTicket extends Ticket {
   area: Area,
   status: TicketStatus,
   assignees: FullTicketAssignee,
-  categoryOptions: FullTicketCategoryOption[]
+  ticketCategoryOptions: FullTicketCategoryOption[]
   priority: Priority
 }
 
