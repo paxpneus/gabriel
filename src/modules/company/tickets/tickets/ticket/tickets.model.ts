@@ -13,6 +13,7 @@ class Ticket
   public priority_id!: number;
   public status_id!: number;
   public completed_at!: Date | null;
+  public due_date!: Date | null;
   public is_late!: boolean;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
