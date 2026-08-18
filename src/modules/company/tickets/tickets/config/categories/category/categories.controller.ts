@@ -10,6 +10,12 @@ export class CategoryController extends BaseController<
 > {
   constructor() {
     super(categoryService);
+
+    this.router.put(
+      "/:id/with-options",
+      ...this.mw("updateWithOptions"),
+      this.updateWithOptions,
+    );
   }
   protected middlewaresFor() {
     return {
@@ -18,6 +24,7 @@ export class CategoryController extends BaseController<
       create: [authenticate, userPermissions],
       bulkCreate: [authenticate, userPermissions],
       update: [authenticate, userPermissions],
+      updateWithOptions: [authenticate, userPermissions],
       destroy: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
     };
@@ -31,6 +38,32 @@ export class CategoryController extends BaseController<
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
+  };
+
+   index = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      const result = await this.service.paginateWithOptions(params);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+   }
+
+    updateWithOptions = async (req: Request, res: Response): Promise<Response> => {
+      try {
+        const {category, options} = req.body
+
+        if (!req.params.id) throw new Error("Categoria não encontrada") 
+
+          console.log(category, options, req.params.id)
+
+        const records = await this.service.updateWithOptions(req.params.id as string, category, options)
+      return res.json(records);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+    
   };
 }
 export default new CategoryController();

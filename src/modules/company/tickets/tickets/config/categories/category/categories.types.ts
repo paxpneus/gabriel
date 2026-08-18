@@ -1,7 +1,7 @@
-import CategoryOption from "../category_options/category-options.model";
+import CategoryOption from "../category-options/category-options.model";
 
 export interface CategoryAttributes {
-  id: number;
+  id: string;
   name: string;
   description?: string | null;
   color?: string | null;
@@ -15,5 +15,5 @@ export interface CategoryCreationAttributes extends Omit<
 > {}
 
 export interface CategoryWithOptions extends CategoryAttributes {
-    options?: CategoryOption[] | null
+  options?: CategoryOption[] | null;
 }

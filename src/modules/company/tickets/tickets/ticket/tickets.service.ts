@@ -1,11 +1,16 @@
-import { CreateOptions, Transaction } from "sequelize";
+import {
+  CreateOptions,
+  FindOptions,
+  Transaction,
+  WhereOptions,
+} from "sequelize";
 import sequelize from "../../../../../config/sequelize";
 import BaseService from "../../../../../shared/utils/base-models/base-service";
 import {
   PaginatedResult,
   QueryParams,
 } from "../../../../../shared/query/query.types";
-import CategoryOption from "../config/categories/category_options/category-options.model";
+import CategoryOption from "../config/categories/category-options/category-options.model";
 import TicketStatus from "../config/ticket-statuses/ticket-statuses.model";
 import TicketAssignee from "../ticket-assignees/ticket-assignees.model";
 import TicketCategoryOption from "../ticket-category-options/ticket-category-options.model";
@@ -13,6 +18,7 @@ import TicketStatusHistory from "../ticket-status-histories/ticket-status-histor
 import Ticket from "./tickets.model";
 import ticketRepository, { TicketRepository } from "./tickets.repository";
 import ticketStatusHistoryService from "../ticket-status-histories/ticket-status-histories.service";
+import { FullTicket } from "./tickets.types";
 
 type TicketTrail = {
   ticket: Ticket;
@@ -74,9 +80,22 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     }
   }
 
-  async paginate(params: QueryParams): Promise<PaginatedResult<Ticket>> {
+  async paginate(params: QueryParams): Promise<PaginatedResult<FullTicket>> {
     await this.refreshLateTickets();
-    return super.paginate(params);
+    return this.paginateWithRelations(params);
+  }
+
+  paginateWithRelations(
+    params: QueryParams,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    forcedWhere?: WhereOptions,
+  ): Promise<PaginatedResult<FullTicket>> {
+    return this.repository.paginateWithRelations(
+      params,
+      this.queryConfig,
+      extraOptions,
+      forcedWhere,
+    );
   }
 
   async refreshLateTickets(now = new Date()): Promise<void> {
@@ -102,7 +121,7 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
 
   async changeStatus(
     ticketId: string,
-    statusId: number,
+    statusId: string,
     changedByUserId?: string,
   ): Promise<Ticket> {
     const transaction = await sequelize.transaction();
@@ -156,7 +175,7 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
 
   async addCategoryOption(
     ticketId: string,
-    categoryOptionId: number,
+    categoryOptionId: string,
   ): Promise<TicketCategoryOption> {
     await this.assertTicket(ticketId);
     if (!(await CategoryOption.findByPk(categoryOptionId)))
@@ -170,7 +189,7 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
 
   async removeCategoryOption(
     ticketId: string,
-    categoryOptionId: number,
+    categoryOptionId: string,
   ): Promise<boolean> {
     return (
       (await TicketCategoryOption.destroy({

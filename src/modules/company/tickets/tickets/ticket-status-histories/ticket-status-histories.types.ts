@@ -1,7 +1,7 @@
 export interface TicketStatusHistoryAttributes {
   id: string;
   ticket_id: string;
-  status_id: number;
+  status_id: string;
   changed_by_user_id?: string | null;
   changed_at: Date;
 }

@@ -12,7 +12,7 @@ class TicketCategoryOption
   implements TicketCategoryOptionAttributes
 {
   public ticket_id!: string;
-  public category_option_id!: number;
+  public category_option_id!: string;
 }
 TicketCategoryOption.init(
   {

@@ -13,9 +13,9 @@ export interface TicketAttributes {
   title: string;
   description: string;
   requester_user_id: string;
-  area_id: number;
-  priority_id: number;
-  status_id: number;
+  area_id: string;
+  priority_id: string;
+  status_id: string;
   completed_at?: Date | null;
   due_date?: Date | null;
   is_late: boolean;

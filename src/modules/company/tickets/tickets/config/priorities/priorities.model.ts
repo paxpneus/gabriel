@@ -8,7 +8,7 @@ class Priority
   extends Model<PriorityAttributes, PriorityCreationAttributes>
   implements PriorityAttributes
 {
-  public id!: number;
+  public id!: string;
   public name!: string;
   public color!: string | null;
   public display_order!: number;

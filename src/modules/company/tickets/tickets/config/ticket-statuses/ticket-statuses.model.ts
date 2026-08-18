@@ -8,7 +8,7 @@ class TicketStatus
   extends Model<TicketStatusAttributes, TicketStatusCreationAttributes>
   implements TicketStatusAttributes
 {
-  public id!: number;
+  public id!: string;
   public name!: string;
   public color!: string | null;
   public completed!: boolean;

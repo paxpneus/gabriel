@@ -5,16 +5,16 @@ import {
   CategoryCreationAttributes,
 } from "./categories.types";
 
-import CategoryOption from "../category_options/category-options.model";
+import CategoryOption from "../category-options/category-options.model";
 class Category
   extends Model<CategoryAttributes, CategoryCreationAttributes>
   implements CategoryAttributes
 {
-  public id!: number;
+  public id!: string;
   public name!: string;
   public description!: string | null;
   public color!: string | null;
-  public options?: CategoryOption[] | null
+  public options?: CategoryOption[] | null;
   public is_active!: boolean;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
