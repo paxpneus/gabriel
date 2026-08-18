@@ -1,6 +1,10 @@
 import { DataTypes, Model } from "sequelize";
 import sequelize from "../../../../../config/sequelize";
-import { TicketAttributes, TicketCreationAttributes } from "./tickets.types";
+import {
+  DueStatus,
+  TicketAttributes,
+  TicketCreationAttributes,
+} from "./tickets.types";
 class Ticket
   extends Model<TicketAttributes, TicketCreationAttributes>
   implements TicketAttributes
@@ -14,7 +18,7 @@ class Ticket
   public status_id!: string;
   public completed_at!: Date | null;
   public due_date!: Date | null;
-  public is_late!: boolean;
+  public due_status!: DueStatus;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -30,22 +34,26 @@ Ticket.init(
     },
     area_id: {
       type: DataTypes.INTEGER,
-      allowNull: false,
+      allowNull: true,
       references: { model: "areas", key: "id" },
     },
     priority_id: {
       type: DataTypes.INTEGER,
-      allowNull: false,
+      allowNull: true,
       references: { model: "priorities", key: "id" },
     },
     status_id: {
       type: DataTypes.INTEGER,
-      allowNull: false,
+      allowNull: true,
       references: { model: "ticket_statuses", key: "id" },
+    },
+    due_status: {
+      type: DataTypes.ENUM(...Object.values(DueStatus)),
+      allowNull: false,
+      defaultValue: DueStatus.ON_TRACK,
     },
     completed_at: { type: DataTypes.DATE, allowNull: true },
     due_date: { type: DataTypes.DATE, allowNull: true },
-    is_late: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   },
   { sequelize, tableName: "tickets", timestamps: true, underscored: true },
 );

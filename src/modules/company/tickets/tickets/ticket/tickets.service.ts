@@ -1,6 +1,7 @@
 import {
   CreateOptions,
   FindOptions,
+  literal,
   Transaction,
   WhereOptions,
 } from "sequelize";
@@ -18,16 +19,7 @@ import TicketStatusHistory from "../ticket-status-histories/ticket-status-histor
 import Ticket from "./tickets.model";
 import ticketRepository, { TicketRepository } from "./tickets.repository";
 import ticketStatusHistoryService from "../ticket-status-histories/ticket-status-histories.service";
-import { FullTicket } from "./tickets.types";
-
-type TicketTrail = {
-  ticket: Ticket;
-  statusHistory: TicketStatusHistory[];
-  resolutionTimeHours: number | null;
-  dueDate: Date | null;
-  exceededDueDate: boolean;
-};
-
+import { FullTicket, DueStatus, TicketTrail } from "./tickets.types";
 export class TicketService extends BaseService<Ticket, TicketRepository> {
   constructor() {
     super(ticketRepository);
@@ -37,22 +29,45 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
         "area_id",
         "priority_id",
         "status_id",
-        "is_late",
+        "due_status",
       ],
       sortableFields: [
         "title",
         "completed_at",
-        "is_late",
+        "due_status",
+        "due_date",
         "createdAt",
         "updatedAt",
       ],
+      customSort: {
+        due_status: () => [
+          literal(`CASE due_status
+            WHEN 'LATE' THEN 0
+            WHEN 'SOON' THEN 1
+            WHEN 'ON_TRACK' THEN 2
+            ELSE 3 END`),
+          "ASC",
+        ],
+        "status.display_order": () => [
+          { model: TicketStatus, as: "status" },
+          "display_order",
+          "ASC",
+        ],
+      },
       searchFields: ["title", "description"],
       defaults: { perPage: 20, sortBy: "createdAt", sortDir: "DESC" },
     };
   }
 
-  private isPastDue(ticket: Ticket, now = new Date()): boolean {
-    return !!ticket.due_date && now.getTime() > ticket.due_date.getTime();
+  private computeDueStatus(ticket: Ticket, isOpen: boolean, now = new Date()): DueStatus {
+    if (!isOpen || !ticket.due_date) return DueStatus.ON_TRACK;
+
+    const diffMs = ticket.due_date.getTime() - now.getTime();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+
+    if (diffMs <= 0) return DueStatus.LATE;
+    if (diffMs <= oneDayMs) return DueStatus.SOON;
+    return DueStatus.ON_TRACK;
   }
 
   async create(
@@ -81,15 +96,16 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
   }
 
   async paginate(params: QueryParams): Promise<PaginatedResult<FullTicket>> {
-    await this.refreshLateTickets();
+    await this.refreshDueStatuses();
     return this.paginateWithRelations(params);
   }
 
-  paginateWithRelations(
+  async paginateWithRelations(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
     forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<FullTicket>> {
+    await this.refreshDueStatuses();
     return this.repository.paginateWithRelations(
       params,
       this.queryConfig,
@@ -98,7 +114,7 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     );
   }
 
-  async refreshLateTickets(now = new Date()): Promise<void> {
+  async refreshDueStatuses(now = new Date()): Promise<void> {
     const tickets = await Ticket.findAll({
       include: [
         {
@@ -113,8 +129,10 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
         const status = ticket.get("status") as TicketStatus | undefined;
         const isOpen =
           !ticket.completed_at && !status?.completed && !status?.canceled;
-        const isLate = isOpen && this.isPastDue(ticket, now);
-        if (ticket.is_late !== isLate) await ticket.update({ is_late: isLate });
+        const dueStatus = this.computeDueStatus(ticket, isOpen, now);
+
+        if (ticket.due_status !== dueStatus)
+          await ticket.update({ due_status: dueStatus });
       }),
     );
   }
@@ -134,9 +152,10 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
       if (!status) throw new Error("Status não encontrado.");
       const now = new Date();
       const completedAt = status.completed || status.canceled ? now : null;
-      const isLate = !completedAt && this.isPastDue(ticket, now);
+      const isOpen = !completedAt;
+      const dueStatus = this.computeDueStatus(ticket, isOpen, now);
       await ticket.update(
-        { status_id: status.id, completed_at: completedAt, is_late: isLate },
+        { status_id: status.id, completed_at: completedAt, due_status: dueStatus },
         { transaction },
       );
       await TicketStatusHistory.create(

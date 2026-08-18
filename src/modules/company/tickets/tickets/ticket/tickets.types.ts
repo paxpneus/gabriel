@@ -6,7 +6,14 @@ import TicketAssignee from "../ticket-assignees/ticket-assignees.model";
 import { FullTicketAssignee } from "../ticket-assignees/ticket-assignees.types";
 import TicketCategoryOption from "../ticket-category-options/ticket-category-options.model";
 import { FullTicketCategoryOption } from "../ticket-category-options/ticket-category-options.types";
+import TicketStatusHistory from "../ticket-status-histories/ticket-status-histories.model";
 import Ticket from "./tickets.model";
+
+export enum DueStatus {
+  ON_TRACK = 'ON_TRACK',
+  SOON = 'SOON',
+  LATE = 'LATE'
+}
 
 export interface TicketAttributes {
   id: string;
@@ -18,7 +25,8 @@ export interface TicketAttributes {
   status_id: string;
   completed_at?: Date | null;
   due_date?: Date | null;
-  is_late: boolean;
+  due_status?: DueStatus;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -35,3 +43,11 @@ export interface FullTicket extends Ticket {
   categoryOptions: FullTicketCategoryOption[]
   priority: Priority
 }
+
+export type TicketTrail = {
+  ticket: Ticket;
+  statusHistory: TicketStatusHistory[];
+  resolutionTimeHours: number | null;
+  dueDate: Date | null;
+  exceededDueDate: boolean;
+};
