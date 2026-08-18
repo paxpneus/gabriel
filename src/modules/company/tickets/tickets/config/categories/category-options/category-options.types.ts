@@ -1,3 +1,5 @@
+import Category from "../category/categories.model";
+
 export interface CategoryOptionAttributes {
   id: string;
   category_id: string;
@@ -5,6 +7,7 @@ export interface CategoryOptionAttributes {
   value?: string | null;
   color?: string | null;
   display_order: number;
+  categoey?: Category;
   is_active: boolean;
   createdAt?: Date;
   updatedAt?: Date;

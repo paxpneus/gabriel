@@ -71,7 +71,17 @@ export class TicketController extends BaseController<Ticket, TicketService> {
     };
   }
 
-   index = async (req: Request, res: Response): Promise<Response> => {
+  show = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const record = await this.service.findByIdFull(req.params.id as string);
+      if (!record) return res.status(404).json({ error: "Não encontrado" });
+      return res.json(record);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  index = async (req: Request, res: Response): Promise<Response> => {
     try {
       const params = this.extractQueryParams(req);
       const result = await this.service.paginateWithRelations(params);
@@ -88,9 +98,7 @@ export class TicketController extends BaseController<Ticket, TicketService> {
       const changedByUserId = (req as AuthenticatedRequest).user?.id;
 
       if (!statusId) {
-        return res
-          .status(400)
-          .json({ error: "Erro: statusId não informado" });
+        return res.status(400).json({ error: "Erro: statusId não informado" });
       }
 
       const ticket = await this.service.changeStatus(
@@ -132,9 +140,7 @@ export class TicketController extends BaseController<Ticket, TicketService> {
       );
 
       if (!removed) {
-        return res
-          .status(404)
-          .json({ error: "Atribuição não encontrada" });
+        return res.status(404).json({ error: "Atribuição não encontrada" });
       }
 
       return res.status(204).send();
