@@ -1,0 +1,2 @@
+'use strict';
+module.exports = { up: (q, S) => q.createTable('ticket_assignees', { ticket_id: { type: S.BIGINT, primaryKey: true, allowNull: false, references: { model: 'tickets', key: 'id' }, onUpdate: 'CASCADE', onDelete: 'CASCADE' }, user_id: { type: S.UUID, primaryKey: true, allowNull: false, references: { model: 'users', key: 'id' }, onUpdate: 'CASCADE', onDelete: 'CASCADE' }, assigned_at: { type: S.DATE, allowNull: false, defaultValue: S.NOW } }), down: q => q.dropTable('ticket_assignees') };

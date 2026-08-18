@@ -596,6 +596,7 @@ async function migrateCancelledInvoices(type: "NF-e" | "NFC-e") {
   // situacao 2 = Cancelada na Bling
   for await (const page of paginateBling<{
     id: number;
+    numero?: string;
     situacao?: number;
     dataEmissao?: string;
     dataOperacao?: string;
@@ -623,6 +624,7 @@ async function migrateCancelledInvoices(type: "NF-e" | "NFC-e") {
             companyId: "",
             partialData: {
               blingId,
+              number: invoice.numero,
               id_system: String(blingId),
               status: "CANCELLED",
             },
