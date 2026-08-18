@@ -71,6 +71,16 @@ export class TicketController extends BaseController<Ticket, TicketService> {
     };
   }
 
+   index = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      const result = await this.service.paginateWithRelations(params);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
   changeStatus = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { id } = req.params;
@@ -167,7 +177,7 @@ export class TicketController extends BaseController<Ticket, TicketService> {
 
       const removed = await this.service.removeCategoryOption(
         id as string,
-        Number(categoryOptionId),
+        categoryOptionId as string,
       );
 
       if (!removed) {

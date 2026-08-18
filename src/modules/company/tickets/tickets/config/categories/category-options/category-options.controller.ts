@@ -4,7 +4,7 @@ import { userPermissions } from "../../../../../../../middlewares/user-permissio
 import CategoryOption from "./category-options.model";
 import categoryOptionService, {
   CategoryOptionService,
-} from "../../categories/category_options/category-options.service";
+} from "./category-options.service";
 export class CategoryOptionController extends BaseController<
   CategoryOption,
   CategoryOptionService

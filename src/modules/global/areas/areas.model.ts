@@ -5,7 +5,7 @@ class Area
   extends Model<AreaAttributes, AreaCreationAttributes>
   implements AreaAttributes
 {
-  public id!: number;
+  public id!: string;
   public name!: string;
   public color!: string | null;
   public is_active!: boolean;

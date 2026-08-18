@@ -13,7 +13,7 @@ class TicketStatusHistory
 {
   public id!: string;
   public ticket_id!: string;
-  public status_id!: number;
+  public status_id!: string;
   public changed_by_user_id!: string | null;
   public changed_at!: Date;
 }

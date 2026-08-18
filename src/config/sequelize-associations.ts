@@ -76,7 +76,7 @@ import TicketStatus from "../modules/company/tickets/tickets/config/ticket-statu
 import Area from "../modules/global/areas/areas.model";
 import Priority from "../modules/company/tickets/tickets/config/priorities/priorities.model";
 import Category from "../modules/company/tickets/tickets/config/categories/category/categories.model";
-import CategoryOption from "../modules/company/tickets/tickets/config/categories/category_options/category-options.model";
+import CategoryOption from "../modules/company/tickets/tickets/config/categories/category-options/category-options.model";
 import Ticket from "../modules/company/tickets/tickets/ticket/tickets.model";
 import TicketAssignee from "../modules/company/tickets/tickets/ticket-assignees/ticket-assignees.model";
 import TicketCategoryOption from "../modules/company/tickets/tickets/ticket-category-options/ticket-category-options.model";
@@ -99,8 +99,8 @@ export function setupAssociations() {
   Customer.hasMany(Order, { foreignKey: "customer_id", as: "orders" });
   Order.belongsTo(Customer, { foreignKey: "customer_id", as: "customer" });
 
-  Contact.hasMany(Order, { foreignKey: "seller_id", as: 'orders'});
-  Order.belongsTo(Contact, { foreignKey: "seller_id", as: "seller"});
+  Contact.hasMany(Order, { foreignKey: "seller_id", as: "orders" });
+  Order.belongsTo(Contact, { foreignKey: "seller_id", as: "seller" });
 
   // Contacts -> Integration / Unit Business
   Contact.belongsTo(Integration, {
@@ -161,8 +161,8 @@ export function setupAssociations() {
   OrderItems.belongsTo(Order, { foreignKey: "order_id", as: "order" });
   Order.hasMany(OrderItems, { foreignKey: "order_id", as: "items" });
 
-  OrderItems.belongsTo(Product, {foreignKey: "product_id", as: "product"});
-  Product.hasMany(OrderItems, {foreignKey: "product_id", as: 'orderItems'})
+  OrderItems.belongsTo(Product, { foreignKey: "product_id", as: "product" });
+  Product.hasMany(OrderItems, { foreignKey: "product_id", as: "orderItems" });
 
   // Store 1:N Orders (loja e pedido)
   Order.belongsTo(Store, { foreignKey: "store_id", as: "store" });
@@ -283,13 +283,13 @@ export function setupAssociations() {
 
   Transporter.belongsTo(Integration, {
     foreignKey: "integrations_id",
-    as: "integration"
-  })
+    as: "integration",
+  });
 
   Integration.hasMany(Transporter, {
     foreignKey: "integrations_id",
-    as: "transporters"
-  })
+    as: "transporters",
+  });
 
   // Transporter -> Invoices
   Transporter.hasMany(Invoice, {
@@ -553,14 +553,14 @@ export function setupAssociations() {
   // ===== INVOICES =====
 
   Invoice.hasMany(InvoiceLogisticOccurrences, {
-    foreignKey: 'invoice_id',
-    as: 'occurrences'
-  })
+    foreignKey: "invoice_id",
+    as: "occurrences",
+  });
 
   InvoiceLogisticOccurrences.belongsTo(Invoice, {
-    foreignKey: 'invoice_id',
-    as: 'invoice'
-  })
+    foreignKey: "invoice_id",
+    as: "invoice",
+  });
 
   // Invoice -> Batch Invoices
   Invoice.hasOne(ExpeditionBatchInvoice, {
@@ -1262,62 +1262,124 @@ SellerSalesOrderItemSnapshot.belongsTo(UnitBusiness, {
   as: "unitBusiness",
 });
 
-  // Event & User Associations
-  Event.belongsToMany(User, {
-    through: UserEvent,
-    foreignKey: "event_id",
-    otherKey: "user_id",
-    as: "users",
-  });
-  User.belongsToMany(Event, {
-    through: UserEvent,
-    foreignKey: "user_id",
-    otherKey: "event_id",
-    as: "events",
-  });
-  UserEvent.belongsTo(User, { foreignKey: "user_id", as: "user" });
-  UserEvent.belongsTo(Event, { foreignKey: "event_id", as: "event" });
-  User.hasMany(UserEvent, { foreignKey: "user_id", as: "userEvents" });
-  Event.hasMany(UserEvent, { foreignKey: "event_id", as: "userEvents" });
+// Event & User Associations
+Event.belongsToMany(User, {
+  through: UserEvent,
+  foreignKey: "event_id",
+  otherKey: "user_id",
+  as: "users",
+});
+User.belongsToMany(Event, {
+  through: UserEvent,
+  foreignKey: "user_id",
+  otherKey: "event_id",
+  as: "events",
+});
+UserEvent.belongsTo(User, { foreignKey: "user_id", as: "user" });
+UserEvent.belongsTo(Event, { foreignKey: "event_id", as: "event" });
+User.hasMany(UserEvent, { foreignKey: "user_id", as: "userEvents" });
+Event.hasMany(UserEvent, { foreignKey: "event_id", as: "userEvents" });
 
-  // ===== TICKETS =====
-  Category.hasMany(CategoryOption, { foreignKey: "category_id", as: "options" });
-  CategoryOption.belongsTo(Category, { foreignKey: "category_id", as: "category" });
+// ===== TICKETS =====
+Category.hasMany(CategoryOption, { foreignKey: "category_id", as: "options" });
+CategoryOption.belongsTo(Category, {
+  foreignKey: "category_id",
+  as: "category",
+});
 
-  User.hasMany(Ticket, { foreignKey: "requester_user_id", as: "requestedTickets" });
-  Ticket.belongsTo(User, { foreignKey: "requester_user_id", as: "requester" });
-  Area.hasMany(Ticket, { foreignKey: "area_id", as: "tickets" });
-  Ticket.belongsTo(Area, { foreignKey: "area_id", as: "area" });
-  Priority.hasMany(Ticket, { foreignKey: "priority_id", as: "tickets" });
-  Ticket.belongsTo(Priority, { foreignKey: "priority_id", as: "priority" });
-  TicketStatus.hasMany(Ticket, { foreignKey: "status_id", as: "tickets" });
-  Ticket.belongsTo(TicketStatus, { foreignKey: "status_id", as: "status" });
+User.hasMany(Ticket, {
+  foreignKey: "requester_user_id",
+  as: "requestedTickets",
+});
+Ticket.belongsTo(User, { foreignKey: "requester_user_id", as: "requester" });
+Area.hasMany(Ticket, { foreignKey: "area_id", as: "tickets" });
+Ticket.belongsTo(Area, { foreignKey: "area_id", as: "area" });
+Priority.hasMany(Ticket, { foreignKey: "priority_id", as: "tickets" });
+Ticket.belongsTo(Priority, { foreignKey: "priority_id", as: "priority" });
+TicketStatus.hasMany(Ticket, { foreignKey: "status_id", as: "tickets" });
+Ticket.belongsTo(TicketStatus, { foreignKey: "status_id", as: "status" });
 
-  Ticket.belongsToMany(User, { through: TicketAssignee, foreignKey: "ticket_id", otherKey: "user_id", as: "assignees" });
-  User.belongsToMany(Ticket, { through: TicketAssignee, foreignKey: "user_id", otherKey: "ticket_id", as: "assignedTickets" });
-  TicketAssignee.belongsTo(Ticket, { foreignKey: "ticket_id", as: "ticket" });
-  TicketAssignee.belongsTo(User, { foreignKey: "user_id", as: "user" });
-  Ticket.hasMany(TicketAssignee, { foreignKey: "ticket_id", as: "ticketAssignees" });
-  User.hasMany(TicketAssignee, { foreignKey: "user_id", as: "ticketAssignments" });
+Ticket.belongsToMany(User, {
+  through: TicketAssignee,
+  foreignKey: "ticket_id",
+  otherKey: "user_id",
+  as: "assignees",
+});
+User.belongsToMany(Ticket, {
+  through: TicketAssignee,
+  foreignKey: "user_id",
+  otherKey: "ticket_id",
+  as: "assignedTickets",
+});
+TicketAssignee.belongsTo(Ticket, { foreignKey: "ticket_id", as: "ticket" });
+TicketAssignee.belongsTo(User, { foreignKey: "user_id", as: "user" });
+Ticket.hasMany(TicketAssignee, {
+  foreignKey: "ticket_id",
+  as: "ticketAssignees",
+});
+User.hasMany(TicketAssignee, {
+  foreignKey: "user_id",
+  as: "ticketAssignments",
+});
 
-  Ticket.belongsToMany(CategoryOption, { through: TicketCategoryOption, foreignKey: "ticket_id", otherKey: "category_option_id", as: "categoryOptions" });
-  CategoryOption.belongsToMany(Ticket, { through: TicketCategoryOption, foreignKey: "category_option_id", otherKey: "ticket_id", as: "tickets" });
-  TicketCategoryOption.belongsTo(Ticket, { foreignKey: "ticket_id", as: "ticket" });
-  TicketCategoryOption.belongsTo(CategoryOption, { foreignKey: "category_option_id", as: "categoryOption" });
-  Ticket.hasMany(TicketCategoryOption, { foreignKey: "ticket_id", as: "ticketCategoryOptions" });
-  CategoryOption.hasMany(TicketCategoryOption, { foreignKey: "category_option_id", as: "ticketCategoryOptions" });
+Ticket.belongsToMany(CategoryOption, {
+  through: TicketCategoryOption,
+  foreignKey: "ticket_id",
+  otherKey: "category_option_id",
+  as: "categoryOptions",
+});
+CategoryOption.belongsToMany(Ticket, {
+  through: TicketCategoryOption,
+  foreignKey: "category_option_id",
+  otherKey: "ticket_id",
+  as: "tickets",
+});
+TicketCategoryOption.belongsTo(Ticket, {
+  foreignKey: "ticket_id",
+  as: "ticket",
+});
+TicketCategoryOption.belongsTo(CategoryOption, {
+  foreignKey: "category_option_id",
+  as: "categoryOption",
+});
+Ticket.hasMany(TicketCategoryOption, {
+  foreignKey: "ticket_id",
+  as: "ticketCategoryOptions",
+});
+CategoryOption.hasMany(TicketCategoryOption, {
+  foreignKey: "category_option_id",
+  as: "ticketCategoryOptions",
+});
 
-  Ticket.hasMany(Subtask, { foreignKey: "ticket_id", as: "subtasks" });
-  Subtask.belongsTo(Ticket, { foreignKey: "ticket_id", as: "ticket" });
+Ticket.hasMany(Subtask, { foreignKey: "ticket_id", as: "subtasks" });
+Subtask.belongsTo(Ticket, { foreignKey: "ticket_id", as: "ticket" });
 
-  Ticket.hasMany(TicketStatusHistory, { foreignKey: "ticket_id", as: "statusHistory" });
-  TicketStatusHistory.belongsTo(Ticket, { foreignKey: "ticket_id", as: "ticket" });
-  TicketStatus.hasMany(TicketStatusHistory, { foreignKey: "status_id", as: "history" });
-  TicketStatusHistory.belongsTo(TicketStatus, { foreignKey: "status_id", as: "status" });
-  User.hasMany(TicketStatusHistory, { foreignKey: "changed_by_user_id", as: "ticketStatusChanges" });
-  TicketStatusHistory.belongsTo(User, { foreignKey: "changed_by_user_id", as: "changedBy" });
+Ticket.hasMany(TicketStatusHistory, {
+  foreignKey: "ticket_id",
+  as: "statusHistory",
+});
+TicketStatusHistory.belongsTo(Ticket, {
+  foreignKey: "ticket_id",
+  as: "ticket",
+});
+TicketStatus.hasMany(TicketStatusHistory, {
+  foreignKey: "status_id",
+  as: "history",
+});
+TicketStatusHistory.belongsTo(TicketStatus, {
+  foreignKey: "status_id",
+  as: "status",
+});
+User.hasMany(TicketStatusHistory, {
+  foreignKey: "changed_by_user_id",
+  as: "ticketStatusChanges",
+});
+TicketStatusHistory.belongsTo(User, {
+  foreignKey: "changed_by_user_id",
+  as: "changedBy",
+});
 
-// CTE(s) 
+// CTE(s)
 
 export function setupCteAssociations() {
   // -------------------------------------------------------------

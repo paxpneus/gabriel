@@ -9,9 +9,9 @@ class Ticket
   public title!: string;
   public description!: string;
   public requester_user_id!: string;
-  public area_id!: number;
-  public priority_id!: number;
-  public status_id!: number;
+  public area_id!: string;
+  public priority_id!: string;
+  public status_id!: string;
   public completed_at!: Date | null;
   public due_date!: Date | null;
   public is_late!: boolean;
