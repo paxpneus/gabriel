@@ -31,6 +31,9 @@ class BaseController<
     this.router.put("/:id", ...this.mw("update"), (req, res) =>
       this.update(req, res),
     );
+
+    this.router.put("/bulk", ...this.mw("bulkUpdate"), (req, res) => this.bulkUpdate(req, res))
+
      this.router.delete("/bulk", ...this.mw("bulkDestroy"), (req, res) =>
   this.bulkDestroy(req, res),
 );
@@ -86,6 +89,19 @@ class BaseController<
       );
       if (!record) return res.status(404).json({ error: "Não encontrado" });
       return res.json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  bulkUpdate = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const records = await this.service.bulkUpdate(req.body, {
+        where: {
+          id: req.body.ids
+        }
+      });
+      return res.status(201).json(records);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
