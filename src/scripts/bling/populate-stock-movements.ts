@@ -80,12 +80,9 @@
  *    por invoice_number normalizado com as linhas "Nota fiscal" do CSV
  *    daquele produto. A data gravada hoje no sistema pra esses movimentos
  *    não é confiável o suficiente pra reconstrução cronológica do estoque.
- *    EXCEÇÃO: produtos que já têm algum MANUAL_ADJUSTMENT imutável
- *    (manual_average_cost_value preenchido) NÃO têm essas datas
- *    corrigidas nesta execução — mantemos o comportamento de hoje (datas
- *    originais do sistema), porque mexer na cronologia de um histórico
- *    que sustenta um ajuste imutável pode invalidar esse ajuste. Esses
- *    produtos são apenas LOGADOS pra revisão manual posterior.
+ *    MANUAL_ADJUSTMENT com manual_average_cost_value preenchido continua
+ *    imutável como fato, mas não bloqueia a correção cronológica dos
+ *    movimentos vindos do sistema nem a sincronização do produto pelo CSV.
  *
  * SEGURANÇA:
  *   reindexProduct APAGA (hard delete) todo o histórico não-protegido do
@@ -114,13 +111,17 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { Op } from "sequelize";
 
 import sequelize from "../../config/sequelize";
 import { setupAssociations } from "../../config/sequelize-associations";
+import UnitBusiness from "../../modules/company/unit-business/unit-business.model";
 import stockMovementService from "../../modules/inventory/stock/stock-movements/stock-movements.service";
 import { ReindexProductPayload } from "../../modules/inventory/stock/stock-movements/stock-movements.types";
 import Stock from "../../modules/inventory/stock/stock/stock.model";
 import stockMovementSourceDataService from "../../modules/inventory/stock/stock-movement-source-data/stock-movement-source-data.service";
+import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
+import InvoiceUnitBusinessAttributes from "../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
@@ -784,7 +785,6 @@ interface ProcessResult {
   ghostSkippedFutureDated: number;
   zeroDeltaLogged: number;
   reconciliationDelta: number | null;
-  hasImmutableManualAdjustments: boolean;
   sourceDataDateCorrections: number;
   error?: string;
 }
@@ -804,9 +804,7 @@ async function processProduct(
 
   // 2. MANUAL_ADJUSTMENT IMUTÁVEIS já existentes (com manual_average_cost_value
   //    preenchido) — são os únicos que sobrevivem à limpeza do passo 1 e os
-  //    únicos usados em isAlreadyCoveredByExisting. Também definem se este
-  //    produto entra na exceção da regra 9 (datas de sourceData NÃO
-  //    corrigidas pelo CSV).
+  //    únicos usados em isAlreadyCoveredByExisting.
   const existingHistory = await stockMovementService.getProductHistory(
     productInternalId,
     UNIT_BUSINESS_ID,
@@ -826,68 +824,31 @@ async function processProduct(
         direction: (m.direction as "IN" | "OUT") ?? "IN",
       }));
 
-  const hasImmutableManualAdjustments = immutableManualAdjustments.length > 0;
-
-  const activeHistorySorted = existingHistory.data
-    .filter((m: any) => m.is_active)
-    .sort((a: any, b: any) => {
-      const dateDiff =
-        new Date(a.movement_date).getTime() -
-        new Date(b.movement_date).getTime();
-      if (dateDiff !== 0) return dateDiff;
-      return (
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      );
-    });
-
-  const oldestMovement: any = activeHistorySorted[0];
-  const oldestIsImmutableManualAdjustment =
-    !!oldestMovement &&
-    oldestMovement.movement_type === "MANUAL_ADJUSTMENT" &&
-    ((oldestMovement.manual_average_cost_value ?? 0) > 0 ||
-      oldestMovement.manual_average_cost_value != null);
-
-  const skipDateCorrectionDueToImmutableAdjustment =
-    hasImmutableManualAdjustments && !oldestIsImmutableManualAdjustment;
-
   // 3. Regra 9 — corrige a movement_date dos movimentos de sourceData
   //    (PURCHASE_ENTRY, SALE_OUT, CUSTOMER_RETURN etc.) pra data do
   //    lançamento correspondente no CSV, casando por invoice_number
-  //    normalizado com as linhas "Nota fiscal". Produtos com
-  //    MANUAL_ADJUSTMENT imutável ficam FORA dessa correção — só logamos
-  //    pra revisão manual depois, e seguimos com as datas originais
-  //    (comportamento de hoje).
+  //    normalizado com as linhas "Nota fiscal". Ajustes manuais imutáveis
+  //    não bloqueiam essa correção.
   let sourceDataDateCorrections = 0;
-  let correctedSourceData = sourceData;
+  const csvInvoiceDateByNumber = buildCsvInvoiceDateMap(rows);
+  const correctedSourceData = sourceData.map((movement: any) => {
+    if (!movement.invoice_number) return movement;
+    const normalized = normalizeInvoiceNumber(movement.invoice_number);
+    const csvDate = csvInvoiceDateByNumber.get(normalized);
+    if (!csvDate) return movement;
 
-  if (skipDateCorrectionDueToImmutableAdjustment) {
+    const originalDate = new Date(movement.movement_date);
+    if (originalDate.getTime() === csvDate.getTime()) return movement;
+
+    sourceDataDateCorrections++;
     console.log(
-      `  ⚠️  Produto ${productInternalId} (${productName}) tem MANUAL_ADJUSTMENT imutável que ` +
-        `NÃO é a movimentação mais antiga (ex: veio depois de uma entrada) — ` +
-        `datas do histórico do sistema NÃO serão corrigidas pelo CSV nesta execução ` +
-        `(mantendo a lógica de hoje). Revisar manualmente depois.`,
+      `  📅 Corrigindo data do movimento ${movement.movement_type} ` +
+        `(invoice_number=${movement.invoice_number}) de ${originalDate.toISOString()} ` +
+        `para ${csvDate.toISOString()} conforme lançamento do CSV.`,
     );
-  } else {
-    const csvInvoiceDateByNumber = buildCsvInvoiceDateMap(rows);
-    correctedSourceData = sourceData.map((movement: any) => {
-      if (!movement.invoice_number) return movement;
-      const normalized = normalizeInvoiceNumber(movement.invoice_number);
-      const csvDate = csvInvoiceDateByNumber.get(normalized);
-      if (!csvDate) return movement;
 
-      const originalDate = new Date(movement.movement_date);
-      if (originalDate.getTime() === csvDate.getTime()) return movement;
-
-      sourceDataDateCorrections++;
-      console.log(
-        `  📅 Corrigindo data do movimento ${movement.movement_type} ` +
-          `(invoice_number=${movement.invoice_number}) de ${originalDate.toISOString()} ` +
-          `para ${csvDate.toISOString()} conforme lançamento do CSV.`,
-      );
-
-      return { ...movement, movement_date: csvDate };
-    });
-  }
+    return { ...movement, movement_date: csvDate };
+  });
 
   const purchaseEntryDates = correctedSourceData
     .filter((m: any) => m.movement_type === "PURCHASE_ENTRY")
@@ -921,8 +882,7 @@ async function processProduct(
       `${ghostPlan.skippedFutureDated.length} nota(s) fantasma ignorada(s) (emitida(s) após o CSV), ` +
       `${plan.zeroDeltaBalances.length} balanço(s) com delta zero (ignorados), ` +
       `${plan.skippedAsAlreadyCovered.length + ghostPlan.skippedAsAlreadyCovered.length} evento(s) já coberto(s) por ajuste imutável (pulados), ` +
-      `${sourceDataDateCorrections} data(s) de sourceData corrigida(s) pelo CSV` +
-      `${skipDateCorrectionDueToImmutableAdjustment ? " [DATAS NÃO CORRIGIDAS: ajuste imutável não é o mais antigo]" : ""}`,
+      `${sourceDataDateCorrections} data(s) de sourceData corrigida(s) pelo CSV`,
   );
 
   for (const zero of plan.zeroDeltaBalances) {
@@ -980,7 +940,6 @@ async function processProduct(
       ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
       zeroDeltaLogged: plan.zeroDeltaBalances.length,
       reconciliationDelta: null,
-      hasImmutableManualAdjustments: skipDateCorrectionDueToImmutableAdjustment,
       sourceDataDateCorrections,
     };
   }
@@ -1097,7 +1056,6 @@ async function processProduct(
       ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
       zeroDeltaLogged: plan.zeroDeltaBalances.length,
       reconciliationDelta,
-      hasImmutableManualAdjustments: skipDateCorrectionDueToImmutableAdjustment,
       sourceDataDateCorrections,
     };
   } catch (err) {
@@ -1118,7 +1076,6 @@ type CsvSyncResult = {
   productInternalId: string;
   productName: string;
   csvMovements: number;
-  usedLegacyReindex: boolean;
 };
 
 async function getLatestCsvWindow(): Promise<CsvWindow> {
@@ -1186,10 +1143,81 @@ async function resolveCsvWindow(): Promise<CsvWindow> {
   };
 }
 
+type IncomingInvoiceMovementType = "PURCHASE_ENTRY" | "CUSTOMER_RETURN";
+
+/**
+ * Usa o mesmo critério da fonte de movimentos de NF: uma nota INCOMING é
+ * retorno quando foi emitida pela própria unit business; nos demais casos,
+ * é uma nota de entrada. Números não encontrados mantêm o fallback do
+ * título fornecido pela Bling, sem interromper a sincronização.
+ */
+async function buildIncomingInvoiceMovementTypeMap(
+  rows: CsvRow[],
+): Promise<Map<string, IncomingInvoiceMovementType>> {
+  const invoiceNumbers = [...new Set(
+    rows
+      .filter(
+        (row) =>
+          row.origem_tipo === "Nota fiscal" &&
+          row.es === "E" &&
+          !!row.origem_numero,
+      )
+      .flatMap((row) => [
+        row.origem_numero,
+        normalizeInvoiceNumber(row.origem_numero),
+      ]),
+  )];
+  if (!invoiceNumbers.length) return new Map();
+
+  const unitBusiness = await UnitBusiness.findByPk(UNIT_BUSINESS_ID, {
+    attributes: ["cnpj"],
+  });
+  if (!unitBusiness) {
+    throw new Error(`Unit business não encontrada: ${UNIT_BUSINESS_ID}`);
+  }
+
+  const invoices = await Invoice.findAll({
+    where: { number_system: { [Op.in]: invoiceNumbers } },
+    attributes: ["id", "number_system", "sender_cnpj"],
+    include: [
+      {
+        model: InvoiceUnitBusinessAttributes,
+        as: "unitBusinessAttributes",
+        required: true,
+        attributes: ["type", "unit_business_id"],
+        where: {
+          unit_business_id: UNIT_BUSINESS_ID,
+          status: { [Op.notIn]: ["CANCELLED", "PENDING_CANCELLED_SYSTEM"] },
+        },
+      },
+    ],
+  });
+
+  const types = new Map<string, IncomingInvoiceMovementType>();
+  for (const invoice of invoices) {
+    const attribute = invoice.unitBusinessAttributes?.find(
+      (item) => item.unit_business_id === UNIT_BUSINESS_ID,
+    );
+    if (!attribute || attribute.type !== "INCOMING" || !invoice.number_system) {
+      continue;
+    }
+
+    types.set(
+      normalizeInvoiceNumber(invoice.number_system),
+      invoice.sender_cnpj === (unitBusiness as any).cnpj
+        ? "CUSTOMER_RETURN"
+        : "PURCHASE_ENTRY",
+    );
+  }
+
+  return types;
+}
+
 function movementFromCsvRow(
   row: CsvRow,
   balance: RunningBalance,
   hasEarlierPurchaseEntry: boolean,
+  incomingInvoiceMovementTypes: Map<string, IncomingInvoiceMovementType>,
 ): ReindexProductPayload | null {
   let quantity = 0;
   let direction: "IN" | "OUT" = "IN";
@@ -1213,8 +1241,17 @@ function movementFromCsvRow(
 
   const isInvoice = row.origem_tipo === "Nota fiscal";
   const isSalesOrder = row.origem_tipo === "Pedido de venda";
+  const movementTypeFromInvoice =
+    isInvoice && row.es === "E"
+      ? incomingInvoiceMovementTypes.get(
+          normalizeInvoiceNumber(row.origem_numero),
+        )
+      : undefined;
   const isCustomerReturn =
-    isInvoice && /devolu[cç][aã]o/i.test(row.origem_titulo ?? "");
+    movementTypeFromInvoice === "CUSTOMER_RETURN" ||
+    (!movementTypeFromInvoice &&
+      isInvoice &&
+      /devolu[cç][aã]o/i.test(row.origem_titulo ?? ""));
 
   if (isInvoice) {
     const movement_type =
@@ -1254,7 +1291,9 @@ function movementFromCsvRow(
   };
 }
 
-function buildCsvMovements(rows: CsvRow[]): ReindexProductPayload[] {
+async function buildCsvMovements(
+  rows: CsvRow[],
+): Promise<ReindexProductPayload[]> {
   const merged = mergeSameInvoiceRows(rows);
   const chronological = collapseConsecutiveBalanceRuns(
     [...merged].sort((a, b) => a.data.getTime() - b.data.getTime()),
@@ -1262,14 +1301,21 @@ function buildCsvMovements(rows: CsvRow[]): ReindexProductPayload[] {
   const balance = new RunningBalance();
   let hasEarlierPurchaseEntry = false;
   const movements: ReindexProductPayload[] = [];
+  const incomingInvoiceMovementTypes =
+    await buildIncomingInvoiceMovementTypeMap(rows);
 
   for (const row of chronological) {
-    const movement = movementFromCsvRow(row, balance, hasEarlierPurchaseEntry);
+    const movement = movementFromCsvRow(
+      row,
+      balance,
+      hasEarlierPurchaseEntry,
+      incomingInvoiceMovementTypes,
+    );
     if (movement) movements.push(movement);
     if (
       row.origem_tipo === "Nota fiscal" &&
       row.es === "E" &&
-      !/devolu[cç][aã]o/i.test(row.origem_titulo ?? "")
+      movement?.movement_type === "PURCHASE_ENTRY"
     ) {
       hasEarlierPurchaseEntry = true;
     }
@@ -1284,29 +1330,10 @@ async function processCsvProduct(
   rows: CsvRow[],
   window: CsvWindow,
 ): Promise<CsvSyncResult> {
-  const existingHistory = await stockMovementService.getProductHistory(
-    productInternalId,
-    UNIT_BUSINESS_ID,
-    { page: 1, perPage: 5000 } as any,
-  );
-  const activeHistory = existingHistory.data
-    .filter((movement: any) => movement.is_active)
-    .sort((a: any, b: any) => {
-      const byDate =
-        new Date(a.movement_date).getTime() - new Date(b.movement_date).getTime();
-      return byDate || new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-    });
-  const hasNonInitialManualAverageCost = activeHistory.some(
-    (movement: any, index: number) =>
-      index > 0 &&
-      ((movement.manual_average_cost_value ?? 0) > 0 || movement.manual_average_cost_value != null),
-  );
-
-  const csvMovements = buildCsvMovements(rows);
+  const csvMovements = await buildCsvMovements(rows);
   console.log(
     `\n[SyncStock] Produto ${productInternalId} (${productName}): ` +
-      `${csvMovements.length} movimento(s) lido(s) do CSV` +
-      `${hasNonInitialManualAverageCost ? " [REINDEX LEGADO: custo médio manual não é o primeiro]" : ""}`,
+      `${csvMovements.length} movimento(s) lido(s) do CSV`,
   );
 
   if (DRY_RUN) {
@@ -1314,36 +1341,19 @@ async function processCsvProduct(
       productInternalId,
       productName,
       csvMovements: csvMovements.length,
-      usedLegacyReindex: hasNonInitialManualAverageCost,
     };
   }
 
   const transaction = await sequelize.transaction();
   try {
-    if (hasNonInitialManualAverageCost) {
-      // Exceção permanente: preserva a estratégia antiga, que não remove
-      // movimentos protegidos por custo médio manual.
-      const sourceData = await stockMovementService.findStockMovementSourceData(
-        UNIT_BUSINESS_ID,
-        productInternalId,
-        transaction,
-      );
-      await stockMovementService.reindexProduct(
-        productInternalId,
-        UNIT_BUSINESS_ID,
-        sourceData,
-        transaction,
-      );
-    } else {
-      await stockMovementService.syncCsvBaseline(
-        productInternalId,
-        UNIT_BUSINESS_ID,
-        csvMovements,
-        window.cutoffDate,
-        window.extractionDate,
-        transaction,
-      );
-    }
+    await stockMovementService.syncCsvBaseline(
+      productInternalId,
+      UNIT_BUSINESS_ID,
+      csvMovements,
+      window.cutoffDate,
+      window.extractionDate,
+      transaction,
+    );
     await transaction.commit();
   } catch (error) {
     await transaction.rollback();
@@ -1354,7 +1364,6 @@ async function processCsvProduct(
     productInternalId,
     productName,
     csvMovements: csvMovements.length,
-    usedLegacyReindex: hasNonInitialManualAverageCost,
   };
 }
 
@@ -1443,8 +1452,6 @@ async function main() {
   }
 
   const totalCsvMovements = results.reduce((sum, result) => sum + result.csvMovements, 0);
-  const legacyReindexProducts = results.filter((result) => result.usedLegacyReindex);
-
   console.log("\n" + "═".repeat(60));
   console.log("  ✅ Finalizado");
   console.log(
@@ -1457,16 +1464,6 @@ async function main() {
     console.log("  Produtos com erro:");
     for (const e of errors)
       console.log(`    - ${e.productInternalId}: ${e.error}`);
-  }
-  console.log(
-    `  Produtos mantidos no reindex legado (custo médio manual não é o primeiro): ` +
-      `${legacyReindexProducts.length}`,
-  );
-  if (legacyReindexProducts.length) {
-    console.log("  ⚠️  Lista de produtos no fluxo legado:");
-    for (const p of legacyReindexProducts) {
-      console.log(`    - ${p.productInternalId} (${p.productName})`);
-    }
   }
   console.log("═".repeat(60));
 
