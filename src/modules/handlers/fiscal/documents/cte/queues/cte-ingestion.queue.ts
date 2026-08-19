@@ -9,14 +9,12 @@ import {
 } from "../../../helpers/mappers/documents/map-fiscal-documents.types";
 import { fetchAndUpsertCte } from "../../../helpers/mappers/documents/cte/cte-upsert.service";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
-import {
-  getIncrementalDateRangeAsDate,
-} from "../../../../../../shared/utils/normalizers/date";
+import { getIncrementalDateRangeAsDate } from "../../../../../../shared/utils/normalizers/date";
 
 const DELAY_BETWEEN_REQUESTS_MS = 30 * 1000;
 const PROVIDER_NAME = "Sieg";
 
-const BACKFILL_CHUNK_MAX_DAYS = 58;
+const BACKFILL_CHUNK_MAX_DAYS = 55;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -87,17 +85,26 @@ export class CteIngestionQueue extends BaseQueueService<void> {
       `[CteIngestionQueue] Iniciando busca periódica de CTes. jobId=${job.id}`,
     );
 
-    const dateRanges = [getIncrementalDateRangeAsDate(232)];
+    const { inicio, fim } = getIncrementalDateRangeAsDate(232);
+
+    const dateRanges = splitDateRangeInChunks(inicio, fim);
+
+    console.log(
+      `[CteIngestionQueue] Intervalo incremental dividido em ${dateRanges.length} bloco(s).`,
+    );
+
     await this.runForDateRanges(dateRanges, `${job.id}`);
   }
 
-  
-  async runBackfill(startDate: Date, endDate: Date = new Date()): Promise<void> {
+  async runBackfill(
+    startDate: Date,
+    endDate: Date = new Date(),
+  ): Promise<void> {
     const dateRanges = splitDateRangeInChunks(startDate, endDate);
 
     console.log(
       `[CteIngestionQueue][BACKFILL] ${dateRanges.length} bloco(s) de até ${BACKFILL_CHUNK_MAX_DAYS} dias ` +
-      `(${startDate.toISOString()} -> ${endDate.toISOString()}).`,
+        `(${startDate.toISOString()} -> ${endDate.toISOString()}).`,
     );
 
     await this.runForDateRanges(dateRanges, "backfill");
@@ -166,9 +173,7 @@ export class CteIngestionQueue extends BaseQueueService<void> {
       }
     }
 
-    console.log(
-      `[CteIngestionQueue] Busca finalizada. jobId=${jobId}`,
-    );
+    console.log(`[CteIngestionQueue] Busca finalizada. jobId=${jobId}`);
   }
 
   private async fetchAndProcess(
