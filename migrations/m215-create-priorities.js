@@ -1,0 +1,2 @@
+'use strict';
+module.exports = { up: (q, S) => q.createTable('priorities', { id: { type: S.INTEGER, primaryKey: true, autoIncrement: true }, name: { type: S.STRING(50), allowNull: false }, color: { type: S.STRING(7), allowNull: true }, display_order: { type: S.INTEGER, allowNull: false, defaultValue: 0 }, sla_hours: { type: S.INTEGER, allowNull: true }, created_at: { type: S.DATE, allowNull: false, defaultValue: S.NOW }, updated_at: { type: S.DATE, allowNull: false, defaultValue: S.NOW } }), down: q => q.dropTable('priorities') };
