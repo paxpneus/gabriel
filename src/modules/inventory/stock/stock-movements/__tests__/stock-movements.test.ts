@@ -470,7 +470,7 @@ describe("StockMovementService", () => {
       );
     });
 
-    it("preserva uma linha com manual_average_cost_value preenchido (mesmo não sendo MANUAL_ADJUSTMENT)", async () => {
+    it("recria uma linha com custo manual que não seja MANUAL_ADJUSTMENT", async () => {
       const overridden = makeExistingMovement({
         id: "override-1",
         invoice_id: "inv-override",
@@ -487,11 +487,11 @@ describe("StockMovementService", () => {
 
       await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, [] as any);
 
-      expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
+      expect((service as any).repository.bulkDelete).toHaveBeenCalled();
       expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
     });
 
-    it("ignora, da fonte nova, qualquer invoice_id que já corresponda a uma linha protegida", async () => {
+    it("não protege MANUAL_ADJUSTMENT sem custo manual contra uma fonte com o mesmo invoice_id", async () => {
       const manualAdjustment = makeExistingMovement({
         id: "manual-1",
         invoice_id: "inv-protected",
@@ -524,10 +524,11 @@ describe("StockMovementService", () => {
         incoming as any,
       );
 
-      expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
+      expect((service as any).repository.bulkDelete).toHaveBeenCalled();
+      expect((service as any).repository.bulkCreate).toHaveBeenCalled();
     });
 
-    it("linha protegida INATIVA é preservada (não apagada) mas NÃO entra na cadeia de cálculo", async () => {
+    it("MANUAL_ADJUSTMENT inativo sem custo manual é removido e não entra na cadeia", async () => {
       const inactiveManual = makeExistingMovement({
         id: "manual-inactive",
         invoice_id: null,
@@ -560,7 +561,7 @@ describe("StockMovementService", () => {
         incoming as any,
       );
 
-      expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
+      expect((service as any).repository.bulkDelete).toHaveBeenCalled();
 
       const created = (service as any).repository.bulkCreate.mock.calls[0][0];
       // parte do zero, ignorando o saldo absurdo do manual inativo
@@ -570,7 +571,7 @@ describe("StockMovementService", () => {
       });
     });
 
-    it("retorna protegidos + recriados, ordenados por data", async () => {
+    it("não retorna MANUAL_ADJUSTMENT sem custo manual após recriar o histórico", async () => {
       const fakeCreated = [
         { id: "new-1", movement_date: new Date("2026-02-01") },
       ];
@@ -601,7 +602,7 @@ describe("StockMovementService", () => {
         ] as any,
       );
 
-      expect(result.map((m: any) => m.id)).toEqual(["manual-1", "new-1"]);
+      expect(result.map((m: any) => m.id)).toEqual(["new-1"]);
     });
   });
 
