@@ -1,0 +1,2 @@
+'use strict';
+module.exports = { up: (q, S) => q.createTable('categories', { id: { type: S.INTEGER, primaryKey: true, autoIncrement: true }, name: { type: S.STRING(100), allowNull: false }, description: { type: S.STRING(255), allowNull: true }, color: { type: S.STRING(7), allowNull: true }, is_active: { type: S.BOOLEAN, allowNull: false, defaultValue: true }, created_at: { type: S.DATE, allowNull: false, defaultValue: S.NOW }, updated_at: { type: S.DATE, allowNull: false, defaultValue: S.NOW } }), down: q => q.dropTable('categories') };

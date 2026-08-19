@@ -1,0 +1,2 @@
+'use strict';
+module.exports = { up: (q, S) => q.createTable('ticket_category_options', { ticket_id: { type: S.BIGINT, primaryKey: true, allowNull: false, references: { model: 'tickets', key: 'id' }, onUpdate: 'CASCADE', onDelete: 'CASCADE' }, category_option_id: { type: S.INTEGER, primaryKey: true, allowNull: false, references: { model: 'category_options', key: 'id' }, onUpdate: 'CASCADE', onDelete: 'CASCADE' } }), down: q => q.dropTable('ticket_category_options') };
