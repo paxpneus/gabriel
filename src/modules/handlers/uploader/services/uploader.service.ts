@@ -82,6 +82,19 @@ export class UploaderService {
     return Buffer.from(response.data);
   }
 
+    async exists(path: string): Promise<boolean> {
+    try {
+      await this.api.head(path);
+      return true;
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        return false;
+      }
+
+      throw new Error(`Erro ao verificar existência do arquivo "${path}" no storage: ${error.message}`);
+    }
+  }
+
   async delete(path: string): Promise<void> {
     try {
       await this.api.delete(path);

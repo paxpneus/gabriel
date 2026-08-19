@@ -133,33 +133,30 @@ export class CteIngestionQueue extends BaseQueueService<void> {
     );
   }
 
-  private async fetchAndProcess(
+    private async fetchAndProcess(
     handler: DocumentSearchHandler,
     genericParams: GenericXmlDocumentParams,
     logLabel: string,
   ): Promise<void> {
+    let documents: ReturnType<DocumentSearchHandler["mapXmlDocuments"]>;
+
     try {
       const providerParams = handler.mapParams(genericParams);
       const response = await handler.fetchXmlDocuments(providerParams);
-      const documents = handler.mapXmlDocuments(response);
-
-      console.log(
-        `[CteIngestionQueue] ${logLabel} -> ${documents.length} documento(s) recebido(s).`,
-      );
-
-      for (const doc of documents) {
-        try {
-          await fetchAndUpsertCte(doc);
-        } catch (err: any) {
-          console.warn(
-            `[CteIngestionQueue] Falha ao upsertar CTe | ${logLabel} | erro=${err?.message}`,
-          );
-        }
-      }
+      documents = handler.mapXmlDocuments(response);
     } catch (err: any) {
       console.warn(
         `[CteIngestionQueue] Falha ao buscar documentos | ${logLabel} | erro=${err?.message}`,
       );
+      return;
+    }
+
+    console.log(
+      `[CteIngestionQueue] ${logLabel} -> ${documents.length} documento(s) recebido(s).`,
+    );
+
+    for (const doc of documents) {
+      await fetchAndUpsertCte(doc);
     }
   }
 }

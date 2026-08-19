@@ -5,18 +5,54 @@ import cteService from "../../../../../../warehouse/fiscal/ctes/cte/services/cte
 import { resolveCteIssuerAsTransporter } from "./cte-party-resolver.service";
 import { encryptXml } from "../../../../../../../shared/utils/xml/xml-cipher";
 import { CteCreationAttributes } from "../../../../../../warehouse/fiscal/ctes/cte/cte.types";
+import uploaderService from "../../../../../uploader/services/uploader.service";
+
+const CTE_XML_DIRECTORY = process.env.CTE_XML_DIRECTORY;
 
 // Resolve o nome do tomador com base em qual papel ele corresponde,
 // já que o XML não repete o nome do tomador — só o taxId + o taker_type.
-function resolveTakerName(extracted: ReturnType<typeof extractCteFromXml>): string | null {
+function resolveTakerName(
+  extracted: ReturnType<typeof extractCteFromXml>,
+): string | null {
   if (!extracted.takerTaxId) return null;
 
-  if (extracted.takerTaxId === extracted.senderTaxId) return extracted.senderName ?? null;
-  if (extracted.takerTaxId === extracted.recipientTaxId) return extracted.recipientName ?? null;
-  if (extracted.takerTaxId === extracted.dispatcherTaxId) return extracted.dispatcherName ?? null;
-  if (extracted.takerTaxId === extracted.receiverTaxId) return extracted.receiverName ?? null;
+  if (extracted.takerTaxId === extracted.senderTaxId)
+    return extracted.senderName ?? null;
+  if (extracted.takerTaxId === extracted.recipientTaxId)
+    return extracted.recipientName ?? null;
+  if (extracted.takerTaxId === extracted.dispatcherTaxId)
+    return extracted.dispatcherName ?? null;
+  if (extracted.takerTaxId === extracted.receiverTaxId)
+    return extracted.receiverName ?? null;
 
   return null;
+}
+
+async function uploadXmlToCloud(
+  id: string,
+  cteNumber: number,
+  xml: string,
+): Promise<void> {
+  const filename = `${cteNumber}_${id}.xml`;
+  const path = `${CTE_XML_DIRECTORY}/${filename}`;
+
+  const alreadyExists = await uploaderService.exists(path);
+  if (alreadyExists) {
+    console.log(
+      `[CTE_UPSERT] XML já existe na nuvem, ignorando envio: ${path}`,
+    );
+    return;
+  }
+
+  await uploaderService.upload({
+    buffer: Buffer.from(xml, "utf-8"),
+    filename,
+    mimeType: "application/xml",
+    directory: CTE_XML_DIRECTORY,
+    preserveFilename: true,
+  });
+
+  console.log(`[CTE_UPSERT] XML enviado para nuvem: ${path}`);
 }
 
 export async function fetchAndUpsertCte(doc: XmlDocumentResult): Promise<void> {
@@ -24,7 +60,9 @@ export async function fetchAndUpsertCte(doc: XmlDocumentResult): Promise<void> {
   const extracted = extractCteFromXml(xmlContent);
 
   if (!extracted.chave) {
-    console.warn("[CTE_UPSERT] CTe sem chave de acesso identificável. Ignorado.");
+    console.warn(
+      "[CTE_UPSERT] CTe sem chave de acesso identificável. Ignorado.",
+    );
     return;
   }
 
@@ -69,13 +107,21 @@ export async function fetchAndUpsertCte(doc: XmlDocumentResult): Promise<void> {
     xml_path: encryptXml(xmlContent),
   };
 
-  const existing = await cteService.findOne({ where: { xml_key: extracted.chave } });
+  const existing = await cteService.findOne({
+    where: { xml_key: extracted.chave },
+  });
+
+  let cteId: string;
 
   if (existing) {
     await cteService.update(existing.id, cteData);
+    cteId = existing.id;
     console.log(`[CTE_UPSERT] CTe atualizado: chave=${extracted.chave}`);
   } else {
-    await cteService.create(cteData);
+    const created = await cteService.create(cteData);
+    cteId = created.id;
     console.log(`[CTE_UPSERT] CTe criado: chave=${extracted.chave}`);
   }
+
+  await uploadXmlToCloud(cteId, extracted.number ?? 0, xmlContent);
 }
