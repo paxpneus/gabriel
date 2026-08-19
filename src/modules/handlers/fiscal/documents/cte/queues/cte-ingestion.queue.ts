@@ -16,14 +16,17 @@ import {
 const DELAY_BETWEEN_REQUESTS_MS = 30 * 1000;
 const PROVIDER_NAME = "Sieg";
 
+const BACKFILL_CHUNK_MAX_DAYS = 58;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Papéis que uma loja pode assumir num CT-e. "emit" fica de fora por padrão
-// (loja nunca é transportadora), mas deixamos parametrizável caso algum
-// CNPJ de loja também opere como transportadora.
 type CteRole = "dest" | "rem" | "tom" | "emit";
-
 const ROLES_TO_QUERY: CteRole[] = ["tom"];
+
+interface DateRange {
+  inicio: Date;
+  fim: Date;
+}
 
 const buildParamsForRole = (
   role: CteRole,
@@ -49,6 +52,27 @@ const buildParamsForRole = (
   }
 };
 
+function splitDateRangeInChunks(
+  start: Date,
+  end: Date,
+  maxDays: number = BACKFILL_CHUNK_MAX_DAYS,
+): DateRange[] {
+  const ranges: DateRange[] = [];
+  const maxMs = maxDays * 24 * 60 * 60 * 1000;
+
+  let chunkStart = new Date(start);
+
+  while (chunkStart < end) {
+    const candidate = new Date(chunkStart.getTime() + maxMs);
+    const chunkEnd = candidate > end ? end : candidate;
+
+    ranges.push({ inicio: chunkStart, fim: chunkEnd });
+    chunkStart = chunkEnd;
+  }
+
+  return ranges;
+}
+
 export class CteIngestionQueue extends BaseQueueService<void> {
   constructor(options: { workless?: boolean } = {}) {
     super("CTE_INGESTION", {
@@ -63,6 +87,26 @@ export class CteIngestionQueue extends BaseQueueService<void> {
       `[CteIngestionQueue] Iniciando busca periódica de CTes. jobId=${job.id}`,
     );
 
+    const dateRanges = [getIncrementalDateRangeAsDate(232)];
+    await this.runForDateRanges(dateRanges, `${job.id}`);
+  }
+
+  
+  async runBackfill(startDate: Date, endDate: Date = new Date()): Promise<void> {
+    const dateRanges = splitDateRangeInChunks(startDate, endDate);
+
+    console.log(
+      `[CteIngestionQueue][BACKFILL] ${dateRanges.length} bloco(s) de até ${BACKFILL_CHUNK_MAX_DAYS} dias ` +
+      `(${startDate.toISOString()} -> ${endDate.toISOString()}).`,
+    );
+
+    await this.runForDateRanges(dateRanges, "backfill");
+  }
+
+  private async runForDateRanges(
+    dateRanges: DateRange[],
+    jobId: string,
+  ): Promise<void> {
     const unitBusinesses =
       await unitBusinessService.getComercialUnitBusinessOnly();
 
@@ -74,12 +118,6 @@ export class CteIngestionQueue extends BaseQueueService<void> {
     }
 
     const handler = resolveDocumentHandler(PROVIDER_NAME);
-
-    const dateRanges = [getIncrementalDateRangeAsDate(232)];
-
-    console.log(
-      `[CteIngestionQueue] ${dateRanges.length} bloco(s) a percorrer (incremental: ontem 00:00 -> agora).`,
-    );
 
     for (let rangeIdx = 0; rangeIdx < dateRanges.length; rangeIdx++) {
       const { inicio: dataEmissaoInicio, fim: dataEmissaoFim } =
@@ -129,34 +167,37 @@ export class CteIngestionQueue extends BaseQueueService<void> {
     }
 
     console.log(
-      `[CteIngestionQueue] Busca periódica de CTes finalizada. jobId=${job.id}`,
+      `[CteIngestionQueue] Busca finalizada. jobId=${jobId}`,
     );
   }
 
-    private async fetchAndProcess(
+  private async fetchAndProcess(
     handler: DocumentSearchHandler,
     genericParams: GenericXmlDocumentParams,
     logLabel: string,
   ): Promise<void> {
-    let documents: ReturnType<DocumentSearchHandler["mapXmlDocuments"]>;
-
     try {
       const providerParams = handler.mapParams(genericParams);
       const response = await handler.fetchXmlDocuments(providerParams);
-      documents = handler.mapXmlDocuments(response);
+      const documents = handler.mapXmlDocuments(response);
+
+      console.log(
+        `[CteIngestionQueue] ${logLabel} -> ${documents.length} documento(s) recebido(s).`,
+      );
+
+      for (const doc of documents) {
+        try {
+          await fetchAndUpsertCte(doc);
+        } catch (err: any) {
+          console.warn(
+            `[CteIngestionQueue] Falha ao upsertar CTe | ${logLabel} | erro=${err?.message}`,
+          );
+        }
+      }
     } catch (err: any) {
       console.warn(
         `[CteIngestionQueue] Falha ao buscar documentos | ${logLabel} | erro=${err?.message}`,
       );
-      return;
-    }
-
-    console.log(
-      `[CteIngestionQueue] ${logLabel} -> ${documents.length} documento(s) recebido(s).`,
-    );
-
-    for (const doc of documents) {
-      await fetchAndUpsertCte(doc);
     }
   }
 }
