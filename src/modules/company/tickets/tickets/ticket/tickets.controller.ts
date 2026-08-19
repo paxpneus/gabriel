@@ -23,6 +23,24 @@ export class TicketController extends BaseController<Ticket, TicketService> {
     );
 
     this.router.post(
+      "/bulk/mark-completed",
+      ...this.mw("markAsCompleted"),
+      this.markAsCompleted,
+    );
+
+    this.router.post(
+      "/bulk/mark-canceled",
+      ...this.mw("markAsCanceled"),
+      this.markAsCanceled,
+    );
+
+    this.router.post(
+      "/bulk/mark-urgency",
+      ...this.mw("markAsUrgency"),
+      this.markAsUrgency,
+    );
+
+    this.router.post(
       "/:id/assignees",
       ...this.mw("assignUser"),
       this.assignUser,
@@ -63,6 +81,9 @@ export class TicketController extends BaseController<Ticket, TicketService> {
       destroy: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
       changeStatus: [authenticate, userPermissions],
+      markAsCompleted: [authenticate, userPermissions],
+      markAsCanceled: [authenticate, userPermissions],
+      markAsUrgency: [authenticate, userPermissions],
       assignUser: [authenticate, userPermissions],
       removeUser: [authenticate, userPermissions],
       addCategoryOption: [authenticate, userPermissions],
@@ -108,6 +129,63 @@ export class TicketController extends BaseController<Ticket, TicketService> {
       );
 
       return res.json(ticket);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  markAsCompleted = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const ticketIds = this.getTicketIds(req);
+      if (!ticketIds) {
+        return res.status(400).json({ error: "Informe um array de ticketIds válido." });
+      }
+
+      await this.service.markAsCompleted(
+        ticketIds,
+        (req as AuthenticatedRequest).user?.id,
+      );
+      return res.json({ success: true });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  markAsCanceled = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const ticketIds = this.getTicketIds(req);
+      if (!ticketIds) {
+        return res.status(400).json({ error: "Informe um array de ticketIds válido." });
+      }
+
+      await this.service.markAsCanceled(
+        ticketIds,
+        (req as AuthenticatedRequest).user?.id,
+      );
+      return res.json({ success: true });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  markAsUrgency = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const ticketIds = this.getTicketIds(req);
+      if (!ticketIds) {
+        return res.status(400).json({ error: "Informe um array de ticketIds válido." });
+      }
+
+      await this.service.markAsUrgency(ticketIds);
+      return res.json({ success: true });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
@@ -209,6 +287,12 @@ export class TicketController extends BaseController<Ticket, TicketService> {
       return res.status(500).json({ error: error.message });
     }
   };
+
+  private getTicketIds(req: Request): string[] | null {
+    const ticketIds = req.body?.ticketIds ?? req.body?.ids;
+
+    return Array.isArray(ticketIds) && ticketIds.length ? ticketIds : null;
+  }
 }
 
 export default new TicketController();

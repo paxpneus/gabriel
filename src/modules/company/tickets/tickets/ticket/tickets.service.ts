@@ -21,6 +21,8 @@ import Ticket from "./tickets.model";
 import ticketRepository, { TicketRepository } from "./tickets.repository";
 import ticketStatusHistoryService from "../ticket-status-histories/ticket-status-histories.service";
 import { FullTicket, DueStatus, TicketTrail } from "./tickets.types";
+import  priorityService  from "../config/priorities/priorities.service";
+import ticketStatusesService from "../config/ticket-statuses/ticket-statuses.service";
 export class TicketService extends BaseService<Ticket, TicketRepository> {
   constructor() {
     super(ticketRepository);
@@ -193,42 +195,86 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     );
   }
 
+  async markAsCompleted(
+    ticketIds: string[],
+    changedByUserId?: string,
+  ): Promise<void> {
+    const status = await ticketStatusesService.findOne({ where: { completed: true } });
+    if (!status) throw new Error("Nenhum status de conclusão cadastrado.");
+
+    await this.changeStatus(ticketIds, status.id, changedByUserId);
+  }
+
+  async markAsCanceled(
+    ticketIds: string[],
+    changedByUserId?: string,
+  ): Promise<void> {
+    const status = await ticketStatusesService.findOne({ where: { canceled: true } });
+    if (!status) throw new Error("Nenhum status de cancelamento cadastrado.");
+
+    await this.changeStatus(ticketIds, status.id, changedByUserId);
+  }
+
+
+  async markAsUrgency(ticketIds: string[]): Promise<void> {
+    const priority = await priorityService.findOne({
+      order: [["display_order", "ASC"]],
+    });
+    if (!priority) throw new Error("Nenhuma prioridade cadastrada.");
+
+    await Ticket.update(
+      { priority_id: priority.id },
+      { where: { id: { [Op.in]: ticketIds } } },
+    );
+  }
+
   async changeStatus(
-    ticketId: string,
+    ticketIds: string | string[],
     statusId: string,
     changedByUserId?: string,
-  ): Promise<Ticket> {
+  ): Promise<Ticket[]> {
+    const ids = Array.isArray(ticketIds) ? ticketIds : [ticketIds];
     const transaction = await sequelize.transaction();
     try {
-      const [ticket, status] = await Promise.all([
-        Ticket.findByPk(ticketId, { transaction }),
-        TicketStatus.findByPk(statusId, { transaction }),
-      ]);
-      if (!ticket) throw new Error("Ticket não encontrado.");
+      const status = await TicketStatus.findByPk(statusId, { transaction });
       if (!status) throw new Error("Status não encontrado.");
+
       const now = new Date();
       const completedAt = status.completed || status.canceled ? now : null;
       const isOpen = !completedAt;
-      const dueStatus = this.computeDueStatus(ticket, isOpen, now);
-      await ticket.update(
-        {
-          status_id: status.id,
-          completed_at: completedAt,
-          due_status: dueStatus,
-        },
-        { transaction },
+
+      const tickets = await Ticket.findAll({
+        where: { id: { [Op.in]: ids } },
+        transaction,
+      });
+      if (tickets.length !== ids.length)
+        throw new Error("Ticket não encontrado.");
+
+      await Promise.all(
+        tickets.map(async (ticket) => {
+          const dueStatus = this.computeDueStatus(ticket, isOpen, now);
+          await ticket.update(
+            {
+              status_id: status.id,
+              completed_at: completedAt,
+              due_status: dueStatus,
+            },
+            { transaction },
+          );
+          await TicketStatusHistory.create(
+            {
+              ticket_id: ticket.id,
+              status_id: status.id,
+              changed_by_user_id: changedByUserId ?? null,
+              changed_at: now,
+            },
+            { transaction },
+          );
+        }),
       );
-      await TicketStatusHistory.create(
-        {
-          ticket_id: ticket.id,
-          status_id: status.id,
-          changed_by_user_id: changedByUserId ?? null,
-          changed_at: now,
-        },
-        { transaction },
-      );
+
       await transaction.commit();
-      return ticket;
+      return tickets;
     } catch (error) {
       await transaction.rollback();
       throw error;
