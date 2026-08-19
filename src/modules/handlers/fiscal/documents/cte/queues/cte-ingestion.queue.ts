@@ -75,7 +75,7 @@ export class CteIngestionQueue extends BaseQueueService<void> {
 
     const handler = resolveDocumentHandler(PROVIDER_NAME);
 
-    const dateRanges = [getIncrementalDateRangeAsDate(1)];
+    const dateRanges = [getIncrementalDateRangeAsDate(232)];
 
     console.log(
       `[CteIngestionQueue] ${dateRanges.length} bloco(s) a percorrer (incremental: ontem 00:00 -> agora).`,
