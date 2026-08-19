@@ -371,7 +371,7 @@ export class StockMovementService extends BaseService<
     );
 
     const isProtected = (m: StockMovement) =>
-      (m.manual_average_cost_value ?? 0) > 0 ||
+      m.movement_type === "MANUAL_ADJUSTMENT" &&
       m.manual_average_cost_value != null;
     const isBeforeOrAtCutoff = (m: StockMovement) =>
       cutoffDate != null &&
@@ -637,10 +637,9 @@ export class StockMovementService extends BaseService<
    * (processMovement / syncProductStockMovements). Só deve ser acionada via
    * rota de controller, sob ação explícita de um operador.
    *
-   * Exceção: linhas PROTEGIDAS nunca são apagadas nem recriadas —
-   * MANUAL_ADJUSTMENT (imutável pelo fluxo do sistema) e qualquer linha com
-   * manual_average_cost_value preenchido (override manual gravado). Elas
-   * ficam intocadas na timeline, servindo só de base (previousState) pro
+   * Exceção: MANUAL_ADJUSTMENT com manual_average_cost_value preenchido
+   * nunca é apagado nem recriado. Ele fica intocado na timeline, servindo
+   * só de base (previousState) pro
    * que vem depois. Se a fonte trouxer de volta um invoice_id que já
    * corresponde a uma linha protegida, essa entrada da fonte é ignorada —
    * a linha protegida manda.
@@ -693,7 +692,7 @@ export class StockMovementService extends BaseService<
     );
 
     const isProtected = (m: StockMovement) =>
-      m.movement_type === "MANUAL_ADJUSTMENT" ||
+      m.movement_type === "MANUAL_ADJUSTMENT" &&
       m.manual_average_cost_value != null;
 
     const protectedMovements = mutableExistingMovements.filter(isProtected);
