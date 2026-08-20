@@ -330,12 +330,12 @@ export class StockMovementService extends BaseService<
   async getCurrentBalances(
     productIds: string[],
     unitBusinessId: string,
-    asOfDate: Date
+    asOfDate: Date,
   ): Promise<Map<string, StockMovement>> {
     return this.repository.findLastMovementsByProducts(
       productIds,
       unitBusinessId,
-      asOfDate
+      asOfDate,
     );
   }
 
@@ -845,6 +845,7 @@ export class StockMovementService extends BaseService<
     unitBusinessId: string,
     incomingMovements: ReindexProductPayload[],
     transaction?: Transaction,
+    ignoreCutoff = false,
   ): Promise<StockMovement[]> {
     const existingMovements = await this.repository.findHistoryByProduct(
       productId,
@@ -852,12 +853,14 @@ export class StockMovementService extends BaseService<
       { transaction },
     );
 
-    const cutoff = await this.getAutomaticSyncCutoff(
-      productId,
-      unitBusinessId,
-      transaction,
-      existingMovements,
-    );
+    const cutoff = ignoreCutoff
+      ? null
+      : await this.getAutomaticSyncCutoff(
+          productId,
+          unitBusinessId,
+          transaction,
+          existingMovements,
+        );
     const isAfterCutoff = (date: Date) =>
       !cutoff || new Date(date).getTime() > cutoff.getTime();
 
@@ -944,7 +947,7 @@ export class StockMovementService extends BaseService<
         // O "fato" do movimento (quantidade/direção/data) nunca muda aqui,
         // só o resultado calculado.
         const direction = movement.direction as "IN" | "OUT" | null;
-        if (direction == null) {
+        if (direction == null && movement.movement_quantity > 0) {
           throw new Error(
             `[STOCK_MOVEMENT] MANUAL_ADJUSTMENT ${movement.id} sem direction definida — dado corrompido, não é seguro recalcular.`,
           );
@@ -1734,6 +1737,134 @@ export class StockMovementService extends BaseService<
     );
 
     return missing.length;
+  }
+
+  /**
+   * SYNC MANUAL — só deve ser chamada pela rota que o FRONT aciona
+   * explicitamente. NUNCA por job/fluxo automático (esse continua sendo
+   * syncAllProductsStockMovements / syncProductStockMovements).
+   *
+   * Ignora completamente o cutoff do CSV: varre TODAS as NFs do produto e
+   * cria só as que ainda não têm NENHUM stock_movement correspondente,
+   * verificado por invoice_number normalizado (cobre SYNCHED e PENDING,
+   * com ou sem invoice_id) — e por invoice_id como checagem extra de
+   * segurança. Não apaga nem modifica nada existente.
+   */
+  private async manualBackfillProductStockMovements(
+    productId: string,
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<number> {
+    const existingMovements = await this.repository.findHistoryByProduct(
+      productId,
+      unitBusinessId,
+      { transaction, activeOnly: false },
+    );
+
+    // Sem cutoff: queremos todas as NFs do produto, sem exceção.
+    const sourceData = await this.findStockMovementSourceData(
+      unitBusinessId,
+      productId,
+      transaction,
+      null,
+    );
+
+    if (!sourceData.length) return 0;
+
+    const existingInvoiceNumbers = new Set(
+      existingMovements
+        .map((m) => normalizeInvoiceNumber(m.invoice_number))
+        .filter((n): n is string => !!n && n !== "0"),
+    );
+    const existingInvoiceIds = new Set(
+      existingMovements
+        .filter((m) => m.invoice_id != null)
+        .map((m) => m.invoice_id as string),
+    );
+
+    const missing = sourceData.filter((item) => {
+      const normalized = normalizeInvoiceNumber(item.invoice_number);
+      const alreadyByNumber =
+        normalized != null &&
+        normalized !== "0" &&
+        existingInvoiceNumbers.has(normalized);
+      const alreadyById =
+        item.invoice_id != null && existingInvoiceIds.has(item.invoice_id);
+
+      return !alreadyByNumber && !alreadyById;
+    });
+
+    if (!missing.length) return 0;
+
+    await this.upsertProductStockMovements(
+      productId,
+      unitBusinessId,
+      missing,
+      transaction,
+      true,
+    );
+
+    return missing.length;
+  }
+
+  /**
+   * Varre todos os produtos de UM unit_business e faz backfill manual
+   * (sem cutoff) das NFs que faltam. Rota exclusiva do front — não plugar
+   * em nenhum job/scheduler.
+   */
+  async manualSyncAllProductsStockMovements(
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<{ product_id: string; created: number }[]> {
+    const unitBusiness = await UnitBusiness.findByPk(unitBusinessId, {
+      transaction,
+    });
+
+    if (!unitBusiness) {
+      throw new Error("Unit business não encontrada!");
+    }
+
+    // Sem filtro de cutoff: pega todas as invoices ativas do unit_business.
+    const invoiceAttrs = await InvoiceUnitBusinessAttributes.findAll({
+      where: {
+        unit_business_id: unitBusinessId,
+        status: { [Op.notIn]: ["CANCELLED", "PENDING_CANCELLED_SYSTEM"] },
+      },
+      transaction,
+    });
+
+    const invoiceIds = invoiceAttrs.map((a) => a.invoice_id);
+    if (!invoiceIds.length) return [];
+
+    const invoices = await Invoice.findAll({
+      where: { id: { [Op.in]: invoiceIds } },
+      attributes: ["id"],
+      transaction,
+    });
+    if (!invoices.length) return [];
+
+    const invoiceItems = await InvoiceItems.findAll({
+      where: { invoice_id: { [Op.in]: invoices.map((i) => i.id) } },
+      transaction,
+    });
+
+    const productIds = [...new Set(invoiceItems.map((i) => i.product_id))];
+
+    const results: { product_id: string; created: number }[] = [];
+
+    for (const productId of productIds) {
+      const created = await this.manualBackfillProductStockMovements(
+        productId,
+        unitBusinessId,
+        transaction,
+      );
+
+      if (created > 0) {
+        results.push({ product_id: productId, created });
+      }
+    }
+
+    return results;
   }
 }
 
