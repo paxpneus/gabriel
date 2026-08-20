@@ -252,6 +252,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
         await ordersService.update(order.id, {
           internal_status: mapOrderInternalStatus(748772),
+          nfe_emitted: false,
         });
 
         console.log(
