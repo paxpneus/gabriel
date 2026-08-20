@@ -326,7 +326,7 @@ export class StockMovementController extends BaseController<
     try {
       const { unitBusinessId } = req.params;
 
-      const result = await this.service.syncAllProductsStockMovements(
+      const result = await this.service.manualSyncAllProductsStockMovements(
         unitBusinessId as string,
       );
       return res.status(200).json(result);
