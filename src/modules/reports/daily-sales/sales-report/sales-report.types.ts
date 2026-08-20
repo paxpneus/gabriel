@@ -9,6 +9,9 @@ export interface SalesReportFilters {
   sku?: string;
   statusId?: string;
   drillDown?: boolean;
+  productIds?: string[];
+  brandIds?: string[];
+  tireMeasure?: string;
 }
 
 export interface SalesReportJobResult {

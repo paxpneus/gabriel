@@ -28,6 +28,8 @@ class SalesOrderItemSnapshot
   public sku!: string;
   public description?: string | null;
   public unit?: string | null;
+  public product_brand?: string | null;
+  public product_measure?: string | null;
 
   public quantity?: number | string;
   public unit_price?: number | string;
@@ -38,6 +40,13 @@ class SalesOrderItemSnapshot
   public average_cost_snapshot?: number | string;
   public total_cost_snapshot?: number | string;
   public cost_source?: string | null;
+
+  public tax_commission_allocated?: number | string;
+  public freight_cost_allocated?: number | string;
+  public computed_icms_value_allocated?: number | string;
+
+  public contribution_value?: number | string;
+  public contribution_pct?: number | string;
 
   public markup_pct?: number | string;
 
@@ -68,55 +77,76 @@ class SalesOrderItemSnapshot
 
 SalesOrderItemSnapshot.init(
   {
-    id:                { type: DataTypes.UUID, defaultValue: uuidv4, primaryKey: true },
+    id: { type: DataTypes.UUID, defaultValue: uuidv4, primaryKey: true },
     order_snapshot_id: { type: DataTypes.UUID, allowNull: false },
-    order_id:          { type: DataTypes.UUID, allowNull: false },
-    order_item_id:     { type: DataTypes.UUID, allowNull: true, unique: true },
-    product_id:        { type: DataTypes.UUID, allowNull: true },
-    store_id:          { type: DataTypes.UUID, allowNull: true },
-    unit_business_id:  { type: DataTypes.UUID, allowNull: true },
-    integration_id:    { type: DataTypes.UUID, allowNull: true },
+    order_id: { type: DataTypes.UUID, allowNull: false },
+    order_item_id: { type: DataTypes.UUID, allowNull: true, unique: true },
+    product_id: { type: DataTypes.UUID, allowNull: true },
+    store_id: { type: DataTypes.UUID, allowNull: true },
+    unit_business_id: { type: DataTypes.UUID, allowNull: true },
+    integration_id: { type: DataTypes.UUID, allowNull: true },
 
-    order_date:      { type: DataTypes.DATEONLY,    allowNull: false },
-    destination_uf:  { type: DataTypes.STRING(2),   allowNull: true },
+    order_date: { type: DataTypes.DATEONLY, allowNull: false },
+    destination_uf: { type: DataTypes.STRING(2), allowNull: true },
 
-    sku:         { type: DataTypes.STRING(100), allowNull: false },
+    sku: { type: DataTypes.STRING(100), allowNull: false },
     description: { type: DataTypes.STRING(255), allowNull: true },
-    unit:        { type: DataTypes.STRING(20),  allowNull: true },
+    unit: { type: DataTypes.STRING(20), allowNull: true },
+    product_brand: { type: DataTypes.STRING(100), allowNull: true },
+    product_measure: { type: DataTypes.STRING(50), allowNull: true },
 
-    quantity:       { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
-    unit_price:     { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
-    gross_total:    { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    quantity: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
+    unit_price: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
+    gross_total: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     discount_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    net_total:      { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    net_total: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
     average_cost_snapshot: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
-    total_cost_snapshot:   { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    cost_source:           { type: DataTypes.STRING(30), allowNull: true },
+    total_cost_snapshot: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    cost_source: { type: DataTypes.STRING(30), allowNull: true },
+
+    tax_commission_allocated: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    freight_cost_allocated: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
+    computed_icms_value_allocated: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      defaultValue: 0,
+    },
 
     markup_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
 
-    commission_base:  { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    commission_rate:  { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
+    commission_base: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    commission_rate: { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
     commission_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
-    ncm:  { type: DataTypes.STRING(20), allowNull: true },
+    ncm: { type: DataTypes.STRING(20), allowNull: true },
     cest: { type: DataTypes.STRING(20), allowNull: true },
     cfop: { type: DataTypes.STRING(20), allowNull: true },
     gtin: { type: DataTypes.STRING(20), allowNull: true },
 
     approx_tax_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    icms_rate:        { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
-    icms_value:       { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    ipi_value:        { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    pis_value:        { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    cofins_value:     { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    difal_value:      { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    ibs_value:        { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
-    cbs_value:        { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    icms_rate: { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
+    icms_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    ipi_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    pis_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    cofins_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    difal_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    ibs_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    cbs_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
-    source_payload:  { type: DataTypes.JSONB, allowNull: true },
-    last_updated_at: { type: DataTypes.DATE,  defaultValue: DataTypes.NOW },
+    contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    contribution_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
+
+    source_payload: { type: DataTypes.JSONB, allowNull: true },
+    last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },
   {
     sequelize,
