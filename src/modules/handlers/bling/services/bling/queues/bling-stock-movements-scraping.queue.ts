@@ -5,7 +5,7 @@ import { promisify } from "util";
 import { Job } from "bullmq";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
-import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
+import { SCRAPING_SHARED_QUEUE_LOCK } from "./scraping-queue-lock";
 
 const execFileAsync = promisify(execFile);
 const CSV_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -25,7 +25,7 @@ export class BlingStockMovementsScrapingQueue extends BaseQueueService<void> {
       concurrency: 1,
       lockDuration: 12 * 60 * 60 * 1000,
       maxProcessingMs: 15 * 60 * 60 * 1000,
-      sharedLock: BLING_SHARED_QUEUE_LOCK,
+      sharedLock: SCRAPING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
   }

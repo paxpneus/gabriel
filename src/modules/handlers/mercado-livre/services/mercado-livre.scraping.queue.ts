@@ -12,6 +12,7 @@ import { Model, Op } from "sequelize";
 import Customer from "../../../sales/customers/customers.model";
 import OrderItems from "../../../sales/orders/order_items/order_items.model";
 import redisService from "../../../../shared/utils/base-models/base-redis";
+import { SCRAPING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/scraping-queue-lock";
 
 export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
   private scrapingService: MLScrapingService;
@@ -24,7 +25,13 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
     next: nextStepOnQueue,
     options: { workless?: boolean } = {}
   ) {
-    super("ML-SCRAPING", { concurrency: 1, lockDuration: 15 * 60 * 1000, maxProcessingMs: 5 * 60 * 1000, workless: options?.workless });
+    super("ML-SCRAPING", {
+      concurrency: 1,
+      lockDuration: 15 * 60 * 1000,
+      maxProcessingMs: 5 * 60 * 1000,
+      sharedLock: SCRAPING_SHARED_QUEUE_LOCK,
+      workless: options?.workless,
+    });
     this.scrapingService = scrapingService;
     this.mlOrderService = mlOrderService;
     this.next = next;
