@@ -356,7 +356,7 @@ export class SellerSalesReportRepository {
             ELSE COALESCE(o.freight_cost, 0)
           END                              AS freight_cost,
           CASE
-            WHEN o.actual_situation IN ('6', '9') THEN 'completed'
+           WHEN o.internal_status IN ('OPEN', 'EMITTED', 'SENT_TO_TRANSPORTER', 'DELIVERED') THEN 'completed'
             ELSE 'cancelled'
           END AS snapshot_status,
           ROUND(

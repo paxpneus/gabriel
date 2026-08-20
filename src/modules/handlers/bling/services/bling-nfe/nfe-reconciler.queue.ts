@@ -19,6 +19,10 @@ import { alertService } from "../../../../../shared/providers/mail-provider/node
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 import Store from "../../../../sales/stores/stores.model";
 import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
+import {
+  COMPLETED_ORDER_INTERNAL_STATUSES,
+  OrderInternalStatus,
+} from "../../../../sales/orders/order/orders.types";
 
 export type NFeReconcilerJobData = Record<string, never>;
 
@@ -222,6 +226,11 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
           );
           await ordersService.update(order.id, {
             internal_status: mappedStatus,
+            ...(COMPLETED_ORDER_INTERNAL_STATUSES.includes(mappedStatus)
+              ? { nfe_emitted: true }
+              : mappedStatus === OrderInternalStatus.CANCELLED
+                ? { nfe_emitted: false }
+                : {}),
           });
           synced++;
           continue;

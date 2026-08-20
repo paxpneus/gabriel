@@ -8,6 +8,7 @@ import { alertService } from "../../../../shared/providers/mail-provider/nodemai
 import { BLING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/bling-queue-lock";
 import { StoreService } from "../../../sales/stores/stores.service";
 import { blingGet } from "../../bling/services/bling/helpers/get-with-sleep";
+import { syncOrderInternalStatus } from "../../../sales/orders/order/helpers/order-status";
 
 const ALLOWED_STORE_NAME = "MercadoLivre";
 const STATUS_EM_ABERTO = 6;
@@ -71,7 +72,7 @@ export class CNPJQueue extends BaseQueueService<any> {
       { id: 748772 },
     );
 
-    await ordersService.update(order.id, { internal_status: "CANCELLED" });
+    await syncOrderInternalStatus(748772, order.id_order_system);
     console.log(`[CNPJQueue] Pedido ${order.id} marcado com erro: ${errorMessage}`);
   }
 
