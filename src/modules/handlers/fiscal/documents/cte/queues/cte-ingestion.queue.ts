@@ -85,7 +85,7 @@ export class CteIngestionQueue extends BaseQueueService<void> {
       `[CteIngestionQueue] Iniciando busca periódica de CTes. jobId=${job.id}`,
     );
 
-    const { inicio, fim } = getIncrementalDateRangeAsDate(232);
+    const { inicio, fim } = getIncrementalDateRangeAsDate(2);
 
     const dateRanges = splitDateRangeInChunks(inicio, fim);
 
