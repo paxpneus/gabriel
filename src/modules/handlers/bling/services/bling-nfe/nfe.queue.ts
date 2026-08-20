@@ -1,3 +1,4 @@
+import { includes } from 'zod';
 import { StoreService } from "./../../../../sales/stores/stores.service";
 // src/.../nfe/nfe.queue.ts
 
@@ -10,6 +11,8 @@ import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 import { blingGet } from "../bling/helpers/get-with-sleep";
+import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
+import { COMPLETED_ORDER_INTERNAL_STATUSES, CompletedOrderInternalStatus } from "../../../../sales/orders/order/orders.types";
 
 const ALLOWED_STORE_NAME = "MercadoLivre";
 
@@ -126,10 +129,12 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
     // 2. Verifica se ainda está em nfe agendada (status 748748)
     if (order.situacao?.id !== STATUS.NFE_AGENDADA) {
-      // Status 9 = NFe já emitida — considerar sucesso silencioso
-      if (order.situacao?.id === 9) {
+      const mappedSituation = mapOrderInternalStatus(order.situacao?.id)
+
+
+      if (COMPLETED_ORDER_INTERNAL_STATUSES.includes(mappedSituation)) {
         console.log(
-          `[NFeQueue] Pedido ${order_id} já com NFe emitida (status 9). Atualizando banco.`,
+          `[NFeQueue] Pedido ${order_id} já com processo completo. Atualizando banco.`,
         );
         const internalOrder = await ordersService.findOne({
           where: { id_order_system: String(order_id) },
@@ -137,7 +142,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         if (internalOrder) {
           await ordersService.update(internalOrder.id, {
             nfe_emitted: true,
-            internal_status: "EMITTED",
+            internal_status: mappedSituation,
           });
         }
         return; // ← sai sem erro, sem markOrderCancelled

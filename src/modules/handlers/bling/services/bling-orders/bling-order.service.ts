@@ -8,7 +8,7 @@ import { BlingCustomerService } from "../bling-customers/bling-customer.service"
 import { executeWebhookAction } from "../../../../../shared/utils/normalizers/webhook";
 import { orderItemsCreationAttributes } from "../../../../sales/orders/order_items/order_items.types";
 import { StoreService } from "../../../../sales/stores/stores.service";
-import { mapOrder } from "../../../../../shared/utils/normalizers/bling/status-mapper";
+import { mapOrderInternalStatus} from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import { Product, ProductConfig } from "../../../../inventory";
 import { Invoice, UnitBusiness } from "../../../../warehouse";
 import Contact from "../../../../sales/contacts/contacts.model";
@@ -600,7 +600,7 @@ export class BlingOrderService {
         orderData.contato,
       );
 
-      const internalStatus = mapOrder(orderData.situacao.id);
+      const internalStatus = mapOrderInternalStatus(orderData.situacao.id);
       const destination = await this.resolveDestination(orderData.contato?.id);
       const fiscalFields = this.extractFiscalFields(orderData, destination);
       const sellerId = await this.upsertSellerContact(
