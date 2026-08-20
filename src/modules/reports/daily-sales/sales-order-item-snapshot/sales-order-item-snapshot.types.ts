@@ -15,6 +15,9 @@ export interface SalesOrderItemSnapshotAttributes {
   description?: string | null;
   unit?: string | null;
 
+  product_brand?: string | null;
+  product_measure?: string | null;
+
   quantity?: number | string;
   unit_price?: number | string;
   gross_total?: number | string;
@@ -24,6 +27,13 @@ export interface SalesOrderItemSnapshotAttributes {
   average_cost_snapshot?: number | string;
   total_cost_snapshot?: number | string;
   cost_source?: string | null;
+
+  tax_commission_allocated?: number | string;
+  freight_cost_allocated?: number | string;
+  computed_icms_value_allocated?: number | string;
+
+  contribution_value?: number | string;
+  contribution_pct?: number | string;
 
   markup_pct?: number | string;
 
