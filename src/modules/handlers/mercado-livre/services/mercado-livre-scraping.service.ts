@@ -93,7 +93,16 @@ export class MLScrapingService {
     const page = await context.newPage();
 
     try {
-      const loggedIn = await this.ensureLoggedIn(context, page);
+      let loggedIn: boolean;
+      try {
+        loggedIn = await this.ensureLoggedIn(context, page);
+      } catch (err) {
+        console.error(
+          "[MLScraping] Erro durante o fluxo de login:",
+          (err as Error).message,
+        );
+        loggedIn = false;
+      }
 
       if (!loggedIn) {
         alertService.sendAlert({
@@ -187,6 +196,31 @@ export class MLScrapingService {
     return this.doGoogleLogin(context, page);
   }
 
+  private async captureLoginFailureDebug(
+    page: Page,
+    label: string,
+  ): Promise<void> {
+    const debugDir = path.join(SESSION_DIR, "debug");
+    fs.mkdirSync(debugDir, { recursive: true });
+
+    const stamp = Date.now();
+    const screenshotPath = path.join(debugDir, `${label}_${stamp}.png`);
+    const htmlPath = path.join(debugDir, `${label}_${stamp}.html`);
+
+    try {
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      fs.writeFileSync(htmlPath, await page.content());
+      console.error(
+        `[MLScraping] Debug de falha de login salvo em ${screenshotPath} (URL: ${page.url()})`,
+      );
+    } catch (debugErr) {
+      console.error(
+        "[MLScraping] Não foi possível capturar debug da falha de login:",
+        (debugErr as Error).message,
+      );
+    }
+  }
+
   private isLoginWall(page: Page): boolean {
     const url = page.url();
     return url.includes("/lgz/") || url.includes("/login");
@@ -211,9 +245,14 @@ export class MLScrapingService {
     });
 
     // Aguarda o botão do Google aparecer e clica
-    await page.waitForSelector("text=Continuar com o Google", {
-      timeout: 15_000,
-    });
+    try {
+      await page.waitForSelector("text=Continuar com o Google", {
+        timeout: 15_000,
+      });
+    } catch (err) {
+      await this.captureLoginFailureDebug(page, "google-button-not-found");
+      throw err;
+    }
     await page.click("text=Continuar com o Google");
 
     // ML redireciona na mesma aba — aguarda chegar no domínio do Google
