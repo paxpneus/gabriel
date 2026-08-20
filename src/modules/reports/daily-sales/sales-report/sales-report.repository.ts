@@ -619,7 +619,7 @@ export class SalesReportRepository {
           o.destination_city,
           COALESCE(iosm.normalized_status, o.actual_situation)  AS status_snapshot,
           CASE
-           WHEN o.internal_status IN ('OPEN', 'EMITTED', 'SENT_TO_TRANSPORTER', 'DELIVERED') THEN 'completed'
+           WHEN o.actual_situation IN ('6', '9', '834029', '834030') THEN 'completed'
             ELSE 'cancelled'
           END AS snapshot_status,
           COALESCE(o.total_products, 0)                         AS total_products,
