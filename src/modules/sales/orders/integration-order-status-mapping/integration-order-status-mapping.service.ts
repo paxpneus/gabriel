@@ -9,6 +9,9 @@ export const BLING_STATUS_DEFAULTS = [
   { external_status_id: "748748", external_status_value: "NFE Agendada",                normalized_status: "NFE_AGENDADA",                 display_name: "NFE Agendada",                 is_cancelled: true,  is_final: false },
   { external_status_id: "748772", external_status_value: "Aguardando Verificação Humana", normalized_status: "AGUARDANDO_VERIFICACAO_HUMANA", display_name: "Aguardando Verificação Humana", is_cancelled: true, is_final: false },
   { external_status_id: "728250", external_status_value: "Aprovação de Desconto",       normalized_status: "APROVAÇÃO_DE_DESCONTO",        display_name: "Aprovação de Desconto",        is_cancelled: true,  is_final: false },
+  { external_status_id: "748743", external_status_value: "Aguardando Agendamento NFE",       normalized_status: "AGUARDANDO_AGENDAMENTO_NFE",        display_name: "Aguardando Agendamento NFE",        is_cancelled: true,  is_final: false },
+  { external_status_id: "834029", external_status_value: "Enviado",       normalized_status: "ENVIADO_TRANSPORTE",        display_name: "Enviado Para Transporte",        is_cancelled: false,  is_final: true },
+  { external_status_id: "834030", external_status_value: "Entregue",       normalized_status: "ENTREGUE",        display_name: "Entregue ao Cliente",        is_cancelled: false,  is_final: true },
 ];
 
 export class IntegrationOrderStatusMappingService {
