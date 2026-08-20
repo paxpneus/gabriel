@@ -1,3 +1,4 @@
+import { includes } from "zod";
 import { StoreService } from "./../../../../sales/stores/stores.service";
 // src/.../nfe/nfe.queue.ts
 
@@ -10,6 +11,13 @@ import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 import { blingGet } from "../bling/helpers/get-with-sleep";
+import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
+import {
+  COMPLETED_ORDER_INTERNAL_STATUSES,
+  CompletedOrderInternalStatus,
+  OrderInternalStatus,
+} from "../../../../sales/orders/order/orders.types";
+import { syncOrderInternalStatus } from "../../../../sales/orders/order/helpers/order-status";
 
 const ALLOWED_STORE_NAME = "MercadoLivre";
 
@@ -99,7 +107,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     });
     if (!orderSystem) return;
     await ordersService.update(orderSystem.id, {
-      internal_status: "CANCELLED",
+      internal_status: OrderInternalStatus.CANCELLED,
     });
     console.log(
       `[NFeQueue] Pedido ${orderId} Marcado como Aguardando verificação humana: ${message}`,
@@ -126,37 +134,16 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
     // 2. Verifica se ainda está em nfe agendada (status 748748)
     if (order.situacao?.id !== STATUS.NFE_AGENDADA) {
-      // Status 9 = NFe já emitida — considerar sucesso silencioso
-      if (order.situacao?.id === 9) {
-        console.log(
-          `[NFeQueue] Pedido ${order_id} já com NFe emitida (status 9). Atualizando banco.`,
-        );
-        const internalOrder = await ordersService.findOne({
-          where: { id_order_system: String(order_id) },
-        });
-        if (internalOrder) {
-          await ordersService.update(internalOrder.id, {
-            nfe_emitted: true,
-            internal_status: "EMITTED",
-          });
-        }
-        return; // ← sai sem erro, sem markOrderCancelled
-      }
+      const syncResult = await syncOrderInternalStatus(
+        order.situacao?.id,
+        order_id,
+      );
 
-      if (order.situacao?.id === STATUS.CANCELADO) {
+      if (syncResult.handled) {
         console.log(
-          `[NFeQueue] Pedido ${order_id} cancelado (status 12). Atualizando banco.`,
+          `[NFeQueue] Pedido ${order_id} sincronizado (outcome=${syncResult.outcome}, status=${syncResult.internalStatus}).`,
         );
-        const internalOrder = await ordersService.findOne({
-          where: { id_order_system: String(order_id) },
-        });
-        if (internalOrder) {
-          await ordersService.update(internalOrder.id, {
-            nfe_emitted: false,
-            internal_status: "CANCELLED",
-          });
-        }
-        return; // ← sai sem erro, sem markOrderCancelled
+        return;
       }
 
       await this.markOrderCancelled(order_id, NFE_ERRORS.WRONG_STATUS.message);
@@ -194,7 +181,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
       await ordersService.update(internalOrder.id, {
         nfe_emitted: true,
-        internal_status: "EMITTED",
+        internal_status: OrderInternalStatus.EMITTED,
       });
     } catch (error: any) {
       const fields = error.response?.data?.error?.fields ?? [];
@@ -233,7 +220,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
       return;
     }
 
-    this.markOrderCancelled(order_id, `${NFE_ERRORS.EMISSION_FAILED}`);
+    this.markOrderCancelled(order_id, NFE_ERRORS.EMISSION_FAILED.message);
     alertService.sendAlert({
       severity: "CRITICAL",
       title: "NFe — falha após todos os retries",

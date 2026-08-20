@@ -1,6 +1,6 @@
 import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
-import { orderAttributes, orderCreationAttributes } from "./orders.types";
+import { orderAttributes, orderCreationAttributes, OrderInternalStatus } from "./orders.types";
 import { v4 as uuidv4 } from "uuid";
 
 class Order
@@ -21,7 +21,7 @@ class Order
   public total_price?: number;
   public total_cost?: number;
   public nfe_emitted?: boolean;
-  public internal_status?: string;
+  public internal_status?: OrderInternalStatus;
   public store_id?: string;
   public unit_business_id?: string;
   public invoice_id?: string;
@@ -149,22 +149,15 @@ Order.init(
       defaultValue: false,
     },
     internal_status: {
-      type: DataTypes.ENUM(
-        'OPEN',
-        'WAITING CHANNEL VALIDATION',
-        'WAITING FOR NFE EMISSION',
-        'CANCELLED',
-        'EMITTED',
-        'UNKNOWN'
-      ),
+      type: DataTypes.ENUM(...Object.values(OrderInternalStatus)),
       allowNull: false,
-      defaultValue: 'OPEN',
+      defaultValue: OrderInternalStatus.OPEN,
       validate: {
         isIn: {
-          args: [['OPEN', 'WAITING CHANNEL VALIDATION', 'WAITING FOR NFE EMISSION', 'CANCELLED', 'EMITTED', 'UNKNOWN']],
-          msg: "O status fornecido não é permitido."
-        }
-      }
+          args: [Object.values(OrderInternalStatus)],
+          msg: "O status fornecido não é permitido.",
+        },
+      },
     },
     source_payload: {
       type: DataTypes.JSONB,
