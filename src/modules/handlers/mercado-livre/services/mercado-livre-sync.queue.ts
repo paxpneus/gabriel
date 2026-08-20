@@ -9,7 +9,11 @@ import {
 } from "../../../../shared/types/queue/base-queue";
 import Customer from "../../../sales/customers/customers.model";
 import { AxiosInstance } from "axios";
-import { FullOrder } from "../../../sales/orders/order/orders.types";
+import {
+  COMPLETED_ORDER_INTERNAL_STATUSES,
+  FullOrder,
+  OrderInternalStatus,
+} from "../../../sales/orders/order/orders.types";
 import sequelize from "../../../../config/sequelize";
 import { Model, Op } from "sequelize";
 import OrderItems from "../../../sales/orders/order_items/order_items.model";
@@ -224,7 +228,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} sem collection_date. Marcando como WAITING CHANNEL VALIDATION.`,
     );
     await ordersService.update(orderSystem.id, {
-      internal_status: "WAITING CHANNEL VALIDATION",
+      internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
     });
   }
 
@@ -271,9 +275,9 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-    if (order.internal_status === "EMITTED") {
+    if (COMPLETED_ORDER_INTERNAL_STATUSES.includes(order.internal_status!)) {
       console.log(
-        `[MLOrderSyncQueue] Pedido ${order.number_order_channel} já emitido — ignorando scraping.`,
+        `[MLOrderSyncQueue] Pedido ${order.number_order_channel} já com processo completo (${order.internal_status}) — ignorando scraping.`,
       );
       return;
     }
@@ -358,9 +362,11 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       where: { name: "Bling" },
     });
 
-    if (orderSystem.internal_status == "EMITTED") {
+    if (
+      COMPLETED_ORDER_INTERNAL_STATUSES.includes(orderSystem.internal_status)
+    ) {
       console.log(
-        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já em status final (${orderSystem.internal_status}). Ignorando.`,
+        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já com processo completo (${orderSystem.internal_status}). Ignorando.`,
       );
       return;
     }
@@ -405,7 +411,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
           );
 
           await ordersService.update(orderSystem.id, {
-            internal_status: "WAITING FOR NFE EMISSION",
+            internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
             waiting_acceptance: true,
           });
           return;
@@ -448,7 +454,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     );
 
     await ordersService.update(orderSystem.id, {
-      internal_status: "WAITING FOR NFE EMISSION",
+      internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
     });
 
     await this.next.addDelayed(

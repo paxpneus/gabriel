@@ -619,7 +619,7 @@ export class SalesReportRepository {
           o.destination_city,
           COALESCE(iosm.normalized_status, o.actual_situation)  AS status_snapshot,
           CASE
-            WHEN o.actual_situation IN ('6', '9') THEN 'completed'
+           WHEN o.actual_situation IN ('6', '9', '834029', '834030') THEN 'completed'
             ELSE 'cancelled'
           END AS snapshot_status,
           COALESCE(o.total_products, 0)                         AS total_products,
@@ -791,6 +791,11 @@ item_source_raw AS (
     COALESCE(pc.sku, oi.sku)                              AS sku,
     oi.name                                               AS description,
     oi.unit,
+    p.brand                                                AS product_brand,
+    p.measure                                               AS product_measure,
+    io.tax_commission                                       AS order_tax_commission,
+    io.freight_cost                                         AS order_freight_cost,
+    io.computed_icms_value                                  AS order_computed_icms_value,
     COALESCE(oi.quantity, 0)::numeric                     AS quantity,
     COALESCE(oi.unit_price, oi.price, 0)::numeric         AS unit_price,
     COALESCE(
@@ -937,7 +942,10 @@ item_calc AS (
     ROUND(item_weight * order_difal_value, 2)          AS difal_value_allocated,
     ROUND(item_weight * order_ibs_value, 2)            AS ibs_value_allocated,
     ROUND(item_weight * order_cbs_value, 2)            AS cbs_value_allocated,
-    ROUND(item_weight * order_approx_tax_value, 2)     AS approx_tax_value_allocated
+    ROUND(item_weight * order_approx_tax_value, 2)     AS approx_tax_value_allocated,
+    ROUND(item_weight * order_tax_commission, 2)      AS tax_commission_allocated,
+    ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated,
+    ROUND(item_weight * order_computed_icms_value, 2) AS computed_icms_value_allocated
   FROM item_weighted
 ),
 
@@ -950,44 +958,62 @@ item_calc AS (
       -- ------------------------------------------------------------------
       inserted_items AS (
         INSERT INTO sales_order_item_snapshots (
-          order_snapshot_id, order_id, order_item_id, product_id,
-          store_id, unit_business_id, integration_id, order_date, destination_uf,
-          sku, description, unit, quantity, unit_price, gross_total, discount_value,
-          net_total, average_cost_snapshot, total_cost_snapshot, cost_source, markup_pct,
-          commission_base, commission_rate, commission_value,
-          ncm, cest, cfop, gtin,
-          approx_tax_value, icms_rate, icms_value, ipi_value, pis_value,
-          cofins_value, difal_value, ibs_value, cbs_value,
-          source_payload, last_updated_at, created_at, updated_at
-        )
-        SELECT
-          order_snapshot_id, order_id, order_item_id, product_id,
-          store_id, unit_business_id, integration_id, order_date, destination_uf,
-          sku, description, unit, quantity, unit_price, gross_total, discount_value,
-          -- net_total gravado é o valor ALOCADO (rateado do pedido a partir
-          -- de total_products), não o líquido.
-          net_total_allocated,
-          average_cost_snapshot,
-          -- Custo bruto do item: SEMPRE average_cost_snapshot (stock_movements)
-          -- * quantity + comissão. Sem fallback pra total_cost_snapshot de
-          -- order_items e sem somar ICMS.
-          ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value,
-          cost_source,
-          ${calculateMarkupSql("net_total_allocated", itemTotalCostSql).percent},
-          commission_base, commission_rate, commission_value,
-          ncm, cest, cfop, gtin,
-          approx_tax_value_allocated,
-          0::numeric AS icms_rate,
-          icms_value_allocated,
-          ipi_value_allocated,
-          pis_value_allocated,
-          cofins_value_allocated,
-          difal_value_allocated,
-          ibs_value_allocated,
-          cbs_value_allocated,
-          source_payload, NOW(), NOW(), NOW()
-        FROM item_calc
+  order_snapshot_id, order_id, order_item_id, product_id,
+  store_id, unit_business_id, integration_id, order_date, destination_uf,
+  sku, description, unit, product_brand, product_measure,
+  quantity, unit_price, gross_total, discount_value,
+  net_total, average_cost_snapshot, total_cost_snapshot, cost_source, markup_pct,
+  commission_base, commission_rate, commission_value,
+  ncm, cest, cfop, gtin,
+  approx_tax_value, icms_rate, icms_value, ipi_value, pis_value,
+  cofins_value, difal_value, ibs_value, cbs_value,
+  tax_commission_allocated, freight_cost_allocated, computed_icms_value_allocated,
+  contribution_value, contribution_pct,
+  source_payload, last_updated_at, created_at, updated_at
+)
+SELECT
+  order_snapshot_id, order_id, order_item_id, product_id,
+  store_id, unit_business_id, integration_id, order_date, destination_uf,
+  sku, description, unit, product_brand, product_measure,
+  quantity, unit_price, gross_total, discount_value,
+  net_total_allocated,
+  average_cost_snapshot,
+  ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value,
+  cost_source,
+  ${calculateMarkupSql("net_total_allocated", itemTotalCostSql).percent},
+  commission_base, commission_rate, commission_value,
+  ncm, cest, cfop, gtin,
+  approx_tax_value_allocated,
+  0::numeric AS icms_rate,
+  icms_value_allocated,
+  ipi_value_allocated,
+  pis_value_allocated,
+  cofins_value_allocated,
+  difal_value_allocated,
+  ibs_value_allocated,
+  cbs_value_allocated,
+  tax_commission_allocated, freight_cost_allocated, computed_icms_value_allocated,
+  (
+    net_total_allocated
+    - tax_commission_allocated
+    - freight_cost_allocated
+    - computed_icms_value_allocated
+    - (ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value)
+  ) AS contribution_value,
+  ${calculatePercentageSql(
+    `net_total_allocated - tax_commission_allocated - freight_cost_allocated - computed_icms_value_allocated - (ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value)`,
+    "net_total_allocated",
+  )} AS contribution_pct,
+  source_payload, NOW(), NOW(), NOW()
+FROM item_calc
         ON CONFLICT (order_item_id) DO UPDATE SET
+          product_brand                  = EXCLUDED.product_brand,
+          product_measure                = EXCLUDED.product_measure,
+          tax_commission_allocated       = EXCLUDED.tax_commission_allocated,
+          freight_cost_allocated         = EXCLUDED.freight_cost_allocated,
+          computed_icms_value_allocated  = EXCLUDED.computed_icms_value_allocated,
+          contribution_value             = EXCLUDED.contribution_value,
+          contribution_pct               = EXCLUDED.contribution_pct,
           order_snapshot_id     = EXCLUDED.order_snapshot_id,
           product_id            = EXCLUDED.product_id,
           store_id              = EXCLUDED.store_id,
@@ -1088,7 +1114,12 @@ item_calc AS (
       FROM item_totals it
       WHERE sos.id = it.order_snapshot_id
       `,
-     { replacements: { orderIds, stockUnitBusinessId: STOCK_MOVEMENTS_UNIT_BUSINESS_ID } },
+      {
+        replacements: {
+          orderIds,
+          stockUnitBusinessId: STOCK_MOVEMENTS_UNIT_BUSINESS_ID,
+        },
+      },
     );
   }
 
@@ -1523,168 +1554,31 @@ item_calc AS (
   // ---------------------------------------------------------------------------
 
   async getReport(filters: SalesReportFilters) {
+    const productIds = filters.productIds ?? [];
+    const brandIds = filters.brandIds ?? []; // agora são UUIDs de brand_id
+    const tireMeasure = filters.tireMeasure ?? null;
+    const hasProductFilter =
+      productIds.length > 0 || brandIds.length > 0 || !!tireMeasure;
+
     const replacements = {
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
-      // aceita um array de unit_business_id (vazio/undefined = sem filtro)
       unitBusinessIds: filters.unitBusinessIds ?? [],
       storeId: filters.storeId ?? null,
       state: filters.state ?? null,
       productId: filters.productId ?? null,
       sku: filters.sku ?? null,
       statusNormalized: filters.statusId ?? null,
+      productIds,
+      brandIds,
+      tireMeasure,
     };
 
-    // array vazio (ou não informado) = não filtra por unit_business_id
-    const unitFilter =
-      "(COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0 OR unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))";
+    if (hasProductFilter) {
+      return this.getReportFromSnapshots(filters, replacements);
+    }
 
-    const [general] = await sequelize.query<ReportRow>(
-      `
-      SELECT
-        COALESCE(SUM(orders_count),    0)::integer AS orders_count,
-        COALESCE(SUM(items_quantity),  0) AS items_quantity,
-        COALESCE(SUM(total_value),     0) AS total_value,
-        COALESCE(SUM(total_freight),   0) AS total_freight,
-        -- gross_total: soma do valor bruto + frete + impostos + comissões (visão bruta)
-        COALESCE(SUM(total_value), 0) + COALESCE(SUM(total_freight), 0) + COALESCE(SUM(total_taxes), 0) + COALESCE(SUM(total_commission), 0) AS gross_total,
-        ${calculateAverageTicketSql("SUM(total_value)", "SUM(orders_count)")} AS average_ticket,
-        ${calculateAverageTicketSql("SUM(total_freight)", "SUM(orders_count)")} AS average_freight,
-        COALESCE(SUM(total_cost),        0) AS total_cost,
-        COALESCE(SUM(total_taxes),       0) AS total_taxes,
-        COALESCE(SUM(total_fees),        0) AS total_fees,
-        COALESCE(SUM(total_commission),  0) AS total_commission,
-        COALESCE(SUM(contribution_value),0) AS contribution_value,
-        ${calculatePercentageSql("SUM(contribution_value)", "SUM(total_value)")} AS contribution_pct,
-        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
-        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
-      FROM daily_sales_facts
-      WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-        AND ${unitFilter}
-      `,
-      { type: QueryTypes.SELECT, replacements },
-    );
-
-    const byState = await sequelize.query<ReportRow>(
-      `
-      SELECT
-        destination_uf,
-        COALESCE(SUM(orders_count),   0)::integer AS orders_count,
-        COALESCE(SUM(items_quantity), 0) AS items_quantity,
-        COALESCE(SUM(total_value),    0) AS total_value,
-        COALESCE(SUM(total_freight),  0) AS total_freight,
-        ${calculateAverageTicketSql("SUM(total_freight)", "SUM(orders_count)")} AS average_freight,
-        ${calculateAverageTicketSql("SUM(total_value)", "SUM(orders_count)")} AS average_ticket
-      FROM daily_sales_state_facts
-      WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-        AND ${unitFilter}
-        AND (:state IS NULL OR destination_uf = :state)
-      GROUP BY destination_uf
-      ORDER BY total_value DESC
-      `,
-      { type: QueryTypes.SELECT, replacements },
-    );
-
-    const byProduct = await sequelize.query<ReportRow>(
-      `
-    SELECT
-      product_id,
-      sku,
-      MAX(description)          AS description,
-      COALESCE(SUM(quantity),   0) AS quantity,
-      COALESCE(SUM(total_cost), 0) AS total_cost,
-      COALESCE(SUM(total_commission), 0) AS total_commission,
-      COALESCE(SUM(total_value),0) AS total_value,
-      ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
-      ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
-    FROM daily_sales_product_facts
-    WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-      AND ${unitFilter}
-      AND (:productId IS NULL OR product_id = CAST(:productId AS uuid))
-      AND (:sku IS NULL OR sku = :sku)
-    GROUP BY product_id, sku
-    ORDER BY quantity DESC
-    `,
-      { type: QueryTypes.SELECT, replacements },
-    );
-
-    const byUnitBusiness = await sequelize.query<ReportRow>(
-      `
-    SELECT
-      dsf.unit_business_id,
-      ub.name                                       AS unit_business_name,
-      COALESCE(SUM(dsf.orders_count),       0)::integer AS orders_count,
-      COALESCE(SUM(dsf.items_quantity),     0) AS items_quantity,
-      COALESCE(SUM(dsf.total_value),        0) AS total_value,
-      COALESCE(SUM(dsf.total_freight),      0) AS total_freight,
-      ${calculateAverageTicketSql("SUM(dsf.total_value)", "SUM(dsf.orders_count)")} AS average_ticket,
-      COALESCE(SUM(dsf.total_cost),         0) AS total_cost,
-      ${calculateAverageValueSql("SUM(dsf.total_value)", "SUM(dsf.items_quantity)")} AS piece_average_value,
-      ${calculateMarkupSql("SUM(dsf.total_value)", "SUM(dsf.total_cost)").decimal} AS markup_decimal,
-      ${calculateMarkupSql("SUM(dsf.total_value)", "SUM(dsf.total_cost)").percent} AS markup_pct,
-      COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
-      COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
-      COALESCE(SUM(dsf.total_commission),   0) AS total_commission,
-      COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
-      ${calculatePercentageSql("SUM(dsf.contribution_value)", "SUM(dsf.total_value)")} AS contribution_pct
-    FROM daily_sales_facts dsf
-    LEFT JOIN unit_businesses ub ON ub.id = dsf.unit_business_id
-    WHERE dsf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-      AND (
-        COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
-        OR dsf.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[])
-      )
-    GROUP BY dsf.unit_business_id, ub.name
-    ORDER BY total_value DESC
-    `,
-      { type: QueryTypes.SELECT, replacements },
-    );
-
-    const byStatus = await sequelize.query<ReportRow>(
-      `
-    WITH total AS (
-      SELECT COALESCE(SUM(orders_count), 0)::integer AS orders_count
-      FROM daily_sales_status_facts
-      WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-        AND ${unitFilter}
-    )
-    SELECT
-      dssf.status_normalized,
-      COALESCE(
-        MAX(iosm.display_name),
-        MAX(dssf.status_display_name),
-        dssf.status_normalized
-      )                                              AS status_display_name,
-      COALESCE(SUM(dssf.orders_count), 0)::integer  AS orders_count,
-      total.orders_count                            AS total_orders_count,
-      COALESCE(SUM(dssf.total_value),  0)           AS total_value
-    FROM daily_sales_status_facts dssf
-    CROSS JOIN total
-    LEFT JOIN integration_order_status_mappings iosm 
-  ON iosm.normalized_status = dssf.status_normalized
-    WHERE dssf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
-      AND (
-        COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
-        OR dssf.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[])
-      )
-      AND (:statusNormalized IS NULL OR dssf.status_normalized = :statusNormalized)
-    GROUP BY dssf.status_normalized, total.orders_count
-    ORDER BY orders_count DESC
-    `,
-      { type: QueryTypes.SELECT, replacements },
-    );
-
-    return {
-      period: {
-        dateFrom: filters.dateFrom,
-        dateTo: filters.dateTo,
-      },
-      general: general ?? {},
-      byState,
-      byProduct,
-      byUnitBusiness,
-      byStatus,
-    };
+    return this.getReportFromFacts(filters, replacements);
   }
 
   /**
@@ -1765,6 +1659,331 @@ item_calc AS (
     );
 
     return rows[0] ?? null;
+  }
+
+  private async getReportFromSnapshots(
+    filters: SalesReportFilters,
+    replacements: Record<string, unknown>,
+  ) {
+    const rowsCte = `
+  product_filtered_rows AS (
+    SELECT
+      sois.order_id,
+      sois.order_date,
+      sois.destination_uf,
+      sois.unit_business_id,
+      sois.product_id,
+      sois.sku,
+      sois.description,
+      sois.product_brand,
+      sois.product_measure,
+      sois.quantity,
+      sois.net_total,
+      sois.total_cost_snapshot,
+      sois.commission_value,
+      sois.tax_commission_allocated,
+      sois.freight_cost_allocated,
+      sois.computed_icms_value_allocated,
+      sois.contribution_value,
+      sos.status_snapshot,
+      sos.store_id
+    FROM sales_order_item_snapshots sois
+    JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
+    LEFT JOIN products p ON p.id = sois.product_id
+    WHERE sois.order_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+      AND sos.snapshot_status = 'completed'
+      AND (COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
+           OR sois.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))
+      AND (CAST(:storeId AS uuid) IS NULL OR sos.store_id = CAST(:storeId AS uuid))
+      AND (CAST(:state AS varchar) IS NULL OR sois.destination_uf = CAST(:state AS varchar))
+      AND (cardinality(ARRAY[:productIds]::uuid[]) = 0
+           OR sois.product_id = ANY(ARRAY[:productIds]::uuid[]))
+      AND (cardinality(ARRAY[:brandIds]::uuid[]) = 0
+           OR p.brand_id = ANY(ARRAY[:brandIds]::uuid[]))
+      AND (CAST(:tireMeasure AS varchar) IS NULL
+           OR UPPER(TRIM(sois.product_measure)) = UPPER(TRIM(CAST(:tireMeasure AS varchar))))
+  )
+`;
+
+    const [general] = await sequelize.query<ReportRow>(
+      `
+    WITH ${rowsCte}
+    SELECT
+      COUNT(DISTINCT order_id)::integer AS orders_count,
+      COALESCE(SUM(quantity), 0) AS items_quantity,
+      COALESCE(SUM(net_total), 0) AS total_value,
+      COALESCE(SUM(freight_cost_allocated), 0) AS total_freight,
+      COALESCE(SUM(net_total), 0)
+        + COALESCE(SUM(freight_cost_allocated), 0)
+        + COALESCE(SUM(computed_icms_value_allocated), 0)
+        + COALESCE(SUM(tax_commission_allocated), 0)
+        + COALESCE(SUM(commission_value), 0) AS gross_total,
+      ${calculateAverageTicketSql("SUM(net_total)", "COUNT(DISTINCT order_id)")} AS average_ticket,
+      ${calculateAverageTicketSql("SUM(freight_cost_allocated)", "COUNT(DISTINCT order_id)")} AS average_freight,
+      COALESCE(SUM(total_cost_snapshot), 0) AS total_cost,
+      COALESCE(SUM(computed_icms_value_allocated), 0) AS total_taxes,
+      COALESCE(SUM(tax_commission_allocated), 0) AS total_fees,
+      COALESCE(SUM(commission_value), 0) AS total_commission,
+      COALESCE(SUM(contribution_value), 0) AS contribution_value,
+      ${calculatePercentageSql("SUM(contribution_value)", "SUM(net_total)")} AS contribution_pct,
+      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").decimal} AS markup_decimal,
+      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct
+    FROM product_filtered_rows
+    `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    const byState = await sequelize.query<ReportRow>(
+      `
+    WITH ${rowsCte}
+    SELECT
+      destination_uf,
+      COUNT(DISTINCT order_id)::integer AS orders_count,
+      COALESCE(SUM(quantity), 0) AS items_quantity,
+      COALESCE(SUM(net_total), 0) AS total_value,
+      COALESCE(SUM(freight_cost_allocated), 0) AS total_freight,
+      ${calculateAverageTicketSql("SUM(freight_cost_allocated)", "COUNT(DISTINCT order_id)")} AS average_freight,
+      ${calculateAverageTicketSql("SUM(net_total)", "COUNT(DISTINCT order_id)")} AS average_ticket
+    FROM product_filtered_rows
+    GROUP BY destination_uf
+    ORDER BY total_value DESC
+    `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    const byProduct = await sequelize.query<ReportRow>(
+      `
+    WITH ${rowsCte}
+    SELECT
+      product_id,
+      sku,
+      MAX(description) AS description,
+      MAX(product_brand) AS product_brand,
+      MAX(product_measure) AS product_measure,
+      COALESCE(SUM(quantity), 0) AS quantity,
+      COALESCE(SUM(total_cost_snapshot), 0) AS total_cost,
+      COALESCE(SUM(commission_value), 0) AS total_commission,
+      COALESCE(SUM(net_total), 0) AS total_value,
+      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").decimal} AS markup_decimal,
+      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct
+    FROM product_filtered_rows
+    GROUP BY product_id, sku
+    ORDER BY quantity DESC
+    `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    const byUnitBusiness = await sequelize.query<ReportRow>(
+      `
+    WITH ${rowsCte}
+    SELECT
+      pfr.unit_business_id,
+      ub.name AS unit_business_name,
+      COUNT(DISTINCT pfr.order_id)::integer AS orders_count,
+      COALESCE(SUM(pfr.quantity), 0) AS items_quantity,
+      COALESCE(SUM(pfr.net_total), 0) AS total_value,
+      COALESCE(SUM(pfr.freight_cost_allocated), 0) AS total_freight,
+      ${calculateAverageTicketSql("SUM(pfr.net_total)", "COUNT(DISTINCT pfr.order_id)")} AS average_ticket,
+      COALESCE(SUM(pfr.total_cost_snapshot), 0) AS total_cost,
+      ${calculateAverageValueSql("SUM(pfr.net_total)", "SUM(pfr.quantity)")} AS piece_average_value,
+      ${calculateMarkupSql("SUM(pfr.net_total)", "SUM(pfr.total_cost_snapshot)").decimal} AS markup_decimal,
+      ${calculateMarkupSql("SUM(pfr.net_total)", "SUM(pfr.total_cost_snapshot)").percent} AS markup_pct,
+      COALESCE(SUM(pfr.computed_icms_value_allocated), 0) AS total_taxes,
+      COALESCE(SUM(pfr.tax_commission_allocated), 0) AS total_fees,
+      COALESCE(SUM(pfr.commission_value), 0) AS total_commission,
+      COALESCE(SUM(pfr.contribution_value), 0) AS contribution_value,
+      ${calculatePercentageSql("SUM(pfr.contribution_value)", "SUM(pfr.net_total)")} AS contribution_pct
+    FROM product_filtered_rows pfr
+    LEFT JOIN unit_businesses ub ON ub.id = pfr.unit_business_id
+    GROUP BY pfr.unit_business_id, ub.name
+    ORDER BY total_value DESC
+    `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    const byStatus = await sequelize.query<ReportRow>(
+      `
+    WITH ${rowsCte},
+    total AS (
+      SELECT COUNT(DISTINCT order_id)::integer AS orders_count
+      FROM product_filtered_rows
+    )
+    SELECT
+      pfr.status_snapshot AS status_normalized,
+      COALESCE(MAX(iosm.display_name), pfr.status_snapshot) AS status_display_name,
+      COUNT(DISTINCT pfr.order_id)::integer AS orders_count,
+      total.orders_count AS total_orders_count,
+      COALESCE(SUM(pfr.net_total), 0) AS total_value
+    FROM product_filtered_rows pfr
+    CROSS JOIN total
+    LEFT JOIN integration_order_status_mappings iosm
+      ON iosm.normalized_status = pfr.status_snapshot
+    WHERE (:statusNormalized IS NULL OR pfr.status_snapshot = :statusNormalized)
+    GROUP BY pfr.status_snapshot, total.orders_count
+    ORDER BY orders_count DESC
+    `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    return {
+      period: { dateFrom: filters.dateFrom, dateTo: filters.dateTo },
+      general: general ?? {},
+      byState,
+      byProduct,
+      byUnitBusiness,
+      byStatus,
+    };
+  }
+
+  private async getReportFromFacts(
+    filters: SalesReportFilters,
+    replacements: Record<string, unknown>,
+  ) {
+    const unitFilter =
+      "(COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0 OR unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))";
+
+    const [general] = await sequelize.query<ReportRow>(
+      `
+      SELECT
+        COALESCE(SUM(orders_count),    0)::integer AS orders_count,
+        COALESCE(SUM(items_quantity),  0) AS items_quantity,
+        COALESCE(SUM(total_value),     0) AS total_value,
+        COALESCE(SUM(total_freight),   0) AS total_freight,
+        COALESCE(SUM(total_value), 0) + COALESCE(SUM(total_freight), 0) + COALESCE(SUM(total_taxes), 0) + COALESCE(SUM(total_commission), 0) AS gross_total,
+        ${calculateAverageTicketSql("SUM(total_value)", "SUM(orders_count)")} AS average_ticket,
+        ${calculateAverageTicketSql("SUM(total_freight)", "SUM(orders_count)")} AS average_freight,
+        COALESCE(SUM(total_cost),        0) AS total_cost,
+        COALESCE(SUM(total_taxes),       0) AS total_taxes,
+        COALESCE(SUM(total_fees),        0) AS total_fees,
+        COALESCE(SUM(total_commission),  0) AS total_commission,
+        COALESCE(SUM(contribution_value),0) AS contribution_value,
+        ${calculatePercentageSql("SUM(contribution_value)", "SUM(total_value)")} AS contribution_pct,
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
+      FROM daily_sales_facts
+      WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+        AND ${unitFilter}
+      `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    const byState = await sequelize.query<ReportRow>(
+      `
+      SELECT
+        destination_uf,
+        COALESCE(SUM(orders_count),   0)::integer AS orders_count,
+        COALESCE(SUM(items_quantity), 0) AS items_quantity,
+        COALESCE(SUM(total_value),    0) AS total_value,
+        COALESCE(SUM(total_freight),  0) AS total_freight,
+        ${calculateAverageTicketSql("SUM(total_freight)", "SUM(orders_count)")} AS average_freight,
+        ${calculateAverageTicketSql("SUM(total_value)", "SUM(orders_count)")} AS average_ticket
+      FROM daily_sales_state_facts
+      WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+        AND ${unitFilter}
+        AND (:state IS NULL OR destination_uf = :state)
+      GROUP BY destination_uf
+      ORDER BY total_value DESC
+      `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    const byProduct = await sequelize.query<ReportRow>(
+      `
+      SELECT
+        product_id,
+        sku,
+        MAX(description)          AS description,
+        COALESCE(SUM(quantity),   0) AS quantity,
+        COALESCE(SUM(total_cost), 0) AS total_cost,
+        COALESCE(SUM(total_commission), 0) AS total_commission,
+        COALESCE(SUM(total_value),0) AS total_value,
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
+      FROM daily_sales_product_facts
+      WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+        AND ${unitFilter}
+        AND (:productId IS NULL OR product_id = CAST(:productId AS uuid))
+        AND (:sku IS NULL OR sku = :sku)
+      GROUP BY product_id, sku
+      ORDER BY quantity DESC
+      `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    const byUnitBusiness = await sequelize.query<ReportRow>(
+      `
+      SELECT
+        dsf.unit_business_id,
+        ub.name                                       AS unit_business_name,
+        COALESCE(SUM(dsf.orders_count),       0)::integer AS orders_count,
+        COALESCE(SUM(dsf.items_quantity),     0) AS items_quantity,
+        COALESCE(SUM(dsf.total_value),        0) AS total_value,
+        COALESCE(SUM(dsf.total_freight),      0) AS total_freight,
+        ${calculateAverageTicketSql("SUM(dsf.total_value)", "SUM(dsf.orders_count)")} AS average_ticket,
+        COALESCE(SUM(dsf.total_cost),         0) AS total_cost,
+        ${calculateAverageValueSql("SUM(dsf.total_value)", "SUM(dsf.items_quantity)")} AS piece_average_value,
+        ${calculateMarkupSql("SUM(dsf.total_value)", "SUM(dsf.total_cost)").decimal} AS markup_decimal,
+        ${calculateMarkupSql("SUM(dsf.total_value)", "SUM(dsf.total_cost)").percent} AS markup_pct,
+        COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
+        COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
+        COALESCE(SUM(dsf.total_commission),   0) AS total_commission,
+        COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
+        ${calculatePercentageSql("SUM(dsf.contribution_value)", "SUM(dsf.total_value)")} AS contribution_pct
+      FROM daily_sales_facts dsf
+      LEFT JOIN unit_businesses ub ON ub.id = dsf.unit_business_id
+      WHERE dsf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+        AND (
+          COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
+          OR dsf.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[])
+        )
+      GROUP BY dsf.unit_business_id, ub.name
+      ORDER BY total_value DESC
+      `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    const byStatus = await sequelize.query<ReportRow>(
+      `
+      WITH total AS (
+        SELECT COALESCE(SUM(orders_count), 0)::integer AS orders_count
+        FROM daily_sales_status_facts
+        WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+          AND ${unitFilter}
+      )
+      SELECT
+        dssf.status_normalized,
+        COALESCE(
+          MAX(iosm.display_name),
+          MAX(dssf.status_display_name),
+          dssf.status_normalized
+        )                                              AS status_display_name,
+        COALESCE(SUM(dssf.orders_count), 0)::integer  AS orders_count,
+        total.orders_count                            AS total_orders_count,
+        COALESCE(SUM(dssf.total_value),  0)           AS total_value
+      FROM daily_sales_status_facts dssf
+      CROSS JOIN total
+      LEFT JOIN integration_order_status_mappings iosm 
+        ON iosm.normalized_status = dssf.status_normalized
+      WHERE dssf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
+        AND (
+          COALESCE(array_length(ARRAY[:unitBusinessIds]::uuid[], 1), 0) = 0
+          OR dssf.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[])
+        )
+        AND (:statusNormalized IS NULL OR dssf.status_normalized = :statusNormalized)
+      GROUP BY dssf.status_normalized, total.orders_count
+      ORDER BY orders_count DESC
+      `,
+      { type: QueryTypes.SELECT, replacements },
+    );
+
+    return {
+      period: { dateFrom: filters.dateFrom, dateTo: filters.dateTo },
+      general: general ?? {},
+      byState,
+      byProduct,
+      byUnitBusiness,
+      byStatus,
+    };
   }
 }
 

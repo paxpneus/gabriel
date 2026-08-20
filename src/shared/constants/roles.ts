@@ -23,6 +23,8 @@ type Scopes =
   | 'Dados Financeiros'
   | 'Todas as Lojas'
   | 'Operações'
+  | 'Demandas'
+  | 'Setores'
 
 interface ChildEntity {
   entity: string
@@ -41,6 +43,26 @@ interface Roles {
 const all: Actions[] = ['read', 'write', 'delete', 'update']
 
 export const ROLE_PERMISSIONS: Roles[] = [
+    {
+    scope: 'Setores',
+    entity: 'areas',
+    route: 'areas',
+    permissions: all,
+    type: 'REGULAR',
+  },
+  {
+    scope: 'Demandas',
+    entity: 'tickets',
+    route: 'tickets',
+    permissions: all,
+    type: 'REGULAR',
+    children: [
+      { entity: 'categories',   label: 'Categorias' },
+      { entity: 'category_options', label: 'Opções de Categoria' },
+      { entity: 'priorities',     label: 'Prioridades' },
+      { entity: 'ticket_statuses',         label: 'Status de Demanda' },
+    ],
+  },
   {
     scope: 'Pedidos',
     entity: 'orders',

@@ -3,12 +3,16 @@ import { AxiosInstance } from "axios";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import { blingOrderWebHookData } from "./bling-order.types";
 import ordersService from "../../../../sales/orders/order/orders.service";
-import { orderCreationAttributes } from "../../../../sales/orders/order/orders.types";
+import {
+  COMPLETED_ORDER_INTERNAL_STATUSES,
+  OrderInternalStatus,
+  orderCreationAttributes,
+} from "../../../../sales/orders/order/orders.types";
 import { BlingCustomerService } from "../bling-customers/bling-customer.service";
 import { executeWebhookAction } from "../../../../../shared/utils/normalizers/webhook";
 import { orderItemsCreationAttributes } from "../../../../sales/orders/order_items/order_items.types";
 import { StoreService } from "../../../../sales/stores/stores.service";
-import { mapOrder } from "../../../../../shared/utils/normalizers/bling/status-mapper";
+import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import { Product, ProductConfig } from "../../../../inventory";
 import { Invoice, UnitBusiness } from "../../../../warehouse";
 import Contact from "../../../../sales/contacts/contacts.model";
@@ -600,7 +604,9 @@ export class BlingOrderService {
         orderData.contato,
       );
 
-      const internalStatus = mapOrder(orderData.situacao.id);
+      const internalStatus = mapOrderInternalStatus(orderData.situacao.id);
+      const isCompleted =
+        COMPLETED_ORDER_INTERNAL_STATUSES.includes(internalStatus);
       const destination = await this.resolveDestination(orderData.contato?.id);
       const fiscalFields = this.extractFiscalFields(orderData, destination);
       const sellerId = await this.upsertSellerContact(
@@ -618,7 +624,6 @@ export class BlingOrderService {
         unitBusinessId = unitBusiness?.id ?? null;
       }
 
-      
       let store: any = null;
       if (orderData.loja?.id) {
         store = await this.storeService.findOne({
@@ -678,6 +683,11 @@ export class BlingOrderService {
         actual_situation: String(orderData.situacao.id),
         date: new Date(orderData.data),
         internal_status: internalStatus,
+        nfe_emitted: isCompleted
+          ? true
+          : internalStatus === OrderInternalStatus.CANCELLED
+            ? false
+            : existingOrder.nfe_emitted,
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
         total_order: Number(orderData.totalProdutos ?? 0),
@@ -936,11 +946,17 @@ export class BlingOrderService {
         custoTotalProdutos,
       );
 
+      const internalStatus = mapOrderInternalStatus(orderData.situacao.id);
+      const isCompleted =
+        COMPLETED_ORDER_INTERNAL_STATUSES.includes(internalStatus);
+
       const ordersPayload: orderCreationAttributes = {
         integrations_id: integration.id,
         customer_id: customer.id,
         invoice_id: invoiceId,
         actual_situation: String(orderData.situacao.id),
+        internal_status: internalStatus,
+        nfe_emitted: isCompleted,
         unit_business_id: unitBusiness?.id ?? null,
         id_order_system: String(orderData.id),
         number_order_system: String(orderData.numero),

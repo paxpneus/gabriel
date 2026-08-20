@@ -18,22 +18,13 @@ import OrderItems from "../../../../sales/orders/order_items/order_items.model";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 import Store from "../../../../sales/stores/stores.model";
+import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
+import {
+  COMPLETED_ORDER_INTERNAL_STATUSES,
+  OrderInternalStatus,
+} from "../../../../sales/orders/order/orders.types";
 
 export type NFeReconcilerJobData = Record<string, never>;
-
-function mapSituacaoToInternalStatus(
-  situacaoId: number | string | undefined | null,
-): string {
-  const id = Number(situacaoId);
-
-  if (id === 9) return "EMITTED";
-  if (id === 748772) return "UNKNOWN";
-  if (id === 748748) return "WAITING FOR NFE EMISSION";
-  if (id === 12 || id === 21) return "CANCELLED";
-  if (id === 748743) return "WAITING CHANNEL VALIDATION";
-
-  return "OPEN";
-}
 
 export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   private blingApi: AxiosInstance;
@@ -226,7 +217,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
         );
 
         const currentSituacaoId = data?.data?.situacao?.id;
-        const mappedStatus = mapSituacaoToInternalStatus(currentSituacaoId);
+        const mappedStatus = mapOrderInternalStatus(currentSituacaoId);
 
         // Pedido já mudou de situação na Bling por fora do reconciler
         if (mappedStatus !== "WAITING CHANNEL VALIDATION") {
@@ -235,6 +226,11 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
           );
           await ordersService.update(order.id, {
             internal_status: mappedStatus,
+            ...(COMPLETED_ORDER_INTERNAL_STATUSES.includes(mappedStatus)
+              ? { nfe_emitted: true }
+              : mappedStatus === OrderInternalStatus.CANCELLED
+                ? { nfe_emitted: false }
+                : {}),
           });
           synced++;
           continue;
@@ -255,7 +251,8 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
         );
 
         await ordersService.update(order.id, {
-          internal_status: mapSituacaoToInternalStatus(748772),
+          internal_status: mapOrderInternalStatus(748772),
+          nfe_emitted: false,
         });
 
         console.log(
