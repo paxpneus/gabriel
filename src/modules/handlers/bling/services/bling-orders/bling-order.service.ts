@@ -946,11 +946,17 @@ export class BlingOrderService {
         custoTotalProdutos,
       );
 
+      const internalStatus = mapOrderInternalStatus(orderData.situacao.id);
+      const isCompleted =
+        COMPLETED_ORDER_INTERNAL_STATUSES.includes(internalStatus);
+
       const ordersPayload: orderCreationAttributes = {
         integrations_id: integration.id,
         customer_id: customer.id,
         invoice_id: invoiceId,
         actual_situation: String(orderData.situacao.id),
+        internal_status: internalStatus,
+        nfe_emitted: isCompleted,
         unit_business_id: unitBusiness?.id ?? null,
         id_order_system: String(orderData.id),
         number_order_system: String(orderData.numero),

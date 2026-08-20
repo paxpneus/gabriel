@@ -9,6 +9,7 @@ import { BLING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/bling
 import { StoreService } from "../../../sales/stores/stores.service";
 import { blingGet } from "../../bling/services/bling/helpers/get-with-sleep";
 import { syncOrderInternalStatus } from "../../../sales/orders/order/helpers/order-status";
+import { OrderInternalStatus } from "../../../sales/orders/order/orders.types";
 
 const ALLOWED_STORE_NAME = "MercadoLivre";
 const STATUS_EM_ABERTO = 6;
@@ -135,7 +136,7 @@ export class CNPJQueue extends BaseQueueService<any> {
       console.log(`[CNPJQueue] CPF detectado — seguindo para próxima fila (data de coleta)`);
 
       await this.applyWaitingNfeStatus(orderSystem);
-      await ordersService.update(orderSystem.id, { internal_status: "WAITING CHANNEL VALIDATION" });
+      await ordersService.update(orderSystem.id, { internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION });
       await this.next.add({ orderSystem, customer }, `ml-check-${orderSystem.id}`);
       return;
     }
@@ -147,7 +148,7 @@ export class CNPJQueue extends BaseQueueService<any> {
       if (!cnaeApproved) {
         console.log(`[CNPJQueue] CNAE liberado para pedido ${orderSystem.id_order_system} — seguindo para data de coleta`);
         await this.applyWaitingNfeStatus(orderSystem);
-        await ordersService.update(orderSystem.id, { internal_status: "WAITING CHANNEL VALIDATION" });
+        await ordersService.update(orderSystem.id, { internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION });
         await this.next.add({ orderSystem, customer }, `ml-check-${orderSystem.id}`);
       } else {
         console.log(`[CNPJQueue] CNAE bloqueado para pedido ${orderSystem.id_order_system} — cancelando`);

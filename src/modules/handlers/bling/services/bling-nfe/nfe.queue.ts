@@ -220,7 +220,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
       return;
     }
 
-    this.markOrderCancelled(order_id, `${NFE_ERRORS.EMISSION_FAILED}`);
+    this.markOrderCancelled(order_id, NFE_ERRORS.EMISSION_FAILED.message);
     alertService.sendAlert({
       severity: "CRITICAL",
       title: "NFe — falha após todos os retries",
