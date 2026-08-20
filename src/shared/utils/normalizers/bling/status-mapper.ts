@@ -1,21 +1,27 @@
-export const mapOrder = (blingStatus: string | number) => {
+import { OrderInternalStatus } from "../../../../modules/sales/orders/order/orders.types"
+
+export const mapOrderInternalStatus = (blingStatus: string | number): OrderInternalStatus => {
     switch (String(blingStatus)) {
         case '12':
-            return 'CANCELLED'
+            return OrderInternalStatus.CANCELLED
         case '9':
-            return 'EMITTED'
+            return OrderInternalStatus.EMITTED
         case '21':
-            return 'CANCELLED'
+            return OrderInternalStatus.CANCELLED
         case '748748':
-            return 'WAITING FOR NFE EMISSION'
+            return OrderInternalStatus.WAITING_FOR_NFE_EMISSION
         case '748772':
-            return 'CANCELLED'
+            return OrderInternalStatus.CANCELLED
         case '748743':
-            return 'WAITING CHANNEL VALIDATION'
+            return OrderInternalStatus.WAITING_CHANNEL_VALIDATION
         case '6':
-            return 'OPEN'
+            return OrderInternalStatus.OPEN
+        case '834029':
+            return OrderInternalStatus.SENT_TO_TRANSPORTER
+        case '834030':
+            return OrderInternalStatus.DELIVERED
         default:
-            return 'UNKNOWN'
+            return OrderInternalStatus.UNKNOWN
     }
 
 }

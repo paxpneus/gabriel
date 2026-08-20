@@ -85,7 +85,7 @@ export class StockMovementController extends BaseController<
       updateManualAverageCost: [authenticate, userPermissions],
       deactivate: [authenticate, userPermissions],
       reactivate: [authenticate, userPermissions],
-      syncAll: [],
+      syncAll: [authenticate, userPermissions],
     };
   }
 
