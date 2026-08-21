@@ -1,4 +1,4 @@
-import { FindOptions } from "sequelize";
+import { FindOptions, Transaction } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import {
   QueryConfig,
@@ -9,6 +9,7 @@ import Product from "../product.model";
 import Stock from "../../stock/stock/stock.model";
 import ProductConfig from "../../product-config/product_config.model";
 import Brand from "../../brands/brands.model";
+import { ProductCreationAttributes } from "../product.types";
 
 import { extractStockFilter } from "../product.query-config";
 
@@ -87,6 +88,18 @@ export class ProductRepository extends BaseRepository<Product> {
         },
       ],
     });
+  }
+
+  async upsertByConflictFields(
+    values: Partial<ProductCreationAttributes>,
+    conflictFields: string[],
+    options?: { transaction?: Transaction },
+  ): Promise<Product> {
+    const [product] = await this.model.upsert(values as any, {
+      conflictFields: conflictFields as any,
+      transaction: options?.transaction,
+    });
+    return product;
   }
 
 }

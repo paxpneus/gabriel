@@ -38,11 +38,10 @@ const STOCK_MOVEMENTS_UNIT_BUSINESS_ID = "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
  *    seja o mais próximo, igual ou anterior à data do pedido (empate de
  *    data+hora desempatado por created_at mais recente).
  *
- *    KIT: se o SKU vendido tem sufixo Kn (ex: "ABC123K4"), o custo médio é
- *    resolvido a partir do produto UNITÁRIO (SKU sem o sufixo, buscado em
- *    product_configs na mesma STOCK_MOVEMENTS_UNIT_BUSINESS_ID) e depois
- *    multiplicado por N (kit_multiplier) — exatamente a mesma regra usada
- *    em sales_report.
+ *    KIT: se o produto vendido é um KIT, o custo médio é resolvido a partir
+ *    do componente real cadastrado em kit_components (product_component_id)
+ *    e depois multiplicado pela quantity do componente (kit_multiplier) —
+ *    exatamente a mesma regra usada em sales_report.
  *
  *    total_cost do item = average_cost_snapshot(stock_movements) * quantity
  *    + commission_value. order_items.total_cost_snapshot/average_cost_snapshot
@@ -380,13 +379,12 @@ WHERE o.seller_id IS NOT NULL
       --    ratear nada do pedido — net_total_raw só serve para calcular o
       --    peso do item). average_cost_snapshot agora é resolvido via
       --    stock_movements (com resolução de KIT), exatamente igual a
-      --    sales_report: pegamos o sku efetivo (product_configs ou o sku
-      --    do próprio order_item), detectamos sufixo Kn para achar o
-      --    kit_multiplier e o sku unitário, resolvemos o product_id de
-      --    custo (unitário, se for kit) via product_configs na
-      --    STOCK_MOVEMENTS_UNIT_BUSINESS_ID, e então buscamos o
-      --    resulting_average_cost do stock_movement mais próximo, igual ou
-      --    anterior à data do pedido para esse produto nessa unit_business.
+      --    sales_report: resolvemos o product_id do item (kit ou não),
+      --    buscamos sua composição em kit_components para achar o
+      --    kit_multiplier e o product_id de custo (componente real, se for
+      --    kit), e então buscamos o resulting_average_cost do
+      --    stock_movement mais próximo, igual ou anterior à data do pedido
+      --    para esse produto na STOCK_MOVEMENTS_UNIT_BUSINESS_ID.
       -- ------------------------------------------------------------------
       item_source_raw AS (
         SELECT
@@ -408,23 +406,18 @@ WHERE o.seller_id IS NOT NULL
             COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))
           )::numeric AS net_total_raw,
 
-          -- KIT: mesma regra de sales_report (/K(\\d+)$/i no sku efetivo).
+          -- KIT: composição real via kit_components (Etapa 1.5 — mesma
+          -- fonte usada em sales_report, substitui a regra por regex).
           -- kit_multiplier = quantas unidades reais tem 1 kit.
-          COALESCE(
-            (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
-            1
-          ) AS kit_multiplier,
+          COALESCE(kc.quantity, 1) AS kit_multiplier,
 
           -- average_cost_snapshot = custo médio unitário (via
-          -- stock_movements do produto certo — UNIT se for kit, o próprio
-          -- se não for) × kit_multiplier. Se não existir stock_movement
-          -- anterior/igual à data do pedido, fica 0 (mesma regra de "custo
-          -- ausente" de sales_report).
+          -- stock_movements do produto certo — componente do kit, se for
+          -- kit, o próprio se não for) × kit_multiplier. Se não existir
+          -- stock_movement anterior/igual à data do pedido, fica 0 (mesma
+          -- regra de "custo ausente" de sales_report).
           COALESCE(scm.resulting_average_cost, 0)::numeric
-            * COALESCE(
-                (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
-                1
-              ) AS average_cost_snapshot,
+            * COALESCE(kc.quantity, 1) AS average_cost_snapshot,
 
           COALESCE(oi.commission_base, 0)::numeric  AS commission_base,
           COALESCE(oi.commission_rate, 0)::numeric  AS commission_rate,
@@ -453,24 +446,20 @@ WHERE o.seller_id IS NOT NULL
           AND pc.unit_business_id = os.unit_business_id
         )
 
-        -- Resolve o product_id "de custo": se o item vendido é KIT (sku com
-        -- sufixo Kn), busca o product_config do produto UNITÁRIO (sku sem o
-        -- sufixo) no MESMO unit_business usado para achar stock_movements.
-        -- Se não for kit, mantém o product_id original.
+        -- Resolve o product_id "de custo": se o item vendido é KIT, busca o
+        -- componente real cadastrado em kit_components. Se não for kit (ou
+        -- não tiver composição cadastrada), mantém o product_id original.
         LEFT JOIN LATERAL (
-          SELECT pc_unit.product_id
-          FROM product_configs pc_unit
-          WHERE pc_unit.unit_business_id = :stockUnitBusinessId
-            AND pc_unit.sku = regexp_replace(COALESCE(pc.sku, oi.sku), 'K[0-9]+$', '', 'i')
+          SELECT kc.product_component_id, kc.quantity
+          FROM kit_components kc
+          WHERE kc.product_kit_id = COALESCE(oi.product_id, p.id)
           LIMIT 1
-        ) pc_unit_lookup ON (
-          regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i') IS NOT NULL
-        )
+        ) kc ON TRUE
 
         LEFT JOIN LATERAL (
           SELECT sm.resulting_average_cost
           FROM stock_movements sm
-          WHERE sm.product_id = COALESCE(pc_unit_lookup.product_id, oi.product_id, p.id)
+          WHERE sm.product_id = COALESCE(kc.product_component_id, oi.product_id, p.id)
             AND sm.unit_business_id = :stockUnitBusinessId
             AND sm.movement_date <= COALESCE(ord.date, ord.created_at)
           ORDER BY sm.movement_date DESC, sm.created_at DESC

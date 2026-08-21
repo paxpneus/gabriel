@@ -21,6 +21,8 @@ import {
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
 import productWithMovementsRepository from '../repository/product-with-movements'
+import KitComponent from "../../kit-components/kit-component.model";
+import kitComponentService from "../../kit-components/kit-component.service";
 
 export class ProductService extends BaseService<Product, ProductRepository> {
   constructor() {
@@ -213,6 +215,70 @@ export class ProductService extends BaseService<Product, ProductRepository> {
       }
       throw err;
     }
+  }
+
+  // ─── Upsert centralizado de produto + composição de kit ────────────────────
+  // Usado pelas integrações (Bling, Tecinco) na ingestão de produtos, pra não
+  // duplicar create/update de Product e sync de kit_components em cada uma.
+  async upsertWithComponents(params: {
+    id?: string;
+    conflictFields?: string[];
+    values: Partial<ProductCreationAttributes>;
+    components?: Array<{ product_component_id: string; quantity: number }>;
+    transaction?: Transaction;
+  }): Promise<Product> {
+    const sequelize = Product.sequelize!;
+    const ownTransaction = !params.transaction;
+    const transaction = params.transaction ?? (await sequelize.transaction());
+
+    try {
+      let product: Product;
+
+      if (params.id) {
+        const updated = await this.repository.update(params.id, params.values, {
+          transaction,
+        });
+        if (!updated) {
+          throw new Error(
+            `ProductService.upsertWithComponents: produto id=${params.id} não encontrado`,
+          );
+        }
+        product = updated;
+      } else if (params.conflictFields?.length) {
+        product = await this.repository.upsertByConflictFields(
+          params.values,
+          params.conflictFields,
+          { transaction },
+        );
+      } else {
+        product = await this.repository.create(params.values, { transaction });
+      }
+
+      if (params.components !== undefined) {
+        await kitComponentService.syncForKit(product.id, params.components, {
+          transaction,
+        });
+      }
+
+      if (ownTransaction) {
+        await transaction.commit();
+      }
+
+      return (
+        (await this.repository.findById(product.id, {
+          include: [{ model: KitComponent, as: "kitComponents" }],
+        })) ?? product
+      );
+    } catch (err) {
+      if (ownTransaction) {
+        await transaction.rollback();
+      }
+      throw err;
+    }
+  }
+
+  async getKitComponents(productKitId: string): Promise<KitComponent[]> {
+    return kitComponentService.findAll({ where: { product_kit_id: productKitId } });
   }
 
   async productReport(
