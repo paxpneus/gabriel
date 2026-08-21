@@ -99,6 +99,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
       { entity: 'supplier_mappings',    label: 'Mapeamento de Fornecedores' },
       { entity: 'integration_mappings', label: 'Mapeamento de Integração' },
       { entity: 'unmapped_invoice_products', label: 'Produtos Não Mapeados' },
+      { entity: 'kit_components', label: 'Composição de Kits' },
     ],
   },
   {

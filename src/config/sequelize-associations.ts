@@ -65,6 +65,7 @@ import Label from "../modules/inventory/labels/labels.model";
 import SellerSalesOrderItemSnapshot from "../modules/reports/sellers-report/models/seller-sales-order-item-snapshot/seller-sales-order-item-snapshot.model";
 import Group from "../modules/inventory/groups/group/group.model";
 import Subgroup from "../modules/inventory/groups/subgroup/subgroup.model";
+import KitComponent from "../modules/inventory/kit-components/kit-component.model";
 import InventorySubgroup from "../modules/inventory/stock-inventory/inventory-subgroups/inventory-subgroups.model";
 import Event from "../modules/company/events/event/event.model";
 import UserEvent from "../modules/company/events/users-event/users-event.model";
@@ -356,6 +357,24 @@ export function setupAssociations() {
 
   Brand.hasMany(Product, { foreignKey: "brand_id", as: "products" });
   Product.belongsTo(Brand, { foreignKey: "brand_id", as: "brandRegister" });
+
+  Product.hasMany(KitComponent, {
+    foreignKey: "product_kit_id",
+    as: "kitComponents",
+  });
+  KitComponent.belongsTo(Product, {
+    foreignKey: "product_kit_id",
+    as: "kitProduct",
+  });
+
+  Product.hasMany(KitComponent, {
+    foreignKey: "product_component_id",
+    as: "usedInKits",
+  });
+  KitComponent.belongsTo(Product, {
+    foreignKey: "product_component_id",
+    as: "componentProduct",
+  });
 
   Group.hasMany(Subgroup, { foreignKey: "group_id", as: "subgroups" });
   Subgroup.belongsTo(Group, { foreignKey: "group_id", as: "group" });
