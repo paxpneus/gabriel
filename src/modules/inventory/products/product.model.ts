@@ -27,6 +27,8 @@ class Product
   public line?: string;
   public measure?: string;
   public rim?: string | null;
+  public measure_id?: string | null;
+  public rim_id?: string | null;
   public subgroup_id?: string;
 
   public readonly createdAt!: Date;
@@ -77,6 +79,20 @@ Product.init(
     line: { type: DataTypes.STRING(100), allowNull: true },
     measure: { type: DataTypes.STRING(50), allowNull: true },
     rim: { type: DataTypes.STRING(5), allowNull: true },
+    measure_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "tire_measures", key: "id" },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
+    },
+    rim_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "rims", key: "id" },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
+    },
     gross_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     net_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     stock_virtual_total: { type: DataTypes.DECIMAL(14, 4), allowNull: true },

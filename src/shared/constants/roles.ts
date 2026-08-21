@@ -100,6 +100,8 @@ export const ROLE_PERMISSIONS: Roles[] = [
       { entity: 'integration_mappings', label: 'Mapeamento de Integração' },
       { entity: 'unmapped_invoice_products', label: 'Produtos Não Mapeados' },
       { entity: 'kit_components', label: 'Composição de Kits' },
+      { entity: 'rims', label: 'Aros' },
+      { entity: 'tire_measures', label: 'Medidas de Pneu' },
     ],
   },
   {

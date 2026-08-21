@@ -2,6 +2,7 @@ import {
   Model,
   ModelStatic,
   FindOptions,
+  FindAndCountOptions,
   CreateOptions,
   UpdateOptions,
   DestroyOptions,
@@ -68,7 +69,7 @@ class BaseRepository<T extends Model> {
   params: QueryParams,
   config: QueryConfig = {},
   extraOptions: Omit<
-    FindOptions,
+    FindAndCountOptions,
     "where" | "limit" | "offset" | "order"
   > = {},
   forcedWhere?: WhereOptions,
