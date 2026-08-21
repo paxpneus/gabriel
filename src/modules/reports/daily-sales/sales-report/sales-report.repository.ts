@@ -1557,8 +1557,16 @@ FROM item_calc
     const productIds = filters.productIds ?? [];
     const brandIds = filters.brandIds ?? []; // agora são UUIDs de brand_id
     const tireMeasure = filters.tireMeasure ?? null;
+    const orderIds = filters.orderIds ?? [];
+    // As tabelas de facts (daily_sales_*) são agregadas por dia/loja/produto/etc
+    // e não têm order_id — qualquer filtro que precise de granularidade de
+    // pedido (produto, marca, medida ou orderIds) precisa ir pela via de
+    // snapshots (sales_order_item_snapshots), que tem uma linha por item.
     const hasProductFilter =
-      productIds.length > 0 || brandIds.length > 0 || !!tireMeasure;
+      productIds.length > 0 ||
+      brandIds.length > 0 ||
+      !!tireMeasure ||
+      orderIds.length > 0;
 
     const replacements = {
       dateFrom: filters.dateFrom,
@@ -1572,6 +1580,7 @@ FROM item_calc
       productIds,
       brandIds,
       tireMeasure,
+      orderIds,
     };
 
     if (hasProductFilter) {
@@ -1702,6 +1711,8 @@ FROM item_calc
            OR p.brand_id = ANY(ARRAY[:brandIds]::uuid[]))
       AND (CAST(:tireMeasure AS varchar) IS NULL
            OR UPPER(TRIM(sois.product_measure)) = UPPER(TRIM(CAST(:tireMeasure AS varchar))))
+      AND (cardinality(ARRAY[:orderIds]::uuid[]) = 0
+           OR sois.order_id = ANY(ARRAY[:orderIds]::uuid[]))
   )
 `;
 

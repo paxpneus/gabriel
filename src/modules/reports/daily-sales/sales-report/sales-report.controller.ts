@@ -77,6 +77,9 @@ class SalesReportController {
         tireMeasure: (req.query.tireMeasure ?? req.query.tire_measure) as
           | string
           | undefined,
+        orderIds: parseArrayQueryParam(
+          req.query.orderIds ?? req.query.order_ids,
+        ),
       });
 
       return res.json(report);

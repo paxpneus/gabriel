@@ -12,6 +12,7 @@ export interface SalesReportFilters {
   productIds?: string[];
   brandIds?: string[];
   tireMeasure?: string;
+  orderIds?: string[];
 }
 
 export interface SalesReportJobResult {
