@@ -1,6 +1,8 @@
 //seller report
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
+import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
+import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
   AffectedSellerCustomerFactKey,
   AffectedSellerProductFactKey,
@@ -592,6 +594,63 @@ WHERE o.seller_id IS NOT NULL
           orderIds,
           stockUnitBusinessId: STOCK_MOVEMENTS_UNIT_BUSINESS_ID,
         },
+      },
+    );
+
+    await this.applySupplierDiscounts(orderIds);
+  }
+
+  // ------------------------------------------------------------------
+  // Desconto de fornecedor — mesmo motor de matching usado em
+  // sales-report.repository.ts (supplierDiscountRuleService.resolveForItems),
+  // só muda a origem/destino: aqui não existe rollup por pedido (contribution
+  // já é só por item), então não tem passo equivalente a updateSnapshotTotals.
+  // gross_total pra PERCENTUAL usa net_total — essa tabela não tem coluna de
+  // valor bruto separada, net_total já é tratado como base de receita do
+  // item no resto do arquivo.
+  // ------------------------------------------------------------------
+  private async applySupplierDiscounts(orderIds: string[]): Promise<void> {
+    const resolveItems = await sequelize.query<SupplierDiscountResolveItemInput>(
+      `
+      SELECT s.order_item_id, s.order_id, cp.brand_id, cp.rim_id, cp.measure_id, s.unit_business_id, s.order_date,
+             s.quantity * COALESCE(kc.quantity, 1) AS real_quantity, s.net_total AS gross_total
+      FROM seller_sales_order_item_snapshots s
+      LEFT JOIN kit_components kc ON kc.product_kit_id = s.product_id
+      LEFT JOIN products cp ON cp.id = COALESCE(kc.product_component_id, s.product_id)
+      WHERE s.order_id = ANY(ARRAY[:orderIds]::uuid[])
+      `,
+      { type: QueryTypes.SELECT, replacements: { orderIds } },
+    );
+
+    const discounts = await supplierDiscountRuleService.resolveForItems(
+      resolveItems,
+    );
+    if (!discounts.size) return;
+
+    const orderItemIds = Array.from(discounts.keys());
+    const discountValues = orderItemIds.map(
+      (id) => discounts.get(id)!.discountValue,
+    );
+    const ruleIds = orderItemIds.map((id) => discounts.get(id)!.ruleId);
+
+    await sequelize.query(
+      `
+      UPDATE seller_sales_order_item_snapshots s
+      SET
+        supplier_discount_value = batch.discount_value,
+        supplier_discount_rule_id = batch.rule_id,
+        contribution_value = s.contribution_value + batch.discount_value,
+        contribution_pct = ${calculatePercentageSql(
+          "s.contribution_value + batch.discount_value",
+          "s.net_total",
+        )}
+      FROM unnest(
+        ARRAY[:orderItemIds]::uuid[], ARRAY[:discountValues]::numeric[], ARRAY[:ruleIds]::uuid[]
+      ) AS batch(order_item_id, discount_value, rule_id)
+      WHERE s.order_item_id = batch.order_item_id
+      `,
+      {
+        replacements: { orderItemIds, discountValues, ruleIds },
       },
     );
   }

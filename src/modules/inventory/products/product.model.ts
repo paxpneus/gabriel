@@ -2,6 +2,9 @@ import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../config/sequelize";
 import { ProductAttributes, ProductCreationAttributes } from "./product.types";
 import { v4 as uuidv4 } from "uuid";
+import Brand from "../brands/brands.model";
+import Rim from "../rims/rim.model";
+import TireMeasure from "../tire-measures/tire-measure.model";
 
 class Product
   extends Model<ProductAttributes, ProductCreationAttributes>
@@ -30,6 +33,9 @@ class Product
   public measure_id?: string | null;
   public rim_id?: string | null;
   public subgroup_id?: string;
+  public brandRegister?: Brand
+  public rimRegister?: Rim
+  public measureRegister?: TireMeasure
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;

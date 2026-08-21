@@ -50,7 +50,6 @@ export class ProductRepository extends BaseRepository<Product> {
     });
   }
 
-
   /**
    * Listagem simples: stock (com filtro de saldo/unit_business), brand e
    * productConfigs (filtrado por unit_business quando informado).
@@ -117,7 +116,6 @@ export class ProductRepository extends BaseRepository<Product> {
     });
     return product;
   }
-
 }
 
 export default new ProductRepository();
