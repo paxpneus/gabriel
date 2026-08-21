@@ -66,6 +66,8 @@ import SellerSalesOrderItemSnapshot from "../modules/reports/sellers-report/mode
 import Group from "../modules/inventory/groups/group/group.model";
 import Subgroup from "../modules/inventory/groups/subgroup/subgroup.model";
 import KitComponent from "../modules/inventory/kit-components/kit-component.model";
+import Rim from "../modules/inventory/rims/rim.model";
+import TireMeasure from "../modules/inventory/tire-measures/tire-measure.model";
 import InventorySubgroup from "../modules/inventory/stock-inventory/inventory-subgroups/inventory-subgroups.model";
 import Event from "../modules/company/events/event/event.model";
 import UserEvent from "../modules/company/events/users-event/users-event.model";
@@ -357,6 +359,15 @@ export function setupAssociations() {
 
   Brand.hasMany(Product, { foreignKey: "brand_id", as: "products" });
   Product.belongsTo(Brand, { foreignKey: "brand_id", as: "brandRegister" });
+
+  Rim.hasMany(Product, { foreignKey: "rim_id", as: "products" });
+  Product.belongsTo(Rim, { foreignKey: "rim_id", as: "rimRegister" });
+
+  TireMeasure.hasMany(Product, { foreignKey: "measure_id", as: "products" });
+  Product.belongsTo(TireMeasure, {
+    foreignKey: "measure_id",
+    as: "measureRegister",
+  });
 
   Product.hasMany(KitComponent, {
     foreignKey: "product_kit_id",

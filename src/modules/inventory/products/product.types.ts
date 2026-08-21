@@ -21,6 +21,8 @@ export interface ProductAttributes {
   line?: string | null;
   measure?: string | null;
   rim?: string | null;
+  measure_id?: string | null;
+  rim_id?: string | null;
   gross_weight?: number;
   net_weight?: number;
   stock_virtual_total?: number;

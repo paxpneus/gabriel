@@ -23,6 +23,8 @@ import supplierMappingService from "../../supplier-mapping/supplier-mapping.serv
 import productWithMovementsRepository from '../repository/product-with-movements'
 import KitComponent from "../../kit-components/kit-component.model";
 import kitComponentService from "../../kit-components/kit-component.service";
+import rimService from "../../rims/rim.service";
+import tireMeasureService from "../../tire-measures/tire-measure.service";
 
 export class ProductService extends BaseService<Product, ProductRepository> {
   constructor() {
@@ -48,7 +50,13 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         }),
         brand_id: (value) => ({
           "$brandRegister.id$": value,
-        }),    
+        }),
+        rim: (value) => ({
+          "$rimRegister.value$": value,
+        }),
+        measure: (value) => ({
+          "$measureRegister.value$": value,
+        }),
       },
     };
   }
@@ -233,9 +241,24 @@ export class ProductService extends BaseService<Product, ProductRepository> {
 
     try {
       let product: Product;
+      const values: Partial<ProductCreationAttributes> = { ...params.values };
+
+      if (values.rim !== undefined) {
+        const rim = await rimService.findOrCreate(values.rim as string | null, {
+          transaction,
+        });
+        values.rim_id = rim?.id ?? null;
+      }
+      if (values.measure !== undefined) {
+        const measure = await tireMeasureService.findOrCreate(
+          values.measure as string | null,
+          { transaction },
+        );
+        values.measure_id = measure?.id ?? null;
+      }
 
       if (params.id) {
-        const updated = await this.repository.update(params.id, params.values, {
+        const updated = await this.repository.update(params.id, values, {
           transaction,
         });
         if (!updated) {
@@ -246,12 +269,12 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         product = updated;
       } else if (params.conflictFields?.length) {
         product = await this.repository.upsertByConflictFields(
-          params.values,
+          values,
           params.conflictFields,
           { transaction },
         );
       } else {
-        product = await this.repository.create(params.values, { transaction });
+        product = await this.repository.create(values, { transaction });
       }
 
       if (params.components !== undefined) {

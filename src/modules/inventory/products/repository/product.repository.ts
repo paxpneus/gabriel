@@ -1,4 +1,4 @@
-import { FindOptions, Transaction } from "sequelize";
+import { FindOptions, FindAndCountOptions, Transaction } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import {
   QueryConfig,
@@ -9,6 +9,8 @@ import Product from "../product.model";
 import Stock from "../../stock/stock/stock.model";
 import ProductConfig from "../../product-config/product_config.model";
 import Brand from "../../brands/brands.model";
+import Rim from "../../rims/rim.model";
+import TireMeasure from "../../tire-measures/tire-measure.model";
 import { ProductCreationAttributes } from "../product.types";
 
 import { extractStockFilter } from "../product.query-config";
@@ -56,7 +58,10 @@ export class ProductRepository extends BaseRepository<Product> {
   async paginateWithStock(
     params: QueryParams,
     queryConfig: QueryConfig,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    extraOptions?: Omit<
+      FindAndCountOptions,
+      "where" | "limit" | "offset" | "order"
+    >,
   ): Promise<PaginatedResult<Product>> {
     const { stockFilter, stockWhere, paramsWithoutStockFilter } =
       extractStockFilter(params);
@@ -64,6 +69,7 @@ export class ProductRepository extends BaseRepository<Product> {
     return this.findPaginated(paramsWithoutStockFilter, queryConfig, {
       ...extraOptions,
       subQuery: false,
+      distinct: true,
       attributes: { exclude: ["source_payload"] },
       include: [
         {
@@ -76,6 +82,16 @@ export class ProductRepository extends BaseRepository<Product> {
         {
           model: Brand,
           as: "brandRegister",
+          required: false,
+        },
+        {
+          model: Rim,
+          as: "rimRegister",
+          required: false,
+        },
+        {
+          model: TireMeasure,
+          as: "measureRegister",
           required: false,
         },
         {
