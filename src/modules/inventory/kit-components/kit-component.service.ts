@@ -1,3 +1,4 @@
+import { Transaction } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import KitComponent from "./kit-component.model";
 import kitComponentRepository, {
@@ -21,6 +22,14 @@ export class KitComponentService extends BaseService<
         sortDir: "DESC",
       },
     };
+  }
+
+  async syncForKit(
+    productKitId: string,
+    components: Array<{ product_component_id: string; quantity: number }>,
+    options?: { transaction?: Transaction },
+  ): Promise<void> {
+    return this.repository.syncForKit(productKitId, components, options);
   }
 }
 

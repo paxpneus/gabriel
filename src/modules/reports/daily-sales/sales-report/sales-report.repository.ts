@@ -810,25 +810,18 @@ item_source_raw AS (
     )                                                     AS net_total_raw,
 
     -- ------------------------------------------------------------------
-    -- KIT: mesma regra do getKitMultiplier em JS (/K(\d+)$/i no sku).
+    -- KIT: composição real via kit_components (Etapa 1.5 — substitui a
+    -- antiga regra por regex de sufixo Kn no sku).
     -- kit_multiplier = quantas unidades reais tem 1 kit.
-    -- unit_sku       = sku do produto unitário (sufixo Kn removido).
     -- ------------------------------------------------------------------
-    COALESCE(
-      (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
-      1
-    )                                                     AS kit_multiplier,
-    regexp_replace(COALESCE(pc.sku, oi.sku), 'K[0-9]+$', '', 'i') AS unit_sku,
+    COALESCE(kc.quantity, 1)                             AS kit_multiplier,
 
     -- average_cost_snapshot = custo médio unitário (via stock_movements do
-    -- produto certo — UNIT se for kit, o próprio se não for) × kit_multiplier.
-    -- Isso reproduz o "custo médio do kit" que o buildItemFinancialFields
-    -- calculava em JS.
+    -- produto certo — componente do kit, se for kit, o próprio se não for)
+    -- × kit_multiplier. Isso reproduz o "custo médio do kit" que o
+    -- buildItemFinancialFields calculava em JS.
     COALESCE(scm.resulting_average_cost, 0)::numeric
-      * COALESCE(
-          (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
-          1
-        )                                                 AS average_cost_snapshot,
+      * COALESCE(kc.quantity, 1)                         AS average_cost_snapshot,
     CASE
       WHEN scm.resulting_average_cost IS NOT NULL THEN 'STOCK_AVERAGE'
       ELSE 'UNKNOWN'
@@ -881,25 +874,21 @@ item_source_raw AS (
   ) st ON TRUE
 
   -- ------------------------------------------------------------------
-  -- Resolve o product_id "de custo": se o item vendido é KIT (sku com
-  -- sufixo Kn), busca o product_config do produto UNITÁRIO (sku sem o
-  -- sufixo) no MESMO unit_business usado pra achar stock_movements. Se
-  -- não for kit, mantém o product_id original.
+  -- Resolve o product_id "de custo": se o item vendido é KIT, busca o
+  -- componente real cadastrado em kit_components. Se não for kit (ou não
+  -- tiver composição cadastrada), mantém o product_id original.
   -- ------------------------------------------------------------------
   LEFT JOIN LATERAL (
-    SELECT pc_unit.product_id
-    FROM product_configs pc_unit
-    WHERE pc_unit.unit_business_id = :stockUnitBusinessId
-      AND pc_unit.sku = regexp_replace(COALESCE(pc.sku, oi.sku), 'K[0-9]+$', '', 'i')
+    SELECT kc.product_component_id, kc.quantity
+    FROM kit_components kc
+    WHERE kc.product_kit_id = COALESCE(oi.product_id, p.id)
     LIMIT 1
-  ) pc_unit_lookup ON (
-    regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i') IS NOT NULL
-  )
+  ) kc ON TRUE
 
   LEFT JOIN LATERAL (
     SELECT sm.resulting_average_cost
     FROM stock_movements sm
-    WHERE sm.product_id = COALESCE(pc_unit_lookup.product_id, oi.product_id, p.id)
+    WHERE sm.product_id = COALESCE(kc.product_component_id, oi.product_id, p.id)
       AND sm.unit_business_id = :stockUnitBusinessId
       AND sm.movement_date <= COALESCE(ord.date, ord.created_at)
     ORDER BY sm.movement_date DESC, sm.created_at DESC
