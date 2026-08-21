@@ -1,5 +1,7 @@
 import { customerAttributes } from "../../customers/customers.types";
 import { orderItemsAttributes } from "../order_items/order_items.types";
+import { SalesOrderSnapshotAttributes } from "../../../reports/daily-sales/sales-order-snapshot/sales-order-snapshot.types";
+import { SalesOrderItemSnapshotAttributes } from "../../../reports/daily-sales/sales-order-item-snapshot/sales-order-item-snapshot.types";
 
 export enum OrderInternalStatus {
   CANCELLED = "CANCELLED",
@@ -78,6 +80,47 @@ export interface orderAttributes {
 export interface FullOrder extends orderAttributes {
   customer: customerAttributes;
   items: orderItemsAttributes[];
+}
+
+// Retorno cru do repository: pedido + snapshot congelado (sales_order_snapshots
+// / sales_order_item_snapshots) gerado pelo job do relatório de vendas
+// (sales-report). Necessário porque orders/order_items podem ter sido
+// alterados desde a venda — o snapshot preserva os valores financeiros
+// (custo, comissão, ICMS calculado, contribution) do momento em que o
+// relatório foi processado.
+export interface OrderWithSalesSnapshotRaw extends orderAttributes {
+  customer?: customerAttributes | null;
+  salesSnapshot?:
+    | (SalesOrderSnapshotAttributes & {
+        items?: SalesOrderItemSnapshotAttributes[];
+      })
+    | null;
+}
+
+export interface OrderSalesReportDetail {
+  order: orderAttributes;
+  customer: customerAttributes | null;
+  // Preço bruto da venda (total_products do snapshot).
+  grossPrice: number;
+  // Lucro real da venda (contribution_value do snapshot).
+  profit: number;
+  // Margem de lucro da venda, em % (contribution_pct do snapshot).
+  profitMargin: number;
+  markupPct: number;
+  discount: number;
+  icms: number;
+  commission: number;
+  totalCost: number;
+  totalTaxes: number;
+  totalFees: number;
+  freightCost: number;
+  taxCommission: number;
+  marketplaceFee: number;
+  paymentFee: number;
+  // Snapshot completo (todos os campos gerados pelo relatório de vendas)
+  // e seus itens, para não perder nenhum dado já calculado no job.
+  snapshot: SalesOrderSnapshotAttributes;
+  items: SalesOrderItemSnapshotAttributes[];
 }
 
 export type orderCreationAttributes = Omit<

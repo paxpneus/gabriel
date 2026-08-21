@@ -14,6 +14,12 @@ class OrderController extends BaseController<Order, OrderService> {
       ...this.mw("releaseWaitingAcceptanceForToday"),
       this.releaseWaitingAcceptanceForToday,
     );
+
+    this.router.get(
+      `/:id/sales-report`,
+      ...this.mw("getOrderSalesReportDetail"),
+      this.getOrderSalesReportDetail,
+    );
   }
 
     protected middlewaresFor() {
@@ -25,9 +31,10 @@ class OrderController extends BaseController<Order, OrderService> {
           destroy: [authenticate, userPermissions],
 
           releaseWaitingAcceptanceForToday: [authenticate, userPermissions],
+          getOrderSalesReportDetail: [authenticate, userPermissions],
         };
       }
-  
+
 
   releaseWaitingAcceptanceForToday = async (
     req: Request,
@@ -51,6 +58,22 @@ class OrderController extends BaseController<Order, OrderService> {
       return res.status(500).json({
       error: error.message,
     });
+    }
+  };
+
+  getOrderSalesReportDetail = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const detail = await this.service.getOrderSalesReportDetail(
+        req.params.id as string,
+      );
+      return res.json(detail);
+    } catch (error: any) {
+      return res.status(404).json({
+        error: error.message,
+      });
     }
   };
 }
