@@ -1,6 +1,8 @@
 // sales report
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
+import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
+import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
   SalesFactKey,
   SalesProductFactKey,
@@ -1110,6 +1112,66 @@ FROM item_calc
         },
       },
     );
+
+    await this.applySupplierDiscounts(orderIds);
+  }
+
+  // ------------------------------------------------------------------
+  // Desconto de fornecedor — roda DEPOIS da query grande acima (que não é
+  // tocada). Coleta as chaves de matching dos itens recém-processados
+  // (resolvendo marca/aro/medida pelo produto COMPONENTE quando o item
+  // vendido é kit — quem tem marca/aro/medida real é o pneu, não o kit),
+  // pede pro motor de matching (supplierDiscountRuleService.resolveForItems)
+  // decompor em blocos/níveis por grupo (pedido + marca + aro + medida +
+  // loja), e grava o resultado em lote. Por fim, refaz o rollup do pedido
+  // via updateSnapshotTotals (já ciente do desconto, ver ali).
+  // ------------------------------------------------------------------
+  private async applySupplierDiscounts(orderIds: string[]): Promise<void> {
+    const resolveItems = await sequelize.query<SupplierDiscountResolveItemInput>(
+      `
+      SELECT s.order_item_id, s.order_id, cp.brand_id, cp.rim_id, cp.measure_id, s.unit_business_id, s.order_date,
+             s.quantity * COALESCE(kc.quantity, 1) AS real_quantity, s.gross_total
+      FROM sales_order_item_snapshots s
+      LEFT JOIN kit_components kc ON kc.product_kit_id = s.product_id
+      LEFT JOIN products cp ON cp.id = COALESCE(kc.product_component_id, s.product_id)
+      WHERE s.order_id = ANY(ARRAY[:orderIds]::uuid[])
+      `,
+      { type: QueryTypes.SELECT, replacements: { orderIds } },
+    );
+
+    const discounts = await supplierDiscountRuleService.resolveForItems(
+      resolveItems,
+    );
+    if (!discounts.size) return;
+
+    const orderItemIds = Array.from(discounts.keys());
+    const discountValues = orderItemIds.map(
+      (id) => discounts.get(id)!.discountValue,
+    );
+    const ruleIds = orderItemIds.map((id) => discounts.get(id)!.ruleId);
+
+    await sequelize.query(
+      `
+      UPDATE sales_order_item_snapshots sois
+      SET
+        supplier_discount_value = batch.discount_value,
+        supplier_discount_rule_id = batch.rule_id,
+        contribution_value = sois.contribution_value + batch.discount_value,
+        contribution_pct = ${calculatePercentageSql(
+          "sois.contribution_value + batch.discount_value",
+          "sois.net_total",
+        )}
+      FROM unnest(
+        ARRAY[:orderItemIds]::uuid[], ARRAY[:discountValues]::numeric[], ARRAY[:ruleIds]::uuid[]
+      ) AS batch(order_item_id, discount_value, rule_id)
+      WHERE sois.order_item_id = batch.order_item_id
+      `,
+      {
+        replacements: { orderItemIds, discountValues, ruleIds },
+      },
+    );
+
+    await this.updateSnapshotTotals(orderIds);
   }
 
   // ---------------------------------------------------------------------------
@@ -1598,6 +1660,11 @@ FROM item_calc
     if (!orderIds.length) return;
 
     const snapshotCostSql = "it.total_cost";
+    // Desconto de fornecedor entra como redutor de custo SÓ na fórmula de
+    // contribution — markup_pct continua usando o custo cheio (decisão
+    // fechada: desconto não mexe em receita/markup, só em contribution).
+    const contributionCostSql =
+      "(it.total_cost - it.total_supplier_discount)";
 
     await sequelize.query(
       `
@@ -1607,6 +1674,7 @@ FROM item_calc
         SUM(sois.quantity)                                           AS items_quantity,
         SUM(sois.total_cost_snapshot)                                AS total_cost,
         SUM(sois.commission_value)                                   AS total_commission,
+        SUM(sois.supplier_discount_value)                            AS total_supplier_discount,
         BOOL_OR(sois.cost_source IS DISTINCT FROM 'STOCK_AVERAGE')  AS has_cost_fallback
       FROM sales_order_item_snapshots sois
       WHERE sois.order_id IN (:orderIds)
@@ -1622,9 +1690,9 @@ FROM item_calc
 
       total_fees        = ${calculateTotalFeesSql("sos")},
 
-      contribution_value = ${calculateOrderContributionValueSql("sos", snapshotCostSql)},
+      contribution_value = ${calculateOrderContributionValueSql("sos", contributionCostSql)},
 
-      contribution_pct  = ${calculateOrderContributionPctSql("sos", snapshotCostSql)},
+      contribution_pct  = ${calculateOrderContributionPctSql("sos", contributionCostSql)},
 
       markup_pct = ${calculateMarkupSql("sos.total_products", snapshotCostSql).percent},
 
