@@ -39,6 +39,25 @@ export interface SupplierDiscountRuleInput {
   unit_business_ids?: string[];
 }
 
+// Forma devolvida por GET (show/index) — mesmo formato de SupplierDiscountRuleInput
+// pros 4 conjuntos de escopo, pra poder reenviar direto num PUT sem remapear
+// nada no front (fetch pro form de edição -> mesmo shape do submit).
+export interface SupplierDiscountRuleDetail {
+  id: string;
+  quantity_step: number;
+  discount_type: SupplierDiscountType;
+  discount_value: number;
+  start_date: Date;
+  end_date: Date;
+  active: boolean;
+  brand_ids: string[];
+  rim_ids: string[];
+  measure_ids: string[];
+  unit_business_ids: string[];
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+
 // Item de entrada de resolveForItems — chave de pool (order_id + escopo) e
 // os valores já resolvidos (quantidade real considerando kit, valor bruto).
 export interface SupplierDiscountResolveItemInput {
