@@ -1,5 +1,6 @@
 import { Transaction } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
+import { PaginatedResult, QueryParams } from "../../../shared/query/query.types";
 import SupplierDiscountRule from "./supplier-discount-rule.model";
 import supplierDiscountRuleRepository, {
   SupplierDiscountRuleRepository,
@@ -8,12 +9,60 @@ import supplierDiscountRuleBrandService from "../supplier-discount-rule-brands/s
 import supplierDiscountRuleRimService from "../supplier-discount-rule-rims/supplier-discount-rule-rim.service";
 import supplierDiscountRuleMeasureService from "../supplier-discount-rule-measures/supplier-discount-rule-measure.service";
 import supplierDiscountUnitBusinessService from "../supplier-discount-unit-businesses/supplier-discount-unit-business.service";
+import SupplierDiscountRuleBrand from "../supplier-discount-rule-brands/supplier-discount-rule-brand.model";
+import SupplierDiscountRuleRim from "../supplier-discount-rule-rims/supplier-discount-rule-rim.model";
+import SupplierDiscountRuleMeasure from "../supplier-discount-rule-measures/supplier-discount-rule-measure.model";
+import SupplierDiscountUnitBusiness from "../supplier-discount-unit-businesses/supplier-discount-unit-business.model";
 import {
   SupplierDiscountCandidateRow,
   SupplierDiscountResolveItemInput,
   SupplierDiscountResolveResult,
+  SupplierDiscountRuleDetail,
   SupplierDiscountRuleInput,
 } from "./supplier-discount-rule.types";
+
+// Include usado tanto por findById (show) quanto por paginate (index) — as
+// 4 pivôs, só a coluna do alvo (o resto do pivô — id/timestamps — não
+// interessa pro front).
+const SCOPE_INCLUDE = [
+  {
+    model: SupplierDiscountRuleBrand,
+    as: "ruleBrands",
+    attributes: ["brand_id"],
+  },
+  { model: SupplierDiscountRuleRim, as: "ruleRims", attributes: ["rim_id"] },
+  {
+    model: SupplierDiscountRuleMeasure,
+    as: "ruleMeasures",
+    attributes: ["measure_id"],
+  },
+  {
+    model: SupplierDiscountUnitBusiness,
+    as: "ruleUnitBusinesses",
+    attributes: ["unit_business_id"],
+  },
+];
+
+const toDetail = (rule: SupplierDiscountRule): SupplierDiscountRuleDetail => {
+  const json = rule.toJSON() as any;
+  return {
+    id: json.id,
+    quantity_step: json.quantity_step,
+    discount_type: json.discount_type,
+    discount_value: json.discount_value,
+    start_date: json.start_date,
+    end_date: json.end_date,
+    active: json.active,
+    brand_ids: (json.ruleBrands ?? []).map((r: any) => r.brand_id),
+    rim_ids: (json.ruleRims ?? []).map((r: any) => r.rim_id),
+    measure_ids: (json.ruleMeasures ?? []).map((r: any) => r.measure_id),
+    unit_business_ids: (json.ruleUnitBusinesses ?? []).map(
+      (r: any) => r.unit_business_id,
+    ),
+    createdAt: json.createdAt,
+    updatedAt: json.updatedAt,
+  };
+};
 
 const groupBy = <T, K extends string>(
   items: T[],
@@ -46,6 +95,30 @@ export class SupplierDiscountRuleService extends BaseService<
         sortDir: "DESC",
       },
     };
+  }
+
+  // Não sobrescrevem findById/paginate herdados (o retorno com escopo
+  // achatado não é estruturalmente compatível com o tipo base Model) — são
+  // métodos à parte, chamados pelo controller (index/show sobrescritos lá)
+  // pra sempre trazer o escopo (marca/aro/medida/loja) junto, já achatado
+  // em *_ids: o mesmo formato que create/update esperam, pra edição no
+  // front ser um fetch + reenvio direto do mesmo objeto, sem remapear nada.
+  async findDetailedById(id: string): Promise<SupplierDiscountRuleDetail | null> {
+    const rule = await this.repository.findById(id, {
+      include: SCOPE_INCLUDE,
+    });
+    return rule ? toDetail(rule) : null;
+  }
+
+  async paginateDetailed(
+    params: QueryParams,
+  ): Promise<PaginatedResult<SupplierDiscountRuleDetail>> {
+    const result = await this.repository.findPaginated(
+      params,
+      this.queryConfig,
+      { include: SCOPE_INCLUDE },
+    );
+    return { ...result, data: result.data.map(toDetail) };
   }
 
   async create(data: SupplierDiscountRuleInput): Promise<SupplierDiscountRule> {
@@ -91,7 +164,7 @@ export class SupplierDiscountRuleService extends BaseService<
 
     if (!unitBusinessIds.length) {
       throw new Error(
-        "supplier_discount_rules: unit_business_ids não pode ser vazio — loja não é um eixo curinga.",
+        "Erro: Ids das unidades de negócio não pode ser vazio — loja não é um eixo curinga.",
       );
     }
     if (
@@ -102,7 +175,7 @@ export class SupplierDiscountRuleService extends BaseService<
       !data.end_date
     ) {
       throw new Error(
-        "supplier_discount_rules: quantity_step, discount_type, discount_value, start_date e end_date são obrigatórios.",
+        "Erro: Quantidade de Pneus, Tipo do Desconto, Valor do Desconto, Data de Início e Data Final são obrigatórios.",
       );
     }
 
