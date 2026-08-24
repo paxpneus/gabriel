@@ -1303,6 +1303,23 @@ FROM item_calc
           NOT EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id)
           OR EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id AND x.measure_id = cp.measure_id)
         )
+
+      UNION
+
+      -- Regra APAGADA (não só desativada): a FK supplier_discount_rule_id
+      -- (ON DELETE SET NULL) já zera essa coluna sozinha quando a regra é
+      -- excluída, mas supplier_discount_value/contribution_value ficam
+      -- travados no valor antigo — a regra não existe mais em
+      -- supplier_discount_rules pra ter um updated_at pra comparar com
+      -- :since, então os dois blocos acima nunca pegam esse caso. Aqui não
+      -- dá pra filtrar por :since (não há timestamp de exclusão); a
+      -- condição em si (rule_id nulo + desconto ainda gravado) já é
+      -- suficiente pra achar só o resíduo órfão, e some sozinha assim que
+      -- applySupplierDiscounts zerar supplier_discount_value.
+      SELECT DISTINCT s.order_id
+      FROM sales_order_item_snapshots s
+      WHERE s.supplier_discount_rule_id IS NULL
+        AND s.supplier_discount_value <> 0
       `,
       { type: QueryTypes.SELECT, replacements: { since } },
     );

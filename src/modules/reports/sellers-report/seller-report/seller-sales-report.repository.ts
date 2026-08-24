@@ -762,6 +762,21 @@ WHERE o.seller_id IS NOT NULL
           NOT EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id)
           OR EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id AND x.measure_id = cp.measure_id)
         )
+
+      UNION
+
+      -- Regra APAGADA (não só desativada) — mesmo racional de
+      -- sales-report.repository.ts: a FK ON DELETE SET NULL já zera
+      -- supplier_discount_rule_id sozinha, mas supplier_discount_value/
+      -- contribution_value ficam travados no valor antigo, e como a regra
+      -- não existe mais não há updated_at pra comparar com :since. A
+      -- condição (rule_id nulo + desconto ainda gravado) já isola o
+      -- resíduo órfão e some sozinha assim que applySupplierDiscounts
+      -- zerar supplier_discount_value.
+      SELECT DISTINCT s.order_id
+      FROM seller_sales_order_item_snapshots s
+      WHERE s.supplier_discount_rule_id IS NULL
+        AND s.supplier_discount_value <> 0
       `,
       { type: QueryTypes.SELECT, replacements: { since } },
     );
