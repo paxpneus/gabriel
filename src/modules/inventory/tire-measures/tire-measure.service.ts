@@ -4,6 +4,7 @@ import TireMeasure from "./tire-measure.model";
 import tireMeasureRepository, {
   TireMeasureRepository,
 } from "./tire-measure.repository";
+import { stripRimFromMeasure } from "./helpers/normalize";
 
 export class TireMeasureService extends BaseService<
   TireMeasure,
@@ -28,8 +29,10 @@ export class TireMeasureService extends BaseService<
     value: string | null | undefined,
     options?: { transaction?: Transaction },
   ): Promise<TireMeasure | null> {
-    const normalized = value?.trim();
-    if (!normalized) return null;
+    const trimmed = value?.trim();
+    if (!trimmed) return null;
+
+    const normalized = stripRimFromMeasure(trimmed);
 
     return this.repository.upsertByFind(
       { value: normalized },

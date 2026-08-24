@@ -52,10 +52,14 @@ export class ProductService extends BaseService<Product, ProductRepository> {
           "$brandRegister.id$": value,
         }),
         rim: (value) => ({
-          "$rimRegister.value$": value,
+          "$rimRegister.value$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
         }),
         measure: (value) => ({
-          "$measureRegister.value$": value,
+          "$measureRegister.value$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
         }),
       },
     };

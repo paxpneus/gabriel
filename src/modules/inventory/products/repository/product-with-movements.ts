@@ -27,6 +27,8 @@ import {
   buildLastMovementRangeWhere,
   extractLastMovementDateFilter,
 } from "../helpers/product-movement-date";
+import Rim from "../../rims/rim.model";
+import TireMeasure from "../../tire-measures/tire-measure.model";
 
 export class ProductWithMovementsRepository extends BaseRepository<Product> {
   constructor(
@@ -212,6 +214,16 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
             required: false,
           },
           {
+            model: Rim,
+            as: "rimRegister",
+            required: false,
+          },
+          {
+            model: TireMeasure,
+            as: "measureRegister",
+            required: false,
+          },
+          {
             model: ProductConfig,
             as: "productConfigs",
             where: resolvedUnitBusinessId
@@ -328,6 +340,16 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
         {
           model: Brand,
           as: "brandRegister",
+          required: false,
+        },
+        {
+          model: Rim,
+          as: "rimRegister",
+          required: false,
+        },
+        {
+          model: TireMeasure,
+          as: "measureRegister",
           required: false,
         },
         {

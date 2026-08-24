@@ -22,6 +22,16 @@ export const productQueryConfig: QueryConfig = {
     brand_id: (value) => ({
       "$brandRegister.id$": value,
     }),
+    rim: (value) => ({
+      "$rimRegister.value$": Array.isArray(value)
+        ? { [Op.in]: value }
+        : value,
+    }),
+    measure: (value) => ({
+      "$measureRegister.value$": Array.isArray(value)
+        ? { [Op.in]: value }
+        : value,
+    }),
   },
 };
 

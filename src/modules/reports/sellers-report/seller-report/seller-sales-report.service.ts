@@ -12,6 +12,10 @@ export interface SellerSalesReportJobResult {
   startedAt: Date;
   lastProcessedAt: Date;
   ordersProcessed: number;
+  supplierDiscountRetro: {
+    candidateOrders: number;
+    ordersUpdated: number;
+  };
 }
 
 export class SellerSalesReportService {
@@ -70,16 +74,83 @@ export class SellerSalesReportService {
         orderIds.length,
       );
 
+      const supplierDiscountRetro =
+        await this.reapplySupplierDiscountsRetroactively();
+
       return {
         jobName: JOB_NAME,
         startedAt: jobStartTime,
         lastProcessedAt,
         ordersProcessed: orderIds.length,
+        supplierDiscountRetro,
       };
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       await sellerSalesReportRepository.markFailed(err);
       throw err;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Reprocessamento retroativo de supplier_discount_rules — mesma lógica de
+  // sales-report.service.ts (ver lá o racional completo). Roda DEPOIS do
+  // fluxo incremental normal, com checkpoint próprio, e em try/catch
+  // isolado: uma falha aqui não deve reverter o sucesso já confirmado do
+  // job principal.
+  // ------------------------------------------------------------------
+  private async reapplySupplierDiscountsRetroactively(): Promise<
+    SellerSalesReportJobResult["supplierDiscountRetro"]
+  > {
+    const scanStartTime = new Date();
+
+    try {
+      const since =
+        await sellerSalesReportRepository.getSupplierDiscountRetroCheckpoint();
+
+      const candidateOrderIds =
+        await sellerSalesReportRepository.findOrderIdsAffectedBySupplierDiscountRuleChanges(
+          since,
+        );
+
+      const changedOrderIds = candidateOrderIds.length
+        ? await sellerSalesReportRepository.reapplySupplierDiscountsForOrderIds(
+            candidateOrderIds,
+          )
+        : [];
+
+      if (changedOrderIds.length) {
+        const [productFactKeys, customerFactKeys] = await Promise.all([
+          sellerSalesReportRepository.findAffectedSellerProductFactKeys(
+            changedOrderIds,
+          ),
+          sellerSalesReportRepository.findAffectedSellerCustomerFactKeys(
+            changedOrderIds,
+          ),
+        ]);
+
+        await sellerSalesReportRepository.upsertDailySellerProductFacts(
+          this.uniqueProductFactKeys(productFactKeys),
+        );
+        await sellerSalesReportRepository.upsertDailySellerCustomerFacts(
+          this.uniqueCustomerFactKeys(customerFactKeys),
+        );
+      }
+
+      await sellerSalesReportRepository.markSupplierDiscountRetroCheckpointSuccess(
+        scanStartTime,
+        changedOrderIds.length,
+      );
+
+      return {
+        candidateOrders: candidateOrderIds.length,
+        ordersUpdated: changedOrderIds.length,
+      };
+    } catch (error) {
+      console.error(
+        "[SellerSalesReport] Reprocessamento retroativo de supplier_discount_rules falhou:",
+        error instanceof Error ? error.message : error,
+      );
+      return { candidateOrders: 0, ordersUpdated: 0 };
     }
   }
 
