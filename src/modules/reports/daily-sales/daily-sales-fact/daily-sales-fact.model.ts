@@ -29,6 +29,7 @@ class DailySalesFact
   public contribution_value?: number | string;
   public contribution_pct?: number | string;
   public markup_pct?: number | string;
+  public total_supplier_discount?: number | string;
 
   public last_updated_at?: Date;
   public readonly createdAt!: Date;
@@ -55,6 +56,10 @@ DailySalesFact.init(
     contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     contribution_pct:   { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
     markup_pct:         { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
+    total_supplier_discount: {
+      type: DataTypes.DECIMAL(14, 2),
+      defaultValue: 0,
+    },
     total_commission: {
       type: DataTypes.DECIMAL(14, 4),
       allowNull: true,

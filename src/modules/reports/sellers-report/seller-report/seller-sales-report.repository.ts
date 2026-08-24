@@ -1111,7 +1111,8 @@ async getReport(filters: SellerSalesReportFilters) {
         ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS average_markup_pct,
         COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
         ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS average_contribution_pct,
-        COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission
+        COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission,
+        COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount
       FROM report_rows s
       `,
       {
@@ -1136,7 +1137,8 @@ async getReport(filters: SellerSalesReportFilters) {
         SUM(s.net_total) AS sale_value,
         SUM(s.commission_value) AS commission_value,
         ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS markup_pct,
-        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct
+        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct,
+        COALESCE(SUM(s.supplier_discount_value), 0) AS supplier_discount_value
       FROM report_rows s
       GROUP BY s.product_id
       ORDER BY sale_value DESC
@@ -1195,7 +1197,8 @@ async getReport(filters: SellerSalesReportFilters) {
         COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
         ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS markup_pct,
         COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
-        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct
+        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct,
+        COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount
       FROM report_rows s
       LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
       GROUP BY s.unit_business_id
@@ -1225,7 +1228,8 @@ async getReport(filters: SellerSalesReportFilters) {
         COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
         ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS markup_pct,
         COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
-        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct
+        ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct,
+        COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount
       FROM report_rows s
       LEFT JOIN contacts ct ON ct.id = s.seller_id
       GROUP BY s.seller_id

@@ -55,6 +55,7 @@ export interface SalesOrderSnapshotAttributes {
   contribution_value?: number | string;
   contribution_pct?: number | string;
   markup_pct?: number | string;
+  total_supplier_discount?: number | string;
 
   has_cost_fallback?: boolean;
   has_invoice_data?: boolean;
