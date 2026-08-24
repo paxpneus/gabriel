@@ -11,6 +11,12 @@ import {
 } from "./seller-sales-report.types";
 
 const JOB_NAME = "seller_sales_report";
+// Checkpoint próprio (mesma tabela report_job_checkpoints, job_name distinto)
+// pro scan retroativo de supplier_discount_rules — independente do checkpoint
+// principal, que segue olhando só orders/order_items alterados. Mesma lógica
+// de sales-report.repository.ts.
+const SUPPLIER_DISCOUNT_RETRO_JOB_NAME =
+  "seller_sales_report_supplier_discount_retro";
 
 // Mesma unit_business "de custo" usada em sales_report — é onde os
 // stock_movements de referência (custo médio real) são resolvidos,
@@ -176,7 +182,44 @@ const calculateMarkupSql = (
 
 export class SellerSalesReportRepository {
   async getCheckpoint(): Promise<Date> {
-    await this.ensureCheckpoint();
+    return this.getCheckpointFor(JOB_NAME);
+  }
+
+  // Checkpoint independente do principal — marca até onde já escaneamos
+  // supplier_discount_rules alteradas pro reprocessamento retroativo.
+  async getSupplierDiscountRetroCheckpoint(): Promise<Date> {
+    return this.getCheckpointFor(SUPPLIER_DISCOUNT_RETRO_JOB_NAME);
+  }
+
+  async markSupplierDiscountRetroCheckpointSuccess(
+    scanStartTime: Date,
+    ordersReprocessed: number,
+  ): Promise<void> {
+    await this.ensureCheckpoint(SUPPLIER_DISCOUNT_RETRO_JOB_NAME);
+
+    await sequelize.query(
+      `
+      UPDATE report_job_checkpoints
+      SET last_processed_at = :scanStartTime,
+          last_run_at = NOW(),
+          status = 'success',
+          rows_processed = :ordersReprocessed,
+          metadata = NULL,
+          updated_at = NOW()
+      WHERE job_name = :jobName
+      `,
+      {
+        replacements: {
+          jobName: SUPPLIER_DISCOUNT_RETRO_JOB_NAME,
+          scanStartTime,
+          ordersReprocessed,
+        },
+      },
+    );
+  }
+
+  private async getCheckpointFor(jobName: string): Promise<Date> {
+    await this.ensureCheckpoint(jobName);
 
     const rows = await sequelize.query<CheckpointRow>(
       `
@@ -187,20 +230,18 @@ export class SellerSalesReportRepository {
       `,
       {
         type: QueryTypes.SELECT,
-        replacements: { jobName: JOB_NAME },
+        replacements: { jobName },
       },
     );
 
     if (!rows[0]) {
-      throw new Error(
-        "Não foi possível inicializar o checkpoint seller_sales_report.",
-      );
+      throw new Error(`Não foi possível inicializar o checkpoint ${jobName}.`);
     }
 
     return rows[0].last_processed_at;
   }
 
-  private async ensureCheckpoint(): Promise<void> {
+  private async ensureCheckpoint(jobName: string): Promise<void> {
     await sequelize.query(
       `
       INSERT INTO report_job_checkpoints (
@@ -223,7 +264,7 @@ export class SellerSalesReportRepository {
       )
       ON CONFLICT (job_name) DO NOTHING
       `,
-      { replacements: { jobName: JOB_NAME } },
+      { replacements: { jobName } },
     );
   }
 
@@ -583,6 +624,13 @@ WHERE o.seller_id IS NOT NULL
         manager_commission_value   = EXCLUDED.manager_commission_value,
         markup_value               = EXCLUDED.markup_value,
         markup_pct                 = EXCLUDED.markup_pct,
+        -- contribution_value volta pra base SEM desconto aqui (EXCLUDED não
+        -- carrega desconto nenhum). supplier_discount_value/rule_id têm que
+        -- ser zerados junto, senão ficam apontando pro desconto da rodada
+        -- ANTERIOR enquanto contribution_value já é a base nova — mesma
+        -- consistência exigida por applySupplierDiscounts em sales-report.
+        supplier_discount_value    = 0,
+        supplier_discount_rule_id  = NULL,
         contribution_value         = EXCLUDED.contribution_value,
         contribution_pct           = EXCLUDED.contribution_pct,
         is_valid_sale               = EXCLUDED.is_valid_sale,
@@ -608,8 +656,16 @@ WHERE o.seller_id IS NOT NULL
   // gross_total pra PERCENTUAL usa net_total — essa tabela não tem coluna de
   // valor bruto separada, net_total já é tratado como base de receita do
   // item no resto do arquivo.
+  //
+  // Idempotente de propósito (mesma razão de sales-report.repository.ts):
+  // contribution_value é recalculado removendo o supplier_discount_value
+  // ANTIGO e somando o novo, em vez de só somar o novo em cima do que já
+  // está lá — permite chamar este método mais de uma vez pro mesmo pedido
+  // (reprocessamento retroativo, fora do fluxo normal de upsertSnapshots)
+  // sem duplicar o desconto na contribuição. A cláusula IS DISTINCT FROM
+  // garante que só as linhas cujo desconto realmente mudou são escritas.
   // ------------------------------------------------------------------
-  private async applySupplierDiscounts(orderIds: string[]): Promise<void> {
+  private async applySupplierDiscounts(orderIds: string[]): Promise<string[]> {
     const resolveItems = await sequelize.query<SupplierDiscountResolveItemInput>(
       `
       SELECT s.order_item_id, s.order_id, cp.brand_id, cp.rim_id, cp.measure_id, s.unit_business_id, s.order_date,
@@ -625,7 +681,7 @@ WHERE o.seller_id IS NOT NULL
     const discounts = await supplierDiscountRuleService.resolveForItems(
       resolveItems,
     );
-    if (!discounts.size) return;
+    if (!discounts.size) return [];
 
     const orderItemIds = Array.from(discounts.keys());
     const discountValues = orderItemIds.map(
@@ -633,26 +689,94 @@ WHERE o.seller_id IS NOT NULL
     );
     const ruleIds = orderItemIds.map((id) => discounts.get(id)!.ruleId);
 
-    await sequelize.query(
+    const changedRows = await sequelize.query<OrderIdRow>(
       `
       UPDATE seller_sales_order_item_snapshots s
       SET
         supplier_discount_value = batch.discount_value,
         supplier_discount_rule_id = batch.rule_id,
-        contribution_value = s.contribution_value + batch.discount_value,
+        contribution_value = s.contribution_value
+          - COALESCE(s.supplier_discount_value, 0)
+          + batch.discount_value,
         contribution_pct = ${calculatePercentageSql(
-          "s.contribution_value + batch.discount_value",
+          "s.contribution_value - COALESCE(s.supplier_discount_value, 0) + batch.discount_value",
           "s.net_total",
         )}
       FROM unnest(
         ARRAY[:orderItemIds]::uuid[], ARRAY[:discountValues]::numeric[], ARRAY[:ruleIds]::uuid[]
       ) AS batch(order_item_id, discount_value, rule_id)
       WHERE s.order_item_id = batch.order_item_id
+        AND (
+          s.supplier_discount_value IS DISTINCT FROM batch.discount_value
+          OR s.supplier_discount_rule_id IS DISTINCT FROM batch.rule_id
+        )
+      RETURNING s.order_id
       `,
       {
+        type: QueryTypes.SELECT,
         replacements: { orderItemIds, discountValues, ruleIds },
       },
     );
+
+    return [...new Set(changedRows.map((row) => row.order_id))];
+  }
+
+  // ------------------------------------------------------------------
+  // Reprocessamento retroativo de supplier_discount_rules — mesma lógica de
+  // sales-report.repository.ts, adaptada pra tabela própria deste relatório
+  // (seller_sales_order_item_snapshots).
+  // ------------------------------------------------------------------
+  async findOrderIdsAffectedBySupplierDiscountRuleChanges(
+    since: Date,
+  ): Promise<string[]> {
+    const rows = await sequelize.query<OrderIdRow>(
+      `
+      SELECT DISTINCT s.order_id
+      FROM seller_sales_order_item_snapshots s
+      WHERE s.supplier_discount_rule_id IN (
+        SELECT id FROM supplier_discount_rules WHERE updated_at >= :since
+      )
+
+      UNION
+
+      SELECT DISTINCT s.order_id
+      FROM seller_sales_order_item_snapshots s
+      LEFT JOIN kit_components kc ON kc.product_kit_id = s.product_id
+      LEFT JOIN products cp ON cp.id = COALESCE(kc.product_component_id, s.product_id)
+      JOIN supplier_discount_rules r
+        ON r.updated_at >= :since
+        AND s.order_date BETWEEN r.start_date AND r.end_date
+        AND EXISTS (
+          SELECT 1 FROM supplier_discount_unit_businesses x
+          WHERE x.supplier_discount_rule_id = r.id AND x.unit_business_id = s.unit_business_id
+        )
+        AND (
+          NOT EXISTS (SELECT 1 FROM supplier_discount_rule_brands x WHERE x.supplier_discount_rule_id = r.id)
+          OR EXISTS (SELECT 1 FROM supplier_discount_rule_brands x WHERE x.supplier_discount_rule_id = r.id AND x.brand_id = cp.brand_id)
+        )
+        AND (
+          NOT EXISTS (SELECT 1 FROM supplier_discount_rule_rims x WHERE x.supplier_discount_rule_id = r.id)
+          OR EXISTS (SELECT 1 FROM supplier_discount_rule_rims x WHERE x.supplier_discount_rule_id = r.id AND x.rim_id = cp.rim_id)
+        )
+        AND (
+          NOT EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id)
+          OR EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id AND x.measure_id = cp.measure_id)
+        )
+      `,
+      { type: QueryTypes.SELECT, replacements: { since } },
+    );
+
+    return [...new Set(rows.map((row) => row.order_id))];
+  }
+
+  // Reaplica o motor de desconto de fornecedor num conjunto arbitrário de
+  // pedidos (fora do fluxo de upsertSnapshots) e devolve só os que tiveram
+  // algum item realmente alterado.
+  async reapplySupplierDiscountsForOrderIds(
+    orderIds: string[],
+  ): Promise<string[]> {
+    if (!orderIds.length) return [];
+    return this.applySupplierDiscounts(orderIds);
   }
 
   async findAffectedSellerProductFactKeys(
