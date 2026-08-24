@@ -69,6 +69,7 @@ class SalesOrderSnapshot
   public contribution_value?: number | string;
   public contribution_pct?: number | string;
   public markup_pct?: number | string;
+  public total_supplier_discount?: number | string;
 
   public has_cost_fallback?: boolean;
   public has_invoice_data?: boolean;
@@ -136,6 +137,10 @@ SalesOrderSnapshot.init(
     contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     contribution_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
     markup_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
+    total_supplier_discount: {
+      type: DataTypes.DECIMAL(14, 2),
+      defaultValue: 0,
+    },
 
     has_cost_fallback: { type: DataTypes.BOOLEAN, defaultValue: false },
     has_invoice_data: { type: DataTypes.BOOLEAN, defaultValue: false },

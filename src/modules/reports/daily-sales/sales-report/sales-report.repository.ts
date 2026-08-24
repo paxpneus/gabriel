@@ -1138,6 +1138,13 @@ FROM item_calc
         contribution_pct  = ${calculateOrderContributionPctSql("sos", snapshotCostSql)},
         markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
 
+        -- Neste ponto (upsert principal, ainda ANTES de applySupplierDiscounts)
+        -- todo item está com supplier_discount_value = 0, seja recém-inserido
+        -- ou resetado pelo ON CONFLICT de inserted_items. O valor real é
+        -- recalculado logo em seguida por applySupplierDiscounts ->
+        -- updateSnapshotTotals, que persiste o total de verdade.
+        total_supplier_discount = 0,
+
         -- snapshot_status recalculado com o custo JÁ resolvido (KIT incluído),
         -- não mais com o EXISTS ingênuo de order_source.
         snapshot_status = CASE
@@ -1426,7 +1433,8 @@ FROM item_calc
             COALESCE(SUM(total_taxes),       0) AS total_taxes,
             COALESCE(SUM(total_fees),        0) AS total_fees,
             COALESCE(SUM(total_commission),  0) AS total_commission,
-            COALESCE(SUM(contribution_value),0) AS contribution_value
+            COALESCE(SUM(contribution_value),0) AS contribution_value,
+            COALESCE(SUM(total_supplier_discount),0) AS total_supplier_discount
           FROM sales_order_snapshots
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
@@ -1437,7 +1445,7 @@ FROM item_calc
           orders_count, items_quantity,
           total_value, total_freight, average_freight, average_ticket,
           total_cost, total_taxes, total_fees, total_commission,
-          contribution_value, contribution_pct, markup_pct,
+          contribution_value, contribution_pct, markup_pct, total_supplier_discount,
           last_updated_at, created_at, updated_at
         )
         SELECT
@@ -1450,6 +1458,7 @@ FROM item_calc
           contribution_value,
           ${calculatePercentageSql("contribution_value", "total_value")},
           ${calculateMarkupSql("total_value", "total_cost").percent},
+          total_supplier_discount,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id) DO UPDATE SET
@@ -1466,6 +1475,7 @@ FROM item_calc
           contribution_value = EXCLUDED.contribution_value,
           contribution_pct   = EXCLUDED.contribution_pct,
           markup_pct         = EXCLUDED.markup_pct,
+          total_supplier_discount = EXCLUDED.total_supplier_discount,
           last_updated_at    = NOW(),
           updated_at         = NOW()
         `,
@@ -1553,7 +1563,8 @@ FROM item_calc
             COALESCE(SUM(total_taxes),     0) AS total_taxes,
             COALESCE(SUM(total_fees),      0) AS total_fees,
             COALESCE(SUM(total_commission),0) AS total_commission,
-            COALESCE(SUM(contribution_value),0) AS contribution_value
+            COALESCE(SUM(contribution_value),0) AS contribution_value,
+            COALESCE(SUM(total_supplier_discount),0) AS total_supplier_discount
           FROM sales_order_snapshots
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
@@ -1565,6 +1576,7 @@ FROM item_calc
           orders_count, items_quantity, total_value, total_freight,
           average_ticket, total_cost, piece_average_value, markup_pct,
           total_taxes, total_fees, total_commission, contribution_value, contribution_pct,
+          total_supplier_discount,
           last_updated_at, created_at, updated_at
         )
         SELECT
@@ -1576,6 +1588,7 @@ FROM item_calc
           ${calculateMarkupSql("total_value", "total_cost").percent},
           total_taxes, total_fees, total_commission, contribution_value,
           ${calculatePercentageSql("contribution_value", "total_value")},
+          total_supplier_discount,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, store_id) DO UPDATE SET
@@ -1592,6 +1605,7 @@ FROM item_calc
           total_commission    = EXCLUDED.total_commission,
           contribution_value  = EXCLUDED.contribution_value,
           contribution_pct    = EXCLUDED.contribution_pct,
+          total_supplier_discount = EXCLUDED.total_supplier_discount,
           last_updated_at     = NOW(),
           updated_at          = NOW()
         `,
@@ -1625,7 +1639,8 @@ FROM item_calc
             -- gross_total = quantidade * oi.unit_price, já bruto, sem rateio
             -- do pedido e sem desconto — consistente com a regra de receita
             -- bruta.
-            COALESCE(SUM(gross_total),        0) AS total_value
+            COALESCE(SUM(gross_total),        0) AS total_value,
+            COALESCE(SUM(supplier_discount_value), 0) AS total_supplier_discount
           FROM sales_order_item_snapshots sois
           JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
   WHERE sois.order_date       = CAST(:factDate AS date)
@@ -1636,12 +1651,14 @@ FROM item_calc
         INSERT INTO daily_sales_product_facts (
           fact_date, unit_business_id, product_id, sku, description,
           quantity, total_cost, total_commission, total_value, markup_pct,
+          total_supplier_discount,
           last_updated_at, created_at, updated_at
         )
         SELECT
           fact_date, unit_business_id, product_id, sku, description,
           quantity, total_cost, total_commission, total_value,
           ${calculateMarkupSql("total_value", "total_cost").percent},
+          total_supplier_discount,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, sku) DO UPDATE SET
@@ -1652,6 +1669,7 @@ FROM item_calc
           total_commission = EXCLUDED.total_commission,
           total_value      = EXCLUDED.total_value,
           markup_pct       = EXCLUDED.markup_pct,
+          total_supplier_discount = EXCLUDED.total_supplier_discount,
           last_updated_at  = NOW(),
           updated_at       = NOW()
         `,
@@ -1826,6 +1844,7 @@ FROM item_calc
       items_quantity    = COALESCE(it.items_quantity, 0),
       total_cost        = COALESCE(it.total_cost, 0),
       total_commission  = COALESCE(it.total_commission, 0),
+      total_supplier_discount = COALESCE(it.total_supplier_discount, 0),
 
       total_taxes       = ${calculateTotalTaxesSql("sos")},
 
@@ -1892,6 +1911,7 @@ FROM item_calc
       sois.freight_cost_allocated,
       sois.computed_icms_value_allocated,
       sois.contribution_value,
+      sois.supplier_discount_value,
       sos.status_snapshot,
       sos.store_id
     FROM sales_order_item_snapshots sois
@@ -1936,7 +1956,8 @@ FROM item_calc
       COALESCE(SUM(contribution_value), 0) AS contribution_value,
       ${calculatePercentageSql("SUM(contribution_value)", "SUM(net_total)")} AS contribution_pct,
       ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").decimal} AS markup_decimal,
-      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct
+      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct,
+      COALESCE(SUM(supplier_discount_value), 0) AS total_supplier_discount
     FROM product_filtered_rows
     `,
       { type: QueryTypes.SELECT, replacements },
@@ -1974,7 +1995,8 @@ FROM item_calc
       COALESCE(SUM(commission_value), 0) AS total_commission,
       COALESCE(SUM(net_total), 0) AS total_value,
       ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").decimal} AS markup_decimal,
-      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct
+      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct,
+      COALESCE(SUM(supplier_discount_value), 0) AS total_supplier_discount
     FROM product_filtered_rows
     GROUP BY product_id, sku
     ORDER BY quantity DESC
@@ -2001,7 +2023,8 @@ FROM item_calc
       COALESCE(SUM(pfr.tax_commission_allocated), 0) AS total_fees,
       COALESCE(SUM(pfr.commission_value), 0) AS total_commission,
       COALESCE(SUM(pfr.contribution_value), 0) AS contribution_value,
-      ${calculatePercentageSql("SUM(pfr.contribution_value)", "SUM(pfr.net_total)")} AS contribution_pct
+      ${calculatePercentageSql("SUM(pfr.contribution_value)", "SUM(pfr.net_total)")} AS contribution_pct,
+      COALESCE(SUM(pfr.supplier_discount_value), 0) AS total_supplier_discount
     FROM product_filtered_rows pfr
     LEFT JOIN unit_businesses ub ON ub.id = pfr.unit_business_id
     GROUP BY pfr.unit_business_id, ub.name
@@ -2068,7 +2091,8 @@ FROM item_calc
         COALESCE(SUM(contribution_value),0) AS contribution_value,
         ${calculatePercentageSql("SUM(contribution_value)", "SUM(total_value)")} AS contribution_pct,
         ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
-        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct,
+        COALESCE(SUM(total_supplier_discount), 0) AS total_supplier_discount
       FROM daily_sales_facts
       WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
         AND ${unitFilter}
@@ -2107,7 +2131,8 @@ FROM item_calc
         COALESCE(SUM(total_commission), 0) AS total_commission,
         COALESCE(SUM(total_value),0) AS total_value,
         ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
-        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct,
+        COALESCE(SUM(total_supplier_discount), 0) AS total_supplier_discount
       FROM daily_sales_product_facts
       WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
         AND ${unitFilter}
@@ -2137,7 +2162,8 @@ FROM item_calc
         COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
         COALESCE(SUM(dsf.total_commission),   0) AS total_commission,
         COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
-        ${calculatePercentageSql("SUM(dsf.contribution_value)", "SUM(dsf.total_value)")} AS contribution_pct
+        ${calculatePercentageSql("SUM(dsf.contribution_value)", "SUM(dsf.total_value)")} AS contribution_pct,
+        COALESCE(SUM(dsf.total_supplier_discount), 0) AS total_supplier_discount
       FROM daily_sales_facts dsf
       LEFT JOIN unit_businesses ub ON ub.id = dsf.unit_business_id
       WHERE dsf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
