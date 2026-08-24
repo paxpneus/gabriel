@@ -44,6 +44,7 @@ import Subgroup from "../../../inventory/groups/subgroup/subgroup.model";
 import { GroupType } from "../../../inventory/groups/group/group.types";
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
 import { IntegrationMappingCreationAttributes } from "../../../integrations/integration-mapping/integration-mapping.types";
+import productService from "../../../inventory/products/services/product.service";
 
 function normalizeTCarDescription(value?: string | null): string {
   return String(value ?? "")
@@ -316,8 +317,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       );
     }
 
-    const [upsertedProduct] = await Product.upsert(
-      {
+    const upsertedProduct = await productService.upsertWithComponents({
+      id: product?.id,
+      conflictFields: ["id_system"],
+      values: {
         id_system: systemId,
         name: data.epctb_nome?.trim() ?? "",
         ean,
@@ -333,8 +336,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         integrations_id: integrations.id,
         source_payload: data as unknown as Record<string, unknown>,
       },
-      { conflictFields: ["id_system"] },
-    );
+    });
     product = upsertedProduct;
     console.log(`${logPrefix} — produto upsertado: id=${product.id}`);
 

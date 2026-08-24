@@ -43,6 +43,9 @@ import {
   decryptXml,
   isEncrypted,
 } from "../../../../../shared/utils/xml/xml-cipher";
+import Brand from "../../../../inventory/brands/brands.model";
+import Rim from "../../../../inventory/rims/rim.model";
+import TireMeasure from "../../../../inventory/tire-measures/tire-measure.model";
 
 const default_seller = "5ff76374-4d67-4ef3-a566-349a015f86b1";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
@@ -524,8 +527,25 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
               {
                 model: Product,
                 as: "product",
-                attributes: ["measure", "line", "brand", "rim"],
+                attributes: ["line"],
                 required: true,
+                include: [
+                  {
+                    model: Brand,
+                    as: "brandRegister",
+                    required: false,
+                  },
+                  {
+                    model: Rim,
+                    as: "rimRegister",
+                    required: false,
+                  },
+                  {
+                    model: TireMeasure,
+                    as: "measureRegister",
+                    required: false,
+                  },
+                ],
               },
             ],
           },
@@ -552,7 +572,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       } | null;
       customer: {
         name: string | null;
-        city: string | null
+        city: string | null;
       };
       date: Date | null;
       measure: string | null;
@@ -581,14 +601,14 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             : default_seller_body,
           customer: {
             name: invoice.receiver_name ?? null,
-            city: invoice.destination_city ?? null
+            city: invoice.destination_city ?? null,
           },
           date: invoice.emitted_at ?? null,
-          measure: item.product?.measure ?? null,
-          rim: item.product?.rim ?? null,
+          measure: item.product?.measureRegister?.value ?? null,
+          rim: item.product?.rimRegister?.value ?? null,
           quantity: item.quantity_expected,
           line: item.product?.line ?? null,
-          brand: item.product?.brand ?? null,
+          brand: item.product?.brandRegister?.name ?? null,
           value: invoice.invoice_value ?? null,
         });
       }

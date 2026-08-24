@@ -78,9 +78,16 @@ export class QueryParser {
     if (params.filters) {
       for (const [field, value] of Object.entries(params.filters)) {
         if (config.customFields?.[field]) {
-          if (value && !(Array.isArray(value) && value.length === 0)) {
+          const cleanedValue = Array.isArray(value)
+            ? value.filter((v) => v !== undefined && v !== null && v !== "")
+            : value;
+
+          if (
+            cleanedValue &&
+            !(Array.isArray(cleanedValue) && cleanedValue.length === 0)
+          ) {
             const resolved = config.customFields[field](
-              value as string | string[],
+              cleanedValue as string | string[],
             );
             Object.assign(where, resolved);
           }

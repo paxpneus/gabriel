@@ -65,6 +65,14 @@ import Label from "../modules/inventory/labels/labels.model";
 import SellerSalesOrderItemSnapshot from "../modules/reports/sellers-report/models/seller-sales-order-item-snapshot/seller-sales-order-item-snapshot.model";
 import Group from "../modules/inventory/groups/group/group.model";
 import Subgroup from "../modules/inventory/groups/subgroup/subgroup.model";
+import KitComponent from "../modules/inventory/kit-components/kit-component.model";
+import Rim from "../modules/inventory/rims/rim.model";
+import TireMeasure from "../modules/inventory/tire-measures/tire-measure.model";
+import SupplierDiscountRule from "../modules/inventory/supplier-discount-rules/supplier-discount-rule.model";
+import SupplierDiscountRuleBrand from "../modules/inventory/supplier-discount-rule-brands/supplier-discount-rule-brand.model";
+import SupplierDiscountRuleRim from "../modules/inventory/supplier-discount-rule-rims/supplier-discount-rule-rim.model";
+import SupplierDiscountRuleMeasure from "../modules/inventory/supplier-discount-rule-measures/supplier-discount-rule-measure.model";
+import SupplierDiscountUnitBusiness from "../modules/inventory/supplier-discount-unit-businesses/supplier-discount-unit-business.model";
 import InventorySubgroup from "../modules/inventory/stock-inventory/inventory-subgroups/inventory-subgroups.model";
 import Event from "../modules/company/events/event/event.model";
 import UserEvent from "../modules/company/events/users-event/users-event.model";
@@ -356,6 +364,98 @@ export function setupAssociations() {
 
   Brand.hasMany(Product, { foreignKey: "brand_id", as: "products" });
   Product.belongsTo(Brand, { foreignKey: "brand_id", as: "brandRegister" });
+
+  Rim.hasMany(Product, { foreignKey: "rim_id", as: "products" });
+  Product.belongsTo(Rim, { foreignKey: "rim_id", as: "rimRegister" });
+
+  TireMeasure.hasMany(Product, { foreignKey: "measure_id", as: "products" });
+  Product.belongsTo(TireMeasure, {
+    foreignKey: "measure_id",
+    as: "measureRegister",
+  });
+
+  Product.hasMany(KitComponent, {
+    foreignKey: "product_kit_id",
+    as: "kitComponents",
+  });
+  KitComponent.belongsTo(Product, {
+    foreignKey: "product_kit_id",
+    as: "kitProduct",
+  });
+
+  Product.hasMany(KitComponent, {
+    foreignKey: "product_component_id",
+    as: "usedInKits",
+  });
+  KitComponent.belongsTo(Product, {
+    foreignKey: "product_component_id",
+    as: "componentProduct",
+  });
+
+  SupplierDiscountRule.hasMany(SupplierDiscountRuleBrand, {
+    foreignKey: "supplier_discount_rule_id",
+    as: "ruleBrands",
+  });
+  SupplierDiscountRuleBrand.belongsTo(SupplierDiscountRule, {
+    foreignKey: "supplier_discount_rule_id",
+    as: "rule",
+  });
+  Brand.hasMany(SupplierDiscountRuleBrand, {
+    foreignKey: "brand_id",
+    as: "supplierDiscountRuleBrands",
+  });
+  SupplierDiscountRuleBrand.belongsTo(Brand, {
+    foreignKey: "brand_id",
+    as: "brand",
+  });
+
+  SupplierDiscountRule.hasMany(SupplierDiscountRuleRim, {
+    foreignKey: "supplier_discount_rule_id",
+    as: "ruleRims",
+  });
+  SupplierDiscountRuleRim.belongsTo(SupplierDiscountRule, {
+    foreignKey: "supplier_discount_rule_id",
+    as: "rule",
+  });
+  Rim.hasMany(SupplierDiscountRuleRim, {
+    foreignKey: "rim_id",
+    as: "supplierDiscountRuleRims",
+  });
+  SupplierDiscountRuleRim.belongsTo(Rim, { foreignKey: "rim_id", as: "rim" });
+
+  SupplierDiscountRule.hasMany(SupplierDiscountRuleMeasure, {
+    foreignKey: "supplier_discount_rule_id",
+    as: "ruleMeasures",
+  });
+  SupplierDiscountRuleMeasure.belongsTo(SupplierDiscountRule, {
+    foreignKey: "supplier_discount_rule_id",
+    as: "rule",
+  });
+  TireMeasure.hasMany(SupplierDiscountRuleMeasure, {
+    foreignKey: "measure_id",
+    as: "supplierDiscountRuleMeasures",
+  });
+  SupplierDiscountRuleMeasure.belongsTo(TireMeasure, {
+    foreignKey: "measure_id",
+    as: "measure",
+  });
+
+  SupplierDiscountRule.hasMany(SupplierDiscountUnitBusiness, {
+    foreignKey: "supplier_discount_rule_id",
+    as: "ruleUnitBusinesses",
+  });
+  SupplierDiscountUnitBusiness.belongsTo(SupplierDiscountRule, {
+    foreignKey: "supplier_discount_rule_id",
+    as: "rule",
+  });
+  UnitBusiness.hasMany(SupplierDiscountUnitBusiness, {
+    foreignKey: "unit_business_id",
+    as: "supplierDiscountUnitBusinesses",
+  });
+  SupplierDiscountUnitBusiness.belongsTo(UnitBusiness, {
+    foreignKey: "unit_business_id",
+    as: "unitBusiness",
+  });
 
   Group.hasMany(Subgroup, { foreignKey: "group_id", as: "subgroups" });
   Subgroup.belongsTo(Group, { foreignKey: "group_id", as: "group" });

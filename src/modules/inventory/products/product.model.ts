@@ -2,6 +2,9 @@ import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../config/sequelize";
 import { ProductAttributes, ProductCreationAttributes } from "./product.types";
 import { v4 as uuidv4 } from "uuid";
+import Brand from "../brands/brands.model";
+import Rim from "../rims/rim.model";
+import TireMeasure from "../tire-measures/tire-measure.model";
 
 class Product
   extends Model<ProductAttributes, ProductCreationAttributes>
@@ -27,7 +30,12 @@ class Product
   public line?: string;
   public measure?: string;
   public rim?: string | null;
+  public measure_id?: string | null;
+  public rim_id?: string | null;
   public subgroup_id?: string;
+  public brandRegister?: Brand
+  public rimRegister?: Rim
+  public measureRegister?: TireMeasure
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -77,6 +85,20 @@ Product.init(
     line: { type: DataTypes.STRING(100), allowNull: true },
     measure: { type: DataTypes.STRING(50), allowNull: true },
     rim: { type: DataTypes.STRING(5), allowNull: true },
+    measure_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "tire_measures", key: "id" },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
+    },
+    rim_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "rims", key: "id" },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
+    },
     gross_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     net_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     stock_virtual_total: { type: DataTypes.DECIMAL(14, 4), allowNull: true },

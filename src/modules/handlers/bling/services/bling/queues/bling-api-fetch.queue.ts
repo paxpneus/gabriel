@@ -60,6 +60,7 @@ import InventoryBatchItems from "../../../../../inventory/stock-inventory/invent
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import sequelize from "../../../../../../config/sequelize";
 import { blingGet } from "../helpers/get-with-sleep";
+import productService from "../../../../../inventory/products/services/product.service";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -668,10 +669,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     );
   }
 
-  private async resolveKitComponentSku(
+  private async resolveKitComponent(
     componentBlingId: number,
     logPrefix: string,
-  ): Promise<string | null> {
+  ): Promise<{ sku: string | null; productId: string | null }> {
     const localProduct = await Product.findOne({
       where: { id_system: String(componentBlingId) },
     });
@@ -683,7 +684,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           unit_business_id: BLING_UNIT_BUSINESS_ID,
         },
       });
-      if (localConfig?.sku) return localConfig.sku;
+      return { sku: localConfig?.sku ?? null, productId: localProduct.id };
     }
 
     try {
@@ -691,12 +692,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         `/produtos/${componentBlingId}`,
         blingApi,
       );
-      return data.data?.codigo ?? null;
+      return { sku: data.data?.codigo ?? null, productId: null };
     } catch (error: any) {
       console.warn(
         `${logPrefix} Não foi possível resolver componente do KIT | componentBlingId=${componentBlingId} | erro=${error.response?.data ?? error.message}`,
       );
-      return null;
+      return { sku: null, productId: null };
     }
   }
 
@@ -1054,21 +1055,37 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const isKit = blingProduct.formato === "E";
 
     let configSku = blingProduct.codigo;
+    let kitComponentsForUpsert:
+      | Array<{ product_component_id: string; quantity: number }>
+      | undefined = undefined;
 
     if (isKit) {
       const component = blingProduct.estrutura?.componentes?.[0];
 
       if (component?.produto?.id) {
-        const componentSku = await this.resolveKitComponentSku(
+        const resolvedComponent = await this.resolveKitComponent(
           component.produto.id,
           "[BLING_API_FETCH]",
         );
 
-        if (componentSku) {
-          configSku = `${componentSku}K${component.quantidade}`;
+        if (resolvedComponent.sku) {
+          configSku = `${resolvedComponent.sku}K${component.quantidade}`;
         } else {
           console.warn(
             `[BLING_API_FETCH] KIT ${blingProduct.codigo} sem SKU de componente resolvível (componentBlingId=${component.produto.id}). Mantendo codigo original: ${blingProduct.codigo}`,
+          );
+        }
+
+        if (resolvedComponent.productId) {
+          kitComponentsForUpsert = [
+            {
+              product_component_id: resolvedComponent.productId,
+              quantity: component.quantidade,
+            },
+          ];
+        } else {
+          console.warn(
+            `[BLING_API_FETCH] KIT ${blingProduct.codigo} — componente (componentBlingId=${component.produto.id}) ainda não existe localmente. kit_components não sincronizado nesta rodada.`,
           );
         }
       } else {
@@ -1141,18 +1158,19 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     try {
       await sequelize.transaction(async (transaction) => {
-        if (existingProduct) {
-          // ─── Produto já mapeado (por qualquer ERP) — UPDATE na linha certa ──
-          await existingProduct.update(productValues, { transaction });
-          product = existingProduct;
+        product = await productService.upsertWithComponents({
+          id: existingProduct?.id,
+          values: productValues,
+          components: kitComponentsForUpsert,
+          transaction,
+        });
 
+        if (existingProduct) {
           console.log(
             `${logPrefix} — produto atualizado via integration mapping (id=${product.id})`,
           );
         } else {
-          // ─── Produto novo de verdade — CREATE + garante o mapping ──────────
-          product = await Product.create(productValues, { transaction });
-
+          // ─── Produto novo de verdade — garante o mapping ────────────────────
           await integrationMappingService.createOrUpdateIntegrationMapping(
             {
               entity_type: "PRODUCT",

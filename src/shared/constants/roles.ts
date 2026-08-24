@@ -25,6 +25,7 @@ type Scopes =
   | 'Operações'
   | 'Demandas'
   | 'Setores'
+  | 'Descontos de Fornecedor'
 
 interface ChildEntity {
   entity: string
@@ -99,7 +100,17 @@ export const ROLE_PERMISSIONS: Roles[] = [
       { entity: 'supplier_mappings',    label: 'Mapeamento de Fornecedores' },
       { entity: 'integration_mappings', label: 'Mapeamento de Integração' },
       { entity: 'unmapped_invoice_products', label: 'Produtos Não Mapeados' },
+      { entity: 'kit_components', label: 'Composição de Kits' },
+      { entity: 'rims', label: 'Aros' },
+      { entity: 'tire_measures', label: 'Medidas de Pneu' },
     ],
+  },
+  {
+    scope: 'Descontos de Fornecedor',
+    entity: 'supplier_discount_rules',
+    route: 'supplier-discount-rules',
+    permissions: all,
+    type: 'REGULAR',
   },
   {
     scope: 'Estoque',

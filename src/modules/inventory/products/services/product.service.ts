@@ -21,6 +21,10 @@ import {
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
 import productWithMovementsRepository from '../repository/product-with-movements'
+import KitComponent from "../../kit-components/kit-component.model";
+import kitComponentService from "../../kit-components/kit-component.service";
+import rimService from "../../rims/rim.service";
+import tireMeasureService from "../../tire-measures/tire-measure.service";
 
 export class ProductService extends BaseService<Product, ProductRepository> {
   constructor() {
@@ -46,7 +50,17 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         }),
         brand_id: (value) => ({
           "$brandRegister.id$": value,
-        }),    
+        }),
+        rim: (value) => ({
+          "$rimRegister.value$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
+        }),
+        measure: (value) => ({
+          "$measureRegister.value$": Array.isArray(value)
+            ? { [Op.in]: value }
+            : value,
+        }),
       },
     };
   }
@@ -213,6 +227,85 @@ export class ProductService extends BaseService<Product, ProductRepository> {
       }
       throw err;
     }
+  }
+
+  // ─── Upsert centralizado de produto + composição de kit ────────────────────
+  // Usado pelas integrações (Bling, Tecinco) na ingestão de produtos, pra não
+  // duplicar create/update de Product e sync de kit_components em cada uma.
+  async upsertWithComponents(params: {
+    id?: string;
+    conflictFields?: string[];
+    values: Partial<ProductCreationAttributes>;
+    components?: Array<{ product_component_id: string; quantity: number }>;
+    transaction?: Transaction;
+  }): Promise<Product> {
+    const sequelize = Product.sequelize!;
+    const ownTransaction = !params.transaction;
+    const transaction = params.transaction ?? (await sequelize.transaction());
+
+    try {
+      let product: Product;
+      const values: Partial<ProductCreationAttributes> = { ...params.values };
+
+      if (values.rim !== undefined) {
+        const rim = await rimService.findOrCreate(values.rim as string | null, {
+          transaction,
+        });
+        values.rim_id = rim?.id ?? null;
+      }
+      if (values.measure !== undefined) {
+        const measure = await tireMeasureService.findOrCreate(
+          values.measure as string | null,
+          { transaction },
+        );
+        values.measure_id = measure?.id ?? null;
+      }
+
+      if (params.id) {
+        const updated = await this.repository.update(params.id, values, {
+          transaction,
+        });
+        if (!updated) {
+          throw new Error(
+            `ProductService.upsertWithComponents: produto id=${params.id} não encontrado`,
+          );
+        }
+        product = updated;
+      } else if (params.conflictFields?.length) {
+        product = await this.repository.upsertByConflictFields(
+          values,
+          params.conflictFields,
+          { transaction },
+        );
+      } else {
+        product = await this.repository.create(values, { transaction });
+      }
+
+      if (params.components !== undefined) {
+        await kitComponentService.syncForKit(product.id, params.components, {
+          transaction,
+        });
+      }
+
+      if (ownTransaction) {
+        await transaction.commit();
+      }
+
+      return (
+        (await this.repository.findById(product.id, {
+          include: [{ model: KitComponent, as: "kitComponents" }],
+        })) ?? product
+      );
+    } catch (err) {
+      if (ownTransaction) {
+        await transaction.rollback();
+      }
+      throw err;
+    }
+  }
+
+  async getKitComponents(productKitId: string): Promise<KitComponent[]> {
+    return kitComponentService.findAll({ where: { product_kit_id: productKitId } });
   }
 
   async productReport(

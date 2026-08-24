@@ -20,6 +20,10 @@ export interface SalesReportJobResult {
   startedAt: Date;
   lastProcessedAt: Date;
   ordersProcessed: number;
+  supplierDiscountRetro: {
+    candidateOrders: number;
+    ordersUpdated: number;
+  };
 }
 
 export interface SalesFactKey {

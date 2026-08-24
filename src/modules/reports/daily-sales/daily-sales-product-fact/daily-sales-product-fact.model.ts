@@ -24,6 +24,7 @@ class DailySalesProductFact
   public total_value?: number | string;
   public markup_pct?: number | string;
   public total_commission?: number | string;
+  public total_supplier_discount?: number | string;
   public last_updated_at?: Date;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -44,6 +45,10 @@ DailySalesProductFact.init(
     total_commission: {
       type: DataTypes.DECIMAL(14, 4),
       allowNull: true,
+    },
+    total_supplier_discount: {
+      type: DataTypes.DECIMAL(14, 2),
+      defaultValue: 0,
     },
     last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },

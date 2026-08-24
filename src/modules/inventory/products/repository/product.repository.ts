@@ -1,4 +1,4 @@
-import { FindOptions } from "sequelize";
+import { FindOptions, FindAndCountOptions, Transaction } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import {
   QueryConfig,
@@ -9,6 +9,9 @@ import Product from "../product.model";
 import Stock from "../../stock/stock/stock.model";
 import ProductConfig from "../../product-config/product_config.model";
 import Brand from "../../brands/brands.model";
+import Rim from "../../rims/rim.model";
+import TireMeasure from "../../tire-measures/tire-measure.model";
+import { ProductCreationAttributes } from "../product.types";
 
 import { extractStockFilter } from "../product.query-config";
 
@@ -47,7 +50,6 @@ export class ProductRepository extends BaseRepository<Product> {
     });
   }
 
-
   /**
    * Listagem simples: stock (com filtro de saldo/unit_business), brand e
    * productConfigs (filtrado por unit_business quando informado).
@@ -55,7 +57,10 @@ export class ProductRepository extends BaseRepository<Product> {
   async paginateWithStock(
     params: QueryParams,
     queryConfig: QueryConfig,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    extraOptions?: Omit<
+      FindAndCountOptions,
+      "where" | "limit" | "offset" | "order"
+    >,
   ): Promise<PaginatedResult<Product>> {
     const { stockFilter, stockWhere, paramsWithoutStockFilter } =
       extractStockFilter(params);
@@ -63,6 +68,7 @@ export class ProductRepository extends BaseRepository<Product> {
     return this.findPaginated(paramsWithoutStockFilter, queryConfig, {
       ...extraOptions,
       subQuery: false,
+      distinct: true,
       attributes: { exclude: ["source_payload"] },
       include: [
         {
@@ -78,6 +84,16 @@ export class ProductRepository extends BaseRepository<Product> {
           required: false,
         },
         {
+          model: Rim,
+          as: "rimRegister",
+          required: false,
+        },
+        {
+          model: TireMeasure,
+          as: "measureRegister",
+          required: false,
+        },
+        {
           model: ProductConfig,
           as: "productConfigs",
           where: stockFilter?.unitBusinessId
@@ -89,6 +105,17 @@ export class ProductRepository extends BaseRepository<Product> {
     });
   }
 
+  async upsertByConflictFields(
+    values: Partial<ProductCreationAttributes>,
+    conflictFields: string[],
+    options?: { transaction?: Transaction },
+  ): Promise<Product> {
+    const [product] = await this.model.upsert(values as any, {
+      conflictFields: conflictFields as any,
+      transaction: options?.transaction,
+    });
+    return product;
+  }
 }
 
 export default new ProductRepository();

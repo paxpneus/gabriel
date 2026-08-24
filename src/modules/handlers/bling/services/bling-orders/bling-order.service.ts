@@ -21,14 +21,13 @@ import { ProductAttributes } from "../../../../inventory/products/product.types"
 import Brand from "../../../../inventory/brands/brands.model";
 import stateService from "../../../../warehouse/address/state/state.service";
 import { blingGet } from "../bling/helpers/get-with-sleep";
+import productService from "../../../../inventory/products/services/product.service";
+import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
   process.env.BLING_ORDER_REQUEST_DELAY_MS ?? 0,
 );
-
-// Detecta sufixo de KIT no SKU, ex: "15409210000K2" -> kit de 2 unidades
-const KIT_SKU_REGEX = /K(\d+)$/i;
 
 export class BlingOrderService {
   public blingApi: AxiosInstance;
@@ -188,12 +187,18 @@ export class BlingOrderService {
     product: (ProductAttributes & { brandRegister?: Brand }) | null;
     averageCost: number | null;
     resolvedSku: string;
+    kitMultiplier: number;
   }> {
     if (!externalProductId && !sku) {
       console.warn(
         `[BlingOrderService] Item sem id externo e sem sku — seguindo sem custo/product_id.`,
       );
-      return { product: null, averageCost: null, resolvedSku: sku ?? "" };
+      return {
+        product: null,
+        averageCost: null,
+        resolvedSku: sku ?? "",
+        kitMultiplier: 1,
+      };
     }
 
     const costUnitBusinessId = await this.resolveCostUnitBusinessId();
@@ -242,45 +247,45 @@ export class BlingOrderService {
       console.warn(
         `[BlingOrderService] ProductConfig não encontrado (externalProductId=${externalProductId ?? "-"}, sku=${sku ?? "-"}). Item será salvo sem custo/comissão.`,
       );
-      return { product: null, averageCost: null, resolvedSku: sku ?? "" };
+      return {
+        product: null,
+        averageCost: null,
+        resolvedSku: sku ?? "",
+        kitMultiplier: 1,
+      };
     }
 
     let averageCost: number | null = Number(config.average_cost ?? 0);
+    let kitMultiplier = 1;
 
-    if (config.product.type === "KIT" && config.sku) {
+    if (config.product.type === "KIT") {
       averageCost = null;
-      const unitSku = config.sku.replace(KIT_SKU_REGEX, "");
-      const unitConfig = await ProductConfig.findOne({
-        where: { sku: unitSku, unit_business_id: costUnitBusinessId },
-        include: [
-          {
-            model: Product,
-            as: "product",
-            attributes: ["id", "type"],
-            where: { type: "UNIT" },
-            required: true,
+      const [kitComponent] = await productService.getKitComponents(
+        config.product.id,
+      );
+
+      if (kitComponent) {
+        kitMultiplier = kitComponent.quantity;
+        const unitConfig = await ProductConfig.findOne({
+          where: {
+            product_id: kitComponent.product_component_id,
+            unit_business_id: costUnitBusinessId,
           },
-        ],
-      });
-      if (unitConfig) averageCost = Number(unitConfig.average_cost ?? 0);
+        });
+        if (unitConfig) averageCost = Number(unitConfig.average_cost ?? 0);
+      } else {
+        console.warn(
+          `[BlingOrderService] KIT sem kit_components cadastrado (product_id=${config.product.id}, sku=${config.sku}). Item será salvo sem custo.`,
+        );
+      }
     }
 
     return {
       product: config.product as ProductAttributes & { brandRegister?: Brand },
       averageCost,
       resolvedSku: config.sku ?? sku ?? "",
+      kitMultiplier,
     };
-  }
-
-  // ─── Detecta se o SKU é um KIT (sufixo K{n}) e retorna o multiplicador ─────
-  // "15409210000K2" -> kit de 2 unidades reais por "quantidade" do item.
-  // SKU sem sufixo K{n} -> multiplicador 1 (item unitário).
-  private getKitMultiplier(sku: string | undefined): number {
-    if (!sku) return 1;
-    const match = sku.match(KIT_SKU_REGEX);
-    if (!match) return 1;
-    const n = Number(match[1]);
-    return Number.isFinite(n) && n > 0 ? n : 1;
   }
 
   // ─── Calcula os campos financeiros de um item de pedido ────────────────────
@@ -297,13 +302,12 @@ export class BlingOrderService {
   private buildItemFinancialFields(
     product: (ProductAttributes & { brandRegister?: Brand }) | null,
     averageCostUnit: number | null,
-    sku: string | undefined,
+    kitMultiplier: number,
     quantity: number,
     itemValue: number,
     hasSellerCommission: boolean,
   ) {
     const brand = product?.brandRegister;
-    const kitMultiplier = this.getKitMultiplier(sku);
 
     const averageCostSnapshot =
       averageCostUnit == null ? null : averageCostUnit * kitMultiplier;
@@ -515,6 +519,7 @@ export class BlingOrderService {
           null;
         let averageCost: number | null = null;
         let resolvedSku = sku ?? "";
+        let kitMultiplier = 1;
 
         try {
           const resolved = await this.resolveProductWithConfig(
@@ -525,6 +530,7 @@ export class BlingOrderService {
           product = resolved.product;
           averageCost = resolved.averageCost;
           resolvedSku = resolved.resolvedSku;
+          kitMultiplier = resolved.kitMultiplier;
         } catch (error: any) {
           // Falha inesperada (ex.: banco fora do ar) — não derruba o pedido,
           // só esse item fica sem custo/comissão.
@@ -540,7 +546,7 @@ export class BlingOrderService {
         const financialFields = this.buildItemFinancialFields(
           product,
           averageCost,
-          resolvedSku,
+          kitMultiplier,
           quantity,
           grossTotalLine,
           hasSellerCommission,
@@ -681,7 +687,11 @@ export class BlingOrderService {
         invoice_id: invoiceId,
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
-        date: new Date(orderData.data),
+        // Sempre grava meia-noite no timezone da aplicação (America/Sao_Paulo),
+        // não o horário exato que o Bling manda em orderData.data — em UTC
+        // isso é 03:00. Pedido pra normalizar a granularidade da venda pro
+        // dia, independente da hora que o Bling registrou.
+        date: startOfDayTz(orderData.data).toDate(),
         internal_status: internalStatus,
         nfe_emitted: isCompleted
           ? true
@@ -961,7 +971,11 @@ export class BlingOrderService {
         id_order_system: String(orderData.id),
         number_order_system: String(orderData.numero),
         number_order_channel: String(orderData.numeroLoja),
-        date: new Date(orderData.data),
+        // Sempre grava meia-noite no timezone da aplicação (America/Sao_Paulo),
+        // não o horário exato que o Bling manda em orderData.data — em UTC
+        // isso é 03:00. Pedido pra normalizar a granularidade da venda pro
+        // dia, independente da hora que o Bling registrou.
+        date: startOfDayTz(orderData.data).toDate(),
         store_id: store?.id ?? null,
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),

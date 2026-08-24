@@ -1,6 +1,8 @@
 // sales report
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
+import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
+import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
   SalesFactKey,
   SalesProductFactKey,
@@ -11,6 +13,10 @@ import {
 } from "./sales-report.types";
 
 const JOB_NAME = "sales_report";
+// Checkpoint próprio (mesma tabela report_job_checkpoints, job_name distinto)
+// pro scan retroativo de supplier_discount_rules — independente do checkpoint
+// principal, que segue olhando só orders/order_items alterados.
+const SUPPLIER_DISCOUNT_RETRO_JOB_NAME = "sales_report_supplier_discount_retro";
 const STOCK_MOVEMENTS_UNIT_BUSINESS_ID = "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
 
 interface CheckpointRow {
@@ -393,7 +399,44 @@ export class SalesReportRepository {
   // Checkpoint e estado do job podem virar um repository próprio de jobs e
   // serem orquestrados pelo service, deixando este arquivo só com analytics.
   async getCheckpoint(): Promise<Date> {
-    await this.ensureCheckpoint();
+    return this.getCheckpointFor(JOB_NAME);
+  }
+
+  // Checkpoint independente do principal — marca até onde já escaneamos
+  // supplier_discount_rules alteradas pro reprocessamento retroativo.
+  async getSupplierDiscountRetroCheckpoint(): Promise<Date> {
+    return this.getCheckpointFor(SUPPLIER_DISCOUNT_RETRO_JOB_NAME);
+  }
+
+  async markSupplierDiscountRetroCheckpointSuccess(
+    scanStartTime: Date,
+    ordersReprocessed: number,
+  ): Promise<void> {
+    await this.ensureCheckpoint(SUPPLIER_DISCOUNT_RETRO_JOB_NAME);
+
+    await sequelize.query(
+      `
+      UPDATE report_job_checkpoints
+      SET last_processed_at = :scanStartTime,
+          last_run_at = NOW(),
+          status = 'success',
+          rows_processed = :ordersReprocessed,
+          metadata = NULL,
+          updated_at = NOW()
+      WHERE job_name = :jobName
+      `,
+      {
+        replacements: {
+          jobName: SUPPLIER_DISCOUNT_RETRO_JOB_NAME,
+          scanStartTime,
+          ordersReprocessed,
+        },
+      },
+    );
+  }
+
+  private async getCheckpointFor(jobName: string): Promise<Date> {
+    await this.ensureCheckpoint(jobName);
 
     const rows = await sequelize.query<CheckpointRow>(
       `
@@ -402,19 +445,17 @@ export class SalesReportRepository {
       WHERE job_name = :jobName
       LIMIT 1
       `,
-      { type: QueryTypes.SELECT, replacements: { jobName: JOB_NAME } },
+      { type: QueryTypes.SELECT, replacements: { jobName } },
     );
 
     if (!rows[0]) {
-      throw new Error(
-        "Não foi possível inicializar o checkpoint sales_report.",
-      );
+      throw new Error(`Não foi possível inicializar o checkpoint ${jobName}.`);
     }
 
     return rows[0].last_processed_at;
   }
 
-  private async ensureCheckpoint(): Promise<void> {
+  private async ensureCheckpoint(jobName: string): Promise<void> {
     await sequelize.query(
       `
       INSERT INTO report_job_checkpoints (
@@ -437,7 +478,7 @@ export class SalesReportRepository {
       )
       ON CONFLICT (job_name) DO NOTHING
       `,
-      { replacements: { jobName: JOB_NAME } },
+      { replacements: { jobName } },
     );
   }
 
@@ -810,25 +851,18 @@ item_source_raw AS (
     )                                                     AS net_total_raw,
 
     -- ------------------------------------------------------------------
-    -- KIT: mesma regra do getKitMultiplier em JS (/K(\d+)$/i no sku).
+    -- KIT: composição real via kit_components (Etapa 1.5 — substitui a
+    -- antiga regra por regex de sufixo Kn no sku).
     -- kit_multiplier = quantas unidades reais tem 1 kit.
-    -- unit_sku       = sku do produto unitário (sufixo Kn removido).
     -- ------------------------------------------------------------------
-    COALESCE(
-      (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
-      1
-    )                                                     AS kit_multiplier,
-    regexp_replace(COALESCE(pc.sku, oi.sku), 'K[0-9]+$', '', 'i') AS unit_sku,
+    COALESCE(kc.quantity, 1)                             AS kit_multiplier,
 
     -- average_cost_snapshot = custo médio unitário (via stock_movements do
-    -- produto certo — UNIT se for kit, o próprio se não for) × kit_multiplier.
-    -- Isso reproduz o "custo médio do kit" que o buildItemFinancialFields
-    -- calculava em JS.
+    -- produto certo — componente do kit, se for kit, o próprio se não for)
+    -- × kit_multiplier. Isso reproduz o "custo médio do kit" que o
+    -- buildItemFinancialFields calculava em JS.
     COALESCE(scm.resulting_average_cost, 0)::numeric
-      * COALESCE(
-          (regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i'))[1]::int,
-          1
-        )                                                 AS average_cost_snapshot,
+      * COALESCE(kc.quantity, 1)                         AS average_cost_snapshot,
     CASE
       WHEN scm.resulting_average_cost IS NOT NULL THEN 'STOCK_AVERAGE'
       ELSE 'UNKNOWN'
@@ -881,25 +915,21 @@ item_source_raw AS (
   ) st ON TRUE
 
   -- ------------------------------------------------------------------
-  -- Resolve o product_id "de custo": se o item vendido é KIT (sku com
-  -- sufixo Kn), busca o product_config do produto UNITÁRIO (sku sem o
-  -- sufixo) no MESMO unit_business usado pra achar stock_movements. Se
-  -- não for kit, mantém o product_id original.
+  -- Resolve o product_id "de custo": se o item vendido é KIT, busca o
+  -- componente real cadastrado em kit_components. Se não for kit (ou não
+  -- tiver composição cadastrada), mantém o product_id original.
   -- ------------------------------------------------------------------
   LEFT JOIN LATERAL (
-    SELECT pc_unit.product_id
-    FROM product_configs pc_unit
-    WHERE pc_unit.unit_business_id = :stockUnitBusinessId
-      AND pc_unit.sku = regexp_replace(COALESCE(pc.sku, oi.sku), 'K[0-9]+$', '', 'i')
+    SELECT kc.product_component_id, kc.quantity
+    FROM kit_components kc
+    WHERE kc.product_kit_id = COALESCE(oi.product_id, p.id)
     LIMIT 1
-  ) pc_unit_lookup ON (
-    regexp_match(COALESCE(pc.sku, oi.sku), 'K([0-9]+)$', 'i') IS NOT NULL
-  )
+  ) kc ON TRUE
 
   LEFT JOIN LATERAL (
     SELECT sm.resulting_average_cost
     FROM stock_movements sm
-    WHERE sm.product_id = COALESCE(pc_unit_lookup.product_id, oi.product_id, p.id)
+    WHERE sm.product_id = COALESCE(kc.product_component_id, oi.product_id, p.id)
       AND sm.unit_business_id = :stockUnitBusinessId
       AND sm.movement_date <= COALESCE(ord.date, ord.created_at)
     ORDER BY sm.movement_date DESC, sm.created_at DESC
@@ -1012,6 +1042,15 @@ FROM item_calc
           tax_commission_allocated       = EXCLUDED.tax_commission_allocated,
           freight_cost_allocated         = EXCLUDED.freight_cost_allocated,
           computed_icms_value_allocated  = EXCLUDED.computed_icms_value_allocated,
+          -- contribution_value volta pra base SEM desconto aqui (EXCLUDED não
+          -- carrega desconto nenhum). supplier_discount_value/rule_id têm que
+          -- ser zerados junto, senão ficam apontando pro desconto da rodada
+          -- ANTERIOR enquanto contribution_value já é a base nova — e é essa
+          -- consistência (contribution_value sempre reflete o
+          -- supplier_discount_value atual) que applySupplierDiscounts assume
+          -- pra recalcular de forma idempotente (ver ali).
+          supplier_discount_value        = 0,
+          supplier_discount_rule_id      = NULL,
           contribution_value             = EXCLUDED.contribution_value,
           contribution_pct               = EXCLUDED.contribution_pct,
           order_snapshot_id     = EXCLUDED.order_snapshot_id,
@@ -1099,6 +1138,13 @@ FROM item_calc
         contribution_pct  = ${calculateOrderContributionPctSql("sos", snapshotCostSql)},
         markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
 
+        -- Neste ponto (upsert principal, ainda ANTES de applySupplierDiscounts)
+        -- todo item está com supplier_discount_value = 0, seja recém-inserido
+        -- ou resetado pelo ON CONFLICT de inserted_items. O valor real é
+        -- recalculado logo em seguida por applySupplierDiscounts ->
+        -- updateSnapshotTotals, que persiste o total de verdade.
+        total_supplier_discount = 0,
+
         -- snapshot_status recalculado com o custo JÁ resolvido (KIT incluído),
         -- não mais com o EXISTS ingênuo de order_source.
         snapshot_status = CASE
@@ -1121,6 +1167,176 @@ FROM item_calc
         },
       },
     );
+
+    await this.applySupplierDiscounts(orderIds);
+  }
+
+  // ------------------------------------------------------------------
+  // Desconto de fornecedor — roda DEPOIS da query grande acima (que não é
+  // tocada). Coleta as chaves de matching dos itens recém-processados
+  // (resolvendo marca/aro/medida pelo produto COMPONENTE quando o item
+  // vendido é kit — quem tem marca/aro/medida real é o pneu, não o kit),
+  // pede pro motor de matching (supplierDiscountRuleService.resolveForItems)
+  // decompor em blocos/níveis por grupo (pedido + marca + aro + medida +
+  // loja), e grava o resultado em lote. Por fim, refaz o rollup do pedido
+  // via updateSnapshotTotals (já ciente do desconto, ver ali) — só para os
+  // pedidos que realmente tiveram algum item alterado.
+  //
+  // Idempotente de propósito: contribution_value é recalculado removendo o
+  // supplier_discount_value ANTIGO (o que já estava gravado) e somando o
+  // novo, em vez de só somar o novo em cima do que já está lá. Isso permite
+  // chamar este método mais de uma vez pro mesmo pedido (ex.: reprocessamento
+  // retroativo por mudança de regra, que roda fora do fluxo normal de
+  // upsertSnapshots) sem duplicar o desconto na contribuição.
+  //
+  // A cláusula IS DISTINCT FROM garante que só as linhas cujo valor/regra de
+  // desconto realmente mudou são escritas — essencial pro scan retroativo,
+  // que pode trazer muitos pedidos candidatos dos quais só uma fração
+  // realmente precisa de update.
+  private async applySupplierDiscounts(orderIds: string[]): Promise<string[]> {
+    const resolveItems = await sequelize.query<SupplierDiscountResolveItemInput>(
+      `
+      SELECT s.order_item_id, s.order_id, cp.brand_id, cp.rim_id, cp.measure_id, s.unit_business_id, s.order_date,
+             s.quantity * COALESCE(kc.quantity, 1) AS real_quantity, s.gross_total
+      FROM sales_order_item_snapshots s
+      LEFT JOIN kit_components kc ON kc.product_kit_id = s.product_id
+      LEFT JOIN products cp ON cp.id = COALESCE(kc.product_component_id, s.product_id)
+      WHERE s.order_id = ANY(ARRAY[:orderIds]::uuid[])
+      `,
+      { type: QueryTypes.SELECT, replacements: { orderIds } },
+    );
+
+    const discounts = await supplierDiscountRuleService.resolveForItems(
+      resolveItems,
+    );
+    if (!discounts.size) return [];
+
+    const orderItemIds = Array.from(discounts.keys());
+    const discountValues = orderItemIds.map(
+      (id) => discounts.get(id)!.discountValue,
+    );
+    const ruleIds = orderItemIds.map((id) => discounts.get(id)!.ruleId);
+
+    const changedRows = await sequelize.query<OrderIdRow>(
+      `
+      UPDATE sales_order_item_snapshots sois
+      SET
+        supplier_discount_value = batch.discount_value,
+        supplier_discount_rule_id = batch.rule_id,
+        contribution_value = sois.contribution_value
+          - COALESCE(sois.supplier_discount_value, 0)
+          + batch.discount_value,
+        contribution_pct = ${calculatePercentageSql(
+          "sois.contribution_value - COALESCE(sois.supplier_discount_value, 0) + batch.discount_value",
+          "sois.net_total",
+        )}
+      FROM unnest(
+        ARRAY[:orderItemIds]::uuid[], ARRAY[:discountValues]::numeric[], ARRAY[:ruleIds]::uuid[]
+      ) AS batch(order_item_id, discount_value, rule_id)
+      WHERE sois.order_item_id = batch.order_item_id
+        AND (
+          sois.supplier_discount_value IS DISTINCT FROM batch.discount_value
+          OR sois.supplier_discount_rule_id IS DISTINCT FROM batch.rule_id
+        )
+      RETURNING sois.order_id
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: { orderItemIds, discountValues, ruleIds },
+      },
+    );
+
+    const changedOrderIds = [
+      ...new Set(changedRows.map((row) => row.order_id)),
+    ];
+    if (!changedOrderIds.length) return [];
+
+    await this.updateSnapshotTotals(changedOrderIds);
+    return changedOrderIds;
+  }
+
+  // ------------------------------------------------------------------
+  // Reprocessamento retroativo de supplier_discount_rules — chamado FORA do
+  // fluxo normal de upsertSnapshots (que respeita o checkpoint principal de
+  // orders/order_items). Regras de desconto podem ser criadas/editadas/
+  // (des)ativadas com efeito sobre vendas já fechadas há tempo, e essas
+  // vendas não entram em findAffectedOrderIds (nada mudou em orders/
+  // order_items). Aqui reaplicamos o motor de matching (que já filtra regra
+  // ativa e zera quando não há mais match) só nos pedidos candidatos: os que
+  // caem no escopo (loja + marca/aro/medida + intervalo de datas) de alguma
+  // regra alterada desde o último scan, OU que já carregam o rule_id de uma
+  // regra alterada (cobre o caso de escopo reduzido/rule desativada).
+  // ------------------------------------------------------------------
+  async findOrderIdsAffectedBySupplierDiscountRuleChanges(
+    since: Date,
+  ): Promise<string[]> {
+    const rows = await sequelize.query<OrderIdRow>(
+      `
+      SELECT DISTINCT s.order_id
+      FROM sales_order_item_snapshots s
+      WHERE s.supplier_discount_rule_id IN (
+        SELECT id FROM supplier_discount_rules WHERE updated_at >= :since
+      )
+
+      UNION
+
+      SELECT DISTINCT s.order_id
+      FROM sales_order_item_snapshots s
+      LEFT JOIN kit_components kc ON kc.product_kit_id = s.product_id
+      LEFT JOIN products cp ON cp.id = COALESCE(kc.product_component_id, s.product_id)
+      JOIN supplier_discount_rules r
+        ON r.updated_at >= :since
+        AND s.order_date BETWEEN r.start_date AND r.end_date
+        AND EXISTS (
+          SELECT 1 FROM supplier_discount_unit_businesses x
+          WHERE x.supplier_discount_rule_id = r.id AND x.unit_business_id = s.unit_business_id
+        )
+        AND (
+          NOT EXISTS (SELECT 1 FROM supplier_discount_rule_brands x WHERE x.supplier_discount_rule_id = r.id)
+          OR EXISTS (SELECT 1 FROM supplier_discount_rule_brands x WHERE x.supplier_discount_rule_id = r.id AND x.brand_id = cp.brand_id)
+        )
+        AND (
+          NOT EXISTS (SELECT 1 FROM supplier_discount_rule_rims x WHERE x.supplier_discount_rule_id = r.id)
+          OR EXISTS (SELECT 1 FROM supplier_discount_rule_rims x WHERE x.supplier_discount_rule_id = r.id AND x.rim_id = cp.rim_id)
+        )
+        AND (
+          NOT EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id)
+          OR EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id AND x.measure_id = cp.measure_id)
+        )
+
+      UNION
+
+      -- Regra APAGADA (não só desativada): a FK supplier_discount_rule_id
+      -- (ON DELETE SET NULL) já zera essa coluna sozinha quando a regra é
+      -- excluída, mas supplier_discount_value/contribution_value ficam
+      -- travados no valor antigo — a regra não existe mais em
+      -- supplier_discount_rules pra ter um updated_at pra comparar com
+      -- :since, então os dois blocos acima nunca pegam esse caso. Aqui não
+      -- dá pra filtrar por :since (não há timestamp de exclusão); a
+      -- condição em si (rule_id nulo + desconto ainda gravado) já é
+      -- suficiente pra achar só o resíduo órfão, e some sozinha assim que
+      -- applySupplierDiscounts zerar supplier_discount_value.
+      SELECT DISTINCT s.order_id
+      FROM sales_order_item_snapshots s
+      WHERE s.supplier_discount_rule_id IS NULL
+        AND s.supplier_discount_value <> 0
+      `,
+      { type: QueryTypes.SELECT, replacements: { since } },
+    );
+
+    return [...new Set(rows.map((row) => row.order_id))];
+  }
+
+  // Reaplica o motor de desconto de fornecedor num conjunto arbitrário de
+  // pedidos (fora do fluxo de upsertSnapshots) e devolve só os que tiveram
+  // algum item realmente alterado — é essa lista, não a de candidatos, que
+  // deve alimentar o refresh de daily facts (evita recomputar agregados de
+  // pedidos que não mudaram nada).
+  async reapplySupplierDiscountsForOrderIds(
+    orderIds: string[],
+  ): Promise<string[]> {
+    if (!orderIds.length) return [];
+    return this.applySupplierDiscounts(orderIds);
   }
 
   // ---------------------------------------------------------------------------
@@ -1234,7 +1450,8 @@ FROM item_calc
             COALESCE(SUM(total_taxes),       0) AS total_taxes,
             COALESCE(SUM(total_fees),        0) AS total_fees,
             COALESCE(SUM(total_commission),  0) AS total_commission,
-            COALESCE(SUM(contribution_value),0) AS contribution_value
+            COALESCE(SUM(contribution_value),0) AS contribution_value,
+            COALESCE(SUM(total_supplier_discount),0) AS total_supplier_discount
           FROM sales_order_snapshots
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
@@ -1245,7 +1462,7 @@ FROM item_calc
           orders_count, items_quantity,
           total_value, total_freight, average_freight, average_ticket,
           total_cost, total_taxes, total_fees, total_commission,
-          contribution_value, contribution_pct, markup_pct,
+          contribution_value, contribution_pct, markup_pct, total_supplier_discount,
           last_updated_at, created_at, updated_at
         )
         SELECT
@@ -1258,6 +1475,7 @@ FROM item_calc
           contribution_value,
           ${calculatePercentageSql("contribution_value", "total_value")},
           ${calculateMarkupSql("total_value", "total_cost").percent},
+          total_supplier_discount,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id) DO UPDATE SET
@@ -1274,6 +1492,7 @@ FROM item_calc
           contribution_value = EXCLUDED.contribution_value,
           contribution_pct   = EXCLUDED.contribution_pct,
           markup_pct         = EXCLUDED.markup_pct,
+          total_supplier_discount = EXCLUDED.total_supplier_discount,
           last_updated_at    = NOW(),
           updated_at         = NOW()
         `,
@@ -1361,7 +1580,8 @@ FROM item_calc
             COALESCE(SUM(total_taxes),     0) AS total_taxes,
             COALESCE(SUM(total_fees),      0) AS total_fees,
             COALESCE(SUM(total_commission),0) AS total_commission,
-            COALESCE(SUM(contribution_value),0) AS contribution_value
+            COALESCE(SUM(contribution_value),0) AS contribution_value,
+            COALESCE(SUM(total_supplier_discount),0) AS total_supplier_discount
           FROM sales_order_snapshots
           WHERE order_date       = CAST(:factDate AS date)
             AND unit_business_id = :unitBusinessId
@@ -1373,6 +1593,7 @@ FROM item_calc
           orders_count, items_quantity, total_value, total_freight,
           average_ticket, total_cost, piece_average_value, markup_pct,
           total_taxes, total_fees, total_commission, contribution_value, contribution_pct,
+          total_supplier_discount,
           last_updated_at, created_at, updated_at
         )
         SELECT
@@ -1384,6 +1605,7 @@ FROM item_calc
           ${calculateMarkupSql("total_value", "total_cost").percent},
           total_taxes, total_fees, total_commission, contribution_value,
           ${calculatePercentageSql("contribution_value", "total_value")},
+          total_supplier_discount,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, store_id) DO UPDATE SET
@@ -1400,6 +1622,7 @@ FROM item_calc
           total_commission    = EXCLUDED.total_commission,
           contribution_value  = EXCLUDED.contribution_value,
           contribution_pct    = EXCLUDED.contribution_pct,
+          total_supplier_discount = EXCLUDED.total_supplier_discount,
           last_updated_at     = NOW(),
           updated_at          = NOW()
         `,
@@ -1433,7 +1656,8 @@ FROM item_calc
             -- gross_total = quantidade * oi.unit_price, já bruto, sem rateio
             -- do pedido e sem desconto — consistente com a regra de receita
             -- bruta.
-            COALESCE(SUM(gross_total),        0) AS total_value
+            COALESCE(SUM(gross_total),        0) AS total_value,
+            COALESCE(SUM(supplier_discount_value), 0) AS total_supplier_discount
           FROM sales_order_item_snapshots sois
           JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
   WHERE sois.order_date       = CAST(:factDate AS date)
@@ -1444,12 +1668,14 @@ FROM item_calc
         INSERT INTO daily_sales_product_facts (
           fact_date, unit_business_id, product_id, sku, description,
           quantity, total_cost, total_commission, total_value, markup_pct,
+          total_supplier_discount,
           last_updated_at, created_at, updated_at
         )
         SELECT
           fact_date, unit_business_id, product_id, sku, description,
           quantity, total_cost, total_commission, total_value,
           ${calculateMarkupSql("total_value", "total_cost").percent},
+          total_supplier_discount,
           NOW(), NOW(), NOW()
         FROM metrics
         ON CONFLICT (fact_date, unit_business_id, sku) DO UPDATE SET
@@ -1460,6 +1686,7 @@ FROM item_calc
           total_commission = EXCLUDED.total_commission,
           total_value      = EXCLUDED.total_value,
           markup_pct       = EXCLUDED.markup_pct,
+          total_supplier_discount = EXCLUDED.total_supplier_discount,
           last_updated_at  = NOW(),
           updated_at       = NOW()
         `,
@@ -1609,6 +1836,11 @@ FROM item_calc
     if (!orderIds.length) return;
 
     const snapshotCostSql = "it.total_cost";
+    // Desconto de fornecedor entra como redutor de custo SÓ na fórmula de
+    // contribution — markup_pct continua usando o custo cheio (decisão
+    // fechada: desconto não mexe em receita/markup, só em contribution).
+    const contributionCostSql =
+      "(it.total_cost - it.total_supplier_discount)";
 
     await sequelize.query(
       `
@@ -1618,6 +1850,7 @@ FROM item_calc
         SUM(sois.quantity)                                           AS items_quantity,
         SUM(sois.total_cost_snapshot)                                AS total_cost,
         SUM(sois.commission_value)                                   AS total_commission,
+        SUM(sois.supplier_discount_value)                            AS total_supplier_discount,
         BOOL_OR(sois.cost_source IS DISTINCT FROM 'STOCK_AVERAGE')  AS has_cost_fallback
       FROM sales_order_item_snapshots sois
       WHERE sois.order_id IN (:orderIds)
@@ -1628,14 +1861,15 @@ FROM item_calc
       items_quantity    = COALESCE(it.items_quantity, 0),
       total_cost        = COALESCE(it.total_cost, 0),
       total_commission  = COALESCE(it.total_commission, 0),
+      total_supplier_discount = COALESCE(it.total_supplier_discount, 0),
 
       total_taxes       = ${calculateTotalTaxesSql("sos")},
 
       total_fees        = ${calculateTotalFeesSql("sos")},
 
-      contribution_value = ${calculateOrderContributionValueSql("sos", snapshotCostSql)},
+      contribution_value = ${calculateOrderContributionValueSql("sos", contributionCostSql)},
 
-      contribution_pct  = ${calculateOrderContributionPctSql("sos", snapshotCostSql)},
+      contribution_pct  = ${calculateOrderContributionPctSql("sos", contributionCostSql)},
 
       markup_pct = ${calculateMarkupSql("sos.total_products", snapshotCostSql).percent},
 
@@ -1694,6 +1928,7 @@ FROM item_calc
       sois.freight_cost_allocated,
       sois.computed_icms_value_allocated,
       sois.contribution_value,
+      sois.supplier_discount_value,
       sos.status_snapshot,
       sos.store_id
     FROM sales_order_item_snapshots sois
@@ -1738,7 +1973,8 @@ FROM item_calc
       COALESCE(SUM(contribution_value), 0) AS contribution_value,
       ${calculatePercentageSql("SUM(contribution_value)", "SUM(net_total)")} AS contribution_pct,
       ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").decimal} AS markup_decimal,
-      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct
+      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct,
+      COALESCE(SUM(supplier_discount_value), 0) AS total_supplier_discount
     FROM product_filtered_rows
     `,
       { type: QueryTypes.SELECT, replacements },
@@ -1776,7 +2012,8 @@ FROM item_calc
       COALESCE(SUM(commission_value), 0) AS total_commission,
       COALESCE(SUM(net_total), 0) AS total_value,
       ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").decimal} AS markup_decimal,
-      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct
+      ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct,
+      COALESCE(SUM(supplier_discount_value), 0) AS total_supplier_discount
     FROM product_filtered_rows
     GROUP BY product_id, sku
     ORDER BY quantity DESC
@@ -1803,7 +2040,8 @@ FROM item_calc
       COALESCE(SUM(pfr.tax_commission_allocated), 0) AS total_fees,
       COALESCE(SUM(pfr.commission_value), 0) AS total_commission,
       COALESCE(SUM(pfr.contribution_value), 0) AS contribution_value,
-      ${calculatePercentageSql("SUM(pfr.contribution_value)", "SUM(pfr.net_total)")} AS contribution_pct
+      ${calculatePercentageSql("SUM(pfr.contribution_value)", "SUM(pfr.net_total)")} AS contribution_pct,
+      COALESCE(SUM(pfr.supplier_discount_value), 0) AS total_supplier_discount
     FROM product_filtered_rows pfr
     LEFT JOIN unit_businesses ub ON ub.id = pfr.unit_business_id
     GROUP BY pfr.unit_business_id, ub.name
@@ -1870,7 +2108,8 @@ FROM item_calc
         COALESCE(SUM(contribution_value),0) AS contribution_value,
         ${calculatePercentageSql("SUM(contribution_value)", "SUM(total_value)")} AS contribution_pct,
         ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
-        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct,
+        COALESCE(SUM(total_supplier_discount), 0) AS total_supplier_discount
       FROM daily_sales_facts
       WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
         AND ${unitFilter}
@@ -1909,7 +2148,8 @@ FROM item_calc
         COALESCE(SUM(total_commission), 0) AS total_commission,
         COALESCE(SUM(total_value),0) AS total_value,
         ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
-        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct
+        ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct,
+        COALESCE(SUM(total_supplier_discount), 0) AS total_supplier_discount
       FROM daily_sales_product_facts
       WHERE fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
         AND ${unitFilter}
@@ -1939,7 +2179,8 @@ FROM item_calc
         COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
         COALESCE(SUM(dsf.total_commission),   0) AS total_commission,
         COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
-        ${calculatePercentageSql("SUM(dsf.contribution_value)", "SUM(dsf.total_value)")} AS contribution_pct
+        ${calculatePercentageSql("SUM(dsf.contribution_value)", "SUM(dsf.total_value)")} AS contribution_pct,
+        COALESCE(SUM(dsf.total_supplier_discount), 0) AS total_supplier_discount
       FROM daily_sales_facts dsf
       LEFT JOIN unit_businesses ub ON ub.id = dsf.unit_business_id
       WHERE dsf.fact_date BETWEEN CAST(:dateFrom AS date) AND CAST(:dateTo AS date)
