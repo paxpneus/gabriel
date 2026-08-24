@@ -22,6 +22,7 @@ import Brand from "../../../../inventory/brands/brands.model";
 import stateService from "../../../../warehouse/address/state/state.service";
 import { blingGet } from "../bling/helpers/get-with-sleep";
 import productService from "../../../../inventory/products/services/product.service";
+import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
@@ -686,7 +687,11 @@ export class BlingOrderService {
         invoice_id: invoiceId,
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
-        date: new Date(orderData.data),
+        // Sempre grava meia-noite no timezone da aplicação (America/Sao_Paulo),
+        // não o horário exato que o Bling manda em orderData.data — em UTC
+        // isso é 03:00. Pedido pra normalizar a granularidade da venda pro
+        // dia, independente da hora que o Bling registrou.
+        date: startOfDayTz(orderData.data).toDate(),
         internal_status: internalStatus,
         nfe_emitted: isCompleted
           ? true
@@ -966,7 +971,11 @@ export class BlingOrderService {
         id_order_system: String(orderData.id),
         number_order_system: String(orderData.numero),
         number_order_channel: String(orderData.numeroLoja),
-        date: new Date(orderData.data),
+        // Sempre grava meia-noite no timezone da aplicação (America/Sao_Paulo),
+        // não o horário exato que o Bling manda em orderData.data — em UTC
+        // isso é 03:00. Pedido pra normalizar a granularidade da venda pro
+        // dia, independente da hora que o Bling registrou.
+        date: startOfDayTz(orderData.data).toDate(),
         store_id: store?.id ?? null,
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
