@@ -18,6 +18,8 @@ import {
   ProductCreationAttributes,
   ProductDetailedWithMovements,
   ProductDetailedWithMovementsSummary,
+  ProductSalesReportFilters,
+  ProductSalesReportRow,
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
 import productWithMovementsRepository from '../repository/product-with-movements'
@@ -306,6 +308,12 @@ export class ProductService extends BaseService<Product, ProductRepository> {
 
   async getKitComponents(productKitId: string): Promise<KitComponent[]> {
     return kitComponentService.findAll({ where: { product_kit_id: productKitId } });
+  }
+
+  async getSalesReport(
+    filters: ProductSalesReportFilters,
+  ): Promise<ProductSalesReportRow[]> {
+    return this.repository.getSalesReport(filters);
   }
 
   async productReport(

@@ -95,3 +95,35 @@ export type LastMovementDateRangeDate = {
   start?: Date;
   end?: Date;
 };
+
+// Filtros do relatório de vendas por produto (products/sales-report/get) —
+// mesma base de dados do sales-report (sales_order_item_snapshots), mas
+// agrupado por produto/sku, com filtro extra de quantidade vendida (min/max)
+// que não existe no sales-report.
+export interface ProductSalesReportFilters {
+  dateFrom: string;
+  dateTo: string;
+  unitBusinessIds?: string[];
+  productIds?: string[];
+  rim?: string;
+  measure?: string;
+  productType?: string;
+  minQuantitySold?: number;
+  maxQuantitySold?: number;
+}
+
+export interface ProductSalesReportRow {
+  product_id: string | null;
+  product_name: string | null;
+  sku: string | null;
+  quantity_sold: number;
+  gross_total: number;
+  total_cost: number;
+  total_supplier_discount: number;
+  contribution_value: number;
+  contribution_pct: number;
+  markup_value: number;
+  markup_pct: number;
+  average_cost: number;
+  commission_value: number;
+}
