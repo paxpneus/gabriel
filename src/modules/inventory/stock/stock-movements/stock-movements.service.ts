@@ -46,6 +46,7 @@ type CreateManualAdjustmentPayload = {
   movement_quantity: number;
   direction_type: "PURCHASE_ENTRY" | "SALE_OUT";
   manual_average_cost_value?: number | null;
+  refers_to?: string | null;
   movement_date?: Date;
 };
 
@@ -370,9 +371,7 @@ export class StockMovementService extends BaseService<
       { transaction },
     );
 
-    const isProtected = (m: StockMovement) =>
-      m.movement_type === "MANUAL_ADJUSTMENT" &&
-      m.manual_average_cost_value != null;
+    const isProtected = (m: StockMovement) => m.refers_to != null;
     const isBeforeOrAtCutoff = (m: StockMovement) =>
       cutoffDate != null &&
       new Date(m.movement_date).getTime() <= cutoffDate.getTime();
@@ -637,12 +636,10 @@ export class StockMovementService extends BaseService<
    * (processMovement / syncProductStockMovements). Só deve ser acionada via
    * rota de controller, sob ação explícita de um operador.
    *
-   * Exceção: MANUAL_ADJUSTMENT com manual_average_cost_value preenchido
-   * nunca é apagado nem recriado. Ele fica intocado na timeline, servindo
-   * só de base (previousState) pro
-   * que vem depois. Se a fonte trouxer de volta um invoice_id que já
-   * corresponde a uma linha protegida, essa entrada da fonte é ignorada —
-   * a linha protegida manda.
+   * Exceção: MANUAL_ADJUSTMENT com refers_to preenchido (correção de custo
+   * ancorada numa nota fiscal específica) nunca é apagado nem recriado. Ele
+   * fica intocado na timeline, servindo só de base (previousState) pro que
+   * vem depois.
    *
    * Linhas protegidas mas desativadas (is_active = false) são preservadas
    * do delete, porém NÃO entram na timeline de cálculo (um ajuste manual
@@ -691,25 +688,15 @@ export class StockMovementService extends BaseService<
       isAfterCutoff(new Date(movement.movement_date)),
     );
 
-    const isProtected = (m: StockMovement) =>
-      m.movement_type === "MANUAL_ADJUSTMENT" &&
-      m.manual_average_cost_value != null;
+    const isProtected = (m: StockMovement) => m.refers_to != null;
 
     const protectedMovements = mutableExistingMovements.filter(isProtected);
     const deletableMovements = mutableExistingMovements.filter(
       (movement) => !isProtected(movement),
     );
 
-    const protectedInvoiceIds = new Set(
-      protectedMovements
-        .filter((m) => m.invoice_id != null)
-        .map((m) => m.invoice_id as string | null),
-    );
-
-    const incomingMovements = incomingSource.filter(
-      (movement) =>
-        isAfterCutoff(new Date(movement.movement_date)) &&
-        !protectedInvoiceIds.has(movement.invoice_id),
+    const incomingMovements = incomingSource.filter((movement) =>
+      isAfterCutoff(new Date(movement.movement_date)),
     );
 
     // Só linhas protegidas ATIVAS entram na timeline de cálculo — as
@@ -1060,6 +1047,47 @@ export class StockMovementService extends BaseService<
   }
 
   /**
+   * refers_to âncora um MANUAL_ADJUSTMENT numa nota fiscal específica (via
+   * invoice_number, não id — ver stock-movements.model.ts) e é o que decide
+   * se a linha fica protegida contra delete/recriação em reindexProduct.
+   * Só faz sentido junto de um manual_average_cost_value (é a correção de
+   * custo dessa nota), e só é aceito se já existir uma PURCHASE_ENTRY com
+   * esse invoice_number pro mesmo produto/unit_business — sanity check
+   * contra erro de digitação.
+   */
+  private async validateRefersTo(
+    productId: string,
+    unitBusinessId: string,
+    refersTo: string | null | undefined,
+    manualAverageCostValue: number | null | undefined,
+    transaction?: Transaction,
+  ): Promise<void> {
+    if (refersTo == null) return;
+
+    if (manualAverageCostValue == null) {
+      throw new Error(
+        "[STOCK_MOVEMENT] refers_to só pode ser setado junto de um manual_average_cost_value.",
+      );
+    }
+
+    const referencedEntry = await StockMovement.findOne({
+      where: {
+        product_id: productId,
+        unit_business_id: unitBusinessId,
+        movement_type: "PURCHASE_ENTRY",
+        invoice_number: refersTo,
+      },
+      transaction,
+    });
+
+    if (!referencedEntry) {
+      throw new Error(
+        `[STOCK_MOVEMENT] refers_to="${refersTo}" não corresponde a nenhuma PURCHASE_ENTRY do produto=${productId}/unit_business=${unitBusinessId}.`,
+      );
+    }
+  }
+
+  /**
    * Cria um MANUAL_ADJUSTMENT — movimento sem nota fiscal de origem
    * (invoice_id = null). A direção recebida no payload (PURCHASE_ENTRY =
    * entra, SALE_OUT = sai) só decide o sinal da soma no saldo; o
@@ -1080,6 +1108,14 @@ export class StockMovementService extends BaseService<
     const movementDate = payload.movement_date ?? new Date();
     const direction: "IN" | "OUT" =
       payload.direction_type === "SALE_OUT" ? "OUT" : "IN";
+
+    await this.validateRefersTo(
+      productId,
+      unitBusinessId,
+      payload.refers_to,
+      payload.manual_average_cost_value,
+      transaction,
+    );
 
     const previousMovement = await this.repository.findLastMovementBefore(
       productId,
@@ -1115,6 +1151,7 @@ export class StockMovementService extends BaseService<
         movement_quantity: payload.movement_quantity,
         unit_cost_invoice: undefined,
         manual_average_cost_value: payload.manual_average_cost_value ?? null,
+        refers_to: payload.refers_to ?? null,
         status: "PENDING",
         is_active: true,
         ...nextState,
@@ -1155,6 +1192,7 @@ export class StockMovementService extends BaseService<
     unitBusinessId: string,
     movementId: string,
     manualAverageCostValue: number | null,
+    refersTo?: string | null,
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
     const movement = await StockMovement.findOne({
@@ -1178,8 +1216,24 @@ export class StockMovementService extends BaseService<
       );
     }
 
+    const nextRefersTo =
+      manualAverageCostValue == null
+        ? null
+        : (refersTo ?? movement.refers_to ?? null);
+
+    await this.validateRefersTo(
+      productId,
+      unitBusinessId,
+      nextRefersTo,
+      manualAverageCostValue,
+      transaction,
+    );
+
     await movement.update(
-      { manual_average_cost_value: manualAverageCostValue },
+      {
+        manual_average_cost_value: manualAverageCostValue,
+        refers_to: nextRefersTo,
+      },
       { transaction },
     );
 

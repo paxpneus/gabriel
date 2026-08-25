@@ -251,7 +251,7 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
    * é (cutoffDate, extractionDate]: o que é anterior já foi consolidado por
    * um CSV anterior; o que é posterior ainda não apareceu no CSV.
    *
-   * Movimentos com custo médio manual nunca são removidos.
+   * Movimentos protegidos (refers_to preenchido) nunca são removidos.
    */
   async deletePendingInCsvWindow(
     productId: string,
@@ -269,10 +269,7 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
         product_id: productId,
         unit_business_id: unitBusinessId,
         status: "PENDING",
-        [Op.or]: [
-          { manual_average_cost_value: null },
-          { manual_average_cost_value: 0 },
-        ],
+        refers_to: null,
         movement_date: movementDate,
         is_active: true,
       },

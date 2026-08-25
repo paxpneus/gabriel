@@ -229,6 +229,9 @@ export class StockMovementController extends BaseController<
   /**
    * POST /stock-movements/:productId/manual-adjustment
    * Cria um ajuste manual (sem invoice_id) e recalcula a cadeia a partir dele.
+   * Body aceita opcionalmente refers_to (invoice_number da PURCHASE_ENTRY
+   * que este ajuste corrige) — só é aceito junto de manual_average_cost_value
+   * e protege a linha contra delete/recriação em reindexProduct.
    */
   createManualAdjustment = async (
     req: Request,
@@ -252,8 +255,10 @@ export class StockMovementController extends BaseController<
 
   /**
    * PATCH /stock-movements/:productId/manual-average-cost/:movementId
-   * ⚠️ Único ponto que escreve manual_average_cost_value. Body: { unit_business_id, manual_average_cost_value }
-   * manual_average_cost_value pode ser `null` pra remover o override.
+   * ⚠️ Único ponto que escreve manual_average_cost_value. Body: { unit_business_id, manual_average_cost_value, refers_to? }
+   * manual_average_cost_value pode ser `null` pra remover o override (nesse
+   * caso refers_to também é limpo, já que não faz sentido sem o override).
+   * refers_to é o invoice_number da PURCHASE_ENTRY que este ajuste corrige.
    */
   updateManualAverageCost = async (
     req: Request,
@@ -262,13 +267,15 @@ export class StockMovementController extends BaseController<
   ) => {
     try {
       const { productId, movementId } = req.params;
-      const { unit_business_id, manual_average_cost_value } = req.body;
+      const { unit_business_id, manual_average_cost_value, refers_to } =
+        req.body;
 
       const result = await this.service.updateManualAverageCost(
         productId as string,
         unit_business_id,
         movementId as string,
         manual_average_cost_value,
+        refers_to,
       );
       return res.status(200).json(result);
     } catch (error) {

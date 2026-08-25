@@ -27,6 +27,7 @@ class StockMovement
   public resulting_average_cost!: number;
   public total_stock_value!: number;
   public manual_average_cost_value?: number | null;
+  public refers_to?: string | null;
   public is_active!: boolean;
   public status!: StockMovementStatus;
   public readonly createdAt!: Date;
@@ -113,6 +114,11 @@ StockMovement.init(
     },
     manual_average_cost_value: {
       type: DataTypes.DECIMAL(12, 4),
+      allowNull: true,
+      defaultValue: null,
+    },
+    refers_to: {
+      type: DataTypes.STRING(100),
       allowNull: true,
       defaultValue: null,
     },

@@ -93,6 +93,7 @@ function makeExistingMovement(overrides: Partial<any> = {}) {
     balance_quantity: 10,
     resulting_average_cost: 10,
     manual_average_cost_value: null,
+    refers_to: null,
     is_active: true,
     direction: null,
     ...overrides,
@@ -428,7 +429,7 @@ describe("StockMovementService", () => {
         balance_quantity: 50,
         resulting_average_cost: 12,
         manual_average_cost_value: 12,
-
+        refers_to: "1",
         is_active: true,
       });
 
@@ -489,6 +490,31 @@ describe("StockMovementService", () => {
 
       expect((service as any).repository.bulkDelete).toHaveBeenCalled();
       expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
+    });
+
+    it("MANUAL_ADJUSTMENT com manual_average_cost_value mas sem refers_to NÃO é protegido (a proteção agora é só refers_to)", async () => {
+      const manualAdjustment = makeExistingMovement({
+        id: "manual-1",
+        invoice_id: null,
+        movement_type: "MANUAL_ADJUSTMENT",
+        movement_date: new Date("2026-01-15"),
+        balance_quantity: 50,
+        resulting_average_cost: 12,
+        manual_average_cost_value: 12,
+        refers_to: null,
+        is_active: true,
+      });
+
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        manualAdjustment,
+      ]);
+
+      await service.reindexProduct(PRODUCT_ID, UNIT_BUSINESS_ID, [] as any);
+
+      expect((service as any).repository.bulkDelete).toHaveBeenCalledWith({
+        where: { id: { [Op.in]: ["manual-1"] } },
+        transaction: undefined,
+      });
     });
 
     it("não protege MANUAL_ADJUSTMENT sem custo manual contra uma fonte com o mesmo invoice_id", async () => {
@@ -878,6 +904,55 @@ describe("StockMovementService", () => {
       expect(created.movement_date.getTime()).toBeGreaterThanOrEqual(before);
       expect(created.movement_date.getTime()).toBeLessThanOrEqual(after);
     });
+
+    it("aceita refers_to junto de manual_average_cost_value, validando contra uma PURCHASE_ENTRY existente", async () => {
+      (StockMovement.findOne as jest.Mock).mockResolvedValue(
+        makeExistingMovement({ movement_type: "PURCHASE_ENTRY" }),
+      );
+      (service as any).repository.findLastMovementBefore.mockResolvedValue(
+        null,
+      );
+      jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      await service.createManualAdjustment(PRODUCT_ID, UNIT_BUSINESS_ID, {
+        movement_quantity: 8,
+        direction_type: "PURCHASE_ENTRY",
+        manual_average_cost_value: 30,
+        refers_to: "1",
+      });
+
+      expect((service as any).repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ refers_to: "1" }),
+        { transaction: undefined },
+      );
+    });
+
+    it("rejeita refers_to sem manual_average_cost_value", async () => {
+      await expect(
+        service.createManualAdjustment(PRODUCT_ID, UNIT_BUSINESS_ID, {
+          movement_quantity: 8,
+          direction_type: "PURCHASE_ENTRY",
+          refers_to: "1",
+        }),
+      ).rejects.toThrow(/refers_to/);
+      expect((service as any).repository.create).not.toHaveBeenCalled();
+    });
+
+    it("rejeita refers_to que não corresponde a nenhuma PURCHASE_ENTRY do produto", async () => {
+      (StockMovement.findOne as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.createManualAdjustment(PRODUCT_ID, UNIT_BUSINESS_ID, {
+          movement_quantity: 8,
+          direction_type: "PURCHASE_ENTRY",
+          manual_average_cost_value: 30,
+          refers_to: "inexistente",
+        }),
+      ).rejects.toThrow(/refers_to/);
+      expect((service as any).repository.create).not.toHaveBeenCalled();
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -926,7 +1001,7 @@ describe("StockMovementService", () => {
         }),
       );
       expect(movement.update).toHaveBeenCalledWith(
-        { manual_average_cost_value: 123 },
+        { manual_average_cost_value: 123, refers_to: null },
         { transaction: undefined },
       );
       expect(upsertSpy).toHaveBeenCalledWith(
@@ -955,9 +1030,83 @@ describe("StockMovementService", () => {
       );
 
       expect(movement.update).toHaveBeenCalledWith(
-        { manual_average_cost_value: null },
+        { manual_average_cost_value: null, refers_to: null },
         { transaction: undefined },
       );
+    });
+
+    it("aceita refersTo e grava refers_to junto do override, validando contra uma PURCHASE_ENTRY existente", async () => {
+      const movement = makeExistingMovement({
+        id: "movement-id-x",
+        movement_type: "MANUAL_ADJUSTMENT",
+      });
+      (StockMovement.findOne as jest.Mock)
+        .mockResolvedValueOnce(movement) // busca por id
+        .mockResolvedValueOnce(
+          makeExistingMovement({ movement_type: "PURCHASE_ENTRY" }),
+        ); // validação do refers_to
+      jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      await service.updateManualAverageCost(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        "movement-id-x",
+        123,
+        "1",
+      );
+
+      expect(movement.update).toHaveBeenCalledWith(
+        { manual_average_cost_value: 123, refers_to: "1" },
+        { transaction: undefined },
+      );
+    });
+
+    it("remover o override (null) limpa refers_to automaticamente, mesmo se refersTo for informado", async () => {
+      const movement = makeExistingMovement({
+        id: "movement-id-x",
+        movement_type: "MANUAL_ADJUSTMENT",
+        refers_to: "1",
+      });
+      (StockMovement.findOne as jest.Mock).mockResolvedValue(movement);
+      jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+
+      await service.updateManualAverageCost(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        "movement-id-x",
+        null,
+        "1",
+      );
+
+      expect(movement.update).toHaveBeenCalledWith(
+        { manual_average_cost_value: null, refers_to: null },
+        { transaction: undefined },
+      );
+    });
+
+    it("rejeita refersTo que não corresponde a nenhuma PURCHASE_ENTRY do produto", async () => {
+      const movement = makeExistingMovement({
+        id: "movement-id-x",
+        movement_type: "MANUAL_ADJUSTMENT",
+      });
+      (StockMovement.findOne as jest.Mock)
+        .mockResolvedValueOnce(movement) // busca por id
+        .mockResolvedValueOnce(null); // refers_to não encontrado
+
+      await expect(
+        service.updateManualAverageCost(
+          PRODUCT_ID,
+          UNIT_BUSINESS_ID,
+          "movement-id-x",
+          123,
+          "inexistente",
+        ),
+      ).rejects.toThrow(/refers_to/);
+      expect(movement.update).not.toHaveBeenCalled();
     });
   });
 
