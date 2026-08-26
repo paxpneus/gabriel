@@ -46,8 +46,15 @@ type CreateManualAdjustmentPayload = {
   movement_quantity: number;
   direction_type: "PURCHASE_ENTRY" | "SALE_OUT";
   manual_average_cost_value?: number | null;
+  refers_to?: string | null;
   movement_date?: Date;
 };
+
+// Offset fixo usado por realignRefersToMovementDates: um MANUAL_ADJUSTMENT
+// ancorado (refers_to) sempre ordena depois da PURCHASE_ENTRY que corrige,
+// nunca "empatado" com ela (empate de movement_date deixaria a ordenação
+// dependente de created_at, frágil).
+const REFERS_TO_ORDERING_OFFSET_MS = 5000;
 
 /**
  * O CSV da Bling pode trazer o número da NF sem os zeros à esquerda usados
@@ -142,6 +149,40 @@ export class StockMovementService extends BaseService<
       )[0];
 
     return latestSynched ? new Date(latestSynched.movement_date) : null;
+  }
+
+  /**
+   * `upsertProductStockMovements` só recalcula a cauda depois do cutoff
+   * automático por padrão (baseline consolidada pelo CSV é imutável pra
+   * fluxos automáticos). Uma correção manual (refers_to) explícita pode
+   * mirar uma nota BEM mais antiga que o cutoff atual — nesse caso, se não
+   * recalcularmos com `ignoreCutoff: true`, a correção fica presa dentro da
+   * baseline congelada: nunca entra na timeline recalculada e nunca se
+   * propaga até o resulting_average_cost do último movimento (o que
+   * `syncProductAverageCostConfig` lê pra atualizar product_configs).
+   * Só pedimos o recálculo completo quando realmente necessário (a data do
+   * ajuste cai dentro ou antes da baseline) pra não pagar o custo de
+   * reprocessar histórico inteiro em toda correção "recente".
+   *
+   * Só é seguro usar `ignoreCutoff: true` porque mergedByInvoiceId /
+   * existingByInvoiceId agora chaveiam por invoice_id ?? id — antes disso,
+   * histórico legado/CSV com invoice_id null colidia no merge e ficava de
+   * fora do recálculo completo (ver incidente documentado no commit que
+   * corrigiu correlationKey em upsertProductStockMovements).
+   */
+  private async needsFullRecalc(
+    productId: string,
+    unitBusinessId: string,
+    movementDate: Date,
+    transaction?: Transaction,
+  ): Promise<boolean> {
+    const cutoff = await this.getAutomaticSyncCutoff(
+      productId,
+      unitBusinessId,
+      transaction,
+    );
+
+    return cutoff != null && movementDate.getTime() <= cutoff.getTime();
   }
 
   private async getLatestCsvExtractionDate(
@@ -370,9 +411,7 @@ export class StockMovementService extends BaseService<
       { transaction },
     );
 
-    const isProtected = (m: StockMovement) =>
-      m.movement_type === "MANUAL_ADJUSTMENT" &&
-      m.manual_average_cost_value != null;
+    const isProtected = (m: StockMovement) => m.refers_to != null;
     const isBeforeOrAtCutoff = (m: StockMovement) =>
       cutoffDate != null &&
       new Date(m.movement_date).getTime() <= cutoffDate.getTime();
@@ -637,12 +676,10 @@ export class StockMovementService extends BaseService<
    * (processMovement / syncProductStockMovements). Só deve ser acionada via
    * rota de controller, sob ação explícita de um operador.
    *
-   * Exceção: MANUAL_ADJUSTMENT com manual_average_cost_value preenchido
-   * nunca é apagado nem recriado. Ele fica intocado na timeline, servindo
-   * só de base (previousState) pro
-   * que vem depois. Se a fonte trouxer de volta um invoice_id que já
-   * corresponde a uma linha protegida, essa entrada da fonte é ignorada —
-   * a linha protegida manda.
+   * Exceção: MANUAL_ADJUSTMENT com refers_to preenchido (correção de custo
+   * ancorada numa nota fiscal específica) nunca é apagado nem recriado. Ele
+   * fica intocado na timeline, servindo só de base (previousState) pro que
+   * vem depois.
    *
    * Linhas protegidas mas desativadas (is_active = false) são preservadas
    * do delete, porém NÃO entram na timeline de cálculo (um ajuste manual
@@ -691,25 +728,15 @@ export class StockMovementService extends BaseService<
       isAfterCutoff(new Date(movement.movement_date)),
     );
 
-    const isProtected = (m: StockMovement) =>
-      m.movement_type === "MANUAL_ADJUSTMENT" &&
-      m.manual_average_cost_value != null;
+    const isProtected = (m: StockMovement) => m.refers_to != null;
 
     const protectedMovements = mutableExistingMovements.filter(isProtected);
     const deletableMovements = mutableExistingMovements.filter(
       (movement) => !isProtected(movement),
     );
 
-    const protectedInvoiceIds = new Set(
-      protectedMovements
-        .filter((m) => m.invoice_id != null)
-        .map((m) => m.invoice_id as string | null),
-    );
-
-    const incomingMovements = incomingSource.filter(
-      (movement) =>
-        isAfterCutoff(new Date(movement.movement_date)) &&
-        !protectedInvoiceIds.has(movement.invoice_id),
+    const incomingMovements = incomingSource.filter((movement) =>
+      isAfterCutoff(new Date(movement.movement_date)),
     );
 
     // Só linhas protegidas ATIVAS entram na timeline de cálculo — as
@@ -885,14 +912,25 @@ export class StockMovementService extends BaseService<
       (m) => m.movement_type !== "MANUAL_ADJUSTMENT",
     );
 
+    // Chave de correlação: invoice_id quando existir, senão o próprio id da
+    // linha. Histórico legado/importado via CSV não tem invoice_id (só
+    // invoice_number) — usar invoice_id puro como chave faria TODAS essas
+    // linhas colidirem no mesmo `null`, descartando todas menos a última do
+    // Map. incoming (CSV/NF ao vivo) sempre tem invoice_id real (filtrado
+    // abaixo), então nunca colide com uma chave de fallback por id.
+    const correlationKey = (m: {
+      invoice_id?: string | null;
+      id?: string;
+    }): string => (m.invoice_id ?? m.id) as string;
+
     const existingByInvoiceId = new Map<string, StockMovement>();
     for (const m of invoiceBackedExisting) {
-      existingByInvoiceId.set(m.invoice_id as string, m);
+      existingByInvoiceId.set(correlationKey(m), m);
     }
 
     const mergedByInvoiceId = new Map<string, ReindexProductPayload>();
     for (const existing of invoiceBackedExisting) {
-      mergedByInvoiceId.set(existing.invoice_id as string, {
+      mergedByInvoiceId.set(correlationKey(existing), {
         product_id: productId,
         invoice_id: existing.invoice_id as string | null,
         invoice_number: existing.invoice_number,
@@ -913,7 +951,12 @@ export class StockMovementService extends BaseService<
 
     type TimelineEntry =
       | { kind: "manual"; date: Date; movement: StockMovement }
-      | { kind: "regular"; date: Date; payload: ReindexProductPayload };
+      | {
+          kind: "regular";
+          date: Date;
+          key: string;
+          payload: ReindexProductPayload;
+        };
 
     const timeline: TimelineEntry[] = [
       ...manualAdjustments.map((movement) => ({
@@ -921,9 +964,10 @@ export class StockMovementService extends BaseService<
         date: new Date(movement.movement_date),
         movement,
       })),
-      ...[...mergedByInvoiceId.values()].map((payload) => ({
+      ...[...mergedByInvoiceId.entries()].map(([key, payload]) => ({
         kind: "regular" as const,
         date: new Date(payload.movement_date),
+        key,
         payload,
       })),
     ].sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -989,11 +1033,7 @@ export class StockMovementService extends BaseService<
       }
 
       const movement = entry.payload;
-
-      if (!movement.invoice_id) {
-        continue;
-      }
-      const existing = existingByInvoiceId.get(movement.invoice_id);
+      const existing = existingByInvoiceId.get(entry.key);
 
       // manual_average_cost_value é IMUTÁVEL via sistema: nunca é aceito a
       // partir do payload de origem (source de NF) — só o que já está
@@ -1060,6 +1100,119 @@ export class StockMovementService extends BaseService<
   }
 
   /**
+   * refers_to âncora um MANUAL_ADJUSTMENT numa nota fiscal específica (via
+   * invoice_number, não id — ver stock-movements.model.ts) e é o que decide
+   * se a linha fica protegida contra delete/recriação em reindexProduct.
+   * Só faz sentido junto de um manual_average_cost_value (é a correção de
+   * custo dessa nota), e só é aceito se já existir uma PURCHASE_ENTRY com
+   * esse invoice_number pro mesmo produto/unit_business — sanity check
+   * contra erro de digitação.
+   *
+   * Retorna a PURCHASE_ENTRY referenciada (ou `null` se `refersTo` não foi
+   * informado) pra quem chama poder derivar o movement_date do ajuste sem
+   * precisar buscar de novo.
+   */
+  private async validateRefersTo(
+    productId: string,
+    unitBusinessId: string,
+    refersTo: string | null | undefined,
+    manualAverageCostValue: number | null | undefined,
+    transaction?: Transaction,
+  ): Promise<StockMovement | null> {
+    if (refersTo == null) return null;
+
+    if (manualAverageCostValue == null) {
+      throw new Error(
+        "[STOCK_MOVEMENT] refers_to só pode ser setado junto de um manual_average_cost_value.",
+      );
+    }
+
+    const referencedEntry = await this.repository.findByInvoiceNumberAndType(
+      productId,
+      unitBusinessId,
+      refersTo,
+      "PURCHASE_ENTRY",
+      transaction,
+    );
+
+    if (!referencedEntry) {
+      throw new Error(
+        `[STOCK_MOVEMENT] refers_to="${refersTo}" não corresponde a nenhuma PURCHASE_ENTRY do produto=${productId}/unit_business=${unitBusinessId}.`,
+      );
+    }
+
+    return referencedEntry;
+  }
+
+  /**
+   * Garante que todo MANUAL_ADJUSTMENT ativo com refers_to preenchido tenha
+   * movement_date estritamente depois da PURCHASE_ENTRY que ele corrige —
+   * fixado em exatamente REFERS_TO_ORDERING_OFFSET_MS (5s) depois dela,
+   * nunca "empatado" com ela.
+   *
+   * Necessário porque reindexProduct apaga e recria toda PURCHASE_ENTRY não
+   * protegida — só o MANUAL_ADJUSTMENT com refers_to sobrevive intocado. Se
+   * a data de origem da nota mudar entre uma recriação e outra (ex.: uma
+   * correção de fuso horário no ingest da Bling), o ajuste protegido — que
+   * ficou parado na data antiga — pode passar a ordenar ANTES da nova
+   * PURCHASE_ENTRY, invertendo a cadeia de cálculo (o ajuste deixaria de
+   * herdar o estado da entrada que corrige). Esta função corrige isso
+   * comparando com a PURCHASE_ENTRY atual, resolvida por invoice_number
+   * (não id — ver stock-movements.model.ts), então continua funcionando
+   * mesmo que a PURCHASE_ENTRY tenha sido recriada com um id novo.
+   *
+   * Só corrige movement_date, não recalcula a cadeia de saldo/custo. Quando
+   * o retorno não vem vazio (alguma data mudou), quem chama deve seguir com
+   * upsertProductStockMovements (ou reindexProduct) pra recalcular a cadeia
+   * na nova ordem.
+   */
+  async realignRefersToMovementDates(
+    productId: string,
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<StockMovement[]> {
+    const history = await this.repository.findHistoryByProduct(
+      productId,
+      unitBusinessId,
+      { transaction, activeOnly: true },
+    );
+
+    const anchoredAdjustments = history.filter(
+      (m) => m.movement_type === "MANUAL_ADJUSTMENT" && m.refers_to != null,
+    );
+
+    const realigned: StockMovement[] = [];
+
+    for (const adjustment of anchoredAdjustments) {
+      const referencedEntry = await this.repository.findByInvoiceNumberAndType(
+        productId,
+        unitBusinessId,
+        adjustment.refers_to as string,
+        "PURCHASE_ENTRY",
+        transaction,
+      );
+
+      // Âncora órfã (a PURCHASE_ENTRY referenciada não existe mais) — nada
+      // a realinhar aqui, mas não é motivo pra travar o resto do produto.
+      if (!referencedEntry) continue;
+
+      const targetDate = new Date(
+        new Date(referencedEntry.movement_date).getTime() +
+          REFERS_TO_ORDERING_OFFSET_MS,
+      );
+
+      if (new Date(adjustment.movement_date).getTime() === targetDate.getTime()) {
+        continue; // já alinhado
+      }
+
+      await adjustment.update({ movement_date: targetDate }, { transaction });
+      realigned.push(adjustment);
+    }
+
+    return realigned;
+  }
+
+  /**
    * Cria um MANUAL_ADJUSTMENT — movimento sem nota fiscal de origem
    * (invoice_id = null). A direção recebida no payload (PURCHASE_ENTRY =
    * entra, SALE_OUT = sai) só decide o sinal da soma no saldo; o
@@ -1070,6 +1223,13 @@ export class StockMovementService extends BaseService<
    * já existe, agora contando com o ajuste recém-criado). Isso cobre tanto
    * o caso "adicionado no fim" quanto o retroativo (movement_date no meio
    * do histórico).
+   *
+   * movement_date não é mais um dado de entrada do fluxo normal (front não
+   * manda mais): quando `refers_to` é informado, a data é sempre a da
+   * PURCHASE_ENTRY referenciada + REFERS_TO_ORDERING_OFFSET_MS (5s à frente,
+   * mesmo dia — garante que o ajuste sempre ordena depois da entrada que
+   * corrige). `payload.movement_date` só é usado como fallback pra chamadas
+   * internas sem refers_to (ex.: reconcileProductBalance).
    */
   async createManualAdjustment(
     productId: string,
@@ -1077,9 +1237,23 @@ export class StockMovementService extends BaseService<
     payload: CreateManualAdjustmentPayload,
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
-    const movementDate = payload.movement_date ?? new Date();
     const direction: "IN" | "OUT" =
       payload.direction_type === "SALE_OUT" ? "OUT" : "IN";
+
+    const referencedEntry = await this.validateRefersTo(
+      productId,
+      unitBusinessId,
+      payload.refers_to,
+      payload.manual_average_cost_value,
+      transaction,
+    );
+
+    const movementDate = referencedEntry
+      ? new Date(
+          new Date(referencedEntry.movement_date).getTime() +
+            REFERS_TO_ORDERING_OFFSET_MS,
+        )
+      : (payload.movement_date ?? new Date());
 
     const previousMovement = await this.repository.findLastMovementBefore(
       productId,
@@ -1115,6 +1289,7 @@ export class StockMovementService extends BaseService<
         movement_quantity: payload.movement_quantity,
         unit_cost_invoice: undefined,
         manual_average_cost_value: payload.manual_average_cost_value ?? null,
+        refers_to: payload.refers_to ?? null,
         status: "PENDING",
         is_active: true,
         ...nextState,
@@ -1122,11 +1297,19 @@ export class StockMovementService extends BaseService<
       { transaction } as any,
     );
 
+    const ignoreCutoff = await this.needsFullRecalc(
+      productId,
+      unitBusinessId,
+      movementDate,
+      transaction,
+    );
+
     return this.upsertProductStockMovements(
       productId,
       unitBusinessId,
       [],
       transaction,
+      ignoreCutoff,
     );
   }
 
@@ -1155,6 +1338,7 @@ export class StockMovementService extends BaseService<
     unitBusinessId: string,
     movementId: string,
     manualAverageCostValue: number | null,
+    refersTo?: string | null,
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
     const movement = await StockMovement.findOne({
@@ -1178,15 +1362,88 @@ export class StockMovementService extends BaseService<
       );
     }
 
+    const nextRefersTo =
+      manualAverageCostValue == null
+        ? null
+        : (refersTo ?? movement.refers_to ?? null);
+
+    const referencedEntry = await this.validateRefersTo(
+      productId,
+      unitBusinessId,
+      nextRefersTo,
+      manualAverageCostValue,
+      transaction,
+    );
+
+    const effectiveMovementDate = referencedEntry
+      ? new Date(
+          new Date(referencedEntry.movement_date).getTime() +
+            REFERS_TO_ORDERING_OFFSET_MS,
+        )
+      : new Date(movement.movement_date);
+
     await movement.update(
-      { manual_average_cost_value: manualAverageCostValue },
+      {
+        manual_average_cost_value: manualAverageCostValue,
+        refers_to: nextRefersTo,
+        ...(referencedEntry ? { movement_date: effectiveMovementDate } : {}),
+      },
       { transaction },
+    );
+
+    const ignoreCutoff = await this.needsFullRecalc(
+      productId,
+      unitBusinessId,
+      effectiveMovementDate,
+      transaction,
     );
 
     return this.upsertProductStockMovements(
       productId,
       unitBusinessId,
       [],
+      transaction,
+      ignoreCutoff,
+    );
+  }
+
+  /**
+   * Dada uma lista de ids, descobre se algum deles precisa forçar recálculo
+   * completo em upsertProductStockMovements: setActiveStatus tira a linha do
+   * filtro is_active padrão, então isso precisa ser resolvido ANTES de
+   * mudar o status, senão a linha já não aparece mais pra sabermos sua data.
+   */
+  private async needsFullRecalcForMovements(
+    productId: string,
+    unitBusinessId: string,
+    movementIds: string[],
+    transaction?: Transaction,
+  ): Promise<boolean> {
+    if (!movementIds.length) return false;
+
+    const movements = await StockMovement.findAll({
+      where: {
+        id: { [Op.in]: movementIds },
+        product_id: productId,
+        unit_business_id: unitBusinessId,
+      },
+      transaction,
+    });
+
+    if (!movements.length) return false;
+
+    const earliestDate = movements.reduce(
+      (min, m) =>
+        new Date(m.movement_date).getTime() < min.getTime()
+          ? new Date(m.movement_date)
+          : min,
+      new Date(movements[0].movement_date),
+    );
+
+    return this.needsFullRecalc(
+      productId,
+      unitBusinessId,
+      earliestDate,
       transaction,
     );
   }
@@ -1197,6 +1454,11 @@ export class StockMovementService extends BaseService<
    * movimentos desativados somem do saldo/custo médio como se nunca
    * tivessem existido. Funciona tanto pra movimentos normais quanto pra
    * MANUAL_ADJUSTMENT.
+   *
+   * Se algum dos movimentos desativados estiver dentro da baseline
+   * consolidada pelo CSV, o recálculo padrão (só a cauda) nunca chegaria
+   * até o resulting_average_cost do último movimento — por isso força
+   * ignoreCutoff quando necessário, igual createManualAdjustment.
    */
   async deactivateStockMovements(
     productId: string,
@@ -1204,6 +1466,13 @@ export class StockMovementService extends BaseService<
     movementIds: string[],
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
+    const ignoreCutoff = await this.needsFullRecalcForMovements(
+      productId,
+      unitBusinessId,
+      movementIds,
+      transaction,
+    );
+
     await this.repository.setActiveStatus(
       movementIds,
       productId,
@@ -1217,12 +1486,14 @@ export class StockMovementService extends BaseService<
       unitBusinessId,
       [],
       transaction,
+      ignoreCutoff,
     );
   }
 
   /**
    * Inverso do deactivate: marca is_active = true em lote e recalcula a
-   * cadeia — os movimentos voltam a contar pro saldo/custo médio.
+   * cadeia — os movimentos voltam a contar pro saldo/custo médio. Mesma
+   * ressalva de ignoreCutoff do deactivate.
    */
   async reactivateStockMovements(
     productId: string,
@@ -1230,6 +1501,13 @@ export class StockMovementService extends BaseService<
     movementIds: string[],
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
+    const ignoreCutoff = await this.needsFullRecalcForMovements(
+      productId,
+      unitBusinessId,
+      movementIds,
+      transaction,
+    );
+
     await this.repository.setActiveStatus(
       movementIds,
       productId,
@@ -1243,6 +1521,7 @@ export class StockMovementService extends BaseService<
       unitBusinessId,
       [],
       transaction,
+      ignoreCutoff,
     );
   }
 

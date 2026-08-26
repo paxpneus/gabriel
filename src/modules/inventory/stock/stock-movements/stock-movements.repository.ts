@@ -63,6 +63,32 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
   }
 
   /**
+   * Busca uma movimentação do produto por invoice_number + movement_type.
+   * Usado pra resolver a âncora de refers_to, que guarda o invoice_number da
+   * movimentação referenciada (não o id — ver stock-movements.model.ts),
+   * já que esse valor sobrevive ao delete+recriação de reindexProduct.
+   */
+  async findByInvoiceNumberAndType(
+    productId: string,
+    unitBusinessId: string,
+    invoiceNumber: string,
+    movementType: StockMovement["movement_type"],
+    transaction?: Transaction,
+  ): Promise<StockMovement | null> {
+    return this.model.findOne({
+      where: {
+        product_id: productId,
+        unit_business_id: unitBusinessId,
+        invoice_number: invoiceNumber,
+        movement_type: movementType,
+        is_active: true,
+      },
+      order: [["movement_date", "ASC"]],
+      transaction,
+    });
+  }
+
+  /**
    * Busca todos os movimentos de um produto a partir de uma data (inclusive),
    * ordenados cronologicamente. Usado na re-indexação em lote.
    */
@@ -251,7 +277,7 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
    * é (cutoffDate, extractionDate]: o que é anterior já foi consolidado por
    * um CSV anterior; o que é posterior ainda não apareceu no CSV.
    *
-   * Movimentos com custo médio manual nunca são removidos.
+   * Movimentos protegidos (refers_to preenchido) nunca são removidos.
    */
   async deletePendingInCsvWindow(
     productId: string,
@@ -269,10 +295,7 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
         product_id: productId,
         unit_business_id: unitBusinessId,
         status: "PENDING",
-        [Op.or]: [
-          { manual_average_cost_value: null },
-          { manual_average_cost_value: 0 },
-        ],
+        refers_to: null,
         movement_date: movementDate,
         is_active: true,
       },
@@ -328,8 +351,8 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
 
     return (
       movement.movement_type === "MANUAL_ADJUSTMENT" &&
-      movement.manual_average_cost_value != null &&
-      Number(movement.manual_average_cost_value) > 0
+      movement.refers_to != null &&
+      movement.manual_average_cost_value != null
     );
   }
 
@@ -337,21 +360,24 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
    * Retorna as últimas `limit` movimentações "efetivas" por produto.
    *
    * REGRA DA POSIÇÃO 0 (última movimentação): precisa SEMPRE ser uma
-   * PURCHASE_ENTRY ou um MANUAL_ADJUSTMENT com manual_average_cost_value
-   * preenchido. Se o topo real da timeline for qualquer outro tipo
-   * (SALE_OUT, CUSTOMER_RETURN, MANUAL_ADJUSTMENT sem custo), esses itens
-   * são ignorados como "última movimentação" — descartamos do topo pra
-   * baixo até achar a última que seja de fato uma entrada/correção válida.
+   * PURCHASE_ENTRY ou um MANUAL_ADJUSTMENT que seja correção de custo
+   * (refers_to E manual_average_cost_value preenchidos — um MANUAL_ADJUSTMENT
+   * com refers_to mas sem manual_average_cost_value é um ajuste de
+   * quantidade, não conta aqui). Se o topo real da timeline for qualquer
+   * outro tipo, esses itens são ignorados como "última movimentação" —
+   * descartamos do topo pra baixo até achar a última que seja de fato uma
+   * entrada/correção válida.
    *
    * REGRA DAS DEMAIS POSIÇÕES (penúltima em diante): qualquer tipo de
    * movimentação conta, pegando exatamente o que vem antes na pilha geral
    * já colapsada (cadeias de correção de PURCHASE_ENTRY continuam
    * colapsando normalmente aqui).
    *
-   * Uma cadeia de correção é: uma PURCHASE_ENTRY seguida (imediatamente, ou
-   * dentro de 1 dia) por um ou mais MANUAL_ADJUSTMENT com
-   * manual_average_cost_value preenchido — cada correção substitui a
-   * anterior no topo da pilha.
+   * Uma cadeia de correção é: uma PURCHASE_ENTRY seguida por um ou mais
+   * MANUAL_ADJUSTMENT cujo `refers_to` bate com o `invoice_number` da
+   * entrada (ou com o `refers_to` da correção anterior, permitindo cadeias
+   * de múltiplas correções) — cada correção substitui a anterior no topo
+   * da pilha. Não há janela de tempo: o casamento é só por invoice.
    *
    * Retorna Map<product_id, StockMovement[]>, mais recente primeiro.
    */
@@ -362,8 +388,6 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
     limit = 2,
     transaction?: Transaction,
   ): Promise<Map<string, StockMovement[]>> {
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-
     const result = new Map<string, StockMovement[]>();
     if (!productIds.length) return result;
 
@@ -382,42 +406,34 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
       transaction,
     });
 
-    type StackItem = { movement: StockMovement; correctable: boolean };
+    type StackItem = { movement: StockMovement; invoiceKey: string | null };
 
     const stacksByProduct = new Map<string, StackItem[]>();
-    const lastSeenByProduct = new Map<string, StockMovement>();
 
     for (const movement of history) {
       const productId = movement.product_id;
-      const previous = lastSeenByProduct.get(productId);
-      lastSeenByProduct.set(productId, movement);
-
       const stack = stacksByProduct.get(productId) ?? [];
       const top = stack[stack.length - 1];
 
-      const hasManualCost =
+      const isCostCorrection =
         movement.movement_type === "MANUAL_ADJUSTMENT" &&
-        movement.manual_average_cost_value != null &&
-        Number(movement.manual_average_cost_value) > 0;
+        movement.refers_to != null &&
+        movement.manual_average_cost_value != null;
 
-      if (hasManualCost && top?.correctable) {
-        const isImmediatelyAfterTop = previous?.id === top.movement.id;
-        const isWithinOneDayOfTop =
-          Math.abs(
-            new Date(movement.movement_date).getTime() -
-              new Date(top.movement.movement_date).getTime(),
-          ) <= ONE_DAY_MS;
-
-        if (isImmediatelyAfterTop || isWithinOneDayOfTop) {
-          stack[stack.length - 1] = { movement, correctable: true };
-          stacksByProduct.set(productId, stack);
-          continue;
-        }
+      if (isCostCorrection && top?.invoiceKey === movement.refers_to) {
+        stack[stack.length - 1] = { movement, invoiceKey: movement.refers_to as string };
+        stacksByProduct.set(productId, stack);
+        continue;
       }
 
       stack.push({
         movement,
-        correctable: movement.movement_type === "PURCHASE_ENTRY",
+        invoiceKey:
+          movement.movement_type === "PURCHASE_ENTRY"
+            ? (movement.invoice_number ?? null)
+            : isCostCorrection
+              ? (movement.refers_to as string)
+              : null,
       });
       stacksByProduct.set(productId, stack);
     }

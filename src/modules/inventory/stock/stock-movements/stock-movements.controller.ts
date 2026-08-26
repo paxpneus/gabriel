@@ -4,6 +4,11 @@ import StockMovement from "./stock-movements.model";
 import StockMovementService from "./stock-movements.service";
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
+import { validateCreate, validateUpdate } from "../../../../middlewares/validation";
+import {
+  CreateStockMovementSchema,
+  UpdateStockMovementSchema,
+} from "../../../../shared/schemas";
 import stockMovementsService from "./stock-movements.service";
 import { QueryParams } from "../../../../shared/query/query.types";
 
@@ -81,8 +86,16 @@ export class StockMovementController extends BaseController<
       reindex: [authenticate, userPermissions],
       sync: [authenticate, userPermissions],
       upsert: [authenticate, userPermissions],
-      createManualAdjustment: [authenticate, userPermissions],
-      updateManualAverageCost: [authenticate, userPermissions],
+      createManualAdjustment: [
+        authenticate,
+        validateCreate(CreateStockMovementSchema),
+        userPermissions,
+      ],
+      updateManualAverageCost: [
+        authenticate,
+        validateUpdate(UpdateStockMovementSchema),
+        userPermissions,
+      ],
       deactivate: [authenticate, userPermissions],
       reactivate: [authenticate, userPermissions],
       syncAll: [authenticate, userPermissions],
@@ -229,6 +242,10 @@ export class StockMovementController extends BaseController<
   /**
    * POST /stock-movements/:productId/manual-adjustment
    * Cria um ajuste manual (sem invoice_id) e recalcula a cadeia a partir dele.
+   * Body exige refers_to (invoice_number da PURCHASE_ENTRY que este ajuste
+   * corrige) — protege a linha contra delete/recriação em reindexProduct.
+   * Não aceita movement_date: a data é sempre calculada no service a partir
+   * da PURCHASE_ENTRY referenciada (mesmo dia, 5s à frente dela).
    */
   createManualAdjustment = async (
     req: Request,
@@ -252,8 +269,12 @@ export class StockMovementController extends BaseController<
 
   /**
    * PATCH /stock-movements/:productId/manual-average-cost/:movementId
-   * ⚠️ Único ponto que escreve manual_average_cost_value. Body: { unit_business_id, manual_average_cost_value }
-   * manual_average_cost_value pode ser `null` pra remover o override.
+   * ⚠️ Único ponto que escreve manual_average_cost_value. Body: { unit_business_id, manual_average_cost_value, refers_to }
+   * manual_average_cost_value pode ser `null` pra remover o override (nesse
+   * caso refers_to também é limpo, já que não faz sentido sem o override).
+   * refers_to é o invoice_number da PURCHASE_ENTRY que este ajuste corrige.
+   * Quando refers_to resolve pra uma PURCHASE_ENTRY, movement_date é
+   * recalculado automaticamente (mesmo dia, 5s à frente dela).
    */
   updateManualAverageCost = async (
     req: Request,
@@ -262,13 +283,15 @@ export class StockMovementController extends BaseController<
   ) => {
     try {
       const { productId, movementId } = req.params;
-      const { unit_business_id, manual_average_cost_value } = req.body;
+      const { unit_business_id, manual_average_cost_value, refers_to } =
+        req.body;
 
       const result = await this.service.updateManualAverageCost(
         productId as string,
         unit_business_id,
         movementId as string,
         manual_average_cost_value,
+        refers_to,
       );
       return res.status(200).json(result);
     } catch (error) {

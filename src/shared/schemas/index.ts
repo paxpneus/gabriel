@@ -33,6 +33,14 @@ export {
   type InvoiceType,
 } from './invoice.schema';
 
+// Stock Movement
+export {
+  CreateStockMovementSchema,
+  UpdateStockMovementSchema,
+  type CreateStockMovementInput,
+  type UpdateStockMovementInput,
+} from './stock-movement.schema';
+
 // Adicione aqui os schemas de outras tabelas conforme necessário
 // export { CreateProductSchema, ... } from './product.schema';
 // export { CreateTransporterSchema, ... } from './transporter.schema';

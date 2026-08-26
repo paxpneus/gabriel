@@ -136,8 +136,8 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
     expect(result.get(PRODUCT_ID)?.[0].movement_type).toBe("PURCHASE_ENTRY"); // topo sempre entry-like
   });
 
-  describe("janela de 1 dia entre PURCHASE_ENTRY e MANUAL_ADJUSTMENT com custo", () => {
-    it("MANUAL_ADJUSTMENT dentro de 1 dia substitui o topo mesmo com evento no meio", async () => {
+  describe("colapso de correção de custo via refers_to == invoice_number (sem janela de tempo)", () => {
+    it("MANUAL_ADJUSTMENT com refers_to == invoice_number do topo colapsa (substitui a entrada), mesmo com grande distância de tempo", async () => {
       const { repository, findAll } = makeRepositoryWithMockedModel();
 
       const movements = [
@@ -145,24 +145,18 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
           id: "A-entry",
           product_id: "p1",
           movement_type: "PURCHASE_ENTRY",
+          invoice_number: "INV-P1",
           movement_date: "2026-01-01T00:00:00.000Z",
           resulting_average_cost: "100.00",
           manual_average_cost_value: null,
         },
         {
-          id: "B-sale-in-between",
-          product_id: "p1",
-          movement_type: "SALE_OUT",
-          movement_date: "2026-01-01T10:00:00.000Z",
-          resulting_average_cost: "100.00",
-          manual_average_cost_value: null,
-        },
-        {
-          id: "C-manual-adjustment-close",
+          id: "C-manual-adjustment-correction",
           product_id: "p1",
           movement_type: "MANUAL_ADJUSTMENT",
           direction: "IN",
-          movement_date: "2026-01-01T20:00:00.000Z",
+          refers_to: "INV-P1",
+          movement_date: "2026-06-01T20:00:00.000Z",
           resulting_average_cost: "120.00",
           manual_average_cost_value: "120.00",
         },
@@ -170,7 +164,8 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
           id: "D-entry-2",
           product_id: "p1",
           movement_type: "PURCHASE_ENTRY",
-          movement_date: "2026-01-10T00:00:00.000Z",
+          invoice_number: "INV-P1-2",
+          movement_date: "2026-07-01T00:00:00.000Z",
           resulting_average_cost: "200.00",
           manual_average_cost_value: null,
         },
@@ -186,18 +181,19 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
 
       const entries = result.get("p1");
 
-      // Pilha: [A-entry(correctable), B-sale(not), C-manual(correctable), D-entry(correctable)]
-      // Last entry-like: D no índice 3
-      // Com limit=3: slice(1, 4).reverse = [D, C, B]
-      expect(entries).toHaveLength(3);
+      // C.refers_to bate com o invoice_number do topo (A-entry) no momento em que é
+      // processado -> substitui A na pilha, mesmo estando 5 meses depois.
+      // Pilha após substituição: [C-manual-adjustment-correction, D-entry-2]
+      // Last entry-like: D no índice 1
+      // Com limit=3: slice(0, 2).reverse = [D, C]
+      expect(entries).toHaveLength(2);
       expect(entries?.map((e) => e.id)).toEqual([
         "D-entry-2",
-        "C-manual-adjustment-close",
-        "B-sale-in-between",
+        "C-manual-adjustment-correction",
       ]);
     });
 
-    it("MANUAL_ADJUSTMENT a mais de 1 dia de distância vira entrada nova", async () => {
+    it("MANUAL_ADJUSTMENT com refers_to que NÃO bate com o invoice_number do topo não colapsa (vira item novo, mas continua entry-like)", async () => {
       const { repository, findAll } = makeRepositoryWithMockedModel();
 
       const movements = [
@@ -205,6 +201,7 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
           id: "D-entry",
           product_id: "p2",
           movement_type: "PURCHASE_ENTRY",
+          invoice_number: "INV-P2",
           movement_date: "2026-01-10T00:00:00.000Z",
           resulting_average_cost: "200.00",
           manual_average_cost_value: null,
@@ -218,10 +215,11 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
           manual_average_cost_value: null,
         },
         {
-          id: "E-manual-adjustment-far",
+          id: "E-manual-adjustment-other-invoice",
           product_id: "p2",
           movement_type: "MANUAL_ADJUSTMENT",
           direction: "IN",
+          refers_to: "INV-OTHER",
           movement_date: "2026-01-12T00:00:00.000Z",
           resulting_average_cost: "250.00",
           manual_average_cost_value: "250.00",
@@ -238,15 +236,57 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
 
       const entries = result.get("p2");
 
-      // Pilha: [D-entry(correctable), F-sale(not), E-manual(correctable, não substitui D)]
+      // Pilha: [D-entry(correctable), F-sale(not), E-manual(correctable, refers_to não
+      // bate com o invoice_number do topo -> não substitui D, vira item novo)]
       // Last entry-like: E no índice 2
       // Com limit=3: slice(0, 3).reverse = [E, F, D]
       expect(entries).toHaveLength(3);
       expect(entries?.map((e) => e.id)).toEqual([
-        "E-manual-adjustment-far",
+        "E-manual-adjustment-other-invoice",
         "F-sale-in-between",
         "D-entry",
       ]);
+    });
+
+    it("MANUAL_ADJUSTMENT com refers_to mas SEM manual_average_cost_value é ajuste de quantidade puro: não colapsa e não é entry-like", async () => {
+      const { repository, findAll } = makeRepositoryWithMockedModel();
+
+      const movements = [
+        {
+          id: "L-entry",
+          product_id: "p9",
+          movement_type: "PURCHASE_ENTRY",
+          invoice_number: "INV-P9",
+          movement_date: "2026-03-01T00:00:00.000Z",
+          resulting_average_cost: "400.00",
+          manual_average_cost_value: null,
+        },
+        {
+          id: "M-manual-qty-only",
+          product_id: "p9",
+          movement_type: "MANUAL_ADJUSTMENT",
+          direction: "OUT",
+          refers_to: "INV-P9",
+          movement_date: "2026-03-01T05:00:00.000Z",
+          resulting_average_cost: "400.00",
+          manual_average_cost_value: null,
+        },
+      ];
+      findAll.mockResolvedValue(movements);
+
+      const result = await repository.findLastEffectiveMovements(
+        ["p9"],
+        UNIT_BUSINESS_ID,
+      );
+
+      const entries = result.get("p9");
+
+      // M tem refers_to preenchido mas manual_average_cost_value null -> é só um
+      // ajuste de quantidade, NÃO conta como correção de custo: não substitui o
+      // topo (L) e não é entry-like (mesmo tratamento que SALE_OUT/CUSTOMER_RETURN).
+      expect(entries).toHaveLength(1);
+      expect(entries?.[0].id).toBe("L-entry");
+      expect(entries?.[0].movement_type).toBe("PURCHASE_ENTRY");
     });
 
     it("MANUAL_ADJUSTMENT sem custo entra como item qualquer, não entry-like", async () => {
@@ -340,7 +380,7 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
   });
 
   describe("casos adicionais de composição da pilha", () => {
-    it("ENTRADA → SAÍDA → AJUSTE (com custo, até 1 dia) retorna ajuste + saída", async () => {
+    it("ENTRADA → SAÍDA → AJUSTE (refers_to aponta pra entrada) retorna ajuste + saída", async () => {
       const { repository, findAll } = makeRepositoryWithMockedModel();
 
       const movements = [
@@ -348,6 +388,7 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
           id: "p5-entry",
           product_id: "p5",
           movement_type: "PURCHASE_ENTRY",
+          invoice_number: "INV-P5",
           movement_date: "2026-04-01T00:00:00.000Z",
           resulting_average_cost: "500.00",
           balance_quantity: "3.0000",
@@ -367,6 +408,7 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
           product_id: "p5",
           movement_type: "MANUAL_ADJUSTMENT",
           direction: "IN",
+          refers_to: "INV-P5",
           movement_date: "2026-04-01T20:00:00.000Z",
           resulting_average_cost: "550.00",
           balance_quantity: "2.0000",
@@ -382,10 +424,12 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
 
       const entries = result.get("p5");
 
-      // Pilha: [p5-entry (substituído por adjustment), p5-sale, p5-adjustment]
-      // Após substituição: [p5-adjustment, p5-sale]
-      // Last entry-like: p5-adjustment
-      // Com limit=2: retorna [adjustment, sale]
+      // p5-adjustment.refers_to bate com o invoice_number de p5-entry, mas quando
+      // é processado o topo da pilha é p5-sale (não p5-entry) -> não colapsa,
+      // vira um item novo, ele mesmo entry-like.
+      // Pilha: [p5-entry, p5-sale, p5-adjustment]
+      // Last entry-like: p5-adjustment no índice 2
+      // Com limit=2: slice(1, 3).reverse = [adjustment, sale]
       expect(entries).toHaveLength(2);
       expect(entries?.[0].id).toBe("p5-adjustment");
       expect(entries?.[1].id).toBe("p5-sale");
@@ -439,7 +483,7 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
       expect(entries?.map((e) => e.id)).toEqual(["p6-entry-2", "p6-sale"]);
     });
 
-    it("ENTRADA → AJUSTE (adjacente) → SAÍDA → AJUSTE (novo) retorna com intervalo até limit", async () => {
+    it("ENTRADA → AJUSTE (refers_to bate, colapsa) → SAÍDA → AJUSTE (refers_to não bate, novo) retorna com intervalo até limit", async () => {
       const { repository, findAll } = makeRepositoryWithMockedModel();
 
       const movements = [
@@ -447,6 +491,7 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
           id: "p8-entry",
           product_id: "p8",
           movement_type: "PURCHASE_ENTRY",
+          invoice_number: "INV-P8",
           movement_date: "2026-07-01T00:00:00.000Z",
           resulting_average_cost: "800.00",
           balance_quantity: "1.0000",
@@ -457,6 +502,7 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
           product_id: "p8",
           movement_type: "MANUAL_ADJUSTMENT",
           direction: "IN",
+          refers_to: "INV-P8",
           movement_date: "2026-07-01T01:00:00.000Z",
           resulting_average_cost: "820.00",
           balance_quantity: "1.0000",
@@ -476,6 +522,7 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
           product_id: "p8",
           movement_type: "MANUAL_ADJUSTMENT",
           direction: "IN",
+          refers_to: "INV-P8-LATER",
           movement_date: "2026-07-10T00:00:00.000Z",
           resulting_average_cost: "900.00",
           balance_quantity: "0.5000",
@@ -493,7 +540,10 @@ describe("StockMovementRepository.findLastEffectiveMovements", () => {
 
       const entries = result.get("p8");
 
-      // Pilha: [p8-adjustment-1 (subst. entry), p8-sale, p8-adjustment-2]
+      // p8-adjustment-1.refers_to bate com o invoice_number do topo (p8-entry,
+      // que é o topo no momento) -> colapsa/substitui.
+      // Pilha após substituição: [p8-adjustment-1(invoiceKey=INV-P8), p8-sale,
+      // p8-adjustment-2(refers_to=INV-P8-LATER não bate com o topo p8-sale -> item novo)]
       // Last entry-like: p8-adjustment-2 no índice 2
       // Com limit=3: slice(0, 3).reverse = [adjustment-2, sale, adjustment-1]
       expect(entries).toHaveLength(3);
