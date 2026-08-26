@@ -24,7 +24,8 @@ export interface StockMovementAttributes {
   resulting_average_cost: number;
   total_stock_value: number;
   manual_average_cost_value?: number | null;
-  is_active: Boolean; 
+  refers_to?: string | null;
+  is_active: Boolean;
   status: StockMovementStatus;
   createdAt?: Date;
   updatedAt?: Date;

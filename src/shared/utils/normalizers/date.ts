@@ -108,6 +108,25 @@ export function getDateRangeAsDate(days = 2): { inicio: Date; fim: Date } {
 }
  
 /**
+ * Interpreta uma string de data/hora "solta" no formato "DD/MM/YYYY HH:mm:ss"
+ * (sem timezone, como as exportadas pela Bling) como horário local de
+ * APP_TIMEZONE, e devolve o Date UTC correspondente.
+ *
+ * Use isso em vez de `new Date(ano, mes, dia, h, m, s)` sempre que a origem
+ * for uma string de wall-clock em horário brasileiro — o construtor nativo
+ * assume o timezone do processo Node, que em produção (container sem `TZ`
+ * definido) é UTC, produzindo um erro de 3h (o valor vira "UTC" em vez de
+ * "America/Sao_Paulo", sem nenhuma conversão de fato).
+ */
+export function parseBrazilianDateTime(value: string): Date {
+  const [datePart, timePart] = value.trim().split(" ");
+  const [day, month, year] = datePart.split("/").map(Number);
+  const time = timePart ?? "00:00:00";
+  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T${time}`;
+  return dayjs.tz(iso, APP_TIMEZONE).toDate();
+}
+
+/**
  * Início do dia (00:00:00.000) no timezone da aplicação.
  */
 export function startOfDayTz(date: string | Date | Dayjs = nowTz()): Dayjs {
