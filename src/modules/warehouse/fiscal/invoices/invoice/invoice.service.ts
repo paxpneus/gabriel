@@ -313,6 +313,86 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     }
   }
 
+  /**
+   * Cria os InvoiceItems (+ InvoiceFiscalItem) que ainda não existem numa
+   * invoice JÁ existente — usado no reprocesso de itens que ficaram
+   * "não mapeados" na primeira passagem e só resolveram a um Product depois
+   * (ex.: alguém concilia o produto no Bling e o webhook reenvia a nota).
+   * Ignora silenciosamente qualquer item cujo product_id já tenha um
+   * InvoiceItems pra essa invoice — a constraint única (invoice_id,
+   * product_id) protege contra duplicata mesmo se essa checagem falhar.
+   * Retorna os product_id efetivamente criados.
+   */
+  async addMissingInvoiceItems(
+    invoiceId: string,
+    items: ItemWithFiscal[],
+    transaction?: Transaction,
+  ): Promise<string[]> {
+    if (!items.length) return [];
+
+    const t = transaction ?? (await sequelize.transaction());
+    const isExternalTransaction = !!transaction;
+
+    try {
+      const existingItems = await InvoiceItems.findAll({
+        where: {
+          invoice_id: invoiceId,
+          product_id: { [Op.in]: items.map((i) => i.product_id) },
+        },
+        transaction: t,
+      });
+      const existingProductIds = new Set(
+        existingItems.map((i) => i.product_id),
+      );
+
+      const newItems = items
+        .filter((item) => !existingProductIds.has(item.product_id))
+        .reduce<ItemWithFiscal[]>((acc, item) => {
+          const dup = acc.find((i) => i.product_id === item.product_id);
+          if (dup) {
+            dup.quantity_expected = Math.trunc(
+              dup.quantity_expected + item.quantity_expected,
+            );
+          } else {
+            acc.push({ ...item });
+          }
+          return acc;
+        }, []);
+
+      if (!newItems.length) {
+        if (!isExternalTransaction) await t.commit();
+        return [];
+      }
+
+      const invoiceItems = newItems.map(({ fiscal: _, ...itemData }) => ({
+        ...itemData,
+        invoice_id: invoiceId,
+      }));
+      await this.repository.createInvoiceItems(invoiceItems, t);
+
+      const fiscalItems = newItems
+        .map(({ fiscal, ...itemData }, index) =>
+          fiscal
+            ? {
+                ...fiscal,
+                invoice_id: invoiceId,
+                item_number: fiscal.item_number ?? index + 1,
+              }
+            : null,
+        )
+        .filter(Boolean) as InvoiceFiscalItemCreationAttributes[];
+      if (fiscalItems.length > 0) {
+        await this.repository.createInvoiceFiscalItems(fiscalItems, t);
+      }
+
+      if (!isExternalTransaction) await t.commit();
+      return newItems.map((i) => i.product_id);
+    } catch (err) {
+      if (!isExternalTransaction) await t.rollback();
+      throw err;
+    }
+  }
+
   async findByIdFull(id: string, unitBusinessId: string) {
     return this.repository.getFullInvoice(id, unitBusinessId);
   }
