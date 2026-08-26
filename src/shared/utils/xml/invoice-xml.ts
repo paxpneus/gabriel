@@ -24,6 +24,7 @@ import { getBlingIntegration } from "../../../modules/handlers/bling/api/bling_a
 import { logDbError } from "../logging/db-errors-logs";
 import { Op } from "sequelize";
 import invoiceService from "../../../modules/warehouse/fiscal/invoices/invoice/invoice.service";
+import invoiceItemsService from "../../../modules/warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import unitBusinessService from "../../../modules/company/unit-business/unit-business.service";
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
@@ -787,11 +788,40 @@ export async function upsertInvoiceFromXml(
   // Unmapped só pode ser registrado após ter o invoice.id, então é tratado depois.
 
   const invoiceItemsForCreate: ItemWithFiscal[] = [];
+  const resolvedProductKeys: Array<{ sku: string | null; gtin: string | null }> = [];
   const unmappedDet: UnmappedInvoiceItemFromXml[] = [
     ...(options?.unmappedItems ?? []),
   ];
 
-  if (Array.isArray(options?.operationalItems) && !existingInvoice) {
+  // No update (re-fetch/webhook/reenvio), reprocessa contra o estado atual de
+  // mapeamento de produto — mas só vale a pena refazer a resolução se ainda
+  // falta conciliar algo. Se a soma do que já virou InvoiceItems já bate com
+  // o total do XML/operationalItems, não há nada novo pra achar.
+  let alreadyFullyReconciled = false;
+  if (existingInvoice) {
+    const xmlTotalQuantity = Array.isArray(options?.operationalItems)
+      ? options.operationalItems.reduce(
+          (sum, item) => sum + Number(item.quantity_expected ?? 0),
+          0,
+        )
+      : det.reduce(
+          (sum: number, item: any) => sum + Number(item.prod?.qCom ?? 0),
+          0,
+        );
+
+    if (xmlTotalQuantity > 0) {
+      const existingItems = await invoiceItemsService.findAll({
+        where: { invoice_id: existingInvoice.id },
+      });
+      const existingTotalExpected = existingItems.reduce(
+        (sum, item) => sum + Number(item.quantity_expected),
+        0,
+      );
+      alreadyFullyReconciled = existingTotalExpected >= xmlTotalQuantity;
+    }
+  }
+
+  if (Array.isArray(options?.operationalItems) && !alreadyFullyReconciled) {
     for (let idx = 0; idx < options.operationalItems.length; idx++) {
       const item = options.operationalItems[idx];
       const { xmlItem, itemNumber } = findXmlItemForOperationalItem({
@@ -818,7 +848,7 @@ export async function upsertInvoiceFromXml(
           : undefined,
       });
     }
-  } else if (det.length && !existingInvoice) {
+  } else if (det.length && !alreadyFullyReconciled) {
     for (let idx = 0; idx < det.length; idx++) {
       const item = det[idx];
       const prod = item.prod ?? {};
@@ -861,6 +891,7 @@ export async function upsertInvoiceFromXml(
           quantityFallback: qty,
         }),
       });
+      resolvedProductKeys.push({ sku, gtin });
     }
   }
 
@@ -918,6 +949,14 @@ export async function upsertInvoiceFromXml(
       },
     );
 
+    // Reprocesso: cria os InvoiceItems que faltam pros itens que agora
+    // resolvem a um Product (ex.: produto conciliado depois da primeira
+    // passagem) — não duplica os que já existem.
+    await invoiceService.addMissingInvoiceItems(
+      existingInvoice.id,
+      invoiceItemsForCreate,
+    );
+
     invoice = await invoiceService.findByIdFullForAllUnits(existingInvoice.id);
 
     if (!invoice) {
@@ -930,6 +969,21 @@ export async function upsertInvoiceFromXml(
   }
 
   console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
+
+  // ─── Limpa UnmappedInvoiceProduct dos itens que resolveram nessa passagem ──
+  // (no create, invoice.id ainda não existia antes, então esse loop é no-op)
+
+  for (const { sku, gtin } of resolvedProductKeys) {
+    const staleUnmapped = await UnmappedInvoiceProduct.findOne({
+      where: {
+        invoice_id: invoice.id,
+        ...(gtin ? { ean: gtin } : { sku: sku ?? null }),
+      },
+    });
+    if (staleUnmapped) {
+      await staleUnmapped.destroy();
+    }
+  }
 
   // ─── Unmapped products (requer invoice.id) ─────────────────────────────────
 
