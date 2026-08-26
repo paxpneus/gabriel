@@ -50,6 +50,12 @@ type CreateManualAdjustmentPayload = {
   movement_date?: Date;
 };
 
+// Offset fixo usado por realignRefersToMovementDates: um MANUAL_ADJUSTMENT
+// ancorado (refers_to) sempre ordena depois da PURCHASE_ENTRY que corrige,
+// nunca "empatado" com ela (empate de movement_date deixaria a ordenação
+// dependente de created_at, frágil).
+const REFERS_TO_ORDERING_OFFSET_MS = 5000;
+
 /**
  * O CSV da Bling pode trazer o número da NF sem os zeros à esquerda usados
  * pelo sistema. A normalização permite identificar o mesmo documento sem
@@ -1070,21 +1076,87 @@ export class StockMovementService extends BaseService<
       );
     }
 
-    const referencedEntry = await StockMovement.findOne({
-      where: {
-        product_id: productId,
-        unit_business_id: unitBusinessId,
-        movement_type: "PURCHASE_ENTRY",
-        invoice_number: refersTo,
-      },
+    const referencedEntry = await this.repository.findByInvoiceNumberAndType(
+      productId,
+      unitBusinessId,
+      refersTo,
+      "PURCHASE_ENTRY",
       transaction,
-    });
+    );
 
     if (!referencedEntry) {
       throw new Error(
         `[STOCK_MOVEMENT] refers_to="${refersTo}" não corresponde a nenhuma PURCHASE_ENTRY do produto=${productId}/unit_business=${unitBusinessId}.`,
       );
     }
+  }
+
+  /**
+   * Garante que todo MANUAL_ADJUSTMENT ativo com refers_to preenchido tenha
+   * movement_date estritamente depois da PURCHASE_ENTRY que ele corrige —
+   * fixado em exatamente REFERS_TO_ORDERING_OFFSET_MS (5s) depois dela,
+   * nunca "empatado" com ela.
+   *
+   * Necessário porque reindexProduct apaga e recria toda PURCHASE_ENTRY não
+   * protegida — só o MANUAL_ADJUSTMENT com refers_to sobrevive intocado. Se
+   * a data de origem da nota mudar entre uma recriação e outra (ex.: uma
+   * correção de fuso horário no ingest da Bling), o ajuste protegido — que
+   * ficou parado na data antiga — pode passar a ordenar ANTES da nova
+   * PURCHASE_ENTRY, invertendo a cadeia de cálculo (o ajuste deixaria de
+   * herdar o estado da entrada que corrige). Esta função corrige isso
+   * comparando com a PURCHASE_ENTRY atual, resolvida por invoice_number
+   * (não id — ver stock-movements.model.ts), então continua funcionando
+   * mesmo que a PURCHASE_ENTRY tenha sido recriada com um id novo.
+   *
+   * Só corrige movement_date, não recalcula a cadeia de saldo/custo. Quando
+   * o retorno não vem vazio (alguma data mudou), quem chama deve seguir com
+   * upsertProductStockMovements (ou reindexProduct) pra recalcular a cadeia
+   * na nova ordem.
+   */
+  async realignRefersToMovementDates(
+    productId: string,
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<StockMovement[]> {
+    const history = await this.repository.findHistoryByProduct(
+      productId,
+      unitBusinessId,
+      { transaction, activeOnly: true },
+    );
+
+    const anchoredAdjustments = history.filter(
+      (m) => m.movement_type === "MANUAL_ADJUSTMENT" && m.refers_to != null,
+    );
+
+    const realigned: StockMovement[] = [];
+
+    for (const adjustment of anchoredAdjustments) {
+      const referencedEntry = await this.repository.findByInvoiceNumberAndType(
+        productId,
+        unitBusinessId,
+        adjustment.refers_to as string,
+        "PURCHASE_ENTRY",
+        transaction,
+      );
+
+      // Âncora órfã (a PURCHASE_ENTRY referenciada não existe mais) — nada
+      // a realinhar aqui, mas não é motivo pra travar o resto do produto.
+      if (!referencedEntry) continue;
+
+      const targetDate = new Date(
+        new Date(referencedEntry.movement_date).getTime() +
+          REFERS_TO_ORDERING_OFFSET_MS,
+      );
+
+      if (new Date(adjustment.movement_date).getTime() === targetDate.getTime()) {
+        continue; // já alinhado
+      }
+
+      await adjustment.update({ movement_date: targetDate }, { transaction });
+      realigned.push(adjustment);
+    }
+
+    return realigned;
   }
 
   /**

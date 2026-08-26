@@ -122,6 +122,7 @@ import Stock from "../../modules/inventory/stock/stock/stock.model";
 import stockMovementSourceDataService from "../../modules/inventory/stock/stock-movement-source-data/stock-movement-source-data.service";
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
 import InvoiceUnitBusinessAttributes from "../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import { parseBrazilianDateTime as parseBlingDate } from "../../shared/utils/normalizers/date";
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
@@ -241,16 +242,6 @@ function parseNum(value: string | undefined): number {
   if (!value) return 0;
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
-}
-
-/**
- * "16/07/2026 10:52:42" -> Date
- */
-function parseBlingDate(value: string): Date {
-  const [datePart, timePart] = value.trim().split(" ");
-  const [day, month, year] = datePart.split("/").map(Number);
-  const [hh, mm, ss] = (timePart ?? "00:00:00").split(":").map(Number);
-  return new Date(year, month - 1, day, hh || 0, mm || 0, ss || 0);
 }
 
 function normalizeInvoiceNumber(
@@ -789,281 +780,6 @@ interface ProcessResult {
   error?: string;
 }
 
-async function processProduct(
-  productInternalId: string,
-  productName: string,
-  rows: CsvRow[],
-): Promise<ProcessResult> {
-  // 1. Fonte "real" (nota fiscal) já existente/derivável do sistema — usada
-  //    tanto pra saber quais notas já existem quanto pra decidir se já há
-  //    PURCHASE_ENTRY antes de uma data, e pra detectar notas fantasma.
-  const sourceData = await stockMovementService.findStockMovementSourceData(
-    UNIT_BUSINESS_ID,
-    productInternalId,
-  );
-
-  // 2. MANUAL_ADJUSTMENT IMUTÁVEIS já existentes (com manual_average_cost_value
-  //    preenchido) — são os únicos que sobrevivem à limpeza do passo 1 e os
-  //    únicos usados em isAlreadyCoveredByExisting.
-  const existingHistory = await stockMovementService.getProductHistory(
-    productInternalId,
-    UNIT_BUSINESS_ID,
-    { page: 1, perPage: 5000 } as any,
-  );
-  const immutableManualAdjustments: ExistingManualAdjustment[] =
-    existingHistory.data
-      .filter(
-        (m) =>
-              m.movement_type === "MANUAL_ADJUSTMENT" &&
-                m.is_active &&
-                ((m.manual_average_cost_value ?? 0) > 0 || m.manual_average_cost_value != null),
-      )
-      .map((m) => ({
-        movement_date: new Date(m.movement_date),
-        movement_quantity: Number(m.movement_quantity),
-        direction: (m.direction as "IN" | "OUT") ?? "IN",
-      }));
-
-  // 3. Regra 9 — corrige a movement_date dos movimentos de sourceData
-  //    (PURCHASE_ENTRY, SALE_OUT, CUSTOMER_RETURN etc.) pra data do
-  //    lançamento correspondente no CSV, casando por invoice_number
-  //    normalizado com as linhas "Nota fiscal". Ajustes manuais imutáveis
-  //    não bloqueiam essa correção.
-  let sourceDataDateCorrections = 0;
-  const csvInvoiceDateByNumber = buildCsvInvoiceDateMap(rows);
-  const correctedSourceData = sourceData.map((movement: any) => {
-    if (!movement.invoice_number) return movement;
-    const normalized = normalizeInvoiceNumber(movement.invoice_number);
-    const csvDate = csvInvoiceDateByNumber.get(normalized);
-    if (!csvDate) return movement;
-
-    const originalDate = new Date(movement.movement_date);
-    if (originalDate.getTime() === csvDate.getTime()) return movement;
-
-    sourceDataDateCorrections++;
-    console.log(
-      `  📅 Corrigindo data do movimento ${movement.movement_type} ` +
-        `(invoice_number=${movement.invoice_number}) de ${originalDate.toISOString()} ` +
-        `para ${csvDate.toISOString()} conforme lançamento do CSV.`,
-    );
-
-    return { ...movement, movement_date: csvDate };
-  });
-
-  const purchaseEntryDates = correctedSourceData
-    .filter((m: any) => m.movement_type === "PURCHASE_ENTRY")
-    .map((m: any) => new Date(m.movement_date));
-
-  const existingInvoiceNumbers = new Set(
-    correctedSourceData
-      .filter((m: any) => m.invoice_number != null)
-      .map((m: any) => normalizeInvoiceNumber(m.invoice_number)),
-  );
-
-  const plan = buildProductPlan(
-    productInternalId,
-    productName,
-    rows,
-    purchaseEntryDates,
-    existingInvoiceNumbers,
-    immutableManualAdjustments,
-  );
-
-  const ghostPlan = buildGhostInvoicePlan(
-    rows,
-    correctedSourceData as any,
-    immutableManualAdjustments,
-  );
-
-  console.log(
-    `\n[SyncStock] Produto ${productInternalId} (${productName}): ` +
-      `${plan.manualAdjustments.length} ajuste(s) manual(is) a criar a partir do CSV, ` +
-      `${ghostPlan.compensations.length} compensação(ões) de nota fantasma a criar, ` +
-      `${ghostPlan.skippedFutureDated.length} nota(s) fantasma ignorada(s) (emitida(s) após o CSV), ` +
-      `${plan.zeroDeltaBalances.length} balanço(s) com delta zero (ignorados), ` +
-      `${plan.skippedAsAlreadyCovered.length + ghostPlan.skippedAsAlreadyCovered.length} evento(s) já coberto(s) por ajuste imutável (pulados), ` +
-      `${sourceDataDateCorrections} data(s) de sourceData corrigida(s) pelo CSV`,
-  );
-
-  for (const zero of plan.zeroDeltaBalances) {
-    console.log(
-      `  ℹ️  Balanço sem efeito (delta=0) — lancamento_id=${zero.lancamento_id} ` +
-        `data=${zero.data.toISOString()}. Ignorado.`,
-    );
-  }
-
-  for (const skipped of plan.skippedAsAlreadyCovered) {
-    console.log(
-      `  ⏭️  lancamento_id=${skipped.lancamento_id} data=${skipped.data.toISOString()} ` +
-        `qty=${skipped.qty} já parece coberto por um MANUAL_ADJUSTMENT imutável — não criado de novo.`,
-    );
-  }
-
-  for (const adj of plan.manualAdjustments) {
-    console.log(
-      `  ${DRY_RUN ? "🔎 [DRY_RUN] criaria" : "✏️  criando"} MANUAL_ADJUSTMENT — ` +
-        `lancamento_id=${adj.source_lancamento_id} data=${adj.movement_date.toISOString()} ` +
-        `qty=${adj.movement_quantity} direction=${adj.direction} ` +
-        `invoice_number=${adj.invoice_number ?? "-"} ` +
-        `manual_average_cost_value=${adj.manual_average_cost_value ?? "null (herda)"}`,
-    );
-  }
-
-  for (const future of ghostPlan.skippedFutureDated) {
-    console.log(
-      `  🕒 NF ${future.invoice_number} não está no CSV mas tem data ` +
-        `${future.movement_date.toISOString()}, posterior ao corte do CSV — ignorada (provável nota emitida depois da extração).`,
-    );
-  }
-
-  for (const skipped of ghostPlan.skippedAsAlreadyCovered) {
-    console.log(
-      `  ⏭️  Compensação da NF fantasma ${skipped.invoice_number} (data=${skipped.movement_date.toISOString()}, ` +
-        `qty=${skipped.qty}) já parece coberta por um MANUAL_ADJUSTMENT imutável — não criada de novo.`,
-    );
-  }
-
-  for (const comp of ghostPlan.compensations) {
-    console.log(
-      `  ${DRY_RUN ? "🔎 [DRY_RUN] criaria" : "✏️  criando"} MANUAL_ADJUSTMENT de compensação — ` +
-        `NF fantasma ${comp.source_invoice_number} (invoice_id=${comp.source_invoice_id}) ` +
-        `data=${comp.movement_date.toISOString()} qty=${comp.movement_quantity} direction=${comp.direction}`,
-    );
-  }
-
-  if (DRY_RUN) {
-    return {
-      productInternalId,
-      productName,
-      manualAdjustmentsFromCsvCreated: plan.manualAdjustments.length,
-      ghostCompensationsCreated: ghostPlan.compensations.length,
-      ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
-      zeroDeltaLogged: plan.zeroDeltaBalances.length,
-      reconciliationDelta: null,
-      sourceDataDateCorrections,
-    };
-  }
-
-  const transaction = await sequelize.transaction();
-  try {
-    // Passo 1: apaga (hard delete) todo MANUAL_ADJUSTMENT mutável (sem
-    // manual_average_cost_value) desse produto. Os imutáveis nunca entram
-    // nesse where (manual_average_cost_value: null exclui exatamente os
-    // que têm valor preenchido).
-    await stockMovementService.bulkDelete({
-      where: {
-        product_id: productInternalId,
-        unit_business_id: UNIT_BUSINESS_ID,
-        movement_type: "MANUAL_ADJUSTMENT",
-        manual_average_cost_value: null,
-      },
-      transaction,
-    });
-
-    // Passo 2: reindex "base" — só com a sourceData (já com as datas
-    // corrigidas pelo CSV, exceto se o produto tiver ajuste imutável) +
-    // os imutáveis que sobreviveram, deixando a cadeia limpa.
-    await stockMovementService.reindexProduct(
-      productInternalId,
-      UNIT_BUSINESS_ID,
-      correctedSourceData,
-      transaction,
-    );
-
-    // Passo 3/4/5: monta os novos ajustes (CSV + compensações de nota
-    // fantasma) e reindexa de novo, junto com a sourceData corrigida.
-    const newManualMovements: ReindexProductPayload[] = [
-      ...plan.manualAdjustments.map(
-        (adj) =>
-          ({
-            product_id: productInternalId,
-            movement_type: "MANUAL_ADJUSTMENT",
-            movement_quantity: adj.movement_quantity,
-            movement_date: adj.movement_date,
-            invoice_id: null,
-            invoice_number: adj.invoice_number,
-            direction: adj.direction,
-            manual_average_cost_value: adj.manual_average_cost_value,
-          }) as unknown as ReindexProductPayload,
-      ),
-      ...ghostPlan.compensations.map(
-        (comp) =>
-          ({
-            product_id: productInternalId,
-            movement_type: "MANUAL_ADJUSTMENT",
-            movement_quantity: comp.movement_quantity,
-            movement_date: comp.movement_date,
-            invoice_id: null,
-            invoice_number: undefined,
-            direction: comp.direction,
-            manual_average_cost_value: null,
-          }) as unknown as ReindexProductPayload,
-      ),
-    ];
-
-    const mergedMovements: ReindexProductPayload[] = [
-      ...correctedSourceData,
-      ...newManualMovements,
-    ];
-
-    await stockMovementService.reindexProduct(
-      productInternalId,
-      UNIT_BUSINESS_ID,
-      mergedMovements,
-      transaction,
-    );
-
-    // Passo 6: reconciliação final — contra o saldo CADASTRADO na tabela
-    // `stocks` (produto + unit business padrão), não contra a última
-    // linha do CSV (que pode estar um dia desatualizada).
-    const stockRow = await Stock.findOne({
-      where: {
-        product_id: productInternalId,
-        unit_business_id: UNIT_BUSINESS_ID,
-      },
-      transaction,
-    });
-    const targetQuantity = stockRow ? Number((stockRow as any).quantity) : 0;
-
-    const before = await stockMovementService.getCurrentBalance(
-      productInternalId,
-      UNIT_BUSINESS_ID,
-    );
-    const balanceBefore = before ? Number(before.balance_quantity) : 0;
-
-    await stockMovementService.syncProductStockMovements(
-      productInternalId,
-      UNIT_BUSINESS_ID,
-      targetQuantity,
-      transaction,
-    );
-
-    const reconciliationDelta = targetQuantity - balanceBefore;
-    if (reconciliationDelta !== 0) {
-      console.log(
-        `  🧮 Reconciliação final aplicada — delta=${reconciliationDelta} ` +
-          `(saldo sistema pós-reindex=${balanceBefore} -> saldo stocks=${targetQuantity})`,
-      );
-    }
-
-    await transaction.commit();
-
-    return {
-      productInternalId,
-      productName,
-      manualAdjustmentsFromCsvCreated: plan.manualAdjustments.length,
-      ghostCompensationsCreated: ghostPlan.compensations.length,
-      ghostSkippedFutureDated: ghostPlan.skippedFutureDated.length,
-      zeroDeltaLogged: plan.zeroDeltaBalances.length,
-      reconciliationDelta,
-      sourceDataDateCorrections,
-    };
-  } catch (err) {
-    await transaction.rollback();
-    throw err;
-  }
-}
-
 // ─── Sincronização incremental pelo CSV ────────────────────────────────────
 
 type CsvWindow = {
@@ -1354,6 +1070,18 @@ async function processCsvProduct(
       window.extractionDate,
       transaction,
     );
+
+    // Garante que todo MANUAL_ADJUSTMENT ancorado (refers_to) continue
+    // ordenando depois da PURCHASE_ENTRY que ele corrige — syncCsvBaseline
+    // acabou de recriar/atualizar a sourceData do CSV e pode ter mudado a
+    // data da PURCHASE_ENTRY referenciada (ex.: correção de fuso horário
+    // no parse da Bling), desalinhando a ordem da cadeia.
+    await stockMovementService.realignRefersToMovementDates(
+      productInternalId,
+      UNIT_BUSINESS_ID,
+      transaction,
+    );
+
     await transaction.commit();
   } catch (error) {
     await transaction.rollback();

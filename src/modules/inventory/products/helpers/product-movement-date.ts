@@ -82,7 +82,11 @@ export function buildLastMovementDateSubquery(
       AND sm.is_active = true
       AND (
         sm.movement_type = 'PURCHASE_ENTRY'
-        OR (sm.movement_type = 'MANUAL_ADJUSTMENT' AND sm.manual_average_cost_value IS NOT NULL)
+        OR (
+          sm.movement_type = 'MANUAL_ADJUSTMENT'
+          AND sm.refers_to IS NOT NULL
+          AND sm.manual_average_cost_value IS NOT NULL
+        )
       )
       ${unitBusinessId ? "AND sm.unit_business_id = :orderUnitBusinessId" : ""}
       ${asOfDateClause}

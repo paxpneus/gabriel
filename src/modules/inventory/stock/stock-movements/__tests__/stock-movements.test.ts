@@ -118,6 +118,7 @@ describe("StockMovementService", () => {
     (service as any).repository = {
       findLastMovement: jest.fn(),
       findLastMovementBefore: jest.fn(),
+      findByInvoiceNumberAndType: jest.fn(),
       findHistoryByProduct: jest.fn().mockResolvedValue([]),
       bulkCreate: jest
         .fn()
@@ -906,7 +907,9 @@ describe("StockMovementService", () => {
     });
 
     it("aceita refers_to junto de manual_average_cost_value, validando contra uma PURCHASE_ENTRY existente", async () => {
-      (StockMovement.findOne as jest.Mock).mockResolvedValue(
+      (
+        service as any
+      ).repository.findByInvoiceNumberAndType.mockResolvedValue(
         makeExistingMovement({ movement_type: "PURCHASE_ENTRY" }),
       );
       (service as any).repository.findLastMovementBefore.mockResolvedValue(
@@ -941,7 +944,9 @@ describe("StockMovementService", () => {
     });
 
     it("rejeita refers_to que não corresponde a nenhuma PURCHASE_ENTRY do produto", async () => {
-      (StockMovement.findOne as jest.Mock).mockResolvedValue(null);
+      (
+        service as any
+      ).repository.findByInvoiceNumberAndType.mockResolvedValue(null);
 
       await expect(
         service.createManualAdjustment(PRODUCT_ID, UNIT_BUSINESS_ID, {
@@ -1040,11 +1045,12 @@ describe("StockMovementService", () => {
         id: "movement-id-x",
         movement_type: "MANUAL_ADJUSTMENT",
       });
-      (StockMovement.findOne as jest.Mock)
-        .mockResolvedValueOnce(movement) // busca por id
-        .mockResolvedValueOnce(
-          makeExistingMovement({ movement_type: "PURCHASE_ENTRY" }),
-        ); // validação do refers_to
+      (StockMovement.findOne as jest.Mock).mockResolvedValue(movement); // busca por id
+      (
+        service as any
+      ).repository.findByInvoiceNumberAndType.mockResolvedValue(
+        makeExistingMovement({ movement_type: "PURCHASE_ENTRY" }),
+      ); // validação do refers_to
       jest
         .spyOn(service, "upsertProductStockMovements")
         .mockResolvedValue([] as any);
@@ -1093,9 +1099,10 @@ describe("StockMovementService", () => {
         id: "movement-id-x",
         movement_type: "MANUAL_ADJUSTMENT",
       });
-      (StockMovement.findOne as jest.Mock)
-        .mockResolvedValueOnce(movement) // busca por id
-        .mockResolvedValueOnce(null); // refers_to não encontrado
+      (StockMovement.findOne as jest.Mock).mockResolvedValue(movement); // busca por id
+      (
+        service as any
+      ).repository.findByInvoiceNumberAndType.mockResolvedValue(null); // refers_to não encontrado
 
       await expect(
         service.updateManualAverageCost(
@@ -1107,6 +1114,132 @@ describe("StockMovementService", () => {
         ),
       ).rejects.toThrow(/refers_to/);
       expect(movement.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // realignRefersToMovementDates
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("realignRefersToMovementDates", () => {
+    it("realinha um MANUAL_ADJUSTMENT ancorado cuja data ficou antes da PURCHASE_ENTRY referenciada", async () => {
+      const referencedEntry = makeExistingMovement({
+        id: "entry-1",
+        movement_type: "PURCHASE_ENTRY",
+        invoice_number: "1",
+        movement_date: new Date("2026-03-01T15:00:00Z"),
+      });
+      const adjustment = makeExistingMovement({
+        id: "manual-1",
+        movement_type: "MANUAL_ADJUSTMENT",
+        refers_to: "1",
+        // data antiga, de antes da PURCHASE_ENTRY ter sido recriada com um
+        // horário novo — fica fora de ordem.
+        movement_date: new Date("2026-03-01T12:00:05Z"),
+      });
+
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        adjustment,
+      ]);
+      (
+        service as any
+      ).repository.findByInvoiceNumberAndType.mockResolvedValue(
+        referencedEntry,
+      );
+
+      const result = await service.realignRefersToMovementDates(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+      );
+
+      expect(
+        (service as any).repository.findByInvoiceNumberAndType,
+      ).toHaveBeenCalledWith(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        "1",
+        "PURCHASE_ENTRY",
+        undefined,
+      );
+      expect(adjustment.update).toHaveBeenCalledWith(
+        { movement_date: new Date("2026-03-01T15:00:05Z") },
+        { transaction: undefined },
+      );
+      expect(result).toEqual([adjustment]);
+    });
+
+    it("não mexe quando o ajuste já está alinhado (5s depois da PURCHASE_ENTRY)", async () => {
+      const referencedEntry = makeExistingMovement({
+        movement_type: "PURCHASE_ENTRY",
+        invoice_number: "1",
+        movement_date: new Date("2026-03-01T15:00:00Z"),
+      });
+      const adjustment = makeExistingMovement({
+        movement_type: "MANUAL_ADJUSTMENT",
+        refers_to: "1",
+        movement_date: new Date("2026-03-01T15:00:05Z"),
+      });
+
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        adjustment,
+      ]);
+      (
+        service as any
+      ).repository.findByInvoiceNumberAndType.mockResolvedValue(
+        referencedEntry,
+      );
+
+      const result = await service.realignRefersToMovementDates(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+      );
+
+      expect(adjustment.update).not.toHaveBeenCalled();
+      expect(result).toEqual([]);
+    });
+
+    it("ignora movimentos sem refers_to", async () => {
+      const plain = makeExistingMovement({
+        movement_type: "MANUAL_ADJUSTMENT",
+        refers_to: null,
+      });
+
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        plain,
+      ]);
+
+      const result = await service.realignRefersToMovementDates(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+      );
+
+      expect(
+        (service as any).repository.findByInvoiceNumberAndType,
+      ).not.toHaveBeenCalled();
+      expect(plain.update).not.toHaveBeenCalled();
+      expect(result).toEqual([]);
+    });
+
+    it("ignora âncora órfã (PURCHASE_ENTRY referenciada não existe mais)", async () => {
+      const adjustment = makeExistingMovement({
+        movement_type: "MANUAL_ADJUSTMENT",
+        refers_to: "sumiu",
+      });
+
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        adjustment,
+      ]);
+      (
+        service as any
+      ).repository.findByInvoiceNumberAndType.mockResolvedValue(null);
+
+      const result = await service.realignRefersToMovementDates(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+      );
+
+      expect(adjustment.update).not.toHaveBeenCalled();
+      expect(result).toEqual([]);
     });
   });
 
