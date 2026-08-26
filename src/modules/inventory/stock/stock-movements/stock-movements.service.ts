@@ -1408,11 +1408,57 @@ export class StockMovementService extends BaseService<
   }
 
   /**
+   * Dada uma lista de ids, descobre se algum deles precisa forçar recálculo
+   * completo em upsertProductStockMovements: setActiveStatus tira a linha do
+   * filtro is_active padrão, então isso precisa ser resolvido ANTES de
+   * mudar o status, senão a linha já não aparece mais pra sabermos sua data.
+   */
+  private async needsFullRecalcForMovements(
+    productId: string,
+    unitBusinessId: string,
+    movementIds: string[],
+    transaction?: Transaction,
+  ): Promise<boolean> {
+    if (!movementIds.length) return false;
+
+    const movements = await StockMovement.findAll({
+      where: {
+        id: { [Op.in]: movementIds },
+        product_id: productId,
+        unit_business_id: unitBusinessId,
+      },
+      transaction,
+    });
+
+    if (!movements.length) return false;
+
+    const earliestDate = movements.reduce(
+      (min, m) =>
+        new Date(m.movement_date).getTime() < min.getTime()
+          ? new Date(m.movement_date)
+          : min,
+      new Date(movements[0].movement_date),
+    );
+
+    return this.needsFullRecalc(
+      productId,
+      unitBusinessId,
+      earliestDate,
+      transaction,
+    );
+  }
+
+  /**
    * Marca is_active = false em lote pros ids enviados (escopado ao
    * produto/unit_business) e recalcula a cadeia a partir dali — os
    * movimentos desativados somem do saldo/custo médio como se nunca
    * tivessem existido. Funciona tanto pra movimentos normais quanto pra
    * MANUAL_ADJUSTMENT.
+   *
+   * Se algum dos movimentos desativados estiver dentro da baseline
+   * consolidada pelo CSV, o recálculo padrão (só a cauda) nunca chegaria
+   * até o resulting_average_cost do último movimento — por isso força
+   * ignoreCutoff quando necessário, igual createManualAdjustment.
    */
   async deactivateStockMovements(
     productId: string,
@@ -1420,6 +1466,13 @@ export class StockMovementService extends BaseService<
     movementIds: string[],
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
+    const ignoreCutoff = await this.needsFullRecalcForMovements(
+      productId,
+      unitBusinessId,
+      movementIds,
+      transaction,
+    );
+
     await this.repository.setActiveStatus(
       movementIds,
       productId,
@@ -1433,12 +1486,14 @@ export class StockMovementService extends BaseService<
       unitBusinessId,
       [],
       transaction,
+      ignoreCutoff,
     );
   }
 
   /**
    * Inverso do deactivate: marca is_active = true em lote e recalcula a
-   * cadeia — os movimentos voltam a contar pro saldo/custo médio.
+   * cadeia — os movimentos voltam a contar pro saldo/custo médio. Mesma
+   * ressalva de ignoreCutoff do deactivate.
    */
   async reactivateStockMovements(
     productId: string,
@@ -1446,6 +1501,13 @@ export class StockMovementService extends BaseService<
     movementIds: string[],
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
+    const ignoreCutoff = await this.needsFullRecalcForMovements(
+      productId,
+      unitBusinessId,
+      movementIds,
+      transaction,
+    );
+
     await this.repository.setActiveStatus(
       movementIds,
       productId,
@@ -1459,6 +1521,7 @@ export class StockMovementService extends BaseService<
       unitBusinessId,
       [],
       transaction,
+      ignoreCutoff,
     );
   }
 

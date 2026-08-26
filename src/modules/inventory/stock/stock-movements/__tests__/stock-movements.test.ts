@@ -1310,6 +1310,10 @@ describe("StockMovementService", () => {
       const upsertSpy = jest
         .spyOn(service, "upsertProductStockMovements")
         .mockResolvedValue([] as any);
+      (StockMovement.findAll as jest.Mock).mockResolvedValue([
+        makeExistingMovement({ id: "mov-1" }),
+        makeExistingMovement({ id: "mov-2" }),
+      ]);
 
       const ids = ["mov-1", "mov-2"];
       await service.deactivateStockMovements(PRODUCT_ID, UNIT_BUSINESS_ID, ids);
@@ -1326,6 +1330,38 @@ describe("StockMovementService", () => {
         UNIT_BUSINESS_ID,
         [],
         undefined,
+        false,
+      );
+    });
+
+    it("força ignoreCutoff quando o movimento desativado está na baseline consolidada pelo CSV", async () => {
+      // Regressão: desativar um movimento antigo (dentro da baseline) e só
+      // recalcular a cauda (ignoreCutoff=false) nunca propaga a remoção pro
+      // resulting_average_cost do último movimento — product_configs.average_cost
+      // fica travado no valor de antes da desativação.
+      const upsertSpy = jest
+        .spyOn(service, "upsertProductStockMovements")
+        .mockResolvedValue([] as any);
+      (stockMovementSourceDataService.findOne as jest.Mock).mockResolvedValue({
+        extraction_date: new Date("2026-01-31T23:59:59Z"),
+      });
+      (StockMovement.findAll as jest.Mock).mockResolvedValue([
+        makeExistingMovement({
+          id: "mov-old",
+          movement_date: new Date("2026-01-10"), // antes do cutoff (31/01)
+        }),
+      ]);
+
+      await service.deactivateStockMovements(PRODUCT_ID, UNIT_BUSINESS_ID, [
+        "mov-old",
+      ]);
+
+      expect(upsertSpy).toHaveBeenCalledWith(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [],
+        undefined,
+        true,
       );
     });
   });
@@ -1335,6 +1371,9 @@ describe("StockMovementService", () => {
       const upsertSpy = jest
         .spyOn(service, "upsertProductStockMovements")
         .mockResolvedValue([] as any);
+      (StockMovement.findAll as jest.Mock).mockResolvedValue([
+        makeExistingMovement({ id: "mov-1" }),
+      ]);
 
       const ids = ["mov-1"];
       await service.reactivateStockMovements(PRODUCT_ID, UNIT_BUSINESS_ID, ids);
@@ -1351,6 +1390,7 @@ describe("StockMovementService", () => {
         UNIT_BUSINESS_ID,
         [],
         undefined,
+        false,
       );
     });
   });
