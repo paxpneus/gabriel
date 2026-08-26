@@ -811,6 +811,58 @@ describe("StockMovementService", () => {
 
       expect((service as any).repository.create).not.toHaveBeenCalled();
     });
+
+    it("movimentos existentes com invoice_id null (histórico legado/CSV) não colidem entre si e são todos recalculados", async () => {
+      // Regressão: mergedByInvoiceId/existingByInvoiceId usados a ser
+      // chaveados só por invoice_id — como histórico legado/CSV tem
+      // invoice_id null em várias linhas, elas colidiam na mesma chave do
+      // Map (só a última sobrevivia) e o loop principal ainda descartava
+      // essa sobrevivente via `if (!movement.invoice_id) continue`. Ambas
+      // as linhas abaixo precisam ser recalculadas — nenhuma pode ser
+      // silenciosamente ignorada.
+      const existingA = makeExistingMovement({
+        id: "legacy-a",
+        invoice_id: null,
+        invoice_number: "A",
+        movement_type: "PURCHASE_ENTRY",
+        movement_date: new Date("2026-01-01"),
+        movement_quantity: 10,
+        unit_cost_invoice: 10,
+        balance_quantity: 999, // valor inicial errado de propósito
+        resulting_average_cost: 999,
+      });
+      const existingB = makeExistingMovement({
+        id: "legacy-b",
+        invoice_id: null,
+        invoice_number: "B",
+        movement_type: "SALE_OUT",
+        movement_date: new Date("2026-01-02"),
+        movement_quantity: 4,
+        balance_quantity: 999,
+        resulting_average_cost: 999,
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        existingA,
+        existingB,
+      ]);
+
+      await service.upsertProductStockMovements(PRODUCT_ID, UNIT_BUSINESS_ID, []);
+
+      expect(existingA.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          balance_quantity: 10,
+          resulting_average_cost: 10,
+        }),
+        { transaction: undefined },
+      );
+      expect(existingB.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          balance_quantity: 6,
+          resulting_average_cost: 10,
+        }),
+        { transaction: undefined },
+      );
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -850,6 +902,7 @@ describe("StockMovementService", () => {
         UNIT_BUSINESS_ID,
         [],
         undefined,
+        false,
       );
     });
 
@@ -1014,6 +1067,7 @@ describe("StockMovementService", () => {
         UNIT_BUSINESS_ID,
         [],
         undefined,
+        false,
       );
     });
 

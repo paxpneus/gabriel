@@ -151,6 +151,40 @@ export class StockMovementService extends BaseService<
     return latestSynched ? new Date(latestSynched.movement_date) : null;
   }
 
+  /**
+   * `upsertProductStockMovements` só recalcula a cauda depois do cutoff
+   * automático por padrão (baseline consolidada pelo CSV é imutável pra
+   * fluxos automáticos). Uma correção manual (refers_to) explícita pode
+   * mirar uma nota BEM mais antiga que o cutoff atual — nesse caso, se não
+   * recalcularmos com `ignoreCutoff: true`, a correção fica presa dentro da
+   * baseline congelada: nunca entra na timeline recalculada e nunca se
+   * propaga até o resulting_average_cost do último movimento (o que
+   * `syncProductAverageCostConfig` lê pra atualizar product_configs).
+   * Só pedimos o recálculo completo quando realmente necessário (a data do
+   * ajuste cai dentro ou antes da baseline) pra não pagar o custo de
+   * reprocessar histórico inteiro em toda correção "recente".
+   *
+   * Só é seguro usar `ignoreCutoff: true` porque mergedByInvoiceId /
+   * existingByInvoiceId agora chaveiam por invoice_id ?? id — antes disso,
+   * histórico legado/CSV com invoice_id null colidia no merge e ficava de
+   * fora do recálculo completo (ver incidente documentado no commit que
+   * corrigiu correlationKey em upsertProductStockMovements).
+   */
+  private async needsFullRecalc(
+    productId: string,
+    unitBusinessId: string,
+    movementDate: Date,
+    transaction?: Transaction,
+  ): Promise<boolean> {
+    const cutoff = await this.getAutomaticSyncCutoff(
+      productId,
+      unitBusinessId,
+      transaction,
+    );
+
+    return cutoff != null && movementDate.getTime() <= cutoff.getTime();
+  }
+
   private async getLatestCsvExtractionDate(
     transaction?: Transaction,
   ): Promise<Date | null> {
@@ -878,14 +912,25 @@ export class StockMovementService extends BaseService<
       (m) => m.movement_type !== "MANUAL_ADJUSTMENT",
     );
 
+    // Chave de correlação: invoice_id quando existir, senão o próprio id da
+    // linha. Histórico legado/importado via CSV não tem invoice_id (só
+    // invoice_number) — usar invoice_id puro como chave faria TODAS essas
+    // linhas colidirem no mesmo `null`, descartando todas menos a última do
+    // Map. incoming (CSV/NF ao vivo) sempre tem invoice_id real (filtrado
+    // abaixo), então nunca colide com uma chave de fallback por id.
+    const correlationKey = (m: {
+      invoice_id?: string | null;
+      id?: string;
+    }): string => (m.invoice_id ?? m.id) as string;
+
     const existingByInvoiceId = new Map<string, StockMovement>();
     for (const m of invoiceBackedExisting) {
-      existingByInvoiceId.set(m.invoice_id as string, m);
+      existingByInvoiceId.set(correlationKey(m), m);
     }
 
     const mergedByInvoiceId = new Map<string, ReindexProductPayload>();
     for (const existing of invoiceBackedExisting) {
-      mergedByInvoiceId.set(existing.invoice_id as string, {
+      mergedByInvoiceId.set(correlationKey(existing), {
         product_id: productId,
         invoice_id: existing.invoice_id as string | null,
         invoice_number: existing.invoice_number,
@@ -906,7 +951,12 @@ export class StockMovementService extends BaseService<
 
     type TimelineEntry =
       | { kind: "manual"; date: Date; movement: StockMovement }
-      | { kind: "regular"; date: Date; payload: ReindexProductPayload };
+      | {
+          kind: "regular";
+          date: Date;
+          key: string;
+          payload: ReindexProductPayload;
+        };
 
     const timeline: TimelineEntry[] = [
       ...manualAdjustments.map((movement) => ({
@@ -914,9 +964,10 @@ export class StockMovementService extends BaseService<
         date: new Date(movement.movement_date),
         movement,
       })),
-      ...[...mergedByInvoiceId.values()].map((payload) => ({
+      ...[...mergedByInvoiceId.entries()].map(([key, payload]) => ({
         kind: "regular" as const,
         date: new Date(payload.movement_date),
+        key,
         payload,
       })),
     ].sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -982,11 +1033,7 @@ export class StockMovementService extends BaseService<
       }
 
       const movement = entry.payload;
-
-      if (!movement.invoice_id) {
-        continue;
-      }
-      const existing = existingByInvoiceId.get(movement.invoice_id);
+      const existing = existingByInvoiceId.get(entry.key);
 
       // manual_average_cost_value é IMUTÁVEL via sistema: nunca é aceito a
       // partir do payload de origem (source de NF) — só o que já está
@@ -1250,11 +1297,19 @@ export class StockMovementService extends BaseService<
       { transaction } as any,
     );
 
+    const ignoreCutoff = await this.needsFullRecalc(
+      productId,
+      unitBusinessId,
+      movementDate,
+      transaction,
+    );
+
     return this.upsertProductStockMovements(
       productId,
       unitBusinessId,
       [],
       transaction,
+      ignoreCutoff,
     );
   }
 
@@ -1320,20 +1375,27 @@ export class StockMovementService extends BaseService<
       transaction,
     );
 
+    const effectiveMovementDate = referencedEntry
+      ? new Date(
+          new Date(referencedEntry.movement_date).getTime() +
+            REFERS_TO_ORDERING_OFFSET_MS,
+        )
+      : new Date(movement.movement_date);
+
     await movement.update(
       {
         manual_average_cost_value: manualAverageCostValue,
         refers_to: nextRefersTo,
-        ...(referencedEntry
-          ? {
-              movement_date: new Date(
-                new Date(referencedEntry.movement_date).getTime() +
-                  REFERS_TO_ORDERING_OFFSET_MS,
-              ),
-            }
-          : {}),
+        ...(referencedEntry ? { movement_date: effectiveMovementDate } : {}),
       },
       { transaction },
+    );
+
+    const ignoreCutoff = await this.needsFullRecalc(
+      productId,
+      unitBusinessId,
+      effectiveMovementDate,
+      transaction,
     );
 
     return this.upsertProductStockMovements(
@@ -1341,6 +1403,7 @@ export class StockMovementService extends BaseService<
       unitBusinessId,
       [],
       transaction,
+      ignoreCutoff,
     );
   }
 
