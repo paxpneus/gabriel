@@ -1064,7 +1064,11 @@ describe("StockMovementService", () => {
       );
 
       expect(movement.update).toHaveBeenCalledWith(
-        { manual_average_cost_value: 123, refers_to: "1" },
+        {
+          manual_average_cost_value: 123,
+          refers_to: "1",
+          movement_date: new Date("2026-01-01T00:00:05.000Z"),
+        },
         { transaction: undefined },
       );
     });

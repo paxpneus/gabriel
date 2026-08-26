@@ -1060,6 +1060,10 @@ export class StockMovementService extends BaseService<
    * custo dessa nota), e só é aceito se já existir uma PURCHASE_ENTRY com
    * esse invoice_number pro mesmo produto/unit_business — sanity check
    * contra erro de digitação.
+   *
+   * Retorna a PURCHASE_ENTRY referenciada (ou `null` se `refersTo` não foi
+   * informado) pra quem chama poder derivar o movement_date do ajuste sem
+   * precisar buscar de novo.
    */
   private async validateRefersTo(
     productId: string,
@@ -1067,8 +1071,8 @@ export class StockMovementService extends BaseService<
     refersTo: string | null | undefined,
     manualAverageCostValue: number | null | undefined,
     transaction?: Transaction,
-  ): Promise<void> {
-    if (refersTo == null) return;
+  ): Promise<StockMovement | null> {
+    if (refersTo == null) return null;
 
     if (manualAverageCostValue == null) {
       throw new Error(
@@ -1089,6 +1093,8 @@ export class StockMovementService extends BaseService<
         `[STOCK_MOVEMENT] refers_to="${refersTo}" não corresponde a nenhuma PURCHASE_ENTRY do produto=${productId}/unit_business=${unitBusinessId}.`,
       );
     }
+
+    return referencedEntry;
   }
 
   /**
@@ -1170,6 +1176,13 @@ export class StockMovementService extends BaseService<
    * já existe, agora contando com o ajuste recém-criado). Isso cobre tanto
    * o caso "adicionado no fim" quanto o retroativo (movement_date no meio
    * do histórico).
+   *
+   * movement_date não é mais um dado de entrada do fluxo normal (front não
+   * manda mais): quando `refers_to` é informado, a data é sempre a da
+   * PURCHASE_ENTRY referenciada + REFERS_TO_ORDERING_OFFSET_MS (5s à frente,
+   * mesmo dia — garante que o ajuste sempre ordena depois da entrada que
+   * corrige). `payload.movement_date` só é usado como fallback pra chamadas
+   * internas sem refers_to (ex.: reconcileProductBalance).
    */
   async createManualAdjustment(
     productId: string,
@@ -1177,17 +1190,23 @@ export class StockMovementService extends BaseService<
     payload: CreateManualAdjustmentPayload,
     transaction?: Transaction,
   ): Promise<StockMovement[]> {
-    const movementDate = payload.movement_date ?? new Date();
     const direction: "IN" | "OUT" =
       payload.direction_type === "SALE_OUT" ? "OUT" : "IN";
 
-    await this.validateRefersTo(
+    const referencedEntry = await this.validateRefersTo(
       productId,
       unitBusinessId,
       payload.refers_to,
       payload.manual_average_cost_value,
       transaction,
     );
+
+    const movementDate = referencedEntry
+      ? new Date(
+          new Date(referencedEntry.movement_date).getTime() +
+            REFERS_TO_ORDERING_OFFSET_MS,
+        )
+      : (payload.movement_date ?? new Date());
 
     const previousMovement = await this.repository.findLastMovementBefore(
       productId,
@@ -1293,7 +1312,7 @@ export class StockMovementService extends BaseService<
         ? null
         : (refersTo ?? movement.refers_to ?? null);
 
-    await this.validateRefersTo(
+    const referencedEntry = await this.validateRefersTo(
       productId,
       unitBusinessId,
       nextRefersTo,
@@ -1305,6 +1324,14 @@ export class StockMovementService extends BaseService<
       {
         manual_average_cost_value: manualAverageCostValue,
         refers_to: nextRefersTo,
+        ...(referencedEntry
+          ? {
+              movement_date: new Date(
+                new Date(referencedEntry.movement_date).getTime() +
+                  REFERS_TO_ORDERING_OFFSET_MS,
+              ),
+            }
+          : {}),
       },
       { transaction },
     );
