@@ -1686,6 +1686,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Monta ItemWithFiscal[] antes do create ───────────────────────────────
 
     const invoiceItemsForCreate: ItemWithFiscal[] = [];
+    const resolvedProductKeys: Array<{
+      sku: string | null;
+      ean: string | null;
+    }> = [];
     const unmappedItems: Array<{
       sku: string | null;
       ean: string | null;
@@ -1694,7 +1698,27 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       reason: string;
     }> = [];
 
-    if (nf.itens?.length && !existingInvoice) {
+    // No update (re-fetch/webhook), reprocessa contra o estado atual de
+    // mapeamento de produto — mas só vale a pena rodar findProductForInvoiceItem
+    // item a item se ainda falta conciliar algo. Se a soma do que já virou
+    // InvoiceItems já bate com o total do XML, não há nada novo pra achar.
+    let alreadyFullyReconciled = false;
+    if (existingInvoice && nf.itens?.length) {
+      const xmlTotalQuantity = nf.itens.reduce(
+        (sum, item) => sum + parseNum(item.quantidade),
+        0,
+      );
+      const existingItems = await invoiceItemsService.findAll({
+        where: { invoice_id: existingInvoice.id },
+      });
+      const existingTotalExpected = existingItems.reduce(
+        (sum, item) => sum + Number(item.quantity_expected),
+        0,
+      );
+      alreadyFullyReconciled = existingTotalExpected >= xmlTotalQuantity;
+    }
+
+    if (nf.itens?.length && !alreadyFullyReconciled) {
       const fiscalByItemNumber = new Map<number, any>();
       for (let idx = 0; idx < xmlDet.length; idx++) {
         fiscalByItemNumber.set(idx, xmlDet[idx]);
@@ -1825,6 +1849,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           quantity_expected: Math.trunc(qty),
           fiscal,
         });
+        resolvedProductKeys.push({ sku, ean });
       }
     }
 
@@ -1857,6 +1882,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         },
       );
 
+      // Reprocesso: cria os InvoiceItems que faltam pros itens que agora
+      // resolvem a um Product (ex.: produto conciliado no Bling depois da
+      // primeira passagem) — não duplica os que já existem.
+      await invoiceService.addMissingInvoiceItems(
+        existingInvoice.id,
+        invoiceItemsForCreate,
+      );
+
       invoice = await invoiceService.findByIdFullForAllUnits(
         existingInvoice.id,
       );
@@ -1871,6 +1904,21 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     console.log(
       `[BLING_API_FETCH] Invoice upsertada: id_system=${nf.id}, key=${key}`,
     );
+
+    // ─── Limpa UnmappedInvoiceProduct dos itens que resolveram nessa passagem ──
+    // (no create, invoice.id ainda não existia antes, então esse loop é no-op)
+
+    for (const { sku, ean } of resolvedProductKeys) {
+      const staleUnmapped = await UnmappedInvoiceProduct.findOne({
+        where: {
+          invoice_id: invoice.id,
+          ...(ean ? { ean } : { sku: sku ?? null }),
+        },
+      });
+      if (staleUnmapped) {
+        await staleUnmapped.destroy();
+      }
+    }
 
     // ─── Unmapped products (requer invoice.id) ────────────────────────────────
 
