@@ -613,7 +613,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       const logPrefix = `[TCAR_UPSERT][ensureProducts] seq=${item.epeit_seq} systemId=${systemId}`;
 
       if (!systemId) {
-        console.warn(`${logPrefix} — sem epctb_codigo, ignorado`);
+        console.warn(
+          `${logPrefix} — sem epctb_codigo, ignorado | produto_nome=${item.produto_nome ?? "?"} | qtd=${item.epeit_qtdade ?? "?"} | vlrliquido=${item.epeit_vlrliquido ?? "?"}`,
+        );
         unmappedItems.push({
           sku: null,
           gtin: null,

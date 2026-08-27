@@ -180,7 +180,14 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
   ...(httpsAgent ? { httpsAgent } : {}),
 
    onResponse: (response) => {
-    if (typeof response.data === 'string') {
+    // Alguns endpoints (ex.: XML da nota fiscal) legitimamente retornam
+    // texto puro, não JSON — só tenta corrigir/parsear quando a resposta
+    // realmente parece um objeto/array JSON.
+    const looksLikeJson =
+      typeof response.data === 'string' &&
+      /^\s*[\{\[]/.test(response.data);
+
+    if (looksLikeJson) {
       try {
         // A Tecinco quebra números decimais em dois tokens JSON inválidos
         // (ex.: "preco":332,5 ou "custo_contabil":391,85538) — a parte
