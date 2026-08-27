@@ -330,8 +330,8 @@ export async function runMigration(opts: RunMigrationOptions): Promise<void> {
     console.log("🚀  Migração full — sem filtro de data\n");
   }
 
-  // await migrateClientes(resolved);
-  await migrateNotasFiscais(resolved);
-  await migrateProdutos(resolved);
-
+  // Produtos e Notas Fiscais rodam em paralelo (rate limit da Tecinco
+  // comporta). Clientes só roda depois que os dois terminarem.
+  await Promise.all([migrateProdutos(resolved), migrateNotasFiscais(resolved)]);
+  await migrateClientes(resolved);
 }
