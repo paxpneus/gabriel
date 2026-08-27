@@ -182,12 +182,33 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
    onResponse: (response) => {
     if (typeof response.data === 'string') {
       try {
+        // A Tecinco quebra números decimais em dois tokens JSON inválidos
+        // (ex.: "preco":332,5 ou "custo_contabil":391,85538) — a parte
+        // decimal não tem tamanho fixo, então casa qualquer quantidade de
+        // dígitos, não só 2.
         const fixed = response.data.replace(
-          /:\s*(\d+),(\d{2})([,\}\]])/g,
+          /:\s*(-?\d+),(\d+)([,\}\]])/g,
           ': $1.$2$3',
         );
         response.data = JSON.parse(fixed);
       } catch (e) {
+        const message = (e as Error).message;
+        console.error('[TCarApi] Falha ao parsear resposta como JSON:', message);
+
+        const positionMatch = message.match(/position (\d+)/);
+        if (positionMatch) {
+          const pos = Number(positionMatch[1]);
+          const start = Math.max(0, pos - 150);
+          console.error(
+            '[TCarApi] Trecho ao redor da posição do erro:',
+            response.data.slice(start, pos + 150),
+          );
+        } else {
+          console.error(
+            '[TCarApi] Trecho bruto (primeiros 500 chars):',
+            response.data.slice(0, 500),
+          );
+        }
       }
     }
     return response;

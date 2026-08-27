@@ -53,6 +53,25 @@ export interface TCarProdutoPayload {
   subgrupo_descricao?: string;
   aplicacao_descricao?: string;
   marca_descricao?: string;
+  /**
+   * Presente quando a busca usa `include=filiais` — estoque/preço por
+   * filial, evitando uma requisição por branch.
+   */
+  filiais?: TCarProdutoFilial[];
+}
+
+/**
+ * Item do array `filiais` retornado por GET /produtos?include=filiais.
+ */
+export interface TCarProdutoFilial {
+  fll_codigo: number;
+  fll_nome?: string;
+  fll_fantasia?: string;
+  estoque_fisico?: number;
+  estoque_disponivel?: number;
+  preco?: number;
+  preco_revenda?: number;
+  custo_contabil?: number;
 }
 
 export interface TCarInvoiceXmlPayload {

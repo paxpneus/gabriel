@@ -209,21 +209,19 @@ async function upsertTecincoCrossConfig(
     const supplierProductCode = gtin ?? sku!;
 
     const existingMapping = await SupplierMapping.findOne({
-      where: { product_id: product.id, supplier_cnpj: senderCnpj },
+      where: { product_id: product.id, supplier_product_code: supplierProductCode },
     });
 
     if (existingMapping) {
-      await existingMapping.update({
-        supplier_product_code: supplierProductCode,
-      });
-    } else {
-      if (supplierProductCode) {
+      if (existingMapping.supplier_cnpj !== senderCnpj) {
+        await existingMapping.update({ supplier_cnpj: senderCnpj });
+      }
+    } else if (supplierProductCode) {
       await SupplierMapping.create({
         product_id: product.id,
         supplier_cnpj: senderCnpj,
         supplier_product_code: supplierProductCode,
       });
-    }
     }
 
     // ─── ProductConfig ──────────────────────────────────────────────────────
