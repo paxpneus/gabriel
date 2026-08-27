@@ -5,6 +5,7 @@ import { TCarUpsertQueue } from "./tecinco-api-fetch.queue";
 import { runMigration } from "../../../../scripts/tecinco/tecinco-migration.runner";
 import { UnitBusiness } from "../../../../modules/warehouse";
 import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
+import { tecincoTireGrupoIds } from "../../../../shared/constants/tecinco-groups";
 import { Op } from "sequelize";
 
 export interface TCarSyncJobPayload {
@@ -54,6 +55,7 @@ export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
       companyId,
       alteradoDesde,
       upsertQueue: this.upsertQueue,
+      grupos: tecincoTireGrupoIds,
     });
 
     console.log(`[TCAR_SYNC] Sync concluído | branchId=${branchId}`);

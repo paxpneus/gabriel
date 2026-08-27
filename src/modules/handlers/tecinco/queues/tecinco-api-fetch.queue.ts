@@ -45,6 +45,7 @@ import { GroupType } from "../../../inventory/groups/group/group.types";
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
 import { IntegrationMappingCreationAttributes } from "../../../integrations/integration-mapping/integration-mapping.types";
 import productService from "../../../inventory/products/services/product.service";
+import { tecincoAllowedGroupNames } from "../../../../shared/constants/tecinco-groups";
 
 function normalizeTCarDescription(value?: string | null): string {
   return String(value ?? "")
@@ -237,6 +238,22 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           `${logPrefix} — branchId não resolvido, não foi possível buscar detalhe do produto para grupo/subgrupo`,
         );
       }
+    }
+
+    // Só sincroniza produtos dos grupos de pneus — o resto é ignorado (não
+    // cria nem atualiza nada no sistema).
+    const resolvedGroupName = normalizeTCarDescription(
+      productDataForGroup.grupo_descricao,
+    );
+    const isAllowedGroup = tecincoAllowedGroupNames.some(
+      (name) => name.toLowerCase() === resolvedGroupName.toLowerCase(),
+    );
+
+    if (!isAllowedGroup) {
+      console.log(
+        `${logPrefix} — grupo "${resolvedGroupName || "(vazio)"}" fora dos grupos de pneus permitidos — produto ignorado`,
+      );
+      return;
     }
 
     const tecincoProductGroup = await resolveTecincoProductGroup(
