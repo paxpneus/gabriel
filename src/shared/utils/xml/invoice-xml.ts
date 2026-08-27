@@ -30,7 +30,6 @@ import unitBusinessService from "../../../modules/company/unit-business/unit-bus
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";
 
-const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const NO_TRANSPORTER_NAME = "Sem transporte";
 const NO_TRANSPORTER_DOCUMENT = "0000000";
 
@@ -196,10 +195,13 @@ async function upsertTecincoCrossConfig(
     if (!sku && !gtin) continue;
 
     // Tenta encontrar o produto pelo EAN ou pelo SupplierMapping
+    // (unitBusinessId já resolvida acima — essa função só roda quando o
+    // emitente é uma das nossas próprias unit_businesses)
     const product = await findProductForInvoiceItem({
       sku,
       ean: gtin,
       supplierCnpj: senderCnpj,
+      unitBusinessId: unitBusiness.id,
       logPrefix,
     });
 
@@ -253,6 +255,8 @@ async function findProductForInvoiceItem(params: {
   sku?: string | null;
   ean?: string | number | null;
   supplierCnpj?: string | null;
+  receiverCnpj?: string | null;
+  unitBusinessId?: string | null;
   logPrefix: string;
 }): Promise<Product | null> {
   const sku = params.sku?.trim();
@@ -266,18 +270,45 @@ async function findProductForInvoiceItem(params: {
     });
   }
 
-  if (!product && sku) {
-    const config = await ProductConfig.findOne({
-      where: { sku, unit_business_id: BLING_UNIT_BUSINESS_ID },
-    });
-    if (config) product = await Product.findByPk(config.product_id);
-  }
-
-  if (product || !ean) return product;
-
   const cleanSupplierCnpj = params.supplierCnpj
     ? cleanDocument(params.supplierCnpj)
     : null;
+
+  // ─── Resolve a unit_business própria da nota ──────────────────────────────
+  // O "supplierCnpj" (emitente) só é uma loja nossa em notas de saída/retorno;
+  // em notas de entrada quem somos nós é o destinatário. Por isso testa os
+  // dois — ou usa a unitBusinessId já resolvida pelo chamador, quando existir.
+  if (!product && sku) {
+    let unitBusiness: typeof UnitBusiness.prototype | null = null;
+
+    if (params.unitBusinessId) {
+      unitBusiness = await UnitBusiness.findByPk(params.unitBusinessId);
+    } else {
+      const candidateCnpjs = [
+        cleanSupplierCnpj,
+        params.receiverCnpj ? cleanDocument(params.receiverCnpj) : null,
+      ].filter((c): c is string => !!c);
+
+      unitBusiness = candidateCnpjs.length
+        ? await UnitBusiness.findOne({
+            where: { cnpj: { [Op.in]: candidateCnpjs } },
+          })
+        : null;
+    }
+
+    if (unitBusiness) {
+      const config = await ProductConfig.findOne({
+        where: { sku, unit_business_id: unitBusiness.id },
+      });
+      if (config) product = await Product.findByPk(config.product_id);
+    } else {
+      console.warn(
+        `${params.logPrefix} — unit business não encontrada (emitente=${params.supplierCnpj ?? "N/A"}, destinatário=${params.receiverCnpj ?? "N/A"}) — fallback por ProductConfig.sku ignorado`,
+      );
+    }
+  }
+
+  if (product || !ean) return product;
 
   const supplierMapping = cleanSupplierCnpj
     ? ((await SupplierMapping.findOne({
@@ -786,7 +817,6 @@ export async function upsertInvoiceFromXml(
   // Unmapped só pode ser registrado após ter o invoice.id, então é tratado depois.
 
   const invoiceItemsForCreate: ItemWithFiscal[] = [];
-  const resolvedProductKeys: Array<{ sku: string | null; gtin: string | null }> = [];
   // Só é confiável quando a Tecinco de fato resolveu algum item pelo próprio
   // epctb_codigo — um array vazio não é sinal de "nada a conciliar", é sinal
   // de que precisamos cair no fallback abaixo (parse do XML bruto), senão os
@@ -875,6 +905,7 @@ export async function upsertInvoiceFromXml(
         sku,
         ean: gtin,
         supplierCnpj: senderCnpj,
+        receiverCnpj,
         logPrefix: "[IMPORT_XML]",
       });
 
@@ -904,7 +935,6 @@ export async function upsertInvoiceFromXml(
           quantityFallback: qty,
         }),
       });
-      resolvedProductKeys.push({ sku, gtin });
     }
   }
 
@@ -983,18 +1013,29 @@ export async function upsertInvoiceFromXml(
 
   console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
 
-  // ─── Limpa UnmappedInvoiceProduct dos itens que resolveram nessa passagem ──
+  // ─── Reconcilia UnmappedInvoiceProduct com o estado atual da passagem ─────
   // (no create, invoice.id ainda não existia antes, então esse loop é no-op)
+  //
+  // unmappedDet representa TODOS os itens que continuam sem mapear nesta
+  // passagem. Qualquer registro UNMAPPED já salvo pra essa invoice que não
+  // aparece mais aqui está obsoleto — seja porque o item foi resolvido, seja
+  // porque passou a ser identificado por outra chave (ex.: numa passagem
+  // anterior resolveu pelo epctb_codigo da Tecinco, nesta caiu no fallback
+  // do XML bruto e ficou sob o cProd do fornecedor) — senão duplica a
+  // quantidade não mapeada a cada reprocessamento. Só mexe em status
+  // "UNMAPPED" pra nunca apagar um registro já resolvido manualmente.
+  const currentUnmappedKeys = new Set(
+    unmappedDet.map((u) => (u.gtin ? `ean:${u.gtin}` : `sku:${u.sku ?? ""}`)),
+  );
 
-  for (const { sku, gtin } of resolvedProductKeys) {
-    const staleUnmapped = await UnmappedInvoiceProduct.findOne({
-      where: {
-        invoice_id: invoice.id,
-        ...(gtin ? { ean: gtin } : { sku: sku ?? null }),
-      },
-    });
-    if (staleUnmapped) {
-      await staleUnmapped.destroy();
+  const existingUnmapped = await UnmappedInvoiceProduct.findAll({
+    where: { invoice_id: invoice.id, status: "UNMAPPED" },
+  });
+
+  for (const row of existingUnmapped) {
+    const key = row.ean ? `ean:${row.ean}` : `sku:${row.sku ?? ""}`;
+    if (!currentUnmappedKeys.has(key)) {
+      await row.destroy();
     }
   }
 
