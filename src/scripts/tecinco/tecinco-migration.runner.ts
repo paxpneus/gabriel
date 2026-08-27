@@ -122,7 +122,7 @@ async function* paginateTCar<T>(
 
 // ─── Etapas ───────────────────────────────────────────────────────────────────
 
-async function migrateProdutos(
+export async function migrateProdutos(
   opts: Required<RunMigrationOptions>,
 ): Promise<void> {
   const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun, grupos } =
@@ -193,7 +193,7 @@ async function migrateProdutos(
   await waitForQueueToDrain(upsertQueue, "Produtos", dryRun);
 }
 
-async function migrateClientes(
+export async function migrateClientes(
   opts: Required<RunMigrationOptions>,
 ): Promise<void> {
   const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun } = opts;
@@ -245,7 +245,7 @@ async function migrateClientes(
   await waitForQueueToDrain(upsertQueue, "Clientes", dryRun);
 }
 
-async function migrateNotasFiscais(
+export async function migrateNotasFiscais(
   opts: Required<RunMigrationOptions>,
 ): Promise<void> {
   const { branchIds, companyId, upsertQueue, dryRun } = opts;
