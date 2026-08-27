@@ -45,7 +45,24 @@ export async function resolveProduct(params: {
     }
   }
 
-  // 3. SupplierMapping pelo EAN
+  // 3. Product.ean / Product.ean_tribut diretamente
+  // (evita tentar INSERT num ean que já existe em outro produto, o que
+  // estoura o índice único parcial products_ean_unique e vira um erro
+  // genérico "Validation error" na fila, já que o conflictFields do
+  // upsert olha só id_system)
+  if (ean) {
+    product = await Product.findOne({
+      where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
+    });
+    if (product) {
+      console.log(
+        `${logPrefix} — produto resolvido via Product.ean/ean_tribut (ean=${ean}): id=${product.id}`,
+      );
+      return product;
+    }
+  }
+
+  // 4. SupplierMapping pelo EAN
   if (ean) {
     const mapping = await SupplierMapping.findOne({
       where: { supplier_product_code: ean },
@@ -61,7 +78,7 @@ export async function resolveProduct(params: {
     }
   }
 
-  // 4. SupplierMapping pelo codigoFabrica
+  // 5. SupplierMapping pelo codigoFabrica
   if (codigoFabrica) {
     const mapping = await SupplierMapping.findOne({
       where: { supplier_product_code: codigoFabrica },
@@ -80,6 +97,31 @@ export async function resolveProduct(params: {
   return null;
 }
 
+// Regra: sempre que um produto é resolvido (não importa por qual caminho —
+// integration mapping, id_system, ProductConfig.sku, SupplierMapping...) e
+// ele tem EAN, esse EAN precisa estar registrado como SupplierMapping. Se o
+// EAN já corresponde a algum produto ou supplier mapping existente, não faz
+// nada; senão, cria o vínculo.
+async function backfillSupplierMappingByEan(params: {
+  product: typeof Product.prototype;
+  ean?: string;
+  logPrefix: string;
+}): Promise<void> {
+  const { product, ean, logPrefix } = params;
+  if (!ean) return;
+
+  const existingByEan = await resolveProductByEan({ ean, logPrefix });
+  if (existingByEan) return;
+
+  await SupplierMapping.create({
+    product_id: product.id,
+    supplier_product_code: ean,
+  });
+  console.log(
+    `${logPrefix} — EAN=${ean} não correspondia a nenhum produto/supplier mapping — SupplierMapping criado vinculando ao produto id=${product.id}`,
+  );
+}
+
 export async function resolveProductWithMapping(params: {
   integrationsId: string;
   systemId: string;
@@ -87,7 +129,8 @@ export async function resolveProductWithMapping(params: {
   ean?: string;
   logPrefix: string;
 }): Promise<typeof Product.prototype | null> {
-  const { integrationsId, systemId, codigoFabrica, ean, logPrefix } = params;
+  const { integrationsId, systemId, codigoFabrica, ean, logPrefix } =
+    params;
 
   // 1) tenta achar direto pelo integration mapping (fast path)
   const mappedProduct = await integrationMappingService.findEntityByMapping(
@@ -100,7 +143,11 @@ export async function resolveProductWithMapping(params: {
     console.log(
       `${logPrefix} — produto resolvido via integration mapping (external_id=${systemId})`,
     );
-    return mappedProduct as typeof Product.prototype;
+
+    const resolved = mappedProduct as typeof Product.prototype;
+    await backfillSupplierMappingByEan({ product: resolved, ean, logPrefix });
+
+    return resolved;
   }
 
   // 2) fallback: Busca detalhada dentro do sistema
@@ -117,6 +164,8 @@ export async function resolveProductWithMapping(params: {
     console.log(
       `${logPrefix} — integration mapping criado/atualizado (external_id=${systemId})`,
     );
+
+    await backfillSupplierMappingByEan({ product, ean, logPrefix });
   }
 
   return product;

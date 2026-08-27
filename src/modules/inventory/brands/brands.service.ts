@@ -64,6 +64,38 @@ export class BrandService extends BaseService<Brand, BrandRepository> {
 
     return Brand.findByPk(rows[0].id);
   }
+
+  async findOrCreateBrand(rawName?: string | null): Promise<Brand | null> {
+    if (!rawName || !rawName.trim()) return null;
+
+    const normalized = rawName.trim();
+
+    const existing = await this.findSimilarBrand(normalized);
+    if (existing) return existing;
+
+    try {
+      const created = await Brand.create({
+        name: normalized,
+        seller_comission_tax_rate: 0,
+        manager_comission_tax_rate: 0,
+      });
+      console.log(
+        `[BrandService] Marca "${normalized}" criada automaticamente (id=${created.id})`,
+      );
+      return created;
+    } catch (err: any) {
+      if (err?.name === "SequelizeUniqueConstraintError") {
+        const raceWinner = await Brand.findOne({
+          where: sequelize.where(
+            sequelize.fn("LOWER", sequelize.col("name")),
+            normalized.toLowerCase(),
+          ),
+        });
+        if (raceWinner) return raceWinner;
+      }
+      throw err;
+    }
+  }
 }
 
 export default new BrandService();

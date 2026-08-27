@@ -306,16 +306,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
     // Resolve a Brand cadastrada mais parecida com o nome vindo da TCar
     // (ex: "Conti" -> "Continental"). Se não achar nada parecido o
-    // suficiente, segue sem brand_id — não trava o upsert do produto.
-    const matchedBrand = await brandsService.findSimilarBrand(
+    // suficiente, cria a brand automaticamente com o nome vindo da TCar.
+    const matchedBrand = await brandsService.findOrCreateBrand(
       data.marca_descricao,
     );
-
-    if (!matchedBrand && data.marca_descricao) {
-      console.warn(
-        `${logPrefix} — marca "${data.marca_descricao}" não encontrada no cadastro de brands. Produto salvo sem brand_id.`,
-      );
-    }
 
     const upsertedProduct = await productService.upsertWithComponents({
       id: product?.id,
