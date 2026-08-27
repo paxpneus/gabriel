@@ -143,7 +143,7 @@ export function extractRimFromMeasure(measure?: string | null): string | null {
 }
 
 async function resolveBlingImportedTireSubgroup(
-  measure?: string | null,
+  rim?: string | null,
   logPrefix = "[BLING_API_FETCH]",
 ): Promise<Subgroup | null> {
   let group = await Group.findOne({
@@ -161,11 +161,9 @@ async function resolveBlingImportedTireSubgroup(
     console.log(`${logPrefix} Grupo criado: ${group.name}`);
   }
 
-  const rim = extractRimFromMeasure(measure);
-
   if (!rim) {
     console.warn(
-      `${logPrefix} Aro não resolvido para measure=${measure ?? "N/A"}; produto salvo sem subgroup_id.`,
+      `${logPrefix} Aro não resolvido para aro=${rim ?? "N/A"}; produto salvo sem subgroup_id.`,
     );
     return null;
   }
@@ -1038,7 +1036,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingProduct.marca,
     );
     const importedTireSubgroup = await resolveBlingImportedTireSubgroup(
-      measure,
+      rim,
       `[BLING_API_FETCH] Produto ${blingProduct.codigo}`,
     );
 
