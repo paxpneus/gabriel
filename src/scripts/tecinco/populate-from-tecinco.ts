@@ -5,10 +5,11 @@ import { runMigration } from "./tecinco-migration.runner";
 import { UnitBusiness } from "../../modules/warehouse";
 import { Op } from "sequelize";
 import { tecincoUnitBusinessForPopulate } from "../../shared/constants/tecinco-units";
+import { tecincoTireGrupoIds } from "../../shared/constants/tecinco-groups";
 
 const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? "default";
 const ALTERADO_DESDE = process.env.TCAR_ALTERADO_DESDE;
-const GRUPOS = ['10', '1', '12', '18'];
+const GRUPOS = tecincoTireGrupoIds;
 
 async function main() {
   await sequelize.authenticate();
