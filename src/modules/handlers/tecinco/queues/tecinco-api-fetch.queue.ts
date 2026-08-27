@@ -180,19 +180,30 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       return;
     }
 
-    const filialNumber = String(data.fll_codigo ?? branchId ?? "").padStart(
-      2,
-      "0",
-    );
-    const unitBusiness = filialNumber
-      ? await UnitBusiness.findOne({ where: { number: filialNumber } })
-      : null;
-
-    if (!unitBusiness) {
-      console.warn(
-        `${logPrefix} — UnitBusiness não encontrada para fll_codigo=${filialNumber}`,
-      );
-    }
+    // Estoque/preço por filial: quando a busca usa include=filiais, data.filiais
+    // já traz todas de uma vez; senão (ex.: webhook de uma filial só), monta um
+    // array de 1 posição a partir dos campos "planos" do payload (compat).
+    const filiaisToProcess: Array<{
+      fll_codigo: number;
+      estoque: number;
+      preco: number;
+      custoContabil: number;
+    }> =
+      data.filiais && data.filiais.length > 0
+        ? data.filiais.map((f) => ({
+            fll_codigo: f.fll_codigo,
+            estoque: Number(f.estoque_fisico ?? 0),
+            preco: Number(f.preco ?? 0),
+            custoContabil: Number(f.custo_contabil ?? 0),
+          }))
+        : [
+            {
+              fll_codigo: Number(data.fll_codigo ?? branchId ?? 0),
+              estoque: Number(data.epcte_estoque ?? 0),
+              preco: Number(data.epprc_preco ?? 0),
+              custoContabil: Number(data.epcte_custcont ?? 0),
+            },
+          ];
 
     const integrations = await getTCarIntegration("Tecinco");
     const ean = normalizeEan(data.epctb_ean);
@@ -282,34 +293,38 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         `${logPrefix} — produto pertence a outra integração (id=${product.integrations_id}) — apenas vinculando`,
       );
 
-      const supplierCnpj = unitBusiness?.cnpj ?? null;
-      if (supplierCnpj && unitBusiness) {
-        await ProductConfig.upsert(
-          {
-            product_id: product.id,
-            unit_business_id: unitBusiness.id,
-            sku: codigoFabrica ?? systemId,
-            price: data.epprc_preco ?? 0,
-            supplier_cost_price: Number(data.epcte_custcont ?? 0),
-            average_cost:
-              Number(data.epcte_custcont ?? 0) > 0
-                ? Number(data.epcte_custcont)
-                : 0,
-          },
-          { conflictFields: ["product_id", "unit_business_id"] },
-        );
-
-        await ensureSupplierMappings({
-          productId: product.id,
-          supplierCnpj,
-          ean,
-          codigoFabrica,
-          logPrefix,
+      for (const filial of filiaisToProcess) {
+        const filialNumber = String(filial.fll_codigo).padStart(2, "0");
+        const unitBusiness = await UnitBusiness.findOne({
+          where: { number: filialNumber },
         });
-      } else {
-        console.warn(
-          `${logPrefix} — CNPJ do fornecedor não resolvível para filial=${filialNumber} — SupplierMapping não registrado`,
-        );
+        const supplierCnpj = unitBusiness?.cnpj ?? null;
+
+        if (supplierCnpj && unitBusiness) {
+          await ProductConfig.upsert(
+            {
+              product_id: product.id,
+              unit_business_id: unitBusiness.id,
+              sku: codigoFabrica ?? systemId,
+              price: filial.preco,
+              supplier_cost_price: filial.custoContabil,
+              average_cost: filial.custoContabil > 0 ? filial.custoContabil : 0,
+            },
+            { conflictFields: ["product_id", "unit_business_id"] },
+          );
+
+          await ensureSupplierMappings({
+            productId: product.id,
+            supplierCnpj,
+            ean,
+            codigoFabrica,
+            logPrefix,
+          });
+        } else {
+          console.warn(
+            `${logPrefix} — CNPJ do fornecedor não resolvível para filial=${filialNumber} — SupplierMapping não registrado`,
+          );
+        }
       }
 
       return;
@@ -351,59 +366,71 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     product = upsertedProduct;
     console.log(`${logPrefix} — produto upsertado: id=${product.id}`);
 
-    if (!unitBusiness) return;
+    // ─── ProductConfig + Stock por filial ──────────────────────────────────────
+    for (const filial of filiaisToProcess) {
+      const filialNumber = String(filial.fll_codigo).padStart(2, "0");
+      const unitBusiness = await UnitBusiness.findOne({
+        where: { number: filialNumber },
+      });
 
-    // ─── ProductConfig + Stock ────────────────────────────────────────────────
-    const entryUnitCost = Number(data.epcte_custcont ?? 0);
-    const stockQty = Math.round(Number(data.epcte_estoque ?? 0));
+      if (!unitBusiness) {
+        console.warn(
+          `${logPrefix} — UnitBusiness não encontrada para fll_codigo=${filialNumber}`,
+        );
+        continue;
+      }
 
-    const existingStock = await Stock.findOne({
-      where: { product_id: product.id, unit_business_id: unitBusiness.id },
-    });
-    const oldQuantity = Number(existingStock?.quantity ?? 0);
-    const oldTotalPrice = Number(existingStock?.total_price ?? 0);
-    const newAverageCost =
-      entryUnitCost > 0
-        ? entryUnitCost
-        : oldQuantity > 0
-          ? oldTotalPrice / oldQuantity
-          : 0;
+      const entryUnitCost = filial.custoContabil;
+      const stockQty = Math.round(filial.estoque);
 
-    await ProductConfig.upsert(
-      {
-        product_id: product.id,
-        unit_business_id: unitBusiness.id,
-        sku: codigoFabrica ?? systemId,
-        price: data.epprc_preco ?? 0,
-        supplier_cost_price: entryUnitCost,
-        average_cost: newAverageCost,
-        average_cost_updated_at: new Date(),
-      },
-      { conflictFields: ["product_id", "unit_business_id"] },
-    );
+      const existingStock = await Stock.findOne({
+        where: { product_id: product.id, unit_business_id: unitBusiness.id },
+      });
+      const oldQuantity = Number(existingStock?.quantity ?? 0);
+      const oldTotalPrice = Number(existingStock?.total_price ?? 0);
+      const newAverageCost =
+        entryUnitCost > 0
+          ? entryUnitCost
+          : oldQuantity > 0
+            ? oldTotalPrice / oldQuantity
+            : 0;
 
-    await Stock.upsert(
-      {
-        product_id: product.id,
-        unit_business_id: unitBusiness.id,
-        quantity: stockQty,
-        total_price: stockQty * newAverageCost,
-      },
-      { conflictFields: ["product_id", "unit_business_id"] },
-    );
+      await ProductConfig.upsert(
+        {
+          product_id: product.id,
+          unit_business_id: unitBusiness.id,
+          sku: codigoFabrica ?? systemId,
+          price: filial.preco,
+          supplier_cost_price: entryUnitCost,
+          average_cost: newAverageCost,
+          average_cost_updated_at: new Date(),
+        },
+        { conflictFields: ["product_id", "unit_business_id"] },
+      );
 
-    console.log(
-      `${logPrefix} — Stock upsertado: qty=${stockQty} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${(stockQty * newAverageCost).toFixed(2)}`,
-    );
+      await Stock.upsert(
+        {
+          product_id: product.id,
+          unit_business_id: unitBusiness.id,
+          quantity: stockQty,
+          total_price: stockQty * newAverageCost,
+        },
+        { conflictFields: ["product_id", "unit_business_id"] },
+      );
 
-    // ─── SupplierMappings ─────────────────────────────────────────────────────
-    await ensureSupplierMappings({
-      productId: product.id,
-      supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
-      ean,
-      codigoFabrica,
-      logPrefix,
-    });
+      console.log(
+        `${logPrefix} — Stock upsertado (filial=${filialNumber}): qty=${stockQty} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${(stockQty * newAverageCost).toFixed(2)}`,
+      );
+
+      // ─── SupplierMappings ───────────────────────────────────────────────────
+      await ensureSupplierMappings({
+        productId: product.id,
+        supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
+        ean,
+        codigoFabrica,
+        logPrefix,
+      });
+    }
   }
 
   // ─── Cliente ───────────────────────────────────────────────────────────────

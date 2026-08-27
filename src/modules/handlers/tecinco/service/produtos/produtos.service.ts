@@ -17,6 +17,10 @@ export class TCarProdutoService {
       offset?: number;
       limit?: number;
       page_size?: number;
+      /** "filiais" — retorna estoque/preço de cada filial em params.branch_ids */
+      include?: string;
+      /** Lista de filiais (fll_codigo) separadas por vírgula, ex.: "12,17" */
+      branch_ids?: string;
     } = {},
   ): Promise<any> {
     return tcarRequest(branchId, (api) =>

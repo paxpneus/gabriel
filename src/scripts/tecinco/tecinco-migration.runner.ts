@@ -140,50 +140,55 @@ async function migrateProdutos(
     ? grupos
     : [undefined];
 
-  for (const branchId of branchIds) {
-    console.log(`\n  🏢 Filial ${branchId}`);
-    let count = 0;
+  // Uma única busca cobrindo todas as filiais de uma vez (include=filiais),
+  // em vez de uma requisição por filial — o estoque/preço de cada uma vem
+  // dentro de produto.filiais. A sessão/autenticação usa a primeira filial
+  // da lista; branch_ids define quais filiais retornam no array.
+  const primaryBranchId = branchIds[0];
+  const branchIdsParam = branchIds.join(",");
+  let count = 0;
 
-    for (const grupo of gruposParaBuscar) {
-      if (grupo !== undefined) {
-        console.log(`    🔖 Grupo ${grupo}`);
-      }
-
-      for await (const page of paginateTCar((offset, limit) =>
-        service.listarProdutos(branchId, {
-          offset,
-          limit,
-          ...(alteradoDesde ? { alterado_desde: alteradoDesde } : {}),
-          ...(grupo !== undefined ? { grupo } : {}),
-        }),
-      )) {
-        for (const produto of page) {
-          const p = produto as any;
-          const systemId = String(p.epctb_codigo);
-
-          await enqueue(
-            upsertQueue,
-            {
-              eventId: `product-${branchId}-${systemId}-${Date.now()}`,
-              resource: "product",
-              action: "sync",
-              companyId,
-              branchId,
-              data: p,
-            },
-            `product-${branchId}-${systemId}`,
-            dryRun,
-          );
-
-          count++;
-        }
-
-        console.log(`  → ${count} produto(s) enfileirado(s)...`);
-      }
+  for (const grupo of gruposParaBuscar) {
+    if (grupo !== undefined) {
+      console.log(`  🔖 Grupo ${grupo}`);
     }
 
-    console.log(`  ✅ Filial ${branchId}: ${count} produtos`);
+    for await (const page of paginateTCar((offset, limit) =>
+      service.listarProdutos(primaryBranchId, {
+        offset,
+        limit,
+        include: "filiais",
+        branch_ids: branchIdsParam,
+        ...(alteradoDesde ? { alterado_desde: alteradoDesde } : {}),
+        ...(grupo !== undefined ? { grupo } : {}),
+      }),
+    )) {
+      for (const produto of page) {
+        const p = produto as any;
+        const systemId = String(p.epctb_codigo);
+
+        await enqueue(
+          upsertQueue,
+          {
+            eventId: `product-${systemId}-${Date.now()}`,
+            resource: "product",
+            action: "sync",
+            companyId,
+            branchId: primaryBranchId,
+            data: p,
+          },
+          `product-${systemId}`,
+          dryRun,
+        );
+
+        count++;
+      }
+
+      console.log(`  → ${count} produto(s) enfileirado(s)...`);
+    }
   }
+
+  console.log(`  ✅ ${count} produtos (filiais: ${branchIdsParam})`);
 
   await waitForQueueToDrain(upsertQueue, "Produtos", dryRun);
 }
@@ -332,6 +337,7 @@ export async function runMigration(opts: RunMigrationOptions): Promise<void> {
 
   // Produtos e Notas Fiscais rodam em paralelo (rate limit da Tecinco
   // comporta). Clientes só roda depois que os dois terminarem.
-  await Promise.all([migrateProdutos(resolved), migrateNotasFiscais(resolved)]);
+  // await Promise.all([migrateProdutos(resolved), migrateNotasFiscais(resolved)]);
+  await Promise.all([migrateNotasFiscais(resolved)]);
   await migrateClientes(resolved);
 }
