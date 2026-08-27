@@ -103,6 +103,8 @@ export const ROLE_PERMISSIONS: Roles[] = [
       { entity: 'kit_components', label: 'Composição de Kits' },
       { entity: 'rims', label: 'Aros' },
       { entity: 'tire_measures', label: 'Medidas de Pneu' },
+      { entity: 'groups', label: 'Grupo de Pneu' },
+      { entity: 'subgroups', label: 'Subgrupo de pneus' },
     ],
   },
   {
