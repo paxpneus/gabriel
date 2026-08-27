@@ -787,9 +787,12 @@ export async function upsertInvoiceFromXml(
 
   const invoiceItemsForCreate: ItemWithFiscal[] = [];
   const resolvedProductKeys: Array<{ sku: string | null; gtin: string | null }> = [];
-  const unmappedDet: UnmappedInvoiceItemFromXml[] = [
-    ...(options?.unmappedItems ?? []),
-  ];
+  // Só é confiável quando a Tecinco de fato resolveu algum item pelo próprio
+  // epctb_codigo — um array vazio não é sinal de "nada a conciliar", é sinal
+  // de que precisamos cair no fallback abaixo (parse do XML bruto), senão os
+  // itens ficam sempre sem produto/nome mesmo quando o XML tem tudo.
+  const operationalItems = options?.operationalItems ?? [];
+  const unmappedDet: UnmappedInvoiceItemFromXml[] = [];
 
   // No update (re-fetch/webhook/reenvio), reprocessa contra o estado atual de
   // mapeamento de produto — mas só vale a pena refazer a resolução se ainda
@@ -797,8 +800,8 @@ export async function upsertInvoiceFromXml(
   // o total do XML/operationalItems, não há nada novo pra achar.
   let alreadyFullyReconciled = false;
   if (existingInvoice) {
-    const xmlTotalQuantity = Array.isArray(options?.operationalItems)
-      ? options.operationalItems.reduce(
+    const xmlTotalQuantity = operationalItems.length > 0
+      ? operationalItems.reduce(
           (sum, item) => sum + Number(item.quantity_expected ?? 0),
           0,
         )
@@ -819,9 +822,21 @@ export async function upsertInvoiceFromXml(
     }
   }
 
-  if (Array.isArray(options?.operationalItems) && !alreadyFullyReconciled) {
-    for (let idx = 0; idx < options.operationalItems.length; idx++) {
-      const item = options.operationalItems[idx];
+  const willFallbackToXmlDet =
+    operationalItems.length === 0 && det.length > 0 && !alreadyFullyReconciled;
+
+  // Quando vamos escanear o det do XML do zero (abaixo), ele já regenera uma
+  // entrada de "não mapeado" pra cada item não resolvido, com sku/ean/nome
+  // reais — então não faz sentido também herdar as entradas vazias que a
+  // Tecinco mandou (senão duplica: uma vazia + uma com dado real pro mesmo
+  // item).
+  if (!willFallbackToXmlDet) {
+    unmappedDet.push(...(options?.unmappedItems ?? []));
+  }
+
+  if (operationalItems.length > 0 && !alreadyFullyReconciled) {
+    for (let idx = 0; idx < operationalItems.length; idx++) {
+      const item = operationalItems[idx];
       const { xmlItem, itemNumber } = findXmlItemForOperationalItem({
         det,
         operationalItem: item,
