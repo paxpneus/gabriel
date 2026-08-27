@@ -46,6 +46,7 @@ export class IntegrationMappingService extends BaseService<
   ) {
     const mapping = await this.repository.findOne({
       where: { entity_type: entityType, integrations_id, external_id },
+      order: [["updatedAt", "DESC"]],
     });
 
     if (!mapping) return null;

@@ -78,7 +78,7 @@ jest.mock("../helpers/customer.helper", () => ({
 
 jest.mock("../../../../inventory/brands/brands.service", () => ({
   __esModule: true,
-  default: { findSimilarBrand: jest.fn() },
+  default: { findSimilarBrand: jest.fn(), findOrCreateBrand: jest.fn() },
 }));
 
 jest.mock(
@@ -170,7 +170,7 @@ describe("TCarUpsertQueue.processProduct", () => {
     });
     (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
     (ensureSupplierMappings as jest.Mock).mockResolvedValue(undefined);
-    (brandsService.findSimilarBrand as jest.Mock).mockResolvedValue(null);
+    (brandsService.findOrCreateBrand as jest.Mock).mockResolvedValue(null);
     (Group.findOne as jest.Mock).mockResolvedValue({ id: "group-1", name: "PNEUS" });
     (Subgroup.findOne as jest.Mock).mockResolvedValue({
       id: "subgroup-1",

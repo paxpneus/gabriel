@@ -85,7 +85,15 @@ export abstract class BaseQueueService<T> {
       });
 
       this.worker.on("failed", (job, err) => {
-        console.error(`[QUEUE] Job ${job?.id} falhou:`, err.message);
+        const detail = (err as any)?.parent?.detail ?? (err as any)?.original?.detail;
+        const constraint =
+          (err as any)?.parent?.constraint ?? (err as any)?.original?.constraint;
+        console.error(
+          `[QUEUE] Job ${job?.id} falhou:`,
+          err.message,
+          constraint ? `| constraint=${constraint}` : "",
+          detail ? `| detail=${detail}` : "",
+        );
         if (job) {
           try {
             this.onFailed(job, err);
