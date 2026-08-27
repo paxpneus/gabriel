@@ -133,7 +133,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   constructor(options: { workless?: boolean } = {}) {
     super("TCAR_UPSERT", {
       concurrency: 1,
-      limiter: { max: 5, duration: 1000 },
+      limiter: { max: 50, duration: 1000 },
       maxProcessingMs: 120_000,
       workless: options.workless,
     });
@@ -301,14 +301,43 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         const supplierCnpj = unitBusiness?.cnpj ?? null;
 
         if (supplierCnpj && unitBusiness) {
+          const entryUnitCost = filial.custoContabil;
+          const stockQty = Math.round(filial.estoque);
+
+          const existingStock = await Stock.findOne({
+            where: { product_id: product.id, unit_business_id: unitBusiness.id },
+          });
+          const oldQuantity = Number(existingStock?.quantity ?? 0);
+          const oldTotalPrice = Number(existingStock?.total_price ?? 0);
+          const newAverageCost =
+            entryUnitCost > 0
+              ? entryUnitCost
+              : oldQuantity > 0
+                ? oldTotalPrice / oldQuantity
+                : 0;
+
           await ProductConfig.upsert(
             {
               product_id: product.id,
               unit_business_id: unitBusiness.id,
               sku: codigoFabrica ?? systemId,
               price: filial.preco,
-              supplier_cost_price: filial.custoContabil,
-              average_cost: filial.custoContabil > 0 ? filial.custoContabil : 0,
+              supplier_cost_price: entryUnitCost,
+              average_cost: newAverageCost,
+            },
+            { conflictFields: ["product_id", "unit_business_id"] },
+          );
+
+          // Estoque é dado da filial, não do "dono" do Product — precisa ser
+          // sincronizado mesmo quando o produto pertence a outra integração,
+          // senão o produto fica com preço/custo atualizados mas estoque
+          // parado (era só ProductConfig sendo tocado aqui antes).
+          await Stock.upsert(
+            {
+              product_id: product.id,
+              unit_business_id: unitBusiness.id,
+              quantity: stockQty,
+              total_price: stockQty * newAverageCost,
             },
             { conflictFields: ["product_id", "unit_business_id"] },
           );
