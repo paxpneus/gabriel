@@ -25,17 +25,31 @@ export class IntegrationMappingService extends BaseService<
     mappingDto: IntegrationMappingCreationAttributes,
     transaction?: Transaction
   ) {
+    const { entity_type, integrations_id, internal_id, external_id } = mappingDto;
+
+    // Esse produto/entidade já tem mapping pra essa integração (talvez com
+    // outro external_id — ex.: a Tecinco reatribuiu o código do produto)?
+    // Reaponta em vez de deixar criar um segundo mapping pro mesmo produto,
+    // que antes passava batido (external_id novo nunca colide com o índice
+    // único, então nada acusava a duplicação).
+    const existingByInternalId = await this.repository.findOne({
+      where: { entity_type, integrations_id, internal_id },
+      transaction,
+    });
+
+    if (existingByInternalId) {
+      if (existingByInternalId.external_id !== external_id) {
+        await existingByInternalId.update(mappingDto, { transaction });
+      }
+      return;
+    }
+
     try {
       await this.repository.upsertByFind(
-        {
-            external_id: mappingDto.external_id,
-            internal_id: mappingDto.internal_id,
-            entity_type: mappingDto.entity_type,
-            integrations_id: mappingDto.integrations_id
-        },
+        { external_id, internal_id, entity_type, integrations_id },
         mappingDto,
         mappingDto,
-        {transaction}
+        { transaction },
       );
     } catch (error: any) {
       if (error?.name !== "SequelizeUniqueConstraintError") throw error;
@@ -45,18 +59,14 @@ export class IntegrationMappingService extends BaseService<
       // que aponte para outro internal_id — e o create() colide com o índice
       // único dessas 3 colunas. Nesse caso o mapping já existe, só precisa
       // ser reapontado para o internal_id novo.
-      const existing = await this.repository.findOne({
-        where: {
-          entity_type: mappingDto.entity_type,
-          integrations_id: mappingDto.integrations_id,
-          external_id: mappingDto.external_id,
-        },
+      const existingByExternalId = await this.repository.findOne({
+        where: { entity_type, integrations_id, external_id },
         transaction,
       });
 
-      if (!existing) throw error;
+      if (!existingByExternalId) throw error;
 
-      await existing.update(mappingDto, { transaction });
+      await existingByExternalId.update(mappingDto, { transaction });
     }
   }
 

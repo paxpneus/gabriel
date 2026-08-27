@@ -8,9 +8,15 @@ import {
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 
 export function normalizeEan(ean?: string): string | undefined {
-  if (!ean || ean.trim() === "" || ean.trim().toUpperCase() === "SEM GTIN")
-    return undefined;
-  return ean.trim();
+  if (!ean) return undefined;
+  const trimmed = ean.trim();
+  if (!trimmed) return undefined;
+  // A Tecinco manda variações de "sem código de barras" (com ou sem espaço,
+  // ex.: "SEM GTIN", "SEMGTIN") — sem normalizar espaço, isso vaza como se
+  // fosse um EAN de verdade e cruza produtos completamente diferentes que
+  // não têm código de barras cadastrado (todos "iguais" pelo mesmo texto).
+  if (trimmed.toUpperCase().replace(/\s+/g, "") === "SEMGTIN") return undefined;
+  return trimmed;
 }
 
 export async function resolveProduct(params: {
