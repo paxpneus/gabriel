@@ -25,17 +25,39 @@ export class IntegrationMappingService extends BaseService<
     mappingDto: IntegrationMappingCreationAttributes,
     transaction?: Transaction
   ) {
-    await this.repository.upsertByFind(
-      {
-          external_id: mappingDto.external_id,
-          internal_id: mappingDto.internal_id,
+    try {
+      await this.repository.upsertByFind(
+        {
+            external_id: mappingDto.external_id,
+            internal_id: mappingDto.internal_id,
+            entity_type: mappingDto.entity_type,
+            integrations_id: mappingDto.integrations_id
+        },
+        mappingDto,
+        mappingDto,
+        {transaction}
+      );
+    } catch (error: any) {
+      if (error?.name !== "SequelizeUniqueConstraintError") throw error;
+
+      // O findOne acima filtra também por internal_id, então não encontra um
+      // mapping já existente para (entity_type, integrations_id, external_id)
+      // que aponte para outro internal_id — e o create() colide com o índice
+      // único dessas 3 colunas. Nesse caso o mapping já existe, só precisa
+      // ser reapontado para o internal_id novo.
+      const existing = await this.repository.findOne({
+        where: {
           entity_type: mappingDto.entity_type,
-          integrations_id: mappingDto.integrations_id
-      },
-      mappingDto,
-      mappingDto,
-      {transaction}
-    );
+          integrations_id: mappingDto.integrations_id,
+          external_id: mappingDto.external_id,
+        },
+        transaction,
+      });
+
+      if (!existing) throw error;
+
+      await existing.update(mappingDto, { transaction });
+    }
   }
 
   // Acha alguma entidade pelo external_id de alguma integração
