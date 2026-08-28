@@ -135,16 +135,27 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     const externalTransaction = options?.transaction as Transaction | undefined;
     const transaction = externalTransaction ?? (await sequelize.transaction());
     try {
+      if (!data.status_id) {
+        const defaultStatus = await TicketStatus.findOne({
+          where: { is_default: true },
+          transaction,
+        });
+        
+        if (defaultStatus) data.status_id = defaultStatus.id;
+        else throw new Error("Nenhum status padrão cadastrado, cadastre um status padrão ou informe o status do chamado!")
+      }
       const ticket = await super.create(data, { ...options, transaction });
-      await ticketStatusHistoryService.create(
-        {
-          ticket_id: ticket.id,
-          status_id: ticket.status_id,
-          changed_by_user_id: ticket.requester_user_id,
-          changed_at: ticket.createdAt,
-        },
-        { transaction },
-      );
+      if (ticket.status_id) {
+        await ticketStatusHistoryService.create(
+          {
+            ticket_id: ticket.id,
+            status_id: ticket.status_id,
+            changed_by_user_id: ticket.requester_user_id,
+            changed_at: ticket.createdAt,
+          },
+          { transaction },
+        );
+      }
       if (!externalTransaction) await transaction.commit();
       return ticket;
     } catch (error) {

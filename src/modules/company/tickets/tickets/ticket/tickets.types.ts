@@ -22,7 +22,7 @@ export interface TicketAttributes {
   requester_user_id: string;
   area_id: string;
   priority_id: string;
-  status_id: string;
+  status_id: string | null;
   completed_at?: Date | null;
   due_date?: Date | null;
   due_status?: DueStatus;

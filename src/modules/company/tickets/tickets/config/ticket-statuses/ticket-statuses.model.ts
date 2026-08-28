@@ -15,6 +15,7 @@ class TicketStatus
   public canceled!: boolean;
   public display_order!: number;
   public is_active!: boolean;
+  public is_default!: boolean;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -42,6 +43,11 @@ TicketStatus.init(
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true,
+    },
+    is_default: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
   },
   {
