@@ -20,54 +20,38 @@ export class IntegrationMappingService extends BaseService<
     super(integrationMappingRepository);
   }
 
-  //Cria ou atualiza o mapeamento de integração de alguma entidade de alguma integração
+  // Cria o mapeamento de integração de uma entidade — uma única vez. Um
+  // mapping já existente (por internal_id OU por external_id) nunca é
+  // atualizado, reapontado ou removido por aqui: resoluções automáticas
+  // (EAN, SKU, nome, id_system...) já causaram mappings errados sendo
+  // silenciosamente reapontados no passado, então a política agora é
+  // "criado uma vez pelo sistema, não é mais tocado" — qualquer correção
+  // precisa ser deliberada (migration/script manual), não automática.
   async createOrUpdateIntegrationMapping(
     mappingDto: IntegrationMappingCreationAttributes,
     transaction?: Transaction
   ) {
     const { entity_type, integrations_id, internal_id, external_id } = mappingDto;
 
-    // Esse produto/entidade já tem mapping pra essa integração (talvez com
-    // outro external_id — ex.: a Tecinco reatribuiu o código do produto)?
-    // Reaponta em vez de deixar criar um segundo mapping pro mesmo produto,
-    // que antes passava batido (external_id novo nunca colide com o índice
-    // único, então nada acusava a duplicação).
-    const existingByInternalId = await this.repository.findOne({
-      where: { entity_type, integrations_id, internal_id },
+    const existing = await this.repository.findOne({
+      where: {
+        entity_type,
+        integrations_id,
+        [Op.or]: [{ internal_id }, { external_id }],
+      },
       transaction,
     });
 
-    if (existingByInternalId) {
-      if (existingByInternalId.external_id !== external_id) {
-        await existingByInternalId.update(mappingDto, { transaction });
+    if (existing) {
+      if (existing.internal_id !== internal_id || existing.external_id !== external_id) {
+        console.warn(
+          `[IntegrationMappingService] mapping já existe (entity_type=${entity_type}, integrations_id=${integrations_id}, internal_id=${existing.internal_id}, external_id=${existing.external_id}) — ignorando tentativa de reapontar para (internal_id=${internal_id}, external_id=${external_id})`,
+        );
       }
-      return;
+      return existing;
     }
 
-    try {
-      await this.repository.upsertByFind(
-        { external_id, internal_id, entity_type, integrations_id },
-        mappingDto,
-        mappingDto,
-        { transaction },
-      );
-    } catch (error: any) {
-      if (error?.name !== "SequelizeUniqueConstraintError") throw error;
-
-      // O findOne acima filtra também por internal_id, então não encontra um
-      // mapping já existente para (entity_type, integrations_id, external_id)
-      // que aponte para outro internal_id — e o create() colide com o índice
-      // único dessas 3 colunas. Nesse caso o mapping já existe, só precisa
-      // ser reapontado para o internal_id novo.
-      const existingByExternalId = await this.repository.findOne({
-        where: { entity_type, integrations_id, external_id },
-        transaction,
-      });
-
-      if (!existingByExternalId) throw error;
-
-      await existingByExternalId.update(mappingDto, { transaction });
-    }
+    return this.repository.create(mappingDto, { transaction });
   }
 
   // Acha alguma entidade pelo external_id de alguma integração

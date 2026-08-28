@@ -89,7 +89,7 @@ async function waitForQueueToDrain(
   console.log(`  ✅ Fila vazia. Avançando...\n`);
 }
 
-async function* paginateTCar<T>(
+export async function* paginateTCar<T>(
   fetcher: (offset: number, limit: number) => Promise<any>,
   max = MAX_ITEMS,
 ): AsyncGenerator<T[]> {
