@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "nodemon --exec tsx src/server.ts",
     "build": "tsc",
-    "postbuild": "mkdir -p dist/scripts/tecinco/output && cp src/scripts/tecinco/output/*.json dist/scripts/tecinco/output/",
     "start": "node dist/server.js",
     "docker": "./dev.sh",
     "migrate": "sequelize-cli db:migrate",
