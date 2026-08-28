@@ -111,12 +111,14 @@ import {
   resolveProductWithMapping,
   ensureSupplierMappings,
 } from "../helpers/product.helpers";
+import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import Product from "../../../../inventory/products/product.model";
 import ProductConfig from "../../../../inventory/product-config/product_config.model";
 import UnitBusiness from "../../../../company/unit-business/unit-business.model";
 import Group from "../../../../inventory/groups/group/group.model";
 import Subgroup from "../../../../inventory/groups/subgroup/subgroup.model";
 import Stock from "../../../../inventory/stock/stock/stock.model";
+import UnmappedInvoiceProduct from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import { TCarUpsertQueue } from "../tecinco-api-fetch.queue";
 import { TCarProdutoPayload } from "../../service/tecinco/tecinco.types";
 
@@ -180,6 +182,8 @@ describe("TCarUpsertQueue.processProduct", () => {
       makeUpsertedProduct(),
     );
     (Stock.findOne as jest.Mock).mockResolvedValue(null);
+    (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue(null);
+    (UnmappedInvoiceProduct.create as jest.Mock).mockResolvedValue(undefined);
   });
 
   function runProductJob(
@@ -199,58 +203,75 @@ describe("TCarUpsertQueue.processProduct", () => {
   }
 
   // ── ação deleted ─────────────────────────────────────────────────────────
+  // Produto nunca é deletado pelo sistema — só desativado (is_active=false)
+  // quando resolvido via integration mapping; histórico é mantido.
 
-  it("ação deleted: remove o produto e não chama o upsert central", async () => {
+  it("ação deleted: desativa (is_active=false) o produto encontrado via mapping, sem deletar", async () => {
     const produto = makeTecincoProduto();
+    const mappedProduct = { id: "mapped-product-id", update: jest.fn() };
+    (integrationMappingService.findEntityByMapping as jest.Mock).mockResolvedValue(
+      mappedProduct,
+    );
 
     await runProductJob("deleted", produto);
 
-    expect(Product.destroy).toHaveBeenCalledWith({
-      where: { id_system: String(produto.epctb_codigo) },
-    });
+    expect(integrationMappingService.findEntityByMapping).toHaveBeenCalledWith(
+      "PRODUCT",
+      INTEGRATION_ID,
+      String(produto.epctb_codigo),
+    );
+    expect(mappedProduct.update).toHaveBeenCalledWith({ is_active: false });
+    expect(Product.destroy).not.toHaveBeenCalled();
     expect(productService.upsertWithComponents).not.toHaveBeenCalled();
   });
 
-  // ── produto sem id (novo, não mapeado) ───────────────────────────────────
+  it("ação deleted: produto não encontrado via mapping — não desativa nem deleta nada", async () => {
+    const produto = makeTecincoProduto();
+    (integrationMappingService.findEntityByMapping as jest.Mock).mockResolvedValue(
+      null,
+    );
 
-  describe("produto sem id (novo, ainda não mapeado)", () => {
-    it("cria uma única vez via upsert central, com fallback por id_system e sem componentes de kit", async () => {
+    await runProductJob("deleted", produto);
+
+    expect(Product.destroy).not.toHaveBeenCalled();
+    expect(productService.upsertWithComponents).not.toHaveBeenCalled();
+  });
+
+  // ── produto sem mapping (novo, precisa de revisão manual) ────────────────
+  // Sistema não cria produto sozinho mais — registra em
+  // unmapped_invoice_products (sem invoice_id) pra revisão manual.
+
+  describe("produto sem mapping (novo, precisa de revisão manual)", () => {
+    it("não cria produto — registra em unmapped_invoice_products e não chama upsert/supplier mapping", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
 
       await runProductJob("updated", produto);
 
-      expect(productService.upsertWithComponents).toHaveBeenCalledTimes(1);
-      expect(productService.upsertWithComponents).toHaveBeenCalledWith(
+      expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: undefined,
-          conflictFields: ["id_system"],
-          values: expect.objectContaining({
-            id_system: String(produto.epctb_codigo),
-          }),
+          invoice_id: null,
+          sku: String(produto.epctb_codigo),
+          ean: produto.epctb_ean,
+          product_name: produto.epctb_nome,
+          reason: "Produto novo, precisa de mapeamento manual",
+          status: "UNMAPPED",
         }),
       );
-      // Tecinco não manda composição de kit — components nunca é passado.
-      const callArgs = (productService.upsertWithComponents as jest.Mock).mock
-        .calls[0][0];
-      expect(callArgs.components).toBeUndefined();
+      expect(productService.upsertWithComponents).not.toHaveBeenCalled();
+      expect(ensureSupplierMappings).not.toHaveBeenCalled();
     });
 
-    it("registra o supplier mapping exatamente uma vez, sem duplicar", async () => {
+    it("já registrado como unmapped — não duplica a linha", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue({
+        id: "existing-unmapped-id",
+      });
 
       await runProductJob("updated", produto);
 
-      expect(ensureSupplierMappings).toHaveBeenCalledTimes(1);
-      expect(ensureSupplierMappings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          productId: "upserted-tecinco-product-id",
-          supplierCnpj: "11222333000144",
-          ean: produto.epctb_ean,
-          codigoFabrica: produto.epctb_codigofabrica,
-        }),
-      );
+      expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
     });
   });
 
@@ -325,6 +346,10 @@ describe("TCarUpsertQueue.processProduct", () => {
 
   it("unit business não encontrada: salva o produto mas não cria ProductConfig/supplier mapping", async () => {
     const produto = makeTecincoProduto({ fll_codigo: 999 });
+    (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+      id: "existing-tecinco-product-id",
+      integrations_id: INTEGRATION_ID,
+    });
     (UnitBusiness.findOne as jest.Mock).mockResolvedValue(null);
 
     await runProductJob("updated", produto);
@@ -341,7 +366,10 @@ describe("TCarUpsertQueue.processProduct", () => {
       epctb_codigo: "700001K2",
       epctb_codigofabrica: "FAB-700001K2",
     });
-    (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+    (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+      id: "existing-tecinco-product-id",
+      integrations_id: INTEGRATION_ID,
+    });
 
     await runProductJob("updated", produto);
 

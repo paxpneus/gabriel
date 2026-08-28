@@ -34,9 +34,9 @@ import { extractProductMeasureAndLine } from "../../bling/services/bling/queues/
 import {
   normalizeEan,
   ensureSupplierMappings,
-  resolveProduct,
   resolveProductWithMapping,
 } from "./helpers/product.helpers";
+import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
 import brandsService from "../../../inventory/brands/brands.service";
 import Group from "../../../inventory/groups/group/group.model";
@@ -175,8 +175,20 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     const logPrefix = `[TCAR_UPSERT][processProduct] id_system=${systemId}`;
 
     if (action === "deleted") {
-      const deleted = await Product.destroy({ where: { id_system: systemId } });
-      console.log(`${logPrefix} — deletado (${deleted} reg)`);
+      // Produto nunca mais é deletado pelo sistema — fica de histórico, só
+      // desativado (is_active=false) quando encontrado via integration mapping.
+      const integrations = await getTCarIntegration("Tecinco");
+      const mapped = await integrationMappingService.findEntityByMapping(
+        "PRODUCT",
+        integrations.id,
+        systemId,
+      );
+      if (mapped) {
+        await (mapped as typeof Product.prototype).update({ is_active: false });
+        console.log(`${logPrefix} — produto desativado (is_active=false), histórico mantido`);
+      } else {
+        console.log(`${logPrefix} — produto não encontrado via mapping, nada a desativar`);
+      }
       return;
     }
 
@@ -272,23 +284,50 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       logPrefix,
     );
 
-    // ─── Resolve produto pelos identificadores ────────────────────────────────
+    // ─── Resolve produto SÓ por integration mapping ────────────────────────────
     let product = await resolveProductWithMapping({
       integrationsId: integrations.id,
       systemId,
-      codigoFabrica,
       ean,
       logPrefix,
     });
 
-    const isOwnProduct =
-      !product || product.integrations_id === integrations.id;
+    // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
+    if (!product) {
+      // unique_ean_null_invoice é UNIQUE(ean) WHERE invoice_id IS NULL — ou
+      // seja, dois systemIds diferentes com o mesmo EAN batem nesse índice
+      // mesmo com sku diferente, então o dedup precisa checar por ean também.
+      const existingUnmapped = await UnmappedInvoiceProduct.findOne({
+        where: {
+          invoice_id: null,
+          ...(ean ? { [Op.or]: [{ sku: systemId }, { ean }] } : { sku: systemId }),
+        },
+      });
+      if (!existingUnmapped) {
+        await UnmappedInvoiceProduct.create({
+          invoice_id: null,
+          integrations_id: integrations.id,
+          sku: systemId,
+          ean: ean ?? null,
+          product_name: data.epctb_nome?.trim() ?? null,
+          quantity: 0,
+          reason: "Produto novo, precisa de mapeamento manual",
+          status: "UNMAPPED",
+        });
+        console.log(
+          `${logPrefix} — produto novo, registrado em unmapped_invoice_products pra revisão manual`,
+        );
+      }
+      return;
+    }
+
+    const isOwnProduct = product.integrations_id === integrations.id;
 
     // ─── Produto de outra integração → apenas vincula, não sobrescreve ────────
     // (brand_id não é tocado aqui de propósito: o produto pertence a outra
     // integração, então não sobrescrevemos os dados "donos" dele, só o
     // ProductConfig/SupplierMapping relativos a esta filial.)
-    if (product && !isOwnProduct) {
+    if (!isOwnProduct) {
       console.log(
         `${logPrefix} — produto pertence a outra integração (id=${product.integrations_id}) — apenas vinculando`,
       );
@@ -373,8 +412,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     );
 
     const upsertedProduct = await productService.upsertWithComponents({
-      id: product?.id,
-      conflictFields: ["id_system"],
+      id: product.id,
       values: {
         id_system: systemId,
         name: data.epctb_nome?.trim() ?? "",
@@ -673,11 +711,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         );
       }
 
-      // ─── Resolve produto pelos identificadores ────────────────────────────────
+      // ─── Resolve produto SÓ por integration mapping ────────────────────────────
       const product = await resolveProductWithMapping({
         integrationsId: integrations.id,
         systemId,
-        codigoFabrica,
         ean,
         logPrefix,
       });

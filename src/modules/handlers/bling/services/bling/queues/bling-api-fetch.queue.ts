@@ -621,8 +621,16 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     if (!magentoProduct) {
       const normalizedEan = ean && ean.trim() !== "" ? ean : null;
 
+      // unique_ean_null_invoice é UNIQUE(ean) WHERE invoice_id IS NULL — dois
+      // skus diferentes com o mesmo EAN batem nesse índice, então o dedup
+      // precisa checar por ean também, não só por sku.
       const existingUnmapped = await UnmappedInvoiceProduct.findOne({
-        where: { invoice_id: null, sku },
+        where: {
+          invoice_id: null,
+          ...(normalizedEan
+            ? { [Op.or]: [{ sku }, { ean: normalizedEan }] }
+            : { sku }),
+        },
         transaction,
       });
 
@@ -1019,17 +1027,46 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const logPrefix = `[BLING_API_FETCH] fetchAndUpsertProduct blingId=${blingProduct.id}`;
 
-    // ─── Resolve o produto SEMPRE via integration mapping (fonte de verdade) ───
-    // resolveProductWithMapping tenta o fast path (integration_mappings) e,
-    // se não achar, cai no fallback (ProductConfig.sku / SupplierMapping) e já
-    // garante a criação do mapping pra próxima vez não precisar do fallback.
+    // ─── Resolve o produto SÓ via integration mapping (fonte de verdade) ───────
+    // Sem fallback por EAN/ProductConfig.sku/SupplierMapping — se não tem
+    // mapping, não é esse produto, ponto final (ver resolveProductWithMapping).
     const existingProduct = await resolveProductWithMapping({
       integrationsId: integration.id,
       systemId: String(blingProduct.id),
-      codigoFabrica: blingProduct.codigo,
       ean: blingProduct.gtin,
       logPrefix,
     });
+
+    // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
+    if (!existingProduct) {
+      const sku = blingProduct.codigo;
+      const ean = blingProduct.gtin ?? null;
+      // unique_ean_null_invoice é UNIQUE(ean) WHERE invoice_id IS NULL — dois
+      // skus diferentes com o mesmo EAN batem nesse índice, então o dedup
+      // precisa checar por ean também, não só por sku.
+      const existingUnmapped = await UnmappedInvoiceProduct.findOne({
+        where: {
+          invoice_id: null,
+          ...(ean ? { [Op.or]: [{ sku }, { ean }] } : { sku }),
+        },
+      });
+      if (!existingUnmapped) {
+        await UnmappedInvoiceProduct.create({
+          invoice_id: null,
+          integrations_id: integration.id,
+          sku,
+          ean,
+          product_name: blingProduct.nome,
+          quantity: 0,
+          reason: "Produto novo, precisa de mapeamento manual",
+          status: "UNMAPPED",
+        });
+        console.log(
+          `${logPrefix} — produto novo, registrado em unmapped_invoice_products pra revisão manual`,
+        );
+      }
+      return;
+    }
 
     const { measure, line, rim } = extractProductMeasureAndLine(
       blingProduct.nome,
@@ -1156,33 +1193,18 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     try {
       await sequelize.transaction(async (transaction) => {
+        // existingProduct já foi garantido não-nulo acima (senão teria
+        // retornado pro unmapped) — sempre update, nunca cria aqui.
         product = await productService.upsertWithComponents({
-          id: existingProduct?.id,
+          id: existingProduct.id,
           values: productValues,
           components: kitComponentsForUpsert,
           transaction,
         });
 
-        if (existingProduct) {
-          console.log(
-            `${logPrefix} — produto atualizado via integration mapping (id=${product.id})`,
-          );
-        } else {
-          // ─── Produto novo de verdade — garante o mapping ────────────────────
-          await integrationMappingService.createOrUpdateIntegrationMapping(
-            {
-              entity_type: "PRODUCT",
-              internal_id: product.id,
-              external_id: String(blingProduct.id),
-              integrations_id: integration.id,
-            },
-            transaction,
-          );
-
-          console.log(
-            `${logPrefix} — produto novo criado e mapping registrado (id=${product.id})`,
-          );
-        }
+        console.log(
+          `${logPrefix} — produto atualizado via integration mapping (id=${product.id})`,
+        );
 
         await ProductConfig.upsert(
           {

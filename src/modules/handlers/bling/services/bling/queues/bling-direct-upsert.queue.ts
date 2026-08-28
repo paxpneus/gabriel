@@ -210,6 +210,31 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
 
   private async handleDelete(resource: string, blingId: number): Promise<void> {
     switch (resource) {
+      case "product": {
+        // Produto nunca é deletado pelo sistema — fica de histórico, só
+        // desativado (is_active=false) quando encontrado via integration
+        // mapping. Mesma regra aplicada pra Tecinco em tecinco-api-fetch.queue.ts.
+        const integrationsId = (await getBlingIntegration("Bling")).id;
+        const mapped = await integrationMappingService.findEntityByMapping(
+          "PRODUCT",
+          integrationsId,
+          String(blingId),
+        );
+        if (mapped) {
+          await (mapped as typeof Product.prototype).update({
+            is_active: false,
+          });
+          console.log(
+            `[BLING_DIRECT_UPSERT] Produto desativado (is_active=false) blingId=${blingId}, histórico mantido`,
+          );
+        } else {
+          console.warn(
+            `[BLING_DIRECT_UPSERT] Produto não encontrado via mapping pra blingId=${blingId}, nada a desativar`,
+          );
+        }
+        break;
+      }
+
       case "product_supplier": {
         console.warn(
           `[BLING_DIRECT_UPSERT] Delete de product_supplier blingId=${blingId} — sem chave direta. Ignorado.`,

@@ -33,6 +33,7 @@ class Product
   public measure_id?: string | null;
   public rim_id?: string | null;
   public subgroup_id?: string;
+  public is_active!: boolean;
   public brandRegister?: Brand
   public rimRegister?: Rim
   public measureRegister?: TireMeasure
@@ -102,6 +103,7 @@ Product.init(
     gross_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     net_weight: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     stock_virtual_total: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
+    is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   },
   {
     sequelize,

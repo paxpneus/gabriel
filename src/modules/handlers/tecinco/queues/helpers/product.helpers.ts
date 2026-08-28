@@ -128,53 +128,36 @@ async function backfillSupplierMappingByEan(params: {
   );
 }
 
+// Resolve produto SÓ por integration_mapping — sem fallback por id_system,
+// ProductConfig.sku, EAN ou SupplierMapping. Esses fallbacks já causaram
+// mappings errados/produtos duplicados no passado (ver contexto da sessão de
+// matching Tecinco↔local); a partir de agora, se não tem mapping, não
+// resolve — quem chama decide o que fazer (registrar em
+// unmapped_invoice_products, não criar produto sozinho).
 export async function resolveProductWithMapping(params: {
   integrationsId: string;
   systemId: string;
-  codigoFabrica?: string;
   ean?: string;
   logPrefix: string;
 }): Promise<typeof Product.prototype | null> {
-  const { integrationsId, systemId, codigoFabrica, ean, logPrefix } =
-    params;
+  const { integrationsId, systemId, ean, logPrefix } = params;
 
-  // 1) tenta achar direto pelo integration mapping (fast path)
   const mappedProduct = await integrationMappingService.findEntityByMapping(
     "PRODUCT",
     integrationsId,
     systemId,
   );
 
-  if (mappedProduct) {
-    console.log(
-      `${logPrefix} — produto resolvido via integration mapping (external_id=${systemId})`,
-    );
+  if (!mappedProduct) return null;
 
-    const resolved = mappedProduct as typeof Product.prototype;
-    await backfillSupplierMappingByEan({ product: resolved, ean, logPrefix });
+  console.log(
+    `${logPrefix} — produto resolvido via integration mapping (external_id=${systemId})`,
+  );
 
-    return resolved;
-  }
+  const resolved = mappedProduct as typeof Product.prototype;
+  await backfillSupplierMappingByEan({ product: resolved, ean, logPrefix });
 
-  // 2) fallback: Busca detalhada dentro do sistema
-  const product = await resolveProduct({ systemId, codigoFabrica, ean, logPrefix });
-
-  // 3) achou pelo fallback? garante o mapping pra próxima vez não precisar dele
-  if (product) {
-    await integrationMappingService.createOrUpdateIntegrationMapping({
-      entity_type: "PRODUCT",
-      internal_id: product.id,
-      external_id: systemId,
-      integrations_id: integrationsId,
-    });
-    console.log(
-      `${logPrefix} — integration mapping criado/atualizado (external_id=${systemId})`,
-    );
-
-    await backfillSupplierMappingByEan({ product, ean, logPrefix });
-  }
-
-  return product;
+  return resolved;
 }
 
 export async function ensureSupplierMappings(params: {

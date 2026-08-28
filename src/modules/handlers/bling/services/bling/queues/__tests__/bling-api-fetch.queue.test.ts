@@ -114,6 +114,7 @@ import ProductConfig from "../../../../../../inventory/product-config/product_co
 import UnitBusiness from "../../../../../../company/unit-business/unit-business.model";
 import Group from "../../../../../../inventory/groups/group/group.model";
 import InventoryBatch from "../../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
+import UnmappedInvoiceProduct from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import { BlingApiFetchQueue } from "../bling-api-fetch.queue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -236,6 +237,8 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
     );
     (Product.findOne as jest.Mock).mockResolvedValue(null);
     (ProductConfig.findOne as jest.Mock).mockResolvedValue(null);
+    (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue(null);
+    (UnmappedInvoiceProduct.create as jest.Mock).mockResolvedValue(undefined);
   });
 
   function runProductJob(blingProduct: any) {
@@ -252,38 +255,40 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
   // ── produto simples (não KIT) ────────────────────────────────────────────
 
   describe("produto simples (não KIT)", () => {
-    it("produto sem id (novo, ainda não mapeado): cria uma única vez e registra o integration mapping", async () => {
+    it("produto sem mapping (novo, precisa de revisão manual): não cria produto, registra em unmapped_invoice_products", async () => {
       const blingProduct = makeBlingProduct();
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
 
       await runProductJob(blingProduct);
 
-      expect(productService.upsertWithComponents).toHaveBeenCalledTimes(1);
-      expect(productService.upsertWithComponents).toHaveBeenCalledWith(
+      expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: undefined,
-          components: undefined,
-          values: expect.objectContaining({
-            id_system: String(blingProduct.id),
-            type: "UNIT",
-          }),
+          invoice_id: null,
+          sku: blingProduct.codigo,
+          ean: blingProduct.gtin,
+          product_name: blingProduct.nome,
+          reason: "Produto novo, precisa de mapeamento manual",
+          status: "UNMAPPED",
         }),
       );
+      expect(productService.upsertWithComponents).not.toHaveBeenCalled();
       expect(
         integrationMappingService.createOrUpdateIntegrationMapping,
-      ).toHaveBeenCalledTimes(1);
-      expect(
-        integrationMappingService.createOrUpdateIntegrationMapping,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({
-          entity_type: "PRODUCT",
-          internal_id: "upserted-product-id",
-          external_id: String(blingProduct.id),
-          integrations_id: INTEGRATION_ID,
-        }),
-        mockTransaction,
-      );
+      ).not.toHaveBeenCalled();
+    });
+
+    it("já registrado como unmapped — não duplica a linha", async () => {
+      const blingProduct = makeBlingProduct();
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue({
+        id: "existing-unmapped-id",
+      });
+
+      await runProductJob(blingProduct);
+
+      expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
     });
 
     it("produto já existente (mapeado): atualiza (não cria de novo) e não duplica o integration mapping", async () => {
@@ -311,6 +316,15 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
   // ── composição de KIT ────────────────────────────────────────────────────
 
   describe("composição de KIT", () => {
+    // Esses testes cobrem a sincronização de kit_components, não a resolução
+    // do KIT em si — precisam que o KIT já esteja mapeado (senão o fluxo para
+    // no registro em unmapped_invoice_products antes de chegar no upsert).
+    beforeEach(() => {
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-kit-product-id",
+      });
+    });
+
     it("KIT sem produto de componente informado (produto sem id): não sincroniza kit_components, mantém o código original", async () => {
       const blingProduct = makeKitBlingProduct({
         estrutura: { componentes: [] },
