@@ -124,8 +124,62 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     return DueStatus.ON_TRACK;
   }
 
-  findByIdFull(id: string, options?: FindOptions): Promise<FullTicket | null> {
-    return this.repository.findByIdFull(id, options);
+  private attachResolutionTime(ticket: Ticket): void {
+    ticket.setDataValue(
+      "resolutionTime" as any,
+      this.formatResolutionTime(ticket.createdAt, ticket.completed_at),
+    );
+    ticket.setDataValue(
+      "deadlineStatus" as any,
+      this.computeDeadlineStatus(ticket.completed_at, ticket.due_date),
+    );
+  }
+
+  private computeDeadlineStatus(
+    completedAt: Date | null,
+    dueDate: Date | null,
+  ): "ON_TIME" | "OVERDUE" | null {
+    if (!completedAt || !dueDate) return null;
+
+    const startOfDay = (date: Date) =>
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+
+    return startOfDay(completedAt) <= startOfDay(dueDate)
+      ? "ON_TIME"
+      : "OVERDUE";
+  }
+
+  private formatResolutionTime(
+    createdAt: Date,
+    completedAt: Date | null,
+  ): string | null {
+    if (!completedAt) return null;
+
+    const totalMinutes = Math.max(
+      0,
+      Math.round((completedAt.getTime() - createdAt.getTime()) / 60_000),
+    );
+
+    const UNITS = [
+      { minutes: 365 * 24 * 60, singular: "ano", plural: "anos" },
+      { minutes: 30 * 24 * 60, singular: "mês", plural: "meses" },
+      { minutes: 7 * 24 * 60, singular: "semana", plural: "semanas" },
+      { minutes: 24 * 60, singular: "dia", plural: "dias" },
+      { minutes: 60, singular: "hora", plural: "horas" },
+      { minutes: 1, singular: "minuto", plural: "minutos" },
+    ];
+
+    const unit =
+      UNITS.find((u) => totalMinutes >= u.minutes) ?? UNITS[UNITS.length - 1];
+    const value = Math.floor(totalMinutes / unit.minutes);
+
+    return `${value} ${value === 1 ? unit.singular : unit.plural}`;
+  }
+
+  async findByIdFull(id: string, options?: FindOptions): Promise<FullTicket | null> {
+    const ticket = await this.repository.findByIdFull(id, options);
+    if (ticket) this.attachResolutionTime(ticket);
+    return ticket;
   }
 
   async create(
@@ -175,12 +229,14 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
     forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<FullTicket>> {
     await this.refreshDueStatuses();
-    return this.repository.paginateWithRelations(
+    const result = await this.repository.paginateWithRelations(
       params,
       this.queryConfig,
       extraOptions,
       forcedWhere,
     );
+    result.data.forEach((ticket) => this.attachResolutionTime(ticket));
+    return result;
   }
 
   async refreshDueStatuses(now = new Date()): Promise<void> {

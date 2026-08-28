@@ -42,6 +42,8 @@ export interface FullTicket extends Ticket {
   assignees: FullTicketAssignee,
   ticketCategoryOptions: FullTicketCategoryOption[]
   priority: Priority
+  resolutionTime: string | null
+  deadlineStatus: "ON_TIME" | "OVERDUE" | null
 }
 
 export type TicketTrail = {
