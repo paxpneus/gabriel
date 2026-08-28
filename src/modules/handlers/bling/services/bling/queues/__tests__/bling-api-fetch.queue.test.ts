@@ -113,6 +113,7 @@ import Product from "../../../../../../inventory/products/product.model";
 import ProductConfig from "../../../../../../inventory/product-config/product_config.model";
 import UnitBusiness from "../../../../../../company/unit-business/unit-business.model";
 import Group from "../../../../../../inventory/groups/group/group.model";
+import Subgroup from "../../../../../../inventory/groups/subgroup/subgroup.model";
 import InventoryBatch from "../../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import UnmappedInvoiceProduct from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import { BlingApiFetchQueue } from "../bling-api-fetch.queue";
@@ -216,7 +217,11 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
     (brandsService.findSimilarBrand as jest.Mock).mockResolvedValue(null);
     (Group.findOne as jest.Mock).mockResolvedValue({
       id: "group-1",
-      name: "PNEUS IMPORTADOS",
+      name: "PNEUS",
+    });
+    (Subgroup.findOne as jest.Mock).mockResolvedValue({
+      id: "subgroup-1",
+      name: "DIVERSOS",
     });
     (getMagentoIntegration as jest.Mock).mockResolvedValue({
       id: "magento-1",

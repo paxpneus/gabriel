@@ -305,6 +305,7 @@ describe("TCarUpsertQueue.processProduct", () => {
       (resolveProductWithMapping as jest.Mock).mockResolvedValue({
         id: "other-integration-product-id",
         integrations_id: "outra-integracao-id",
+        update: jest.fn(),
       });
 
       await runProductJob("updated", produto);
@@ -329,6 +330,7 @@ describe("TCarUpsertQueue.processProduct", () => {
       (resolveProductWithMapping as jest.Mock).mockResolvedValue({
         id: "other-integration-product-id",
         integrations_id: "outra-integracao-id",
+        update: jest.fn(),
       });
       (UnitBusiness.findOne as jest.Mock).mockResolvedValue({
         id: UNIT_BUSINESS_ID,

@@ -395,6 +395,19 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         }
       }
 
+      // A Tecinco é a fonte de verdade real de grupo/subgrupo — mesmo num
+      // produto "dono" de outra integração (não sobrescrevemos brand/nome/
+      // etc dele), o subgroup_id continua sendo dela pra classificar.
+      if (
+        tecincoProductGroup?.subgroup?.id &&
+        product.subgroup_id !== tecincoProductGroup.subgroup.id
+      ) {
+        await product.update({ subgroup_id: tecincoProductGroup.subgroup.id });
+        console.log(
+          `${logPrefix} — subgroup atualizado mesmo sendo produto de outra integração (classificação de grupo é sempre da Tecinco): ${tecincoProductGroup.subgroup.id}`,
+        );
+      }
+
       return;
     }
 

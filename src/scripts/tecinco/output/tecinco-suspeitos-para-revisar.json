@@ -1,0 +1,69 @@
+{
+  "gerado_em": "2026-08-28T12:08:52.765Z",
+  "resumo": {
+    "mapeamentos_suspeitos_nome_duvidoso": 0,
+    "medida_divergente_c_comercial": 0,
+    "duplicatas_provaveis_no_catalogo": 0,
+    "eans_errados_para_corrigir_na_bling": 5,
+    "load_index_divergente_apesar_de_ean_sku_bater": 0
+  },
+  "mapeamentos_suspeitos_nome_duvidoso": [],
+  "medida_divergente_c_comercial": [],
+  "duplicatas_provaveis_no_catalogo": [],
+  "eans_errados_para_corrigir_na_bling": [
+    {
+      "tipo": "ean_cruzado_entre_2_produtos_locais",
+      "tecinco_id_sistema": "20328",
+      "tecinco_nome": "PNEU 215/50R17 95W XL FR EXTREMECONTACT SPORT 02",
+      "tecinco_ean": "4019238098419",
+      "resposta_do_usuario": "ean do produto tecinco aponta pro produto errado meu sistema, pois um é 94W e outro 95W, ou seja nenhum é apagado, produto tecinco mapeia com o ead51233-2454-4444-bdd3-00529679650c, 95W"
+    },
+    {
+      "tipo": "ean_cruzado_entre_2_produtos_locais",
+      "tecinco_id_sistema": "11423",
+      "tecinco_nome": "PNEU 265/45R20 104Y CONTI SC5 SUV MGT",
+      "tecinco_ean": "4019238713206",
+      "resposta_do_usuario": "ean do produto tecinco aponta pro produto errado meu sistema, pois um é 104Y e outro 108Y, ou seja nenhum é apagado, produto tecinco mapeia com o 49e2f377-bcbd-4464-ae89-b714e61744ec, 104Y"
+    },
+    {
+      "tipo": "ean_cruzado_entre_2_produtos_locais",
+      "tecinco_id_sistema": "7025",
+      "tecinco_nome": "PNEU 265/45R20 108Y CONTI SPORT CONTACT 5 SUV MO",
+      "tecinco_ean": "4019238525953",
+      "resposta_do_usuario": "ean do produto tecinco aponta pro produto errado meu sistema, pois um é 108Y e outro 104Y, ou seja nenhum é apagado, produto tecinco mapeia com o 2aa24311-2475-4483-a8f5-c735b6cb411b, 108Y"
+    },
+    {
+      "tipo": "ean_do_produto_novo_bate_com_produto_local_de_outra_linha",
+      "tecinco_id_sistema": "8749",
+      "tecinco_nome": "PNEU 285/75R16 GENERAL GRABBER AT2",
+      "tecinco_ean": "4019238585247",
+      "observacao": "esse EAN da Tecinco bate com algum produto local, mas de modelo/linha totalmente diferente — o produto local com esse EAN provavelmente está com o EAN errado cadastrado na Bling",
+      "produto_local_com_esse_ean_errado": {
+        "id": "6d044364-705e-40b0-b54d-b1668c8f7f57",
+        "name": "Pneu 245/40R18 93Y FR ContiSportContact 5 AO Continental",
+        "ean": "4019238585247",
+        "ean_tribut": "",
+        "sku": "03565860000",
+        "stock_movements_count": 1,
+        "invoice_items_count": 1
+      }
+    },
+    {
+      "tipo": "ean_do_produto_novo_bate_com_produto_local_de_outra_linha",
+      "tecinco_id_sistema": "9461",
+      "tecinco_nome": "PNEU 165/70R13 79T GENERAL EVERTREK",
+      "tecinco_ean": "4032344778648",
+      "observacao": "esse EAN da Tecinco bate com algum produto local, mas de modelo/linha totalmente diferente — o produto local com esse EAN provavelmente está com o EAN errado cadastrado na Bling",
+      "produto_local_com_esse_ean_errado": {
+        "id": "456e1a64-2aa2-4ffd-bb49-24c207200c4f",
+        "name": "Pneu 165/70R13 79T Altimax One General Tire General Tire",
+        "ean": "4032344778648",
+        "ean_tribut": "4032344778648",
+        "sku": "15578480000",
+        "stock_movements_count": 0,
+        "invoice_items_count": 0
+      }
+    }
+  ],
+  "load_index_divergente_apesar_de_ean_sku_bater": []
+}

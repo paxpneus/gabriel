@@ -66,7 +66,7 @@ const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
 const NO_TRANSPORTER_NAME = "Sem transporte";
 const NO_TRANSPORTER_DOCUMENT = "0000000";
-const BLING_IMPORTED_TIRE_GROUP_NAME = "PNEUS IMPORTADOS";
+const BLING_DEFAULT_TIRE_GROUP_NAME = "PNEUS";
 
 function parseBlingDate(date: string) {
   if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(date)) {
@@ -142,33 +142,36 @@ export function extractRimFromMeasure(measure?: string | null): string | null {
   return match?.[1] ?? null;
 }
 
-async function resolveBlingImportedTireSubgroup(
+// Bucket do aro na taxonomia real do grupo PNEUS: só existe subgroup
+// isolado até ARO 21 — 22 pra cima (e qualquer aro não resolvido) cai nos
+// catch-alls "ARO 22 ACIMA"/"DIVERSOS" (confirmado direto no banco).
+function resolveDefaultTireSubgroupName(rim?: string | null): string {
+  if (!rim) return "DIVERSOS";
+  const rimNumber = Number(rim);
+  if (!Number.isFinite(rimNumber)) return "DIVERSOS";
+  return rimNumber >= 22 ? "ARO 22 ACIMA" : `ARO ${rim}`;
+}
+
+async function resolveBlingDefaultTireSubgroup(
   rim?: string | null,
   logPrefix = "[BLING_API_FETCH]",
 ): Promise<Subgroup | null> {
   let group = await Group.findOne({
     where: {
       type: GroupType.PRODUCTS,
-      name: { [Op.iLike]: BLING_IMPORTED_TIRE_GROUP_NAME },
+      name: { [Op.iLike]: BLING_DEFAULT_TIRE_GROUP_NAME },
     },
   });
 
   if (!group) {
     group = await Group.create({
-      name: BLING_IMPORTED_TIRE_GROUP_NAME,
+      name: BLING_DEFAULT_TIRE_GROUP_NAME,
       type: GroupType.PRODUCTS,
     });
     console.log(`${logPrefix} Grupo criado: ${group.name}`);
   }
 
-  if (!rim) {
-    console.warn(
-      `${logPrefix} Aro não resolvido para aro=${rim ?? "N/A"}; produto salvo sem subgroup_id.`,
-    );
-    return null;
-  }
-
-  const subgroupName = `ARO ${rim}`;
+  const subgroupName = resolveDefaultTireSubgroupName(rim);
   let subgroup = await Subgroup.findOne({
     where: {
       group_id: group.id,
@@ -1072,10 +1075,19 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingProduct.nome,
       blingProduct.marca,
     );
-    const importedTireSubgroup = await resolveBlingImportedTireSubgroup(
-      rim,
-      `[BLING_API_FETCH] Produto ${blingProduct.codigo}`,
-    );
+
+    // Bling nunca reclassifica um produto que já tem subgroup — só a
+    // Tecinco tem autoridade pra isso, é dela que vêm os grupos reais.
+    // Bling só define um subgroup quando o produto ainda não tem nenhum,
+    // usando PNEUS como grupo padrão.
+    let subgroupIdToApply = existingProduct.subgroup_id;
+    if (!subgroupIdToApply) {
+      const defaultSubgroup = await resolveBlingDefaultTireSubgroup(
+        rim,
+        `[BLING_API_FETCH] Produto ${blingProduct.codigo}`,
+      );
+      subgroupIdToApply = defaultSubgroup?.id;
+    }
 
     const matchedBrand = await brandsService.findSimilarBrand(
       blingProduct.marca,
@@ -1182,7 +1194,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       unit: blingProduct.unidade,
       brand: blingProduct.marca,
       brand_id: matchedBrand?.id ?? null,
-      subgroup_id: importedTireSubgroup?.id,
+      subgroup_id: subgroupIdToApply,
       line,
       rim,
       measure,

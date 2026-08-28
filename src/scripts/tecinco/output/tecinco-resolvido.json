@@ -1,0 +1,1698 @@
+[
+  {
+    "external_id": "20328",
+    "internal_id": "ead51233-2454-4444-bdd3-00529679650c",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/50R17 95W XL FR EXTREMECONTACT SPORT 02",
+    "local_nome": "Pneu 215/50R17 95W XL FR ExtremeContact Sport 02 Continental",
+    "acao": "mapear_produto_existente",
+    "resposta": "ean do produto tecinco aponta pro produto errado meu sistema, pois um é 94W e outro 95W, ou seja nenhum é apagado, produto tecinco mapeia com o ead51233-2454-4444-bdd3-00529679650c, 95W"
+  },
+  {
+    "external_id": "7222",
+    "internal_id": "d67a7df8-41a0-4370-a017-6f98d9f0e38f",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/40R18 99Y CONTI CSC 3",
+    "local_nome": "Pneu 255/40R18 99Y XL FR ContiSportContact 3 MO Continental",
+    "acao": "mapear_produto_existente",
+    "resposta": "novamente, sao produtos diferentes, mantém ambos, e produto tecinco mapeia para d67a7df8-41a0-4370-a017-6f98d9f0e38f"
+  },
+  {
+    "external_id": "7886",
+    "internal_id": "2dfa94a7-8416-4c04-a354-cbec38dc50ed",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/50R19 103W CONTI CSC5#",
+    "local_nome": "PNEU 255/50R19 103W CONTI CSC5#",
+    "acao": "mapear_produto_existente",
+    "resposta": "produtos diferentes, nenhum é apagado. Produto tecinco é mapeado com esse 2dfa94a7-8416-4c04-a354-cbec38dc50ed"
+  },
+  {
+    "external_id": "11423",
+    "internal_id": "49e2f377-bcbd-4464-ae89-b714e61744ec",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/45R20 104Y CONTI SC5 SUV MGT",
+    "local_nome": "Pneu 265/45R20 104Y FR ContiSportContact 5 SUV MGT Continental",
+    "acao": "mapear_produto_existente",
+    "resposta": "ean do produto tecinco aponta pro produto errado meu sistema, pois um é 104Y e outro 108Y, ou seja nenhum é apagado, produto tecinco mapeia com o 49e2f377-bcbd-4464-ae89-b714e61744ec, 104Y"
+  },
+  {
+    "external_id": "7025",
+    "internal_id": "2aa24311-2475-4483-a8f5-c735b6cb411b",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/45R20 108Y CONTI SPORT CONTACT 5 SUV MO",
+    "local_nome": "Pneu 265/45R20 108Y XL FR ContiSportContact 5 SUV MO Continental",
+    "acao": "mapear_produto_existente",
+    "resposta": "ean do produto tecinco aponta pro produto errado meu sistema, pois um é 108Y e outro 104Y, ou seja nenhum é apagado, produto tecinco mapeia com o 2aa24311-2475-4483-a8f5-c735b6cb411b, 108Y"
+  },
+  {
+    "external_id": "16921",
+    "internal_id": "37b3854b-7fcd-44b9-808a-a08d413112be",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/45R21 110Y XL FR CONTISPORTCONTACT 5 SUV LR",
+    "local_nome": "PNEU 275/45R21 110Y XL FR CONTISPORTCONTACT 5 SUV LR",
+    "acao": "mapear_produto_existente",
+    "resposta": "novamente, sao produtos diferentes, mantém ambos, e produto tecinco mapeia para 37b3854b-7fcd-44b9-808a-a08d413112be"
+  },
+  {
+    "external_id": "11997",
+    "internal_id": "6b3d840e-349e-47e1-91c3-4e6fa79f1831",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/65R18 116T GRABBER ATX RWL",
+    "local_nome": "PNEU 275/65R18 116T GRABBER ATX RWL",
+    "acao": "mapear_produto_existente",
+    "resposta": "novamente, sao produtos diferentes, mantém ambos, e produto tecinco mapeia para 6b3d840e-349e-47e1-91c3-4e6fa79f1831"
+  },
+  {
+    "external_id": "19675",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/45R20 106W HU901 SPEED MAX",
+    "acao": "criar_produto_novo",
+    "resposta": "PRODUTO NOVO CADASTRAR PRODUTO com informacoes da tecinco para todas suas filiais e registrar seu integration-mapping",
+    "tecinco_item_completo": {
+      "id_sistema": "19675",
+      "nome": "PNEU 275/45R20 106W HU901 SPEED MAX",
+      "ean": "",
+      "sku": "000000000016005464"
+    }
+  },
+  {
+    "external_id": "7582",
+    "internal_id": "5dccc30e-0871-435e-9802-a6acdce6e559",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/45R17 84V CONTICSC3 SSR OE",
+    "acao": "mapear_produto_existente",
+    "resposta": "NAO ENTENDI, claramente ele tem um correspondente local: PNEU 205/45R17 84V CONTICSC3 SSR OE 5dccc30e-0871-435e-9802-a6acdce6e559"
+  },
+  {
+    "external_id": "8749",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 285/75R16 GENERAL GRABBER AT2",
+    "acao": "criar_produto_novo",
+    "resposta": "nenhum produto local com nome ou id_system correspondente ao item da Tecinco — mesmo quando EAN/SKU bate com algum produto local, é um pneu de linha/modelo totalmente diferente (coincidência ou dado errado na Tecinco). Cadastrar como produto novo.",
+    "tecinco_item_completo": {
+      "id_sistema": "8749",
+      "nome": "PNEU 285/75R16 GENERAL GRABBER AT2",
+      "ean": "4019238585247",
+      "sku": "5684100000"
+    }
+  },
+  {
+    "external_id": "1163",
+    "internal_id": "6db5c77d-e84c-4125-b3d2-b05ce29cf050",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 185/60R15 88H MICHELIN PRIMACY 4",
+    "local_nome": "PNEU 185/60R15 88H MICHELIN PRIMACY 4",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=1163) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "25616",
+    "internal_id": "147430b8-d259-47ba-9e06-56f55ceba07e",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 185/65R15 88H WESTLAKE SA37",
+    "local_nome": "PNEU 185/65R15 88H WESTLAKE SA37",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "23175",
+    "internal_id": "5a5b58bc-1da6-44af-a118-632f028d305e",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 185R14 LANVIGATOR MILEMAX 102/100R ",
+    "local_nome": "PNEU 185R14 LANVIGATOR MILEMAX 102/100R",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=23175) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "41",
+    "internal_id": "f3e84f15-8eb4-4671-a825-6bce66a105b1",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 195/55R15 85H EFFICIENTGRI",
+    "local_nome": "PNEU 195/55R15 85H EFFICIENTGRI",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=41) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "22061",
+    "internal_id": "3d55ad14-cd9b-4b9a-be52-9afbdb33073a",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 195/55R15 85V WESTLAKE Z-108",
+    "local_nome": "Pneu 195/55R15 85V FR Z-108 Westlake",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=618d13f0-e68f-44bd-8245-05066f5c1e6b, sem EAN/SKU/atividade) era duplicata do produto real com atividade (102/104) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "618d13f0-e68f-44bd-8245-05066f5c1e6b"
+  },
+  {
+    "external_id": "2742",
+    "internal_id": "ada18b70-15a3-4e4a-890d-59784b63f8e1",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 195/65R15 91H BRIDGESTONE ER30",
+    "local_nome": "PNEU 195/65R15 91H BRIDGESTONE ER30",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "22110",
+    "internal_id": "73910acc-8ebf-49ce-8fb5-40cd1594f9ea",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 195R14 LANVIGATOR MILEMAX 106/104R",
+    "local_nome": "PNEU 195R14 LANVIGATOR MILEMAX 106/104R",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=22110) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "1231",
+    "internal_id": "d962eb41-92ac-40c9-b339-bdbdaff47d76",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/55R16 90V BRIDGESTONE ER30",
+    "local_nome": "PNEU 205/55R16 90V BRIDGESTONE ER30",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=1231) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13616",
+    "internal_id": "cba84f7b-250b-46a7-8f5a-77df98d6bba2",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/55R16 91V BRIDGESTONE ER300 TURANZA",
+    "local_nome": "PNEU 205/55R16 91V BRIDGESTONE ER300 TURANZA",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13616) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7671",
+    "internal_id": "3aea9f6f-72e1-49ba-bc89-e2821a6ac620",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/55R16 91W LANDSAIL LS288",
+    "local_nome": "PNEU 205/55R16 91W LANDSAIL LS288",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7671) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "19116",
+    "internal_id": "49b3f469-63ba-4c77-8277-8c7474ceb860",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/60R15 91V LANVIGATOR COMFORT2",
+    "local_nome": "PNEU 205/60R15 91V LANVIGATOR COMFORT2",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=19116) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "6821",
+    "internal_id": "63b723d0-42de-45c1-a739-8d13fd21377c",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/70R15 8L FALKEN R51",
+    "local_nome": "PNEU 205/70R15 8L FALKEN R51",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6821) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "1291",
+    "internal_id": "7fe2bd3b-135b-4459-a11f-c3c481fdb3df",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/70R15 96T BRID.DUELER A/T",
+    "local_nome": "Pneu 205/70R15 96T Dueler A/T 693 Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=e244b43c-df77-4a86-b166-90f8f6ca2068, sem EAN/SKU/atividade) era duplicata do produto real com atividade (10/9) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "e244b43c-df77-4a86-b166-90f8f6ca2068"
+  },
+  {
+    "external_id": "2661",
+    "internal_id": "693a1d57-8fd8-4b79-86df-816ea2e88d2f",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/70R15 96T CONTI 4X4CONTAC#",
+    "local_nome": "PNEU 205/70R15 96T CONTI 4X4CONTAC#",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=2661) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "9205",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/70R15C 106/104S FARROAD FRD96",
+    "local_nome": "PNEU 205/70R15C 106/104S FARROAD FRD96",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 19138 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=ca642ea2-237c-4953-9884-cd36f34b21dc) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "ca642ea2-237c-4953-9884-cd36f34b21dc",
+    "mesmo_produto_que_external_id": "19138"
+  },
+  {
+    "external_id": "25484",
+    "internal_id": "908ecc55-94c0-4c64-8902-c7e502b39246",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/60R17 96H DUNLOP ENASAVE EC350+",
+    "local_nome": "PNEU 215/60R17 96H DUNLOP ENASAVE EC350+",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=25484) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "12733",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/65R16 102H BRIDGESTONE H/T 684II",
+    "local_nome": "PNEU 215/65R16 102H BRIDGESTONE H/T 684II",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 23955 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=df92bdb9-05f1-4c48-b206-d9b456262429) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "df92bdb9-05f1-4c48-b206-d9b456262429",
+    "mesmo_produto_que_external_id": "23955"
+  },
+  {
+    "external_id": "22204",
+    "internal_id": "a729cbd7-868f-464c-98bc-5dbeb02f1236",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/75R17.5 ONYX HO309 TRACAO 16L 135/133J",
+    "local_nome": "PNEU 215/75R17.5 ONYX HO309 TRACAO 16L 135/133J",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=22204) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "22784",
+    "internal_id": "bbe9a14f-f387-4e2b-9794-6860c301795b",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/75R17.5 WESTLAKE CM988 MISTO 135/133J 16PR **TB(RS/SC) ",
+    "local_nome": "PNEU 215/75R17.5 WESTLAKE CM988 MISTO 135/133J 16PR **TB(RS/SC)",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=22784) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "23945",
+    "internal_id": "5aeb1229-f0fb-4844-853c-c2bc660f90cb",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/75R17.5 WESTLAKE WSR+1 128/126M 14PR",
+    "local_nome": "PNEU 215/75R17.5 WESTLAKE WSR+1 128/126M 14PR",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=23945) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "15996",
+    "internal_id": "7eee1506-8231-49ce-8ca4-632815b961d4",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/40R19 89W DELINTE DH6-RUN FLAT",
+    "local_nome": "PNEU 225/40R19 89W DELINTE DH6-RUN FLAT",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=15996) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7106",
+    "internal_id": "081352d6-ca68-4db4-b0c0-934cb4425ad5",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/40R19 89W PIRELLI PZERO RF",
+    "local_nome": "PNEU 225/40R19 89W PIRELLI PZERO RF",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7106) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "25615",
+    "internal_id": "b9ab0dc3-ef5d-401a-ada0-90176ad43b9c",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/40R19 93Y PIRELLI P ZERO RUN FLAT",
+    "local_nome": "PNEU 225/40R19 93Y PIRELLI P ZERO RUN FLAT",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "6622",
+    "internal_id": "e05b8574-2300-49ab-a381-0067d26699f5",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/45R18 95V KUMHO KH17 OE",
+    "local_nome": "PNEU 225/45R18 95V KUMHO KH17 OE",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6622) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "22118",
+    "internal_id": "89656ce4-4072-496b-b836-ae4b33deb65e",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/45R18 95W XL LANVIGATOR CATCHPOWER PLUS ",
+    "local_nome": "PNEU 225/45R18 95W XL LANVIGATOR CATCHPOWER PLUS",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=22118) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13875",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/45R18 95Y TL TURANZA T005 BRIDGESTONE",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 29703 (mesmo produto, já mapeado) — não cria mapping próprio. Stub próprio (id=d601dabc-1efd-48cc-9abe-2f42a7c9c3ce) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "d601dabc-1efd-48cc-9abe-2f42a7c9c3ce",
+    "mesmo_produto_que_external_id": "29703"
+  },
+  {
+    "external_id": "8419",
+    "internal_id": "60fc0630-b601-40e2-8e80-1ef317e51fd5",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/50R17 94V BRIDGESTON ER300",
+    "local_nome": "PNEU 225/50R17 94V BRIDGESTON ER300",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=8419) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "6436",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/50R17 94V KUMHO KH17 OE",
+    "local_nome": "PNEU 225/50R17 94V KUMHO KH17 OE",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 14763 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=13035264-07b2-47ca-ad2c-37b28e162a21) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "13035264-07b2-47ca-ad2c-37b28e162a21",
+    "mesmo_produto_que_external_id": "14763"
+  },
+  {
+    "external_id": "8119",
+    "internal_id": "cfdef287-6621-4e17-8d4f-25041f27ecff",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/50R17 94W KUMHO KU31 SSR",
+    "local_nome": "PNEU 225/50R17 94W KUMHO KU31 SSR",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=8119) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "8278",
+    "internal_id": "2f5c0aaf-5e05-4e8f-b66b-f8de19a4ef9f",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/65R16C GOODRIDE 112/110R 8PR SC328",
+    "local_nome": "PNEU 225/65R16C GOODRIDE 112/110R 8PR SC328",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=8278) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "9943",
+    "internal_id": "21d0e462-9363-41a1-b265-795ff73c685a",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/65R17 102H PIRELLI S-VERDE",
+    "local_nome": "PNEU 225/65R17 102H PIRELLI S-VERDE",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=9943) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "6325",
+    "internal_id": "9b3ecc24-2fa9-40f5-97b8-49740423aa2c",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/50R18 101W KUMHO PS31",
+    "local_nome": "PNEU 235/50R18 101W KUMHO PS31",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "22626",
+    "internal_id": "443f7f44-7e0f-4343-93b5-380bfd2f29fb",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/50R18 101W XL LANVIGATOR CATCHPOWER PLUS",
+    "local_nome": "PNEU 235/50R18 101W XL LANVIGATOR CATCHPOWER PLUS",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=22626) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "8185",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/55R17 99H KUMHO KH17",
+    "local_nome": "PNEU 235/55R17 99H KUMHO KH17",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 12344 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=ba4e03e4-5c7d-40a6-8204-88bb5d75f42b) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "ba4e03e4-5c7d-40a6-8204-88bb5d75f42b",
+    "mesmo_produto_que_external_id": "12344"
+  },
+  {
+    "external_id": "8474",
+    "internal_id": "ff456acd-ee44-4891-ac2f-1299e2c35414",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/55R19 105V XL SPEED MAX DSU02",
+    "local_nome": "PNEU 235/55R19 105V XL SPEED MAX DSU02",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=8474) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "9273",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/55R19 105W FARROAD LRI",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 11533 (mesmo produto FRD88, já mapeado via EAN/SKU exato) — não cria mapping próprio. \"LRI\" no nome deste código não corresponde a nenhum modelo Farroad real. Stub próprio marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "2102b069-5d7a-4b79-8959-87c58b3dcdc9",
+    "mesmo_produto_que_external_id": "11533"
+  },
+  {
+    "external_id": "23346",
+    "internal_id": "bd66799b-bba6-454a-9d7a-9100095e0e83",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/60R16 100H LANVIGATOR COMFORT II ",
+    "local_nome": "PNEU 235/60R16 100H LANVIGATOR COMFORT II",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=23346) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "22295",
+    "internal_id": "f71a3864-cabe-4840-a64a-6bb262f8136f",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/60R17 102H XL LANVIGATOR PERFORMAX",
+    "local_nome": "PNEU 235/60R17 102H XL LANVIGATOR PERFORMAX",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=22295) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "2337",
+    "internal_id": "6adc4b46-f49b-4d90-8419-1f4fee23abcc",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/60R18 102H KUMHO KL21",
+    "local_nome": "PNEU 235/60R18 102H KUMHO KL21",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=2337) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "6786",
+    "internal_id": "619a6b25-c1da-4c4d-b732-696655df9f20",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 245/40R17 95W DELINTE DH2",
+    "local_nome": "PNEU 245/40R17 95W DELINTE DH2",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6786) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "2863",
+    "internal_id": "f4088402-7ba8-4985-ba37-bad5dffae8df",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 245/40R18 97Y KUMHO KU31",
+    "local_nome": "PNEU 245/40R18 97Y KUMHO KU31",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "22123",
+    "internal_id": "d74ad15a-f3e6-4e56-932f-c38cf7134ca4",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 245/70R16 111H SUNSET VENTTURA H/T B1",
+    "local_nome": "PNEU 245/70R16 111H SUNSET VENTTURA H/T B1",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=22123) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13512",
+    "internal_id": "38a777fc-6158-47b0-8785-f31b4b64c4b2",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 245/70R16 BRIDGESTONE 684III D.H/T ECO 111T",
+    "local_nome": "PNEU 245/70R16 BRIDGESTONE 684III D.H/T ECO 111T",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13512) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "25614",
+    "internal_id": "8da634bf-855d-480a-87f1-ec467b10f9be",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/35R19 95Y PIRELLI P ZERO RUN FLAT",
+    "local_nome": "PNEU 255/35R19 95Y PIRELLI P ZERO RUN FLAT",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "11540",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/60R18 110H BRIDGESTONE DUELER",
+    "local_nome": "PNEU 265/60R18 110H BRIDGESTONE DUELER",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 23020 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=f02d322b-a218-4616-9f87-eaa24e880b0d) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "f02d322b-a218-4616-9f87-eaa24e880b0d",
+    "mesmo_produto_que_external_id": "23020"
+  },
+  {
+    "external_id": "8001",
+    "internal_id": "37ec1491-83c7-4442-aa87-1bfd96be8c67",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/60R18 110H KUMHO KL33",
+    "local_nome": "PNEU 265/60R18 110H KUMHO KL33",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "22515",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/60R18 110H KUMHO SOLUS KL21",
+    "local_nome": "PNEU 265/60R18 110H KUMHO SOLUS KL21",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 13432 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=fe99371e-3aec-427a-ba55-7827f30342c0) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "fe99371e-3aec-427a-ba55-7827f30342c0",
+    "mesmo_produto_que_external_id": "13432"
+  },
+  {
+    "external_id": "7989",
+    "internal_id": "402739ee-8d4f-4950-9aa2-891b92bee7c7",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/60R18 110T KUMHO KL61",
+    "local_nome": "PNEU 265/60R18 110T KUMHO KL61",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "11148",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/60R18 BRIDGESTONE DUELER H/T",
+    "local_nome": "PNEU 265/60R18 BRIDGESTONE DUELER H/T",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 23020 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=35aacd18-7d98-43a5-a86d-913f109eee4f) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "35aacd18-7d98-43a5-a86d-913f109eee4f",
+    "mesmo_produto_que_external_id": "23020"
+  },
+  {
+    "external_id": "7912",
+    "internal_id": "b44c83b1-d79d-45ff-8620-013cbedeaef8",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/65R17 112S BRIDGESTONE DUELER AT 693III ",
+    "local_nome": "Pneu 265/65R17 112S Dueler A/T 693 III Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=763410bb-2a7c-44a5-a3e6-43167300fa23, sem EAN/SKU/atividade) era duplicata do produto real com atividade (6/6) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "763410bb-2a7c-44a5-a3e6-43167300fa23"
+  },
+  {
+    "external_id": "14865",
+    "internal_id": "b267131f-fa4b-4962-89be-77bfba424e46",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/65R17 FIRESTONE DESTINATION H/T 112H",
+    "local_nome": "PNEU 265/65R17 FIRESTONE DESTINATION H/T 112H",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=14865) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "23440",
+    "internal_id": "151dbb9a-e17e-4b39-b6f4-91599dbbac55",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/70R16 112T MILEVER MU069",
+    "local_nome": "PNEU 265/70R16 112T MILEVER MU069",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=23440) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "19773",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/70R16 HABILEAD RS21 HT 112H",
+    "local_nome": "PNEU 265/70R16 HABILEAD RS21 HT 112H",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 8231 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=6bcd336b-2b10-4b0c-92ad-ca08e58b7ec7) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "6bcd336b-2b10-4b0c-92ad-ca08e58b7ec7",
+    "mesmo_produto_que_external_id": "8231"
+  },
+  {
+    "external_id": "26352",
+    "internal_id": "0e599091-bdbc-4b35-a149-e791442245e5",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/40R20 106W XL DELINTE DH6 RUNFLAT",
+    "local_nome": "PNEU 275/40R20 106W XL DELINTE DH6 RUNFLAT",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "19595",
+    "internal_id": "53836549-305b-4020-9edd-5648b42ac271",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22.5 ARGANTIS A.R70D TRACAO 149/146M TL",
+    "local_nome": "PNEU 275/80R22.5 ARGANTIS A.R70D TRACAO 149/146M TL",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "24572",
+    "internal_id": "d91ecc1e-ed30-42d4-9b41-d5db6d02d87b",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22.5 TRAZANO EZ573 MISTO DIREC 149/146L 16L TL",
+    "local_nome": "PNEU 275/80R22.5 TRAZANO EZ573 MISTO DIREC 149/146L 16L TL",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=24572) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "26114",
+    "internal_id": "4fa83c96-4361-42fb-a0f4-fea49e3db8b9",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 285/45R22 PIRELLI SCORPION VERDE",
+    "local_nome": "PNEU 285/45R22 PIRELLI SCORPION VERDE",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "19284",
+    "internal_id": "fac7a817-0f67-4f52-b337-45afaa8aa543",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 295/80R22.5 BORRACHUDO PIRELLI",
+    "local_nome": "PNEU 295/80R22.5 BORRACHUDO PIRELLI",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=19284) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "19285",
+    "internal_id": "2f2f1f72-5bbc-4a98-8a80-f924f9c027a5",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 295/80R22.5 LISO PIRELLI",
+    "local_nome": "PNEU 295/80R22.5 LISO PIRELLI",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=19285) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "9937",
+    "internal_id": "7e73b05b-dc74-41a9-b426-88a8af7c89de",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU USADO 255/35R19 92Y CSC5 SSR",
+    "local_nome": "PNEU USADO 255/35R19 92Y CSC5 SSR",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=9937) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "9462",
+    "internal_id": "42029753-c071-4a66-a581-4dea9ae3cf2e",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 175/70R13 82T GENERAL EVERTREK",
+    "local_nome": "PNEU 175/70R13 82T GENERAL EVERTREK",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "2640",
+    "internal_id": "f20c7c06-b172-4cd5-9d94-5cab77073b8f",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 175/70R13 82TCONTIPOWERCONTACT",
+    "local_nome": "PNEU 175/70R13 82TCONTIPOWERCONTACT",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "2600",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 175/70R14 84T CONTI POWERCONTACT OE",
+    "local_nome": "PNEU 175/70R14 84T CONTI POWERCONTACT OE",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 16903 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=d611157e-7163-4473-8700-6274ab2931ed) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "d611157e-7163-4473-8700-6274ab2931ed",
+    "mesmo_produto_que_external_id": "16903"
+  },
+  {
+    "external_id": "1200",
+    "internal_id": "4c83dd17-500b-49cd-b6ad-787e4b6f9c39",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 185/60R14 82H CONTI ECO3",
+    "local_nome": "PNEU 185/60R14 82H CONTI ECO3",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=1200) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "1610",
+    "internal_id": "d01fcd0d-e05b-45ea-a06b-1c0125bad318",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 185/70R13 82T BARUM BRILHANTIS",
+    "local_nome": "PNEU 185/70R13 82T BARUM BRILHANTIS",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "13608",
+    "internal_id": "bb32dfb3-62f6-40bb-9672-77245c6b43e3",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 185/70R13 86T BRAVURIS 5HM",
+    "local_nome": "PNEU 185/70R13 86T BRAVURIS 5HM",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13608) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "6412",
+    "internal_id": "f5ea275b-5d86-4915-a829-229b99fc3435",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 185R14C 102/100Q VANCO-8",
+    "local_nome": "PNEU 185R14C 102/100Q VANCO-8",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6412) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "1317",
+    "internal_id": "e36956b2-1803-4928-aa43-663285eb33f4",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 195/60R15 88H BARUM BRAVURIS 2",
+    "local_nome": "PNEU 195/60R15 88H BARUM BRAVURIS 2",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "6789",
+    "internal_id": "c4e4519d-1a92-4ea0-8b45-c602b00462f0",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/40R17 84W BRAVURIS 2",
+    "local_nome": "PNEU 205/40R17 84W BRAVURIS 2",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6789) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "6463",
+    "internal_id": "bb1067ea-20af-4bec-9d50-5c6e3a2fddae",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/45R17 88W BRAVURIS 2",
+    "local_nome": "PNEU 205/45R17 88W BRAVURIS 2",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "2084",
+    "internal_id": "6ce11677-4304-418e-9b32-251816e0dcdb",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/60R15 91H BARUM BRAVURIS 2",
+    "local_nome": "PNEU 205/60R15 91H BARUM BRAVURIS 2",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "6652",
+    "internal_id": "08f27de0-dc5a-482a-bb29-b7e24d4793ce",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/70R15C 106/104R TL VANCO 8",
+    "local_nome": "PNEU 205/70R15C 106/104R TL VANCO 8",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6652) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7164",
+    "internal_id": "8aaa0db9-3ed2-4840-8b03-9125cc227732",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/75R16C CONTINENTAL VANCO 2",
+    "local_nome": "PNEU 205/75R16C CONTINENTAL VANCO 2",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7164) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "2000",
+    "internal_id": "88aff9d8-6d1f-4ed6-8e18-2a455653993c",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/75R16C CONTINENTAL VANCO 8",
+    "local_nome": "PNEU 205/75R16C CONTINENTAL VANCO 8",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=2000) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "8320",
+    "internal_id": "ca6098df-7673-47bc-80fa-593bd34acd1d",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/55R18 98V CONTI CCUHP",
+    "local_nome": "PNEU 225/55R18 98V CONTI CCUHP",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=8320) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7655",
+    "internal_id": "7092c4db-cd42-407c-b3ba-0fbb3edd2cb5",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/70R15 CONTI VANCO 2",
+    "local_nome": "PNEU 225/70R15 CONTI VANCO 2",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7655) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "2427",
+    "internal_id": "7c80550f-2b31-44fa-a4f3-0d03493bc056",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/70R15C 112/110R TL VANCO 8",
+    "local_nome": "PNEU 225/70R15C 112/110R TL VANCO 8",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=2427) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "6443",
+    "internal_id": "346e266c-c050-42ec-88f9-361e1fe9a76e",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/50R18 97V CONTINENTAL UHP",
+    "local_nome": "PNEU 235/50R18 97V CONTINENTAL UHP",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6443) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "25861",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/50R19 99V FR PREMIUMCONTACT C",
+    "acao": "criar_produto_novo",
+    "resposta": "nenhum produto local com nome ou id_system correspondente ao item da Tecinco — mesmo quando EAN/SKU bate com algum produto local, é um pneu de linha/modelo totalmente diferente (coincidência ou dado errado na Tecinco). Cadastrar como produto novo.",
+    "tecinco_item_completo": {
+      "id_sistema": "25861",
+      "sku": "03159980000",
+      "ean": "4019238993929",
+      "nome": "PNEU 235/50R19 99V FR PREMIUMCONTACT C",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 19",
+      "marca": "CONTI IMP"
+    }
+  },
+  {
+    "external_id": "1524",
+    "internal_id": "0f1e0bc4-f175-42e0-9440-af72a62ef504",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/75R15 109T CROSSCONTACT LX",
+    "local_nome": "PNEU 235/75R15 109T CROSSCONTACT LX",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=1524) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "8044",
+    "internal_id": "68ae26c5-dd95-4a56-a75e-2f9f3b0fc72f",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 245/35R18 CONTI SC2",
+    "local_nome": "PNEU 245/35R18 CONTI SC2",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=8044) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7379",
+    "internal_id": "24a786a7-c546-4ca9-b532-0584fffb9dc6",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 245/35R19 CONTI CSC 5",
+    "local_nome": "PNEU 245/35R19 CONTI CSC 5",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7379) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "6707",
+    "internal_id": "5320fbf4-5b48-442a-9f0d-b995e18a3d33",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 245/45ZR18 100W CONTI CSC3",
+    "local_nome": "PNEU 245/45ZR18 100W CONTI CSC3",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6707) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7471",
+    "internal_id": "174f23a5-b969-4152-90c7-c50546dc5577",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/40ZR17 CONTINENTAL SPC2 N2",
+    "local_nome": "PNEU 255/40ZR17 CONTINENTAL SPC2 N2",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7471) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7884",
+    "internal_id": "9c5a0e34-8040-4a24-b5da-99644cf15bda",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/45R19 92Y CONTI SC5 SSR",
+    "local_nome": "PNEU 255/45R19 92Y CONTI SC5 SSR",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7884) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "9026",
+    "internal_id": "dc57895d-3e72-4354-a436-54f005a49759",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/35R19 98Y CSC5 MO",
+    "local_nome": "PNEU 265/35R19 98Y CSC5 MO",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=9026) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "15000",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/45R20 104Y FR CONTINENTAL SPORT CONTACT 2 MO",
+    "local_nome": "PNEU 265/45R20 104Y FR CONTINENTAL SPORT CONTACT 2 MO",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 13469 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=42c9cbb5-e737-4994-a3da-2efa47ae9599) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "42c9cbb5-e737-4994-a3da-2efa47ae9599",
+    "mesmo_produto_que_external_id": "13469"
+  },
+  {
+    "external_id": "6609",
+    "internal_id": "8024ed23-10c7-48eb-a9cf-4a176bfa5e2a",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/65R17 110S GENERAL GRAB.AW",
+    "local_nome": "PNEU 265/65R17 110S GENERAL GRAB.AW",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6609) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "2389",
+    "internal_id": "7e819c03-8427-4195-b72f-beb3b9ba199c",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/75R16  OWL GRABBER AT 2",
+    "local_nome": "PNEU 265/75R16  OWL GRABBER AT 2",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=2389) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "16321",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/75R16 123/120R LRE FR GRABBER A/TX RWL 10PR",
+    "local_nome": "PNEU 265/75R16 123/120R LRE FR GRABBER A/TX RWL 10PR",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 12923 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=ae84bdb0-024a-49fd-913a-1c5a6dccd4ac) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "ae84bdb0-024a-49fd-913a-1c5a6dccd4ac",
+    "mesmo_produto_que_external_id": "12923"
+  },
+  {
+    "external_id": "8123",
+    "internal_id": "ffd1e6fe-bfa0-41f2-9780-a78cd9cfbbe1",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/40R19 CONTI CSC2 FR",
+    "local_nome": "PNEU 275/40R19 CONTI CSC2 FR",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=8123) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "25471",
+    "internal_id": "c11a87d3-4560-4f7c-bc7c-52e87546c1cb",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22,5 LISO CONTI HYBRID HS3 SA CONTINENTAL 16PR 149/146L",
+    "local_nome": "PNEU 275/80R22,5 LISO CONTI HYBRID HS3 SA CONTINENTAL 16PR 149/146L",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=25471) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7851",
+    "internal_id": "6e624720-9c21-478a-9cf2-5c5ce9783128",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 31X10,5R15 GRABBER SRL",
+    "local_nome": "PNEU 31X10,5R15 GRABBER SRL",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7851) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "27905",
+    "internal_id": "c05f9b27-27bc-4e71-951b-2bacf72b7742",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 11.00-22 16PR 152/147G DR940 (DIRECIONAL) - DURABLE",
+    "local_nome": "PNEU 11.00-22 16PR 152/147G DR940 (DIRECIONAL) - DURABLE",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=27905) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "12824",
+    "internal_id": "e4caf162-3f61-4975-b631-c10229b3991d",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/75R17,5 LDR1 126/124M TL CONTINENTAL ( BORRAC )",
+    "local_nome": "PNEU 215/75R17,5 LDR1 126/124M TL CONTINENTAL ( BORRAC )",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=12824) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "8664",
+    "internal_id": "17b81a14-dd20-4542-9be5-e4228eec6200",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/75R17.5 AEOLUS ASR35 18PR (LISO)",
+    "local_nome": "PNEU 235/75R17.5 AEOLUS ASR35 18PR (LISO)",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=8664) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7961",
+    "internal_id": "1283805b-27d4-4e88-8f06-378a97c08674",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22.5 149/146 PIRELLI FORMULA",
+    "local_nome": "PNEU 275/80R22.5 149/146 PIRELLI FORMULA",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7961) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "12179",
+    "internal_id": "a5ea5386-fb64-4b4d-b772-f22924f3be54",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22.5 HD3 SA 149/146L TL CONTINENTAL",
+    "local_nome": "PNEU 275/80R22.5 HD3 SA 149/146L TL CONTINENTAL",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "13147",
+    "internal_id": "d9c38094-a563-4caf-91e8-c0c883bf5df4",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22.5 PRO-S 149/146M M+S TL ANTEO",
+    "local_nome": "PNEU 275/80R22.5 PRO-S 149/146M M+S TL ANTEO",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13147) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13143",
+    "internal_id": "93363501-4816-48af-b749-703df08c109b",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22.5TL 149/146LM+S PIRELLI FG88",
+    "local_nome": "PNEU 275/80R22.5TL 149/146LM+S PIRELLI FG88",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13143) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13417",
+    "internal_id": "e1042658-3a3c-46c6-8958-1f28f4b01dad",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22.5TL 149/146LM+S TG88",
+    "local_nome": "PNEU 275/80R22.5TL 149/146LM+S TG88",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13417) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13142",
+    "internal_id": "8e3bdd59-939a-4432-9294-67be20140ec4",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22.5TL 149/146M PIRELLI FR88",
+    "local_nome": "PNEU 275/80R22.5TL 149/146M PIRELLI FR88",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13142) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13485",
+    "internal_id": "d073d775-ac43-409b-bd54-a7a994523f26",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/80R22.5TL 149/146MM+S PIRELLI TR88 (BORRACHUDO)",
+    "local_nome": "PNEU 275/80R22.5TL 149/146MM+S PIRELLI TR88 (BORRACHUDO)",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13485) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "11764",
+    "internal_id": "423ccbd2-8c12-4813-9611-021e8263423d",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 295/80R22.5 152/148M ANTEO BORRACHUDO",
+    "local_nome": "PNEU 295/80R22.5 152/148M ANTEO BORRACHUDO",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=11764) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13456",
+    "internal_id": "aad9baa0-2183-4882-9660-c318e4c1e7c9",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 295/80R22.5(*)TL152/148M18 FORMULA DRII",
+    "local_nome": "PNEU 295/80R22.5(*)TL152/148M18 FORMULA DRII",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13456) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13141",
+    "internal_id": "ae32d079-7047-46f4-a4da-fb61b09f9339",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 295/80R22.5TL 152/148LM+S PIRELLI FG88",
+    "local_nome": "PNEU 295/80R22.5TL 152/148LM+S PIRELLI FG88",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13141) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13140",
+    "internal_id": "2708847e-9dab-4887-b894-27775af816f7",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 295/80R22.5TL 152/148LM+S PIRELLI TG88",
+    "local_nome": "PNEU 295/80R22.5TL 152/148LM+S PIRELLI TG88",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13140) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13144",
+    "internal_id": "31d0e6c4-cf3e-474d-ae40-06d74c92940a",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 295/80R22.5TL 152/148M PIRELLI FR88",
+    "local_nome": "PNEU 295/80R22.5TL 152/148M PIRELLI FR88",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13144) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7904",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 185/65R15 88H BRIDGESTONE ECOPIA EP 150",
+    "local_nome": "PNEU 185/65R15 88H BRIDGESTONE ECOPIA EP 150",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 23959 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=01011f97-d620-4b82-b277-01ecc2ec40cc) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "01011f97-d620-4b82-b277-01ecc2ec40cc",
+    "mesmo_produto_que_external_id": "23959"
+  },
+  {
+    "external_id": "23960",
+    "internal_id": "62a31a41-962d-42a3-8312-01e15caad1e8",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 195/65R15 91H BRIDGESTONE ECOPIA EP150",
+    "local_nome": "Pneu 195/65R15 91H Ecopia EP150 Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=13a040f5-3fad-4da0-9cef-d824b0562f03, sem EAN/SKU/atividade) era duplicata do produto real com atividade (52/50) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "13a040f5-3fad-4da0-9cef-d824b0562f03"
+  },
+  {
+    "external_id": "26513",
+    "internal_id": "bfc70434-3aa3-44f1-aabe-918a5c3059be",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/50R17 89V BRIDGESTONE TURANZA T005",
+    "local_nome": "Pneu 205/50R17 89V Bridgestone Turanza T005",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=60a69e89-f220-4a7e-ae3e-daa81aeb4157, sem EAN/SKU/atividade) era duplicata do produto real com atividade (73/76) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "60a69e89-f220-4a7e-ae3e-daa81aeb4157"
+  },
+  {
+    "external_id": "23958",
+    "internal_id": "1313f495-41ae-4a20-a5c2-ffecff665583",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/55R16 91H BRIDGESTONE DUELER AT REVO2",
+    "local_nome": "Pneu 205/55R16 91H Dueler A/T Revo 2 Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=c607e250-c95e-4bdd-8f16-ccfd35e6fa44, sem EAN/SKU/atividade) era duplicata do produto real com atividade (9/8) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "c607e250-c95e-4bdd-8f16-ccfd35e6fa44"
+  },
+  {
+    "external_id": "23963",
+    "internal_id": "d6bf8171-16d2-4578-95b8-86644142a0cb",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/55R16 91V BRIDGESTONE ECOPIA EP150",
+    "local_nome": "Pneu 205/55R16 91V Ecopia EP150 Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=c050134c-9a1e-45b2-902a-8df4b69905e6, sem EAN/SKU/atividade) era duplicata do produto real com atividade (9/7) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "c050134c-9a1e-45b2-902a-8df4b69905e6"
+  },
+  {
+    "external_id": "23961",
+    "internal_id": "df1eb7de-e0c4-4c59-90f2-948ec3a708aa",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/50R17 91V BRIDGESTONE TURANZA ER33",
+    "local_nome": "PNEU 215/50R17 91V BRIDGESTONE TURANZA ER33",
+    "acao": "mapear_produto_existente",
+    "resposta": "confirmado manualmente: são pneus diferentes (a alternativa com atividade é de outra linha/modelo) — mantém o mapeamento pro próprio registro do item (stub), sem exclusão."
+  },
+  {
+    "external_id": "23955",
+    "internal_id": "993ad051-34af-48f0-bfc6-f3ac54e4ed15",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/65R16 102H BRIDGESTONE DUELER H/T 684II",
+    "local_nome": "Pneu 215/65R16 102H XL Dueler H/T 684 II Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=6f6e1a30-b3f8-4391-88bf-e81f956a1fe4, sem EAN/SKU/atividade) era duplicata do produto real com atividade (12/12) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "6f6e1a30-b3f8-4391-88bf-e81f956a1fe4"
+  },
+  {
+    "external_id": "13857",
+    "internal_id": "0d263d1b-3a6a-48b9-bd77-863b306bbda0",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/40R19 93Y TURANZA T005 RUNFLAT 93Y TL BRIDGESTONE",
+    "local_nome": "PNEU 225/40R19 93Y TURANZA T005 RUNFLAT 93Y TL BRIDGESTONE",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13857) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "29703",
+    "internal_id": "2e425c86-3775-4fd0-a3fc-fa7c48749113",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/45R18 95Y BRIDGESTONE TURANZA T005 95Y",
+    "local_nome": "Pneu 225/45R18 95Y XL Turanza T005 Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=b0ec3fa7-9c7d-4d4f-98ef-2fe40a30378e, sem EAN/SKU/atividade) era duplicata do produto real com atividade (12/13) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "b0ec3fa7-9c7d-4d4f-98ef-2fe40a30378e"
+  },
+  {
+    "external_id": "23951",
+    "internal_id": "df0ff58a-2b23-4703-965a-d3cb0687cbf5",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/55R18 98H BRIDGESTONE DUELER H/T 684II",
+    "local_nome": "Pneu 225/55R18 98H Dueler H/T 684 II Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=28f6ba9f-4f13-4992-9748-27ea6e626382, sem EAN/SKU/atividade) era duplicata do produto real com atividade (2/1) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "28f6ba9f-4f13-4992-9748-27ea6e626382"
+  },
+  {
+    "external_id": "27030",
+    "internal_id": "703b8e56-1b04-4b83-9fb2-c5675704a7d4",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/60R17 99Y BRIDGESTONE TURANZA T005",
+    "local_nome": "Pneu 225/60R17 99Y Turanza T005 Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=32aae7e2-3d88-4ef6-9754-f124428f3380, sem EAN/SKU/atividade) era duplicata do produto real com atividade (42/41) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "32aae7e2-3d88-4ef6-9754-f124428f3380"
+  },
+  {
+    "external_id": "25554",
+    "internal_id": "c1594f6f-780c-414b-8320-69fe139a88d1",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/55R18 100V BRIDGESTONE ALENZA 001",
+    "local_nome": "Pneu 235/55R18 100V Alenza 001 Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=2ccaf675-26c4-49e7-9da1-94930e5f7c97, sem EAN/SKU/atividade) era duplicata do produto real com atividade (20/17) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "2ccaf675-26c4-49e7-9da1-94930e5f7c97"
+  },
+  {
+    "external_id": "23685",
+    "internal_id": "416700f6-5b38-4f94-bb93-60a6fe1e6ae0",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 245/70R16 111T BRIDGESTONE DUELER HT 684III",
+    "local_nome": "Pneu 245/70R16 111T XL Dueler H/T 684 III Bridgestone",
+    "acao": "mapear_produto_existente",
+    "resposta": "stub vazio (id=db14b066-63b6-4891-80a9-3f943400fddc, sem EAN/SKU/atividade) era duplicata do produto real com atividade (3/3) — corrigido pra mapear no produto real. Stub marcado em produto_duplicado_para_excluir pra avaliação futura de exclusão.",
+    "produto_duplicado_para_excluir": "db14b066-63b6-4891-80a9-3f943400fddc"
+  },
+  {
+    "external_id": "13717",
+    "internal_id": "86926712-6ea6-41c6-9a7f-3924a46c1272",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/35R19 96Y POTENZA RE050A BRIDGESTONE",
+    "local_nome": "PNEU 255/35R19 96Y POTENZA RE050A BRIDGESTONE",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13717) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13858",
+    "internal_id": "7d7a452b-e296-4fd3-90b8-bf9ac570ca80",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/35R19 96Y TURANZA T005 RUNFLAT TL BRIDGESTONE",
+    "local_nome": "PNEU 255/35R19 96Y TURANZA T005 RUNFLAT TL BRIDGESTONE",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13858) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "23575",
+    "internal_id": "5b770080-8208-47b1-8e33-76d219828216",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/70R16 BRIDGESTONE",
+    "local_nome": "PNEU 255/70R16 BRIDGESTONE",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=23575) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "23890",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/60R18 110T BRDIGESTONE DUELER HT 684II ",
+    "local_nome": "PNEU 265/60R18 110T BRDIGESTONE DUELER HT 684II",
+    "acao": "codigo_tecinco_duplicado",
+    "resposta": "código tecinco duplicado do external_id 17147 (mesmo produto, já mapeado com sinal real/EAN-SKU) — não cria mapping próprio, senão fica 2 external_id pro mesmo internal_id. Stub próprio (id=aa950031-d5bc-4fd3-a368-0e06d56b9070) marcado em produto_duplicado_para_excluir.",
+    "produto_duplicado_para_excluir": "aa950031-d5bc-4fd3-a368-0e06d56b9070",
+    "mesmo_produto_que_external_id": "17147"
+  },
+  {
+    "external_id": "26048",
+    "internal_id": "06d9ed47-8d63-44b2-8639-973d353e21a1",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/65R17 112S DUELER AT 693III",
+    "local_nome": "PNEU 265/65R17 112S DUELER AT 693III",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=26048) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "1710",
+    "internal_id": "c2b617d6-9562-4b90-957f-d247abce0368",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "CAMARA DE AR  ARO 13",
+    "local_nome": "CAMARA DE AR  ARO 13",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=1710) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "6496",
+    "internal_id": "d8138617-30dd-490d-84fb-99f06432d0bd",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "CAMARA DE AR 28T790 16.9 PIRELLI",
+    "local_nome": "CAMARA DE AR 28T790 16.9 PIRELLI",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=6496) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "2198",
+    "internal_id": "623f6690-cf1e-419e-a8cb-fc1da3fbfd3c",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "CAMARA DE AR 750/18 MAGGION",
+    "local_nome": "CAMARA DE AR 750/18 MAGGION",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=2198) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7375",
+    "internal_id": "61c9aa58-d233-4df8-bc25-fb4d28b2a9ee",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "CAMARA DE AR A20/21 TR35 MAGGION",
+    "local_nome": "CAMARA DE AR A20/21 TR35 MAGGION",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7375) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "9211",
+    "internal_id": "2727a6e1-8c94-4e12-af18-fdd741a8f85a",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "CAMARA DE AR MSA-21 LEVORIM",
+    "local_nome": "CAMARA DE AR MSA-21 LEVORIM",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=9211) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "9210",
+    "internal_id": "45a18ce8-cc04-4ab5-a1eb-081cff0e6be2",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "CAMARA DE AR MSB-18 LEVORIM",
+    "local_nome": "CAMARA DE AR MSB-18 LEVORIM",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=9210) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "24239",
+    "internal_id": "693a6950-439c-4010-93bf-44bed01aa34f",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 2135/50R20 104W XL PIRELLI SCORPION ZERO",
+    "local_nome": "PNEU 2135/50R20 104W XL PIRELLI SCORPION ZERO",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=24239) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "22595",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/60R18LT 114/110S PANGEA AT LETRA BRANCA",
+    "acao": "criar_produto_novo",
+    "resposta": "nenhum produto local com nome ou id_system correspondente ao item da Tecinco — mesmo quando EAN/SKU bate com algum produto local, é um pneu de linha/modelo totalmente diferente (coincidência ou dado errado na Tecinco). Cadastrar como produto novo.",
+    "tecinco_item_completo": {
+      "id_sistema": "22595",
+      "sku": "000000000016009030",
+      "ean": "07896807421949",
+      "nome": "PNEU 265/60R18LT 114/110S PANGEA AT LETRA BRANCA",
+      "grupo": "PNEUS IMPORTADOS",
+      "subgrupo": "ARO 18",
+      "marca": "SPEEDMAX"
+    }
+  },
+  {
+    "external_id": "8253",
+    "internal_id": "8bf6f661-3c0e-48ba-ba62-252aaa05f92b",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 31X10.5R15LT ONYX NY-AT187 109R",
+    "local_nome": "PNEU 31X10.5R15LT ONYX NY-AT187 109R",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=8253) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "12747",
+    "internal_id": "545f71d3-a986-4b3f-8af4-521ccc54d333",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU AT24X8 -12 4PR TL M977 MAXXIS",
+    "local_nome": "PNEU AT24X8 -12 4PR TL M977 MAXXIS",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=12747) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7728",
+    "internal_id": "2028abfb-d6ee-46fd-9cfe-bbf3f3139419",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU MOTO 100.80ZR17 MICHEL STREET",
+    "local_nome": "PNEU MOTO 100.80ZR17 MICHEL STREET",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7728) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "2082",
+    "internal_id": "9557e459-b372-410c-93b8-1346aff5d084",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PROTETOR ARO 20 SBN RADIAL",
+    "local_nome": "PROTETOR ARO 20 SBN RADIAL",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=2082) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7414",
+    "internal_id": "a6a2cfa6-57ed-4d15-8e2e-022733edaf25",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PROTETOR RADIAL ",
+    "local_nome": "PROTETOR RADIAL",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=7414) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "23123",
+    "internal_id": "3d9387d3-4ec5-47ea-9be2-bf22da7296fe",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "1671394785 SENSOR PRESSAO PNEU (TPMS) FORD",
+    "local_nome": "1671394785 SENSOR PRESSAO PNEU (TPMS) FORD",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=23123) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "17327",
+    "internal_id": "e6e7055e-77ef-43d2-b1fa-71bf9c89119d",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU T115/70R16 CONTINENTAL SCONTACT",
+    "local_nome": "PNEU T115/70R16 CONTINENTAL SCONTACT",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=17327) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "1421",
+    "internal_id": "53ce9eb7-011a-4ad2-b5b1-bc4ee70da74a",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "CAMARA DE AR CA15/16 TR15",
+    "local_nome": "CAMARA DE AR CA15/16 TR15",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=1421) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "13145",
+    "internal_id": "e28012f3-565b-42c4-adef-cca19e8a47e1",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 1000-20TT 146/143J 16 ANTEO AT65",
+    "local_nome": "PNEU 1000-20TT 146/143J 16 ANTEO AT65",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=13145) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "25479",
+    "internal_id": "b3b1ccfd-3876-4bcf-924e-56714adbbd45",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PROTETOR ARO 20 SBN FURO CENTRAL 205 MM",
+    "local_nome": "PROTETOR ARO 20 SBN FURO CENTRAL 205 MM",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=25479) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "25480",
+    "internal_id": "ad0d4186-ad1c-40b7-8814-71358ab5f889",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PROTETOR ARO 25 SBN FURO CENTRAL 430 MM",
+    "local_nome": "PROTETOR ARO 25 SBN FURO CENTRAL 430 MM",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=25480) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "9461",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 165/70R13 79T GENERAL EVERTREK",
+    "acao": "criar_produto_novo",
+    "resposta": "nenhum produto local com nome ou id_system correspondente ao item da Tecinco — mesmo quando EAN/SKU bate com algum produto local, é um pneu de linha/modelo totalmente diferente (coincidência ou dado errado na Tecinco). Cadastrar como produto novo.",
+    "tecinco_item_completo": {
+      "id_sistema": "9461",
+      "nome": "PNEU 165/70R13 79T GENERAL EVERTREK"
+    }
+  },
+  {
+    "external_id": "17378",
+    "internal_id": "5528520e-3b13-4432-9b11-b27dea5d9209",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 225/60R18 104V XL ECOCONTACT 6",
+    "local_nome": "PNEU 225/60R18 104V XL ECOCONTACT 6",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto local (id_system=17378) com nome idêntico ao item da Tecinco — é o próprio registro do item, só sem EAN/SKU/atividade ainda; mapeia direto nele em vez do candidato \"real\" de outra linha."
+  },
+  {
+    "external_id": "7975",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/70R15C 106/104R CONTI VAN CONTACT AP 8PR",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto local (326e59b3, \"205/70R15 102/100Q VanContact AP\"), mas o load index/spec é diferente (Tecinco: 106/104R 8PR reforçado/comercial \"C\"; local: 102/100Q) — usuário decidiu que são produtos diferentes. Não existe outro item na Tecinco pra cobrir a versão 102/100Q, então 326e59b3 fica sem mapping Tecinco mesmo (não é possível). Mapping antigo (ean_ou_sku_exato) removido de certeza.json.",
+    "tecinco_item_completo": {
+      "id_sistema": "7975",
+      "sku": "04513490000",
+      "ean": "4019238776188",
+      "nome": "PNEU 205/70R15C 106/104R CONTI VAN CONTACT AP 8PR",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 15",
+      "marca": "CONTINENTAL"
+    }
+  },
+  {
+    "external_id": "7072",
+    "internal_id": "5aa8e16e-1d1e-4a97-b6a5-cc8d0f7bdcbc",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/60R18 112H GENERAL AT",
+    "local_nome": "PNEU 255/60R18 112H GENERAL AT",
+    "acao": "mapear_produto_existente",
+    "resposta": "produto diferente do GENERAL AT2# já mapeado (mapeado.duplicatas_provaveis #27) — nome idêntico ao item tecinco 7072, mapping novo criado (não existia antes)."
+  },
+  {
+    "external_id": "13551",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 205/70R15 96T FR BRAVURIS 4X4",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 205/70R15 94T Barum Bravuris 4x4) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "13551",
+      "sku": "15407790000",
+      "ean": "4024063003705",
+      "nome": "PNEU 205/70R15 96T FR BRAVURIS 4X4",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 15",
+      "marca": "BARUM"
+    }
+  },
+  {
+    "external_id": "7583",
+    "internal_id": "71f44eb7-a954-42ba-88b4-3d58b98d56af",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 235/45R17 97Y CONTI CSC 5 FR",
+    "local_nome": "PNEU 235/45R17 97Y CONTI CSC 5 FR",
+    "acao": "mapear_produto_existente",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 235/45R17 94W FR ContiSportContact 5 Continental) — por definição são produtos diferentes (índice de carga/velocidade divergente = estrutura interna diferente). Existe o próprio stub local com o índice correto, mapeado nele. EAN/SKU do produto antigo provavelmente errado na Bling."
+  },
+  {
+    "external_id": "19957",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/70R17 112T FR GRABBER A/TX RWL ( LETRA BRANCA )",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 255/70R17 112S Grabber A/TX General Tire - Letras Brancas) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "19957",
+      "sku": "04509750000",
+      "ean": "4032344004396",
+      "nome": "PNEU 255/70R17 112T FR GRABBER A/TX RWL ( LETRA BRANCA )",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 17",
+      "marca": "GT SUV"
+    }
+  },
+  {
+    "external_id": "13282",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/65R17 112T GRABBER A/TX RWL (LETRA BRANCA)",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 265/65R17 112H FR Grabber A/TX General Tire -Letras Brancas) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "13282",
+      "sku": "45097100000",
+      "ean": "4032344004419",
+      "nome": "PNEU 265/65R17 112T GRABBER A/TX RWL (LETRA BRANCA)",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 17",
+      "marca": "GT SUV"
+    }
+  },
+  {
+    "external_id": "13563",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 265/70R16 112T GRABBER A/TX RWL ( LETRA BRANCA )",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 265/70R16 115T FR Grabber A/TX RWL General Tire - Letras Brancas) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "13563",
+      "sku": "04509710000",
+      "ean": "4032344004426",
+      "nome": "PNEU 265/70R16 112T GRABBER A/TX RWL ( LETRA BRANCA )",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 16",
+      "marca": "GT SUV"
+    }
+  },
+  {
+    "external_id": "22664",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/45R20 110Y XL CONTINENTAL SPORT CONTACT 5P N0",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 275/45R20 100Y XL ContiSportContact 5P N0) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "22664",
+      "sku": "03572660000",
+      "ean": "4019238695274",
+      "nome": "PNEU 275/45R20 110Y XL CONTINENTAL SPORT CONTACT 5P N0",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 20",
+      "marca": "CONTI IMP"
+    }
+  },
+  {
+    "external_id": "11105",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/45R21 107Y SC5 SUV MO",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 275/45R21 110Y XL FR ContiSportContact 5 SUV MO Continental) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "11105",
+      "sku": "3543160000",
+      "ean": "4019238605754",
+      "nome": "PNEU 275/45R21 107Y SC5 SUV MO",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 21",
+      "marca": "CONTI IMP"
+    }
+  },
+  {
+    "external_id": "17092",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 275/65R18LT 123/120R  GENERAL TIRE GRABBER  ATX RWL",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 275/65R18 116T Grabber ATX RWL - Letras Brancas General Tire) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "17092",
+      "sku": "04492510000",
+      "ean": "4032344011271",
+      "nome": "PNEU 275/65R18LT 123/120R  GENERAL TIRE GRABBER  ATX RWL",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 18",
+      "marca": "GT SUV"
+    }
+  },
+  {
+    "external_id": "23956",
+    "internal_id": "abff6326-0ccb-4747-b84f-d44a2bf92aed",
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 215/60R17 100H BRIDGESTONE ALENZA 001",
+    "local_nome": "PNEU 215/60R17 100H BRIDGESTONE ALENZA 001",
+    "acao": "mapear_produto_existente",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 215/60R17 96H Alenza 001 Bridgestone) — por definição são produtos diferentes (índice de carga/velocidade divergente = estrutura interna diferente). Existe o próprio stub local com o índice correto, mapeado nele. EAN/SKU do produto antigo provavelmente errado na Bling."
+  },
+  {
+    "external_id": "6632",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 185/70R14 88H CONTIPOWER OE",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 185/70R14 88T ContiPowerContact Continental) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "6632",
+      "sku": "15508410000",
+      "ean": "4019238016918",
+      "nome": "PNEU 185/70R14 88H CONTIPOWER OE",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 14",
+      "marca": "CONTINENTAL"
+    }
+  },
+  {
+    "external_id": "9805",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 245/40R17 91W FR CONTISPORTCONTACT 5 MO",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 245/40R17 91Y FR ContiSportContact 5 MO) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "9805",
+      "sku": "03507380000",
+      "ean": "4019238456233",
+      "nome": "PNEU 245/40R17 91W FR CONTISPORTCONTACT 5 MO",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 17",
+      "marca": "CONTI IMP"
+    }
+  },
+  {
+    "external_id": "22057",
+    "internal_id": null,
+    "entity_type": "PRODUCT",
+    "tecinco_nome": "PNEU 255/45R20 105W XL ECOCONTACT 6 Q MO",
+    "acao": "criar_produto_novo",
+    "resposta": "EAN/SKU batia com produto de índice de carga/velocidade DIFERENTE (Pneu 255/45R20 105Y XL FR EcoContact 6Q * Continental) — por definição são produtos diferentes. Não existe produto local com o índice correto ainda — cadastrar como produto novo. EAN/SKU do produto antigo provavelmente errado na Bling.",
+    "tecinco_item_completo": {
+      "id_sistema": "22057",
+      "sku": "03129300000",
+      "ean": "4019238075014",
+      "nome": "PNEU 255/45R20 105W XL ECOCONTACT 6 Q MO",
+      "grupo": "PNEUS",
+      "subgrupo": "ARO 20",
+      "marca": "CONTI IMP"
+    }
+  }
+]
