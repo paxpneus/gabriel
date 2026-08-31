@@ -367,20 +367,10 @@ async function doAutoLogin(page: Page): Promise<boolean> {
  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
 
 
+ // O formulário de login da Bling é de etapa única: usuário e senha ficam
+ // visíveis ao mesmo tempo, e o botão já é o de submit ("Entrar") — não
+ // existe mais um botão intermediário "Continuar" que revela a senha depois.
  await page.fill("#username", BLING_EMAIL);
-
-
- const continuarBtn = page.locator(".login-button-submit");
- if (await continuarBtn.isVisible().catch(() => false)) {
-   await continuarBtn.click();
- }
-
-
- await page
-   .waitForSelector('input[type="password"].InputText-input', { timeout: 10_000 })
-   .catch(() => {});
-
-
  await page.fill('input[type="password"].InputText-input', BLING_PASSWORD);
  await page.click(".login-button-submit");
 
