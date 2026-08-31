@@ -32,7 +32,6 @@ import Store from "../../../../../sales/stores/stores.model";
 import Contact from "../../../../../sales/contacts/contacts.model";
 import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
-import InvoiceFiscalItem from "../../../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import {
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,
@@ -52,7 +51,11 @@ import brandsService from "../../../../../inventory/brands/brands.service";
 import Group from "../../../../../inventory/groups/group/group.model";
 import Subgroup from "../../../../../inventory/groups/subgroup/subgroup.model";
 import { GroupType } from "../../../../../inventory/groups/group/group.types";
-import { resolveProductWithMapping } from "../../../../tecinco/queues/helpers/product.helpers";
+import {
+  resolveProductWithMapping,
+  assertEanNotOwnedByAnotherProduct,
+  EanConflictError,
+} from "../../../../tecinco/queues/helpers/product.helpers";
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
 import { getMagentoIntegration } from "../../../../magentoV2/api/magentoV2_api";
 import stockMovementsService from "../../../../../inventory/stock/stock-movements/stock-movements.service";
@@ -395,7 +398,18 @@ interface BlingApiInvoiceItem {
   descricao?: string;
   quantidade: number;
   valor?: number;
+  valorTotal?: number;
+  classificacaoFiscal?: string;
+  cest?: string;
+  cfop?: string;
   gtin: string | number;
+  impostos?: {
+    valorAproximadoTotalTributos?: number;
+    icms?: {
+      aliquota?: number;
+      valor?: number;
+    };
+  };
 }
 
 // ─── Queue ────────────────────────────────────────────────────────────────────
@@ -422,6 +436,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         if (
           err?.name === "SequelizeUniqueConstraintError" ||
           err?.name?.startsWith("Sequelize") ||
+          err?.name === "EanConflictError" ||
           status === 400 ||
           status === 404
         ) {
@@ -841,126 +856,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     return product;
   }
 
-  // ─── CORREÇÃO 3: helper que parseia det[] do XML e faz upsert em invoice_fiscal_items ──
-  private async upsertFiscalItems(
-    invoiceId: string,
-    xmlContent: string,
-    senderCnpj: string,
-    logPrefix: string,
-  ): Promise<void> {
-    const parsed = parser.parse(xmlContent);
-
-    const nfe =
-      parsed?.nfeProc?.NFe?.infNFe ||
-      parsed?.procNFe?.NFe?.infNFe ||
-      parsed?.NFe?.infNFe;
-
-    if (!nfe) return;
-
-    const rawDet = nfe.det;
-    if (!rawDet) return;
-
-    const det: any[] = Array.isArray(rawDet) ? rawDet : [rawDet];
-
-    for (let idx = 0; idx < det.length; idx++) {
-      const item = det[idx];
-      const prod = item.prod ?? {};
-      const imposto = item.imposto ?? {};
-
-      const sku = prod.cProd ? String(prod.cProd).trim() : null;
-      const gtin =
-        prod.cEAN && prod.cEAN !== "SEM GTIN" ? String(prod.cEAN).trim() : null;
-      const qty = Number(prod.qCom ?? 0);
-      const unitPrice = Number(prod.vUnCom ?? 0);
-      const totalValue = Number(prod.vProd ?? 0);
-
-      // Resolve product_id interno (melhor esforço — não bloqueia se não encontrar)
-      const product = await this.findProductForInvoiceItem({
-        sku,
-        ean: gtin,
-        supplierCnpj: senderCnpj,
-        logPrefix,
-      });
-
-      // ─── Impostos por item ──────────────────────────────────────────────────
-
-      // ICMS — pode estar em vários grupos: ICMS00, ICMS10, ICMS20... pegamos o primeiro
-      const icmsGroup: any = imposto.ICMS ? Object.values(imposto.ICMS)[0] : {};
-
-      const icmsRate = Number(icmsGroup?.pICMS ?? 0);
-      const icmsValue = Number(icmsGroup?.vICMS ?? 0);
-
-      // DIFAL
-      const difalValue = Number(
-        imposto?.ICMSUFDest?.vICMSUFDest ?? imposto?.ICMSUFDest?.vICMSDest ?? 0,
-      );
-
-      // IPI
-      const ipiGroup: any = imposto?.IPI?.IPITrib ?? imposto?.IPI?.IPINT ?? {};
-      const ipiValue = Number(ipiGroup?.vIPI ?? 0);
-
-      // PIS
-      const pisGroup: any =
-        imposto?.PIS?.PISAliq ??
-        imposto?.PIS?.PISQtde ??
-        imposto?.PIS?.PISNT ??
-        imposto?.PIS?.PISOutr ??
-        {};
-      const pisValue = Number(pisGroup?.vPIS ?? 0);
-
-      // COFINS
-      const cofinsGroup: any =
-        imposto?.COFINS?.COFINSAliq ??
-        imposto?.COFINS?.COFINSQtde ??
-        imposto?.COFINS?.COFINSNT ??
-        imposto?.COFINS?.COFINSOutr ??
-        {};
-      const cofinsValue = Number(cofinsGroup?.vCOFINS ?? 0);
-
-      // IBS/CBS (reforma tributária — disponíveis em notas mais novas)
-      const ibsCbsGroup: any = imposto?.IBSCBS?.gIBSCBS ?? {};
-      const ibsValue =
-        Number(ibsCbsGroup?.gIBSUF?.vIBSUF ?? 0) +
-        Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0);
-      const cbsValue = Number(ibsCbsGroup?.gCBS?.vCBS ?? 0);
-
-      const approxTaxValue = Number(imposto?.vTotTrib ?? 0);
-
-      const conflictFields = ["invoice_id", "item_number"] as any;
-
-      await InvoiceFiscalItem.upsert(
-        {
-          invoice_id: invoiceId,
-          product_id: product?.id ?? null,
-          item_number: idx + 1,
-          sku,
-          description: String(prod.xProd ?? "").slice(0, 255) || null,
-          quantity: qty,
-          unit_price: unitPrice,
-          total_value: totalValue,
-          ncm: prod.NCM ? String(prod.NCM) : null,
-          cest: prod.CEST ? String(prod.CEST) : null,
-          cfop: prod.CFOP ? String(prod.CFOP) : null,
-          gtin,
-          approx_tax_value: approxTaxValue,
-          icms_rate: icmsRate,
-          icms_value: icmsValue,
-          ipi_value: ipiValue,
-          pis_value: pisValue,
-          cofins_value: cofinsValue,
-          difal_value: difalValue,
-          ibs_value: ibsValue,
-          cbs_value: cbsValue,
-        },
-        { conflictFields },
-      );
-    }
-
-    console.log(
-      `${logPrefix} ${det.length} item(ns) fiscal(is) upsertado(s) para invoice ${invoiceId}`,
-    );
-  }
-
   async process(job: Job<ApiFetchJobPayload>): Promise<void> {
     const { eventId, resource, action, apiFetch } = job.data;
 
@@ -1069,6 +964,31 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         );
       }
       return;
+    }
+
+    // ─── EAN/ean_tribut não pode "misturar" com outro product ─────────────────
+    // Antes de criar/atualizar, garante que gtin/gtinEmbalagem não pertencem
+    // a nenhum outro product (nem via ean/ean_tribut nem via SupplierMapping).
+    // Se pertencer, é conflito de dados — aborta sem retry e alerta pra
+    // revisão manual (ver constraint de banco equivalente na migration).
+    try {
+      await assertEanNotOwnedByAnotherProduct({
+        productId: existingProduct.id,
+        candidates: [
+          { field: "ean", value: blingProduct.gtin },
+          { field: "ean_tribut", value: blingProduct.gtinEmbalagem },
+        ],
+        logPrefix,
+      });
+    } catch (error: any) {
+      if (error instanceof EanConflictError) {
+        alertService.sendAlert({
+          severity: "CRITICAL",
+          title: "Conflito de EAN entre produtos (Bling)",
+          message: `${error.message} | blingId=${blingProduct.id} | sku=${blingProduct.codigo}`,
+        });
+      }
+      throw error;
     }
 
     const { measure, line, rim } = extractProductMeasureAndLine(
@@ -1523,7 +1443,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     let fiscalTotals: ReturnType<
       typeof extractInvoiceFiscalTotalsFromXml
     > | null = null;
-    let xmlDet: any[] = [];
 
     if (nf.xml) {
       try {
@@ -1543,16 +1462,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           destinationUfFromXml = extracted.destinationUf || null;
           destinationCityFromXml = extracted.destinationCity || null;
           fiscalTotals = extractInvoiceFiscalTotalsFromXml(xmlContent);
-
-          // Extrai det do XML para montar fiscal items
-          const parsed = parser.parse(xmlContent);
-          const nfeXml =
-            parsed?.nfeProc?.NFe?.infNFe ||
-            parsed?.procNFe?.NFe?.infNFe ||
-            parsed?.NFe?.infNFe;
-          if (nfeXml?.det) {
-            xmlDet = Array.isArray(nfeXml.det) ? nfeXml.det : [nfeXml.det];
-          }
         }
       } catch (err) {
         console.warn("[XML PARSE ERROR]", { blingId: apiFetch.blingId, err });
@@ -1751,11 +1660,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     if (nf.itens?.length && !alreadyFullyReconciled) {
-      const fiscalByItemNumber = new Map<number, any>();
-      for (let idx = 0; idx < xmlDet.length; idx++) {
-        fiscalByItemNumber.set(idx, xmlDet[idx]);
-      }
-
       for (let idx = 0; idx < nf.itens.length; idx++) {
         const item = nf.itens[idx];
         const sku = item.codigo?.trim() ?? null;
@@ -1772,7 +1676,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         if (!product) {
           const reason =
             !sku && !ean
-              ? "SKU e EAN ausentes no XML"
+              ? "SKU e EAN ausentes no item da API"
               : !sku
                 ? "SKU ausente — apenas EAN salvo"
                 : !ean
@@ -1789,92 +1693,35 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           continue;
         }
 
-        // ─── Fiscal item do XML correspondente ──────────────────────────────
-        let fiscal: ItemWithFiscal["fiscal"] = undefined;
-        const xmlItem = fiscalByItemNumber.get(idx);
+        // ─── Fiscal item direto da resposta da API Bling ────────────────────
+        // A API não traz frete/seguro/outras despesas/desconto/IPI/PIS/COFINS/
+        // DIFAL/IBS/CBS por item (só o XML da NF-e tem isso), então
+        // acquisition_unit_cost fica de fora — o kardex (stock-movements
+        // .service.ts) já cai pro unit_price quando acquisition_unit_cost
+        // está zerado/ausente.
+        const unitPrice = parseNum(item.valor);
+        const totalValue = parseNum(item.valorTotal) || unitPrice * qty;
 
-        if (xmlItem) {
-          const prod = xmlItem.prod ?? {};
-          const imposto = xmlItem.imposto ?? {};
-
-          // Captura dinâmica do grupo ICMS
-          const icmsGroup: any = imposto?.ICMS
-            ? Object.values(imposto.ICMS)[0]
-            : {};
-
-          const ipiGroup: any =
-            imposto?.IPI?.IPITrib ?? imposto?.IPI?.IPINT ?? {};
-          const pisGroup: any =
-            imposto?.PIS?.PISAliq ??
-            imposto?.PIS?.PISQtde ??
-            imposto?.PIS?.PISNT ??
-            imposto?.PIS?.PISOutr ??
-            {};
-          const cofinsGroup: any =
-            imposto?.COFINS?.COFINSAliq ??
-            imposto?.COFINS?.COFINSQtde ??
-            imposto?.COFINS?.COFINSNT ??
-            imposto?.COFINS?.COFINSOutr ??
-            {};
-          const ibsCbsGroup: any = imposto?.IBSCBS?.gIBSCBS ?? {};
-
-          // ─── Valores de Custo de Aquisição por Item ─────────────────────
-          const vProd = parseNum(prod.vProd);
-          const vIPI = parseNum(ipiGroup?.vIPI);
-          const freightValue = parseNum(prod.vFrete);
-          const insuranceValue = parseNum(prod.vSeg);
-          const otherExpensesValue = parseNum(prod.vOutro);
-          const discountValue = parseNum(prod.vDesc);
-          const icmsStValue = parseNum(icmsGroup?.vICMSST);
-
-          const itemQty = parseNum(prod.qCom) || qty || 1;
-          const acquisitionTotal =
-            vProd +
-            freightValue +
-            insuranceValue +
-            otherExpensesValue +
-            vIPI +
-            icmsStValue -
-            discountValue;
-
-          const acquisitionUnitCost =
-            itemQty > 0 ? acquisitionTotal / itemQty : 0;
-          // ──────────────────────────────────────────────────────────────────
-
-          fiscal = {
-            product_id: product.id,
-            item_number: idx + 1,
-            sku,
-            description: String(prod.xProd ?? "").slice(0, 255) || null,
-            quantity: itemQty,
-            unit_price: parseNum(prod.vUnCom) || parseNum(item.valor),
-            total_value: vProd,
-            ncm: prod.NCM ? String(prod.NCM) : null,
-            cest: prod.CEST ? String(prod.CEST) : null,
-            cfop: prod.CFOP ? String(prod.CFOP) : null,
-            gtin: ean,
-            approx_tax_value: parseNum(imposto?.vTotTrib),
-            icms_rate: parseNum(icmsGroup?.pICMS),
-            icms_value: parseNum(icmsGroup?.vICMS),
-            ipi_value: vIPI,
-            pis_value: parseNum(pisGroup?.vPIS),
-            cofins_value: parseNum(cofinsGroup?.vCOFINS),
-            difal_value: parseNum(
-              imposto?.ICMSUFDest?.vICMSUFDest ??
-                imposto?.ICMSUFDest?.vICMSDest,
-            ),
-            ibs_value:
-              parseNum(ibsCbsGroup?.gIBSUF?.vIBSUF) +
-              parseNum(ibsCbsGroup?.gIBSMun?.vIBSMun),
-            cbs_value: parseNum(ibsCbsGroup?.gCBS?.vCBS),
-            freight_value: freightValue,
-            insurance_value: insuranceValue,
-            other_expenses_value: otherExpensesValue,
-            discount_value: discountValue,
-            icms_st_value: icmsStValue,
-            acquisition_unit_cost: acquisitionUnitCost,
-          };
-        }
+        const fiscal: ItemWithFiscal["fiscal"] = {
+          product_id: product.id,
+          item_number: idx + 1,
+          sku,
+          description: item.descricao
+            ? String(item.descricao).slice(0, 255)
+            : null,
+          quantity: qty,
+          unit_price: unitPrice,
+          total_value: totalValue,
+          ncm: item.classificacaoFiscal ? String(item.classificacaoFiscal) : null,
+          cest: item.cest ? String(item.cest) : null,
+          cfop: item.cfop ? String(item.cfop) : null,
+          gtin: ean,
+          approx_tax_value: parseNum(
+            item.impostos?.valorAproximadoTotalTributos,
+          ),
+          icms_rate: parseNum(item.impostos?.icms?.aliquota),
+          icms_value: parseNum(item.impostos?.icms?.valor),
+        };
 
         invoiceItemsForCreate.push({
           product_id: product.id,

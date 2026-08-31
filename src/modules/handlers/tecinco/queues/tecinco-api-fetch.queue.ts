@@ -37,6 +37,8 @@ import {
   normalizeEan,
   ensureSupplierMappings,
   resolveProductWithMapping,
+  assertEanNotOwnedByAnotherProduct,
+  EanConflictError,
 } from "./helpers/product.helpers";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
@@ -489,6 +491,28 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       }
 
       return;
+    }
+
+    // ─── EAN não pode "misturar" com outro product ─────────────────────────────
+    // Antes de criar/atualizar, garante que o ean não pertence a nenhum outro
+    // product (nem via ean/ean_tribut nem via SupplierMapping). Se pertencer,
+    // é conflito de dados — aborta sem retry e alerta pra revisão manual (ver
+    // constraint de banco equivalente na migration).
+    try {
+      await assertEanNotOwnedByAnotherProduct({
+        productId: product.id,
+        candidates: [{ field: "ean", value: ean }],
+        logPrefix,
+      });
+    } catch (error: any) {
+      if (error instanceof EanConflictError) {
+        alertService.sendAlert({
+          severity: "CRITICAL",
+          title: "Conflito de EAN entre produtos (Tecinco)",
+          message: `${error.message} | systemId=${systemId}`,
+        });
+      }
+      throw error;
     }
 
     // ─── Produto próprio da Tecinco: cria ou atualiza ─────────────────────────

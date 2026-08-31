@@ -102,6 +102,8 @@ jest.mock("../helpers/product.helpers", () => ({
   normalizeEan: jest.fn((ean?: string) => ean),
   resolveProductWithMapping: jest.fn(),
   ensureSupplierMappings: jest.fn(),
+  assertEanNotOwnedByAnotherProduct: jest.fn().mockResolvedValue(undefined),
+  EanConflictError: class EanConflictError extends Error {},
 }));
 
 import { getTCarIntegration } from "../../api/tecinco_api";

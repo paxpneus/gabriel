@@ -230,6 +230,61 @@ export async function resolveProductByEan(params: {
   return null;
 }
 
+// Erro de dados (não é infra) — quem chama decide como reagir, mas por
+// padrão não deve ser reprocessado com retry/backoff, igual aos outros
+// erros de validação dessas filas.
+export class EanConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EanConflictError";
+  }
+}
+
+// Garante que nenhum dos EANs candidatos (ean e/ou ean_tribut, conforme a
+// integração) já pertence a um product OU está vinculado via SupplierMapping
+// a um product diferente do que estamos criando/atualizando. Isso pega o
+// conflito de "mistura" (mesmo EAN em ean de um produto e ean_tribut de
+// outro) antes de estourar erro genérico do Postgres na constraint de banco,
+// e dá contexto suficiente pra alertar/revisar manualmente.
+export async function assertEanNotOwnedByAnotherProduct(params: {
+  productId: string;
+  candidates: Array<{ field: string; value?: string | null }>;
+  logPrefix: string;
+}): Promise<void> {
+  const { productId, candidates, logPrefix } = params;
+
+  for (const { field, value } of candidates) {
+    const normalized = normalizeEan(value ?? undefined);
+    if (!normalized) continue;
+
+    const conflictingProduct = await Product.findOne({
+      where: {
+        id: { [Op.ne]: productId },
+        [Op.or]: [{ ean: normalized }, { ean_tribut: normalized }],
+      },
+    });
+
+    if (conflictingProduct) {
+      throw new EanConflictError(
+        `${logPrefix} — ${field}=${normalized} já pertence ao product id=${conflictingProduct.id} (produto atual id=${productId})`,
+      );
+    }
+
+    const conflictingMapping = await SupplierMapping.findOne({
+      where: {
+        supplier_product_code: normalized,
+        product_id: { [Op.ne]: productId },
+      },
+    });
+
+    if (conflictingMapping) {
+      throw new EanConflictError(
+        `${logPrefix} — ${field}=${normalized} já está vinculado via SupplierMapping ao product id=${conflictingMapping.product_id} (produto atual id=${productId})`,
+      );
+    }
+  }
+}
+
 export async function resolveProductByEanWithStock(params: {
   ean: string;
   unitBusinessId: string;

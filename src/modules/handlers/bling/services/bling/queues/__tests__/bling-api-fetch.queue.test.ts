@@ -61,6 +61,8 @@ jest.mock("../../../../../../inventory/brands/brands.service", () => ({
 jest.mock("../../../../../tecinco/queues/helpers/product.helpers", () => ({
   __esModule: true,
   resolveProductWithMapping: jest.fn(),
+  assertEanNotOwnedByAnotherProduct: jest.fn().mockResolvedValue(undefined),
+  EanConflictError: class EanConflictError extends Error {},
 }));
 
 jest.mock(
