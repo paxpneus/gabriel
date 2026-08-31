@@ -50,6 +50,16 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         sku: (value) => ({
           "$productConfigs.sku$": value,
         }),
+        // Busca por gtin OU gtin_package — o join de productConfigs já vem
+        // escopado pela unit_business_id do usuário (injetada pelo
+        // controller em filters.stockUnit.unitBusinessId), então essa busca
+        // nunca cruza o gtin de uma loja/integração com o de outra.
+        gtin: (value) => ({
+          [Op.or]: [
+            { "$productConfigs.gtin$": value },
+            { "$productConfigs.gtin_package$": value },
+          ],
+        }),
         subgroup_id: (value) => ({
           "$subgroup.id$": value,
         }),
