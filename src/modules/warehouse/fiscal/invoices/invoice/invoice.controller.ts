@@ -17,13 +17,7 @@ import { Op } from "sequelize";
 import { InvoiceAttributes } from "./invoice.types";
 import multer from "multer";
 import { BlingApiFetchQueue } from "../../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
-import User from "../../../../company/users/users/user.model";
-import {
-  TCarUpsertJobPayload,
-  TCarUpsertQueue,
-} from "../../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
-import { upsertInvoiceFromXml } from "../../../../../shared/utils/xml/invoice-xml";
-import UnitBusiness from "../../../../company/unit-business/unit-business.model";
+import { TCarUpsertQueue } from "../../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { getUserContext } from "../../../../../shared/query/get-logged-user";
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -433,38 +427,13 @@ export class InvoiceController extends BaseController<
         return;
       }
 
-      if (integration === "bling") {
-        console.log("IMPORT BLING");
-        const queue = req.app.locals.BlingApiFetchQueue as BlingApiFetchQueue;
-        await queue.upsertInvoiceFromXml(xmlContent);
-      } else if (integration === "tecinco") {
-        const userId = (req as any).user?.id;
-        const user = await User.findByPk(userId, {
-          attributes: ["unit_business_id"],
-        });
-
-        const unitBusiness = user?.unit_business_id
-          ? await UnitBusiness.findByPk(user.unit_business_id, {
-              attributes: ["number"],
-            })
-          : null;
-
-        const branchId = unitBusiness?.number
-          ? Number(unitBusiness.number)
-          : undefined;
-
-        const queue = req.app.locals.TCarUpsertQueue as TCarUpsertQueue;
-        await queue.add({
-          eventId: `manual-xml-${Date.now()}`,
-          resource: "invoice_xml",
-          action: "created",
-          companyId: "",
-          branchId,
-          data: { xml: xmlContent },
-        } satisfies TCarUpsertJobPayload);
-      } else {
-        await upsertInvoiceFromXml(xmlContent);
-      }
+      await this.service.importInvoiceXml({
+        integration,
+        xmlContent,
+        userId: (req as any).user?.id,
+        blingQueue: req.app.locals.BlingApiFetchQueue as BlingApiFetchQueue,
+        tecincoQueue: req.app.locals.TCarUpsertQueue as TCarUpsertQueue,
+      });
 
       res.json({ success: true });
     } catch (err: any) {

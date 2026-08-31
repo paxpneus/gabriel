@@ -38,6 +38,10 @@ import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invo
 import eventService from "../../../../company/events/event/event.service";
 import redisService from "../../../../../shared/utils/base-models/base-redis";
 import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import { BlingApiFetchQueue } from "../../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
+import { TCarUpsertQueue } from "../../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { upsertInvoiceFromXml } from "../../../../../shared/utils/xml/invoice-xml";
+import User from "../../../../company/users/users/user.model";
 import userService from "../../../../company/users/users/user.service";
 import {
   decryptXml,
@@ -814,6 +818,53 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         }
       }
     }
+  }
+
+  /**
+   * Importa uma NF-e a partir de um XML enviado manualmente. Roda sempre
+   * de forma síncrona (nunca enfileira), pra que um erro no processamento
+   * propague de verdade pro chamador em vez de só ser logado por um worker
+   * em background.
+   */
+  async importInvoiceXml(params: {
+    integration?: string;
+    xmlContent: string;
+    userId?: string;
+    blingQueue: BlingApiFetchQueue;
+    tecincoQueue: TCarUpsertQueue;
+  }): Promise<void> {
+    const { integration, xmlContent, userId, blingQueue, tecincoQueue } =
+      params;
+
+    if (integration === "bling") {
+      await blingQueue.upsertInvoiceFromXml(xmlContent);
+    } else if (integration === "tecinco") {
+      const branchId = await this.resolveTecincoBranchId(userId);
+      if (!branchId) {
+        throw new Error(
+          "Não foi possível resolver a filial do usuário para importar via Tecinco",
+        );
+      }
+      await tecincoQueue.upsertInvoiceFromXml(xmlContent, branchId);
+    } else {
+      await upsertInvoiceFromXml(xmlContent);
+    }
+  }
+
+  private async resolveTecincoBranchId(
+    userId: string | undefined,
+  ): Promise<number | undefined> {
+    const user = userId
+      ? await User.findByPk(userId, { attributes: ["unit_business_id"] })
+      : null;
+
+    const unitBusiness = user?.unit_business_id
+      ? await UnitBusiness.findByPk(user.unit_business_id, {
+          attributes: ["number"],
+        })
+      : null;
+
+    return unitBusiness?.number ? Number(unitBusiness.number) : undefined;
   }
 }
 

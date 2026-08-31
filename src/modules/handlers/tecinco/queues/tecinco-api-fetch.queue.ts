@@ -22,11 +22,13 @@ import { getTCarIntegration } from "../api/tecinco_api";
 import {
   TCarConferenciaEstoqueService,
   TCarNotaFiscalXmlByChaveComposta,
+  TCarNotaFiscalXmlByChaveNfe,
 } from "../service/conferencias-estoque/conferencias-estoque.service";
 import {
   InvoiceOperationalItemFromXml,
   UnmappedInvoiceItemFromXml,
   upsertInvoiceFromXml,
+  extractInvoiceIdentificationFromXml,
 } from "../../../../shared/utils/xml/invoice-xml";
 import TCarClienteService from "../service/clientes/clientes.service";
 import TCarProdutoService from "../service/produtos/produtos.service";
@@ -137,6 +139,84 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       maxProcessingMs: 120_000,
       workless: options.workless,
     });
+  }
+
+  /**
+   * Importa uma NF-e a partir de um XML enviado manualmente. Antes de
+   * importar, valida a nota contra a API da Tecinco pela chave de acesso
+   * (mesma identificação que GET /notas-fiscais/:numero?chave_nfe= aceita) —
+   * se a nota não existir lá (404), a importação falha de verdade em vez de
+   * silenciosamente aceitar um XML que a Tecinco ainda não reconhece.
+   * Roda síncrono, fora da fila, pra propagar erro de verdade pro chamador.
+   */
+  async upsertInvoiceFromXml(
+    xmlContent: string,
+    branchId: number,
+  ): Promise<void> {
+    const { numero, chaveAcesso } =
+      extractInvoiceIdentificationFromXml(xmlContent);
+
+    if (!numero || !chaveAcesso) {
+      throw new Error(
+        "XML sem número ou chave de acesso — não é possível validar contra a Tecinco",
+      );
+    }
+
+    const logPrefix = `[TCAR_UPSERT] invoice_xml_manual numero=${numero} branchId=${branchId}`;
+    const conferenciaService = new TCarConferenciaEstoqueService();
+    const identificacao: TCarNotaFiscalXmlByChaveNfe = {
+      chave_nfe: chaveAcesso,
+    };
+
+    let notaFiscal: any;
+    try {
+      notaFiscal = await conferenciaService.getNotaFiscal(
+        numero,
+        branchId,
+        identificacao,
+      );
+    } catch (err: any) {
+      const tecincoMessage = err?.response?.data?.message;
+      throw new Error(
+        tecincoMessage
+          ? `Nota fiscal não encontrada na Tecinco: ${tecincoMessage}`
+          : `Falha ao consultar nota fiscal na Tecinco: ${err?.message ?? err}`,
+      );
+    }
+
+    const itens = notaFiscal?.data?.itens ?? [];
+    const clnCodigo = notaFiscal?.data?.cliente?.codigo;
+
+    if (clnCodigo) {
+      await upsertCustomerFromTCar(branchId, clnCodigo, logPrefix);
+    } else {
+      console.warn(
+        `${logPrefix} — cln_codigo não resolvido, customer não sincronizado`,
+      );
+    }
+
+    let operationalItems: InvoiceOperationalItemFromXml[] = [];
+    let unmappedItems: UnmappedInvoiceItemFromXml[] = [];
+
+    if (Array.isArray(itens) && itens.length > 0) {
+      const ensured = await this.ensureProductsFromInvoiceItems(
+        itens,
+        branchId,
+      );
+      operationalItems = ensured.operationalItems;
+      unmappedItems = ensured.unmappedItems;
+    } else {
+      console.warn(`${logPrefix} — nota fiscal sem itens retornados`);
+    }
+
+    await upsertInvoiceFromXml(xmlContent, {
+      integrationName: "Tecinco",
+      operationalItems,
+      unmappedItems,
+      sourcePayload: notaFiscal?.data ?? notaFiscal ?? null,
+    });
+
+    console.log(`${logPrefix} — invoice upsertada com sucesso`);
   }
 
   async process(job: Job<TCarUpsertJobPayload>): Promise<void> {

@@ -33,6 +33,57 @@ import integrationsService from "../../../modules/integrations/integrations/inte
 const NO_TRANSPORTER_NAME = "Sem transporte";
 const NO_TRANSPORTER_DOCUMENT = "0000000";
 
+/**
+ * Extrai só o número (ide.nNF) e a chave de acesso de 44 dígitos de um XML
+ * de NF-e, sem processar o restante do documento. Usado para validar um
+ * upload manual de XML contra a fonte oficial (ex.: API da Tecinco) antes
+ * de importar.
+ */
+export function extractInvoiceIdentificationFromXml(
+  xmlContent: string,
+): { numero: string; chaveAcesso: string } {
+  const parsed = parser.parse(xmlContent);
+  const nfe =
+    parsed?.nfeProc?.NFe?.infNFe ||
+    parsed?.procNFe?.NFe?.infNFe ||
+    parsed?.NFe?.infNFe;
+
+  if (!nfe) {
+    throw new Error("XML inválido: estrutura de NF-e não reconhecida");
+  }
+
+  const ide = nfe.ide ?? {};
+  const numero = String(ide.nNF ?? "");
+
+  const rawId: string = nfe["@_Id"] ?? "";
+  let chaveAcesso = rawId.replace(/^NFe/, "");
+
+  if (!chaveAcesso) {
+    chaveAcesso =
+      parsed?.nfeProc?.protNFe?.infProt?.chNFe ??
+      parsed?.procNFe?.protNFe?.infProt?.chNFe ??
+      "";
+  }
+
+  if (!chaveAcesso) {
+    const emit = nfe.emit ?? {};
+    const cuf = String(ide.cUF ?? "");
+    const aamm =
+      String(ide.dhEmi ?? "").slice(2, 4) + String(ide.dhEmi ?? "").slice(5, 7);
+    const cnpj = String(emit.CNPJ ?? "").replace(/\D/g, "");
+    const mod = String(ide.mod ?? "55").padStart(2, "0");
+    const serie = String(ide.serie ?? "").padStart(3, "0");
+    const nnf = String(ide.nNF ?? "").padStart(9, "0");
+    const tpemis = String(ide.tpEmis ?? "1");
+    const cnf = String(ide.cNF ?? "").padStart(8, "0");
+    const cdv = String(ide.cDV ?? "");
+    const candidate = `${cuf}${aamm}${cnpj}${mod}${serie}${nnf}${tpemis}${cnf}${cdv}`;
+    if (candidate.length === 44) chaveAcesso = candidate;
+  }
+
+  return { numero, chaveAcesso };
+}
+
 export interface InvoiceOperationalItemFromXml {
   product_id: string;
   quantity_expected: number;
