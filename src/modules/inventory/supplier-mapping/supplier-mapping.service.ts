@@ -9,7 +9,6 @@ import {
   SupplierMappingCreationAttributes,
 } from "./supplier-mapping.types";
 import {
-  resolveProduct,
   resolveProductByEan,
 } from "../../handlers/tecinco/queues/helpers/product.helpers";
 

@@ -28,7 +28,7 @@ export function normalizeEan(ean?: string): string | undefined {
 // deve ser sempre consultado por ela diretamente — nunca por "qualquer loja
 // dessa integração", já que uma integração pode ter várias lojas com
 // ProductConfig.gtin populado de formas diferentes.
-async function resolveIntegrationsIdForUnitBusiness(
+export async function resolveIntegrationsIdForUnitBusiness(
   unitBusinessId: string,
   transaction?: Transaction,
 ): Promise<string> {
@@ -44,104 +44,41 @@ async function resolveIntegrationsIdForUnitBusiness(
   return unitBusiness.integrations_id;
 }
 
-export async function resolveProduct(params: {
-  systemId: string;
-  codigoFabrica?: string;
-  ean?: string;
+// Fonte da verdade de "qual produto local é esse código externo": SEMPRE
+// integration_mappings, nunca Product.id_system direto. id_system é só um
+// campo informativo (o último valor visto vindo da integração) — resolver
+// por ele direto já causou produto errado sendo escolhido quando o mesmo
+// id_system foi reaproveitado/alterado do lado de fora sem o mapping
+// acompanhar. Sem side effects — não cria SupplierMapping nem nada; é só
+// leitura, usada tanto por fluxos que escrevem (resolveProductWithMapping)
+// quanto por fluxos só de leitura (ex.: conferência de estoque).
+export async function resolveProductByMappingOnly(params: {
   unitBusinessId: string;
+  systemId: string;
   logPrefix: string;
 }): Promise<typeof Product.prototype | null> {
-  const { systemId, codigoFabrica, ean, unitBusinessId, logPrefix } = params;
-
-  // 1. id_system
-  let product = await Product.findOne({ where: { id_system: systemId } });
-  if (product) return product;
-
-  // 2. ProductConfig.sku = codigoFabrica
-  if (codigoFabrica) {
-    const config = await ProductConfig.findOne({
-      where: {
-        unit_business_id: unitBusinessId,
-        sku: {
-          [Op.in]: [codigoFabrica, systemId],
-        },
-      },
-    });
-    if (config) {
-      product = await Product.findByPk(config.product_id);
-      if (product) {
-        console.log(
-          `${logPrefix} — produto resolvido via ProductConfig.sku (codigoFabrica=${codigoFabrica}): id=${product.id}`,
-        );
-        return product;
-      }
-    }
-  }
-
-  // 3. ProductConfig.gtin / gtin_package diretamente, na própria unit
-  // business (evita tentar INSERT num gtin que já existe em outro produto
-  // dessa loja, o que estoura a constraint única e vira um erro genérico
-  // "Validation error" na fila, já que o conflictFields do upsert olha só
-  // id_system)
-  if (ean) {
-    const config = await ProductConfig.findOne({
-      where: {
-        unit_business_id: unitBusinessId,
-        [Op.or]: [{ gtin: ean }, { gtin_package: ean }],
-      },
-    });
-    if (config) {
-      product = await Product.findByPk(config.product_id);
-      if (product) {
-        console.log(
-          `${logPrefix} — produto resolvido via ProductConfig.gtin/gtin_package (ean=${ean}): id=${product.id}`,
-        );
-        return product;
-      }
-    }
-  }
+  const { unitBusinessId, systemId, logPrefix } = params;
 
   const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
 
-  // 4. SupplierMapping pelo EAN
-  if (ean) {
-    const mapping = await SupplierMapping.findOne({
-      where: { supplier_product_code: ean, integrations_id: integrationsId },
-    });
-    if (mapping) {
-      product = await Product.findByPk(mapping.product_id);
-      if (product) {
-        console.log(
-          `${logPrefix} — produto resolvido via SupplierMapping EAN=${ean}: id=${product.id}`,
-        );
-        return product;
-      }
-    }
-  }
+  const mappedProduct = await integrationMappingService.findEntityByMapping(
+    "PRODUCT",
+    integrationsId,
+    systemId,
+  );
 
-  // 5. SupplierMapping pelo codigoFabrica
-  if (codigoFabrica) {
-    const mapping = await SupplierMapping.findOne({
-      where: { supplier_product_code: codigoFabrica, integrations_id: integrationsId },
-    });
-    if (mapping) {
-      product = await Product.findByPk(mapping.product_id);
-      if (product) {
-        console.log(
-          `${logPrefix} — produto resolvido via SupplierMapping codigoFabrica=${codigoFabrica}: id=${product.id}`,
-        );
-        return product;
-      }
-    }
-  }
+  if (!mappedProduct) return null;
 
-  return null;
+  console.log(
+    `${logPrefix} — produto resolvido via integration mapping (external_id=${systemId})`,
+  );
+
+  return mappedProduct as typeof Product.prototype;
 }
 
-// Regra: sempre que um produto é resolvido (não importa por qual caminho —
-// integration mapping, id_system, ProductConfig.sku, SupplierMapping...) e
-// ele tem EAN, esse EAN precisa estar registrado como SupplierMapping. Se o
-// EAN já corresponde a algum produto ou supplier mapping existente NA MESMA
+// Regra: sempre que um produto é resolvido via integration mapping e ele tem
+// EAN, esse EAN precisa estar registrado como SupplierMapping. Se o EAN já
+// corresponde a algum produto ou supplier mapping existente NA MESMA
 // INTEGRAÇÃO, não faz nada; senão, cria o vínculo.
 async function backfillSupplierMappingByEan(params: {
   product: typeof Product.prototype;
@@ -167,12 +104,13 @@ async function backfillSupplierMappingByEan(params: {
   );
 }
 
-// Resolve produto SÓ por integration_mapping — sem fallback por id_system,
-// ProductConfig.sku, EAN ou SupplierMapping. Esses fallbacks já causaram
-// mappings errados/produtos duplicados no passado (ver contexto da sessão de
-// matching Tecinco↔local); a partir de agora, se não tem mapping, não
-// resolve — quem chama decide o que fazer (registrar em
-// unmapped_invoice_products, não criar produto sozinho).
+// Resolve produto SÓ por integration_mapping (via resolveProductByMappingOnly)
+// e, se encontrado, garante o SupplierMapping do EAN (backfill). Usado pelos
+// fluxos que criam/atualizam produto (Bling/Tecinco upsert) — se não tem
+// mapping, não resolve — quem chama decide o que fazer (registrar em
+// unmapped_invoice_products, não criar produto sozinho). Fluxos só de
+// leitura (sem transação de escrita em andamento) devem usar
+// resolveProductByMappingOnly diretamente, sem o backfill.
 export async function resolveProductWithMapping(params: {
   unitBusinessId: string;
   systemId: string;
@@ -181,21 +119,9 @@ export async function resolveProductWithMapping(params: {
 }): Promise<typeof Product.prototype | null> {
   const { unitBusinessId, systemId, ean, logPrefix } = params;
 
-  const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
+  const resolved = await resolveProductByMappingOnly({ unitBusinessId, systemId, logPrefix });
+  if (!resolved) return null;
 
-  const mappedProduct = await integrationMappingService.findEntityByMapping(
-    "PRODUCT",
-    integrationsId,
-    systemId,
-  );
-
-  if (!mappedProduct) return null;
-
-  console.log(
-    `${logPrefix} — produto resolvido via integration mapping (external_id=${systemId})`,
-  );
-
-  const resolved = mappedProduct as typeof Product.prototype;
   await backfillSupplierMappingByEan({ product: resolved, ean, unitBusinessId, logPrefix });
 
   return resolved;

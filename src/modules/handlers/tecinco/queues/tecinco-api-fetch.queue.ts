@@ -305,11 +305,27 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       ? String(data.epctb_codigofabrica).trim()
       : undefined;
 
+    // A Tecinco opera por loja — toda resolução de produto por EAN/
+    // SupplierMapping precisa saber exatamente qual unit business é a da
+    // operação (nunca "qualquer loja Tecinco"). branchId é a loja que
+    // originou esse evento; sem ela não há como escopar com segurança.
+    const resolvedBranchId = branchId ?? Number(data.fll_codigo);
+    const operationUnitBusiness = resolvedBranchId
+      ? await UnitBusiness.findOne({
+          where: { number: String(resolvedBranchId).padStart(2, "0") },
+        })
+      : null;
+
+    if (!operationUnitBusiness) {
+      console.warn(
+        `${logPrefix} — unit business não resolvida para branchId=${resolvedBranchId || "?"} — produto ignorado (sem loja da operação não há como resolver com segurança)`,
+      );
+      return;
+    }
+
     let productDataForGroup: TCarProdutoPayload = data;
 
     if (!data.grupo_descricao || !data.subgrupo_descricao) {
-      const resolvedBranchId = branchId ?? Number(data.fll_codigo);
-
       if (resolvedBranchId) {
         try {
           const produtoService = new TCarProdutoService();
@@ -368,7 +384,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
     // ─── Resolve produto SÓ por integration mapping ────────────────────────────
     let product = await resolveProductWithMapping({
-      integrationsId: integrations.id,
+      unitBusinessId: operationUnitBusiness.id,
       systemId,
       ean,
       logPrefix,
@@ -468,6 +484,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             supplierCnpj,
             ean,
             codigoFabrica,
+            unitBusinessId: unitBusiness.id,
             logPrefix,
           });
         } else {
@@ -501,6 +518,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     try {
       await assertEanNotOwnedByAnotherProduct({
         productId: product.id,
+        unitBusinessId: operationUnitBusiness.id,
         candidates: [{ field: "ean", value: ean }],
         logPrefix,
       });
@@ -533,7 +551,6 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       values: {
         id_system: systemId,
         name: data.epctb_nome?.trim() ?? "",
-        ean,
         unit: data.epctb_unidade,
         gross_weight: data.epctb_pesobruto,
         net_weight: data.epctb_pesoliq,
@@ -612,6 +629,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
         ean,
         codigoFabrica,
+        unitBusinessId: unitBusiness.id,
         logPrefix,
       });
     }
@@ -776,8 +794,6 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     operationalItems: InvoiceOperationalItemFromXml[];
     unmappedItems: UnmappedInvoiceItemFromXml[];
   }> {
-    const integrations = await getTCarIntegration("Tecinco");
-
     const operationalItems: InvoiceOperationalItemFromXml[] = [];
     const unmappedItems: UnmappedInvoiceItemFromXml[] = [];
     const unitBusiness = await UnitBusiness.findOne({
@@ -785,9 +801,23 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     });
 
     if (!unitBusiness) {
+      // Sem unit business não há como escopar a resolução por EAN/
+      // SupplierMapping com segurança (a Tecinco opera por loja) — os itens
+      // ficam todos como unmapped em vez de arriscar resolver contra a loja
+      // errada.
       console.warn(
         `[TCAR_UPSERT] UnitBusiness não encontrada para branchId=${branchId} — produtos da nota não serão vinculados`,
       );
+      return {
+        operationalItems: [],
+        unmappedItems: itens.map((item) => ({
+          sku: item.epctb_codigo ? String(item.epctb_codigo).trim() : null,
+          gtin: null,
+          qty: Number(item.epeit_qtdade ?? 0),
+          xProd: item.produto_nome ?? null,
+          reason: `UnitBusiness não encontrada para branchId=${branchId}`,
+        })),
+      };
     }
 
     const produtoService = new TCarProdutoService();
@@ -830,7 +860,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
       // ─── Resolve produto SÓ por integration mapping ────────────────────────────
       const product = await resolveProductWithMapping({
-        integrationsId: integrations.id,
+        unitBusinessId: unitBusiness.id,
         systemId,
         ean,
         logPrefix,
@@ -883,9 +913,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       // ─── SupplierMappings ─────────────────────────────────────────────────────
       await ensureSupplierMappings({
         productId: product.id,
-        supplierCnpj: unitBusiness?.cnpj ?? "00000000000000",
+        supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
         ean,
         codigoFabrica,
+        unitBusinessId: unitBusiness.id,
         logPrefix,
         systemId,
       });
