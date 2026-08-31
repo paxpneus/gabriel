@@ -22,6 +22,7 @@ import {
   ProductSalesReportRow,
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
+import { resolveIntegrationsIdForUnitBusiness } from "../../../handlers/tecinco/queues/helpers/product.helpers";
 import productWithMovementsRepository from '../repository/product-with-movements'
 import KitComponent from "../../kit-components/kit-component.model";
 import kitComponentService from "../../kit-components/kit-component.service";
@@ -38,7 +39,12 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         sortBy: ["created_at", "name"],
         sortDir: "DESC",
       },
-      searchFields: ["name", "ean", "ean_tribut", "$productConfigs.sku$"],
+      searchFields: [
+        "name",
+        "$productConfigs.sku$",
+        "$productConfigs.gtin$",
+        "$productConfigs.gtin_package$",
+      ],
       filterableFields: ["type"],
       customFields: {
         sku: (value) => ({
@@ -88,19 +94,31 @@ export class ProductService extends BaseService<Product, ProductRepository> {
 
   async findByCode(
     code: string,
+    unitBusinessId: string,
     options?: { transaction?: Transaction },
   ): Promise<{ product: Product; matchedCode: string } | null> {
-    const byEan = await this.findOne({
+    const config = await ProductConfig.findOne({
       where: {
-        [Op.or]: [{ ean: code }, { ean_tribut: code }],
+        unit_business_id: unitBusinessId,
+        [Op.or]: [{ gtin: code }, { gtin_package: code }],
       },
       transaction: options?.transaction,
     });
 
-    if (byEan) return { product: byEan, matchedCode: code };
+    if (config) {
+      const product = await this.findById(config.product_id, {
+        transaction: options?.transaction,
+      });
+      if (product) return { product, matchedCode: code };
+    }
+
+    const integrationsId = await resolveIntegrationsIdForUnitBusiness(
+      unitBusinessId,
+      options?.transaction,
+    );
 
     const mapping = await supplierMappingService.findOne({
-      where: { supplier_product_code: code },
+      where: { supplier_product_code: code, integrations_id: integrationsId },
       include: [{ model: Product, as: "product" }],
       transaction: options?.transaction,
     });

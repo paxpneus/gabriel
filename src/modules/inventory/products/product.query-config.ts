@@ -7,7 +7,12 @@ export const productQueryConfig: QueryConfig = {
     sortBy: ["created_at", "name"],
     sortDir: "DESC",
   },
-  searchFields: ["name", "ean", "ean_tribut", "$productConfigs.sku$"],
+  searchFields: [
+    "name",
+    "$productConfigs.sku$",
+    "$productConfigs.gtin$",
+    "$productConfigs.gtin_package$",
+  ],
   filterableFields: ["type"],
   customFields: {
     sku: (value) => ({

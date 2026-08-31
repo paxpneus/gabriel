@@ -111,7 +111,7 @@ export class InventoryBatchLogsService extends BaseService<
           batchId: inventoryBatchId,
           productId: productFound.id,
           stockId: stock.id!,
-          ean: productFound.ean ?? "",
+          ean: config?.gtin ?? config?.gtin_package ?? "",
           sku: config?.sku ?? "",
           quantityStock: stock.quantity,
         },
@@ -176,8 +176,8 @@ export class InventoryBatchLogsService extends BaseService<
       return {
         product_id: productFound.id,
         product_name: productFound.name,
-        ean: productFound.ean,
-        ean_tribut: productFound.ean_tribut,
+        ean: config?.gtin ?? null,
+        ean_tribut: config?.gtin_package ?? null,
       };
     });
   }
