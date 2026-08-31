@@ -363,6 +363,43 @@ async function isLoginWall(page: Page): Promise<boolean> {
 }
 
 
+/**
+ * Loga o estado da página quando o login automático falha de um jeito
+ * inesperado (ex.: campo não encontrado a tempo). Sem isso, uma mudança de
+ * layout ou um desafio anti-bot (CAPTCHA, verificação de dispositivo, tela
+ * de "escolher conta") só aparece como um timeout genérico no log, sem
+ * pista nenhuma do que a Bling realmente mostrou pro browser headless.
+ */
+async function logLoginPageState(page: Page, context: string): Promise<void> {
+ try {
+   const url = page.url();
+   const usernameCount = await page.locator("#username").count();
+   const passwordCount = await page
+     .locator('input[type="password"].InputText-input')
+     .count();
+   const bodyText = await page
+     // @ts-ignore — evaluate roda no contexto do browser, onde `document` existe
+     .evaluate(() => document.body.innerText.slice(0, 1500))
+     .catch(() => "<falha ao ler body>");
+
+   console.error(
+     `[BlingStockScrape] Estado da página em "${context}": url=${url} ` +
+       `#username=${usernameCount} senha=${passwordCount}\n` +
+       `--- texto visível da página ---\n${bodyText}\n--- fim ---`,
+   );
+
+   const screenshotPath = path.resolve(
+     `./bling_session/login-failure-${Date.now()}.png`,
+   );
+   await page.screenshot({ path: screenshotPath, fullPage: true });
+   console.error(`[BlingStockScrape] Screenshot salvo em ${screenshotPath}`);
+ } catch (err: any) {
+   console.error(
+     `[BlingStockScrape] Falha ao capturar diagnóstico de "${context}": ${err?.message ?? err}`,
+   );
+ }
+}
+
 async function doAutoLogin(page: Page): Promise<boolean> {
  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
 
@@ -370,9 +407,14 @@ async function doAutoLogin(page: Page): Promise<boolean> {
  // O formulário de login da Bling é de etapa única: usuário e senha ficam
  // visíveis ao mesmo tempo, e o botão já é o de submit ("Entrar") — não
  // existe mais um botão intermediário "Continuar" que revela a senha depois.
- await page.fill("#username", BLING_EMAIL);
- await page.fill('input[type="password"].InputText-input', BLING_PASSWORD);
- await page.click(".login-button-submit");
+ try {
+   await page.fill("#username", BLING_EMAIL);
+   await page.fill('input[type="password"].InputText-input', BLING_PASSWORD);
+   await page.click(".login-button-submit");
+ } catch (err: any) {
+   await logLoginPageState(page, "preenchimento do formulário de login");
+   throw err;
+ }
 
 
  await page.waitForTimeout(4_000);
@@ -387,6 +429,7 @@ async function doAutoLogin(page: Page): Promise<boolean> {
    console.error(
      "[BlingStockScrape] Login automático falhou — CAPTCHA, 2FA ou credenciais inválidas",
    );
+   await logLoginPageState(page, "pós-login ainda na tela de login");
    return false;
  }
 
