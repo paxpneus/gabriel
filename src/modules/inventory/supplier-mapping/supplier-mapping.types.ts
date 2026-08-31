@@ -6,6 +6,7 @@ export interface SupplierMappingAttributes {
   product_id: string;
   supplier_cnpj?: string;
   supplier_product_code: string;
+  integrations_id?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
