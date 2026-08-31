@@ -374,9 +374,7 @@ async function logLoginPageState(page: Page, context: string): Promise<void> {
  try {
    const url = page.url();
    const usernameCount = await page.locator("#username").count();
-   const passwordCount = await page
-     .locator('input[type="password"].InputText-input')
-     .count();
+   const passwordCount = await page.locator('input[type="password"]').count();
    const bodyText = await page
      // @ts-ignore — evaluate roda no contexto do browser, onde `document` existe
      .evaluate(() => document.body.innerText.slice(0, 1500))
@@ -404,13 +402,32 @@ async function doAutoLogin(page: Page): Promise<boolean> {
  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
 
 
- // O formulário de login da Bling é de etapa única: usuário e senha ficam
- // visíveis ao mesmo tempo, e o botão já é o de submit ("Entrar") — não
- // existe mais um botão intermediário "Continuar" que revela a senha depois.
+ // A Bling serve pelo menos duas implementações diferentes do formulário
+ // de login (a "clássica", com classes tipo `InputText-input` e botão
+ // `.login-button-submit`, e uma redesenhada com PrimeReact — classes
+ // `p-inputtext`/`p-button-primary`, sem `.login-button-submit`). Qual
+ // delas aparece varia até entre execuções do mesmo processo (confirmado
+ // rodando localmente com playwright-extra + stealth várias vezes) — não
+ // é uma migração linear que dá pra tratar como "layout antigo vs novo".
+ // Por isso os seletores abaixo evitam classes específicas de layout e
+ // usam só o que é estável nas duas versões: o id do usuário, o
+ // type="password" da senha (só existe um campo desse tipo na página) e o
+ // texto do botão — e esperam o elemento ficar visível antes de interagir,
+ // já que a página é renderizada via JS e pode não estar pronta logo após
+ // o domcontentloaded.
+ const usernameField = page.locator("#username");
+ const passwordField = page.locator('input[type="password"]');
+ const submitButton = page.getByRole("button", { name: "Entrar", exact: true });
+
  try {
-   await page.fill("#username", BLING_EMAIL);
-   await page.fill('input[type="password"].InputText-input', BLING_PASSWORD);
-   await page.click(".login-button-submit");
+   await usernameField.waitFor({ state: "visible", timeout: 15_000 });
+   await usernameField.fill(BLING_EMAIL);
+
+   await passwordField.waitFor({ state: "visible", timeout: 15_000 });
+   await passwordField.fill(BLING_PASSWORD);
+
+   await submitButton.waitFor({ state: "visible", timeout: 15_000 });
+   await submitButton.click();
  } catch (err: any) {
    await logLoginPageState(page, "preenchimento do formulário de login");
    throw err;

@@ -172,12 +172,31 @@ export class BlingManifestacaoService {
       timeout: 30_000,
     });
 
-    // O formulário de login da Bling é de etapa única: usuário e senha ficam
-    // visíveis ao mesmo tempo, e o botão já é o de submit ("Entrar") — não
-    // existe mais um botão intermediário "Continuar" que revela a senha depois.
-    await page.fill("#username", BLING_EMAIL);
-    await page.fill('input[type="password"].InputText-input', BLING_PASSWORD);
-    await page.click(".login-button-submit");
+    // A Bling serve pelo menos duas implementações diferentes do formulário
+    // de login (a "clássica", com classes tipo `InputText-input` e botão
+    // `.login-button-submit`, e uma redesenhada com PrimeReact — classes
+    // `p-inputtext`/`p-button-primary`, sem `.login-button-submit`). Qual
+    // delas aparece varia até entre execuções do mesmo processo, então os
+    // seletores abaixo evitam classes específicas de layout e usam só o que
+    // é estável nas duas versões: o id do usuário, o type="password" da
+    // senha (só existe um campo desse tipo na página) e o texto do botão —
+    // esperando cada um ficar visível antes de interagir, já que a página é
+    // renderizada via JS e pode não estar pronta logo após o domcontentloaded.
+    const usernameField = page.locator("#username");
+    const passwordField = page.locator('input[type="password"]');
+    const submitButton = page.getByRole("button", {
+      name: "Entrar",
+      exact: true,
+    });
+
+    await usernameField.waitFor({ state: "visible", timeout: 15_000 });
+    await usernameField.fill(BLING_EMAIL);
+
+    await passwordField.waitFor({ state: "visible", timeout: 15_000 });
+    await passwordField.fill(BLING_PASSWORD);
+
+    await submitButton.waitFor({ state: "visible", timeout: 15_000 });
+    await submitButton.click();
 
     await page.waitForTimeout(4_000);
     await page.goto(NOTAS_ENTRADA_URL, {
