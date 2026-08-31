@@ -12,8 +12,6 @@ class Product
 {
   public id!: string;
   public name!: string;
-  public ean?: string;
-  public ean_tribut?: string;
   public id_system?: string;
   public type?: string;
   public category?: string;
@@ -52,8 +50,6 @@ Product.init(
     },
     id_system: { type: DataTypes.STRING(100), allowNull: true },
     name: { type: DataTypes.STRING(255), allowNull: false },
-    ean: { type: DataTypes.STRING(20), allowNull: true },
-    ean_tribut: { type: DataTypes.STRING(20), allowNull: true },
     type: { type: DataTypes.ENUM("UNIT", "KIT"), defaultValue: "UNIT" },
     subgroup_id: {
       type: DataTypes.UUID,
