@@ -106,8 +106,10 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       return;
     }
 
+    const integration = await getBlingIntegration("Bling");
+
     const existing = await SupplierMapping.findOne({
-      where: { product_id: product.id },
+      where: { product_id: product.id, integrations_id: integration.id },
     });
 
     if (existing) {
@@ -124,6 +126,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
         product_id: product.id,
         supplier_cnpj: `PENDING-${data.supplierBlingId}`,
         supplier_product_code: data.supplier_product_code,
+        integrations_id: integration.id,
       });
     }
 

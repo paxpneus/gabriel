@@ -360,47 +360,63 @@ async function findProductForInvoiceItem(params: {
   // O "supplierCnpj" (emitente) só é uma loja nossa em notas de saída/retorno;
   // em notas de entrada quem somos nós é o destinatário. Por isso testa os
   // dois — ou usa a unitBusinessId já resolvida pelo chamador, quando existir.
-  //
+  // unit_business_id é sempre a fonte da verdade de "qual loja" — nunca dá
+  // pra inferir de longe, e ProductConfig/SupplierMapping (via
+  // unit_business.integrations_id) nunca são consultados por "qualquer loja
+  // dessa integração".
+  let unitBusiness: typeof UnitBusiness.prototype | null = null;
+
+  if (params.unitBusinessId) {
+    unitBusiness = await UnitBusiness.findByPk(params.unitBusinessId);
+  } else {
+    const cleanSupplierCnpj = params.supplierCnpj
+      ? cleanDocument(params.supplierCnpj)
+      : null;
+    const candidateCnpjs = [
+      cleanSupplierCnpj,
+      params.receiverCnpj ? cleanDocument(params.receiverCnpj) : null,
+    ].filter((c): c is string => !!c);
+
+    unitBusiness = candidateCnpjs.length
+      ? await UnitBusiness.findOne({
+          where: { cnpj: { [Op.in]: candidateCnpjs } },
+        })
+      : null;
+  }
+
+  if (!unitBusiness) {
+    console.warn(
+      `${params.logPrefix} — unit business não encontrada (emitente=${params.supplierCnpj ?? "N/A"}, destinatário=${params.receiverCnpj ?? "N/A"}) — busca por ProductConfig ignorada`,
+    );
+    return null;
+  }
+
   // SKU (cProd) é a chave mais confiável e tem prioridade — EAN é usado só
   // como fallback quando não há SKU ou não há ProductConfig correspondente.
   if (sku) {
-    let unitBusiness: typeof UnitBusiness.prototype | null = null;
-
-    if (params.unitBusinessId) {
-      unitBusiness = await UnitBusiness.findByPk(params.unitBusinessId);
-    } else {
-      const cleanSupplierCnpj = params.supplierCnpj
-        ? cleanDocument(params.supplierCnpj)
-        : null;
-      const candidateCnpjs = [
-        cleanSupplierCnpj,
-        params.receiverCnpj ? cleanDocument(params.receiverCnpj) : null,
-      ].filter((c): c is string => !!c);
-
-      unitBusiness = candidateCnpjs.length
-        ? await UnitBusiness.findOne({
-            where: { cnpj: { [Op.in]: candidateCnpjs } },
-          })
-        : null;
-    }
-
-    if (unitBusiness) {
-      const config = await findProductConfigBySku(sku, unitBusiness.id);
-      if (config) product = await Product.findByPk(config.product_id);
-    } else {
-      console.warn(
-        `${params.logPrefix} — unit business não encontrada (emitente=${params.supplierCnpj ?? "N/A"}, destinatário=${params.receiverCnpj ?? "N/A"}) — busca por ProductConfig.sku ignorada`,
-      );
-    }
+    const config = await findProductConfigBySku(sku, unitBusiness.id);
+    if (config) product = await Product.findByPk(config.product_id);
   }
 
   if (!product && ean) {
-    product = await Product.findOne({
-      where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
+    const config = await ProductConfig.findOne({
+      where: {
+        unit_business_id: unitBusiness.id,
+        [Op.or]: [{ gtin: ean }, { gtin_package: ean }],
+      },
     });
+    if (config) product = await Product.findByPk(config.product_id);
   }
 
   if (product || !ean) return product;
+
+  const integrationsId = unitBusiness.integrations_id;
+  if (!integrationsId) {
+    console.warn(
+      `${params.logPrefix} — unit business ${unitBusiness.id} sem integrations_id configurado — fallback por SupplierMapping ignorado`,
+    );
+    return null;
+  }
 
   const cleanSupplierCnpj = params.supplierCnpj
     ? cleanDocument(params.supplierCnpj)
@@ -408,15 +424,19 @@ async function findProductForInvoiceItem(params: {
 
   const supplierMapping = cleanSupplierCnpj
     ? ((await SupplierMapping.findOne({
-        where: { supplier_product_code: ean, supplier_cnpj: cleanSupplierCnpj },
+        where: {
+          supplier_product_code: ean,
+          supplier_cnpj: cleanSupplierCnpj,
+          integrations_id: integrationsId,
+        },
         order: [["updatedAt", "DESC"]],
       })) ??
       (await SupplierMapping.findOne({
-        where: { supplier_product_code: ean },
+        where: { supplier_product_code: ean, integrations_id: integrationsId },
         order: [["updatedAt", "DESC"]],
       })))
     : await SupplierMapping.findOne({
-        where: { supplier_product_code: ean },
+        where: { supplier_product_code: ean, integrations_id: integrationsId },
         order: [["updatedAt", "DESC"]],
       });
 
@@ -426,7 +446,7 @@ async function findProductForInvoiceItem(params: {
 
   if (product) {
     console.log(
-      `${params.logPrefix} Produto resolvido via SupplierMapping | ean_nf=${ean} | product_id=${product.id} | ean_sistema=${product.ean}`,
+      `${params.logPrefix} Produto resolvido via SupplierMapping | ean_nf=${ean} | product_id=${product.id}`,
     );
   }
 

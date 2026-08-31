@@ -570,7 +570,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     console.log(
-      `${logPrefix} Stock upsertado: ean=${product.ean} | qty=${newQuantity} | avg_cost=${averageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
+      `${logPrefix} Stock upsertado: product_id=${product.id} | qty=${newQuantity} | avg_cost=${averageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
     );
 
     const affectedBatches = await InventoryBatch.findAll({
@@ -838,16 +838,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // SKU (nf.itens[].codigo) é a chave mais confiável — vem direto do
     // catálogo da Bling e bate com ProductConfig.sku, sempre escopado na
     // unit_business da Bling. EAN é usado só como fallback quando não há
-    // SKU ou não há ProductConfig correspondente.
+    // SKU ou não há ProductConfig correspondente — e mora em
+    // ProductConfig.gtin/gtin_package (escopado por unit_business_id), não
+    // mais em Product.ean/ean_tribut.
     if (sku) {
       const config = await findProductConfigBySku(sku, BLING_UNIT_BUSINESS_ID!);
       if (config) product = await Product.findByPk(config.product_id);
     }
 
     if (!product && ean) {
-      product = await Product.findOne({
-        where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
+      const config = await ProductConfig.findOne({
+        where: {
+          unit_business_id: BLING_UNIT_BUSINESS_ID,
+          [Op.or]: [{ gtin: ean }, { gtin_package: ean }],
+        },
       });
+      if (config) product = await Product.findByPk(config.product_id);
     }
 
     if (product || !ean) return product;
@@ -857,20 +863,29 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       ? cleanDocument(params.supplierCnpj)
       : null;
 
+    const integration = await getBlingIntegration("Bling");
+
     const supplierMapping = cleanSupplierCnpj
       ? ((await SupplierMapping.findOne({
           where: {
             supplier_product_code: supplierProductCode,
             supplier_cnpj: cleanSupplierCnpj,
+            integrations_id: integration.id,
           },
           order: [["updatedAt", "DESC"]],
         })) ??
         (await SupplierMapping.findOne({
-          where: { supplier_product_code: supplierProductCode },
+          where: {
+            supplier_product_code: supplierProductCode,
+            integrations_id: integration.id,
+          },
           order: [["updatedAt", "DESC"]],
         })))
       : await SupplierMapping.findOne({
-          where: { supplier_product_code: supplierProductCode },
+          where: {
+            supplier_product_code: supplierProductCode,
+            integrations_id: integration.id,
+          },
           order: [["updatedAt", "DESC"]],
         });
 
@@ -880,7 +895,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     if (product) {
       console.log(
-        `${params.logPrefix} Produto resolvido via SupplierMapping | ean_nf=${ean} | product_id=${product.id} | ean_sistema=${product.ean}`,
+        `${params.logPrefix} Produto resolvido via SupplierMapping | ean_nf=${ean} | product_id=${product.id}`,
       );
     }
 
@@ -960,7 +975,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // Sem fallback por EAN/ProductConfig.sku/SupplierMapping — se não tem
     // mapping, não é esse produto, ponto final (ver resolveProductWithMapping).
     const existingProduct = await resolveProductWithMapping({
-      integrationsId: integration.id,
+      unitBusinessId: unitBusiness.id,
       systemId: String(blingProduct.id),
       ean: blingProduct.gtin,
       logPrefix,
@@ -1005,6 +1020,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     try {
       await assertEanNotOwnedByAnotherProduct({
         productId: existingProduct.id,
+        unitBusinessId: unitBusiness.id,
         candidates: [
           { field: "ean", value: blingProduct.gtin },
           { field: "ean_tribut", value: blingProduct.gtinEmbalagem },
@@ -1137,8 +1153,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const productValues = {
       name: blingProduct.nome,
       id_system: String(blingProduct.id),
-      ean: blingProduct.gtin ?? `NO-EAN-${blingProduct.id}`,
-      ean_tribut: blingProduct.gtinEmbalagem ?? `NO-EAN-${blingProduct.id}`,
       type: isKit ? "KIT" : "UNIT",
       integrations_id: integration.id,
       source_payload: blingProduct as unknown as Record<string, unknown>,
@@ -1385,9 +1399,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     const cleanCnpj = cleanDocument(cnpj);
+    const integration = await getBlingIntegration("Bling");
 
     const existing = await SupplierMapping.findOne({
-      where: { product_id: product.id },
+      where: { product_id: product.id, integrations_id: integration.id },
     });
 
     if (existing) {
@@ -1401,6 +1416,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           product_id: product.id,
           supplier_cnpj: cleanCnpj,
           supplier_product_code: ps.codigo,
+          integrations_id: integration.id,
         });
       }
     }
