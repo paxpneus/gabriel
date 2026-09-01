@@ -8,6 +8,7 @@ import {
   FullSupplierMapping,
   SupplierMappingCreationAttributes,
 } from "./supplier-mapping.types";
+import { resolveIntegrationsIdForUnitBusiness } from "../../handlers/tecinco/queues/helpers/product.helpers";
 
 export class SupplierMappingService extends BaseService<
   SupplierMapping,
@@ -17,12 +18,20 @@ export class SupplierMappingService extends BaseService<
     super(supplierMappingRepository);
   }
 
-  async findByProductCode(ean: string): Promise<FullSupplierMapping | null> {
+  async findByProductCode(
+    ean: string,
+    unitBusinessId: string,
+  ): Promise<FullSupplierMapping | null> {
     if (!ean) {
       throw Error("EAN Não informado");
     }
 
-    const supplierFound = await this.repository.findSupplierByProductCode(ean);
+    const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
+
+    const supplierFound = await this.repository.findSupplierByProductCode(
+      ean,
+      integrationsId,
+    );
 
     if (!supplierFound) return null;
 

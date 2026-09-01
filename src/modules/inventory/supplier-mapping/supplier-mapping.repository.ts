@@ -11,10 +11,12 @@ export class SupplierMappingRepository extends BaseRepository<SupplierMapping> {
 
  async findSupplierByProductCode(
   ean: string,
+  integrationsId: string,
 ): Promise<FullSupplierMapping | null> {
   const supplierMappingFound = (await this.findOne({
     where: {
-      supplier_product_code: ean
+      supplier_product_code: ean,
+      integrations_id: integrationsId,
     },
     include: [
       {
