@@ -1,4 +1,4 @@
-import { FindOptions } from "sequelize";
+import { FindOptions, where } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import { Product, ProductConfig, Stock } from "../../../inventory";
 import InvoiceItems from "../../fiscal/invoices/invoice-items/invoice-items.model";
@@ -154,7 +154,9 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
             model: Product,
             as: "product",
             attributes: { exclude: ["source_payload"] },
-            include: [{ model: Stock, as: "stocks" }],
+            include: [{ model: Stock, as: "stocks", where: {
+              unit_business_id: unitBusinessId
+            } }],
           },
         ],
       },
