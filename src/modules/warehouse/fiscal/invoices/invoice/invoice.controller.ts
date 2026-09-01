@@ -420,6 +420,11 @@ export class InvoiceController extends BaseController<
         return;
       }
 
+      if (!integration) {
+        res.status(400).json({ error: "Nenhuma integração selecionada!" });
+        return;
+      }
+
       const xmlContent = req.file.buffer.toString("utf-8");
 
       if (!xmlContent.trim()) {
