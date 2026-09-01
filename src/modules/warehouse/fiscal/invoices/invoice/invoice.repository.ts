@@ -299,7 +299,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           as: "unitBusinessAttributes",
           where: attrWhere,
           required: true,
-          attributes: ["status", "type", "batch_generated"],
+          attributes: ["status", "type", "batch_generated", "unit_business_id"],
           include: [
             {
               model: UnitBusiness,
@@ -405,7 +405,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           as: "unitBusinessAttributes",
           where: { unit_business_id: unitBusinessId },
           required: false,
-          attributes: ["status", "type", "batch_generated"],
+          attributes: ["status", "type", "batch_generated", "unit_business_id"],
           include: [
             {
               model: UnitBusiness,
@@ -466,7 +466,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           model: InvoiceUnitBusinessAttributes,
           as: "unitBusinessAttributes",
           required: false,
-          attributes: ["status", "type", "batch_generated"],
+          attributes: ["status", "type", "batch_generated", "unit_business_id"],
           include: [
             {
               model: UnitBusiness,
@@ -509,7 +509,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           as: "unitBusinessAttributes",
           where: { unit_business_id: unitBusinessId },
           required: false,
-          attributes: ["status", "type", "batch_generated"],
+          attributes: ["status", "type", "batch_generated", "unit_business_id"],
           include: [
             {
               model: UnitBusiness,
@@ -550,7 +550,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           as: "unitBusinessAttributes",
           where: { unit_business_id: unitBusinessId },
           required: false,
-          attributes: ["status", "type", "batch_generated"],
+          attributes: ["status", "type", "batch_generated", "unit_business_id"],
           include: [{ model: UnitBusiness, as: "unitBusiness" }],
         },
         {

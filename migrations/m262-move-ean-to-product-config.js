@@ -35,6 +35,43 @@ module.exports = {
         { transaction },
       );
 
+      // Product.ean/ean_tribut era global (sem unit_business_id) — um produto
+      // pode ter EAN real e ainda assim não ter product_configs pra alguma
+      // (ou nenhuma) unit_business ainda. Sem isso, o UPDATE abaixo (que só
+      // toca linhas já existentes) perde silenciosamente esse dado quando as
+      // colunas forem dropadas. Cria a linha faltante pra CADA unit_business,
+      // zerada, só com o gtin/gtin_package preenchido — não inventa sku nem
+      // custo, é só pra não perder o EAN/GTIN que existia.
+      await queryInterface.sequelize.query(
+        `
+        INSERT INTO product_configs (
+          id, product_id, unit_business_id, gtin, gtin_package, price, created_at, updated_at
+        )
+        SELECT
+          gen_random_uuid(),
+          p.id,
+          ub.id,
+          CASE WHEN p.ean IS NOT NULL AND p.ean <> '' AND p.ean NOT LIKE 'PENDING%'
+               THEN p.ean END,
+          CASE WHEN p.ean_tribut IS NOT NULL AND p.ean_tribut <> '' AND p.ean_tribut NOT LIKE 'PENDING%'
+               THEN p.ean_tribut END,
+          0,
+          NOW(),
+          NOW()
+        FROM products p
+        CROSS JOIN unit_businesses ub
+        WHERE (
+            (p.ean IS NOT NULL AND p.ean <> '' AND p.ean NOT LIKE 'PENDING%')
+            OR (p.ean_tribut IS NOT NULL AND p.ean_tribut <> '' AND p.ean_tribut NOT LIKE 'PENDING%')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM product_configs pc
+            WHERE pc.product_id = p.id AND pc.unit_business_id = ub.id
+          );
+        `,
+        { transaction },
+      );
+
       // Excluídos do backfill: não são dado real, então não há o que preservar.
       await queryInterface.sequelize.query(
         `
