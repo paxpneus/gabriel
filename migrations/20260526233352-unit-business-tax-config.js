@@ -32,15 +32,19 @@ module.exports = {
       updated_at: { type: Sequelize.DATE, allowNull: false },
     });
 
-    // já insere a Loja Pax Meli
-    await queryInterface.bulkInsert('unit_business_tax_configs', [{
-      id: require('uuid').v4(),
-      unit_business_id: '2d4a638e-1738-48c5-ac8b-d6c120ffa2e5',
-      approx_tax_rate: 0.0830,
-      description: 'Taxa fiscal estimada Loja Pax Meli (Mercado Livre)',
-      created_at: new Date(),
-      updated_at: new Date(),
-    }]);
+    // já insere a Loja Pax Meli, se ela existir neste banco
+    await queryInterface.sequelize.query(`
+      INSERT INTO unit_business_tax_configs
+        (id, unit_business_id, approx_tax_rate, description, created_at, updated_at)
+      SELECT :id, id, 0.0830, 'Taxa fiscal estimada Loja Pax Meli (Mercado Livre)', now(), now()
+      FROM unit_businesses
+      WHERE id = :unitBusinessId
+    `, {
+      replacements: {
+        id: require('uuid').v4(),
+        unitBusinessId: '2d4a638e-1738-48c5-ac8b-d6c120ffa2e5',
+      },
+    });
   },
 
   async down(queryInterface) {
