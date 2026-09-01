@@ -5,6 +5,8 @@ import {
   CreationAttributes,
   UpdateOptions,
   Transaction,
+  fn,
+  col,
 } from "sequelize";
 import {
   PaginatedResult,
@@ -12,7 +14,9 @@ import {
 } from "../../../../shared/query/query.types";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import Product from "../product.model";
-import productRepository, { ProductRepository } from "../repository/product.repository";
+import productRepository, {
+  ProductRepository,
+} from "../repository/product.repository";
 import ProductConfig from "../../product-config/product_config.model";
 import {
   ProductCreationAttributes,
@@ -23,7 +27,7 @@ import {
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
 import { resolveIntegrationsIdForUnitBusiness } from "../../../handlers/tecinco/queues/helpers/product.helpers";
-import productWithMovementsRepository from '../repository/product-with-movements'
+import productWithMovementsRepository from "../repository/product-with-movements";
 import KitComponent from "../../kit-components/kit-component.model";
 import kitComponentService from "../../kit-components/kit-component.service";
 import rimService from "../../rims/rim.service";
@@ -45,7 +49,23 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         "$productConfigs.gtin$",
         "$productConfigs.gtin_package$",
       ],
+      sortableFields: [
+        "name",
+        "$productConfigs.sku$",
+        "$productConfigs.gtin$",
+        "$productConfigs.gtin_package$",
+      ],
       filterableFields: ["type"],
+      customSort: {
+        gtin: (dir) => [
+          fn(
+            "COALESCE",
+            col("productConfigs.gtin"),
+            col("productConfigs.gtin_package"),
+          ),
+          dir,
+        ],
+      },
       customFields: {
         sku: (value) => ({
           "$productConfigs.sku$": value,
@@ -335,7 +355,9 @@ export class ProductService extends BaseService<Product, ProductRepository> {
   }
 
   async getKitComponents(productKitId: string): Promise<KitComponent[]> {
-    return kitComponentService.findAll({ where: { product_kit_id: productKitId } });
+    return kitComponentService.findAll({
+      where: { product_kit_id: productKitId },
+    });
   }
 
   async getSalesReport(
@@ -349,12 +371,13 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     unitBusinessId?: string,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<ProductDetailedWithMovementsSummary[]> {
-    const products = await productWithMovementsRepository.findAllDetailedWithMovements(
-      params,
-      this.queryConfig,
-      unitBusinessId,
-      extraOptions,
-    );
+    const products =
+      await productWithMovementsRepository.findAllDetailedWithMovements(
+        params,
+        this.queryConfig,
+        unitBusinessId,
+        extraOptions,
+      );
 
     return products.map((p) => this.normalizeProductWithMovements(p));
   }
