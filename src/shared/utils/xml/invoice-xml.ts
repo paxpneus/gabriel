@@ -315,12 +315,6 @@ async function findProductForInvoiceItem(params: {
 
   let product: Product | null = null;
 
-  if (ean) {
-    product = await Product.findOne({
-      where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
-    });
-  }
-
   const cleanSupplierCnpj = params.supplierCnpj
     ? cleanDocument(params.supplierCnpj)
     : null;
@@ -329,7 +323,11 @@ async function findProductForInvoiceItem(params: {
   // O "supplierCnpj" (emitente) só é uma loja nossa em notas de saída/retorno;
   // em notas de entrada quem somos nós é o destinatário. Por isso testa os
   // dois — ou usa a unitBusinessId já resolvida pelo chamador, quando existir.
-  if (!product && sku) {
+  //
+  // SKU (cProd/nf.itens[].codigo) é a chave mais confiável — o mesmo EAN pode
+  // estar cadastrado (errado ou não) em mais de um product, então o SKU via
+  // ProductConfig tem prioridade sobre o EAN.
+  if (sku) {
     let unitBusiness: typeof UnitBusiness.prototype | null = null;
 
     if (params.unitBusinessId) {
@@ -357,6 +355,12 @@ async function findProductForInvoiceItem(params: {
         `${params.logPrefix} — unit business não encontrada (emitente=${params.supplierCnpj ?? "N/A"}, destinatário=${params.receiverCnpj ?? "N/A"}) — fallback por ProductConfig.sku ignorado`,
       );
     }
+  }
+
+  if (!product && ean) {
+    product = await Product.findOne({
+      where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
+    });
   }
 
   if (product || !ean) return product;

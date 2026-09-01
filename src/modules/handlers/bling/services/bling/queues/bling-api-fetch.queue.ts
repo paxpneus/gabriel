@@ -806,17 +806,20 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     let product: Product | null = null;
 
-    if (ean) {
-      product = await Product.findOne({
-        where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
-      });
-    }
-
-    if (!product && sku) {
+    // SKU (nf.itens[].codigo) é a chave mais confiável — o mesmo EAN pode
+    // estar cadastrado (errado ou não) em mais de um product, então o SKU
+    // via ProductConfig tem prioridade sobre o EAN.
+    if (sku) {
       const config = await ProductConfig.findOne({
         where: { sku, unit_business_id: BLING_UNIT_BUSINESS_ID },
       });
       if (config) product = await Product.findByPk(config.product_id);
+    }
+
+    if (!product && ean) {
+      product = await Product.findOne({
+        where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
+      });
     }
 
     if (product || !ean) return product;
