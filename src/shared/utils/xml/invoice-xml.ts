@@ -710,6 +710,7 @@ export async function upsertInvoiceFromXml(
     sourcePayload?: Record<string, unknown>;
     isCancelled?: boolean;
     invoiceType?: "INCOMING" | "OUTGOING";
+    unitBusinessId?: string | null;
   },
 ): Promise<void> {
   const {
@@ -717,7 +718,8 @@ export async function upsertInvoiceFromXml(
     initialStatus = "WAITING_SCHEDULE_SALES",
     skipCrossConfig = false,
     allowUpdateFromAnyIntegration = false,
-    invoiceType
+    invoiceType,
+    unitBusinessId,
   } = options ?? {};
   const parsed = parser.parse(xmlContent);
 
@@ -961,6 +963,7 @@ export async function upsertInvoiceFromXml(
         ean: gtin,
         supplierCnpj: senderCnpj,
         receiverCnpj,
+        unitBusinessId,
         logPrefix: "[IMPORT_XML]",
       });
 

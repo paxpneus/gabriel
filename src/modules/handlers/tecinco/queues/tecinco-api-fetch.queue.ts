@@ -211,11 +211,19 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       console.warn(`${logPrefix} — nota fiscal sem itens retornados`);
     }
 
+    // Passado explicitamente pro fallback de findProductForInvoiceItem por sku
+    // (via ProductConfig) não depender de inferência de unit_business por CNPJ
+    // — só relevante quando itens vier vazio e cair no parse bruto do XML.
+    const unitBusiness = await UnitBusiness.findOne({
+      where: { number: String(branchId).padStart(2, "0") },
+    });
+
     await upsertInvoiceFromXml(xmlContent, {
       integrationName: "Tecinco",
       operationalItems,
       unmappedItems,
       sourcePayload: notaFiscal?.data ?? notaFiscal ?? null,
+      unitBusinessId: unitBusiness?.id ?? null,
     });
 
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
@@ -759,12 +767,20 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       return;
     }
 
+    // Passado explicitamente pro fallback de findProductForInvoiceItem por sku
+    // (via ProductConfig) não depender de inferência de unit_business por CNPJ
+    // — só relevante quando itens vier vazio e cair no parse bruto do XML.
+    const unitBusiness = await UnitBusiness.findOne({
+      where: { number: String(branchId).padStart(2, "0") },
+    });
+
     await upsertInvoiceFromXml(xml, {
       integrationName: "Tecinco",
       operationalItems,
       unmappedItems,
       sourcePayload: notaFiscal?.data ?? notaFiscal ?? null,
       invoiceType,
+      unitBusinessId: unitBusiness?.id ?? null,
     });
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
   }

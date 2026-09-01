@@ -1930,6 +1930,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         status === "CANCELLED" ? "PENDING_CANCELLED_SYSTEM" : undefined,
       skipCrossConfig: true,
       allowUpdateFromAnyIntegration: true,
+      unitBusinessId: BLING_UNIT_BUSINESS_ID,
     });
   }
 
