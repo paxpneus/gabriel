@@ -459,15 +459,19 @@ describe("BlingApiFetchQueue.findBlingInvoiceIdByChave", () => {
     queue = new BlingApiFetchQueue({ workless: true });
   });
 
-  it("monta a query /nfe?chaveAcesso= e retorna o id do primeiro resultado", async () => {
+  it("monta a query /nfe?chaveAcesso=&tipo= e retorna o id do primeiro resultado", async () => {
     const get = jest
       .fn()
       .mockResolvedValue({ data: { data: [{ id: 123 }] } });
     (blingApi as any).get = get;
 
-    const id = await (queue as any).findBlingInvoiceIdByChave(CHAVE, "NF-e");
+    const id = await (queue as any).findBlingInvoiceIdByChave(
+      CHAVE,
+      "NF-e",
+      0,
+    );
 
-    expect(get).toHaveBeenCalledWith(`/nfe?chaveAcesso=${CHAVE}`);
+    expect(get).toHaveBeenCalledWith(`/nfe?chaveAcesso=${CHAVE}&tipo=0`);
     expect(id).toBe(123);
   });
 
@@ -475,16 +479,24 @@ describe("BlingApiFetchQueue.findBlingInvoiceIdByChave", () => {
     const get = jest.fn().mockResolvedValue({ data: { data: [{ id: 456 }] } });
     (blingApi as any).get = get;
 
-    const id = await (queue as any).findBlingInvoiceIdByChave(CHAVE, "NFC-e");
+    const id = await (queue as any).findBlingInvoiceIdByChave(
+      CHAVE,
+      "NFC-e",
+      1,
+    );
 
-    expect(get).toHaveBeenCalledWith(`/nfce?chaveAcesso=${CHAVE}`);
+    expect(get).toHaveBeenCalledWith(`/nfce?chaveAcesso=${CHAVE}&tipo=1`);
     expect(id).toBe(456);
   });
 
   it("retorna null quando a Bling não retorna nenhum resultado", async () => {
     (blingApi as any).get = jest.fn().mockResolvedValue({ data: { data: [] } });
 
-    const id = await (queue as any).findBlingInvoiceIdByChave(CHAVE, "NF-e");
+    const id = await (queue as any).findBlingInvoiceIdByChave(
+      CHAVE,
+      "NF-e",
+      0,
+    );
 
     expect(id).toBeNull();
   });
@@ -517,7 +529,9 @@ describe("BlingApiFetchQueue.upsertInvoiceFromXml", () => {
       buildMinimalNfeXml({ chaveAcesso: CHAVE, mod: "55" }),
     );
 
-    expect(findSpy).toHaveBeenCalledWith(CHAVE, "NF-e");
+    // tenta tipo=0 (entrada) primeiro, já acha aí — nem chega a tentar tipo=1
+    expect(findSpy).toHaveBeenCalledWith(CHAVE, "NF-e", 0);
+    expect(findSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy).toHaveBeenCalledWith(
       { resource: "invoice", blingId: 999, action: "created", companyId: "" },
       "NF-e",
@@ -527,7 +541,9 @@ describe("BlingApiFetchQueue.upsertInvoiceFromXml", () => {
   it("descobre a nota por chave (mod=65) e delega como NFC-e/consumer_invoice", async () => {
     const findSpy = jest
       .spyOn(queue as any, "findBlingInvoiceIdByChave")
-      .mockResolvedValue(777);
+      .mockImplementation((...args: any[]) =>
+        Promise.resolve(args[2] === 1 ? 777 : null),
+      );
     const fetchSpy = jest
       .spyOn(queue as any, "fetchAndUpsertInvoice")
       .mockResolvedValue(undefined);
@@ -536,7 +552,9 @@ describe("BlingApiFetchQueue.upsertInvoiceFromXml", () => {
       buildMinimalNfeXml({ chaveAcesso: CHAVE, mod: "65" }),
     );
 
-    expect(findSpy).toHaveBeenCalledWith(CHAVE, "NFC-e");
+    // tipo=0 não acha, cai pro tipo=1 (saída) dentro do mesmo type NFC-e
+    expect(findSpy).toHaveBeenNthCalledWith(1, CHAVE, "NFC-e", 0);
+    expect(findSpy).toHaveBeenNthCalledWith(2, CHAVE, "NFC-e", 1);
     expect(fetchSpy).toHaveBeenCalledWith(
       {
         resource: "consumer_invoice",
@@ -548,7 +566,7 @@ describe("BlingApiFetchQueue.upsertInvoiceFromXml", () => {
     );
   });
 
-  it("sem mod reconhecível, tenta NF-e antes de cair pra NFC-e", async () => {
+  it("sem mod reconhecível, tenta NF-e (tipo 0 e 1) antes de cair pra NFC-e", async () => {
     const findSpy = jest
       .spyOn(queue as any, "findBlingInvoiceIdByChave")
       .mockImplementation((...args: any[]) =>
@@ -560,8 +578,9 @@ describe("BlingApiFetchQueue.upsertInvoiceFromXml", () => {
 
     await queue.upsertInvoiceFromXml(buildMinimalNfeXml({ chaveAcesso: CHAVE }));
 
-    expect(findSpy).toHaveBeenNthCalledWith(1, CHAVE, "NF-e");
-    expect(findSpy).toHaveBeenNthCalledWith(2, CHAVE, "NFC-e");
+    expect(findSpy).toHaveBeenNthCalledWith(1, CHAVE, "NF-e", 0);
+    expect(findSpy).toHaveBeenNthCalledWith(2, CHAVE, "NF-e", 1);
+    expect(findSpy).toHaveBeenNthCalledWith(3, CHAVE, "NFC-e", 0);
     expect(fetchSpy).toHaveBeenCalledWith(
       expect.objectContaining({ blingId: 111 }),
       "NFC-e",

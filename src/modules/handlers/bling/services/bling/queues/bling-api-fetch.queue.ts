@@ -500,10 +500,16 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   private async findBlingInvoiceIdByChave(
     chaveAcesso: string,
     type: "NF-e" | "NFC-e",
+    tipo: 0 | 1,
   ): Promise<number | null> {
+    // A busca por chaveAcesso na Bling exige "tipo" (0=entrada, 1=saída) —
+    // sem ele o resultado vem vazio mesmo pra uma nota que existe (confirmado
+    // testando direto contra a API). Como não sabemos a direção da nota antes
+    // de achá-la, o chamador tenta os dois valores.
     const endpoint = type === "NF-e" ? "/nfe" : "/nfce";
     const params = new URLSearchParams();
     params.set("chaveAcesso", chaveAcesso);
+    params.set("tipo", String(tipo));
 
     const { data } = await blingGet<{ data: Array<{ id: number }> }>(
       `${endpoint}?${params.toString()}`,
@@ -1912,13 +1918,18 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const candidateTypes: Array<"NF-e" | "NFC-e"> =
       mod === "65" ? ["NFC-e"] : mod === "55" ? ["NF-e"] : ["NF-e", "NFC-e"];
+    // Não sabemos se é entrada (compra) ou saída (venda) antes de achar a
+    // nota — tenta os dois.
+    const candidateTipos: Array<0 | 1> = [0, 1];
 
     let found: { id: number; type: "NF-e" | "NFC-e" } | null = null;
-    for (const type of candidateTypes) {
-      const id = await this.findBlingInvoiceIdByChave(chaveAcesso, type);
-      if (id) {
-        found = { id, type };
-        break;
+    outer: for (const type of candidateTypes) {
+      for (const tipo of candidateTipos) {
+        const id = await this.findBlingInvoiceIdByChave(chaveAcesso, type, tipo);
+        if (id) {
+          found = { id, type };
+          break outer;
+        }
       }
     }
 
