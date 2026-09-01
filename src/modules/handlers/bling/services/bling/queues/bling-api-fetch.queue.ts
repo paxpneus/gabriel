@@ -802,61 +802,20 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     logPrefix: string;
   }): Promise<Product | null> {
     const sku = params.sku?.trim();
-    const ean = params.ean ? String(params.ean).trim() : null;
 
-    let product: Product | null = null;
+    // O EAN da nota não é confiável (fabricante reaproveita/reatribui código
+    // de barras entre produtos diferentes ao longo do tempo) — a única chave
+    // confiável é o SKU (nf.itens[].codigo), resolvido via ProductConfig
+    // sempre na unit_business da Bling. Sem SKU ou sem ProductConfig
+    // correspondente, o item cai em unmapped — não há fallback por EAN.
+    if (!sku) return null;
 
-    // SKU (nf.itens[].codigo) é a chave mais confiável — o mesmo EAN pode
-    // estar cadastrado (errado ou não) em mais de um product, então o SKU
-    // via ProductConfig tem prioridade sobre o EAN.
-    if (sku) {
-      const config = await ProductConfig.findOne({
-        where: { sku, unit_business_id: BLING_UNIT_BUSINESS_ID },
-      });
-      if (config) product = await Product.findByPk(config.product_id);
-    }
+    const config = await ProductConfig.findOne({
+      where: { sku, unit_business_id: BLING_UNIT_BUSINESS_ID },
+    });
+    if (!config) return null;
 
-    if (!product && ean) {
-      product = await Product.findOne({
-        where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
-      });
-    }
-
-    if (product || !ean) return product;
-
-    const supplierProductCode: string = ean;
-    const cleanSupplierCnpj = params.supplierCnpj
-      ? cleanDocument(params.supplierCnpj)
-      : null;
-
-    const supplierMapping = cleanSupplierCnpj
-      ? ((await SupplierMapping.findOne({
-          where: {
-            supplier_product_code: supplierProductCode,
-            supplier_cnpj: cleanSupplierCnpj,
-          },
-          order: [["updatedAt", "DESC"]],
-        })) ??
-        (await SupplierMapping.findOne({
-          where: { supplier_product_code: supplierProductCode },
-          order: [["updatedAt", "DESC"]],
-        })))
-      : await SupplierMapping.findOne({
-          where: { supplier_product_code: supplierProductCode },
-          order: [["updatedAt", "DESC"]],
-        });
-
-    if (!supplierMapping) return null;
-
-    product = await Product.findByPk(supplierMapping.product_id);
-
-    if (product) {
-      console.log(
-        `${params.logPrefix} Produto resolvido via SupplierMapping | ean_nf=${ean} | product_id=${product.id} | ean_sistema=${product.ean}`,
-      );
-    }
-
-    return product;
+    return Product.findByPk(config.product_id);
   }
 
   async process(job: Job<ApiFetchJobPayload>): Promise<void> {
