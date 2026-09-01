@@ -352,49 +352,85 @@ async function findProductForInvoiceItem(params: {
   logPrefix: string;
 }): Promise<Product | null> {
   const sku = params.sku?.trim();
+  const ean = params.ean ? String(params.ean).trim() : null;
 
-  // O EAN da nota não é confiável (fabricante reaproveita/reatribui código
-  // de barras entre produtos diferentes ao longo do tempo) — a única chave
-  // confiável é o SKU (cProd/nf.itens[].codigo), resolvido via ProductConfig
-  // na unit_business correta. Sem SKU ou sem ProductConfig correspondente, o
-  // item cai em unmapped — não há fallback por EAN nem por SupplierMapping.
-  if (!sku) return null;
+  let product: Product | null = null;
 
   // ─── Resolve a unit_business própria da nota ──────────────────────────────
   // O "supplierCnpj" (emitente) só é uma loja nossa em notas de saída/retorno;
   // em notas de entrada quem somos nós é o destinatário. Por isso testa os
   // dois — ou usa a unitBusinessId já resolvida pelo chamador, quando existir.
-  let unitBusiness: typeof UnitBusiness.prototype | null = null;
+  //
+  // SKU (cProd) é a chave mais confiável e tem prioridade — EAN é usado só
+  // como fallback quando não há SKU ou não há ProductConfig correspondente.
+  if (sku) {
+    let unitBusiness: typeof UnitBusiness.prototype | null = null;
 
-  if (params.unitBusinessId) {
-    unitBusiness = await UnitBusiness.findByPk(params.unitBusinessId);
-  } else {
-    const cleanSupplierCnpj = params.supplierCnpj
-      ? cleanDocument(params.supplierCnpj)
-      : null;
-    const candidateCnpjs = [
-      cleanSupplierCnpj,
-      params.receiverCnpj ? cleanDocument(params.receiverCnpj) : null,
-    ].filter((c): c is string => !!c);
+    if (params.unitBusinessId) {
+      unitBusiness = await UnitBusiness.findByPk(params.unitBusinessId);
+    } else {
+      const cleanSupplierCnpj = params.supplierCnpj
+        ? cleanDocument(params.supplierCnpj)
+        : null;
+      const candidateCnpjs = [
+        cleanSupplierCnpj,
+        params.receiverCnpj ? cleanDocument(params.receiverCnpj) : null,
+      ].filter((c): c is string => !!c);
 
-    unitBusiness = candidateCnpjs.length
-      ? await UnitBusiness.findOne({
-          where: { cnpj: { [Op.in]: candidateCnpjs } },
-        })
-      : null;
+      unitBusiness = candidateCnpjs.length
+        ? await UnitBusiness.findOne({
+            where: { cnpj: { [Op.in]: candidateCnpjs } },
+          })
+        : null;
+    }
+
+    if (unitBusiness) {
+      const config = await findProductConfigBySku(sku, unitBusiness.id);
+      if (config) product = await Product.findByPk(config.product_id);
+    } else {
+      console.warn(
+        `${params.logPrefix} — unit business não encontrada (emitente=${params.supplierCnpj ?? "N/A"}, destinatário=${params.receiverCnpj ?? "N/A"}) — busca por ProductConfig.sku ignorada`,
+      );
+    }
   }
 
-  if (!unitBusiness) {
-    console.warn(
-      `${params.logPrefix} — unit business não encontrada (emitente=${params.supplierCnpj ?? "N/A"}, destinatário=${params.receiverCnpj ?? "N/A"}) — busca por ProductConfig.sku ignorada`,
+  if (!product && ean) {
+    product = await Product.findOne({
+      where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
+    });
+  }
+
+  if (product || !ean) return product;
+
+  const cleanSupplierCnpj = params.supplierCnpj
+    ? cleanDocument(params.supplierCnpj)
+    : null;
+
+  const supplierMapping = cleanSupplierCnpj
+    ? ((await SupplierMapping.findOne({
+        where: { supplier_product_code: ean, supplier_cnpj: cleanSupplierCnpj },
+        order: [["updatedAt", "DESC"]],
+      })) ??
+      (await SupplierMapping.findOne({
+        where: { supplier_product_code: ean },
+        order: [["updatedAt", "DESC"]],
+      })))
+    : await SupplierMapping.findOne({
+        where: { supplier_product_code: ean },
+        order: [["updatedAt", "DESC"]],
+      });
+
+  if (!supplierMapping) return null;
+
+  product = await Product.findByPk(supplierMapping.product_id);
+
+  if (product) {
+    console.log(
+      `${params.logPrefix} Produto resolvido via SupplierMapping | ean_nf=${ean} | product_id=${product.id} | ean_sistema=${product.ean}`,
     );
-    return null;
   }
 
-  const config = await findProductConfigBySku(sku, unitBusiness.id);
-  if (!config) return null;
-
-  return Product.findByPk(config.product_id);
+  return product;
 }
 
 async function upsertFiscalItems(
