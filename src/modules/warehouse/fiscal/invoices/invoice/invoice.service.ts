@@ -40,7 +40,6 @@ import redisService from "../../../../../shared/utils/base-models/base-redis";
 import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import { BlingApiFetchQueue } from "../../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { TCarUpsertQueue } from "../../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
-import { upsertInvoiceFromXml } from "../../../../../shared/utils/xml/invoice-xml";
 import User from "../../../../company/users/users/user.model";
 import userService from "../../../../company/users/users/user.service";
 import {
@@ -847,7 +846,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       }
       await tecincoQueue.upsertInvoiceFromXml(xmlContent, branchId);
     } else {
-      await upsertInvoiceFromXml(xmlContent);
+      throw new Error(`Integração inválida ou ausente: ${integration ?? "(nenhuma)"}`);
     }
   }
 

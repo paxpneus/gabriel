@@ -1,6 +1,5 @@
 import {
   FullInvoiceForAllUnits,
-  InvoiceStatus,
   ItemWithFiscal,
 } from "../../../../../warehouse/fiscal/invoices/invoice/invoice.types";
 import { Job } from "bullmq";
@@ -47,7 +46,7 @@ import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/inv
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import invoiceItemsService from "../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import {
-  upsertInvoiceFromXml,
+  extractInvoiceIdentificationFromXml,
   findProductConfigBySku,
 } from "../../../../../../shared/utils/xml/invoice-xml";
 import brandsService from "../../../../../inventory/brands/brands.service";
@@ -491,6 +490,27 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     return map;
+  }
+
+  // ─── Busca o id Bling de uma nota pela chave de acesso ─────────────────────
+  // Único uso do XML no fluxo de import: descobrir QUAL nota buscar. A
+  // resolução de itens em si sempre vem do endpoint (fetchAndUpsertInvoice),
+  // nunca do XML — cProd do XML é o código do fornecedor, não bate com
+  // ProductConfig.sku.
+  private async findBlingInvoiceIdByChave(
+    chaveAcesso: string,
+    type: "NF-e" | "NFC-e",
+  ): Promise<number | null> {
+    const endpoint = type === "NF-e" ? "/nfe" : "/nfce";
+    const params = new URLSearchParams();
+    params.set("chaveAcesso", chaveAcesso);
+
+    const { data } = await blingGet<{ data: Array<{ id: number }> }>(
+      `${endpoint}?${params.toString()}`,
+      blingApi,
+    );
+
+    return data?.data?.[0]?.id ?? null;
   }
 
   private async syncStockAndBatches(params: {
@@ -1873,25 +1893,50 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   }
 
   /**
-   * Importa uma NF-e a partir de um XML bruto (sem passar pela API Bling).
-   * Usado pelo endpoint de importação manual de XML.
+   * Importa uma NF-e/NFC-e a partir de um XML bruto. O XML é usado só pra
+   * DESCOBRIR a nota dentro da Bling (via chave de acesso) — a resolução de
+   * itens nunca usa o XML: uma vez achado o id Bling, delega inteiramente
+   * pra fetchAndUpsertInvoice, que resolve cada item por nf.itens[].codigo
+   * (o único código que bate com ProductConfig.sku — cProd do XML é o
+   * código do FORNECEDOR na nota, um espaço de código diferente).
    */
-  async upsertInvoiceFromXml(
-    xmlContent: string,
-    status?: InvoiceStatus,
-  ): Promise<void> {
-    await upsertInvoiceFromXml(xmlContent, {
-      integrationName: "Bling",
-      initialStatus:
-        status === "CANCELLED"
-          ? "PENDING_CANCELLED_SYSTEM"
-          : "WAITING_SCHEDULE_SALES",
-      updateStatus:
-        status === "CANCELLED" ? "PENDING_CANCELLED_SYSTEM" : undefined,
-      skipCrossConfig: true,
-      allowUpdateFromAnyIntegration: true,
-      unitBusinessId: BLING_UNIT_BUSINESS_ID,
-    });
+  async upsertInvoiceFromXml(xmlContent: string): Promise<void> {
+    const { chaveAcesso, mod } =
+      extractInvoiceIdentificationFromXml(xmlContent);
+
+    if (!chaveAcesso) {
+      throw new Error(
+        "XML sem chave de acesso — não é possível localizar a nota na Bling",
+      );
+    }
+
+    const candidateTypes: Array<"NF-e" | "NFC-e"> =
+      mod === "65" ? ["NFC-e"] : mod === "55" ? ["NF-e"] : ["NF-e", "NFC-e"];
+
+    let found: { id: number; type: "NF-e" | "NFC-e" } | null = null;
+    for (const type of candidateTypes) {
+      const id = await this.findBlingInvoiceIdByChave(chaveAcesso, type);
+      if (id) {
+        found = { id, type };
+        break;
+      }
+    }
+
+    if (!found) {
+      throw new Error(
+        `Nota fiscal não encontrada na Bling para chave=${chaveAcesso} — não é possível importar`,
+      );
+    }
+
+    await this.fetchAndUpsertInvoice(
+      {
+        resource: found.type === "NF-e" ? "invoice" : "consumer_invoice",
+        blingId: found.id,
+        action: "created",
+        companyId: "",
+      },
+      found.type,
+    );
   }
 
   protected override onFailed(

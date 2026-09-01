@@ -432,3 +432,151 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
     });
   });
 });
+
+// ─── findBlingInvoiceIdByChave / upsertInvoiceFromXml ──────────────────────────
+// A resolução de itens de uma nota importada por XML NUNCA usa o próprio XML —
+// o XML só serve pra descobrir a nota dentro da Bling (por chave de acesso);
+// a partir daí tudo delega pra fetchAndUpsertInvoice, que resolve os itens por
+// nf.itens[].codigo (testado à parte, não duplicado aqui).
+
+const CHAVE = "29260802036483000614550010004404561245674661";
+
+function buildMinimalNfeXml(params: {
+  chaveAcesso?: string;
+  mod?: string;
+}): string {
+  const idAttr = params.chaveAcesso ? ` Id="NFe${params.chaveAcesso}"` : "";
+  const modTag = params.mod !== undefined ? `<mod>${params.mod}</mod>` : "";
+  return `<NFe><infNFe${idAttr}><ide>${modTag}<nNF>1</nNF></ide></infNFe></NFe>`;
+}
+
+describe("BlingApiFetchQueue.findBlingInvoiceIdByChave", () => {
+  let queue: BlingApiFetchQueue;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.BLING_UNIT_BUSINESS_ID = UNIT_BUSINESS_ID;
+    queue = new BlingApiFetchQueue({ workless: true });
+  });
+
+  it("monta a query /nfe?chaveAcesso= e retorna o id do primeiro resultado", async () => {
+    const get = jest
+      .fn()
+      .mockResolvedValue({ data: { data: [{ id: 123 }] } });
+    (blingApi as any).get = get;
+
+    const id = await (queue as any).findBlingInvoiceIdByChave(CHAVE, "NF-e");
+
+    expect(get).toHaveBeenCalledWith(`/nfe?chaveAcesso=${CHAVE}`);
+    expect(id).toBe(123);
+  });
+
+  it("usa /nfce pra NFC-e", async () => {
+    const get = jest.fn().mockResolvedValue({ data: { data: [{ id: 456 }] } });
+    (blingApi as any).get = get;
+
+    const id = await (queue as any).findBlingInvoiceIdByChave(CHAVE, "NFC-e");
+
+    expect(get).toHaveBeenCalledWith(`/nfce?chaveAcesso=${CHAVE}`);
+    expect(id).toBe(456);
+  });
+
+  it("retorna null quando a Bling não retorna nenhum resultado", async () => {
+    (blingApi as any).get = jest.fn().mockResolvedValue({ data: { data: [] } });
+
+    const id = await (queue as any).findBlingInvoiceIdByChave(CHAVE, "NF-e");
+
+    expect(id).toBeNull();
+  });
+});
+
+describe("BlingApiFetchQueue.upsertInvoiceFromXml", () => {
+  let queue: BlingApiFetchQueue;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.BLING_UNIT_BUSINESS_ID = UNIT_BUSINESS_ID;
+    queue = new BlingApiFetchQueue({ workless: true });
+  });
+
+  it("lança erro quando o XML não tem chave de acesso", async () => {
+    await expect(
+      queue.upsertInvoiceFromXml(buildMinimalNfeXml({})),
+    ).rejects.toThrow(/chave de acesso/i);
+  });
+
+  it("descobre a nota por chave (mod=55) e delega pra fetchAndUpsertInvoice como NF-e", async () => {
+    const findSpy = jest
+      .spyOn(queue as any, "findBlingInvoiceIdByChave")
+      .mockResolvedValue(999);
+    const fetchSpy = jest
+      .spyOn(queue as any, "fetchAndUpsertInvoice")
+      .mockResolvedValue(undefined);
+
+    await queue.upsertInvoiceFromXml(
+      buildMinimalNfeXml({ chaveAcesso: CHAVE, mod: "55" }),
+    );
+
+    expect(findSpy).toHaveBeenCalledWith(CHAVE, "NF-e");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      { resource: "invoice", blingId: 999, action: "created", companyId: "" },
+      "NF-e",
+    );
+  });
+
+  it("descobre a nota por chave (mod=65) e delega como NFC-e/consumer_invoice", async () => {
+    const findSpy = jest
+      .spyOn(queue as any, "findBlingInvoiceIdByChave")
+      .mockResolvedValue(777);
+    const fetchSpy = jest
+      .spyOn(queue as any, "fetchAndUpsertInvoice")
+      .mockResolvedValue(undefined);
+
+    await queue.upsertInvoiceFromXml(
+      buildMinimalNfeXml({ chaveAcesso: CHAVE, mod: "65" }),
+    );
+
+    expect(findSpy).toHaveBeenCalledWith(CHAVE, "NFC-e");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      {
+        resource: "consumer_invoice",
+        blingId: 777,
+        action: "created",
+        companyId: "",
+      },
+      "NFC-e",
+    );
+  });
+
+  it("sem mod reconhecível, tenta NF-e antes de cair pra NFC-e", async () => {
+    const findSpy = jest
+      .spyOn(queue as any, "findBlingInvoiceIdByChave")
+      .mockImplementation((...args: any[]) =>
+        Promise.resolve(args[1] === "NFC-e" ? 111 : null),
+      );
+    const fetchSpy = jest
+      .spyOn(queue as any, "fetchAndUpsertInvoice")
+      .mockResolvedValue(undefined);
+
+    await queue.upsertInvoiceFromXml(buildMinimalNfeXml({ chaveAcesso: CHAVE }));
+
+    expect(findSpy).toHaveBeenNthCalledWith(1, CHAVE, "NF-e");
+    expect(findSpy).toHaveBeenNthCalledWith(2, CHAVE, "NFC-e");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ blingId: 111 }),
+      "NFC-e",
+    );
+  });
+
+  it("lança erro quando a nota não é encontrada na Bling (nem NF-e nem NFC-e)", async () => {
+    jest
+      .spyOn(queue as any, "findBlingInvoiceIdByChave")
+      .mockResolvedValue(null);
+    const fetchSpy = jest.spyOn(queue as any, "fetchAndUpsertInvoice");
+
+    await expect(
+      queue.upsertInvoiceFromXml(buildMinimalNfeXml({ chaveAcesso: CHAVE })),
+    ).rejects.toThrow(/não encontrada na Bling/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});

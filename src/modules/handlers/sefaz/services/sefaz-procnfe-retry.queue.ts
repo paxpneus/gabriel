@@ -97,22 +97,7 @@ export class SefazProcNFeRetryQueue extends BaseQueueService<SefazProcNFeRetryJo
         return; // aborta a execução inteira, próxima tentativa só na próxima hora
       }
 
-      if (xmlCompleto) {
-        if (temProdutoRelevante(xmlCompleto)) {
-          await this.apiFetchQueue.upsertInvoiceFromXml(xmlCompleto);
-          console.log(`[SEFAZ-RETRY] chNFe=${chave} procNFe obtido e processado`);
-        } else {
-          console.log(
-            `[SEFAZ-RETRY] chNFe=${chave} procNFe obtido sem produtos relevantes`,
-          );
-        }
-
-        await invoice.update({
-          sefaz_manifestation_status: "CONFIRMADO",
-          sefaz_full_xml_last_query_at: new Date(),
-        });
-      } else {
-        // 641/642 ou erro tratado — incrementa tentativa, marca timestamp
+      const registerAttemptFailure = async () => {
         const attempts = invoice.sefaz_full_xml_attempts! + 1;
         const desistiu = attempts >= MAX_TENTATIVAS_PROCNFE;
 
@@ -129,6 +114,37 @@ export class SefazProcNFeRetryQueue extends BaseQueueService<SefazProcNFeRetryJo
             `[SEFAZ-RETRY] chNFe=${chave} excedeu ${MAX_TENTATIVAS_PROCNFE} tentativas — desistindo`,
           );
         }
+      };
+
+      if (xmlCompleto) {
+        if (temProdutoRelevante(xmlCompleto)) {
+          try {
+            await this.apiFetchQueue.upsertInvoiceFromXml(xmlCompleto);
+            console.log(`[SEFAZ-RETRY] chNFe=${chave} procNFe obtido e processado`);
+          } catch (err: any) {
+            // Nota ainda não indexada na Bling (ou de outra integração) —
+            // não deixa o throw escapar do loop, senão trava o lote inteiro:
+            // trata como "não confirmado ainda", tenta de novo na próxima hora.
+            console.warn(
+              `[SEFAZ-RETRY] chNFe=${chave} falha ao importar via Bling: ${err?.message}`,
+            );
+            await registerAttemptFailure();
+            await sleep(5000);
+            continue;
+          }
+        } else {
+          console.log(
+            `[SEFAZ-RETRY] chNFe=${chave} procNFe obtido sem produtos relevantes`,
+          );
+        }
+
+        await invoice.update({
+          sefaz_manifestation_status: "CONFIRMADO",
+          sefaz_full_xml_last_query_at: new Date(),
+        });
+      } else {
+        // 641/642 ou erro tratado — incrementa tentativa, marca timestamp
+        await registerAttemptFailure();
       }
 
       // Rate limit entre consultas — bem espaçado, já que rodamos 1x/hora

@@ -42,7 +42,7 @@ const NO_TRANSPORTER_DOCUMENT = "0000000";
  */
 export function extractInvoiceIdentificationFromXml(
   xmlContent: string,
-): { numero: string; chaveAcesso: string } {
+): { numero: string; chaveAcesso: string; mod: "55" | "65" | null } {
   const parsed = parser.parse(xmlContent);
   const nfe =
     parsed?.nfeProc?.NFe?.infNFe ||
@@ -55,6 +55,9 @@ export function extractInvoiceIdentificationFromXml(
 
   const ide = nfe.ide ?? {};
   const numero = String(ide.nNF ?? "");
+
+  const modRaw = String(ide.mod ?? "").trim();
+  const mod = modRaw === "55" || modRaw === "65" ? (modRaw as "55" | "65") : null;
 
   const rawId: string = nfe["@_Id"] ?? "";
   let chaveAcesso = rawId.replace(/^NFe/, "");
@@ -72,17 +75,17 @@ export function extractInvoiceIdentificationFromXml(
     const aamm =
       String(ide.dhEmi ?? "").slice(2, 4) + String(ide.dhEmi ?? "").slice(5, 7);
     const cnpj = String(emit.CNPJ ?? "").replace(/\D/g, "");
-    const mod = String(ide.mod ?? "55").padStart(2, "0");
+    const modPadded = String(ide.mod ?? "55").padStart(2, "0");
     const serie = String(ide.serie ?? "").padStart(3, "0");
     const nnf = String(ide.nNF ?? "").padStart(9, "0");
     const tpemis = String(ide.tpEmis ?? "1");
     const cnf = String(ide.cNF ?? "").padStart(8, "0");
     const cdv = String(ide.cDV ?? "");
-    const candidate = `${cuf}${aamm}${cnpj}${mod}${serie}${nnf}${tpemis}${cnf}${cdv}`;
+    const candidate = `${cuf}${aamm}${cnpj}${modPadded}${serie}${nnf}${tpemis}${cnf}${cdv}`;
     if (candidate.length === 44) chaveAcesso = candidate;
   }
 
-  return { numero, chaveAcesso };
+  return { numero, chaveAcesso, mod };
 }
 
 export interface InvoiceOperationalItemFromXml {
@@ -331,6 +334,15 @@ export async function findProductConfigBySku(
   return row ? ProductConfig.findByPk(row.id) : null;
 }
 
+/**
+ * Resolve um Product a partir de sku/ean crus do XML (cProd/cEAN). Escopo
+ * deliberadamente restrito: só é seguro chamar isso de `upsertTecincoCrossConfig`,
+ * pra notas de SAÍDA das nossas próprias unit_businesses Tecinco — ali cProd é
+ * o NOSSO código declarado na NOSSA nota, não o código de um fornecedor
+ * terceiro. Nunca reusar isso pra resolver itens de uma nota de ENTRADA
+ * (compra) — o cProd nesse caso é do fornecedor, um espaço de código
+ * diferente do ProductConfig.sku, e pode casar com o produto errado.
+ */
 async function findProductForInvoiceItem(params: {
   sku?: string | null;
   ean?: string | number | null;
@@ -703,7 +715,6 @@ export async function upsertInvoiceFromXml(
     sourcePayload?: Record<string, unknown>;
     isCancelled?: boolean;
     invoiceType?: "INCOMING" | "OUTGOING";
-    unitBusinessId?: string | null;
   },
 ): Promise<void> {
   const {
@@ -712,7 +723,6 @@ export async function upsertInvoiceFromXml(
     skipCrossConfig = false,
     allowUpdateFromAnyIntegration = false,
     invoiceType,
-    unitBusinessId,
   } = options ?? {};
   const parsed = parser.parse(xmlContent);
 
@@ -942,8 +952,12 @@ export async function upsertInvoiceFromXml(
       });
     }
   } else if (det.length && !alreadyFullyReconciled) {
-    for (let idx = 0; idx < det.length; idx++) {
-      const item = det[idx];
+    // Sem operationalItems (a integração não retornou itens) — não há mais
+    // fonte confiável de SKU aqui: cProd é o código do FORNECEDOR na nota,
+    // não bate com ProductConfig.sku. Cada linha do XML vira unmapped pra
+    // revisão manual; cProd/cEAN/xProd/qCom são só metadado de exibição,
+    // nunca resolvem um Product.
+    for (const item of det) {
       const prod = item.prod ?? {};
 
       const sku = prod.cProd ? String(prod.cProd).trim() : null;
@@ -951,40 +965,13 @@ export async function upsertInvoiceFromXml(
         prod.cEAN && prod.cEAN !== "SEM GTIN" ? String(prod.cEAN).trim() : null;
       const qty = Number(prod.qCom ?? 0);
 
-      const product = await findProductForInvoiceItem({
+      unmappedDet.push({
         sku,
-        ean: gtin,
-        supplierCnpj: senderCnpj,
-        receiverCnpj,
-        unitBusinessId,
-        logPrefix: "[IMPORT_XML]",
-      });
-
-      if (!product) {
-        const reason =
-          !sku && !gtin
-            ? "SKU e EAN ausentes no XML"
-            : !sku
-              ? "SKU ausente — apenas EAN salvo"
-              : !gtin
-                ? "EAN ausente — apenas SKU salvo"
-                : "SKU e EAN presentes mas sem produto correspondente no banco";
-
-        unmappedDet.push({ sku, gtin, qty, xProd: prod.xProd ?? null, reason });
-        continue;
-      }
-
-      invoiceItemsForCreate.push({
-        product_id: product.id,
-        quantity_expected: Math.trunc(qty),
-        fiscal: buildFiscalItemFromXml({
-          xmlItem: item,
-          productId: product.id,
-          itemNumber: idx + 1,
-          sku,
-          gtin,
-          quantityFallback: qty,
-        }),
+        gtin,
+        qty,
+        xProd: prod.xProd ?? null,
+        reason:
+          "Integração não retornou itens da API — item não resolvido automaticamente (revisão manual necessária)",
       });
     }
   }
