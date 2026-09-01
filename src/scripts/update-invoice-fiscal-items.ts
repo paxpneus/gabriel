@@ -6,6 +6,7 @@ import { Product, ProductConfig, SupplierMapping } from "../modules/inventory";
 import { decryptXml, isEncrypted } from "../shared/utils/xml/xml-cipher";
 import { cleanDocument } from "../shared/utils/normalizers/document";
 import sequelize from "../config/sequelize";
+import { getBlingIntegration } from "../modules/handlers/bling/api/bling_api.service";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 
@@ -28,9 +29,13 @@ async function findProductForInvoiceItem(params: {
   let product: Product | null = null;
 
   if (ean) {
-    product = await Product.findOne({
-      where: { [Op.or]: [{ ean }, { ean_tribut: ean }] },
+    const config = await ProductConfig.findOne({
+      where: {
+        unit_business_id: BLING_UNIT_BUSINESS_ID,
+        [Op.or]: [{ gtin: ean }, { gtin_package: ean }],
+      },
     });
+    if (config) product = await Product.findByPk(config.product_id);
   }
 
   if (!product && sku) {
@@ -47,20 +52,29 @@ async function findProductForInvoiceItem(params: {
     ? cleanDocument(params.supplierCnpj)
     : null;
 
+  const integration = await getBlingIntegration("Bling");
+
   const supplierMapping = cleanSupplierCnpj
     ? ((await SupplierMapping.findOne({
         where: {
           supplier_product_code: supplierProductCode,
           supplier_cnpj: cleanSupplierCnpj,
+          integrations_id: integration.id,
         },
         order: [["updatedAt", "DESC"]],
       })) ??
       (await SupplierMapping.findOne({
-        where: { supplier_product_code: supplierProductCode },
+        where: {
+          supplier_product_code: supplierProductCode,
+          integrations_id: integration.id,
+        },
         order: [["updatedAt", "DESC"]],
       })))
     : await SupplierMapping.findOne({
-        where: { supplier_product_code: supplierProductCode },
+        where: {
+          supplier_product_code: supplierProductCode,
+          integrations_id: integration.id,
+        },
         order: [["updatedAt", "DESC"]],
       });
 

@@ -49,7 +49,7 @@ async function main() {
   console.log("═".repeat(55));
 
   const products = await Product.findAll({
-    attributes: ["id", "name", "ean", "ean_tribut", "id_system"],
+    attributes: ["id", "name", "id_system"],
     where: { type: "UNIT" },
     include: [
       { model: Brand, as: "brandRegister", attributes: ["name"], required: false },
@@ -65,11 +65,15 @@ async function main() {
 
   const configs = await ProductConfig.findAll({
     where: { unit_business_id: BLING_UNIT_BUSINESS_ID },
-    attributes: ["product_id", "sku"],
+    attributes: ["product_id", "sku", "gtin", "gtin_package"],
   });
   const skuByProductId = new Map<string, string>();
+  const eanByProductId = new Map<string, string>();
+  const eanTributByProductId = new Map<string, string>();
   for (const c of configs) {
     if (c.sku) skuByProductId.set(c.product_id, c.sku);
+    if (c.gtin) eanByProductId.set(c.product_id, c.gtin);
+    if (c.gtin_package) eanTributByProductId.set(c.product_id, c.gtin_package);
   }
 
   const stockMovementCounts = (await StockMovement.findAll({
@@ -93,8 +97,8 @@ async function main() {
   const items: LocalProductCatalogItem[] = products.map((p: any) => ({
     id: p.id,
     name: p.name,
-    ean: p.ean ?? null,
-    ean_tribut: p.ean_tribut ?? null,
+    ean: eanByProductId.get(p.id) ?? null,
+    ean_tribut: eanTributByProductId.get(p.id) ?? null,
     id_system: p.id_system ?? null,
     sku: skuByProductId.get(p.id) ?? null,
     marca: p.brandRegister?.name ?? null,
