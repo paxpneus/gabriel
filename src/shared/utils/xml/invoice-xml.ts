@@ -22,7 +22,8 @@ import { cleanDocument } from "../../../shared/utils/normalizers/document";
 import { encryptXml } from "../../../shared/utils/xml/xml-cipher";
 import { getBlingIntegration } from "../../../modules/handlers/bling/api/bling_api.service";
 import { logDbError } from "../logging/db-errors-logs";
-import { Op } from "sequelize";
+import { Op, QueryTypes } from "sequelize";
+import sequelize from "../../../config/sequelize";
 import invoiceService from "../../../modules/warehouse/fiscal/invoices/invoice/invoice.service";
 import invoiceItemsService from "../../../modules/warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
@@ -302,6 +303,34 @@ async function upsertTecincoCrossConfig(
   }
 }
 
+/**
+ * Busca o ProductConfig pelo sku dentro de uma unit_business, tolerando o
+ * zero-padding que a Bling às vezes aplica em nf.itens[].codigo/prod.cProd
+ * (ex.: manda "0000015509110000" pro sku real "15509110000"). Match só é
+ * aceito quando o sku cadastrado é exatamente o sufixo do código recebido e
+ * tudo antes desse sufixo é zero — nunca um "contains" genérico, pra não
+ * confundir com outro sku menor que apareça por coincidência no final do
+ * código recebido.
+ */
+export async function findProductConfigBySku(
+  sku: string,
+  unitBusinessId: string,
+): Promise<ProductConfig | null> {
+  const rows = await sequelize.query<{ id: string }>(
+    `SELECT id FROM product_configs
+     WHERE unit_business_id = :unitBusinessId
+       AND sku IS NOT NULL AND sku <> ''
+       AND right(:sku, length(sku)) = sku
+       AND regexp_replace(left(:sku, length(:sku) - length(sku)), '0', '', 'g') = ''
+     ORDER BY length(sku) DESC
+     LIMIT 1`,
+    { replacements: { unitBusinessId, sku }, type: QueryTypes.SELECT },
+  );
+
+  const row = rows[0];
+  return row ? ProductConfig.findByPk(row.id) : null;
+}
+
 async function findProductForInvoiceItem(params: {
   sku?: string | null;
   ean?: string | number | null;
@@ -350,9 +379,7 @@ async function findProductForInvoiceItem(params: {
     return null;
   }
 
-  const config = await ProductConfig.findOne({
-    where: { sku, unit_business_id: unitBusiness.id },
-  });
+  const config = await findProductConfigBySku(sku, unitBusiness.id);
   if (!config) return null;
 
   return Product.findByPk(config.product_id);

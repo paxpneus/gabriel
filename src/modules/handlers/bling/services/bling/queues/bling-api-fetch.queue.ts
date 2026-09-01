@@ -46,7 +46,10 @@ import magentoCatalogService from "../../../../magentoV2/service/catalog/product
 import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import invoiceItemsService from "../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
-import { upsertInvoiceFromXml } from "../../../../../../shared/utils/xml/invoice-xml";
+import {
+  upsertInvoiceFromXml,
+  findProductConfigBySku,
+} from "../../../../../../shared/utils/xml/invoice-xml";
 import brandsService from "../../../../../inventory/brands/brands.service";
 import Group from "../../../../../inventory/groups/group/group.model";
 import Subgroup from "../../../../../inventory/groups/subgroup/subgroup.model";
@@ -810,9 +813,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // correspondente, o item cai em unmapped — não há fallback por EAN.
     if (!sku) return null;
 
-    const config = await ProductConfig.findOne({
-      where: { sku, unit_business_id: BLING_UNIT_BUSINESS_ID },
-    });
+    const config = await findProductConfigBySku(sku, BLING_UNIT_BUSINESS_ID!);
     if (!config) return null;
 
     return Product.findByPk(config.product_id);
