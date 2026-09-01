@@ -27,7 +27,7 @@ export class InvoiceItemsService extends BaseService<
     super(invoiceItemsRepository);
   }
 
-  async createInvoiceItem(
+  async createInvoiceItemForUnmappedProducts(
     invoiceItemDto: Partial<InvoiceItems>,
     newEan: string,
     unMappedProductId: string,
