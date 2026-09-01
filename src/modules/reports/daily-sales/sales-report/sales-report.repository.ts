@@ -874,7 +874,7 @@ item_source_raw AS (
     pc.ncm                                                AS ncm,
     pc.cest                                               AS cest,
     NULL::varchar                                         AS cfop,
-    COALESCE(pc.gtin, p.ean)                              AS gtin,
+    COALESCE(pc.gtin, pc.gtin_package)                    AS gtin,
     io.total_products                                     AS order_total_products,
     io.icms_value                                         AS order_icms_value,
     io.ipi_value                                          AS order_ipi_value,
