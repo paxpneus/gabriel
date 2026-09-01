@@ -219,7 +219,13 @@ export class InvoiceController extends BaseController<
           .filter(Boolean);
       }
 
-      const data = await this.labelService.getLabelData(ids);
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+
+      const data = await this.labelService.getLabelData(ids, unitBusinessId);
 
       return res.json({ data });
     } catch (err: any) {

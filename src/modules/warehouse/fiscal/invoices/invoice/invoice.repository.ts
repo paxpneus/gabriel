@@ -596,8 +596,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                       as: "product",
                       attributes: [
                         "name",
-                        "ean",
-                        "ean_tribut",
                         "id_system",
                         "type",
                         "brand",
@@ -610,6 +608,8 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                             "product_id",
                             "sku",
                             "price",
+                            "gtin",
+                            "gtin_package",
                             "unit_business_id",
                           ],
                           where: { unit_business_id: unitBusinessId },

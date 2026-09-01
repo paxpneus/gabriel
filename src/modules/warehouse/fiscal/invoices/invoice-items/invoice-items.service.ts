@@ -17,6 +17,7 @@ import InvoiceItems from "./invoice-items.model";
 import invoiceItemsRepository, {
   InvoiceItemsRepository,
 } from "./invoice-items.repository";
+import { resolveIntegrationsIdForUnitBusiness } from "../../../../handlers/tecinco/queues/helpers/product.helpers";
 
 export class InvoiceItemsService extends BaseService<
   InvoiceItems,
@@ -122,7 +123,7 @@ export class InvoiceItemsService extends BaseService<
           ncm: config?.ncm ?? null,
           cest: config?.cest ?? null,
           cfop: null,
-          gtin: newEan || unMappedProduct.ean || product?.ean || null,
+          gtin: newEan || unMappedProduct.ean || config?.gtin || config?.gtin_package || null,
           approx_tax_value: 0,
           icms_rate: 0,
           icms_value: 0,
@@ -259,10 +260,16 @@ export class InvoiceItemsService extends BaseService<
           newEan ?? unMappedProduct.ean ?? unMappedProduct.sku;
 
         if (supplierProductCode) {
+          const integrationsId = await resolveIntegrationsIdForUnitBusiness(
+            incomingAttr.unit_business_id,
+            t,
+          );
+
           const existingSupplierMapping = await supplierMappingService.findOne({
             where: {
               product_id: invoiceItemDto.product_id,
               supplier_product_code: supplierProductCode,
+              integrations_id: integrationsId,
             },
             transaction: t,
           });
@@ -278,10 +285,11 @@ export class InvoiceItemsService extends BaseService<
                 product_id: invoiceItemDto.product_id,
                 supplier_cnpj: invoice.sender_cnpj,
                 supplier_product_code: supplierProductCode,
+                integrations_id: integrationsId,
               },
               { transaction: t },
             );
-            
+
 
             console.log(
               `[INVOICE_ITEMS] SupplierMapping criado: product_id=${invoiceItemDto.product_id}, cnpj=${invoice.sender_cnpj}, code=${supplierProductCode}`,

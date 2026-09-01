@@ -30,6 +30,7 @@ import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/
 import unitBusinessService from "../../../modules/company/unit-business/unit-business.service";
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";
+import { resolveIntegrationsIdForUnitBusiness } from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
 
 const NO_TRANSPORTER_NAME = "Sem transporte";
 const NO_TRANSPORTER_DOCUMENT = "0000000";
@@ -264,9 +265,14 @@ async function upsertTecincoCrossConfig(
 
     // ─── SupplierMapping ────────────────────────────────────────────────────
     const supplierProductCode = gtin ?? sku!;
+    const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusiness.id);
 
     const existingMapping = await SupplierMapping.findOne({
-      where: { product_id: product.id, supplier_product_code: supplierProductCode },
+      where: {
+        product_id: product.id,
+        supplier_product_code: supplierProductCode,
+        integrations_id: integrationsId,
+      },
     });
 
     if (existingMapping) {
@@ -278,6 +284,7 @@ async function upsertTecincoCrossConfig(
         product_id: product.id,
         supplier_cnpj: senderCnpj,
         supplier_product_code: supplierProductCode,
+        integrations_id: integrationsId,
       });
     }
 
