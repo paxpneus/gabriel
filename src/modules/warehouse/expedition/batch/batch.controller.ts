@@ -149,6 +149,7 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
+      const { unitBusinessId } = await getUserContext(req)
       let ids: string[] = [];
 
       if (Array.isArray(req.query.invoiceIds)) {
@@ -164,7 +165,7 @@ export class ExpeditionBatchController extends BaseController<
         return res.status(400).json({ error: "Nenhum invoiceId informado." });
       }
 
-      const batches = await this.service.getBatchesByInvoiceIds(ids);
+      const batches = await this.service.getBatchesByInvoiceIds(ids, unitBusinessId);
       return res.json(batches);
     } catch (err: any) {
       return res.status(400).json({ error: err.message });

@@ -437,6 +437,7 @@ export class ExpeditionBatchService extends BaseService<
 
   async getBatchesByInvoiceIds(
     invoiceIds: string[],
+    unitBusinessId: string,
   ): Promise<ExpeditionBatch[]> {
     if (!invoiceIds.length) return [];
 
@@ -472,7 +473,9 @@ export class ExpeditionBatchService extends BaseService<
             {
               model: Product,
               as: "product",
-              include: [{ model: Stock, as: "stocks" }],
+              include: [{ model: Stock, as: "stocks", where: {
+                unit_business_id: unitBusinessId
+              } }],
             },
           ],
         },
