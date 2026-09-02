@@ -9,6 +9,7 @@ import { userPermissions } from "../../../middlewares/user-permissions";
 import unitBusinessService from "../../company/unit-business/unit-business.service";
 import productWithMovementService from './services/product-with-movements'
 import { StockUnitFilter } from "./product.types";
+import { getUserContext } from "../../../shared/query/get-logged-user";
 
 type ProductQueryParams = Omit<QueryParams, "filters"> & {
   filters?: Record<string, string | string[] | StockUnitFilter | undefined>;
@@ -65,6 +66,12 @@ export class ProductController extends BaseController<
     );
 
     this.router.get("/:id/full", ...this.mw("findByIdFull"), this.findByIdFull);
+
+    this.router.get(
+      "/by-code/:code",
+      ...this.mw("findByCode"),
+      this.findByCode,
+    );
   }
 
   protected middlewaresFor() {
@@ -72,11 +79,32 @@ export class ProductController extends BaseController<
       index: [authenticate],
       indexDetailed: [authenticate],
       findByIdFull: [authenticate],
+      findByCode: [authenticate],
       productReport: [authenticate, userPermissions],
       productByUnit: [authenticate, userPermissions],
       productSalesReport: [authenticate, userPermissions],
     };
   }
+
+  findByCode = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const code = req.params.code as string;
+      const { unitBusinessId } = await getUserContext(req);
+
+      const product = await this.service.findProductByCode(
+        code,
+        unitBusinessId,
+      );
+
+      if (!product) {
+        return res.status(404).json({ error: "Produto não encontrado" });
+      }
+
+      return res.json(product);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
 
   findByIdFull = async (req: Request, res: Response): Promise<Response> => {
     try {

@@ -26,9 +26,11 @@ import {
   ProductSalesReportRow,
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
+import productConfigService from "../../product-config/product_config.service";
 import {
   resolveIntegrationsIdForUnitBusiness,
   assertEanNotOwnedByAnotherProduct,
+  normalizeEan,
 } from "../../../handlers/tecinco/queues/helpers/product.helpers";
 import productWithMovementsRepository from "../repository/product-with-movements";
 import KitComponent from "../../kit-components/kit-component.model";
@@ -160,6 +162,45 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     if (!product) return null;
 
     return { product, matchedCode: code };
+  }
+
+  /**
+   * Busca somente leitura por código (gtin ou gtin_package), escopada pela
+   * unit_business do usuário logado (quem chama resolve isso, ex.: pelo
+   * controller via getUserContext). Prioriza ProductConfig da própria unit
+   * business; se não achar, cai pro SupplierMapping da integração dessa unit
+   * business. Não cria nem altera nada — apenas lookup.
+   */
+  async findProductByCode(
+    code: string,
+    unitBusinessId: string,
+  ): Promise<Product | null> {
+    const normalized = normalizeEan(code);
+    if (!normalized) return null;
+
+    const config = await productConfigService.findOne({
+      where: {
+        unit_business_id: unitBusinessId,
+        [Op.or]: [{ gtin: normalized }, { gtin_package: normalized }],
+      },
+    });
+    if (config) {
+      return this.repository.findByIdWithRelations(
+        config.product_id,
+        unitBusinessId,
+      );
+    }
+
+    const mapping = await supplierMappingService.findByProductCode(
+      normalized,
+      unitBusinessId,
+    );
+    if (!mapping) return null;
+
+    return this.repository.findByIdWithRelations(
+      mapping.product_id,
+      unitBusinessId,
+    );
   }
 
   async create(
