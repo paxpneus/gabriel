@@ -38,6 +38,7 @@ import {
   ensureSupplierMappings,
   resolveProductWithMapping,
   assertEanNotOwnedByAnotherProduct,
+  isProductOwnedByIntegration,
   EanConflictError,
 } from "./helpers/product.helpers";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
@@ -419,7 +420,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       return;
     }
 
-    const isOwnProduct = product.integrations_id === integrations.id;
+    const isOwnProduct = isProductOwnedByIntegration(product, integrations.id);
 
     // ─── Produto de outra integração → apenas vincula, não sobrescreve ────────
     // (brand_id não é tocado aqui de propósito: o produto pertence a outra
@@ -453,11 +454,34 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
                 ? oldTotalPrice / oldQuantity
                 : 0;
 
+          try {
+            await assertEanNotOwnedByAnotherProduct({
+              productId: product.id,
+              unitBusinessId: unitBusiness.id,
+              candidates: [{ field: "ean", value: ean }],
+              logPrefix,
+            });
+          } catch (error: any) {
+            if (error instanceof EanConflictError) {
+              alertService.sendAlert({
+                severity: "CRITICAL",
+                title: "Conflito de EAN entre produtos (Tecinco)",
+                message: `${error.message} | systemId=${systemId} | filial=${filialNumber}`,
+              });
+              console.warn(
+                `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
+              );
+              continue;
+            }
+            throw error;
+          }
+
           await ProductConfig.upsert(
             {
               product_id: product.id,
               unit_business_id: unitBusiness.id,
               sku: codigoFabrica ?? systemId,
+              gtin: ean ?? undefined,
               price: filial.preco,
               supplier_cost_price: entryUnitCost,
               average_cost: newAverageCost,
@@ -508,29 +532,6 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       }
 
       return;
-    }
-
-    // ─── EAN não pode "misturar" com outro product ─────────────────────────────
-    // Antes de criar/atualizar, garante que o ean não pertence a nenhum outro
-    // product (nem via ean/ean_tribut nem via SupplierMapping). Se pertencer,
-    // é conflito de dados — aborta sem retry e alerta pra revisão manual (ver
-    // constraint de banco equivalente na migration).
-    try {
-      await assertEanNotOwnedByAnotherProduct({
-        productId: product.id,
-        unitBusinessId: operationUnitBusiness.id,
-        candidates: [{ field: "ean", value: ean }],
-        logPrefix,
-      });
-    } catch (error: any) {
-      if (error instanceof EanConflictError) {
-        alertService.sendAlert({
-          severity: "CRITICAL",
-          title: "Conflito de EAN entre produtos (Tecinco)",
-          message: `${error.message} | systemId=${systemId}`,
-        });
-      }
-      throw error;
     }
 
     // ─── Produto próprio da Tecinco: cria ou atualiza ─────────────────────────
@@ -596,18 +597,50 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             ? oldTotalPrice / oldQuantity
             : 0;
 
-      await ProductConfig.upsert(
-        {
-          product_id: product.id,
-          unit_business_id: unitBusiness.id,
-          sku: codigoFabrica ?? systemId,
-          price: filial.preco,
-          supplier_cost_price: entryUnitCost,
-          average_cost: newAverageCost,
-          average_cost_updated_at: new Date(),
-        },
-        { conflictFields: ["product_id", "unit_business_id"] },
-      );
+      // ─── EAN não pode "misturar" com outro product ─────────────────────────
+      // Checagem por filial — cada unit_business tem seu próprio ProductConfig,
+      // então uma colisão numa loja não implica colisão nas outras (ver o bug
+      // real que isso corrigiu: checar só a operationUnitBusiness antes do
+      // loop deixava passar colisão nas demais filiais).
+      let eanConflict = false;
+      try {
+        await assertEanNotOwnedByAnotherProduct({
+          productId: product.id,
+          unitBusinessId: unitBusiness.id,
+          candidates: [{ field: "ean", value: ean }],
+          logPrefix,
+        });
+      } catch (error: any) {
+        if (error instanceof EanConflictError) {
+          alertService.sendAlert({
+            severity: "CRITICAL",
+            title: "Conflito de EAN entre produtos (Tecinco)",
+            message: `${error.message} | systemId=${systemId} | filial=${filialNumber}`,
+          });
+          console.warn(
+            `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
+          );
+          eanConflict = true;
+        } else {
+          throw error;
+        }
+      }
+
+      if (!eanConflict) {
+        await ProductConfig.upsert(
+          {
+            product_id: product.id,
+            unit_business_id: unitBusiness.id,
+            sku: codigoFabrica ?? systemId,
+            gtin: ean ?? undefined,
+            price: filial.preco,
+            supplier_cost_price: entryUnitCost,
+            average_cost: newAverageCost,
+            average_cost_updated_at: new Date(),
+          },
+          { conflictFields: ["product_id", "unit_business_id"] },
+        );
+      }
 
       await Stock.upsert(
         {
@@ -888,25 +921,53 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
         if (!existingConfig) {
           const skuToUse = codigoFabrica ?? systemId;
-          await ProductConfig.upsert(
-            {
-              product_id: product.id,
-              unit_business_id: unitBusiness.id,
-              sku: skuToUse,
-              price: Number(tcarPayload?.epprc_preco ?? 0),
-              supplier_cost_price: Number(
-                tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0,
-              ),
-              average_cost: Number(
-                tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0,
-              ),
-              average_cost_updated_at: new Date(),
-            },
-            { conflictFields: ["product_id", "unit_business_id"] },
-          );
-          console.log(
-            `${logPrefix} — ProductConfig garantido: sku=${skuToUse}`,
-          );
+
+          let eanConflict = false;
+          try {
+            await assertEanNotOwnedByAnotherProduct({
+              productId: product.id,
+              unitBusinessId: unitBusiness.id,
+              candidates: [{ field: "ean", value: ean }],
+              logPrefix,
+            });
+          } catch (error: any) {
+            if (error instanceof EanConflictError) {
+              alertService.sendAlert({
+                severity: "CRITICAL",
+                title: "Conflito de EAN entre produtos (Tecinco)",
+                message: `${error.message} | systemId=${systemId}`,
+              });
+              console.warn(
+                `${logPrefix} — ProductConfig não criado por conflito de EAN`,
+              );
+              eanConflict = true;
+            } else {
+              throw error;
+            }
+          }
+
+          if (!eanConflict) {
+            await ProductConfig.upsert(
+              {
+                product_id: product.id,
+                unit_business_id: unitBusiness.id,
+                sku: skuToUse,
+                gtin: ean ?? undefined,
+                price: Number(tcarPayload?.epprc_preco ?? 0),
+                supplier_cost_price: Number(
+                  tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0,
+                ),
+                average_cost: Number(
+                  tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0,
+                ),
+                average_cost_updated_at: new Date(),
+              },
+              { conflictFields: ["product_id", "unit_business_id"] },
+            );
+            console.log(
+              `${logPrefix} — ProductConfig garantido: sku=${skuToUse}`,
+            );
+          }
         }
       }
 

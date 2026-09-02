@@ -159,6 +159,18 @@ export const blingApi: AxiosInstance = createAxiosInstance({
 
   // Interceptor de request: injeta o token atual
   onRequest: async (config) => {
+    const method = config.method?.toUpperCase();
+    const isMutatingMethod =
+      !!method && ["POST", "PUT", "PATCH", "DELETE"].includes(method);
+
+    // Bloqueia requests de escrita para a Bling fora de produção, evitando
+    // alterar dados reais na API durante desenvolvimento/testes.
+    if (isMutatingMethod && process.env.NODE_ENV !== "production") {
+      throw new Error(
+        `[BlingApi] Requisição ${method} bloqueada: NODE_ENV="${process.env.NODE_ENV}" (apenas em "production" a Bling aceita requests de escrita).`,
+      );
+    }
+
     await waitForBlingRateLimit();
     const configToken = await getBlingToken();
     config.headers.Authorization = `Bearer ${configToken.access_token}`;

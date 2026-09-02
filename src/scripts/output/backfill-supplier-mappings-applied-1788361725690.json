@@ -1,0 +1,4667 @@
+[
+  {
+    "product_id": "00f5127a-bc1d-4eff-bd75-4f9e42d8fd74",
+    "code": "4019238296426",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "01387cba-fa75-4da6-bace-d0f5c8019822",
+    "code": "4032344011639",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "01bc8130-8ad7-48ce-b210-93acc81ebf78",
+    "code": "8808563353418",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "027ba8d4-6ce2-4bf4-808d-e6a4fff7e56e",
+    "code": "4019238040586",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "03968a82-0d1e-4feb-b210-c969dbc2d937",
+    "code": "8808563353715",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "03b0fc92-5840-485a-b54b-88ef254fa56b",
+    "code": "7893091007262",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "040bbc68-ef50-48ed-b5ec-65c3cd72b4bd",
+    "code": "07896807422007",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "04100a64-4100-470f-bce1-f559c336cd51",
+    "code": "4019238695274",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "04149349-b9a7-48d5-87b4-6054ea973e05",
+    "code": "4019238098396",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "04149349-b9a7-48d5-87b4-6054ea973e05",
+    "code": "4019238098396",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "04f6aceb-58f6-4fdf-aae2-051cf37be6f4",
+    "code": "8808563441283",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "05aed034-9d51-4cf4-b995-7a3704a45308",
+    "code": "4019238046465",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "066c33db-c728-4a23-bb90-5bcce053b8e6",
+    "code": "4019238993967",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "06fe949c-b84c-42c0-982f-6c378b191fd6",
+    "code": "4032344004228",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "07232aa0-3e71-4f26-af20-94f1b58c2894",
+    "code": "4024063007079",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "07232aa0-3e71-4f26-af20-94f1b58c2894",
+    "code": "4024063007079",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "0a90da4a-6e31-4e6c-a08f-2d2f9c0ba8ee",
+    "code": "4019238283983",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "0ad62cba-3f0e-452d-96d8-608787240c77",
+    "code": "4019238543131",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "0bd6d22f-17e2-4d6d-aa92-d14f81c6e3ba",
+    "code": "7893091037276",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "0d8d13fd-0181-4283-8d99-9082b1639da6",
+    "code": "07896807421994",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "0da0e1b1-99d0-40a5-987e-cac87978675a",
+    "code": "4024063004313",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "0e857170-c825-4e3b-af26-56c765f5b491",
+    "code": "8808563549545",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "0e8fcdbb-194c-4f50-afc6-6e358c658ec7",
+    "code": "4019238779721",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "0eb4612d-6003-4b0a-a378-5dc6fc812a50",
+    "code": "4019238285031",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "0eda4012-f058-423e-b797-e32d0a941dc3",
+    "code": "8808563544618",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "0ee1442e-48a8-4fed-b0d5-1484364a284f",
+    "code": "4019238758542",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "0f662735-b987-4a6f-ae91-9157645613ba",
+    "code": "7893091035081",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "0ff38ab2-2e44-4fb6-9c2e-4e95aa718e41",
+    "code": "4019238780598",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "103b42d4-5dfe-42d1-8e36-43cff5e2dc45",
+    "code": "4019238324228",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "10668214-3bcd-473e-bf07-e52fd8690de1",
+    "code": "7893091038594",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "110b6660-3d4b-4794-8a82-34c3be47528c",
+    "code": "4019238095395",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "110eddef-af30-4ad8-b7ce-4d2fdafc465d",
+    "code": "4019238296396",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "114c3e05-c2d4-4620-beee-809b2dbbd75c",
+    "code": "4019238793123",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "114c3e05-c2d4-4620-beee-809b2dbbd75c",
+    "code": "4019238793123",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "116a9e86-6dc7-44f4-9e37-d356d5490471",
+    "code": "4019238304275",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "1246fd1b-5d94-4485-858d-e243d207399e",
+    "code": "4019238752540",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1246fd1b-5d94-4485-858d-e243d207399e",
+    "code": "4019238752540",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1313f495-41ae-4a20-a5c2-ffecff665583",
+    "code": "7893091036576",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "1343bd58-6717-4863-9e9f-00b515d82708",
+    "code": "4024063005747",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "134a92ff-2061-43d9-b179-a23ab4098945",
+    "code": "07896807421932",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "136b0ff7-37c9-400b-a231-bcdf8085a373",
+    "code": "4019238296488",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "136b0ff7-37c9-400b-a231-bcdf8085a373",
+    "code": "4019238296488",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "137aff68-a306-43f2-ab9d-925440df4eaa",
+    "code": "4019238784909",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "137aff68-a306-43f2-ab9d-925440df4eaa",
+    "code": "4019238784909",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "139da3e4-2266-4e23-a55a-866db075c263",
+    "code": "4032344004365",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "139da3e4-2266-4e23-a55a-866db075c263",
+    "code": "4032344004365",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1431889d-de2d-4f52-a725-c4f90247551c",
+    "code": "4019238300154",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "147fe49b-8960-4673-a162-3c20b1038443",
+    "code": "4019238015577",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "14aa64eb-c915-40bf-9568-4c12de8bdd9b",
+    "code": "4019238051711",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "14b49a7f-f4cd-45b4-b562-7b04082ece18",
+    "code": "07896807425213",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "152bcd01-7fa0-44ad-89cf-0af0ec10b559",
+    "code": "4019238656909",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "15d84df3-7e4f-4a69-8f5c-8c7fe06da07c",
+    "code": "7893091032813",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "17e24158-84f5-4216-a662-487311c4c050",
+    "code": "4019238296372",
+    "supplier_cnpj": "02316749000682",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "17e24158-84f5-4216-a662-487311c4c050",
+    "code": "4019238296372",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1814e13f-e6a2-4666-955f-c831a55ca9e2",
+    "code": "7893091037283",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "18ac2fba-0904-47a0-b461-43523d4f1507",
+    "code": "06930213609179",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "18da86c6-9249-4d38-91cb-c85786340a79",
+    "code": "7893091008962",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "1b9caa86-6624-4b43-af6b-11b46f3695ac",
+    "code": "7893091033926",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "1b9ed434-5dea-4b7e-b05a-104dc2ec084c",
+    "code": "8808563305455",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1c1bc404-5716-42e6-bf50-2c5a5b019126",
+    "code": "4019238563573",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "1c75bd74-3df7-40c8-b330-bdefe9cd5a7a",
+    "code": "8808563427331",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1c9ca234-db1a-4425-a220-423f6cf66e0d",
+    "code": "7893091032820",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1d65e237-3b6d-46b4-a51d-65909161a053",
+    "code": "06959956785544",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1d7cab9b-c2d3-470a-ac87-780e64c50ebc",
+    "code": "4032344004259",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1d7cab9b-c2d3-470a-ac87-780e64c50ebc",
+    "code": "4032344004259",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1d9739f6-9475-4c28-96b4-0fc4efc89155",
+    "code": "4032344007809",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1d9981e8-fa8b-4221-b2bf-a5cbcc321645",
+    "code": "4019238793192",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1dddd839-73d9-4821-9864-ca6cc2887187",
+    "code": "8808563363127",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1e327cf4-617e-4fb3-b6dd-d65e3fd1a2d8",
+    "code": "4024063004214",
+    "supplier_cnpj": "02316749000925",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1e327cf4-617e-4fb3-b6dd-d65e3fd1a2d8",
+    "code": "4024063004214",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1eac06a9-4041-4ea6-9c4b-db8ba2af7d7e",
+    "code": "4019238098389",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "1fad3944-8e8a-4351-a907-595729c4e1ab",
+    "code": "4019238081985",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "20ca2acb-b9c8-427d-a44b-3f6a00743500",
+    "code": "4019238030709",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "20e9d9b2-e374-47cb-836f-9bedeb702a69",
+    "code": "8808563473833",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "217a31f4-41a9-40ee-9e78-ee82d5a27e51",
+    "code": "4019238280449",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "217a31f4-41a9-40ee-9e78-ee82d5a27e51",
+    "code": "4019238280449",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "21c8c4cf-2274-4f45-8e2e-5964b3a334f0",
+    "code": "06959956785612",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "2236238e-413c-4c04-aba2-540a554aabe4",
+    "code": "07896807423134",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "22b8a66b-e087-4c2b-9a58-5af44b6b9129",
+    "code": "7893091032462",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "23b1c077-ce22-4eb7-9077-6a33cbeb1d48",
+    "code": "7893091036927",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "25179e88-09d7-424e-8581-e35bd0060cda",
+    "code": "4019238058482",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "25bafd28-3025-4009-9187-911800629eed",
+    "code": "4019238038415",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "25bafd28-3025-4009-9187-911800629eed",
+    "code": "4019238038415",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "25c8a5a5-967b-4389-8568-db8c482eec7d",
+    "code": "7893091038075",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "25e76d63-484c-4f21-bece-65e4b210bd5b",
+    "code": "7893091033414",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "27278d4e-805e-4e50-b37a-e3e0cd466a94",
+    "code": "051342209194",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "28f67897-839e-445d-88ce-090c9cc9e9e3",
+    "code": "4019238093452",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "2906348a-84a3-4d5c-88ad-83819d1621d6",
+    "code": "06922250420008",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "29b139e3-7279-49f8-bd4a-4e3e7c8c7177",
+    "code": "4019238299953",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "2a13e068-5c3d-4c67-81c8-074ba00df22a",
+    "code": "7893091037047",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "2a533384-9974-48d7-92fe-a089ab441709",
+    "code": "4019238324907",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "created"
+  },
+  {
+    "product_id": "2a533384-9974-48d7-92fe-a089ab441709",
+    "code": "4019238324907",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "2a65f8b2-ee71-4c99-935e-c715ac640341",
+    "code": "4019238015614",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "2b5167ee-cd1c-48b1-a220-053793e993ae",
+    "code": "4032344015569",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "2d02a6e2-1fbc-4197-a35f-240e00767cba",
+    "code": "07896807422847",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "2da00377-ff52-48fb-904c-086e176ac0d0",
+    "code": "4019238326987",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "2e425c86-3775-4fd0-a3fc-fa7c48749113",
+    "code": "7893091034206",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "2ef44366-1357-4881-9093-1d3d04a525db",
+    "code": "4019238048933",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "2f52f49e-2faa-4894-88ae-2476fbc5cc27",
+    "code": "4019238082029",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "2fb9d5ad-f925-49a4-bb55-02b6d049f618",
+    "code": "4032344004402",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "30623e02-e279-4fa6-a5bc-b7a010fa0a8c",
+    "code": "4019238324211",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "3064df15-fcdf-4766-91bc-888f6b5c3dfd",
+    "code": "4019238562231",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3130be96-a36a-4906-950c-a4f9dd9a4161",
+    "code": "7893091033407",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "314ce696-bbfd-4f17-91e6-e8605737882c",
+    "code": "07896807419281",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3180d270-00ff-4073-944f-296ac85bb173",
+    "code": "4019238324914",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3180d270-00ff-4073-944f-296ac85bb173",
+    "code": "4019238324914",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3180d270-00ff-4073-944f-296ac85bb173",
+    "code": "4024063004429",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "31f67e24-909a-4549-bdca-a56579fff6b1",
+    "code": "4019238051940",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "33a2afce-6506-4dc3-9122-ee54b895eb9c",
+    "code": "07896807423073",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "345e7ca9-d8ac-4187-9025-2169603d1292",
+    "code": "4032344013602",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "345e7ca9-d8ac-4187-9025-2169603d1292",
+    "code": "4032344013602",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "34a59d43-4976-4e48-86f7-823031d0b868",
+    "code": "4032344004303",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "34a59d43-4976-4e48-86f7-823031d0b868",
+    "code": "4032344004303",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "353566f2-3b90-4993-9715-b41bd1c190a0",
+    "code": "8808563342320",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "363be970-19e9-40ce-a660-286b398e7b93",
+    "code": "4024063004276",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3882dd04-2353-4774-a32a-fad1216a804b",
+    "code": "07896807419816",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "39e0487a-9f83-48e1-949a-fac65be10c44",
+    "code": "4019238048711",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3ac0949d-9ac8-4171-bc54-5cf6cd523fa5",
+    "code": "7893091032912",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "3add70cf-930d-499b-9bf8-228b207091bd",
+    "code": "4032344004426",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3bb3187a-34d8-4b97-ab4b-a6a38026a90a",
+    "code": "07896807422854",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3c5e7f2c-7816-4454-93a1-3a8f1558b82f",
+    "code": "4019238097726",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3c7d0b18-674b-4bdf-82de-8c0221296a58",
+    "code": "4032344004358",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3c90e1b5-6321-4e0d-b256-a4affa4556a3",
+    "code": "4019238015676",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3c90e1b5-6321-4e0d-b256-a4affa4556a3",
+    "code": "4019238015676",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3c918fd1-da69-45da-a493-d36375906d50",
+    "code": "4019238015553",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3d53ae41-0978-43be-bed5-39847c50729c",
+    "code": "4019238015690",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3d53ae41-0978-43be-bed5-39847c50729c",
+    "code": "4019238015690",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3e49b10a-c582-4916-adbe-a7d0cd4cf89f",
+    "code": "4032344004310",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3eef677b-d760-4365-b392-5e290a39f4a6",
+    "code": "8808563337708",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3f790525-880a-4d64-8e79-c304ff03f67a",
+    "code": "4019238095456",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "3f930ddc-0817-4279-bc44-494ca48a7350",
+    "code": "4032344012872",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "4082506e-3478-471c-abad-9ae7e0470221",
+    "code": "4019238097832",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "40d19b64-6dda-463f-a820-098ca1a593c3",
+    "code": "7893091022968",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "416700f6-5b38-4f94-bb93-60a6fe1e6ae0",
+    "code": "7893091006203",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "4186b992-4590-4476-8a52-83c8f4633a8a",
+    "code": "4019238040654",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "4266eb50-ed0e-487b-9360-1430c6b4bfe3",
+    "code": "8808563325293",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "428665ea-66b5-4e3c-b6e3-00471afc5b5b",
+    "code": "4024063004238",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "42f2db16-2c26-4f3b-b2eb-490067008975",
+    "code": "4019238291551",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "4342448a-fb6e-47bf-9c26-510cfea650b2",
+    "code": "4019238469899",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "44b3473a-a05c-45ec-96c4-09766c4954db",
+    "code": "7893091003066",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "4514fc3b-d2d1-4350-896a-d91439cbbe88",
+    "code": "4019238034493",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4514fc3b-d2d1-4350-896a-d91439cbbe88",
+    "code": "4019238034493",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "45ae1d24-025f-41a8-9c23-e2f09109d44a",
+    "code": "4019238095470",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "46ffa6d9-56a5-43f9-b877-09d92581d202",
+    "code": "4019238016901",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "46ffa6d9-56a5-43f9-b877-09d92581d202",
+    "code": "4019238016901",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "478700a6-fff0-4297-974c-fba18f5b86eb",
+    "code": "07896807425121",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "47dea9ec-46e4-485e-9875-9a765dba05e4",
+    "code": "4019238762730",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "485dc3d3-2e35-47b2-8be6-2c0ee6ed7ec4",
+    "code": "4019238045949",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "48f087fc-b2ec-41c4-bd0a-189e3e3c3f7d",
+    "code": "4019238324273",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "48f087fc-b2ec-41c4-bd0a-189e3e3c3f7d",
+    "code": "4019238324273",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "48f56815-9b35-42ec-a511-8ebd8b4c1783",
+    "code": "4019238485356",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "490bc2a0-9738-4917-a4d7-7c59532c8bc9",
+    "code": "4024063003668",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "49e0108b-52c2-4f89-a2a0-e7b99584cc6a",
+    "code": "7893091035371",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "4d1115d7-4a92-4086-9bc9-9f85d2523c98",
+    "code": "4019238095463",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4d1115d7-4a92-4086-9bc9-9f85d2523c98",
+    "code": "4019238095463",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4d44ff01-cdf6-4347-92ff-6ae48682e7b9",
+    "code": "4024063004283",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4d5c25e3-0285-40e0-bc03-d303d378a3a7",
+    "code": "4032344004211",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4d5c25e3-0285-40e0-bc03-d303d378a3a7",
+    "code": "4032344004211",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4d73c3b5-99f9-41f5-a2d4-7fbe5c761936",
+    "code": "4019238191165",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "4da1fd30-f61a-4ade-9079-02f31097b085",
+    "code": "4019238594614",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "4de285ed-bcde-4daa-99f4-571f97d29989",
+    "code": "4024063004368",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4e5c269e-8cd6-4fd4-9b3d-17066b0e4bf0",
+    "code": "8808563373935",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4ebf8e53-84d3-41d6-a6fe-3b190b0cd30d",
+    "code": "8808563366906",
+    "supplier_cnpj": "32257844000109",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4ecdb678-c14c-49b9-8524-314a1d7f0194",
+    "code": "7893091036026",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "4f05547d-b70c-48b0-9506-93aa69e9bbdc",
+    "code": "4019238370485",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "4f626227-81ee-4738-8e33-c535b84808ef",
+    "code": "4019238784893",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5009a050-0b68-4c34-ab64-0de258983e7a",
+    "code": "4019238324112",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "5133adcf-8f2a-4125-a294-fda8a9da47fb",
+    "code": "4019238784916",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "51566c8f-b5d8-4b9a-811d-9afcdcf18531",
+    "code": "4024063004306",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "516e3d7a-47e1-4e6b-9737-83d2637f736b",
+    "code": "4019238793963",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "52c33acc-1ab5-49c8-8924-3006b907a767",
+    "code": "7893091006371",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "52e3ab28-c02f-48a9-bd1f-4b1a2f0d3da8",
+    "code": "4019238297690",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5361a3b6-b9fe-4d45-9d76-ca2cd5232e39",
+    "code": "8808563352114",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "53a35c41-8d91-4bb5-a566-217672362f2d",
+    "code": "4019238285703",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "53a35c41-8d91-4bb5-a566-217672362f2d",
+    "code": "4019238741841",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "543ba315-ab37-4a8f-b331-ec326e1cf258",
+    "code": "4019238283686",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "543ba315-ab37-4a8f-b331-ec326e1cf258",
+    "code": "4019238283686",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "54687c17-3a35-4b79-8e21-89399c2c5924",
+    "code": "4019238563627",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5557646a-e5f3-413f-b910-19b8b370689a",
+    "code": "4019238097658",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "557f56b7-6414-4daa-87c6-d9e5d698f336",
+    "code": "7893091035357",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "55827a12-07cc-4f1f-add9-c3490035b9fa",
+    "code": "4019238605457",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "569aecae-b3c9-4855-81af-57e55ea52f55",
+    "code": "07896807420058",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "571d8337-3c2a-418c-a705-fc12ff239613",
+    "code": "7893091034848",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "57f7ba99-b7dc-4475-b228-3e3b4bf9fe49",
+    "code": "7893091003462",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "580ce987-aacb-4232-b9ba-15d0427edfab",
+    "code": "4019238099287",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "5815ba21-c9f7-48cd-a0d7-bb778a010279",
+    "code": "4019238291612",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "581fc689-4df8-4e48-97f3-98a7da9792ea",
+    "code": "06930213609667",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5900d2aa-056e-47a6-9c85-d68b3a95ae9d",
+    "code": "4019238762532",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5b057477-472f-4e71-a45d-8e9b80e9c6ea",
+    "code": "4019238324747",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "5b4cee4e-af08-4462-ac94-85f4c510b996",
+    "code": "4024063004399",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5be8b2d5-8c26-4ba0-bf6a-7638a97f82f8",
+    "code": "4019238051681",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5c4c0587-4cc3-468d-b6a5-d9aa62dbf05e",
+    "code": "4032344007830",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5c4c0587-4cc3-468d-b6a5-d9aa62dbf05e",
+    "code": "4032344007830",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5d1c32c9-70f2-4ed0-b317-82392929877f",
+    "code": "7893091027703",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "5d8d910a-ebc0-41c7-9b3b-c3445190cfc3",
+    "code": "07896807424735",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "5e1e86a1-78e8-497d-9483-18109234b64e",
+    "code": "4019238456240",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5e356695-d2f9-40ee-a024-567c4225ceb5",
+    "code": "7893091037726",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5e3a4030-04d2-4bea-acfb-e036178fbd60",
+    "code": "4019238094916",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "5ed5c8bd-8415-42cf-9e13-e01609617977",
+    "code": "07896807421987",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5edeeb84-11d3-407f-a17b-cadf06b6e857",
+    "code": "4019238777567",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5f21d080-8878-47ec-9081-458d842768db",
+    "code": "4019238805109",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "5f7cefaf-6e63-4374-aba6-73eb57baf55e",
+    "code": "4024063003699",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5fa40050-e14a-4d23-b0a1-92a7fcf90cad",
+    "code": "4019238543155",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "5fed2bc2-e962-4cd8-83ef-fe645bbdf98a",
+    "code": "4032344775357",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6035ec20-04f2-4ea9-8dbe-b2a1643c976c",
+    "code": "7893091038266",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "60420afb-3ffe-4216-8124-c08069c930cd",
+    "code": "051342014538",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "60a553ec-668a-4647-925c-3e27e0b649e3",
+    "code": "4019238284027",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "60eb4b44-3e12-4640-a206-51ab5f36fa66",
+    "code": "4019238040531",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6160e1a0-c679-4a8e-9c61-2204b682082c",
+    "code": "4032344007823",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6160e1a0-c679-4a8e-9c61-2204b682082c",
+    "code": "4032344007823",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "62a31a41-962d-42a3-8312-01e15caad1e8",
+    "code": "7893091035166",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "630a01e4-5b91-430b-8ee3-7b5e4f137a91",
+    "code": "7893091028229",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "630cdee3-c8d1-49d6-a253-e836006e263a",
+    "code": "4019238283990",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "63890f5b-4f33-4677-b5f4-74d6b2e8cbaf",
+    "code": "4024063004320",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "63b29a50-1df5-4975-beb2-a2636dc026ee",
+    "code": "07896807421888",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "63d5147c-d285-4e4b-9c4d-e120cc1319a2",
+    "code": "4019238296402",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "63d5147c-d285-4e4b-9c4d-e120cc1319a2",
+    "code": "4019238296402",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6409ee25-0951-4a5f-93ac-9f404e0ddd85",
+    "code": "7893091038167",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "649029e4-8b98-41b1-93b6-04e3b7a2c17c",
+    "code": "4019238285215",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "661511fb-d7a5-49c9-ad4a-14dd5c88b3d9",
+    "code": "4019238094923",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "66634f75-8a70-4ab6-adfa-a9e5459b7eba",
+    "code": "4019238099553",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "673deaff-7e6f-4574-b792-a0fb5cf001f2",
+    "code": "4032344007847",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "67d8a2f5-76ba-4322-9714-efc701bbfb52",
+    "code": "4019238095418",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "684a7333-ea81-48ba-b214-4177d20be72c",
+    "code": "7893091035142",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "6a2c2578-224f-45bf-b59b-1cc66f5453c8",
+    "code": "7893091036088",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6a5b28be-4e35-4c81-8e6a-19940641784a",
+    "code": "4019238403176",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6a8fb040-2000-477d-a809-373b6f3a0b75",
+    "code": "4032344004273",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6ae956f2-ae61-4e95-8816-e8b99935c9af",
+    "code": "07896807428047",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6b2b8ef0-ac96-4e83-b285-486b1c5596a4",
+    "code": "4019238038422",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6c2e6196-4c66-4b35-81c8-e32be488e6e7",
+    "code": "4019238026061",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6d49f2b3-ffb2-41d5-a149-c99077a4efef",
+    "code": "4019238284041",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6d49f2b3-ffb2-41d5-a149-c99077a4efef",
+    "code": "4019238284041",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6dd35076-64a3-4962-9272-2a8f60a03a88",
+    "code": "07896807421901",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "6eec9f03-3055-4274-9332-00a33b620ac6",
+    "code": "4019238807974",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6f76ef83-bc0d-4e1d-b1cb-32d205f670c8",
+    "code": "4024063003651",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6f76ef83-bc0d-4e1d-b1cb-32d205f670c8",
+    "code": "4024063003651",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6f94bbb3-a080-4e64-8e0c-18d239fd5f39",
+    "code": "4019238283594",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "6fc7ee6a-f6a6-4e6c-ae57-86004ebd6593",
+    "code": "7893091003400",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "6fcb4023-9b72-4410-9508-31821d80302f",
+    "code": "4019238015652",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "703b8e56-1b04-4b83-9fb2-c5675704a7d4",
+    "code": "7893091031908",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "70bf51e3-3698-4a29-ac96-fd64e5ceb0d9",
+    "code": "7893091035616",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7151b4f3-094d-4584-90a1-efc8c33f0607",
+    "code": "4019238807073",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "71ac6a72-26a7-4881-b736-ebd79eb56ff5",
+    "code": "4019238042276",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "created"
+  },
+  {
+    "product_id": "71ac6a72-26a7-4881-b736-ebd79eb56ff5",
+    "code": "4019238042276",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "71ac6a72-26a7-4881-b736-ebd79eb56ff5",
+    "code": "4019238543124",
+    "supplier_cnpj": "02316749000682",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "71c6b192-c90d-4a9f-98dd-9b5e7dbf472d",
+    "code": "051342275526",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "71f437dd-450b-4a18-909c-9a79068eaca1",
+    "code": "07896807419298",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "71f74058-dc4f-433e-a83d-3d6a3b9d503e",
+    "code": "4019238793208",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "733c4b32-04cd-47d4-821e-78bd8762393b",
+    "code": "4019238040616",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7436f882-8588-4af0-ac72-4baff4edca41",
+    "code": "4019238324235",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "conflict_different_product",
+    "detail": "SupplierMapping existente (id=5fd46228-6cc0-4f9e-b65a-a9e79e810ed2) aponta pro produto 6160e1a0-c679-4a8e-9c61-2204b682082c, evidência de batch aponta pro produto 7436f882-8588-4af0-ac72-4baff4edca41"
+  },
+  {
+    "product_id": "7442e75c-76d7-4139-b7ca-fafb30e0d877",
+    "code": "4019238671568",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "747a3a42-b570-4443-af63-97e2fbbc5769",
+    "code": "4032344005911",
+    "supplier_cnpj": "02316749000682",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "747a3a42-b570-4443-af63-97e2fbbc5769",
+    "code": "4032344013381",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "created"
+  },
+  {
+    "product_id": "747a3a42-b570-4443-af63-97e2fbbc5769",
+    "code": "4032344013381",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "752307db-5824-47ef-9702-53f082b5e21d",
+    "code": "7893091027031",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "76062a5d-0006-4950-b981-e250d47e3d0e",
+    "code": "4019238310450",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "7623efa7-615b-4515-bddc-e5600be32de2",
+    "code": "4019238040579",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "76735d72-aa61-4cf1-a2e7-814879d83ae5",
+    "code": "4024063004337",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7753a06c-52a9-480e-82d9-d4eb86da0d79",
+    "code": "4024063004207",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7753a06c-52a9-480e-82d9-d4eb86da0d79",
+    "code": "4024063004207",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "780ae53c-d3be-49e2-9dbd-1080aee307a2",
+    "code": "07896807426685",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "782b9d16-0893-4054-865c-404f40ac8c04",
+    "code": "4024063004344",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "78a767b2-9f87-489a-b922-7fb8641baec8",
+    "code": "7893091035289",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "79095787-58fd-4b37-a81d-94b2a89ea67c",
+    "code": "4019238095999",
+    "supplier_cnpj": "02316749001735",
+    "unit_business_id": "17c4496b-5177-4346-8dbb-8da64a671626",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "79095787-58fd-4b37-a81d-94b2a89ea67c",
+    "code": "4019238095999",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "79153fb3-1a6e-4dba-90bf-8058bef2c239",
+    "code": "4019238560961",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "79a1e713-994d-4919-aa74-7c9ae6ec5558",
+    "code": "4019238287967",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7b79561b-2701-42bd-9cce-3cd9c5657f36",
+    "code": "7893091035104",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "7c94daea-172c-4462-b5b8-f2d17a225a66",
+    "code": "4019238542967",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7c94daea-172c-4462-b5b8-f2d17a225a66",
+    "code": "4019238542967",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7cc2e1dd-9b3d-43dd-a298-d6d5d8bc685a",
+    "code": "4032344775739",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7d339bd5-91f2-41bd-8e1b-94e2c62c9dca",
+    "code": "7893091033377",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "7d70efbc-1b3c-4016-b46a-813961a5d0cd",
+    "code": "7893091036101",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "7e7e427e-669a-4d4e-a8c4-e1992a69455e",
+    "code": "4019238283723",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7e7e427e-669a-4d4e-a8c4-e1992a69455e",
+    "code": "4019238283723",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7fb8d85d-a671-440c-a655-15e5ee759f9c",
+    "code": "4019238485448",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "7fe2bd3b-135b-4459-a11f-c3c481fdb3df",
+    "code": "7893091006111",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "8103cbc0-3460-424b-88a2-2add5d4281dc",
+    "code": "7893091036545",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "81df3901-50f4-48da-bc48-88525f7b392a",
+    "code": "4019238373622",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "82718613-a7f2-4b1d-ac28-7885fafbee03",
+    "code": "4032344004327",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "83c757c9-ecbf-44b0-9b6c-a1c5910c8163",
+    "code": "4019238324945",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "created"
+  },
+  {
+    "product_id": "83c757c9-ecbf-44b0-9b6c-a1c5910c8163",
+    "code": "4019238324945",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "83e1eb23-1641-410e-b868-36a0e6d7816f",
+    "code": "06922250436528",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "83ea4726-7703-4a33-8814-6d02c4ab1af8",
+    "code": "4019238005202",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "84a17d24-6f1a-413a-9169-6e25b09d333d",
+    "code": "4019238097719",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "84c5c803-4d96-47f7-b8a9-3e678b7bb423",
+    "code": "4019238013504",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "84d5026b-9cd2-4d1d-8703-e94f8d9a994e",
+    "code": "4032344012667",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "85e2d62d-3f76-4553-bcec-8790834b8c9c",
+    "code": "7893091036507",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "87169915-16fa-4b79-a214-b5d521790147",
+    "code": "4032344775715",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "876ae051-14c4-465c-b65f-6b157c1cb22b",
+    "code": "4019238779691",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "876ae051-14c4-465c-b65f-6b157c1cb22b",
+    "code": "4019238995374",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "877b1797-a440-49a5-b133-7cedf4263ac8",
+    "code": "7893091027352",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "887fadf6-891c-4573-8db2-c884ca70f57b",
+    "code": "4019238282603",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "88920087-76dc-4cf4-8913-bd0fa5c7eec4",
+    "code": "7893091034398",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "88da8362-e38a-4449-8a44-b5eb8a60d0cf",
+    "code": "7893091036811",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "8913a4d2-4956-4902-acb3-22fa62fad5c1",
+    "code": "8808563313610",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "8a4eddcf-3a34-4f86-8697-991558767722",
+    "code": "7893091038242",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "8b0aa94e-2569-4c75-b3bc-479fe0b9e8c3",
+    "code": "4019238777550",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "8b0aa94e-2569-4c75-b3bc-479fe0b9e8c3",
+    "code": "4019238777550",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "8b6e39f2-864e-4f30-9417-234ef798e06e",
+    "code": "4024063004252",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "8bd91495-f491-476c-abf2-875ec8739d36",
+    "code": "4019238285208",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "8cd603cc-c54c-4d65-be9a-396b82ffaa79",
+    "code": "7893091008955",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "8e340e4b-d18f-4f63-a195-273bc67abfb3",
+    "code": "4019238088151",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "8e734338-b7da-45cf-84e0-34882b60f93b",
+    "code": "4019238058499",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "8f19f76a-ad84-47fa-a223-14a7854f0862",
+    "code": "4019238312942",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "900b7720-c4f7-4a4e-9747-c36ed886c049",
+    "code": "4032344007649",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "91e8163f-c733-4fa2-9fc5-937e4202a2fb",
+    "code": "07896807421857",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "91f528d7-acdf-4d7d-bd56-95cf0273678c",
+    "code": "4019238285239",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "928045e8-96e8-4f12-8e17-a7c822c2ca96",
+    "code": "07896807419878",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "928ebe86-8a56-4647-a570-8d37442f6003",
+    "code": "8808563340968",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "92fe2aaa-e16e-4a05-b7e6-41d0b56671ab",
+    "code": "4019238082098",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "93eedd50-3156-47a9-8c34-4b1e2fb4c815",
+    "code": "4019238296419",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "941a342f-94da-48a1-9146-17f9979104ca",
+    "code": "4019238095487",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "946d694c-0b64-4f2f-b1ca-90a2b47c3ad8",
+    "code": "4019238299717",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "959cfe50-2962-46ac-8cbb-9f05c45a629e",
+    "code": "4019238083392",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "96570a68-b322-4220-9d01-5265553cad80",
+    "code": "07896807426371",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "97440b4f-e655-4842-9e23-89f78bcbb792",
+    "code": "4019238283679",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "97752323-3a25-4ae5-9a0a-62cc188101cd",
+    "code": "4019238015560",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "98b50058-f59b-416b-bc11-60a6f903cef2",
+    "code": "4019238624847",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "993ad051-34af-48f0-bfc6-f3ac54e4ed15",
+    "code": "7893091008429",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "994c2924-20f6-48a2-be44-88a3a5d6c872",
+    "code": "4032344012643",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "996199be-17ed-4583-812c-6e6afffc8047",
+    "code": "7893091038136",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "99f1f488-bb67-4fd1-8757-b111bab578c0",
+    "code": "4019238660241",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "9a74002f-4416-415b-8845-0e8dbd4cd602",
+    "code": "4019238324389",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "9b0e0a6d-8431-4186-a46b-f491aeee5de8",
+    "code": "7893091033568",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "9be45d32-0666-4213-a501-44a0989c0453",
+    "code": "7893091008542",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "9cfa3f09-6a12-48f8-af79-6d8940d95f61",
+    "code": "4024063004474",
+    "supplier_cnpj": "02316749000682",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "9d42642a-3c8e-4a54-8bd7-4f7790d69a68",
+    "code": "4019238002478",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "9d4a6bdf-54cc-4226-ab1a-d2c1f6a948c0",
+    "code": "06959956785728",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "9d59b6db-2aa3-443d-b139-8beb68da6278",
+    "code": "07896807423042",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "9e210a32-032b-434a-97c7-707702c67c8d",
+    "code": "7893091036231",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "9ed6229d-fb9c-4718-bae1-dbe2caa6abc1",
+    "code": "8808563507965",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "9fcddf23-98a5-4c38-8739-1601c6a73270",
+    "code": "4019238708202",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "9fed0929-33b5-41f3-bf8f-aa77a93df511",
+    "code": "07896807421918",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "a070cf2c-fa33-4bbe-a466-876ecff0b855",
+    "code": "4019238305142",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a0ac0b91-435f-4f9f-910e-9910ebc214ce",
+    "code": "4019238097702",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "a1c55e2f-eea2-4575-b8e7-5c87868246e8",
+    "code": "4019238015638",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a299c079-923d-4717-a796-4acc28f5467c",
+    "code": "7893091033612",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "a33cbd3e-a6a3-42ae-a71f-f31186f1c0e9",
+    "code": "4019238030457",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a418333a-8cb7-4f02-81f9-849a4b8f3f3f",
+    "code": "7893091007002",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "a4682af7-65de-4277-b692-d88a034205af",
+    "code": "4019238079531",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a4c57b8f-3bbd-4aad-abeb-adb36cc0f84a",
+    "code": "7893091037412",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a4d49b4b-2487-4b97-b1ce-b549c547b4a5",
+    "code": "4019238622195",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a55d3685-6138-4132-9f1c-1be281009440",
+    "code": "4019238779813",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a5ba729f-8014-4902-a2a6-68a191ee0d0f",
+    "code": "4019238061659",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a732245f-cd10-44b6-8f9b-d2bf44c7ef83",
+    "code": "4019238624830",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a746a1d4-1d0d-416d-bbbe-9e48d2e3318e",
+    "code": "4019238284034",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "a7cfd425-f67f-4908-b6ee-e4c3842efe1c",
+    "code": "4019238295979",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "a8f9dba9-ed81-4257-8f5f-38afd3b1b342",
+    "code": "07896807422984",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "aa252ae2-2bea-4ca5-9bff-93492f94d73e",
+    "code": "4019238040555",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "aaff3b8e-b4df-4855-8c07-8125bedf7b37",
+    "code": "06972743365651",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "ab82d20c-cb49-44e0-b782-63b5f8cb0620",
+    "code": "4019238594577",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "abce3bb1-4fca-4dfd-ba28-4177008dcde7",
+    "code": "07896807428085",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "abed26f3-e20f-4cd1-9f73-35a5d24e5c32",
+    "code": "4019238299892",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "abf74043-3be5-4607-8454-093be1cb137d",
+    "code": "4019238044133",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "ad6b6a0a-735f-4fe5-98ab-e708cf80c614",
+    "code": "4019238328325",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "adba20d3-d94a-4a4a-8fe5-fa9f7c4aa222",
+    "code": "4019238075861",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "ae3248fe-6955-4ca3-a8d1-ca1df3052077",
+    "code": "7893091037252",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "ae406771-4bb6-47eb-a293-341e4e8cf8c1",
+    "code": "4024063001671",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "af53f236-d366-4f5b-9eec-10783e016e35",
+    "code": "4019238040562",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "af8551ac-1a97-4dec-9866-6a5e2685243c",
+    "code": "4019238660579",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "af8551ac-1a97-4dec-9866-6a5e2685243c",
+    "code": "4019238660579",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b00eb27d-be3f-4c9c-adc8-0baac22c5f7c",
+    "code": "4019238297263",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "b0353274-eed8-4212-9d0f-e83ede237bc1",
+    "code": "07896807425398",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b159561f-0118-459a-8ba4-9a7ca4080799",
+    "code": "4019238095494",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b159561f-0118-459a-8ba4-9a7ca4080799",
+    "code": "4019238095494",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b18ffab9-f617-4437-b63c-14dec7b924e9",
+    "code": "4019238095401",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b19b0167-87ec-49af-bd29-bb46708aadca",
+    "code": "4019238300383",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b247c84a-0e29-445d-abcc-245072798fac",
+    "code": "4024063003705",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "created"
+  },
+  {
+    "product_id": "b3578f8a-8a76-4c1c-8553-b537b545faa1",
+    "code": "4019238034738",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b386a379-9996-4182-984a-f9977e8ccdbf",
+    "code": "4019238751130",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b44c83b1-d79d-45ff-8620-013cbedeaef8",
+    "code": "7893091006227",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b49d929d-47a4-4d61-b642-2c7f2271980d",
+    "code": "4019238557367",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b52c5910-8638-4cbf-a87e-3bffdf2ad3c6",
+    "code": "4019238771947",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b5bd9070-d8fd-4d7e-a07c-fa0ef1c35e97",
+    "code": "07896807422977",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b5bd9070-d8fd-4d7e-a07c-fa0ef1c35e97",
+    "code": "07896807426654",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b614a9b9-1c69-4f2f-9b3c-55e386f6bb5d",
+    "code": "06922250436504",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b68519c8-8a76-439e-8dce-6362b458ba22",
+    "code": "4019238651171",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b69f0e22-0266-4493-aa9e-2d9ac3fdc0e5",
+    "code": "4019238762556",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b758cf68-b16b-4a4f-93cd-caa0ca084cf2",
+    "code": "7893091036309",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "b798150f-a556-4c20-9e7e-7d43847a5082",
+    "code": "7893091034718",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "b83f3881-b052-432a-8b13-e9733327e49e",
+    "code": "4032344004266",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b83f3881-b052-432a-8b13-e9733327e49e",
+    "code": "4032344004266",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b904a358-977c-42f3-b780-0d43f56cc05c",
+    "code": "4019238321982",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b914976e-1f8d-41cc-b84e-4e419d676443",
+    "code": "4019238042078",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "b9a3b8c0-6db7-4bea-96a2-cc8b2b01460d",
+    "code": "4019238760743",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "bb696ad9-f15b-4860-b3a8-1395f21d851d",
+    "code": "08848116048965",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "bb6dcd0c-1072-4827-9625-40fd3908edd2",
+    "code": "07896807421826",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "bbb6448c-57f0-4e98-9a77-d49f8150262d",
+    "code": "8808563472010",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "bcd4d465-3d84-4e38-a035-2ee46a4d2aa2",
+    "code": "7893091035746",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "bd5dde03-2c96-4dca-ad7b-3db490b37276",
+    "code": "07896807425633",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "bd8f492b-c67a-481a-8b82-a8c3045188c6",
+    "code": "4019238285024",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "bfc70434-3aa3-44f1-aabe-918a5c3059be",
+    "code": "7893091033278",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "c0cb36b5-79e8-4729-95e7-83ffd7ccf76c",
+    "code": "7893091008894",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "c1594f6f-780c-414b-8320-69fe139a88d1",
+    "code": "7893091032349",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "conflict_gtin_trigger",
+    "detail": "código 7893091032349 já é gtin/gtin_package do produto e1993c73-54fb-4ad1-9d21-69ee32d75020 nessa integração"
+  },
+  {
+    "product_id": "c1594f6f-780c-414b-8320-69fe139a88d1",
+    "code": "7893091033261",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "conflict_different_product",
+    "detail": "SupplierMapping existente (id=1490af5e-13de-40df-acf3-9dd89514f9e0) aponta pro produto 6afca281-a647-4c06-8301-2a826908409e, evidência de batch aponta pro produto c1594f6f-780c-414b-8320-69fe139a88d1"
+  },
+  {
+    "product_id": "c169ed07-d71c-4e39-82b0-8ec96a11692f",
+    "code": "4019238082760",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "c365382f-4112-4552-89bf-f9d9c9012018",
+    "code": "7893091028298",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "c39d36f0-92b9-49aa-a2ca-1b64e356ed6c",
+    "code": "4019238324730",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "created"
+  },
+  {
+    "product_id": "c39d36f0-92b9-49aa-a2ca-1b64e356ed6c",
+    "code": "4019238324730",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "c39d36f0-92b9-49aa-a2ca-1b64e356ed6c",
+    "code": "4024063004504",
+    "supplier_cnpj": "02316749000682",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c3a991d7-e631-4bf7-8e8e-491bf85b9a52",
+    "code": "4019238030471",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "c4506876-c61c-48a8-ac3a-f30fc18c4ba2",
+    "code": "4019238013399",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c4dbaf4b-9d45-4136-9cca-33f1dbb27561",
+    "code": "4019238089349",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c4dbaf4b-9d45-4136-9cca-33f1dbb27561",
+    "code": "4019238295931",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "c4fae151-47fe-419e-933a-2bfe29f97eb0",
+    "code": "4032344007786",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c4fae151-47fe-419e-933a-2bfe29f97eb0",
+    "code": "4032344007786",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c6083da2-9acd-4670-99f4-423b18856dcc",
+    "code": "8808563353579",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c78c0458-581c-4337-ab74-6580b65e37d7",
+    "code": "4019238013962",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c7b7872e-2c35-4bfa-8fbe-98e3ad29d30b",
+    "code": "8808563341071",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c923427e-78d0-4533-899e-099a8cedc209",
+    "code": "4019238082494",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c93e591a-fd7a-4644-9c8e-1ded04201c3f",
+    "code": "8808563291789",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c948e361-88ef-42cb-94cb-806285bba974",
+    "code": "4019238807004",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "c99831bc-2d79-49f6-b0da-d46d20d7a58c",
+    "code": "06922250436511",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "cb085168-93ec-4559-a8d9-7cbfaf35cc48",
+    "code": "4019238077957",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "cbe8daac-8a4d-415f-8949-1d762c8d0a1a",
+    "code": "4019238776133",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "cbfddbb0-0cf3-46e2-b286-9de64af65621",
+    "code": "4019238302271",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "cc5444c8-fdd0-4166-930d-a8929495196c",
+    "code": "4019238298123",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "ccb62ff3-44c9-4187-9832-56acc5557097",
+    "code": "07896807423103",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "cdc5181a-2739-47fb-9347-a5b730aef9e8",
+    "code": "4019238015591",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "cdd07064-f366-49fa-897b-f6d4a267965d",
+    "code": "07896807421956",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "cded7f78-15dd-4124-962d-9a9c928b3da9",
+    "code": "07896807423950",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "cead769f-0738-420c-ae5d-4dfd91cb307a",
+    "code": "4019238295894",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "cfda5ee6-9172-415c-aeef-e5e3697ae682",
+    "code": "4019238786453",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "d30cc1a7-de8c-4235-b289-cca4db479fc1",
+    "code": "4019238327335",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "d3433818-a99d-428f-b238-503df0ff2e22",
+    "code": "7893091028632",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "d3bdd242-392c-4432-864f-10c7a1b307aa",
+    "code": "4019238071771",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "d5452dfb-30a1-4f3f-8653-7100152405fe",
+    "code": "7893091032929",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "d680e208-1f44-4249-9682-6caee0eae841",
+    "code": "4019238074789",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "d688d9a9-6483-4f12-bf7b-7f2f1a31e448",
+    "code": "4019238545326",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "d6bf8171-16d2-4578-95b8-86644142a0cb",
+    "code": "7893091027680",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "d8167c85-6ddd-49c3-902c-bcdd87ac06b1",
+    "code": "4019238324242",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "d8167c85-6ddd-49c3-902c-bcdd87ac06b1",
+    "code": "4019238324242",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "d81f50c8-d39d-4739-8c26-c4f3ed32faff",
+    "code": "4032344013619",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "d82062d1-b40c-477e-ba4f-b1526c8a8ceb",
+    "code": "7893091036989",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "d856046e-0e45-459e-abcf-a55afeaa6891",
+    "code": "4019238295948",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "d9ad98ec-0262-406c-b481-676acfc4af4d",
+    "code": "4019238020403",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "db01fc3a-8dcf-4356-b280-a0041be6aa8a",
+    "code": "8808563423869",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "db4da1dc-b28d-44b5-898f-bef017400451",
+    "code": "4024063003675",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "dbd85005-9d2c-417d-93fe-f78659d179e4",
+    "code": "4019238095425",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "dd27e12c-2495-4b5d-8388-950cb748cd6c",
+    "code": "07896807421963",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "de499fea-751a-4263-b666-41eec4f731a1",
+    "code": "7893091036910",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "dea2069f-6dde-41f0-be1c-9273e4f52231",
+    "code": "7893091035296",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "df0ff58a-2b23-4703-965a-d3cb0687cbf5",
+    "code": "7893091007446",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "df29cd59-bb38-471c-965f-e9cc03b74b41",
+    "code": "4019238296358",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "df8233a6-071c-423c-8838-acf7754179a2",
+    "code": "07896807428078",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e0a6da49-f7b2-4cbb-a052-6118af0b175d",
+    "code": "4019238098402",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e21b0f04-84c8-4456-afbd-7c01b453a5f8",
+    "code": "4032344004280",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e2630ef8-70c4-4da0-a3a2-35ed7ff6028d",
+    "code": "4032344775579",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e269092e-658f-4cd4-a8da-4d3af55b5263",
+    "code": "4019238302264",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "e37412ad-c873-4102-a9bf-67deb122ef53",
+    "code": "8808563377544",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e3938b43-a1e0-429d-a316-14c0640997df",
+    "code": "4019238023176",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "e3cc3e77-0f80-4f12-a051-9c8afb6b38b0",
+    "code": "4019238820775",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e47e1a98-6edc-4f91-8dbb-15e17764afef",
+    "code": "8808563337418",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e4e392ad-1606-41a5-b2df-74911a507f39",
+    "code": "4019238456257",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e508831c-22e7-489f-b02f-d2f6a7cce2d1",
+    "code": "4019238477399",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e53629aa-2d89-4ce5-b612-bf5ccca893f5",
+    "code": "4019238051834",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e70ad598-f948-46a7-a715-3186db3a4d32",
+    "code": "07896807421772",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e75724db-a72a-41cb-9c3a-848721d314e0",
+    "code": "4019238296365",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e76d9bc6-9459-476b-88e9-2bae322c23cd",
+    "code": "07896807424896",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e7a6bfc2-bc15-4fd7-aed1-6b0391ce80cb",
+    "code": "4032344606811",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e7a7b716-dacd-46c5-b86b-80198d729fd7",
+    "code": "4019238041804",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e83e8992-bd0b-4c22-80fb-b7676889ba84",
+    "code": "07896807421833",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e8e289da-8ce4-4e50-8a95-bfd4eea320e0",
+    "code": "8808563427348",
+    "supplier_cnpj": "32257844000109",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e92d25ed-c544-48ac-a5ab-2f7e953aa8b8",
+    "code": "4019238616811",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e9c309c0-921c-4496-a7c4-155743da739d",
+    "code": "4019238776171",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "e9e278d1-c539-4f08-88e0-9397c0cbcd4a",
+    "code": "4019238520293",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "ead51233-2454-4444-bdd3-00529679650c",
+    "code": "4019238098426",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "eaf43027-7c85-4091-a3d0-8505ddf44e8a",
+    "code": "4032344004235",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "eb109129-7120-4917-915f-fdfa596cb960",
+    "code": "7893091038440",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "eb1b3197-9d2b-4f4f-97a7-27dfbe16ac6a",
+    "code": "4024063004221",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "eb753bbc-face-46d8-801a-5480c372d125",
+    "code": "8808563402406",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "eb914014-c76e-4a24-b596-c3b7235605d1",
+    "code": "4019238283839",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "ecb14d03-60d6-44b4-8909-ce5d6155879a",
+    "code": "4019238014884",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "ed399e9d-2b60-43a2-9575-2b8212c637b3",
+    "code": "4019238015669",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "edf56f2b-3e25-4b86-876b-481d82674abc",
+    "code": "7893091008993",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "ee288899-026a-4150-a9f9-5fdedd7fc57a",
+    "code": "4019238040814",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "ee50c573-0b50-43f9-a247-62faf5168e77",
+    "code": "4019238781755",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "ef44f95c-06a6-4d8d-8c10-36529463c0b4",
+    "code": "4019238015584",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f04aac3e-69bb-4b96-bb5a-be70f2baa548",
+    "code": "7893091037535",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f07e0fce-81be-41c7-bad0-d88b93e1755a",
+    "code": "4019238283709",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f12c8b58-c521-4918-b331-95de9d23bb20",
+    "code": "4024063004375",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f16bcbf7-5cef-4ae0-aa9e-ac672382318f",
+    "code": "4024063003682",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "created"
+  },
+  {
+    "product_id": "f16bcbf7-5cef-4ae0-aa9e-ac672382318f",
+    "code": "4024063003682",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "f2064b6c-cdbf-40f7-8f8f-6534a5702175",
+    "code": "4019238292473",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f2271736-397a-4b89-868f-37285005cf85",
+    "code": "4019238051377",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f234883f-9f41-483c-b214-b53b5a7084f0",
+    "code": "07896807423110",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f300c351-c320-4c00-9261-52a071694953",
+    "code": "4032344004297",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f38d2e55-2ac0-413d-a5e5-963ea70a4252",
+    "code": "7893091035876",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "f3ac29be-3dd4-4ff1-89c3-022ed764e4d2",
+    "code": "7893091035906",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "f400e8ce-76a2-4300-908d-c9e1c8b7b1f1",
+    "code": "4019238284003",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "85c0d32d-1762-4daa-ad7e-3185a0317255",
+    "integrations_id": "8b6cb352-f594-4575-b6c3-7f7b8916316e",
+    "integration_name": "Tecinco",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f400e8ce-76a2-4300-908d-c9e1c8b7b1f1",
+    "code": "4019238284003",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f44dc181-424c-4822-8ca6-8ee727e6601e",
+    "code": "4019238005172",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f4724c4b-f4d4-4143-8ef7-b745e6b57c3d",
+    "code": "4019238296389",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f53411af-cf7a-45e7-9465-210f64ed28bd",
+    "code": "4019238620146",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f5e7642e-317c-44e7-8061-4edda687497a",
+    "code": "7893091008986",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "f66db272-36e4-4c2e-8442-5e7b7826d9a5",
+    "code": "7893091027413",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "f687e66a-99b5-4537-8873-c9568f4b859d",
+    "code": "4032344004174",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f79e8220-acc0-49db-a98b-a4115b6de8da",
+    "code": "4019238012484",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f7b05240-5763-4c72-80d7-f837389e0057",
+    "code": "7893091033773",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f8383185-383e-489e-9eb0-087564a6e563",
+    "code": "4019238807967",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f878f10f-6033-4340-8e98-806240cdc1e0",
+    "code": "7893091008504",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "f88bde21-efa6-4955-ba6e-d23bcb4f270c",
+    "code": "4019238284973",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "f939e5ac-bd98-4ce0-80e6-d72e85cfae55",
+    "code": "8808563342306",
+    "supplier_cnpj": "46540626000191",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f96006f2-488c-4c67-8f56-f552060c6721",
+    "code": "08848116048972",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "f982d2c0-e313-42d1-af89-f3a347ea7f3c",
+    "code": "4019238695267",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "fa7325f1-5559-4c24-bb6f-42ca7fcc2510",
+    "code": "7893091007033",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "faa5171d-e1bd-418b-ba18-e06d0dc8b108",
+    "code": "08808956604585",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "created"
+  },
+  {
+    "product_id": "fc48a0b2-bf77-468a-b4cc-26bba2dd91d7",
+    "code": "7893091033391",
+    "supplier_cnpj": "57497539000115",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "fc7eb07e-87a0-47a5-a2fb-ce4245b5c176",
+    "code": "4019238010688",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "fcadd92d-5b9e-4ba2-9254-b3261640fe4e",
+    "code": "4032344011202",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "fd3b5f72-7a66-407b-a91e-d927ae46597b",
+    "code": "06922250436498",
+    "supplier_cnpj": "10158356000101",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "fdb255af-eb97-4542-bc34-7f77c8cead82",
+    "code": "051342017973",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "fe7d447c-a355-4fae-b29a-37d3ad1f20f9",
+    "code": "4032344012674",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "fec268d1-a580-4187-9ef8-a1579f75731b",
+    "code": "4019238044126",
+    "supplier_cnpj": "02036483000452",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "fed879b3-7e64-42f6-bced-e2c50f22e976",
+    "code": "4019238786071",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "feeaf933-7236-4df0-84d2-a2b3bbea262d",
+    "code": "4024063004245",
+    "supplier_cnpj": "02036483000614",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  },
+  {
+    "product_id": "ff22badb-bef8-4dbd-97c0-2a364ea30199",
+    "code": "06959956785803",
+    "supplier_cnpj": "10158356019554",
+    "unit_business_id": "361b5640-ec04-4b3f-8191-fe3ac5f134c4",
+    "integrations_id": "9f2dad31-c321-42c0-9532-249847eb2a26",
+    "integration_name": "Bling",
+    "outcome": "already_correct"
+  }
+]

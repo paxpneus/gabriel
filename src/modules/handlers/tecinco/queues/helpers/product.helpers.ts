@@ -44,6 +44,22 @@ export async function resolveIntegrationsIdForUnitBusiness(
   return unitBusiness.integrations_id;
 }
 
+// Product.integrations_id é o "dono" dos campos descritivos compartilhados
+// (name, brand, measure, weight, subgroup etc.) — únicos por produto, não
+// por integração. Quando o mesmo produto físico está mapeado em mais de uma
+// integração (via integration_mappings, ex.: catálogo Bling + Tecinco
+// reconciliados manualmente), só o dono pode sobrescrever esses campos na
+// sincronização; as outras integrações só atualizam o que é realmente delas
+// (ProductConfig/Stock/SupplierMapping da própria unit business). Produto
+// sem dono ainda (integrations_id nulo) pode ser reivindicado por quem
+// sincronizar primeiro.
+export function isProductOwnedByIntegration(
+  product: { integrations_id?: string | null },
+  integrationsId: string,
+): boolean {
+  return !product.integrations_id || product.integrations_id === integrationsId;
+}
+
 // Fonte da verdade de "qual produto local é esse código externo": SEMPRE
 // integration_mappings, nunca Product.id_system direto. id_system é só um
 // campo informativo (o último valor visto vindo da integração) — resolver
@@ -230,21 +246,30 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
   unitBusinessId: string;
   candidates: Array<{ field: string; value?: string | null }>;
   logPrefix: string;
+  transaction?: Transaction;
 }): Promise<void> {
-  const { productId, unitBusinessId, candidates, logPrefix } = params;
+  const { productId, unitBusinessId, candidates, logPrefix, transaction } = params;
 
-  const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
+  const integrationsId = await resolveIntegrationsIdForUnitBusiness(
+    unitBusinessId,
+    transaction,
+  );
 
   for (const { field, value } of candidates) {
     const normalized = normalizeEan(value ?? undefined);
     if (!normalized) continue;
 
+    // ProductConfig.gtin/gtin_package é dado primário — vem direto do sync
+    // do catálogo da integração dona do produto. Se colide com o de OUTRO
+    // produto, os dois lados são igualmente autoritativos e não dá pra saber
+    // qual está certo sem revisão humana — trava e alerta (ver callers).
     const conflictingConfig = await ProductConfig.findOne({
       where: {
         unit_business_id: unitBusinessId,
         product_id: { [Op.ne]: productId },
         [Op.or]: [{ gtin: normalized }, { gtin_package: normalized }],
       },
+      transaction,
     });
 
     if (conflictingConfig) {
@@ -253,18 +278,27 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
       );
     }
 
+    // SupplierMapping é um sinal inferido (veio do código de um fornecedor
+    // numa nota, não da própria integração dona do produto) — mais fraco que
+    // o ProductConfig.gtin que está sendo gravado agora. Se colidir, o
+    // mapping antigo ficou desatualizado (ex.: a integração reatribuiu esse
+    // código pra outro produto) — remove ele automaticamente em vez de
+    // travar a escrita do gtin novo, senão o produto fica preso num conflito
+    // que nunca se resolve sozinho.
     const conflictingMapping = await SupplierMapping.findOne({
       where: {
         supplier_product_code: normalized,
         integrations_id: integrationsId,
         product_id: { [Op.ne]: productId },
       },
+      transaction,
     });
 
     if (conflictingMapping) {
-      throw new EanConflictError(
-        `${logPrefix} — ${field}=${normalized} já está vinculado via SupplierMapping ao product id=${conflictingMapping.product_id} (produto atual id=${productId})`,
+      console.warn(
+        `${logPrefix} — ${field}=${normalized} estava vinculado via SupplierMapping (id=${conflictingMapping.id}) ao product id=${conflictingMapping.product_id} — desatualizado, removendo pra liberar pro product id=${productId}`,
       );
+      await conflictingMapping.destroy({ transaction });
     }
   }
 }

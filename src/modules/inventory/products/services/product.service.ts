@@ -26,7 +26,10 @@ import {
   ProductSalesReportRow,
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
-import { resolveIntegrationsIdForUnitBusiness } from "../../../handlers/tecinco/queues/helpers/product.helpers";
+import {
+  resolveIntegrationsIdForUnitBusiness,
+  assertEanNotOwnedByAnotherProduct,
+} from "../../../handlers/tecinco/queues/helpers/product.helpers";
 import productWithMovementsRepository from "../repository/product-with-movements";
 import KitComponent from "../../kit-components/kit-component.model";
 import kitComponentService from "../../kit-components/kit-component.service";
@@ -183,6 +186,19 @@ export class ProductService extends BaseService<Product, ProductRepository> {
             `[ProductService.create] product_id=${product.id} — config sem unit_business_id, ProductConfig não criado`,
           );
         } else {
+          if (config.gtin || config.gtin_package) {
+            await assertEanNotOwnedByAnotherProduct({
+              productId: product.id,
+              unitBusinessId: config.unit_business_id,
+              candidates: [
+                { field: "gtin", value: config.gtin },
+                { field: "gtin_package", value: config.gtin_package },
+              ],
+              logPrefix: `[ProductService.create] product_id=${product.id}`,
+              transaction,
+            });
+          }
+
           await ProductConfig.create(
             {
               ...config,
@@ -236,6 +252,19 @@ export class ProductService extends BaseService<Product, ProductRepository> {
             `[ProductService.update] product_id=${id} — config sem unit_business_id, ProductConfig não atualizado`,
           );
         } else {
+          if (config.gtin || config.gtin_package) {
+            await assertEanNotOwnedByAnotherProduct({
+              productId: id,
+              unitBusinessId: config.unit_business_id,
+              candidates: [
+                { field: "gtin", value: config.gtin },
+                { field: "gtin_package", value: config.gtin_package },
+              ],
+              logPrefix: `[ProductService.update] product_id=${id}`,
+              transaction,
+            });
+          }
+
           const existingConfig = await ProductConfig.findOne({
             where: {
               product_id: id,

@@ -56,6 +56,7 @@ import { GroupType } from "../../../../../inventory/groups/group/group.types";
 import {
   resolveProductWithMapping,
   assertEanNotOwnedByAnotherProduct,
+  isProductOwnedByIntegration,
   EanConflictError,
 } from "../../../../tecinco/queues/helpers/product.helpers";
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
@@ -1013,10 +1014,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     // ─── EAN/ean_tribut não pode "misturar" com outro product ─────────────────
-    // Antes de criar/atualizar, garante que gtin/gtinEmbalagem não pertencem
-    // a nenhum outro product (nem via ean/ean_tribut nem via SupplierMapping).
-    // Se pertencer, é conflito de dados — aborta sem retry e alerta pra
-    // revisão manual (ver constraint de banco equivalente na migration).
+    // Antes de criar/atualizar, garante que gtin/gtinEmbalagem não pertencem a
+    // nenhum outro product. Colisão com ProductConfig de outro produto é dado
+    // primário/ambíguo dos dois lados — aborta sem retry e alerta pra revisão
+    // manual (ver constraint de banco equivalente na migration). Colisão só
+    // com SupplierMapping (sinal mais fraco, inferido de nota) é resolvida
+    // sozinha: o mapping desatualizado é apagado e a escrita prossegue — ver
+    // assertEanNotOwnedByAnotherProduct.
     try {
       await assertEanNotOwnedByAnotherProduct({
         productId: existingProduct.id,
@@ -1036,6 +1040,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         });
       }
       throw error;
+    }
+
+    // ─── Produto de outra integração → não sobrescreve os campos descritivos ──
+    // (name/brand/measure/weight/subgroup são únicos por produto, não por
+    // integração — quando o mesmo produto físico está mapeado em mais de uma
+    // integração, só o dono pode reescrevê-los; ver isProductOwnedByIntegration).
+    // ProductConfig/Stock/Magento/kardex desta unit business continuam sendo
+    // sincronizados normalmente logo abaixo, independente da posse.
+    const isOwnProduct = isProductOwnedByIntegration(
+      existingProduct,
+      integration.id,
+    );
+    if (!isOwnProduct) {
+      console.log(
+        `${logPrefix} — produto pertence a outra integração (id=${existingProduct.integrations_id}) — apenas vinculando`,
+      );
     }
 
     const { measure, line, rim } = extractProductMeasureAndLine(
@@ -1172,16 +1192,20 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       await sequelize.transaction(async (transaction) => {
         // existingProduct já foi garantido não-nulo acima (senão teria
         // retornado pro unmapped) — sempre update, nunca cria aqui.
-        product = await productService.upsertWithComponents({
-          id: existingProduct.id,
-          values: productValues,
-          components: kitComponentsForUpsert,
-          transaction,
-        });
+        if (isOwnProduct) {
+          product = await productService.upsertWithComponents({
+            id: existingProduct.id,
+            values: productValues,
+            components: kitComponentsForUpsert,
+            transaction,
+          });
 
-        console.log(
-          `${logPrefix} — produto atualizado via integration mapping (id=${product.id})`,
-        );
+          console.log(
+            `${logPrefix} — produto atualizado via integration mapping (id=${product.id})`,
+          );
+        } else {
+          product = existingProduct;
+        }
 
         await ProductConfig.upsert(
           {
