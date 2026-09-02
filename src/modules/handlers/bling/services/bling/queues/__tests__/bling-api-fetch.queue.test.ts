@@ -62,6 +62,10 @@ jest.mock("../../../../../tecinco/queues/helpers/product.helpers", () => ({
   __esModule: true,
   resolveProductWithMapping: jest.fn(),
   assertEanNotOwnedByAnotherProduct: jest.fn().mockResolvedValue(undefined),
+  isProductOwnedByIntegration: jest.fn(
+    (product: { integrations_id?: string | null }, integrationsId: string) =>
+      !product?.integrations_id || product.integrations_id === integrationsId,
+  ),
   EanConflictError: class EanConflictError extends Error {},
 }));
 

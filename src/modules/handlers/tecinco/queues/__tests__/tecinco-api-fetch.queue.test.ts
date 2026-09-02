@@ -103,6 +103,10 @@ jest.mock("../helpers/product.helpers", () => ({
   resolveProductWithMapping: jest.fn(),
   ensureSupplierMappings: jest.fn(),
   assertEanNotOwnedByAnotherProduct: jest.fn().mockResolvedValue(undefined),
+  isProductOwnedByIntegration: jest.fn(
+    (product: { integrations_id?: string | null }, integrationsId: string) =>
+      !product?.integrations_id || product.integrations_id === integrationsId,
+  ),
   EanConflictError: class EanConflictError extends Error {},
 }));
 
