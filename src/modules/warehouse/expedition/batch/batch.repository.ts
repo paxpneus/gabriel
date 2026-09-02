@@ -67,6 +67,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                     {
                       model: ProductConfig,
                       as: "productConfigs",
+                      where: { unit_business_id: unitBusinessId },
                       required: false,
                       limit: 1,
                     },
