@@ -6,8 +6,6 @@ import Product from "./product.model";
 export interface ProductAttributes {
   id: string;
   name: string;
-  ean?: string;
-  ean_tribut?: string;
   id_system?: string;
   type?: string;
   category?: string;

@@ -5,6 +5,8 @@ import {
   CreationAttributes,
   UpdateOptions,
   Transaction,
+  fn,
+  col,
 } from "sequelize";
 import {
   PaginatedResult,
@@ -12,7 +14,9 @@ import {
 } from "../../../../shared/query/query.types";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import Product from "../product.model";
-import productRepository, { ProductRepository } from "../repository/product.repository";
+import productRepository, {
+  ProductRepository,
+} from "../repository/product.repository";
 import ProductConfig from "../../product-config/product_config.model";
 import {
   ProductCreationAttributes,
@@ -22,7 +26,13 @@ import {
   ProductSalesReportRow,
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
-import productWithMovementsRepository from '../repository/product-with-movements'
+import productConfigService from "../../product-config/product_config.service";
+import {
+  resolveIntegrationsIdForUnitBusiness,
+  assertEanNotOwnedByAnotherProduct,
+  normalizeEan,
+} from "../../../handlers/tecinco/queues/helpers/product.helpers";
+import productWithMovementsRepository from "../repository/product-with-movements";
 import KitComponent from "../../kit-components/kit-component.model";
 import kitComponentService from "../../kit-components/kit-component.service";
 import rimService from "../../rims/rim.service";
@@ -38,11 +48,42 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         sortBy: ["created_at", "name"],
         sortDir: "DESC",
       },
-      searchFields: ["name", "ean", "ean_tribut", "$productConfigs.sku$"],
+      searchFields: [
+        "name",
+        "$productConfigs.sku$",
+        "$productConfigs.gtin$",
+        "$productConfigs.gtin_package$",
+      ],
+      sortableFields: [
+        "name",
+        "$productConfigs.sku$",
+        "$productConfigs.gtin$",
+        "$productConfigs.gtin_package$",
+      ],
       filterableFields: ["type"],
+      customSort: {
+        gtin: (dir) => [
+          fn(
+            "COALESCE",
+            col("productConfigs.gtin"),
+            col("productConfigs.gtin_package"),
+          ),
+          dir,
+        ],
+      },
       customFields: {
         sku: (value) => ({
           "$productConfigs.sku$": value,
+        }),
+        // Busca por gtin OU gtin_package — o join de productConfigs já vem
+        // escopado pela unit_business_id do usuário (injetada pelo
+        // controller em filters.stockUnit.unitBusinessId), então essa busca
+        // nunca cruza o gtin de uma loja/integração com o de outra.
+        gtin: (value) => ({
+          [Op.or]: [
+            { "$productConfigs.gtin$": value },
+            { "$productConfigs.gtin_package$": value },
+          ],
         }),
         subgroup_id: (value) => ({
           "$subgroup.id$": value,
@@ -88,19 +129,31 @@ export class ProductService extends BaseService<Product, ProductRepository> {
 
   async findByCode(
     code: string,
+    unitBusinessId: string,
     options?: { transaction?: Transaction },
   ): Promise<{ product: Product; matchedCode: string } | null> {
-    const byEan = await this.findOne({
+    const config = await ProductConfig.findOne({
       where: {
-        [Op.or]: [{ ean: code }, { ean_tribut: code }],
+        unit_business_id: unitBusinessId,
+        [Op.or]: [{ gtin: code }, { gtin_package: code }],
       },
       transaction: options?.transaction,
     });
 
-    if (byEan) return { product: byEan, matchedCode: code };
+    if (config) {
+      const product = await this.findById(config.product_id, {
+        transaction: options?.transaction,
+      });
+      if (product) return { product, matchedCode: code };
+    }
+
+    const integrationsId = await resolveIntegrationsIdForUnitBusiness(
+      unitBusinessId,
+      options?.transaction,
+    );
 
     const mapping = await supplierMappingService.findOne({
-      where: { supplier_product_code: code },
+      where: { supplier_product_code: code, integrations_id: integrationsId },
       include: [{ model: Product, as: "product" }],
       transaction: options?.transaction,
     });
@@ -109,6 +162,45 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     if (!product) return null;
 
     return { product, matchedCode: code };
+  }
+
+  /**
+   * Busca somente leitura por código (gtin ou gtin_package), escopada pela
+   * unit_business do usuário logado (quem chama resolve isso, ex.: pelo
+   * controller via getUserContext). Prioriza ProductConfig da própria unit
+   * business; se não achar, cai pro SupplierMapping da integração dessa unit
+   * business. Não cria nem altera nada — apenas lookup.
+   */
+  async findProductByCode(
+    code: string,
+    unitBusinessId: string,
+  ): Promise<Product | null> {
+    const normalized = normalizeEan(code);
+    if (!normalized) return null;
+
+    const config = await productConfigService.findOne({
+      where: {
+        unit_business_id: unitBusinessId,
+        [Op.or]: [{ gtin: normalized }, { gtin_package: normalized }],
+      },
+    });
+    if (config) {
+      return this.repository.findByIdWithRelations(
+        config.product_id,
+        unitBusinessId,
+      );
+    }
+
+    const mapping = await supplierMappingService.findByProductCode(
+      normalized,
+      unitBusinessId,
+    );
+    if (!mapping) return null;
+
+    return this.repository.findByIdWithRelations(
+      mapping.product_id,
+      unitBusinessId,
+    );
   }
 
   async create(
@@ -135,6 +227,19 @@ export class ProductService extends BaseService<Product, ProductRepository> {
             `[ProductService.create] product_id=${product.id} — config sem unit_business_id, ProductConfig não criado`,
           );
         } else {
+          if (config.gtin || config.gtin_package) {
+            await assertEanNotOwnedByAnotherProduct({
+              productId: product.id,
+              unitBusinessId: config.unit_business_id,
+              candidates: [
+                { field: "gtin", value: config.gtin },
+                { field: "gtin_package", value: config.gtin_package },
+              ],
+              logPrefix: `[ProductService.create] product_id=${product.id}`,
+              transaction,
+            });
+          }
+
           await ProductConfig.create(
             {
               ...config,
@@ -188,6 +293,19 @@ export class ProductService extends BaseService<Product, ProductRepository> {
             `[ProductService.update] product_id=${id} — config sem unit_business_id, ProductConfig não atualizado`,
           );
         } else {
+          if (config.gtin || config.gtin_package) {
+            await assertEanNotOwnedByAnotherProduct({
+              productId: id,
+              unitBusinessId: config.unit_business_id,
+              candidates: [
+                { field: "gtin", value: config.gtin },
+                { field: "gtin_package", value: config.gtin_package },
+              ],
+              logPrefix: `[ProductService.update] product_id=${id}`,
+              transaction,
+            });
+          }
+
           const existingConfig = await ProductConfig.findOne({
             where: {
               product_id: id,
@@ -307,7 +425,9 @@ export class ProductService extends BaseService<Product, ProductRepository> {
   }
 
   async getKitComponents(productKitId: string): Promise<KitComponent[]> {
-    return kitComponentService.findAll({ where: { product_kit_id: productKitId } });
+    return kitComponentService.findAll({
+      where: { product_kit_id: productKitId },
+    });
   }
 
   async getSalesReport(
@@ -321,12 +441,13 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     unitBusinessId?: string,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<ProductDetailedWithMovementsSummary[]> {
-    const products = await productWithMovementsRepository.findAllDetailedWithMovements(
-      params,
-      this.queryConfig,
-      unitBusinessId,
-      extraOptions,
-    );
+    const products =
+      await productWithMovementsRepository.findAllDetailedWithMovements(
+        params,
+        this.queryConfig,
+        unitBusinessId,
+        extraOptions,
+      );
 
     return products.map((p) => this.normalizeProductWithMovements(p));
   }

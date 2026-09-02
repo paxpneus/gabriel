@@ -1,4 +1,4 @@
-import { CreateOptions } from "sequelize";
+import { CreateOptions, UniqueConstraintError } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import SupplierMapping from "./supplier-mapping.model";
 import supplierMappingRepository, {
@@ -8,10 +8,7 @@ import {
   FullSupplierMapping,
   SupplierMappingCreationAttributes,
 } from "./supplier-mapping.types";
-import {
-  resolveProduct,
-  resolveProductByEan,
-} from "../../handlers/tecinco/queues/helpers/product.helpers";
+import { resolveIntegrationsIdForUnitBusiness } from "../../handlers/tecinco/queues/helpers/product.helpers";
 
 export class SupplierMappingService extends BaseService<
   SupplierMapping,
@@ -21,12 +18,20 @@ export class SupplierMappingService extends BaseService<
     super(supplierMappingRepository);
   }
 
-  async findByProductCode(ean: string): Promise<FullSupplierMapping | null> {
+  async findByProductCode(
+    ean: string,
+    unitBusinessId: string,
+  ): Promise<FullSupplierMapping | null> {
     if (!ean) {
       throw Error("EAN Não informado");
     }
 
-    const supplierFound = await this.repository.findSupplierByProductCode(ean);
+    const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
+
+    const supplierFound = await this.repository.findSupplierByProductCode(
+      ean,
+      integrationsId,
+    );
 
     if (!supplierFound) return null;
 
@@ -43,18 +48,26 @@ export class SupplierMappingService extends BaseService<
       throw new Error("supplier_product_code não informado");
     }
 
-    const product = await resolveProductByEan({
-      ean: productCode,
-      logPrefix: "[SupplierMappingService.create]",
-    });
-
-    if (product) {
-      throw new Error(
-        `Produto ou mapeamento já registrado com esse código ${productCode}`,
-      );
+    if (!data.integrations_id) {
+      throw new Error("integrations_id não informado");
     }
 
-    return this.repository.create(data, options);
+    // Conflito (código já é gtin/gtin_package de outro produto na mesma
+    // integração, ou já existe SupplierMapping com esse código nela) é
+    // validado pelo próprio banco — unique index
+    // product_supplier_maps_integrations_id_code_unique e o trigger
+    // trigger_prevent_supplier_mapping_gtin_conflict — não precisa duplicar
+    // a checagem aqui.
+    try {
+      return await this.repository.create(data, options);
+    } catch (error: any) {
+      if (error instanceof UniqueConstraintError) {
+        throw new Error(
+          `Já existe um SupplierMapping com o código ${productCode} nessa integração`,
+        );
+      }
+      throw error;
+    }
   }
 }
 

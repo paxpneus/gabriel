@@ -1,7 +1,7 @@
 import { Op, Sequelize, Transaction } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
-import { Product } from "../../../inventory";
+import { Product, ProductConfig } from "../../../inventory";
 import Invoice from "../../fiscal/invoices/invoice/invoice.model";
 import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
 import ExpeditionBatchInvoice from "../batch-invoices/batch-invoices.model";
@@ -59,9 +59,10 @@ export class ExpeditionScanLogService extends BaseService<
    */
   private async findProductByCode(
     code: string,
+    unitBusinessId: string,
     t?: Transaction,
   ): Promise<{ product: Product; matchedCode: string }> {
-    const result = await productsService.findByCode(code, {
+    const result = await productsService.findByCode(code, unitBusinessId, {
       transaction: t,
     });
 
@@ -234,9 +235,12 @@ export class ExpeditionScanLogService extends BaseService<
 
       await assertTransshipment(batchInvoice.invoice, unitBusiness);
 
+      const scanUnitBusinessId: string = (invoiceRead as any).unit_business_id;
+
       // ── Busca produto centralizada (EAN + supplier mapping) ───────────────
       const { product, matchedCode } = await this.findProductByCode(
         productcode,
+        scanUnitBusinessId,
         t,
       );
 
@@ -264,15 +268,23 @@ export class ExpeditionScanLogService extends BaseService<
 
       const stripLeadingZeros = (v: string) => v.replace(/^0+/, "");
 
+      const productConfig = await ProductConfig.findOne({
+        where: {
+          product_id: product.id,
+          unit_business_id: scanUnitBusinessId,
+        },
+        transaction: t,
+      });
+
       const eanExistsOnLabel =
-        product.ean &&
-        (labelcode.includes(product.ean) ||
-          labelcode.includes(stripLeadingZeros(product.ean)));
+        productConfig?.gtin &&
+        (labelcode.includes(productConfig.gtin) ||
+          labelcode.includes(stripLeadingZeros(productConfig.gtin)));
 
       const eanTributExistsOnLabel =
-        product.ean_tribut &&
-        (labelcode.includes(product.ean_tribut) ||
-          labelcode.includes(stripLeadingZeros(product.ean_tribut)));
+        productConfig?.gtin_package &&
+        (labelcode.includes(productConfig.gtin_package) ||
+          labelcode.includes(stripLeadingZeros(productConfig.gtin_package)));
 
       const matchedCodeExistsOnLabel =
         matchedCode &&
@@ -335,7 +347,11 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
       // ── 2. Busca produto centralizada (EAN + supplier mapping) ─────────────
-      const {product} = await this.findProductByCode(labelcode, t);
+      const {product} = await this.findProductByCode(
+        labelcode,
+        batch.unit_business_id,
+        t,
+      );
 
       // ── 3. Busca o BatchItem do produto neste lote (com lock) ──────────────
       const batchItem = await batchItemsService.findOne({
@@ -477,7 +493,11 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
       // ── 2. Busca produto centralizada (EAN + supplier mapping) ─────────────
-      const {product} = await this.findProductByCode(labelcode, t);
+      const {product} = await this.findProductByCode(
+        labelcode,
+        batch.unit_business_id,
+        t,
+      );
 
       // ── 3. Busca o BatchItem do produto neste lote (com lock) ──────────────
       const batchItem = await batchItemsService.findOne({
@@ -577,7 +597,11 @@ export class ExpeditionScanLogService extends BaseService<
 
       for (const item of items) {
         // ── Busca produto centralizada (EAN + supplier mapping) ───────────────
-        const {product} = await this.findProductByCode(item.productcode, t);
+        const {product} = await this.findProductByCode(
+          item.productcode,
+          batch.unit_business_id,
+          t,
+        );
 
         const productRead = (await batchItemsService.findOne({
           where: {

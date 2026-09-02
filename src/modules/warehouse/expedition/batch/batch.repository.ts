@@ -47,7 +47,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               as: "unitBusinessAttributes",
               where: { unit_business_id: unitBusinessId },
               required: false,
-              attributes: ["status", "type", "batch_generated"],
+              attributes: ["status", "type", "batch_generated", "unit_business_id"],
             },
           ],
         },
@@ -67,6 +67,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
                     {
                       model: ProductConfig,
                       as: "productConfigs",
+                      where: { unit_business_id: unitBusinessId },
                       required: false,
                       limit: 1,
                     },

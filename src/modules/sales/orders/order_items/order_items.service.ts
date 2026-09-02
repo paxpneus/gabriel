@@ -10,7 +10,7 @@ import orderItemsRepository, {
 } from "./order_items.repository";
 import Order from "../order/orders.model";
 import { UnitBusiness, Invoice } from "../../../warehouse";
-import { Product } from "../../../inventory";
+import { Product, ProductConfig } from "../../../inventory";
 import Contact from "../../contacts/contacts.model";
 import Customer from "../../customers/customers.model";
 import { OrderSalesDetailRow, SalesDetailFilters } from "./order_items.types";
@@ -147,7 +147,7 @@ export class OrderItemsService extends BaseService<
           {
             model: Product,
             as: "product",
-            attributes: ["id", "name", "ean", "ean_tribut", "line", "measure"],
+            attributes: ["id", "name", "line", "measure"],
             include: [{ model: Brand, as: "brandRegister" }],
           },
           {
@@ -243,6 +243,35 @@ export class OrderItemsService extends BaseService<
         ),
       ]);
 
+    // ─── Busca ProductConfig (gtin/gtin_package) por par produto+loja ─────
+    const productUnitBusinessPairs = new Map<
+      string,
+      { product_id: string; unit_business_id: string }
+    >();
+    for (const item of result.data as any[]) {
+      const productId = item.product_id;
+      const unitBusinessId = item.order?.unit_business_id;
+      if (!productId || !unitBusinessId) continue;
+      productUnitBusinessPairs.set(`${productId}:${unitBusinessId}`, {
+        product_id: productId,
+        unit_business_id: unitBusinessId,
+      });
+    }
+
+    const productConfigMap = new Map<string, ProductConfig>();
+    if (productUnitBusinessPairs.size) {
+      const productConfigs = await ProductConfig.findAll({
+        where: { [Op.or]: [...productUnitBusinessPairs.values()] },
+        attributes: ["product_id", "unit_business_id", "gtin", "gtin_package"],
+      });
+      for (const config of productConfigs) {
+        productConfigMap.set(
+          `${config.product_id}:${config.unit_business_id}`,
+          config,
+        );
+      }
+    }
+
     const data: OrderSalesDetailRow[] = result.data.map((item: any) => {
       const order = item.order;
       const snapshot = item.sellerSnapshot;
@@ -268,6 +297,12 @@ export class OrderItemsService extends BaseService<
       const idVendedorTecinco = order?.seller?.id
         ? (sellerExternalIdsMap.get(order.seller.id) ?? null)
         : null;
+
+      const productConfig =
+        item.product_id && order?.unit_business_id
+          ? productConfigMap.get(`${item.product_id}:${order.unit_business_id}`)
+          : undefined;
+      const ean = productConfig?.gtin ?? productConfig?.gtin_package ?? null;
 
       const integracoesProduto = item.product_id
         ? (productIntegrationMappingsMap.get(item.product_id) ?? [])
@@ -306,7 +341,7 @@ export class OrderItemsService extends BaseService<
           identificacao: {
             integracoes: integration_data_normalized,
             nome: item.product?.name ?? null,
-            ean: item.product?.ean ?? null,
+            ean,
             sku_bling: item.sku,
             linha: item.product?.line ?? null,
           },

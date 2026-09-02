@@ -9,7 +9,7 @@ import Transporter from "../../../transporter/transporter.model";
 import {  InvoiceWithTransporter } from "./invoice.types";
 import CarrierLabelRange from "../../../transporter/carrier-label-ranges/carrier-label-ranges.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
-import { Product } from "../../../../inventory";
+import { Product, ProductConfig } from "../../../../inventory";
 
 // Importe seus modelos e a instância do sequelize se necessário
 // import { Invoice } from '../../database/models/Invoice';
@@ -53,20 +53,31 @@ interface LabelProductVolume {
 
 export class LabelService {
 
-  private async findEanFromInvoiceItems(invoiceId: string): Promise<Map<number, string>> {
+  private async findEanFromInvoiceItems(invoiceId: string, unitBusinessId: string): Promise<Map<number, string>> {
   const items = await InvoiceItems.findAll({
     where: { invoice_id: invoiceId },
-    include: [{ model: Product, as: 'product' }],
+    include: [
+      {
+        model: Product,
+        as: 'product',
+        include: [
+          {
+            model: ProductConfig,
+            as: 'productConfigs',
+            required: false,
+            where: { unit_business_id: unitBusinessId },
+          },
+        ],
+      },
+    ],
     order: [['createdAt', 'ASC']],
   });
 
-  const eanMap = new Map<number, string>(); 
+  const eanMap = new Map<number, string>();
   items.forEach((item, index) => {
-    const product = (item as any).product as Product | undefined;
-    const ean =
-      product?.ean ||
-      product?.ean_tribut ||
-      '';
+    const product = (item as any).product as (Product & { productConfigs?: ProductConfig[] }) | undefined;
+    const config = product?.productConfigs?.[0];
+    const ean = config?.gtin || config?.gtin_package || '';
     if (ean) eanMap.set(index, ean);
   });
 
@@ -75,7 +86,7 @@ export class LabelService {
   /**
    * Busca os dados para etiquetas utilizando Sequelize
    */
-  async getLabelData(invoiceIds: string[]): Promise<LabelData[]> {
+  async getLabelData(invoiceIds: string[], unitBusinessId: string): Promise<LabelData[]> {
   const invoices = await (Invoice as any).findAll({
     where: { id: { [Op.in]: invoiceIds } },
     include: ["transporter"],
@@ -90,7 +101,7 @@ export class LabelService {
     const batchResults = await Promise.allSettled(
       batch.map(async (invoice: any) => {
         try {
-          const parsed = await this.extractFromXml(invoice);
+          const parsed = await this.extractFromXml(invoice, unitBusinessId);
           await invoice.update({ printed_label: true });
           return parsed;
         } catch (err) {
@@ -129,24 +140,25 @@ private async findCarrierRange(
 
 
 
-  private async extractFromXml(invoice: any): Promise<LabelData> {
+  private async extractFromXml(invoice: any, unitBusinessId: string): Promise<LabelData> {
   let xmlPath: string = invoice.xml_path ?? '';
 
 
    if (isEncrypted(xmlPath)) {
- 
+
       xmlPath = decryptXml(xmlPath)
-    
+
   }
-  
-    return await this.parseNFeXml(invoice.id, xmlPath, invoice.transporter_id);
-  
+
+    return await this.parseNFeXml(invoice.id, xmlPath, invoice.transporter_id, unitBusinessId);
+
 }
 
   private async parseNFeXml(
     invoiceId: string,
     xml: string,
-    transporter_id: string
+    transporter_id: string,
+    unitBusinessId: string,
   ): Promise<LabelData> {
     const parsed = await parseStringPromise(xml, {
       explicitArray: false,
@@ -205,7 +217,7 @@ private async findCarrierRange(
 if (!Array.isArray(itens)) itens = [itens];
 
 // Pré-carrega EANs do cadastro para usar como fallback
-const eanFallbackMap = await this.findEanFromInvoiceItems(invoiceId);
+const eanFallbackMap = await this.findEanFromInvoiceItems(invoiceId, unitBusinessId);
 
 let somaQtd = 0;
 const produtos: string[] = [];

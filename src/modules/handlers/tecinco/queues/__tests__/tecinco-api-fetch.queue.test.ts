@@ -348,7 +348,7 @@ describe("TCarUpsertQueue.processProduct", () => {
 
   // ── unit business não encontrada ─────────────────────────────────────────
 
-  it("unit business não encontrada: salva o produto mas não cria ProductConfig/supplier mapping", async () => {
+  it("unit business não encontrada: ignora o produto por completo (sem loja da operação não há como resolver com segurança)", async () => {
     const produto = makeTecincoProduto({ fll_codigo: 999 });
     (resolveProductWithMapping as jest.Mock).mockResolvedValue({
       id: "existing-tecinco-product-id",
@@ -358,7 +358,7 @@ describe("TCarUpsertQueue.processProduct", () => {
 
     await runProductJob("updated", produto);
 
-    expect(productService.upsertWithComponents).toHaveBeenCalledTimes(1);
+    expect(productService.upsertWithComponents).not.toHaveBeenCalled();
     expect(ProductConfig.upsert).not.toHaveBeenCalled();
     expect(ensureSupplierMappings).not.toHaveBeenCalled();
   });

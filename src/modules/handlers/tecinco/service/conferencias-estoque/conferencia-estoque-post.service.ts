@@ -9,14 +9,13 @@ import {
   TCarConferenciaTipo,
   TCarNotaFiscalQueryParams,
 } from "../../../../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
-import { Product, ProductConfig, SupplierMapping } from "../../../../inventory";
+import { ProductConfig, SupplierMapping } from "../../../../inventory";
 import { TCarConferenciaEstoqueService } from "./conferencias-estoque.service";
 import { cleanDocument } from "../../../../../shared/utils/normalizers/document";
 import {
-  normalizeEan,
-  resolveProduct,
+  resolveProductByMappingOnly,
+  resolveIntegrationsIdForUnitBusiness,
 } from "../../queues/helpers/product.helpers";
-import TCarProdutoService from "../produtos/produtos.service";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -86,45 +85,30 @@ interface TCarConferenciaContexto {
 
 // ─── Helpers internos ──────────────────────────────────────────────────────────
 
+// Resolve produto_codigo (epctb_codigo da Tecinco) → product_id local SÓ via
+// integration_mapping — é a mesma chave (external_id) que tecinco-api-fetch
+// grava ao mapear o produto, então não precisa consultar a API da Tecinco de
+// novo aqui só pra obter codigoFabrica/ean (esse fallback já foi removido de
+// resolveProduct: id_system/ProductConfig/SupplierMapping como fallback pra
+// resolução por código já causaram produto errado escolhido no passado).
 async function findProductIdByTecincoCodigo(
   produtoCodigo: string,
-  branchId: number,
-  produtoService: TCarProdutoService,
+  unitBusinessId: string,
   cache: Map<string, string | null>,
 ): Promise<string | null> {
   if (cache.has(produtoCodigo)) return cache.get(produtoCodigo)!;
 
-  let productId: string | null = null;
+  const product = await resolveProductByMappingOnly({
+    unitBusinessId,
+    systemId: produtoCodigo,
+    logPrefix: `[TCarConferenciaPostService] produto_codigo=${produtoCodigo}`,
+  });
 
-  try {
-    const resultado = await produtoService.obterProduto(
-      branchId,
-      produtoCodigo,
-    );
-    const tcarPayload: any = resultado?.data ?? resultado;
+  const productId = product?.id ?? null;
 
-    const codigoFabrica = tcarPayload?.epctb_codigofabrica
-      ? String(tcarPayload.epctb_codigofabrica).trim()
-      : undefined;
-    const ean = normalizeEan(tcarPayload?.epctb_ean);
-
-    const product = await resolveProduct({
-      systemId: produtoCodigo,
-      codigoFabrica,
-      ean,
-      logPrefix: `[TCarConferenciaPostService] produto_codigo=${produtoCodigo}`,
-    });
-
-    productId = product?.id ?? null;
-
-    if (!productId) {
-      console.warn(
-        `[TCarConferenciaPostService] Produto Tecinco ${produtoCodigo} encontrado na API mas não resolvido localmente | codigoFabrica=${codigoFabrica} | ean=${ean}`,
-      );
-    }
-  } catch (err: any) {
+  if (!productId) {
     console.warn(
-      `[TCarConferenciaPostService] Falha ao buscar produto ${produtoCodigo} na Tecinco: ${err?.message ?? err}`,
+      `[TCarConferenciaPostService] Produto Tecinco ${produtoCodigo} sem integration mapping local`,
     );
   }
 
@@ -134,7 +118,9 @@ async function findProductIdByTecincoCodigo(
 
 /**
  * Dado um product_id local, resolve o SKU que a Tecinco conhece para ele.
- * Ordem: ProductConfig da unidade → SupplierMapping → EAN do produto como fallback.
+ * Ordem: ProductConfig da unidade → SupplierMapping (escopado pela integração
+ * dessa unidade) → ProductConfig.gtin/gtin_package da própria unidade como
+ * fallback.
  */
 async function findSkuByProductId(
   productId: string,
@@ -147,9 +133,11 @@ async function findSkuByProductId(
   });
   if (config?.sku && tecincoCodigosValidos.has(config.sku)) return config.sku;
 
-  // 2. SupplierMapping — pega o que bate com algum item da Tecinco
+  // 2. SupplierMapping — pega o que bate com algum item da Tecinco, escopado
+  // pela integração dessa unit business (nunca cross-integração)
+  const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
   const mappings = await SupplierMapping.findAll({
-    where: { product_id: productId },
+    where: { product_id: productId, integrations_id: integrationsId },
   });
   for (const m of mappings) {
     if (tecincoCodigosValidos.has(m.supplier_product_code)) {
@@ -157,10 +145,11 @@ async function findSkuByProductId(
     }
   }
 
-  // 3. EAN como último fallback
-  const product = await Product.findByPk(productId, { attributes: ["ean"] });
-  if (product?.ean && tecincoCodigosValidos.has(product.ean))
-    return product.ean;
+  // 3. ProductConfig.gtin/gtin_package da própria unit business como último
+  // fallback (já carregado no passo 1)
+  if (config?.gtin && tecincoCodigosValidos.has(config.gtin)) return config.gtin;
+  if (config?.gtin_package && tecincoCodigosValidos.has(config.gtin_package))
+    return config.gtin_package;
 
   return null;
 }
@@ -392,16 +381,12 @@ export class TCarConferenciaPostService {
     }
 
     // ── Resolve, para cada produto_codigo da Tecinco, o product_id local ──────
-    // O produto_codigo retornado pela conferência (epctb_codigo) não é salvo
-    // localmente — busca na API da Tecinco pra obter codigofabrica/ean e
-    // cruzar com o produto local
-    const produtoService = new TCarProdutoService();
+    // via integration_mapping (produto_codigo = external_id = epctb_codigo).
     const tecincoCodigoParaProductId = new Map<string, string | null>();
     for (const itemTecinco of itensTecinco) {
       await findProductIdByTecincoCodigo(
         itemTecinco.produto_codigo,
-        branchId,
-        produtoService,
+        ctx.unitBusiness.id,
         tecincoCodigoParaProductId,
       );
     }

@@ -151,7 +151,7 @@ export class InventoryBatchService extends BaseService<
             return {
               product_id: p.id,
               inventory_batch_id: batch.id,
-              ean: p.ean_tribut ?? p.ean ?? "",
+              ean: config?.gtin ?? config?.gtin_package ?? "",
               sku: config?.sku ?? "",
               quantity_stock: stock.quantity,
               status: "OPEN",
@@ -348,7 +348,7 @@ export class InventoryBatchService extends BaseService<
     const productInclude = {
       model: Product,
       as: "product",
-      attributes: ["id", "name", "ean"],
+      attributes: ["id", "name"],
       include: [
         {
           model: ProductConfig,

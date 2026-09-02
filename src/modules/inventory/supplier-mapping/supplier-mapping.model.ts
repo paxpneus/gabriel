@@ -10,6 +10,7 @@ class SupplierMapping extends Model<SupplierMappingAttributes, SupplierMappingCr
   public product_id!: string;
   public supplier_cnpj!: string;
   public supplier_product_code!: string;
+  public integrations_id?: string;
 
   public product?: Product
 
@@ -40,6 +41,14 @@ SupplierMapping.init(
     supplier_product_code: {
       type: DataTypes.STRING(100),
       allowNull: false,
+    },
+    integrations_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: 'integrations',
+        key: 'id',
+      },
     },
   },
   {

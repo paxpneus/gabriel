@@ -53,7 +53,7 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
        const { invoiceItem, newEan, unMappedProductId } = req.body;
 
 
-      const response = await this.service.createInvoiceItem(invoiceItem, newEan, unMappedProductId)
+      const response = await this.service.createInvoiceItemForUnmappedProducts(invoiceItem, newEan, unMappedProductId)
 
       return res.status(201).json(response);
     } catch (error: any) {

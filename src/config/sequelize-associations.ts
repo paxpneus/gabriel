@@ -359,6 +359,15 @@ export function setupAssociations() {
     as: "product",
   });
 
+  SupplierMapping.belongsTo(Integration, {
+    foreignKey: "integrations_id",
+    as: "integration",
+  });
+  Integration.hasMany(SupplierMapping, {
+    foreignKey: "integrations_id",
+    as: "supplierMappings",
+  });
+
   Supplier.hasMany(Product, { foreignKey: "supplier_id", as: "products" });
   Product.belongsTo(Supplier, { foreignKey: "supplier_id", as: "supplier" });
 
