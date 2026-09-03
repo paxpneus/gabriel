@@ -402,12 +402,16 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
     // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
     if (!product) {
-      // unique_ean_null_invoice é UNIQUE(ean) WHERE invoice_id IS NULL — ou
-      // seja, dois systemIds diferentes com o mesmo EAN batem nesse índice
-      // mesmo com sku diferente, então o dedup precisa checar por ean também.
+      // unique_ean_integration_null_invoice é UNIQUE(ean, integrations_id)
+      // WHERE invoice_id IS NULL — dois systemIds diferentes com o mesmo EAN
+      // na mesma integração batem nesse índice mesmo com sku diferente,
+      // então o dedup precisa checar por ean também (sempre escopado à
+      // integração, já que o mesmo EAN pode legitimamente existir em
+      // integrações diferentes).
       const existingUnmapped = await UnmappedInvoiceProduct.findOne({
         where: {
           invoice_id: null,
+          integrations_id: integrations.id,
           ...(ean ? { [Op.or]: [{ sku: systemId }, { ean }] } : { sku: systemId }),
         },
       });
@@ -417,6 +421,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           integrations_id: integrations.id,
           sku: systemId,
           ean: ean ?? null,
+          external_id: systemId,
           product_name: data.epctb_nome?.trim() ?? null,
           quantity: 0,
           reason: "Produto novo, precisa de mapeamento manual",
