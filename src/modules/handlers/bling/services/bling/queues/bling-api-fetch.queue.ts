@@ -840,8 +840,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // catálogo da Bling e bate com ProductConfig.sku, sempre escopado na
     // unit_business da Bling. EAN é usado só como fallback quando não há
     // SKU ou não há ProductConfig correspondente — e mora em
-    // ProductConfig.gtin/gtin_package (escopado por unit_business_id), não
-    // mais em Product.ean/ean_tribut.
+    // ProductConfig.gtin (escopado por unit_business_id), não mais em
+    // Product.ean. gtin_package não participa da resolução — é só um
+    // campo guardado para uso futuro.
     if (sku) {
       const config = await findProductConfigBySku(sku, BLING_UNIT_BUSINESS_ID!);
       if (config) product = await Product.findByPk(config.product_id);
@@ -851,7 +852,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       const config = await ProductConfig.findOne({
         where: {
           unit_business_id: BLING_UNIT_BUSINESS_ID,
-          [Op.or]: [{ gtin: ean }, { gtin_package: ean }],
+          gtin: ean,
         },
       });
       if (config) product = await Product.findByPk(config.product_id);

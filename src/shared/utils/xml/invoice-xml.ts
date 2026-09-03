@@ -409,7 +409,7 @@ async function findProductForInvoiceItem(params: {
     const config = await ProductConfig.findOne({
       where: {
         unit_business_id: unitBusiness.id,
-        [Op.or]: [{ gtin: ean }, { gtin_package: ean }],
+        gtin: ean,
       },
     });
     if (config) product = await Product.findByPk(config.product_id);

@@ -281,21 +281,12 @@ export class ExpeditionScanLogService extends BaseService<
         (labelcode.includes(productConfig.gtin) ||
           labelcode.includes(stripLeadingZeros(productConfig.gtin)));
 
-      const eanTributExistsOnLabel =
-        productConfig?.gtin_package &&
-        (labelcode.includes(productConfig.gtin_package) ||
-          labelcode.includes(stripLeadingZeros(productConfig.gtin_package)));
-
       const matchedCodeExistsOnLabel =
         matchedCode &&
         (labelcode.includes(matchedCode) ||
           labelcode.includes(stripLeadingZeros(matchedCode)));
 
-      if (
-        !eanExistsOnLabel &&
-        !eanTributExistsOnLabel &&
-        !matchedCodeExistsOnLabel
-      ) {
+      if (!eanExistsOnLabel && !matchedCodeExistsOnLabel) {
         throw Error("Etiqueta não pertencente ao produto lido!");
       }
 

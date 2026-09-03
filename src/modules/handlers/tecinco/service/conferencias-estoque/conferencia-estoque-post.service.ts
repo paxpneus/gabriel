@@ -119,8 +119,7 @@ async function findProductIdByTecincoCodigo(
 /**
  * Dado um product_id local, resolve o SKU que a Tecinco conhece para ele.
  * Ordem: ProductConfig da unidade → SupplierMapping (escopado pela integração
- * dessa unidade) → ProductConfig.gtin/gtin_package da própria unidade como
- * fallback.
+ * dessa unidade) → ProductConfig.gtin da própria unidade como fallback.
  */
 async function findSkuByProductId(
   productId: string,
@@ -145,11 +144,9 @@ async function findSkuByProductId(
     }
   }
 
-  // 3. ProductConfig.gtin/gtin_package da própria unit business como último
-  // fallback (já carregado no passo 1)
+  // 3. ProductConfig.gtin da própria unit business como último fallback
+  // (já carregado no passo 1)
   if (config?.gtin && tecincoCodigosValidos.has(config.gtin)) return config.gtin;
-  if (config?.gtin_package && tecincoCodigosValidos.has(config.gtin_package))
-    return config.gtin_package;
 
   return null;
 }

@@ -77,7 +77,7 @@ export class LabelService {
   items.forEach((item, index) => {
     const product = (item as any).product as (Product & { productConfigs?: ProductConfig[] }) | undefined;
     const config = product?.productConfigs?.[0];
-    const ean = config?.gtin || config?.gtin_package || '';
+    const ean = config?.gtin || '';
     if (ean) eanMap.set(index, ean);
   });
 

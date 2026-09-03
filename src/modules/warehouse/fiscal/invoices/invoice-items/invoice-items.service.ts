@@ -123,7 +123,7 @@ export class InvoiceItemsService extends BaseService<
           ncm: config?.ncm ?? null,
           cest: config?.cest ?? null,
           cfop: null,
-          gtin: newEan || unMappedProduct.ean || config?.gtin || config?.gtin_package || null,
+          gtin: newEan || unMappedProduct.ean || config?.gtin || null,
           approx_tax_value: 0,
           icms_rate: 0,
           icms_value: 0,

@@ -111,7 +111,7 @@ export class InventoryBatchLogsService extends BaseService<
           batchId: inventoryBatchId,
           productId: productFound.id,
           stockId: stock.id!,
-          ean: config?.gtin ?? config?.gtin_package ?? "",
+          ean: config?.gtin ?? "",
           sku: config?.sku ?? "",
           quantityStock: stock.quantity,
         },

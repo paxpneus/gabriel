@@ -5,7 +5,6 @@ import {
   CreationAttributes,
   UpdateOptions,
   Transaction,
-  fn,
   col,
 } from "sequelize";
 import {
@@ -52,38 +51,22 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         "name",
         "$productConfigs.sku$",
         "$productConfigs.gtin$",
-        "$productConfigs.gtin_package$",
       ],
       sortableFields: [
         "name",
         "$productConfigs.sku$",
         "$productConfigs.gtin$",
-        "$productConfigs.gtin_package$",
       ],
       filterableFields: ["type"],
       customSort: {
-        gtin: (dir) => [
-          fn(
-            "COALESCE",
-            col("productConfigs.gtin"),
-            col("productConfigs.gtin_package"),
-          ),
-          dir,
-        ],
+        gtin: (dir) => [col("productConfigs.gtin"), dir],
       },
       customFields: {
         sku: (value) => ({
           "$productConfigs.sku$": value,
         }),
-        // Busca por gtin OU gtin_package — o join de productConfigs já vem
-        // escopado pela unit_business_id do usuário (injetada pelo
-        // controller em filters.stockUnit.unitBusinessId), então essa busca
-        // nunca cruza o gtin de uma loja/integração com o de outra.
         gtin: (value) => ({
-          [Op.or]: [
-            { "$productConfigs.gtin$": value },
-            { "$productConfigs.gtin_package$": value },
-          ],
+          "$productConfigs.gtin$": value,
         }),
         subgroup_id: (value) => ({
           "$subgroup.id$": value,
@@ -135,7 +118,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     const config = await ProductConfig.findOne({
       where: {
         unit_business_id: unitBusinessId,
-        [Op.or]: [{ gtin: code }, { gtin_package: code }],
+        gtin: code,
       },
       transaction: options?.transaction,
     });
@@ -165,11 +148,11 @@ export class ProductService extends BaseService<Product, ProductRepository> {
   }
 
   /**
-   * Busca somente leitura por código (gtin ou gtin_package), escopada pela
-   * unit_business do usuário logado (quem chama resolve isso, ex.: pelo
-   * controller via getUserContext). Prioriza ProductConfig da própria unit
-   * business; se não achar, cai pro SupplierMapping da integração dessa unit
-   * business. Não cria nem altera nada — apenas lookup.
+   * Busca somente leitura por código (gtin), escopada pela unit_business do
+   * usuário logado (quem chama resolve isso, ex.: pelo controller via
+   * getUserContext). Prioriza ProductConfig da própria unit business; se
+   * não achar, cai pro SupplierMapping da integração dessa unit business.
+   * Não cria nem altera nada — apenas lookup.
    */
   async findProductByCode(
     code: string,
@@ -181,7 +164,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     const config = await productConfigService.findOne({
       where: {
         unit_business_id: unitBusinessId,
-        [Op.or]: [{ gtin: normalized }, { gtin_package: normalized }],
+        gtin: normalized,
       },
     });
     if (config) {
@@ -227,14 +210,11 @@ export class ProductService extends BaseService<Product, ProductRepository> {
             `[ProductService.create] product_id=${product.id} — config sem unit_business_id, ProductConfig não criado`,
           );
         } else {
-          if (config.gtin || config.gtin_package) {
+          if (config.gtin) {
             await assertEanNotOwnedByAnotherProduct({
               productId: product.id,
               unitBusinessId: config.unit_business_id,
-              candidates: [
-                { field: "gtin", value: config.gtin },
-                { field: "gtin_package", value: config.gtin_package },
-              ],
+              candidates: [{ field: "gtin", value: config.gtin }],
               logPrefix: `[ProductService.create] product_id=${product.id}`,
               transaction,
             });
@@ -293,14 +273,11 @@ export class ProductService extends BaseService<Product, ProductRepository> {
             `[ProductService.update] product_id=${id} — config sem unit_business_id, ProductConfig não atualizado`,
           );
         } else {
-          if (config.gtin || config.gtin_package) {
+          if (config.gtin) {
             await assertEanNotOwnedByAnotherProduct({
               productId: id,
               unitBusinessId: config.unit_business_id,
-              candidates: [
-                { field: "gtin", value: config.gtin },
-                { field: "gtin_package", value: config.gtin_package },
-              ],
+              candidates: [{ field: "gtin", value: config.gtin }],
               logPrefix: `[ProductService.update] product_id=${id}`,
               transaction,
             });

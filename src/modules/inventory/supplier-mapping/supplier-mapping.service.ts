@@ -52,9 +52,9 @@ export class SupplierMappingService extends BaseService<
       throw new Error("integrations_id não informado");
     }
 
-    // Conflito (código já é gtin/gtin_package de outro produto na mesma
-    // integração, ou já existe SupplierMapping com esse código nela) é
-    // validado pelo próprio banco — unique index
+    // Conflito (código já é gtin de outro produto na mesma integração, ou
+    // já existe SupplierMapping com esse código nela) é validado pelo
+    // próprio banco — unique index
     // product_supplier_maps_integrations_id_code_unique e o trigger
     // trigger_prevent_supplier_mapping_gtin_conflict — não precisa duplicar
     // a checagem aqui.

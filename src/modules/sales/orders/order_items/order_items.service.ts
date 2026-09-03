@@ -243,7 +243,7 @@ export class OrderItemsService extends BaseService<
         ),
       ]);
 
-    // ─── Busca ProductConfig (gtin/gtin_package) por par produto+loja ─────
+    // ─── Busca ProductConfig (gtin) por par produto+loja ─────
     const productUnitBusinessPairs = new Map<
       string,
       { product_id: string; unit_business_id: string }
@@ -262,7 +262,7 @@ export class OrderItemsService extends BaseService<
     if (productUnitBusinessPairs.size) {
       const productConfigs = await ProductConfig.findAll({
         where: { [Op.or]: [...productUnitBusinessPairs.values()] },
-        attributes: ["product_id", "unit_business_id", "gtin", "gtin_package"],
+        attributes: ["product_id", "unit_business_id", "gtin"],
       });
       for (const config of productConfigs) {
         productConfigMap.set(
@@ -302,7 +302,7 @@ export class OrderItemsService extends BaseService<
         item.product_id && order?.unit_business_id
           ? productConfigMap.get(`${item.product_id}:${order.unit_business_id}`)
           : undefined;
-      const ean = productConfig?.gtin ?? productConfig?.gtin_package ?? null;
+      const ean = productConfig?.gtin ?? null;
 
       const integracoesProduto = item.product_id
         ? (productIntegrationMappingsMap.get(item.product_id) ?? [])

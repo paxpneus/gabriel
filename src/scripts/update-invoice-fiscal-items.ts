@@ -1,5 +1,4 @@
 import { parseStringPromise } from "xml2js";
-import { Op } from "sequelize";
 import InvoiceFiscalItem from "../modules/warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import { Invoice } from "../modules/warehouse";
 import { Product, ProductConfig, SupplierMapping } from "../modules/inventory";
@@ -32,7 +31,7 @@ async function findProductForInvoiceItem(params: {
     const config = await ProductConfig.findOne({
       where: {
         unit_business_id: BLING_UNIT_BUSINESS_ID,
-        [Op.or]: [{ gtin: ean }, { gtin_package: ean }],
+        gtin: ean,
       },
     });
     if (config) product = await Product.findByPk(config.product_id);

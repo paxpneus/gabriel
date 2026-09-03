@@ -193,14 +193,14 @@ export async function resolveProductByEan(params: {
   const config = await ProductConfig.findOne({
     where: {
       unit_business_id: unitBusinessId,
-      [Op.or]: [{ gtin: normalizedEan }, { gtin_package: normalizedEan }],
+      gtin: normalizedEan,
     },
   });
   if (config) {
     const product = await Product.findByPk(config.product_id);
     if (product) {
       console.log(
-        `${logPrefix} — produto resolvido via ProductConfig.gtin/gtin_package (ean=${normalizedEan})`,
+        `${logPrefix} — produto resolvido via ProductConfig.gtin (ean=${normalizedEan})`,
       );
       return product;
     }
@@ -234,13 +234,13 @@ export class EanConflictError extends Error {
   }
 }
 
-// Garante que nenhum dos EANs candidatos (ean e/ou ean_tribut, conforme a
-// integração) já pertence, NA MESMA UNIT BUSINESS, a um product OU está
-// vinculado via SupplierMapping, NA MESMA INTEGRAÇÃO, a um product diferente
-// do que estamos criando/atualizando. Isso pega o conflito de "mistura"
-// (mesmo código no gtin de um produto e no gtin_package de outro) antes de
-// estourar erro genérico do Postgres na constraint de banco, e dá contexto
-// suficiente pra alertar/revisar manualmente.
+// Garante que nenhum dos EANs candidatos já pertence, NA MESMA UNIT
+// BUSINESS, a um product OU está vinculado via SupplierMapping, NA MESMA
+// INTEGRAÇÃO, a um product diferente do que estamos criando/atualizando.
+// Isso pega o conflito antes de estourar erro genérico do Postgres na
+// constraint de banco, e dá contexto suficiente pra alertar/revisar
+// manualmente. Só considera ProductConfig.gtin — gtin_package não participa
+// de nenhuma checagem, é só um campo guardado para uso futuro.
 export async function assertEanNotOwnedByAnotherProduct(params: {
   productId: string;
   unitBusinessId: string;
@@ -259,15 +259,15 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
     const normalized = normalizeEan(value ?? undefined);
     if (!normalized) continue;
 
-    // ProductConfig.gtin/gtin_package é dado primário — vem direto do sync
-    // do catálogo da integração dona do produto. Se colide com o de OUTRO
-    // produto, os dois lados são igualmente autoritativos e não dá pra saber
-    // qual está certo sem revisão humana — trava e alerta (ver callers).
+    // ProductConfig.gtin é dado primário — vem direto do sync do catálogo
+    // da integração dona do produto. Se colide com o de OUTRO produto, os
+    // dois lados são igualmente autoritativos e não dá pra saber qual está
+    // certo sem revisão humana — trava e alerta (ver callers).
     const conflictingConfig = await ProductConfig.findOne({
       where: {
         unit_business_id: unitBusinessId,
         product_id: { [Op.ne]: productId },
-        [Op.or]: [{ gtin: normalized }, { gtin_package: normalized }],
+        gtin: normalized,
       },
       transaction,
     });
@@ -328,11 +328,11 @@ export async function resolveProductByEanWithStock(params: {
     },
   ];
 
-  // 1. ProductConfig.gtin/gtin_package na própria unit business.
+  // 1. ProductConfig.gtin na própria unit business.
   const config = await ProductConfig.findOne({
     where: {
       unit_business_id: unitBusinessId,
-      [Op.or]: [{ gtin: normalizedEan }, { gtin_package: normalizedEan }],
+      gtin: normalizedEan,
     },
     transaction,
   });
@@ -344,7 +344,7 @@ export async function resolveProductByEanWithStock(params: {
     });
     if (product) {
       console.log(
-        `${logPrefix} — produto resolvido via ProductConfig.gtin/gtin_package (ean=${normalizedEan})`,
+        `${logPrefix} — produto resolvido via ProductConfig.gtin (ean=${normalizedEan})`,
       );
       return product;
     }

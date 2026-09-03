@@ -151,7 +151,7 @@ export class InventoryBatchService extends BaseService<
             return {
               product_id: p.id,
               inventory_batch_id: batch.id,
-              ean: config?.gtin ?? config?.gtin_package ?? "",
+              ean: config?.gtin ?? "",
               sku: config?.sku ?? "",
               quantity_stock: stock.quantity,
               status: "OPEN",

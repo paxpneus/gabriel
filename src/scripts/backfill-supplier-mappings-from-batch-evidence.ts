@@ -36,7 +36,7 @@
  *   SUPPLIER_MAPPING_BACKFILL_APPLY=true npx ts-node src/scripts/backfill-supplier-mappings-from-batch-evidence.ts
  */
 
-import { Op, QueryTypes, UniqueConstraintError } from "sequelize";
+import { QueryTypes, UniqueConstraintError } from "sequelize";
 import * as fs from "fs";
 import * as path from "path";
 import sequelize from "../config/sequelize";
@@ -141,11 +141,11 @@ async function main() {
       continue;
     }
 
-    // Pré-checagem do mesmo conflito que o trigger de banco valida (gtin/gtin_package
+    // Pré-checagem do mesmo conflito que o trigger de banco valida (gtin
     // de OUTRO produto na mesma integração) — pra reportar sem precisar tentar
     // o INSERT e tratar exception em DRY_RUN.
     const conflictingConfig = await ProductConfig.findOne({
-      where: { [Op.or]: [{ gtin: tuple.code }, { gtin_package: tuple.code }] },
+      where: { gtin: tuple.code },
       include: [
         {
           model: UnitBusiness,
@@ -163,7 +163,7 @@ async function main() {
       results.push({
         ...tuple,
         outcome: "conflict_gtin_trigger",
-        detail: `código ${tuple.code} já é gtin/gtin_package do produto ${(conflictingConfig as any).product_id} nessa integração`,
+        detail: `código ${tuple.code} já é gtin do produto ${(conflictingConfig as any).product_id} nessa integração`,
       });
       continue;
     }
