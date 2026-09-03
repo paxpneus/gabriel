@@ -19,6 +19,8 @@ import uploaderService, {
   UploaderService,
   UploadInput,
 } from "../../handlers/uploader/services/uploader.service";
+import invoiceItemsService from "../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
+
 export class UnmappedInvoiceProductService extends BaseService<
   UnmappedInvoiceProduct,
   UnmappedInvoiceProductRepository
@@ -135,6 +137,43 @@ export class UnmappedInvoiceProductService extends BaseService<
     transaction?: Transaction,
   ): Promise<UnmappedInvoiceProduct[]> {
     return this.repository.findUnmappedByInvoiceIds(invoiceIds, transaction);
+  }
+
+  // Resolve a linha unmapped que originou a criação manual de um Product
+  // (ver fetchAndUpsertProduct/processProduct com create:true) — se ela
+  // pertence a uma nota, cria o InvoiceItem/SupplierMapping retroativamente
+  // e apaga o unmapped (reaproveita createInvoiceItemForUnmappedProducts,
+  // que já faz isso); senão (unmapped de catálogo, sem invoice_id), só
+  // apaga. NÃO resolve outros unmapped com o mesmo EAN em outras notas —
+  // isso é tratado separadamente pela cascata de auto-mapeamento.
+  async resolveFromCreatedProduct(params: {
+    externalId: string;
+    integrationsId: string;
+    productId: string;
+  }): Promise<void> {
+    const unmapped = await this.findOne({
+      where: {
+        external_id: params.externalId,
+        integrations_id: params.integrationsId,
+        status: "UNMAPPED",
+      },
+    });
+
+    if (!unmapped) return;
+
+    if (unmapped.invoice_id) {
+      await invoiceItemsService.createInvoiceItemForUnmappedProducts(
+        {
+          product_id: params.productId,
+          invoice_id: unmapped.invoice_id,
+          quantity_expected: unmapped.quantity ?? 0,
+        },
+        unmapped.ean ?? "",
+        unmapped.id,
+      );
+    } else {
+      await this.delete(unmapped.id);
+    }
   }
 
   async getFullById(id: string): Promise<UnmappedInvoiceProduct> {
