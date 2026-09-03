@@ -20,7 +20,7 @@ export class OrderService extends BaseService<Order, OrderRepository> {
         sortBy: ['created_at'],
         sortDir: 'DESC',
       },
-      sortableFields: ['created_at', 'date'],
+      sortableFields: ['created_at', 'date', 'collection_date', 'internal_status'],
       stringFields: ['number_order_system'],
       searchFields: ['number_order_system'],
       customFields: {
