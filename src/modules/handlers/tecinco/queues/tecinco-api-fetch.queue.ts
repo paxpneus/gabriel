@@ -855,6 +855,21 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   }> {
     const operationalItems: InvoiceOperationalItemFromXml[] = [];
     const unmappedItems: UnmappedInvoiceItemFromXml[] = [];
+
+    // Item sem epctb_codigo não é um "produto pendente de revisão" — é a nota
+    // vindo sem dado nenhum pro item (comum em compra de uso e consumo, não
+    // pneu). Um item assim já invalida a confiança na nota inteira, então
+    // ignora a nota toda em vez de processar só os itens que têm código.
+    const hasItemWithoutCode = itens.some(
+      (item) => !String(item.epctb_codigo ?? "").trim(),
+    );
+    if (hasItemWithoutCode) {
+      console.warn(
+        `[TCAR_UPSERT] item sem epctb_codigo na nota (branchId=${branchId}) — nota ignorada por completo`,
+      );
+      return { operationalItems: [], unmappedItems: [] };
+    }
+
     const unitBusiness = await UnitBusiness.findOne({
       where: { number: String(branchId).padStart(2, "0") },
     });
@@ -882,22 +897,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     const produtoService = new TCarProdutoService();
 
     for (const item of itens) {
-      const systemId = String(item.epctb_codigo ?? "").trim();
+      // hasItemWithoutCode já garantiu, acima, que todo item aqui tem
+      // epctb_codigo.
+      const systemId = String(item.epctb_codigo).trim();
       const logPrefix = `[TCAR_UPSERT][ensureProducts] seq=${item.epeit_seq} systemId=${systemId}`;
-
-      if (!systemId) {
-        console.warn(
-          `${logPrefix} — sem epctb_codigo, ignorado | produto_nome=${item.produto_nome ?? "?"} | qtd=${item.epeit_qtdade ?? "?"} | vlrliquido=${item.epeit_vlrliquido ?? "?"}`,
-        );
-        unmappedItems.push({
-          sku: null,
-          gtin: null,
-          qty: Number(item.epeit_qtdade ?? 0),
-          xProd: item.produto_nome ?? null,
-          reason: "Código de produto Tecinco ausente no item da nota",
-        });
-        continue;
-      }
 
       // ─── Busca Tecinco API para obter codigoFabrica e EAN ────────────────────
       let tcarPayload: any = null;
