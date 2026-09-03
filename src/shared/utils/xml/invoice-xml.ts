@@ -975,8 +975,17 @@ export async function upsertInvoiceFromXml(
     }
   }
 
+  // operationalItems vazio não é, por si só, sinal de "a integração não
+  // retornou itens" — ela pode ter retornado itens reais que só não viraram
+  // operationalItems (ex.: nenhum pertence ao grupo pneu, ou nenhum resolveu
+  // pra um Product). Nesses casos o chamador já populou unmappedItems com o
+  // motivo real por item, e não faz sentido descartar isso e recair no parse
+  // bruto do XML — só cai no fallback quando o chamador não deu nenhuma
+  // informação de item (nem operational, nem unmapped).
+  const callerProvidedItemInfo =
+    operationalItems.length > 0 || (options?.unmappedItems?.length ?? 0) > 0;
   const willFallbackToXmlDet =
-    operationalItems.length === 0 && det.length > 0 && !alreadyFullyReconciled;
+    !callerProvidedItemInfo && det.length > 0 && !alreadyFullyReconciled;
 
   // Quando vamos escanear o det do XML do zero (abaixo), ele já regenera uma
   // entrada de "não mapeado" pra cada item não resolvido, com sku/ean/nome

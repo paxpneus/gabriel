@@ -212,6 +212,15 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       console.warn(`${logPrefix} — nota fiscal sem itens retornados`);
     }
 
+    // Sem item de pneu resolvido nem pendente de revisão (nota sem itens, ou
+    // com itens mas nenhum do grupo pneu) — não processa a invoice.
+    if (operationalItems.length === 0 && unmappedItems.length === 0) {
+      console.warn(
+        `${logPrefix} — nenhum item de pneu na nota, invoice não processada`,
+      );
+      return;
+    }
+
     await upsertInvoiceFromXml(xmlContent, {
       integrationName: "Tecinco",
       operationalItems,
@@ -746,6 +755,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     let notaFiscal: any | null = null;
     let operationalItems: InvoiceOperationalItemFromXml[] = [];
     let unmappedItems: UnmappedInvoiceItemFromXml[] = [];
+    let detailFetchFailed = false;
 
     // ─── Busca detalhe da nota fiscal e garante produtos dos itens ───────────
     try {
@@ -778,6 +788,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         console.warn(`${logPrefix} — nota fiscal sem itens retornados`);
       }
     } catch (err: any) {
+      detailFetchFailed = true;
       if (err?.response?.status === 404) {
         console.warn(
           `${logPrefix} — detalhe da nota fiscal não encontrado (404), seguindo sem upsert de produtos`,
@@ -787,6 +798,21 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           `${logPrefix} — erro ao buscar detalhe da nota fiscal: ${err?.message ?? err}`,
         );
       }
+    }
+
+    // Sem item de pneu resolvido nem pendente de revisão (nota sem itens, ou
+    // com itens mas nenhum do grupo pneu) — não processa a invoice. Não se
+    // aplica quando a busca do detalhe falhou (404/erro): aí genuinamente não
+    // sabemos o que tem na nota, então segue pro fallback via XML bruto.
+    if (
+      !detailFetchFailed &&
+      operationalItems.length === 0 &&
+      unmappedItems.length === 0
+    ) {
+      console.warn(
+        `${logPrefix} — nenhum item de pneu na nota, invoice não processada`,
+      );
+      return;
     }
 
     let xml: string | null = null;
@@ -889,6 +915,28 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         console.warn(
           `${logPrefix} — falha ao buscar produto na Tecinco: ${err?.message ?? err}`,
         );
+      }
+
+      // ─── Fora do grupo pneu → ignora o item da nota ────────────────────────────
+      // Mesmo critério do catalog sync (processProduct): só nos interessam
+      // produtos de pneu. Item de outro grupo (óleo, válvula, chumbo etc.) não
+      // vira unmapped nem operational — é só ignorado. Só filtra quando o
+      // grupo foi de fato resolvido (tcarPayload disponível); falha na busca
+      // do produto não deve bloquear a resolução por mapping como antes.
+      const resolvedGroupName = tcarPayload
+        ? normalizeTCarDescription(tcarPayload.grupo_descricao)
+        : "";
+      const isKnownNonTireGroup =
+        resolvedGroupName.length > 0 &&
+        !tecincoAllowedGroupNames.some(
+          (name) => name.toLowerCase() === resolvedGroupName.toLowerCase(),
+        );
+
+      if (isKnownNonTireGroup) {
+        console.log(
+          `${logPrefix} — grupo "${resolvedGroupName}" fora dos grupos de pneus permitidos — item da nota ignorado`,
+        );
+        continue;
       }
 
       // ─── Resolve produto SÓ por integration mapping ────────────────────────────
