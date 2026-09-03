@@ -217,7 +217,7 @@ export class UnmappedInvoiceProductService extends BaseService<
     }
     if (!unmapped.external_id) {
       throw new Error(
-        "Unmapped sem external_id, não é possível criar produto automaticamente",
+        "Produto não mapeado não tem id do ERP, não é possível criar produto automaticamente",
       );
     }
 
