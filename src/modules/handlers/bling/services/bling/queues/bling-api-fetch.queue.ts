@@ -1412,7 +1412,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     await unmappedInvoiceProductService.resolveFromCreatedProduct({
       externalId: String(blingProduct.id),
       integrationsId: integration.id,
-      productId: newProduct.id,
     });
 
     return newProduct;

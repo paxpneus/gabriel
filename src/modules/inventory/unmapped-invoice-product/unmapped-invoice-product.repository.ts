@@ -48,6 +48,30 @@ export class UnmappedInvoiceProductRepository extends BaseRepository<UnmappedInv
       transaction,
     });
   }
+
+  async findByCodeExcluding(
+    supplierProductCode: string,
+    excludeId: string,
+    transaction?: Transaction,
+  ): Promise<UnmappedInvoiceProduct[]> {
+    return this.findAll({
+      where: {
+        status: 'UNMAPPED',
+        id: { [Op.ne]: excludeId },
+        invoice_id: { [Op.ne]: null },
+        [Op.or]: [{ ean: supplierProductCode }, { sku: supplierProductCode }],
+      },
+      include: [
+        {
+          model: Invoice,
+          as: 'invoice',
+          attributes: ['id', 'sender_cnpj'],
+          required: true,
+        },
+      ],
+      transaction,
+    });
+  }
 }
 
 export default new UnmappedInvoiceProductRepository();

@@ -290,6 +290,34 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       return;
     }
 
+    if (opts.create) {
+      // ─── Criação manual (POST .../create-product) — o payload enfileirado
+      // só carrega o essencial pra identificar o produto (epctb_codigo);
+      // busca o detalhe completo aqui (dentro do worker, não no request
+      // HTTP) e substitui `data` por ele. O self-fetch mais abaixo (linhas
+      // ~343+) só backfilla productDataForGroup pra grupo/subgrupo — os
+      // demais campos (ean, codigoFabrica, filiais/preço/estoque, nome)
+      // são lidos direto de `data`, então sem isso aqui o produto seria
+      // criado sem esses dados.
+      const produtoService = new TCarProdutoService();
+      const detalhe = await produtoService.obterProduto(
+        branchId ?? Number(data.fll_codigo),
+        systemId,
+      );
+      const detalheData = (detalhe?.data ?? detalhe) as
+        | TCarProdutoPayload
+        | undefined;
+
+      if (!detalheData) {
+        throw new Error(
+          `${logPrefix} — não foi possível buscar detalhe do produto na Tecinco pra criação manual`,
+        );
+      }
+
+      data = { ...data, ...detalheData };
+      console.log(`${logPrefix} — detalhe completo buscado pra criação manual`);
+    }
+
     // Estoque/preço por filial: quando a busca usa include=filiais, data.filiais
     // já traz todas de uma vez; senão (ex.: webhook de uma filial só), monta um
     // array de 1 posição a partir dos campos "planos" do payload (compat).
@@ -769,7 +797,6 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     await unmappedInvoiceProductService.resolveFromCreatedProduct({
       externalId: systemId,
       integrationsId: integrations.id,
-      productId: newProduct.id,
     });
 
     return newProduct;

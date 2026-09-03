@@ -9,6 +9,8 @@ import { UnmappedInvoiceProductCreationAttributes } from "./unmapped-invoice-pro
 import multer from "multer";
 import uploaderService from "../../handlers/uploader/services/uploader.service";
 import { UnitBusiness, User } from "../../warehouse";
+import { BlingApiFetchQueue } from "../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
+import { TCarUpsertQueue } from "../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 
 const upload = multer({ storage: multer.memoryStorage() });
 export class UnmappedInvoiceProductController extends BaseController<
@@ -30,6 +32,11 @@ export class UnmappedInvoiceProductController extends BaseController<
     );
     this.router.get("/full/:id", ...this.mw("getFullById"), this.getFullById)
     this.router.get("/:id/image", ...this.mw("getImage"), this.getImage);
+    this.router.post(
+      "/:id/create-product",
+      ...this.mw("createProduct"),
+      this.createProduct,
+    );
 
   }
 
@@ -44,6 +51,7 @@ export class UnmappedInvoiceProductController extends BaseController<
       getFullById: [authenticate, userPermissions],
       markMapped: [authenticate, userPermissions],
       getImage: [authenticate, userPermissions],
+      createProduct: [authenticate, userPermissions],
       createUnmappedFromReadingEan: [
         authenticate,
         userPermissions,
@@ -98,6 +106,25 @@ export class UnmappedInvoiceProductController extends BaseController<
     res.status(500).json({ error: error.message });
   }
 };
+
+  createProduct = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { id } = req.params;
+
+      await this.service.createProduct(id as string, {
+        blingApiFetchQueue: req.app.locals
+          .BlingApiFetchQueue as BlingApiFetchQueue,
+        tcarUpsertQueue: req.app.locals.TCarUpsertQueue as TCarUpsertQueue,
+        userId: (req as any).user?.id,
+      });
+
+      return res
+        .status(202)
+        .json({ message: "Criação de produto enfileirada" });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
 
   createUnmappedFromReadingEan = async (
   req: Request,
