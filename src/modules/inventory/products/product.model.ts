@@ -51,6 +51,21 @@ Product.init(
     id_system: { type: DataTypes.STRING(100), allowNull: true },
     name: { type: DataTypes.STRING(255), allowNull: false },
     type: { type: DataTypes.ENUM("UNIT", "KIT"), defaultValue: "UNIT" },
+    category: {
+      type: DataTypes.ENUM(
+        "TIRE",
+        "PART",
+        "OIL",
+        "BATTERY",
+        "ACCESSORY",
+        "WHEEL",
+        "TUBE",
+        "SERVICE",
+        "OTHER",
+      ),
+      allowNull: true,
+      defaultValue: "TIRE",
+    },
     subgroup_id: {
       type: DataTypes.UUID,
       allowNull: true,
