@@ -52,8 +52,29 @@ export function nowTz(): Dayjs {
  
 /**
  * Retorna uma data (string ou Date) já ajustada pro timezone da aplicação.
+ *
+ * Uma string "solta" sem offset/timezone (ex: "2026-09-02" ou
+ * "2026-09-02 15:30:00", como as datas exportadas pela Bling) é tratada
+ * como horário de parede em APP_TIMEZONE via `dayjs.tz()` — não como UTC.
+ * Isso importa porque uma string ISO *date-only* tipo "2026-09-02" é
+ * interpretada pelo `Date`/dayjs como meia-noite UTC (padrão do ECMA-262),
+ * que em APP_TIMEZONE (UTC-3) já cai às 21h do dia anterior; sem esse
+ * tratamento, pedidos com data pura (sem hora) da Bling eram salvos com
+ * um dia a menos.
+ *
+ * `Date` e `Dayjs` já representam um instante absoluto sem ambiguidade,
+ * então continuam sendo apenas reexibidos em APP_TIMEZONE. Uma string com
+ * offset/`Z` explícito também cai nesse caminho, porque `dayjs.tz(string, tz)`
+ * ignora o offset embutido e trataria os números como horário local — o
+ * que corromperia o instante.
  */
 export function toTz(date: string | Date | Dayjs): Dayjs {
+  const isNaiveString = typeof date === "string" && !/(Z|[+-]\d{2}:?\d{2})$/.test(date.trim());
+
+  if (isNaiveString) {
+    return dayjs.tz(date, APP_TIMEZONE);
+  }
+
   return dayjs(date).tz(APP_TIMEZONE);
 }
  
