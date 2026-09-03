@@ -465,7 +465,21 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             ...(ean ? { [Op.or]: [{ sku: systemId }, { ean }] } : { sku: systemId }),
           },
         });
-        if (!existingUnmapped) {
+        if (existingUnmapped) {
+          // Upsert: um unmapped já registrado antes desse campo existir (ou
+          // criado numa passagem anterior) precisa continuar acompanhando o
+          // que a Tecinco manda — em especial external_id, sem o qual o
+          // endpoint de criar produto não funciona pra essa linha.
+          await existingUnmapped.update({
+            sku: systemId,
+            ean: ean ?? null,
+            external_id: systemId,
+            product_name: data.epctb_nome?.trim() ?? null,
+          });
+          console.log(
+            `${logPrefix} — unmapped já existente atualizado (external_id/dados sincronizados)`,
+          );
+        } else {
           await UnmappedInvoiceProduct.create({
             invoice_id: null,
             integrations_id: integrations.id,

@@ -177,7 +177,7 @@ describe("UnmappedInvoiceProductService", () => {
           blingApiFetchQueue: blingQueue as any,
           tcarUpsertQueue: { add: jest.fn() } as any,
         }),
-      ).rejects.toThrow(/sem external_id/i);
+      ).rejects.toThrow(/não tem id do ERP/i);
 
       expect(integrationsService.findById).not.toHaveBeenCalled();
       expect(blingQueue.add).not.toHaveBeenCalled();

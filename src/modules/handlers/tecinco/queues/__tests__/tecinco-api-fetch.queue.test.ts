@@ -289,16 +289,23 @@ describe("TCarUpsertQueue.processProduct", () => {
       expect(ensureSupplierMappings).not.toHaveBeenCalled();
     });
 
-    it("já registrado como unmapped — não duplica a linha", async () => {
+    it("já registrado como unmapped — não duplica a linha, mas atualiza (upsert) o registro existente com os dados mais recentes", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue({
-        id: "existing-unmapped-id",
-      });
+      const existingUnmapped = { id: "existing-unmapped-id", update: jest.fn() };
+      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue(
+        existingUnmapped,
+      );
 
       await runProductJob("updated", produto);
 
       expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
+      expect(existingUnmapped.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          external_id: String(produto.epctb_codigo),
+          product_name: produto.epctb_nome,
+        }),
+      );
     });
   });
 

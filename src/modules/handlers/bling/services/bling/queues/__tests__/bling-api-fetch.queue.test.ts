@@ -304,17 +304,24 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       ).not.toHaveBeenCalled();
     });
 
-    it("já registrado como unmapped — não duplica a linha", async () => {
+    it("já registrado como unmapped — não duplica a linha, mas atualiza (upsert) o registro existente com os dados mais recentes", async () => {
       const blingProduct = makeBlingProduct();
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue({
-        id: "existing-unmapped-id",
-      });
+      const existingUnmapped = { id: "existing-unmapped-id", update: jest.fn() };
+      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue(
+        existingUnmapped,
+      );
 
       await runProductJob(blingProduct);
 
       expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
+      expect(existingUnmapped.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          external_id: String(blingProduct.id),
+          product_name: blingProduct.nome,
+        }),
+      );
     });
 
     it("produto já existente (mapeado): atualiza (não cria de novo) e não duplica o integration mapping", async () => {

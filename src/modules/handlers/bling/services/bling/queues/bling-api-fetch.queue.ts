@@ -705,8 +705,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           `${logPrefix} Produto não encontrado no Magento — unmapped registrado | sku=${sku}`,
         );
       } else {
+        // Upsert: mantém sku/ean/nome sincronizados com o que a Bling manda,
+        // mesmo que o unmapped já exista de uma passagem anterior.
+        await existingUnmapped.update(
+          { sku, ean: normalizedEan, product_name: productName },
+          { transaction },
+        );
         console.log(
-          `${logPrefix} Produto já registrado como unmapped no Magento | sku=${sku}`,
+          `${logPrefix} Produto já registrado como unmapped no Magento (dados sincronizados) | sku=${sku}`,
         );
       }
 
@@ -1020,7 +1026,21 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             ...(ean ? { [Op.or]: [{ sku }, { ean }] } : { sku }),
           },
         });
-        if (!existingUnmapped) {
+        if (existingUnmapped) {
+          // Upsert: um unmapped já registrado antes desse campo existir (ou
+          // criado numa passagem anterior) precisa continuar acompanhando o
+          // que a Bling manda — em especial external_id, sem o qual o
+          // endpoint de criar produto não funciona pra essa linha.
+          await existingUnmapped.update({
+            sku,
+            ean,
+            external_id: String(blingProduct.id),
+            product_name: blingProduct.nome,
+          });
+          console.log(
+            `${logPrefix} — unmapped já existente atualizado (external_id/dados sincronizados)`,
+          );
+        } else {
           await UnmappedInvoiceProduct.create({
             invoice_id: null,
             integrations_id: integration.id,
