@@ -38,6 +38,7 @@ import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items
 import InvoiceUnitBusinessAttributes from "../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import { FullInvoice } from "../../fiscal/invoices/invoice/invoice.types";
+import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -236,6 +237,23 @@ export class ExpeditionBatchService extends BaseService<
         return;
       }
 
+      const unmappedRows = await unmappedInvoiceProductService.findUnmappedByInvoiceIds(
+        notBatched.map((i) => i.id),
+        t,
+      );
+      if (unmappedRows.length) {
+        const numbers = [
+          ...new Set(
+            unmappedRows.map(
+              (u: any) => u.invoice?.number_system ?? u.invoice_id,
+            ),
+          ),
+        ];
+        throw new Error(
+          `Nota(s) com produtos não mapeados: ${numbers.join(", ")}`,
+        );
+      }
+
       for (const invoice of notBatched) {
         await assertTransshipment(invoice, unitBusiness);
       }
@@ -305,6 +323,16 @@ export class ExpeditionBatchService extends BaseService<
         throw new Error("Nota não encontrada para a chave de acesso informada");
       if (!(invoice as any).items?.length)
         throw new Error("Nota não possui itens");
+
+      const invoiceUnmapped = await unmappedInvoiceProductService.findUnmappedByInvoiceIds(
+        [invoice.id],
+        t,
+      );
+      if (invoiceUnmapped.length) {
+        throw new Error(
+          `Nota(s) com produtos não mapeados: ${invoice.number_system}`,
+        );
+      }
 
       const plainInvoice = invoice.get({ plain: true }) as any;
 

@@ -1,4 +1,4 @@
-import { DestroyOptions, FindOptions, Op } from "sequelize";
+import { DestroyOptions, FindOptions, Op, Transaction } from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -128,6 +128,13 @@ export class UnmappedInvoiceProductService extends BaseService<
         },
       );
     });
+  }
+
+  async findUnmappedByInvoiceIds(
+    invoiceIds: string[],
+    transaction?: Transaction,
+  ): Promise<UnmappedInvoiceProduct[]> {
+    return this.repository.findUnmappedByInvoiceIds(invoiceIds, transaction);
   }
 
   async getFullById(id: string): Promise<UnmappedInvoiceProduct> {
