@@ -291,4 +291,85 @@ describe("UnmappedInvoiceProductService", () => {
       expect(tcarQueue.add).not.toHaveBeenCalled();
     });
   });
+
+  // ─── getCreateProductJobStatus ──────────────────────────────────────────
+  // Status do job enfileirado por createProduct — usado pro front dar
+  // polling. jobIds são determinísticos (um por integração, baseados no id
+  // do unmapped), então a busca tenta os dois sem precisar saber qual
+  // integração foi usada.
+
+  describe("getCreateProductJobStatus", () => {
+    function makeJob(overrides: Partial<any> = {}) {
+      return {
+        getState: jest.fn().mockResolvedValue("completed"),
+        failedReason: undefined,
+        ...overrides,
+      };
+    }
+
+    it("nenhum job encontrado em nenhuma das duas filas: status not_found", async () => {
+      const blingQueue = { queue: { getJob: jest.fn().mockResolvedValue(null) } };
+      const tcarQueue = { queue: { getJob: jest.fn().mockResolvedValue(null) } };
+
+      const result = await service.getCreateProductJobStatus("unmapped-1", {
+        blingApiFetchQueue: blingQueue as any,
+        tcarUpsertQueue: tcarQueue as any,
+      });
+
+      expect(result).toEqual({ status: "not_found" });
+      expect(blingQueue.queue.getJob).toHaveBeenCalledWith(
+        "bling-product-create-unmapped-1",
+      );
+      expect(tcarQueue.queue.getJob).toHaveBeenCalledWith(
+        "tecinco-product-create-unmapped-1",
+      );
+    });
+
+    it("job encontrado na fila Bling, completado com sucesso: status completed", async () => {
+      const job = makeJob({ getState: jest.fn().mockResolvedValue("completed") });
+      const blingQueue = { queue: { getJob: jest.fn().mockResolvedValue(job) } };
+      const tcarQueue = { queue: { getJob: jest.fn().mockResolvedValue(null) } };
+
+      const result = await service.getCreateProductJobStatus("unmapped-1", {
+        blingApiFetchQueue: blingQueue as any,
+        tcarUpsertQueue: tcarQueue as any,
+      });
+
+      expect(result).toEqual({ status: "completed" });
+    });
+
+    it("job encontrado na fila Tecinco (Bling não achou), falhou: status failed com a mensagem de erro", async () => {
+      const job = makeJob({
+        getState: jest.fn().mockResolvedValue("failed"),
+        failedReason: "gtin já pertence a outro produto",
+      });
+      const blingQueue = { queue: { getJob: jest.fn().mockResolvedValue(null) } };
+      const tcarQueue = { queue: { getJob: jest.fn().mockResolvedValue(job) } };
+
+      const result = await service.getCreateProductJobStatus("unmapped-1", {
+        blingApiFetchQueue: blingQueue as any,
+        tcarUpsertQueue: tcarQueue as any,
+      });
+
+      expect(result).toEqual({
+        status: "failed",
+        error: "gtin já pertence a outro produto",
+      });
+    });
+
+    it("job ainda pendente (waiting/active/delayed): repassa o estado como está", async () => {
+      for (const state of ["waiting", "active", "delayed"] as const) {
+        const job = makeJob({ getState: jest.fn().mockResolvedValue(state) });
+        const blingQueue = { queue: { getJob: jest.fn().mockResolvedValue(job) } };
+        const tcarQueue = { queue: { getJob: jest.fn().mockResolvedValue(null) } };
+
+        const result = await service.getCreateProductJobStatus("unmapped-1", {
+          blingApiFetchQueue: blingQueue as any,
+          tcarUpsertQueue: tcarQueue as any,
+        });
+
+        expect(result).toEqual({ status: state });
+      }
+    });
+  });
 });

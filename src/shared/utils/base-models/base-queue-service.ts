@@ -356,6 +356,12 @@ export abstract class BaseQueueService<T> {
       removeOnFail: {
         age: 24 * 3600 * 7,
       },
+      // attempts/backoff pensados pra falhas transitórias (rede, rate
+      // limit). Erros permanentes (dado inválido, conflito) não devem
+      // esperar essas tentativas — o processor lança UnrecoverableError
+      // (bullmq) nesses casos, que pula direto pra "failed" independente
+      // de quantas tentativas ainda restam (ver createProductFromBlingData/
+      // createProductFromTCarData).
       attempts: 5,
       backoff: this.hasCustomBackoff
         ? { type: "custom" }

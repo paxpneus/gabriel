@@ -2,7 +2,7 @@ import {
   FullInvoiceForAllUnits,
   ItemWithFiscal,
 } from "../../../../../warehouse/fiscal/invoices/invoice/invoice.types";
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
 import { ApiFetchRequest, WebhookQueuePayload } from "../bling-webhook.types";
@@ -1411,19 +1411,47 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     integration: Awaited<ReturnType<typeof getBlingIntegration>>,
     logPrefix: string,
   ): Promise<Product> {
-    const newProduct = await productService.create({
-      name: blingProduct.nome,
-      id_system: String(blingProduct.id),
-      type: blingProduct.formato === "E" ? "KIT" : "UNIT",
-      integrations_id: integration.id,
-      category: "TIRE",
-      config: {
-        unit_business_id: unitBusiness.id,
-        sku: blingProduct.codigo,
-        gtin: blingProduct.gtin,
-        price: Number(blingProduct.preco) || 0,
-      },
+    // products.id_system é único globalmente no banco (products_id_system_key).
+    // Se já existe um Product com esse id_system mas resolveProductWithMapping
+    // não achou (mapping ausente/órfão pra essa integração), NÃO reconecta
+    // sozinho — resolver por id_system direto já causou bug antes (produto
+    // errado escolhido quando o id_system foi reaproveitado/alterado do lado
+    // de fora sem o mapping acompanhar, ver resolveProductByMappingOnly em
+    // product.helpers.ts). Falha com erro claro pra revisão manual, em vez
+    // de deixar productService.create estourar a constraint.
+    const conflictingProduct = await Product.findOne({
+      where: { id_system: String(blingProduct.id) },
     });
+    if (conflictingProduct) {
+      // UnrecoverableError: dado a mesma entrada, essa checagem vai falhar
+      // igual em qualquer tentativa — não é erro transitório, retry não
+      // ajuda. Pula direto pra "failed" (ver BaseQueueService.add).
+      throw new UnrecoverableError(
+        `Não foi possível criar o produto: encontramos uma inconsistência no cadastro (provavelmente dado legado). Encaminhe este erro para o time técnico investigar. [${logPrefix} — já existe um produto (id=${conflictingProduct.id}) com id_system=${blingProduct.id}, sem mapping válido para esta integração]`,
+      );
+    }
+
+    let newProduct: Product;
+    try {
+      newProduct = await productService.create({
+        name: blingProduct.nome,
+        id_system: String(blingProduct.id),
+        type: blingProduct.formato === "E" ? "KIT" : "UNIT",
+        integrations_id: integration.id,
+        category: "TIRE",
+        config: {
+          unit_business_id: unitBusiness.id,
+          sku: blingProduct.codigo,
+          gtin: blingProduct.gtin,
+          price: Number(blingProduct.preco) || 0,
+        },
+      });
+    } catch (err: any) {
+      // Qualquer erro aqui (conflito de EAN, constraint do banco, etc.) é
+      // sobre os dados já resolvidos deste produto — determinístico, uma
+      // nova tentativa com os mesmos dados falha do mesmo jeito.
+      throw new UnrecoverableError(err.message);
+    }
 
     await integrationMappingService.createOrUpdateIntegrationMapping({
       entity_type: "PRODUCT",

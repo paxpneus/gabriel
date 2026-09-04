@@ -1,4 +1,4 @@
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
 import { Op } from "sequelize";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
@@ -309,7 +309,11 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         | undefined;
 
       if (!detalheData) {
-        throw new Error(
+        // UnrecoverableError: a API respondeu (sem erro de rede/timeout,
+        // que teria lançado antes de chegar aqui) só que sem dados pra esse
+        // código — sinal de que o produto não existe mais na Tecinco pra
+        // esse systemId, não uma falha transitória. Retry não resolve.
+        throw new UnrecoverableError(
           `${logPrefix} — não foi possível buscar detalhe do produto na Tecinco pra criação manual`,
         );
       }
@@ -784,18 +788,46 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       filiaisToProcess.find((f) => f.fll_codigo === resolvedBranchId) ??
       filiaisToProcess[0];
 
-    const newProduct = await productService.create({
-      name: data.epctb_nome?.trim() ?? "",
-      id_system: systemId,
-      category: "TIRE",
-      integrations_id: integrations.id,
-      config: {
-        unit_business_id: operationUnitBusiness.id,
-        sku: codigoFabrica ?? systemId,
-        gtin: ean,
-        price: matchingFilial?.preco ?? 0,
-      },
+    // products.id_system é único globalmente no banco (products_id_system_key).
+    // Se já existe um Product com esse id_system mas resolveProductWithMapping
+    // não achou (mapping ausente/órfão pra essa integração), NÃO reconecta
+    // sozinho — resolver por id_system direto já causou bug antes (produto
+    // errado escolhido quando o id_system foi reaproveitado/alterado do lado
+    // de fora sem o mapping acompanhar, ver resolveProductByMappingOnly em
+    // product.helpers.ts). Falha com erro claro pra revisão manual, em vez
+    // de deixar productService.create estourar a constraint.
+    const conflictingProduct = await Product.findOne({
+      where: { id_system: systemId },
     });
+    if (conflictingProduct) {
+      // UnrecoverableError: dado a mesma entrada, essa checagem vai falhar
+      // igual em qualquer tentativa — não é erro transitório, retry não
+      // ajuda. Pula direto pra "failed" (ver BaseQueueService.add).
+      throw new UnrecoverableError(
+        `Não foi possível criar o produto: encontramos uma inconsistência no cadastro (provavelmente dado legado). Encaminhe este erro para o time técnico investigar. [${logPrefix} — já existe um produto (id=${conflictingProduct.id}) com id_system=${systemId}, sem mapping válido para esta integração]`,
+      );
+    }
+
+    let newProduct: Product;
+    try {
+      newProduct = await productService.create({
+        name: data.epctb_nome?.trim() ?? "",
+        id_system: systemId,
+        category: "TIRE",
+        integrations_id: integrations.id,
+        config: {
+          unit_business_id: operationUnitBusiness.id,
+          sku: codigoFabrica ?? systemId,
+          gtin: ean,
+          price: matchingFilial?.preco ?? 0,
+        },
+      });
+    } catch (err: any) {
+      // Qualquer erro aqui (conflito de EAN, constraint do banco, etc.) é
+      // sobre os dados já resolvidos deste produto — determinístico, uma
+      // nova tentativa com os mesmos dados falha do mesmo jeito.
+      throw new UnrecoverableError(err.message);
+    }
 
     await integrationMappingService.createOrUpdateIntegrationMapping({
       entity_type: "PRODUCT",

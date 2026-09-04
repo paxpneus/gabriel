@@ -27,6 +27,7 @@ jest.mock("bullmq", () => ({
   QueueEvents: jest.fn().mockImplementation(() => ({})),
   Worker: jest.fn().mockImplementation(() => ({ on: jest.fn() })),
   DelayedError: class DelayedError extends Error {},
+  UnrecoverableError: class UnrecoverableError extends Error {},
 }));
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
@@ -469,6 +470,27 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
         unmappedInvoiceProductService.resolveFromCreatedProduct,
       ).not.toHaveBeenCalled();
       expect(ProductConfig.upsert).not.toHaveBeenCalled();
+    });
+
+    it("já existe um Product com esse id_system mas sem mapping válido (mapping órfão/ausente): falha com erro claro, NÃO tenta criar (evita estourar a constraint global products_id_system_key)", async () => {
+      const blingProduct = makeBlingProduct();
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (Product.findOne as jest.Mock).mockResolvedValue({
+        id: "orphan-product-id",
+      });
+
+      await expect(
+        runProductJob(blingProduct, { create: true }),
+      ).rejects.toThrow(/já existe um produto.*sem mapping válido/i);
+
+      expect(productService.create).not.toHaveBeenCalled();
+      expect(
+        integrationMappingService.createOrUpdateIntegrationMapping,
+      ).not.toHaveBeenCalled();
+      expect(
+        unmappedInvoiceProductService.resolveFromCreatedProduct,
+      ).not.toHaveBeenCalled();
     });
 
     it("opts.create ausente (comportamento padrão, ex.: sync normal): mesmo sem mapping, NÃO cria produto — continua só registrando unmapped", async () => {

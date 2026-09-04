@@ -37,6 +37,11 @@ export class UnmappedInvoiceProductController extends BaseController<
       ...this.mw("createProduct"),
       this.createProduct,
     );
+    this.router.get(
+      "/:id/create-product/job",
+      ...this.mw("getJob"),
+      this.getJob,
+    );
 
   }
 
@@ -52,6 +57,7 @@ export class UnmappedInvoiceProductController extends BaseController<
       markMapped: [authenticate, userPermissions],
       getImage: [authenticate, userPermissions],
       createProduct: [authenticate, userPermissions],
+      getJob: [authenticate, userPermissions],
       createUnmappedFromReadingEan: [
         authenticate,
         userPermissions,
@@ -121,6 +127,28 @@ export class UnmappedInvoiceProductController extends BaseController<
       return res
         .status(202)
         .json({ message: "Criação de produto enfileirada" });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // Status do job de criação de produto (enfileirado por createProduct) —
+  // usado pelo front pra dar polling e saber se deu erro ou sucesso, já que
+  // a criação de fato acontece de forma assíncrona no worker.
+  getJob = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { id } = req.params;
+
+      const result = await this.service.getCreateProductJobStatus(
+        id as string,
+        {
+          blingApiFetchQueue: req.app.locals
+            .BlingApiFetchQueue as BlingApiFetchQueue,
+          tcarUpsertQueue: req.app.locals.TCarUpsertQueue as TCarUpsertQueue,
+        },
+      );
+
+      return res.status(200).json(result);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

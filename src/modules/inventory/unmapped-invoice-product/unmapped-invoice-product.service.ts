@@ -286,6 +286,59 @@ export class UnmappedInvoiceProductService extends BaseService<
     }
   }
 
+  // Status do job de criação de produto enfileirado por createProduct — o
+  // endpoint só enfileira e responde rápido, então o front usa isso pra dar
+  // polling e saber se deu erro ou sucesso no processamento (assíncrono, no
+  // worker). Os jobIds são determinísticos (um por integração, baseados no
+  // id do unmapped), então dá pra procurar direto sem guardar qual
+  // integração foi usada.
+  async getCreateProductJobStatus(
+    id: string,
+    params: {
+      blingApiFetchQueue: BlingApiFetchQueue;
+      tcarUpsertQueue: TCarUpsertQueue;
+    },
+  ): Promise<{
+    status:
+      | "not_found"
+      | "waiting"
+      | "active"
+      | "delayed"
+      | "completed"
+      | "failed"
+      | "unknown";
+    error?: string;
+  }> {
+    const job =
+      (await params.blingApiFetchQueue.queue.getJob(
+        `bling-product-create-${id}`,
+      )) ??
+      (await params.tcarUpsertQueue.queue.getJob(
+        `tecinco-product-create-${id}`,
+      ));
+
+    if (!job) {
+      return { status: "not_found" };
+    }
+
+    const state = await job.getState();
+
+    if (state === "failed") {
+      return { status: "failed", error: job.failedReason };
+    }
+
+    if (
+      state === "waiting" ||
+      state === "active" ||
+      state === "delayed" ||
+      state === "completed"
+    ) {
+      return { status: state };
+    }
+
+    return { status: "unknown" };
+  }
+
   async getFullById(id: string): Promise<UnmappedInvoiceProduct> {
     const unmapped = await this.repository.getFullById(id)
     
