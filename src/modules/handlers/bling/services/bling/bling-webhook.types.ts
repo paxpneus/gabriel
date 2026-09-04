@@ -144,6 +144,8 @@ export interface ApiFetchRequest {
   companyId: string;
   /** Dados parciais já conhecidos pelo webhook */
   partialData?: Partial<MappedInvoice>;
+  /** Criação manual de produto a partir de um UnmappedInvoiceProduct — ver fetchAndUpsertProduct */
+  create?: boolean;
 }
 
 // ─── Mapped entity shapes (espelham os models) ────────────────────────────────

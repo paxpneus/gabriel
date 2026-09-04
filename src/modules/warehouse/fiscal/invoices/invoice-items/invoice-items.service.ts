@@ -1,3 +1,4 @@
+import { Transaction } from "sequelize";
 import sequelize from "../../../../../config/sequelize";
 import BaseService from "../../../../../shared/utils/base-models/base-service";
 import { Product, ProductConfig } from "../../../../inventory";
@@ -27,12 +28,47 @@ export class InvoiceItemsService extends BaseService<
     super(invoiceItemsRepository);
   }
 
+  // Único disparador de cascata: mapear (manualmente, via POST /add/item)
+  // UM unmapped pra um product_id — seja esse produto novo (acabou de ser
+  // criado a partir de outro unmapped, ver
+  // UnmappedInvoiceProductService.resolveFromCreatedProduct, que NÃO
+  // cascateia sozinho) ou já existente — sempre avalia, ao final, outros
+  // unmapped "irmãos" (mesmo código de fornecedor, mesmo CNPJ emissor) pra
+  // auto-mapear também (ver cascadeAutoMapUnmapped).
   async createInvoiceItemForUnmappedProducts(
     invoiceItemDto: Partial<InvoiceItems>,
     newEan: string,
     unMappedProductId: string,
   ): Promise<void> {
-    return sequelize.transaction(async (t) => {
+    return sequelize.transaction((t) =>
+      this.createInvoiceItemForUnmappedProductsInTx(
+        t,
+        invoiceItemDto,
+        newEan,
+        unMappedProductId,
+      ),
+    );
+  }
+
+  // Corpo transacional de createInvoiceItemForUnmappedProducts, extraído
+  // pra ser reaproveitado pela cascata de auto-mapeamento (ver
+  // cascadeAutoMapUnmapped) — que precisa rodar esse mesmo fluxo pra outros
+  // unmapped "irmãos", na MESMA transação, sem duplicar a lógica.
+  //
+  // triggerCascade: só true na chamada raiz (o mapeamento manual que o
+  // usuário disparou). cascadeAutoMapUnmapped já busca TODOS os siblings de
+  // uma vez só e distribui um por um pra essa função — se cada sibling
+  // também disparasse sua própria cascata, a busca rodaria de novo pra cada
+  // um (redundante) e o mesmo sibling podia ser alcançado por mais de um
+  // caminho recursivo ao mesmo tempo. Por isso as chamadas feitas de DENTRO
+  // de cascadeAutoMapUnmapped passam triggerCascade: false.
+  private async createInvoiceItemForUnmappedProductsInTx(
+    t: Transaction,
+    invoiceItemDto: Partial<InvoiceItems>,
+    newEan: string,
+    unMappedProductId: string,
+    triggerCascade: boolean = true,
+  ): Promise<void> {
       if (!invoiceItemDto.product_id) {
         throw new Error("Produto não encontrado!");
       }
@@ -305,7 +341,63 @@ export class InvoiceItemsService extends BaseService<
       await unmappedInvoiceProductService.delete(unMappedProductId, {
         transaction: t,
       });
-    });
+
+      // ─── 6. Cascata: outros unmapped do mesmo fornecedor com o mesmo
+      // código de fornecedor podem ser mapeados automaticamente também —
+      // ver cascadeAutoMapUnmapped. Só dispara na chamada raiz (ver
+      // triggerCascade acima) — os siblings processados pela própria
+      // cascata não disparam uma busca nova cada um.
+      if (triggerCascade) {
+        await this.cascadeAutoMapUnmapped(t, {
+          productId: invoiceItemDto.product_id,
+          supplierProductCode:
+            newEan || unMappedProduct.ean || unMappedProduct.sku,
+          senderCnpj: invoice.sender_cnpj,
+          excludeId: unMappedProductId,
+        });
+      }
+  }
+
+  // Depois de mapear um unmapped manualmente, avalia se outros unmapped (em
+  // outras notas) com o mesmo código de fornecedor e a mesma nota de
+  // origem (mesmo CNPJ emissor) também podem ser resolvidos pro mesmo
+  // produto — só nesse caso é seguro assumir automaticamente, já que o
+  // mesmo EAN pode legitimamente ser de produtos diferentes entre
+  // fornecedores diferentes (ver findCascadeMatches). Busca TODOS os
+  // siblings de uma vez só (uma única query) e processa cada um com
+  // triggerCascade: false — nenhum deles dispara uma busca nova, então cada
+  // sibling é tocado exatamente uma vez, sem recursão nem redundância.
+  private async cascadeAutoMapUnmapped(
+    t: Transaction,
+    params: {
+      productId: string;
+      supplierProductCode: string | null;
+      senderCnpj: string;
+      excludeId: string;
+    },
+  ): Promise<void> {
+    const matches = await unmappedInvoiceProductService.findCascadeMatches(
+      {
+        supplierProductCode: params.supplierProductCode,
+        excludeId: params.excludeId,
+        senderCnpj: params.senderCnpj,
+      },
+      t,
+    );
+
+    for (const match of matches) {
+      await this.createInvoiceItemForUnmappedProductsInTx(
+        t,
+        {
+          product_id: params.productId,
+          invoice_id: match.invoice_id!,
+          quantity_expected: match.quantity ?? 0,
+        },
+        match.ean ?? "",
+        match.id,
+        false,
+      );
+    }
   }
 
   async syncBatchFromInvoice(

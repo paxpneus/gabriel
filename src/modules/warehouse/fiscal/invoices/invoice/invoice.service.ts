@@ -12,7 +12,6 @@ import {
 import BaseService from "../../../../../shared/utils/base-models/base-service";
 import Invoice from "./invoice.model";
 import invoiceRepository, { InvoiceRepository } from "./invoice.repository";
-import UnitBusiness from "../../../../company/unit-business/unit-business.model";
 import Transporter from "../../../transporter/transporter.model";
 import ExpeditionBatch from "../../../expedition/batch/batch.model";
 import ExpeditionBatchInvoice from "../../../expedition/batch-invoices/batch-invoices.model";
@@ -40,7 +39,6 @@ import redisService from "../../../../../shared/utils/base-models/base-redis";
 import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import { BlingApiFetchQueue } from "../../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { TCarUpsertQueue } from "../../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
-import User from "../../../../company/users/users/user.model";
 import userService from "../../../../company/users/users/user.service";
 import {
   decryptXml,
@@ -49,6 +47,7 @@ import {
 import Brand from "../../../../inventory/brands/brands.model";
 import Rim from "../../../../inventory/rims/rim.model";
 import TireMeasure from "../../../../inventory/tire-measures/tire-measure.model";
+import { resolveTecincoBranchId } from "../../../../../shared/utils/tecinco/resolve-branch-id";
 
 const default_seller = "5ff76374-4d67-4ef3-a566-349a015f86b1";
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
@@ -838,7 +837,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     if (integration === "bling") {
       await blingQueue.upsertInvoiceFromXml(xmlContent);
     } else if (integration === "tecinco") {
-      const branchId = await this.resolveTecincoBranchId(userId);
+      const branchId = await resolveTecincoBranchId(userId);
       if (!branchId) {
         throw new Error(
           "Não foi possível resolver a filial do usuário para importar via Tecinco",
@@ -850,21 +849,6 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     }
   }
 
-  private async resolveTecincoBranchId(
-    userId: string | undefined,
-  ): Promise<number | undefined> {
-    const user = userId
-      ? await User.findByPk(userId, { attributes: ["unit_business_id"] })
-      : null;
-
-    const unitBusiness = user?.unit_business_id
-      ? await UnitBusiness.findByPk(user.unit_business_id, {
-          attributes: ["number"],
-        })
-      : null;
-
-    return unitBusiness?.number ? Number(unitBusiness.number) : undefined;
-  }
 }
 
 export default new InvoiceService();

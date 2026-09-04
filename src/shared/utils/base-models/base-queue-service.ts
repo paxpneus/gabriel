@@ -333,7 +333,7 @@ export abstract class BaseQueueService<T> {
     );
   }
 
-  async add(data: T, jobId?: string) {
+  async add(data: T, jobId?: string, jobOptions?: { priority?: number }) {
     if (jobId) {
       const existingJob = await this.queue.getJob(jobId);
       if (existingJob) {
@@ -347,6 +347,11 @@ export abstract class BaseQueueService<T> {
 
     return this.queue.add(this.queueName, data, {
       jobId,
+      // BullMQ nativo: menor número = maior prioridade, jobs sem `priority`
+      // ficam atrás de qualquer job que tenha uma definida. Usado pra fazer
+      // um job específico furar a fila de espera de uma fila já existente,
+      // sem precisar de fila/lock dedicados.
+      ...(jobOptions?.priority ? { priority: jobOptions.priority } : {}),
       removeOnComplete: true,
       removeOnFail: {
         age: 24 * 3600 * 7,

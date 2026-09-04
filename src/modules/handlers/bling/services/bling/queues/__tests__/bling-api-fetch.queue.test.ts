@@ -97,7 +97,15 @@ jest.mock(
   "../../../../../../inventory/products/services/product.service",
   () => ({
     __esModule: true,
-    default: { upsertWithComponents: jest.fn() },
+    default: { upsertWithComponents: jest.fn(), create: jest.fn() },
+  }),
+);
+
+jest.mock(
+  "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service",
+  () => ({
+    __esModule: true,
+    default: { resolveFromCreatedProduct: jest.fn() },
   }),
 );
 
@@ -122,6 +130,7 @@ import Group from "../../../../../../inventory/groups/group/group.model";
 import Subgroup from "../../../../../../inventory/groups/subgroup/subgroup.model";
 import InventoryBatch from "../../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import UnmappedInvoiceProduct from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
+import unmappedInvoiceProductService from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import { BlingApiFetchQueue } from "../bling-api-fetch.queue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -250,15 +259,21 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
     (ProductConfig.findOne as jest.Mock).mockResolvedValue(null);
     (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue(null);
     (UnmappedInvoiceProduct.create as jest.Mock).mockResolvedValue(undefined);
+    (productService.create as jest.Mock).mockResolvedValue(
+      makeUpsertedProduct({ id: "created-product-id" }),
+    );
+    (
+      unmappedInvoiceProductService.resolveFromCreatedProduct as jest.Mock
+    ).mockResolvedValue(undefined);
   });
 
-  function runProductJob(blingProduct: any) {
+  function runProductJob(blingProduct: any, apiFetchOverrides: Partial<any> = {}) {
     return queue.process({
       data: {
         eventId: "evt-1",
         resource: "product",
         action: "updated",
-        apiFetch: { blingId: blingProduct.id },
+        apiFetch: { blingId: blingProduct.id, ...apiFetchOverrides },
       },
     } as unknown as Job<any>);
   }
@@ -289,17 +304,24 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       ).not.toHaveBeenCalled();
     });
 
-    it("já registrado como unmapped — não duplica a linha", async () => {
+    it("já registrado como unmapped — não duplica a linha, mas atualiza (upsert) o registro existente com os dados mais recentes", async () => {
       const blingProduct = makeBlingProduct();
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue({
-        id: "existing-unmapped-id",
-      });
+      const existingUnmapped = { id: "existing-unmapped-id", update: jest.fn() };
+      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue(
+        existingUnmapped,
+      );
 
       await runProductJob(blingProduct);
 
       expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
+      expect(existingUnmapped.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          external_id: String(blingProduct.id),
+          product_name: blingProduct.nome,
+        }),
+      );
     });
 
     it("produto já existente (mapeado): atualiza (não cria de novo) e não duplica o integration mapping", async () => {
@@ -321,6 +343,143 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       expect(
         integrationMappingService.createOrUpdateIntegrationMapping,
       ).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── criação manual a partir de unmapped (create:true) ────────────────────
+  // Disparado só pelo endpoint POST .../create-product — nunca pelo fluxo
+  // normal de webhook/sync (ver testes acima, que continuam sem passar
+  // create:true e devem preservar o comportamento de sempre).
+
+  describe("criação manual a partir de unmapped (opts.create:true)", () => {
+    it("sem mapping + create:true: cria Product+ProductConfig+IntegrationMapping, resolve o unmapped de origem, e CAI pro resto do fluxo (não retorna cedo)", async () => {
+      const blingProduct = makeBlingProduct();
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (productService.create as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+
+      await runProductJob(blingProduct, { create: true });
+
+      // Não registra o produto de novo como unmapped por falta de mapping
+      // (o registro de unmapped do Magento, por falta de SKU lá, é outra
+      // coisa e não é o que este teste cobre).
+      expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: "Produto novo, precisa de mapeamento manual",
+        }),
+      );
+
+      expect(productService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: blingProduct.nome,
+          id_system: String(blingProduct.id),
+          integrations_id: INTEGRATION_ID,
+          config: expect.objectContaining({
+            unit_business_id: UNIT_BUSINESS_ID,
+            sku: blingProduct.codigo,
+            gtin: blingProduct.gtin,
+            price: blingProduct.preco,
+          }),
+        }),
+      );
+
+      expect(
+        integrationMappingService.createOrUpdateIntegrationMapping,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entity_type: "PRODUCT",
+          internal_id: "created-product-id",
+          integrations_id: INTEGRATION_ID,
+          external_id: String(blingProduct.id),
+        }),
+      );
+
+      expect(
+        unmappedInvoiceProductService.resolveFromCreatedProduct,
+      ).toHaveBeenCalledWith({
+        externalId: String(blingProduct.id),
+        integrationsId: INTEGRATION_ID,
+      });
+
+      // Cai pro resto do fluxo normal (fall-through) — não retorna cedo.
+      // O produto recém-criado é "próprio" (mesma integração), então o
+      // fall-through completa os campos descritivos (brand/subgroup/measure)
+      // via upsertWithComponents, igual faria pra um produto já existente.
+      expect(productService.upsertWithComponents).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "created-product-id" }),
+      );
+      expect(ProductConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ product_id: "created-product-id" }),
+        expect.anything(),
+      );
+      expect(stockMovementsService.syncProductStockMovements).toHaveBeenCalledWith(
+        "created-product-id",
+        UNIT_BUSINESS_ID,
+        undefined,
+        expect.anything(),
+      );
+    });
+
+    it("dados faltando no ERP (sem gtin e sem preço): cria o produto mesmo assim, sem gtin e com preço 0 (nunca NaN)", async () => {
+      const blingProduct = makeBlingProduct({ gtin: undefined, preco: undefined });
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (productService.create as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+
+      await runProductJob(blingProduct, { create: true });
+
+      expect(productService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ gtin: undefined, price: 0 }),
+        }),
+      );
+      const price = (productService.create as jest.Mock).mock.calls[0][0].config
+        .price;
+      expect(Number.isNaN(price)).toBe(false);
+      // Sem EAN, o resto do fluxo não deveria quebrar tentando validar
+      // conflito com um valor undefined.
+      expect(ProductConfig.upsert).toHaveBeenCalled();
+    });
+
+    it("código já existente em outro produto: productService.create rejeita (EanConflictError) e o fluxo aborta sem criar mapping nem resolver o unmapped", async () => {
+      const blingProduct = makeBlingProduct();
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (productService.create as jest.Mock).mockRejectedValue(
+        new Error(
+          `gtin ${blingProduct.gtin} já pertence a outro produto nessa unit_business`,
+        ),
+      );
+
+      await expect(
+        runProductJob(blingProduct, { create: true }),
+      ).rejects.toThrow(/já pertence a outro produto/);
+
+      expect(
+        integrationMappingService.createOrUpdateIntegrationMapping,
+      ).not.toHaveBeenCalled();
+      expect(
+        unmappedInvoiceProductService.resolveFromCreatedProduct,
+      ).not.toHaveBeenCalled();
+      expect(ProductConfig.upsert).not.toHaveBeenCalled();
+    });
+
+    it("opts.create ausente (comportamento padrão, ex.: sync normal): mesmo sem mapping, NÃO cria produto — continua só registrando unmapped", async () => {
+      const blingProduct = makeBlingProduct();
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+
+      await runProductJob(blingProduct); // sem create:true
+
+      expect(productService.create).not.toHaveBeenCalled();
+      expect(UnmappedInvoiceProduct.create).toHaveBeenCalled();
     });
   });
 

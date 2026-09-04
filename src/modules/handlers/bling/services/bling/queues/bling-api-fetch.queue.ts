@@ -31,6 +31,7 @@ import Store from "../../../../../sales/stores/stores.model";
 import Contact from "../../../../../sales/contacts/contacts.model";
 import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
+import unmappedInvoiceProductService from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import {
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,
@@ -669,12 +670,16 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     if (!magentoProduct) {
       const normalizedEan = ean && ean.trim() !== "" ? ean : null;
 
-      // unique_ean_null_invoice é UNIQUE(ean) WHERE invoice_id IS NULL — dois
-      // skus diferentes com o mesmo EAN batem nesse índice, então o dedup
-      // precisa checar por ean também, não só por sku.
+      // unique_ean_integration_null_invoice é UNIQUE(ean, integrations_id)
+      // WHERE invoice_id IS NULL — dois skus diferentes com o mesmo EAN na
+      // mesma integração batem nesse índice, então o dedup precisa checar
+      // por ean também, não só por sku (mas sempre escopado à integração,
+      // já que o mesmo EAN pode legitimamente existir em integrações
+      // diferentes).
       const existingUnmapped = await UnmappedInvoiceProduct.findOne({
         where: {
           invoice_id: null,
+          integrations_id: magentoIntegration.id,
           ...(normalizedEan
             ? { [Op.or]: [{ sku }, { ean: normalizedEan }] }
             : { sku }),
@@ -700,8 +705,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           `${logPrefix} Produto não encontrado no Magento — unmapped registrado | sku=${sku}`,
         );
       } else {
+        // Upsert: mantém sku/ean/nome sincronizados com o que a Bling manda,
+        // mesmo que o unmapped já exista de uma passagem anterior.
+        await existingUnmapped.update(
+          { sku, ean: normalizedEan, product_name: productName },
+          { transaction },
+        );
         console.log(
-          `${logPrefix} Produto já registrado como unmapped no Magento | sku=${sku}`,
+          `${logPrefix} Produto já registrado como unmapped no Magento (dados sincronizados) | sku=${sku}`,
         );
       }
 
@@ -914,7 +925,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     try {
       switch (resource) {
         case "product":
-          await this.fetchAndUpsertProduct(apiFetch);
+          await this.fetchAndUpsertProduct(apiFetch, {
+            create: !!apiFetch.create,
+          });
           break;
 
         case "stock":
@@ -951,6 +964,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
   private async fetchAndUpsertProduct(
     apiFetch: ApiFetchRequest,
+    opts: { create?: boolean } = {},
   ): Promise<void> {
     const { data } = await blingGet<{ data: BlingApiProduct }>(
       `/produtos/${apiFetch.blingId}`,
@@ -976,42 +990,74 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Resolve o produto SÓ via integration mapping (fonte de verdade) ───────
     // Sem fallback por EAN/ProductConfig.sku/SupplierMapping — se não tem
     // mapping, não é esse produto, ponto final (ver resolveProductWithMapping).
-    const existingProduct = await resolveProductWithMapping({
+    let existingProduct = await resolveProductWithMapping({
       unitBusinessId: unitBusiness.id,
       systemId: String(blingProduct.id),
       ean: blingProduct.gtin,
       logPrefix,
     });
 
-    // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
     if (!existingProduct) {
-      const sku = blingProduct.codigo;
-      const ean = blingProduct.gtin ?? null;
-      // unique_ean_null_invoice é UNIQUE(ean) WHERE invoice_id IS NULL — dois
-      // skus diferentes com o mesmo EAN batem nesse índice, então o dedup
-      // precisa checar por ean também, não só por sku.
-      const existingUnmapped = await UnmappedInvoiceProduct.findOne({
-        where: {
-          invoice_id: null,
-          ...(ean ? { [Op.or]: [{ sku }, { ean }] } : { sku }),
-        },
-      });
-      if (!existingUnmapped) {
-        await UnmappedInvoiceProduct.create({
-          invoice_id: null,
-          integrations_id: integration.id,
-          sku,
-          ean,
-          product_name: blingProduct.nome,
-          quantity: 0,
-          reason: "Produto novo, precisa de mapeamento manual",
-          status: "UNMAPPED",
-        });
-        console.log(
-          `${logPrefix} — produto novo, registrado em unmapped_invoice_products pra revisão manual`,
+      if (opts.create) {
+        // ─── Criação manual disparada via unmapped (POST .../create-product) ──
+        // Cria o Product+ProductConfig+IntegrationMapping e cai pro resto da
+        // função normalmente — dali em diante ela já trata `existingProduct`
+        // genericamente (KIT, Magento, kardex, estoque).
+        existingProduct = await this.createProductFromBlingData(
+          blingProduct,
+          unitBusiness,
+          integration,
+          logPrefix,
         );
+      } else {
+        // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
+        const sku = blingProduct.codigo;
+        const ean = blingProduct.gtin ?? null;
+        // unique_ean_integration_null_invoice é UNIQUE(ean, integrations_id)
+        // WHERE invoice_id IS NULL — dois skus diferentes com o mesmo EAN na
+        // mesma integração batem nesse índice, então o dedup precisa checar
+        // por ean também, não só por sku (mas sempre escopado à integração,
+        // já que o mesmo EAN pode legitimamente existir em integrações
+        // diferentes).
+        const existingUnmapped = await UnmappedInvoiceProduct.findOne({
+          where: {
+            invoice_id: null,
+            integrations_id: integration.id,
+            ...(ean ? { [Op.or]: [{ sku }, { ean }] } : { sku }),
+          },
+        });
+        if (existingUnmapped) {
+          // Upsert: um unmapped já registrado antes desse campo existir (ou
+          // criado numa passagem anterior) precisa continuar acompanhando o
+          // que a Bling manda — em especial external_id, sem o qual o
+          // endpoint de criar produto não funciona pra essa linha.
+          await existingUnmapped.update({
+            sku,
+            ean,
+            external_id: String(blingProduct.id),
+            product_name: blingProduct.nome,
+          });
+          console.log(
+            `${logPrefix} — unmapped já existente atualizado (external_id/dados sincronizados)`,
+          );
+        } else {
+          await UnmappedInvoiceProduct.create({
+            invoice_id: null,
+            integrations_id: integration.id,
+            sku,
+            ean,
+            external_id: String(blingProduct.id),
+            product_name: blingProduct.nome,
+            quantity: 0,
+            reason: "Produto novo, precisa de mapeamento manual",
+            status: "UNMAPPED",
+          });
+          console.log(
+            `${logPrefix} — produto novo, registrado em unmapped_invoice_products pra revisão manual`,
+          );
+        }
+        return;
       }
-      return;
     }
 
     // ─── EAN/ean_tribut não pode "misturar" com outro product ─────────────────
@@ -1344,6 +1390,51 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     console.log(
       `[BLING_API_FETCH] Produto ${blingProduct.codigo} complementado com EAN=${blingProduct.gtin ?? "N/A"}`,
     );
+  }
+
+  // ─── Cria o Product a partir dos dados do ERP quando disparado manualmente
+  // via unmapped (create-product), fazendo o mapping apontar pra ele e
+  // resolvendo o UnmappedInvoiceProduct de origem (ver
+  // UnmappedInvoiceProductService.resolveFromCreatedProduct). O resto de
+  // fetchAndUpsertProduct trata o produto retornado genericamente daqui pra
+  // frente (KIT/Magento/kardex/estoque).
+  private async createProductFromBlingData(
+    blingProduct: BlingApiProduct,
+    unitBusiness: UnitBusiness,
+    integration: Awaited<ReturnType<typeof getBlingIntegration>>,
+    logPrefix: string,
+  ): Promise<Product> {
+    const newProduct = await productService.create({
+      name: blingProduct.nome,
+      id_system: String(blingProduct.id),
+      type: blingProduct.formato === "E" ? "KIT" : "UNIT",
+      integrations_id: integration.id,
+      category: "TIRE",
+      config: {
+        unit_business_id: unitBusiness.id,
+        sku: blingProduct.codigo,
+        gtin: blingProduct.gtin,
+        price: Number(blingProduct.preco) || 0,
+      },
+    });
+
+    await integrationMappingService.createOrUpdateIntegrationMapping({
+      entity_type: "PRODUCT",
+      internal_id: newProduct.id,
+      integrations_id: integration.id,
+      external_id: String(blingProduct.id),
+    });
+
+    console.log(
+      `${logPrefix} — produto criado manualmente a partir de unmapped (product_id=${newProduct.id})`,
+    );
+
+    await unmappedInvoiceProductService.resolveFromCreatedProduct({
+      externalId: String(blingProduct.id),
+      integrationsId: integration.id,
+    });
+
+    return newProduct;
   }
 
   private async fetchAndUpsertProductSupplier(
@@ -1784,7 +1875,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           quantity: qty,
           unit_price: unitPrice,
           total_value: totalValue,
-          ncm: item.classificacaoFiscal ? String(item.classificacaoFiscal) : null,
+          ncm: item.classificacaoFiscal
+            ? String(item.classificacaoFiscal)
+            : null,
           cest: item.cest ? String(item.cest) : null,
           cfop: item.cfop ? String(item.cfop) : null,
           gtin: ean,
@@ -2008,7 +2101,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     let found: { id: number; type: "NF-e" | "NFC-e" } | null = null;
     outer: for (const type of candidateTypes) {
       for (const tipo of candidateTipos) {
-        const id = await this.findBlingInvoiceIdByChave(chaveAcesso, type, tipo);
+        const id = await this.findBlingInvoiceIdByChave(
+          chaveAcesso,
+          type,
+          tipo,
+        );
         if (id) {
           found = { id, type };
           break outer;

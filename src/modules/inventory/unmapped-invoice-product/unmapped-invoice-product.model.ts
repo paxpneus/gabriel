@@ -20,6 +20,7 @@ class UnmappedInvoiceProduct
   public quantity!: number;
   public image_path!: string;
   public integrations_id!: string | null;
+  public external_id!: string | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -81,6 +82,10 @@ UnmappedInvoiceProduct.init(
     image_path: {
       type: DataTypes.TEXT,
       allowNull: true
+    },
+    external_id: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
     }
   },
   {

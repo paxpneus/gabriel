@@ -42,6 +42,7 @@ import {
   EanConflictError,
 } from "./helpers/product.helpers";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
+import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
 import brandsService from "../../../inventory/brands/brands.service";
 import Group from "../../../inventory/groups/group/group.model";
@@ -132,6 +133,8 @@ export interface TCarUpsertJobPayload {
   companyId: string;
   branchId?: number;
   data: unknown;
+  /** Criação manual de produto a partir de um UnmappedInvoiceProduct — ver processProduct */
+  create?: boolean;
 }
 
 export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
@@ -244,7 +247,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         break;
 
       case "product":
-        await this.processProduct(action, data as TCarProdutoPayload, branchId);
+        await this.processProduct(action, data as TCarProdutoPayload, branchId, {
+          create: !!job.data.create,
+        });
         break;
 
       case "customer":
@@ -262,6 +267,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     action: TCarAction,
     data: TCarProdutoPayload,
     branchId?: number,
+    opts: { create?: boolean } = {},
   ): Promise<void> {
     const systemId = String(data.epctb_codigo);
     const logPrefix = `[TCAR_UPSERT][processProduct] id_system=${systemId}`;
@@ -282,6 +288,34 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         console.log(`${logPrefix} — produto não encontrado via mapping, nada a desativar`);
       }
       return;
+    }
+
+    if (opts.create) {
+      // ─── Criação manual (POST .../create-product) — o payload enfileirado
+      // só carrega o essencial pra identificar o produto (epctb_codigo);
+      // busca o detalhe completo aqui (dentro do worker, não no request
+      // HTTP) e substitui `data` por ele. O self-fetch mais abaixo (linhas
+      // ~343+) só backfilla productDataForGroup pra grupo/subgrupo — os
+      // demais campos (ean, codigoFabrica, filiais/preço/estoque, nome)
+      // são lidos direto de `data`, então sem isso aqui o produto seria
+      // criado sem esses dados.
+      const produtoService = new TCarProdutoService();
+      const detalhe = await produtoService.obterProduto(
+        branchId ?? Number(data.fll_codigo),
+        systemId,
+      );
+      const detalheData = (detalhe?.data ?? detalhe) as
+        | TCarProdutoPayload
+        | undefined;
+
+      if (!detalheData) {
+        throw new Error(
+          `${logPrefix} — não foi possível buscar detalhe do produto na Tecinco pra criação manual`,
+        );
+      }
+
+      data = { ...data, ...detalheData };
+      console.log(`${logPrefix} — detalhe completo buscado pra criação manual`);
     }
 
     // Estoque/preço por filial: quando a busca usa include=filiais, data.filiais
@@ -400,33 +434,69 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       logPrefix,
     });
 
-    // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
     if (!product) {
-      // unique_ean_null_invoice é UNIQUE(ean) WHERE invoice_id IS NULL — ou
-      // seja, dois systemIds diferentes com o mesmo EAN batem nesse índice
-      // mesmo com sku diferente, então o dedup precisa checar por ean também.
-      const existingUnmapped = await UnmappedInvoiceProduct.findOne({
-        where: {
-          invoice_id: null,
-          ...(ean ? { [Op.or]: [{ sku: systemId }, { ean }] } : { sku: systemId }),
-        },
-      });
-      if (!existingUnmapped) {
-        await UnmappedInvoiceProduct.create({
-          invoice_id: null,
-          integrations_id: integrations.id,
-          sku: systemId,
-          ean: ean ?? null,
-          product_name: data.epctb_nome?.trim() ?? null,
-          quantity: 0,
-          reason: "Produto novo, precisa de mapeamento manual",
-          status: "UNMAPPED",
+      if (opts.create) {
+        // ─── Criação manual disparada via unmapped (POST .../create-product) ──
+        // Cria o Product+ProductConfig+IntegrationMapping e cai pro resto da
+        // função normalmente — dali em diante ela já trata `product`
+        // genericamente (grupo/subgrupo, estoque por filial, etc).
+        product = await this.createProductFromTCarData({
+          data,
+          systemId,
+          ean,
+          codigoFabrica,
+          integrations,
+          operationUnitBusiness,
+          filiaisToProcess,
+          logPrefix,
         });
-        console.log(
-          `${logPrefix} — produto novo, registrado em unmapped_invoice_products pra revisão manual`,
-        );
+      } else {
+        // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
+        // unique_ean_integration_null_invoice é UNIQUE(ean, integrations_id)
+        // WHERE invoice_id IS NULL — dois systemIds diferentes com o mesmo EAN
+        // na mesma integração batem nesse índice mesmo com sku diferente,
+        // então o dedup precisa checar por ean também (sempre escopado à
+        // integração, já que o mesmo EAN pode legitimamente existir em
+        // integrações diferentes).
+        const existingUnmapped = await UnmappedInvoiceProduct.findOne({
+          where: {
+            invoice_id: null,
+            integrations_id: integrations.id,
+            ...(ean ? { [Op.or]: [{ sku: systemId }, { ean }] } : { sku: systemId }),
+          },
+        });
+        if (existingUnmapped) {
+          // Upsert: um unmapped já registrado antes desse campo existir (ou
+          // criado numa passagem anterior) precisa continuar acompanhando o
+          // que a Tecinco manda — em especial external_id, sem o qual o
+          // endpoint de criar produto não funciona pra essa linha.
+          await existingUnmapped.update({
+            sku: systemId,
+            ean: ean ?? null,
+            external_id: systemId,
+            product_name: data.epctb_nome?.trim() ?? null,
+          });
+          console.log(
+            `${logPrefix} — unmapped já existente atualizado (external_id/dados sincronizados)`,
+          );
+        } else {
+          await UnmappedInvoiceProduct.create({
+            invoice_id: null,
+            integrations_id: integrations.id,
+            sku: systemId,
+            ean: ean ?? null,
+            external_id: systemId,
+            product_name: data.epctb_nome?.trim() ?? null,
+            quantity: 0,
+            reason: "Produto novo, precisa de mapeamento manual",
+            status: "UNMAPPED",
+          });
+          console.log(
+            `${logPrefix} — produto novo, registrado em unmapped_invoice_products pra revisão manual`,
+          );
+        }
+        return;
       }
-      return;
     }
 
     const isOwnProduct = isProductOwnedByIntegration(product, integrations.id);
@@ -675,6 +745,75 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         logPrefix,
       });
     }
+  }
+
+  // ─── Cria o Product a partir dos dados do ERP quando disparado manualmente
+  // via unmapped (create-product), fazendo o mapping apontar pra ele e
+  // resolvendo o UnmappedInvoiceProduct de origem (ver
+  // UnmappedInvoiceProductService.resolveFromCreatedProduct). O resto de
+  // processProduct trata o produto retornado genericamente daqui pra frente
+  // (grupo/subgrupo, estoque por filial, etc).
+  private async createProductFromTCarData(params: {
+    data: TCarProdutoPayload;
+    systemId: string;
+    ean: string | undefined;
+    codigoFabrica: string | undefined;
+    integrations: Awaited<ReturnType<typeof getTCarIntegration>>;
+    operationUnitBusiness: UnitBusiness;
+    filiaisToProcess: Array<{
+      fll_codigo: number;
+      estoque: number;
+      preco: number;
+      custoContabil: number;
+    }>;
+    logPrefix: string;
+  }): Promise<Product> {
+    const {
+      data,
+      systemId,
+      ean,
+      codigoFabrica,
+      integrations,
+      operationUnitBusiness,
+      filiaisToProcess,
+      logPrefix,
+    } = params;
+
+    const resolvedBranchId = Number(operationUnitBusiness.number);
+    const matchingFilial =
+      filiaisToProcess.find((f) => f.fll_codigo === resolvedBranchId) ??
+      filiaisToProcess[0];
+
+    const newProduct = await productService.create({
+      name: data.epctb_nome?.trim() ?? "",
+      id_system: systemId,
+      category: "TIRE",
+      integrations_id: integrations.id,
+      config: {
+        unit_business_id: operationUnitBusiness.id,
+        sku: codigoFabrica ?? systemId,
+        gtin: ean,
+        price: matchingFilial?.preco ?? 0,
+      },
+    });
+
+    await integrationMappingService.createOrUpdateIntegrationMapping({
+      entity_type: "PRODUCT",
+      internal_id: newProduct.id,
+      integrations_id: integrations.id,
+      external_id: systemId,
+    });
+
+    console.log(
+      `${logPrefix} — produto criado manualmente a partir de unmapped (product_id=${newProduct.id})`,
+    );
+
+    await unmappedInvoiceProductService.resolveFromCreatedProduct({
+      externalId: systemId,
+      integrationsId: integrations.id,
+    });
+
+    return newProduct;
   }
 
   // ─── Cliente ───────────────────────────────────────────────────────────────
