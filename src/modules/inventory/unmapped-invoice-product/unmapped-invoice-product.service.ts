@@ -26,6 +26,12 @@ import { TCarUpsertQueue } from "../../handlers/tecinco/queues/tecinco-api-fetch
 import { resolveTecincoBranchId } from "../../../shared/utils/tecinco/resolve-branch-id";
 import { TCarProdutoPayload } from "../../handlers/tecinco/service/tecinco/tecinco.types";
 
+// Quanto tempo o job de criação de produto fica visível no Redis depois de
+// concluir (ver createProduct/getCreateProductJobStatus) — a fila por
+// padrão apaga job concluído na hora (removeOnComplete:true, pensado pra
+// sync de alto volume), o que faria getJob nunca ver "completed".
+const CREATE_PRODUCT_JOB_RETENTION_SECONDS = 24 * 3600;
+
 export class UnmappedInvoiceProductService extends BaseService<
   UnmappedInvoiceProduct,
   UnmappedInvoiceProductRepository
@@ -246,7 +252,11 @@ export class UnmappedInvoiceProductService extends BaseService<
           },
         },
         `bling-product-create-${unmapped.id}`,
-        { priority: 1 },
+        // removeOnComplete com retenção: getCreateProductJobStatus precisa
+        // achar o job depois de concluído (default da fila é apagar na
+        // hora — ver BaseQueueService.add) pra reportar "completed" em vez
+        // de "not_found".
+        { priority: 1, removeOnComplete: { age: CREATE_PRODUCT_JOB_RETENTION_SECONDS } },
       );
     } else if (integration.name === "Tecinco") {
       const branchId = await resolveTecincoBranchId(params.userId);
@@ -277,7 +287,7 @@ export class UnmappedInvoiceProductService extends BaseService<
           create: true,
         },
         `tecinco-product-create-${unmapped.id}`,
-        { priority: 1 },
+        { priority: 1, removeOnComplete: { age: CREATE_PRODUCT_JOB_RETENTION_SECONDS } },
       );
     } else {
       throw new Error(
@@ -325,6 +335,13 @@ export class UnmappedInvoiceProductService extends BaseService<
 
     if (state === "failed") {
       return { status: "failed", error: job.failedReason };
+    }
+
+    // "prioritized": estado próprio do BullMQ pra job com priority explícita
+    // (ver createProduct, priority:1) enquanto ele ainda não foi pego por um
+    // worker — equivalente a "waiting" pro que o front precisa saber.
+    if (state === "prioritized") {
+      return { status: "waiting" };
     }
 
     if (

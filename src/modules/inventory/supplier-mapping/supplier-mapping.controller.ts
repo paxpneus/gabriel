@@ -7,10 +7,17 @@ import { authenticate } from '../../../middlewares/auth-token';
 import { userPermissions } from '../../../middlewares/user-permissions';
 import { getUserContext } from '../../../shared/query/get-logged-user';
 import { resolveIntegrationsIdForUnitBusiness } from '../../handlers/tecinco/queues/helpers/product.helpers';
+import unmappedInvoiceProductService from '../unmapped-invoice-product/unmapped-invoice-product.service';
 
 export class SupplierMappingController extends BaseController<SupplierMapping, typeof SupplierMappingService> {
   constructor() {
     super(SupplierMappingService);
+
+    this.router.post(
+      '/from-unmapped',
+      ...this.mw('createFromUnmapped'),
+      this.createFromUnmapped,
+    );
   }
 
   protected middlewaresFor() {
@@ -23,6 +30,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       bulkCreate: [authenticate, userPermissions],
       bulkUpdate: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
+      createFromUnmapped: [authenticate, userPermissions],
     };
   }
 
@@ -140,6 +148,35 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       });
 
       return res.status(201).json(records);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // Mapeia manualmente um unmapped pra um product_id já existente via
+  // SupplierMapping, apagando o unmapped em seguida (ver
+  // SupplierMappingService.createFromUnmapped). Escopa por integração do
+  // usuário logado — mesmo padrão de posse usado em show/update/destroy —
+  // pra um usuário não conseguir mapear um unmapped de outra integração.
+  createFromUnmapped = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const integrationsId = await this.resolveIntegrationsId(req);
+      const { product_id, unmapped_invoice_product_id, supplier_cnpj } = req.body;
+
+      const unmapped = await unmappedInvoiceProductService.findById(
+        unmapped_invoice_product_id,
+      );
+      if (!unmapped || unmapped.integrations_id !== integrationsId) {
+        return res.status(404).json({ error: 'Produto não mapeado não encontrado' });
+      }
+
+      const record = await this.service.createFromUnmapped({
+        productId: product_id,
+        unmappedInvoiceProductId: unmapped_invoice_product_id,
+        supplierCnpj: supplier_cnpj,
+      });
+
+      return res.status(201).json(record);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

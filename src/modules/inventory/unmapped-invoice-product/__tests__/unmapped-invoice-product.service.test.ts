@@ -237,7 +237,7 @@ describe("UnmappedInvoiceProductService", () => {
           }),
         }),
         `bling-product-create-${baseUnmapped.id}`,
-        { priority: 1 },
+        expect.objectContaining({ priority: 1, removeOnComplete: expect.any(Object) }),
       );
     });
 
@@ -268,7 +268,7 @@ describe("UnmappedInvoiceProductService", () => {
           }),
         }),
         `tecinco-product-create-${baseUnmapped.id}`,
-        { priority: 1 },
+        expect.objectContaining({ priority: 1, removeOnComplete: expect.any(Object) }),
       );
     });
 
@@ -370,6 +370,19 @@ describe("UnmappedInvoiceProductService", () => {
 
         expect(result).toEqual({ status: state });
       }
+    });
+
+    it("job com priority explícita ainda não pego por um worker: BullMQ reporta 'prioritized', repassado como 'waiting' pro front", async () => {
+      const job = makeJob({ getState: jest.fn().mockResolvedValue("prioritized") });
+      const blingQueue = { queue: { getJob: jest.fn().mockResolvedValue(job) } };
+      const tcarQueue = { queue: { getJob: jest.fn().mockResolvedValue(null) } };
+
+      const result = await service.getCreateProductJobStatus("unmapped-1", {
+        blingApiFetchQueue: blingQueue as any,
+        tcarUpsertQueue: tcarQueue as any,
+      });
+
+      expect(result).toEqual({ status: "waiting" });
     });
   });
 });

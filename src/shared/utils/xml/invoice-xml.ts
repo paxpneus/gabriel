@@ -1023,30 +1023,16 @@ export async function upsertInvoiceFromXml(
           : undefined,
       });
     }
-  } else if (det.length && !alreadyFullyReconciled) {
-    // Sem operationalItems (a integração não retornou itens) — não há mais
-    // fonte confiável de SKU aqui: cProd é o código do FORNECEDOR na nota,
-    // não bate com ProductConfig.sku. Cada linha do XML vira unmapped pra
-    // revisão manual; cProd/cEAN/xProd/qCom são só metadado de exibição,
-    // nunca resolvem um Product.
-    for (const item of det) {
-      const prod = item.prod ?? {};
-
-      const sku = prod.cProd ? String(prod.cProd).trim() : null;
-      const gtin =
-        prod.cEAN && prod.cEAN !== "SEM GTIN" ? String(prod.cEAN).trim() : null;
-      const qty = Number(prod.qCom ?? 0);
-
-      unmappedDet.push({
-        sku,
-        gtin,
-        qty,
-        xProd: prod.xProd ?? null,
-        reason:
-          "Integração não retornou itens da API — item não resolvido automaticamente (revisão manual necessária)",
-      });
-    }
   }
+  // else (willFallbackToXmlDet): a integração não retornou nenhum item pra
+  // essa nota (nem operationalItems, nem unmappedItems) — não há mais fonte
+  // confiável de SKU aqui: cProd é o código do FORNECEDOR na nota, não bate
+  // com ProductConfig.sku, e não temos como saber se a nota é sequer de
+  // categoria produto (pneu) sem os dados que a integração deveria ter
+  // resolvido. Em vez de recair no parse bruto do XML e criar unmapped
+  // "às cegas" por linha, a nota inteira é ignorada nesta passagem — ver o
+  // guard em "!willFallbackToXmlDet" mais abaixo, que também pula a
+  // reconciliação de UnmappedInvoiceProduct pra não mexer no que já existe.
 
   // ─── Create ou Update da invoice ──────────────────────────────────────────
 
@@ -1126,61 +1112,71 @@ export async function upsertInvoiceFromXml(
   // ─── Reconcilia UnmappedInvoiceProduct com o estado atual da passagem ─────
   // (no create, invoice.id ainda não existia antes, então esse loop é no-op)
   //
+  // Pulado inteiro quando willFallbackToXmlDet: a integração não retornou
+  // NENHUM item pra essa nota (nem operationalItems, nem unmappedItems), e
+  // sem esses dados não dá pra saber se a nota é sequer de categoria
+  // produto — a nota inteira é ignorada nesta passagem, sem criar nem
+  // apagar unmapped, em vez de adivinhar a partir do XML bruto.
+  //
   // unmappedDet representa TODOS os itens que continuam sem mapear nesta
   // passagem. Qualquer registro UNMAPPED já salvo pra essa invoice que não
   // aparece mais aqui está obsoleto — seja porque o item foi resolvido, seja
-  // porque passou a ser identificado por outra chave (ex.: numa passagem
-  // anterior resolveu pelo epctb_codigo da Tecinco, nesta caiu no fallback
-  // do XML bruto e ficou sob o cProd do fornecedor) — senão duplica a
+  // porque passou a ser identificado por outra chave — senão duplica a
   // quantidade não mapeada a cada reprocessamento. Só mexe em status
   // "UNMAPPED" pra nunca apagar um registro já resolvido manualmente.
-  const currentUnmappedKeys = new Set(
-    unmappedDet.map((u) => (u.gtin ? `ean:${u.gtin}` : `sku:${u.sku ?? ""}`)),
-  );
+  if (!willFallbackToXmlDet) {
+    const currentUnmappedKeys = new Set(
+      unmappedDet.map((u) => (u.gtin ? `ean:${u.gtin}` : `sku:${u.sku ?? ""}`)),
+    );
 
-  const existingUnmapped = await UnmappedInvoiceProduct.findAll({
-    where: { invoice_id: invoice.id, status: "UNMAPPED" },
-  });
-
-  for (const row of existingUnmapped) {
-    const key = row.ean ? `ean:${row.ean}` : `sku:${row.sku ?? ""}`;
-    if (!currentUnmappedKeys.has(key)) {
-      await row.destroy();
-    }
-  }
-
-  // ─── Unmapped products (requer invoice.id) ─────────────────────────────────
-
-  for (const u of unmappedDet) {
-    const quantity = toIntegerQuantity(u.qty);
-
-    const existing = await UnmappedInvoiceProduct.findOne({
-      where: {
-        invoice_id: invoice.id,
-        ...(u.gtin ? { ean: u.gtin } : { sku: u.sku ?? null }),
-      },
+    const existingUnmapped = await UnmappedInvoiceProduct.findAll({
+      where: { invoice_id: invoice.id, status: "UNMAPPED" },
     });
 
-    if (!existing) {
-      await UnmappedInvoiceProduct.create({
-        invoice_id: invoice.id,
-        integrations_id: integration.id,
-        ean: u.gtin ?? null,
-        sku: u.sku ?? null,
-        product_name: u.xProd,
-        quantity,
-        reason: u.reason,
-        status: "UNMAPPED",
-      });
-    } else {
-      await existing.update({
-        quantity,
-        integrations_id: integration.id,
-      });
+    for (const row of existingUnmapped) {
+      const key = row.ean ? `ean:${row.ean}` : `sku:${row.sku ?? ""}`;
+      if (!currentUnmappedKeys.has(key)) {
+        await row.destroy();
+      }
     }
 
-    console.warn(
-      `[IMPORT_XML] Produto não mapeado | invoice=${idSystem} | sku=${u.sku} | ean=${u.gtin} | motivo=${u.reason}`,
+    // ─── Unmapped products (requer invoice.id) ───────────────────────────────
+
+    for (const u of unmappedDet) {
+      const quantity = toIntegerQuantity(u.qty);
+
+      const existing = await UnmappedInvoiceProduct.findOne({
+        where: {
+          invoice_id: invoice.id,
+          ...(u.gtin ? { ean: u.gtin } : { sku: u.sku ?? null }),
+        },
+      });
+
+      if (!existing) {
+        await UnmappedInvoiceProduct.create({
+          invoice_id: invoice.id,
+          integrations_id: integration.id,
+          ean: u.gtin ?? null,
+          sku: u.sku ?? null,
+          product_name: u.xProd,
+          quantity,
+          reason: u.reason,
+          status: "UNMAPPED",
+        });
+      } else {
+        await existing.update({
+          quantity,
+          integrations_id: integration.id,
+        });
+      }
+
+      console.warn(
+        `[IMPORT_XML] Produto não mapeado | invoice=${idSystem} | sku=${u.sku} | ean=${u.gtin} | motivo=${u.reason}`,
+      );
+    }
+  } else {
+    console.log(
+      `[IMPORT_XML] Nota ${idSystem} ignorada pra fins de unmapped — integração não retornou itens.`,
     );
   }
 

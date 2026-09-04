@@ -333,7 +333,14 @@ export abstract class BaseQueueService<T> {
     );
   }
 
-  async add(data: T, jobId?: string, jobOptions?: { priority?: number }) {
+  async add(
+    data: T,
+    jobId?: string,
+    jobOptions?: {
+      priority?: number;
+      removeOnComplete?: boolean | { age: number; count?: number };
+    },
+  ) {
     if (jobId) {
       const existingJob = await this.queue.getJob(jobId);
       if (existingJob) {
@@ -352,7 +359,13 @@ export abstract class BaseQueueService<T> {
       // um job específico furar a fila de espera de uma fila já existente,
       // sem precisar de fila/lock dedicados.
       ...(jobOptions?.priority ? { priority: jobOptions.priority } : {}),
-      removeOnComplete: true,
+      // Default true: filas de alto volume (sync normal) não devem acumular
+      // job concluído no Redis. Jobs cujo resultado alguém vai consultar
+      // depois (ex.: criação de produto, consultada via getJob) devem
+      // passar um removeOnComplete com retenção (ex.: { age: 24*3600 }),
+      // senão o job some do Redis assim que termina com sucesso e getJob
+      // nunca encontra "completed" — só "not_found".
+      removeOnComplete: jobOptions?.removeOnComplete ?? true,
       removeOnFail: {
         age: 24 * 3600 * 7,
       },
