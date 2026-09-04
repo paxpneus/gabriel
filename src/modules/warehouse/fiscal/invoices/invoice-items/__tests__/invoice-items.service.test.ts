@@ -160,7 +160,7 @@ describe("InvoiceItemsService.createInvoiceItemForUnmappedProducts (cascata de a
     );
   });
 
-  it("com 1 match na cascata (mesmo código+CNPJ, outra nota): mapeia o alvo E o match pro MESMO product_id, apaga os dois unmapped, e a recursão do match não encontra mais nada (sem loop infinito)", async () => {
+  it("com 1 match na cascata (mesmo código+CNPJ, outra nota): mapeia o alvo E o match pro MESMO product_id, apaga os dois unmapped, e o match processado não dispara uma nova busca (triggerCascade:false)", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockImplementation(
       (id: string) => {
         if (id === "unmapped-1") return Promise.resolve(makeUnmapped({ id: "unmapped-1", quantity: 5 }));
@@ -174,11 +174,9 @@ describe("InvoiceItemsService.createInvoiceItemForUnmappedProducts (cascata de a
     (invoiceService.findByIdFullForAllUnits as jest.Mock).mockImplementation(
       (invoiceId: string) => Promise.resolve(makeInvoice({ id: invoiceId })),
     );
-    (unmappedInvoiceProductService.findCascadeMatches as jest.Mock)
-      .mockResolvedValueOnce([
-        { id: "unmapped-2", invoice_id: "invoice-2", quantity: 3, ean: "EAN-1" },
-      ])
-      .mockResolvedValueOnce([]); // busca da cascata do match-2 não acha mais nada
+    (unmappedInvoiceProductService.findCascadeMatches as jest.Mock).mockResolvedValue([
+      { id: "unmapped-2", invoice_id: "invoice-2", quantity: 3, ean: "EAN-1" },
+    ]);
 
     await service.createInvoiceItemForUnmappedProducts(
       { product_id: "product-1", invoice_id: "invoice-1", quantity_expected: 5 },
@@ -208,9 +206,9 @@ describe("InvoiceItemsService.createInvoiceItemForUnmappedProducts (cascata de a
       expect.anything(),
     );
 
-    // A cascata roda pro alvo e de novo pro match (recursivo) — sem terceira
-    // chamada, já que a segunda busca não encontrou mais nada.
-    expect(unmappedInvoiceProductService.findCascadeMatches).toHaveBeenCalledTimes(2);
+    // A cascata só dispara na chamada raiz — o match processado (triggerCascade:
+    // false) não busca de novo, então findCascadeMatches roda uma única vez.
+    expect(unmappedInvoiceProductService.findCascadeMatches).toHaveBeenCalledTimes(1);
   });
 
   it("com múltiplos matches na cascata: resolve TODOS pro mesmo product_id passado pela função pai", async () => {
@@ -227,12 +225,10 @@ describe("InvoiceItemsService.createInvoiceItemForUnmappedProducts (cascata de a
     (invoiceService.findByIdFullForAllUnits as jest.Mock).mockImplementation(
       (invoiceId: string) => Promise.resolve(makeInvoice({ id: invoiceId })),
     );
-    (unmappedInvoiceProductService.findCascadeMatches as jest.Mock)
-      .mockResolvedValueOnce([
-        { id: "unmapped-2", invoice_id: "invoice-unmapped-2", quantity: 2, ean: "EAN-1" },
-        { id: "unmapped-3", invoice_id: "invoice-unmapped-3", quantity: 7, ean: "EAN-1" },
-      ])
-      .mockResolvedValue([]); // recursões dos dois matches não acham mais nada
+    (unmappedInvoiceProductService.findCascadeMatches as jest.Mock).mockResolvedValue([
+      { id: "unmapped-2", invoice_id: "invoice-unmapped-2", quantity: 2, ean: "EAN-1" },
+      { id: "unmapped-3", invoice_id: "invoice-unmapped-3", quantity: 7, ean: "EAN-1" },
+    ]);
 
     await service.createInvoiceItemForUnmappedProducts(
       { product_id: "product-1", invoice_id: "invoice-1", quantity_expected: 5 },
@@ -245,5 +241,9 @@ describe("InvoiceItemsService.createInvoiceItemForUnmappedProducts (cascata de a
       expect(call[0].product_id).toBe("product-1");
     }
     expect(unmappedInvoiceProductService.delete).toHaveBeenCalledTimes(3);
+    // Cascata roda só na chamada raiz (triggerCascade default true) — os 2
+    // matches são processados com triggerCascade:false, então uma única
+    // busca já cobre tudo.
+    expect(unmappedInvoiceProductService.findCascadeMatches).toHaveBeenCalledTimes(1);
   });
 });
