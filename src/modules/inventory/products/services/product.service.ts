@@ -207,7 +207,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
       if (config) {
         if (!config.unit_business_id) {
           console.warn(
-            `[ProductService.create] product_id=${product.id} — config sem unit_business_id, ProductConfig não criado`,
+            `Produto "${product.name}" criado, mas sem os dados de venda (SKU, GTIN, preço) para nenhuma loja — o cadastro enviado não informou a unidade de negócio. [ProductService.create product_id=${product.id}: config sem unit_business_id, ProductConfig não criado]`,
           );
         } else {
           if (config.gtin) {

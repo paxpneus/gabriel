@@ -804,7 +804,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       // igual em qualquer tentativa — não é erro transitório, retry não
       // ajuda. Pula direto pra "failed" (ver BaseQueueService.add).
       throw new UnrecoverableError(
-        `Não foi possível criar o produto: encontramos uma inconsistência no cadastro (provavelmente dado legado). Encaminhe este erro para o time técnico investigar. [${logPrefix} — já existe um produto (id=${conflictingProduct.id}) com id_system=${systemId}, sem mapping válido para esta integração]`,
+        `Não foi possível criar o produto "${data.epctb_nome}": já existe um produto "${conflictingProduct.name}" com esse mesmo id do ERP no cadastro, mas sem mapping válido pra esta integração (provavelmente dado legado). Encaminhe este erro para o time técnico investigar. [${logPrefix} — produto conflitante id=${conflictingProduct.id}, id_system=${systemId}]`,
       );
     }
 

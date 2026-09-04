@@ -273,8 +273,15 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
     });
 
     if (conflictingConfig) {
+      const [conflictingProduct, currentProduct] = await Promise.all([
+        Product.findByPk(conflictingConfig.product_id, {
+          attributes: ["name"],
+          transaction,
+        }),
+        Product.findByPk(productId, { attributes: ["name"], transaction }),
+      ]);
       throw new EanConflictError(
-        `${logPrefix} — ${field}=${normalized} já pertence ao product id=${conflictingConfig.product_id} (produto atual id=${productId})`,
+        `Não foi possível salvar: o código ${normalized} já pertence ao produto "${conflictingProduct?.name ?? conflictingConfig.product_id}", mas está sendo usado agora pro produto "${currentProduct?.name ?? productId}". Encaminhe este erro para o time técnico investigar. [${logPrefix} — ${field}=${normalized}, produto conflitante id=${conflictingConfig.product_id}, produto atual id=${productId}]`,
       );
     }
 
