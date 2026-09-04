@@ -697,6 +697,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             product_name: productName,
             quantity: 0,
             reason: "Produto não encontrado no Magento",
+            type: "ERROR_INTEGRATION",
             status: "UNMAPPED",
           },
           { transaction },
@@ -708,7 +709,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         // Upsert: mantém sku/ean/nome sincronizados com o que a Bling manda,
         // mesmo que o unmapped já exista de uma passagem anterior.
         await existingUnmapped.update(
-          { sku, ean: normalizedEan, product_name: productName },
+          { sku, ean: normalizedEan, product_name: productName, type: "ERROR_INTEGRATION" },
           { transaction },
         );
         console.log(
@@ -1045,6 +1046,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             ean,
             external_id: String(blingProduct.id),
             product_name: blingProduct.nome,
+            type: "ERROR_CATALOG",
           });
           console.log(
             `${logPrefix} — unmapped já existente atualizado (external_id/dados sincronizados)`,
@@ -1059,6 +1061,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             product_name: blingProduct.nome,
             quantity: 0,
             reason: "Produto novo, precisa de mapeamento manual",
+            type: "ERROR_CATALOG",
             status: "UNMAPPED",
           });
           console.log(
@@ -2035,12 +2038,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           product_name: u.descricao,
           quantity,
           reason: u.reason,
+          type: "ERROR_INVOICE",
           status: "UNMAPPED",
         });
       } else {
         await existing.update({
           quantity,
           integrations_id: unit_business.integrations_id ?? integration.id,
+          type: "ERROR_INVOICE",
         });
       }
 

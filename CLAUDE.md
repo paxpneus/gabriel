@@ -24,6 +24,26 @@ entity's model (e.g. `ProductConfig.findOne(...)` or
 `SupplierMapping.findOne(...)` from inside `ProductService`) is a layering
 violation, even if the result is only read, never written.
 
+**The `include` carve-out above applies to the repository layer only — not
+to services.** Even within a single entity's own service, a query that
+references another model — including a plain `include` used only for
+eager-loading a related entity's fields — must not be written inline in the
+service. That kind of query construction belongs in a named method on the
+entity's own repository (e.g. `unmappedInvoiceProductRepository.findUnmappedByInvoiceIds(...)`,
+`unmappedInvoiceProductRepository.findByCodeExcluding(...)`), and the
+service only calls that repository method — it never builds the
+`include`/`where` object itself. A service method that calls the inherited
+`BaseService.findAll`/`findOne` with a plain `where` and no `include` (so it
+never references another model at all) is still fine directly in the
+service — the line is specifically about any query shape that names or
+joins another model, not about using the base service's generic finders in
+general. See `unmapped-invoice-product.repository.ts`'s `getFullById`,
+`findUnmappedByInvoiceIds`, and `findByCodeExcluding` for the pattern: the
+repository owns every `include`, and `unmapped-invoice-product.service.ts`'s
+`findCascadeMatches` calls the repository method and only does the
+CNPJ-normalization *filtering* (business logic, not query construction) on
+the result in the service.
+
 Before adding a method that needs another entity's data, check
 `BaseRepository`/`BaseService`/`BaseController` first — most generic
 lookups (`findOne`, `findById`, `findAll`, etc.) are already there, so the
@@ -139,6 +159,22 @@ part of this section in the same turn — don't leave it to drift out of date.
 - Routes: `GET /:id/full`, `GET /by-code/:code` (read-only lookup),
   `GET /detailed/get`, `GET /report/get`, `GET /by-unit-business/get`,
   `GET /sales-report/get`.
+- `products.id_system` has a **global** unique DB index
+  (`products_id_system_key`, migration `20260415125537`/`20260415130053`) —
+  unique across the whole table, not scoped by `integrations_id`. This
+  matters for the create-product-from-unmapped flow (see below): before
+  creating a `Product` for a given ERP id, callers must check whether a
+  Product with that `id_system` already exists (even if `resolveProductWithMapping`
+  found no valid mapping for it — i.e. an orphaned/missing-mapping case),
+  otherwise `productService.create` throws a raw Postgres constraint error
+  instead of a clear one.
+- `products.category` (ENUM: `TIRE`, `PART`, `OIL`, `BATTERY`, `ACCESSORY`,
+  `WHEEL`, `TUBE`, `SERVICE`, `OTHER`; default `TIRE`; DB column added by
+  migration `20260609225551-add-product-category-and-unit-business-type.js`)
+  existed in the database but was **missing from `product.model.ts`'s
+  `.init()`** until this session — added now with the same enum/default.
+  Before this fix, any code reading/writing `Product.category` through
+  Sequelize silently ignored the column.
 
 ## ProductConfig (`src/modules/inventory/product-config/`)
 
@@ -175,6 +211,36 @@ part of this section in the same turn — don't leave it to drift out of date.
   resolves `integrations_id` for the unit business, then looks up the
   mapping; this is the method to reuse instead of duplicating a raw
   `findOne` with the same where-clause.
+- `supplierMappingService.createFromUnmapped({ productId, unmappedInvoiceProductId, supplierCnpj? })`
+  (this session) — manually maps an `UnmappedInvoiceProduct` to an
+  **already-existing** `Product` via `SupplierMapping`, without going
+  through `InvoiceItems` at all. Exposed at `POST /supplier-mapping/from-unmapped`.
+  Mainly for **catalog-scoped** unmapped rows (`invoice_id: null`), where
+  `InvoiceItemsService.createInvoiceItemForUnmappedProducts` doesn't apply
+  (there's no invoice to attach an item to). Behavior:
+  - Code = `unmapped.ean ?? unmapped.sku`; `integrations_id` comes from the
+    unmapped row itself.
+  - **Idempotent when the mapping already exists for the same product**:
+    if a `SupplierMapping` already exists for `(integrations_id, code)` and
+    it already points at the *same* `product_id` being sent, this is
+    treated as success (no re-insert attempt, avoids hitting the unique
+    constraint pointlessly) — it still proceeds to the mapping/delete steps
+    below. Only throws when the existing mapping points at a **different**
+    product (a real conflict).
+  - If the unmapped row has `external_id` set (i.e. it's catalog-scoped,
+    the ERP's own product id is known), also calls
+    `integrationMappingService.createOrUpdateIntegrationMapping(...)` for
+    that `(entity_type: "PRODUCT", internal_id: productId, integrations_id, external_id)`
+    — without this, the next Bling/Tecinco catalog sync wouldn't find a
+    mapping for that `external_id` and would recreate the same unmapped row,
+    undoing the manual mapping just made.
+  - Deletes the `UnmappedInvoiceProduct` row at the end. All of the above
+    runs in one transaction.
+  - The controller checks `unmapped.integrations_id` against the logged
+    user's own resolved integration before calling the service (same
+    ownership-check pattern as `show`/`update`/`destroy` in this
+    controller) — a user can't map an unmapped row belonging to a different
+    integration/tenant this way.
 
 ## Integration mapping (`src/modules/integrations/integration-mapping/`)
 
@@ -258,7 +324,137 @@ part of this section in the same turn — don't leave it to drift out of date.
   - When an item later resolves, the matching `UnmappedInvoiceProduct` rows
     are cleaned up (see the "Limpa UnmappedInvoiceProduct" step in
     `bling-api-fetch.queue.ts`).
+  - **Upsert, not just dedup-check** (this session): when a catalog-sync
+    pass (`fetchAndUpsertProduct`/`processProduct`/`syncProductWithMagento`)
+    finds an unmapped row already exists for the same `sku`/`ean`, it used
+    to do nothing — a real bug for `external_id`, since rows created
+    *before* the `m267` column existed (or from a pass where it wasn't
+    resolved yet) would never get it backfilled, permanently blocking
+    create-product for them. Now every pass calls `.update({ sku, ean,
+    external_id, product_name })` on the existing row instead of no-op'ing.
+    `status` is deliberately left untouched by this update (never forced
+    back to `"UNMAPPED"`), so a row a human already resolved to `"MAPPED"`
+    via `markMapped` doesn't get silently reverted by a later sync pass.
 - **Controller is in the HIGH unscoped-CRUD list above. Not fixed.**
+
+### Create product from unmapped (this session)
+
+Lets a user manually turn a catalog-scoped `UnmappedInvoiceProduct`
+(`invoice_id: null`, `external_id` populated) into a real `Product`,
+reusing the existing Bling/Tecinco fetch-and-upsert pipeline instead of
+duplicating its logic (KIT handling, Magento sync, kardex, per-filial
+stock — all of that already works generically once a `Product` exists, so
+the new code only needs to *produce* one and fall through). **This is
+always user-triggered — there is no automatic trigger anywhere else**; the
+normal catalog-sync path still only registers unmapped rows unless this
+flag is explicitly set.
+
+- Endpoint: `POST /unmapped-invoice-products/:id/create-product` — validates
+  `external_id` is set, resolves the integration (`Bling`/`Tecinco`) from
+  `unmapped.integrations_id`, and enqueues a job on the **same existing**
+  `BlingApiFetchQueue`/`TCarUpsertQueue` (no dedicated queue was created).
+  For Tecinco, resolves the user's branch via
+  `src/shared/utils/tecinco/resolve-branch-id.ts`'s `resolveTecincoBranchId`
+  (shared with `InvoiceService.importInvoiceXml`, extracted this session)
+  and enqueues a **minimal** payload (`fll_codigo`, `epctb_codigo`,
+  `epctb_nome` placeholder) — the worker itself fetches the full ERP detail
+  (see below), not the HTTP request.
+- **Priority mechanism — reuses existing queue infra, no new queue/lock**:
+  `BaseQueueService.add(data, jobId, jobOptions)` gained an optional
+  `jobOptions.priority` forwarded straight to BullMQ's native per-job
+  `priority` (lower number = picked first; jobs without an explicit
+  priority always sort after any job that has one). The create-product job
+  is enqueued with `priority: 1` on the *same* `BLING_API_FETCH`/
+  `TCAR_UPSERT` queue used for normal sync — no new queue class, no change
+  to `BLING_SHARED_QUEUE_LOCK`'s ranks, no equivalent lock added for
+  Tecinco. This was a deliberate simplification after an earlier design
+  (separate `BLING_PRODUCT_CREATE`/`TECINCO_PRODUCT_CREATE` queues with
+  their own lock wiring) was rejected as unnecessary infra. Caveat: BullMQ
+  cannot preempt a job already *running* — `priority` only affects which
+  job is picked up *next*.
+- `fetchAndUpsertProduct` (Bling) / `processProduct` (Tecinco) both gained
+  an `opts.create` flag (default `false`, preserves prior behavior). When
+  `resolveProductWithMapping` finds nothing and `opts.create` is true
+  (or, **for Bling only**, when the product is a KIT — see below), instead
+  of registering an unmapped row and returning, they call a new private
+  `createProductFromBlingData`/`createProductFromTCarData` which:
+  1. Checks `Product.findOne({ where: { id_system } })` for a pre-existing
+     Product with that exact `id_system` (see the global-uniqueness note in
+     the Products section above) — if found, this means a mapping is
+     missing/orphaned for an existing product; it does **not** silently
+     reconnect to it (a prior bug class: resolving by `id_system` directly
+     already caused the wrong product being picked when an `id_system` was
+     reused externally without the mapping following along — see
+     `resolveProductByMappingOnly`'s own comment in `product.helpers.ts`).
+     It throws a `bullmq` `UnrecoverableError` with a friendly
+     lead sentence + the product names + technical ids bracketed at the
+     end, asking for manual investigation.
+  2. Otherwise calls `productService.create(...)` (wrapped in try/catch,
+     any failure — EAN conflict, DB constraint — also rethrown as
+     `UnrecoverableError`, since it's about already-resolved data and
+     deterministic: retrying with the same input fails the same way) and
+     `integrationMappingService.createOrUpdateIntegrationMapping(...)`.
+  3. Calls `unmappedInvoiceProductService.resolveFromCreatedProduct({ externalId, integrationsId })`
+     — finds the *specific* originating catalog unmapped row (by
+     `external_id` + `integrations_id`) and **just deletes it**. This does
+     **not** create an `InvoiceItems` row, does **not** cascade to sibling
+     unmapped rows in other invoices, and does **not** touch any other
+     unmapped row sharing the same EAN/SKU. Resolving *other* invoices that
+     had the same product unmapped is left entirely to the separate manual
+     flow (`POST /add/item` → `createInvoiceItemForUnmappedProducts`, see
+     the Invoices/fiscal section's cascade entry) — deliberately, since an
+     EAN shared across different suppliers' invoices isn't guaranteed to be
+     the same physical product.
+  4. Returns the new/existing product, and the caller falls through into
+     the rest of `fetchAndUpsertProduct`/`processProduct` exactly as if
+     the product had been found by mapping (KIT component sync, Magento
+     sync, `ProductConfig`/`Stock` upsert, kardex) — no duplicated logic.
+- **KIT auto-create (Bling only, no `opts.create` needed)**: a product with
+  `blingProduct.formato === "E"` always takes the create branch even
+  without the manual endpoint, because a KIT's `ProductConfig.sku` is
+  synthesized from its resolved component's sku + quantity
+  (`${componentSku}K${quantidade}`) — that code is inherently unique to
+  that exact component combination, so there is no risk of the "this code
+  might belong to a different product" ambiguity that justifies requiring
+  manual confirmation for regular products. Tecinco has no equivalent — it
+  never syncs KIT composition at all (Tecinco-owned catalog data has no KIT
+  concept; the Bling `formato === "E"` check simply never matches there).
+- **Job status polling**: `GET /unmapped-invoice-products/:id/create-product/job`
+  → `UnmappedInvoiceProductService.getCreateProductJobStatus` looks up the
+  job by its deterministic id (`bling-product-create-${id}` /
+  `tecinco-product-create-${id}`, tried against both queues) and maps
+  BullMQ's `job.getState()` to `{ status, error? }`. Two BullMQ-specific
+  gotchas this had to account for:
+  - A job enqueued with an explicit `priority` sits in BullMQ's separate
+    `"prioritized"` state (not `"waiting"`) until a worker picks it up —
+    reported to the caller as `"waiting"` (the frontend has no reason to
+    care about the distinction).
+  - Queue jobs default to `removeOnComplete: true` (instant deletion on
+    success — fine for high-volume sync queues, which is why it's still
+    the `BaseQueueService.add` default), so a *successfully finished*
+    create-product job would vanish before anyone could poll it and this
+    endpoint would wrongly report `"not_found"` instead of `"completed"`.
+    `BaseQueueService.add` now accepts a per-call `jobOptions.removeOnComplete`
+    override; the create-product job passes `{ age: 24 * 3600 }` (keeps it
+    24h after finishing) — every *other* caller of `.add()` keeps the
+    instant-delete default.
+  - Permanent failures use `UnrecoverableError` specifically so `getState()`
+    reports `"failed"` immediately — the queue's normal `attempts: 5`
+    exponential backoff (~30s/60s/120s/240s/480s, ~15min total) is
+    otherwise still the default and would leave `getState()` reporting
+    `"delayed"` for that whole window even for an error that's certain to
+    fail identically on every retry.
+- **Error-message convention adopted this session** for anything that can
+  reach an end user through this flow (job `failedReason`, thrown
+  `Error`/`UnrecoverableError` messages): lead with one plain-language
+  sentence a non-technical user can act on (what happened, and — for
+  data-inconsistency cases — "encaminhe este erro para o time técnico"),
+  name the actual product(s) involved by `name` (not just id), and put the
+  technical detail (ids, field names, code file/function) in `[...]` at the
+  end for whoever the message gets forwarded to. See
+  `assertEanNotOwnedByAnotherProduct`'s `EanConflictError` message and the
+  `id_system`-conflict messages in `createProductFromBlingData`/
+  `createProductFromTCarData` for the concrete pattern.
 
 ## Invoices / fiscal (`src/modules/warehouse/fiscal/invoices/`)
 
@@ -296,6 +492,26 @@ part of this section in the same turn — don't leave it to drift out of date.
   `m265`).
 - `src/shared/utils/xml/invoice-xml.ts` — parses NF-e XML and resolves the
   product per item using that same order.
+  - **Raw-XML unmapped fallback removed (this session)**: when the calling
+    integration provides *no* item info at all for an invoice (neither
+    `operationalItems` nor `unmappedItems` — tracked by the
+    `willFallbackToXmlDet` flag), the code used to fall back to parsing the
+    raw XML `<det>` nodes and create an `UnmappedInvoiceProduct` per line
+    with a generic reason (`"Integração não retornou itens da API..."`).
+    This produced unmapped rows for lines with no way to know whether they
+    were even a tracked product category (a real example hit: an engine
+    oil line got flagged this way even though only tire-category invoices
+    should reach this reconciliation at all) — `cProd` in that fallback is
+    the *supplier's* code, never resolves a `Product`, and there's no
+    signal available at that point to filter by category. Now, when
+    `willFallbackToXmlDet` is true, the **entire invoice is ignored** for
+    unmapped-reconciliation purposes this pass: no unmapped rows are
+    created, and — just as importantly — the existing "delete stale
+    `UNMAPPED` rows no longer present in this pass" reconciliation loop is
+    also skipped entirely, so nothing already recorded for that invoice
+    gets touched either. The invoice itself still gets created/updated
+    normally with whatever real items *were* resolved; only the
+    unmapped-tracking side is skipped.
 - FK behavior on deleting an `invoices` row: `stock_movements.invoice_id`
   and `orders.invoice_id` are `RESTRICT` (block deletion);
   `operations.invoice_id` and `sales_order_snapshots.invoice_id` are
@@ -337,6 +553,18 @@ part of this section in the same turn — don't leave it to drift out of date.
   matching was removed in `m265`.
 - **`batch.controller.ts` (expedition) is in the HIGH unscoped-CRUD list.
   Not fixed.**
+- **Blocked: adding an invoice with unmapped products to a batch (this
+  session)**. Both `ExpeditionBatchService.generateBatchFromInvoices` and
+  `.addInvoiceToBatch` now call
+  `unmappedInvoiceProductService.findUnmappedByInvoiceIds(invoiceIds, t)`
+  (query lives in `UnmappedInvoiceProductRepository`, per the
+  repository-owns-queries rule above) and throw
+  `"Nota(s) com produtos não mapeados: <numbers>"` before doing anything
+  else if any targeted invoice still has `UnmappedInvoiceProduct` rows with
+  `status: "UNMAPPED"`. In `generateBatchFromInvoices` this is scoped to
+  `notBatched` (the invoices actually about to be processed this call, not
+  ones already batched) and sits right before the existing
+  `assertTransshipment` loop.
 
 ## Sales / orders (`src/modules/sales/orders/`)
 

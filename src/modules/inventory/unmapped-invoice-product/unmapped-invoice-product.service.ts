@@ -41,9 +41,20 @@ export class UnmappedInvoiceProductService extends BaseService<
 
     this.queryConfig = {
       defaults: { perPage: 50, sortBy: "createdAt", sortDir: "DESC" },
-      searchFields: ["product_name", "ean", "sku"],
-      filterableFields: ["status", "invoice_id"],
-      sortableFields: ["product_name", "ean", "sku"],
+      searchFields: ["product_name", "ean", "sku", "reason"],
+      stringFields: ["ean", "sku", "external_id"],
+      filterableFields: [
+        "status",
+        "invoice_id",
+        "type",
+        "integrations_id",
+        "reason",
+        "product_name",
+        "external_id",
+        "ean",
+        "sku",
+      ],
+      sortableFields: ["product_name", "ean", "sku", "type", "status", "external_id"],
     };
   }
 
@@ -101,6 +112,7 @@ export class UnmappedInvoiceProductService extends BaseService<
         integrations_id,
         reason:
           "EAN não encontrado no sistema, verificar ERP para ajustar cadastro!",
+        type: "ERROR_SCAN" as const,
         image_path: imagePath,
       };
       const createdUnmapped = await this.repository.create(payload, {

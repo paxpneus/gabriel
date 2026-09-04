@@ -1161,12 +1161,14 @@ export async function upsertInvoiceFromXml(
           product_name: u.xProd,
           quantity,
           reason: u.reason,
+          type: "ERROR_INVOICE",
           status: "UNMAPPED",
         });
       } else {
         await existing.update({
           quantity,
           integrations_id: integration.id,
+          type: "ERROR_INVOICE",
         });
       }
 

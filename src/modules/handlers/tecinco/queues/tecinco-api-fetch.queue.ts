@@ -479,6 +479,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             ean: ean ?? null,
             external_id: systemId,
             product_name: data.epctb_nome?.trim() ?? null,
+            type: "ERROR_CATALOG",
           });
           console.log(
             `${logPrefix} — unmapped já existente atualizado (external_id/dados sincronizados)`,
@@ -493,6 +494,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             product_name: data.epctb_nome?.trim() ?? null,
             quantity: 0,
             reason: "Produto novo, precisa de mapeamento manual",
+            type: "ERROR_CATALOG",
             status: "UNMAPPED",
           });
           console.log(

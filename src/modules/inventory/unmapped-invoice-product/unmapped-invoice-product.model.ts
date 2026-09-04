@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   UnmappedInvoiceProductAttributes,
   UnmappedInvoiceProductCreationAttributes,
+  UnmappedInvoiceProductType,
 } from './unmapped-invoice-product.types';
 
 class UnmappedInvoiceProduct
@@ -16,6 +17,7 @@ class UnmappedInvoiceProduct
   public sku!: string | null;
   public product_name!: string | null;
   public reason!: string;
+  public type!: UnmappedInvoiceProductType;
   public status!: string;
   public quantity!: number;
   public image_path!: string;
@@ -77,6 +79,15 @@ UnmappedInvoiceProduct.init(
     },
     reason: {
       type: DataTypes.STRING(255),
+      allowNull: false,
+    },
+    type: {
+      type: DataTypes.ENUM(
+        "ERROR_CATALOG",
+        "ERROR_INTEGRATION",
+        "ERROR_INVOICE",
+        "ERROR_SCAN",
+      ),
       allowNull: false,
     },
     image_path: {
