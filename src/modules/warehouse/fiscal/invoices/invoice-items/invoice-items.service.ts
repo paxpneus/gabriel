@@ -54,11 +54,20 @@ export class InvoiceItemsService extends BaseService<
   // pra ser reaproveitado pela cascata de auto-mapeamento (ver
   // cascadeAutoMapUnmapped) — que precisa rodar esse mesmo fluxo pra outros
   // unmapped "irmãos", na MESMA transação, sem duplicar a lógica.
+  //
+  // triggerCascade: só true na chamada raiz (o mapeamento manual que o
+  // usuário disparou). cascadeAutoMapUnmapped já busca TODOS os siblings de
+  // uma vez só e distribui um por um pra essa função — se cada sibling
+  // também disparasse sua própria cascata, a busca rodaria de novo pra cada
+  // um (redundante) e o mesmo sibling podia ser alcançado por mais de um
+  // caminho recursivo ao mesmo tempo. Por isso as chamadas feitas de DENTRO
+  // de cascadeAutoMapUnmapped passam triggerCascade: false.
   private async createInvoiceItemForUnmappedProductsInTx(
     t: Transaction,
     invoiceItemDto: Partial<InvoiceItems>,
     newEan: string,
     unMappedProductId: string,
+    triggerCascade: boolean = true,
   ): Promise<void> {
       if (!invoiceItemDto.product_id) {
         throw new Error("Produto não encontrado!");
@@ -335,14 +344,18 @@ export class InvoiceItemsService extends BaseService<
 
       // ─── 6. Cascata: outros unmapped do mesmo fornecedor com o mesmo
       // código de fornecedor podem ser mapeados automaticamente também —
-      // ver cascadeAutoMapUnmapped.
-      await this.cascadeAutoMapUnmapped(t, {
-        productId: invoiceItemDto.product_id,
-        supplierProductCode:
-          newEan || unMappedProduct.ean || unMappedProduct.sku,
-        senderCnpj: invoice.sender_cnpj,
-        excludeId: unMappedProductId,
-      });
+      // ver cascadeAutoMapUnmapped. Só dispara na chamada raiz (ver
+      // triggerCascade acima) — os siblings processados pela própria
+      // cascata não disparam uma busca nova cada um.
+      if (triggerCascade) {
+        await this.cascadeAutoMapUnmapped(t, {
+          productId: invoiceItemDto.product_id,
+          supplierProductCode:
+            newEan || unMappedProduct.ean || unMappedProduct.sku,
+          senderCnpj: invoice.sender_cnpj,
+          excludeId: unMappedProductId,
+        });
+      }
   }
 
   // Depois de mapear um unmapped manualmente, avalia se outros unmapped (em
@@ -350,8 +363,10 @@ export class InvoiceItemsService extends BaseService<
   // origem (mesmo CNPJ emissor) também podem ser resolvidos pro mesmo
   // produto — só nesse caso é seguro assumir automaticamente, já que o
   // mesmo EAN pode legitimamente ser de produtos diferentes entre
-  // fornecedores diferentes (ver findCascadeMatches). Cada match encontrado
-  // roda o mesmo fluxo de novo, na mesma transação.
+  // fornecedores diferentes (ver findCascadeMatches). Busca TODOS os
+  // siblings de uma vez só (uma única query) e processa cada um com
+  // triggerCascade: false — nenhum deles dispara uma busca nova, então cada
+  // sibling é tocado exatamente uma vez, sem recursão nem redundância.
   private async cascadeAutoMapUnmapped(
     t: Transaction,
     params: {
@@ -371,10 +386,6 @@ export class InvoiceItemsService extends BaseService<
     );
 
     for (const match of matches) {
-      // Cada match também vai rodar cascadeAutoMapUnmapped de novo (a
-      // cascata não tem flag de liga/desliga) — inofensivo: como cada
-      // linha já é apagada ao ser processada, uma re-busca subsequente com
-      // o mesmo código+CNPJ simplesmente não encontra mais nada.
       await this.createInvoiceItemForUnmappedProductsInTx(
         t,
         {
@@ -384,6 +395,7 @@ export class InvoiceItemsService extends BaseService<
         },
         match.ean ?? "",
         match.id,
+        false,
       );
     }
   }

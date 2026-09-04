@@ -184,6 +184,36 @@ part of this section in the same turn — don't leave it to drift out of date.
 - `integrationMappingService.findGroupedMappingsMap(...)` /
   `.findExternalIdsMap(...)` — used to enrich rows (e.g. in
   `order_items.service.ts`) with external integration ids in bulk.
+- `integrationMappingService.createOrUpdateIntegrationMapping(...)` —
+  despite the name, **never actually updates/reassigns an existing
+  mapping**: if a row already exists for `(entity_type, integrations_id,
+  internal_id OR external_id)`, it just `console.warn`s and returns the
+  existing row unchanged, no exception raised. `Product` deletion does
+  **not** clean up its `integration_mappings` rows (no FK — `internal_id`
+  is a plain varchar, not a real foreign key) — so manually deleting a
+  Product that already had a mapping leaves an **orphaned mapping** behind,
+  permanently squatting that `external_id`. The next time that same
+  external product needs a *new* local Product created for it (e.g. via
+  `UnmappedInvoiceProductService.createProduct` → Bling's
+  `createProductFromBlingData` / Tecinco's `createProductFromTCarData`,
+  both of which call `createOrUpdateIntegrationMapping` right after
+  creating the product), the create-product flow finishes "successfully"
+  (Product + ProductConfig do get created) but the mapping step silently
+  no-ops against the stale orphan — the new product ends up with **no**
+  `integration_mapping` at all, and nothing in the response/logs surfaces
+  this beyond a `console.warn`. Confirmed and reproduced this session
+  (product manually deleted → its `external_id`'s mapping orphaned → next
+  product created for that same `external_id` got no mapping). **Fixed**
+  (`m268-delete-integration-mapping-on-product-delete.js`, this session):
+  DB trigger `trigger_delete_integration_mapping_on_product_delete`
+  (`AFTER DELETE ON products`) deletes any `integration_mappings` row with
+  `entity_type = 'PRODUCT'` and `internal_id = <deleted product's id>`.
+  Only touches `entity_type = 'PRODUCT'` — other entity types (e.g.
+  `CONTACT`) are unaffected by Product deletion. This closes the orphan at
+  its source going forward, but `createOrUpdateIntegrationMapping`'s
+  silent-no-op-on-conflict behavior itself is unchanged — any orphan rows
+  that already existed before this migration are not backfilled/cleaned up
+  by it.
 - **Controller has a CRITICAL auth gap — see scoping status above. Not
   fixed.**
 
@@ -210,10 +240,21 @@ part of this section in the same turn — don't leave it to drift out of date.
     e.g. `"Produto Tecinco presente na nota mas sem produto correspondente
     no banco"`). This is the original/narrower case.
   - Both flows dedupe before creating (`existingUnmapped` lookup by `sku`
-    and/or `ean` scoped to the same `invoice_id` value) because of the
-    unique index `unique_ean_null_invoice` — `UNIQUE(ean) WHERE invoice_id
-    IS NULL` — which means two different SKUs sharing the same EAN collide
-    on that index, so dedup must check `ean` too, not just `sku`.
+    and/or `ean` scoped to the same `invoice_id` value, and to
+    `integrations_id` for the `invoice_id: null` case) because of the
+    unique index `unique_ean_integration_null_invoice` (`m266`, replaced
+    the older global `unique_ean_null_invoice`) — `UNIQUE(ean,
+    integrations_id) WHERE invoice_id IS NULL` — scoped per integration so
+    two different integrations' catalogs can legitimately share an EAN
+    without colliding; within the same integration, two different SKUs
+    sharing the same EAN still collide on that index, so dedup must check
+    `ean` too, not just `sku`.
+  - `external_id` (`m267`) is only populated on the `invoice_id: null`
+    (catalog-fetch) case — it's the ERP's own product id (Bling
+    `produtoId` / Tecinco `epctb_codigo`), never available on the
+    invoice-import case where only a supplier code is known. It's what
+    lets `UnmappedInvoiceProductService.createProduct` create a real
+    `Product` from an unmapped row.
   - When an item later resolves, the matching `UnmappedInvoiceProduct` rows
     are cleaned up (see the "Limpa UnmappedInvoiceProduct" step in
     `bling-api-fetch.queue.ts`).
@@ -226,6 +267,27 @@ part of this section in the same turn — don't leave it to drift out of date.
   `helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`).
 - `invoice-items/` — `InvoiceItems` + `InvoiceFiscalItem`; resolves the
   product/config for each line using the standard priority order below.
+- **Manual mapping cascade** (`POST /add/item` →
+  `InvoiceItemsService.createInvoiceItemForUnmappedProductsInTx`): mapping
+  one `UnmappedInvoiceProduct` manually also auto-maps "sibling" unmapped
+  rows in *other* invoices that share the same supplier code + sender CNPJ
+  (`cascadeAutoMapUnmapped`/`findCascadeMatches`). `cascadeAutoMapUnmapped`
+  only ever runs **once per request**, from the root call — it fetches all
+  siblings in a single query and processes each one via
+  `createInvoiceItemForUnmappedProductsInTx(..., triggerCascade: false)`,
+  which skips re-triggering the cascade. `triggerCascade` defaults to
+  `true` and must stay `true` only on the root (user-initiated) call.
+  This was fixed this session from a self-recursive design (every sibling
+  processed used to re-run `cascadeAutoMapUnmapped` itself) that had a real
+  bug: since the outer loop's match list was captured once up front, a
+  sibling further down it could already have been consumed by an inner
+  recursive call triggered by an earlier sibling, and the outer loop's
+  stale second attempt threw `"Produto não mapeado não encontrado!"` on the
+  already-deleted row — rolling back the whole transaction (one shared
+  transaction for the whole cascade), undoing siblings that had already
+  mapped successfully. If this function is touched again, keep
+  `cascadeAutoMapUnmapped` single-shot (`triggerCascade: false` on every
+  call it makes) rather than reintroducing recursion.
 - **Standard product-resolution order** used across the Bling queue, NF-e
   XML import, and maintenance scripts: SKU (`ProductConfig.sku`) first →
   `ProductConfig.gtin` → `SupplierMapping` by code + integration. SKU wins
