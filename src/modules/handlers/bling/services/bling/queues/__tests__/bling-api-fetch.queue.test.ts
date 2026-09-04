@@ -481,6 +481,38 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       expect(productService.create).not.toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).toHaveBeenCalled();
     });
+
+    it("KIT sem mapping, SEM create:true: cria automaticamente mesmo assim — código de KIT é sintético (componente+quantidade), nunca ambíguo, não precisa de confirmação manual", async () => {
+      const kitBlingProduct = makeKitBlingProduct();
+      makeFakeBlingApi({ blingId: kitBlingProduct.id, blingProduct: kitBlingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (productService.create as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-kit-product-id" }),
+      );
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-kit-product-id" }),
+      );
+
+      await runProductJob(kitBlingProduct); // sem create:true
+
+      expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: "Produto novo, precisa de mapeamento manual",
+        }),
+      );
+      expect(productService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "KIT",
+          id_system: String(kitBlingProduct.id),
+        }),
+      );
+      expect(productService.upsertWithComponents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "created-kit-product-id",
+          values: expect.objectContaining({ type: "KIT" }),
+        }),
+      );
+    });
   });
 
   // ── composição de KIT ────────────────────────────────────────────────────

@@ -997,12 +997,21 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       logPrefix,
     });
 
+    // KIT não precisa de confirmação manual pra ser criado: o código dele é
+    // sintético (monta-se a partir do sku do componente + quantidade — ver
+    // configSku mais abaixo), então nunca existe ambiguidade de "esse código
+    // pode ser de um produto diferente" — o risco que o fluxo manual existe
+    // pra evitar em produtos normais. Por isso KIT entra automaticamente,
+    // como se create:true tivesse sido passado.
+    const isKit = blingProduct.formato === "E";
+
     if (!existingProduct) {
-      if (opts.create) {
-        // ─── Criação manual disparada via unmapped (POST .../create-product) ──
-        // Cria o Product+ProductConfig+IntegrationMapping e cai pro resto da
-        // função normalmente — dali em diante ela já trata `existingProduct`
-        // genericamente (KIT, Magento, kardex, estoque).
+      if (opts.create || isKit) {
+        // ─── Criação automática (KIT) ou manual disparada via unmapped
+        // (POST .../create-product) ── Cria o Product+ProductConfig+
+        // IntegrationMapping e cai pro resto da função normalmente — dali em
+        // diante ela já trata `existingProduct` genericamente (KIT, Magento,
+        // kardex, estoque).
         existingProduct = await this.createProductFromBlingData(
           blingProduct,
           unitBusiness,
@@ -1132,8 +1141,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         `[BLING_API_FETCH] Marca "${blingProduct.marca}" não encontrada no cadastro de brands (produto=${blingProduct.codigo}). Produto salvo sem brand_id.`,
       );
     }
-
-    const isKit = blingProduct.formato === "E";
 
     let configSku = blingProduct.codigo;
     let kitComponentsForUpsert:
