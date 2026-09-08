@@ -140,7 +140,7 @@ export class BlingManifestacaoService {
     page: Page,
   ): Promise<boolean> {
     await page.goto(NOTAS_ENTRADA_URL, {
-      waitUntil: "domcontentloaded",
+      waitUntil: "networkidle",
       timeout: 30_000,
     });
 
@@ -243,9 +243,13 @@ export class BlingManifestacaoService {
 
     await page.waitForTimeout(4_000);
     await page.goto(NOTAS_ENTRADA_URL, {
-      waitUntil: "domcontentloaded",
+      waitUntil: "networkidle",
       timeout: 30_000,
     });
+    // Folga extra pra SPA/cookies assentarem antes de checar — sem isso o
+    // diagnóstico abaixo captura a página ainda em branco (visto em prod:
+    // #username=0 senha=0, corpo vazio, mesmo com login OK).
+    await page.waitForTimeout(1_500);
 
     if (this.isLoginWall(page)) {
       console.error(
