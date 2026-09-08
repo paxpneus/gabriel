@@ -79,6 +79,7 @@ jest.mock(
     default: {
       createOrUpdateIntegrationMapping: jest.fn(),
       findExternalIdsMap: jest.fn(),
+      bulkDelete: jest.fn(),
     },
   }),
 );
@@ -104,7 +105,28 @@ jest.mock(
   "../../../../../../inventory/products/services/product.service",
   () => ({
     __esModule: true,
-    default: { upsertWithComponents: jest.fn(), create: jest.fn(), delete: jest.fn() },
+    default: {
+      upsertWithComponents: jest.fn(),
+      create: jest.fn(),
+      delete: jest.fn(),
+      update: jest.fn(),
+    },
+  }),
+);
+
+jest.mock(
+  "../../../../../../inventory/supplier-mapping/supplier-mapping.service",
+  () => ({
+    __esModule: true,
+    default: { bulkDelete: jest.fn() },
+  }),
+);
+
+jest.mock(
+  "../../../../../../inventory/product-config/product_config.service",
+  () => ({
+    __esModule: true,
+    default: { bulkDelete: jest.fn() },
   }),
 );
 
@@ -134,6 +156,8 @@ import { getMagentoIntegration } from "../../../../../magentoV2/api/magentoV2_ap
 import magentoCatalogService from "../../../../../magentoV2/service/catalog/products/products.service";
 import stockMovementsService from "../../../../../../inventory/stock/stock-movements/stock-movements.service";
 import productService from "../../../../../../inventory/products/services/product.service";
+import supplierMappingService from "../../../../../../inventory/supplier-mapping/supplier-mapping.service";
+import productConfigService from "../../../../../../inventory/product-config/product_config.service";
 import Product from "../../../../../../inventory/products/product.model";
 import ProductConfig from "../../../../../../inventory/product-config/product_config.model";
 import UnitBusiness from "../../../../../../company/unit-business/unit-business.model";
@@ -142,8 +166,6 @@ import Subgroup from "../../../../../../inventory/groups/subgroup/subgroup.model
 import InventoryBatch from "../../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import UnmappedInvoiceProduct from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
-import invoiceItemsService from "../../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
-import batchInvoiceItemsService from "../../../../../../warehouse/expedition/batch-invoice-items/batch-invoice-items.service";
 import { BlingApiFetchQueue } from "../bling-api-fetch.queue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -511,32 +533,36 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
   // Checagem estrita: só entra nesse fluxo com situacao === "E" exatamente —
   // qualquer outro valor (incluindo "A"/ausente) preserva o fluxo normal.
 
-  describe("situacao=E (produto excluído/desativado na Bling)", () => {
-    it("produto local mapeado: apaga invoice_items e stock_movements antes do Product, e não segue pro resto do fluxo (sem unmapped, sem upsertWithComponents)", async () => {
+  describe("situacao=E (produto desativado na Bling)", () => {
+    it("produto local mapeado: apaga integration_mappings/supplier_mappings/product_configs, marca is_active=false, e não segue pro resto do fluxo (sem unmapped, sem upsertWithComponents, Product/invoice_items/stock_movements intocados)", async () => {
       const blingProduct = makeBlingProduct({ situacao: "E" });
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       const existingProduct = { id: "existing-product-id", name: "Pneu Aro 14 Continental" };
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(existingProduct);
-      const bulkDeleteInvoiceItems = jest
-        .spyOn(invoiceItemsService, "bulkDelete")
-        .mockResolvedValue(0 as any);
 
       await runProductJob(blingProduct);
 
-      expect(bulkDeleteInvoiceItems).toHaveBeenCalledWith(
+      expect(integrationMappingService.bulkDelete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { entity_type: "PRODUCT", internal_id: existingProduct.id },
+        }),
+      );
+      expect(supplierMappingService.bulkDelete).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { product_id: existingProduct.id },
         }),
       );
-      expect(stockMovementsService.bulkDelete).toHaveBeenCalledWith(
+      expect(productConfigService.bulkDelete).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { product_id: existingProduct.id },
         }),
       );
-      expect(productService.delete).toHaveBeenCalledWith(
+      expect(productService.update).toHaveBeenCalledWith(
         existingProduct.id,
+        { is_active: false },
         expect.anything(),
       );
+      expect(productService.delete).not.toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
       expect(productService.upsertWithComponents).not.toHaveBeenCalled();
       expect(
@@ -544,107 +570,28 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       ).not.toHaveBeenCalled();
     });
 
-    it("sem produto local mapeado: ignora silenciosamente, não cria unmapped nem tenta apagar nada", async () => {
+    it("sem produto local mapeado: ignora silenciosamente, não cria unmapped nem tenta desassociar nada", async () => {
       const blingProduct = makeBlingProduct({ situacao: "E" });
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      const bulkDeleteInvoiceItems = jest
-        .spyOn(invoiceItemsService, "bulkDelete")
-        .mockResolvedValue(0 as any);
 
       await runProductJob(blingProduct);
 
-      expect(bulkDeleteInvoiceItems).not.toHaveBeenCalled();
-      expect(stockMovementsService.bulkDelete).not.toHaveBeenCalled();
-      expect(productService.delete).not.toHaveBeenCalled();
+      expect(integrationMappingService.bulkDelete).not.toHaveBeenCalled();
+      expect(supplierMappingService.bulkDelete).not.toHaveBeenCalled();
+      expect(productConfigService.bulkDelete).not.toHaveBeenCalled();
+      expect(productService.update).not.toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
     });
 
-    it("produto tem stock_movement MANUAL_ADJUSTMENT com refers_to preenchido: não apaga nada (nem invoice_items, nem stock_movements, nem o Product) — banco bloqueia esse delete", async () => {
-      const blingProduct = makeBlingProduct({ situacao: "E" });
-      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
-      const existingProduct = { id: "existing-product-id", name: "Pneu Aro 14 Continental" };
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue(existingProduct);
-      (stockMovementsService.findOne as jest.Mock).mockResolvedValue({
-        id: "movement-1",
-        movement_type: "MANUAL_ADJUSTMENT",
-        refers_to: "NF-123",
-      });
-      const bulkDeleteInvoiceItems = jest
-        .spyOn(invoiceItemsService, "bulkDelete")
-        .mockResolvedValue(0 as any);
-      const consoleWarnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
-
-      await runProductJob(blingProduct);
-
-      expect(stockMovementsService.findOne).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            product_id: existingProduct.id,
-            movement_type: "MANUAL_ADJUSTMENT",
-          }),
-        }),
-      );
-      expect(bulkDeleteInvoiceItems).not.toHaveBeenCalled();
-      expect(stockMovementsService.bulkDelete).not.toHaveBeenCalled();
-      expect(productService.delete).not.toHaveBeenCalled();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining(existingProduct.name),
-      );
-    });
-
-    it("produto tem batch_invoice_item com quantity_read > 0 (já conferido fisicamente): não apaga nada", async () => {
-      const blingProduct = makeBlingProduct({ situacao: "E" });
-      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
-      const existingProduct = { id: "existing-product-id", name: "Pneu Aro 14 Continental" };
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue(existingProduct);
-      const findBlockingSpy = jest
-        .spyOn(batchInvoiceItemsService, "findBlockingByProductId")
-        .mockResolvedValue({ id: "batch-invoice-item-1", quantity_read: 2 } as any);
-      const bulkDeleteInvoiceItems = jest
-        .spyOn(invoiceItemsService, "bulkDelete")
-        .mockResolvedValue(0 as any);
-      const consoleWarnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
-
-      await runProductJob(blingProduct);
-
-      expect(findBlockingSpy).toHaveBeenCalledWith(existingProduct.id);
-      expect(bulkDeleteInvoiceItems).not.toHaveBeenCalled();
-      expect(stockMovementsService.bulkDelete).not.toHaveBeenCalled();
-      expect(productService.delete).not.toHaveBeenCalled();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining(existingProduct.name),
-      );
-    });
-
-    it("falha ao apagar (ex: FK de outra tabela ainda referenciando o produto): loga o erro e não derruba o job", async () => {
-      const blingProduct = makeBlingProduct({ situacao: "E" });
-      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
-      const existingProduct = { id: "existing-product-id", name: "Pneu Aro 14 Continental" };
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue(existingProduct);
-      jest
-        .spyOn(invoiceItemsService, "bulkDelete")
-        .mockRejectedValue(new Error("update or delete on table violates foreign key constraint"));
-      const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-
-      await expect(runProductJob(blingProduct)).resolves.not.toThrow();
-
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining(existingProduct.name),
-      );
-    });
-
-    it("situacao !== 'E' (ex: 'A', ativo): preserva o fluxo normal, não entra no ramo de exclusão", async () => {
+    it("situacao !== 'E' (ex: 'A', ativo): preserva o fluxo normal, não entra no ramo de desativação", async () => {
       const blingProduct = makeBlingProduct({ situacao: "A" });
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      const bulkDeleteInvoiceItems = jest
-        .spyOn(invoiceItemsService, "bulkDelete")
-        .mockResolvedValue(0 as any);
 
       await runProductJob(blingProduct);
 
-      expect(bulkDeleteInvoiceItems).not.toHaveBeenCalled();
+      expect(integrationMappingService.bulkDelete).not.toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({ reason: "Produto novo, precisa de mapeamento manual" }),
       );

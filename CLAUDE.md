@@ -190,10 +190,11 @@ part of this section in the same turn — don't leave it to drift out of date.
   `inventory_batch_items.product_id`, and `kit_components.product_component_id`
   (the component side) are `RESTRICT` — deleting a `Product` that still has
   any of those rows pointing at it fails with a raw Postgres FK violation
-  unless the dependent rows are deleted first (see
-  `handleDeactivatedBlingProduct` below, which deliberately only clears the
-  two RESTRICT tables it's known to hit in practice — `invoice_items` and
-  `stock_movements` — and leaves the other three alone, best-effort).
+  unless the dependent rows are deleted first. No code path in the app
+  actually hard-deletes a `Product` today — `handleDeactivatedBlingProduct`
+  (below) used to, but was reverted in favor of never deleting `Product`
+  at all (see that section for why); these FK facts remain here because
+  they're still relevant to any future/manual deletion.
 
 ### Auto-map by SKU/SupplierMapping across integrations (this session)
 
@@ -298,7 +299,7 @@ mapping-resolution/KIT/unmapped-registration logic runs:
 - The check is a **strict** `blingProduct.situacao === "E"` — any other
   value, including `undefined`/`"A"`, falls straight through to the normal
   flow unchanged. This was a deliberate, explicit ask (a looser check here
-  would risk deleting active products on a field-shape surprise from the
+  would risk touching active products on a field-shape surprise from the
   API).
 - When it matches, `handleDeactivatedBlingProduct` takes over completely
   and the normal flow (KIT sync, Magento sync, `ProductConfig`/`Stock`
@@ -307,49 +308,48 @@ mapping-resolution/KIT/unmapped-registration logic runs:
   by design.
 - It resolves the local `Product` the same way the normal flow does
   (`resolveProductWithMapping`, mapping-only). If there's no local product
-  mapped to it, it's a no-op (nothing to delete).
-- **Pre-check for `MANUAL_ADJUSTMENT` stock movements** (before touching
-  anything): `trigger_prevent_delete_manual_adjustment_with_cost` (`m247`)
-  blocks, at the DB level, any `DELETE` on a `stock_movements` row where
-  `movement_type = 'MANUAL_ADJUSTMENT' AND refers_to IS NOT NULL` (it's a
-  manual cost adjustment anchored to a specific invoice — not something an
-  automated product deletion should ever discard). Rather than let that
-  trigger raise mid-transaction, `handleDeactivatedBlingProduct` checks for
-  one first via `stockMovementsService.findOne(...)`; if found, it logs a
-  clear `console.warn` and returns immediately **without deleting anything
-  at all** — not `invoice_items`, not other `stock_movements`, not the
-  `Product`. The whole cleanup is all-or-nothing per product.
-- **Pre-check for physically-read batch items** (this session, same
-  before-touching-anything pattern): a `batch_invoice_items` row with
-  `quantity_read > 0` means someone already scanned/received that product
-  in a real expedition batch — a physical action, not just a reservation.
-  `batch_invoice_items` has no `product_id` column directly (it hangs off
-  `expedition_batch_items` via `expedition_batch_item_id`), so
-  `BatchInvoiceItemsRepository.findBlockingByProductId` joins to
-  `ExpeditionBatchItems` (association alias `"batchItem"`, see
-  `sequelize-associations.ts`) filtered by `product_id`, and
-  `handleDeactivatedBlingProduct` calls it via
-  `batchInvoiceItemsService.findBlockingByProductId` (the service is the
-  layer the queue calls — per the layering rule, it never touches the
-  `BatchInvoiceItems`/`ExpeditionBatchItems` models directly). Same
-  all-or-nothing behavior as the `MANUAL_ADJUSTMENT` guard: if found, logs
-  and returns without deleting anything.
-- Otherwise, it deletes the product for real (not `is_active=false` — this
-  is a genuine hard delete), inside one transaction that first clears
-  `invoice_items` and `stock_movements` for that `product_id` (via
-  `invoiceItemsService.bulkDelete`/`stockMovementsService.bulkDelete`,
-  **not** the raw models — per the layering rule) before calling
-  `productService.delete` on the product itself, since both of those
-  tables are `RESTRICT` (see the FK bullet above).
-- Best-effort, not exhaustive: `expedition_batch_items`,
-  `inventory_batch_items`, and `kit_components.product_component_id` are
-  also `RESTRICT` on `product_id` and are **not** cleared by this method —
-  if a `situacao=E` product is still referenced by one of those (already
-  batched for expedition, already counted in an inventory batch, or used
-  as a KIT component elsewhere), the delete transaction fails. That failure
-  is caught, logged with `console.error` (product name + id + the
-  underlying error), and swallowed — the job does **not** fail/retry, and
-  the `Product` row is left in place for manual investigation.
+  mapped to it, it's a no-op.
+
+**Design history (important if this gets touched again):** an earlier
+version of this same session made `handleDeactivatedBlingProduct` actually
+hard-delete the `Product` row (plus its `invoice_items`/`stock_movements`,
+guarded by two pre-checks against `MANUAL_ADJUSTMENT` stock movements and
+physically-read `batch_invoice_items`). That turned out to be too fragile
+in production — real products kept hitting other `RESTRICT` FKs
+(`expedition_batch_items`, `inventory_batch_items`,
+`kit_components.product_component_id`) that were never guarded, requiring
+manual SQL snapshot-and-cleanup to actually delete them. **This was
+explicitly reverted and replaced** with the current, much simpler design:
+
+- `handleDeactivatedBlingProduct` **never deletes `Product`,
+  `invoice_items`, or `stock_movements`** — all history stays intact, and
+  none of those `RESTRICT` FKs are ever at risk since the `Product` row is
+  never touched for deletion.
+- Instead it strips every reference that makes the product *reachable* by
+  code, inside one transaction:
+  - `integrationMappingService.bulkDelete({where: {entity_type: "PRODUCT", internal_id: product.id}})` —
+    **all** `integration_mappings` for this product, across every
+    integration (Bling *and* Tecinco), not just the one that reported
+    `situacao=E`. A product retired from one channel is treated as retired
+    everywhere.
+  - `supplierMappingService.bulkDelete({where: {product_id: product.id}})` —
+    all `SupplierMapping` rows for it.
+  - `productConfigService.bulkDelete({where: {product_id: product.id}})` —
+    all `ProductConfig` rows for it (it loses `sku`/`gtin`/`price` in every
+    store it had one).
+  - `productService.update(product.id, {is_active: false})` — reuses the
+    `is_active` column that already existed on `Product` (`m256`) but had
+    nothing writing `false` to it since the old `BlingDirectUpsertQueue`
+    delete-handler was removed (see webhook wiring below).
+- This self-terminates without any extra logic: once the mapping is gone,
+  the *next* `situacao=E` event for that same `blingId` can't resolve a
+  local product via `resolveProductWithMapping` at all, so it hits the
+  "no local product mapped, no-op" branch above and does nothing — no
+  re-attempt, no unmapped row, no update. That's what makes the product
+  permanently ignored by the fetch/upsert flow going forward.
+- `BatchInvoiceItemsRepository`/`Service.findBlockingByProductId` (the
+  `quantity_read` guard from the reverted design) was deleted outright as
+  dead code, not just unused — its only caller was the hard-delete path.
 - **Webhook wiring (this session)**: `bling-webhook.mapper.ts`'s `mapProduct`
   used to special-case `action === "deleted"` into a `directUpsert: {table:
   "delete", ...}` job on `BlingDirectUpsertQueue`, whose `handleDelete`
@@ -362,8 +362,9 @@ mapping-resolution/KIT/unmapped-registration logic runs:
   side either, the product just flips to `situacao=E` and stays fetchable
   at `/produtos/:id`. The `"product"` case in `BlingDirectUpsertQueue.handleDelete`
   was removed as dead code (its `is_active=false` behavior is superseded by
-  the hard-delete above); `"invoice"`/`"consumer_invoice"`/`"product_supplier"`
-  deletes are unaffected, still going through `directUpsert`.
+  `handleDeactivatedBlingProduct` above, which does that and more);
+  `"invoice"`/`"consumer_invoice"`/`"product_supplier"` deletes are
+  unaffected, still going through `directUpsert`.
 
 ## ProductConfig (`src/modules/inventory/product-config/`)
 

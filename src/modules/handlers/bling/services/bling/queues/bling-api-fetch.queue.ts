@@ -65,12 +65,13 @@ import {
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
 import { getMagentoIntegration } from "../../../../magentoV2/api/magentoV2_api";
 import stockMovementsService from "../../../../../inventory/stock/stock-movements/stock-movements.service";
-import batchInvoiceItemsService from "../../../../../warehouse/expedition/batch-invoice-items/batch-invoice-items.service";
 import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import sequelize from "../../../../../../config/sequelize";
 import { blingGet } from "../helpers/get-with-sleep";
 import productService from "../../../../../inventory/products/services/product.service";
+import supplierMappingService from "../../../../../inventory/supplier-mapping/supplier-mapping.service";
+import productConfigService from "../../../../../inventory/product-config/product_config.service";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -1551,21 +1552,25 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     return newProduct;
   }
 
-  // ─── Produto marcado situacao=E (excluído) na Bling ────────────────────────
+  // ─── Produto marcado situacao=E (desativado) na Bling ──────────────────────
   // Só chamado quando fetchAndUpsertProduct já confirmou situacao === "E"
   // (checagem estrita, ver ali). Se não existe produto local mapeado, não há
   // nada a fazer — ignora silenciosamente (nunca cria unmapped pra isso).
-  // Se existe, apaga invoice_items e stock_movements do produto ANTES de
-  // apagar o Product em si — as duas tabelas têm FK RESTRICT em product_id
-  // (ver migrations `20260413-create-warehouse-structure`/`m194`), então
-  // excluir o Product primeiro estouraria erro de constraint.
   //
-  // Best-effort: outras tabelas também têm FK RESTRICT em product_id
-  // (expedition_batch_items, inventory_batch_items, kit_components como
-  // componente de outro KIT) que este método deliberadamente não limpa — se
-  // o produto já foi usado em algum desses fluxos, a exclusão falha e fica
-  // só logada, sem derrubar o job (não é um erro transitório que valha
-  // retry, mas também não deve travar o processamento do resto da fila).
+  // Nunca apaga o Product em si, nem invoice_items/stock_movements — só
+  // desassocia: apaga TODOS os integration_mappings desse produto (de
+  // qualquer integração, não só Bling — um produto desativado numa
+  // integração fica sem código de referência em nenhuma), todos os
+  // SupplierMapping, e todos os ProductConfig (o produto fica sem
+  // sku/gtin/preço em nenhuma loja) — e marca is_active=false. Isso faz o
+  // produto ficar "inútil" (sem como ser referenciado por código nenhum) mas
+  // preserva o histórico (invoice_items/stock_movements intactos).
+  //
+  // Ignorado dali pra frente automaticamente, sem lógica extra: sem
+  // integration_mapping, a próxima passagem de sync pra esse blingId não
+  // encontra o produto via resolveProductWithMapping e cai direto no "sem
+  // produto local mapeado, ignorado" acima — não recria unmapped, não tenta
+  // desassociar de novo.
   private async handleDeactivatedBlingProduct(
     blingProduct: BlingApiProduct,
     unitBusiness: UnitBusiness,
@@ -1585,66 +1590,29 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       return;
     }
 
-    // trigger_prevent_delete_manual_adjustment_with_cost (m247) bloqueia no
-    // banco qualquer DELETE de stock_movements MANUAL_ADJUSTMENT com
-    // refers_to preenchido (é um ajuste manual amarrado a uma nota
-    // específica — não pode ser descartado por uma exclusão automática de
-    // produto). Checa isso ANTES de tentar apagar qualquer coisa: se existe
-    // ao menos um, não apaga nem invoice_items nem stock_movements nem o
-    // Product em si — a exclusão inteira fica pra revisão manual, em vez de
-    // deixar o banco estourar a exceção no meio da transação.
-    const blockingManualAdjustment = await stockMovementsService.findOne({
-      where: {
-        product_id: product.id,
-        movement_type: "MANUAL_ADJUSTMENT",
-        refers_to: { [Op.ne]: null },
-      },
+    await sequelize.transaction(async (t) => {
+      await integrationMappingService.bulkDelete({
+        where: { entity_type: "PRODUCT", internal_id: product.id },
+        transaction: t,
+      });
+      await supplierMappingService.bulkDelete({
+        where: { product_id: product.id },
+        transaction: t,
+      });
+      await productConfigService.bulkDelete({
+        where: { product_id: product.id },
+        transaction: t,
+      });
+      await productService.update(
+        product.id,
+        { is_active: false },
+        { transaction: t },
+      );
     });
 
-    if (blockingManualAdjustment) {
-      console.warn(
-        `${logPrefix} — produto "${product.name}" está marcado situacao=E na Bling, mas tem stock_movements de ajuste manual (MANUAL_ADJUSTMENT) com refers_to preenchido — o banco não permite excluir esses registros. Produto mantido, revisão manual necessária. [product_id=${product.id}]`,
-      );
-      return;
-    }
-
-    // Item de lote de expedição já conferido fisicamente (batch_invoice_items
-    // .quantity_read > 0) é uma ação física real (alguém já bipou/recebeu
-    // esse produto no lote) — não pode ser descartado por uma exclusão
-    // automática de produto, mesmo que a linha de invoice_items em si não
-    // tenha nenhuma trava de FK. Mesmo padrão do guard acima: checa antes de
-    // apagar qualquer coisa, não apaga nada se achar.
-    const blockingReadBatchItem =
-      await batchInvoiceItemsService.findBlockingByProductId(product.id);
-
-    if (blockingReadBatchItem) {
-      console.warn(
-        `${logPrefix} — produto "${product.name}" está marcado situacao=E na Bling, mas tem item de lote de expedição já conferido fisicamente (quantity_read > 0) — não é seguro apagar. Produto mantido, revisão manual necessária. [product_id=${product.id}]`,
-      );
-      return;
-    }
-
-    try {
-      await sequelize.transaction(async (t) => {
-        await invoiceItemsService.bulkDelete({
-          where: { product_id: product.id },
-          transaction: t,
-        });
-        await stockMovementsService.bulkDelete({
-          where: { product_id: product.id },
-          transaction: t,
-        });
-        await productService.delete(product.id, { transaction: t });
-      });
-
-      console.log(
-        `${logPrefix} — produto "${product.name}" excluído localmente (situacao=E na Bling), junto com seus invoice items e stock movements | product_id=${product.id}`,
-      );
-    } catch (err: any) {
-      console.error(
-        `${logPrefix} — produto "${product.name}" está marcado situacao=E na Bling mas não foi possível excluí-lo localmente — provavelmente ainda referenciado por lote de expedição, lote de inventário ou como componente de outro KIT. Produto mantido, revisão manual necessária. [product_id=${product.id}: ${err?.message}]`,
-      );
-    }
+    console.log(
+      `${logPrefix} — produto "${product.name}" desativado (situacao=E na Bling): integration_mappings/supplier_mappings/product_configs removidos, is_active=false | product_id=${product.id}`,
+    );
   }
 
   private async fetchAndUpsertProductSupplier(
