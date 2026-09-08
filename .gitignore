@@ -2,6 +2,9 @@ node_modules
 ml_session/
 ml_downloads/
 caddy/
+# exceção: snippet de config trocado pelo deploy blue-green (deploy/deploy.sh)
+!caddy/
+!caddy/active-upstream
 dist
 .env
 .history

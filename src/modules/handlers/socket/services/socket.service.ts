@@ -75,6 +75,11 @@ class SocketService implements ISocketEmitter {
     }
     return this.io;
   }
+
+  close(): Promise<void> {
+    if (!this.io) return Promise.resolve();
+    return new Promise((resolve) => this.io!.close(() => resolve()));
+  }
 }
 
 export const socketService = new SocketService();

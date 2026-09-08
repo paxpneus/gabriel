@@ -8,12 +8,16 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
+      # Snippet trocado pelo script de deploy (deploy/deploy.sh) para apontar
+      # o tráfego para api-blue ou api-green — ver deploy/README.md.
+      - ./caddy/active-upstream:/etc/caddy/active-upstream
       - caddy_data:/data
       - caddy_config:/config
     networks:
       - backend
     depends_on:
-      - api
+      - api-blue
+      - api-green
 
   # ── 1. PostgreSQL ─────────────────────────────────────────────────────────
   postgres:
@@ -69,8 +73,11 @@ services:
       - backend
     restart: "no"
 
-  # ── 4. API ────────────────────────────────────────────────────────────────
-  api:
+  # ── 4. API (blue/green) ──────────────────────────────────────────────────
+  # As duas cores ficam sempre no ar; deploy/deploy.sh builda a imagem nova,
+  # sobe a cor ociosa, espera ela ficar healthy, vira o tráfego do Caddy
+  # (caddy/active-upstream) e só então para a cor antiga. Ver deploy/README.md.
+  api-blue: &api
     build:
       context: .
       target: app
@@ -148,9 +155,13 @@ services:
       - backend
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
-      interval: 30s
-      timeout: 10s
+      interval: 5s
+      timeout: 3s
       retries: 3
+      start_period: 15s
+
+  api-green:
+    <<: *api
 
   # ── 5. Workers gerais ─────────────────────────────────────────────────────
   workers:

@@ -13,6 +13,40 @@ import { registerSocketHandlers } from "./modules/handlers/socket/services/socke
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = "0.0.0.0";
+const SHUTDOWN_TIMEOUT_MS = 10_000;
+
+let httpServer: ReturnType<typeof createServer> | undefined;
+let shuttingDown = false;
+
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} recebido, drenando conexões antes de sair...`);
+
+  const forceExit = setTimeout(() => {
+    console.error("Timeout no shutdown gracioso, encerrando à força.");
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceExit.unref();
+
+  try {
+    await socketService.close();
+    if (httpServer) {
+      await new Promise<void>((resolve, reject) => {
+        httpServer!.close((err) => (err ? reject(err) : resolve()));
+      });
+    }
+    await sequelize.close();
+    console.log("Shutdown concluído.");
+    process.exit(0);
+  } catch (err) {
+    console.error("Erro durante o shutdown gracioso:", err);
+    process.exit(1);
+  }
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
 
 async function start(): Promise<void> {
   await sequelize.authenticate();
@@ -21,7 +55,7 @@ async function start(): Promise<void> {
 
   await initApp();
 
-  const httpServer = createServer(app);
+  httpServer = createServer(app);
 
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") ?? [];
   socketService.init(httpServer, redisConnection, {
