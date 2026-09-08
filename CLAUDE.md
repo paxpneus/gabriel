@@ -175,6 +175,188 @@ part of this section in the same turn — don't leave it to drift out of date.
   `.init()`** until this session — added now with the same enum/default.
   Before this fix, any code reading/writing `Product.category` through
   Sequelize silently ignored the column.
+- FK behavior on deleting a `products` row: `product_supplier_maps.product_id`,
+  `stocks.product_id`, `product_configs.product_id`, and
+  `kit_components.product_id` (the KIT/parent side) are `CASCADE`;
+  `invoice_fiscal_items.product_id` is `SET NULL`; `invoice_items.product_id`,
+  `stock_movements.product_id` (`m194`), `expedition_batch_items.product_id`,
+  `inventory_batch_items.product_id`, and `kit_components.product_component_id`
+  (the component side) are `RESTRICT` — deleting a `Product` that still has
+  any of those rows pointing at it fails with a raw Postgres FK violation
+  unless the dependent rows are deleted first (see
+  `handleDeactivatedBlingProduct` below, which deliberately only clears the
+  two RESTRICT tables it's known to hit in practice — `invoice_items` and
+  `stock_movements` — and leaves the other three alone, best-effort).
+
+### Auto-map by SKU/SupplierMapping across integrations (this session)
+
+Before Bling's `fetchAndUpsertProduct` or Tecinco's `processProduct`
+register an unmapped row or create a new `Product` for a code with no
+`integration_mapping` yet, they now try more things first — a 3-level
+cascade, each level attempted only if the previous one found nothing:
+1. `integration_mapping` (unchanged, pre-existing — `resolveProductWithMapping`).
+2. `resolveProductBySku(sku, logPrefix)` — `ProductConfig.findOne({where:
+   {sku}})`, **global, deliberately not scoped** by `unit_business_id` or
+   `integrations_id`. This is intentional: the same physical product can be
+   created by the *other* integration first (catalog sync happens
+   independently per integration, so a tire created via Tecinco can later
+   show up in a Bling sync, or vice versa) — scoping this search would
+   defeat the whole point. **Do not scope this function** without checking
+   with the user first — an earlier draft this same session tried scoping
+   it to unit_businesses of the syncing integration and was explicitly
+   corrected back to global.
+3. `resolveProductBySupplierMapping(code, integrationsId, logPrefix)`
+   (new, both in `product.helpers.ts`) — `SupplierMapping.findOne({where:
+   {supplier_product_code: code, integrations_id: integrationsId}})`. This
+   one **is** scoped to the syncing integration, since `SupplierMapping` is
+   inherently a per-integration table (`supplier_product_code` only means
+   anything within one integration's namespace).
+
+Either 2 or 3 matching means auto-mapping to the existing product instead
+of creating a duplicate. Bling passes `blingProduct.codigo`; Tecinco passes
+`data.epctb_codigofabrica` ("código de fábrica") — different field names,
+same concept (the physical product's SKU/manufacturer code) — to both
+levels of the fallback.
+
+- Each integration wraps the shared resolvers in its own private method
+  (`autoMapExistingProductBySku` in both `bling-api-fetch.queue.ts` and
+  `tecinco-api-fetch.queue.ts`) that tries level 2 then level 3 and, on a
+  match, calls `integrationMappingService.createOrUpdateIntegrationMapping(...)`
+  for *this* integration pointing at the existing product, and
+  `unmappedInvoiceProductService.resolveFromCreatedProduct(...)` to clean up
+  any unmapped row already registered for that external_id — then returns
+  the matched product so the caller falls through into the same generic
+  KIT/Magento/`ProductConfig`/`Stock`/kardex sync as every other resolved
+  product. Deliberately does **not** touch `Product.id_system`/
+  `Product.integrations_id` on the matched row — those stay owned by
+  whichever integration created the product first (see
+  `isProductOwnedByIntegration` above); only a new `integration_mappings`
+  row is added.
+- Runs **before** the `opts.create`/unmapped-registration branch, not after
+  — so even a manually-triggered create-product call
+  (`POST .../create-product`) tries this cascade first and only creates a
+  new `Product` if nothing matched at any level. "Procura primeiro, cria
+  depois" applies uniformly to both the automatic sync pass and the manual
+  trigger.
+- **Unit products only.** Bling's KIT branch (`isKit`, `formato === "E"`)
+  never calls this — a KIT's `ProductConfig.sku` is synthesized
+  (`${componentSku}K${quantidade}`) and is never expected to collide with
+  an existing unit product's SKU, so KIT stays exactly as before: always
+  auto-created, matched only by `integration_mapping`. Tecinco has no KIT
+  concept, so its call is unconditional whenever there's no mapping yet.
+- **This upsert-on-match behavior is exclusive to the catalog-fetch flow —
+  it never happens on invoice-item resolution**, confirmed explicitly:
+  invoice items resolving via SKU/SupplierMapping never create/update an
+  `integration_mapping`.
+- **Tecinco invoice items get the same 3-level cascade, minus the mapping
+  upsert.** `ensureProductsFromInvoiceItems` (`tecinco-api-fetch.queue.ts`)
+  used to be mapping-only with zero fallback — an item with no
+  `integration_mapping` went straight to `unmappedItems`. It now also tries
+  `resolveProductBySku(codigoFabrica, logPrefix)` (global, same as
+  catalog) then `resolveProductBySupplierMapping(codigoFabrica,
+  integrations.id, logPrefix)` (scoped) before giving up. `codigoFabrica`
+  is already fetched per item via an existing extra Tecinco API call
+  (`produtoService.obterProduto`), so nothing new is fetched. A
+  product resolved via either new step gets no special treatment — it
+  falls through into the exact same downstream code (`ProductConfig`
+  ensure, `ensureSupplierMappings`, `operationalItems.push`) that a
+  mapping-resolved item already gets, since that code only cares about the
+  `product` variable, not how it got resolved.
+  Bling's own invoice-item resolver (`findProductForInvoiceItem`,
+  `bling-api-fetch.queue.ts:844-921`) needed **no changes** — it already
+  did SKU → `ProductConfig.gtin` → SupplierMapping (by EAN) before this
+  session, which already covers what was asked; it also intentionally
+  never creates an `integration_mapping`, since a Bling invoice line item
+  carries no Bling-internal product id at all (only `codigo`/`gtin`), so
+  there'd be nothing meaningful to map with.
+- **Reprocessing an invoice that arrived before its product existed
+  already self-heals, unrelated to this change**: an item that couldn't
+  resolve gets recorded as `UnmappedInvoiceProduct` with `invoice_id` set;
+  if/when that same invoice gets reprocessed later (re-fetched/re-imported)
+  after the product now resolves, the pre-existing reconciliation logic
+  (`invoiceService.addMissingInvoiceItems` + the stale-unmapped-row cleanup
+  loop, in both `invoice-xml.ts` and `bling-api-fetch.queue.ts`) already
+  creates the real `InvoiceItems` and deletes the obsolete unmapped row.
+  Nothing about this cascade changes that mechanism — it only affects
+  whether an item resolves on a *given* pass.
+
+### Bling product deactivation (`situacao=E`, this session)
+
+Bling's product payload carries a `situacao` field (`"A"` = active, `"E"` =
+excluded/deactivated on Bling's side) that `fetchAndUpsertProduct` didn't
+read at all before this session — a product Bling had deleted would just
+keep being treated as active on every sync. Now, at the very top of
+`fetchAndUpsertProduct`, right after `logPrefix` is built and *before* the
+mapping-resolution/KIT/unmapped-registration logic runs:
+- The check is a **strict** `blingProduct.situacao === "E"` — any other
+  value, including `undefined`/`"A"`, falls straight through to the normal
+  flow unchanged. This was a deliberate, explicit ask (a looser check here
+  would risk deleting active products on a field-shape surprise from the
+  API).
+- When it matches, `handleDeactivatedBlingProduct` takes over completely
+  and the normal flow (KIT sync, Magento sync, `ProductConfig`/`Stock`
+  upsert, kardex, unmapped registration) is skipped entirely — **no
+  `UnmappedInvoiceProduct` row is ever created for a `situacao=E` product**,
+  by design.
+- It resolves the local `Product` the same way the normal flow does
+  (`resolveProductWithMapping`, mapping-only). If there's no local product
+  mapped to it, it's a no-op (nothing to delete).
+- **Pre-check for `MANUAL_ADJUSTMENT` stock movements** (before touching
+  anything): `trigger_prevent_delete_manual_adjustment_with_cost` (`m247`)
+  blocks, at the DB level, any `DELETE` on a `stock_movements` row where
+  `movement_type = 'MANUAL_ADJUSTMENT' AND refers_to IS NOT NULL` (it's a
+  manual cost adjustment anchored to a specific invoice — not something an
+  automated product deletion should ever discard). Rather than let that
+  trigger raise mid-transaction, `handleDeactivatedBlingProduct` checks for
+  one first via `stockMovementsService.findOne(...)`; if found, it logs a
+  clear `console.warn` and returns immediately **without deleting anything
+  at all** — not `invoice_items`, not other `stock_movements`, not the
+  `Product`. The whole cleanup is all-or-nothing per product.
+- **Pre-check for physically-read batch items** (this session, same
+  before-touching-anything pattern): a `batch_invoice_items` row with
+  `quantity_read > 0` means someone already scanned/received that product
+  in a real expedition batch — a physical action, not just a reservation.
+  `batch_invoice_items` has no `product_id` column directly (it hangs off
+  `expedition_batch_items` via `expedition_batch_item_id`), so
+  `BatchInvoiceItemsRepository.findBlockingByProductId` joins to
+  `ExpeditionBatchItems` (association alias `"batchItem"`, see
+  `sequelize-associations.ts`) filtered by `product_id`, and
+  `handleDeactivatedBlingProduct` calls it via
+  `batchInvoiceItemsService.findBlockingByProductId` (the service is the
+  layer the queue calls — per the layering rule, it never touches the
+  `BatchInvoiceItems`/`ExpeditionBatchItems` models directly). Same
+  all-or-nothing behavior as the `MANUAL_ADJUSTMENT` guard: if found, logs
+  and returns without deleting anything.
+- Otherwise, it deletes the product for real (not `is_active=false` — this
+  is a genuine hard delete), inside one transaction that first clears
+  `invoice_items` and `stock_movements` for that `product_id` (via
+  `invoiceItemsService.bulkDelete`/`stockMovementsService.bulkDelete`,
+  **not** the raw models — per the layering rule) before calling
+  `productService.delete` on the product itself, since both of those
+  tables are `RESTRICT` (see the FK bullet above).
+- Best-effort, not exhaustive: `expedition_batch_items`,
+  `inventory_batch_items`, and `kit_components.product_component_id` are
+  also `RESTRICT` on `product_id` and are **not** cleared by this method —
+  if a `situacao=E` product is still referenced by one of those (already
+  batched for expedition, already counted in an inventory batch, or used
+  as a KIT component elsewhere), the delete transaction fails. That failure
+  is caught, logged with `console.error` (product name + id + the
+  underlying error), and swallowed — the job does **not** fail/retry, and
+  the `Product` row is left in place for manual investigation.
+- **Webhook wiring (this session)**: `bling-webhook.mapper.ts`'s `mapProduct`
+  used to special-case `action === "deleted"` into a `directUpsert: {table:
+  "delete", ...}` job on `BlingDirectUpsertQueue`, whose `handleDelete`
+  handler just set `is_active: false` — no cleanup of dependent rows, and
+  no knowledge of `situacao` at all. `product.deleted` is now routed
+  through the **same** `requiresApiFetch` path as `created`/`updated` (no
+  more special-casing by action in `mapProduct`), so `BlingApiFetchQueue.fetchAndUpsertProduct`
+  fetches the current product from the API and decides what to do from the
+  fresh `situacao` value — Bling's "delete" isn't a real deletion on their
+  side either, the product just flips to `situacao=E` and stays fetchable
+  at `/produtos/:id`. The `"product"` case in `BlingDirectUpsertQueue.handleDelete`
+  was removed as dead code (its `is_active=false` behavior is superseded by
+  the hard-delete above); `"invoice"`/`"consumer_invoice"`/`"product_supplier"`
+  deletes are unaffected, still going through `directUpsert`.
 
 ## ProductConfig (`src/modules/inventory/product-config/`)
 
@@ -335,6 +517,29 @@ part of this section in the same turn — don't leave it to drift out of date.
     `status` is deliberately left untouched by this update (never forced
     back to `"UNMAPPED"`), so a row a human already resolved to `"MAPPED"`
     via `markMapped` doesn't get silently reverted by a later sync pass.
+  - **`type` column** (`m269`, this session): categorizes *why* a row is
+    unmapped, independent of `reason` (free text) and `integrations_id`
+    (which integration) — four values, set at every create/upsert site
+    above: `ERROR_CATALOG` (catalog-sync, no mapping — the only type
+    eligible for the create-product flow), `ERROR_INTEGRATION`
+    (cross-check against a system that isn't the product's ERP of origin,
+    e.g. `syncProductWithMagento` — mapping-only, never creates a Product),
+    `ERROR_INVOICE` (invoice-line item unresolved, both the Bling API path
+    and `invoice-xml.ts`), `ERROR_SCAN` (manual EAN-photo lookup miss,
+    `createUnmappedFromReadingEan` — the only case with no `integrations_id`
+    tie to a catalog or invoice flow). `filterableFields` now also includes
+    `type`, `integrations_id`, `reason`, `product_name`, `external_id`,
+    `ean`, `sku` (all exact-match, same mechanism as the pre-existing
+    `status`/`invoice_id` filters) alongside the existing free-text
+    `search` over `product_name`/`ean`/`sku`. `m269`'s backfill `UPDATE`
+    needed an explicit `::"enum_unmapped_invoice_products_type"` cast (a
+    bare `CASE` of string literals defaults to `text` in Postgres, which a
+    plain assignment into an enum column rejects) — and the migration
+    itself had to be made idempotent (guard `ADD COLUMN` with
+    `describeTable`, add `WHERE type IS NULL` to the backfill) because
+    sequelize-cli does **not** wrap a migration file's `up()` in a
+    transaction here, so the first (failing) run had already committed the
+    `ADD COLUMN` before erroring on the cast.
 - **Controller is in the HIGH unscoped-CRUD list above. Not fixed.**
 
 ### Create product from unmapped (this session)

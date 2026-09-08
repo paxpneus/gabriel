@@ -61,15 +61,15 @@ function mapProduct(
   action: BlingAction,
   data: BlingProductPayload,
 ): MappedWebhookResult {
-  if (action === "deleted") {
-    return {
-      directUpsert: { table: "delete", resource: "product", blingId: data.id },
-    };
-  }
+  // "deleted" na Bling não é uma exclusão de fato — o produto continua
+  // existindo lá, só passa a vir com situacao="E" (ver
+  // BlingApiFetchQueue.fetchAndUpsertProduct/handleDeactivatedBlingProduct,
+  // que decide o que fazer localmente a partir do dado fresco da API). Por
+  // isso "deleted" cai no mesmo requiresApiFetch dos outros dois actions,
+  // em vez do directUpsert de delete usado por invoice/product_supplier.
 
   // O webhook de produto NÃO traz EAN → precisa buscar na API Bling
   return {
-    
     requiresApiFetch: {
       resource: "product",
       blingId: data.id,

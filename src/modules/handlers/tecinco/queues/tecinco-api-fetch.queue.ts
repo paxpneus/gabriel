@@ -37,6 +37,8 @@ import {
   normalizeEan,
   ensureSupplierMappings,
   resolveProductWithMapping,
+  resolveProductBySku,
+  resolveProductBySupplierMapping,
   assertEanNotOwnedByAnotherProduct,
   isProductOwnedByIntegration,
   EanConflictError,
@@ -438,6 +440,20 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       logPrefix,
     });
 
+    // Sem mapping ainda: antes de criar (opts.create) ou registrar unmapped,
+    // tenta auto-mapear pra um produto físico já existente pelo SKU
+    // (codigoFabrica == ProductConfig.sku) — pode ter sido criado por outra
+    // integração (ex.: Bling). Tecinco não tem conceito de KIT, então isso
+    // sempre roda quando não tem mapping ainda.
+    if (!product) {
+      product = await this.autoMapExistingProductBySku(
+        codigoFabrica,
+        systemId,
+        integrations,
+        logPrefix,
+      );
+    }
+
     if (!product) {
       if (opts.create) {
         // ─── Criação manual disparada via unmapped (POST .../create-product) ──
@@ -751,6 +767,50 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         logPrefix,
       });
     }
+  }
+
+  // ─── Auto-mapeia um produto físico já existente ────────────────────────────
+  // Cascata de 2 níveis, cada um tentado só se o anterior não achar nada:
+  // 1. resolveProductBySku — codigoFabrica contra ProductConfig.sku, GLOBAL
+  //    (sem escopar por unit_business/integração — o mesmo produto pode ter
+  //    sido criado pela Bling).
+  // 2. resolveProductBySupplierMapping — mesmo código, mas escopado à
+  //    integração Tecinco (SupplierMapping é uma tabela por-integração).
+  // Qualquer um dos dois que achar: cria o IntegrationMapping pra essa
+  // integração em vez de criar um Product duplicado, e resolve o
+  // UnmappedInvoiceProduct de origem, igual createProductFromTCarData —
+  // sem isso a próxima passagem de sync criaria unmapped de novo pra esse
+  // systemId. Retorna null (sem side effect) se codigoFabrica não vier ou
+  // nenhum dos dois achar nada.
+  private async autoMapExistingProductBySku(
+    codigoFabrica: string | undefined,
+    systemId: string,
+    integrations: Awaited<ReturnType<typeof getTCarIntegration>>,
+    logPrefix: string,
+  ): Promise<Product | null> {
+    let matched = await resolveProductBySku(codigoFabrica, logPrefix);
+    if (!matched) {
+      matched = await resolveProductBySupplierMapping(
+        codigoFabrica,
+        integrations.id,
+        logPrefix,
+      );
+    }
+    if (!matched) return null;
+
+    await integrationMappingService.createOrUpdateIntegrationMapping({
+      entity_type: "PRODUCT",
+      internal_id: matched.id,
+      integrations_id: integrations.id,
+      external_id: systemId,
+    });
+
+    await unmappedInvoiceProductService.resolveFromCreatedProduct({
+      externalId: systemId,
+      integrationsId: integrations.id,
+    });
+
+    return matched as Product;
   }
 
   // ─── Cria o Product a partir dos dados do ERP quando disparado manualmente
@@ -1068,6 +1128,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
 
     const produtoService = new TCarProdutoService();
+    const integrations = await getTCarIntegration("Tecinco");
 
     for (const item of itens) {
       // hasItemWithoutCode já garantiu, acima, que todo item aqui tem
@@ -1115,13 +1176,33 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         continue;
       }
 
-      // ─── Resolve produto SÓ por integration mapping ────────────────────────────
-      const product = await resolveProductWithMapping({
+      // ─── Resolve produto: mapping → SKU (global) → SupplierMapping (integração) ──
+      // resolveProductWithMapping é mapping-only (só integration_mapping). Se
+      // não achar, tenta o mesmo fallback usado no catalog sync (processProduct):
+      // 1. resolveProductBySku — codigoFabrica contra ProductConfig.sku,
+      //    GLOBAL (o produto pode ter sido criado por outra integração).
+      // 2. resolveProductBySupplierMapping — mesmo código, escopado à
+      //    integração Tecinco.
+      // Nenhum dos dois cria/atualiza integration_mapping aqui — esse upsert
+      // fica exclusivo do catalog sync (ver autoMapExistingProductBySku);
+      // aqui só serve pra resolver o produto pra este item da nota.
+      let product = await resolveProductWithMapping({
         unitBusinessId: unitBusiness.id,
         systemId,
         ean,
         logPrefix,
       });
+
+      if (!product) {
+        product = await resolveProductBySku(codigoFabrica, logPrefix);
+      }
+      if (!product) {
+        product = await resolveProductBySupplierMapping(
+          codigoFabrica,
+          integrations.id,
+          logPrefix,
+        );
+      }
 
       // ─── Produto não encontrado → ignora item ─────────────────────────────────
       if (!product) {

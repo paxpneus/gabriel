@@ -224,6 +224,65 @@ export async function resolveProductByEan(params: {
   return null;
 }
 
+// Resolve um produto físico já existente pelo SKU (ProductConfig.sku), sem
+// escopar por unit_business — o mesmo produto pode ter sido criado por outra
+// integração, numa unit_business diferente da que está sincronizando agora
+// (ex.: criado via Tecinco, sincronizando via Bling, ou vice-versa). Usado
+// pra auto-mapear em vez de duplicar o Product quando o código do
+// fabricante/SKU já bate com um produto existente — Bling manda isso como
+// `codigo`, Tecinco como `epctb_codigofabrica`; os dois representam o mesmo
+// conceito (SKU/código de fábrica do produto físico). Só se aplica a
+// produtos unitários — KIT nunca passa por aqui (seu código é sintético,
+// nunca deveria colidir com o SKU de um produto existente).
+export async function resolveProductBySku(
+  sku: string | null | undefined,
+  logPrefix: string,
+): Promise<typeof Product.prototype | null> {
+  const trimmed = sku?.trim();
+  if (!trimmed) return null;
+
+  const config = await ProductConfig.findOne({ where: { sku: trimmed } });
+  if (!config) return null;
+
+  const product = await Product.findByPk(config.product_id);
+  if (!product) return null;
+
+  console.log(
+    `${logPrefix} — produto resolvido via ProductConfig.sku (sku=${trimmed}) — auto-mapeando em vez de criar um novo`,
+  );
+
+  return product;
+}
+
+// Terceiro nível de fallback (depois de integration_mapping e
+// resolveProductBySku): resolve um produto já existente via SupplierMapping
+// — diferente de resolveProductBySku, este é escopado pela integração que
+// está sincronizando (integrations_id), já que SupplierMapping já é uma
+// tabela por-integração por natureza (supplier_product_code só faz sentido
+// dentro do contexto de uma integração específica).
+export async function resolveProductBySupplierMapping(
+  code: string | null | undefined,
+  integrationsId: string,
+  logPrefix: string,
+): Promise<typeof Product.prototype | null> {
+  const trimmed = code?.trim();
+  if (!trimmed) return null;
+
+  const mapping = await SupplierMapping.findOne({
+    where: { supplier_product_code: trimmed, integrations_id: integrationsId },
+  });
+  if (!mapping) return null;
+
+  const product = await Product.findByPk(mapping.product_id);
+  if (!product) return null;
+
+  console.log(
+    `${logPrefix} — produto resolvido via SupplierMapping (code=${trimmed}, integrations_id=${integrationsId})`,
+  );
+
+  return product;
+}
+
 // Erro de dados (não é infra) — quem chama decide como reagir, mas por
 // padrão não deve ser reprocessado com retry/backoff, igual aos outros
 // erros de validação dessas filas.

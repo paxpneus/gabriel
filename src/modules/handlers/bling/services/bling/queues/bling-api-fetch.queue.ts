@@ -56,6 +56,8 @@ import Subgroup from "../../../../../inventory/groups/subgroup/subgroup.model";
 import { GroupType } from "../../../../../inventory/groups/group/group.types";
 import {
   resolveProductWithMapping,
+  resolveProductBySku,
+  resolveProductBySupplierMapping,
   assertEanNotOwnedByAnotherProduct,
   isProductOwnedByIntegration,
   EanConflictError,
@@ -63,6 +65,7 @@ import {
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
 import { getMagentoIntegration } from "../../../../magentoV2/api/magentoV2_api";
 import stockMovementsService from "../../../../../inventory/stock/stock-movements/stock-movements.service";
+import batchInvoiceItemsService from "../../../../../warehouse/expedition/batch-invoice-items/batch-invoice-items.service";
 import InventoryBatchItems from "../../../../../inventory/stock-inventory/inventory-batch-items/inventory-batch-items.model";
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import sequelize from "../../../../../../config/sequelize";
@@ -310,6 +313,8 @@ interface BlingApiProduct {
   precoCusto: number;
   precoCompra: number;
   formato?: string;
+  // "A" = ativo, "E" = excluído/desativado na Bling — ver handleDeactivatedBlingProduct
+  situacao?: string;
   unidade?: string;
   pesoLiquido?: number;
   pesoBruto?: number;
@@ -988,6 +993,21 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const logPrefix = `[BLING_API_FETCH] fetchAndUpsertProduct blingId=${blingProduct.id}`;
 
+    // ─── Produto excluído/desativado na Bling ──────────────────────────────────
+    // Checagem estrita (=== "E", nunca truthy/!== "A") — qualquer outro valor de
+    // situacao (incluindo undefined) cai no fluxo normal abaixo, sem exceção.
+    // situacao=E interrompe TUDO: não cria/atualiza produto, não sincroniza KIT/
+    // Magento/kardex/estoque, e não registra unmapped — só tenta excluir
+    // localmente o que já existir (ver handleDeactivatedBlingProduct).
+    if (blingProduct.situacao === "E") {
+      await this.handleDeactivatedBlingProduct(
+        blingProduct,
+        unitBusiness,
+        logPrefix,
+      );
+      return;
+    }
+
     // ─── Resolve o produto SÓ via integration mapping (fonte de verdade) ───────
     // Sem fallback por EAN/ProductConfig.sku/SupplierMapping — se não tem
     // mapping, não é esse produto, ponto final (ver resolveProductWithMapping).
@@ -1005,6 +1025,20 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // pra evitar em produtos normais. Por isso KIT entra automaticamente,
     // como se create:true tivesse sido passado.
     const isKit = blingProduct.formato === "E";
+
+    // Sem mapping ainda: antes de criar (opts.create/KIT) ou registrar
+    // unmapped, tenta auto-mapear pra um produto físico já existente pelo
+    // SKU (blingProduct.codigo == ProductConfig.sku) — pode ter sido criado
+    // por outra integração (ex.: Tecinco). Só produto unitário: nunca
+    // tentado pro ramo de KIT, cujo código é sintético e nunca deveria
+    // colidir com o SKU de um produto já cadastrado.
+    if (!existingProduct && !isKit) {
+      existingProduct = await this.autoMapExistingProductBySku(
+        blingProduct,
+        integration,
+        logPrefix,
+      );
+    }
 
     if (!existingProduct) {
       if (opts.create || isKit) {
@@ -1402,6 +1436,48 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     );
   }
 
+  // ─── Auto-mapeia um produto físico já existente ────────────────────────────
+  // Cascata de 2 níveis, cada um tentado só se o anterior não achar nada:
+  // 1. resolveProductBySku — blingProduct.codigo contra ProductConfig.sku,
+  //    GLOBAL (sem escopar por unit_business/integração — o mesmo produto
+  //    pode ter sido criado pela Tecinco).
+  // 2. resolveProductBySupplierMapping — mesmo código, mas escopado à
+  //    integração Bling (SupplierMapping é uma tabela por-integração).
+  // Qualquer um dos dois que achar: cria o IntegrationMapping pra essa
+  // integração em vez de criar um Product duplicado, e resolve o
+  // UnmappedInvoiceProduct de origem, igual createProductFromBlingData —
+  // sem isso a próxima passagem de sync criaria unmapped de novo pra esse
+  // external_id. Retorna null (sem side effect) se nenhum dos dois achar.
+  private async autoMapExistingProductBySku(
+    blingProduct: BlingApiProduct,
+    integration: Awaited<ReturnType<typeof getBlingIntegration>>,
+    logPrefix: string,
+  ): Promise<Product | null> {
+    let matched = await resolveProductBySku(blingProduct.codigo, logPrefix);
+    if (!matched) {
+      matched = await resolveProductBySupplierMapping(
+        blingProduct.codigo,
+        integration.id,
+        logPrefix,
+      );
+    }
+    if (!matched) return null;
+
+    await integrationMappingService.createOrUpdateIntegrationMapping({
+      entity_type: "PRODUCT",
+      internal_id: matched.id,
+      integrations_id: integration.id,
+      external_id: String(blingProduct.id),
+    });
+
+    await unmappedInvoiceProductService.resolveFromCreatedProduct({
+      externalId: String(blingProduct.id),
+      integrationsId: integration.id,
+    });
+
+    return matched as Product;
+  }
+
   // ─── Cria o Product a partir dos dados do ERP quando disparado manualmente
   // via unmapped (create-product), fazendo o mapping apontar pra ele e
   // resolvendo o UnmappedInvoiceProduct de origem (ver
@@ -1473,6 +1549,102 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
 
     return newProduct;
+  }
+
+  // ─── Produto marcado situacao=E (excluído) na Bling ────────────────────────
+  // Só chamado quando fetchAndUpsertProduct já confirmou situacao === "E"
+  // (checagem estrita, ver ali). Se não existe produto local mapeado, não há
+  // nada a fazer — ignora silenciosamente (nunca cria unmapped pra isso).
+  // Se existe, apaga invoice_items e stock_movements do produto ANTES de
+  // apagar o Product em si — as duas tabelas têm FK RESTRICT em product_id
+  // (ver migrations `20260413-create-warehouse-structure`/`m194`), então
+  // excluir o Product primeiro estouraria erro de constraint.
+  //
+  // Best-effort: outras tabelas também têm FK RESTRICT em product_id
+  // (expedition_batch_items, inventory_batch_items, kit_components como
+  // componente de outro KIT) que este método deliberadamente não limpa — se
+  // o produto já foi usado em algum desses fluxos, a exclusão falha e fica
+  // só logada, sem derrubar o job (não é um erro transitório que valha
+  // retry, mas também não deve travar o processamento do resto da fila).
+  private async handleDeactivatedBlingProduct(
+    blingProduct: BlingApiProduct,
+    unitBusiness: UnitBusiness,
+    logPrefix: string,
+  ): Promise<void> {
+    const product = await resolveProductWithMapping({
+      unitBusinessId: unitBusiness.id,
+      systemId: String(blingProduct.id),
+      ean: blingProduct.gtin,
+      logPrefix,
+    });
+
+    if (!product) {
+      console.log(
+        `${logPrefix} — situacao=E na Bling, sem produto local mapeado, ignorado.`,
+      );
+      return;
+    }
+
+    // trigger_prevent_delete_manual_adjustment_with_cost (m247) bloqueia no
+    // banco qualquer DELETE de stock_movements MANUAL_ADJUSTMENT com
+    // refers_to preenchido (é um ajuste manual amarrado a uma nota
+    // específica — não pode ser descartado por uma exclusão automática de
+    // produto). Checa isso ANTES de tentar apagar qualquer coisa: se existe
+    // ao menos um, não apaga nem invoice_items nem stock_movements nem o
+    // Product em si — a exclusão inteira fica pra revisão manual, em vez de
+    // deixar o banco estourar a exceção no meio da transação.
+    const blockingManualAdjustment = await stockMovementsService.findOne({
+      where: {
+        product_id: product.id,
+        movement_type: "MANUAL_ADJUSTMENT",
+        refers_to: { [Op.ne]: null },
+      },
+    });
+
+    if (blockingManualAdjustment) {
+      console.warn(
+        `${logPrefix} — produto "${product.name}" está marcado situacao=E na Bling, mas tem stock_movements de ajuste manual (MANUAL_ADJUSTMENT) com refers_to preenchido — o banco não permite excluir esses registros. Produto mantido, revisão manual necessária. [product_id=${product.id}]`,
+      );
+      return;
+    }
+
+    // Item de lote de expedição já conferido fisicamente (batch_invoice_items
+    // .quantity_read > 0) é uma ação física real (alguém já bipou/recebeu
+    // esse produto no lote) — não pode ser descartado por uma exclusão
+    // automática de produto, mesmo que a linha de invoice_items em si não
+    // tenha nenhuma trava de FK. Mesmo padrão do guard acima: checa antes de
+    // apagar qualquer coisa, não apaga nada se achar.
+    const blockingReadBatchItem =
+      await batchInvoiceItemsService.findBlockingByProductId(product.id);
+
+    if (blockingReadBatchItem) {
+      console.warn(
+        `${logPrefix} — produto "${product.name}" está marcado situacao=E na Bling, mas tem item de lote de expedição já conferido fisicamente (quantity_read > 0) — não é seguro apagar. Produto mantido, revisão manual necessária. [product_id=${product.id}]`,
+      );
+      return;
+    }
+
+    try {
+      await sequelize.transaction(async (t) => {
+        await invoiceItemsService.bulkDelete({
+          where: { product_id: product.id },
+          transaction: t,
+        });
+        await stockMovementsService.bulkDelete({
+          where: { product_id: product.id },
+          transaction: t,
+        });
+        await productService.delete(product.id, { transaction: t });
+      });
+
+      console.log(
+        `${logPrefix} — produto "${product.name}" excluído localmente (situacao=E na Bling), junto com seus invoice items e stock movements | product_id=${product.id}`,
+      );
+    } catch (err: any) {
+      console.error(
+        `${logPrefix} — produto "${product.name}" está marcado situacao=E na Bling mas não foi possível excluí-lo localmente — provavelmente ainda referenciado por lote de expedição, lote de inventário ou como componente de outro KIT. Produto mantido, revisão manual necessária. [product_id=${product.id}: ${err?.message}]`,
+      );
+    }
   }
 
   private async fetchAndUpsertProductSupplier(
