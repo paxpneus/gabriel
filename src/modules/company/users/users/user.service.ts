@@ -14,7 +14,7 @@ import {
 } from "../../../../shared/query/query.types";
 import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import UnitBusiness from "../../unit-business/unit-business.model";
-import { FindOptions, UniqueConstraintError } from "sequelize";
+import { DestroyOptions, FindOptions, UniqueConstraintError } from "sequelize";
 import redisService from "../../../../shared/utils/base-models/base-redis";
 import UserConfig from "../user_config/user_config.model";
 import UserUnitBusiness from "../user_unit_business/user_unit_business.model";
@@ -264,12 +264,32 @@ export class UserService extends BaseService<User, UserRepository> {
     });
   }
 
+  // Soft delete: só desativa (bloqueia login), não apaga a linha.
+  async delete(id: string, options?: DestroyOptions): Promise<boolean> {
+    const updated = await this.repository.update(
+      id,
+      { active: false } as Partial<User["_creationAttributes"]>,
+      options,
+    );
+    return !!updated;
+  }
+
+  async bulkDelete(options: DestroyOptions): Promise<number> {
+    const [count] = await this.repository.bulkUpdate(
+      { active: false } as Partial<User["_creationAttributes"]>,
+      { where: options.where ?? {}, transaction: options.transaction },
+    );
+    return count;
+  }
+
   async login(email: string, password: string) {
     let user = await this.repository.getFullUser({
       where: { email },
     });
 
     if (!user) throw new Error("Usuário não encontrado");
+
+    if (user.active === false) throw new Error("Usuário desativado");
 
     const incorrectPassword = await bcrypt.compare(password, user.password);
     if (!incorrectPassword) throw new Error("Senha Incorreta");

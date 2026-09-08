@@ -18,6 +18,7 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   public role_id!: string;
   public email!: string;
   public password!: string;
+  public active!: boolean;
   public id_system?: number | null;
   public config?: UserConfigAttributes;
   public role?: Role;
@@ -81,7 +82,12 @@ User.init(
     password: {
         type: DataTypes.STRING(255),
         allowNull: false,
-    }
+    },
+    active: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
   },
   {
     sequelize,

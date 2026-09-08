@@ -166,6 +166,44 @@ export class BlingManifestacaoService {
     return page.url().includes("/login");
   }
 
+  /**
+   * Loga o estado da página quando o login automático falha de um jeito
+   * inesperado (ex.: campo não encontrado a tempo). Sem isso, uma mudança de
+   * layout ou um desafio anti-bot (CAPTCHA, verificação de dispositivo, tela
+   * de "escolher conta") só aparece como um timeout genérico no log, sem
+   * pista nenhuma do que a Bling realmente mostrou pro browser headless.
+   * Mesmo diagnóstico usado em get-stock-movements.ts.
+   */
+  private async logLoginPageState(page: Page, context: string): Promise<void> {
+    try {
+      const url = page.url();
+      const usernameCount = await page.locator("#username").count();
+      const passwordCount = await page
+        .locator('input[type="password"]')
+        .count();
+      const bodyText = await page
+        // @ts-ignore — evaluate roda no contexto do browser, onde `document` existe
+        .evaluate(() => document.body.innerText.slice(0, 1500))
+        .catch(() => "<falha ao ler body>");
+
+      console.error(
+        `[BlingManifest] Estado da página em "${context}": url=${url} ` +
+          `#username=${usernameCount} senha=${passwordCount}\n` +
+          `--- texto visível da página ---\n${bodyText}\n--- fim ---`,
+      );
+
+      const screenshotPath = path.resolve(
+        `${SESSION_DIR}/login-failure-${Date.now()}.png`,
+      );
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      console.error(`[BlingManifest] Screenshot salvo em ${screenshotPath}`);
+    } catch (err: any) {
+      console.error(
+        `[BlingManifest] Falha ao capturar diagnóstico de "${context}": ${err?.message ?? err}`,
+      );
+    }
+  }
+
   private async doAutoLogin(page: Page): Promise<boolean> {
     await page.goto(LOGIN_URL, {
       waitUntil: "domcontentloaded",
@@ -189,14 +227,19 @@ export class BlingManifestacaoService {
       exact: true,
     });
 
-    await usernameField.waitFor({ state: "visible", timeout: 15_000 });
-    await usernameField.fill(BLING_EMAIL);
+    try {
+      await usernameField.waitFor({ state: "visible", timeout: 15_000 });
+      await usernameField.fill(BLING_EMAIL);
 
-    await passwordField.waitFor({ state: "visible", timeout: 15_000 });
-    await passwordField.fill(BLING_PASSWORD);
+      await passwordField.waitFor({ state: "visible", timeout: 15_000 });
+      await passwordField.fill(BLING_PASSWORD);
 
-    await submitButton.waitFor({ state: "visible", timeout: 15_000 });
-    await submitButton.click();
+      await submitButton.waitFor({ state: "visible", timeout: 15_000 });
+      await submitButton.click();
+    } catch (err: any) {
+      await this.logLoginPageState(page, "preenchimento do formulário de login");
+      throw err;
+    }
 
     await page.waitForTimeout(4_000);
     await page.goto(NOTAS_ENTRADA_URL, {
@@ -208,6 +251,7 @@ export class BlingManifestacaoService {
       console.error(
         "[BlingManifest] Login automático falhou — CAPTCHA, 2FA ou credenciais inválidas",
       );
+      await this.logLoginPageState(page, "pós-login ainda na tela de login");
       return false;
     }
 

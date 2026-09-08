@@ -14,6 +14,7 @@ export interface UserAttributes {
   role_id: string;
   email: string;
   password: string;
+  active?: boolean;
   config?: UserConfigAttributes;
   businessToView?: string | string[]
   allowedModules?: USER_TYPE_CONFIG

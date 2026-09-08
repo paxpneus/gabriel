@@ -50,6 +50,13 @@ lookups (`findOne`, `findById`, `findAll`, etc.) are already there, so the
 correct fix is usually calling `<entity>Service.findOne(...)`, not writing a
 new raw query.
 
+## Code comments
+
+Comments on code and functions must be brief, short, summarized, and
+direct — no long paragraphs. State the one non-obvious reason (a hidden
+constraint, a workaround, why this and not the obvious alternative) in a
+line or two, not a multi-line explanation of what the code already says.
+
 # Domain context — module reference
 
 This section is a working map of the modules below, built from direct code
