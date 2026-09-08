@@ -674,8 +674,32 @@ flag is explicitly set.
 - `invoice/` — `Invoice` model/service/repository/controller, plus
   `invoice-label.service.ts` (resolves EAN for printed labels) and
   `helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`).
-- `invoice-items/` — `InvoiceItems` + `InvoiceFiscalItem`; resolves the
-  product/config for each line using the standard priority order below.
+- `invoice-items/` — `InvoiceItems`; resolves the product/config for each
+  line using the standard priority order below. `InvoiceFiscalItem` is a
+  sibling model in its own `invoice-fiscal-item/` folder with no
+  repository/service/controller of its own (just `.model.ts`/`.types.ts`)
+  — it's queried/written directly wherever needed (`invoice.repository.ts`,
+  `invoice.service.ts`, `invoice-items.service.ts`), not through a
+  dedicated layer.
+- **Fixed this session — duplicate-key crash in `addMissingInvoiceItems`**
+  (`invoice.service.ts`, the reprocess path used when an NF-e's `existingInvoice`
+  is found in `invoice-xml.ts`): it only checked `InvoiceItems` to decide
+  which incoming product_ids were "already handled" for the invoice, then
+  inserted `InvoiceFiscalItem` unconditionally for the rest. Both tables
+  share the identical `UNIQUE(invoice_id, product_id)` constraint
+  (`invoice_items` via `uq_invoice_items_invoice_product`,
+  `invoice_fiscal_items` via `invoice_fiscal_items_invoice_id_product_id_unique`),
+  and it's an accepted, designed scenario (see "Auto-map by SKU/SupplierMapping"
+  above) for two different Tecinco `epctb_codigo`s to resolve to the same
+  local `Product` — so a product_id could already have an `InvoiceFiscalItem`
+  row (e.g. from an earlier pass that got this far and committed, then
+  failed/retried for an unrelated reason) without yet having an
+  `InvoiceItems` row for this exact call's input set, and the old check let
+  it through to a raw Postgres constraint error instead of skipping it.
+  Fixed by checking **both** `InvoiceItems` and `InvoiceFiscalItem` for
+  existing `(invoice_id, product_id)` pairs before filtering. If this
+  function is touched again, keep both checks — checking only one table is
+  the exact bug that was fixed.
 - **Manual mapping cascade** (`POST /add/item` →
   `InvoiceItemsService.createInvoiceItemForUnmappedProductsInTx`): mapping
   one `UnmappedInvoiceProduct` manually also auto-maps "sibling" unmapped
@@ -736,6 +760,73 @@ flag is explicitly set.
   above. Not fixed**: `show`/`destroy`/`create` unscoped; other actions
   trust a client-supplied `?unitBusinessId=` over the logged user's own;
   DANFE/XML batch downloads have no store filter.
+
+## Bling NFe web-scraping automation (`.../bling-nfe/automations/auto-manifest/`)
+
+- `BlingManifestacaoService`/`BlingNfeScrapingQueue` (queue
+  `BLING_NFE_SCRAPING`, runs on `worker-scraping`, every 3h) automates
+  "manifestar nota como operação realizada" through Bling's own web UI
+  (`notas.entrada.php`) via Playwright — no public API for this action.
+  Uses a persistent browser profile (`./bling_session`) shared with
+  `get-stock-movements.ts`, which logs in the same way but against
+  `estoque.php`.
+- **Fixed this session**: login kept failing only on this flow (100% of
+  runs), while `get-stock-movements.ts` worked fine with the same
+  credentials/profile. Root cause: `ensureLoggedIn`/`doAutoLogin` checked
+  `page.url()` right after `waitUntil: "domcontentloaded"` — too early for
+  Bling's SPA to render, so the login-diagnostic screenshot (also added
+  this session, mirroring `get-stock-movements.ts`'s `logLoginPageState`)
+  showed an unrendered page (`#username=0`, empty body) that looked like a
+  login wall. `get-stock-movements.ts` already used `waitUntil:
+  "networkidle"` + a settle wait; this file used `domcontentloaded` with
+  none. Fixed by switching both `page.goto` calls in the login flow to
+  `networkidle` and adding the same ~1.5s settle wait. If either file is
+  touched again, keep `networkidle` for Bling's pages — `domcontentloaded`
+  isn't enough to trust `page.url()`/DOM state on a client-rendered page.
+
+## Tecinco API auth/session (`src/modules/handlers/tecinco/api/tecinco_api.ts`)
+
+- `sessionPool` (a `Map<branchId, TCarBranchSession>`) caches one session
+  token per branch, in memory only — lost on every process restart. Both
+  `ensureSession` (cache-miss login) and `onResponseError`'s 401 handler
+  (session-expired relogin) call `doTCarLogin(branchId)`, and each already
+  serializes concurrent calls *for the same branch* via the branch's own
+  `isRefreshing`/`failedQueue`.
+- **Fixed this session — intermittent 403 on `/auth/login`**: `doTCarLogin`
+  uses the *same* account credentials (username/password/api_key/company_id)
+  for every branch — only the later `/auth/session/branch` call differs by
+  branch. The per-branch lock above doesn't stop two *different* branches
+  from calling `/auth/login` at the same time (e.g. `TCarSyncQueue`
+  dispatches one job per branch — currently branches `12`/`17` — and both
+  can run concurrently right after a process restart or whenever both
+  branches' cached tokens are empty at once). Tecinco's API appears to
+  reject one of two concurrent logins for the same account with a bare 403
+  (not 401/429, so neither existing retry path in the response interceptor
+  catches it) — this matched the observed pattern of ~3% of requests
+  failing with a plain "Request failed with status code 403" whose stack
+  trace bottoms out in `doTCarLogin`, not in any other endpoint. Fixed by
+  wrapping `doTCarLogin`'s entire body in a **module-level** (not
+  per-branch) promise-chain mutex (`withTCarLoginLock`), so logins for
+  different branches queue up instead of racing — this covers both call
+  sites (`ensureSession` and the 401 relogin path) since both go through
+  `doTCarLogin`.
+- **`TCAR_UPSERT`/`TCAR_SYNC` deliberately do NOT share a BullMQ
+  `sharedLock`** (unlike Bling's queues, which share
+  `BLING_SHARED_QUEUE_LOCK` — see the Bling NFe section above and
+  `bling-queue-lock.ts`). This was considered and rejected: `TCarSyncQueue.process`
+  (`tecinco-sync-queue.ts`) calls `runMigration`
+  (`tecinco-migration.runner.ts`), which enqueues jobs onto `TCAR_UPSERT`
+  and then blocks on `waitForQueueToDrain(upsertQueue, ...)` as part of the
+  *same* sync job. A full job-level `sharedLock` between the two queues
+  would deadlock: the sync job holds the lock while waiting for
+  `TCAR_UPSERT` to drain, but `TCAR_UPSERT` jobs can never acquire that
+  same lock to run and drain. The module-level login mutex above already
+  serializes the actual race (concurrent `/auth/login` calls) without this
+  risk, since both queues funnel through the same `doTCarLogin`. If queue-level
+  coordination between `TCAR_UPSERT`/`TCAR_SYNC` is wanted later, it needs
+  a narrower lock scoped to the individual Tecinco API calls inside
+  `migrateProdutos`/`migrateClientes`/`migrateNotasFiscais`, not the whole
+  job — the `waitForQueueToDrain` step must stay outside any such lock.
 
 ## Stock / stock movements (`src/modules/inventory/stock/`)
 

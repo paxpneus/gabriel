@@ -52,6 +52,7 @@ import sequelize from "../../../../../../config/sequelize";
 import mockedRepository from "../invoice.repository";
 import invoiceService from "../invoice.service";
 import InvoiceItems from "../../invoice-items/invoice-items.model";
+import InvoiceFiscalItem from "../../invoice-fiscal-item/invoice-fiscal-item.model";
 
 const repo = mockedRepository as unknown as {
   createInvoiceItems: jest.Mock;
@@ -76,6 +77,7 @@ beforeEach(() => {
 
   (sequelize.transaction as jest.Mock).mockResolvedValue(fakeTransaction);
   (InvoiceItems.findAll as jest.Mock).mockResolvedValue([]);
+  (InvoiceFiscalItem.findAll as jest.Mock).mockResolvedValue([]);
   repo.createInvoiceItems.mockResolvedValue(undefined);
   repo.createInvoiceFiscalItems.mockResolvedValue(undefined);
 });
@@ -111,6 +113,22 @@ describe("InvoiceService.addMissingInvoiceItems", () => {
       product_id: "prod-2",
       invoice_id: INVOICE_ID,
     });
+  });
+
+  it("ignora product_id que já tem InvoiceFiscalItem mesmo sem InvoiceItems (evita estourar a unique constraint)", async () => {
+    (InvoiceFiscalItem.findAll as jest.Mock).mockResolvedValue([
+      { product_id: "prod-1" },
+    ]);
+
+    const result = await invoiceService.addMissingInvoiceItems(INVOICE_ID, [
+      makeItem({ product_id: "prod-1" }), // só tem fiscal item — deve ser ignorado
+      makeItem({ product_id: "prod-2" }), // novo — deve ser criado
+    ]);
+
+    expect(result).toEqual(["prod-2"]);
+    const createdItems = repo.createInvoiceItems.mock.calls[0][0];
+    expect(createdItems).toHaveLength(1);
+    expect(createdItems[0]).toMatchObject({ product_id: "prod-2" });
   });
 
   it("quando todos os itens já existem, não chama createInvoiceItems/createInvoiceFiscalItems e retorna []", async () => {

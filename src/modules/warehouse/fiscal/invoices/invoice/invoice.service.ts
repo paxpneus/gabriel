@@ -34,6 +34,7 @@ import {
   InvoiceUnitBusinessAttributesStatus,
 } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import { InvoiceFiscalItemCreationAttributes } from "../invoice-fiscal-item/invoice-fiscal-item.types";
+import InvoiceFiscalItem from "../invoice-fiscal-item/invoice-fiscal-item.model";
 import eventService from "../../../../company/events/event/event.service";
 import redisService from "../../../../../shared/utils/base-models/base-redis";
 import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
@@ -321,8 +322,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
    * "não mapeados" na primeira passagem e só resolveram a um Product depois
    * (ex.: alguém concilia o produto no Bling e o webhook reenvia a nota).
    * Ignora silenciosamente qualquer item cujo product_id já tenha um
-   * InvoiceItems pra essa invoice — a constraint única (invoice_id,
-   * product_id) protege contra duplicata mesmo se essa checagem falhar.
+   * InvoiceItems OU InvoiceFiscalItem pra essa invoice — duas notas Tecinco
+   * podem legitimamente resolver códigos internos diferentes pro mesmo
+   * product_id (auto-map por SKU/EAN), então checar só InvoiceItems deixava
+   * passar um product_id que já tinha InvoiceFiscalItem (ex.: de uma
+   * passagem anterior que falhou depois de criar o fiscal item mas antes de
+   * concluir), estourando a constraint única (invoice_id, product_id) no
+   * insert em vez de ser ignorado aqui.
    * Retorna os product_id efetivamente criados.
    */
   async addMissingInvoiceItems(
@@ -336,16 +342,21 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     const isExternalTransaction = !!transaction;
 
     try {
-      const existingItems = await InvoiceItems.findAll({
-        where: {
-          invoice_id: invoiceId,
-          product_id: { [Op.in]: items.map((i) => i.product_id) },
-        },
-        transaction: t,
-      });
-      const existingProductIds = new Set(
-        existingItems.map((i) => i.product_id),
-      );
+      const productIds = items.map((i) => i.product_id);
+      const [existingItems, existingFiscalItems] = await Promise.all([
+        InvoiceItems.findAll({
+          where: { invoice_id: invoiceId, product_id: { [Op.in]: productIds } },
+          transaction: t,
+        }),
+        InvoiceFiscalItem.findAll({
+          where: { invoice_id: invoiceId, product_id: { [Op.in]: productIds } },
+          transaction: t,
+        }),
+      ]);
+      const existingProductIds = new Set([
+        ...existingItems.map((i) => i.product_id),
+        ...existingFiscalItems.map((i) => i.product_id),
+      ]);
 
       const newItems = items
         .filter((item) => !existingProductIds.has(item.product_id))

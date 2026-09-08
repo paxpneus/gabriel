@@ -94,53 +94,72 @@ function processQueue(session: TCarBranchSession, error: unknown, token: string 
 // Login por filial
 // ---------------------------------------------------------------------------
 
+// Lock global (não por filial): login usa a mesma conta/credencial pra
+// qualquer branchId, e a API da Tecinco rejeita com 403 quando dois logins
+// concorrentes chegam pra filiais diferentes ao mesmo tempo (ex.: TCAR_SYNC
+// disparando as 2 filiais em paralelo logo após o cache de sessão zerar).
+// O lock por filial em ensureSession não cobre esse caso, só serializa
+// dentro da mesma filial — por isso o lock aqui precisa ser único pro
+// módulo inteiro, cobrindo login inicial (ensureSession) e relogin pós-401
+// (onResponseError), já que ambos chamam doTCarLogin.
+let tcarLoginLock: Promise<unknown> = Promise.resolve();
+
+async function withTCarLoginLock<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = tcarLoginLock;
+  const run = previous.then(fn, fn);
+  tcarLoginLock = run.catch(() => undefined);
+  return run;
+}
+
 export async function doTCarLogin(branchId: number): Promise<string> {
-  const { baseUrl, apiKey, username, password, companyId } = await getTCarToken();
+  return withTCarLoginLock(async () => {
+    const { baseUrl, apiKey, username, password, companyId } = await getTCarToken();
 
-  const axiosInstance = axios.create({
-    baseURL: baseUrl,
-    ...(httpsAgent ? { httpsAgent } : {}),
-  });
+    const axiosInstance = axios.create({
+      baseURL: baseUrl,
+      ...(httpsAgent ? { httpsAgent } : {}),
+    });
 
-  const loginRes = await axiosInstance.post(
-    `/auth/login`,
-    { username, password },
-    {
-      params: { company_id: companyId },
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-      },
-    },
-  );
-
-  const body = loginRes.data as TCarLoginResponse;
-
-  if (body.status !== 'success') {
-    throw new Error(
-      `[TCarApi] Login rejeitado (branch ${branchId}): ${JSON.stringify(body)}`,
-    );
-  }
-
-  const { session_token, branch_required } = body.data;
-
-  if (branch_required) {
-    await axiosInstance.post(
-      `/auth/session/branch`,
-      { branch_id: branchId },
+    const loginRes = await axiosInstance.post(
+      `/auth/login`,
+      { username, password },
       {
         params: { company_id: companyId },
         headers: {
           'Content-Type': 'application/json',
           'x-api-key': apiKey,
-          'x-tcar-session': session_token,
         },
       },
     );
-  }
 
-  getSession(branchId).sessionToken = session_token;
-  return session_token;
+    const body = loginRes.data as TCarLoginResponse;
+
+    if (body.status !== 'success') {
+      throw new Error(
+        `[TCarApi] Login rejeitado (branch ${branchId}): ${JSON.stringify(body)}`,
+      );
+    }
+
+    const { session_token, branch_required } = body.data;
+
+    if (branch_required) {
+      await axiosInstance.post(
+        `/auth/session/branch`,
+        { branch_id: branchId },
+        {
+          params: { company_id: companyId },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'x-tcar-session': session_token,
+          },
+        },
+      );
+    }
+
+    getSession(branchId).sessionToken = session_token;
+    return session_token;
+  });
 }
 
 // ---------------------------------------------------------------------------
