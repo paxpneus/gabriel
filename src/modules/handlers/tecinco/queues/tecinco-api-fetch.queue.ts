@@ -226,11 +226,16 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       return;
     }
 
+    const fetchingUnitBusiness = await UnitBusiness.findOne({
+      where: { number: String(branchId).padStart(2, "0") },
+    });
+
     await upsertInvoiceFromXml(xmlContent, {
       integrationName: "Tecinco",
       operationalItems,
       unmappedItems,
       sourcePayload: notaFiscal?.data ?? notaFiscal ?? null,
+      fetchingUnitBusinessId: fetchingUnitBusiness?.id,
     });
 
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
@@ -1069,12 +1074,17 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       return;
     }
 
+    const fetchingUnitBusiness = await UnitBusiness.findOne({
+      where: { number: String(branchId).padStart(2, "0") },
+    });
+
     await upsertInvoiceFromXml(xml, {
       integrationName: "Tecinco",
       operationalItems,
       unmappedItems,
       sourcePayload: notaFiscal?.data ?? notaFiscal ?? null,
       invoiceType,
+      fetchingUnitBusinessId: fetchingUnitBusiness?.id,
     });
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
   }

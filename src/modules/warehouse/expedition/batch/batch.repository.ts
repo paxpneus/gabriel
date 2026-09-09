@@ -47,7 +47,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
               as: "unitBusinessAttributes",
               where: { unit_business_id: unitBusinessId },
               required: false,
-              attributes: ["status", "type", "batch_generated", "unit_business_id"],
+              attributes: ["status", "type", "purpose", "batch_generated", "unit_business_id"],
             },
           ],
         },
@@ -165,6 +165,19 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
   }
 
   normalizeBatchPlain(plain: any): ExpeditionBatchFull {
+    // Uma nota de transbordo pode ter 2 linhas de unitBusinessAttributes
+    // aqui (entrada + saída) — casa pela direção/propósito do próprio
+    // batch em vez de pegar a primeira.
+    const pickAttr = (attrs: any[] | undefined) => {
+      if (!attrs?.length) return null;
+      if (attrs.length === 1) return attrs[0];
+      return (
+        attrs.find(
+          (a) => a.type === plain.type && a.purpose === plain.purpose,
+        ) ?? attrs[0]
+      );
+    };
+
     return {
       ...plain,
       batchInvoices: plain.batchInvoices?.map((bi: any) => ({
@@ -172,8 +185,7 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
         invoice: bi.invoice
           ? {
               ...bi.invoice,
-              unitBusinessAttributes:
-                bi.invoice.unitBusinessAttributes?.[0] ?? null,
+              unitBusinessAttributes: pickAttr(bi.invoice.unitBusinessAttributes),
             }
           : bi.invoice,
         items: bi.items?.map((item: any) => ({

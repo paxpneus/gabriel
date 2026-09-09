@@ -2200,11 +2200,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // ─── Sincroniza batch se a invoice já pertencer a um ─────────────────────
 
-    const batchInvoice = await ExpeditionBatchInvoice.findOne({
+    const batchInvoices = await ExpeditionBatchInvoice.findAll({
       where: { invoice_id: invoice.id },
     });
 
-    if (batchInvoice) {
+    for (const batchInvoice of batchInvoices) {
       await invoiceItemsService.syncBatchFromInvoice(batchInvoice);
     }
 

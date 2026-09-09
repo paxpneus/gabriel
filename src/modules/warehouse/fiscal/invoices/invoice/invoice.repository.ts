@@ -120,7 +120,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         },
         {
           model: ExpeditionBatchInvoice,
-          as: "batchInvoice",
+          as: "batchInvoices",
           required: true,
           attributes: ["id", "createdAt"],
           include: [
@@ -150,21 +150,26 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           ),
           // O romaneio precisa ter sido gerado pela mesma unit business
           Sequelize.where(
-            Sequelize.col("batchInvoice->batch.unit_business_id"),
+            Sequelize.col("batchInvoices->batch.unit_business_id"),
             Sequelize.col("unitBusinessAttributes.unit_business_id"),
           ),
+          // Uma nota de transbordo pode ter um 2º batchInvoice (INCOMING) na
+          // mesma unit_business — essa consulta é sempre sobre o lado de
+          // saída/romaneio, então precisa travar explicitamente o batch
+          // certo, senão a junção duplica a linha da invoice.
+          Sequelize.where(Sequelize.col("batchInvoices->batch.type"), "OUTGOING"),
           {
             [Op.or]: [
               // 1. Romaneio gerado nos últimos 5 dias, sem nenhuma ocorrência
               {
-                "$batchInvoice.batch.delivery_note_generated_at$": {
+                "$batchInvoices.batch.delivery_note_generated_at$": {
                   [Op.gte]: twentyDaysAgo,
                 },
                 [Op.and]: this.noLogisticOccurrenceAtAllLiteral(),
               },
               // 2. Romaneio gerado nos últimos 45 dias, sem ocorrência "Entregue", porém que tenha alguma ocorrência
               {
-                "$batchInvoice.batch.delivery_note_generated_at$": {
+                "$batchInvoices.batch.delivery_note_generated_at$": {
                   [Op.gte]: fortyFiveDaysAgo,
                 },
                 [Op.and]: this.hasOccurrenceButNotDeliveredLiteral(),
@@ -309,7 +314,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         },
         {
           model: ExpeditionBatchInvoice,
-          as: "batchInvoice",
+          as: "batchInvoices",
           required: hasBatchFilter,
           attributes: ["id"],
           include: [
@@ -574,14 +579,14 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         },
         {
           model: ExpeditionBatchInvoice,
-          as: "batchInvoice",
+          as: "batchInvoices",
           required: false,
           include: [
             {
               model: ExpeditionBatch,
               as: "batch",
               where: { unit_business_id: unitBusinessId },
-              attributes: ["number", "status", "mode", "id"],
+              attributes: ["number", "status", "mode", "id", "type", "purpose"],
             },
             {
               model: BatchInvoiceItems,
@@ -641,29 +646,39 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         : item.product,
     }));
 
-    if (plain.batchInvoice?.items) {
-      plain.batchInvoice.items = plain.batchInvoice.items.map((bi: any) => ({
-        ...bi,
-        batchItem: bi.batchItem
-          ? {
-              ...bi.batchItem,
-              product: bi.batchItem.product
-                ? {
-                    ...bi.batchItem.product,
-                    productConfigs:
-                      bi.batchItem.product.productConfigs?.slice(0, 1) ?? [],
-                  }
-                : bi.batchItem.product,
-            }
-          : bi.batchItem,
+    if (plain.batchInvoices?.length) {
+      plain.batchInvoices = plain.batchInvoices.map((batchInvoice: any) => ({
+        ...batchInvoice,
+        items: batchInvoice.items?.map((bi: any) => ({
+          ...bi,
+          batchItem: bi.batchItem
+            ? {
+                ...bi.batchItem,
+                product: bi.batchItem.product
+                  ? {
+                      ...bi.batchItem.product,
+                      productConfigs:
+                        bi.batchItem.product.productConfigs?.slice(0, 1) ?? [],
+                    }
+                  : bi.batchItem.product,
+              }
+            : bi.batchItem,
+        })),
       }));
     }
 
+    // Uma nota de transbordo pode ter 2 batchInvoices (entrada + saída) na
+    // mesma unit_business — junta os items de todas num único map; se o
+    // mesmo produto aparecer nas 2 pernas, a última sobrescreve (limitação
+    // aceita, caso raro).
     const batchItemsMap = new Map<string, any>(
-      plain.batchInvoice?.items?.map((b: BatchInvoiceItemsAttributes) => [
-        b.batchItem?.product_id,
-        b,
-      ]) ?? [],
+      (plain.batchInvoices ?? []).flatMap(
+        (batchInvoice: any) =>
+          batchInvoice.items?.map((b: BatchInvoiceItemsAttributes) => [
+            b.batchItem?.product_id,
+            b,
+          ]) ?? [],
+      ),
     );
 
     return {
@@ -779,12 +794,14 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   async findInvoiceAttribute(
     invoiceId: string,
     unitBusinessId: string,
+    type?: "INCOMING" | "OUTGOING",
     transaction?: Transaction,
   ): Promise<InvoiceUnitBusinessAttributes | null> {
     return InvoiceUnitBusinessAttributes.findOne({
       where: {
         invoice_id: invoiceId,
         unit_business_id: unitBusinessId,
+        ...(type ? { type } : {}),
       },
       transaction,
     });
@@ -793,20 +810,24 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   async createInvoiceAttributes(
     attributes: InvoiceUnitBusinessAttributesCreationAttributes[],
     transaction?: Transaction,
-  ): Promise<void> {
-    await InvoiceUnitBusinessAttributes.bulkCreate(attributes, { transaction });
+  ): Promise<InvoiceUnitBusinessAttributes[]> {
+    return InvoiceUnitBusinessAttributes.bulkCreate(attributes, { transaction });
   }
 
   async findUnitBusinessesByCnpj(
     cnpjs: string[],
     transaction?: Transaction,
-  ): Promise<{ id: string; cnpj: string }[]> {
+  ): Promise<{ id: string; cnpj: string; transshipment_allowed: boolean }[]> {
     const results = await UnitBusiness.findAll({
       where: { cnpj: { [Op.in]: cnpjs } },
-      attributes: ["id", "cnpj"],
+      attributes: ["id", "cnpj", "transshipment_allowed"],
       transaction,
     });
-    return results.map((ub) => ({ id: ub.id, cnpj: (ub as any).cnpj }));
+    return results.map((ub) => ({
+      id: ub.id,
+      cnpj: (ub as any).cnpj,
+      transshipment_allowed: !!(ub as any).transshipment_allowed,
+    }));
   }
 
   async findXmlPathsByIds(

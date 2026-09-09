@@ -95,7 +95,7 @@ export interface FullInvoiceAttributes {
   createdAt?: Date;
   updatedAt?: Date;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes;
-  batchInvoice?: ExpeditionBatchInvoiceAttributes;
+  batchInvoices?: ExpeditionBatchInvoiceAttributes[];
   printed_label?: boolean;
   emitted_at?: Date;
   number_system?: string;
@@ -153,7 +153,7 @@ export interface FullInvoiceAttributesForAllUnits {
   createdAt?: Date;
   updatedAt?: Date;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[];
-  batchInvoice?: ExpeditionBatchInvoiceAttributes;
+  batchInvoices?: ExpeditionBatchInvoiceAttributes[];
   printed_label?: boolean;
   emitted_at?: Date;
   number_system?: string;

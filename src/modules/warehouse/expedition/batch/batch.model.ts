@@ -17,7 +17,8 @@ class ExpeditionBatch extends Model<ExpeditionBatchAttributes, ExpeditionBatchCr
   public total_volumes!: number;
   public total_volumes_received!: number
   public type!: string
-  public transporters_id!: string | null; 
+  public purpose!: 'REGULAR' | 'TRANSSHIPMENT'
+  public transporters_id!: string | null;
   public description?: string
   public mode?: string
   public delivery_note_generated_at?: Date | null;
@@ -90,6 +91,11 @@ ExpeditionBatch.init(
       type: DataTypes.ENUM("INCOMING", "OUTGOING"),
       allowNull: false,
       defaultValue: 'OUTGOING'
+    },
+    purpose: {
+      type: DataTypes.ENUM("REGULAR", "TRANSSHIPMENT"),
+      allowNull: false,
+      defaultValue: 'REGULAR'
     },
     mode: {
       type: DataTypes.ENUM("REGULAR", "ADVANCED"),

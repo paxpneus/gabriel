@@ -18,6 +18,7 @@ class InvoiceUnitBusinessAttributes
   public unit_business_id!: string;
   public invoice_id!: string;
   public type!: "INCOMING" | "OUTGOING";
+  public purpose!: "REGULAR" | "TRANSSHIPMENT";
   public status!: InvoiceUnitBusinessAttributesStatus;
   public batch_generated!: boolean;
 
@@ -57,6 +58,11 @@ InvoiceUnitBusinessAttributes.init(
       type: DataTypes.ENUM("INCOMING", "OUTGOING"),
       allowNull: false,
     },
+    purpose: {
+      type: DataTypes.ENUM("REGULAR", "TRANSSHIPMENT"),
+      allowNull: false,
+      defaultValue: "REGULAR",
+    },
     status: {
       type: DataTypes.ENUM(
         "OPEN",
@@ -86,7 +92,7 @@ InvoiceUnitBusinessAttributes.init(
     indexes: [
       {
         unique: true,
-        fields: ["invoice_id", "unit_business_id"],
+        fields: ["invoice_id", "unit_business_id", "type", "purpose"],
         name: "uq_invoice_unit_business_attributes_invoice_unit_business",
       },
     ],

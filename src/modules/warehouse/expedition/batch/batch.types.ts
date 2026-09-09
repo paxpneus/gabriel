@@ -13,6 +13,7 @@ export interface ExpeditionBatchAttributes {
   unit_business_id: string;
   total_volumes: number;
   type?: string;
+  purpose?: 'REGULAR' | 'TRANSSHIPMENT';
   batchInvoices?: any;
   total_volumes_received?: number;
   transporters_id?: string | null;
@@ -48,6 +49,7 @@ export interface ExpeditionBatchFull {
   transporters_id?: string | null;
   delivery_note_generated_at?: Date | null;
   type?: string;
+  purpose?: 'REGULAR' | 'TRANSSHIPMENT';
   mode?: string;
   operator_id?: string;
   createdAt?: Date;

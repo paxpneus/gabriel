@@ -25,6 +25,20 @@ export class ExpeditionBatchInvoiceService extends BaseService<
     super(expeditionBatchInvoiceRepository);
   }
 
+  async findByInvoiceAndUnitBusiness(
+    invoiceId: string,
+    unitBusinessId: string,
+    opts: { type?: string; purpose?: string } = {},
+    transaction?: Transaction,
+  ) {
+    return this.repository.findByInvoiceAndUnitBusiness(
+      invoiceId,
+      unitBusinessId,
+      opts,
+      transaction,
+    );
+  }
+
   async removeBatchInvoice(
     id: string,
     externalTransaction?: Transaction,

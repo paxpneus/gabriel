@@ -233,7 +233,11 @@ export class ExpeditionScanLogService extends BaseService<
         throw new Error("Nota fiscal não carregada corretamente");
       }
 
-      await assertTransshipment(batchInvoice.invoice, unitBusiness);
+      await assertTransshipment(
+        batchInvoice.invoice,
+        unitBusiness,
+        invoiceRead.type as "INCOMING" | "OUTGOING",
+      );
 
       const scanUnitBusinessId: string = (invoiceRead as any).unit_business_id;
 
@@ -395,7 +399,11 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      await assertTransshipment(batchInvoices[0].invoice, unitBusiness);
+      await assertTransshipment(
+        batchInvoices[0].invoice,
+        unitBusiness,
+        batch.type as "INCOMING" | "OUTGOING",
+      );
 
       let remaining = quantity;
       const scanLogs: any[] = [];
@@ -541,7 +549,11 @@ export class ExpeditionScanLogService extends BaseService<
         );
       }
 
-      await assertTransshipment(batchInvoice.invoice, unitBusiness);
+      await assertTransshipment(
+        batchInvoice.invoice,
+        unitBusiness,
+        batch.type as "INCOMING" | "OUTGOING",
+      );
 
       // ── 5. Cria os ScanLogs ────────────────────────────────────────────────
       const scanLogs = Array.from({ length: quantity }, () => ({

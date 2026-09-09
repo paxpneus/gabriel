@@ -24,6 +24,7 @@ export async function ensureInvoiceUnitBusinessAttributes(
         type,
         status,
         batch_generated: false,
+        purpose: "REGULAR",
       },
     ],
   );

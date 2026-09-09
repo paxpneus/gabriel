@@ -672,9 +672,11 @@ export function setupAssociations() {
   });
 
   // Invoice -> Batch Invoices
-  Invoice.hasOne(ExpeditionBatchInvoice, {
+  // hasMany, não hasOne: uma nota de transbordo pode ter 2 (entrada + saída)
+  // na mesma unit_business — ver invoice_unit_business_attributes.purpose.
+  Invoice.hasMany(ExpeditionBatchInvoice, {
     foreignKey: "invoice_id",
-    as: "batchInvoice",
+    as: "batchInvoices",
   });
 
   ExpeditionBatchInvoice.belongsTo(Invoice, {

@@ -778,6 +778,10 @@ export async function upsertInvoiceFromXml(
     sourcePayload?: Record<string, unknown>;
     isCancelled?: boolean;
     invoiceType?: "INCOMING" | "OUTGOING";
+    /** Filial que buscou a nota (ex.: branchId da Tecinco resolvido pra
+     * unit_business) — usada pra detectar transbordo quando nem emitente
+     * nem destinatária da nota é uma unit_business nossa. */
+    fetchingUnitBusinessId?: string | null;
   },
 ): Promise<void> {
   const {
@@ -786,6 +790,7 @@ export async function upsertInvoiceFromXml(
     skipCrossConfig = false,
     allowUpdateFromAnyIntegration = false,
     invoiceType,
+    fetchingUnitBusinessId,
   } = options ?? {};
   const parsed = parser.parse(xmlContent);
 
@@ -1049,6 +1054,7 @@ export async function upsertInvoiceFromXml(
         {
           initialStatus: resolveInitialStatus(),
           invoiceType: options?.invoiceType,
+          fetchingUnitBusinessId,
         },
       )
       .catch((error: any) => {
@@ -1095,6 +1101,20 @@ export async function upsertInvoiceFromXml(
       existingInvoice.id,
       invoiceItemsForCreate,
     );
+
+    // A nota já existia (criada antes por outra filial/direção) — o
+    // createWithRelations original só roda 1x, na criação, então uma
+    // filial de transbordo que fetcha essa mesma nota depois (ex.: primeiro
+    // como entrada, depois como saída) nunca ganharia seu próprio attribute
+    // por esse caminho sem essa chamada.
+    if (fetchingUnitBusinessId && invoiceType) {
+      await invoiceService.ensureUnitBusinessAttributeForFetch(
+        existingInvoice.id,
+        fetchingUnitBusinessId,
+        invoiceType,
+        resolveInitialStatus(),
+      );
+    }
 
     invoice = await invoiceService.findByIdFullForAllUnits(existingInvoice.id);
 

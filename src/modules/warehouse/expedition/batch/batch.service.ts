@@ -170,9 +170,14 @@ export class ExpeditionBatchService extends BaseService<
 
       const invoices: FullInvoice[] = rawInvoices.map((invoice) => {
         const plain = invoice.get({ plain: true });
+        const attrs = plain.unitBusinessAttributes ?? [];
+        // Uma nota de transbordo pode ter 2 linhas aqui (entrada + saída) —
+        // casa pela direção pedida nesta chamada em vez de pegar a primeira.
+        const matched =
+          attrs.find((a: any) => a.type === type) ?? attrs[0] ?? null;
         return {
           ...plain,
-          unitBusinessAttributes: plain.unitBusinessAttributes?.[0] ?? null,
+          unitBusinessAttributes: matched,
         } as unknown as FullInvoice;
       });
 
@@ -224,10 +229,12 @@ export class ExpeditionBatchService extends BaseService<
       }
 
       if (alreadyBatched.length > 0 && notBatched.length === 0) {
-        const batchInvoice = await batchInvoicesService.findOne({
-          where: { invoice_id: invoices[0].id },
-          transaction: t,
-        });
+        const batchInvoice = await batchInvoicesService.findByInvoiceAndUnitBusiness(
+          invoices[0].id,
+          unitBusinessId,
+          { type },
+          t,
+        );
 
         if (!batchInvoice) {
           throw new Error("Lote não encontrado para notas já processadas");
@@ -254,9 +261,24 @@ export class ExpeditionBatchService extends BaseService<
         );
       }
 
+      const resolvedAttrs = [];
       for (const invoice of notBatched) {
-        await assertTransshipment(invoice, unitBusiness);
+        resolvedAttrs.push(
+          await assertTransshipment(
+            invoice,
+            unitBusiness,
+            type as "INCOMING" | "OUTGOING",
+          ),
+        );
       }
+
+      ensureSameBy(
+        resolvedAttrs,
+        (a) => a?.purpose ?? "REGULAR",
+        "Não é permitido misturar notas de transbordo com notas regulares no mesmo lote!",
+      );
+
+      const purpose = resolvedAttrs[0]?.purpose ?? "REGULAR";
 
       const batchType = type == "OUTGOING" ? "EXPEDITION" : "ENTRANCE";
 
@@ -281,6 +303,7 @@ export class ExpeditionBatchService extends BaseService<
         total_volumes_received: 0,
         integrations_id: invoices[0].integrations_id,
         type,
+        purpose,
         mode,
         transporters_id: invoices[0].transporter_id || null,
       };
@@ -341,21 +364,23 @@ export class ExpeditionBatchService extends BaseService<
         transaction: t,
       });
 
-      await assertTransshipment(invoice, unitBusiness);
+      const attr = await assertTransshipment(
+        invoice,
+        unitBusiness,
+        type as "INCOMING" | "OUTGOING",
+      );
+      const purpose = attr?.purpose ?? "REGULAR";
 
       // ── Verifica se já existe um batch_invoice para essa nota NESSA unit_business ──
-      const alreadyInBatch = await batchInvoicesService.findOne({
-        where: { invoice_id: invoice.id },
-        include: [
-          {
-            model: ExpeditionBatch,
-            as: "batch",
-            where: { unit_business_id: unitBusinessId },
-            required: true,
-          },
-        ],
-        transaction: t,
-      });
+      // Nota comum: bloqueia qualquer batch invoice já existente, igual hoje.
+      // Nota de transbordo: bloqueia só duplicata da MESMA direção/propósito —
+      // a perna oposta (entrada/saída) já existente é esperada e legítima.
+      const alreadyInBatch = await batchInvoicesService.findByInvoiceAndUnitBusiness(
+        invoice.id,
+        unitBusinessId,
+        purpose === "TRANSSHIPMENT" ? { type, purpose } : {},
+        t,
+      );
 
       if (alreadyInBatch) {
         if (alreadyInBatch.expedition_batch_id === batchId) {
@@ -376,6 +401,12 @@ export class ExpeditionBatchService extends BaseService<
         });
         if (!found) throw new Error("Lote não encontrado");
         if (found.status === "FINISHED") throw new Error("Lote já finalizado");
+
+        if (found.type !== type || (found as any).purpose !== purpose) {
+          throw new Error(
+            "Direção ou propósito da nota não corresponde ao lote informado!",
+          );
+        }
 
         if (
           found.mode === "REGULAR" &&
@@ -433,6 +464,7 @@ export class ExpeditionBatchService extends BaseService<
           total_volumes_received: 0,
           integrations_id: invoice.integrations_id,
           type,
+          purpose,
           transporters_id: invoice.transporter_id || null,
         };
 

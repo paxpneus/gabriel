@@ -67,7 +67,7 @@ class Invoice
   public sefaz_full_xml_last_query_at?: Date | null;
   public transporter?: Transporter;
 
-  public batchInvoice?: ExpeditionBatchInvoiceAttributes;
+  public batchInvoices?: ExpeditionBatchInvoiceAttributes[];
   public unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[]
 
   public readonly createdAt!: Date;

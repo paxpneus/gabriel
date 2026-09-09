@@ -14,6 +14,7 @@ export interface InvoiceUnitBusinessAttributesAttributes {
   unit_business_id: string;
   invoice_id: string;
   type: "INCOMING" | "OUTGOING";
+  purpose: "REGULAR" | "TRANSSHIPMENT";
   status: InvoiceUnitBusinessAttributesStatus;
   batch_generated?: boolean;
   createdAt?: Date;

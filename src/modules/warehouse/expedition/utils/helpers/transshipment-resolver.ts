@@ -1,11 +1,6 @@
-import { Transaction } from "sequelize";
 import { cleanDocument } from "../../../../../shared/utils/normalizers/document";
 import InvoiceUnitBusinessAttributes from "../../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
-import {
-  InvoiceUnitBusinessAttributesCreationAttributes,
-  InvoiceUnitBusinessAttributesStatus,
-} from "../../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
-import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
+import { resolveInvoicePurposeForUnitBusiness } from "../../../fiscal/invoices/invoice/helpers/transshipment-context";
 import invoiceRepository from "../../../fiscal/invoices/invoice/invoice.repository";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 
@@ -20,8 +15,9 @@ export async function assertTransshipment(
     cnpj: string;
     transshipment_allowed?: boolean;
   } | null,
-): Promise<void> {
-  if (!unitBusiness) return;
+  type: "INCOMING" | "OUTGOING",
+): Promise<InvoiceUnitBusinessAttributes | null> {
+  if (!unitBusiness) return null;
 
   if (!invoice.sender_cnpj || !invoice.receiver_cnpj) {
     throw new Error(
@@ -29,24 +25,21 @@ export async function assertTransshipment(
     );
   }
 
-  const unitCnpj = cleanDocument(unitBusiness.cnpj);
-  const senderCnpj = cleanDocument(invoice.sender_cnpj);
-  const receiverCnpj = cleanDocument(invoice.receiver_cnpj);
+  const { eligible, purpose } = resolveInvoicePurposeForUnitBusiness(
+    unitBusiness,
+    invoice,
+  );
 
-  const isSender = senderCnpj === unitCnpj;
-  const isReceiver = receiverCnpj === unitCnpj;
-
-  if (!unitBusiness.transshipment_allowed && !isSender && !isReceiver) {
+  if (!eligible) {
     throw new Error(
       "Leitura bloqueada: nota fiscal não pertence à sua unidade de negócio",
     );
   }
 
   // ─── Garante o invoice unit business attribute ──────────────────────────
-  const type = "INCOMING"
-  const status = "OPEN"
+  const status = "OPEN";
 
-  let unitBusinessId
+  let unitBusinessId;
 
   if (!unitBusiness.id) {
     const foundUnit = await unitBusinessService.findOne({
@@ -63,20 +56,22 @@ export async function assertTransshipment(
 
   const existing = await invoiceRepository.findInvoiceAttribute(
     invoice.id,
-    unitBusinessId
+    unitBusinessId,
+    type,
   );
 
-  if (existing) return;
+  if (existing) return existing;
 
-  await invoiceRepository.createInvoiceAttributes(
-    [
-      {
-        invoice_id: invoice.id,
-        unit_business_id: unitBusinessId,
-        type,
-        status,
-        batch_generated: false,
-      },
-    ],
-  );
+  const [created] = await invoiceRepository.createInvoiceAttributes([
+    {
+      invoice_id: invoice.id,
+      unit_business_id: unitBusinessId,
+      type,
+      status,
+      batch_generated: false,
+      purpose,
+    },
+  ]);
+
+  return created;
 }

@@ -38,9 +38,11 @@ import InvoiceFiscalItem from "../invoice-fiscal-item/invoice-fiscal-item.model"
 import eventService from "../../../../company/events/event/event.service";
 import redisService from "../../../../../shared/utils/base-models/base-redis";
 import InvoiceUnitBusinessAttributes from "../invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import { resolveInvoicePurposeForUnitBusiness } from "./helpers/transshipment-context";
 import { BlingApiFetchQueue } from "../../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { TCarUpsertQueue } from "../../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import userService from "../../../../company/users/users/user.service";
+import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import {
   decryptXml,
   isEncrypted,
@@ -114,7 +116,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           ],
         }),
         batchStatus: (value) => ({
-          "$batchInvoice.batch.status$": Array.isArray(value)
+          "$batchInvoices.batch.status$": Array.isArray(value)
             ? { [Op.in]: value }
             : value,
         }),
@@ -186,11 +188,15 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       transaction,
       initialStatus = "OPEN",
       invoiceType,
+      fetchingUnitBusinessId,
     }: {
       transaction?: Transaction;
       initialStatus?: InvoiceUnitBusinessAttributesStatus;
       mainUnitBusinessId?: string;
       invoiceType?: "INCOMING" | "OUTGOING";
+      /** Filial que buscou/fetchou a nota (ex.: branchId da Tecinco) — pode
+       * ser diferente de sender/receiver quando a nota é de transbordo. */
+      fetchingUnitBusinessId?: string | null;
     } = {},
   ): Promise<Invoice> {
     const t = transaction ?? (await sequelize.transaction());
@@ -205,9 +211,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         t,
       );
 
-      const cnpjMap = new Map(unitBusinesses.map((ub) => [ub.cnpj, ub.id]));
-      const senderUbId = cnpjMap.get(invoiceData.sender_cnpj);
-      const receiverUbId = cnpjMap.get(invoiceData.receiver_cnpj);
+      const unitBusinessByCnpj = new Map(unitBusinesses.map((ub) => [ub.cnpj, ub]));
+      const senderUbId = unitBusinessByCnpj.get(invoiceData.sender_cnpj)?.id;
+      const receiverUbId = unitBusinessByCnpj.get(invoiceData.receiver_cnpj)?.id;
 
       // ─── 2. Cria a invoice ───────────────────────────────────────────────
       const invoice = await this.repository.createInvoice(
@@ -261,8 +267,14 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         unitBusinessId: string,
         type: "INCOMING" | "OUTGOING",
         status: InvoiceUnitBusinessAttributesStatus,
+        purpose: "REGULAR" | "TRANSSHIPMENT" = "REGULAR",
       ) => {
-        const key = `${invoice.id}:${unitBusinessId}`;
+        // `type` entra na chave pra não descartar a 2ª linha quando
+        // senderUbId === receiverUbId (mesmo CNPJ como emitente e
+        // destinatário) — cenário raro, mas nesse caso as 2 chamadas de
+        // addAttr abaixo tinham a mesma unitBusinessId e só a primeira
+        // sobrevivia antes desse fix.
+        const key = `${invoice.id}:${unitBusinessId}:${type}:${purpose}`;
         if (seen.has(key)) return;
         seen.add(key);
         attributes.push({
@@ -271,20 +283,63 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           type,
           status,
           batch_generated: false,
+          purpose,
         });
       };
 
       if (senderUbId && receiverUbId) {
-        addAttr(senderUbId, "OUTGOING", "OPEN");
-        addAttr(receiverUbId, "INCOMING", initialStatus ?? "OPEN");
+        const senderUb = unitBusinessByCnpj.get(invoiceData.sender_cnpj)!;
+        const receiverUb = unitBusinessByCnpj.get(invoiceData.receiver_cnpj)!;
+        addAttr(
+          senderUbId,
+          "OUTGOING",
+          "OPEN",
+          resolveInvoicePurposeForUnitBusiness(senderUb, invoiceData).purpose,
+        );
+        addAttr(
+          receiverUbId,
+          "INCOMING",
+          initialStatus ?? "OPEN",
+          resolveInvoicePurposeForUnitBusiness(receiverUb, invoiceData).purpose,
+        );
       } else if (senderUbId) {
-        addAttr(senderUbId, invoiceType ?? "OUTGOING", initialStatus ?? "OPEN");
+        const senderUb = unitBusinessByCnpj.get(invoiceData.sender_cnpj)!;
+        addAttr(
+          senderUbId,
+          invoiceType ?? "OUTGOING",
+          initialStatus ?? "OPEN",
+          resolveInvoicePurposeForUnitBusiness(senderUb, invoiceData).purpose,
+        );
       } else if (receiverUbId) {
+        const receiverUb = unitBusinessByCnpj.get(invoiceData.receiver_cnpj)!;
         addAttr(
           receiverUbId,
           invoiceType ?? "INCOMING",
           initialStatus ?? "OPEN",
+          resolveInvoicePurposeForUnitBusiness(receiverUb, invoiceData).purpose,
         );
+      }
+
+      // ─── Filial que fetchou a nota, quando nem emitente nem destinatária ──
+      // (nota de transbordo de verdade: as duas partes comerciais são
+      // terceiros, nenhuma é uma unit_business nossa — reaproveita o mesmo
+      // seen/addAttr, então não duplica se coincidir com sender/receiver).
+      if (
+        fetchingUnitBusinessId &&
+        fetchingUnitBusinessId !== senderUbId &&
+        fetchingUnitBusinessId !== receiverUbId &&
+        invoiceType
+      ) {
+        const fetchingUb = await unitBusinessService.findById(fetchingUnitBusinessId);
+        if (fetchingUb) {
+          const { eligible, purpose } = resolveInvoicePurposeForUnitBusiness(
+            fetchingUb,
+            invoiceData,
+          );
+          if (eligible) {
+            addAttr(fetchingUnitBusinessId, invoiceType, initialStatus ?? "OPEN", purpose);
+          }
+        }
       }
 
       if (attributes.length > 0) {
@@ -314,6 +369,60 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       if (!isExternalTransaction) await t.rollback();
       throw err;
     }
+  }
+
+  /**
+   * Garante o InvoiceUnitBusinessAttributes de uma unit_business que
+   * fetchou/reprocessou uma nota JÁ existente (ex.: reenvio da Tecinco pra
+   * uma filial de transbordo, depois da criação inicial da invoice — que só
+   * cria attributes pra sender/receiver via createWithRelations). Diferente
+   * de assertTransshipment: roda num job de background, não numa ação do
+   * usuário, então nunca lança erro quando a filial não tem relação com a
+   * nota — só loga e não cria nada.
+   */
+  async ensureUnitBusinessAttributeForFetch(
+    invoiceId: string,
+    fetchingUnitBusinessId: string | null | undefined,
+    type: "INCOMING" | "OUTGOING",
+    status: InvoiceUnitBusinessAttributesStatus,
+  ): Promise<void> {
+    if (!fetchingUnitBusinessId) return;
+
+    const unitBusiness = await unitBusinessService.findById(fetchingUnitBusinessId);
+    if (!unitBusiness) return;
+
+    const invoice = await this.findById(invoiceId);
+    if (!invoice) return;
+
+    const { eligible, purpose } = resolveInvoicePurposeForUnitBusiness(
+      unitBusiness,
+      invoice,
+    );
+
+    if (!eligible) {
+      console.warn(
+        `[ensureUnitBusinessAttributeForFetch] unit_business ${fetchingUnitBusinessId} não é sender/receiver/transshipment_allowed pra invoice ${invoiceId} — attribute não criado`,
+      );
+      return;
+    }
+
+    const existing = await this.repository.findInvoiceAttribute(
+      invoiceId,
+      fetchingUnitBusinessId,
+      type,
+    );
+    if (existing) return;
+
+    await this.repository.createInvoiceAttributes([
+      {
+        invoice_id: invoiceId,
+        unit_business_id: fetchingUnitBusinessId,
+        type,
+        status,
+        batch_generated: false,
+        purpose,
+      },
+    ]);
   }
 
   /**
@@ -565,11 +674,22 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         bonded_invoice: invoice.number_system,
       });
 
-      if (invoice.batchInvoice) {
-        await batchInvoicesService.removeBatchInvoice(
-          invoice.batchInvoice.id,
-          t,
-        );
+      // Uma nota de transbordo pode ter 2 batchInvoices (entrada + saída) na
+      // mesma unit_business — remove só a que bate com a direção/propósito
+      // do atributo que está sendo cancelado, nunca a perna oposta em curso.
+      if (invoice.batchInvoices?.length) {
+        const attr = invoice.unitBusinessAttributes as any;
+        const toRemove = attr
+          ? invoice.batchInvoices.filter(
+              (bi: any) =>
+                bi.batch?.type === attr.type &&
+                (attr.purpose ? bi.batch?.purpose === attr.purpose : true),
+            )
+          : invoice.batchInvoices;
+
+        for (const bi of toRemove as any[]) {
+          await batchInvoicesService.removeBatchInvoice(bi.id, t);
+        }
       }
     });
   }
