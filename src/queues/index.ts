@@ -335,7 +335,7 @@ export function startAutomationWorkers() {
     "BLING_RECONCILER",
   ]);
 
-  reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  reconcilerQueue.scheduleRepeat({ every: 15 * 60 * 1000 });
 
   blingReconcilerQueue.scheduleRepeat({
     every: 2 * 60 * 60 * 1000,
@@ -437,7 +437,10 @@ export function startScrapingWorker() {
     { workless: false },
   );
 
-  mlScrapingQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
+  // Cada ciclo já leva ~2min pra iniciar + ~3min de execução — 5min sem
+  // folga entre execuções mantinha o job praticamente sempre ocupado.
+  // 10min dá uma janela real de descanso entre ciclos.
+  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
 
   const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
     new BlingManifestacaoService(),
