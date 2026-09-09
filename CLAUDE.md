@@ -470,6 +470,69 @@ explicitly reverted and replaced** with the current, much simpler design:
   silent-no-op-on-conflict behavior itself is unchanged — any orphan rows
   that already existed before this migration are not backfilled/cleaned up
   by it.
+- **Confirmed hitting this in production (Tecinco, this session)**: the
+  user manually mapped ~53 `ERROR_CATALOG` unmapped rows via the
+  create-product flow for one unit_business; ~4h later the same
+  `integrations_id` had 38 `ERROR_CATALOG` rows again, 34 of them the exact
+  same product (same `external_id`/name) as ones just mapped. Root cause
+  was this pre-`m268` orphan backlog, not a per-branch scoping issue —
+  `unit_businesses.integrations_id` is shared by every Tecinco filial (one
+  `integrations` row for the whole tenant) and Tecinco's `epctb_codigo` is
+  itself global (`/produtos?branch_ids=...` returns one row per code with
+  a `filiais` sub-array for per-branch stock/price), so the user's
+  assumption that mapping once should cover every Tecinco branch was
+  correct — that is not where the bug is. The actual sequence: a prior
+  (pre-`m268`) product deletion had already orphaned the `integration_mappings`
+  row for that `external_id`; the create-product flow created a brand-new
+  `Product` fine, but `createOrUpdateIntegrationMapping` silently no-op'd
+  against the stale orphan (still pointing at the deleted product's id)
+  instead of writing a mapping for the new product;
+  `resolveFromCreatedProduct` still deleted the unmapped row regardless, so
+  the manual mapping *looked* successful in the UI. On the next catalog
+  sync, `resolveProductByMappingOnly` found the orphan, tried to load its
+  `internal_id`, got nothing (product doesn't exist), so
+  `resolveProductWithMapping` returned null and the item was re-registered
+  as a brand new `UnmappedInvoiceProduct` — indistinguishable from "never
+  mapped" to anyone looking at the queue. Reproduced by querying the DB
+  directly: 20 of the 38 rows had a matching local `Product` (by
+  `id_system` = the unmapped row's `external_id`) with zero
+  `integration_mappings` of its own, while a stale mapping for that same
+  `external_id` pointed at a nonexistent `internal_id` — 21 such orphaned
+  `PRODUCT`/Tecinco mappings exist in total. **Still unfixed**: the
+  pre-existing orphan backlog needs a one-off cleanup (delete
+  `integration_mappings` rows whose `internal_id` has no matching row in
+  the table named by `entity_type`) before manual re-mapping of these
+  particular products can succeed — until that cleanup runs, re-attempting
+  create-product for the same `external_id` will now hit the `id_system`
+  conflict guard (`createProductFromTCarData`'s pre-check) and throw an
+  `UnrecoverableError` instead of silently repeating, since the *product*
+  already exists this time.
+- **Fixed this session — `createOrUpdateIntegrationMapping` used to also
+  block by `internal_id`, not just `external_id`.** Found via a second,
+  distinct production case (also Tecinco): a product already had a valid
+  (non-orphaned) mapping for `external_id=20517`; a `SupplierMapping` +
+  `UnmappedInvoiceProduct` existed for the *same physical product* under a
+  *different* `external_id=13216` (confirmed by the user: **normal on
+  Tecinco** — the same tire legitimately gets more than one `epctb_codigo`,
+  e.g. across filiais/duplicate catalog entries). Calling
+  `supplierMappingService.createFromUnmapped` for the `13216` row created
+  the `SupplierMapping` fine, but the old query —
+  `where: {entity_type, integrations_id, [Op.or]: [{internal_id}, {external_id}]}`
+  — matched the *existing* `20517` mapping purely by `internal_id`, so the
+  `13216` mapping was silently never created (just a `console.warn`, same
+  silent-no-op as the orphan case above but a different root cause: this
+  mapping wasn't orphaned, it just already existed for a different code).
+  Every subsequent catalog sync for `13216` kept re-registering it as
+  unmapped, forever, since nothing ever closed that specific loop. **Fixed**:
+  the existence check is now scoped to `external_id` only — a mapping is
+  only refused when *that exact* `external_id` already points at a
+  *different* `internal_id` (the real conflict this function exists to
+  prevent — silently reassigning one code to another product). The same
+  `internal_id` having other `external_id` rows in the same integration is
+  now explicitly allowed and expected, not blocked. Covered by
+  `src/modules/integrations/integration-mapping/__tests__/integration-mapping.service.test.ts`
+  (new this session) — in particular the case "mesmo internal_id já tem
+  mapping pra outro external_id: cria um novo mesmo assim".
 - **Controller has a CRITICAL auth gap — see scoping status above. Not
   fixed.**
 

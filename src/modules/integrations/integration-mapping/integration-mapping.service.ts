@@ -20,13 +20,15 @@ export class IntegrationMappingService extends BaseService<
     super(integrationMappingRepository);
   }
 
-  // Cria o mapeamento de integração de uma entidade — uma única vez. Um
-  // mapping já existente (por internal_id OU por external_id) nunca é
-  // atualizado, reapontado ou removido por aqui: resoluções automáticas
-  // (EAN, SKU, nome, id_system...) já causaram mappings errados sendo
-  // silenciosamente reapontados no passado, então a política agora é
-  // "criado uma vez pelo sistema, não é mais tocado" — qualquer correção
-  // precisa ser deliberada (migration/script manual), não automática.
+  // Cria o mapeamento de integração de uma entidade. Um external_id já
+  // mapeado nunca é reapontado pra outro internal_id (resoluções
+  // automáticas — EAN, SKU, nome, id_system... — já causaram mappings
+  // errados sendo silenciosamente reapontados no passado); qualquer
+  // correção disso precisa ser deliberada (migration/script manual), não
+  // automática. Mas um mesmo internal_id PODE ter várias linhas nessa
+  // integração — normal na Tecinco, que reaproveita/duplica epctb_codigo
+  // entre filiais/cadastros pro mesmo produto físico — então só bloqueia
+  // por external_id, nunca por internal_id sozinho.
   async createOrUpdateIntegrationMapping(
     mappingDto: IntegrationMappingCreationAttributes,
     transaction?: Transaction
@@ -34,18 +36,14 @@ export class IntegrationMappingService extends BaseService<
     const { entity_type, integrations_id, internal_id, external_id } = mappingDto;
 
     const existing = await this.repository.findOne({
-      where: {
-        entity_type,
-        integrations_id,
-        [Op.or]: [{ internal_id }, { external_id }],
-      },
+      where: { entity_type, integrations_id, external_id },
       transaction,
     });
 
     if (existing) {
-      if (existing.internal_id !== internal_id || existing.external_id !== external_id) {
+      if (existing.internal_id !== internal_id) {
         console.warn(
-          `[IntegrationMappingService] mapping já existe (entity_type=${entity_type}, integrations_id=${integrations_id}, internal_id=${existing.internal_id}, external_id=${existing.external_id}) — ignorando tentativa de reapontar para (internal_id=${internal_id}, external_id=${external_id})`,
+          `[IntegrationMappingService] external_id=${external_id} já mapeado (entity_type=${entity_type}, integrations_id=${integrations_id}) pro internal_id=${existing.internal_id} — ignorando tentativa de reapontar para internal_id=${internal_id}`,
         );
       }
       return existing;
