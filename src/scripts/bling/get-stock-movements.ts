@@ -99,6 +99,7 @@ import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import sequelize from "../../config/sequelize";
 import { setupAssociations } from "../../config/sequelize-associations";
 import stockMovementSourceDataService from "../../modules/inventory/stock/stock-movement-source-data/stock-movement-source-data.service";
+import { waitForBlingRateLimit } from "../../modules/handlers/bling/api/bling_api.service";
 
 
 chromiumExtra.use(StealthPlugin());
@@ -617,6 +618,11 @@ async function fetchLancamentosPage(
    `&dataFim=${encodeURIComponent(formatDateForBling(extractionDate))}` +
    `&tipoLancamento=&tipoOrigem=`;
 
+
+ // A Bling limita por CONTA, não por app/token — esse fetch por cookie
+ // conta pra mesma cota das chamadas via blingApi, por isso passa pelo
+ // mesmo espaçamento do Redis antes de disparar.
+ await waitForBlingRateLimit();
 
  const raw = await page.evaluate<PageFetchResult, string>(async (fetchUrl) => {
    try {

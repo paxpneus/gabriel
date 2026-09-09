@@ -55,7 +55,13 @@ const RESERVE_SLOT_SCRIPT = `
 // Enfileira (via sleep) até o horário reservado para essa chamada específica.
 // Substitui o antigo sliding-window log por um leaky-bucket com reserva de slot,
 // evitando rajadas e distribuindo as chamadas uniformemente no tempo.
-async function waitForBlingRateLimit(): Promise<void> {
+//
+// Exportada porque o limite da Bling é por CONTA inteira, não por app/token
+// (confirmado em developer.bling.com.br/limites) — os scrapers autenticados
+// por cookie (get-stock-movements.ts, nfe-manifest-web-scraping.service.ts)
+// batem na mesma cota mesmo não usando esta instância axios, então também
+// chamam esta função antes de cada request pra Bling.
+export async function waitForBlingRateLimit(): Promise<void> {
   const now = Date.now();
 
   const reservedSlot = Number(

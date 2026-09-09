@@ -190,10 +190,15 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   }
 
   private async reconcileStuckOrders(): Promise<void> {
+    // 10min provou ser curto demais em produção: o scraping ML tem seu
+    // próprio ciclo (start + execução) e às vezes não consegue casar o
+    // pedido a tempo, fazendo pedidos normais (ainda em trânsito) caírem
+    // aqui como "presos" antes da hora. Voltado pro valor original (30min)
+    // até revisarmos com dados reais quanto tempo o matching normal leva.
     const stuckOrders = await ordersService.findAll({
       where: {
         internal_status: "WAITING CHANNEL VALIDATION",
-        updatedAt: { [Op.lt]: new Date(Date.now() - 10 * 60 * 1000) },
+        updatedAt: { [Op.lt]: new Date(Date.now() - 30 * 60 * 1000) },
       },
       include: [
         {
@@ -269,7 +274,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     alertService.sendAlert({
       severity: "LOW",
       title: "ML Sync — pedidos presos sem coleta",
-      message: `${stuckOrders.length} pedido(s) em WAITING CHANNEL VALIDATION há mais de 10 min sem match no scraping. ${synced} tiveram o internal_status apenas sincronizado (já haviam mudado de situação na Bling).`,
+      message: `${stuckOrders.length} pedido(s) em WAITING CHANNEL VALIDATION há mais de 30 min sem match no scraping. ${synced} tiveram o internal_status apenas sincronizado (já haviam mudado de situação na Bling).`,
     });
   }
 }

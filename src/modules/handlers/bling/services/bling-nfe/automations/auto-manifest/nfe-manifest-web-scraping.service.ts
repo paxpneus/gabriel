@@ -7,6 +7,7 @@ import { BrowserContext, Page } from "playwright";
 import { chromium as chromiumExtra } from "playwright-extra";
 // @ts-ignore
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { waitForBlingRateLimit } from "../../../../api/bling_api.service";
 
 chromiumExtra.use(StealthPlugin());
 
@@ -139,6 +140,9 @@ export class BlingManifestacaoService {
     context: BrowserContext,
     page: Page,
   ): Promise<boolean> {
+    // A Bling limita por CONTA, não por app/token — essa navegação por
+    // cookie conta pra mesma cota das chamadas via blingApi.
+    await waitForBlingRateLimit();
     await page.goto(NOTAS_ENTRADA_URL, {
       waitUntil: "networkidle",
       timeout: 30_000,
@@ -205,6 +209,7 @@ export class BlingManifestacaoService {
   }
 
   private async doAutoLogin(page: Page): Promise<boolean> {
+    await waitForBlingRateLimit();
     await page.goto(LOGIN_URL, {
       waitUntil: "domcontentloaded",
       timeout: 30_000,
@@ -242,6 +247,7 @@ export class BlingManifestacaoService {
     }
 
     await page.waitForTimeout(4_000);
+    await waitForBlingRateLimit();
     await page.goto(NOTAS_ENTRADA_URL, {
       waitUntil: "networkidle",
       timeout: 30_000,
@@ -328,6 +334,7 @@ export class BlingManifestacaoService {
     await page.waitForTimeout(500);
 
     // 14. Clicar em "Manifestar"
+    await waitForBlingRateLimit();
     await page.click("#btnManifestarLote");
 
     // Se existir um modal de confirmação intermediário (abrirManifestar() pode
