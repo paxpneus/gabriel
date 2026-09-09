@@ -23,7 +23,7 @@ export interface IMailProvider {
 
 // NODE MAILER AELRT TYPES
 
-export type AlertSeverity = "CRITICAL" | "HIGH" | "MEDIUM";
+export type AlertSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 
 export type AlertChannel = "email" | "whatsapp";
 

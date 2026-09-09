@@ -4,12 +4,14 @@ export const SEVERITY_COLORS: Record<AlertSeverity, string> = {
   CRITICAL: "#D32F2F",
   HIGH: "#F57C00",
   MEDIUM: "#FBC02D",
+  LOW: "#9E9E9E",
 };
 
 export const SEVERITY_EMOJI: Record<AlertSeverity, string> = {
   CRITICAL: "🔴",
   HIGH: "🟠",
   MEDIUM: "🟡",
+  LOW: "ℹ️",
 };
 
 export function buildHtml(payload: AlertPayload): string {

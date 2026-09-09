@@ -298,7 +298,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
         `[MLOrderSyncQueue] SKU "${row.sku}" não encontrado no pedido Bling ${order.id_order_system}.`,
       );
       alertService.sendAlert({
-        severity: "MEDIUM",
+        severity: "LOW",
         title: "ML Sync — SKU sem match",
         message: `Pedido Bling ${order.id_order_system} não contém SKU "${row.sku}" vindo do ML. Requer revisão manual.`,
       });
@@ -349,7 +349,8 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
 
   /**
    * Remove job anterior (se existir) e cria novo job delayed na NFeQueue,
-   * agendado para 1 dia antes da data de coleta.
+   * agendado para o mesmo dia da data de coleta, às 07:00. Se já passou das
+   * 13:00 no dia da coleta, agenda para o dia seguinte às 07:00.
    */
   private async scheduleNfe(
     idOrderSystem: string,
@@ -432,19 +433,12 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
 
     await this.next.removeJob(jobId);
 
-    const isTomorrow = this.isNextDay(collectionDate);
-
     const MIN_DELAY_MS = 30_000;
 
-    const delay = isTomorrow
-      ? MIN_DELAY_MS
-      : Math.max(setDelayBasedOnDate(new Date(collectionDate)), MIN_DELAY_MS);
-
-    if (isTomorrow) {
-      console.log(
-        `[MLOrderSyncQueue] Coleta amanhã — NFe agendada imediatamente para pedido ${idOrderSystem}`,
-      );
-    }
+    const delay = Math.max(
+      setDelayBasedOnDate(new Date(collectionDate)),
+      MIN_DELAY_MS,
+    );
 
     await this.blingApi.patch(
       `/pedidos/vendas/${idOrderSystem}/situacoes/748748`,
@@ -466,21 +460,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       jobId,
       delay,
     );
-  }
-
-  private isNextDay(date: Date): boolean {
-    const tomorrow = new Date();
-    const tomorrowUTC = Date.UTC(
-      tomorrow.getUTCFullYear(),
-      tomorrow.getUTCMonth(),
-      tomorrow.getUTCDate() + 1,
-    );
-    const dateUTC = Date.UTC(
-      date.getUTCFullYear(),
-      date.getUTCMonth(),
-      date.getUTCDate(),
-    );
-    return dateUTC === tomorrowUTC;
   }
 
   private readonly SIBLING_WINDOW_MS = 10 * 60 * 1_000;

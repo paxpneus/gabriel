@@ -335,7 +335,7 @@ export function startAutomationWorkers() {
     "BLING_RECONCILER",
   ]);
 
-  reconcilerQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
+  reconcilerQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
 
   blingReconcilerQueue.scheduleRepeat({
     every: 2 * 60 * 60 * 1000,
@@ -437,7 +437,7 @@ export function startScrapingWorker() {
     { workless: false },
   );
 
-  mlScrapingQueue.scheduleRepeat({ every: 20 * 60 * 1000 });
+  mlScrapingQueue.scheduleRepeat({ every: 5 * 60 * 1000 });
 
   const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
     new BlingManifestacaoService(),

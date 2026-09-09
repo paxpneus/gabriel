@@ -193,7 +193,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     const stuckOrders = await ordersService.findAll({
       where: {
         internal_status: "WAITING CHANNEL VALIDATION",
-        updatedAt: { [Op.lt]: new Date(Date.now() - 0.5 * 60 * 60 * 1000) },
+        updatedAt: { [Op.lt]: new Date(Date.now() - 10 * 60 * 1000) },
       },
       include: [
         {
@@ -267,9 +267,9 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     }
 
     alertService.sendAlert({
-      severity: "MEDIUM",
+      severity: "LOW",
       title: "ML Sync — pedidos presos sem coleta",
-      message: `${stuckOrders.length} pedido(s) em WAITING CHANNEL VALIDATION há mais de 2h sem match no scraping. ${synced} tiveram o internal_status apenas sincronizado (já haviam mudado de situação na Bling).`,
+      message: `${stuckOrders.length} pedido(s) em WAITING CHANNEL VALIDATION há mais de 10 min sem match no scraping. ${synced} tiveram o internal_status apenas sincronizado (já haviam mudado de situação na Bling).`,
     });
   }
 }

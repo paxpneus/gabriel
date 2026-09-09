@@ -39,6 +39,9 @@ export class AlertService {
       `\n${"=".repeat(60)}\n${emoji} ALERT [${payload.severity}] ${payload.title}\n${"=".repeat(60)}`
     );
 
+    // LOW fica só no log — condição rotineira, não dispara email.
+    if (payload.severity === "LOW") return;
+
     Promise.race([
       this.doSend(payload),
       new Promise<void>((_, reject) =>

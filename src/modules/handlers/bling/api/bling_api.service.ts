@@ -10,12 +10,14 @@ import { redisConnection } from "../../../../shared/utils/base-models/base-redis
 let isRefreshing = false;
 let failedQueue: QueueItem[] = [];
 
-// Intervalo mínimo entre requests para a Bling (default: 1 req/s).
-// A Bling permite até 3 req/s, mas na prática está estourando 429 com
-// frequência mesmo a 2 req/s (intervalo de 500ms) — voltando pro intervalo
-// de 1s que era usado antes de 2026-08-04 (commit 7dc4bd26).
+// Intervalo mínimo entre requests para a Bling (default: ~0.66 req/s).
+// A Bling permite até 3 req/s, mas mesmo a 1 req/s (1000ms, commit
+// 93146820) o 429 continuou ocorrendo com frequência — aumentado pra
+// 1500ms. Se persistir mesmo assim, o próximo suspeito é tráfego fora
+// deste limiter (scripts de scraping com login por cookie, que não
+// passam pela instância `blingApi`).
 const BLING_RATE_LIMIT_INTERVAL_MS = Number(
-  process.env.BLING_RATE_LIMIT_INTERVAL_MS ?? 1000,
+  process.env.BLING_RATE_LIMIT_INTERVAL_MS ?? 1500,
 );
 const BLING_RATE_LIMIT_KEY = "rate-limit:bling:next-slot";
 
