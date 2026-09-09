@@ -276,7 +276,7 @@ describe("ReconcilerQueue", () => {
 
       expect(ordersService.update).toHaveBeenCalledTimes(1);
       expect(alertService.sendAlert).toHaveBeenCalledWith(
-        expect.objectContaining({ severity: "MEDIUM" }),
+        expect.objectContaining({ severity: "LOW" }),
       );
     });
   });

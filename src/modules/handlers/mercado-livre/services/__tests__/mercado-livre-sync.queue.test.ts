@@ -242,7 +242,7 @@ describe("MLOrderSyncQueue", () => {
       await queue.process(makeJob({ row: makeRow() }));
 
       expect(alertService.sendAlert).toHaveBeenCalledWith(
-        expect.objectContaining({ severity: "MEDIUM", title: "ML Sync — SKU sem match" }),
+        expect.objectContaining({ severity: "LOW", title: "ML Sync — SKU sem match" }),
       );
       expect(ordersService.update).not.toHaveBeenCalled();
     });
