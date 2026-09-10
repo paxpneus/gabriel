@@ -11,6 +11,7 @@ import {
 } from "./integration-mapping.types";
 import { entityRepositoryMap } from "./helpers/map-repository";
 import Integration from "../integrations/integrations.model";
+import productService from "../../inventory/products/services/product.service";
 
 export class IntegrationMappingService extends BaseService<
   IntegrationMapping,
@@ -67,6 +68,36 @@ export class IntegrationMappingService extends BaseService<
 
     const repository = entityRepositoryMap[entityType];
     return repository.findById(mapping.internal_id);
+  }
+
+  // Pra decidir, em lote, quais external_id (ex.: todo o catálogo Tecinco
+  // de uma sincronização) já têm um mapeamento VÁLIDO — não basta existir a
+  // linha em integration_mappings, ela pode ser órfã (internal_id sem
+  // Product correspondente, ver histórico de mapeamentos órfãos em
+  // CLAUDE.md). Só entity_type PRODUCT por enquanto (usa productService
+  // direto pra checar a existência em lote) — generalizar pra outros tipos
+  // se algum outro caller precisar.
+  async findValidExternalIdsSet(
+    integrations_id: string,
+  ): Promise<Set<string>> {
+    const mappings = await this.repository.findAll({
+      where: { entity_type: "PRODUCT", integrations_id },
+      attributes: ["external_id", "internal_id"],
+    });
+    if (!mappings.length) return new Set();
+
+    const internalIds = [...new Set(mappings.map((m) => m.internal_id))];
+    const existingProducts = await productService.findAll({
+      where: { id: { [Op.in]: internalIds } },
+      attributes: ["id"],
+    });
+    const existingProductIds = new Set(existingProducts.map((p) => p.id));
+
+    return new Set(
+      mappings
+        .filter((m) => existingProductIds.has(m.internal_id))
+        .map((m) => m.external_id),
+    );
   }
 
   async findExternalIdsMap(

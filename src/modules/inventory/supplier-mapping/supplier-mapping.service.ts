@@ -84,7 +84,7 @@ export class SupplierMappingService extends BaseService<
     productId: string;
     unmappedInvoiceProductId: string;
     supplierCnpj?: string;
-  }): Promise<SupplierMapping> {
+  }): Promise<SupplierMapping | null> {
     return sequelize.transaction(async (t) => {
       const unmapped = await unmappedInvoiceProductService.findById(
         params.unmappedInvoiceProductId,
@@ -93,6 +93,33 @@ export class SupplierMappingService extends BaseService<
 
       if (!unmapped) {
         throw new Error("Produto não mapeado não encontrado!");
+      }
+
+      // ERROR_CATALOG_DUPLICATE: o código é ambíguo por definição (colide
+      // com outro produto no catálogo Tecinco) — não faz sentido tentar
+      // criar um SupplierMapping pra ele (a validação de conflito
+      // bloquearia mesmo). Só cria o integration_mapping (produto Tecinco
+      // × produto sistema via external_id, que é sempre único
+      // independente da ambiguidade de sku/ean) e apaga o unmapped.
+      if (unmapped.type === "ERROR_CATALOG_DUPLICATE") {
+        if (!unmapped.integrations_id || !unmapped.external_id) {
+          throw new Error(
+            "Produto não mapeado duplicado sem integrations_id/external_id, não é possível mapear",
+          );
+        }
+        await integrationMappingService.createOrUpdateIntegrationMapping(
+          {
+            entity_type: "PRODUCT",
+            internal_id: params.productId,
+            integrations_id: unmapped.integrations_id,
+            external_id: unmapped.external_id,
+          },
+          t,
+        );
+        await unmappedInvoiceProductService.delete(unmapped.id, {
+          transaction: t,
+        });
+        return null;
       }
 
       const supplierProductCode = unmapped.ean ?? unmapped.sku;

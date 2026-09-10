@@ -251,4 +251,62 @@ describe("SupplierMappingService.createFromUnmapped", () => {
     ).not.toHaveBeenCalled();
     expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();
   });
+
+  it("unmapped ERROR_CATALOG_DUPLICATE: só cria o integration_mapping (código ambíguo, não tenta SupplierMapping), apaga o unmapped e retorna null", async () => {
+    (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      id: "unmapped-1",
+      ean: "EAN-1",
+      sku: "SKU-1",
+      integrations_id: "integration-1",
+      external_id: "90001",
+      type: "ERROR_CATALOG_DUPLICATE",
+    });
+
+    const result = await service.createFromUnmapped({
+      productId: "product-1",
+      unmappedInvoiceProductId: "unmapped-1",
+    });
+
+    expect(SupplierMapping.findOne).not.toHaveBeenCalled();
+    expect(SupplierMapping.create).not.toHaveBeenCalled();
+    expect(
+      integrationMappingService.createOrUpdateIntegrationMapping,
+    ).toHaveBeenCalledWith(
+      {
+        entity_type: "PRODUCT",
+        internal_id: "product-1",
+        integrations_id: "integration-1",
+        external_id: "90001",
+      },
+      expect.anything(),
+    );
+    expect(unmappedInvoiceProductService.delete).toHaveBeenCalledWith(
+      "unmapped-1",
+      expect.anything(),
+    );
+    expect(result).toBeNull();
+  });
+
+  it("unmapped ERROR_CATALOG_DUPLICATE sem external_id: lança erro claro, não cria nada nem apaga o unmapped", async () => {
+    (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      id: "unmapped-1",
+      ean: "EAN-1",
+      sku: "SKU-1",
+      integrations_id: "integration-1",
+      external_id: null,
+      type: "ERROR_CATALOG_DUPLICATE",
+    });
+
+    await expect(
+      service.createFromUnmapped({
+        productId: "product-1",
+        unmappedInvoiceProductId: "unmapped-1",
+      }),
+    ).rejects.toThrow(/duplicado sem integrations_id\/external_id/i);
+
+    expect(
+      integrationMappingService.createOrUpdateIntegrationMapping,
+    ).not.toHaveBeenCalled();
+    expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();
+  });
 });

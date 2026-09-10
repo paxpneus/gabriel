@@ -1,4 +1,4 @@
-import { Op, Transaction } from "sequelize";
+import { Op, Transaction, UniqueConstraintError } from "sequelize";
 import {
   ProductConfig,
   Product,
@@ -110,11 +110,23 @@ async function backfillSupplierMappingByEan(params: {
 
   const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
 
-  await SupplierMapping.create({
-    product_id: product.id,
-    supplier_product_code: ean,
-    integrations_id: integrationsId,
-  });
+  try {
+    await SupplierMapping.create({
+      product_id: product.id,
+      supplier_product_code: ean,
+      integrations_id: integrationsId,
+    });
+  } catch (err: any) {
+    if (err instanceof UniqueConstraintError) {
+      // Corrida: outra escrita criou um SupplierMapping com esse código
+      // entre o resolveProductByEan acima e este create — não é erro de
+      // infra, retry não ajuda.
+      throw new SupplierMappingConflictError(
+        `Não foi possível vincular: o código ${ean} já está mapeado (SupplierMapping) nessa integração pra outro produto. Encaminhe este erro para o time técnico investigar. [${logPrefix} — EAN=${ean}, produto atual id=${product.id}]`,
+      );
+    }
+    throw err;
+  }
   console.log(
     `${logPrefix} — EAN=${ean} não correspondia a nenhum produto/supplier mapping nessa integração — SupplierMapping criado vinculando ao produto id=${product.id}`,
   );
@@ -166,16 +178,38 @@ export async function ensureSupplierMappings(params: {
     const existing = await SupplierMapping.findOne({
       where: { supplier_product_code: code, integrations_id: integrationsId },
     });
-    if (!existing) {
-      if (code) {
+    if (existing) {
+      if (existing.product_id !== productId) {
+        // Código já mapeado pra um produto DIFERENTE nessa integração —
+        // não sobrescreve/duplica, erro de dado pra revisão manual (quem
+        // chama decide como reagir, ver tecinco-api-fetch.queue.ts).
+        const [conflictingProduct, currentProduct] = await Promise.all([
+          Product.findByPk(existing.product_id, { attributes: ["name"] }),
+          Product.findByPk(productId, { attributes: ["name"] }),
+        ]);
+        throw new SupplierMappingConflictError(
+          `Não foi possível vincular: o código ${code} já está mapeado (SupplierMapping) pro produto "${conflictingProduct?.name ?? existing.product_id}" nessa integração, mas está sendo usado agora pro produto "${currentProduct?.name ?? productId}". Encaminhe este erro para o time técnico investigar. [${logPrefix} — ${label}=${code}, produto conflitante id=${existing.product_id}, produto atual id=${productId}]`,
+        );
+      }
+      continue; // já mapeado pro mesmo produto — nada a fazer
+    }
+    if (!code) continue;
+    try {
       await SupplierMapping.create({
         product_id: productId,
         supplier_cnpj: supplierCnpj,
         supplier_product_code: code,
         integrations_id: integrationsId,
       });
-      }
       console.log(`${logPrefix} — SupplierMapping criado: ${label}=${code}`);
+    } catch (err: any) {
+      if (err instanceof UniqueConstraintError) {
+        // Corrida: outra escrita criou entre o findOne acima e este create.
+        throw new SupplierMappingConflictError(
+          `Não foi possível vincular: o código ${code} já está mapeado (SupplierMapping) nessa integração pra outro produto. Encaminhe este erro para o time técnico investigar. [${logPrefix} — ${label}=${code}, produto atual id=${productId}]`,
+        );
+      }
+      throw err;
     }
   }
 }
@@ -293,6 +327,19 @@ export class EanConflictError extends Error {
   }
 }
 
+// Mesma natureza do EanConflictError acima, mas especificamente pra
+// SupplierMapping: só pode existir uma linha de SupplierMapping por
+// (integrations_id, supplier_product_code) — ver ensureSupplierMappings/
+// backfillSupplierMappingByEan e o índice único parcial
+// product_supplier_maps_integrations_id_code_unique (m263) + trigger
+// trigger_prevent_duplicate_supplier_mapping (m272).
+export class SupplierMappingConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SupplierMappingConflictError";
+  }
+}
+
 // Garante que nenhum dos EANs candidatos já pertence, NA MESMA UNIT
 // BUSINESS, a um product OU está vinculado via SupplierMapping, NA MESMA
 // INTEGRAÇÃO, a um product diferente do que estamos criando/atualizando.
@@ -367,6 +414,44 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
       await conflictingMapping.destroy({ transaction });
     }
   }
+}
+
+// Verifica, ao vivo (sem depender de nenhum índice/flag pré-calculado), se
+// um código (sku ou gtin) já pertence a OUTRO produto dentro da MESMA
+// integração — via ProductConfig (em qualquer unit_business da integração)
+// ou SupplierMapping. Usado só na criação manual de produto a partir de um
+// unmapped (createProductFromTCarData, em tecinco-api-fetch.queue.ts) pra
+// decidir se o campo pode ser preenchido com segurança ou precisa ficar
+// vazio — NÃO bloqueia a criação do produto (o produto é criado mesmo
+// assim, só sem esse campo/sem SupplierMapping pra ele); o único lugar que
+// efetivamente barra com erro por código ambíguo é a criação do
+// SupplierMapping em si (ver SupplierMappingConflictError). Não recebe
+// productId pra excluir — nesse ponto o produto ainda não existe, então
+// qualquer ocorrência já é "outro produto" por definição.
+export async function isCodeOwnedByAnotherProduct(params: {
+  code: string;
+  field: "sku" | "gtin";
+  integrationsId: string;
+}): Promise<boolean> {
+  const { code, field, integrationsId } = params;
+
+  const unitBusinesses = await UnitBusiness.findAll({
+    where: { integrations_id: integrationsId },
+    attributes: ["id"],
+  });
+  const unitBusinessIds = unitBusinesses.map((ub) => ub.id);
+
+  const conflictingConfig = unitBusinessIds.length
+    ? await ProductConfig.findOne({
+        where: { [field]: code, unit_business_id: { [Op.in]: unitBusinessIds } },
+      })
+    : null;
+  if (conflictingConfig) return true;
+
+  const conflictingMapping = await SupplierMapping.findOne({
+    where: { supplier_product_code: code, integrations_id: integrationsId },
+  });
+  return !!conflictingMapping;
 }
 
 export async function resolveProductByEanWithStock(params: {

@@ -41,7 +41,9 @@ import {
   resolveProductBySupplierMapping,
   assertEanNotOwnedByAnotherProduct,
   isProductOwnedByIntegration,
+  isCodeOwnedByAnotherProduct,
   EanConflictError,
+  SupplierMappingConflictError,
 } from "./helpers/product.helpers";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
@@ -137,6 +139,10 @@ export interface TCarUpsertJobPayload {
   data: unknown;
   /** Criação manual de produto a partir de um UnmappedInvoiceProduct — ver processProduct */
   create?: boolean;
+  /** Calculado no migrateProdutos: código de fábrica duplicado no catálogo Tecinco completo */
+  skuDuplicated?: boolean;
+  /** Calculado no migrateProdutos: EAN duplicado no catálogo Tecinco completo */
+  eanDuplicated?: boolean;
 }
 
 export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
@@ -251,6 +257,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       case "product":
         await this.processProduct(action, data as TCarProdutoPayload, branchId, {
           create: !!job.data.create,
+          skuDuplicated: !!job.data.skuDuplicated,
+          eanDuplicated: !!job.data.eanDuplicated,
         });
         break;
 
@@ -269,7 +277,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     action: TCarAction,
     data: TCarProdutoPayload,
     branchId?: number,
-    opts: { create?: boolean } = {},
+    opts: { create?: boolean; skuDuplicated?: boolean; eanDuplicated?: boolean } = {},
   ): Promise<void> {
     const systemId = String(data.epctb_codigo);
     const logPrefix = `[TCAR_UPSERT][processProduct] id_system=${systemId}`;
@@ -350,8 +358,11 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           ];
 
     const integrations = await getTCarIntegration("Tecinco");
-    const ean = normalizeEan(data.epctb_ean);
-    const codigoFabrica = data.epctb_codigofabrica
+    // let (não const): sanitizados mais abaixo quando o produto é criado
+    // manualmente (opts.create) a partir de um unmapped e o código já
+    // pertence a outro produto na mesma integração — ver isCodeOwnedByAnotherProduct.
+    let ean = normalizeEan(data.epctb_ean);
+    let codigoFabrica = data.epctb_codigofabrica
       ? String(data.epctb_codigofabrica).trim()
       : undefined;
 
@@ -432,20 +443,46 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       logPrefix,
     );
 
+    // Duplicado no catálogo Tecinco completo (calculado no migrateProdutos,
+    // ver TCarUpsertJobPayload.skuDuplicated/eanDuplicated) — auto-mapear
+    // por código de fábrica/EAN seria ambíguo, então o fallback nem tenta.
+    const isDuplicatedInCatalog = !!(opts.skuDuplicated || opts.eanDuplicated);
+
+    // skuOmitted/eanOmitted: decide, em qualquer ponto da função daqui pra
+    // frente, se o ProductConfig/SupplierMapping deve deixar esse campo de
+    // fora (sem bloquear nada, só não grava o código ambíguo). Começa
+    // igual às flags de duplicidade do catálogo (produto já mapeado, sync
+    // normal); no branch opts.create abaixo, a checagem ao vivo
+    // (isCodeOwnedByAnotherProduct) pode também marcar como true e zerar
+    // codigoFabrica/ean — depois disso o resto da função (criação +
+    // loop de filiais, que reusa essas mesmas variáveis) já reflete a
+    // decisão automaticamente. Calculado ANTES do resolveProductWithMapping
+    // abaixo de propósito: esse resolve já faz um backfill de SupplierMapping
+    // pelo EAN internamente (ver backfillSupplierMappingByEan), então o EAN
+    // duplicado precisa estar omitido ali também — não só no loop de filiais
+    // mais abaixo — senão a mesma ambiguidade que o resto da função evita
+    // ainda vazava um SupplierMapping criado por esse caminho mais cedo.
+    let skuOmitted = !!opts.skuDuplicated;
+    let eanOmitted = !!opts.eanDuplicated;
+
     // ─── Resolve produto SÓ por integration mapping ────────────────────────────
     let product = await resolveProductWithMapping({
       unitBusinessId: operationUnitBusiness.id,
       systemId,
-      ean,
+      ean: eanOmitted ? undefined : ean,
       logPrefix,
     });
 
-    // Sem mapping ainda: antes de criar (opts.create) ou registrar unmapped,
-    // tenta auto-mapear pra um produto físico já existente pelo SKU
-    // (codigoFabrica == ProductConfig.sku) — pode ter sido criado por outra
-    // integração (ex.: Bling). Tecinco não tem conceito de KIT, então isso
-    // sempre roda quando não tem mapping ainda.
-    if (!product) {
+    // Sem mapping ainda: antes de registrar unmapped, tenta auto-mapear pra
+    // um produto físico já existente pelo SKU (codigoFabrica ==
+    // ProductConfig.sku) — pode ter sido criado por outra integração (ex.:
+    // Bling). Tecinco não tem conceito de KIT, então isso sempre roda
+    // quando não tem mapping ainda, a não ser que o código esteja
+    // duplicado no catálogo Tecinco (ambíguo — ver isDuplicatedInCatalog).
+    // NUNCA roda em opts.create: criação manual disparada pelo usuário é
+    // pra criar mesmo, não pra tentar reaproveitar/mapear em cima de um
+    // produto existente por trás — se o usuário mandou criar, cria.
+    if (!product && !isDuplicatedInCatalog && !opts.create) {
       product = await this.autoMapExistingProductBySku(
         codigoFabrica,
         systemId,
@@ -457,6 +494,39 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     if (!product) {
       if (opts.create) {
         // ─── Criação manual disparada via unmapped (POST .../create-product) ──
+        // Checagem ao vivo (não depende de skuDuplicated/eanDuplicated do
+        // payload — esse enqueue é direto do endpoint manual, mas pode não
+        // carregar as flags do jeito granular que esta checagem precisa):
+        // se o código já pertence a OUTRO produto em qualquer unit_business
+        // dessa integração, não bloqueia a criação — só cria sem esse campo
+        // (nem SupplierMapping pra ele), igual o sync normal faz pra
+        // produto já mapeado (ver comentário no loop de filiais abaixo). O
+        // único lugar que efetivamente dá erro por código ambíguo é a
+        // criação do SupplierMapping em si (SupplierMappingConflictError,
+        // ver ensureSupplierMappings) — não a criação do produto.
+        if (codigoFabrica && (await isCodeOwnedByAnotherProduct({
+          code: codigoFabrica,
+          field: "sku",
+          integrationsId: integrations.id,
+        }))) {
+          console.warn(
+            `${logPrefix} — codigoFabrica=${codigoFabrica} já pertence a outro produto nessa integração — produto criado sem sku`,
+          );
+          codigoFabrica = undefined;
+          skuOmitted = true;
+        }
+        if (ean && (await isCodeOwnedByAnotherProduct({
+          code: ean,
+          field: "gtin",
+          integrationsId: integrations.id,
+        }))) {
+          console.warn(
+            `${logPrefix} — ean=${ean} já pertence a outro produto nessa integração — produto criado sem ean`,
+          );
+          ean = undefined;
+          eanOmitted = true;
+        }
+
         // Cria o Product+ProductConfig+IntegrationMapping e cai pro resto da
         // função normalmente — dali em diante ela já trata `product`
         // genericamente (grupo/subgrupo, estoque por filial, etc).
@@ -465,6 +535,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           systemId,
           ean,
           codigoFabrica,
+          skuOmitted,
           integrations,
           operationUnitBusiness,
           filiaisToProcess,
@@ -474,15 +545,28 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
         // unique_ean_integration_null_invoice é UNIQUE(ean, integrations_id)
         // WHERE invoice_id IS NULL — dois systemIds diferentes com o mesmo EAN
-        // na mesma integração batem nesse índice mesmo com sku diferente,
-        // então o dedup precisa checar por ean também (sempre escopado à
-        // integração, já que o mesmo EAN pode legitimamente existir em
-        // integrações diferentes).
+        // na mesma integração batem nesse índice mesmo com external_id
+        // diferente, então o dedup precisa checar por ean também (sempre
+        // escopado à integração, já que o mesmo EAN pode legitimamente
+        // existir em integrações diferentes). A busca usa external_id (não
+        // sku) como identidade estável — sku aqui é só o código de fábrica
+        // pra exibição, não serve mais como chave de lookup.
+        const skuToStore = codigoFabrica ?? data.epctb_coded ?? null;
+        const unmappedType: "ERROR_CATALOG" | "ERROR_CATALOG_DUPLICATE" =
+          isDuplicatedInCatalog ? "ERROR_CATALOG_DUPLICATE" : "ERROR_CATALOG";
+        const reason = isDuplicatedInCatalog
+          ? `Este código aparece duplicado no catálogo da Tecinco (${[
+              opts.skuDuplicated && "sku",
+              opts.eanDuplicated && "ean",
+            ]
+              .filter(Boolean)
+              .join(", ")}) — mais de um produto usa o mesmo valor, então não dá pra mapear automaticamente com segurança. Precisa de revisão manual.`
+          : "Produto novo, precisa de mapeamento manual";
         const existingUnmapped = await UnmappedInvoiceProduct.findOne({
           where: {
             invoice_id: null,
             integrations_id: integrations.id,
-            ...(ean ? { [Op.or]: [{ sku: systemId }, { ean }] } : { sku: systemId }),
+            ...(ean ? { [Op.or]: [{ external_id: systemId }, { ean }] } : { external_id: systemId }),
           },
         });
         if (existingUnmapped) {
@@ -491,11 +575,12 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           // que a Tecinco manda — em especial external_id, sem o qual o
           // endpoint de criar produto não funciona pra essa linha.
           await existingUnmapped.update({
-            sku: systemId,
+            sku: skuToStore,
             ean: ean ?? null,
             external_id: systemId,
             product_name: data.epctb_nome?.trim() ?? null,
-            type: "ERROR_CATALOG",
+            type: unmappedType,
+            reason,
           });
           console.log(
             `${logPrefix} — unmapped já existente atualizado (external_id/dados sincronizados)`,
@@ -504,13 +589,13 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           await UnmappedInvoiceProduct.create({
             invoice_id: null,
             integrations_id: integrations.id,
-            sku: systemId,
+            sku: skuToStore,
             ean: ean ?? null,
             external_id: systemId,
             product_name: data.epctb_nome?.trim() ?? null,
             quantity: 0,
-            reason: "Produto novo, precisa de mapeamento manual",
-            type: "ERROR_CATALOG",
+            reason,
+            type: unmappedType,
             status: "UNMAPPED",
           });
           console.log(
@@ -581,8 +666,12 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             {
               product_id: product.id,
               unit_business_id: unitBusiness.id,
-              sku: codigoFabrica ?? systemId,
-              gtin: ean ?? undefined,
+              // Produto já tem identidade resolvida (integration_mapping) —
+              // duplicidade de sku/ean no catálogo Tecinco não bloqueia o
+              // sync dele, só não grava o código ambíguo como se fosse
+              // confiável (omite o campo, não sobrescreve com o systemId).
+              ...(skuOmitted ? {} : { sku: codigoFabrica ?? systemId }),
+              ...(eanOmitted ? {} : { gtin: ean ?? undefined }),
               price: filial.preco,
               supplier_cost_price: entryUnitCost,
               average_cost: newAverageCost,
@@ -604,14 +693,29 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             { conflictFields: ["product_id", "unit_business_id"] },
           );
 
-          await ensureSupplierMappings({
-            productId: product.id,
-            supplierCnpj,
-            ean,
-            codigoFabrica,
-            unitBusinessId: unitBusiness.id,
-            logPrefix,
-          });
+          try {
+            await ensureSupplierMappings({
+              productId: product.id,
+              supplierCnpj,
+              // Idem ProductConfig acima: código sinalizado/detectado como
+              // ambíguo não é confiável pra vincular via SupplierMapping
+              // (mesmo motivo do fallback não usar).
+              ean: eanOmitted ? undefined : ean,
+              codigoFabrica: skuOmitted ? undefined : codigoFabrica,
+              unitBusinessId: unitBusiness.id,
+              logPrefix,
+            });
+          } catch (error: any) {
+            if (error instanceof SupplierMappingConflictError) {
+              alertService.sendAlert({
+                severity: "CRITICAL",
+                title: "Conflito de SupplierMapping entre produtos (Tecinco)",
+                message: `${error.message} | systemId=${systemId} | filial=${filialNumber}`,
+              });
+              throw new UnrecoverableError(error.message);
+            }
+            throw error;
+          }
         } else {
           console.warn(
             `${logPrefix} — CNPJ do fornecedor não resolvível para filial=${filialNumber} — SupplierMapping não registrado`,
@@ -732,8 +836,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           {
             product_id: product.id,
             unit_business_id: unitBusiness.id,
-            sku: codigoFabrica ?? systemId,
-            gtin: ean ?? undefined,
+            // Ver comentário equivalente no branch "outra integração" acima.
+            ...(skuOmitted ? {} : { sku: codigoFabrica ?? systemId }),
+            ...(eanOmitted ? {} : { gtin: ean ?? undefined }),
             price: filial.preco,
             supplier_cost_price: entryUnitCost,
             average_cost: newAverageCost,
@@ -758,14 +863,27 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       );
 
       // ─── SupplierMappings ───────────────────────────────────────────────────
-      await ensureSupplierMappings({
-        productId: product.id,
-        supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
-        ean,
-        codigoFabrica,
-        unitBusinessId: unitBusiness.id,
-        logPrefix,
-      });
+      // Ver comentário equivalente no branch "outra integração" acima.
+      try {
+        await ensureSupplierMappings({
+          productId: product.id,
+          supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
+          ean: eanOmitted ? undefined : ean,
+          codigoFabrica: skuOmitted ? undefined : codigoFabrica,
+          unitBusinessId: unitBusiness.id,
+          logPrefix,
+        });
+      } catch (error: any) {
+        if (error instanceof SupplierMappingConflictError) {
+          alertService.sendAlert({
+            severity: "CRITICAL",
+            title: "Conflito de SupplierMapping entre produtos (Tecinco)",
+            message: `${error.message} | systemId=${systemId} | filial=${filialNumber}`,
+          });
+          throw new UnrecoverableError(error.message);
+        }
+        throw error;
+      }
     }
   }
 
@@ -824,6 +942,11 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     systemId: string;
     ean: string | undefined;
     codigoFabrica: string | undefined;
+    /** true quando codigoFabrica foi zerado por já pertencer a outro
+     * produto na mesma integração (ver isCodeOwnedByAnotherProduct em
+     * processProduct) — nesse caso o produto deve ficar mesmo sem sku, sem
+     * cair pro fallback de usar o systemId como sku. */
+    skuOmitted: boolean;
     integrations: Awaited<ReturnType<typeof getTCarIntegration>>;
     operationUnitBusiness: UnitBusiness;
     filiaisToProcess: Array<{
@@ -839,6 +962,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       systemId,
       ean,
       codigoFabrica,
+      skuOmitted,
       integrations,
       operationUnitBusiness,
       filiaisToProcess,
@@ -879,7 +1003,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         integrations_id: integrations.id,
         config: {
           unit_business_id: operationUnitBusiness.id,
-          sku: codigoFabrica ?? systemId,
+          ...(skuOmitted ? {} : { sku: codigoFabrica ?? systemId }),
           gtin: ean,
           price: matchingFilial?.preco ?? 0,
         },
@@ -1207,8 +1331,14 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       // ─── Produto não encontrado → ignora item ─────────────────────────────────
       if (!product) {
         console.warn(`${logPrefix} — produto não encontrado, ignorando item`);
+        const skuToStore =
+          codigoFabrica ??
+          (tcarPayload?.epctb_coded
+            ? String(tcarPayload.epctb_coded).trim()
+            : undefined) ??
+          null;
         unmappedItems.push({
-          sku: systemId,
+          sku: skuToStore,
           gtin: ean ?? null,
           qty: Number(item.epeit_qtdade ?? 0),
           xProd: item.produto_nome ?? null,
@@ -1277,15 +1407,33 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       }
 
       // ─── SupplierMappings ─────────────────────────────────────────────────────
-      await ensureSupplierMappings({
-        productId: product.id,
-        supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
-        ean,
-        codigoFabrica,
-        unitBusinessId: unitBusiness.id,
-        logPrefix,
-        systemId,
-      });
+      // Erro de conflito aqui só afeta este item da nota — não deve abortar
+      // a nota inteira (mesmo padrão do eanConflict logo acima), então só
+      // alerta e segue pros próximos itens em vez de propagar.
+      try {
+        await ensureSupplierMappings({
+          productId: product.id,
+          supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
+          ean,
+          codigoFabrica,
+          unitBusinessId: unitBusiness.id,
+          logPrefix,
+          systemId,
+        });
+      } catch (error: any) {
+        if (error instanceof SupplierMappingConflictError) {
+          alertService.sendAlert({
+            severity: "CRITICAL",
+            title: "Conflito de SupplierMapping entre produtos (Tecinco)",
+            message: `${error.message} | systemId=${systemId}`,
+          });
+          console.warn(
+            `${logPrefix} — SupplierMapping não registrado por conflito de código`,
+          );
+        } else {
+          throw error;
+        }
+      }
 
       operationalItems.push({
         product_id: product.id,

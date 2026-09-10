@@ -5,6 +5,8 @@
  * Usado tanto pelo script de migração full quanto pelo TCarSyncQueue (sync incremental).
  */
 
+import * as fs from "fs";
+import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { Queue } from "bullmq";
 import { TCarProdutoService } from "../../modules/handlers/tecinco/service/produtos/produtos.service";
@@ -14,6 +16,14 @@ import {
   TCarUpsertQueue,
   TCarUpsertJobPayload,
 } from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { getTCarIntegration } from "../../modules/handlers/tecinco/api/tecinco_api";
+import { normalizeEan } from "../../modules/handlers/tecinco/queues/helpers/product.helpers";
+import integrationMappingService from "../../modules/integrations/integration-mapping/integration-mapping.service";
+import {
+  fetchTecincoCatalog,
+  CATALOG_OUTPUT_PATH,
+  TecincoCatalogItem,
+} from "./dump-tecinco-catalog";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -120,6 +130,78 @@ export async function* paginateTCar<T>(
   }
 }
 
+// ─── Camada de segurança: dedup dentro do catálogo Tecinco ───────────────────
+// A Tecinco reaproveita/duplica epctb_codigofabrica (com fallback pro campo
+// epctb_coded quando não tem código de fábrica) e epctb_ean entre produtos
+// físicos completamente diferentes (confirmado em produção — ver "Auto-map
+// by EAN across integrations" no CLAUDE.md). Antes de enfileirar um produto
+// sem mapeamento ainda pro processProduct, verificamos se algum desses 2
+// códigos colide com outro produto do catálogo — se colidir, o
+// auto-mapeamento por código de fábrica/SupplierMapping seria ambíguo,
+// então a linha nunca chega a virar job: vira ERROR_CATALOG_DUPLICATE em
+// unmapped_invoice_products pra revisão manual.
+
+interface TecincoDuplicateValueSets {
+  sku: Set<string>;
+  ean: Set<string>;
+}
+
+function normalizeCatalogCode(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+// "sku" pra fins de detecção de duplicidade = código de fábrica, com
+// epctb_coded só como fallback quando não tem código de fábrica — mesma
+// regra usada pra decidir o sku persistido em UnmappedInvoiceProduct.
+function effectiveSku(item: { sku?: string | null; coded?: string | null }): string | undefined {
+  return normalizeCatalogCode(item.sku) ?? normalizeCatalogCode(item.coded);
+}
+
+// Só valores que aparecem em mais de um produto entram nos sets — um valor
+// repetido 2x ou 200x é igualmente ambíguo pra auto-mapear, não tem "muito
+// comum, deve ser só um preenchimento padrão" que torne isso seguro (foi
+// exatamente esse tipo de valor reaproveitado que causou o incidente real
+// que motivou esta camada).
+export function buildTecincoDuplicateValueSets(
+  items: TecincoCatalogItem[],
+): TecincoDuplicateValueSets {
+  const counts = {
+    sku: new Map<string, number>(),
+    ean: new Map<string, number>(),
+  };
+
+  for (const item of items) {
+    const sku = effectiveSku(item);
+    const ean = normalizeEan(item.ean ?? undefined);
+    if (sku) counts.sku.set(sku, (counts.sku.get(sku) ?? 0) + 1);
+    if (ean) counts.ean.set(ean, (counts.ean.get(ean) ?? 0) + 1);
+  }
+
+  const toDuplicateSet = (m: Map<string, number>) =>
+    new Set([...m.entries()].filter(([, n]) => n > 1).map(([v]) => v));
+
+  return {
+    sku: toDuplicateSet(counts.sku),
+    ean: toDuplicateSet(counts.ean),
+  };
+}
+
+// Pra um produto específico, quais dos seus 2 códigos colidem com outro
+// produto do catálogo — vazio significa que é seguro auto-mapear por
+// código de fábrica/SupplierMapping.
+export function findTecincoCollidingFields(
+  item: { coded?: string | null; sku?: string | null; ean?: string | null },
+  sets: TecincoDuplicateValueSets,
+): string[] {
+  const collided: string[] = [];
+  const sku = effectiveSku(item);
+  const ean = normalizeEan(item.ean ?? undefined);
+  if (sku && sets.sku.has(sku)) collided.push(`sku=${sku}`);
+  if (ean && sets.ean.has(ean)) collided.push(`ean=${ean}`);
+  return collided;
+}
+
 // ─── Etapas ───────────────────────────────────────────────────────────────────
 
 export async function migrateProdutos(
@@ -147,6 +229,34 @@ export async function migrateProdutos(
   const primaryBranchId = branchIds[0];
   const branchIdsParam = branchIds.join(",");
   let count = 0;
+  let duplicateCount = 0;
+
+  // ─── Pré-check: catálogo completo + índice de duplicidade ────────────────
+  // Sempre o catálogo INTEIRO da Tecinco (todos os grupos de pneu, ignora
+  // `alteradoDesde` e o filtro `grupos` deste run) — uma duplicidade pode
+  // estar num produto fora do escopo desta sincronização específica. Limpa
+  // qualquer JSON remanescente de uma execução anterior antes de começar, e
+  // apaga o que este run gerou assim que o índice está pronto — o arquivo é
+  // só um artefato intermediário, não deve sobrar no disco.
+  if (fs.existsSync(CATALOG_OUTPUT_PATH)) {
+    fs.unlinkSync(CATALOG_OUTPUT_PATH);
+  }
+
+  console.log("  🔍 Verificando duplicidade no catálogo Tecinco completo...");
+  const fullCatalog = await fetchTecincoCatalog({ branchIds });
+  fs.mkdirSync(path.dirname(CATALOG_OUTPUT_PATH), { recursive: true });
+  fs.writeFileSync(CATALOG_OUTPUT_PATH, JSON.stringify(fullCatalog, null, 2));
+
+  const duplicateValueSets = buildTecincoDuplicateValueSets(fullCatalog);
+  const integrations = await getTCarIntegration("Tecinco");
+  const validExternalIds = await integrationMappingService.findValidExternalIdsSet(
+    integrations.id,
+  );
+
+  fs.unlinkSync(CATALOG_OUTPUT_PATH);
+  console.log(
+    `  ✅ Índice de duplicidade pronto (${fullCatalog.length} produtos verificados, ${validExternalIds.size} já mapeados/existentes)\n`,
+  );
 
   for (const grupo of gruposParaBuscar) {
     if (grupo !== undefined) {
@@ -167,6 +277,18 @@ export async function migrateProdutos(
         const p = produto as any;
         const systemId = String(p.epctb_codigo);
 
+        // Sempre enfileira — a decisão de usar (ou não) o fallback por
+        // sku/ean quando colidindo agora é do processProduct, não daqui.
+        // Só calculamos e propagamos a flag no payload do job (barato: só
+        // lookup em Set, o índice já foi construído acima).
+        const collidingFields = findTecincoCollidingFields(
+          { coded: p.epctb_coded, sku: p.epctb_codigofabrica, ean: p.epctb_ean },
+          duplicateValueSets,
+        );
+        const skuDuplicated = collidingFields.some((f) => f.startsWith("sku="));
+        const eanDuplicated = collidingFields.some((f) => f.startsWith("ean="));
+        if (collidingFields.length) duplicateCount++;
+
         await enqueue(
           upsertQueue,
           {
@@ -176,6 +298,8 @@ export async function migrateProdutos(
             companyId,
             branchId: primaryBranchId,
             data: p,
+            skuDuplicated,
+            eanDuplicated,
           },
           `product-${systemId}`,
           dryRun,
@@ -184,11 +308,13 @@ export async function migrateProdutos(
         count++;
       }
 
-      console.log(`  → ${count} produto(s) enfileirado(s)...`);
+      console.log(`  → ${count} produto(s) processado(s) (${duplicateCount} sinalizado(s) como duplicado no catálogo)...`);
     }
   }
 
-  console.log(`  ✅ ${count} produtos (filiais: ${branchIdsParam})`);
+  console.log(
+    `  ✅ ${count} produtos (filiais: ${branchIdsParam}) — ${duplicateCount} sinalizado(s) como duplicado no catálogo`,
+  );
 
   await waitForQueueToDrain(upsertQueue, "Produtos", dryRun);
 }

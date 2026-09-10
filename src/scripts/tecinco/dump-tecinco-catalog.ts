@@ -4,6 +4,9 @@
  * Extrai o catálogo completo de produtos da Tecinco (grupos de pneus,
  * unit businesses configuradas para populate) para um JSON simples em
  * disco — sem tocar no banco local. Insumo para match-tecinco-products.ts.
+ * `fetchTecincoCatalog` também é reaproveitada por `migrateProdutos`
+ * (tecinco-migration.runner.ts) pra montar o índice de duplicidade antes
+ * de enfileirar produtos.
  *
  * Uso:
  *   npx ts-node src/scripts/tecinco/dump-tecinco-catalog.ts
@@ -24,6 +27,7 @@ import { paginateTCar } from "./tecinco-migration.runner";
 export interface TecincoCatalogItem {
   id_sistema: string;
   sku: string | null;
+  coded: string | null;
   ean: string | null;
   nome: string;
   grupo: string | null;
@@ -37,28 +41,22 @@ export const CATALOG_OUTPUT_PATH = path.join(
   "tecinco-catalog.json",
 );
 
-async function main() {
-  await sequelize.authenticate();
-  setupAssociations();
-
-  const units = await UnitBusiness.findAll({
-    attributes: ["id", "id_system", "number"],
-    where: { number: { [Op.in]: tecincoUnitBusinessForPopulate } },
-  });
-  const branchIds: number[] = units.map((u) => Number(u.number));
+// Busca o catálogo Tecinco completo (todos os grupos de pneu, todas as
+// filiais passadas) direto da API — só leitura, não grava nada em disco
+// nem no banco. `primaryBranchId` é quem autentica a sessão; `branchIds`
+// define quais filiais aparecem no array `filiais` de cada produto.
+export async function fetchTecincoCatalog(params: {
+  branchIds: number[];
+  grupos?: string[];
+}): Promise<TecincoCatalogItem[]> {
+  const { branchIds, grupos = tecincoTireGrupoIds } = params;
   const primaryBranchId = branchIds[0];
   const branchIdsParam = branchIds.join(",");
 
-  console.log("═".repeat(55));
-  console.log("  📥 Dump do catálogo Tecinco");
-  console.log(`  🏢 Filiais: ${branchIdsParam}`);
-  console.log("═".repeat(55));
-
   const service = new TCarProdutoService();
   const items: TecincoCatalogItem[] = [];
-  const countByGrupo: Record<string, number> = {};
 
-  for (const grupo of tecincoTireGrupoIds) {
+  for (const grupo of grupos) {
     console.log(`  🔖 Grupo ${grupo}`);
     let grupoCount = 0;
 
@@ -75,6 +73,7 @@ async function main() {
         items.push({
           id_sistema: String(p.epctb_codigo),
           sku: p.epctb_codigofabrica ?? null,
+          coded: p.epctb_coded ?? null,
           ean: p.epctb_ean ?? null,
           nome: p.epctb_nome,
           grupo: p.grupo_descricao ?? null,
@@ -85,23 +84,44 @@ async function main() {
       }
     }
 
-    countByGrupo[grupo] = grupoCount;
     console.log(`    → ${grupoCount} produto(s)`);
   }
+
+  return items;
+}
+
+async function main() {
+  await sequelize.authenticate();
+  setupAssociations();
+
+  const units = await UnitBusiness.findAll({
+    attributes: ["id", "id_system", "number"],
+    where: { number: { [Op.in]: tecincoUnitBusinessForPopulate } },
+  });
+  const branchIds: number[] = units.map((u) => Number(u.number));
+  const branchIdsParam = branchIds.join(",");
+
+  console.log("═".repeat(55));
+  console.log("  📥 Dump do catálogo Tecinco");
+  console.log(`  🏢 Filiais: ${branchIdsParam}`);
+  console.log("═".repeat(55));
+
+  const items = await fetchTecincoCatalog({ branchIds });
 
   fs.mkdirSync(path.dirname(CATALOG_OUTPUT_PATH), { recursive: true });
   fs.writeFileSync(CATALOG_OUTPUT_PATH, JSON.stringify(items, null, 2));
 
   console.log("─".repeat(55));
   console.log(`  ✅ Total: ${items.length} produto(s)`);
-  console.log(`  📊 Por grupo: ${JSON.stringify(countByGrupo)}`);
   console.log(`  💾 Salvo em: ${CATALOG_OUTPUT_PATH}`);
   console.log("═".repeat(55));
 
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error("❌ Erro ao extrair catálogo Tecinco:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("❌ Erro ao extrair catálogo Tecinco:", err);
+    process.exit(1);
+  });
+}

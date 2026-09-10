@@ -87,6 +87,7 @@ UnmappedInvoiceProduct.init(
         "ERROR_INTEGRATION",
         "ERROR_INVOICE",
         "ERROR_SCAN",
+        "ERROR_CATALOG_DUPLICATE",
       ),
       allowNull: false,
     },

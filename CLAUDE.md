@@ -196,97 +196,312 @@ part of this section in the same turn — don't leave it to drift out of date.
   at all (see that section for why); these FK facts remain here because
   they're still relevant to any future/manual deletion.
 
-### Auto-map by SKU/SupplierMapping across integrations (this session)
+### Auto-map by SKU/SupplierMapping across integrations, + Tecinco catalog-duplicate safety net (this session)
 
-Before Bling's `fetchAndUpsertProduct` or Tecinco's `processProduct`
-register an unmapped row or create a new `Product` for a code with no
-`integration_mapping` yet, they now try more things first — a 3-level
-cascade, each level attempted only if the previous one found nothing:
-1. `integration_mapping` (unchanged, pre-existing — `resolveProductWithMapping`).
-2. `resolveProductBySku(sku, logPrefix)` — `ProductConfig.findOne({where:
-   {sku}})`, **global, deliberately not scoped** by `unit_business_id` or
-   `integrations_id`. This is intentional: the same physical product can be
-   created by the *other* integration first (catalog sync happens
-   independently per integration, so a tire created via Tecinco can later
-   show up in a Bling sync, or vice versa) — scoping this search would
-   defeat the whole point. **Do not scope this function** without checking
-   with the user first — an earlier draft this same session tried scoping
-   it to unit_businesses of the syncing integration and was explicitly
-   corrected back to global.
-3. `resolveProductBySupplierMapping(code, integrationsId, logPrefix)`
-   (new, both in `product.helpers.ts`) — `SupplierMapping.findOne({where:
-   {supplier_product_code: code, integrations_id: integrationsId}})`. This
-   one **is** scoped to the syncing integration, since `SupplierMapping` is
-   inherently a per-integration table (`supplier_product_code` only means
-   anything within one integration's namespace).
+**Historical context, read this first if touching this again**: mid-session,
+this cascade was found in production to cross-map completely unrelated
+physical products — Tecinco reuses/duplicates numeric codes
+(`epctb_codigofabrica`/`epctb_coded`/`epctb_ean`) across catalog entries
+that have nothing to do with each other (confirmed real examples: a
+`12-16.5` industrial skid-steer tire and a `265/60R18` Bridgestone Dueler
+ended up sharing one `Product`, both via `sku=48681`; a `275/45R20`
+Speedmax and a `275/40R21` Speedmax ditto). A first fix attempt removed
+SKU/código-de-fábrica matching entirely (EAN-only), but the user reverted
+that for **Bling** (collisions are rare there, not worth the lost recall)
+and asked for a different fix on **Tecinco**, where the problem is real: a
+**pre-enqueue safety net** that catches the ambiguous codes *before* they
+ever reach the matching cascade, rather than removing the cascade's
+trust in SKU altogether. So: the matching cascade itself is back to
+exactly what it always was; what's new is the Tecinco-only pre-flight
+step described below that keeps ambiguous codes from ever reaching it.
 
-Either 2 or 3 matching means auto-mapping to the existing product instead
-of creating a duplicate. Bling passes `blingProduct.codigo`; Tecinco passes
-`data.epctb_codigofabrica` ("código de fábrica") — different field names,
-same concept (the physical product's SKU/manufacturer code) — to both
-levels of the fallback.
+**Cascade in Bling's `fetchAndUpsertProduct` and Tecinco's `processProduct`**
+(unchanged behavior, back to how it always worked), before registering an
+unmapped row or creating a new `Product` for a code with no
+`integration_mapping` yet — 2-level fallback via `autoMapExistingProductBySku`
+in both `bling-api-fetch.queue.ts` and `tecinco-api-fetch.queue.ts`:
+1. `integration_mapping` (`resolveProductWithMapping`).
+2. `resolveProductBySku(sku, logPrefix)` (`product.helpers.ts`) —
+   `ProductConfig.findOne({where: {sku}})`, **global**, not scoped by
+   `unit_business_id`/`integrations_id` (the same physical product may have
+   been created by the *other* integration first — catalog sync happens
+   independently per integration). Bling passes `blingProduct.codigo`,
+   Tecinco passes `epctb_codigofabrica` ("código de fábrica").
+3. `resolveProductBySupplierMapping(code, integrationsId, logPrefix)` — same
+   code, but via `SupplierMapping.supplier_product_code`, scoped to the
+   syncing integration (`SupplierMapping` is inherently per-integration).
 
-- Each integration wraps the shared resolvers in its own private method
-  (`autoMapExistingProductBySku` in both `bling-api-fetch.queue.ts` and
-  `tecinco-api-fetch.queue.ts`) that tries level 2 then level 3 and, on a
-  match, calls `integrationMappingService.createOrUpdateIntegrationMapping(...)`
-  for *this* integration pointing at the existing product, and
-  `unmappedInvoiceProductService.resolveFromCreatedProduct(...)` to clean up
-  any unmapped row already registered for that external_id — then returns
-  the matched product so the caller falls through into the same generic
-  KIT/Magento/`ProductConfig`/`Stock`/kardex sync as every other resolved
-  product. Deliberately does **not** touch `Product.id_system`/
-  `Product.integrations_id` on the matched row — those stay owned by
-  whichever integration created the product first (see
-  `isProductOwnedByIntegration` above); only a new `integration_mappings`
-  row is added.
-- Runs **before** the `opts.create`/unmapped-registration branch, not after
-  — so even a manually-triggered create-product call
-  (`POST .../create-product`) tries this cascade first and only creates a
-  new `Product` if nothing matched at any level. "Procura primeiro, cria
-  depois" applies uniformly to both the automatic sync pass and the manual
-  trigger.
-- **Unit products only.** Bling's KIT branch (`isKit`, `formato === "E"`)
-  never calls this — a KIT's `ProductConfig.sku` is synthesized
-  (`${componentSku}K${quantidade}`) and is never expected to collide with
-  an existing unit product's SKU, so KIT stays exactly as before: always
-  auto-created, matched only by `integration_mapping`. Tecinco has no KIT
-  concept, so its call is unconditional whenever there's no mapping yet.
-- **This upsert-on-match behavior is exclusive to the catalog-fetch flow —
-  it never happens on invoice-item resolution**, confirmed explicitly:
-  invoice items resolving via SKU/SupplierMapping never create/update an
-  `integration_mapping`.
-- **Tecinco invoice items get the same 3-level cascade, minus the mapping
-  upsert.** `ensureProductsFromInvoiceItems` (`tecinco-api-fetch.queue.ts`)
-  used to be mapping-only with zero fallback — an item with no
-  `integration_mapping` went straight to `unmappedItems`. It now also tries
-  `resolveProductBySku(codigoFabrica, logPrefix)` (global, same as
-  catalog) then `resolveProductBySupplierMapping(codigoFabrica,
-  integrations.id, logPrefix)` (scoped) before giving up. `codigoFabrica`
-  is already fetched per item via an existing extra Tecinco API call
-  (`produtoService.obterProduto`), so nothing new is fetched. A
-  product resolved via either new step gets no special treatment — it
-  falls through into the exact same downstream code (`ProductConfig`
-  ensure, `ensureSupplierMappings`, `operationalItems.push`) that a
-  mapping-resolved item already gets, since that code only cares about the
-  `product` variable, not how it got resolved.
-  Bling's own invoice-item resolver (`findProductForInvoiceItem`,
-  `bling-api-fetch.queue.ts:844-921`) needed **no changes** — it already
-  did SKU → `ProductConfig.gtin` → SupplierMapping (by EAN) before this
-  session, which already covers what was asked; it also intentionally
-  never creates an `integration_mapping`, since a Bling invoice line item
-  carries no Bling-internal product id at all (only `codigo`/`gtin`), so
-  there'd be nothing meaningful to map with.
-- **Reprocessing an invoice that arrived before its product existed
-  already self-heals, unrelated to this change**: an item that couldn't
-  resolve gets recorded as `UnmappedInvoiceProduct` with `invoice_id` set;
-  if/when that same invoice gets reprocessed later (re-fetched/re-imported)
-  after the product now resolves, the pre-existing reconciliation logic
-  (`invoiceService.addMissingInvoiceItems` + the stale-unmapped-row cleanup
-  loop, in both `invoice-xml.ts` and `bling-api-fetch.queue.ts`) already
-  creates the real `InvoiceItems` and deletes the obsolete unmapped row.
-  Nothing about this cascade changes that mechanism — it only affects
-  whether an item resolves on a *given* pass.
+Either match auto-maps to the existing product (creates the
+`integration_mappings` row, calls
+`unmappedInvoiceProductService.resolveFromCreatedProduct(...)`) instead of
+creating a duplicate `Product`; runs before the `opts.create`/unmapped
+branch so even the manual create-product endpoint tries this first. KIT
+(Bling only, `formato === "E"`) never calls this — its `ProductConfig.sku`
+is synthesized, never expected to collide. Tecinco's `ensureProductsFromInvoiceItems`
+gets the same 2-level fallback (minus the mapping upsert — that stays
+catalog-sync-only). `ensureSupplierMappings` (`product.helpers.ts`) creates
+a `SupplierMapping` row for whichever of `ean`/`codigoFabrica`/`systemId`
+are present and not yet registered — all three, not EAN-only.
+
+**New this session — Tecinco catalog-duplicate safety net**, since Tecinco
+(unlike Bling) genuinely has codes that collide across unrelated products:
+before `migrateProdutos` (`src/scripts/tecinco/tecinco-migration.runner.ts`,
+called by both the full-migration script and `TCarSyncQueue`'s incremental
+sync — same `runMigration` entry point either way) enqueues *anything* onto
+`processProduct`, it now does a pre-flight pass:
+1. Fetches the Tecinco catalog **in full** — every tire group
+  (`tecincoTireGrupoIds`), ignoring both this run's `grupos` filter and
+  `alteradoDesde` (a collision can involve a product outside this run's own
+  batch, so a partial fetch can't be trusted) — via `fetchTecincoCatalog`
+  (extracted from `dump-tecinco-catalog.ts`'s `main()`, now shared by both;
+  that script's own `main()` is guarded by `require.main === module` so
+  importing the module elsewhere doesn't trigger it). Still scoped to this
+  run's `branchIds` (not `tecincoUnitBusinessForPopulate`'s full branch
+  list) — a collision only matters for branches actually being synced.
+2. Writes that catalog to `CATALOG_OUTPUT_PATH` (same path the standalone
+   dump script uses) purely as an intermediate artifact — deletes it right
+   after building the in-memory index, and *also* deletes any pre-existing
+   file at that path before starting (defensive, in case a previous run
+   crashed mid-way and left one behind). No dump JSON should ever survive
+   a `migrateProdutos` run on disk. **Known gap, not addressed**: if two
+   `migrateProdutos` runs ever executed concurrently, they'd race on this
+   same file path — considered unlikely in practice (queue concurrency)
+   and not worth a unique-per-run filename unless it's actually seen.
+3. Builds 2 `Set<string>` (via `buildTecincoDuplicateValueSets`, in
+   `tecinco-migration.runner.ts`) of **values** — not product ids — that
+   appear on more than one catalog entry: one for `sku` (the code used to
+   *find* a product — `epctb_codigofabrica`, falling back to `epctb_coded`
+   only when there's no código de fábrica at all — see `effectiveSku`) and
+   one for `ean`. `epctb_coded` was originally its own third independent
+   axis but was collapsed into the `sku` axis this session — código de
+   fábrica is what the matching cascade above actually reads, so that's
+   what "duplicated" needs to mean here too; `epctb_coded` only still
+   matters as a fallback signal when a catalog entry has no código de
+   fábrica at all. A value repeated 2× or 200× is equally unsafe to
+   auto-map on — no "too common to be a real collision" exemption; that
+   reasoning is exactly backwards (the more a code repeats, the more
+   products it could wrongly match). Empty/null values, and EAN's "sem
+   GTIN" placeholder variants (via the existing `normalizeEan`), are never
+   counted — genuinely confirmed against a real prod catalog dump this
+   session that non-EAN placeholder-like codes (e.g. `sku=48681` repeated
+   64×) are exactly the dangerous case, not noise to filter out.
+4. Batch-checks which `external_id`s already have a **valid** (non-orphaned)
+   `integration_mapping` — `internal_id` pointing at a `Product` that
+   actually exists, same "não existe no sistema" criterion used to find the
+   21 orphaned mappings earlier this session — via the new
+   `integrationMappingService.findValidExternalIdsSet(integrationsId)`
+   (`integration-mapping.service.ts`; queries its own model with a plain
+   `where`, then calls `productService.findAll` to check existence — two
+   services, no cross-model query in either repository, per the layering
+   rule above).
+5. **Revised later this session — `migrateProdutos` now always enqueues
+   every catalog item, never skips one for being duplicated.** The earlier
+   design (still described by an outdated version of this doc until now)
+   had step 5 skip `enqueue()` entirely for a colliding item and write
+   `registerCatalogDuplicate` instead — that function and that skip no
+   longer exist. Now: for every item, `findTecincoCollidingFields` is
+   computed unconditionally (cheap — just `Set` lookups against the index
+   from step 3) and the result becomes two booleans,
+   `skuDuplicated`/`eanDuplicated`, attached straight onto the job payload
+   (`TCarUpsertJobPayload.skuDuplicated`/`.eanDuplicated`); the item is
+   **always** enqueued onto `processProduct` regardless. The decision of
+   what to do with a colliding code moved from "here, before enqueueing"
+   to "inside `processProduct` itself" (see next point) — this was a
+   deliberate simplification: `migrateProdutos` no longer needs its own
+   parallel "is this externally mapped already" special-case (the old
+   `validExternalIds` gate that decided whether to even run the duplicate
+   check), since `processProduct` already knows how to handle an
+   already-mapped product safely regardless of the flags.
+6. **`processProduct` (`tecinco-api-fetch.queue.ts`) is where the flags
+   actually take effect**, via `opts.skuDuplicated`/`opts.eanDuplicated`
+   (both plumbed through `TCarUpsertQueue.process`'s job-data → opts
+   mapping) and a derived `isDuplicatedInCatalog = skuDuplicated ||
+   eanDuplicated`:
+   - **Fallback gate**: `autoMapExistingProductBySku` (the SKU/
+     SupplierMapping fallback described above) is skipped entirely when
+     `isDuplicatedInCatalog` is true — same effect as the old design (never
+     auto-map on an ambiguous code), just decided later and per-job instead
+     of at enqueue time. It's also skipped unconditionally when
+     `opts.create` is true (see the create-product section below — manual
+     creation never tries to reuse an existing product via fallback,
+     independent of duplication).
+   - **Unmapped registration**: when no product resolves (`opts.create`
+     false, mapping + fallback both empty-handed), the row written to
+     `UnmappedInvoiceProduct` picks `type: "ERROR_CATALOG_DUPLICATE"` when
+     `isDuplicatedInCatalog`, else the original `type: "ERROR_CATALOG"` —
+     both share the exact same create/update code path (an upsert keyed on
+     `external_id`/`ean` within the integration, unchanged from before),
+     just with a computed `type`/`reason` instead of a hardcoded one. This
+     also gives duplicate-tracking automatic self-healing for free: since
+     every item is now always enqueued and the upsert re-evaluates
+     `type`/`reason` on every pass, a code that stops colliding (Tecinco's
+     data got cleaned up) flips the existing row from
+     `ERROR_CATALOG_DUPLICATE` back to `ERROR_CATALOG` (or the row gets
+     deleted outright if it now resolves) on the very next sync — no
+     separate cleanup step needed.
+   - **`skuOmitted`/`eanOmitted`** (declared as `let`, seeded from the two
+     opts flags, right before the `resolveProductWithMapping` call — order
+     matters, see the production-bug note further down): these are the
+     single mechanism that decides, everywhere downstream in the function
+     (product creation, the per-filial `ProductConfig.upsert` calls, both
+     `ensureSupplierMappings` calls), whether `sku`/`gtin` get written at
+     all. They start out equal to the catalog-duplicate flags but can also
+     be set independently by the live `isCodeOwnedByAnotherProduct` check
+     in the `opts.create` branch (see below) — once set, the rest of the
+     function just checks these two booleans, not `opts.*` directly, so
+     both triggers (catalog-wide duplication, and a live per-create
+     conflict) converge on identical downstream behavior: never block,
+     just leave that one field out of the write.
+7. **`UnmappedInvoiceProduct.sku` stores the display code, not the dedup
+   key** (applies to every Tecinco site that creates/updates an unmapped
+   row — `processProduct`'s own unmapped-registration branch above, and
+   `ensureProductsFromInvoiceItems`'s "produto não encontrado" branch):
+   `sku` is written as `codigoFabrica ?? epctb_coded ?? null` — código de
+   fábrica first, the `epctb_coded` field only as a fallback when there's
+   no código de fábrica, matching the same `effectiveSku` rule used for
+   duplicate detection above. This is purely for a human reviewer to have
+   something readable in the queue; it is **not** used to find/dedupe the
+   row. Dedup/identity instead keys off `external_id` (`epctb_codigo`, the
+   ERP's own stable id) wherever it's available — i.e. every
+   `invoice_id: null` (catalog-scoped) row. The one remaining case with no
+   `external_id` available at all is `ensureProductsFromInvoiceItems`'s
+   `invoice_id`-scoped unmapped rows (real NF-e line items never carry the
+   ERP's own product id, only a supplier code) — there, `sku` is still the
+   only identity signal the existing per-invoice reconciliation in
+   `invoice-xml.ts` has to key off, so changing what `sku` stores there
+   also changes what counts as "the same unmapped item" across
+   reprocessing passes for that one case; a pre-existing invoice-scoped
+   `UNMAPPED` row keyed on the old value just reads as stale on the next
+   pass and gets recreated with the new value — a one-time cost, not a
+   functional break. `InvoiceOperationalItemFromXml.sku` (resolved items,
+   not unmapped ones) was deliberately **left untouched** — it still
+   carries `systemId`, because `findXmlItemForOperationalItem` in
+   `invoice-xml.ts` matches it against the NF-e XML's own `cProd`, an
+   unrelated concern from the unmapped-queue display code above.
+
+**Reprocessing an invoice that arrived before its product existed already
+self-heals, unrelated to any of this**: an item that couldn't resolve gets
+recorded as `UnmappedInvoiceProduct` with `invoice_id` set; if/when that
+same invoice gets reprocessed later, the pre-existing reconciliation logic
+(`invoiceService.addMissingInvoiceItems` + the stale-unmapped-row cleanup
+loop, in both `invoice-xml.ts` and `bling-api-fetch.queue.ts`) already
+creates the real `InvoiceItems` and deletes the obsolete unmapped row.
+
+### SupplierMapping/ProductConfig duplicate-code protection + manual mapping/create of a duplicate (later same session)
+
+On top of the pre-enqueue safety net above, a second layer stops a
+duplicated code from ever being written as a `SupplierMapping` or a
+`ProductConfig.sku`, and defines what happens when a human maps/creates a
+product from an `ERROR_CATALOG_DUPLICATE` row:
+
+- **`ensureSupplierMappings`/`backfillSupplierMappingByEan`
+  (`product.helpers.ts`)** — both wrap their `SupplierMapping.create` in a
+  check + try/catch that throws a new `SupplierMappingConflictError`
+  (friendly message naming both products by name) whenever the code
+  already maps to a *different* product in the same integration — either
+  found via an explicit `findOne` first, or via `UniqueConstraintError` on
+  the unique `(integrations_id, supplier_product_code)` index (`m263`) as
+  a race-safety-net. If it already maps to the *same* product, it's a
+  silent no-op (idempotent). `ensureSupplierMappings`'s two call sites in
+  `processProduct` (own-product and other-integration branches) convert
+  this into `UnrecoverableError` (with an `alertService.sendAlert`) so the
+  job fails fast with a clear message instead of retrying forever — this
+  remains the **only** place in the whole Tecinco safety net that actually
+  throws/blocks; everywhere else, an ambiguous code is just omitted, never
+  an error.
+- **DB triggers, defense in depth** — `m272` (`trigger_prevent_duplicate_supplier_mapping`,
+  mirrors the app-level check above at the DB layer) and `m273`
+  (`trigger_prevent_product_config_sku_conflict`, the `ProductConfig.sku`
+  equivalent — nothing previously stopped two different products in the
+  same integration from both claiming the same `sku`; `m273` also widens
+  `m263`'s `prevent_supplier_mapping_gtin_conflict` to check
+  `ProductConfig.sku`, not just `.gtin`, closing the same hole from the
+  other direction). **`m274` fixed a real production incident these two
+  triggers caused**: Postgres fires a `BEFORE UPDATE OF <col>` trigger
+  whenever that column appears in the `UPDATE`'s `SET` clause, regardless
+  of whether the value actually changes — and `ProductConfig.upsert(...)`
+  always includes `sku`/`gtin` in its `SET`. So every *routine* sync of an
+  already-mapped product whose `sku` happened to be one of Tecinco's many
+  legitimately-duplicated codes (confirmed in production: `sku=48681`
+  alone was shared by 62 different products) got permanently blocked by
+  its own trigger, even though it was just re-writing the same value that
+  was already there — no new collision was being introduced. `m274` adds
+  `TG_OP = 'INSERT' OR NEW.<col> IS DISTINCT FROM OLD.<col>` guards to all
+  four conflict trigger functions (`m263`/`m264`'s pre-existing two, plus
+  `m272`/`m273`'s new two) so they only re-validate when the relevant
+  value actually changes. **This DB-level fix was secondary, not the root
+  fix** — the real root fix was `skuOmitted`/`eanOmitted` (below), which
+  stops the app from ever attempting the conflicting write in the first
+  place; `m274` just stops a no-op reaffirmation from being treated as a
+  fresh conflict on top of that.
+- **`skuOmitted`/`eanOmitted` (final design)** — the app-level answer to
+  the same incident, and the mechanism referenced in point 6 above. For
+  **any** product already resolved (via mapping or, when un-duplicated,
+  via fallback), if its code is flagged duplicated, the per-filial
+  `ProductConfig.upsert` and `ensureSupplierMappings` calls simply leave
+  that field out of the write (`...(skuOmitted ? {} : { sku: ... })`,
+  `ean: eanOmitted ? undefined : ean`) — price/stock/every other field
+  still syncs normally. Nothing is ever blocked for a routine sync; the
+  product just never gets a `sku`/`gtin` written from an ambiguous source.
+- **`opts.create` (manual create-product from an unmapped row) — final
+  behavior, after being revised twice this session**: creation **never
+  errors** for an ambiguous code either. Before calling
+  `createProductFromTCarData`, a **live** check —
+  `isCodeOwnedByAnotherProduct({ code, field: "sku" | "gtin",
+  integrationsId })` (`product.helpers.ts`, boolean, not throwing) —
+  looks for a conflict across `ProductConfig` (any unit_business of the
+  integration) and `SupplierMapping` (scoped to the integration). This is
+  live rather than payload-flag-driven because the manual create-product
+  endpoint's job doesn't necessarily carry the same granular
+  `skuDuplicated`/`eanDuplicated` flags `migrateProdutos` computes. On a
+  hit, the local `codigoFabrica`/`ean` variable is zeroed and the matching
+  `skuOmitted`/`eanOmitted` flag set — the product is still created, just
+  without that field (and without a `SupplierMapping` for it), same as the
+  routine-sync case. The only intentionally-omitted design considered and
+  rejected mid-session was blocking creation outright with a thrown error
+  — reverted because the whole point of creating the product anyway is
+  that once Tecinco's own data stops colliding, the *next* sync already
+  finds the product via its `integration_mapping` and fills in the
+  previously-omitted field normally, with zero manual follow-up.
+- **Mapping (not creating) an `ERROR_CATALOG_DUPLICATE` row to an existing
+  product** — `supplierMappingService.createFromUnmapped`
+  (`supplier-mapping.service.ts`) branches on `unmapped.type` at the top:
+  for `"ERROR_CATALOG_DUPLICATE"`, it **only** calls
+  `integrationMappingService.createOrUpdateIntegrationMapping(...)` and
+  deletes the unmapped row — it deliberately never attempts a
+  `SupplierMapping` for this case (the code is ambiguous by definition; a
+  `SupplierMapping` would either violate `m272`/`ensureSupplierMappings`'s
+  own conflict check or just be wrong). Return type is
+  `SupplierMapping | null` to reflect this (`null` for the duplicate
+  branch). A normal `"ERROR_CATALOG"` row goes through the original,
+  unchanged path (`SupplierMapping` + `integration_mapping` as needed).
+- **Production bug found and fixed post-deploy, confirmed by a direct
+  DB-vs-`tecinco-catalog.json` cross-check after a full catalog upsert**:
+  `resolveProductWithMapping` (called at the very top of `processProduct`,
+  before mapping resolution even happens) internally calls
+  `backfillSupplierMappingByEan` — a **separate**, unconditional path that
+  creates a `SupplierMapping` for the raw `ean` argument whenever a
+  product resolves via mapping and that EAN doesn't already resolve to
+  something in the integration. This call happened *before*
+  `skuOmitted`/`eanOmitted` were even computed, so it was never gated by
+  them — a duplicated EAN on an already-mapped product could still get a
+  `SupplierMapping` created for it through this one specific path, even
+  though every other write site correctly omitted it. Confirmed in
+  production: 2 real `SupplierMapping` rows created for catalog-duplicated
+  EANs this way. **Fixed** by moving the `isDuplicatedInCatalog`/
+  `skuOmitted`/`eanOmitted` computation to *before* the
+  `resolveProductWithMapping` call and passing `ean: eanOmitted ?
+  undefined : ean` into it — `resolveProductWithMapping`'s `ean` parameter
+  has no other use than feeding this exact backfill, so gating it there is
+  safe and sufficient. If `resolveProductWithMapping` (or any future
+  caller of `backfillSupplierMappingByEan`) is touched again: remember
+  this function has a real side effect (`SupplierMapping` creation) that
+  is easy to miss since the function's own name only suggests read/lookup.
+  (`ensureProductsFromInvoiceItems`'s own separate call to
+  `resolveProductWithMapping` was deliberately left ungated — per an
+  earlier explicit user decision, that flow never creates mappings and
+  only reads already-curated data, so it was scoped out of this whole
+  safety net from the start, and stays that way.)
 
 ### Bling product deactivation (`situacao=E`, this session)
 
@@ -590,15 +805,20 @@ explicitly reverted and replaced** with the current, much simpler design:
     via `markMapped` doesn't get silently reverted by a later sync pass.
   - **`type` column** (`m269`, this session): categorizes *why* a row is
     unmapped, independent of `reason` (free text) and `integrations_id`
-    (which integration) — four values, set at every create/upsert site
-    above: `ERROR_CATALOG` (catalog-sync, no mapping — the only type
-    eligible for the create-product flow), `ERROR_INTEGRATION`
-    (cross-check against a system that isn't the product's ERP of origin,
-    e.g. `syncProductWithMagento` — mapping-only, never creates a Product),
+    (which integration) — set at every create/upsert site above:
+    `ERROR_CATALOG` (catalog-sync, no mapping — the only type eligible for
+    the create-product flow), `ERROR_INTEGRATION` (cross-check against a
+    system that isn't the product's ERP of origin, e.g.
+    `syncProductWithMagento` — mapping-only, never creates a Product),
     `ERROR_INVOICE` (invoice-line item unresolved, both the Bling API path
     and `invoice-xml.ts`), `ERROR_SCAN` (manual EAN-photo lookup miss,
     `createUnmappedFromReadingEan` — the only case with no `integrations_id`
-    tie to a catalog or invoice flow). `filterableFields` now also includes
+    tie to a catalog or invoice flow), and `ERROR_CATALOG_DUPLICATE` (`m271`,
+    later this session — Tecinco-only, a catalog code that collides with a
+    different product elsewhere in the Tecinco catalog; see "Auto-map by
+    SKU/SupplierMapping... + Tecinco catalog-duplicate safety net" above —
+    deliberately inert, not eligible for create-product like `ERROR_CATALOG`
+    is). `filterableFields` now also includes
     `type`, `integrations_id`, `reason`, `product_name`, `external_id`,
     `ean`, `sku` (all exact-match, same mechanism as the pre-existing
     `status`/`invoice_id` filters) alongside the existing free-text
@@ -846,6 +1066,91 @@ flag is explicitly set.
   `networkidle` and adding the same ~1.5s settle wait. If either file is
   touched again, keep `networkidle` for Bling's pages — `domcontentloaded`
   isn't enough to trust `page.url()`/DOM state on a client-rendered page.
+
+## ML → Bling NFe scheduling pipeline (`src/modules/handlers/mercado-livre/`, `.../bling-nfe/`)
+
+- **`setDelayBasedOnDate(date)`** (`src/shared/utils/queues/setDelay.ts`) —
+  computes the delay for the NFe-emission BullMQ job. As of this session:
+  targets the **same day** as `collection_date` at 07:00 BRT (10:00 UTC);
+  if "now" is already past 13:00 BRT (16:00 UTC) on that day, targets the
+  **next day** at 07:00 BRT instead. Used by both
+  `MLOrderSyncQueue.scheduleNfe` (`mercado-livre-sync.queue.ts`) and
+  `ReconcilerQueue.reconcileWaitingNfe` (`nfe-reconciler.queue.ts`) — same
+  formula for both, no per-caller override anymore (the old "1 day before
+  collection, forced-immediate if collection is tomorrow" behavior and the
+  `isNextDay` special case were removed as no longer needed: the new
+  formula already produces the right delay for every case, including
+  "collection is tomorrow").
+- **`reconcileStuckOrders`** (`nfe-reconciler.queue.ts`) marks an order
+  `WAITING CHANNEL VALIDATION` for longer than a threshold as "aguardando
+  verificação humana" (Bling situação `748772`). **This threshold was
+  tuned to 10min then reverted to 30min the same session** after a real
+  production incident: 10min is shorter than the ML scraping cycle's own
+  real-world latency (see below), so orders still in normal transit (not
+  actually stuck, just waiting for their first scraping match) were being
+  swept into human-review before scraping ever got a fair shot at them —
+  "quase todos os pedidos" started landing in aguardando verificação
+  humana instead of reaching `WAITING FOR NFE EMISSION`. If this threshold
+  is tuned again, verify against real scraping-cycle timing first, not
+  just the reconciler's own polling interval.
+- **`MLScrapingQueue`** (`ML-SCRAPING`, downloads/parses the Mercado Livre
+  order spreadsheet) — cadence tuned 20min → 5min → **10min** this
+  session. 5min was too tight: each cycle itself takes ~2min to start +
+  ~3min to run (~5min total), leaving no idle gap between cycles and
+  starving other Bling-lock queues (see below). 10min gives real breathing
+  room.
+- **`BLING_SHARED_QUEUE_LOCK`** (`bling/services/bling/queues/bling-queue-lock.ts`)
+  — strict rank-based priority (Redis ZSET, `score = rank*1e14 + timestamp`,
+  lowest rank always goes next), **no aging/fairness mechanism**. A queue
+  waiting for the lock can be starved **indefinitely** by continuous
+  higher-rank traffic — the `maxWaitMs` safety valve (default 60min) only
+  fires a `HIGH` alert, it does **not** boost priority or force the job
+  through. Confirmed in production: an order sat in `WAITING CHANNEL
+  VALIDATION` for 6+ days, fully matching `reconcileStuckOrders`'s query
+  (verified live), yet was never processed — `NFE_RECONCILER` (and worse,
+  `NFE_EMISSION`, the queue that actually emits the NFe) were ranked near
+  the bottom, so a sustained stream of `BLING_API_FETCH` webhook traffic
+  (rank 1 at the time) could always cut in line ahead of them. **Fixed
+  this session**: `NFE_EMISSION` and `NFE_RECONCILER` moved to ranks 1-2
+  (highest priority) — current order: `NFE_EMISSION:1, NFE_RECONCILER:2,
+  BLING_API_FETCH:3, BLING_STOCK_MOVEMENTS_SCRAPING:4,
+  BLING_ORDER_INGESTION:5, CNPJ_VERIFY_CNAE:6, ML_ORDER_SYNC:7,
+  BLING_NFE_SCRAPING:8, BLING_RECONCILER:9`. If starvation resurfaces for
+  some other queue, the real fix is adding aging (rank improves the longer
+  a ticket waits), not just reshuffling fixed ranks — reshuffling only
+  moves which queue is safe, it doesn't remove the underlying "no
+  fairness" gap.
+- **Bling's API rate limit is per ACCOUNT, not per app/OAuth client**
+  (confirmed at developer.bling.com.br/limites: "limites... não específicas
+  por endpoints, mas sim para todas [requisições da conta]" — 3 req/s,
+  120k/day; IP gets blocked 10min on 300 errors/10s or 600 requests/10s,
+  60min on 20 `/oauth/token` requests/60s). Registering a second Bling app
+  does **not** get a separate quota — it shares the same account-wide
+  budget. This means every code path that talks to Bling, regardless of
+  auth mechanism, must respect the same pacing.
+  `waitForBlingRateLimit()` (`bling/api/bling_api.service.ts`) is the
+  single Redis-backed leaky-bucket limiter (atomic Lua `EVAL`, so
+  provably race-free across any number of concurrent callers) — now
+  **exported** and also called from the two Playwright/cookie-session
+  scrapers that bypass the OAuth `blingApi` axios instance entirely
+  (`get-stock-movements.ts`'s `fetchLancamentosPage`, and
+  `nfe-manifest-web-scraping.service.ts`'s page navigations + the
+  `#btnManifestarLote` click) — those were previously invisible to the
+  rate limiter despite consuming the same account-wide quota, which was
+  the leading suspect for 429s persisting even after tightening
+  `BLING_RATE_LIMIT_INTERVAL_MS` (currently 1500ms) on the OAuth side
+  alone. `BLING_API_FETCH`/`invoice`/`stock` webhook processing itself was
+  ruled out as the direct 429 cause: verified read-only (no
+  `blingApi.post/put/patch/delete` in that file), no concurrent fan-out
+  (`Promise.all`), `concurrency: 1`, and the physical-stock lookup is
+  properly batched per invoice (not N+1 per line item) — 2 sequential
+  Bling GETs is the normal case per webhook event.
+- **Known follow-up, not yet done**: `BlingNfeScrapingQueue`'s
+  `scheduleRepeat({ every: 3 * 60 * 60 * 1000 })` (`src/queues/index.ts`)
+  has no `cron`/`tz` anchor, so it drifts across all hours of the day
+  (anchored to whenever the process booted) and can land in the middle of
+  peak webhook traffic instead of a predictable off-hours slot like
+  `BLING_STOCK_MOVEMENTS_SCRAPING`'s `cron: "0 5 * * *"`.
 
 ## Tecinco API auth/session (`src/modules/handlers/tecinco/api/tecinco_api.ts`)
 

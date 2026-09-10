@@ -113,12 +113,14 @@ jest.mock("../helpers/product.helpers", () => ({
   resolveProductBySku: jest.fn(),
   resolveProductBySupplierMapping: jest.fn(),
   ensureSupplierMappings: jest.fn(),
+  isCodeOwnedByAnotherProduct: jest.fn().mockResolvedValue(false),
   assertEanNotOwnedByAnotherProduct: jest.fn().mockResolvedValue(undefined),
   isProductOwnedByIntegration: jest.fn(
     (product: { integrations_id?: string | null }, integrationsId: string) =>
       !product?.integrations_id || product.integrations_id === integrationsId,
   ),
   EanConflictError: class EanConflictError extends Error {},
+  SupplierMappingConflictError: class SupplierMappingConflictError extends Error {},
 }));
 
 import { getTCarIntegration } from "../../api/tecinco_api";
@@ -129,6 +131,8 @@ import {
   resolveProductBySku,
   resolveProductBySupplierMapping,
   ensureSupplierMappings,
+  isCodeOwnedByAnotherProduct,
+  SupplierMappingConflictError,
 } from "../helpers/product.helpers";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import Product from "../../../../inventory/products/product.model";
@@ -198,6 +202,7 @@ describe("TCarUpsertQueue.processProduct", () => {
     (resolveProductBySku as jest.Mock).mockResolvedValue(null);
     (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(null);
     (ensureSupplierMappings as jest.Mock).mockResolvedValue(undefined);
+    (isCodeOwnedByAnotherProduct as jest.Mock).mockResolvedValue(false);
     (brandsService.findOrCreateBrand as jest.Mock).mockResolvedValue(null);
     (Group.findOne as jest.Mock).mockResolvedValue({ id: "group-1", name: "PNEUS" });
     (Subgroup.findOne as jest.Mock).mockResolvedValue({
@@ -288,7 +293,8 @@ describe("TCarUpsertQueue.processProduct", () => {
       expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({
           invoice_id: null,
-          sku: String(produto.epctb_codigo),
+          external_id: String(produto.epctb_codigo),
+          sku: produto.epctb_codigofabrica,
           ean: produto.epctb_ean,
           product_name: produto.epctb_nome,
           reason: "Produto novo, precisa de mapeamento manual",
@@ -390,22 +396,32 @@ describe("TCarUpsertQueue.processProduct", () => {
       );
     });
 
-    it("opts.create:true também tenta o match por SKU primeiro — só cria um produto novo se não achar nada", async () => {
+    it("opts.create:true NUNCA tenta o fallback por SKU/SupplierMapping — usuário mandou criar, então cria mesmo que exista um produto com esse sku/EAN", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      // Mesmo que o fallback ACHARIA um produto se fosse tentado, ele não
+      // deve nem ser chamado — criação manual não deve reaproveitar/mapear
+      // em cima de outro produto por trás.
       const matchedProduct = { id: "matched-by-sku-id", name: "Produto já cadastrado" };
       (resolveProductBySku as jest.Mock).mockResolvedValue(matchedProduct);
+      (productService.create as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
       (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
-        makeUpsertedProduct({ id: "matched-by-sku-id" }),
+        makeUpsertedProduct({ id: "created-product-id" }),
       );
 
       await runProductJob("updated", produto, { create: true });
 
-      expect(productService.create).not.toHaveBeenCalled();
+      expect(resolveProductBySku).not.toHaveBeenCalled();
+      expect(resolveProductBySupplierMapping).not.toHaveBeenCalled();
+      expect(productService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ id_system: String(produto.epctb_codigo) }),
+      );
       expect(
         integrationMappingService.createOrUpdateIntegrationMapping,
       ).toHaveBeenCalledWith(
-        expect.objectContaining({ internal_id: "matched-by-sku-id" }),
+        expect.objectContaining({ internal_id: "created-product-id" }),
       );
     });
 
@@ -428,6 +444,57 @@ describe("TCarUpsertQueue.processProduct", () => {
       );
       expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({ reason: "Produto novo, precisa de mapeamento manual" }),
+      );
+    });
+  });
+
+  // ── flags de duplicidade no catálogo (skuDuplicated/eanDuplicated) ───────
+  // Calculadas no migrateProdutos e propagadas no payload do job — quando
+  // presentes, o fallback por SKU/EAN não deve nem ser tentado (auto-mapear
+  // seria ambíguo), e o unmapped deve ser gravado como ERROR_CATALOG_DUPLICATE
+  // em vez de ERROR_CATALOG.
+
+  describe("flags de duplicidade no catálogo (skuDuplicated/eanDuplicated)", () => {
+    it("skuDuplicated:true — não tenta o fallback por SKU/SupplierMapping, registra unmapped como ERROR_CATALOG_DUPLICATE", async () => {
+      const produto = makeTecincoProduto();
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+
+      await runProductJob("updated", produto, { skuDuplicated: true });
+
+      expect(resolveProductBySku).not.toHaveBeenCalled();
+      expect(resolveProductBySupplierMapping).not.toHaveBeenCalled();
+      expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "ERROR_CATALOG_DUPLICATE",
+          reason: expect.stringContaining("duplicado no catálogo da Tecinco"),
+        }),
+      );
+    });
+
+    it("eanDuplicated:true também bloqueia o fallback e usa ERROR_CATALOG_DUPLICATE", async () => {
+      const produto = makeTecincoProduto();
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+
+      await runProductJob("updated", produto, { eanDuplicated: true });
+
+      expect(resolveProductBySku).not.toHaveBeenCalled();
+      expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "ERROR_CATALOG_DUPLICATE" }),
+      );
+    });
+
+    it("sem as flags (ou false): comportamento inalterado — tenta o fallback normalmente e usa ERROR_CATALOG", async () => {
+      const produto = makeTecincoProduto();
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+
+      await runProductJob("updated", produto, {
+        skuDuplicated: false,
+        eanDuplicated: false,
+      });
+
+      expect(resolveProductBySku).toHaveBeenCalled();
+      expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "ERROR_CATALOG" }),
       );
     });
   });
@@ -508,6 +575,83 @@ describe("TCarUpsertQueue.processProduct", () => {
       expect(ensureSupplierMappings).toHaveBeenCalledWith(
         expect.objectContaining({ productId: "created-product-id" }),
       );
+    });
+
+    it("codigoFabrica já pertence a outro produto na mesma integração (checagem ao vivo): cria o produto SEM sku, sem SupplierMapping pro código de fábrica, só com o integration_mapping — não é erro", async () => {
+      const minimalPayload = {
+        fll_codigo: 1,
+        epctb_codigo: "700001",
+        epctb_nome: "",
+      } as TCarProdutoPayload;
+      const fullDetail = makeTecincoProduto();
+      (TCarProdutoService as unknown as jest.Mock).mockImplementation(() => ({
+        obterProduto: jest.fn().mockResolvedValue({ data: fullDetail }),
+      }));
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (isCodeOwnedByAnotherProduct as jest.Mock).mockImplementation(
+        async ({ field }: { field: string }) => field === "sku",
+      );
+      (productService.create as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+
+      await runProductJob("created", minimalPayload, { create: true });
+
+      expect(isCodeOwnedByAnotherProduct).toHaveBeenCalledWith(
+        expect.objectContaining({ code: fullDetail.epctb_codigofabrica, field: "sku" }),
+      );
+      const createConfig = (productService.create as jest.Mock).mock.calls[0][0]
+        .config;
+      expect(createConfig).not.toHaveProperty("sku");
+      expect(createConfig.gtin).toBe(fullDetail.epctb_ean);
+
+      expect(
+        integrationMappingService.createOrUpdateIntegrationMapping,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ internal_id: "created-product-id" }),
+      );
+      // Resto do fluxo (loop de filiais) também usa o codigoFabrica já
+      // sanitizado — ProductConfig/SupplierMapping da filial não recebem
+      // o código ambíguo.
+      expect(ProductConfig.upsert).toHaveBeenCalledWith(
+        expect.not.objectContaining({ sku: expect.anything() }),
+        expect.anything(),
+      );
+      expect(ensureSupplierMappings).toHaveBeenCalledWith(
+        expect.objectContaining({ codigoFabrica: undefined }),
+      );
+    });
+
+    it("ean já pertence a outro produto na mesma integração: cria sem gtin, mantém sku normalmente — não é erro", async () => {
+      const minimalPayload = {
+        fll_codigo: 1,
+        epctb_codigo: "700001",
+        epctb_nome: "",
+      } as TCarProdutoPayload;
+      const fullDetail = makeTecincoProduto();
+      (TCarProdutoService as unknown as jest.Mock).mockImplementation(() => ({
+        obterProduto: jest.fn().mockResolvedValue({ data: fullDetail }),
+      }));
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (isCodeOwnedByAnotherProduct as jest.Mock).mockImplementation(
+        async ({ field }: { field: string }) => field === "gtin",
+      );
+      (productService.create as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+
+      await runProductJob("created", minimalPayload, { create: true });
+
+      const createConfig = (productService.create as jest.Mock).mock.calls[0][0]
+        .config;
+      expect(createConfig.gtin).toBeUndefined();
+      expect(createConfig.sku).toBe(fullDetail.epctb_codigofabrica);
     });
 
     it("ERP não retorna detalhe do produto (ex.: removido entre o sync de catálogo e o clique do usuário): lança erro claro, não cria nada", async () => {
@@ -640,6 +784,74 @@ describe("TCarUpsertQueue.processProduct", () => {
       expect(productService.upsertWithComponents).toHaveBeenCalledTimes(1);
       expect(productService.upsertWithComponents).toHaveBeenCalledWith(
         expect.objectContaining({ id: "existing-tecinco-product-id" }),
+      );
+    });
+
+    it("ensureSupplierMappings lança SupplierMappingConflictError: processProduct propaga como UnrecoverableError (erro amigável, sem retry) e alerta", async () => {
+      const produto = makeTecincoProduto();
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-tecinco-product-id",
+        integrations_id: INTEGRATION_ID,
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-tecinco-product-id" }),
+      );
+      (ensureSupplierMappings as jest.Mock).mockRejectedValue(
+        new SupplierMappingConflictError(
+          "código já está mapeado pra outro produto nessa integração",
+        ),
+      );
+
+      await expect(runProductJob("updated", produto)).rejects.toThrow(
+        /já está mapeado pra outro produto/,
+      );
+    });
+
+    it("skuDuplicated:true num produto JÁ MAPEADO: sync normal continua (sem erro), mas ProductConfig/SupplierMapping não recebem o codigoFabrica ambíguo", async () => {
+      const produto = makeTecincoProduto();
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-tecinco-product-id",
+        integrations_id: INTEGRATION_ID,
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-tecinco-product-id" }),
+      );
+
+      await runProductJob("updated", produto, { skuDuplicated: true });
+
+      expect(ProductConfig.upsert).toHaveBeenCalledWith(
+        expect.not.objectContaining({ sku: expect.anything() }),
+        expect.anything(),
+      );
+      expect(ProductConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ gtin: produto.epctb_ean }),
+        expect.anything(),
+      );
+      expect(ensureSupplierMappings).toHaveBeenCalledWith(
+        expect.objectContaining({ codigoFabrica: undefined, ean: produto.epctb_ean }),
+      );
+    });
+
+    // resolveProductWithMapping faz um backfill de SupplierMapping pelo EAN
+    // internamente (ver backfillSupplierMappingByEan) — se o EAN duplicado
+    // não for omitido já nessa chamada (e só mais tarde no loop de
+    // filiais), esse backfill cria o SupplierMapping ambíguo mesmo assim.
+    // Bug real encontrado em produção nesta sessão: 2 SupplierMappings
+    // criados pra EANs duplicados via esse caminho.
+    it("eanDuplicated:true: resolveProductWithMapping é chamado com ean omitido (evita o backfill criar SupplierMapping ambíguo)", async () => {
+      const produto = makeTecincoProduto();
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-tecinco-product-id",
+        integrations_id: INTEGRATION_ID,
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-tecinco-product-id" }),
+      );
+
+      await runProductJob("updated", produto, { eanDuplicated: true });
+
+      expect(resolveProductWithMapping).toHaveBeenCalledWith(
+        expect.objectContaining({ ean: undefined }),
       );
     });
   });
