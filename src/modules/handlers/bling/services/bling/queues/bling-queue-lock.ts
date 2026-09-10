@@ -1,5 +1,15 @@
 import { baseQueueOptions } from "../../../../../../shared/utils/base-models/base-queue-service";
 
+// Histórico: isto já foi um mutex compartilhado por 7 filas do pipeline de
+// pedido inteiro (NFE_EMISSION, NFE_RECONCILER, BLING_ORDER_INGESTION,
+// CNPJ_VERIFY_CNAE, ML_ORDER_SYNC, BLING_RECONCILER + este). Foi substituído
+// por lock por PEDIDO (withOrderLock em base-queue-service.ts, chave
+// dinâmica) nessas 6 filas — pedidos diferentes agora correm em paralelo de
+// verdade entre elas, serializando só quando duas realmente tocam o MESMO
+// pedido. Hoje só BLING_API_FETCH ainda usa este lock (sozinho, sem
+// contenção real — os ranks abaixo continuam corretos caso outra fila
+// precise voltar a compartilhar este recurso no futuro, mas não fazem mais
+// diferença prática hoje).
 export const BLING_SHARED_QUEUE_LOCK: NonNullable<baseQueueOptions["sharedLock"]> = {
   key: "locks:bling:queues",
   ttlMs: 2 * 60 * 1000,       // 2min — se job morrer, libera rápido

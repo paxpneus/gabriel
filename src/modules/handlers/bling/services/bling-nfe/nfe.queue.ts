@@ -9,7 +9,6 @@ import { NFeJobData } from "./nfe.types";
 import { AxiosInstance } from "axios";
 import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
-import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 import {
   blingGet,
   blingPut,
@@ -55,14 +54,12 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     options: { workless?: boolean } = {},
   ) {
     super("NFE_EMISSION", {
-      concurrency: 1,
-      limiter: {
-        max: 1,
-        duration: 3000,
-      },
+      // Pedidos diferentes agora só serializam via lock por pedido
+      // (withOrderLock), não mais por um mutex global entre filas — a Bling
+      // já é protegida à parte por waitForBlingRateLimit(). Concurrency mais
+      // alta deixa vários pedidos avançarem em paralelo de verdade.
+      concurrency: 5,
       maxProcessingMs: 60_000,
-
-      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
     this.blingApi = blingApi;
@@ -122,7 +119,10 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
   async process(job: Job<NFeJobData>): Promise<void> {
     const { order_id } = job.data;
+    return this.withOrderLock(order_id, () => this.processOrder(order_id));
+  }
 
+  private async processOrder(order_id: number): Promise<void> {
     console.log(`[NFeQueue] Processando NFe do pedido ${order_id}`);
 
     // 1. Busca o pedido fresco na Bling
@@ -223,14 +223,23 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
   protected onFailed(job: Job<NFeJobData>, error: Error): void {
     const { order_id } = job.data;
 
-    if (error.message?.includes("Timeout aguardando lock compartilhado")) {
+    if (error.message?.includes("Timeout aguardando lock do pedido")) {
       console.warn(
-        `[NFeQueue] Job ${job.id} (pedido ${order_id}) falhou por timeout de lock (>24h), não por erro de emissão. Pedido NÃO foi cancelado.`,
+        `[NFeQueue] Job ${job.id} (pedido ${order_id}) falhou por timeout de lock de pedido, não por erro de emissão. Pedido NÃO foi cancelado.`,
       );
       return;
     }
 
-    this.markOrderCancelled(order_id, NFE_ERRORS.EMISSION_FAILED.message);
+    // onFailed roda fora do processo (job já saiu do try/catch de process()),
+    // então o lock por pedido de lá já foi liberado — precisa pegar de novo.
+    this.withOrderLock(order_id, () =>
+      this.markOrderCancelled(order_id, NFE_ERRORS.EMISSION_FAILED.message),
+    ).catch((lockError: any) => {
+      console.error(
+        `[NFeQueue] Falha ao marcar pedido ${order_id} como verificação humana (onFailed):`,
+        lockError.message,
+      );
+    });
     alertService.sendAlert({
       severity: "CRITICAL",
       title: "NFe — falha após todos os retries",

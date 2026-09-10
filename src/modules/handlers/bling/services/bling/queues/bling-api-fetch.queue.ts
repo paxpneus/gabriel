@@ -37,7 +37,6 @@ import {
   getBlingInvoiceReferenceDate,
   isBlingInvoiceOnOrAfterCutoff,
 } from "../bling-invoice-cutoff";
-import { BLING_SHARED_QUEUE_LOCK } from "./bling-queue-lock";
 import {
   logDbError,
   rethrowWithLog,
@@ -429,12 +428,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
   constructor(options: { workless?: boolean } = {}) {
     super("BLING_API_FETCH", {
+      // Não usa mais BLING_SHARED_QUEUE_LOCK: desde que o pipeline de
+      // pedidos passou a usar lock por pedido (withOrderLock), esta é a
+      // única fila que ainda referenciava esse lock — sem mais ninguém pra
+      // arbitrar prioridade contra, ele só serializava os próprios jobs
+      // desta fila entre si (redundante com concurrency:1 abaixo, que já
+      // garante isso) sem trazer benefício algum.
       concurrency: 1,
       limiter: {
         max: 2,
         duration: 1000,
       },
-      sharedLock: BLING_SHARED_QUEUE_LOCK,
       maxProcessingMs: 600_000,
       lockDuration: 10 * 60 * 1000,
       workless: options.workless,

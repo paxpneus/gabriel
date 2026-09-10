@@ -16,7 +16,6 @@ import { getBlingIntegration } from "../../api/bling_api.service";
 import { FullOrder } from "../../../../sales/orders/order/orders.types";
 import OrderItems from "../../../../sales/orders/order_items/order_items.model";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
-import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 import { blingGet, blingPut, blingPatch } from "../bling/helpers/get-with-sleep";
 import Store from "../../../../sales/stores/stores.model";
 import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
@@ -27,33 +26,39 @@ import {
 
 export type NFeReconcilerJobData = Record<string, never>;
 
-// reconcileStuckOrders itera sobre muitos pedidos numa única execução —
-// manual:true tira o lock automático do job inteiro (que travava toda fila
-// de rank mais alto pelos minutos que o loop levasse) e faz cada chamada
-// Bling pegar/soltar o lock individualmente via withSharedLock, ver uso
-// abaixo.
-const RECONCILER_SHARED_LOCK = { ...BLING_SHARED_QUEUE_LOCK, manual: true };
+// Interface estreita — só o que reconcileStuckOrders precisa saber sobre a
+// ML_ORDER_SYNC pra decidir se pode varrer pedidos presos com segurança.
+export type WaitUntilIdle = {
+  waitUntilIdle: (maxWaitMs: number) => Promise<boolean>;
+};
+
+// Teto de espera por ML_ORDER_SYNC ficar livre antes de reconcileStuckOrders
+// desistir e pular o sweep desta execução — cabe dentro do maxProcessingMs
+// de 15min do NFE_RECONCILER, deixando folga pro sweep em si.
+const ML_ORDER_SYNC_IDLE_WAIT_MS = 5 * 60 * 1000;
 
 export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   private blingApi: AxiosInstance;
   private cnpjNext: nextStepOnQueue | getJob;
   private nfeNext: nextStepDelayedOnQueue | getJob;
+  private mlOrderSyncNext: WaitUntilIdle;
 
   constructor(
     cnpjNext: nextStepOnQueue | getJob,
     nfeNext: nextStepDelayedOnQueue | getJob,
     blingApi: AxiosInstance,
+    mlOrderSyncNext: WaitUntilIdle,
     options: { workless?: boolean } = {},
   ) {
     super("NFE_RECONCILER", {
       concurrency: 1,
-      sharedLock: RECONCILER_SHARED_LOCK,
       maxProcessingMs: 15 * 60 * 1000,
       workless: options.workless,
     });
     this.blingApi = blingApi;
     this.cnpjNext = cnpjNext;
     this.nfeNext = nfeNext;
+    this.mlOrderSyncNext = mlOrderSyncNext;
   }
 
   async process(job: Job<NFeReconcilerJobData>): Promise<void> {
@@ -106,29 +111,39 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     let recreated = 0;
 
     for (const order of orders) {
-      if (!order.id_order_system || !order.collection_date) continue;
+      const idOrderSystem = order.id_order_system;
+      if (!idOrderSystem || !order.collection_date) continue;
+      const collectionDate = order.collection_date;
 
-      const jobId = `nfe-generation-${order.id_order_system}`;
-      const existingJob = await (this.nfeNext as getJob).getJob(jobId);
+      // Lock por pedido: corrida estreita com ML_ORDER_SYNC.scheduleNfe
+      // gravando WAITING_FOR_NFE_EMISSION um await antes de agendar o job —
+      // sem isso, os dois podiam tentar addDelayed pro mesmo jobId ao mesmo
+      // tempo (BullMQ já deduplica por jobId, mas evita a escrita redundante).
+      const recreatedJob = await this.withOrderLock(idOrderSystem, async () => {
+        const jobId = `nfe-generation-${idOrderSystem}`;
+        const existingJob = await (this.nfeNext as getJob).getJob(jobId);
 
-      if (existingJob) continue;
+        if (existingJob) return false;
 
-      console.warn(
-        `[GlobalReconciler][NFE] Job ${jobId} ausente no Redis. Recriando...`,
-      );
+        console.warn(
+          `[GlobalReconciler][NFE] Job ${jobId} ausente no Redis. Recriando...`,
+        );
 
-      const delay = setDelayBasedOnDate(order.collection_date);
+        const delay = setDelayBasedOnDate(collectionDate);
 
-      await (this.nfeNext as nextStepDelayedOnQueue).addDelayed(
-        {
-          order_id: order.id_order_system,
-          collection_date: String(order.collection_date),
-        },
-        jobId,
-        delay,
-      );
+        await (this.nfeNext as nextStepDelayedOnQueue).addDelayed(
+          {
+            order_id: idOrderSystem,
+            collection_date: String(collectionDate),
+          },
+          jobId,
+          delay,
+        );
 
-      recreated++;
+        return true;
+      });
+
+      if (recreatedJob) recreated++;
     }
 
     console.log(`[GlobalReconciler][NFE] ${recreated} job(s) recriado(s).`);
@@ -198,6 +213,24 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   }
 
   private async reconcileStuckOrders(): Promise<void> {
+    // Espera event-driven (sem polling — bloqueia no "drained" do BullMQ)
+    // por ML_ORDER_SYNC ficar livre. Motivo: "situação ainda 748743" pode
+    // significar tanto "pedido abandonado de verdade" quanto "ainda não
+    // chegou a vez do ML_ORDER_SYNC processar" — e as duas leituras são
+    // igualmente frescas, não tem como diferenciar só olhando o pedido.
+    // Sem isso, um backlog no ML_ORDER_SYNC fazia este sweep marcar como
+    // "verificação humana" pedidos que estavam prestes a ser agendados
+    // corretamente.
+    const mlSyncIsClear = await this.mlOrderSyncNext.waitUntilIdle(
+      ML_ORDER_SYNC_IDLE_WAIT_MS,
+    );
+    if (!mlSyncIsClear) {
+      console.log(
+        `[NFeReconciler] ML_ORDER_SYNC ainda ocupado após ${ML_ORDER_SYNC_IDLE_WAIT_MS / 60000}min de espera — pulando sweep de pedidos presos nesta execução.`,
+      );
+      return;
+    }
+
     // 10min provou ser curto demais em produção: o scraping ML tem seu
     // próprio ciclo (start + execução) e às vezes não consegue casar o
     // pedido a tempo, fazendo pedidos normais (ainda em trânsito) caírem
@@ -224,76 +257,82 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     let synced = 0;
 
     for (const order of stuckOrders) {
+      const idOrderSystem = order.id_order_system;
+      if (!idOrderSystem) continue;
+
       try {
-        const { data } = await this.withSharedLock(RECONCILER_SHARED_LOCK, () =>
-          blingGet(`/pedidos/vendas/${order.id_order_system}`, this.blingApi),
-        );
-
-        const currentSituacaoId = data?.data?.situacao?.id;
-        const mappedStatus = mapOrderInternalStatus(currentSituacaoId);
-
-        // Pedido já mudou de situação na Bling por fora do reconciler
-        if (mappedStatus !== "WAITING CHANNEL VALIDATION") {
-          console.log(
-            `[NFeReconciler] Pedido ${order.id_order_system} já mudou de situação na Bling (situacao ${currentSituacaoId} -> ${mappedStatus}). Sincronizando sem editar.`,
+        // Lock por pedido em volta de toda a sequência (GET+sleeps+PUT+PATCH)
+        // — pedidos diferentes do loop seguem em paralelo entre si e com as
+        // outras filas do pipeline; só serializa se algo mais tocar esse
+        // MESMO pedido ao mesmo tempo.
+        await this.withOrderLock(idOrderSystem, async () => {
+          const { data } = await blingGet(
+            `/pedidos/vendas/${idOrderSystem}`,
+            this.blingApi,
           );
-          await ordersService.update(order.id, {
-            internal_status: mappedStatus,
-            ...(COMPLETED_ORDER_INTERNAL_STATUSES.includes(mappedStatus)
-              ? { nfe_emitted: true }
-              : mappedStatus === OrderInternalStatus.CANCELLED
-                ? { nfe_emitted: false }
-                : {}),
-          });
-          synced++;
-          continue;
-        }
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+          const currentSituacaoId = data?.data?.situacao?.id;
+          const mappedStatus = mapOrderInternalStatus(currentSituacaoId);
 
-        // PUT de /pedidos/vendas é "salvar a venda inteira", não um patch de
-        // texto — a Bling revalida a integração de estoque de todos os itens
-        // ao salvar, e pode recusar (code 67, saldo insuficiente) por um
-        // motivo que não tem nada a ver com a nota que estamos tentando
-        // gravar. Isolado num try/catch próprio pra não travar o PATCH de
-        // situação abaixo, que é o efeito que realmente importa aqui — sem
-        // isso, um pedido caía de novo em WAITING CHANNEL VALIDATION sem
-        // nunca virar "verificação humana", só reprocessando pra sempre.
-        try {
-          await this.withSharedLock(RECONCILER_SHARED_LOCK, () =>
-            blingPut(`/pedidos/vendas/${order.id_order_system}`, {
+          // Pedido já mudou de situação na Bling por fora do reconciler
+          if (mappedStatus !== "WAITING CHANNEL VALIDATION") {
+            console.log(
+              `[NFeReconciler] Pedido ${idOrderSystem} já mudou de situação na Bling (situacao ${currentSituacaoId} -> ${mappedStatus}). Sincronizando sem editar.`,
+            );
+            await ordersService.update(order.id, {
+              internal_status: mappedStatus,
+              ...(COMPLETED_ORDER_INTERNAL_STATUSES.includes(mappedStatus)
+                ? { nfe_emitted: true }
+                : mappedStatus === OrderInternalStatus.CANCELLED
+                  ? { nfe_emitted: false }
+                  : {}),
+            });
+            synced++;
+            return;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+
+          // PUT de /pedidos/vendas é "salvar a venda inteira", não um patch de
+          // texto — a Bling revalida a integração de estoque de todos os itens
+          // ao salvar, e pode recusar (code 67, saldo insuficiente) por um
+          // motivo que não tem nada a ver com a nota que estamos tentando
+          // gravar. Isolado num try/catch próprio pra não travar o PATCH de
+          // situação abaixo, que é o efeito que realmente importa aqui — sem
+          // isso, um pedido caía de novo em WAITING CHANNEL VALIDATION sem
+          // nunca virar "verificação humana", só reprocessando pra sempre.
+          try {
+            await blingPut(`/pedidos/vendas/${idOrderSystem}`, {
               ...data.data,
               observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana: Pedido parado em aguardando agendamento de nfe, pelo motivo de não conseguir encontrar o pedido na planilha do mercado livre`,
-            }, this.blingApi),
-          );
-        } catch (putError: any) {
-          console.error(
-            `[NFeReconciler] Falha ao gravar observação do pedido preso ${order.id_order_system} (seguindo pro PATCH de situação mesmo assim):`,
-            JSON.stringify(putError.response?.data, null, 2),
-          );
-        }
+            }, this.blingApi);
+          } catch (putError: any) {
+            console.error(
+              `[NFeReconciler] Falha ao gravar observação do pedido preso ${idOrderSystem} (seguindo pro PATCH de situação mesmo assim):`,
+              JSON.stringify(putError.response?.data, null, 2),
+            );
+          }
 
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+          await new Promise((resolve) => setTimeout(resolve, 3000));
 
-        await this.withSharedLock(RECONCILER_SHARED_LOCK, () =>
-          blingPatch(
-            `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
+          await blingPatch(
+            `/pedidos/vendas/${idOrderSystem}/situacoes/748772`,
             { id: 748772 },
             this.blingApi,
-          ),
-        );
+          );
 
-        await ordersService.update(order.id, {
-          internal_status: mapOrderInternalStatus(748772),
-          nfe_emitted: false,
+          await ordersService.update(order.id, {
+            internal_status: mapOrderInternalStatus(748772),
+            nfe_emitted: false,
+          });
+
+          console.log(
+            `[NFeReconciler] Pedido ${idOrderSystem} marcado como verificação humana.`,
+          );
         });
-
-        console.log(
-          `[NFeReconciler] Pedido ${order.id_order_system} marcado como verificação humana.`,
-        );
       } catch (error: any) {
         console.error(
-          `[NFeReconciler] Erro ao processar pedido preso ${order.id_order_system} (GET/PATCH/atualização local):`,
+          `[NFeReconciler] Erro ao processar pedido preso ${idOrderSystem} (GET/PATCH/atualização local):`,
           JSON.stringify(error.response?.data, null, 2),
         );
       }

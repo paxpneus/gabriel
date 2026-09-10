@@ -6,12 +6,14 @@ import { OrderInternalStatus } from "../../../../../sales/orders/order/orders.ty
 // que cria Queue/QueueEvents reais no construtor mesmo com workless:true.
 // Nenhum teste desta suite deve abrir conexão real com Redis. ────────────────
 
+// set precisa resolver "OK" pro withOrderLock (lock por pedido) não ficar
+// girando em loop de retry até estourar o timeout do teste.
 jest.mock("../../../../../../config/redis", () => ({
   __esModule: true,
   redisConfig: {},
   redisClient: {
     get: jest.fn(),
-    set: jest.fn(),
+    set: jest.fn().mockResolvedValue("OK"),
     del: jest.fn(),
     eval: jest.fn(),
     zadd: jest.fn(),
@@ -273,7 +275,7 @@ describe("NFeQueue", () => {
 
       (queue as any).onFailed(
         job,
-        new Error("Timeout aguardando lock compartilhado"),
+        new Error('[QUEUE] Timeout aguardando lock do pedido "26577371207"'),
       );
 
       expect(fakeBlingApi.put).not.toHaveBeenCalled();

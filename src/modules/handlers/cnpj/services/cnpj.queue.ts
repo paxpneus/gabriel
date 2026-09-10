@@ -5,7 +5,6 @@ import { AxiosInstance } from "axios";
 import { nextStepOnQueue } from "../../../../shared/types/queue/base-queue";
 import ordersService from "../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
-import { BLING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/bling-queue-lock";
 import { StoreService } from "../../../sales/stores/stores.service";
 import {
   blingGet,
@@ -36,9 +35,9 @@ export class CNPJQueue extends BaseQueueService<any> {
     options: { workless?: boolean } = {},
   ) {
     super("CNPJ_VERIFY_CNAE", {
-      concurrency: 1,
-      limiter: { max: 1, duration: 3000 },
-      sharedLock: BLING_SHARED_QUEUE_LOCK,
+      // Pedidos diferentes só serializam via lock por pedido (withOrderLock)
+      // agora, não mais por mutex global entre filas.
+      concurrency: 5,
       maxProcessingMs: 60_000,
       workless: options.workless,
     });
@@ -103,6 +102,13 @@ export class CNPJQueue extends BaseQueueService<any> {
   }
 
   async process(job: Job<any, any, string>): Promise<void> {
+    const { orderSystem } = job.data;
+    return this.withOrderLock(orderSystem.id_order_system, () =>
+      this.processOrder(job),
+    );
+  }
+
+  private async processOrder(job: Job<any, any, string>): Promise<void> {
     console.log(`[QUEUE] Processando verificação de documento ${job.id}`);
 
     const { customer, cnaes, orderSystem } = job.data;

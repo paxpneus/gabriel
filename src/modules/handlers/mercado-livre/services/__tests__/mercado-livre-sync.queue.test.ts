@@ -38,9 +38,22 @@ jest.mock("../../../../sales/orders/order/orders.service", () => ({
   default: { findById: jest.fn(), update: jest.fn() },
 }));
 
+// redisConnection abaixo é o que withOrderLock (base-queue-service.ts) usa
+// pro lock por pedido — precisa resolver "OK" no set pra não ficar girando
+// em loop de retry até estourar o timeout do teste.
 jest.mock("../../../../../shared/utils/base-models/base-redis", () => ({
   __esModule: true,
   default: { get: jest.fn(), set: jest.fn() },
+  redisConnection: {
+    get: jest.fn(),
+    set: jest.fn().mockResolvedValue("OK"),
+    del: jest.fn(),
+    eval: jest.fn(),
+    zadd: jest.fn(),
+    zrem: jest.fn(),
+    zrange: jest.fn(),
+    exists: jest.fn(),
+  },
 }));
 
 jest.mock("../../../../integrations/integrations/integrations.service", () => ({
@@ -88,9 +101,11 @@ function makeOrder(overrides: Partial<any> = {}) {
 }
 
 function makeFakeBlingApi(): AxiosInstance {
-  const get = jest
-    .fn()
-    .mockResolvedValue({ data: { data: { observacoesInternas: "" } } });
+  // situacao: 748743 por padrão — finalizeNfeScheduling reconfere isso ao
+  // vivo antes do PATCH pra 748748 (ver seu comentário no código-fonte).
+  const get = jest.fn().mockResolvedValue({
+    data: { data: { observacoesInternas: "", situacao: { id: 748743 } } },
+  });
   const put = jest.fn().mockResolvedValue({ data: {} });
   const patch = jest.fn().mockResolvedValue({ data: {} });
   return { get, post: jest.fn(), put, patch } as unknown as AxiosInstance;
@@ -336,6 +351,108 @@ describe("MLOrderSyncQueue", () => {
         }),
         `nfe-generation-${orderSystem.id_order_system}`,
         expect.any(Number),
+      );
+    });
+  });
+
+  describe("resumeAfterAcceptance", () => {
+    function makeReleasedOrder(overrides: Partial<any> = {}) {
+      return makeOrder({
+        internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
+        waiting_acceptance: false,
+        collection_date: new Date("2026-08-25"),
+        ...overrides,
+      });
+    }
+
+    it("estado esperado (WAITING_FOR_NFE_EMISSION, waiting_acceptance=false): finaliza o agendamento (PATCH 748748 + addDelayed)", async () => {
+      const order = makeReleasedOrder();
+      (ordersService.findById as jest.Mock).mockResolvedValue(order);
+
+      await queue.resumeAfterAcceptance(order.id);
+
+      expect(fakeBlingApi.patch).toHaveBeenCalledWith(
+        `/pedidos/vendas/${order.id_order_system}/situacoes/748748`,
+        { id: 748748 },
+        { timeout: 20000 },
+      );
+      expect(ordersService.update).toHaveBeenCalledWith(order.id, {
+        internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
+      });
+      expect(nextFake.addDelayed).toHaveBeenCalledWith(
+        expect.objectContaining({ order_id: order.id_order_system }),
+        `nfe-generation-${order.id_order_system}`,
+        expect.any(Number),
+      );
+    });
+
+    it("situação Bling divergiu por fora (ex: cancelado direto na Bling enquanto travado): não faz PATCH, só sincroniza internal_status", async () => {
+      const order = makeReleasedOrder();
+      (ordersService.findById as jest.Mock).mockResolvedValue(order);
+      (fakeBlingApi.get as jest.Mock).mockResolvedValue({
+        data: { data: { situacao: { id: 12 } } },
+      });
+
+      await queue.resumeAfterAcceptance(order.id);
+
+      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+      expect(nextFake.addDelayed).not.toHaveBeenCalled();
+      expect(ordersService.update).toHaveBeenCalledWith(order.id, {
+        internal_status: OrderInternalStatus.CANCELLED,
+        nfe_emitted: false,
+      });
+    });
+
+    it("pedido não encontrado: não faz nada", async () => {
+      (ordersService.findById as jest.Mock).mockResolvedValue(null);
+
+      await queue.resumeAfterAcceptance("missing-id");
+
+      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+      expect(nextFake.addDelayed).not.toHaveBeenCalled();
+    });
+
+    it("ainda waiting_acceptance=true (liberação não confirmada de verdade): ignora sem agendar", async () => {
+      const order = makeReleasedOrder({ waiting_acceptance: true });
+      (ordersService.findById as jest.Mock).mockResolvedValue(order);
+
+      await queue.resumeAfterAcceptance(order.id);
+
+      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+      expect(nextFake.addDelayed).not.toHaveBeenCalled();
+    });
+
+    it("internal_status divergente (não é mais WAITING_FOR_NFE_EMISSION): ignora sem agendar", async () => {
+      const order = makeReleasedOrder({
+        internal_status: OrderInternalStatus.EMITTED,
+      });
+      (ordersService.findById as jest.Mock).mockResolvedValue(order);
+
+      await queue.resumeAfterAcceptance(order.id);
+
+      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+    });
+
+    it("sem collection_date: não agenda (não tem como calcular o delay)", async () => {
+      const order = makeReleasedOrder({ collection_date: null });
+      (ordersService.findById as jest.Mock).mockResolvedValue(order);
+
+      await queue.resumeAfterAcceptance(order.id);
+
+      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+    });
+
+    it("process() roteia { resumeOrderId } pra resumeAfterAcceptance", async () => {
+      const order = makeReleasedOrder();
+      (ordersService.findById as jest.Mock).mockResolvedValue(order);
+
+      await queue.process(makeJob({ resumeOrderId: order.id }));
+
+      expect(ordersService.findById).toHaveBeenCalledWith(order.id);
+      expect(fakeBlingApi.patch).toHaveBeenCalledWith(
+        `/pedidos/vendas/${order.id_order_system}/situacoes/748748`,
+        { id: 748748 },
+        { timeout: 20000 },
       );
     });
   });

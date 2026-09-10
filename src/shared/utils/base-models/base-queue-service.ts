@@ -354,6 +354,94 @@ export abstract class BaseQueueService<T> {
     }
   }
 
+  // Lock por ENTIDADE (ex: um pedido), não por fila. Diferente de
+  // withSharedLock (um recurso único global, com ranking/aging entre
+  // filas), aqui a chave é dinâmica por chamada — então duas filas
+  // diferentes só disputam quando tocam literalmente o MESMO pedido ao
+  // mesmo tempo (raro), e pedidos diferentes correm 100% em paralelo,
+  // inclusive entre filas diferentes do pipeline (BLING_ORDER_INGESTION →
+  // CNPJ_VERIFY_CNAE → ML_ORDER_SYNC → NFE_EMISSION). Não usa fila de
+  // prioridade/aging — contenção rara não precisa disso, um retry simples
+  // e limitado basta; se estourar maxWaitMs, lança erro e deixa o job
+  // falhar/tentar de novo pelo mecanismo normal de retry do BullMQ.
+  async withOrderLock<R>(
+    orderKey: string | number,
+    fn: () => Promise<R>,
+    options?: { ttlMs?: number; retryDelayMs?: number; maxWaitMs?: number },
+  ): Promise<R> {
+    const key = `locks:bling:order:${orderKey}`;
+    const ttlMs = options?.ttlMs ?? 2 * 60 * 1000;
+    const retryDelayMs = options?.retryDelayMs ?? 300;
+    const maxWaitMs = options?.maxWaitMs ?? 2 * 60 * 1000;
+    const token = `${this.queueName}:order:${orderKey}:${randomUUID()}`;
+    const startedAt = Date.now();
+
+    while (true) {
+      const acquired = await redisConnection.set(key, token, "PX", ttlMs, "NX");
+      if (acquired === "OK") break;
+
+      if (Date.now() - startedAt > maxWaitMs) {
+        throw new Error(
+          `[QUEUE] Timeout aguardando lock do pedido "${orderKey}" (fila ${this.queueName}) — outra fila deve estar processando o mesmo pedido.`,
+        );
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+
+    const refreshMs = Math.max(1000, Math.floor(ttlMs / 3));
+    const refreshInterval = setInterval(() => {
+      this.refreshSharedLock(key, token, ttlMs).catch(() => {});
+    }, refreshMs);
+
+    try {
+      return await fn();
+    } finally {
+      clearInterval(refreshInterval);
+      await this.releaseSharedLock(key, token).catch(() => {});
+    }
+  }
+
+  async hasPendingJobs(): Promise<boolean> {
+    const counts = await this.queue.getJobCounts(
+      "waiting",
+      "active",
+      "delayed",
+      "prioritized",
+    );
+    return Object.values(counts).some((count) => count > 0);
+  }
+
+  // Espera esta fila ficar sem nenhum job pendente, de forma event-driven —
+  // não faz polling: fica bloqueada no evento "drained" do BullMQ (disparado
+  // via Redis Stream quando a lista de espera esvazia), não numa checagem
+  // por intervalo. Reconfere hasPendingJobs() a cada acordar porque
+  // "drained" dispara com a lista de espera vazia mesmo que ainda haja jobs
+  // *ativos* em andamento (concurrency > 1) — só retorna true quando
+  // realmente não sobra nada. Retorna false se estourar maxWaitMs.
+  async waitUntilIdle(maxWaitMs: number): Promise<boolean> {
+    const startedAt = Date.now();
+
+    while (await this.hasPendingJobs()) {
+      const remaining = maxWaitMs - (Date.now() - startedAt);
+      if (remaining <= 0) return false;
+
+      await new Promise<void>((resolve) => {
+        const onDrained = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        const timeout = setTimeout(() => {
+          this.queueEvents.off("drained", onDrained);
+          resolve();
+        }, remaining);
+        this.queueEvents.once("drained", onDrained);
+      });
+    }
+
+    return true;
+  }
+
   // Promove o rank efetivo do ticket com base no tempo de espera, pra um rank
   // baixo não ficar preso pra sempre atrás de tráfego contínuo de rank mais
   // alto (ex: ML_ORDER_SYNC atrás de BLING_API_FETCH). Nunca passa do rank 1.

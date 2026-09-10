@@ -141,38 +141,43 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     return orderData as unknown as Promise<FullOrder[]>;
   }
 
-  async releaseWaitingAcceptanceForToday(): Promise<number> {
+  async releaseWaitingAcceptanceForToday(): Promise<Order[]> {
     const startOfToday = new Date();
     startOfToday.setUTCHours(0, 0, 0, 0);
 
     const endOfToday = new Date();
     endOfToday.setUTCHours(23, 59, 59, 999);
 
-    const [affectedCount] = await this.repository.bulkUpdate(
-      {
-        waiting_acceptance: false,
+    const where = {
+      waiting_acceptance: true,
+      internal_status: "WAITING FOR NFE EMISSION",
+      collection_date: {
+        [Op.between]: [startOfToday, endOfToday],
       },
-      {
-        where: {
-          waiting_acceptance: true,
-          internal_status: "WAITING FOR NFE EMISSION",
-          collection_date: {
-            [Op.between]: [startOfToday, endOfToday],
-          },
-          createdAt: {
-            [Op.between]: [startOfToday, endOfToday],
-          },
-        },
+      createdAt: {
+        [Op.between]: [startOfToday, endOfToday],
       },
-    );
+    };
 
-    if (!affectedCount) {
+    // Seleciona antes do update pra saber exatamente quais pedidos foram
+    // liberados — o caller precisa dessa lista pra retomar o agendamento de
+    // NFe de cada um (ver MLOrderSyncQueue.resumeAfterAcceptance); só zerar
+    // a flag no banco não faz isso sozinho.
+    const affectedOrders = await this.findAll({ where });
+
+    if (!affectedOrders.length) {
       console.log(
         `[OrdersService] Nenhum pedido encontrado para liberar geração de nota fiscal.`,
       );
+      return [];
     }
 
-    return affectedCount;
+    await this.repository.bulkUpdate(
+      { waiting_acceptance: false },
+      { where },
+    );
+
+    return affectedOrders;
   }
 }
 

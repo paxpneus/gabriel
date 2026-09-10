@@ -46,7 +46,7 @@ jest.mock("bullmq", () => ({
 
 jest.mock("../../../../../sales/orders/order/orders.service", () => ({
   __esModule: true,
-  default: { findAll: jest.fn() },
+  default: { findAll: jest.fn(), findById: jest.fn() },
 }));
 
 jest.mock("../../../api/bling_api.service", () => ({
@@ -213,11 +213,15 @@ describe("BlingReconcilerQueue", () => {
 
     it("pedido já tem NF na Bling: PATCH para situação Atendido (9)", async () => {
       (ordersService.findAll as jest.Mock).mockResolvedValue([
-        { number_order_system: "100", collection_date: null },
+        { id: "o1", number_order_system: "100", collection_date: null },
       ]);
+      (ordersService.findById as jest.Mock).mockResolvedValue({
+        id: "o1",
+        collection_date: null,
+      });
       mockListAndFullOrder({
         listedOrders: [{ id: 1, numero: 100, situacao: { id: 6 } }],
-        fullOrderData: { notaFiscal: { id: 999 } },
+        fullOrderData: { notaFiscal: { id: 999 }, situacao: { id: 6 } },
       });
 
       await queue.process({ data: { task: "sync-invoiced-or-collected" } } as Job);
@@ -231,11 +235,15 @@ describe("BlingReconcilerQueue", () => {
 
     it("pedido sem NF mas já com collection_date local: PATCH para 'aguardando NF com coleta' (748748)", async () => {
       (ordersService.findAll as jest.Mock).mockResolvedValue([
-        { number_order_system: "100", collection_date: new Date("2026-08-20") },
+        { id: "o1", number_order_system: "100", collection_date: new Date("2026-08-20") },
       ]);
+      (ordersService.findById as jest.Mock).mockResolvedValue({
+        id: "o1",
+        collection_date: new Date("2026-08-20"),
+      });
       mockListAndFullOrder({
         listedOrders: [{ id: 1, numero: 100, situacao: { id: 6 } }],
-        fullOrderData: { notaFiscal: undefined },
+        fullOrderData: { notaFiscal: undefined, situacao: { id: 6 } },
       });
 
       await queue.process({ data: { task: "sync-invoiced-or-collected" } } as Job);
@@ -249,11 +257,33 @@ describe("BlingReconcilerQueue", () => {
 
     it("pedido sem NF e sem collection_date: não altera nada na Bling", async () => {
       (ordersService.findAll as jest.Mock).mockResolvedValue([
-        { number_order_system: "100", collection_date: null },
+        { id: "o1", number_order_system: "100", collection_date: null },
       ]);
+      (ordersService.findById as jest.Mock).mockResolvedValue({
+        id: "o1",
+        collection_date: null,
+      });
       mockListAndFullOrder({
         listedOrders: [{ id: 1, numero: 100, situacao: { id: 6 } }],
-        fullOrderData: { notaFiscal: undefined },
+        fullOrderData: { notaFiscal: undefined, situacao: { id: 6 } },
+      });
+
+      await queue.process({ data: { task: "sync-invoiced-or-collected" } } as Job);
+
+      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+    });
+
+    it("pedido não está mais em situação 6 (mudou por fora, ex: verificação humana): pula sem PATCH", async () => {
+      (ordersService.findAll as jest.Mock).mockResolvedValue([
+        { id: "o1", number_order_system: "100", collection_date: new Date("2026-08-20") },
+      ]);
+      (ordersService.findById as jest.Mock).mockResolvedValue({
+        id: "o1",
+        collection_date: new Date("2026-08-20"),
+      });
+      mockListAndFullOrder({
+        listedOrders: [{ id: 1, numero: 100, situacao: { id: 6 } }],
+        fullOrderData: { notaFiscal: undefined, situacao: { id: 748772 } },
       });
 
       await queue.process({ data: { task: "sync-invoiced-or-collected" } } as Job);
@@ -263,9 +293,13 @@ describe("BlingReconcilerQueue", () => {
 
     it("erro ao sincronizar um pedido não interrompe os demais e dispara alerta MEDIUM", async () => {
       (ordersService.findAll as jest.Mock).mockResolvedValue([
-        { number_order_system: "100", collection_date: null },
-        { number_order_system: "200", collection_date: null },
+        { id: "o1", number_order_system: "100", collection_date: null },
+        { id: "o2", number_order_system: "200", collection_date: null },
       ]);
+      (ordersService.findById as jest.Mock).mockResolvedValue({
+        id: "o2",
+        collection_date: null,
+      });
       (fakeBlingApi.get as jest.Mock).mockImplementation((url: string) => {
         if (url === "/canais-venda") {
           return Promise.resolve({ data: { data: [{ id: STORE_ID }] } });
@@ -284,7 +318,9 @@ describe("BlingReconcilerQueue", () => {
           return Promise.reject(new Error("timeout"));
         }
         if (url === "/pedidos/vendas/2") {
-          return Promise.resolve({ data: { data: { notaFiscal: { id: 1 } } } });
+          return Promise.resolve({
+            data: { data: { notaFiscal: { id: 1 }, situacao: { id: 6 } } },
+          });
         }
         return Promise.resolve({ data: { data: {} } });
       });

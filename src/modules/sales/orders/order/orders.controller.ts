@@ -41,14 +41,31 @@ class OrderController extends BaseController<Order, OrderService> {
     res: Response,
   ): Promise<Response> => {
     try {
-      const affectedCount =
+      const releasedOrders =
         await this.service.releaseWaitingAcceptanceForToday();
 
+      // Zerar a flag não agenda a NFe sozinho — cada pedido liberado precisa
+      // retomar o agendamento (PATCH da situação Bling + job delayed), que
+      // MLOrderSyncQueue.resumeAfterAcceptance faz sob o lock do pedido.
+      for (const order of releasedOrders) {
+        if (!order.id_order_system) {
+          console.warn(
+            `[OrdersController] Pedido ${order.id} liberado sem id_order_system — não é possível retomar o agendamento.`,
+          );
+          continue;
+        }
+
+        await req.app.locals.MLOrderSyncQueue.add(
+          { resumeOrderId: order.id_order_system },
+          `ml-resume-${order.id_order_system}`,
+        );
+      }
+
       console.log(
-        `[OrdersService] ${affectedCount} pedido(s) liberados — waiting_acceptance → false.`,
+        `[OrdersService] ${releasedOrders.length} pedido(s) liberados — waiting_acceptance → false.`,
       );
       return res.json({
-        message: `${affectedCount} pedido(s) liberados — waiting_acceptance → false.`,
+        message: `${releasedOrders.length} pedido(s) liberados — waiting_acceptance → false.`,
       });
     } catch (error: any) {
       console.log(

@@ -74,8 +74,17 @@ function makeFakeBlingApi(): AxiosInstance {
   return { get, post: jest.fn(), put, patch } as unknown as AxiosInstance;
 }
 
-function makeQueue(blingApi: AxiosInstance, cnpjNext: any, nfeNext: any) {
-  return new ReconcilerQueue(cnpjNext, nfeNext, blingApi, { workless: true });
+function makeQueue(
+  blingApi: AxiosInstance,
+  cnpjNext: any,
+  nfeNext: any,
+  mlOrderSyncNext: { waitUntilIdle: jest.Mock } = {
+    waitUntilIdle: jest.fn().mockResolvedValue(true),
+  },
+) {
+  return new ReconcilerQueue(cnpjNext, nfeNext, blingApi, mlOrderSyncNext, {
+    workless: true,
+  });
 }
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
@@ -204,6 +213,35 @@ describe("ReconcilerQueue", () => {
     function makeStuckOrder(overrides: Partial<any> = {}) {
       return { id: "o1", id_order_system: "1001", ...overrides };
     }
+
+    it("ML_ORDER_SYNC ainda ocupado: pula o sweep sem consultar/tocar nenhum pedido", async () => {
+      const mlOrderSyncNext = { waitUntilIdle: jest.fn().mockResolvedValue(false) };
+      const busyQueue = makeQueue(fakeBlingApi, cnpjNext, nfeNext, mlOrderSyncNext);
+      (ordersService.findAll as jest.Mock).mockResolvedValue([makeStuckOrder()]);
+
+      await (busyQueue as any).reconcileStuckOrders();
+
+      expect(mlOrderSyncNext.waitUntilIdle).toHaveBeenCalledWith(5 * 60 * 1000);
+      expect(ordersService.findAll).not.toHaveBeenCalled();
+      expect(fakeBlingApi.get).not.toHaveBeenCalled();
+    });
+
+    it("ML_ORDER_SYNC livre: espera e segue com o sweep normalmente", async () => {
+      const mlOrderSyncNext = { waitUntilIdle: jest.fn().mockResolvedValue(true) };
+      const clearQueue = makeQueue(fakeBlingApi, cnpjNext, nfeNext, mlOrderSyncNext);
+      (ordersService.findAll as jest.Mock).mockResolvedValue([makeStuckOrder()]);
+      (fakeBlingApi.get as jest.Mock).mockResolvedValue({
+        data: { data: { situacao: { id: 834029 } } },
+      });
+
+      await (clearQueue as any).reconcileStuckOrders();
+
+      expect(mlOrderSyncNext.waitUntilIdle).toHaveBeenCalledWith(5 * 60 * 1000);
+      expect(ordersService.update).toHaveBeenCalledWith("o1", {
+        internal_status: "SENT_TO_TRANSPORTER",
+        nfe_emitted: true,
+      });
+    });
 
     it("situação já mudou pra um status completo (834029): grava internal_status e nfe_emitted=true", async () => {
       (ordersService.findAll as jest.Mock).mockResolvedValue([makeStuckOrder()]);

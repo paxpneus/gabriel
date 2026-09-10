@@ -4,7 +4,6 @@ import BlingOrderService from "./bling-order.service";
 import { nextStepOnQueue } from "../../../../../shared/types/queue/base-queue";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
-import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
 
 export class BlingOrderQueue extends BaseQueueService<any> {
   private orderService: BlingOrderService;
@@ -17,13 +16,14 @@ export class BlingOrderQueue extends BaseQueueService<any> {
     options: { workless?: boolean } = {},
   ) {
     super("BLING_ORDER_INGESTION", {
-      concurrency: 1,
+      // Pedidos diferentes só serializam via lock por pedido (withOrderLock)
+      // agora, não mais por mutex global entre filas.
+      concurrency: 5,
       limiter: {
-        max: 2,
+        max: 5,
         duration: 1000,
       },
       maxProcessingMs: 120_000,
-      sharedLock: BLING_SHARED_QUEUE_LOCK,
       workless: options.workless,
     });
     this.orderService = orderService;
@@ -31,6 +31,14 @@ export class BlingOrderQueue extends BaseQueueService<any> {
   }
 
   async process(job: Job<any, any, string>): Promise<void> {
+    // Trava pelo id do pedido na Bling (é o que vira id_order_system uma vez
+    // persistido) — mesma chave que as demais filas do pipeline usam, então
+    // um evento de webhook duplicado/rápido pro mesmo pedido serializa
+    // corretamente contra CNPJ/ML_SYNC/NFE_EMISSION tocando esse pedido.
+    return this.withOrderLock(job.data.data.id, () => this.processOrder(job));
+  }
+
+  private async processOrder(job: Job<any, any, string>): Promise<void> {
     console.log("[1]. Data do job vindo webhook diretamente", job.data);
     console.log(
       `[1] [QUEUE] Processando Pedido ${job.data.event} - ${job.data.data.id}`,

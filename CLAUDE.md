@@ -1137,6 +1137,13 @@ flag is explicitly set.
 
 ## ML → Bling NFe scheduling pipeline (`src/modules/handlers/mercado-livre/`, `.../bling-nfe/`)
 
+**Referência completa do pipeline** (as 6 filas, precondição/escrita de
+cada uma, a tabela de estados `OrderInternalStatus` ↔ situação Bling, o
+lock por pedido, e todo par de corrida entre filas já mapeado e tratado):
+`docs/automation/order-pipeline.md`. Mantenha esse arquivo atualizado, não
+este — os bullets abaixo ficam só com o histórico de investigação/fix de
+sessão, não a referência viva.
+
 - **`setDelayBasedOnDate(date)`** (`src/shared/utils/queues/setDelay.ts`) —
   computes the delay for the NFe-emission BullMQ job. As of this session:
   targets the **same day** as `collection_date` at 07:00 BRT (10:00 UTC);
@@ -1259,6 +1266,144 @@ flag is explicitly set.
   per job and needs the shared lock, use `manual: true` +
   `withSharedLock` per item from the start — the "one lock per job" default
   is only correct for queues that process a single item per job.
+- **Superseded later the same session: `BLING_SHARED_QUEUE_LOCK` (rank+aging,
+  above) was replaced by a per-ORDER lock for the whole order pipeline —
+  `NFE_EMISSION`, `NFE_RECONCILER`, `BLING_ORDER_INGESTION`,
+  `CNPJ_VERIFY_CNAE`, `ML_ORDER_SYNC`, `BLING_RECONCILER`.** Only
+  `BLING_API_FETCH` still uses `BLING_SHARED_QUEUE_LOCK` (product/invoice
+  catalog sync, a different domain from orders — the two never needed to
+  coordinate with each other). Two separate things motivated this:
+  1. **User-asked investigation**: is the cross-queue mutex even needed for
+     Bling rate-limit protection, given `waitForBlingRateLimit()` already
+     paces every Bling call globally regardless of which queue issues it?
+     Confirmed: no, the mutex was never actually protecting Bling's rate
+     limit — that's fully independent. But investigating turned up a real,
+     separate risk the mutex *was* incidentally masking: **no write to
+     `orders` (`internal_status`/situação) has optimistic locking, a version
+     column, or a transaction** (`OrdersService.update` → plain
+     `findByPk` + `record.update`, no lock) — and at least 5 queues
+     (`nfe-reconciler`, `mercado-livre-sync`, `cnpj`, `nfe.queue`,
+     `bling-reconciler`) do read-modify-write on an order's status with a
+     real gap (network calls, sleeps) between the read and the write. Fully
+     removing the mutex with no replacement would have let two queues
+     genuinely race on the same order (lost update). Per-order locking
+     keeps that protection (same order still fully serialized) while
+     removing the *unrelated* cost of serializing every order behind every
+     other order.
+  2. **Confirmed production throughput bug**, reported by the user: even
+     after the lock-scoping fix above, a burst of new orders still got
+     stuck — 100 new orders arriving produced a backlog of ~175
+     `ML_ORDER_SYNC` jobs (mostly `MLScrapingQueue` row-matches, not just
+     the new orders' own webhook jobs), and because `ML_ORDER_SYNC` had
+     `concurrency: 1` + a BullMQ `limiter: {max:1, duration:3000}`, the
+     queue's own throughput was hard-capped at 1 job/3s — **175 × 3s ≈
+     8.75min minimum just to cycle the backlog once**, before any actual
+     Bling round-trips. New orders queued behind that backlog took long
+     enough that `NFE_RECONCILER`'s 30-minute stuck-order sweep fired
+     before `ML_ORDER_SYNC` ever got to them, marking them "aguardando
+     verificação humana" even though the ML scraping had already found
+     their collection date. The pipeline the user described —
+     `BLING_ORDER_INGESTION → CNPJ_VERIFY_CNAE → ML_ORDER_SYNC →
+     NFE_EMISSION`, sequential *per order* — was being serialized
+     *globally* by both the old cross-queue mutex and each queue's own
+     conservative `concurrency`/`limiter`, when it only ever needed to be
+     sequential per order. The user's own framing: "a automação deve ser
+     rápida — entrou pedido já roda tudo pra emitir logo ou agendar."
+  - **`BaseQueueService.withOrderLock(orderKey, fn, options?)`**
+    (`base-queue-service.ts`) — new primitive alongside `withSharedLock`:
+    a plain Redis `SET key NX PX` mutex keyed dynamically
+    (`locks:bling:order:${orderKey}`) instead of one fixed key. No
+    priority ticket/ranking/aging at all — contention here should be rare
+    (two things touching the exact same order at once), so a bounded
+    retry (default `maxWaitMs` 2min, `retryDelayMs` 300ms) that just
+    throws on timeout is enough; the job then fails and retries later via
+    BullMQ's own attempts/backoff, same as any other transient failure.
+    Reuses the same key-agnostic `refreshSharedLock`/`releaseSharedLock`
+    helpers `withSharedLock` uses.
+  - **The lock key is the Bling order id** (`id_order_system` once
+    persisted; the raw webhook `data.id` in `BlingOrderQueue` before a
+    local row necessarily exists yet) — the one identifier present at
+    every pipeline stage, so all 6 queues contend correctly against each
+    other for the *same* physical order regardless of which queue reaches
+    it first.
+  - **Not reentrant** — a Redis NX lock can't be acquired twice by the same
+    logical flow. Every migrated queue locks at exactly one entry point per
+    call chain and documents it: `NFeQueue.process` locks once, delegating
+    to a private `processOrder`; `MLOrderSyncQueue.applyCollectionDate`/
+    `syncFromWebhook` lock once each and delegate to `*Locked` siblings
+    that call `scheduleNfe` *without* it re-locking (comment on
+    `scheduleNfe` calls this out explicitly). `NFeQueue.onFailed` runs
+    *after* `process()`'s own lock was already released (the job already
+    exited), so it re-acquires the lock itself before calling
+    `markOrderCancelled` again.
+  - **The two big-loop reconcilers got simpler, not just re-keyed**: since
+    fairness-between-queues is no longer a concern (different orders don't
+    contend with each other at all now), `nfe-reconciler.queue.ts`'s
+    `reconcileStuckOrders` and `bling-reconciler.queue.ts`'s
+    `syncInvoicedOrCollectedOrders` went from 3 separate
+    `withSharedLock` acquisitions per order (one per Bling call, to let
+    other queues interleave between them) back down to **one**
+    `withOrderLock` per order covering that order's whole sequence
+    (GET+sleeps+PUT+PATCH) — simpler, and correct, since nothing else needs
+    to interleave mid-order anymore. Page-level listing GETs (not tied to
+    one order) and `getMercadoLivreStoreId()` lost their lock entirely —
+    they were never protecting anything per-order.
+  - **Concurrency raised on the 4 single-item queues**, now that Bling
+    pacing is fully independent of queue-level throttling:
+    `NFE_EMISSION`/`CNPJ_VERIFY_CNAE`/`BLING_ORDER_INGESTION` concurrency
+    1→5, `ML_ORDER_SYNC` 1→10 (the queue that actually had the reported
+    backlog); their old conservative BullMQ `limiter`s were removed or
+    loosened to match — the real Bling-side cap is `waitForBlingRateLimit()`
+    alone, these per-queue limits were redundant and, per the incident
+    above, actively harmful under a real backlog.
+- **Per-order locking closes corruption from two queues writing the same
+  order at once, but not one queue arriving too early on a transition
+  another is about to make** — the user asked for a systematic audit of
+  every queue pair in the 6-queue order pipeline for this shape of race
+  (not just the `reconcileStuckOrders`/`ML_ORDER_SYNC` pair already known).
+  Full reference of the pipeline as it stands today — the 6 queues'
+  preconditions/writes, the state table, the lock, and every queue-pair
+  coordination case — now lives in `docs/automation/order-pipeline.md`
+  (kept as a living doc, not a changelog — update it, not this file, when
+  describing current behavior). What changed this session, for history:
+  - `reconcileStuckOrders` now waits for `ML_ORDER_SYNC` to go idle
+    (`BaseQueueService.waitUntilIdle`, event-driven via BullMQ's
+    `"drained"` event — no polling) before sweeping, capped at 5min, since
+    "situação still 748743" can't distinguish a genuinely abandoned order
+    from one `ML_ORDER_SYNC` just hasn't reached yet.
+  - **Real structural bug, not just a timing race**: the
+    `lock_today_orders` branch of `scheduleNfe` writes
+    `WAITING_FOR_NFE_EMISSION` + `waiting_acceptance: true` without ever
+    PATCHing Bling to `748748`; `POST
+    /orders/release-waiting-acceptance-for-today` only flipped the DB flag
+    back to `false` and never resumed the actual scheduling — so every
+    order released through that endpoint got picked up later by
+    `reconcileWaitingNfe` (recreating the missing emission job with Bling
+    still at `748743`) and `NFE_EMISSION` then bounced it to human review.
+    Fixed by giving `MLOrderSyncQueue` a `resumeAfterAcceptance(orderId)`
+    entry point (routed via a new `{resumeOrderId}` job-data shape) that
+    finishes the scheduling for real; `releaseWaitingAcceptanceForToday`
+    now selects affected orders *before* the update and returns the full
+    list so `OrdersController` can enqueue one resume job per order.
+  - `reconcileWaitingNfe` (the one `NFE_RECONCILER` routine that had no
+    `withOrderLock`) and `BLING_RECONCILER`'s `syncInvoicedOrCollectedOrders`
+    (which decided its PATCH from a per-page order snapshot instead of
+    rereading the order's `situacao`/`collection_date` fresh inside the
+    per-order lock) both got smaller fixes in the same pass — see the doc
+    for current behavior.
+  - **Follow-up in the same session**: `finalizeNfeScheduling` — the
+    shared tail of both `scheduleNfe` and `resumeAfterAcceptance` that
+    does the actual PATCH to `748748` — used to trust only the local
+    `isEligibleForSync` snapshot (`source_payload`, populated by the last
+    webhook `BLING_ORDER_INGESTION` processed) before writing. Added a
+    live `blingGet` + `mapOrderInternalStatus` check right before the
+    PATCH: if Bling's situação isn't still `748743` (e.g. the order was
+    cancelled directly on Bling while sitting in `waiting_acceptance`),
+    it syncs `internal_status` to match reality and skips scheduling
+    instead of blindly overwriting. Matters most for
+    `resumeAfterAcceptance`, where the gap between an order getting locked
+    and someone manually releasing it can be far longer than the normal
+    gap `isEligibleForSync` alone was ever tolerant of.
 - **Bling's API rate limit is per ACCOUNT, not per app/OAuth client**
   (confirmed at developer.bling.com.br/limites: "limites... não específicas
   por endpoints, mas sim para todas [requisições da conta]" — 3 req/s,
