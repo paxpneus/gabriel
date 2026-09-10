@@ -174,6 +174,7 @@ describe("MLOrderSyncQueue", () => {
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
         `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748748`,
         { id: 748748 },
+        { timeout: 20000 },
       );
       expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
         internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
@@ -263,11 +264,13 @@ describe("MLOrderSyncQueue", () => {
         expect.objectContaining({
           observacoesInternas: expect.stringContaining("ML: 000000461_239"),
         }),
+        { timeout: 20000 },
       );
       // scheduleNfe encadeado a partir do mesmo fluxo:
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
         `/pedidos/vendas/${order.id_order_system}/situacoes/748748`,
         { id: 748748 },
+        { timeout: 20000 },
       );
       expect(ordersService.update).toHaveBeenCalledWith(order.id, {
         internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
@@ -321,6 +324,7 @@ describe("MLOrderSyncQueue", () => {
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
         `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748748`,
         { id: 748748 },
+        { timeout: 20000 },
       );
       expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
         internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,

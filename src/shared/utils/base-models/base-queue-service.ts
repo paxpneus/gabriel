@@ -24,6 +24,11 @@ export type baseQueueOptions = {
       enabled?: boolean;
       ranks?: Record<string, number>;
       defaultRank?: number;
+      // A cada `agingIntervalMs` esperando, o rank efetivo do ticket melhora em 1
+      // (nunca passa de 1, o melhor). Sem isso um rank baixo sob tráfego alto e
+      // sustentado de rank mais alto nunca roda (visto em produção: ML_ORDER_SYNC
+      // rank 7 travado atrás de BLING_API_FETCH contínuo). Default 2min.
+      agingIntervalMs?: number;
     };
   };
 };
@@ -34,6 +39,7 @@ type SharedLockPriorityTicket = {
   token: string;
   resource: string;
   rank: number;
+  timestamp: number;
 };
 
 export abstract class BaseQueueService<T> {
@@ -146,6 +152,7 @@ export abstract class BaseQueueService<T> {
   ): Promise<boolean> {
     if (priorityTicket) {
       await this.cleanupSharedLockPriorityQueue(priorityTicket.waitKey);
+      await this.applySharedLockPriorityAging(priorityTicket, sharedLock);
       const isNext = await this.isNextSharedLockPriorityTicket(priorityTicket);
       if (!isNext) return false;
     }
@@ -265,7 +272,36 @@ export abstract class BaseQueueService<T> {
       Math.max(ttlMs, 5 * 60 * 1000),
     );
 
-    return { waitKey, ticketKey, token: member, resource, rank };
+    return {
+      waitKey,
+      ticketKey,
+      token: member,
+      resource,
+      rank,
+      timestamp: job.timestamp ?? Date.now(),
+    };
+  }
+
+  // Promove o rank efetivo do ticket com base no tempo de espera, pra um rank
+  // baixo não ficar preso pra sempre atrás de tráfego contínuo de rank mais
+  // alto (ex: ML_ORDER_SYNC atrás de BLING_API_FETCH). Nunca passa do rank 1.
+  private async applySharedLockPriorityAging(
+    ticket: SharedLockPriorityTicket,
+    sharedLock: NonNullable<baseQueueOptions["sharedLock"]>,
+  ): Promise<void> {
+    const agingIntervalMs = sharedLock.priority?.agingIntervalMs ?? 2 * 60 * 1000;
+    if (!agingIntervalMs || agingIntervalMs <= 0) return;
+
+    const waitedMs = Date.now() - ticket.timestamp;
+    const promotions = Math.floor(waitedMs / agingIntervalMs);
+    if (promotions <= 0) return;
+
+    const effectiveRank = Math.max(1, ticket.rank - promotions);
+    const score = effectiveRank * 100_000_000_000_000 + ticket.timestamp;
+
+    // LT: só atualiza se o novo score for MENOR (melhor) que o atual — score
+    // baixo é o que ZRANGE 0,0 escolhe primeiro.
+    await redisConnection.zadd(ticket.waitKey, "LT", score, ticket.token);
   }
 
   private resolveSharedLockResource(job: Job<T>): string {

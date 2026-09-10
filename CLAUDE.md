@@ -1100,26 +1100,53 @@ flag is explicitly set.
   starving other Bling-lock queues (see below). 10min gives real breathing
   room.
 - **`BLING_SHARED_QUEUE_LOCK`** (`bling/services/bling/queues/bling-queue-lock.ts`)
-  — strict rank-based priority (Redis ZSET, `score = rank*1e14 + timestamp`,
-  lowest rank always goes next), **no aging/fairness mechanism**. A queue
-  waiting for the lock can be starved **indefinitely** by continuous
-  higher-rank traffic — the `maxWaitMs` safety valve (default 60min) only
-  fires a `HIGH` alert, it does **not** boost priority or force the job
-  through. Confirmed in production: an order sat in `WAITING CHANNEL
-  VALIDATION` for 6+ days, fully matching `reconcileStuckOrders`'s query
-  (verified live), yet was never processed — `NFE_RECONCILER` (and worse,
-  `NFE_EMISSION`, the queue that actually emits the NFe) were ranked near
-  the bottom, so a sustained stream of `BLING_API_FETCH` webhook traffic
-  (rank 1 at the time) could always cut in line ahead of them. **Fixed
-  this session**: `NFE_EMISSION` and `NFE_RECONCILER` moved to ranks 1-2
-  (highest priority) — current order: `NFE_EMISSION:1, NFE_RECONCILER:2,
-  BLING_API_FETCH:3, BLING_STOCK_MOVEMENTS_SCRAPING:4,
-  BLING_ORDER_INGESTION:5, CNPJ_VERIFY_CNAE:6, ML_ORDER_SYNC:7,
-  BLING_NFE_SCRAPING:8, BLING_RECONCILER:9`. If starvation resurfaces for
-  some other queue, the real fix is adding aging (rank improves the longer
-  a ticket waits), not just reshuffling fixed ranks — reshuffling only
-  moves which queue is safe, it doesn't remove the underlying "no
-  fairness" gap.
+  — rank-based priority (Redis ZSET, `score = rank*1e14 + timestamp`, lowest
+  score always goes next). Confirmed in production: an order sat in
+  `WAITING CHANNEL VALIDATION` for 6+ days, fully matching
+  `reconcileStuckOrders`'s query (verified live), yet was never processed —
+  `NFE_RECONCILER` (and worse, `NFE_EMISSION`, the queue that actually
+  emits the NFe) were ranked near the bottom, so a sustained stream of
+  `BLING_API_FETCH` webhook traffic (rank 1 at the time) could always cut
+  in line ahead of them. **Fixed in an earlier session**: `NFE_EMISSION`
+  and `NFE_RECONCILER` moved to ranks 1-2 (highest priority) — current
+  order: `NFE_EMISSION:1, NFE_RECONCILER:2, BLING_API_FETCH:3,
+  BLING_STOCK_MOVEMENTS_SCRAPING:4, BLING_ORDER_INGESTION:5,
+  CNPJ_VERIFY_CNAE:6, ML_ORDER_SYNC:7, BLING_NFE_SCRAPING:8,
+  BLING_RECONCILER:9`.
+  **Starvation resurfaced for `ML_ORDER_SYNC` (rank 7), fixed this
+  session by adding aging** — this is the exact class of bug the previous
+  fix's own note predicted ("if starvation resurfaces for some other
+  queue, the real fix is adding aging, not reshuffling ranks"). Symptom
+  reported by the user: every order was landing in "aguardando
+  verificação humana" (`reconcileStuckOrders`'s `ERROR_CATALOG`-style
+  sweep, unrelated queue but same mechanism as the bug above) even though
+  `MLScrapingQueue`'s logs showed every order's `collection_date` being
+  found correctly. Root cause: `ML_ORDER_SYNC` is the *only* thing that
+  writes `collection_date` onto the order (via `syncFromExcel` →
+  `applyCollectionDate`) — under sustained `BLING_API_FETCH` webhook
+  traffic (rank 3) and `NFE_RECONCILER` running every 15min (rank 2),
+  `ML_ORDER_SYNC`'s tickets could never become the ZSET's front-of-line
+  member (the old `isNextSharedLockPriorityTicket` check only lets the
+  single lowest-score ticket try the lock, with no way for a lower rank
+  to ever overtake a higher one), so its jobs sat retrying every 500ms
+  indefinitely while `NFE_RECONCILER`'s `reconcileStuckOrders` (which
+  doesn't need the lock to decide — just a >30min-stuck timestamp check)
+  kept sweeping those same orders into human review before `ML_ORDER_SYNC`
+  ever got a turn to apply the collection date it had already found.
+  **Fix**: `BaseQueueService` (`base-queue-service.ts`) now supports
+  `sharedLock.priority.agingIntervalMs` (new
+  `applySharedLockPriorityAging` method) — every time a waiting ticket
+  rechecks the lock, it re-`ZADD`s its own score with an *effective* rank
+  that improves by 1 for every `agingIntervalMs` elapsed since it first
+  started waiting (floored at rank 1, never above the best-defined tier;
+  uses Redis `ZADD ... LT` so a ticket's score only ever improves, never
+  regresses). `BLING_SHARED_QUEUE_LOCK` sets `agingIntervalMs: 2*60*1000`,
+  so a rank-7 ticket reaches rank 1 within ~12 minutes of sustained
+  contention — comfortably inside the 30-minute `reconcileStuckOrders`
+  window — while still respecting the original ranking the rest of the
+  time. The `maxWaitMs` safety valve (default 60min, unchanged) still
+  only fires a `HIGH` alert on top of this, it doesn't itself boost
+  priority.
 - **Bling's API rate limit is per ACCOUNT, not per app/OAuth client**
   (confirmed at developer.bling.com.br/limites: "limites... não específicas
   por endpoints, mas sim para todas [requisições da conta]" — 3 req/s,
@@ -1130,21 +1157,56 @@ flag is explicitly set.
   auth mechanism, must respect the same pacing.
   `waitForBlingRateLimit()` (`bling/api/bling_api.service.ts`) is the
   single Redis-backed leaky-bucket limiter (atomic Lua `EVAL`, so
-  provably race-free across any number of concurrent callers) — now
-  **exported** and also called from the two Playwright/cookie-session
-  scrapers that bypass the OAuth `blingApi` axios instance entirely
-  (`get-stock-movements.ts`'s `fetchLancamentosPage`, and
-  `nfe-manifest-web-scraping.service.ts`'s page navigations + the
-  `#btnManifestarLote` click) — those were previously invisible to the
-  rate limiter despite consuming the same account-wide quota, which was
-  the leading suspect for 429s persisting even after tightening
-  `BLING_RATE_LIMIT_INTERVAL_MS` (currently 1500ms) on the OAuth side
-  alone. `BLING_API_FETCH`/`invoice`/`stock` webhook processing itself was
-  ruled out as the direct 429 cause: verified read-only (no
-  `blingApi.post/put/patch/delete` in that file), no concurrent fan-out
-  (`Promise.all`), `concurrency: 1`, and the physical-stock lookup is
-  properly batched per invoice (not N+1 per line item) — 2 sequential
-  Bling GETs is the normal case per webhook event.
+  provably race-free across any number of concurrent callers), called
+  from the `blingApi` axios instance's `onRequest` interceptor (covers
+  every GET/POST/PUT/PATCH/DELETE through that instance) and also from
+  the two Playwright/cookie-session scrapers that bypass the OAuth
+  `blingApi` axios instance entirely (`get-stock-movements.ts`'s
+  `fetchLancamentosPage`, and `nfe-manifest-web-scraping.service.ts`'s
+  page navigations + the `#btnManifestarLote` click) — those were
+  previously invisible to the rate limiter despite consuming the same
+  account-wide quota. `BLING_API_FETCH`/`invoice`/`stock` webhook
+  processing itself was ruled out as a direct 429 cause: verified
+  read-only (no `blingApi.post/put/patch/delete` in that file), no
+  concurrent fan-out (`Promise.all`), `concurrency: 1`, and the
+  physical-stock lookup is properly batched per invoice (not N+1 per line
+  item) — 2 sequential Bling GETs is the normal case per webhook event.
+  **Revisited this session** (user reported 429s "estourando toda hora"
+  despite `BLING_RATE_LIMIT_INTERVAL_MS=1500` + a manually-added 2000ms
+  extra delay in `blingGet` — combined that's already well under Bling's
+  3 req/s limit on paper, so the interval itself wasn't the likely
+  culprit). Found and fixed two real gaps instead:
+  - `handleBlingOAuthCallback`'s token-exchange `fetch()` had **no
+    timeout at all** (inconsistent with `doRefreshToken`'s sibling call,
+    which already had `AbortSignal.timeout(30_000)`) — added the same
+    30s timeout.
+  - Every Bling write call (POST/PUT/PATCH) across `cnpj.queue.ts`,
+    `bling-reconciler.queue.ts`, `nfe-reconciler.queue.ts`, `nfe.queue.ts`,
+    `mercado-livre-sync.queue.ts`, and `bling.service.ts`'s one GET, were
+    calling `blingApi.get/post/put/patch` directly — bypassing the extra
+    `BLING_ORDER_REQUEST_DELAY_MS` pacing buffer that only the `blingGet`
+    helper applied, and relying solely on the shared axios instance's
+    single global timeout with no per-call override. `get-with-sleep.ts`
+    now exports `blingGet`/`blingPost`/`blingPut`/`blingPatch` — all four
+    apply the same pacing + an explicit per-call timeout (`
+    BLING_REQUEST_TIMEOUT_MS`, default 20s; NFe generation
+    (`/gerar-nfe`) explicitly overrides to 45s since it involves Bling
+    talking to SEFAZ and can be slower) — and every production call site
+    above was migrated onto these wrappers, so no write call is timeout-
+    or pacing-inconsistent with reads anymore.
+  - `BLING_RATE_LIMIT_INTERVAL_MS` default raised 1500ms → 2000ms for
+    extra headroom, per explicit user request.
+  - Left as an open, documented hypothesis (can't be verified from code
+    alone): if 429s persist after this, the two most likely remaining
+    causes are (a) a different process/environment — another deploy, or
+    a manual maintenance script under `src/scripts/bling/` — pointed at a
+    **different Redis** than production, so it paces its own requests
+    correctly but uncoordinated with the shared limiter; or (b) a
+    temporary IP ban already in effect (300 errors/10s or 600 requests/10s
+    → 10-60min block per developer.bling.com.br/limites), which makes
+    every request fail for the whole ban window regardless of current
+    pacing — this can look exactly like "estourando toda hora" in logs
+    even though it's really one earlier burst still being paid for.
 - **Known follow-up, not yet done**: `BlingNfeScrapingQueue`'s
   `scheduleRepeat({ every: 3 * 60 * 60 * 1000 })` (`src/queues/index.ts`)
   has no `cron`/`tz` anchor, so it drifts across all hours of the day

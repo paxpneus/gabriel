@@ -939,7 +939,10 @@ describe("BlingApiFetchQueue.findBlingInvoiceIdByChave", () => {
       0,
     );
 
-    expect(get).toHaveBeenCalledWith(`/nfe?chaveAcesso=${CHAVE}&tipo=0`);
+    expect(get).toHaveBeenCalledWith(
+      `/nfe?chaveAcesso=${CHAVE}&tipo=0`,
+      { timeout: 20000 },
+    );
     expect(id).toBe(123);
   });
 
@@ -953,7 +956,10 @@ describe("BlingApiFetchQueue.findBlingInvoiceIdByChave", () => {
       1,
     );
 
-    expect(get).toHaveBeenCalledWith(`/nfce?chaveAcesso=${CHAVE}&tipo=1`);
+    expect(get).toHaveBeenCalledWith(
+      `/nfce?chaveAcesso=${CHAVE}&tipo=1`,
+      { timeout: 20000 },
+    );
     expect(id).toBe(456);
   });
 

@@ -5,11 +5,20 @@ export const BLING_SHARED_QUEUE_LOCK: NonNullable<baseQueueOptions["sharedLock"]
   ttlMs: 2 * 60 * 1000,       // 2min — se job morrer, libera rápido
   retryDelayMs: 500,           // checa a cada 500ms quem é o próximo
 
-  // Sem aging: um rank baixo pode nunca rodar sob tráfego alto e sustentado
-  // de rank mais alto (ex: BLING_API_FETCH sob rajada de webhooks). Por isso
   // NFE_EMISSION (prazo real de coleta) e NFE_RECONCILER (rede de segurança
   // que recria jobs perdidos) ficam nos ranks mais altos — não podem ficar
   // presos atrás de sync de catálogo/estoque.
+  //
+  // Aging (agingIntervalMs): confirmado em produção que rank fixo sem aging
+  // faz um rank baixo nunca rodar sob tráfego alto e sustentado de rank mais
+  // alto — ML_ORDER_SYNC (rank 7) ficava preso atrás do fluxo contínuo de
+  // BLING_API_FETCH (webhooks), e como ML_ORDER_SYNC é quem aplica a
+  // collection_date que destrava o pedido, o NFE_RECONCILER (rank 2, que não
+  // depende do lock pra decidir isso) acabava marcando esses pedidos como
+  // "aguardando verificação humana" por estarem há >30min sem avançar, mesmo
+  // com a data de coleta já achada pelo scraping. Com aging, o rank efetivo
+  // de um ticket melhora 1 nível a cada agingIntervalMs esperando (nunca
+  // passa do rank 1), garantindo que nenhuma fila fique presa pra sempre.
   priority: {
     enabled: true,
     ranks: {
@@ -24,5 +33,6 @@ export const BLING_SHARED_QUEUE_LOCK: NonNullable<baseQueueOptions["sharedLock"]
       BLING_RECONCILER:     9, // busca pedidos perdidos
     },
     defaultRank: 10,
+    agingIntervalMs: 2 * 60 * 1000,
   },
 };

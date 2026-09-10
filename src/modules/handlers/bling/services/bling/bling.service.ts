@@ -1,6 +1,7 @@
 import { AxiosInstance } from "axios";
 import { blingApi } from "../../api/bling_api.service";
 import { blingOrderResponse, blingOrdersParams } from "./bling.types";
+import { blingGet } from "./helpers/get-with-sleep";
 
 export class BlingService {
   private blingApi: AxiosInstance;
@@ -10,7 +11,7 @@ export class BlingService {
 
   async getOrders(params: blingOrdersParams): Promise<blingOrderResponse[]> {
     try {
-      const { data } = await this.blingApi.get(`/pedidos/vendas/`, {
+      const { data } = await blingGet(`/pedidos/vendas/`, this.blingApi, {
         params: params,
         paramsSerializer: {
           indexes: null,

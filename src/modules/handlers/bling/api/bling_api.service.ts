@@ -10,14 +10,25 @@ import { redisConnection } from "../../../../shared/utils/base-models/base-redis
 let isRefreshing = false;
 let failedQueue: QueueItem[] = [];
 
-// Intervalo mínimo entre requests para a Bling (default: ~0.66 req/s).
-// A Bling permite até 3 req/s, mas mesmo a 1 req/s (1000ms, commit
-// 93146820) o 429 continuou ocorrendo com frequência — aumentado pra
-// 1500ms. Se persistir mesmo assim, o próximo suspeito é tráfego fora
-// deste limiter (scripts de scraping com login por cookie, que não
-// passam pela instância `blingApi`).
+// Intervalo mínimo entre requests para a Bling (default: 2000ms = 0.5 req/s).
+// A Bling permite até 3 req/s, mas mesmo a 1000ms e depois 1500ms o 429
+// continuou ocorrendo com frequência — aumentado pra 2000ms de margem extra.
+// Esse limiter cobre toda chamada que passa pela instância `blingApi`
+// (GET/POST/PUT/PATCH/DELETE, via onRequest abaixo) mais os dois scrapers
+// autenticados por cookie que chamam waitForBlingRateLimit() manualmente
+// (get-stock-movements.ts, nfe-manifest-web-scraping.service.ts) — a conta
+// Bling tem uma cota só, não por app/token (ver comentário na exportação
+// abaixo). Se o 429 persistir mesmo com essa margem, o suspeito deixa de
+// ser o pacing e passa a ser: (a) tráfego fora deste processo — outro
+// deploy/ambiente ou script manual apontando pra um Redis diferente do de
+// produção, que não compartilha a chave BLING_RATE_LIMIT_KEY; ou (b) um
+// bloqueio de IP de 10-60min já em andamento (300 erros/10s ou 600
+// requests/10s), que faz TODA chamada falhar até o bloqueio expirar,
+// mesmo com o pacing correto — nesse caso o log de erro é enganoso porque
+// parece "estourando toda hora" quando na verdade é um único banimento
+// persistente.
 const BLING_RATE_LIMIT_INTERVAL_MS = Number(
-  process.env.BLING_RATE_LIMIT_INTERVAL_MS ?? 1500,
+  process.env.BLING_RATE_LIMIT_INTERVAL_MS ?? 2000,
 );
 const BLING_RATE_LIMIT_KEY = "rate-limit:bling:next-slot";
 
@@ -294,6 +305,7 @@ export const handleBlingOAuthCallback = async (code: string): Promise<void> => {
       code,
       redirect_uri: configToken.callback_url!,
     }).toString(),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!tokenRes.ok) {

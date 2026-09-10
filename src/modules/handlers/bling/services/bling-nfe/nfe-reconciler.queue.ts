@@ -17,6 +17,7 @@ import { FullOrder } from "../../../../sales/orders/order/orders.types";
 import OrderItems from "../../../../sales/orders/order_items/order_items.model";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
+import { blingGet, blingPut, blingPatch } from "../bling/helpers/get-with-sleep";
 import Store from "../../../../sales/stores/stores.model";
 import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import {
@@ -217,8 +218,9 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
     for (const order of stuckOrders) {
       try {
-        const { data } = await this.blingApi.get(
+        const { data } = await blingGet(
           `/pedidos/vendas/${order.id_order_system}`,
+          this.blingApi,
         );
 
         const currentSituacaoId = data?.data?.situacao?.id;
@@ -243,16 +245,17 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+        await blingPut(`/pedidos/vendas/${order.id_order_system}`, {
           ...data.data,
           observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana: Pedido parado em aguardando agendamento de nfe, pelo motivo de não conseguir encontrar o pedido na planilha do mercado livre`,
-        });
+        }, this.blingApi);
 
         await new Promise((resolve) => setTimeout(resolve, 3000));
 
-        await this.blingApi.patch(
+        await blingPatch(
           `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
           { id: 748772 },
+          this.blingApi,
         );
 
         await ordersService.update(order.id, {

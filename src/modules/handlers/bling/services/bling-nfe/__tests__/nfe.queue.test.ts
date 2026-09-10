@@ -146,6 +146,8 @@ describe("NFeQueue", () => {
 
       expect(fakeBlingApi.post).toHaveBeenCalledWith(
         `/pedidos/vendas/${order.id}/gerar-nfe`,
+        undefined,
+        { timeout: 45000 },
       );
       expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
         nfe_emitted: true,
@@ -178,6 +180,7 @@ describe("NFeQueue", () => {
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
         `/pedidos/vendas/${order.id}/situacoes/748772`,
         { id: 748772 },
+        { timeout: 20000 },
       );
       expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
         internal_status: OrderInternalStatus.CANCELLED,
@@ -198,6 +201,7 @@ describe("NFeQueue", () => {
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
         `/pedidos/vendas/${order.id}/situacoes/748772`,
         { id: 748772 },
+        { timeout: 20000 },
       );
       expect(alertService.sendAlert).toHaveBeenCalledWith(
         expect.objectContaining({ severity: "HIGH", title: "NFe — Sem estoque" }),
@@ -250,10 +254,12 @@ describe("NFeQueue", () => {
             "Pedido não estava no status NFE Agendada ao tentar gerar NFe",
           ),
         }),
+        { timeout: 20000 },
       );
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
         `/pedidos/vendas/${order.id}/situacoes/748772`,
         { id: 748772 },
+        { timeout: 20000 },
       );
       expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
         internal_status: OrderInternalStatus.CANCELLED,
@@ -291,6 +297,7 @@ describe("NFeQueue", () => {
         expect.objectContaining({
           observacoesInternas: expect.stringContaining("Falha ao gerar NFe na Bling"),
         }),
+        { timeout: 20000 },
       );
       expect(alertService.sendAlert).toHaveBeenCalledWith(
         expect.objectContaining({ severity: "CRITICAL" }),

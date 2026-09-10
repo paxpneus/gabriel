@@ -6,7 +6,7 @@ import { getBlingIntegration } from "../../api/bling_api.service";
 import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
-import { blingGet } from "../bling/helpers/get-with-sleep";
+import { blingGet, blingPatch } from "../bling/helpers/get-with-sleep";
 
 const BLING_SITUACAO_ATENDIDO = 9;
 
@@ -52,7 +52,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
 
   // ─── Busca o canal MercadoLivre e retorna o STORE_ID ────────────────────────
   private async getMercadoLivreStoreId(): Promise<number | undefined> {
-    const channelResponse = await this.blingApi.get(`/canais-venda`, {
+    const channelResponse = await blingGet(`/canais-venda`, this.blingApi, {
       params: { tipos: ["MercadoLivre"], situacao: 1 },
     });
     return channelResponse.data.data?.[0]?.id;
@@ -86,7 +86,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
     let failedCount = 0;
 
     while (true) {
-      const { data } = await this.blingApi.get(`/pedidos/vendas`, {
+      const { data } = await blingGet(`/pedidos/vendas`, this.blingApi, {
         params: {
           idLoja: STORE_ID,
           "idsSituacoes[]": 6,
@@ -187,7 +187,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
     let failedCount = 0;
 
     while (true) {
-      const { data } = await this.blingApi.get(`/pedidos/vendas`, {
+      const { data } = await blingGet(`/pedidos/vendas`, this.blingApi, {
         params: {
           idLoja: STORE_ID,
           "idsSituacoes[]": 6,
@@ -232,18 +232,20 @@ export class BlingReconcilerQueue extends BaseQueueService<
           const hasCollectionDate = !!existingOrder.collection_date;
 
           if (hasInvoice) {
-            await this.blingApi.patch(
+            await blingPatch(
               `/pedidos/vendas/${blingOrder.id}/situacoes/${BLING_SITUACAO_ATENDIDO}`,
               { id: BLING_SITUACAO_ATENDIDO },
+              this.blingApi,
             );
             updatedToInvoiced++;
             console.log(
               `[BlingReconciler] Pedido ${blingOrder.numero} já tem NF (${orderData.notaFiscal.id}) — situação alterada para Atendido (${BLING_SITUACAO_ATENDIDO}).`,
             );
           } else if (hasCollectionDate) {
-            await this.blingApi.patch(
+            await blingPatch(
               `/pedidos/vendas/${blingOrder.id}/situacoes/${BLING_SITUACAO_AGUARDANDO_NF_COM_COLETA}`,
               { id: BLING_SITUACAO_AGUARDANDO_NF_COM_COLETA },
+              this.blingApi,
             );
             updatedToCollected++;
             console.log(

@@ -22,6 +22,11 @@ import { alertService } from "../../../../shared/providers/mail-provider/nodemai
 import redisService from "../../../../shared/utils/base-models/base-redis";
 import integrationsService from "../../../integrations/integrations/integrations.service";
 import { BLING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/bling-queue-lock";
+import {
+  blingGet,
+  blingPut,
+  blingPatch,
+} from "../../bling/services/bling/helpers/get-with-sleep";
 
 /**
  * Job pode vir de duas origens:
@@ -323,21 +328,22 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       number_order_channel: row.order_number,
     });
 
-    const { data } = await this.blingApi.get(
+    const { data } = await blingGet(
       `/pedidos/vendas/${order.id_order_system}`,
+      this.blingApi,
     );
     if (isSibling) {
-      await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+      await blingPut(`/pedidos/vendas/${order.id_order_system}`, {
         ...data.data,
         observacoesInternas:
           `${data.data.observacoesInternas} \n Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim(),
-      });
+      }, this.blingApi);
     } else {
-      await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+      await blingPut(`/pedidos/vendas/${order.id_order_system}`, {
         ...data.data,
         observacoesInternas:
           `${data.data.observacoesInternas} \n ML: ${row.order_number}`.trim(),
-      });
+      }, this.blingApi);
     }
 
     console.log(
@@ -440,11 +446,12 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       MIN_DELAY_MS,
     );
 
-    await this.blingApi.patch(
+    await blingPatch(
       `/pedidos/vendas/${idOrderSystem}/situacoes/748748`,
       {
         id: 748748,
       },
+      this.blingApi,
     );
 
     await ordersService.update(orderSystem.id, {

@@ -163,10 +163,12 @@ describe("CNPJQueue", () => {
           "Documento não informado ou inválido",
         ),
       }),
+      { timeout: 20000 },
     );
     expect(fakeBlingApi.patch).toHaveBeenCalledWith(
       `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748772`,
       { id: 748772 },
+      { timeout: 20000 },
     );
     expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
       internal_status: "CANCELLED",
@@ -188,6 +190,7 @@ describe("CNPJQueue", () => {
     expect(fakeBlingApi.patch).toHaveBeenCalledWith(
       `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`,
       { id: 748743 },
+      { timeout: 20000 },
     );
     expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
       internal_status: "WAITING CHANNEL VALIDATION",
@@ -207,6 +210,7 @@ describe("CNPJQueue", () => {
     expect(fakeBlingApi.patch).toHaveBeenCalledWith(
       `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`,
       { id: 748743 },
+      { timeout: 20000 },
     );
     expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
       internal_status: "WAITING CHANNEL VALIDATION",
@@ -230,6 +234,7 @@ describe("CNPJQueue", () => {
           "CNAE não atendido pela empresa",
         ),
       }),
+      { timeout: 20000 },
     );
     expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
       internal_status: "CANCELLED",

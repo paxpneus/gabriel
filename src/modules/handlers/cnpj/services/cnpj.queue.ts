@@ -7,7 +7,11 @@ import ordersService from "../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/bling-queue-lock";
 import { StoreService } from "../../../sales/stores/stores.service";
-import { blingGet } from "../../bling/services/bling/helpers/get-with-sleep";
+import {
+  blingGet,
+  blingPut,
+  blingPatch,
+} from "../../bling/services/bling/helpers/get-with-sleep";
 import { syncOrderInternalStatus } from "../../../sales/orders/order/helpers/order-status";
 import { OrderInternalStatus } from "../../../sales/orders/order/orders.types";
 
@@ -62,15 +66,16 @@ export class CNPJQueue extends BaseQueueService<any> {
       this.blingApi,
     );
 
-    await this.blingApi.put(`/pedidos/vendas/${order.id_order_system}`, {
+    await blingPut(`/pedidos/vendas/${order.id_order_system}`, {
       ...data.data,
       observacoesInternas:
         `${data.data.observacoesInternas} \n Pedido Cancelado pelo Motivo: ${errorMessage}`.trim(),
-    });
+    }, this.blingApi);
 
-    await this.blingApi.patch(
+    await blingPatch(
       `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
       { id: 748772 },
+      this.blingApi,
     );
 
     await syncOrderInternalStatus(748772, order.id_order_system);
@@ -79,9 +84,10 @@ export class CNPJQueue extends BaseQueueService<any> {
 
   private async applyWaitingNfeStatus(orderSystem: any): Promise<boolean> {
     try {
-      await this.blingApi.patch(
+      await blingPatch(
         `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748743`,
         { id: 748743 },
+        this.blingApi,
       );
       return true;
     } catch (err: any) {

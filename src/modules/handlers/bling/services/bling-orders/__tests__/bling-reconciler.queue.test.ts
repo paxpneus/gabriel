@@ -213,6 +213,7 @@ describe("BlingReconcilerQueue", () => {
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
         "/pedidos/vendas/1/situacoes/9",
         { id: 9 },
+        { timeout: 20000 },
       );
     });
 
@@ -230,6 +231,7 @@ describe("BlingReconcilerQueue", () => {
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
         "/pedidos/vendas/1/situacoes/748748",
         { id: 748748 },
+        { timeout: 20000 },
       );
     });
 

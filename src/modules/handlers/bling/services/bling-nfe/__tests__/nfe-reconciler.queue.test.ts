@@ -254,6 +254,7 @@ describe("ReconcilerQueue", () => {
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
         "/pedidos/vendas/1001/situacoes/748772",
         { id: 748772 },
+        { timeout: 20000 },
       );
       // 748772 sempre mapeia para CANCELLED — igual ao branch acima (situação
       // já mudou), este branch também deve gravar nfe_emitted=false.

@@ -10,7 +10,12 @@ import { AxiosInstance } from "axios";
 import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BLING_SHARED_QUEUE_LOCK } from "../bling/queues/bling-queue-lock";
-import { blingGet } from "../bling/helpers/get-with-sleep";
+import {
+  blingGet,
+  blingPut,
+  blingPatch,
+  blingPost,
+} from "../bling/helpers/get-with-sleep";
 import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import {
   COMPLETED_ORDER_INTERNAL_STATUSES,
@@ -87,18 +92,19 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
     await new Promise((r) => setTimeout(r, 1000));
 
-    await this.blingApi.put(`/pedidos/vendas/${orderId}`, {
+    await blingPut(`/pedidos/vendas/${orderId}`, {
       ...data.data,
       observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`,
-    });
+    }, this.blingApi);
 
     await new Promise((r) => setTimeout(r, 3000));
 
-    await this.blingApi.patch(
+    await blingPatch(
       `/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`,
       {
         id: STATUS.AGUARDANDO_VERIFICACAO_HUMANA,
       },
+      this.blingApi,
     );
     const orderSystem = await ordersService.findOne({
       where: {
@@ -120,7 +126,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     console.log(`[NFeQueue] Processando NFe do pedido ${order_id}`);
 
     // 1. Busca o pedido fresco na Bling
-    const { data } = await this.blingApi.get(`/pedidos/vendas/${order_id}`);
+    const { data } = await blingGet(`/pedidos/vendas/${order_id}`, this.blingApi);
     const order = data.data;
 
     // 1.1 Filtra por loja — só Mercado Livre passa daqui pra frente
@@ -165,7 +171,11 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
 
     // 4. Emite a NFe
     try {
-      await this.blingApi.post(`/pedidos/vendas/${order_id}/gerar-nfe`);
+      // Timeout maior que o default: emissão de NFe envolve a Bling falando
+      // com a SEFAZ, pode ser mais lenta que uma leitura/escrita comum.
+      await blingPost(`/pedidos/vendas/${order_id}/gerar-nfe`, undefined, this.blingApi, {
+        timeout: 45_000,
+      });
       console.log(`[NFeQueue] NFe emitida com sucesso para pedido ${order_id}`);
 
       const internalOrder = await ordersService.findOne({
