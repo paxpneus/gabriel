@@ -12,7 +12,6 @@ class Product
 {
   public id!: string;
   public name!: string;
-  public id_system?: string;
   public type?: string;
   public category?: string;
   public integrations_id?: string;
@@ -48,7 +47,6 @@ Product.init(
       primaryKey: true,
       allowNull: false,
     },
-    id_system: { type: DataTypes.STRING(100), allowNull: true },
     name: { type: DataTypes.STRING(255), allowNull: false },
     type: { type: DataTypes.ENUM("UNIT", "KIT"), defaultValue: "UNIT" },
     category: {

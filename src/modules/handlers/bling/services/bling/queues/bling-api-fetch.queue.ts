@@ -743,11 +743,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
   private async resolveKitComponent(
     componentBlingId: number,
+    integrationsId: string,
     logPrefix: string,
   ): Promise<{ sku: string | null; productId: string | null }> {
-    const localProduct = await Product.findOne({
-      where: { id_system: String(componentBlingId) },
-    });
+    const localProduct = await integrationMappingService.findEntityByMapping(
+      "PRODUCT",
+      integrationsId,
+      String(componentBlingId),
+    );
 
     if (localProduct) {
       const localConfig = await ProductConfig.findOne({
@@ -942,7 +945,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           break;
 
         case "product_supplier":
-          // await this.fetchAndUpsertProductSupplier(apiFetch);
           break;
 
         case "invoice":
@@ -1191,6 +1193,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       if (component?.produto?.id) {
         const resolvedComponent = await this.resolveKitComponent(
           component.produto.id,
+          integration.id,
           "[BLING_API_FETCH]",
         );
 
@@ -1264,7 +1267,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const productValues = {
       name: blingProduct.nome,
-      id_system: String(blingProduct.id),
       type: isKit ? "KIT" : "UNIT",
       integrations_id: integration.id,
       source_payload: blingProduct as unknown as Record<string, unknown>,
@@ -1491,31 +1493,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     integration: Awaited<ReturnType<typeof getBlingIntegration>>,
     logPrefix: string,
   ): Promise<Product> {
-    // products.id_system é único globalmente no banco (products_id_system_key).
-    // Se já existe um Product com esse id_system mas resolveProductWithMapping
-    // não achou (mapping ausente/órfão pra essa integração), NÃO reconecta
-    // sozinho — resolver por id_system direto já causou bug antes (produto
-    // errado escolhido quando o id_system foi reaproveitado/alterado do lado
-    // de fora sem o mapping acompanhar, ver resolveProductByMappingOnly em
-    // product.helpers.ts). Falha com erro claro pra revisão manual, em vez
-    // de deixar productService.create estourar a constraint.
-    const conflictingProduct = await Product.findOne({
-      where: { id_system: String(blingProduct.id) },
-    });
-    if (conflictingProduct) {
-      // UnrecoverableError: dado a mesma entrada, essa checagem vai falhar
-      // igual em qualquer tentativa — não é erro transitório, retry não
-      // ajuda. Pula direto pra "failed" (ver BaseQueueService.add).
-      throw new UnrecoverableError(
-        `Não foi possível criar o produto "${blingProduct.nome}": já existe um produto "${conflictingProduct.name}" com esse mesmo id do ERP no cadastro, mas sem mapping válido pra esta integração (provavelmente dado legado). Encaminhe este erro para o time técnico investigar. [${logPrefix} — produto conflitante id=${conflictingProduct.id}, id_system=${blingProduct.id}]`,
-      );
-    }
-
     let newProduct: Product;
     try {
       newProduct = await productService.create({
         name: blingProduct.nome,
-        id_system: String(blingProduct.id),
         type: blingProduct.formato === "E" ? "KIT" : "UNIT",
         integrations_id: integration.id,
         category: "TIRE",
@@ -1612,111 +1593,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     console.log(
       `${logPrefix} — produto "${product.name}" desativado (situacao=E na Bling): integration_mappings/supplier_mappings/product_configs removidos, is_active=false | product_id=${product.id}`,
-    );
-  }
-
-  private async fetchAndUpsertProductSupplier(
-    apiFetch: ApiFetchRequest,
-  ): Promise<void> {
-    const { data } = await blingGet<{ data: BlingApiProductSupplier }>(
-      `/produtos/fornecedores/${apiFetch.blingId}`,
-      blingApi,
-    );
-
-    const ps = data.data;
-
-    if (!ps?.produto?.id) {
-      throw new Error(
-        `[BLING_API_FETCH] Produto-fornecedor ${apiFetch.blingId} sem produto.id. Retry.`,
-      );
-    }
-
-    const product = await Product.findOne({
-      where: { id_system: String(ps.produto.id) },
-    });
-
-    if (!product) {
-      console.warn(
-        `[BLING_API_FETCH] Produto blingId=${ps.produto.id} não encontrado. Ignorado.`,
-      );
-      return;
-    }
-
-    let cnpj = ps.fornecedor?.cnpj ?? ps.fornecedor?.cpf ?? "";
-    const supplierId = ps.fornecedor?.id ? String(ps.fornecedor.id) : null;
-
-    if (!cnpj && supplierId) {
-      const supplierDb = await Supplier.findOne({
-        where: { id_system: supplierId },
-      });
-      if (supplierDb?.document && !supplierDb.document.startsWith("PENDING-")) {
-        cnpj = supplierDb.document;
-      }
-    }
-
-    if (!cnpj && supplierId) {
-      try {
-        const { data: contatoRes } = await blingGet<{ data: any }>(
-          `/contatos/${supplierId}`,
-          blingApi,
-        );
-        const contato = contatoRes.data;
-        cnpj = contato?.numeroDocumento ?? "";
-
-        if (cnpj) {
-          await Supplier.upsert({
-            id_system: supplierId,
-            name: contato?.nome ?? "SEM NOME",
-            document: cnpj,
-            fantasy_name: contato?.fantasia ?? null,
-            city: contato?.endereco?.municipio ?? "",
-            uf: contato?.endereco?.uf ?? "",
-            code: contato?.codigo ?? null,
-          });
-        }
-      } catch (error: any) {
-        if (error?.response?.status === 404) {
-          console.warn(
-            `[BLING_API_FETCH] Contato ${supplierId} não existe na Bling.`,
-          );
-          return;
-        }
-        throw error;
-      }
-    }
-
-    if (!cnpj) {
-      console.warn(
-        `[BLING_API_FETCH] Fornecedor ${supplierId} sem CNPJ/CPF resolvível. SupplierMapping não atualizado.`,
-      );
-      return;
-    }
-
-    const cleanCnpj = cleanDocument(cnpj);
-    const integration = await getBlingIntegration("Bling");
-
-    const existing = await SupplierMapping.findOne({
-      where: { product_id: product.id, integrations_id: integration.id },
-    });
-
-    if (existing) {
-      await existing.update({
-        supplier_cnpj: cleanCnpj,
-        supplier_product_code: ps.codigo ?? existing.supplier_product_code,
-      });
-    } else {
-      if (ps.codigo) {
-        await SupplierMapping.create({
-          product_id: product.id,
-          supplier_cnpj: cleanCnpj,
-          supplier_product_code: ps.codigo,
-          integrations_id: integration.id,
-        });
-      }
-    }
-
-    console.log(
-      `[BLING_API_FETCH] SupplierMapping ${existing ? "atualizado" : "criado"}: productId=${product.id}, cnpj=${cleanCnpj}`,
     );
   }
 
@@ -2228,8 +2104,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const blingIdByProductId = new Map<string, number>();
 
     for (const p of affectedProducts) {
-      const mapped = mappingBlingIds.get(p.id);
-      const resolved = mapped ?? p.id_system;
+      const resolved = mappingBlingIds.get(p.id);
 
       if (resolved) {
         blingIdByProductId.set(p.id, Number(resolved));

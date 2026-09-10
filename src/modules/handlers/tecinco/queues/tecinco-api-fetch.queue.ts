@@ -752,30 +752,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       data.marca_descricao,
     );
 
-    // Não sobrescreve id_system quando o valor já pertence a OUTRO produto —
-    // um produto pode legitimamente ter mais de um epctb_codigo mapeado nele
-    // (ver "Auto-map by SKU/SupplierMapping..." no CLAUDE.md), mas id_system
-    // é uma coluna única GLOBAL; forçar o external_id sendo sincronizado
-    // agora pode colidir com um produto diferente que já é dono legítimo
-    // desse id_system. Incidente real de produção: external_id=13180 mapeado
-    // num produto com id_system="6690" (seu primeiro external_id), enquanto
-    // um produto totalmente diferente já tinha id_system="13180" — todo sync
-    // desse item falhava pra sempre no UNIQUE de products.id_system.
-    let idSystemToApply: string | undefined = systemId;
-    if (product.id_system !== systemId) {
-      const idSystemOwner = await Product.findOne({ where: { id_system: systemId } });
-      if (idSystemOwner && idSystemOwner.id !== product.id) {
-        console.warn(
-          `${logPrefix} — id_system=${systemId} já pertence a outro produto (id=${idSystemOwner.id}, nome="${idSystemOwner.name}") — não sobrescrevendo id_system deste produto (mantém "${product.id_system}")`,
-        );
-        idSystemToApply = undefined;
-      }
-    }
-
     const upsertedProduct = await productService.upsertWithComponents({
       id: product.id,
       values: {
-        ...(idSystemToApply !== undefined ? { id_system: idSystemToApply } : {}),
         name: data.epctb_nome?.trim() ?? "",
         unit: data.epctb_unidade,
         gross_weight: data.epctb_pesobruto,
@@ -994,31 +973,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       filiaisToProcess.find((f) => f.fll_codigo === resolvedBranchId) ??
       filiaisToProcess[0];
 
-    // products.id_system é único globalmente no banco (products_id_system_key).
-    // Se já existe um Product com esse id_system mas resolveProductWithMapping
-    // não achou (mapping ausente/órfão pra essa integração), NÃO reconecta
-    // sozinho — resolver por id_system direto já causou bug antes (produto
-    // errado escolhido quando o id_system foi reaproveitado/alterado do lado
-    // de fora sem o mapping acompanhar, ver resolveProductByMappingOnly em
-    // product.helpers.ts). Falha com erro claro pra revisão manual, em vez
-    // de deixar productService.create estourar a constraint.
-    const conflictingProduct = await Product.findOne({
-      where: { id_system: systemId },
-    });
-    if (conflictingProduct) {
-      // UnrecoverableError: dado a mesma entrada, essa checagem vai falhar
-      // igual em qualquer tentativa — não é erro transitório, retry não
-      // ajuda. Pula direto pra "failed" (ver BaseQueueService.add).
-      throw new UnrecoverableError(
-        `Não foi possível criar o produto "${data.epctb_nome}": já existe um produto "${conflictingProduct.name}" com esse mesmo id do ERP no cadastro, mas sem mapping válido pra esta integração (provavelmente dado legado). Encaminhe este erro para o time técnico investigar. [${logPrefix} — produto conflitante id=${conflictingProduct.id}, id_system=${systemId}]`,
-      );
-    }
-
     let newProduct: Product;
     try {
       newProduct = await productService.create({
         name: data.epctb_nome?.trim() ?? "",
-        id_system: systemId,
         category: "TIRE",
         integrations_id: integrations.id,
         config: {

@@ -166,15 +166,41 @@ part of this section in the same turn — don't leave it to drift out of date.
 - Routes: `GET /:id/full`, `GET /by-code/:code` (read-only lookup),
   `GET /detailed/get`, `GET /report/get`, `GET /by-unit-business/get`,
   `GET /sales-report/get`.
-- `products.id_system` has a **global** unique DB index
-  (`products_id_system_key`, migration `20260415125537`/`20260415130053`) —
-  unique across the whole table, not scoped by `integrations_id`. This
-  matters for the create-product-from-unmapped flow (see below): before
-  creating a `Product` for a given ERP id, callers must check whether a
-  Product with that `id_system` already exists (even if `resolveProductWithMapping`
-  found no valid mapping for it — i.e. an orphaned/missing-mapping case),
-  otherwise `productService.create` throws a raw Postgres constraint error
-  instead of a clear one.
+- **`products.id_system` was removed entirely this session** (migration
+  `m275-remove-id-system-from-products.js`, both unique indexes
+  `products_id_system_key`/`products_id_system_unique_idx` dropped along
+  with the column). It used to be a legacy varchar holding "the last
+  external id seen for this product," **globally unique** across the
+  whole table — the root cause of a real production crash (see the
+  `Product.id_system` history entry below, kept for context even though
+  the field is gone): a physical product can legitimately have more than
+  one external id mapped to it (`integration_mappings` handles this fine,
+  scoped per integration; a single global-unique column can't). Every
+  place that used to read `id_system` to resolve a product now goes
+  through `integrationMappingService.findEntityByMapping("PRODUCT",
+  integrationsId, externalId)` instead: Bling's `resolveKitComponent` (KIT
+  component lookup), `bling-direct-upsert.queue.ts`'s
+  `upsertSupplierMapping`, `bling-order.service.ts`'s
+  `resolveProductWithConfig` (order-item cost resolution), and the
+  physical-stock-lookup fallback in `bling-api-fetch.queue.ts` (which
+  simply lost its `?? p.id_system` fallback — every product relevant to
+  that path already got an `integration_mapping` backfilled first, see
+  next point). `fetchAndUpsertProductSupplier` (Bling) was deleted outright
+  as dead code — its only caller was already commented out. The
+  create-time "does a Product already exist with this id" duplicate guard
+  (both integrations' `createProductFromBlingData`/`createProductFromTCarData`)
+  is also gone — there's nothing left to check it against; creation now
+  relies entirely on `resolveProductWithMapping` + the EAN/SKU conflict
+  handling documented elsewhere in this file.
+  The backfill (create the `integration_mapping` for any `Product` that
+  was until then only resolvable via `id_system`) is a standalone raw SQL
+  statement (`INSERT INTO integration_mappings ... SELECT ... FROM
+  products WHERE id_system IS NOT NULL ... ON CONFLICT (entity_type,
+  integrations_id, external_id) DO NOTHING` — idempotent, safe to rerun),
+  run by hand against prod **before** `m275`. Deliberately **not** embedded
+  in the migration itself — considered and reverted; kept as a separate
+  manual step instead. As always, **the user runs both the backfill SQL
+  and the migration themselves.**
 - `products.category` (ENUM: `TIRE`, `PART`, `OIL`, `BATTERY`, `ACCESSORY`,
   `WHEEL`, `TUBE`, `SERVICE`, `OTHER`; default `TIRE`; DB column added by
   migration `20260609225551-add-product-category-and-unit-business-type.js`)
@@ -503,7 +529,14 @@ product from an `ERROR_CATALOG_DUPLICATE` row:
   only reads already-curated data, so it was scoped out of this whole
   safety net from the start, and stays that way.)
 
-### `Product.id_system` overwrite on routine Tecinco sync — production crash + fix (later same session)
+### `Product.id_system` overwrite on routine Tecinco sync — production crash + fix, later fully superseded by removing the column (same session)
+
+**Superseded**: the interim fix described below (omit `id_system` on
+conflict) was itself replaced later this session by removing
+`products.id_system` entirely — see the Products section above. Left here
+for the incident history/reasoning, since the same root cause (a column
+that can only hold one external id, when a product can legitimately have
+several) is exactly what motivated the full removal.
 
 A **third** production incident, found via a real failing job log the user
 pasted (`Validation error | constraint=products_id_system_key | detail=Key
@@ -754,11 +787,13 @@ explicitly reverted and replaced** with the current, much simpler design:
   pre-existing orphan backlog needs a one-off cleanup (delete
   `integration_mappings` rows whose `internal_id` has no matching row in
   the table named by `entity_type`) before manual re-mapping of these
-  particular products can succeed — until that cleanup runs, re-attempting
-  create-product for the same `external_id` will now hit the `id_system`
-  conflict guard (`createProductFromTCarData`'s pre-check) and throw an
-  `UnrecoverableError` instead of silently repeating, since the *product*
-  already exists this time.
+  particular products can succeed. (At the time this was found,
+  re-attempting create-product for the same `external_id` hit an
+  `id_system` conflict guard in `createProductFromTCarData` and threw an
+  `UnrecoverableError` instead of silently repeating — that guard no
+  longer exists, since `products.id_system` was removed entirely later
+  this session; see the Products section above. The orphan backlog itself
+  is unaffected by that removal and is still unresolved.)
 - **Fixed this session — `createOrUpdateIntegrationMapping` used to also
   block by `internal_id`, not just `external_id`.** Found via a second,
   distinct production case (also Tecinco): a product already had a valid
@@ -911,18 +946,15 @@ flag is explicitly set.
   (or, **for Bling only**, when the product is a KIT — see below), instead
   of registering an unmapped row and returning, they call a new private
   `createProductFromBlingData`/`createProductFromTCarData` which:
-  1. Checks `Product.findOne({ where: { id_system } })` for a pre-existing
-     Product with that exact `id_system` (see the global-uniqueness note in
-     the Products section above) — if found, this means a mapping is
-     missing/orphaned for an existing product; it does **not** silently
-     reconnect to it (a prior bug class: resolving by `id_system` directly
-     already caused the wrong product being picked when an `id_system` was
-     reused externally without the mapping following along — see
-     `resolveProductByMappingOnly`'s own comment in `product.helpers.ts`).
-     It throws a `bullmq` `UnrecoverableError` with a friendly
-     lead sentence + the product names + technical ids bracketed at the
-     end, asking for manual investigation.
-  2. Otherwise calls `productService.create(...)` (wrapped in try/catch,
+  1. **(Removed this session, along with `products.id_system` itself — see
+     the Products section above.)** Used to check `Product.findOne({
+     where: { id_system } })` for a pre-existing orphaned-mapping conflict
+     before creating. There's nothing left to check that against now;
+     creation goes straight to step 2, relying entirely on
+     `resolveProductWithMapping` (already run by the caller) plus the
+     EAN/SKU conflict handling (`assertEanNotOwnedByAnotherProduct`,
+     `isCodeOwnedByAnotherProduct`) documented elsewhere in this file.
+  2. Calls `productService.create(...)` (wrapped in try/catch,
      any failure — EAN conflict, DB constraint — also rethrown as
      `UnrecoverableError`, since it's about already-resolved data and
      deterministic: retrying with the same input fails the same way) and
@@ -985,9 +1017,8 @@ flag is explicitly set.
   name the actual product(s) involved by `name` (not just id), and put the
   technical detail (ids, field names, code file/function) in `[...]` at the
   end for whoever the message gets forwarded to. See
-  `assertEanNotOwnedByAnotherProduct`'s `EanConflictError` message and the
-  `id_system`-conflict messages in `createProductFromBlingData`/
-  `createProductFromTCarData` for the concrete pattern.
+  `assertEanNotOwnedByAnotherProduct`'s `EanConflictError` message and
+  `SupplierMappingConflictError` for the concrete pattern.
 
 ## Invoices / fiscal (`src/modules/warehouse/fiscal/invoices/`)
 

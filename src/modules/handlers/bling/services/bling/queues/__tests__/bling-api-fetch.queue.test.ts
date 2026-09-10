@@ -79,6 +79,7 @@ jest.mock(
     default: {
       createOrUpdateIntegrationMapping: jest.fn(),
       findExternalIdsMap: jest.fn(),
+      findEntityByMapping: jest.fn(),
       bulkDelete: jest.fn(),
     },
   }),
@@ -629,7 +630,6 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       expect(productService.create).toHaveBeenCalledWith(
         expect.objectContaining({
           name: blingProduct.nome,
-          id_system: String(blingProduct.id),
           integrations_id: INTEGRATION_ID,
           config: expect.objectContaining({
             unit_business_id: UNIT_BUSINESS_ID,
@@ -723,27 +723,6 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       expect(ProductConfig.upsert).not.toHaveBeenCalled();
     });
 
-    it("já existe um Product com esse id_system mas sem mapping válido (mapping órfão/ausente): falha com erro claro, NÃO tenta criar (evita estourar a constraint global products_id_system_key)", async () => {
-      const blingProduct = makeBlingProduct();
-      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      (Product.findOne as jest.Mock).mockResolvedValue({
-        id: "orphan-product-id",
-      });
-
-      await expect(
-        runProductJob(blingProduct, { create: true }),
-      ).rejects.toThrow(/já existe um produto.*sem mapping válido/i);
-
-      expect(productService.create).not.toHaveBeenCalled();
-      expect(
-        integrationMappingService.createOrUpdateIntegrationMapping,
-      ).not.toHaveBeenCalled();
-      expect(
-        unmappedInvoiceProductService.resolveFromCreatedProduct,
-      ).not.toHaveBeenCalled();
-    });
-
     it("opts.create ausente (comportamento padrão, ex.: sync normal): mesmo sem mapping, NÃO cria produto — continua só registrando unmapped", async () => {
       const blingProduct = makeBlingProduct();
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
@@ -776,7 +755,6 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       expect(productService.create).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "KIT",
-          id_system: String(kitBlingProduct.id),
         }),
       );
       expect(productService.upsertWithComponents).toHaveBeenCalledWith(
@@ -826,7 +804,9 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
         componentBlingProduct: { codigo: "10026681" },
       });
       // Componente não tem Product local — só resolve via fallback da API.
-      (Product.findOne as jest.Mock).mockResolvedValue(null);
+      (integrationMappingService.findEntityByMapping as jest.Mock).mockResolvedValue(
+        null,
+      );
 
       await runProductJob(blingProduct);
 
@@ -844,9 +824,9 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       const componentBlingId = blingProduct.estrutura.componentes[0].produto.id;
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
 
-      (Product.findOne as jest.Mock).mockResolvedValue({
-        id: "local-component-product-id",
-      });
+      (integrationMappingService.findEntityByMapping as jest.Mock).mockResolvedValue(
+        { id: "local-component-product-id" },
+      );
       // ProductConfig do componente não existe pra essa unit_business — sku
       // do sistema não bate (não resolve) com o que a Bling espera.
       (ProductConfig.findOne as jest.Mock).mockResolvedValue(null);
@@ -871,9 +851,9 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       const componentBlingId = blingProduct.estrutura.componentes[0].produto.id;
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
 
-      (Product.findOne as jest.Mock).mockResolvedValue({
-        id: "local-component-product-id",
-      });
+      (integrationMappingService.findEntityByMapping as jest.Mock).mockResolvedValue(
+        { id: "local-component-product-id" },
+      );
       (ProductConfig.findOne as jest.Mock).mockResolvedValue({
         sku: "10026681",
       });

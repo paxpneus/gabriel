@@ -22,6 +22,7 @@ import Brand from "../../../../inventory/brands/brands.model";
 import stateService from "../../../../warehouse/address/state/state.service";
 import { blingGet } from "../bling/helpers/get-with-sleep";
 import productService from "../../../../inventory/products/services/product.service";
+import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
@@ -207,10 +208,12 @@ export class BlingOrderService {
     let product: Product | null = null;
 
     if (externalProductId) {
-      product = await Product.findOne({
-        where: { id_system: externalProductId },
-        attributes: ["id"],
-      });
+      const integration = await getBlingIntegration("Bling");
+      product = await integrationMappingService.findEntityByMapping(
+        "PRODUCT",
+        integration.id,
+        externalProductId,
+      );
     }
 
     if (!product && name) {

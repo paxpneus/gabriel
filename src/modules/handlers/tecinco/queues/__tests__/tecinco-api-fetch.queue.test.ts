@@ -415,9 +415,7 @@ describe("TCarUpsertQueue.processProduct", () => {
 
       expect(resolveProductBySku).not.toHaveBeenCalled();
       expect(resolveProductBySupplierMapping).not.toHaveBeenCalled();
-      expect(productService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ id_system: String(produto.epctb_codigo) }),
-      );
+      expect(productService.create).toHaveBeenCalled();
       expect(
         integrationMappingService.createOrUpdateIntegrationMapping,
       ).toHaveBeenCalledWith(
@@ -533,7 +531,6 @@ describe("TCarUpsertQueue.processProduct", () => {
       expect(productService.create).toHaveBeenCalledWith(
         expect.objectContaining({
           name: fullDetail.epctb_nome,
-          id_system: String(fullDetail.epctb_codigo),
           integrations_id: INTEGRATION_ID,
           config: expect.objectContaining({
             unit_business_id: UNIT_BUSINESS_ID,
@@ -731,30 +728,6 @@ describe("TCarUpsertQueue.processProduct", () => {
       expect(ProductConfig.upsert).not.toHaveBeenCalled();
     });
 
-    it("já existe um Product com esse id_system mas sem mapping válido (mapping órfão/ausente): falha com erro claro, NÃO tenta criar (evita estourar a constraint global products_id_system_key)", async () => {
-      const minimalPayload = {
-        fll_codigo: 1,
-        epctb_codigo: "700001",
-        epctb_nome: "",
-      } as TCarProdutoPayload;
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      (Product.findOne as jest.Mock).mockResolvedValue({
-        id: "orphan-product-id",
-      });
-
-      await expect(
-        runProductJob("created", minimalPayload, { create: true }),
-      ).rejects.toThrow(/já existe um produto.*sem mapping válido/i);
-
-      expect(productService.create).not.toHaveBeenCalled();
-      expect(
-        integrationMappingService.createOrUpdateIntegrationMapping,
-      ).not.toHaveBeenCalled();
-      expect(
-        unmappedInvoiceProductService.resolveFromCreatedProduct,
-      ).not.toHaveBeenCalled();
-    });
-
     it("opts.create ausente (comportamento padrão, ex.: sync normal): mesmo sem mapping, NÃO busca detalhe nem cria produto — continua só registrando unmapped", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
@@ -855,55 +828,6 @@ describe("TCarUpsertQueue.processProduct", () => {
       );
     });
 
-    // Bug real de produção: um produto pode legitimamente ter mais de um
-    // epctb_codigo mapeado nele (id_system só guarda um valor, global e
-    // único) — sobrescrever id_system pro external_id sendo sincronizado
-    // agora pode colidir com outro produto que já é dono legítimo desse
-    // id_system, travando o job pra sempre num erro de constraint.
-    it("id_system do external_id já pertence a OUTRO produto: não sobrescreve id_system (upsert segue sem esse campo)", async () => {
-      const produto = makeTecincoProduto({ epctb_codigo: "13180" });
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
-        id: "existing-tecinco-product-id",
-        id_system: "6690",
-        integrations_id: INTEGRATION_ID,
-      });
-      (Product.findOne as jest.Mock).mockResolvedValue({
-        id: "other-product-id",
-        name: "Produto Y",
-      });
-      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
-        makeUpsertedProduct({ id: "existing-tecinco-product-id" }),
-      );
-
-      await runProductJob("updated", produto);
-
-      expect(productService.upsertWithComponents).toHaveBeenCalledWith(
-        expect.objectContaining({
-          values: expect.not.objectContaining({ id_system: expect.anything() }),
-        }),
-      );
-    });
-
-    it("id_system do external_id livre (nenhum outro produto dono): sobrescreve normalmente", async () => {
-      const produto = makeTecincoProduto({ epctb_codigo: "13180" });
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
-        id: "existing-tecinco-product-id",
-        id_system: "6690",
-        integrations_id: INTEGRATION_ID,
-      });
-      (Product.findOne as jest.Mock).mockResolvedValue(null);
-      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
-        makeUpsertedProduct({ id: "existing-tecinco-product-id" }),
-      );
-
-      await runProductJob("updated", produto);
-
-      expect(productService.upsertWithComponents).toHaveBeenCalledWith(
-        expect.objectContaining({
-          values: expect.objectContaining({ id_system: "13180" }),
-        }),
-      );
-    });
   });
 
   // ── produto de outra integração (apenas vincula, não duplica) ────────────

@@ -6,7 +6,6 @@ import Product from "./product.model";
 export interface ProductAttributes {
   id: string;
   name: string;
-  id_system?: string;
   type?: string;
   category?: string;
   integrations_id?: string;

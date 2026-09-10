@@ -4,7 +4,6 @@ import {
 } from "./../bling-webhook.types";
 import { Job } from "bullmq";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
-import { Product, ProductConfig } from "../../../../../inventory";
 import { Stock } from "../../../../../inventory/index";
 import { SupplierMapping } from "../../../../../inventory";
 import { Supplier } from "../../../../../inventory";
@@ -95,9 +94,13 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       { table: "product_supplier_maps" }
     >["data"],
   ): Promise<void> {
-    const product = await Product.findOne({
-      where: { id_system: String(data.productBlingId) },
-    });
+    const integration = await getBlingIntegration("Bling");
+
+    const product = await integrationMappingService.findEntityByMapping(
+      "PRODUCT",
+      integration.id,
+      String(data.productBlingId),
+    );
 
     if (!product) {
       console.warn(
@@ -105,8 +108,6 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       );
       return;
     }
-
-    const integration = await getBlingIntegration("Bling");
 
     const existing = await SupplierMapping.findOne({
       where: { product_id: product.id, integrations_id: integration.id },
