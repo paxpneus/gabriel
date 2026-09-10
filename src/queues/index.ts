@@ -107,9 +107,13 @@ function buildQueues(activeWorkers: QueueName[]) {
     { workless: w("BLING_ORDER_INGESTION") },
   );
 
-  const reconcilerQueue = new ReconcilerQueue(cnpjNext, nfeNext, blingApi, {
-    workless: w("NFE_RECONCILER"),
-  });
+  const reconcilerQueue = new ReconcilerQueue(
+    cnpjNext,
+    nfeNext,
+    blingApi,
+    { waitUntilIdle: (maxWaitMs: number) => mlOrderSyncQueue.waitUntilIdle(maxWaitMs) },
+    { workless: w("NFE_RECONCILER") },
+  );
 
   const blingReconcilerQueue = new BlingReconcilerQueue(
     blingApi,
