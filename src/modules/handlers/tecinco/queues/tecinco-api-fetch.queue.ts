@@ -752,10 +752,30 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       data.marca_descricao,
     );
 
+    // Não sobrescreve id_system quando o valor já pertence a OUTRO produto —
+    // um produto pode legitimamente ter mais de um epctb_codigo mapeado nele
+    // (ver "Auto-map by SKU/SupplierMapping..." no CLAUDE.md), mas id_system
+    // é uma coluna única GLOBAL; forçar o external_id sendo sincronizado
+    // agora pode colidir com um produto diferente que já é dono legítimo
+    // desse id_system. Incidente real de produção: external_id=13180 mapeado
+    // num produto com id_system="6690" (seu primeiro external_id), enquanto
+    // um produto totalmente diferente já tinha id_system="13180" — todo sync
+    // desse item falhava pra sempre no UNIQUE de products.id_system.
+    let idSystemToApply: string | undefined = systemId;
+    if (product.id_system !== systemId) {
+      const idSystemOwner = await Product.findOne({ where: { id_system: systemId } });
+      if (idSystemOwner && idSystemOwner.id !== product.id) {
+        console.warn(
+          `${logPrefix} — id_system=${systemId} já pertence a outro produto (id=${idSystemOwner.id}, nome="${idSystemOwner.name}") — não sobrescrevendo id_system deste produto (mantém "${product.id_system}")`,
+        );
+        idSystemToApply = undefined;
+      }
+    }
+
     const upsertedProduct = await productService.upsertWithComponents({
       id: product.id,
       values: {
-        id_system: systemId,
+        ...(idSystemToApply !== undefined ? { id_system: idSystemToApply } : {}),
         name: data.epctb_nome?.trim() ?? "",
         unit: data.epctb_unidade,
         gross_weight: data.epctb_pesobruto,

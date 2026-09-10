@@ -6,22 +6,34 @@ import { OrderInternalStatus } from "../../../../../sales/orders/order/orders.ty
 // BaseQueueService, que cria Queue/QueueEvents reais no construtor mesmo com
 // workless:true. ────────────────────────────────────────────────────────────
 
-jest.mock("../../../../../../config/redis", () => ({
-  __esModule: true,
-  redisConfig: {},
-  redisClient: {
-    get: jest.fn(),
-    set: jest.fn(),
-    del: jest.fn(),
-    eval: jest.fn(),
-    zadd: jest.fn(),
-    zrem: jest.fn(),
-    zrange: jest.fn(),
-    exists: jest.fn(),
-    scan: jest.fn(),
-    on: jest.fn(),
-  },
-}));
+// zadd/zrange abaixo simulam um ZSET de fila-de-prioridade mínimo (só "o
+// último ticket registrado é sempre o próximo") — suficiente pra
+// withSharedLock resolver a aquisição do lock de cara nos testes, que não
+// exercitam concorrência real entre filas.
+jest.mock("../../../../../../config/redis", () => {
+  let lastPriorityMember: string | undefined;
+  return {
+    __esModule: true,
+    redisConfig: {},
+    redisClient: {
+      get: jest.fn(),
+      set: jest.fn().mockResolvedValue("OK"),
+      del: jest.fn(),
+      eval: jest.fn(),
+      zadd: jest.fn().mockImplementation((...args: any[]) => {
+        lastPriorityMember = args[args.length - 1];
+        return Promise.resolve(1);
+      }),
+      zrem: jest.fn(),
+      zrange: jest.fn().mockImplementation(() =>
+        Promise.resolve(lastPriorityMember ? [lastPriorityMember] : []),
+      ),
+      exists: jest.fn().mockResolvedValue(1),
+      scan: jest.fn(),
+      on: jest.fn(),
+    },
+  };
+});
 
 jest.mock("bullmq", () => ({
   __esModule: true,

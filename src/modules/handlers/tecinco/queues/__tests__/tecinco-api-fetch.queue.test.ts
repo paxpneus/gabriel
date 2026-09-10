@@ -854,6 +854,56 @@ describe("TCarUpsertQueue.processProduct", () => {
         expect.objectContaining({ ean: undefined }),
       );
     });
+
+    // Bug real de produção: um produto pode legitimamente ter mais de um
+    // epctb_codigo mapeado nele (id_system só guarda um valor, global e
+    // único) — sobrescrever id_system pro external_id sendo sincronizado
+    // agora pode colidir com outro produto que já é dono legítimo desse
+    // id_system, travando o job pra sempre num erro de constraint.
+    it("id_system do external_id já pertence a OUTRO produto: não sobrescreve id_system (upsert segue sem esse campo)", async () => {
+      const produto = makeTecincoProduto({ epctb_codigo: "13180" });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-tecinco-product-id",
+        id_system: "6690",
+        integrations_id: INTEGRATION_ID,
+      });
+      (Product.findOne as jest.Mock).mockResolvedValue({
+        id: "other-product-id",
+        name: "Produto Y",
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-tecinco-product-id" }),
+      );
+
+      await runProductJob("updated", produto);
+
+      expect(productService.upsertWithComponents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          values: expect.not.objectContaining({ id_system: expect.anything() }),
+        }),
+      );
+    });
+
+    it("id_system do external_id livre (nenhum outro produto dono): sobrescreve normalmente", async () => {
+      const produto = makeTecincoProduto({ epctb_codigo: "13180" });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-tecinco-product-id",
+        id_system: "6690",
+        integrations_id: INTEGRATION_ID,
+      });
+      (Product.findOne as jest.Mock).mockResolvedValue(null);
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-tecinco-product-id" }),
+      );
+
+      await runProductJob("updated", produto);
+
+      expect(productService.upsertWithComponents).toHaveBeenCalledWith(
+        expect.objectContaining({
+          values: expect.objectContaining({ id_system: "13180" }),
+        }),
+      );
+    });
   });
 
   // ── produto de outra integração (apenas vincula, não duplica) ────────────

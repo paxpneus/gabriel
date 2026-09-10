@@ -20,6 +20,18 @@ export type baseQueueOptions = {
     ttlMs?: number;
     retryDelayMs?: number;
     maxWaitMs?: number;
+    // true: o construtor NÃO envolve o process(job) inteiro com o lock — a
+    // fila é responsável por chamar withSharedLock() ela mesma, em volta de
+    // cada unidade de trabalho dentro do seu próprio loop (ex: por pedido).
+    // Necessário pra filas que iteram sobre muitos itens numa única
+    // execução (ex: reconcilers de paginação): sem isso, o lock fica preso
+    // pelo job inteiro (podendo levar minutos, sujeito só ao
+    // maxProcessingMs), travando toda fila de rank mais alto que aparecer
+    // no meio do loop — visto em produção: BLING_RECONCILER (rank 9, o
+    // mais baixo) segurando o lock por um loop de dezenas/centenas de
+    // pedidos, bloqueando NFE_EMISSION/NFE_RECONCILER (ranks 1-2) o tempo
+    // todo até o loop terminar.
+    manual?: boolean;
     priority?: {
       enabled?: boolean;
       ranks?: Record<string, number>;
@@ -67,13 +79,14 @@ export abstract class BaseQueueService<T> {
     this.sharedLockPriority = options.sharedLock?.priority;
 
     if (!options.workless) {
-      const processor = options.sharedLock
-        ? (job: Job<T>) => {
-            const token = `${this.queueName}:${job.id ?? "no-id"}:${randomUUID()}`;
-            return this.processWithSharedLock(job, options.sharedLock!, token);
-          }
-        : (job: Job<T>) =>
-            this.runProcessWithTimeout(job, this.maxProcessingMs);
+      const processor =
+        options.sharedLock && !options.sharedLock.manual
+          ? (job: Job<T>) => {
+              const token = `${this.queueName}:${job.id ?? "no-id"}:${randomUUID()}`;
+              return this.processWithSharedLock(job, options.sharedLock!, token);
+            }
+          : (job: Job<T>) =>
+              this.runProcessWithTimeout(job, this.maxProcessingMs);
 
       this.worker = new Worker(this.queueName, processor, {
         connection: redisConnection,
@@ -144,7 +157,6 @@ export abstract class BaseQueueService<T> {
   }
 
   private async tryAcquireOnce(
-    job: Job<T>,
     sharedLock: NonNullable<baseQueueOptions["sharedLock"]>,
     token: string,
     ttlMs: number,
@@ -176,13 +188,13 @@ export abstract class BaseQueueService<T> {
     const retryDelayMs = sharedLock.retryDelayMs ?? 1000;
 
     const priorityTicket = await this.registerSharedLockPriorityTicket(
-      job,
+      String(job.id ?? "no-id"),
+      job.timestamp ?? Date.now(),
       sharedLock,
       ttlMs,
     );
 
     const acquired = await this.tryAcquireOnce(
-      job,
       sharedLock,
       token,
       ttlMs,
@@ -248,21 +260,21 @@ export abstract class BaseQueueService<T> {
   }
 
   private async registerSharedLockPriorityTicket(
-    job: Job<T>,
+    member: string,
+    timestamp: number,
     sharedLock: NonNullable<baseQueueOptions["sharedLock"]>,
     ttlMs: number,
   ): Promise<SharedLockPriorityTicket | undefined> {
     if (!sharedLock.priority?.enabled) return undefined;
 
     const waitKey = `${sharedLock.key}:priority`;
-    const member = String(job.id);
     const ticketKey = `${waitKey}:ticket:${member}`;
-    const resource = this.resolveSharedLockResource(job);
+    const resource = this.queueName;
     const rank =
       sharedLock.priority.ranks?.[resource] ??
       sharedLock.priority.defaultRank ??
       9;
-    const score = rank * 100_000_000_000_000 + (job.timestamp ?? Date.now());
+    const score = rank * 100_000_000_000_000 + timestamp;
 
     await redisConnection.zadd(waitKey, "NX", score, member);
     await redisConnection.set(
@@ -272,14 +284,74 @@ export abstract class BaseQueueService<T> {
       Math.max(ttlMs, 5 * 60 * 1000),
     );
 
-    return {
-      waitKey,
-      ticketKey,
-      token: member,
-      resource,
-      rank,
-      timestamp: job.timestamp ?? Date.now(),
-    };
+    return { waitKey, ticketKey, token: member, resource, rank, timestamp };
+  }
+
+  // Versão de withSharedLock: pega e solta o lock em volta de UMA unidade de
+  // trabalho (ex: uma chamada Bling dentro de um loop), em vez do job(job)
+  // inteiro. Usar quando a fila tem sharedLock.manual=true — nesse caso o
+  // construtor não envolve process() automaticamente, e a fila deve chamar
+  // isso ela mesma dentro do seu loop, uma vez por item/chamada.
+  async withSharedLock<R>(
+    sharedLock: NonNullable<baseQueueOptions["sharedLock"]>,
+    fn: () => Promise<R>,
+  ): Promise<R> {
+    const ttlMs = sharedLock.ttlMs ?? 15 * 60 * 1000;
+    const retryDelayMs = sharedLock.retryDelayMs ?? 1000;
+    const maxWaitMs = sharedLock.maxWaitMs ?? 60 * 60 * 1000;
+    const startedAt = Date.now();
+    const token = `${this.queueName}:manual:${randomUUID()}`;
+
+    const priorityTicket = await this.registerSharedLockPriorityTicket(
+      token,
+      startedAt,
+      sharedLock,
+      ttlMs,
+    );
+
+    let alerted = false;
+
+    try {
+      while (true) {
+        const acquired = await this.tryAcquireOnce(
+          sharedLock,
+          token,
+          ttlMs,
+          priorityTicket,
+        );
+        if (acquired) break;
+
+        const waitedMs = Date.now() - startedAt;
+        if (waitedMs > maxWaitMs && !alerted) {
+          alerted = true;
+          alertService.sendAlert({
+            severity: "HIGH",
+            title: `[${this.queueName}] aguardando lock "${sharedLock.key}" há ${Math.round(waitedMs / 60000)}min`,
+            message: `Aquisição manual dentro de um loop, rank ${priorityTicket?.rank ?? "n/a"} — possível fome ou lock travado.`,
+          });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+
+      const refreshMs = Math.max(1000, Math.floor(ttlMs / 3));
+      const refreshInterval = setInterval(() => {
+        this.refreshSharedLock(sharedLock.key, token, ttlMs).catch(() => {});
+      }, refreshMs);
+
+      try {
+        return await fn();
+      } finally {
+        clearInterval(refreshInterval);
+        await this.releaseSharedLock(sharedLock.key, token).catch(() => {});
+      }
+    } finally {
+      if (priorityTicket) {
+        await this.releaseSharedLockPriorityTicket(priorityTicket).catch(
+          () => {},
+        );
+      }
+    }
   }
 
   // Promove o rank efetivo do ticket com base no tempo de espera, pra um rank
@@ -302,10 +374,6 @@ export abstract class BaseQueueService<T> {
     // LT: só atualiza se o novo score for MENOR (melhor) que o atual — score
     // baixo é o que ZRANGE 0,0 escolhe primeiro.
     await redisConnection.zadd(ticket.waitKey, "LT", score, ticket.token);
-  }
-
-  private resolveSharedLockResource(job: Job<T>): string {
-    return this.queueName;
   }
 
   private async releaseSharedLockPriorityTicket(

@@ -14,6 +14,15 @@ const BLING_SITUACAO_AGUARDANDO_NF_COM_COLETA = 748748;
 
 type ReconcilerTask = "reconcile-open-orders" | "sync-invoiced-or-collected";
 
+// Ambas as rotinas paginam sobre até centenas de pedidos numa única
+// execução — manual:true tira o lock automático do job inteiro (que travava
+// toda fila de rank mais alto, inclusive NFE_EMISSION/NFE_RECONCILER, pelo
+// tempo que o loop levasse — especialmente grave aqui, já que BLING_RECONCILER
+// é o rank mais baixo da lista e mesmo assim conseguia segurar o lock
+// indefinidamente uma vez iniciado) e faz cada chamada Bling pegar/soltar o
+// lock individualmente via withSharedLock.
+const RECONCILER_SHARED_LOCK = { ...BLING_SHARED_QUEUE_LOCK, manual: true };
+
 export class BlingReconcilerQueue extends BaseQueueService<
   Record<string, never>
 > {
@@ -28,7 +37,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
   ) {
     super("BLING_RECONCILER", {
       concurrency: 1,
-      sharedLock: BLING_SHARED_QUEUE_LOCK,
+      sharedLock: RECONCILER_SHARED_LOCK,
       workless: options.workless,
       maxProcessingMs: 15 * 60 * 1000,
     });
@@ -52,9 +61,13 @@ export class BlingReconcilerQueue extends BaseQueueService<
 
   // ─── Busca o canal MercadoLivre e retorna o STORE_ID ────────────────────────
   private async getMercadoLivreStoreId(): Promise<number | undefined> {
-    const channelResponse = await blingGet(`/canais-venda`, this.blingApi, {
-      params: { tipos: ["MercadoLivre"], situacao: 1 },
-    });
+    const channelResponse = await this.withSharedLock(
+      RECONCILER_SHARED_LOCK,
+      () =>
+        blingGet(`/canais-venda`, this.blingApi, {
+          params: { tipos: ["MercadoLivre"], situacao: 1 },
+        }),
+    );
     return channelResponse.data.data?.[0]?.id;
   }
 
@@ -86,15 +99,17 @@ export class BlingReconcilerQueue extends BaseQueueService<
     let failedCount = 0;
 
     while (true) {
-      const { data } = await blingGet(`/pedidos/vendas`, this.blingApi, {
-        params: {
-          idLoja: STORE_ID,
-          "idsSituacoes[]": 6,
-          dataInicial: dataInicialStr,
-          pagina: page,
-          limite: PAGE_LIMIT,
-        },
-      });
+      const { data } = await this.withSharedLock(RECONCILER_SHARED_LOCK, () =>
+        blingGet(`/pedidos/vendas`, this.blingApi, {
+          params: {
+            idLoja: STORE_ID,
+            "idsSituacoes[]": 6,
+            dataInicial: dataInicialStr,
+            pagina: page,
+            limite: PAGE_LIMIT,
+          },
+        }),
+      );
 
       const orders: any[] = data.data ?? [];
       console.log(
@@ -187,15 +202,17 @@ export class BlingReconcilerQueue extends BaseQueueService<
     let failedCount = 0;
 
     while (true) {
-      const { data } = await blingGet(`/pedidos/vendas`, this.blingApi, {
-        params: {
-          idLoja: STORE_ID,
-          "idsSituacoes[]": 6,
-          dataInicial: dataInicialStr,
-          pagina: page,
-          limite: PAGE_LIMIT,
-        },
-      });
+      const { data } = await this.withSharedLock(RECONCILER_SHARED_LOCK, () =>
+        blingGet(`/pedidos/vendas`, this.blingApi, {
+          params: {
+            idLoja: STORE_ID,
+            "idsSituacoes[]": 6,
+            dataInicial: dataInicialStr,
+            pagina: page,
+            limite: PAGE_LIMIT,
+          },
+        }),
+      );
 
       const orders: any[] = data.data ?? [];
       if (orders.length === 0) break;
@@ -222,9 +239,9 @@ export class BlingReconcilerQueue extends BaseQueueService<
         try {
           // A listagem de /pedidos/vendas não traz notaFiscal de forma confiável,
           // então busca o pedido completo (mesmo endpoint usado no create/update).
-          const { data: fullOrderResponse } = await blingGet(
-            `/pedidos/vendas/${blingOrder.id}`,
-            this.blingApi,
+          const { data: fullOrderResponse } = await this.withSharedLock(
+            RECONCILER_SHARED_LOCK,
+            () => blingGet(`/pedidos/vendas/${blingOrder.id}`, this.blingApi),
           );
           const orderData = fullOrderResponse.data;
 
@@ -232,20 +249,24 @@ export class BlingReconcilerQueue extends BaseQueueService<
           const hasCollectionDate = !!existingOrder.collection_date;
 
           if (hasInvoice) {
-            await blingPatch(
-              `/pedidos/vendas/${blingOrder.id}/situacoes/${BLING_SITUACAO_ATENDIDO}`,
-              { id: BLING_SITUACAO_ATENDIDO },
-              this.blingApi,
+            await this.withSharedLock(RECONCILER_SHARED_LOCK, () =>
+              blingPatch(
+                `/pedidos/vendas/${blingOrder.id}/situacoes/${BLING_SITUACAO_ATENDIDO}`,
+                { id: BLING_SITUACAO_ATENDIDO },
+                this.blingApi,
+              ),
             );
             updatedToInvoiced++;
             console.log(
               `[BlingReconciler] Pedido ${blingOrder.numero} já tem NF (${orderData.notaFiscal.id}) — situação alterada para Atendido (${BLING_SITUACAO_ATENDIDO}).`,
             );
           } else if (hasCollectionDate) {
-            await blingPatch(
-              `/pedidos/vendas/${blingOrder.id}/situacoes/${BLING_SITUACAO_AGUARDANDO_NF_COM_COLETA}`,
-              { id: BLING_SITUACAO_AGUARDANDO_NF_COM_COLETA },
-              this.blingApi,
+            await this.withSharedLock(RECONCILER_SHARED_LOCK, () =>
+              blingPatch(
+                `/pedidos/vendas/${blingOrder.id}/situacoes/${BLING_SITUACAO_AGUARDANDO_NF_COM_COLETA}`,
+                { id: BLING_SITUACAO_AGUARDANDO_NF_COM_COLETA },
+                this.blingApi,
+              ),
             );
             updatedToCollected++;
             console.log(

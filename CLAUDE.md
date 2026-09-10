@@ -503,6 +503,43 @@ product from an `ERROR_CATALOG_DUPLICATE` row:
   only reads already-curated data, so it was scoped out of this whole
   safety net from the start, and stays that way.)
 
+### `Product.id_system` overwrite on routine Tecinco sync — production crash + fix (later same session)
+
+A **third** production incident, found via a real failing job log the user
+pasted (`Validation error | constraint=products_id_system_key | detail=Key
+(id_system)=(13180) already exists`, retried 5× then alerted). Root cause,
+confirmed by the user directly querying prod: `processProduct`'s
+"produto próprio" branch (`tecinco-api-fetch.queue.ts`, right before the
+`productService.upsertWithComponents(...)` call for an already-mapped
+product) unconditionally included `id_system: systemId` in the **update**
+values on every sync pass — with no check for whether that value already
+belongs to a *different* product. `products.id_system` has a **global**
+unique index (see the Products section above), but a single physical
+product can legitimately have **more than one** `epctb_codigo` mapped to
+it (documented elsewhere in this same section — confirmed real example:
+1246/19557 both mapping to one product). Since `id_system` can only hold
+one value, blindly resyncing it to "whichever external_id happened to be
+processed this pass" is unstable, and in this incident it collided with a
+**completely different, legitimately-existing** product that already
+owned `id_system="13180"` — the mapped product's own `id_system` was
+`"6690"` (its first-synced code), and every subsequent sync of the
+`13180` mapping tried to steal `"13180"` away from its rightful owner and
+crashed. **Fixed** the same way as the sku/ean omission pattern above:
+before the upsert, if `product.id_system !== systemId`, look up
+`Product.findOne({ where: { id_system: systemId } })` — if a *different*
+product already owns it, `id_system` is left out of the update values
+entirely (never overwritten, never blocks); otherwise it updates normally
+(so a product created without `id_system` yet, or being corrected, still
+gets backfilled). This mirrors `skuOmitted`/`eanOmitted`'s "never block,
+just omit the conflicting field" philosophy exactly, just for a
+`Product`-level field instead of `ProductConfig`/`SupplierMapping`.
+**Bling's equivalent call site** (`bling-api-fetch.queue.ts`, `productValues.id_system
+= String(blingProduct.id)`, also unconditional on every update) has the
+exact same latent structural risk — not fixed yet, out of scope for this
+incident (which was Tecinco-only) and not confirmed as an actual problem
+there; if a similar crash is ever reported on the Bling side, this is
+where to look first.
+
 ### Bling product deactivation (`situacao=E`, this session)
 
 Bling's product payload carries a `situacao` field (`"A"` = active, `"E"` =
@@ -1147,6 +1184,50 @@ flag is explicitly set.
   time. The `maxWaitMs` safety valve (default 60min, unchanged) still
   only fires a `HIGH` alert on top of this, it doesn't itself boost
   priority.
+- **A second, more severe starvation class fixed this session: the lock
+  was held for an entire `process(job)` execution, not per Bling call.**
+  Reported by the user as three symptoms of the same root cause: "everything
+  stuck for a while, eventually someone wins" (e.g. `BLING_ORDER_INGESTION`),
+  and "a job's wait released but it's still stuck even with nothing ahead
+  of it" (`ML_ORDER_SYNC`). Root cause: `processWithSharedLock` (the
+  automatic per-job wrap) acquires the lock **once** at the start of
+  `process(job)` and only releases it in the `finally` when the whole job
+  finishes. That's fine for one-item-per-job queues (`NFE_EMISSION`,
+  `ML_ORDER_SYNC`, `CNPJ_VERIFY_CNAE`, `BLING_ORDER_INGESTION`,
+  `BLING_API_FETCH`), but `NFE_RECONCILER`'s `reconcileStuckOrders` and
+  `BLING_RECONCILER`'s `reconcileOpenOrders`/`syncInvoicedOrCollectedOrders`
+  each loop over **many orders in one job**, with real Bling round-trips
+  (and, in `reconcileStuckOrders`, explicit `1s`+`3s` sleeps) per order —
+  so one execution of either queue could hold the *entire* shared lock for
+  minutes (bounded only by `maxProcessingMs`, 15min for both), blocking
+  literally every other Bling queue regardless of rank the whole time.
+  Worst case was `BLING_RECONCILER`: it's rank **9** (the lowest, by
+  design), yet once it acquired the lock it could still block
+  `NFE_EMISSION`/`NFE_RECONCILER` (ranks 1-2) for the rest of its loop —
+  ranking alone only decides who goes *next*, it can't preempt a lock
+  already held.
+  **Fix**: `BaseQueueService` gained `sharedLock.manual` (constructor
+  option) and a public `withSharedLock(sharedLock, fn)` method. When
+  `manual: true`, the constructor stops auto-wrapping `process(job)` with
+  the lock entirely — the queue itself must call `withSharedLock` around
+  each unit of work. `registerSharedLockPriorityTicket`/`tryAcquireOnce`
+  were generalized to take a plain `(member, timestamp)` instead of a
+  BullMQ `Job`, since `withSharedLock` isn't tied to a job. Both
+  `ReconcilerQueue` (`nfe-reconciler.queue.ts`) and `BlingReconcilerQueue`
+  (`bling-reconciler.queue.ts`) now set
+  `sharedLock: { ...BLING_SHARED_QUEUE_LOCK, manual: true }` and wrap
+  **each individual Bling call** in their loops with
+  `this.withSharedLock(RECONCILER_SHARED_LOCK, () => blingGet/Put/Patch(...))`
+  — including releasing the lock during `reconcileStuckOrders`'s 1s/3s
+  sleeps between calls, not just between orders. Net effect: these two
+  reconciler jobs can still take a while wall-clock (bounded by
+  `maxProcessingMs` as before), but they no longer monopolize the lock
+  while doing it — every other Bling queue gets to interleave between
+  each of their individual API calls, based on the same rank+aging
+  ordering as before. If a new queue is added that loops over many items
+  per job and needs the shared lock, use `manual: true` +
+  `withSharedLock` per item from the start — the "one lock per job" default
+  is only correct for queues that process a single item per job.
 - **Bling's API rate limit is per ACCOUNT, not per app/OAuth client**
   (confirmed at developer.bling.com.br/limites: "limites... não específicas
   por endpoints, mas sim para todas [requisições da conta]" — 3 req/s,
