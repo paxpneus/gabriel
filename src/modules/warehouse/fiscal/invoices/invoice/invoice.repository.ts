@@ -596,7 +596,6 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                       as: "product",
                       attributes: [
                         "name",
-                        "id_system",
                         "type",
                         "brand",
                       ],
