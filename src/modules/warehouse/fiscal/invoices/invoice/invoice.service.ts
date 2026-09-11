@@ -414,8 +414,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     return this.repository.getFullInvoiceWithBatch(id, unitBusinessId);
   }
 
-  async findByIdFullForAllUnits(id?: string, xml_key?: string) {
-    return this.repository.getFullInvoiceForAllUnits(id, xml_key);
+  async findByIdFullForAllUnits(
+    id?: string,
+    xml_key?: string,
+    id_system?: string,
+  ) {
+    return this.repository.getFullInvoiceForAllUnits(id, xml_key, id_system);
   }
 
   async listInvoices(

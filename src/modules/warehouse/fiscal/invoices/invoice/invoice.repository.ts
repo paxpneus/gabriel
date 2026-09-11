@@ -448,14 +448,24 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   async getFullInvoiceForAllUnits(
     invoiceId?: string,
     invoiceKey?: string,
+    idSystem?: string,
   ): Promise<FullInvoiceForAllUnits | null> {
-    if (!invoiceId && !invoiceKey) {
-      throw new Error("É necessário informar invoiceId ou invoiceKey.");
+    if (!invoiceId && !invoiceKey && !idSystem) {
+      throw new Error(
+        "É necessário informar invoiceId, invoiceKey ou idSystem.",
+      );
     }
 
     const data = await this.findOne({
       where: {
-        ...(invoiceId ? { id: invoiceId } : { xml_key: invoiceKey }),
+        ...(invoiceId
+          ? { id: invoiceId }
+          : {
+              [Op.or]: [
+                ...(invoiceKey ? [{ xml_key: invoiceKey }] : []),
+                ...(idSystem ? [{ id_system: idSystem }] : []),
+              ],
+            }),
       },
       attributes: {
         exclude: ["xml_path", "source_payload"],
