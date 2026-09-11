@@ -307,10 +307,14 @@ describe("ReconcilerQueue", () => {
         { timeout: 20000 },
       );
       // 748772 sempre mapeia para CANCELLED — igual ao branch acima (situação
-      // já mudou), este branch também deve gravar nfe_emitted=false.
+      // já mudou), este branch também deve gravar nfe_emitted=false. Esse é o
+      // branch que decide o cancelamento, então também grava reason_cancelled
+      // (diferente do branch acima, que só sincroniza uma mudança já feita
+      // por fora — esse não sabe o motivo, então não grava nenhum).
       expect(ordersService.update).toHaveBeenCalledWith("o1", {
         internal_status: OrderInternalStatus.CANCELLED,
         nfe_emitted: false,
+        reason_cancelled: "ML_SCRAPING_NO_MATCH",
       });
     });
 

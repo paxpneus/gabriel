@@ -217,6 +217,55 @@ describe("BlingOrderService", () => {
       },
     );
 
+    it.each([12, 21])(
+      "situacao.id=%i (cancelamento real via Bling/cliente) grava reason_cancelled=CUSTOMER_CANCELLED",
+      async (situacaoId) => {
+        orderData.situacao = { id: situacaoId, valor: 0 };
+
+        await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+        expect(lastUpdateFields()).toEqual(
+          expect.objectContaining({ reason_cancelled: "CUSTOMER_CANCELLED" }),
+        );
+      },
+    );
+
+    it("situacao.id=748772 (verificação humana, já decidida por uma fila) NÃO grava reason_cancelled — não sobrescreve o motivo já gravado antes", async () => {
+      orderData.situacao = { id: 748772, valor: 0 };
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(lastUpdateFields()).not.toHaveProperty("reason_cancelled");
+    });
+
+    it("situacao.id=9 (EMITTED) NÃO grava reason_cancelled", async () => {
+      orderData.situacao = { id: 9, valor: 0 };
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(lastUpdateFields()).not.toHaveProperty("reason_cancelled");
+    });
+
+    it("grava actual_situation/internal_status ANTES de qualquer etapa de enriquecimento, mesmo se uma delas falhar depois (ex.: updateCustomer)", async () => {
+      orderData.situacao = { id: 9, valor: 0 };
+      mockBlingCustomerServiceInstance.updateCustomer.mockRejectedValue(
+        new Error("Falha simulada ao atualizar contato"),
+      );
+
+      await expect(
+        service.updateOrderFromBling({ data: { id: orderData.id } } as any),
+      ).rejects.toThrow("Falha simulada ao atualizar contato");
+
+      const calls = (ordersService.update as jest.Mock).mock.calls;
+      expect(calls[0]).toEqual([
+        "order-uuid-1",
+        {
+          actual_situation: "9",
+          internal_status: OrderInternalStatus.EMITTED,
+        },
+      ]);
+    });
+
     it.each([834029, 834030])(
       "situacao.id=%i (SENT_TO_TRANSPORTER/DELIVERED) grava nfe_emitted=true",
       async (situacaoId) => {

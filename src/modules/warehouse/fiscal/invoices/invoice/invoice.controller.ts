@@ -109,8 +109,20 @@ export class InvoiceController extends BaseController<
     req: Request,
     contextUnitBusinessId: string,
   ): string {
+    // filters[unit_business_id] também é lido aqui — antes só valia
+    // ?unitBusinessId=, e ter os dois convivendo sem se sobrepor causava um
+    // AND impossível entre esse escopo e o customField unit_business_id do
+    // queryConfig (mesmo campo, valores diferentes = zero resultados).
+    const filtersUnitBusinessId = (
+      req.query.filters as Record<string, unknown> | undefined
+    )?.unit_business_id;
+
     const fromParams = (req.params.unitBusinessId ??
-      req.query.unitBusinessId) as string | undefined;
+      req.query.unitBusinessId ??
+      (typeof filtersUnitBusinessId === "string"
+        ? filtersUnitBusinessId
+        : undefined)) as string | undefined;
+
     return fromParams && fromParams.trim() ? fromParams : contextUnitBusinessId;
   }
 

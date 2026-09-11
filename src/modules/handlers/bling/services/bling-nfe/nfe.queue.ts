@@ -20,6 +20,7 @@ import {
   COMPLETED_ORDER_INTERNAL_STATUSES,
   CompletedOrderInternalStatus,
   OrderInternalStatus,
+  OrderReasonCancelled,
 } from "../../../../sales/orders/order/orders.types";
 import { syncOrderInternalStatus } from "../../../../sales/orders/order/helpers/order-status";
 
@@ -81,6 +82,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
   private async markOrderCancelled(
     orderId: number,
     message: string,
+    reasonCancelled: OrderReasonCancelled,
   ): Promise<void> {
     const { data } = await blingGet(
       `/pedidos/vendas/${orderId}`,
@@ -111,6 +113,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     if (!orderSystem) return;
     await ordersService.update(orderSystem.id, {
       internal_status: OrderInternalStatus.CANCELLED,
+      reason_cancelled: reasonCancelled,
     });
     console.log(
       `[NFeQueue] Pedido ${orderId} Marcado como Aguardando verificação humana: ${message}`,
@@ -152,7 +155,11 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         return;
       }
 
-      await this.markOrderCancelled(order_id, NFE_ERRORS.WRONG_STATUS.message);
+      await this.markOrderCancelled(
+        order_id,
+        NFE_ERRORS.WRONG_STATUS.message,
+        OrderReasonCancelled.NFE_WRONG_STATUS,
+      );
       return;
     }
 
@@ -165,6 +172,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
       await this.markOrderCancelled(
         order_id,
         `${NFE_ERRORS.MISSING_FIELDS.message}: ${detail}`,
+        OrderReasonCancelled.NFE_MISSING_FIELDS,
       );
       return;
     }
@@ -206,6 +214,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         await this.markOrderCancelled(
           order_id,
           "Item(s) sem estoque disponível na Bling. Requer reposição manual.",
+          OrderReasonCancelled.NFE_NO_STOCK,
         );
         alertService.sendAlert({
           severity: "HIGH",
@@ -233,7 +242,11 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     // onFailed roda fora do processo (job já saiu do try/catch de process()),
     // então o lock por pedido de lá já foi liberado — precisa pegar de novo.
     this.withOrderLock(order_id, () =>
-      this.markOrderCancelled(order_id, NFE_ERRORS.EMISSION_FAILED.message),
+      this.markOrderCancelled(
+        order_id,
+        NFE_ERRORS.EMISSION_FAILED.message,
+        OrderReasonCancelled.NFE_EMISSION_FAILED,
+      ),
     ).catch((lockError: any) => {
       console.error(
         `[NFeQueue] Falha ao marcar pedido ${order_id} como verificação humana (onFailed):`,

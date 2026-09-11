@@ -161,6 +161,43 @@ export function endOfDayTz(date: string | Date | Dayjs = nowTz()): Dayjs {
   return toTz(date).endOf("day");
 }
 
+/**
+ * `collection_date` (pedidos Mercado Livre) era gravado, até a correção em
+ * `mercado-livre-scraping.service.ts`, como meia-noite UTC em vez de meia-
+ * noite em APP_TIMEZONE — o "dia D" pretendido ficava salvo 3h ANTES do
+ * que deveria (21h do dia anterior em BRT). O próprio scraping se
+ * autocorrige, mas só enquanto o pedido ainda está em WAITING_CHANNEL_VALIDATION
+ * (`MLOrderSyncQueue.isEligibleForSync`) — uma vez que o `collection_date`
+ * já foi aplicado e o pedido avançou (NFe agendada), a fila não volta a
+ * reescrever, então o valor antigo persiste até o pedido ser coletado.
+ * Essas duas funções cobrem as DUAS codificações possíveis pro mesmo dia,
+ * sem invadir o dia anterior/seguinte — a janela "old encoding" de um dia
+ * nunca se sobrepõe à de outro (são só 3h de largura, coladas na meia-noite
+ * certa).
+ */
+export function collectionDateDayRangeCompat(
+  date: string | Date | Dayjs = nowTz(),
+): { start: Date; end: Date } {
+  const brtMidnight = startOfDayTz(date);
+  const utcMidnight = dayjs.utc(brtMidnight.format("YYYY-MM-DD"));
+  return { start: utcMidnight.toDate(), end: brtMidnight.toDate() };
+}
+
+/**
+ * Menor instante possível representando "o dia seguinte a `date`", cobrindo
+ * as duas codificações de `collection_date` (ver `collectionDateDayRangeCompat`).
+ * Use como limite inferior de um filtro "collection_date no futuro" —
+ * `>= collectionDateFutureStartCompat()` inclui tanto um "amanhã" já escrito
+ * certo (meia-noite BRT) quanto um escrito com o bug antigo (meia-noite UTC,
+ * que é ainda mais cedo).
+ */
+export function collectionDateFutureStartCompat(
+  date: string | Date | Dayjs = nowTz(),
+): Date {
+  const tomorrow = toTz(date).add(1, "day");
+  return dayjs.utc(tomorrow.format("YYYY-MM-DD")).toDate();
+}
+
 export function getChunkedDateRangesAsDate(
   startDate: string | Date | Dayjs,
   monthsPerChunk = 2,

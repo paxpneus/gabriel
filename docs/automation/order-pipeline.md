@@ -42,14 +42,33 @@ de uma fila ao mesmo tempo (ver "Lock por pedido" abaixo).
 `COMPLETED_ORDER_INTERNAL_STATUSES` — toda fila do pipeline checa isso
 antes de agir, pra nunca reabrir um pedido já concluído.
 
-**Ponto de atenção**: situação `748772` ("aguardando verificação humana") é
-escrita por 3 lugares diferentes com motivos diferentes (CNAE bloqueado,
-falha na emissão de NFe, pedido preso sem match no scraping), mas
-`mapOrderInternalStatus` colapsa todos eles no mesmo `CANCELLED` de um
-cancelamento real do cliente (situação 12/21) — hoje nada em
-`internal_status` distingue as duas coisas. Se isso vier a importar (ex:
-um dashboard que precise separar "cancelado pelo cliente" de "precisa de
-revisão humana"), essa distinção precisa ser adicionada.
+Situação `748772` ("aguardando verificação humana") é escrita por 3 lugares
+diferentes com motivos diferentes (CNAE bloqueado, falha na emissão de NFe,
+pedido preso sem match no scraping), e `mapOrderInternalStatus` colapsa
+todos eles no mesmo `CANCELLED` de um cancelamento real do cliente
+(situação 12/21) — **essa distinção agora existe na coluna `orders.reason_cancelled`**
+(enum, nullable), gravada de forma síncrona pela fila que decide o
+cancelamento, no mesmo momento em que escreve `internal_status=CANCELLED`:
+
+| `reason_cancelled` | Quem grava | Motivo |
+|---|---|---|
+| `DOCUMENT_INVALID` | `CNPJ_VERIFY_CNAE` (`markOrderError`, errorId 1) | Documento do cliente ausente/inválido |
+| `CNAE_BLOCKED` | `CNPJ_VERIFY_CNAE` (`markOrderError`, errorId 2) | CNAE do cliente bloqueado |
+| `NFE_WRONG_STATUS` | `NFE_EMISSION` (`markOrderCancelled`) | Situação divergiu de NFE_AGENDADA (748748) ao tentar emitir |
+| `NFE_MISSING_FIELDS` | `NFE_EMISSION` (`markOrderCancelled`) | Campos obrigatórios ausentes pra emissão |
+| `NFE_NO_STOCK` | `NFE_EMISSION` (`markOrderCancelled`) | Bling recusou emissão por falta de estoque (field code 74) |
+| `NFE_EMISSION_FAILED` | `NFE_EMISSION` (`onFailed`, após esgotar retries) | Falha genérica ao gerar NFe na Bling |
+| `ML_SCRAPING_NO_MATCH` | `NFE_RECONCILER` (`reconcileStuckOrders`) | Pedido preso >30min sem match na planilha do Mercado Livre |
+| `CUSTOMER_CANCELLED` | `BLING_ORDER_INGESTION` (webhook, situação 12/21) | Cancelamento real, feito pelo cliente ou direto na Bling |
+
+O webhook (`BLING_ORDER_INGESTION`) só grava `reason_cancelled` para
+situação `12`/`21` — para qualquer outra situação (inclusive `748772`
+chegando como confirmação tardia de um cancelamento que uma fila já
+decidiu e já gravou) a chave é **omitida**, nunca zerada, pra não
+sobrescrever um motivo mais específico já gravado antes. O branch de
+`reconcileStuckOrders` que só resincroniza uma mudança de situação feita
+por fora da automação (não é ele quem decidiu cancelar) também não grava
+motivo nenhum.
 
 ## As 6 filas
 

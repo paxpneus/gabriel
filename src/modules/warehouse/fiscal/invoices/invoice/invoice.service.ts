@@ -129,7 +129,6 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             return {
               [Op.or]: [
                 { batch_generated: false },
-                { printed_label: false },
                 {
                   status: {
                     [Op.notIn]: ["FINISHED", "CANCELLED"],
@@ -179,7 +178,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         // loja MercadoLivre + pedido (`order`, via Invoice.hasOne) com
         // collection_date dentro do dia de hoje em America/Sao_Paulo — só
         // diferem no que mais restringem.
-        pending_mercadolivre: (value) =>
+        pending_mercado_livre: (value) =>
           value === "true"
             ? {
                 ...storeCollectionDateTodayWhere("MercadoLivre"),
@@ -187,7 +186,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
               }
             : {},
 
-        all_today_mercadolivre: (value) =>
+        all_today_mercado_livre: (value) =>
           value === "true" ? storeCollectionDateTodayWhere("MercadoLivre") : {},
 
         finished_mercado_livre: (value) =>

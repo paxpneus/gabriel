@@ -1236,6 +1236,195 @@ lock por pedido, e todo par de corrida entre filas já mapeado e tratado):
 este — os bullets abaixo ficam só com o histórico de investigação/fix de
 sessão, não a referência viva.
 
+- **`orders.reason_cancelled` (nova coluna, migration `m277`, this
+  session)** — nullable enum (`OrderReasonCancelled`,
+  `orders.types.ts`/`orders.model.ts`) that disambiguates WHY an order sits
+  in `internal_status=CANCELLED`/situação `748772`, a gap
+  `docs/automation/order-pipeline.md` had documented since it was first
+  written. Full value list, and which of the 6 pipeline queues writes each
+  one, now lives in that doc's "Máquina de estados" section (kept current
+  there, not duplicated here) — in short: 6 values map 1:1 to the 3
+  queues that decide a 748772 cancellation (`CNPJ_VERIFY_CNAE`'s
+  `markOrderError`, `NFE_EMISSION`'s `markOrderCancelled` — 4 call sites —
+  and `NFE_RECONCILER`'s `reconcileStuckOrders`), plus `CUSTOMER_CANCELLED`
+  for a genuine situação `12`/`21` cancellation written by
+  `BLING_ORDER_INGESTION`'s webhook path
+  (`bling-order.service.ts`'s `reasonCancelledFields` helper). The webhook
+  path only ever sets the key for `12`/`21` — every other situação
+  (including `748772` arriving as a delayed webhook confirmation of a
+  cancellation a queue already decided and already tagged) **omits the key
+  entirely**, never nulls it, so a more specific reason a queue already
+  wrote is never clobbered.
+- **`actual_situation`/`internal_status` are now written as early as
+  possible in `updateOrderFromBling`, in their own small `ordersService.update`
+  call, before any enrichment step (contact upsert, address lookup,
+  item/cost/commission resolution, financial calc) that can throw on an
+  order with missing/unexpected data (`bling-order.service.ts`, this
+  session).** Before this, the whole function wrote every field — status
+  included — in a single `ordersService.update` call at the very end; any
+  error anywhere earlier in the function (a `Contact.create` failure, a
+  malformed item payload, `resolveIcmsRate`'s `stateService.findOne`, etc.)
+  aborted the function via the outer try/catch's `throw error` before that
+  final write ever ran, silently leaving the order's status stale in the
+  DB even though the fresh situação had already been fetched and mapped
+  successfully. The early write is wrapped in its own try/catch that logs
+  and continues rather than aborting (a failure here is almost always
+  transient — the same final write later in the function would fail too,
+  and the outer catch/BullMQ retry handles that case same as before); the
+  final write at the end of the function still includes these same fields
+  too (redundant, harmless, keeps that object's shape self-documenting for
+  its use in the return value). `createOrderFromBling` was **not** changed
+  the same way — when there's truly no existing local row yet, there's no
+  order to "update early," and giving it an equivalent minimal-insert /
+  enrich-after split would be a bigger restructuring than was asked for.
+- **`collection_date` (Mercado Livre orders) was being written as UTC
+  midnight instead of `America/Sao_Paulo` midnight — a real, silent 3-hour
+  offset, not just a test artifact (this session).** Root cause:
+  `mercado-livre-scraping.service.ts`'s 3 branches that compute
+  `collectionDate` ("pronto para coleta" → hoje, "entregar amanhã", "coleta
+  do dia D de MÊS") all built the value via `new Date(Date.UTC(y, m, d))`
+  or `new Date().getUTCDate()`-style arithmetic — UTC midnight of the
+  *intended* calendar day, which in `America/Sao_Paulo` (UTC-3) is 21:00 of
+  the day *before*. Confirmed harmless to the scheduling automation itself:
+  `setDelayBasedOnDate` (`setDelay.ts`) and `mercado-livre-sync.queue.ts`'s
+  "coleta é hoje?" check (`mercado-livre-sync.queue.ts:432-449`) both only
+  ever read/compare `collection_date`'s **UTC** calendar-day components
+  (`setUTCHours`/`getUTCDate` — never converting to BRT), and a fixed 3h
+  shift within the same UTC day can never change those components — so
+  nothing in the actual NFe-scheduling pipeline was ever affected by this
+  bug, confirmed by direct proof (`setUTCHours` overwrites the time
+  component entirely, so the UTC date it operates on is identical before
+  and after the fix). What *was* broken: any **BRT-aware** read of
+  `collection_date` — i.e. `storeCollectionDateTodayWhere`'s Mercado Livre
+  invoice filters and the new Orders summary endpoints (both this same
+  session, both using `startOfDayTz()`/`endOfDayTz()`) — would read a
+  "day D" value as belonging to "day D-1" instead. Fixed by switching all
+  3 branches to `nowTz()`/`startOfDayTz()` (`shared/utils/normalizers/date.ts`).
+  **Retroactive gap, not fully self-healing**: `MLOrderSyncQueue.applyCollectionDateLocked`
+  re-derives and overwrites `collection_date` on every scrape pass (exact
+  `getTime()` comparison, so a differently-encoded recompute *does*
+  trigger a rewrite) — but only while the order is still
+  `WAITING_CHANNEL_VALIDATION` (`isEligibleForSync` gate). Once
+  `collection_date` has been applied and the order has moved on to
+  `WAITING_FOR_NFE_EMISSION`, nothing ever re-derives it again, so any
+  order scheduled *before* this fix keeps the old (UTC-midnight) encoding
+  until it's actually collected — which, given collection windows are
+  short, is squarely inside the "today"/"future" window the new filters
+  care about. **Fixed at the read side too, not just the write side**: two
+  new exported functions in `date.ts`, `collectionDateDayRangeCompat(date?)`
+  and `collectionDateFutureStartCompat(date?)`, build ranges that match
+  *either* possible encoding for a given calendar day without bleeding
+  into the adjacent day (the old-encoding window for day D is exactly the
+  3 hours `[D 00:00 UTC, D 00:00 BRT)` — narrow and precise, not a
+  full-day-wide range, which would incorrectly also catch day D+1's
+  old-encoded value since that falls at `D+1 00:00 UTC`, inside a naive
+  full-BRT-day window for D). Verified numerically at runtime (`ts-node`),
+  not just reasoned about on paper. Used by
+  `storeCollectionDateTodayWhere` (`invoice/helpers/custom-filters.ts`)
+  and `orders.repository.ts`'s `countShipTodayPending`/`countShipToFuture`;
+  `orders/order/helpers/aggregates.ts`'s `collectionDateBucketLiteral`
+  (used by `groupShipToFutureByDate`) does the equivalent normalization at
+  the SQL level, via a `CASE WHEN date_part('hour', ... AT TIME ZONE 'UTC') = 0`
+  check that shifts an old-encoded value +3h before bucketing by BRT
+  calendar day.
+- **New Orders summary/detail endpoints (this session)**, the first
+  consumer of `reason_cancelled`. Mounted at `/api/order/...` — the route
+  loader (`src/config/routes.ts`) mounts a module's router at `/${folder
+  name}`, and this module's routes file lives in a folder literally named
+  `order` (singular), not `orders` (same reason `invoice.controller.ts`'s
+  routes are at `/api/invoice`, not `/api/invoices`) — don't guess
+  `/api/orders` if this is touched again. `GET /orders/summary/status-counts`
+  (4 counts — `human_verification` = `actual_situation = "748772"`;
+  `ship_today_pending` = `collection_date` today AND (no invoice OR its
+  `InvoiceUnitBusinessAttributes.batch_generated` is false); `ship_to_define`
+  = `collection_date IS NULL` AND `internal_status IN (OPEN,
+  WAITING_CHANNEL_VALIDATION)` — added this session: an order already past
+  those two (`CANCELLED`/`EMITTED`/`WAITING_FOR_NFE_EMISSION`/
+  `SENT_TO_TRANSPORTER`/`DELIVERED`/`UNKNOWN`) doesn't need a collection
+  date defined anymore even if `collection_date` is still null, so it must
+  not count as "a definir"; `ship_to_future` = `collection_date` strictly
+  after today — starts tomorrow, never includes today), `GET
+  /orders/summary/human-verification/detail` (`{reason: count}`, grouped by
+  `reason_cancelled`, `null` bucketed as `"UNSET"`), `GET
+  /orders/summary/ship-to-future/detail` (`{"YYYY-MM-DD": count}`, grouped
+  by `collection_date`'s calendar day in `America/Sao_Paulo` via
+  `collectionDateBucketLiteral()`, `orders/order/helpers/aggregates.ts`),
+  `GET /orders/summary/ship-today-pending/detail` (array of rows, not a
+  count/group like the two aggregate details — `{number_order_system,
+  customer_name, sale_date, collection_date, invoice_number,
+  invoice_emitted_at}` per order, `sale_date` from `orders.date`,
+  `invoice_number`/`invoice_emitted_at` from the linked
+  `Invoice.number_system`/`.emitted_at` when `invoice_id` is set, both
+  `null` otherwise), and `GET /orders/summary/ship-to-define/detail`
+  (also array of rows — `{id_order_system, customer_name, status,
+  sale_date}`; `status` — **revised after an explicit correction**: the
+  first version used the raw Bling `actual_situation` code, but the user
+  asked for the same translation `OrderService.paginate` already uses for
+  the generic Orders listing instead — `salesSnapshot?.status_snapshot ??
+  internal_status ?? null` (join `SalesOrderSnapshot` as `"salesSnapshot"`,
+  `attributes: ["status_snapshot"]`, `required: false` — the frozen status
+  from the sales-report job wins over the live `internal_status` column
+  when a snapshot exists). This keeps `ship_to_define`'s displayed status
+  consistent with what the rest of the Orders UI already shows for the
+  same order, rather than introducing a second, Bling-specific status
+  vocabulary just for this one screen). Both of these two list-type
+  detail methods (`findShipTodayPendingDetail`/`findShipToDefineDetail`)
+  share their `where` with their corresponding count method via a private
+  `shipTodayPendingWhere()`/`shipToDefineWhere()` helper each, so count
+  and detail can never drift out of sync. All 8 repository query methods
+  (`orders.repository.ts`) are new — every one of the 4 summary categories
+  now has a detail endpoint.
+  - **Scoping — revised twice this session, settled on store-only, no
+    `unit_business_id` anywhere.** First attempt scoped every method by the
+    logged-in user's `unit_business_id` (`getUserContext`/
+    `resolveUnitBusinessId`, mirroring `invoice.controller.ts`). Confirmed
+    wrong against real prod data: `orders.unit_business_id` is only
+    populated when the Bling `loja` maps to an actual physical-branch
+    `UnitBusiness` (`bling-order.service.ts`'s `UnitBusiness.findOne({where:
+    {id_system: orderData.loja.id}})`) — a marketplace channel's `loja`
+    (confirmed for Mercado Livre specifically, 13912 real orders) never
+    has that mapping, so scoping by `unit_business_id` silently zeroed
+    every `collection_date`-based count. The 3 `collection_date` methods
+    (`countShipTodayPending`/`countShipToDefine`/`countShipToFuture`, plus
+    `groupShipToFutureByDate`) now scope by `store_id` instead — resolved
+    once via `OrderRepository.resolveMercadoLivreStoreId()` (`Store.findOne({where:
+    {name: "MercadoLivre"}})`, cached on the instance, mirrors
+    `BlingOrderService.resolveCostUnitBusinessId`'s exact same
+    lazy-cache-on-instance pattern) and returns `0`/`[]` early if that
+    `Store` row doesn't exist rather than risk matching orders with a null
+    `store_id`. This scoping is correct because `collection_date` itself is
+    Mercado-Livre-exclusive (only `MLOrderSyncQueue.applyCollectionDate`
+    ever writes it — confirmed via grep, no other channel/queue touches it)
+    — every one of these 3 counts is inherently *about* the ML shipping
+    queue, so scoping by that one store is the right (and only meaningful)
+    scope, not a workaround.
+  - **`human_verification`/its detail were first *also* scoped to the
+    Mercado Livre store, then corrected**: situação `748772` is a general
+    Bling order status, not specific to any sales channel (a non-ML order
+    can legitimately need human review too) — scoping it by store would
+    silently hide those. `countHumanVerification`/`groupHumanVerificationByReason`
+    take **no scoping parameter at all** now — global count/breakdown
+    across every channel.
+  - **One exception, added back after the above**: `countShipTodayPending`
+    alone still takes a `unitBusinessId` and scopes its nested
+    `InvoiceUnitBusinessAttributes` include by it (`where: {unit_business_id}`)
+    — `batch_generated` is inherently per `(invoice_id, unit_business_id)`,
+    about *who generated the batch* (the logged-in user's own branch), a
+    genuinely different axis from every other scope discussed above (which
+    is about the order/channel, not the acting branch). `getOrdersStatusSummary`
+    (service) and `getOrdersStatusSummary` (controller, via
+    `getUserContext(req).unitBusinessId` — no override param, unlike
+    `invoice.controller.ts`'s `resolveUnitBusinessId`) are the only other
+    two places in this whole feature that touch `unitBusinessId`; every
+    other repository/service/controller method here (`countHumanVerification`,
+    `countShipToDefine`, `countShipToFuture`, `groupHumanVerificationByReason`,
+    `groupShipToFutureByDate`, and their controller actions) takes none.
+  - Routing gotcha worth remembering if this controller is touched again:
+    `BaseController` registers `GET /:id` in its own constructor (via
+    `super()`), which runs *before* any subclass constructor body —
+    Express matches `/:id` against any single-segment path, so a new
+    custom route must always be 2+ segments (`/summary/...`, not
+    `/summary`) or it's silently unreachable, shadowed by `show`.
 - **`setDelayBasedOnDate(date)`** (`src/shared/utils/queues/setDelay.ts`) —
   computes the delay for the NFe-emission BullMQ job. As of this session:
   targets the **same day** as `collection_date` at 07:00 BRT (10:00 UTC);

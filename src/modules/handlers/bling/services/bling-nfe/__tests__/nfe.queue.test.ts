@@ -186,6 +186,7 @@ describe("NFeQueue", () => {
       );
       expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
         internal_status: OrderInternalStatus.CANCELLED,
+        reason_cancelled: "NFE_MISSING_FIELDS",
       });
     });
 
@@ -265,6 +266,7 @@ describe("NFeQueue", () => {
       );
       expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
         internal_status: OrderInternalStatus.CANCELLED,
+        reason_cancelled: "NFE_WRONG_STATUS",
       });
     });
   });

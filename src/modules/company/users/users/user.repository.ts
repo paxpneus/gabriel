@@ -9,6 +9,7 @@ import Role from "../roles/role.model";
 import Contact from "../../../sales/contacts/contacts.model";
 import UnitBusinessConfig from "../../unit-business/unit-business-config/unit-business-config.model";
 import Label from "../../../inventory/labels/labels.model";
+import Integration from "../../../integrations/integrations/integrations.model";
 
 export class UserRepository extends BaseRepository<User> {
   constructor() {
@@ -28,6 +29,11 @@ export class UserRepository extends BaseRepository<User> {
           as: "unitBusiness",
           attributes: ["id", "name", "number", "integrations_id", "id_system", "cnpj"],
           include: [
+            {
+              model: Integration,
+              as: 'integration',
+              attributes: ['name']
+            },
             {
               model: UnitBusinessConfig,
               as: 'config',

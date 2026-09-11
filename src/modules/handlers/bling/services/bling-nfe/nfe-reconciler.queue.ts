@@ -22,6 +22,7 @@ import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/
 import {
   COMPLETED_ORDER_INTERNAL_STATUSES,
   OrderInternalStatus,
+  OrderReasonCancelled,
 } from "../../../../sales/orders/order/orders.types";
 
 export type NFeReconcilerJobData = Record<string, never>;
@@ -324,6 +325,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
           await ordersService.update(order.id, {
             internal_status: mapOrderInternalStatus(748772),
             nfe_emitted: false,
+            reason_cancelled: OrderReasonCancelled.ML_SCRAPING_NO_MATCH,
           });
 
           console.log(

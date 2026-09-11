@@ -26,6 +26,21 @@ export const COMPLETED_ORDER_INTERNAL_STATUSES: readonly OrderInternalStatus[] =
   OrderInternalStatus.DELIVERED,
 ];
 
+// Motivo por trás de internal_status=CANCELLED — inclui tanto as causas de
+// situação Bling 748772 ("aguardando verificação humana", escrita por 3
+// filas diferentes) quanto cancelamento real do cliente/Bling (situação
+// 12/21), que hoje colapsam todos no mesmo CANCELLED sem distinção.
+export enum OrderReasonCancelled {
+  DOCUMENT_INVALID = "DOCUMENT_INVALID",
+  CNAE_BLOCKED = "CNAE_BLOCKED",
+  NFE_WRONG_STATUS = "NFE_WRONG_STATUS",
+  NFE_MISSING_FIELDS = "NFE_MISSING_FIELDS",
+  NFE_NO_STOCK = "NFE_NO_STOCK",
+  NFE_EMISSION_FAILED = "NFE_EMISSION_FAILED",
+  ML_SCRAPING_NO_MATCH = "ML_SCRAPING_NO_MATCH",
+  CUSTOMER_CANCELLED = "CUSTOMER_CANCELLED",
+}
+
 export interface orderAttributes {
   id: string;
   integrations_id: string;
@@ -42,6 +57,7 @@ export interface orderAttributes {
   total_cost?: number;
   nfe_emitted?: boolean;
   internal_status?: OrderInternalStatus;
+  reason_cancelled?: OrderReasonCancelled | null;
   store_id?: string | null;
   unit_business_id?: string | null;
   invoice_id?: string | null;
@@ -80,6 +96,27 @@ export interface orderAttributes {
 export interface FullOrder extends orderAttributes {
   customer: customerAttributes;
   items: orderItemsAttributes[];
+}
+
+// Uma linha do detalhe de ship_today_pending (GET /summary/ship-today-pending/detail).
+export interface ShipTodayPendingDetailRow {
+  number_order_system: string;
+  customer_name: string | null;
+  sale_date: Date | null;
+  collection_date: Date | null;
+  invoice_number: string | null;
+  invoice_emitted_at: Date | null;
+}
+
+// Uma linha do detalhe de ship_to_define (GET /summary/ship-to-define/detail).
+// `status` usa a mesma tradução de OrderService.paginate:
+// salesSnapshot?.status_snapshot ?? internal_status ?? null — não o
+// actual_situation bruto da Bling.
+export interface ShipToDefineDetailRow {
+  id_order_system: string | null;
+  customer_name: string | null;
+  status: string | null;
+  sale_date: Date | null;
 }
 
 // Retorno cru do repository: pedido + snapshot congelado (sales_order_snapshots
