@@ -36,7 +36,7 @@ jest.mock("../../bling-customers/bling-customer.service", () => ({
 
 const mockStoreServiceInstance = {
   findOne: jest.fn(),
-  create: jest.fn(),
+  findOrCreateByName: jest.fn(),
 };
 jest.mock("../../../../../sales/stores/stores.service", () => ({
   __esModule: true,

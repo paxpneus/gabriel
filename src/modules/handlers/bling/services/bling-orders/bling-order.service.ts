@@ -581,6 +581,32 @@ export class BlingOrderService {
     return { items, custoTotalProdutos };
   }
 
+  // Store is a small, fixed taxonomy of Bling channel *types* (`tipo`, e.g.
+  // "LojaFisica", "MercadoLivre") shared across every branch of that type —
+  // not one row per physical branch. `name` (the `tipo`) is the real
+  // identity other code keys off directly (nfe-reconciler's
+  // `where: { name: "MercadoLivre" }`, `ALLOWED_STORE_NAME`,
+  // `integration.allowed_channels`), so dedup must happen on `name`, backed
+  // by a DB unique index (see migration) — `id_store_system` is just a
+  // cheap lookup cache for a channel id already known to resolve here, not
+  // a real per-row identity.
+  private async resolveStore(lojaId: number | undefined): Promise<any> {
+    if (!lojaId) return null;
+
+    const existing = await this.storeService.findOne({
+      where: { id_store_system: String(lojaId) },
+    });
+    if (existing) return existing;
+
+    const blingStore = await blingGet(`/canais-venda/${lojaId}`, this.blingApi);
+    const tipo = blingStore.data.data.tipo;
+
+    return this.storeService.findOrCreateByName(
+      tipo,
+      String(blingStore.data.data.id),
+    );
+  }
+
   async updateOrderFromBling(
     body: blingOrderWebHookData,
   ): Promise<{ customer: any; cnaes: any[]; orderSystem: any } | null> {
@@ -633,31 +659,7 @@ export class BlingOrderService {
         unitBusinessId = unitBusiness?.id ?? null;
       }
 
-      let store: any = null;
-      if (orderData.loja?.id) {
-        store = await this.storeService.findOne({
-          where: { id_store_system: String(orderData.loja.id) },
-        });
-
-        if (!store) {
-          const blingStore = await blingGet(
-            `/canais-venda/${orderData.loja.id}`,
-            this.blingApi,
-          );
-          const tipo = blingStore.data.data.tipo;
-
-          store = await this.storeService.findOne({
-            where: { name: tipo },
-          });
-
-          if (!store) {
-            store = await this.storeService.create({
-              name: tipo,
-              id_store_system: String(blingStore.data.data.id),
-            });
-          }
-        }
-      }
+      const store = await this.resolveStore(orderData.loja?.id);
 
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
 
@@ -875,32 +877,7 @@ export class BlingOrderService {
         } as any);
       }
 
-      let store = null;
-
-      if (orderData.loja?.id) {
-        store = await this.storeService.findOne({
-          where: { id_store_system: String(orderData.loja.id) },
-        });
-
-        if (!store) {
-          const blingStore = await blingGet(
-            `/canais-venda/${orderData.loja.id}`,
-            this.blingApi,
-          );
-          const tipo = blingStore.data.data.tipo;
-
-          store = await this.storeService.findOne({
-            where: { name: tipo },
-          });
-
-          if (!store) {
-            store = await this.storeService.create({
-              name: tipo,
-              id_store_system: String(blingStore.data.data.id),
-            });
-          }
-        }
-      }
+      const store = await this.resolveStore(orderData.loja?.id);
 
       if (!integration) {
         throw new Error("Bling Integration não encontrada no cache");

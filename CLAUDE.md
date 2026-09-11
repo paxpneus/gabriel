@@ -1557,6 +1557,51 @@ sessão, não a referência viva.
   ones already batched) and sits right before the existing
   `assertTransshipment` loop.
 
+## Store (`src/modules/sales/stores/`)
+
+- `Store` is **not** one row per physical branch — it's a small, fixed
+  taxonomy of Bling sales-channel *types* (`tipo` from Bling's
+  `/canais-venda/{id}`, e.g. `"LojaFisica"`, `"MercadoLivre"`), shared by
+  every branch/channel of that same type. `name` (the `tipo` value) is the
+  real identity the rest of the codebase keys off directly —
+  `nfe-reconciler.queue.ts`'s `where: { name: "MercadoLivre" }`,
+  `ALLOWED_STORE_NAME` (`nfe.queue.ts`/`cnpj.queue.ts`), the
+  `where: { name: "Outros" }` fallback in `bling-api-fetch.queue.ts`/
+  `invoice-xml.ts`, and `Integration.allowed_channels`. `id_store_system` is
+  only a fast-lookup cache for one specific Bling channel id already known
+  to resolve to that bucket — not a real per-row identity, and not unique.
+- **Fixed this session — ~20 duplicate `Store` rows all named
+  `"LojaFisica"` in production.** Root cause: `BlingOrderService` (both
+  `createOrderFromBling` and `updateOrderFromBling`, identical code
+  duplicated in each) resolved the channel's `Store` via a plain
+  check-then-create (`findOne({where:{name: tipo}})` then `create(...)` if
+  not found) with **no DB unique constraint on `name`** — under concurrent
+  webhook processing for orders from different physical branches that
+  share the same Bling `tipo`, multiple requests could all pass the
+  `findOne` check before any of them committed, each creating its own row.
+  **Fixed**: both call sites now go through one shared private
+  `BlingOrderService.resolveStore(lojaId)`, which calls
+  `storeService.findOrCreateByName(tipo, idStoreSystem)` —
+  `StoreRepository.findOrCreateByName` uses Sequelize's `findOrCreate` on
+  `name`, made race-safe by a new unique index (migration
+  `m276-dedupe-stores-and-unique-name.js`). That migration also merges the
+  pre-existing duplicates: picks the oldest row per `name` as canonical,
+  reassigns `orders.store_id`/`invoices.store_id`/
+  `sales_order_snapshots.store_id`/`sales_order_item_snapshots.store_id`
+  from the duplicates to it (plain UPDATE, none of those tables have a
+  unique constraint on `store_id`), and — since
+  `daily_sales_store_facts` has `UNIQUE(fact_date, unit_business_id,
+  store_id)` and its metric columns include percentages
+  (`markup_pct`/`contribution_pct`) that can't be arithmetically merged —
+  just deletes the fact rows pinned to a duplicate `store_id` instead of
+  reassigning them, since that table is a derived snapshot
+  (`upsertDailySalesStoreFacts`) that regenerates from `orders`/
+  `sales_order_snapshots`, which this same migration already fixed. This
+  does **not** retroactively recompute historical daily-sales-store facts
+  already recorded under the wrong `store_id` — if exact historical
+  reporting matters, rerun the snapshot/fact recompute after the migration.
+  As always, **the user runs this migration themselves.**
+
 ## Sales / orders (`src/modules/sales/orders/`)
 
 - `order_items.service.ts` — builds sales-detail rows joining
