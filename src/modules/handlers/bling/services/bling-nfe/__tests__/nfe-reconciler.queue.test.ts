@@ -81,10 +81,20 @@ function makeQueue(
   mlOrderSyncNext: { waitUntilIdle: jest.Mock } = {
     waitUntilIdle: jest.fn().mockResolvedValue(true),
   },
+  mlScrapingNext: { add: jest.Mock } = { add: jest.fn() },
+  mlScrapingWaitUntilIdle: { waitUntilIdle: jest.Mock } = {
+    waitUntilIdle: jest.fn().mockResolvedValue(true),
+  },
 ) {
-  return new ReconcilerQueue(cnpjNext, nfeNext, blingApi, mlOrderSyncNext, {
-    workless: true,
-  });
+  return new ReconcilerQueue(
+    cnpjNext,
+    nfeNext,
+    blingApi,
+    mlOrderSyncNext,
+    mlScrapingNext,
+    mlScrapingWaitUntilIdle,
+    { workless: true },
+  );
 }
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
@@ -214,7 +224,32 @@ describe("ReconcilerQueue", () => {
       return { id: "o1", id_order_system: "1001", ...overrides };
     }
 
-    it("ML_ORDER_SYNC ainda ocupado: pula o sweep sem consultar/tocar nenhum pedido", async () => {
+    it("ML-SCRAPING ainda ocupado: pula o sweep sem sequer checar ML_ORDER_SYNC", async () => {
+      const mlScrapingWaitUntilIdle = {
+        waitUntilIdle: jest.fn().mockResolvedValue(false),
+      };
+      const mlOrderSyncNext = { waitUntilIdle: jest.fn() };
+      const busyQueue = makeQueue(
+        fakeBlingApi,
+        cnpjNext,
+        nfeNext,
+        mlOrderSyncNext,
+        { add: jest.fn() },
+        mlScrapingWaitUntilIdle,
+      );
+      (ordersService.findAll as jest.Mock).mockResolvedValue([makeStuckOrder()]);
+
+      await (busyQueue as any).reconcileStuckOrders();
+
+      expect(mlScrapingWaitUntilIdle.waitUntilIdle).toHaveBeenCalledWith(
+        10 * 60 * 1000,
+      );
+      expect(mlOrderSyncNext.waitUntilIdle).not.toHaveBeenCalled();
+      expect(ordersService.findAll).not.toHaveBeenCalled();
+      expect(fakeBlingApi.get).not.toHaveBeenCalled();
+    });
+
+    it("ML-SCRAPING livre mas ML_ORDER_SYNC ainda ocupado: pula o sweep sem consultar/tocar nenhum pedido", async () => {
       const mlOrderSyncNext = { waitUntilIdle: jest.fn().mockResolvedValue(false) };
       const busyQueue = makeQueue(fakeBlingApi, cnpjNext, nfeNext, mlOrderSyncNext);
       (ordersService.findAll as jest.Mock).mockResolvedValue([makeStuckOrder()]);
@@ -226,7 +261,7 @@ describe("ReconcilerQueue", () => {
       expect(fakeBlingApi.get).not.toHaveBeenCalled();
     });
 
-    it("ML_ORDER_SYNC livre: espera e segue com o sweep normalmente", async () => {
+    it("ML-SCRAPING e ML_ORDER_SYNC livres: espera os dois e segue com o sweep normalmente", async () => {
       const mlOrderSyncNext = { waitUntilIdle: jest.fn().mockResolvedValue(true) };
       const clearQueue = makeQueue(fakeBlingApi, cnpjNext, nfeNext, mlOrderSyncNext);
       (ordersService.findAll as jest.Mock).mockResolvedValue([makeStuckOrder()]);
@@ -336,6 +371,102 @@ describe("ReconcilerQueue", () => {
     });
   });
 
+  describe("reconcileMissingCollectionDate", () => {
+    it("Bling tem pedido em 748743 sem dataPrevista, e ele ainda não tem collection_date no banco: dispara scraping sob demanda", async () => {
+      const mlScrapingNext = { add: jest.fn().mockResolvedValue(undefined) };
+      const q = makeQueue(
+        fakeBlingApi,
+        cnpjNext,
+        nfeNext,
+        undefined,
+        mlScrapingNext,
+      );
+      (fakeBlingApi.get as jest.Mock).mockResolvedValue({
+        data: { data: [{ id: 1001, numero: "1001", dataPrevista: undefined }] },
+      });
+      (ordersService.findAll as jest.Mock).mockResolvedValue([
+        { id: "o1", id_order_system: "1001", number_order_system: "1001" },
+      ]);
+
+      await (q as any).reconcileMissingCollectionDate();
+
+      expect(fakeBlingApi.get).toHaveBeenCalledWith(
+        "/pedidos/vendas",
+        expect.objectContaining({
+          params: expect.objectContaining({ "idsSituacoes[]": 748743 }),
+        }),
+      );
+      expect(ordersService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            number_order_system: ["1001"],
+            collection_date: null,
+          }),
+        }),
+      );
+      expect(mlScrapingNext.add).toHaveBeenCalledWith(
+        { triggered_by: "nfe-reconciler" },
+        "ml-scraping-on-demand",
+      );
+    });
+
+    it("Bling não retorna nenhum pedido em 748743: não consulta o banco nem dispara scraping", async () => {
+      const mlScrapingNext = { add: jest.fn() };
+      const q = makeQueue(
+        fakeBlingApi,
+        cnpjNext,
+        nfeNext,
+        undefined,
+        mlScrapingNext,
+      );
+      (fakeBlingApi.get as jest.Mock).mockResolvedValue({ data: { data: [] } });
+
+      await (q as any).reconcileMissingCollectionDate();
+
+      expect(ordersService.findAll).not.toHaveBeenCalled();
+      expect(mlScrapingNext.add).not.toHaveBeenCalled();
+    });
+
+    it("todos os pedidos em 748743 já têm dataPrevista na Bling: não consulta o banco nem dispara scraping", async () => {
+      const mlScrapingNext = { add: jest.fn() };
+      const q = makeQueue(
+        fakeBlingApi,
+        cnpjNext,
+        nfeNext,
+        undefined,
+        mlScrapingNext,
+      );
+      (fakeBlingApi.get as jest.Mock).mockResolvedValue({
+        data: { data: [{ id: 1001, numero: "1001", dataPrevista: "2026-08-20" }] },
+      });
+
+      await (q as any).reconcileMissingCollectionDate();
+
+      expect(ordersService.findAll).not.toHaveBeenCalled();
+      expect(mlScrapingNext.add).not.toHaveBeenCalled();
+    });
+
+    it("pedido sem dataPrevista na Bling mas já resolvido localmente (collection_date já preenchida): não dispara scraping", async () => {
+      const mlScrapingNext = { add: jest.fn() };
+      const q = makeQueue(
+        fakeBlingApi,
+        cnpjNext,
+        nfeNext,
+        undefined,
+        mlScrapingNext,
+      );
+      (fakeBlingApi.get as jest.Mock).mockResolvedValue({
+        data: { data: [{ id: 1001, numero: "1001", dataPrevista: undefined }] },
+      });
+      // A query já filtra collection_date: null — pedido resolvido não volta.
+      (ordersService.findAll as jest.Mock).mockResolvedValue([]);
+
+      await (q as any).reconcileMissingCollectionDate();
+
+      expect(mlScrapingNext.add).not.toHaveBeenCalled();
+    });
+  });
+
   describe("process — dispatcher", () => {
     it("uma sub-rotina falhando dispara alerta CRITICAL com o nome certo, sem derrubar as outras", async () => {
       jest
@@ -343,6 +474,9 @@ describe("ReconcilerQueue", () => {
         .mockRejectedValue(new Error("boom"));
       jest.spyOn(queue as any, "reconcileOpenOrders").mockResolvedValue(undefined);
       jest.spyOn(queue as any, "reconcileStuckOrders").mockResolvedValue(undefined);
+      jest
+        .spyOn(queue as any, "reconcileMissingCollectionDate")
+        .mockResolvedValue(undefined);
 
       await queue.process({} as Job);
 

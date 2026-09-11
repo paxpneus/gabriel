@@ -46,6 +46,13 @@ function reasonCancelledFields(situacaoId: unknown) {
     : {};
 }
 
+// Só inclui a chave collection_date quando a Bling manda dataPrevista
+// preenchida — omitida (nunca null) quando vier vazia, pra não apagar um
+// collection_date já resolvido antes por scraping/ML_ORDER_SYNC.
+function collectionDateFromBling(dataPrevista: string | undefined | null) {
+  return dataPrevista ? { collection_date: startOfDayTz(dataPrevista).toDate() } : {};
+}
+
 export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService;
@@ -763,6 +770,7 @@ export class BlingOrderService {
         total_cost: orderFinancials.total_cost,
         ...(sellerId ? { seller_id: sellerId } : {}),
         ...orderFiscalFieldsToUpdate,
+        ...collectionDateFromBling(orderData.dataPrevista),
       };
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
@@ -1017,6 +1025,7 @@ export class BlingOrderService {
         ...(sellerId ? { seller_id: sellerId } : {}),
         ...fiscalFields,
         ...orderFinancials,
+        ...collectionDateFromBling(orderData.dataPrevista),
       };
 
       const createdOrder = await ordersService.create(ordersPayload);

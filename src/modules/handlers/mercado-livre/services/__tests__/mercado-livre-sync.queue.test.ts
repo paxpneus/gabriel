@@ -124,6 +124,7 @@ describe("MLOrderSyncQueue", () => {
     removeJob: jest.Mock;
     addDelayed: jest.Mock;
   };
+  let scrapingNextFake: { add: jest.Mock };
   let queue: MLOrderSyncQueue;
 
   beforeEach(() => {
@@ -135,9 +136,13 @@ describe("MLOrderSyncQueue", () => {
       removeJob: jest.fn(),
       addDelayed: jest.fn(),
     };
-    queue = new MLOrderSyncQueue(nextFake as any, fakeBlingApi, {
-      workless: true,
-    });
+    scrapingNextFake = { add: jest.fn().mockResolvedValue(undefined) };
+    queue = new MLOrderSyncQueue(
+      nextFake as any,
+      fakeBlingApi,
+      scrapingNextFake as any,
+      { workless: true },
+    );
 
     (ordersService.update as jest.Mock).mockResolvedValue([1]);
     (integrationsService.getFullIntegration as jest.Mock).mockResolvedValue({
@@ -180,7 +185,7 @@ describe("MLOrderSyncQueue", () => {
   });
 
   describe("syncFromWebhook", () => {
-    it("elegível e com collection_date já preenchida: agenda NFe direto (scheduleNfe)", async () => {
+    it("elegível e com collection_date já preenchida (ex: vinda de dataPrevista): agenda NFe direto, sem disparar scraping", async () => {
       mockEligible(true);
       const orderSystem = makeOrder({ collection_date: new Date("2026-08-20") });
 
@@ -194,9 +199,10 @@ describe("MLOrderSyncQueue", () => {
       expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
         internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
       });
+      expect(scrapingNextFake.add).not.toHaveBeenCalled();
     });
 
-    it("elegível e sem collection_date: marca WAITING_CHANNEL_VALIDATION e aguarda próximo scraping", async () => {
+    it("elegível e sem collection_date: marca WAITING_CHANNEL_VALIDATION e dispara scraping sob demanda", async () => {
       mockEligible(true);
       const orderSystem = makeOrder({ collection_date: null });
 
@@ -206,6 +212,10 @@ describe("MLOrderSyncQueue", () => {
         internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
       });
       expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+      expect(scrapingNextFake.add).toHaveBeenCalledWith(
+        { triggered_by: "ml-order-sync" },
+        "ml-scraping-on-demand",
+      );
     });
 
     it("não elegível (internal_status/situacao já divergentes): ignora sem gravar nada", async () => {

@@ -1236,6 +1236,94 @@ lock por pedido, e todo par de corrida entre filas já mapeado e tratado):
 este — os bullets abaixo ficam só com o histórico de investigação/fix de
 sessão, não a referência viva.
 
+- **`collection_date` agora pode vir de `dataPrevista` (payload Bling),
+  não só do scraping/planilha do ML; `ML-SCRAPING` deixou de ter cron fixo
+  (this session)** — pedido explícito do usuário. `BlingOrderService`
+  (`createOrderFromBling`/`updateOrderFromBling`) agora grava
+  `collection_date` direto a partir de `orderData.dataPrevista` (via
+  `startOfDayTz`, mesmo padrão já usado pro campo `date`) sempre que a
+  Bling manda essa data preenchida; se vier vazia, a chave é **omitida**
+  do payload de update (nunca gravada como `null`), preservando qualquer
+  valor já resolvido antes por scraping. Como consequência, o branch
+  existente em `MLOrderSyncQueue.syncFromWebhookLocked` que já checava
+  `if (orderSystem.collection_date)` pra pular o casamento via Excel e
+  agendar a NFe direto passou a disparar "de graça" pra todo pedido cuja
+  Bling já informa a data prevista — nenhuma mudança de lógica precisou
+  ser feita ali além de remover um protótipo morto e comentado (`//TESTE`)
+  que tentava fazer algo parecido com um `new Date()` sem fuso (bug que
+  motivou reforçar o uso de `startOfDayTz`). Pra pedidos que chegam sem
+  `dataPrevista`: `ML-SCRAPING` (`mercado-livre.scraping.queue.ts`) teve
+  seu cron fixo de 10min **removido** (`startScrapingWorker`) e passou a
+  rodar só **sob demanda**, via um job com `jobId` fixo
+  (`"ml-scraping-on-demand"`, dedupe nativo do BullMQ) disparado por
+  `MLOrderSyncQueue.syncFromWebhookLocked` (na chegada do pedido) ou por
+  um novo método `ReconcilerQueue.reconcileMissingCollectionDate`
+  (`nfe-reconciler.queue.ts`, roda junto no `Promise.allSettled` de
+  `NFE_RECONCILER`, a cada 15min) — este último busca **ao vivo na Bling**
+  (não confia em snapshot local) todos os pedidos em situação `748743`,
+  filtra os que a própria Bling ainda não tem `dataPrevista`, cruza com o
+  banco pra achar os que ainda estão com `collection_date` nulo, e só
+  então dispara o scraping — rede de segurança caso o disparo original
+  tenha falhado silenciosamente ou nunca ocorrido. Como consequência dessa
+  mudança (scraping deixou de ser um relógio independente),
+  `reconcileStuckOrders` passou a esperar `ML-SCRAPING` ficar livre
+  **antes** de esperar `ML_ORDER_SYNC` (nessa ordem — scraping alimenta
+  `ML_ORDER_SYNC`, não o contrário), senão um ciclo de scraping recém-
+  disparado (inclusive pelo próprio `reconcileMissingCollectionDate`,
+  rodando em paralelo) podia passar despercebido (ML_ORDER_SYNC ainda
+  vazio nesse instante) e o sweep marcar erroneamente um pedido como
+  "verificação humana" antes do scraping ter a chance de resolvê-lo.
+  Wiring dessas duas novas dependências (`MLOrderSyncQueue`/
+  `ReconcilerQueue` precisam de um cliente `workless:true` de
+  `MLScrapingQueue`, já que rodam num container diferente de
+  `startScrapingWorker`, o único com o Worker real) resolvido com um `let`
+  predeclarado em `buildQueues()` pra quebrar a referência circular
+  (`MLScrapingQueue` aponta pra `mlOrderSyncQueue.add`, que por sua vez
+  precisa apontar de volta pra `mlScrapingQueue.add`). Detalhe completo
+  (query exata, sequenciamento dos `waitUntilIdle`, mecanismo de dedupe)
+  em `docs/automation/order-pipeline.md`.
+
+- **Refinamento do item acima, mesma sessão — `MLScrapingQueue` não confia
+  em `job.data` pra saber o que precisa resolver.** Correção do usuário
+  durante a implementação: a ideia original de passar os pedidos pendentes
+  dentro do payload do `.add()` do gatilho sob demanda tinha um problema
+  real com o dedupe por `jobId` fixo (`"ml-scraping-on-demand"`) — se um
+  segundo pedido chegasse sem `dataPrevista` enquanto o job do primeiro
+  ainda estivesse esperando na fila, o `.add()` do segundo seria
+  silenciosamente ignorado (mesmo `jobId` já ocupado) e a informação dele
+  se perderia. Fix: `MLScrapingQueue.process()` agora consulta o banco
+  **na hora em que o job roda de verdade** (não confia em snapshot do
+  `job.data`) por pedidos ainda em `WAITING_CHANNEL_VALIDATION` sem
+  `collection_date` — isso funciona não importa qual dos dois
+  disparadores "ganhou" o dedupe. Duas otimizações vieram junto, também a
+  pedido do usuário (que apontou que disparar sob demanda e mesmo assim
+  enfileirar ~300 jobs no `ML_ORDER_SYNC` — um por linha da planilha
+  inteira — era desperdício, já que se sabe exatamente quais pedidos
+  precisam ser resolvidos):
+  1. Se não sobrar nenhum pedido pendente no momento em que o job roda
+     (ex: resolvido por `dataPrevista` enquanto esperava na fila), o ciclo
+     inteiro é pulado **antes** de baixar a planilha — sem essa checagem,
+     o job abriria o Playwright/baixaria o Excel à toa.
+  2. Quando sobra, a planilha ainda é baixada inteira (não dá pra pedir só
+     um pedido ao Mercado Livre), mas só as linhas que batem por
+     data+comprador com **algum** pedido pendente viram job no
+     `ML_ORDER_SYNC`, via uma nova função compartilhada
+     `matchesOrderByDateAndBuyer` (`mercado-livre/services/helpers/order-match.ts`
+     — extraída também de `MLOrderSyncQueue.syncFromExcel`, que tinha essa
+     mesma lógica de match inline, pra não duplicar). Investigado e
+     confirmado que isso não quebra a busca de "pedidos irmãos"
+     (`findSiblingOrders`): a lista completa dos últimos 7 dias continua
+     sendo gravada sem filtro no cache `orders_seven_days_ago` (só decide
+     quais linhas geram job, não contra quais pedidos elas casam), e um
+     irmão sempre compartilha data/cliente com o pedido pendente que
+     originou o match, então a linha correspondente nunca é descartada
+     pelo pré-filtro. Também esclarecido pro usuário, à parte: mesmo antes
+     desse refinamento, as chamadas na Bling em si já eram filtradas — só
+     pedidos genuinamente ainda pendentes (não `COMPLETED_ORDER_INTERNAL_STATUSES`,
+     e ainda `WAITING_CHANNEL_VALIDATION` via `isEligibleForSync`) chegavam
+     a fazer GET/PUT/PATCH; o desperdício real era só de jobs BullMQ/leituras
+     no banco, não de chamadas na Bling.
+
 - **`orders.reason_cancelled` (nova coluna, migration `m277`, this
   session)** — nullable enum (`OrderReasonCancelled`,
   `orders.types.ts`/`orders.model.ts`) that disambiguates WHY an order sits

@@ -13,6 +13,9 @@ import Customer from "../../../sales/customers/customers.model";
 import OrderItems from "../../../sales/orders/order_items/order_items.model";
 import redisService from "../../../../shared/utils/base-models/base-redis";
 import { SCRAPING_SHARED_QUEUE_LOCK } from "../../bling/services/bling/queues/scraping-queue-lock";
+import { OrderInternalStatus } from "../../../sales/orders/order/orders.types";
+import { matchesOrderByDateAndBuyer } from "./helpers/order-match";
+import { MLExcelRow } from "./mercado-livre.types";
 
 export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
   private scrapingService: MLScrapingService;
@@ -38,27 +41,6 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
   }
 
   async process(job: Job<MLScrapingJobData>): Promise<void> {
-    const min = 1 * 60 * 1000;
-    const max = 3 * 60 * 1000;
-    const sleep = Math.floor(Math.random() * (max - min + 1)) + min;
-    console.log(
-      `[MLScrapingQueue] Próxima execução em ${Math.round(sleep / 60000)} min`,
-    );
-    await new Promise((resolve) => setTimeout(resolve, sleep));
-
-    console.log(`[MLScrapingQueue] Iniciando sincronização do Excel`);
-
-    const rows = await this.scrapingService.downloadAndParseExcel();
-    this.mlOrderService.updateCache(rows);
-
-    console.log(
-      `[MLScrapingQueue] ${rows.length} pedidos encontrados. Enfileirando...`,
-    );
-
-    const sortedRows = [...rows].sort(
-      (a, b) => a.collection_date.getTime() - b.collection_date.getTime(),
-    );
-
     const todaysDate = new Date();
     const sevenDaysAgo = new Date(todaysDate);
     sevenDaysAgo.setUTCDate(todaysDate.getUTCDate() - 7);
@@ -109,12 +91,66 @@ export class MLScrapingQueue extends BaseQueueService<MLScrapingJobData> {
       order instanceof Model ? order.get({ plain: true }) : order,
     );
 
+    // Scraping é sob demanda agora (sem cron fixo) — antes de baixar/parsear
+    // a planilha inteira (caro: Playwright + jitter), confere se ainda tem
+    // ALGUM pedido pendente de collection_date. Se não tiver mais nenhum
+    // (ex: já resolvido por dataPrevista, ou por um ciclo anterior que
+    // rodou antes deste), o disparo que gerou este job já perdeu o motivo
+    // de existir — não vale a pena rodar o ciclo inteiro.
+    const pendingOrders = plainOrders.filter(
+      (order: any) =>
+        order.internal_status === OrderInternalStatus.WAITING_CHANNEL_VALIDATION &&
+        !order.collection_date,
+    );
+
+    if (pendingOrders.length === 0) {
+      console.log(
+        `[MLScrapingQueue] Nenhum pedido pendente de collection_date no momento — pulando ciclo.`,
+      );
+      return;
+    }
+
+    const min = 1 * 60 * 1000;
+    const max = 3 * 60 * 1000;
+    const sleep = Math.floor(Math.random() * (max - min + 1)) + min;
+    console.log(
+      `[MLScrapingQueue] Próxima execução em ${Math.round(sleep / 60000)} min`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, sleep));
+
+    console.log(`[MLScrapingQueue] Iniciando sincronização do Excel`);
+
+    const rows = await this.scrapingService.downloadAndParseExcel();
+    this.mlOrderService.updateCache(rows);
+
+    const sortedRows = [...rows].sort(
+      (a, b) => a.collection_date.getTime() - b.collection_date.getTime(),
+    );
+
+    // Só enfileira linha que possa corresponder a um pedido genuinamente
+    // pendente — evita criar um job de ML_ORDER_SYNC (com leitura no banco
+    // e, se der match, chamadas na Bling) pra cada uma das ~centenas de
+    // linhas da planilha quando só um punhado de pedidos precisa de fato
+    // ser resolvido agora. A busca de "irmãos" (mesmo cliente/SKU) dentro
+    // de MLOrderSyncQueue.syncFromExcel continua usando a lista completa
+    // (orders_seven_days_ago, gravada abaixo sem filtro) — o filtro aqui só
+    // decide QUAIS linhas viram job, não contra quais pedidos elas casam.
+    const relevantRows = sortedRows.filter((row: MLExcelRow) =>
+      pendingOrders.some((order: any) =>
+        matchesOrderByDateAndBuyer(order.date, order.customer?.name, row),
+      ),
+    );
+
     await redisService.set(`orders_seven_days_ago`, plainOrders, {
       mode: "EX",
       duration: 60 * 30,
     });
 
-    for (const row of sortedRows) {
+    console.log(
+      `[MLScrapingQueue] ${relevantRows.length}/${rows.length} linha(s) relevante(s) para ${pendingOrders.length} pedido(s) pendente(s). Enfileirando...`,
+    );
+
+    for (const row of relevantRows) {
       await this.next.add({ row }, `ml-sync-${row.order_number}`);
     }
 
