@@ -6,7 +6,7 @@ export const setDelayBasedOnDate = (date: Date): number => {
     const collectionDate = new Date(date);
 
     const target = new Date(collectionDate);
-    target.setUTCHours(10, 0, 0, 0);
+    target.setUTCHours(9, 0, 0, 0);
 
     const cutoff = new Date(collectionDate);
     cutoff.setUTCHours(16, 0, 0, 0);
