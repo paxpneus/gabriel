@@ -109,11 +109,12 @@ export interface ShipTodayPendingDetailRow {
 }
 
 // Uma linha do detalhe de ship_to_define (GET /summary/ship-to-define/detail).
-// `status` usa a mesma tradução de OrderService.paginate:
-// salesSnapshot?.status_snapshot ?? internal_status ?? null — não o
-// actual_situation bruto da Bling.
+// `status` é internal_status traduzido pra pt-BR via
+// translateOrderInternalStatus (helpers/translations.ts) — não o
+// status_snapshot (fonte diferente, diverge de internal_status na
+// prática) nem o actual_situation bruto da Bling.
 export interface ShipToDefineDetailRow {
-  id_order_system: string | null;
+  number_order_system: string | null;
   customer_name: string | null;
   status: string | null;
   sale_date: Date | null;

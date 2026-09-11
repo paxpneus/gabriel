@@ -17,6 +17,7 @@ import {
   collectionDateFutureStartCompat,
 } from "../../../../shared/utils/normalizers/date";
 import { collectionDateBucketLiteral } from "./helpers/aggregates";
+import { translateOrderInternalStatus } from "./helpers/translations";
 import Store from "../../stores/stores.model";
 
 const MERCADO_LIVRE_STORE_NAME = "MercadoLivre";
@@ -230,6 +231,20 @@ export class OrderRepository extends BaseRepository<Order> {
 
   // Mesmo where de countShipToDefine, listando os pedidos em vez de só
   // contar.
+  //
+  // `status` é o `internal_status` puro — NÃO a mesma precedência de
+  // OrderService.paginate() (`status_snapshot ?? internal_status`).
+  // status_snapshot vem de `actual_situation` (código bruto da Bling) via
+  // `integration_order_status_mappings` — uma fonte INDEPENDENTE de
+  // internal_status, que várias filas (cnpj.queue, mercado-livre-sync.queue,
+  // nfe.queue...) avançam sozinho sem tocar actual_situation. Como esse
+  // filtro (shipToDefineWhere) restringe por internal_status, exibir
+  // status_snapshot no lugar já mostrou, em produção, pedidos filtrados
+  // como "ainda pendentes" (OPEN/WAITING_CHANNEL_VALIDATION) com status
+  // exibido "CANCELADO"/"ATENDIDO" — coerente com o próprio dado (as duas
+  // colunas realmente divergem), mas contraditório com o filtro que gerou
+  // a lista. Aqui o campo exibido tem que ser exatamente o que foi
+  // filtrado.
   async findShipToDefineDetail(): Promise<ShipToDefineDetailRow[]> {
     const where = await this.shipToDefineWhere();
     if (!where) return [];
@@ -237,15 +252,9 @@ export class OrderRepository extends BaseRepository<Order> {
     const rows = await this.model.findAll({
       subQuery: false,
       where,
-      attributes: ["id_order_system", "internal_status", "date"],
+      attributes: ["number_order_system", "internal_status", "date"],
       include: [
         { model: Customer, as: "customer", required: false, attributes: ["name"] },
-        {
-          model: SalesOrderSnapshot,
-          as: "salesSnapshot",
-          attributes: ["status_snapshot"],
-          required: false,
-        },
       ],
       order: [["date", "ASC"]],
     });
@@ -253,9 +262,9 @@ export class OrderRepository extends BaseRepository<Order> {
     return rows.map((r) => {
       const plain = r.get({ plain: true }) as any;
       return {
-        id_order_system: plain.id_order_system,
+        number_order_system: plain.number_order_system,
         customer_name: plain.customer?.name ?? null,
-        status: plain.salesSnapshot?.status_snapshot ?? plain.internal_status ?? null,
+        status: translateOrderInternalStatus(plain.internal_status),
         sale_date: plain.date,
       };
     });

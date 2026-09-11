@@ -1356,18 +1356,67 @@ sessão, não a referência viva.
   `invoice_number`/`invoice_emitted_at` from the linked
   `Invoice.number_system`/`.emitted_at` when `invoice_id` is set, both
   `null` otherwise), and `GET /orders/summary/ship-to-define/detail`
-  (also array of rows — `{id_order_system, customer_name, status,
-  sale_date}`; `status` — **revised after an explicit correction**: the
-  first version used the raw Bling `actual_situation` code, but the user
-  asked for the same translation `OrderService.paginate` already uses for
-  the generic Orders listing instead — `salesSnapshot?.status_snapshot ??
-  internal_status ?? null` (join `SalesOrderSnapshot` as `"salesSnapshot"`,
-  `attributes: ["status_snapshot"]`, `required: false` — the frozen status
-  from the sales-report job wins over the live `internal_status` column
-  when a snapshot exists). This keeps `ship_to_define`'s displayed status
-  consistent with what the rest of the Orders UI already shows for the
-  same order, rather than introducing a second, Bling-specific status
-  vocabulary just for this one screen). Both of these two list-type
+  (also array of rows — `{number_order_system, customer_name, status,
+  sale_date}`; `status` field — **revised twice this session, real bug
+  found in the middle**: v1 used the raw Bling `actual_situation` code;
+  the user asked for the same translation `OrderService.paginate` already
+  uses for the generic Orders listing instead (`salesSnapshot?.status_snapshot
+  ?? internal_status ?? null`); **that v2 then surfaced a real, confirmed
+  production data-integrity bug**, caught by the user directly reading the
+  response — orders whose `shipToDefineWhere()` filter matched them as
+  `internal_status IN (OPEN, WAITING_CHANNEL_VALIDATION)` were showing
+  `status: "CANCELADO"`/`"ATENDIDO"`/`"AGUARDANDO_AGENDAMENTO_NFE"` in the
+  response, apparently contradicting the very filter that selected them.
+  Root cause (confirmed by reading `sales-report.repository.ts`'s
+  `upsertSnapshots`): `sales_order_snapshots.status_snapshot` is **not**
+  derived from `internal_status` at all — it's `COALESCE(iosm.normalized_status,
+  o.actual_situation)` joined through `integration_order_status_mappings`
+  on `o.actual_situation`, a completely independent status vocabulary fed
+  by the *raw Bling situação code*. Despite `orders.service.ts`'s own
+  comment calling it "status_snapshot congelado" (frozen), `SalesReportQueue`
+  actually re-upserts it **hourly** for any touched order — so it isn't a
+  stale historical artifact, it's a live column that just tracks a
+  different signal (`actual_situation`) than `internal_status` does. Since
+  several queues (`cnpj.queue.ts`, `mercado-livre-sync.queue.ts`,
+  `nfe.queue.ts`, `nfe-reconciler.queue.ts`) advance `internal_status`
+  *alone*, without ever touching `actual_situation`, the two columns can
+  and do genuinely disagree for the same order — this is a real,
+  unreconciled data-integrity gap between the two status vocabularies, not
+  expected/documented behavior; **not fixed at its source this session**,
+  only worked around locally in this one endpoint (see below). v3 fix:
+  `findShipToDefineDetail` returns `internal_status` directly, with
+  **no** `SalesOrderSnapshot` join at all — since the list is filtered by
+  `internal_status`, the displayed field must be that same column, or the
+  response self-contradicts its own filter exactly like v2 did. **v4
+  (final, this session)**: the raw `internal_status` value (`"OPEN"`,
+  `"WAITING CHANNEL VALIDATION"`, etc.) is translated to a pt-BR label
+  before being returned, via a new `translateOrderInternalStatus()`
+  helper in `orders/order/helpers/translations.ts` — a plain
+  `Record<OrderInternalStatus, string>` lookup, exported/parameterized per
+  the "Reusable query/filter helpers" convention even though it's not a
+  query fragment (it's still reusable formatting logic worth keeping out
+  of the repository's inline `.map()`, just not gated by that rule's
+  query-specific scope). **Deliberately its own translation, not reused
+  from `integration_order_status_mappings.display_name`**: that table's
+  labels are keyed by raw Bling situação code (the `actual_situation`
+  vocabulary), and per the divergence bug above, `actual_situation` and
+  `internal_status` are not reliably the same thing for a given order —
+  reusing that table's labels here would silently reintroduce the exact
+  contradiction v2 had, just phrased as a label instead of a raw enum
+  value. The pt-BR copy itself came from explicit user corrections mid-session
+  (not translated literally from the enum names) —
+  `WAITING_CHANNEL_VALIDATION` → "Verificação de CNAE e Procurando Data de
+  Coleta no Mercado Livre" (covers both `CNPJ_VERIFY_CNAE` and
+  `ML_ORDER_SYNC` scraping-match waiting, not just the CNAE half),
+  `WAITING_FOR_NFE_EMISSION` → "Aguardando Emissão de Nota Fiscal". If a
+  new `OrderInternalStatus` value is ever added, `ORDER_INTERNAL_STATUS_LABELS`
+  must be updated too — `translateOrderInternalStatus` falls back to
+  returning the raw value unchanged for anything missing from the map,
+  so a forgotten new status silently shows English/raw in the UI instead
+  of throwing. Only `ship_to_define`'s detail uses this translation so
+  far — `OrderService.paginate()`'s generic listing keeps its existing
+  `status_snapshot ?? internal_status` precedence untouched. Both of
+  these two list-type
   detail methods (`findShipTodayPendingDetail`/`findShipToDefineDetail`)
   share their `where` with their corresponding count method via a private
   `shipTodayPendingWhere()`/`shipToDefineWhere()` helper each, so count
@@ -1890,6 +1939,36 @@ sessão, não a referência viva.
   data and seller external ids; feeds Tecinco-facing reporting.
 - **`orders.controller.ts` and `order_items.controller.ts` are in the HIGH
   unscoped-CRUD list. Not fixed.**
+- **Confirmed production data-integrity gap, found this session, NOT
+  fixed**: `orders.internal_status` and `sales_order_snapshots.status_snapshot`
+  are two independent status vocabularies for the same order that can
+  genuinely disagree, and nothing reconciles them. `status_snapshot` is
+  computed in `sales-report.repository.ts`'s `upsertSnapshots` as
+  `COALESCE(iosm.normalized_status, o.actual_situation)` — derived from
+  `orders.actual_situation` (raw Bling situação code) via
+  `integration_order_status_mappings`, **not** from `internal_status`.
+  `SalesReportQueue` re-upserts it hourly for any order touched since the
+  last run, so it's a live column, not a frozen historical snapshot
+  (despite a comment in `orders.service.ts` calling it "congelado").
+  Meanwhile several queues (`cnpj.queue.ts`, `mercado-livre-sync.queue.ts`,
+  `nfe.queue.ts`, `nfe-reconciler.queue.ts`) advance `internal_status`
+  *alone*, without ever touching `actual_situation` — so an order can sit
+  with `internal_status=OPEN`/`WAITING_CHANNEL_VALIDATION` (still pending
+  per the app's own fulfillment pipeline) while `status_snapshot` already
+  shows a terminal Bling-side label like `"CANCELADO"`/`"ATENDIDO"`.
+  Confirmed directly by the user against real prod data: filtering Orders
+  by `internal_status IN (OPEN, WAITING_CHANNEL_VALIDATION)` (the new
+  `ship_to_define` detail endpoint, see the ML pipeline section above)
+  returned rows displaying exactly those "terminal" `status_snapshot`
+  labels — self-contradicting the very filter that selected them.
+  `OrderService.paginate()`'s `salesSnapshot?.status_snapshot ??
+  internal_status ?? null` precedence (the generic Orders listing) is
+  unaffected/intentional for that screen, but any *new* code that filters
+  by `internal_status` must display `internal_status`, not
+  `status_snapshot`, for the same row, or it will show this same
+  contradiction. Not fixed at the root (no reconciliation between the two
+  columns exists) — only worked around locally in `ship_to_define`'s
+  detail endpoint this session.
 
 ## Reports
 

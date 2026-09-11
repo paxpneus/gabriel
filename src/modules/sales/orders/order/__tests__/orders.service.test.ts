@@ -129,22 +129,25 @@ describe("OrderService — resumo de status", () => {
     ]);
   });
 
-  it("getShipToDefineDetail: lista os pedidos pendentes sem collection_date, status igual à listagem padrão (status_snapshot > internal_status)", async () => {
+  it("getShipToDefineDetail: lista os pedidos pendentes sem collection_date, status é o internal_status traduzido pra pt-BR (NÃO o status_snapshot)", async () => {
+    // status_snapshot vem de actual_situation via integration_order_status_mappings
+    // — uma fonte independente de internal_status que diverge na prática
+    // (confirmado em produção: pedido com internal_status=OPEN mas
+    // status_snapshot="CANCELADO"). Como o filtro é por internal_status, o
+    // status exibido tem que vir dele (traduzido), não do snapshot.
     const makeRow = (data: any) => ({ get: () => data });
     (Order.findAll as jest.Mock).mockResolvedValue([
       makeRow({
-        id_order_system: "26577371207",
+        number_order_system: "16603",
         internal_status: "OPEN",
         date: new Date("2026-09-10"),
         customer: { name: "DANIEL CAMPOS PAIVA" },
-        salesSnapshot: { status_snapshot: "PENDENTE" },
       }),
       makeRow({
-        id_order_system: "26577371208",
+        number_order_system: "16604",
         internal_status: "WAITING CHANNEL VALIDATION",
         date: new Date("2026-09-11"),
         customer: null,
-        salesSnapshot: null,
       }),
     ]);
 
@@ -152,15 +155,15 @@ describe("OrderService — resumo de status", () => {
 
     expect(result).toEqual([
       {
-        id_order_system: "26577371207",
+        number_order_system: "16603",
         customer_name: "DANIEL CAMPOS PAIVA",
-        status: "PENDENTE", // veio do status_snapshot, não do internal_status
+        status: "Em Aberto",
         sale_date: new Date("2026-09-10"),
       },
       {
-        id_order_system: "26577371208",
+        number_order_system: "16604",
         customer_name: null,
-        status: "WAITING CHANNEL VALIDATION", // sem snapshot, cai pro internal_status
+        status: "Verificação de CNAE e Procurando Data de Coleta no Mercado Livre",
         sale_date: new Date("2026-09-11"),
       },
     ]);
