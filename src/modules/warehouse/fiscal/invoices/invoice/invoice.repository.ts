@@ -38,6 +38,7 @@ import {
 } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import { InvoiceItemsAttributes } from "../invoice-items/invoice-items.types";
 import InvoiceFiscalItem from "../invoice-fiscal-item/invoice-fiscal-item.model";
+import Order from "../../../../sales/orders/order/orders.model";
 import {
   InvoiceFiscalItemAttributes,
   InvoiceFiscalItemCreationAttributes,
@@ -317,16 +318,11 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
               model: ExpeditionBatch,
               as: "batch",
               required: hasBatchFilter,
-              where: { unit_business_id: unitBusinessId },
               attributes: ["number", "status", "mode", "id"],
-              ...(batchStatusWhere
-                ? {
-                    where: {
-                      unit_business_id: unitBusinessId,
-                      ...batchStatusWhere,
-                    },
-                  }
-                : {}),
+              where: {
+                unit_business_id: unitBusinessId,
+                ...(batchStatusWhere ?? {}),
+              },
             },
           ],
         },
@@ -334,6 +330,14 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           model: Store,
           as: "store",
           attributes: ["name"],
+        },
+        // Só pra permitir os customFields de Mercado Livre (invoice.service.ts)
+        // filtrarem por `$order.collection_date$` — sem filtro nenhum ativo,
+        // é um LEFT JOIN inofensivo, igual ao de `store`/`batchInvoice`.
+        {
+          model: Order,
+          as: "order",
+          attributes: ["id", "collection_date"],
         },
         {
           model: Transporter,

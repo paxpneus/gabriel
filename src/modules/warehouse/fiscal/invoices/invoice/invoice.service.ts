@@ -24,6 +24,7 @@ import {
 import Store from "../../../../sales/stores/stores.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import { getBrazilDate } from "../../../../../shared/utils/normalizers/date";
+import { storeCollectionDateTodayWhere } from "./helpers/custom-filters";
 import sequelize from "../../../../../config/sequelize";
 import batchInvoicesService from "../../../expedition/batch-invoices/batch-invoices.service";
 import { Product, ProductConfig, Supplier } from "../../../../inventory";
@@ -51,6 +52,7 @@ import TireMeasure from "../../../../inventory/tire-measures/tire-measure.model"
 import { resolveTecincoBranchId } from "../../../../../shared/utils/tecinco/resolve-branch-id";
 
 const default_seller = "5ff76374-4d67-4ef3-a566-349a015f86b1";
+
 export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   constructor() {
     super(invoiceRepository);
@@ -171,6 +173,43 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             ? { [Op.in]: value }
             : value,
         }),
+
+        // Fila de embarque Mercado Livre: 4 abas mutuamente exclusivas da
+        // mesma tela ("o que precisa/já foi embarcado hoje"). Todas exigem
+        // loja MercadoLivre + pedido (`order`, via Invoice.hasOne) com
+        // collection_date dentro do dia de hoje em America/Sao_Paulo — só
+        // diferem no que mais restringem.
+        pending_mercadolivre: (value) =>
+          value === "true"
+            ? {
+                ...storeCollectionDateTodayWhere("MercadoLivre"),
+                "$unitBusinessAttributes.batch_generated$": false,
+              }
+            : {},
+
+        all_today_mercadolivre: (value) =>
+          value === "true" ? storeCollectionDateTodayWhere("MercadoLivre") : {},
+
+        finished_mercado_livre: (value) =>
+          value === "true"
+            ? {
+                ...storeCollectionDateTodayWhere("MercadoLivre"),
+                "$unitBusinessAttributes.batch_generated$": true,
+                "$unitBusinessAttributes.status$": {
+                  [Op.in]: ["FINISHED", "CANCELLED"],
+                },
+              }
+            : {},
+
+        dispatched_mercado_livre: (value) =>
+          value === "true"
+            ? {
+                ...storeCollectionDateTodayWhere("MercadoLivre"),
+                "$batchInvoice.batch.delivery_note_generated_at$": {
+                  [Op.ne]: null,
+                },
+              }
+            : {},
       },
     };
   }

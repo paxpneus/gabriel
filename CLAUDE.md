@@ -50,6 +50,30 @@ lookups (`findOne`, `findById`, `findAll`, etc.) are already there, so the
 correct fix is usually calling `<entity>Service.findOne(...)`, not writing a
 new raw query.
 
+## Reusable query/filter helpers belong in `helpers/`, not inline in service/repository
+
+When a piece of query-building logic (a `where` fragment, a `Sequelize.literal`,
+anything that isn't trivial and could plausibly be reused by more than one
+filter/method) is written inline in an entity's `<entity>.service.ts` or
+`<entity>.repository.ts`, it must instead be a named, exported, parameterized
+function in that entity's own `helpers/` folder (e.g.
+`src/modules/warehouse/fiscal/invoices/invoice/helpers/`) — never a
+module-level function or closure defined directly in the service/repository
+file. Parameterize on whatever varies between call sites (a store name, a
+unit business id, a table alias, a reference date, etc.) instead of hardcoding
+one call site's value inside the helper — the point is that a second filter
+or method can import and reuse it later without copy-pasting or having to
+first "promote" it out of the service file. See
+`invoice/helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`) and
+`invoice/helpers/custom-filters.ts` (`storeCollectionDateTodayWhere`) for the
+pattern — both are plain exported functions taking the values that differ per
+call site, imported by `invoice.service.ts`/`invoice.repository.ts` rather
+than defined inside them. This is about code organization, not layering: the
+helper file still belongs to the same entity and gets imported by whichever
+layer (service or repository) actually uses it — it does not change which
+layer is allowed to build the query in the first place (see "Layer
+separation" above).
+
 ## Code comments
 
 Comments on code and functions must be brief, short, summarized, and
@@ -1111,6 +1135,74 @@ flag is explicitly set.
   above. Not fixed**: `show`/`destroy`/`create` unscoped; other actions
   trust a client-supplied `?unitBusinessId=` over the logged user's own;
   DANFE/XML batch downloads have no store filter.
+- **Fixed this session — `getFullInvoiceForAllUnits` crash on Bling notes
+  without `chaveAcesso` yet**: `fetchAndUpsertInvoice`
+  (`bling-api-fetch.queue.ts`) looked up the pre-existing invoice by
+  `xml_key` (`nf.chaveAcesso`) only. A note still pending SEFAZ
+  authorization (`situacao: 1`) has no `chaveAcesso` yet, so the lookup's
+  two args were both `undefined` and `InvoiceRepository.getFullInvoiceForAllUnits`'s
+  own guard threw `"É necessário informar invoiceId ou invoiceKey"` —
+  crashing every retry for that note (webhook resync, reprocess) forever,
+  even though the note was already in the DB (created earlier, also
+  without a chave, so `id_system = String(nf.id)` was its only
+  identifier). Fixed by adding `idSystem` as a third, always-present
+  fallback identifier: `getFullInvoiceForAllUnits(invoiceId?, invoiceKey?,
+  idSystem?)` now matches by `id_system` OR `xml_key` when no `invoiceId`
+  is given, and the Bling call site passes `String(nf.id)` as that
+  fallback. `invoice-xml.ts`'s own call to `findByIdFullForAllUnits`
+  (Tecinco/manual XML import) was left unchanged — that flow always has a
+  `chaveAcesso` from the XML itself.
+- **Custom filters for the Mercado Livre shipping queue (this session)**:
+  `pending_mercadolivre`, `all_today_mercadolivre`, `finished_mercado_livre`,
+  `dispatched_mercado_livre` — each a `=true` boolean flag, mutually
+  exclusive tabs of the same screen ("o que precisa/já foi embarcado hoje
+  pelo Mercado Livre"; if more than one is sent, each contributes its own
+  `Object.assign`-merged `where` fragment independently — not mutually
+  exclusive at the query-building level, just intended to be used one at a
+  time by the frontend). Implemented as 4 entries in
+  `InvoiceService.queryConfig.customFields` (`invoice.service.ts`) —
+  **not** in the repository — matching this file's pre-existing pattern for
+  filters that need to reference an already-joined association
+  (`batchStatus`, `status`, `type`, `batch_generated`,
+  `unit_business_id`), which QueryParser merges as top-level `where`
+  fragments into the one query `InvoiceRepository.listInvoices` already
+  builds via `$assoc.field$` dot-notation — no separate query, no new
+  method on the repository. `InvoiceRepository.listInvoices` only gained
+  one small structural addition to support this: an unconditional `Order`
+  include (`as: "order"`, `Invoice.hasOne(Order, {as: "order"})`) alongside
+  the pre-existing `store`/`batchInvoice.batch` ones, since a dot-notation
+  filter needs its association to already be in the query's `include`
+  regardless of which layer names the filter condition — for a request
+  with none of these 4 flags, it's a harmless extra LEFT JOIN, same as
+  `store`/`transporter`/`supplier` already are. A `$dotpath$` condition
+  against a `required: false` (LEFT JOIN) association naturally behaves
+  like an inner join once a non-null filter value is added (a genuinely
+  unmatched LEFT JOIN row has every joined column NULL, so e.g. `{[Op.ne]:
+  null}` or an exact-value match both correctly exclude it) — this is why
+  none of the 4 filters (nor the pre-existing `batchStatus`) need to force
+  `required: true` on their association to work correctly. All four
+  require `$store.name$ = "MercadoLivre"` and
+  `$order.collection_date$` within today's `America/Sao_Paulo` calendar
+  day (`startOfDayTz()`/`endOfDayTz()` from
+  `shared/utils/normalizers/date.ts`, not a naive UTC day;
+  `storeCollectionDateTodayWhere(storeName)`, exported from
+  `invoice/helpers/custom-filters.ts` per the "Reusable query/filter
+  helpers" rule above, builds this pair and is spread into each of the 4
+  customFields). They differ only in what else they require:
+  - `pending_mercadolivre`: `$unitBusinessAttributes.batch_generated$ =
+    false` (same condition the plain `batch_generated` filter uses) — "o
+    que ainda precisa ser embarcado hoje."
+  - `all_today_mercadolivre`: no `batch_generated` constraint at all — the
+    same set as `pending_mercadolivre` plus whatever already got batched
+    today too.
+  - `finished_mercado_livre`: `$unitBusinessAttributes.batch_generated$ =
+    true` AND `$unitBusinessAttributes.status$ IN (FINISHED, CANCELLED)` —
+    the exact same condition the `pendingProcess=false` ("processo
+    finalizado") filter already uses, just also scoped to Mercado Livre +
+    today's collection.
+  - `dispatched_mercado_livre`: `$batchInvoice.batch.delivery_note_generated_at$
+    IS NOT NULL` (same field `findInvoicesPendingLogisticOccurrence`
+    already reads as "romaneio gerado") — "o que já teve romaneio gerado."
 
 ## Bling NFe web-scraping automation (`.../bling-nfe/automations/auto-manifest/`)
 
