@@ -159,8 +159,22 @@ export class CNPJQueue extends BaseQueueService<any> {
     if (customer.type === "F") {
       console.log(`[CNPJQueue] CPF detectado — seguindo para próxima fila (data de coleta)`);
 
-      await this.applyWaitingNfeStatus(orderSystem);
-      await ordersService.update(orderSystem.id, { internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION });
+      const patched = await this.applyWaitingNfeStatus(orderSystem);
+      if (!patched) {
+        console.warn(
+          `[CNPJQueue] Pedido ${orderSystem.id_order_system} não avançou — Bling rejeitou a mudança de situação para 748743.`,
+        );
+        return;
+      }
+      // actual_situation gravado aqui também (não só internal_status): é o
+      // que MLOrderSyncQueue.isEligibleForSync confere antes de agendar a
+      // NFe — sem isso ficava com a situação antiga até o próximo webhook
+      // completo da Bling reescrever source_payload, e nada reagenda esse
+      // pedido nesse meio tempo.
+      await ordersService.update(orderSystem.id, {
+        internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
+        actual_situation: "748743",
+      });
       await this.next.add({ orderSystem, customer }, `ml-check-${orderSystem.id}`);
       return;
     }
@@ -171,8 +185,17 @@ export class CNPJQueue extends BaseQueueService<any> {
 
       if (!cnaeApproved) {
         console.log(`[CNPJQueue] CNAE liberado para pedido ${orderSystem.id_order_system} — seguindo para data de coleta`);
-        await this.applyWaitingNfeStatus(orderSystem);
-        await ordersService.update(orderSystem.id, { internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION });
+        const patched = await this.applyWaitingNfeStatus(orderSystem);
+        if (!patched) {
+          console.warn(
+            `[CNPJQueue] Pedido ${orderSystem.id_order_system} não avançou — Bling rejeitou a mudança de situação para 748743.`,
+          );
+          return;
+        }
+        await ordersService.update(orderSystem.id, {
+          internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
+          actual_situation: "748743",
+        });
         await this.next.add({ orderSystem, customer }, `ml-check-${orderSystem.id}`);
       } else {
         console.log(`[CNPJQueue] CNAE bloqueado para pedido ${orderSystem.id_order_system} — cancelando`);

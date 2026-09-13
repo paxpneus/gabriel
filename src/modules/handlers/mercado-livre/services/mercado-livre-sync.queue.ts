@@ -108,22 +108,29 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   // ─── Guarda: só segue se o pedido ainda estiver de fato aguardando validação de canal ──
 
   /**
-   * Rebusca o pedido só com internal_status e source_payload para confirmar
+   * Rebusca o pedido só com internal_status e actual_situation para confirmar
    * que ele ainda está em WAITING CHANNEL VALIDATION (748743 na Bling).
    * Evita processar pedido que já mudou de situação entre o enqueue e o processamento.
+   *
+   * Usa `actual_situation` (não `source_payload.situacao.id`): CNPJQueue
+   * avança o pedido pra 748743 direto na Bling (applyWaitingNfeStatus) e só
+   * grava `internal_status` localmente — não reescreve `source_payload`, que
+   * só é atualizado por um webhook completo (create/updateOrderFromBling).
+   * Checar `source_payload` aqui fazia essa checagem falhar sempre logo
+   * depois do avanço pelo CNPJQueue, já que o snapshot ainda tinha a
+   * situação antiga ("Em Aberto"), mesmo com `internal_status` já correto —
+   * derrubando o agendamento de NFe de todo pedido que passa por ali.
    */
   private async isEligibleForSync(orderId: string): Promise<boolean> {
     const orderData = await ordersService.findById(orderId, {
-      attributes: ["internal_status", "source_payload"],
+      attributes: ["internal_status", "actual_situation"],
     });
 
     if (!orderData) return false;
 
-    const situacaoId = (orderData as any).source_payload?.situacao?.id;
-
     return (
       orderData.internal_status === "WAITING CHANNEL VALIDATION" &&
-      String(situacaoId) === "748743"
+      String((orderData as any).actual_situation) === "748743"
     );
   }
 
