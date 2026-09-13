@@ -13,6 +13,7 @@ const EXCLUDED_ROUTES = new Set([
   "bling",
   "bling-orders",
   "stores",
+  "mercado_livre",
 ]);
 
 function findFile(dir: string, pattern: RegExp): string | undefined {
