@@ -1,6 +1,11 @@
 import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
-import { orderAttributes, orderCreationAttributes, OrderInternalStatus } from "./orders.types";
+import {
+  orderAttributes,
+  orderCreationAttributes,
+  OrderInternalStatus,
+  OrderReasonCancelled,
+} from "./orders.types";
 import { v4 as uuidv4 } from "uuid";
 
 class Order
@@ -22,6 +27,7 @@ class Order
   public total_cost?: number;
   public nfe_emitted?: boolean;
   public internal_status?: OrderInternalStatus;
+  public reason_cancelled?: OrderReasonCancelled | null;
   public store_id?: string;
   public unit_business_id?: string;
   public invoice_id?: string;
@@ -158,6 +164,10 @@ Order.init(
           msg: "O status fornecido não é permitido.",
         },
       },
+    },
+    reason_cancelled: {
+      type: DataTypes.ENUM(...Object.values(OrderReasonCancelled)),
+      allowNull: true,
     },
     source_payload: {
       type: DataTypes.JSONB,

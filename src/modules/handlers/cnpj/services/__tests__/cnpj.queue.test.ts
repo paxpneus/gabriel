@@ -175,6 +175,7 @@ describe("CNPJQueue", () => {
     expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
       internal_status: "CANCELLED",
       nfe_emitted: false,
+      reason_cancelled: "DOCUMENT_INVALID",
     });
     expect(nextFake.add).not.toHaveBeenCalled();
   });
@@ -241,6 +242,7 @@ describe("CNPJQueue", () => {
     expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
       internal_status: "CANCELLED",
       nfe_emitted: false,
+      reason_cancelled: "CNAE_BLOCKED",
     });
     expect(nextFake.add).not.toHaveBeenCalled();
   });

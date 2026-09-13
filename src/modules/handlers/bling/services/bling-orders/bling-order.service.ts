@@ -6,6 +6,7 @@ import ordersService from "../../../../sales/orders/order/orders.service";
 import {
   COMPLETED_ORDER_INTERNAL_STATUSES,
   OrderInternalStatus,
+  OrderReasonCancelled,
   orderCreationAttributes,
 } from "../../../../sales/orders/order/orders.types";
 import { BlingCustomerService } from "../bling-customers/bling-customer.service";
@@ -29,6 +30,28 @@ const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
   process.env.BLING_ORDER_REQUEST_DELAY_MS ?? 0,
 );
+
+// Situações Bling de cancelamento real pelo cliente/Bling (não confundir
+// com 748772 "aguardando verificação humana" — essa é decidida e já tem
+// reason_cancelled gravado por uma das filas de automação antes de o
+// webhook chegar aqui, então NÃO entra nesta lista).
+const CUSTOMER_CANCELLED_SITUACAO_IDS = ["12", "21"];
+
+// Só inclui a chave reason_cancelled quando dá pra saber o motivo (12/21)
+// — omitida (não gravada como null) em qualquer outra situação, pra nunca
+// sobrescrever um motivo mais específico que uma fila já gravou antes.
+function reasonCancelledFields(situacaoId: unknown) {
+  return CUSTOMER_CANCELLED_SITUACAO_IDS.includes(String(situacaoId))
+    ? { reason_cancelled: OrderReasonCancelled.CUSTOMER_CANCELLED }
+    : {};
+}
+
+// Só inclui a chave collection_date quando a Bling manda dataPrevista
+// preenchida — omitida (nunca null) quando vier vazia, pra não apagar um
+// collection_date já resolvido antes por scraping/ML_ORDER_SYNC.
+function collectionDateFromBling(dataPrevista: string | undefined | null) {
+  return dataPrevista ? { collection_date: startOfDayTz(dataPrevista).toDate() } : {};
+}
 
 export class BlingOrderService {
   public blingApi: AxiosInstance;
@@ -581,6 +604,32 @@ export class BlingOrderService {
     return { items, custoTotalProdutos };
   }
 
+  // Store is a small, fixed taxonomy of Bling channel *types* (`tipo`, e.g.
+  // "LojaFisica", "MercadoLivre") shared across every branch of that type —
+  // not one row per physical branch. `name` (the `tipo`) is the real
+  // identity other code keys off directly (nfe-reconciler's
+  // `where: { name: "MercadoLivre" }`, `ALLOWED_STORE_NAME`,
+  // `integration.allowed_channels`), so dedup must happen on `name`, backed
+  // by a DB unique index (see migration) — `id_store_system` is just a
+  // cheap lookup cache for a channel id already known to resolve here, not
+  // a real per-row identity.
+  private async resolveStore(lojaId: number | undefined): Promise<any> {
+    if (!lojaId) return null;
+
+    const existing = await this.storeService.findOne({
+      where: { id_store_system: String(lojaId) },
+    });
+    if (existing) return existing;
+
+    const blingStore = await blingGet(`/canais-venda/${lojaId}`, this.blingApi);
+    const tipo = blingStore.data.data.tipo;
+
+    return this.storeService.findOrCreateByName(
+      tipo,
+      String(blingStore.data.data.id),
+    );
+  }
+
   async updateOrderFromBling(
     body: blingOrderWebHookData,
   ): Promise<{ customer: any; cnaes: any[]; orderSystem: any } | null> {
@@ -609,13 +658,35 @@ export class BlingOrderService {
         return null;
       }
 
+      const internalStatus = mapOrderInternalStatus(orderData.situacao.id);
+      const isCompleted =
+        COMPLETED_ORDER_INTERNAL_STATUSES.includes(internalStatus);
+
+      // Grava actual_situation/internal_status JÁ, antes de qualquer etapa
+      // de enriquecimento abaixo (contato, endereço, custo/comissão de
+      // item, financeiro) que pode lançar em pedido com dado faltante ou
+      // inesperado. Sem isso, um erro em qualquer uma dessas etapas
+      // secundárias deixava o pedido com status desatualizado no banco,
+      // mesmo já sabendo o status real vindo da Bling. O update completo
+      // mais abaixo regrava os dois de novo — redundante, mas garante que
+      // o essencial nunca fica pra trás por causa de algo secundário.
+      try {
+        await ordersService.update(existingOrder.id, {
+          actual_situation: String(orderData.situacao.id),
+          internal_status: internalStatus,
+          ...reasonCancelledFields(orderData.situacao.id),
+        });
+      } catch (statusError: any) {
+        console.error(
+          `[BlingOrderService] Falha ao gravar actual_situation/internal_status do pedido ${orderData.numero} (seguindo mesmo assim):`,
+          statusError.message,
+        );
+      }
+
       const customer = await this.blingCustomerService.updateCustomer(
         orderData.contato,
       );
 
-      const internalStatus = mapOrderInternalStatus(orderData.situacao.id);
-      const isCompleted =
-        COMPLETED_ORDER_INTERNAL_STATUSES.includes(internalStatus);
       const destination = await this.resolveDestination(orderData.contato?.id);
       const fiscalFields = this.extractFiscalFields(orderData, destination);
       const sellerId = await this.upsertSellerContact(
@@ -633,31 +704,7 @@ export class BlingOrderService {
         unitBusinessId = unitBusiness?.id ?? null;
       }
 
-      let store: any = null;
-      if (orderData.loja?.id) {
-        store = await this.storeService.findOne({
-          where: { id_store_system: String(orderData.loja.id) },
-        });
-
-        if (!store) {
-          const blingStore = await blingGet(
-            `/canais-venda/${orderData.loja.id}`,
-            this.blingApi,
-          );
-          const tipo = blingStore.data.data.tipo;
-
-          store = await this.storeService.findOne({
-            where: { name: tipo },
-          });
-
-          if (!store) {
-            store = await this.storeService.create({
-              name: tipo,
-              id_store_system: String(blingStore.data.data.id),
-            });
-          }
-        }
-      }
+      const store = await this.resolveStore(orderData.loja?.id);
 
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
 
@@ -696,6 +743,7 @@ export class BlingOrderService {
         // dia, independente da hora que o Bling registrou.
         date: startOfDayTz(orderData.data).toDate(),
         internal_status: internalStatus,
+        ...reasonCancelledFields(orderData.situacao.id),
         nfe_emitted: isCompleted
           ? true
           : internalStatus === OrderInternalStatus.CANCELLED
@@ -722,6 +770,7 @@ export class BlingOrderService {
         total_cost: orderFinancials.total_cost,
         ...(sellerId ? { seller_id: sellerId } : {}),
         ...orderFiscalFieldsToUpdate,
+        ...collectionDateFromBling(orderData.dataPrevista),
       };
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
@@ -875,32 +924,7 @@ export class BlingOrderService {
         } as any);
       }
 
-      let store = null;
-
-      if (orderData.loja?.id) {
-        store = await this.storeService.findOne({
-          where: { id_store_system: String(orderData.loja.id) },
-        });
-
-        if (!store) {
-          const blingStore = await blingGet(
-            `/canais-venda/${orderData.loja.id}`,
-            this.blingApi,
-          );
-          const tipo = blingStore.data.data.tipo;
-
-          store = await this.storeService.findOne({
-            where: { name: tipo },
-          });
-
-          if (!store) {
-            store = await this.storeService.create({
-              name: tipo,
-              id_store_system: String(blingStore.data.data.id),
-            });
-          }
-        }
-      }
+      const store = await this.resolveStore(orderData.loja?.id);
 
       if (!integration) {
         throw new Error("Bling Integration não encontrada no cache");
@@ -969,6 +993,7 @@ export class BlingOrderService {
         invoice_id: invoiceId,
         actual_situation: String(orderData.situacao.id),
         internal_status: internalStatus,
+        ...reasonCancelledFields(orderData.situacao.id),
         nfe_emitted: isCompleted,
         unit_business_id: unitBusiness?.id ?? null,
         id_order_system: String(orderData.id),
@@ -1000,6 +1025,7 @@ export class BlingOrderService {
         ...(sellerId ? { seller_id: sellerId } : {}),
         ...fiscalFields,
         ...orderFinancials,
+        ...collectionDateFromBling(orderData.dataPrevista),
       };
 
       const createdOrder = await ordersService.create(ordersPayload);

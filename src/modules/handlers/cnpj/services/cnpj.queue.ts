@@ -12,7 +12,10 @@ import {
   blingPatch,
 } from "../../bling/services/bling/helpers/get-with-sleep";
 import { syncOrderInternalStatus } from "../../../sales/orders/order/helpers/order-status";
-import { OrderInternalStatus } from "../../../sales/orders/order/orders.types";
+import {
+  OrderInternalStatus,
+  OrderReasonCancelled,
+} from "../../../sales/orders/order/orders.types";
 
 const ALLOWED_STORE_NAME = "MercadoLivre";
 const STATUS_EM_ABERTO = 6;
@@ -21,6 +24,11 @@ const ErrorValues = [
   { id: 1, error: "Documento não informado ou inválido " },
   { id: 2, error: "CNAE não atendido pela empresa" },
 ];
+
+const REASON_BY_ERROR_ID: Record<number, OrderReasonCancelled> = {
+  1: OrderReasonCancelled.DOCUMENT_INVALID,
+  2: OrderReasonCancelled.CNAE_BLOCKED,
+};
 
 export class CNPJQueue extends BaseQueueService<any> {
   private CNPJService;
@@ -77,7 +85,11 @@ export class CNPJQueue extends BaseQueueService<any> {
       this.blingApi,
     );
 
-    await syncOrderInternalStatus(748772, order.id_order_system);
+    await syncOrderInternalStatus(
+      748772,
+      order.id_order_system,
+      REASON_BY_ERROR_ID[errorId],
+    );
     console.log(`[CNPJQueue] Pedido ${order.id} marcado com erro: ${errorMessage}`);
   }
 

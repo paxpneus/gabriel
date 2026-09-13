@@ -4,6 +4,7 @@ import ordersService from "../../../../../modules/sales/orders/order/orders.serv
 import {
   COMPLETED_ORDER_INTERNAL_STATUSES,
   OrderInternalStatus,
+  OrderReasonCancelled,
 } from "../../../../../modules/sales/orders/order/orders.types";
 import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 
@@ -27,10 +28,15 @@ export type OrderStatusSyncResult =
  *
  * Retorna sempre o internalStatus mapeado, mesmo quando handled=false, pra
  * quem chamou poder logar/decidir sem precisar mapear de novo.
+ *
+ * `reasonCancelled` é opcional e só é gravado quando o outcome é
+ * "cancelled" — quem chama sem saber o motivo (ex: NFeQueue resincronizando
+ * a situação atual da Bling) simplesmente omite o parâmetro.
  */
 export const syncOrderInternalStatus = async (
   blingSituationId: string | number,
   orderId: string | number,
+  reasonCancelled?: OrderReasonCancelled,
 ): Promise<OrderStatusSyncResult> => {
   const mappedStatus = mapOrderInternalStatus(blingSituationId);
 
@@ -55,6 +61,7 @@ export const syncOrderInternalStatus = async (
     await ordersService.update(internalOrder.id, {
       nfe_emitted: false,
       internal_status: mappedStatus,
+      ...(reasonCancelled ? { reason_cancelled: reasonCancelled } : {}),
     });
 
     return { handled: true, outcome: "cancelled", internalStatus: mappedStatus };

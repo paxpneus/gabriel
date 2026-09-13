@@ -4,6 +4,7 @@ import orderService, { OrderService } from "./orders.service";
 import Order from "./orders.model";
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
+import { getUserContext } from "../../../../shared/query/get-logged-user";
 
 class OrderController extends BaseController<Order, OrderService> {
   constructor() {
@@ -20,6 +21,36 @@ class OrderController extends BaseController<Order, OrderService> {
       ...this.mw("getOrderSalesReportDetail"),
       this.getOrderSalesReportDetail,
     );
+
+    this.router.get(
+      "/summary/status-counts",
+      ...this.mw("getOrdersStatusSummary"),
+      this.getOrdersStatusSummary,
+    );
+
+    this.router.get(
+      "/summary/ship-today-pending/detail",
+      ...this.mw("getShipTodayPendingDetail"),
+      this.getShipTodayPendingDetail,
+    );
+
+    this.router.get(
+      "/summary/ship-to-define/detail",
+      ...this.mw("getShipToDefineDetail"),
+      this.getShipToDefineDetail,
+    );
+
+    this.router.get(
+      "/summary/human-verification/detail",
+      ...this.mw("getHumanVerificationDetail"),
+      this.getHumanVerificationDetail,
+    );
+
+    this.router.get(
+      "/summary/ship-to-future/detail",
+      ...this.mw("getShipToFutureDetail"),
+      this.getShipToFutureDetail,
+    );
   }
 
     protected middlewaresFor() {
@@ -32,9 +63,13 @@ class OrderController extends BaseController<Order, OrderService> {
 
           releaseWaitingAcceptanceForToday: [authenticate, userPermissions],
           getOrderSalesReportDetail: [authenticate, userPermissions],
+          getOrdersStatusSummary: [authenticate, userPermissions],
+          getShipTodayPendingDetail: [authenticate, userPermissions],
+          getShipToDefineDetail: [authenticate, userPermissions],
+          getHumanVerificationDetail: [authenticate, userPermissions],
+          getShipToFutureDetail: [authenticate, userPermissions],
         };
       }
-
 
   releaseWaitingAcceptanceForToday = async (
     req: Request,
@@ -91,6 +126,72 @@ class OrderController extends BaseController<Order, OrderService> {
       return res.status(404).json({
         error: error.message,
       });
+    }
+  };
+
+  getOrdersStatusSummary = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const context = await getUserContext(req);
+      const data = await this.service.getOrdersStatusSummary(
+        context.unitBusinessId,
+      );
+      return res.json(data);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  getShipTodayPendingDetail = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const context = await getUserContext(req);
+      const data = await this.service.getShipTodayPendingDetail(
+        context.unitBusinessId,
+      );
+      return res.json(data);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  getShipToDefineDetail = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const data = await this.service.getShipToDefineDetail();
+      return res.json(data);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  getHumanVerificationDetail = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const data = await this.service.getHumanVerificationDetail();
+      return res.json(data);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  getShipToFutureDetail = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const data = await this.service.getShipToFutureDetail();
+      return res.json(data);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
     }
   };
 }

@@ -5,6 +5,7 @@ import ordersService from "../../../sales/orders/order/orders.service";
 import {
   nextRemoveOnQueue,
   nextStepDelayedOnQueue,
+  nextStepOnQueue,
   getJob,
 } from "../../../../shared/types/queue/base-queue";
 import Customer from "../../../sales/customers/customers.model";
@@ -27,6 +28,7 @@ import {
   blingPatch,
 } from "../../bling/services/bling/helpers/get-with-sleep";
 import { mapOrderInternalStatus } from "../../../../shared/utils/normalizers/bling/status-mapper";
+import { matchesOrderByDateAndBuyer } from "./helpers/order-match";
 
 /**
  * Job pode vir de três origens:
@@ -44,10 +46,12 @@ export type MLOrderSyncJobData =
 export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   private blingApi: AxiosInstance;
   private next: nextStepDelayedOnQueue & nextRemoveOnQueue & getJob;
+  private scrapingNext: nextStepOnQueue;
 
   constructor(
     next: nextStepDelayedOnQueue & nextRemoveOnQueue & getJob,
     blingApi: AxiosInstance,
+    scrapingNext: nextStepOnQueue,
     options: { workless?: boolean } = {},
   ) {
     super("ML-ORDER-SYNC", {
@@ -63,6 +67,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     });
     this.blingApi = blingApi;
     this.next = next;
+    this.scrapingNext = scrapingNext;
   }
 
   async process(job: Job<MLOrderSyncJobData>): Promise<void> {
@@ -133,22 +138,9 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     row: MLExcelRow,
     ordersSystem: FullOrder[],
   ): Promise<void> {
-    const saleDate = new Date(row.sale_date);
-
-    const filtered = ordersSystem.filter((order) => {
-      if (!order.date) return false;
-      const orderDate = new Date(order.date);
-      const sameDay =
-        orderDate.getUTCFullYear() === saleDate.getUTCFullYear() &&
-        orderDate.getUTCMonth() === saleDate.getUTCMonth() &&
-        orderDate.getUTCDate() === saleDate.getUTCDate();
-
-      const nameMatch = order.customer?.name
-        ?.toLowerCase()
-        .includes(row.buyer.toLowerCase());
-
-      return sameDay && nameMatch;
-    });
+    const filtered = ordersSystem.filter((order) =>
+      matchesOrderByDateAndBuyer(order.date, order.customer?.name, row),
+    );
 
     if (!filtered.length) {
       console.log(
@@ -220,24 +212,6 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-    //TESTE
-    // if (!orderSystem.collection_date) {
-    //   const {data} = await this.blingApi.get(`/pedidos/vendas/${orderSystem.id_order_system}`)
-    //   const orderUpdated = ordersService.update(orderSystem.id, {
-    //     collection_date: new Date(data.data.dataPrevista)
-    //   })
-
-    //   //@ts-ignore
-    //   await this.scheduleNfe(
-    //     //@ts-ignore
-    //     orderUpdated.id_order_system!,
-    //     //@ts-ignore
-    //     orderUpdated.collection_date,
-    //     orderUpdated,
-    //   );
-    //   return;
-    // }
-
     if (orderSystem.collection_date) {
       // Scraping já rodou antes do webhook chegar — agenda NFe direto
       console.log(
@@ -251,13 +225,36 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-    // Sem collection_date — marca como aguardando e espera o próximo scraping
+    // Sem collection_date — marca como aguardando e dispara scraping sob
+    // demanda (não há mais cron fixo; ML-SCRAPING só roda quando pedido).
     console.log(
-      `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} sem collection_date. Marcando como WAITING CHANNEL VALIDATION.`,
+      `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} sem collection_date. Marcando como WAITING CHANNEL VALIDATION e disparando scraping sob demanda.`,
     );
     await ordersService.update(orderSystem.id, {
       internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
     });
+    await this.triggerScraping("ml-order-sync");
+  }
+
+  /**
+   * Pede um ciclo de scraping sob demanda na fila ML-SCRAPING (processo
+   * separado — ver startScrapingWorker). jobId fixo faz o BullMQ deduplicar:
+   * se já existe um ciclo pendente/rodando, o pedido novo é ignorado — um
+   * ciclo só resolve TODOS os pedidos pendentes de uma vez (baixa a
+   * planilha inteira), então não há motivo pra empilhar disparos por pedido.
+   */
+  private async triggerScraping(triggeredBy: string): Promise<void> {
+    try {
+      await this.scrapingNext.add(
+        { triggered_by: triggeredBy },
+        "ml-scraping-on-demand",
+      );
+    } catch (error: any) {
+      console.error(
+        `[MLOrderSyncQueue] Falha ao disparar scraping sob demanda (triggered_by=${triggeredBy}):`,
+        error.message,
+      );
+    }
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────

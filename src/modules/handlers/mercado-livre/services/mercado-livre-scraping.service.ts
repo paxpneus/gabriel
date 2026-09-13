@@ -10,6 +10,7 @@ import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { MLExcelRow } from "./mercado-livre.types";
 import { parseBRL } from "../../../../shared/utils/normalizers/dotToPoint";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
+import { nowTz, startOfDayTz } from "../../../../shared/utils/normalizers/date";
 
 chromiumExtra.use(StealthPlugin());
 
@@ -491,28 +492,16 @@ export class MLScrapingService {
       const isTomorrowDelivery = TOMORROW_DELIVERY_REGEX.test(String(status));
 
       if (isReadyForPickup || isNFeAlreadyEmitted) {
-        // Pedidos prontos para coleta sem data prevista → amanhã (UTC)
-        const tomorrow = new Date();
-        collectionDate = new Date(
-          Date.UTC(
-            tomorrow.getUTCFullYear(),
-            tomorrow.getUTCMonth(),
-            tomorrow.getUTCDate(),
-          ),
-        );
+        // Pedidos prontos para coleta sem data prevista → hoje, meia-noite
+        // em APP_TIMEZONE (não meia-noite UTC — Date.UTC(y,m,d) cai às 21h
+        // do dia anterior em America/Sao_Paulo, empurrando a nota pro dia
+        // errado em qualquer filtro/agrupamento por dia calendário BRT).
+        collectionDate = startOfDayTz().toDate();
         console.log(
           `[MLScraping] Pedido ${orderNumber} "pronto para coleta" — collection_date definida para hoje: ${collectionDate.toISOString()}`,
         );
       } else if (isTomorrowDelivery) {
-        const tomorrow = new Date();
-        tomorrow.setUTCDate(tomorrow.getUTCDate() + 1); 
-        collectionDate = new Date(
-          Date.UTC(
-            tomorrow.getUTCFullYear(),
-            tomorrow.getUTCMonth(),
-            tomorrow.getUTCDate(),
-          ),
-        );
+        collectionDate = startOfDayTz(nowTz().add(1, "day")).toDate();
         console.log(
           `[MLScraping] Pedido ${orderNumber} "para entregar na coleta de amanhã" — collection_date definida para amanhã: ${collectionDate.toISOString()}`,
         );
@@ -531,16 +520,15 @@ export class MLScrapingService {
           continue;
         }
 
-        const now = new Date();
-        let year = now.getFullYear();
-        if (
-          month < now.getMonth() ||
-          (month === now.getMonth() && day < now.getDate())
-        ) {
+        const now = nowTz();
+        let year = now.year();
+        if (month < now.month() || (month === now.month() && day < now.date())) {
           year += 1;
         }
 
-        collectionDate = new Date(Date.UTC(year, month, day));
+        collectionDate = startOfDayTz(
+          `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+        ).toDate();
       }
       // ──────────────────────────────────────────────────────────────────
 

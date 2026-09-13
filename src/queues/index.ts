@@ -49,6 +49,7 @@ export const serverAdapter = new ExpressAdapter();
 export type QueueName =
   | "NFE_EMISSION"
   | "ML_ORDER_SYNC"
+  | "ML_SCRAPING"
   | "CNPJ_VERIFY_CNAE"
   | "BLING_ORDER_INGESTION"
   | "NFE_RECONCILER"
@@ -85,9 +86,31 @@ function buildQueues(activeWorkers: QueueName[]) {
     getJob: (jobId: string) => nfeQueue.getJob(jobId),
   };
 
-  const mlOrderSyncQueue = new MLOrderSyncQueue(nfeNext, blingApi, {
-    workless: w("ML_ORDER_SYNC"),
-  });
+  // Cliente (workless) da fila ML-SCRAPING — o Worker real só existe no
+  // container startScrapingWorker(); esta instância aqui só serve pra
+  // MLOrderSyncQueue/ReconcilerQueue disparar/consultar jobs pela mesma
+  // fila compartilhada no Redis (scraping sob demanda). Predeclarado como
+  // `let` por causa da referência circular: MLScrapingQueue precisa de um
+  // `next` apontando pra mlOrderSyncQueue.add, e MLOrderSyncQueue precisa
+  // de um `scrapingNext` apontando pra mlScrapingQueue.add — as closures
+  // abaixo só capturam a variável (resolvida no momento da chamada, não da
+  // definição), então é seguro contanto que nada invoque `.add()` durante
+  // a própria construção, o que não acontece aqui.
+  let mlScrapingQueue!: MLScrapingQueue;
+
+  const mlOrderSyncQueue = new MLOrderSyncQueue(
+    nfeNext,
+    blingApi,
+    { add: (data: any, jobId: string) => mlScrapingQueue.add(data, jobId) },
+    { workless: w("ML_ORDER_SYNC") },
+  );
+
+  mlScrapingQueue = new MLScrapingQueue(
+    new MLScrapingService(),
+    new MLOrderService(),
+    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
+    { workless: true },
+  );
 
   const cnpjQueue = new CNPJQueue(
     new CNPJService(),
@@ -112,6 +135,8 @@ function buildQueues(activeWorkers: QueueName[]) {
     nfeNext,
     blingApi,
     { waitUntilIdle: (maxWaitMs: number) => mlOrderSyncQueue.waitUntilIdle(maxWaitMs) },
+    { add: (data: any, jobId: string) => mlScrapingQueue.add(data, jobId) },
+    { waitUntilIdle: (maxWaitMs: number) => mlScrapingQueue.waitUntilIdle(maxWaitMs) },
     { workless: w("NFE_RECONCILER") },
   );
 
@@ -166,6 +191,7 @@ function buildQueues(activeWorkers: QueueName[]) {
   return {
     nfeQueue,
     mlOrderSyncQueue,
+    mlScrapingQueue,
     cnpjQueue,
     blingOrderQueue,
     reconcilerQueue,
@@ -328,6 +354,7 @@ export function startAutomationWorkers() {
   const {
     nfeQueue,
     mlOrderSyncQueue,
+    mlScrapingQueue,
     cnpjQueue,
     reconcilerQueue,
     blingReconcilerQueue,
@@ -355,6 +382,7 @@ export function startAutomationWorkers() {
 
   void nfeQueue;
   void mlOrderSyncQueue;
+  void mlScrapingQueue;
   void cnpjQueue;
   void reconcilerQueue;
   void blingReconcilerQueue;
@@ -434,17 +462,17 @@ export function startScrapingWorker() {
     "BLING_NFE_SCRAPING",
   ]);
 
+  // Sem cron fixo — este Worker (o único com processamento real: download
+  // do Excel via Playwright) só roda quando um job "ml-scraping-on-demand"
+  // chega pelo Redis, disparado por MLOrderSyncQueue (pedido sem
+  // collection_date) ou por ReconcilerQueue.reconcileMissingCollectionDate
+  // (rede de segurança), ambos rodando no container startAutomationWorkers.
   const mlScrapingQueue = new MLScrapingQueue(
     new MLScrapingService(),
     new MLOrderService(),
     { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
     { workless: false },
   );
-
-  // Cada ciclo já leva ~2min pra iniciar + ~3min de execução — 5min sem
-  // folga entre execuções mantinha o job praticamente sempre ocupado.
-  // 10min dá uma janela real de descanso entre ciclos.
-  mlScrapingQueue.scheduleRepeat({ every: 10 * 60 * 1000 });
 
   const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
     new BlingManifestacaoService(),
@@ -466,4 +494,5 @@ export function startScrapingWorker() {
     "------------------- QUEUE: Scraping Worker Ativo! -------------------",
   );
   console.log("  → BLING_STOCK_MOVEMENTS_SCRAPING (05:00 BRT)");
+  console.log("  → ML-SCRAPING (sob demanda, sem cron)");
 }

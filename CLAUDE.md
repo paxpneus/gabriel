@@ -50,6 +50,30 @@ lookups (`findOne`, `findById`, `findAll`, etc.) are already there, so the
 correct fix is usually calling `<entity>Service.findOne(...)`, not writing a
 new raw query.
 
+## Reusable query/filter helpers belong in `helpers/`, not inline in service/repository
+
+When a piece of query-building logic (a `where` fragment, a `Sequelize.literal`,
+anything that isn't trivial and could plausibly be reused by more than one
+filter/method) is written inline in an entity's `<entity>.service.ts` or
+`<entity>.repository.ts`, it must instead be a named, exported, parameterized
+function in that entity's own `helpers/` folder (e.g.
+`src/modules/warehouse/fiscal/invoices/invoice/helpers/`) — never a
+module-level function or closure defined directly in the service/repository
+file. Parameterize on whatever varies between call sites (a store name, a
+unit business id, a table alias, a reference date, etc.) instead of hardcoding
+one call site's value inside the helper — the point is that a second filter
+or method can import and reuse it later without copy-pasting or having to
+first "promote" it out of the service file. See
+`invoice/helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`) and
+`invoice/helpers/custom-filters.ts` (`storeCollectionDateTodayWhere`) for the
+pattern — both are plain exported functions taking the values that differ per
+call site, imported by `invoice.service.ts`/`invoice.repository.ts` rather
+than defined inside them. This is about code organization, not layering: the
+helper file still belongs to the same entity and gets imported by whichever
+layer (service or repository) actually uses it — it does not change which
+layer is allowed to build the query in the first place (see "Layer
+separation" above).
+
 ## Code comments
 
 Comments on code and functions must be brief, short, summarized, and
@@ -1111,6 +1135,74 @@ flag is explicitly set.
   above. Not fixed**: `show`/`destroy`/`create` unscoped; other actions
   trust a client-supplied `?unitBusinessId=` over the logged user's own;
   DANFE/XML batch downloads have no store filter.
+- **Fixed this session — `getFullInvoiceForAllUnits` crash on Bling notes
+  without `chaveAcesso` yet**: `fetchAndUpsertInvoice`
+  (`bling-api-fetch.queue.ts`) looked up the pre-existing invoice by
+  `xml_key` (`nf.chaveAcesso`) only. A note still pending SEFAZ
+  authorization (`situacao: 1`) has no `chaveAcesso` yet, so the lookup's
+  two args were both `undefined` and `InvoiceRepository.getFullInvoiceForAllUnits`'s
+  own guard threw `"É necessário informar invoiceId ou invoiceKey"` —
+  crashing every retry for that note (webhook resync, reprocess) forever,
+  even though the note was already in the DB (created earlier, also
+  without a chave, so `id_system = String(nf.id)` was its only
+  identifier). Fixed by adding `idSystem` as a third, always-present
+  fallback identifier: `getFullInvoiceForAllUnits(invoiceId?, invoiceKey?,
+  idSystem?)` now matches by `id_system` OR `xml_key` when no `invoiceId`
+  is given, and the Bling call site passes `String(nf.id)` as that
+  fallback. `invoice-xml.ts`'s own call to `findByIdFullForAllUnits`
+  (Tecinco/manual XML import) was left unchanged — that flow always has a
+  `chaveAcesso` from the XML itself.
+- **Custom filters for the Mercado Livre shipping queue (this session)**:
+  `pending_mercadolivre`, `all_today_mercadolivre`, `finished_mercado_livre`,
+  `dispatched_mercado_livre` — each a `=true` boolean flag, mutually
+  exclusive tabs of the same screen ("o que precisa/já foi embarcado hoje
+  pelo Mercado Livre"; if more than one is sent, each contributes its own
+  `Object.assign`-merged `where` fragment independently — not mutually
+  exclusive at the query-building level, just intended to be used one at a
+  time by the frontend). Implemented as 4 entries in
+  `InvoiceService.queryConfig.customFields` (`invoice.service.ts`) —
+  **not** in the repository — matching this file's pre-existing pattern for
+  filters that need to reference an already-joined association
+  (`batchStatus`, `status`, `type`, `batch_generated`,
+  `unit_business_id`), which QueryParser merges as top-level `where`
+  fragments into the one query `InvoiceRepository.listInvoices` already
+  builds via `$assoc.field$` dot-notation — no separate query, no new
+  method on the repository. `InvoiceRepository.listInvoices` only gained
+  one small structural addition to support this: an unconditional `Order`
+  include (`as: "order"`, `Invoice.hasOne(Order, {as: "order"})`) alongside
+  the pre-existing `store`/`batchInvoice.batch` ones, since a dot-notation
+  filter needs its association to already be in the query's `include`
+  regardless of which layer names the filter condition — for a request
+  with none of these 4 flags, it's a harmless extra LEFT JOIN, same as
+  `store`/`transporter`/`supplier` already are. A `$dotpath$` condition
+  against a `required: false` (LEFT JOIN) association naturally behaves
+  like an inner join once a non-null filter value is added (a genuinely
+  unmatched LEFT JOIN row has every joined column NULL, so e.g. `{[Op.ne]:
+  null}` or an exact-value match both correctly exclude it) — this is why
+  none of the 4 filters (nor the pre-existing `batchStatus`) need to force
+  `required: true` on their association to work correctly. All four
+  require `$store.name$ = "MercadoLivre"` and
+  `$order.collection_date$` within today's `America/Sao_Paulo` calendar
+  day (`startOfDayTz()`/`endOfDayTz()` from
+  `shared/utils/normalizers/date.ts`, not a naive UTC day;
+  `storeCollectionDateTodayWhere(storeName)`, exported from
+  `invoice/helpers/custom-filters.ts` per the "Reusable query/filter
+  helpers" rule above, builds this pair and is spread into each of the 4
+  customFields). They differ only in what else they require:
+  - `pending_mercadolivre`: `$unitBusinessAttributes.batch_generated$ =
+    false` (same condition the plain `batch_generated` filter uses) — "o
+    que ainda precisa ser embarcado hoje."
+  - `all_today_mercadolivre`: no `batch_generated` constraint at all — the
+    same set as `pending_mercadolivre` plus whatever already got batched
+    today too.
+  - `finished_mercado_livre`: `$unitBusinessAttributes.batch_generated$ =
+    true` AND `$unitBusinessAttributes.status$ IN (FINISHED, CANCELLED)` —
+    the exact same condition the `pendingProcess=false` ("processo
+    finalizado") filter already uses, just also scoped to Mercado Livre +
+    today's collection.
+  - `dispatched_mercado_livre`: `$batchInvoice.batch.delivery_note_generated_at$
+    IS NOT NULL` (same field `findInvoicesPendingLogisticOccurrence`
+    already reads as "romaneio gerado") — "o que já teve romaneio gerado."
 
 ## Bling NFe web-scraping automation (`.../bling-nfe/automations/auto-manifest/`)
 
@@ -1144,6 +1236,332 @@ lock por pedido, e todo par de corrida entre filas já mapeado e tratado):
 este — os bullets abaixo ficam só com o histórico de investigação/fix de
 sessão, não a referência viva.
 
+- **`collection_date` agora pode vir de `dataPrevista` (payload Bling),
+  não só do scraping/planilha do ML; `ML-SCRAPING` deixou de ter cron fixo
+  (this session)** — pedido explícito do usuário. `BlingOrderService`
+  (`createOrderFromBling`/`updateOrderFromBling`) agora grava
+  `collection_date` direto a partir de `orderData.dataPrevista` (via
+  `startOfDayTz`, mesmo padrão já usado pro campo `date`) sempre que a
+  Bling manda essa data preenchida; se vier vazia, a chave é **omitida**
+  do payload de update (nunca gravada como `null`), preservando qualquer
+  valor já resolvido antes por scraping. Como consequência, o branch
+  existente em `MLOrderSyncQueue.syncFromWebhookLocked` que já checava
+  `if (orderSystem.collection_date)` pra pular o casamento via Excel e
+  agendar a NFe direto passou a disparar "de graça" pra todo pedido cuja
+  Bling já informa a data prevista — nenhuma mudança de lógica precisou
+  ser feita ali além de remover um protótipo morto e comentado (`//TESTE`)
+  que tentava fazer algo parecido com um `new Date()` sem fuso (bug que
+  motivou reforçar o uso de `startOfDayTz`). Pra pedidos que chegam sem
+  `dataPrevista`: `ML-SCRAPING` (`mercado-livre.scraping.queue.ts`) teve
+  seu cron fixo de 10min **removido** (`startScrapingWorker`) e passou a
+  rodar só **sob demanda**, via um job com `jobId` fixo
+  (`"ml-scraping-on-demand"`, dedupe nativo do BullMQ) disparado por
+  `MLOrderSyncQueue.syncFromWebhookLocked` (na chegada do pedido) ou por
+  um novo método `ReconcilerQueue.reconcileMissingCollectionDate`
+  (`nfe-reconciler.queue.ts`, roda junto no `Promise.allSettled` de
+  `NFE_RECONCILER`, a cada 15min) — este último busca **ao vivo na Bling**
+  (não confia em snapshot local) todos os pedidos em situação `748743`,
+  filtra os que a própria Bling ainda não tem `dataPrevista`, cruza com o
+  banco pra achar os que ainda estão com `collection_date` nulo, e só
+  então dispara o scraping — rede de segurança caso o disparo original
+  tenha falhado silenciosamente ou nunca ocorrido. Como consequência dessa
+  mudança (scraping deixou de ser um relógio independente),
+  `reconcileStuckOrders` passou a esperar `ML-SCRAPING` ficar livre
+  **antes** de esperar `ML_ORDER_SYNC` (nessa ordem — scraping alimenta
+  `ML_ORDER_SYNC`, não o contrário), senão um ciclo de scraping recém-
+  disparado (inclusive pelo próprio `reconcileMissingCollectionDate`,
+  rodando em paralelo) podia passar despercebido (ML_ORDER_SYNC ainda
+  vazio nesse instante) e o sweep marcar erroneamente um pedido como
+  "verificação humana" antes do scraping ter a chance de resolvê-lo.
+  Wiring dessas duas novas dependências (`MLOrderSyncQueue`/
+  `ReconcilerQueue` precisam de um cliente `workless:true` de
+  `MLScrapingQueue`, já que rodam num container diferente de
+  `startScrapingWorker`, o único com o Worker real) resolvido com um `let`
+  predeclarado em `buildQueues()` pra quebrar a referência circular
+  (`MLScrapingQueue` aponta pra `mlOrderSyncQueue.add`, que por sua vez
+  precisa apontar de volta pra `mlScrapingQueue.add`). Detalhe completo
+  (query exata, sequenciamento dos `waitUntilIdle`, mecanismo de dedupe)
+  em `docs/automation/order-pipeline.md`.
+
+- **Refinamento do item acima, mesma sessão — `MLScrapingQueue` não confia
+  em `job.data` pra saber o que precisa resolver.** Correção do usuário
+  durante a implementação: a ideia original de passar os pedidos pendentes
+  dentro do payload do `.add()` do gatilho sob demanda tinha um problema
+  real com o dedupe por `jobId` fixo (`"ml-scraping-on-demand"`) — se um
+  segundo pedido chegasse sem `dataPrevista` enquanto o job do primeiro
+  ainda estivesse esperando na fila, o `.add()` do segundo seria
+  silenciosamente ignorado (mesmo `jobId` já ocupado) e a informação dele
+  se perderia. Fix: `MLScrapingQueue.process()` agora consulta o banco
+  **na hora em que o job roda de verdade** (não confia em snapshot do
+  `job.data`) por pedidos ainda em `WAITING_CHANNEL_VALIDATION` sem
+  `collection_date` — isso funciona não importa qual dos dois
+  disparadores "ganhou" o dedupe. Duas otimizações vieram junto, também a
+  pedido do usuário (que apontou que disparar sob demanda e mesmo assim
+  enfileirar ~300 jobs no `ML_ORDER_SYNC` — um por linha da planilha
+  inteira — era desperdício, já que se sabe exatamente quais pedidos
+  precisam ser resolvidos):
+  1. Se não sobrar nenhum pedido pendente no momento em que o job roda
+     (ex: resolvido por `dataPrevista` enquanto esperava na fila), o ciclo
+     inteiro é pulado **antes** de baixar a planilha — sem essa checagem,
+     o job abriria o Playwright/baixaria o Excel à toa.
+  2. Quando sobra, a planilha ainda é baixada inteira (não dá pra pedir só
+     um pedido ao Mercado Livre), mas só as linhas que batem por
+     data+comprador com **algum** pedido pendente viram job no
+     `ML_ORDER_SYNC`, via uma nova função compartilhada
+     `matchesOrderByDateAndBuyer` (`mercado-livre/services/helpers/order-match.ts`
+     — extraída também de `MLOrderSyncQueue.syncFromExcel`, que tinha essa
+     mesma lógica de match inline, pra não duplicar). Investigado e
+     confirmado que isso não quebra a busca de "pedidos irmãos"
+     (`findSiblingOrders`): a lista completa dos últimos 7 dias continua
+     sendo gravada sem filtro no cache `orders_seven_days_ago` (só decide
+     quais linhas geram job, não contra quais pedidos elas casam), e um
+     irmão sempre compartilha data/cliente com o pedido pendente que
+     originou o match, então a linha correspondente nunca é descartada
+     pelo pré-filtro. Também esclarecido pro usuário, à parte: mesmo antes
+     desse refinamento, as chamadas na Bling em si já eram filtradas — só
+     pedidos genuinamente ainda pendentes (não `COMPLETED_ORDER_INTERNAL_STATUSES`,
+     e ainda `WAITING_CHANNEL_VALIDATION` via `isEligibleForSync`) chegavam
+     a fazer GET/PUT/PATCH; o desperdício real era só de jobs BullMQ/leituras
+     no banco, não de chamadas na Bling.
+
+- **`orders.reason_cancelled` (nova coluna, migration `m277`, this
+  session)** — nullable enum (`OrderReasonCancelled`,
+  `orders.types.ts`/`orders.model.ts`) that disambiguates WHY an order sits
+  in `internal_status=CANCELLED`/situação `748772`, a gap
+  `docs/automation/order-pipeline.md` had documented since it was first
+  written. Full value list, and which of the 6 pipeline queues writes each
+  one, now lives in that doc's "Máquina de estados" section (kept current
+  there, not duplicated here) — in short: 6 values map 1:1 to the 3
+  queues that decide a 748772 cancellation (`CNPJ_VERIFY_CNAE`'s
+  `markOrderError`, `NFE_EMISSION`'s `markOrderCancelled` — 4 call sites —
+  and `NFE_RECONCILER`'s `reconcileStuckOrders`), plus `CUSTOMER_CANCELLED`
+  for a genuine situação `12`/`21` cancellation written by
+  `BLING_ORDER_INGESTION`'s webhook path
+  (`bling-order.service.ts`'s `reasonCancelledFields` helper). The webhook
+  path only ever sets the key for `12`/`21` — every other situação
+  (including `748772` arriving as a delayed webhook confirmation of a
+  cancellation a queue already decided and already tagged) **omits the key
+  entirely**, never nulls it, so a more specific reason a queue already
+  wrote is never clobbered.
+- **`actual_situation`/`internal_status` are now written as early as
+  possible in `updateOrderFromBling`, in their own small `ordersService.update`
+  call, before any enrichment step (contact upsert, address lookup,
+  item/cost/commission resolution, financial calc) that can throw on an
+  order with missing/unexpected data (`bling-order.service.ts`, this
+  session).** Before this, the whole function wrote every field — status
+  included — in a single `ordersService.update` call at the very end; any
+  error anywhere earlier in the function (a `Contact.create` failure, a
+  malformed item payload, `resolveIcmsRate`'s `stateService.findOne`, etc.)
+  aborted the function via the outer try/catch's `throw error` before that
+  final write ever ran, silently leaving the order's status stale in the
+  DB even though the fresh situação had already been fetched and mapped
+  successfully. The early write is wrapped in its own try/catch that logs
+  and continues rather than aborting (a failure here is almost always
+  transient — the same final write later in the function would fail too,
+  and the outer catch/BullMQ retry handles that case same as before); the
+  final write at the end of the function still includes these same fields
+  too (redundant, harmless, keeps that object's shape self-documenting for
+  its use in the return value). `createOrderFromBling` was **not** changed
+  the same way — when there's truly no existing local row yet, there's no
+  order to "update early," and giving it an equivalent minimal-insert /
+  enrich-after split would be a bigger restructuring than was asked for.
+- **`collection_date` (Mercado Livre orders) was being written as UTC
+  midnight instead of `America/Sao_Paulo` midnight — a real, silent 3-hour
+  offset, not just a test artifact (this session).** Root cause:
+  `mercado-livre-scraping.service.ts`'s 3 branches that compute
+  `collectionDate` ("pronto para coleta" → hoje, "entregar amanhã", "coleta
+  do dia D de MÊS") all built the value via `new Date(Date.UTC(y, m, d))`
+  or `new Date().getUTCDate()`-style arithmetic — UTC midnight of the
+  *intended* calendar day, which in `America/Sao_Paulo` (UTC-3) is 21:00 of
+  the day *before*. Confirmed harmless to the scheduling automation itself:
+  `setDelayBasedOnDate` (`setDelay.ts`) and `mercado-livre-sync.queue.ts`'s
+  "coleta é hoje?" check (`mercado-livre-sync.queue.ts:432-449`) both only
+  ever read/compare `collection_date`'s **UTC** calendar-day components
+  (`setUTCHours`/`getUTCDate` — never converting to BRT), and a fixed 3h
+  shift within the same UTC day can never change those components — so
+  nothing in the actual NFe-scheduling pipeline was ever affected by this
+  bug, confirmed by direct proof (`setUTCHours` overwrites the time
+  component entirely, so the UTC date it operates on is identical before
+  and after the fix). What *was* broken: any **BRT-aware** read of
+  `collection_date` — i.e. `storeCollectionDateTodayWhere`'s Mercado Livre
+  invoice filters and the new Orders summary endpoints (both this same
+  session, both using `startOfDayTz()`/`endOfDayTz()`) — would read a
+  "day D" value as belonging to "day D-1" instead. Fixed by switching all
+  3 branches to `nowTz()`/`startOfDayTz()` (`shared/utils/normalizers/date.ts`).
+  **Retroactive gap, not fully self-healing**: `MLOrderSyncQueue.applyCollectionDateLocked`
+  re-derives and overwrites `collection_date` on every scrape pass (exact
+  `getTime()` comparison, so a differently-encoded recompute *does*
+  trigger a rewrite) — but only while the order is still
+  `WAITING_CHANNEL_VALIDATION` (`isEligibleForSync` gate). Once
+  `collection_date` has been applied and the order has moved on to
+  `WAITING_FOR_NFE_EMISSION`, nothing ever re-derives it again, so any
+  order scheduled *before* this fix keeps the old (UTC-midnight) encoding
+  until it's actually collected — which, given collection windows are
+  short, is squarely inside the "today"/"future" window the new filters
+  care about. **Fixed at the read side too, not just the write side**: two
+  new exported functions in `date.ts`, `collectionDateDayRangeCompat(date?)`
+  and `collectionDateFutureStartCompat(date?)`, build ranges that match
+  *either* possible encoding for a given calendar day without bleeding
+  into the adjacent day (the old-encoding window for day D is exactly the
+  3 hours `[D 00:00 UTC, D 00:00 BRT)` — narrow and precise, not a
+  full-day-wide range, which would incorrectly also catch day D+1's
+  old-encoded value since that falls at `D+1 00:00 UTC`, inside a naive
+  full-BRT-day window for D). Verified numerically at runtime (`ts-node`),
+  not just reasoned about on paper. Used by
+  `storeCollectionDateTodayWhere` (`invoice/helpers/custom-filters.ts`)
+  and `orders.repository.ts`'s `countShipTodayPending`/`countShipToFuture`;
+  `orders/order/helpers/aggregates.ts`'s `collectionDateBucketLiteral`
+  (used by `groupShipToFutureByDate`) does the equivalent normalization at
+  the SQL level, via a `CASE WHEN date_part('hour', ... AT TIME ZONE 'UTC') = 0`
+  check that shifts an old-encoded value +3h before bucketing by BRT
+  calendar day.
+- **New Orders summary/detail endpoints (this session)**, the first
+  consumer of `reason_cancelled`. Mounted at `/api/order/...` — the route
+  loader (`src/config/routes.ts`) mounts a module's router at `/${folder
+  name}`, and this module's routes file lives in a folder literally named
+  `order` (singular), not `orders` (same reason `invoice.controller.ts`'s
+  routes are at `/api/invoice`, not `/api/invoices`) — don't guess
+  `/api/orders` if this is touched again. `GET /orders/summary/status-counts`
+  (4 counts — `human_verification` = `actual_situation = "748772"`;
+  `ship_today_pending` = `collection_date` today AND (no invoice OR its
+  `InvoiceUnitBusinessAttributes.batch_generated` is false); `ship_to_define`
+  = `collection_date IS NULL` AND `internal_status IN (OPEN,
+  WAITING_CHANNEL_VALIDATION)` — added this session: an order already past
+  those two (`CANCELLED`/`EMITTED`/`WAITING_FOR_NFE_EMISSION`/
+  `SENT_TO_TRANSPORTER`/`DELIVERED`/`UNKNOWN`) doesn't need a collection
+  date defined anymore even if `collection_date` is still null, so it must
+  not count as "a definir"; `ship_to_future` = `collection_date` strictly
+  after today — starts tomorrow, never includes today), `GET
+  /orders/summary/human-verification/detail` (`{reason: count}`, grouped by
+  `reason_cancelled`, `null` bucketed as `"UNSET"`), `GET
+  /orders/summary/ship-to-future/detail` (`{"YYYY-MM-DD": count}`, grouped
+  by `collection_date`'s calendar day in `America/Sao_Paulo` via
+  `collectionDateBucketLiteral()`, `orders/order/helpers/aggregates.ts`),
+  `GET /orders/summary/ship-today-pending/detail` (array of rows, not a
+  count/group like the two aggregate details — `{number_order_system,
+  customer_name, sale_date, collection_date, invoice_number,
+  invoice_emitted_at}` per order, `sale_date` from `orders.date`,
+  `invoice_number`/`invoice_emitted_at` from the linked
+  `Invoice.number_system`/`.emitted_at` when `invoice_id` is set, both
+  `null` otherwise), and `GET /orders/summary/ship-to-define/detail`
+  (also array of rows — `{number_order_system, customer_name, status,
+  sale_date}`; `status` field — **revised twice this session, real bug
+  found in the middle**: v1 used the raw Bling `actual_situation` code;
+  the user asked for the same translation `OrderService.paginate` already
+  uses for the generic Orders listing instead (`salesSnapshot?.status_snapshot
+  ?? internal_status ?? null`); **that v2 then surfaced a real, confirmed
+  production data-integrity bug**, caught by the user directly reading the
+  response — orders whose `shipToDefineWhere()` filter matched them as
+  `internal_status IN (OPEN, WAITING_CHANNEL_VALIDATION)` were showing
+  `status: "CANCELADO"`/`"ATENDIDO"`/`"AGUARDANDO_AGENDAMENTO_NFE"` in the
+  response, apparently contradicting the very filter that selected them.
+  Root cause (confirmed by reading `sales-report.repository.ts`'s
+  `upsertSnapshots`): `sales_order_snapshots.status_snapshot` is **not**
+  derived from `internal_status` at all — it's `COALESCE(iosm.normalized_status,
+  o.actual_situation)` joined through `integration_order_status_mappings`
+  on `o.actual_situation`, a completely independent status vocabulary fed
+  by the *raw Bling situação code*. Despite `orders.service.ts`'s own
+  comment calling it "status_snapshot congelado" (frozen), `SalesReportQueue`
+  actually re-upserts it **hourly** for any touched order — so it isn't a
+  stale historical artifact, it's a live column that just tracks a
+  different signal (`actual_situation`) than `internal_status` does. Since
+  several queues (`cnpj.queue.ts`, `mercado-livre-sync.queue.ts`,
+  `nfe.queue.ts`, `nfe-reconciler.queue.ts`) advance `internal_status`
+  *alone*, without ever touching `actual_situation`, the two columns can
+  and do genuinely disagree for the same order — this is a real,
+  unreconciled data-integrity gap between the two status vocabularies, not
+  expected/documented behavior; **not fixed at its source this session**,
+  only worked around locally in this one endpoint (see below). v3 fix:
+  `findShipToDefineDetail` returns `internal_status` directly, with
+  **no** `SalesOrderSnapshot` join at all — since the list is filtered by
+  `internal_status`, the displayed field must be that same column, or the
+  response self-contradicts its own filter exactly like v2 did. **v4
+  (final, this session)**: the raw `internal_status` value (`"OPEN"`,
+  `"WAITING CHANNEL VALIDATION"`, etc.) is translated to a pt-BR label
+  before being returned, via a new `translateOrderInternalStatus()`
+  helper in `orders/order/helpers/translations.ts` — a plain
+  `Record<OrderInternalStatus, string>` lookup, exported/parameterized per
+  the "Reusable query/filter helpers" convention even though it's not a
+  query fragment (it's still reusable formatting logic worth keeping out
+  of the repository's inline `.map()`, just not gated by that rule's
+  query-specific scope). **Deliberately its own translation, not reused
+  from `integration_order_status_mappings.display_name`**: that table's
+  labels are keyed by raw Bling situação code (the `actual_situation`
+  vocabulary), and per the divergence bug above, `actual_situation` and
+  `internal_status` are not reliably the same thing for a given order —
+  reusing that table's labels here would silently reintroduce the exact
+  contradiction v2 had, just phrased as a label instead of a raw enum
+  value. The pt-BR copy itself came from explicit user corrections mid-session
+  (not translated literally from the enum names) —
+  `WAITING_CHANNEL_VALIDATION` → "Verificação de CNAE e Procurando Data de
+  Coleta no Mercado Livre" (covers both `CNPJ_VERIFY_CNAE` and
+  `ML_ORDER_SYNC` scraping-match waiting, not just the CNAE half),
+  `WAITING_FOR_NFE_EMISSION` → "Aguardando Emissão de Nota Fiscal". If a
+  new `OrderInternalStatus` value is ever added, `ORDER_INTERNAL_STATUS_LABELS`
+  must be updated too — `translateOrderInternalStatus` falls back to
+  returning the raw value unchanged for anything missing from the map,
+  so a forgotten new status silently shows English/raw in the UI instead
+  of throwing. Only `ship_to_define`'s detail uses this translation so
+  far — `OrderService.paginate()`'s generic listing keeps its existing
+  `status_snapshot ?? internal_status` precedence untouched. Both of
+  these two list-type
+  detail methods (`findShipTodayPendingDetail`/`findShipToDefineDetail`)
+  share their `where` with their corresponding count method via a private
+  `shipTodayPendingWhere()`/`shipToDefineWhere()` helper each, so count
+  and detail can never drift out of sync. All 8 repository query methods
+  (`orders.repository.ts`) are new — every one of the 4 summary categories
+  now has a detail endpoint.
+  - **Scoping — revised twice this session, settled on store-only, no
+    `unit_business_id` anywhere.** First attempt scoped every method by the
+    logged-in user's `unit_business_id` (`getUserContext`/
+    `resolveUnitBusinessId`, mirroring `invoice.controller.ts`). Confirmed
+    wrong against real prod data: `orders.unit_business_id` is only
+    populated when the Bling `loja` maps to an actual physical-branch
+    `UnitBusiness` (`bling-order.service.ts`'s `UnitBusiness.findOne({where:
+    {id_system: orderData.loja.id}})`) — a marketplace channel's `loja`
+    (confirmed for Mercado Livre specifically, 13912 real orders) never
+    has that mapping, so scoping by `unit_business_id` silently zeroed
+    every `collection_date`-based count. The 3 `collection_date` methods
+    (`countShipTodayPending`/`countShipToDefine`/`countShipToFuture`, plus
+    `groupShipToFutureByDate`) now scope by `store_id` instead — resolved
+    once via `OrderRepository.resolveMercadoLivreStoreId()` (`Store.findOne({where:
+    {name: "MercadoLivre"}})`, cached on the instance, mirrors
+    `BlingOrderService.resolveCostUnitBusinessId`'s exact same
+    lazy-cache-on-instance pattern) and returns `0`/`[]` early if that
+    `Store` row doesn't exist rather than risk matching orders with a null
+    `store_id`. This scoping is correct because `collection_date` itself is
+    Mercado-Livre-exclusive (only `MLOrderSyncQueue.applyCollectionDate`
+    ever writes it — confirmed via grep, no other channel/queue touches it)
+    — every one of these 3 counts is inherently *about* the ML shipping
+    queue, so scoping by that one store is the right (and only meaningful)
+    scope, not a workaround.
+  - **`human_verification`/its detail were first *also* scoped to the
+    Mercado Livre store, then corrected**: situação `748772` is a general
+    Bling order status, not specific to any sales channel (a non-ML order
+    can legitimately need human review too) — scoping it by store would
+    silently hide those. `countHumanVerification`/`groupHumanVerificationByReason`
+    take **no scoping parameter at all** now — global count/breakdown
+    across every channel.
+  - **One exception, added back after the above**: `countShipTodayPending`
+    alone still takes a `unitBusinessId` and scopes its nested
+    `InvoiceUnitBusinessAttributes` include by it (`where: {unit_business_id}`)
+    — `batch_generated` is inherently per `(invoice_id, unit_business_id)`,
+    about *who generated the batch* (the logged-in user's own branch), a
+    genuinely different axis from every other scope discussed above (which
+    is about the order/channel, not the acting branch). `getOrdersStatusSummary`
+    (service) and `getOrdersStatusSummary` (controller, via
+    `getUserContext(req).unitBusinessId` — no override param, unlike
+    `invoice.controller.ts`'s `resolveUnitBusinessId`) are the only other
+    two places in this whole feature that touch `unitBusinessId`; every
+    other repository/service/controller method here (`countHumanVerification`,
+    `countShipToDefine`, `countShipToFuture`, `groupHumanVerificationByReason`,
+    `groupShipToFutureByDate`, and their controller actions) takes none.
+  - Routing gotcha worth remembering if this controller is touched again:
+    `BaseController` registers `GET /:id` in its own constructor (via
+    `super()`), which runs *before* any subclass constructor body —
+    Express matches `/:id` against any single-segment path, so a new
+    custom route must always be 2+ segments (`/summary/...`, not
+    `/summary`) or it's silently unreachable, shadowed by `show`.
 - **`setDelayBasedOnDate(date)`** (`src/shared/utils/queues/setDelay.ts`) —
   computes the delay for the NFe-emission BullMQ job. As of this session:
   targets the **same day** as `collection_date` at 07:00 BRT (10:00 UTC);
@@ -1557,6 +1975,51 @@ sessão, não a referência viva.
   ones already batched) and sits right before the existing
   `assertTransshipment` loop.
 
+## Store (`src/modules/sales/stores/`)
+
+- `Store` is **not** one row per physical branch — it's a small, fixed
+  taxonomy of Bling sales-channel *types* (`tipo` from Bling's
+  `/canais-venda/{id}`, e.g. `"LojaFisica"`, `"MercadoLivre"`), shared by
+  every branch/channel of that same type. `name` (the `tipo` value) is the
+  real identity the rest of the codebase keys off directly —
+  `nfe-reconciler.queue.ts`'s `where: { name: "MercadoLivre" }`,
+  `ALLOWED_STORE_NAME` (`nfe.queue.ts`/`cnpj.queue.ts`), the
+  `where: { name: "Outros" }` fallback in `bling-api-fetch.queue.ts`/
+  `invoice-xml.ts`, and `Integration.allowed_channels`. `id_store_system` is
+  only a fast-lookup cache for one specific Bling channel id already known
+  to resolve to that bucket — not a real per-row identity, and not unique.
+- **Fixed this session — ~20 duplicate `Store` rows all named
+  `"LojaFisica"` in production.** Root cause: `BlingOrderService` (both
+  `createOrderFromBling` and `updateOrderFromBling`, identical code
+  duplicated in each) resolved the channel's `Store` via a plain
+  check-then-create (`findOne({where:{name: tipo}})` then `create(...)` if
+  not found) with **no DB unique constraint on `name`** — under concurrent
+  webhook processing for orders from different physical branches that
+  share the same Bling `tipo`, multiple requests could all pass the
+  `findOne` check before any of them committed, each creating its own row.
+  **Fixed**: both call sites now go through one shared private
+  `BlingOrderService.resolveStore(lojaId)`, which calls
+  `storeService.findOrCreateByName(tipo, idStoreSystem)` —
+  `StoreRepository.findOrCreateByName` uses Sequelize's `findOrCreate` on
+  `name`, made race-safe by a new unique index (migration
+  `m276-dedupe-stores-and-unique-name.js`). That migration also merges the
+  pre-existing duplicates: picks the oldest row per `name` as canonical,
+  reassigns `orders.store_id`/`invoices.store_id`/
+  `sales_order_snapshots.store_id`/`sales_order_item_snapshots.store_id`
+  from the duplicates to it (plain UPDATE, none of those tables have a
+  unique constraint on `store_id`), and — since
+  `daily_sales_store_facts` has `UNIQUE(fact_date, unit_business_id,
+  store_id)` and its metric columns include percentages
+  (`markup_pct`/`contribution_pct`) that can't be arithmetically merged —
+  just deletes the fact rows pinned to a duplicate `store_id` instead of
+  reassigning them, since that table is a derived snapshot
+  (`upsertDailySalesStoreFacts`) that regenerates from `orders`/
+  `sales_order_snapshots`, which this same migration already fixed. This
+  does **not** retroactively recompute historical daily-sales-store facts
+  already recorded under the wrong `store_id` — if exact historical
+  reporting matters, rerun the snapshot/fact recompute after the migration.
+  As always, **the user runs this migration themselves.**
+
 ## Sales / orders (`src/modules/sales/orders/`)
 
 - `order_items.service.ts` — builds sales-detail rows joining
@@ -1564,6 +2027,36 @@ sessão, não a referência viva.
   data and seller external ids; feeds Tecinco-facing reporting.
 - **`orders.controller.ts` and `order_items.controller.ts` are in the HIGH
   unscoped-CRUD list. Not fixed.**
+- **Confirmed production data-integrity gap, found this session, NOT
+  fixed**: `orders.internal_status` and `sales_order_snapshots.status_snapshot`
+  are two independent status vocabularies for the same order that can
+  genuinely disagree, and nothing reconciles them. `status_snapshot` is
+  computed in `sales-report.repository.ts`'s `upsertSnapshots` as
+  `COALESCE(iosm.normalized_status, o.actual_situation)` — derived from
+  `orders.actual_situation` (raw Bling situação code) via
+  `integration_order_status_mappings`, **not** from `internal_status`.
+  `SalesReportQueue` re-upserts it hourly for any order touched since the
+  last run, so it's a live column, not a frozen historical snapshot
+  (despite a comment in `orders.service.ts` calling it "congelado").
+  Meanwhile several queues (`cnpj.queue.ts`, `mercado-livre-sync.queue.ts`,
+  `nfe.queue.ts`, `nfe-reconciler.queue.ts`) advance `internal_status`
+  *alone*, without ever touching `actual_situation` — so an order can sit
+  with `internal_status=OPEN`/`WAITING_CHANNEL_VALIDATION` (still pending
+  per the app's own fulfillment pipeline) while `status_snapshot` already
+  shows a terminal Bling-side label like `"CANCELADO"`/`"ATENDIDO"`.
+  Confirmed directly by the user against real prod data: filtering Orders
+  by `internal_status IN (OPEN, WAITING_CHANNEL_VALIDATION)` (the new
+  `ship_to_define` detail endpoint, see the ML pipeline section above)
+  returned rows displaying exactly those "terminal" `status_snapshot`
+  labels — self-contradicting the very filter that selected them.
+  `OrderService.paginate()`'s `salesSnapshot?.status_snapshot ??
+  internal_status ?? null` precedence (the generic Orders listing) is
+  unaffected/intentional for that screen, but any *new* code that filters
+  by `internal_status` must display `internal_status`, not
+  `status_snapshot`, for the same row, or it will show this same
+  contradiction. Not fixed at the root (no reconciliation between the two
+  columns exists) — only worked around locally in `ship_to_define`'s
+  detail endpoint this session.
 
 ## Reports
 

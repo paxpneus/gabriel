@@ -4,7 +4,12 @@ import Customer from "../../customers/customers.model";
 import SalesOrderSnapshot from "../../../reports/daily-sales/sales-order-snapshot/sales-order-snapshot.model";
 import Order from "./orders.model";
 import orderRepository, { OrderRepository } from "./orders.repository";
-import { FullOrder, OrderSalesReportDetail } from "./orders.types";
+import {
+  FullOrder,
+  OrderSalesReportDetail,
+  ShipTodayPendingDetailRow,
+  ShipToDefineDetailRow,
+} from "./orders.types";
 import { QueryParams, PaginatedResult } from "../../../../shared/query/query.types";
 
 const toNumber = (value: number | string | null | undefined): number =>
@@ -178,6 +183,62 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     );
 
     return affectedOrders;
+  }
+
+  // ─── Resumo de status ─────────────────────────────────────────────────────
+  // unitBusinessId só é usado por countShipTodayPending (escopa QUEM
+  // gerou o lote — batch_generated é por filial) — ver o comentário no
+  // topo de orders.repository.ts: pedidos de marketplace (Mercado Livre
+  // incluso) não têm unit_business_id preenchido no pedido em si, então
+  // nenhum outro método deste resumo escopa por unit business.
+
+  async getOrdersStatusSummary(unitBusinessId: string) {
+    const [
+      humanVerification,
+      shipTodayPending,
+      shipToDefine,
+      shipToFuture,
+    ] = await Promise.all([
+      this.repository.countHumanVerification(),
+      this.repository.countShipTodayPending(unitBusinessId),
+      this.repository.countShipToDefine(),
+      this.repository.countShipToFuture(),
+    ]);
+
+    return {
+      human_verification: { quantity: humanVerification },
+      ship_today_pending: { quantity: shipTodayPending },
+      ship_to_define: { quantity: shipToDefine },
+      ship_to_future: { quantity: shipToFuture },
+    };
+  }
+
+  async getShipTodayPendingDetail(
+    unitBusinessId: string,
+  ): Promise<ShipTodayPendingDetailRow[]> {
+    return this.repository.findShipTodayPendingDetail(unitBusinessId);
+  }
+
+  async getShipToDefineDetail(): Promise<ShipToDefineDetailRow[]> {
+    return this.repository.findShipToDefineDetail();
+  }
+
+  async getHumanVerificationDetail(): Promise<Record<string, number>> {
+    const rows = await this.repository.groupHumanVerificationByReason();
+
+    return rows.reduce<Record<string, number>>((acc, { reason, quantity }) => {
+      acc[reason ?? "UNSET"] = quantity;
+      return acc;
+    }, {});
+  }
+
+  async getShipToFutureDetail(): Promise<Record<string, number>> {
+    const rows = await this.repository.groupShipToFutureByDate();
+
+    return rows.reduce<Record<string, number>>((acc, { date, quantity }) => {
+      acc[date] = quantity;
+      return acc;
+    }, {});
   }
 }
 

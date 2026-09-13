@@ -36,7 +36,7 @@ jest.mock("../../bling-customers/bling-customer.service", () => ({
 
 const mockStoreServiceInstance = {
   findOne: jest.fn(),
-  create: jest.fn(),
+  findOrCreateByName: jest.fn(),
 };
 jest.mock("../../../../../sales/stores/stores.service", () => ({
   __esModule: true,
@@ -53,6 +53,7 @@ import orderItemsService from "../../../../../sales/orders/order_items/order_ite
 import { getBlingIntegration } from "../../../api/bling_api.service";
 import UnitBusiness from "../../../../../company/unit-business/unit-business.model";
 import BlingOrderService from "../bling-order.service";
+import { startOfDayTz } from "../../../../../../shared/utils/normalizers/date";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,7 @@ function makeOrderData(overrides: Partial<any> = {}) {
       tipoPessoa: "F",
       numeroDocumento: "548.829.156-34",
     },
+    dataPrevista: undefined as string | undefined,
     situacao: { id: 834029, valor: 0 },
     loja: { id: 205955595 },
     notaFiscal: { id: 26587010552 },
@@ -217,6 +219,55 @@ describe("BlingOrderService", () => {
       },
     );
 
+    it.each([12, 21])(
+      "situacao.id=%i (cancelamento real via Bling/cliente) grava reason_cancelled=CUSTOMER_CANCELLED",
+      async (situacaoId) => {
+        orderData.situacao = { id: situacaoId, valor: 0 };
+
+        await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+        expect(lastUpdateFields()).toEqual(
+          expect.objectContaining({ reason_cancelled: "CUSTOMER_CANCELLED" }),
+        );
+      },
+    );
+
+    it("situacao.id=748772 (verificação humana, já decidida por uma fila) NÃO grava reason_cancelled — não sobrescreve o motivo já gravado antes", async () => {
+      orderData.situacao = { id: 748772, valor: 0 };
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(lastUpdateFields()).not.toHaveProperty("reason_cancelled");
+    });
+
+    it("situacao.id=9 (EMITTED) NÃO grava reason_cancelled", async () => {
+      orderData.situacao = { id: 9, valor: 0 };
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(lastUpdateFields()).not.toHaveProperty("reason_cancelled");
+    });
+
+    it("grava actual_situation/internal_status ANTES de qualquer etapa de enriquecimento, mesmo se uma delas falhar depois (ex.: updateCustomer)", async () => {
+      orderData.situacao = { id: 9, valor: 0 };
+      mockBlingCustomerServiceInstance.updateCustomer.mockRejectedValue(
+        new Error("Falha simulada ao atualizar contato"),
+      );
+
+      await expect(
+        service.updateOrderFromBling({ data: { id: orderData.id } } as any),
+      ).rejects.toThrow("Falha simulada ao atualizar contato");
+
+      const calls = (ordersService.update as jest.Mock).mock.calls;
+      expect(calls[0]).toEqual([
+        "order-uuid-1",
+        {
+          actual_situation: "9",
+          internal_status: OrderInternalStatus.EMITTED,
+        },
+      ]);
+    });
+
     it.each([834029, 834030])(
       "situacao.id=%i (SENT_TO_TRANSPORTER/DELIVERED) grava nfe_emitted=true",
       async (situacaoId) => {
@@ -273,6 +324,45 @@ describe("BlingOrderService", () => {
     });
   });
 
+  describe("updateOrderFromBling — collection_date (dataPrevista)", () => {
+    it("dataPrevista preenchida: grava collection_date em meia-noite BRT", async () => {
+      orderData.dataPrevista = "2026-08-20";
+
+      await service.updateOrderFromBling({
+        data: { id: orderData.id },
+      } as any);
+
+      expect(lastUpdateFields()).toEqual(
+        expect.objectContaining({
+          collection_date: startOfDayTz("2026-08-20").toDate(),
+        }),
+      );
+    });
+
+    it("dataPrevista vazia: NÃO inclui collection_date no payload de update, preservando o valor já gravado", async () => {
+      orderData.dataPrevista = "";
+      (ordersService.findOne as jest.Mock).mockResolvedValue(
+        makeExistingOrder({ collection_date: new Date("2026-08-15T00:00:00-03:00") }),
+      );
+
+      await service.updateOrderFromBling({
+        data: { id: orderData.id },
+      } as any);
+
+      expect(lastUpdateFields()).not.toHaveProperty("collection_date");
+    });
+
+    it("dataPrevista ausente do payload: NÃO inclui collection_date no update", async () => {
+      delete orderData.dataPrevista;
+
+      await service.updateOrderFromBling({
+        data: { id: orderData.id },
+      } as any);
+
+      expect(lastUpdateFields()).not.toHaveProperty("collection_date");
+    });
+  });
+
   describe("createOrderFromBling", () => {
     it("delega para updateOrderFromBling quando o pedido já existe (não duplica create)", async () => {
       (ordersService.findOne as jest.Mock).mockResolvedValue(makeExistingOrder());
@@ -302,6 +392,32 @@ describe("BlingOrderService", () => {
           nfe_emitted: true,
         }),
       );
+    });
+
+    it("dataPrevista preenchida: grava collection_date já na criação", async () => {
+      (ordersService.findOne as jest.Mock).mockResolvedValue(null);
+      (UnitBusiness.findOne as jest.Mock).mockResolvedValue({ id: "ub-1" });
+      orderData.dataPrevista = "2026-09-01";
+
+      await service.createOrderFromBling({ data: { id: orderData.id } } as any);
+
+      const createdPayload = (ordersService.create as jest.Mock).mock.calls[0][0];
+      expect(createdPayload).toEqual(
+        expect.objectContaining({
+          collection_date: startOfDayTz("2026-09-01").toDate(),
+        }),
+      );
+    });
+
+    it("dataPrevista ausente: não inclui collection_date na criação", async () => {
+      (ordersService.findOne as jest.Mock).mockResolvedValue(null);
+      (UnitBusiness.findOne as jest.Mock).mockResolvedValue({ id: "ub-1" });
+      delete orderData.dataPrevista;
+
+      await service.createOrderFromBling({ data: { id: orderData.id } } as any);
+
+      const createdPayload = (ordersService.create as jest.Mock).mock.calls[0][0];
+      expect(createdPayload).not.toHaveProperty("collection_date");
     });
   });
 });
