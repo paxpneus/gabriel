@@ -197,11 +197,29 @@ describe("CNPJQueue", () => {
     );
     expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
       internal_status: "WAITING CHANNEL VALIDATION",
+      actual_situation: "748743",
     });
     expect(nextFake.add).toHaveBeenCalledWith(
       { orderSystem, customer: { document: "54882915634", type: "F" } },
       `ml-check-${orderSystem.id}`,
     );
+  });
+
+  it("cliente CPF: Bling rejeita o PATCH pra 748743 (400) — não avança localmente nem encaminha", async () => {
+    (fakeBlingApi.patch as jest.Mock).mockRejectedValueOnce({
+      response: { status: 400, data: { error: "invalid transition" } },
+    });
+
+    await queue.process(
+      makeJob({
+        customer: { document: "54882915634", type: "F" },
+        cnaes: [],
+        orderSystem,
+      }),
+    );
+
+    expect(ordersService.update).not.toHaveBeenCalled();
+    expect(nextFake.add).not.toHaveBeenCalled();
   });
 
   it("cliente CNPJ com CNAE fora da lista de bloqueio (checkCNAE=false): segue para a próxima fila", async () => {
@@ -217,6 +235,7 @@ describe("CNPJQueue", () => {
     );
     expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
       internal_status: "WAITING CHANNEL VALIDATION",
+      actual_situation: "748743",
     });
     expect(nextFake.add).toHaveBeenCalledWith(
       { orderSystem, customer },

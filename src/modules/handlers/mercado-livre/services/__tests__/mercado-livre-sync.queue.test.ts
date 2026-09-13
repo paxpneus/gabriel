@@ -75,15 +75,15 @@ import { MLOrderSyncQueue } from "../mercado-livre-sync.queue";
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 // Marca o pedido como elegível (ou não) para os guards isEligibleForSync,
-// que revalidam internal_status + source_payload.situacao.id via findById.
+// que revalidam internal_status + actual_situation via findById.
 function mockEligible(eligible: boolean) {
   (ordersService.findById as jest.Mock).mockResolvedValue(
     eligible
       ? {
           internal_status: "WAITING CHANNEL VALIDATION",
-          source_payload: { situacao: { id: "748743" } },
+          actual_situation: "748743",
         }
-      : { internal_status: "OPEN", source_payload: { situacao: { id: "6" } } },
+      : { internal_status: "OPEN", actual_situation: "6" },
   );
 }
 
