@@ -25,6 +25,8 @@ import { blingGet } from "../bling/helpers/get-with-sleep";
 import productService from "../../../../inventory/products/services/product.service";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
+import { CollectionDateSchedulerService } from "../bling-nfe/collection-date/collection-date-scheduler.service";
+import { MarketPlaceLabelStatus, FullOrder } from "../../../../sales/orders/order/orders.types";
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
@@ -46,66 +48,20 @@ function reasonCancelledFields(situacaoId: unknown) {
     : {};
 }
 
-// A Bling às vezes manda dataPrevista preenchida mas com o sentinel de
-// "data zero" do MySQL ("0000-00-00", com ou sem hora) em vez de vir vazia
-// — convenção de coluna NOT NULL sem valor real definido. Checado por regex
-// ANTES de tentar parsear: passar "0000-00-00" pro dayjs.tz cai no ano 0000
-// e, por causa do offset histórico (pré-1914) de America/Sao_Paulo na base
-// IANA (-03:06:28, hora solar média local, não um -03:00 redondo), o
-// resultado é um Date por volta de novembro de 1899 — confirmado batendo
-// exatamente com um caso de produção. Curto-circuita esse parse frágil
-// (o minuto exato varia por versão do ICU) em vez de depender dele pra
-// cair no filtro genérico de ano abaixo.
-const MYSQL_ZERO_DATE_REGEX = /^0000-00-00/;
-
-// Rede de segurança genérica pra qualquer OUTRA data implausível que chegue
-// preenchida (não só o sentinel MySQL acima) — um pedido real nunca tem
-// coleta prevista antes disso. Sem essa checagem, uma data desse tipo virava
-// um delay negativo em setDelayBasedOnDate → NFe agendada pra ~30s (o piso
-// MIN_DELAY_MS de finalizeNfeScheduling), ou seja, emissão praticamente
-// imediata em vez de esperar a coleta de verdade.
-const MIN_PLAUSIBLE_COLLECTION_YEAR = 2000;
-
-// Só inclui a chave collection_date quando a Bling manda dataPrevista
-// preenchida e plausível — omitida (nunca null, e nunca um valor chutado)
-// quando vier vazia, zerada ou implausível. Isso faz o pedido cair
-// exatamente no mesmo fluxo de "sem collection_date" de quando a Bling não
-// manda nada: MLOrderSyncQueue marca WAITING_CHANNEL_VALIDATION e dispara o
-// scraping do ML pra buscar a data real, em vez de aceitar um valor
-// inventado — e também não apaga um collection_date já resolvido antes por
-// scraping/ML_ORDER_SYNC.
-function collectionDateFromBling(dataPrevista: string | undefined | null) {
-  if (!dataPrevista) return {};
-
-  const trimmed = dataPrevista.trim();
-
-  if (MYSQL_ZERO_DATE_REGEX.test(trimmed)) {
-    console.warn(
-      `[BlingOrderService] dataPrevista "zerada" (sentinel MySQL) ignorada: "${dataPrevista}"`,
-    );
-    return {};
-  }
-
-  const parsed = startOfDayTz(trimmed);
-  if (!parsed.isValid() || parsed.year() < MIN_PLAUSIBLE_COLLECTION_YEAR) {
-    console.warn(
-      `[BlingOrderService] dataPrevista implausível ignorada: "${dataPrevista}"`,
-    );
-    return {};
-  }
-
-  return { collection_date: parsed.toDate() };
-}
-
 export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService;
   private storeService: StoreService;
+  private collectionDateScheduler: CollectionDateSchedulerService;
 
-  constructor(blingApi: AxiosInstance) {
+  constructor(
+    blingApi: AxiosInstance,
+    collectionDateScheduler: CollectionDateSchedulerService,
+  ) {
     this.blingApi = blingApi;
     this.blingCustomerService = new BlingCustomerService(blingApi);
     this.storeService = new StoreService();
+    this.collectionDateScheduler = collectionDateScheduler;
   }
 
   async processWebhook(
@@ -814,10 +770,23 @@ export class BlingOrderService {
         total_cost: orderFinancials.total_cost,
         ...(sellerId ? { seller_id: sellerId } : {}),
         ...orderFiscalFieldsToUpdate,
-        ...collectionDateFromBling(orderData.dataPrevista),
       };
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
+
+      // Grava/reconcilia collection_date a partir de dataPrevista — sem
+      // consultar o marketplace (isso é feito por ML_ORDER_SYNC, logo em
+      // seguida no pipeline). Já roda dentro do withOrderLock do pedido
+      // (BlingOrderQueue.process envolve toda a cadeia), então usa a
+      // variante Locked — a pública (syncCollectionDate) tentaria pegar o
+      // lock de novo e travaria (não é reentrante).
+      if (orderData.dataPrevista) {
+        await this.collectionDateScheduler.syncCollectionDateLocked(
+          existingOrder.id_order_system!,
+          startOfDayTz(orderData.dataPrevista).toDate(),
+          { ...existingOrder.dataValues, ...orderUpdateFields } as unknown as FullOrder,
+        );
+      }
 
       // ─── NOVO: acumula os itens sincronizados pra devolver no orderSystem ────
       const syncedItems: any[] = [];
@@ -1069,7 +1038,14 @@ export class BlingOrderService {
         ...(sellerId ? { seller_id: sellerId } : {}),
         ...fiscalFields,
         ...orderFinancials,
-        ...collectionDateFromBling(orderData.dataPrevista),
+        // Único ponto de inicialização de market_place_label_status — nunca
+        // reinicializado num update (arriscaria sobrescrever um valor que
+        // ML_ORDER_SYNC/webhook/reconciler já gravaram). Placeholder,
+        // substituído pelo valor real assim que ML_ORDER_SYNC rodar pela
+        // primeira vez pra este pedido.
+        market_place_label_status: integration.allowed_channels?.includes(store?.name ?? "")
+          ? MarketPlaceLabelStatus.WAITING_FOR_SYSTEM_NFE
+          : MarketPlaceLabelStatus.UNKNOWN,
       };
 
       const createdOrder = await ordersService.create(ordersPayload);
@@ -1081,6 +1057,21 @@ export class BlingOrderService {
         }));
 
       const createdItems = await orderItemsService.bulkCreate(itemsPayload);
+
+      // Grava/reconcilia collection_date a partir de dataPrevista — sem
+      // consultar o marketplace (isso é feito por ML_ORDER_SYNC, logo em
+      // seguida no pipeline). Já roda dentro do withOrderLock do pedido
+      // (BlingOrderQueue.process envolve toda a cadeia), então usa a
+      // variante Locked. internal_status ainda é OPEN neste ponto
+      // (CNPJ_VERIFY_CNAE não rodou) — seguro por construção, ver a nota de
+      // segurança em CollectionDateSchedulerService.scheduleNfe.
+      if (orderData.dataPrevista) {
+        await this.collectionDateScheduler.syncCollectionDateLocked(
+          createdOrder.id_order_system!,
+          startOfDayTz(orderData.dataPrevista).toDate(),
+          createdOrder.dataValues as unknown as FullOrder,
+        );
+      }
 
       if (!integration.allowed_channels?.includes(store?.name ?? "")) {
         console.log(

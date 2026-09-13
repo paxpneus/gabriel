@@ -1,7 +1,6 @@
 import { Job } from "bullmq";
 import { BaseQueueService } from "../../../../../shared/utils/base-models/base-queue-service";
 import { AxiosInstance } from "axios";
-import BlingOrderService from "../bling-orders/bling-order.service";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import ordersService from "../../../../sales/orders/order/orders.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
@@ -22,7 +21,6 @@ export class BlingReconcilerQueue extends BaseQueueService<
 > {
   private blingApi: AxiosInstance;
   private blingOrderNext: { add: (data: any, jobId: string) => Promise<any> };
-  private blingOrderService: BlingOrderService;
   private blingOrderIngestionCheck: HasPendingJobs;
   private cnpjCheck: HasPendingJobs;
   private mlOrderSyncCheck: HasPendingJobs;
@@ -44,7 +42,6 @@ export class BlingReconcilerQueue extends BaseQueueService<
     });
     this.blingApi = blingApi;
     this.blingOrderNext = blingOrderNext;
-    this.blingOrderService = new BlingOrderService(blingApi);
     this.blingOrderIngestionCheck = automationQueueChecks.blingOrderIngestion;
     this.cnpjCheck = automationQueueChecks.cnpjVerifyCnae;
     this.mlOrderSyncCheck = automationQueueChecks.mlOrderSync;

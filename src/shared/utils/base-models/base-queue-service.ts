@@ -54,6 +54,82 @@ type SharedLockPriorityTicket = {
   timestamp: number;
 };
 
+// Lock por ENTIDADE (ex: um pedido), extraído de BaseQueueService.withOrderLock
+// pra poder ser usado também por um serviço plain (não uma fila) —
+// CollectionDateSchedulerService precisa do mesmo mutex sem precisar
+// existir como uma BaseQueueService (o que criaria uma Queue Redis nunca
+// usada só pra herdar este método). `label` é só pro token/mensagem de erro
+// (debug) — a chave do lock em si (`locks:bling:order:${orderKey}`) é fixa
+// e global, então qualquer chamador (fila ou serviço plain) disputa
+// corretamente pelo mesmo mutex do mesmo pedido.
+export async function withOrderLock<R>(
+  label: string,
+  orderKey: string | number,
+  fn: () => Promise<R>,
+  options?: { ttlMs?: number; retryDelayMs?: number; maxWaitMs?: number },
+): Promise<R> {
+  const key = `locks:bling:order:${orderKey}`;
+  const ttlMs = options?.ttlMs ?? 2 * 60 * 1000;
+  const retryDelayMs = options?.retryDelayMs ?? 300;
+  const maxWaitMs = options?.maxWaitMs ?? 2 * 60 * 1000;
+  const token = `${label}:order:${orderKey}:${randomUUID()}`;
+  const startedAt = Date.now();
+
+  while (true) {
+    const acquired = await redisConnection.set(key, token, "PX", ttlMs, "NX");
+    if (acquired === "OK") break;
+
+    if (Date.now() - startedAt > maxWaitMs) {
+      throw new Error(
+        `[QUEUE] Timeout aguardando lock do pedido "${orderKey}" (${label}) — outra fila deve estar processando o mesmo pedido.`,
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+  }
+
+  const refreshMs = Math.max(1000, Math.floor(ttlMs / 3));
+  const refreshInterval = setInterval(() => {
+    refreshLock(key, token, ttlMs).catch(() => {});
+  }, refreshMs);
+
+  try {
+    return await fn();
+  } finally {
+    clearInterval(refreshInterval);
+    await releaseLock(key, token).catch(() => {});
+  }
+}
+
+async function refreshLock(key: string, token: string, ttlMs: number): Promise<void> {
+  await redisConnection.eval(
+    `
+    if redis.call("GET", KEYS[1]) == ARGV[1] then
+      return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+    end
+    return 0
+    `,
+    1,
+    key,
+    token,
+    String(ttlMs),
+  );
+}
+
+async function releaseLock(key: string, token: string): Promise<void> {
+  await redisConnection.eval(
+    `
+    if redis.call("GET", KEYS[1]) == ARGV[1] then
+      return redis.call("DEL", KEYS[1])
+    end
+    return 0
+    `,
+    1,
+    key,
+    token,
+  );
+}
+
 export abstract class BaseQueueService<T> {
   public queue: Queue;
   protected worker: Worker | undefined;
@@ -369,37 +445,7 @@ export abstract class BaseQueueService<T> {
     fn: () => Promise<R>,
     options?: { ttlMs?: number; retryDelayMs?: number; maxWaitMs?: number },
   ): Promise<R> {
-    const key = `locks:bling:order:${orderKey}`;
-    const ttlMs = options?.ttlMs ?? 2 * 60 * 1000;
-    const retryDelayMs = options?.retryDelayMs ?? 300;
-    const maxWaitMs = options?.maxWaitMs ?? 2 * 60 * 1000;
-    const token = `${this.queueName}:order:${orderKey}:${randomUUID()}`;
-    const startedAt = Date.now();
-
-    while (true) {
-      const acquired = await redisConnection.set(key, token, "PX", ttlMs, "NX");
-      if (acquired === "OK") break;
-
-      if (Date.now() - startedAt > maxWaitMs) {
-        throw new Error(
-          `[QUEUE] Timeout aguardando lock do pedido "${orderKey}" (fila ${this.queueName}) — outra fila deve estar processando o mesmo pedido.`,
-        );
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-    }
-
-    const refreshMs = Math.max(1000, Math.floor(ttlMs / 3));
-    const refreshInterval = setInterval(() => {
-      this.refreshSharedLock(key, token, ttlMs).catch(() => {});
-    }, refreshMs);
-
-    try {
-      return await fn();
-    } finally {
-      clearInterval(refreshInterval);
-      await this.releaseSharedLock(key, token).catch(() => {});
-    }
+    return withOrderLock(`fila ${this.queueName}`, orderKey, fn, options);
   }
 
   async hasPendingJobs(): Promise<boolean> {

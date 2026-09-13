@@ -14,14 +14,15 @@ import CNPJService from "../modules/handlers/cnpj/services/cnpj.service";
 
 import { NFeQueue } from "./../modules/handlers/bling/services/bling-nfe/nfe.queue";
 import { NFeValidationService } from "./../modules/handlers/bling/services/bling-nfe/nfe-validation.service";
+import { CollectionDateSchedulerService } from "../modules/handlers/bling/services/bling-nfe/collection-date/collection-date-scheduler.service";
 
-import { MLScrapingQueue } from "../modules/handlers/mercado-livre/services/mercado-livre.scraping.queue";
-import { MLScrapingService } from "../modules/handlers/mercado-livre/services/mercado-livre-scraping.service";
-import { MLOrderService } from "../modules/handlers/mercado-livre/services/mercado-livre.service";
 import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mercado-livre-sync.queue";
 
 import { ReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
 import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-orders/bling-reconciler.queue";
+
+import { MarketplaceWebhookSyncQueue } from "../modules/handlers/marketplace/queues/marketplace-webhook-sync.queue";
+import { MarketplaceReconcilerQueue } from "../modules/handlers/marketplace/queues/marketplace-reconciler.queue";
 
 import { BlingDirectUpsertQueue } from "./../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue";
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
@@ -49,7 +50,8 @@ export const serverAdapter = new ExpressAdapter();
 export type QueueName =
   | "NFE_EMISSION"
   | "ML_ORDER_SYNC"
-  | "ML_SCRAPING"
+  | "MARKETPLACE_WEBHOOK_SYNC"
+  | "MARKETPLACE_RECONCILER"
   | "CNPJ_VERIFY_CNAE"
   | "BLING_ORDER_INGESTION"
   | "NFE_RECONCILER"
@@ -73,8 +75,6 @@ function buildQueues(activeWorkers: QueueName[]) {
   const active = new Set<QueueName>(activeWorkers);
   const w = (name: QueueName) => !active.has(name); // workless = true se NÃO estiver na lista
 
-  const blingOrderService = new BlingOrderService(blingApi);
-
   const nfeQueue = new NFeQueue(new NFeValidationService(), blingApi, {
     workless: w("NFE_EMISSION"),
   });
@@ -86,31 +86,18 @@ function buildQueues(activeWorkers: QueueName[]) {
     getJob: (jobId: string) => nfeQueue.getJob(jobId),
   };
 
-  // Cliente (workless) da fila ML-SCRAPING — o Worker real só existe no
-  // container startScrapingWorker(); esta instância aqui só serve pra
-  // MLOrderSyncQueue/ReconcilerQueue disparar/consultar jobs pela mesma
-  // fila compartilhada no Redis (scraping sob demanda). Predeclarado como
-  // `let` por causa da referência circular: MLScrapingQueue precisa de um
-  // `next` apontando pra mlOrderSyncQueue.add, e MLOrderSyncQueue precisa
-  // de um `scrapingNext` apontando pra mlScrapingQueue.add — as closures
-  // abaixo só capturam a variável (resolvida no momento da chamada, não da
-  // definição), então é seguro contanto que nada invoque `.add()` durante
-  // a própria construção, o que não acontece aqui.
-  let mlScrapingQueue!: MLScrapingQueue;
+  // Ponto único de gravação/reconciliação de collection_date + agendamento
+  // de emissão de NFe — consumido por BlingOrderService (grava direto a
+  // partir de dataPrevista, sem consultar o marketplace), MLOrderSyncQueue,
+  // MarketplaceWebhookSyncQueue e MarketplaceReconcilerQueue (esses três
+  // confirmam contra a API do marketplace antes de chamar).
+  const collectionDateScheduler = new CollectionDateSchedulerService(blingApi, nfeNext);
 
-  const mlOrderSyncQueue = new MLOrderSyncQueue(
-    nfeNext,
-    blingApi,
-    { add: (data: any, jobId: string) => mlScrapingQueue.add(data, jobId) },
-    { workless: w("ML_ORDER_SYNC") },
-  );
+  const blingOrderService = new BlingOrderService(blingApi, collectionDateScheduler);
 
-  mlScrapingQueue = new MLScrapingQueue(
-    new MLScrapingService(),
-    new MLOrderService(),
-    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
-    { workless: true },
-  );
+  const mlOrderSyncQueue = new MLOrderSyncQueue(collectionDateScheduler, {
+    workless: w("ML_ORDER_SYNC"),
+  });
 
   const cnpjQueue = new CNPJQueue(
     new CNPJService(),
@@ -134,9 +121,6 @@ function buildQueues(activeWorkers: QueueName[]) {
     cnpjNext,
     nfeNext,
     blingApi,
-    { waitUntilIdle: (maxWaitMs: number) => mlOrderSyncQueue.waitUntilIdle(maxWaitMs) },
-    { add: (data: any, jobId: string) => mlScrapingQueue.add(data, jobId) },
-    { waitUntilIdle: (maxWaitMs: number) => mlScrapingQueue.waitUntilIdle(maxWaitMs) },
     { hasPendingJobs: () => blingOrderQueue.hasPendingJobs() },
     { hasPendingJobs: () => cnpjQueue.hasPendingJobs() },
     { hasPendingJobs: () => mlOrderSyncQueue.hasPendingJobs() },
@@ -152,6 +136,16 @@ function buildQueues(activeWorkers: QueueName[]) {
       mlOrderSync: { hasPendingJobs: () => mlOrderSyncQueue.hasPendingJobs() },
     },
     { workless: w("BLING_RECONCILER") },
+  );
+
+  const marketplaceWebhookSyncQueue = new MarketplaceWebhookSyncQueue(
+    collectionDateScheduler,
+    { workless: w("MARKETPLACE_WEBHOOK_SYNC") },
+  );
+
+  const marketplaceReconcilerQueue = new MarketplaceReconcilerQueue(
+    collectionDateScheduler,
+    { workless: w("MARKETPLACE_RECONCILER") },
   );
 
   const blingDirectUpsertQueue = new BlingDirectUpsertQueue({
@@ -199,11 +193,13 @@ function buildQueues(activeWorkers: QueueName[]) {
   return {
     nfeQueue,
     mlOrderSyncQueue,
-    mlScrapingQueue,
     cnpjQueue,
     blingOrderQueue,
     reconcilerQueue,
     blingReconcilerQueue,
+    marketplaceWebhookSyncQueue,
+    marketplaceReconcilerQueue,
+    collectionDateScheduler,
     blingDirectUpsertQueue,
     blingApiFetchQueue,
     blingTokenRefreshQueue,
@@ -228,6 +224,9 @@ export function registerQueues(app: Express) {
     cnpjQueue,
     reconcilerQueue,
     blingReconcilerQueue,
+    marketplaceWebhookSyncQueue,
+    marketplaceReconcilerQueue,
+    collectionDateScheduler,
     blingDirectUpsertQueue,
     blingApiFetchQueue,
     blingTokenRefreshQueue,
@@ -244,15 +243,8 @@ export function registerQueues(app: Express) {
   } = buildQueues([]);
 
   const blingOrderQueue = new BlingOrderQueue(
-    new BlingOrderService(blingApi),
+    new BlingOrderService(blingApi, collectionDateScheduler),
     { add: async () => {} },
-    { workless: true },
-  );
-
-  const mlScrapingQueue = new MLScrapingQueue(
-    new MLScrapingService(),
-    new MLOrderService(),
-    { add: (data, jobId) => mlOrderSyncQueue.add(data, jobId) },
     { workless: true },
   );
 
@@ -260,6 +252,7 @@ export function registerQueues(app: Express) {
   app.locals.CNPJQueue = cnpjQueue;
   app.locals.NfeQueue = nfeQueue;
   app.locals.MLOrderSyncQueue = mlOrderSyncQueue;
+  app.locals.MarketplaceWebhookSyncQueue = marketplaceWebhookSyncQueue;
   app.locals.BlingDirectUpsertQueue = blingDirectUpsertQueue;
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
@@ -282,7 +275,8 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(cnpjQueue.queue),
       new BullMQAdapter(blingOrderQueue.queue),
       new BullMQAdapter(blingReconcilerQueue.queue),
-      new BullMQAdapter(mlScrapingQueue.queue),
+      new BullMQAdapter(marketplaceWebhookSyncQueue.queue),
+      new BullMQAdapter(marketplaceReconcilerQueue.queue),
       new BullMQAdapter(blingDirectUpsertQueue.queue),
       new BullMQAdapter(blingApiFetchQueue.queue),
       new BullMQAdapter(blingTokenRefreshQueue.queue),
@@ -305,6 +299,7 @@ export function registerQueues(app: Express) {
   queueMonitorService.registerFromLocals(app.locals, {
     NfeQueue: "NFE_EMISSION",
     MLOrderSyncQueue: "ML_ORDER_SYNC",
+    MarketplaceWebhookSyncQueue: "MARKETPLACE_WEBHOOK_SYNC",
     CNPJQueue: "CNPJ_VERIFY_CNAE",
     BlingOrderQueue: "BLING_ORDER_INGESTION",
     BlingDirectUpsertQueue: "BLING_DIRECT_UPSERT",
@@ -362,16 +357,19 @@ export function startAutomationWorkers() {
   const {
     nfeQueue,
     mlOrderSyncQueue,
-    mlScrapingQueue,
     cnpjQueue,
     reconcilerQueue,
     blingReconcilerQueue,
+    marketplaceWebhookSyncQueue,
+    marketplaceReconcilerQueue,
   } = buildQueues([
     "NFE_EMISSION",
     "ML_ORDER_SYNC",
     "CNPJ_VERIFY_CNAE",
     "NFE_RECONCILER",
     "BLING_RECONCILER",
+    "MARKETPLACE_WEBHOOK_SYNC",
+    "MARKETPLACE_RECONCILER",
   ]);
 
   reconcilerQueue.scheduleRepeat({ every: 15 * 60 * 1000 });
@@ -388,12 +386,24 @@ export function startAutomationWorkers() {
     data: { task: "sync-invoiced-or-collected" },
   });
 
+  marketplaceReconcilerQueue.scheduleRepeat({
+    every: 60 * 60 * 1000,
+    jobId: "marketplace-reconciler-collection-date",
+    data: { task: "collection_date" },
+  });
+
+  marketplaceReconcilerQueue.scheduleRepeat({
+    every: 5 * 60 * 1000,
+    jobId: "marketplace-reconciler-label-status",
+    data: { task: "label_status" },
+  });
+
   void nfeQueue;
   void mlOrderSyncQueue;
-  void mlScrapingQueue;
   void cnpjQueue;
   void reconcilerQueue;
   void blingReconcilerQueue;
+  void marketplaceWebhookSyncQueue;
 
   console.log(
     "------------------- QUEUE: Automation Workers Ativos! -------------------",
@@ -401,6 +411,8 @@ export function startAutomationWorkers() {
   console.log("  → BLING_ORDER_INGESTION");
   console.log("  → CNPJ_VERIFY_CNAE");
   console.log("  → ML_ORDER_SYNC");
+  console.log("  → MARKETPLACE_WEBHOOK_SYNC");
+  console.log("  → MARKETPLACE_RECONCILER (1h/5min)");
   console.log("  → NFE_EMISSION");
   console.log("  → NFE_RECONCILER (1h)");
   console.log("  → BLING_RECONCILER (2h)");
@@ -465,22 +477,10 @@ export function startTecincoWorkers() {
 
 // ─── container: worker-scraping ───────────────────────────────────────────────
 export function startScrapingWorker() {
-  const { mlOrderSyncQueue, blingStockMovementsScrapingQueue } = buildQueues([
+  const { blingStockMovementsScrapingQueue } = buildQueues([
     "BLING_STOCK_MOVEMENTS_SCRAPING",
     "BLING_NFE_SCRAPING",
   ]);
-
-  // Sem cron fixo — este Worker (o único com processamento real: download
-  // do Excel via Playwright) só roda quando um job "ml-scraping-on-demand"
-  // chega pelo Redis, disparado por MLOrderSyncQueue (pedido sem
-  // collection_date) ou por ReconcilerQueue.reconcileMissingCollectionDate
-  // (rede de segurança), ambos rodando no container startAutomationWorkers.
-  const mlScrapingQueue = new MLScrapingQueue(
-    new MLScrapingService(),
-    new MLOrderService(),
-    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
-    { workless: false },
-  );
 
   const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
     new BlingManifestacaoService(),
@@ -494,7 +494,6 @@ export function startScrapingWorker() {
     jobId: "bling-stock-movements-daily",
   });
 
-  void mlScrapingQueue;
   void blingNfeScrapingQueue;
   void blingStockMovementsScrapingQueue;
 
@@ -502,5 +501,5 @@ export function startScrapingWorker() {
     "------------------- QUEUE: Scraping Worker Ativo! -------------------",
   );
   console.log("  → BLING_STOCK_MOVEMENTS_SCRAPING (05:00 BRT)");
-  console.log("  → ML-SCRAPING (sob demanda, sem cron)");
+  console.log("  → BLING_NFE_SCRAPING (3h)");
 }

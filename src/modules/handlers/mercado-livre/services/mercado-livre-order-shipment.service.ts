@@ -8,6 +8,7 @@ import {
   MarketplaceOrderResult,
   MarketplaceShipmentResult,
 } from "../../marketplace/helpers/mappers/map-marketplace-api.types";
+import { mapMercadoLivreLabelStatus } from "../helpers/map-label-status";
 
 const fetchOrder = async (
   numberOrderChannel: string,
@@ -38,18 +39,16 @@ const fetchShipment = async (
   return data;
 };
 
-// NOTE (Etapa 1): o enum MarketPlaceLabelStatus só existe a partir da
-// migration da Etapa 2 (orders.market_place_label_status) — até lá, esta
-// função devolve um placeholder textual sem valor operacional. A Etapa 2
-// atualiza este mapeamento pra chamar mapMercadoLivreLabelStatus e devolver
-// o enum de verdade.
 const mapShipmentResponse = (
   response: MercadoLivreShipmentResponse,
 ): MarketplaceShipmentResult => ({
   collectionDate: response?.lead_time?.estimated_handling_limit?.date
     ? new Date(response.lead_time.estimated_handling_limit.date)
     : null,
-  labelStatus: response?.status ?? "UNKNOWN",
+  labelStatus: mapMercadoLivreLabelStatus(
+    response?.status ?? null,
+    response?.substatus ?? null,
+  ),
 });
 
 // TODO (Etapa 1 — validar contra API real, ver pergunta em aberto #5 do

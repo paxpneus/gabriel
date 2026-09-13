@@ -1,6 +1,5 @@
 import { Job } from "bullmq";
-import { AxiosInstance } from "axios";
-import { OrderInternalStatus } from "../../../../sales/orders/order/orders.types";
+import { OrderInternalStatus, MarketPlaceLabelStatus } from "../../../../sales/orders/order/orders.types";
 
 // ─── Mocks de infraestrutura (Redis/BullMQ) — MLOrderSyncQueue extends
 // BaseQueueService, que cria Queue/QueueEvents reais no construtor mesmo com
@@ -38,6 +37,11 @@ jest.mock("../../../../sales/orders/order/orders.service", () => ({
   default: { findById: jest.fn(), update: jest.fn() },
 }));
 
+jest.mock("../../../../sales/stores/stores.service", () => ({
+  __esModule: true,
+  default: { findById: jest.fn() },
+}));
+
 // redisConnection abaixo é o que withOrderLock (base-queue-service.ts) usa
 // pro lock por pedido — precisa resolver "OK" no set pra não ficar girando
 // em loop de retry até estourar o timeout do teste.
@@ -56,9 +60,20 @@ jest.mock("../../../../../shared/utils/base-models/base-redis", () => ({
   },
 }));
 
-jest.mock("../../../../integrations/integrations/integrations.service", () => ({
+jest.mock(
+  "../../../bling/services/bling-nfe/collection-date/collection-date-scheduler.service",
+  () => ({
+    __esModule: true,
+    isEligibleForSync: jest.fn(),
+    // Só usado como tipo pelo MLOrderSyncQueue — nunca instanciado
+    // diretamente aqui (o teste injeta um fake via construtor).
+    CollectionDateSchedulerService: jest.fn(),
+  }),
+);
+
+jest.mock("../../../marketplace/services/marketplace-order-shipment.service", () => ({
   __esModule: true,
-  default: { getFullIntegration: jest.fn() },
+  getMarketplaceCollectionAndLabelStatusWithRetry: jest.fn(),
 }));
 
 jest.mock("../../../../../shared/providers/mail-provider/nodemailer.alert", () => ({
@@ -67,9 +82,10 @@ jest.mock("../../../../../shared/providers/mail-provider/nodemailer.alert", () =
 }));
 
 import ordersService from "../../../../sales/orders/order/orders.service";
-import redisService from "../../../../../shared/utils/base-models/base-redis";
-import integrationsService from "../../../../integrations/integrations/integrations.service";
+import storeService from "../../../../sales/stores/stores.service";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
+import { isEligibleForSync } from "../../../bling/services/bling-nfe/collection-date/collection-date-scheduler.service";
+import { getMarketplaceCollectionAndLabelStatusWithRetry } from "../../../marketplace/services/marketplace-order-shipment.service";
 import { MLOrderSyncQueue } from "../mercado-livre-sync.queue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -93,22 +109,12 @@ function makeOrder(overrides: Partial<any> = {}) {
     id_order_system: "26577371207",
     number_order_channel: "000000461_239",
     internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
-    collection_date: null,
+    collection_date: null as Date | null,
+    store_id: "store-1",
     createdAt: new Date("2026-01-01T00:00:00Z"),
     items: [{ sku: "10117005" }],
     ...overrides,
   };
-}
-
-function makeFakeBlingApi(): AxiosInstance {
-  // situacao: 748743 por padrão — finalizeNfeScheduling reconfere isso ao
-  // vivo antes do PATCH pra 748748 (ver seu comentário no código-fonte).
-  const get = jest.fn().mockResolvedValue({
-    data: { data: { observacoesInternas: "", situacao: { id: 748743 } } },
-  });
-  const put = jest.fn().mockResolvedValue({ data: {} });
-  const patch = jest.fn().mockResolvedValue({ data: {} });
-  return { get, post: jest.fn(), put, patch } as unknown as AxiosInstance;
 }
 
 function makeJob(data: any): Job<any> {
@@ -118,40 +124,32 @@ function makeJob(data: any): Job<any> {
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
 describe("MLOrderSyncQueue", () => {
-  let fakeBlingApi: AxiosInstance;
-  let nextFake: {
-    getJob: jest.Mock;
-    removeJob: jest.Mock;
-    addDelayed: jest.Mock;
+  let mockCollectionDateScheduler: {
+    syncCollectionDateLocked: jest.Mock;
+    finalizeNfeScheduling: jest.Mock;
   };
-  let scrapingNextFake: { add: jest.Mock };
   let queue: MLOrderSyncQueue;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
-    fakeBlingApi = makeFakeBlingApi();
-    nextFake = {
-      getJob: jest.fn().mockResolvedValue(undefined),
-      removeJob: jest.fn(),
-      addDelayed: jest.fn(),
+    mockCollectionDateScheduler = {
+      syncCollectionDateLocked: jest.fn().mockResolvedValue(undefined),
+      finalizeNfeScheduling: jest.fn().mockResolvedValue(undefined),
     };
-    scrapingNextFake = { add: jest.fn().mockResolvedValue(undefined) };
-    queue = new MLOrderSyncQueue(
-      nextFake as any,
-      fakeBlingApi,
-      scrapingNextFake as any,
-      { workless: true },
-    );
+    queue = new MLOrderSyncQueue(mockCollectionDateScheduler as any, { workless: true });
 
     (ordersService.update as jest.Mock).mockResolvedValue([1]);
-    (integrationsService.getFullIntegration as jest.Mock).mockResolvedValue({
-      lock_today_orders: false,
+    (isEligibleForSync as jest.Mock).mockResolvedValue(true);
+    (storeService.findById as jest.Mock).mockResolvedValue({ id: "store-1", name: "MercadoLivre" });
+    (getMarketplaceCollectionAndLabelStatusWithRetry as jest.Mock).mockResolvedValue({
+      collectionDate: new Date("2026-08-20"),
+      labelStatus: MarketPlaceLabelStatus.READY_TO_PRINT,
     });
   });
 
   describe("process — roteamento", () => {
-    it("orderSystem já CANCELLED: ignora sem tocar em nada", async () => {
+    it("orderSystem já CANCELLED: ignora sem consultar elegibilidade nem o marketplace", async () => {
       await queue.process(
         makeJob({
           orderSystem: { ...makeOrder(), internal_status: "CANCELLED" },
@@ -159,209 +157,101 @@ describe("MLOrderSyncQueue", () => {
         }),
       );
 
+      expect(isEligibleForSync).not.toHaveBeenCalled();
       expect(ordersService.update).not.toHaveBeenCalled();
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
     });
 
-    it("row do Excel sem cache disponível: loga MISS CACHE e não quebra", async () => {
-      (redisService.get as jest.Mock).mockResolvedValue(null);
-
+    it("orderSystem ausente: loga e não quebra", async () => {
       await expect(
-        queue.process(
-          makeJob({
-            row: {
-              order_number: "1",
-              sale_date: new Date(),
-              collection_date: new Date(),
-              sku: "x",
-              buyer: "fulano",
-            },
-          }),
-        ),
+        queue.process(makeJob({ orderSystem: null, customer: {} })),
       ).resolves.toBeUndefined();
 
-      expect(ordersService.update).not.toHaveBeenCalled();
+      expect(isEligibleForSync).not.toHaveBeenCalled();
     });
   });
 
-  describe("syncFromWebhook", () => {
-    it("elegível e com collection_date já preenchida (ex: vinda de dataPrevista): agenda NFe direto, sem disparar scraping", async () => {
-      mockEligible(true);
-      const orderSystem = makeOrder({ collection_date: new Date("2026-08-20") });
-
-      await queue.process(makeJob({ orderSystem, customer: {} }));
-
-      expect(fakeBlingApi.patch).toHaveBeenCalledWith(
-        `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748748`,
-        { id: 748748 },
-        { timeout: 20000 },
-      );
-      expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
-        internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
-      });
-      expect(scrapingNextFake.add).not.toHaveBeenCalled();
-    });
-
-    it("elegível e sem collection_date: marca WAITING_CHANNEL_VALIDATION e dispara scraping sob demanda", async () => {
-      mockEligible(true);
-      const orderSystem = makeOrder({ collection_date: null });
-
-      await queue.process(makeJob({ orderSystem, customer: {} }));
-
-      expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
-        internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
-      });
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
-      expect(scrapingNextFake.add).toHaveBeenCalledWith(
-        { triggered_by: "ml-order-sync" },
-        "ml-scraping-on-demand",
-      );
-    });
-
-    it("não elegível (internal_status/situacao já divergentes): ignora sem gravar nada", async () => {
-      mockEligible(false);
+  describe("syncFromWebhookLocked", () => {
+    it("não elegível (internal_status/situacao já divergentes): ignora sem consultar o marketplace", async () => {
+      (isEligibleForSync as jest.Mock).mockResolvedValue(false);
       const orderSystem = makeOrder();
 
       await queue.process(makeJob({ orderSystem, customer: {} }));
 
-      expect(ordersService.update).not.toHaveBeenCalled();
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("applyCollectionDate (via syncFromExcel)", () => {
-    function makeCachedOrders(order: any) {
-      return [
-        {
-          ...order,
-          date: new Date("2026-08-11"),
-          customer: { name: "Daniel Campos Paiva" },
-        },
-      ];
-    }
-
-    function makeRow(overrides: Partial<any> = {}) {
-      return {
-        order_number: "000000461_239",
-        sale_date: new Date("2026-08-11"),
-        collection_date: new Date("2026-08-12"),
-        sku: "10117005",
-        buyer: "Daniel Campos Paiva",
-        ...overrides,
-      };
-    }
-
-    it("pedido já com processo completo: ignora o scraping sem tocar no banco", async () => {
-      const order = makeOrder({ internal_status: OrderInternalStatus.EMITTED });
-      (redisService.get as jest.Mock).mockResolvedValue(makeCachedOrders(order));
-
-      await queue.process(makeJob({ row: makeRow() }));
-
+      expect(getMarketplaceCollectionAndLabelStatusWithRetry).not.toHaveBeenCalled();
       expect(ordersService.update).not.toHaveBeenCalled();
     });
 
-    it("SKU do Excel não bate com nenhum item do pedido: dispara alerta MEDIUM e não atualiza", async () => {
-      mockEligible(true);
-      const order = makeOrder({ items: [{ sku: "outro-sku" }] });
-      (redisService.get as jest.Mock).mockResolvedValue(makeCachedOrders(order));
+    it("pedido sem store_id: alerta LOW e não consulta o marketplace", async () => {
+      const orderSystem = makeOrder({ store_id: null });
 
-      await queue.process(makeJob({ row: makeRow() }));
+      await queue.process(makeJob({ orderSystem, customer: {} }));
 
       expect(alertService.sendAlert).toHaveBeenCalledWith(
-        expect.objectContaining({ severity: "LOW", title: "ML Sync — SKU sem match" }),
+        expect.objectContaining({ severity: "LOW", title: "ML Sync — pedido sem store" }),
       );
+      expect(getMarketplaceCollectionAndLabelStatusWithRetry).not.toHaveBeenCalled();
+    });
+
+    it("marketplace responde com sucesso e collectionDate: grava label status e aciona o CollectionDateScheduler", async () => {
+      const orderSystem = makeOrder();
+
+      await queue.process(makeJob({ orderSystem, customer: {} }));
+
+      expect(storeService.findById).toHaveBeenCalledWith("store-1", { attributes: ["name"] });
+      expect(getMarketplaceCollectionAndLabelStatusWithRetry).toHaveBeenCalledWith(
+        "MercadoLivre",
+        orderSystem.number_order_channel,
+      );
+      expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
+        market_place_label_status: MarketPlaceLabelStatus.READY_TO_PRINT,
+      });
+      expect(mockCollectionDateScheduler.syncCollectionDateLocked).toHaveBeenCalledWith(
+        orderSystem.id_order_system,
+        new Date("2026-08-20"),
+        orderSystem,
+      );
+    });
+
+    it("marketplace responde com sucesso mas sem collectionDate ainda, sem fallback local: grava label status, não lança erro, não agenda nada", async () => {
+      (getMarketplaceCollectionAndLabelStatusWithRetry as jest.Mock).mockResolvedValue({
+        collectionDate: null,
+        labelStatus: MarketPlaceLabelStatus.WAITING_MARKETPLACE_PROCESS_NFE,
+      });
+      const orderSystem = makeOrder({ collection_date: null });
+
+      await expect(
+        queue.process(makeJob({ orderSystem, customer: {} })),
+      ).resolves.toBeUndefined();
+
+      expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
+        market_place_label_status: MarketPlaceLabelStatus.WAITING_MARKETPLACE_PROCESS_NFE,
+      });
+      expect(mockCollectionDateScheduler.syncCollectionDateLocked).not.toHaveBeenCalled();
+    });
+
+    it("retry esgotado (marketplace fora do ar) mas há collection_date local: usa o valor local como fallback, label status não é tocado", async () => {
+      (getMarketplaceCollectionAndLabelStatusWithRetry as jest.Mock).mockResolvedValue(null);
+      const orderSystem = makeOrder({ collection_date: new Date("2026-08-18") });
+
+      await queue.process(makeJob({ orderSystem, customer: {} }));
+
       expect(ordersService.update).not.toHaveBeenCalled();
+      expect(mockCollectionDateScheduler.syncCollectionDateLocked).toHaveBeenCalledWith(
+        orderSystem.id_order_system,
+        new Date(orderSystem.collection_date!),
+        orderSystem,
+      );
     });
 
-    it("match válido: grava collection_date, anota na Bling e encadeia scheduleNfe (PATCH 748748 + WAITING_FOR_NFE_EMISSION)", async () => {
-      mockEligible(true);
-      const order = makeOrder();
-      (redisService.get as jest.Mock).mockResolvedValue(makeCachedOrders(order));
+    it("retry esgotado e sem nenhuma collection_date de fallback: lança erro (job falha e será retentado pelo BullMQ)", async () => {
+      (getMarketplaceCollectionAndLabelStatusWithRetry as jest.Mock).mockResolvedValue(null);
+      const orderSystem = makeOrder({ collection_date: null });
 
-      await queue.process(makeJob({ row: makeRow() }));
+      await expect(
+        queue.process(makeJob({ orderSystem, customer: {} })),
+      ).rejects.toThrow();
 
-      expect(ordersService.update).toHaveBeenCalledWith(order.id, {
-        collection_date: new Date("2026-08-12"),
-        number_order_channel: "000000461_239",
-      });
-      expect(fakeBlingApi.put).toHaveBeenCalledWith(
-        `/pedidos/vendas/${order.id_order_system}`,
-        expect.objectContaining({
-          observacoesInternas: expect.stringContaining("ML: 000000461_239"),
-        }),
-        { timeout: 20000 },
-      );
-      // scheduleNfe encadeado a partir do mesmo fluxo:
-      expect(fakeBlingApi.patch).toHaveBeenCalledWith(
-        `/pedidos/vendas/${order.id_order_system}/situacoes/748748`,
-        { id: 748748 },
-        { timeout: 20000 },
-      );
-      expect(ordersService.update).toHaveBeenCalledWith(order.id, {
-        internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
-      });
-    });
-  });
-
-  describe("scheduleNfe (via syncFromWebhook, com collection_date já preenchida)", () => {
-    it("pedido já com processo completo: não agenda nada", async () => {
-      mockEligible(true);
-      const orderSystem = makeOrder({
-        internal_status: OrderInternalStatus.EMITTED,
-        collection_date: new Date("2026-08-20"),
-      });
-
-      await queue.process(makeJob({ orderSystem, customer: {} }));
-
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
-      expect(nextFake.addDelayed).not.toHaveBeenCalled();
-    });
-
-    it("chegou hoje + coleta hoje/futuro + lock_today_orders ativo + sem job agendado: trava para aceite manual (waiting_acceptance=true), sem PATCH na Bling", async () => {
-      mockEligible(true);
-      (integrationsService.getFullIntegration as jest.Mock).mockResolvedValue({
-        lock_today_orders: true,
-      });
-      const now = new Date();
-      const orderSystem = makeOrder({
-        createdAt: now,
-        collection_date: now,
-      });
-
-      await queue.process(makeJob({ orderSystem, customer: {} }));
-
-      expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
-        internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
-        waiting_acceptance: true,
-      });
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
-      expect(nextFake.addDelayed).not.toHaveBeenCalled();
-    });
-
-    it("fluxo normal: PATCH 748748 na Bling, grava WAITING_FOR_NFE_EMISSION e agenda job delayed na NFeQueue", async () => {
-      mockEligible(true);
-      const orderSystem = makeOrder({
-        collection_date: new Date("2026-08-25"),
-      });
-
-      await queue.process(makeJob({ orderSystem, customer: {} }));
-
-      expect(fakeBlingApi.patch).toHaveBeenCalledWith(
-        `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748748`,
-        { id: 748748 },
-        { timeout: 20000 },
-      );
-      expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
-        internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
-      });
-      expect(nextFake.addDelayed).toHaveBeenCalledWith(
-        expect.objectContaining({
-          order_id: orderSystem.id_order_system,
-          collection_date: String(orderSystem.collection_date),
-        }),
-        `nfe-generation-${orderSystem.id_order_system}`,
-        expect.any(Number),
-      );
+      expect(mockCollectionDateScheduler.syncCollectionDateLocked).not.toHaveBeenCalled();
     });
   });
 
@@ -375,42 +265,17 @@ describe("MLOrderSyncQueue", () => {
       });
     }
 
-    it("estado esperado (WAITING_FOR_NFE_EMISSION, waiting_acceptance=false): finaliza o agendamento (PATCH 748748 + addDelayed)", async () => {
+    it("estado esperado (WAITING_FOR_NFE_EMISSION, waiting_acceptance=false): delega a finalização pro CollectionDateScheduler", async () => {
       const order = makeReleasedOrder();
       (ordersService.findById as jest.Mock).mockResolvedValue(order);
 
       await queue.resumeAfterAcceptance(order.id);
 
-      expect(fakeBlingApi.patch).toHaveBeenCalledWith(
-        `/pedidos/vendas/${order.id_order_system}/situacoes/748748`,
-        { id: 748748 },
-        { timeout: 20000 },
+      expect(mockCollectionDateScheduler.finalizeNfeScheduling).toHaveBeenCalledWith(
+        order.id_order_system,
+        new Date(order.collection_date!),
+        order,
       );
-      expect(ordersService.update).toHaveBeenCalledWith(order.id, {
-        internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
-      });
-      expect(nextFake.addDelayed).toHaveBeenCalledWith(
-        expect.objectContaining({ order_id: order.id_order_system }),
-        `nfe-generation-${order.id_order_system}`,
-        expect.any(Number),
-      );
-    });
-
-    it("situação Bling divergiu por fora (ex: cancelado direto na Bling enquanto travado): não faz PATCH, só sincroniza internal_status", async () => {
-      const order = makeReleasedOrder();
-      (ordersService.findById as jest.Mock).mockResolvedValue(order);
-      (fakeBlingApi.get as jest.Mock).mockResolvedValue({
-        data: { data: { situacao: { id: 12 } } },
-      });
-
-      await queue.resumeAfterAcceptance(order.id);
-
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
-      expect(nextFake.addDelayed).not.toHaveBeenCalled();
-      expect(ordersService.update).toHaveBeenCalledWith(order.id, {
-        internal_status: OrderInternalStatus.CANCELLED,
-        nfe_emitted: false,
-      });
     });
 
     it("pedido não encontrado: não faz nada", async () => {
@@ -418,8 +283,16 @@ describe("MLOrderSyncQueue", () => {
 
       await queue.resumeAfterAcceptance("missing-id");
 
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
-      expect(nextFake.addDelayed).not.toHaveBeenCalled();
+      expect(mockCollectionDateScheduler.finalizeNfeScheduling).not.toHaveBeenCalled();
+    });
+
+    it("sem id_order_system: não faz nada", async () => {
+      const order = makeReleasedOrder({ id_order_system: undefined });
+      (ordersService.findById as jest.Mock).mockResolvedValue(order);
+
+      await queue.resumeAfterAcceptance(order.id);
+
+      expect(mockCollectionDateScheduler.finalizeNfeScheduling).not.toHaveBeenCalled();
     });
 
     it("ainda waiting_acceptance=true (liberação não confirmada de verdade): ignora sem agendar", async () => {
@@ -428,19 +301,16 @@ describe("MLOrderSyncQueue", () => {
 
       await queue.resumeAfterAcceptance(order.id);
 
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
-      expect(nextFake.addDelayed).not.toHaveBeenCalled();
+      expect(mockCollectionDateScheduler.finalizeNfeScheduling).not.toHaveBeenCalled();
     });
 
     it("internal_status divergente (não é mais WAITING_FOR_NFE_EMISSION): ignora sem agendar", async () => {
-      const order = makeReleasedOrder({
-        internal_status: OrderInternalStatus.EMITTED,
-      });
+      const order = makeReleasedOrder({ internal_status: OrderInternalStatus.EMITTED });
       (ordersService.findById as jest.Mock).mockResolvedValue(order);
 
       await queue.resumeAfterAcceptance(order.id);
 
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+      expect(mockCollectionDateScheduler.finalizeNfeScheduling).not.toHaveBeenCalled();
     });
 
     it("sem collection_date: não agenda (não tem como calcular o delay)", async () => {
@@ -449,7 +319,7 @@ describe("MLOrderSyncQueue", () => {
 
       await queue.resumeAfterAcceptance(order.id);
 
-      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+      expect(mockCollectionDateScheduler.finalizeNfeScheduling).not.toHaveBeenCalled();
     });
 
     it("process() roteia { resumeOrderId } pra resumeAfterAcceptance", async () => {
@@ -459,10 +329,10 @@ describe("MLOrderSyncQueue", () => {
       await queue.process(makeJob({ resumeOrderId: order.id }));
 
       expect(ordersService.findById).toHaveBeenCalledWith(order.id);
-      expect(fakeBlingApi.patch).toHaveBeenCalledWith(
-        `/pedidos/vendas/${order.id_order_system}/situacoes/748748`,
-        { id: 748748 },
-        { timeout: 20000 },
+      expect(mockCollectionDateScheduler.finalizeNfeScheduling).toHaveBeenCalledWith(
+        order.id_order_system,
+        new Date(order.collection_date!),
+        order,
       );
     });
   });

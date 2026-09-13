@@ -4,6 +4,7 @@ import {
   getMercadoLivreIntegration,
   handleMercadoLivreOAuthCallback,
 } from "../api/mercado-livre_api.service";
+import { MarketplaceWebhookSyncQueue } from "../../marketplace/queues/marketplace-webhook-sync.queue";
 
 const router = Router();
 
@@ -12,9 +13,6 @@ const router = Router();
 // mount path é literalmente o nome desta pasta (src/config/routes.ts's
 // loadModules), e as rotas obrigatórias exigem "/api/mercado_livre/...".
 // Ver plano (Etapa 1, seção 1.1) para a justificativa completa.
-
-// POST /webhook entra na Etapa 2 (precisa de MarketplaceWebhookSyncQueue,
-// que ainda não existe) — esta etapa só cobre o fluxo de OAuth.
 
 // ─── OAuth ────────────────────────────────────────────────────────────────
 
@@ -48,6 +46,42 @@ router.get("/callback", async (req: Request, res: Response) => {
 
   await handleMercadoLivreOAuthCallback(code);
   res.status(200).json({ ok: true, message: "Tokens salvos com sucesso" });
+});
+
+// ─── Webhook ──────────────────────────────────────────────────────────────
+
+// Payload do ML: {resource: "/orders/123"|"/shipments/456", topic:
+// "orders_v2"|"shipments", ...} — NÃO confia no payload pra dado nenhum, só
+// usa pra saber qual recurso re-buscar ao vivo e em qual direção.
+//
+// TODO: sem verificação de assinatura por ora (mesmo estado honesto do
+// webhook do Bling hoje, também não enforçado) — a rota já re-busca ao vivo
+// e nunca confia no corpo do payload para dado nenhum, então a exposição
+// fica limitada a "um atacante consegue nos fazer re-buscar o estado real e
+// atual de um pedido real um pouco mais cedo".
+router.post("/webhook", async (req: Request, res: Response) => {
+  const queue: MarketplaceWebhookSyncQueue = req.app.locals.MarketplaceWebhookSyncQueue;
+
+  const topic =
+    req.body?.topic === "shipments"
+      ? "shipments"
+      : req.body?.topic === "orders_v2"
+        ? "orders"
+        : null;
+
+  if (!topic) {
+    res.status(200).json({ ignored: true });
+    return;
+  }
+
+  const resourceId = String(req.body.resource ?? "").split("/").pop();
+  if (!resourceId) {
+    res.status(200).json({ ignored: true });
+    return;
+  }
+
+  await queue.add({ store: "MercadoLivre", topic, resourceId }, `marketplace-webhook-${topic}-${resourceId}`);
+  res.status(200).json({ received: true });
 });
 
 export default router;

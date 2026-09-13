@@ -1261,7 +1261,7 @@ flag is explicitly set.
 
 ## ML → Bling NFe scheduling pipeline (`src/modules/handlers/mercado-livre/`, `.../bling-nfe/`)
 
-**Referência completa do pipeline** (as 6 filas, precondição/escrita de
+**Referência completa do pipeline** (as 8 filas, precondição/escrita de
 cada uma, a tabela de estados `OrderInternalStatus` ↔ situação Bling, o
 lock por pedido, e todo par de corrida entre filas já mapeado e tratado):
 `docs/automation/order-pipeline.md`. Mantenha esse arquivo atualizado, não
@@ -1320,6 +1320,98 @@ sessão, não a referência viva.
      scraping sob demanda; se isso nunca resolver, `reconcileStuckOrders`
      (30min) já escala pra verificação humana (748772) — nunca inventa uma
      data.
+
+**Migração ML-Scraping → API oficial do Mercado Livre (Etapa 1 numa sessão
+anterior, Etapa 2 nesta sessão) — supersede toda menção a `ML-SCRAPING`/
+`MLScrapingQueue`/planilha do Excel nos bullets históricos abaixo.** A
+antiga automação de `collection_date` (baixar a planilha de vendas do ML
+via Playwright e casar linhas por data+comprador, `MLScrapingQueue`/
+`MLOrderSyncQueue.syncFromExcel`) foi **removida por completo** — arquivos
+apagados: `mercado-livre.scraping.queue.ts`, `mercado-livre-scraping.service.ts`,
+`mercado-livre.service.ts`, `mercado-livre.types.ts`,
+`services/helpers/order-match.ts`, e os testes correspondentes. A fila
+`ML_SCRAPING` some do `QueueName`/`buildQueues`; `startScrapingWorker()`
+continua existindo (mesmo container/target Docker), só perde a fiação do
+scraping do ML — os scrapers do Bling (`BlingNfeScrapingQueue`,
+`BlingStockMovementsScrapingQueue`) continuam intocados nela.
+`docker-compose.yml`'s serviço `worker-scraping` perde `ML_HEADLESS` e os
+volumes `ml_session`/`ml_downloads`; `cap_add: SYS_ADMIN` e
+`stock_movement_csv` ficam (ainda servem o Bling).
+
+Substituição: `collection_date` e o status da etiqueta de envio agora vêm
+da **API oficial do Mercado Livre** (`GET /orders/:id` → `GET /shipments/:id`,
+generalizado para futuros marketplaces via um novo módulo
+`src/modules/handlers/marketplace/` — `MarketplaceHandler`/
+`resolveMarketplaceHandler`, espelhando o padrão adapter+resolver já usado
+em `src/modules/handlers/logistic/`). Peças novas:
+- `mercado-livre_api.service.ts`/`.types.ts` (antes vazios) — cliente OAuth
+  do ML (refresh 401 + dedupe de concorrência, mesmo padrão de
+  `bling_api.service.ts`; sem leaky-bucket de rate limit ainda — limites
+  reais do ML desconhecidos). Rotas em
+  `src/modules/handlers/mercado-livre/mercado_livre/` (pasta-folha com
+  underscore, de propósito — o mount path do `loadModules` é o nome dessa
+  pasta-folha, e a rota exigida é `/api/mercado_livre/...`; a árvore do
+  módulo continua com hífen). `"mercado_livre"` foi pra `EXCLUDED_ROUTES`
+  igual `"bling"`/`"bling-orders"`.
+- `getMarketplaceCollectionAndLabelStatus(storeName, numberOrderChannel)`
+  (`marketplace/services/marketplace-order-shipment.service.ts`) — o
+  método único que todo chamador usa; e sua variante
+  `...WithRetry` (3 tentativas, usada só por `ML_ORDER_SYNC`, o único
+  chamador cuja falha sem tratamento travaria o pipeline).
+- `mapMercadoLivreLabelStatus` (`mercado-livre/helpers/map-label-status.ts`)
+  traduz status/substatus cru do ML pro novo enum `MarketPlaceLabelStatus`
+  (`UNKNOWN`/`WAITING_FOR_SYSTEM_NFE`/`WAITING_MARKETPLACE_PROCESS_NFE`/
+  `WAITING_MARKETPLACE_LABEL_GENERATION`/`READY_TO_PRINT`) —
+  `WAITING_FOR_SYSTEM_NFE` só é atribuído pelo próprio sistema na
+  ingestão, nunca derivado do ML. Colunas novas em `orders`
+  (`market_place_label_status` enum default `UNKNOWN`,
+  `market_place_label_printed` boolean default `false`, migration `m278`).
+- **`CollectionDateSchedulerService`**
+  (`bling/services/bling-nfe/collection-date/collection-date-scheduler.service.ts`,
+  novo) — extração de `MLOrderSyncQueue`'s antigo
+  `applyCollectionDateLocked`/`scheduleNfe`/`finalizeNfeScheduling`,
+  generalizada: ponto único que todo caminho de escrita de
+  `collection_date` (`BLING_ORDER_INGESTION`, `ML_ORDER_SYNC`,
+  `MARKETPLACE_WEBHOOK_SYNC`, `MARKETPLACE_RECONCILER`) chama —
+  `syncCollectionDateLocked` compara por **dia civil BRT**, não instante
+  exato, e decide entre no-op/gravar/reagendar. Fica ao lado de
+  `nfe.queue.ts` (não em `marketplace/`) porque os efeitos colaterais são
+  maquinário de Bling/NFe, não de marketplace. `withOrderLock` foi
+  extraído de `BaseQueueService` pra uma função standalone exportada de
+  `base-queue-service.ts` (mesma chave Redis `locks:bling:order:${id}`,
+  já era global) especificamente pra esse serviço plain conseguir usá-la
+  sem precisar existir como uma fila fake.
+- **`MARKETPLACE_WEBHOOK_SYNC`** e **`MARKETPLACE_RECONCILER`** (novo,
+  `src/modules/handlers/marketplace/queues/`) — a primeira reage a
+  webhooks de `orders`/`shipments` do ML (nunca confia no payload, só
+  re-busca ao vivo); a segunda tem duas cadências num componente só
+  (padrão de `BlingReconcilerQueue`, dispatch por `job.data.task`):
+  `collection_date` a cada 1h, `label_status` a cada 5min.
+- `ML_ORDER_SYNC` (`mercado-livre-sync.queue.ts`) reescrita: perdeu todo o
+  maquinário de scraping/Excel/`resolveMatch`/`findSiblingOrders`; agora
+  **sempre** consulta a API do marketplace ao processar um webhook de
+  pedido (tenha ele já `collection_date` ou não — decisão explícita do
+  usuário, unifica as duas ramificações antigas numa só), grava
+  `market_place_label_status` incondicionalmente em caso de sucesso, e cai
+  pro valor local de `collection_date` (gravado por `dataPrevista`) só se
+  o retry esgotar.
+- `nfe-reconciler.queue.ts`'s `reconcileStuckOrders` perdeu as duas
+  esperas `waitUntilIdle` (existiam só por causa do scraping ser uma
+  segunda fila assíncrona sem teto definido) — `ML_ORDER_SYNC` agora
+  resolve tudo numa chamada de API síncrona do ponto de vista da fila,
+  dentro do mesmo job. `reconcileMissingCollectionDate` (rede de segurança
+  do scraping sob demanda) foi **removida por completo** — a cadência
+  `collection_date` do `MARKETPLACE_RECONCILER` já cobre o mesmo terreno.
+  Novo valor de `OrderReasonCancelled`: `MARKETPLACE_SYNC_STUCK`
+  (sucessor de `ML_SCRAPING_NO_MATCH`, que fica só como histórico no
+  enum/linhas antigas).
+- **Etapas 3–5 do plano original (ambiente de teste com Bling mockado,
+  teste manual, ajustes pós-teste) ficaram fora do escopo desta sessão** —
+  não implementadas. Também não confirmados contra a API real do ML nesta
+  sessão (ficam como próximos passos): o endpoint/formato exato de
+  `resolveOrdersFromShipment` (resolução shipment→order(s), hoje lança
+  erro "TBD" em `mercado-livre-order-shipment.service.ts`) e se o refresh
+  OAuth2 do ML espera Basic Auth ou client_id/secret no body.
 
 - **`collection_date` agora pode vir de `dataPrevista` (payload Bling),
   não só do scraping/planilha do ML; `ML-SCRAPING` deixou de ter cron fixo

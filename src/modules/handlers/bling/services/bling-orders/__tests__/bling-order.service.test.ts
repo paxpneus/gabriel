@@ -71,6 +71,7 @@ function makeIntegration(overrides: Partial<any> = {}) {
 function makeExistingOrder(overrides: Partial<any> = {}) {
   const base: any = {
     id: "order-uuid-1",
+    id_order_system: "1001",
     unit_business_id: "ub-existing",
     nfe_emitted: false,
     destination_uf: "SP",
@@ -138,12 +139,19 @@ function makeFakeBlingApi(orderData: any): AxiosInstance {
 describe("BlingOrderService", () => {
   let service: BlingOrderService;
   let orderData: ReturnType<typeof makeOrderData>;
+  let mockCollectionDateScheduler: { syncCollectionDateLocked: jest.Mock };
 
   beforeEach(() => {
     jest.clearAllMocks();
 
     orderData = makeOrderData();
-    service = new BlingOrderService(makeFakeBlingApi(orderData) as any);
+    mockCollectionDateScheduler = {
+      syncCollectionDateLocked: jest.fn().mockResolvedValue(undefined),
+    };
+    service = new BlingOrderService(
+      makeFakeBlingApi(orderData) as any,
+      mockCollectionDateScheduler as any,
+    );
 
     (getBlingIntegration as jest.Mock).mockResolvedValue(makeIntegration());
     mockStoreServiceInstance.findOne.mockResolvedValue({
@@ -160,7 +168,8 @@ describe("BlingOrderService", () => {
     (ordersService.update as jest.Mock).mockResolvedValue([1]);
     (ordersService.create as jest.Mock).mockResolvedValue({
       id: "new-order-id",
-      dataValues: { id: "new-order-id" },
+      id_order_system: "new-id-order-system",
+      dataValues: { id: "new-order-id", id_order_system: "new-id-order-system" },
     });
     (orderItemsService.bulkCreate as jest.Mock).mockResolvedValue([]);
   });
@@ -325,21 +334,26 @@ describe("BlingOrderService", () => {
   });
 
   describe("updateOrderFromBling — collection_date (dataPrevista)", () => {
-    it("dataPrevista preenchida: grava collection_date em meia-noite BRT", async () => {
+    // collection_date não é mais escrito como campo do payload de update —
+    // BlingOrderService só grava/reconcilia via
+    // CollectionDateSchedulerService.syncCollectionDateLocked, sem consultar
+    // o marketplace (isso é feito por ML_ORDER_SYNC, logo em seguida no
+    // pipeline).
+    it("dataPrevista preenchida: aciona o CollectionDateScheduler com o dia em meia-noite BRT", async () => {
       orderData.dataPrevista = "2026-08-20";
 
       await service.updateOrderFromBling({
         data: { id: orderData.id },
       } as any);
 
-      expect(lastUpdateFields()).toEqual(
-        expect.objectContaining({
-          collection_date: startOfDayTz("2026-08-20").toDate(),
-        }),
+      expect(mockCollectionDateScheduler.syncCollectionDateLocked).toHaveBeenCalledWith(
+        "1001",
+        startOfDayTz("2026-08-20").toDate(),
+        expect.objectContaining({ id: "order-uuid-1" }),
       );
     });
 
-    it("dataPrevista vazia: NÃO inclui collection_date no payload de update, preservando o valor já gravado", async () => {
+    it("dataPrevista vazia: NÃO aciona o CollectionDateScheduler, preservando o valor já gravado", async () => {
       orderData.dataPrevista = "";
       (ordersService.findOne as jest.Mock).mockResolvedValue(
         makeExistingOrder({ collection_date: new Date("2026-08-15T00:00:00-03:00") }),
@@ -349,17 +363,17 @@ describe("BlingOrderService", () => {
         data: { id: orderData.id },
       } as any);
 
-      expect(lastUpdateFields()).not.toHaveProperty("collection_date");
+      expect(mockCollectionDateScheduler.syncCollectionDateLocked).not.toHaveBeenCalled();
     });
 
-    it("dataPrevista ausente do payload: NÃO inclui collection_date no update", async () => {
+    it("dataPrevista ausente do payload: NÃO aciona o CollectionDateScheduler", async () => {
       delete orderData.dataPrevista;
 
       await service.updateOrderFromBling({
         data: { id: orderData.id },
       } as any);
 
-      expect(lastUpdateFields()).not.toHaveProperty("collection_date");
+      expect(mockCollectionDateScheduler.syncCollectionDateLocked).not.toHaveBeenCalled();
     });
 
     it("dataPrevista com data-sentinela implausível (ex: 1899-11-30, época zero Delphi/OLE): NÃO inclui collection_date, preservando o valor já gravado", async () => {
@@ -420,7 +434,7 @@ describe("BlingOrderService", () => {
       );
     });
 
-    it("dataPrevista preenchida: grava collection_date já na criação", async () => {
+    it("dataPrevista preenchida: aciona o CollectionDateScheduler já na criação", async () => {
       (ordersService.findOne as jest.Mock).mockResolvedValue(null);
       (UnitBusiness.findOne as jest.Mock).mockResolvedValue({ id: "ub-1" });
       orderData.dataPrevista = "2026-09-01";
@@ -428,14 +442,15 @@ describe("BlingOrderService", () => {
       await service.createOrderFromBling({ data: { id: orderData.id } } as any);
 
       const createdPayload = (ordersService.create as jest.Mock).mock.calls[0][0];
-      expect(createdPayload).toEqual(
-        expect.objectContaining({
-          collection_date: startOfDayTz("2026-09-01").toDate(),
-        }),
+      expect(createdPayload).not.toHaveProperty("collection_date");
+      expect(mockCollectionDateScheduler.syncCollectionDateLocked).toHaveBeenCalledWith(
+        "new-id-order-system",
+        startOfDayTz("2026-09-01").toDate(),
+        expect.objectContaining({ id: "new-order-id" }),
       );
     });
 
-    it("dataPrevista ausente: não inclui collection_date na criação", async () => {
+    it("dataPrevista ausente: não aciona o CollectionDateScheduler na criação", async () => {
       (ordersService.findOne as jest.Mock).mockResolvedValue(null);
       (UnitBusiness.findOne as jest.Mock).mockResolvedValue({ id: "ub-1" });
       delete orderData.dataPrevista;
@@ -444,6 +459,7 @@ describe("BlingOrderService", () => {
 
       const createdPayload = (ordersService.create as jest.Mock).mock.calls[0][0];
       expect(createdPayload).not.toHaveProperty("collection_date");
+      expect(mockCollectionDateScheduler.syncCollectionDateLocked).not.toHaveBeenCalled();
     });
 
     it("dataPrevista com data-sentinela implausível (1899-11-30): não inclui collection_date na criação", async () => {

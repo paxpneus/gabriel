@@ -9,6 +9,7 @@ import {
   OrderSalesReportDetail,
   ShipTodayPendingDetailRow,
   ShipToDefineDetailRow,
+  PendingMarketplaceOrder,
 } from "./orders.types";
 import { QueryParams, PaginatedResult } from "../../../../shared/query/query.types";
 
@@ -239,6 +240,12 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       acc[date] = quantity;
       return acc;
     }, {});
+  }
+
+  async findPendingMarketplaceOrders(
+    allowedChannels: string[],
+  ): Promise<PendingMarketplaceOrder[]> {
+    return this.repository.findPendingMarketplaceOrders(allowedChannels);
   }
 }
 

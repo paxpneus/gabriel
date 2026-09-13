@@ -9,6 +9,7 @@ import {
   ShipToDefineDetailRow,
   OrderInternalStatus,
   COMPLETED_ORDER_INTERNAL_STATUSES,
+  PendingMarketplaceOrder,
 } from "./orders.types";
 import { Op, fn, col, literal, WhereOptions } from "sequelize";
 import { Invoice } from "../../../warehouse";
@@ -369,6 +370,36 @@ export class OrderRepository extends BaseRepository<Order> {
       date: r.date_bucket,
       quantity: Number(r.quantity),
     }));
+  }
+
+  // Pedidos ainda pendentes de sincronização com o marketplace (OPEN ou
+  // WAITING_CHANNEL_VALIDATION), de uma store em allowedChannels — usado
+  // por MarketplaceReconcilerQueue (chamado uma vez por execução de cada
+  // uma das suas duas cadências, nunca construído inline pela fila, per a
+  // regra de "repository/service owns the query" do CLAUDE.md).
+  async findPendingMarketplaceOrders(
+    allowedChannels: string[],
+  ): Promise<PendingMarketplaceOrder[]> {
+    if (!allowedChannels.length) return [];
+
+    const rows = await this.model.findAll({
+      where: {
+        internal_status: {
+          [Op.in]: [OrderInternalStatus.OPEN, OrderInternalStatus.WAITING_CHANNEL_VALIDATION],
+        },
+      },
+      include: [
+        {
+          model: Store,
+          as: "store",
+          where: { name: { [Op.in]: allowedChannels } },
+          required: true,
+          attributes: ["id", "name"],
+        },
+      ],
+    });
+
+    return rows.map((r) => r.get({ plain: true })) as unknown as PendingMarketplaceOrder[];
   }
 }
 

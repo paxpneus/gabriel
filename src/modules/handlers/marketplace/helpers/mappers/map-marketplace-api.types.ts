@@ -1,4 +1,5 @@
 import { AxiosInstance } from "axios";
+import { MarketPlaceLabelStatus } from "../../../../sales/orders/order/orders.types";
 
 // Resultado genérico do GET de order — só o que qualquer marketplace precisa
 // devolver pra alimentar a busca de shipment em seguida.
@@ -9,10 +10,10 @@ export interface MarketplaceOrderResult {
 // Resultado genérico do GET de shipment. `collectionDate`/`labelStatus` já
 // mapeados para o vocabulário do sistema — cada marketplace concreto
 // (mercadoLivreHandler, futuramente Shopee) é quem sabe traduzir seu próprio
-// status/substatus cru pra isso.
+// status/substatus cru pra isso (ver map-label-status.ts de cada um).
 export interface MarketplaceShipmentResult {
   collectionDate: Date | null;
-  labelStatus: string;
+  labelStatus: MarketPlaceLabelStatus;
 }
 
 /**

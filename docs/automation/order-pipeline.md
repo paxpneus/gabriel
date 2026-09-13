@@ -13,45 +13,27 @@ veja a seção final antes de adicionar uma.
 
 ```
 BLING_ORDER_INGESTION → CNPJ_VERIFY_CNAE → ML_ORDER_SYNC → NFE_EMISSION
-        (webhook)         (verifica CNAE)   (casa com ML)   (emite NFe)
+        (webhook)         (verifica CNAE)   (confirma coleta   (emite NFe)
+                                              via API do ML)
 ```
 
 `NFE_RECONCILER` e `BLING_RECONCILER` rodam em paralelo, em intervalos
 próprios, como rede de segurança — recriam jobs perdidos e corrigem
 pedidos que ficaram presos, sem fazer parte do fluxo principal.
+`MARKETPLACE_WEBHOOK_SYNC` (reage a webhooks do Mercado Livre) e
+`MARKETPLACE_RECONCILER` (duas cadências próprias) também rodam ao lado do
+pipeline, alimentando o mesmo par de campos (`collection_date`,
+`market_place_label_status`) que `ML_ORDER_SYNC` escreve — ver "Convergência
+em `collection_date`/`market_place_label_status`" abaixo.
 
-`ML-SCRAPING` (baixa a planilha de vendas do Mercado Livre) não é uma das
-6 filas do pipeline — roda num container/processo à parte
-(`startScrapingWorker`) — e não tem mais cron fixo: só é acionada **sob
-demanda**, via um job com `jobId` fixo (`"ml-scraping-on-demand"`)
-disparado por `ML_ORDER_SYNC` (quando um pedido chega sem `collection_date`
-conhecida) ou pelo `NFE_RECONCILER` (rede de segurança, ver
-`reconcileMissingCollectionDate` abaixo). O `jobId` fixo faz o BullMQ
-deduplicar disparos concorrentes — um único ciclo resolve todos os
-pedidos pendentes de uma vez, não só o que disparou o gatilho.
-
-`MLScrapingQueue.process()` **não confia no `job.data` de quem disparou**
-pra saber o que precisa resolver (isso seria frágil justamente por causa do
-dedupe por `jobId` fixo — um segundo disparo com dados diferentes seria
-descartado silenciosamente enquanto o primeiro job ainda está na fila).
-Em vez disso, toda vez que o job roda de verdade, ele **consulta o banco
-na hora** por pedidos ainda pendentes (`internal_status =
-WAITING_CHANNEL_VALIDATION` e `collection_date` nulo). Duas consequências
-disso:
-- Se não sobrar nenhum pedido pendente no momento em que o job roda (ex:
-  já resolvido por `dataPrevista` enquanto o job esperava na fila), o
-  ciclo inteiro é pulado **antes** de baixar a planilha (evita o custo de
-  abrir o Playwright/baixar o Excel à toa).
-- Se sobrar, a planilha ainda é baixada por inteiro (não dá pra pedir ao
-  Mercado Livre só um pedido), mas só as linhas que batem por
-  data+comprador com **algum** pedido pendente viram job no
-  `ML_ORDER_SYNC` — não uma pra cada linha da planilha inteira. Isso não
-  quebra a busca de "pedidos irmãos" (mesmo cliente/SKU, ver
-  `findSiblingOrders`): a lista completa dos últimos 7 dias continua sendo
-  gravada no cache `orders_seven_days_ago` sem filtro nenhum, o filtro é só
-  sobre quais linhas geram job — e um irmão sempre compartilha
-  data/cliente com o pedido pendente que originou o match, então a linha
-  correspondente nunca é descartada.
+`collection_date` é resolvido consultando a **API oficial do Mercado
+Livre** (`GET /orders/:id` → `GET /shipments/:id`, via
+`getMarketplaceCollectionAndLabelStatus`,
+`src/modules/handlers/marketplace/services/marketplace-order-shipment.service.ts`)
+— não mais por scraping de planilha. Não existe mais um passo assíncrono
+separado (a antiga fila `ML-SCRAPING`, removida) entre "pedido chegou" e
+"collection_date resolvida": `ML_ORDER_SYNC` resolve isso dentro do mesmo
+job que processa o webhook do pedido.
 
 Cada pedido avança por essas etapas sequencialmente, mas **pedidos
 diferentes correm 100% em paralelo entre si**, em todas as filas ao mesmo
@@ -65,7 +47,7 @@ de uma fila ao mesmo tempo (ver "Lock por pedido" abaixo).
 |---|---|---|
 | `OPEN` | 6 | `BLING_ORDER_INGESTION` |
 | `WAITING_CHANNEL_VALIDATION` | 748743 | `CNPJ_VERIFY_CNAE` |
-| `WAITING_FOR_NFE_EMISSION` | 748748 | `ML_ORDER_SYNC` |
+| `WAITING_FOR_NFE_EMISSION` | 748748 | `ML_ORDER_SYNC` (via `CollectionDateSchedulerService`) |
 | `EMITTED` | 9 | `NFE_EMISSION` |
 | `SENT_TO_TRANSPORTER` | 834029 | espelhado da Bling (não gerado pela automação) |
 | `DELIVERED` | 834030 | espelhado da Bling (não gerado pela automação) |
@@ -77,8 +59,8 @@ antes de agir, pra nunca reabrir um pedido já concluído.
 
 Situação `748772` ("aguardando verificação humana") é escrita por 3 lugares
 diferentes com motivos diferentes (CNAE bloqueado, falha na emissão de NFe,
-pedido preso sem match no scraping), e `mapOrderInternalStatus` colapsa
-todos eles no mesmo `CANCELLED` de um cancelamento real do cliente
+pedido preso sem confirmação de coleta/etiqueta), e `mapOrderInternalStatus`
+colapsa todos eles no mesmo `CANCELLED` de um cancelamento real do cliente
 (situação 12/21) — **essa distinção agora existe na coluna `orders.reason_cancelled`**
 (enum, nullable), gravada de forma síncrona pela fila que decide o
 cancelamento, no mesmo momento em que escreve `internal_status=CANCELLED`.
@@ -123,7 +105,8 @@ mesmo — não antes, como no design anterior de alguns call sites.
 | `NFE_MISSING_FIELDS` | `NFE_EMISSION` (`markOrderCancelled`) | Campos obrigatórios ausentes pra emissão |
 | `NFE_NO_STOCK` | `NFE_EMISSION` (`markOrderCancelled`) | Bling recusou emissão por falta de estoque (field code 74) |
 | `NFE_EMISSION_FAILED` | `NFE_EMISSION` (`onFailed`, após esgotar retries) | Falha genérica ao gerar NFe na Bling |
-| `ML_SCRAPING_NO_MATCH` | `NFE_RECONCILER` (`reconcileStuckOrders`) | Pedido preso >30min sem match na planilha do Mercado Livre |
+| `ML_SCRAPING_NO_MATCH` | *(histórico — não gravado mais)* | Pedido preso >30min sem match na antiga planilha do Mercado Livre; sucedido por `MARKETPLACE_SYNC_STUCK` |
+| `MARKETPLACE_SYNC_STUCK` | `NFE_RECONCILER` (`reconcileStuckOrders`) | Pedido preso >30min sem conseguir confirmar dados de coleta/etiqueta junto à API do marketplace |
 | `CUSTOMER_CANCELLED` | `BLING_ORDER_INGESTION` (webhook, situação 12/21) | Cancelamento real, feito pelo cliente ou direto na Bling |
 
 O webhook (`BLING_ORDER_INGESTION`) só grava `reason_cancelled` para
@@ -135,46 +118,75 @@ sobrescrever um motivo mais específico já gravado antes. O branch de
 por fora da automação (não é ele quem decidiu cancelar) também não grava
 motivo nenhum.
 
-## As 6 filas
+## As 8 filas
 
 - **`BLING_ORDER_INGESTION`** (`bling-order.queue.ts`) — recebe webhooks de
   pedido (`order.created`/`order.updated`), cria/atualiza a linha local
   espelhando a situação Bling atual (busca ao vivo, não confia no payload
   do webhook), e só segue a cadeia (enfileira pro `CNPJ_VERIFY_CNAE`) se a
   situação buscada for `6` (OPEN). Pedidos de outras lojas (não Mercado
-  Livre) são só salvos, sem entrar na automação. Também grava
-  `collection_date` direto a partir do campo `dataPrevista` do pedido
-  Bling (`BlingOrderService`, create e update), quando presente — se
-  `dataPrevista` vier vazia, o campo é simplesmente omitido do payload de
-  update, nunca zerado, preservando qualquer valor já gravado por
-  `ML_ORDER_SYNC` antes.
+  Livre) são só salvos, sem entrar na automação. Também grava/reconcilia
+  `collection_date` direto a partir do campo `dataPrevista` do pedido Bling
+  (`BlingOrderService`, create e update, via
+  `CollectionDateSchedulerService.syncCollectionDateLocked`) quando
+  presente — **sem consultar o marketplace**; se `dataPrevista` vier vazia,
+  simplesmente não chama o scheduler, preservando qualquer valor já
+  gravado antes. Inicializa `market_place_label_status` (só na criação, pra
+  não sobrescrever um valor que outra fila já tenha gravado depois) como
+  `WAITING_FOR_SYSTEM_NFE` se o canal do pedido estiver em
+  `Integration.allowed_channels`, senão `UNKNOWN`.
 - **`CNPJ_VERIFY_CNAE`** (`cnpj.queue.ts`) — rebusca o pedido ao vivo,
   confirma que ainda está em situação `6`, valida documento/CNAE do
   cliente. Sucesso: PATCH situação `748743` + `internal_status:
   WAITING_CHANNEL_VALIDATION`, enfileira pro `ML_ORDER_SYNC`. Falha
   (documento inválido ou CNAE bloqueado): PATCH `748772` +
   `internal_status: CANCELLED`.
-- **`ML_ORDER_SYNC`** (`mercado-livre-sync.queue.ts`) — a única fila que
-  escreve `collection_date` (além de `BLING_ORDER_INGESTION`, que agora
-  também pode gravá-la direto a partir de `dataPrevista` — ver abaixo).
-  Duas origens de job: match do Excel de scraping (`{row}`) ou webhook de
+- **`ML_ORDER_SYNC`** (`mercado-livre-sync.queue.ts`) — reage ao webhook de
   pedido (`{orderSystem, customer}`). Confirma sempre, ao vivo, que o
   pedido ainda está em `WAITING_CHANNEL_VALIDATION`/`748743` antes de agir
-  (`isEligibleForSync`). No caminho do webhook: se o pedido já chega com
-  `collection_date` preenchida (porque `BLING_ORDER_INGESTION` já gravou a
-  partir de `dataPrevista` da Bling), pula o casamento via Excel e agenda a
-  NFe direto; se não tiver, marca `WAITING_CHANNEL_VALIDATION` e dispara um
-  ciclo de `ML-SCRAPING` sob demanda (`jobId` fixo `"ml-scraping-on-demand"`,
-  ver "Visão geral"). Ao achar `collection_date` (por qualquer via): PATCH
-  situação `748748` + `internal_status: WAITING_FOR_NFE_EMISSION`, agenda
-  job delayed no `NFE_EMISSION`. Também expõe `resumeAfterAcceptance`, usada
-  pra retomar o agendamento de um pedido que ficou travado esperando
-  aceite manual (ver "Coordenação entre filas" abaixo).
+  (`isEligibleForSync`, `collection-date-scheduler.service.ts`). Consulta a
+  API do marketplace **sempre**, tenha o pedido já uma `collection_date` ou
+  não (`getMarketplaceCollectionAndLabelStatusWithRetry` — até 3 tentativas
+  antes de desistir): sucesso grava `market_place_label_status`
+  incondicionalmente e usa a `collection_date` retornada; falha após
+  esgotar o retry cai para a `collection_date` já gravada localmente (por
+  `dataPrevista`), se houver — sem nenhuma, o job falha e é retentado pelo
+  BullMQ. Ao ter uma `collection_date` (de qualquer origem), delega pra
+  `CollectionDateSchedulerService.syncCollectionDateLocked`, que decide
+  gravar/reagendar e eventualmente faz PATCH `748748` +
+  `internal_status: WAITING_FOR_NFE_EMISSION` + agenda o job delayed no
+  `NFE_EMISSION`. Também expõe `resumeAfterAcceptance`, usada pra retomar o
+  agendamento de um pedido que ficou travado esperando aceite manual (ver
+  "Coordenação entre filas" abaixo) — delega a finalização pro mesmo
+  `CollectionDateSchedulerService`.
+- **`MARKETPLACE_WEBHOOK_SYNC`** (`marketplace-webhook-sync.queue.ts`) —
+  reage a webhooks de `orders`/`shipments` do marketplace (rota
+  `POST /api/mercado_livre/webhook`). Nunca confia em dado nenhum do corpo
+  do webhook, só usa `resource`/`topic` pra saber qual recurso re-buscar ao
+  vivo e em qual direção: uma notificação de `orders` é sempre 1 pedido; uma
+  de `shipments` pode cobrir mais de um pedido local (agrupamento por
+  `pack_id`), resolvido via `getMarketplaceOrdersFromShipment` — todo id
+  devolvido é sincronizado. Pra cada pedido: grava
+  `market_place_label_status` sempre (mesmo partindo de `UNKNOWN` — a
+  chegada do webhook já prova que é um pedido de marketplace) e, se veio
+  `collectionDate`, aciona `CollectionDateSchedulerService.syncCollectionDateLocked`
+  — as duas escritas dentro do mesmo `withOrderLock`. Ignora pedidos já em
+  `COMPLETED_ORDER_INTERNAL_STATUSES`.
+- **`MARKETPLACE_RECONCILER`** (`marketplace-reconciler.queue.ts`) — duas
+  cadências independentes num componente só (mesmo padrão de
+  `BLING_RECONCILER`, dispatch por `job.data.task`): `collection_date` (1h)
+  confirma/reagenda `collection_date` via `CollectionDateSchedulerService`
+  pra todo pedido ainda pendente (`OPEN`/`WAITING_CHANNEL_VALIDATION`, de
+  uma store em `allowed_channels` —
+  `OrderRepository.findPendingMarketplaceOrders`); `label_status` (5min) só
+  atualiza `market_place_label_status` (sem efeito colateral de
+  agendamento, por isso roda bem mais frequente). Rede de segurança pra
+  quando o webhook falha silenciosamente ou nunca chega.
 - **`NFE_EMISSION`** (`nfe.queue.ts`) — confirma ao vivo que a situação
   ainda é `748748` (`NFE_AGENDADA`) antes de emitir. Sucesso: `nfe_emitted:
   true`, `internal_status: EMITTED`. Falha (situação divergente, campos
   faltando, erro da Bling): PATCH `748772` + `internal_status: CANCELLED`.
-- **`NFE_RECONCILER`** (`nfe-reconciler.queue.ts`) — 4 rotinas
+- **`NFE_RECONCILER`** (`nfe-reconciler.queue.ts`) — 3 rotinas
   independentes, disparadas juntas via `Promise.allSettled`:
   - `reconcileWaitingNfe`: recria job de emissão faltando no Redis pra
     pedido já em `WAITING_FOR_NFE_EMISSION` com `collection_date`.
@@ -182,17 +194,7 @@ motivo nenhum.
     `CNPJ_VERIFY_CNAE`, pra pedido preso em `OPEN`.
   - `reconcileStuckOrders`: pedido em `WAITING_CHANNEL_VALIDATION` há mais
     de 30min — se a situação ao vivo ainda confirmar isso, marca `748772`
-    (verificação humana). Espera `ML-SCRAPING` e depois `ML_ORDER_SYNC`
-    ficarem livres antes de rodar (ver "Coordenação entre filas" abaixo).
-  - `reconcileMissingCollectionDate` (rede de segurança pro scraping sob
-    demanda): busca ao vivo na Bling todos os pedidos em situação `748743`
-    (`GET /pedidos/vendas?idsSituacoes[]=748743`, paginado), separa os que
-    a própria Bling ainda não tem `dataPrevista`, cruza com o banco pra
-    achar os que ainda estão com `collection_date` nulo, e — se houver
-    algum — dispara um ciclo de `ML-SCRAPING` sob demanda (mesmo `jobId`
-    fixo `"ml-scraping-on-demand"` usado por `ML_ORDER_SYNC`). Cobre o
-    caso do disparo original (feito por `ML_ORDER_SYNC` na chegada do
-    pedido) ter falhado silenciosamente ou nunca ter ocorrido.
+    (verificação humana) com `reason_cancelled: MARKETPLACE_SYNC_STUCK`.
 - **`BLING_RECONCILER`** (`bling-reconciler.queue.ts`) — 2 rotinas:
   - `reconcileOpenOrders` (a cada 2h): cria localmente pedidos que já
     existem na Bling em situação `6` mas ainda não foram sincronizados.
@@ -201,27 +203,67 @@ motivo nenhum.
     vinculada, PATCH `9`; se não tem NF mas já tem `collection_date` local,
     PATCH `748748`.
 
+## `CollectionDateSchedulerService` (ponto único de escrita de `collection_date`)
+
+`src/modules/handlers/bling/services/bling-nfe/collection-date/collection-date-scheduler.service.ts`.
+Todo caminho que grava/reconcilia `collection_date` (`BLING_ORDER_INGESTION`,
+`ML_ORDER_SYNC`, `MARKETPLACE_WEBHOOK_SYNC`, `MARKETPLACE_RECONCILER`) passa
+por aqui — `syncCollectionDateLocked(idOrderSystem, newDate, orderSystem)`,
+assumindo que quem chama já está dentro do `withOrderLock` do pedido (a
+variante pública `syncCollectionDate` pega o lock sozinha, pra quem ainda
+não está dentro dele).
+
+- **Compara por dia civil (BRT), não por instante exato** — duas chamadas
+  pro mesmo dia com horários de resposta diferentes (API do marketplace vs.
+  `dataPrevista` da Bling) não contam como uma mudança real. A normalização
+  pra início do dia BRT (`startOfDayTz`) é sempre feita aqui, nunca no call
+  site.
+- Só 3 dos `OrderInternalStatus` são "agendáveis": `OPEN`,
+  `WAITING_CHANNEL_VALIDATION`, `WAITING_FOR_NFE_EMISSION` — qualquer outro
+  (já emitido, cancelado, etc.) é no-op total.
+- Se já está em `WAITING_FOR_NFE_EMISSION` (job já agendado): dia igual é
+  no-op total (sem `removeJob`/`addDelayed`); dia diferente remove o job
+  atual e reagenda (`finalizeNfeScheduling`).
+- Se está em `OPEN`/`WAITING_CHANNEL_VALIDATION` (nenhum job ainda):
+  **sempre** chama `scheduleNfe`, mesmo que o dia não tenha mudado — o
+  agendamento em si pode ainda não ter acontecido (ex: `BLING_ORDER_INGESTION`
+  gravou via `dataPrevista` e `ML_ORDER_SYNC` só confirmou o mesmo dia
+  depois). `scheduleNfe`/`finalizeNfeScheduling` são seguros de chamar de
+  novo, e `isEligibleForSync` dentro de `scheduleNfe` garante que nada
+  acontece de fato enquanto o pedido não estiver em
+  `WAITING_CHANNEL_VALIDATION` — é por isso que chamar isso a partir de
+  `BLING_ORDER_INGESTION` (pedido ainda `OPEN`, `CNPJ_VERIFY_CNAE` não
+  rodou) é seguro: o único efeito ali é permitir a gravação de
+  `collection_date`, nunca agendar/emitir uma NFe antes da hora.
+- `finalizeNfeScheduling` não confia só no snapshot local — antes do PATCH
+  pra `748748`, busca a situação da Bling ao vivo e só segue se ainda for
+  `748743`; se divergiu por fora, só sincroniza `internal_status` e não
+  agenda nada.
+
 ## Lock por pedido (`withOrderLock`)
 
-`BaseQueueService.withOrderLock` (`base-queue-service.ts`). Mutex Redis
-(`SET key NX PX`) com chave **dinâmica** —
-`locks:bling:order:${idOrderSystem}` — em vez de uma chave fixa
-compartilhada entre filas. Isso significa:
+`BaseQueueService.withOrderLock` (`base-queue-service.ts`) — método de
+instância de toda fila, que delega pra uma função standalone
+(`withOrderLock`, exportada do mesmo arquivo) reaproveitada também por
+`CollectionDateSchedulerService`, que não é uma fila. Mutex Redis
+(`SET key NX PX`) com chave **dinâmica** — `locks:bling:order:${idOrderSystem}`
+— em vez de uma chave fixa compartilhada entre filas. Isso significa:
 
 - Pedidos diferentes correm em paralelo total, mesmo entre filas
-  diferentes, mesmo dentro da mesma fila (todas as 6 rodam com
-  `concurrency` > 1).
+  diferentes, mesmo dentro da mesma fila (todas rodam com `concurrency` >
+  1).
 - Só serializa quando duas coisas tentam tocar o **mesmo** pedido ao mesmo
   tempo — quem pede o lock primeiro pega; o outro espera (retry curto, até
   2min de teto) e, se estourar, o job falha e tenta de novo depois pelo
   mecanismo normal de retry do BullMQ.
 - **Não é reentrante** — cada fluxo pega o lock uma única vez, no ponto de
   entrada, e todo o resto da cadeia daquele fluxo (incluindo chamadas
-  internas tipo `scheduleNfe`/`finalizeNfeScheduling`) assume que já está
-  dentro do lock, sem pegar de novo.
+  internas tipo `CollectionDateSchedulerService.scheduleNfe`/
+  `finalizeNfeScheduling`) assume que já está dentro do lock, sem pegar de
+  novo.
 - A chave usada é o **id do pedido na Bling** (`id_order_system` uma vez
   persistido; o `data.id` cru do webhook antes disso) — o único
-  identificador presente em toda etapa do pipeline, garantindo que as 6
+  identificador presente em toda etapa do pipeline, garantindo que todas as
   filas disputem corretamente pelo mesmo pedido físico.
 
 ## Rate limit da Bling
@@ -250,7 +292,9 @@ real (várias chamadas acordando juntas), só uma vence cada checagem; as
 demais recebem um novo tempo de espera e voltam pro topo do loop — imune a
 jitter de timer por construção, porque nunca confia num plano calculado
 antes, só no que o Redis confirma bem na hora. Detalhes completos, incluindo
-o contador diagnóstico de gap real entre disparos, no `CLAUDE.md`.
+o contador diagnóstico de gap real entre disparos, no `CLAUDE.md`. **A API
+do Mercado Livre não tem um limiter equivalente ainda** — os limites reais
+são desconhecidos até validação em produção (ver `CLAUDE.md`).
 
 ## Watchdog de job (`maxProcessingMs`)
 
@@ -287,47 +331,63 @@ mesmo assim levar a uma decisão que só faz sentido enquanto a outra fila
 ainda não terminou o trabalho dela naquele pedido. Cada caso abaixo
 descreve como isso é evitado hoje.
 
-### `reconcileStuckOrders` e `ML_ORDER_SYNC`/`ML-SCRAPING`
+### Convergência em `collection_date`/`market_place_label_status`
 
-`reconcileStuckOrders` considera um pedido preso quando a situação ainda é
-`748743` (`WAITING_CHANNEL_VALIDATION`) há mais de 30min. Essa leitura
-sozinha não diferencia um pedido genuinamente abandonado de um que só está
-esperando a vez de ser processado pelo `ML_ORDER_SYNC` — a única fila que
-move um pedido pra fora desse status via scraping. Desde que `ML-SCRAPING`
-passou a rodar sob demanda (sem cron fixo), essa ambiguidade ganhou uma
-segunda camada: pode haver um ciclo de scraping *em andamento* na fila
-`ML-SCRAPING` (inclusive um que o próprio `reconcileMissingCollectionDate`
-acabou de disparar, rodando em paralelo no mesmo `Promise.allSettled`)
-enquanto o `ML_ORDER_SYNC` ainda está totalmente vazio — porque o scraping
-ainda não terminou de baixar/parsear a planilha pra distribuir os jobs
-`{row}` que alimentam o `ML_ORDER_SYNC`. Por isso, antes de rodar o sweep,
-`reconcileStuckOrders` espera **primeiro** `ML-SCRAPING` (teto de 10min) e
-**depois** `ML_ORDER_SYNC` (teto de 5min) ficarem sem nenhum job pendente
-(`BaseQueueService.waitUntilIdle`, event-driven via o evento `"drained"`
-do BullMQ — não faz polling por intervalo), nessa ordem porque scraping
-alimenta `ML_ORDER_SYNC`, não o contrário. Se qualquer um dos dois
-estourar seu teto, pula o sweep desta execução e tenta de novo no próximo
-ciclo agendado. Esse gate é restrito a essa rotina especificamente — as
-demais rotinas do pipeline não competem pelo mesmo status.
+Quatro produtores independentes podem tocar o mesmo pedido: `ML_ORDER_SYNC`,
+`MARKETPLACE_WEBHOOK_SYNC`, e as duas cadências do `MARKETPLACE_RECONCILER`.
+(`BLING_ORDER_INGESTION` fica de fora dessa convergência — ela só grava
+`collection_date` a partir de `dataPrevista`, sem nunca consultar o
+marketplace; quem reconcilia um valor ainda não confirmado é sempre
+`ML_ORDER_SYNC`, na sequência normal do pipeline.) A coordenação entre os
+quatro é inteiramente feita por `withOrderLock` (serializa dois produtores
+tocando o mesmo pedido) + o guard de no-op-por-dia de
+`CollectionDateSchedulerService` (uma escrita redundante de um segundo
+produtor chegando logo depois, pro mesmo dia civil, é um no-op barato, não
+um duplo agendamento) — não existe nenhum guard de precedência por "origem"
+além disso, porque não é necessário: `ML_ORDER_SYNC` é o único ponto que
+efetivamente confirma `collection_date` contra o marketplace na chegada do
+pedido, então qualquer divergência com um valor ainda não confirmado
+(`dataPrevista`) é resolvida na primeira vez que `ML_ORDER_SYNC` rodar —
+uma sequência determinística no pipeline, não uma corrida entre fontes.
+`market_place_label_status` não tem guard equivalente (nenhuma comparação,
+sempre sobrescreve) — aceitável porque essa escrita não tem efeito
+colateral de agendamento; dois produtores correndo no mesmo pedido só
+significam que o campo reflete brevemente qual busca chegou por último,
+ambas vindas da mesma API dentro de instantes uma da outra.
+
+### `reconcileStuckOrders` (NFE_RECONCILER)
+
+Considera um pedido preso quando a situação ainda é `748743`
+(`WAITING_CHANNEL_VALIDATION`) há mais de 30min, e marca `748772`
+(`reason_cancelled: MARKETPLACE_SYNC_STUCK`). Não precisa mais esperar
+nenhuma outra fila ficar livre antes de rodar (diferente do antigo design
+baseado em scraping): `ML_ORDER_SYNC` resolve `collection_date` via uma
+chamada de API síncrona (do ponto de vista da fila) dentro do mesmo job que
+marca `WAITING_CHANNEL_VALIDATION`, então não existe mais um backlog de
+segunda fila que possa fazer um pedido em trânsito parecer abandonado. O
+modo de falha que essa rotina cobre hoje é diferente: a chamada à API do
+marketplace (de `ML_ORDER_SYNC`, do webhook ou do reconciler) pode falhar
+repetidamente (API do ML fora do ar, refresh de token quebrado, rate
+limit) e deixar um pedido preso indefinidamente.
 
 ### Retomada de `waiting_acceptance` (`ML_ORDER_SYNC` ↔ `NFE_EMISSION`)
 
 Quando um pedido chega no mesmo dia com coleta hoje/futuro e
-`lock_today_orders` está ativo, `scheduleNfe` trava o pedido pra aceite
-manual: grava `internal_status: WAITING_FOR_NFE_EMISSION,
-waiting_acceptance: true`, sem ainda fazer o PATCH da situação Bling pra
-`748748`. A liberação (`POST /orders/release-waiting-acceptance-for-today`)
-só seleciona os pedidos afetados e zera a flag — quem de fato completa o
-agendamento (PATCH `748748` + job delayed no `NFE_EMISSION`) é
+`lock_today_orders` está ativo, `CollectionDateSchedulerService.scheduleNfe`
+trava o pedido pra aceite manual: grava `internal_status:
+WAITING_FOR_NFE_EMISSION, waiting_acceptance: true`, sem ainda fazer o PATCH
+da situação Bling pra `748748`. A liberação
+(`POST /orders/release-waiting-acceptance-for-today`) só seleciona os
+pedidos afetados e zera a flag — quem de fato completa o agendamento (PATCH
+`748748` + job delayed no `NFE_EMISSION`) é
 `MLOrderSyncQueue.resumeAfterAcceptance`, chamado uma vez por pedido
 liberado (`OrdersController` enfileira um job `{resumeOrderId}` pra cada
-um). `resumeAfterAcceptance` confirma o estado esperado pós-liberação
+um), que delega a finalização pro mesmo
+`CollectionDateSchedulerService.finalizeNfeScheduling`.
+`resumeAfterAcceptance` confirma o estado esperado pós-liberação
 (`WAITING_FOR_NFE_EMISSION` + `waiting_acceptance: false`) antes de agir —
 não reusa `isEligibleForSync`, que exige `WAITING_CHANNEL_VALIDATION`, um
-status anterior a esse. A lógica de finalizar o agendamento
-(`finalizeNfeScheduling`) é compartilhada entre `scheduleNfe` e
-`resumeAfterAcceptance`, então o PATCH/write/addDelayed nunca fica
-duplicado entre os dois caminhos.
+status anterior a esse.
 
 `finalizeNfeScheduling` não confia só no snapshot local — antes do PATCH
 pra `748748`, ela busca a situação da Bling ao vivo e só segue se ainda for
@@ -340,29 +400,12 @@ travado e alguém liberar manualmente pode passar um tempo bem maior do que
 o intervalo normal entre `isEligibleForSync` (que lê o snapshot local de
 `source_payload`) e essa checagem.
 
-### `reconcileWaitingNfe` e `ML_ORDER_SYNC.scheduleNfe`
+### `reconcileWaitingNfe` e `CollectionDateSchedulerService.scheduleNfe`
 
 `reconcileWaitingNfe` roda sob `withOrderLock` por pedido, igual as outras
 rotinas do arquivo — evita que ela tente recriar um job de emissão
 (`addDelayed`) na mesma janela em que `scheduleNfe` está no meio de gravar
 `WAITING_FOR_NFE_EMISSION` e agendar esse mesmo job.
-
-### `reconcileMissingCollectionDate` e `ML_ORDER_SYNC` (disparo de `ML-SCRAPING`)
-
-Os dois únicos pontos do sistema que disparam um ciclo de `ML-SCRAPING`
-sob demanda — `ML_ORDER_SYNC.syncFromWebhookLocked` (na chegada de um
-pedido sem `collection_date`) e `reconcileMissingCollectionDate` (rede de
-segurança, a cada 15min) — usam o **mesmo `jobId` fixo**
-(`"ml-scraping-on-demand"`) ao chamar `.add()` na mesma instância cliente
-de `MLScrapingQueue` (ver `src/queues/index.ts`). Isso não é coincidência:
-o dedupe nativo do BullMQ por `jobId` (um `.add()` com um id já
-pendente/ativo na fila é ignorado) garante que os dois disparadores nunca
-enfileirem dois ciclos de scraping em paralelo, mesmo disparando
-"ao mesmo tempo" (ex: um pedido chega sem `collection_date` bem na janela
-em que o reconciler também decidiu disparar) — um único ciclo, iniciado
-por qualquer um dos dois, já resolve todos os pedidos pendentes de uma
-vez (baixa a planilha inteira), então não há necessidade de coordenação
-além dessa deduplicação por id.
 
 ### `reconcileOpenOrders` (NFE_RECONCILER)
 
@@ -391,9 +434,12 @@ mesma página.
    qualquer sequência ler-decidir-escrever sobre um pedido específico.
 2. Confira a tabela de estados: sua fila lê algum status que outra fila
    também escreve? Se sim, existe o risco de chegar cedo demais numa
-   transição que já vai acontecer (padrão de `reconcileStuckOrders` acima)
-   — considere se precisa de um `waitUntilIdle` na fila produtora, ou se
-   sua fila já reconfere os dados frescos o suficiente, dentro do lock,
-   pra não precisar disso (padrão de `syncInvoicedOrCollectedOrders`).
-3. Atualize esta tabela e a lista de filas acima com o que sua fila lê e
+   transição que já vai acontecer — considere se sua fila já reconfere os
+   dados frescos o suficiente, dentro do lock, pra não precisar de nenhuma
+   espera adicional (padrão de `syncInvoicedOrCollectedOrders`).
+3. Se sua fila grava `collection_date`, faça isso através de
+   `CollectionDateSchedulerService` — nunca grave/reagende esse campo
+   direto, pra não duplicar o guard de no-op-por-dia nem o agendamento de
+   NFe.
+4. Atualize esta tabela e a lista de filas acima com o que sua fila lê e
    escreve.

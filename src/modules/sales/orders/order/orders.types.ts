@@ -37,8 +37,30 @@ export enum OrderReasonCancelled {
   NFE_MISSING_FIELDS = "NFE_MISSING_FIELDS",
   NFE_NO_STOCK = "NFE_NO_STOCK",
   NFE_EMISSION_FAILED = "NFE_EMISSION_FAILED",
+  // Histórico — só a extinta ML-SCRAPING gravava este valor. Substituído por
+  // MARKETPLACE_SYNC_STUCK (ver abaixo); nunca mais escrito, mantido só
+  // porque já existe em linhas antigas.
   ML_SCRAPING_NO_MATCH = "ML_SCRAPING_NO_MATCH",
   CUSTOMER_CANCELLED = "CUSTOMER_CANCELLED",
+  // Pedido preso em WAITING_CHANNEL_VALIDATION há muito tempo porque a
+  // chamada à API do marketplace (ML_ORDER_SYNC, MARKETPLACE_WEBHOOK_SYNC ou
+  // MARKETPLACE_RECONCILER) vem falhando repetidamente — sucessor de
+  // ML_SCRAPING_NO_MATCH, escrito pelo mesmo reconcileStuckOrders.
+  MARKETPLACE_SYNC_STUCK = "MARKETPLACE_SYNC_STUCK",
+}
+
+// Status da etiqueta de envio no marketplace (hoje só Mercado Livre) — só
+// tem sentido para pedidos de canais em Integration.allowed_channels;
+// permanece UNKNOWN para qualquer outro. WAITING_FOR_SYSTEM_NFE é o único
+// valor atribuído pelo próprio sistema (na ingestão do pedido); os demais
+// vêm do mapeamento do status/substatus cru do marketplace
+// (mapMercadoLivreLabelStatus).
+export enum MarketPlaceLabelStatus {
+  UNKNOWN = "UNKNOWN",
+  WAITING_FOR_SYSTEM_NFE = "WAITING_FOR_SYSTEM_NFE",
+  WAITING_MARKETPLACE_PROCESS_NFE = "WAITING_MARKETPLACE_PROCESS_NFE",
+  WAITING_MARKETPLACE_LABEL_GENERATION = "WAITING_MARKETPLACE_LABEL_GENERATION",
+  READY_TO_PRINT = "READY_TO_PRINT",
 }
 
 export interface orderAttributes {
@@ -62,6 +84,8 @@ export interface orderAttributes {
   unit_business_id?: string | null;
   invoice_id?: string | null;
   waiting_acceptance?: boolean;
+  market_place_label_status?: MarketPlaceLabelStatus;
+  market_place_label_printed?: boolean;
   source_payload?: Record<string, unknown>;
   total_products?: number;
   total_order?: number;
@@ -96,6 +120,15 @@ export interface orderAttributes {
 export interface FullOrder extends orderAttributes {
   customer: customerAttributes;
   items: orderItemsAttributes[];
+}
+
+// Pedido pendente de sincronização com o marketplace (OPEN ou
+// WAITING_CHANNEL_VALIDATION, de uma store em Integration.allowed_channels)
+// — retorno de OrderRepository.findPendingMarketplaceOrders, usado por
+// MarketplaceReconcilerQueue. Precisa da store carregada (não só o id) pra
+// resolver qual MarketplaceHandler consultar.
+export interface PendingMarketplaceOrder extends orderAttributes {
+  store: { id: string; name: string };
 }
 
 // Uma linha do detalhe de ship_today_pending (GET /summary/ship-today-pending/detail).

@@ -1,66 +1,38 @@
 import { Job } from "bullmq";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
-import { MLExcelRow } from "./mercado-livre.types";
 import ordersService from "../../../sales/orders/order/orders.service";
-import {
-  nextRemoveOnQueue,
-  nextStepDelayedOnQueue,
-  nextStepOnQueue,
-  getJob,
-} from "../../../../shared/types/queue/base-queue";
-import Customer from "../../../sales/customers/customers.model";
-import { AxiosInstance } from "axios";
-import {
-  COMPLETED_ORDER_INTERNAL_STATUSES,
-  FullOrder,
-  OrderInternalStatus,
-} from "../../../sales/orders/order/orders.types";
-import sequelize from "../../../../config/sequelize";
-import { Model, Op } from "sequelize";
-import OrderItems from "../../../sales/orders/order_items/order_items.model";
-import { setDelayBasedOnDate } from "../../../../shared/utils/queues/setDelay";
+import storeService from "../../../sales/stores/stores.service";
+import { OrderInternalStatus } from "../../../sales/orders/order/orders.types";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
-import redisService from "../../../../shared/utils/base-models/base-redis";
-import integrationsService from "../../../integrations/integrations/integrations.service";
 import {
-  blingGet,
-  blingPut,
-  blingPatch,
-} from "../../bling/services/bling/helpers/get-with-sleep";
-import { mapOrderInternalStatus } from "../../../../shared/utils/normalizers/bling/status-mapper";
-import { matchesOrderByDateAndBuyer } from "./helpers/order-match";
+  CollectionDateSchedulerService,
+  isEligibleForSync,
+} from "../../bling/services/bling-nfe/collection-date/collection-date-scheduler.service";
+import { getMarketplaceCollectionAndLabelStatusWithRetry } from "../../marketplace/services/marketplace-order-shipment.service";
 
 /**
- * Job pode vir de três origens:
- * 1. MLScrapingQueue — traz { row } com dados completos do Excel
- * 2. MLOrderQueue (webhook) — traz { order, customer } com dados do Bling/webhook
- * 3. OrdersController.releaseWaitingAcceptanceForToday — traz { resumeOrderId }
- *    pra retomar o agendamento de um pedido que ficou preso em
- *    waiting_acceptance e acabou de ser liberado (ver resumeAfterAcceptance)
+ * Job pode vir de duas origens:
+ * 1. MLOrderQueue (webhook, via CNPJQueue) — traz { orderSystem, customer }
+ *    com dados do Bling/webhook.
+ * 2. OrdersController.releaseWaitingAcceptanceForToday — traz
+ *    { resumeOrderId } pra retomar o agendamento de um pedido que ficou
+ *    preso em waiting_acceptance e acabou de ser liberado (ver
+ *    resumeAfterAcceptance).
  */
 export type MLOrderSyncJobData =
-  | { row: MLExcelRow; orderSystem?: never; customer?: never; resumeOrderId?: never }
-  | { orderSystem: any; customer: any; row?: never; resumeOrderId?: never }
-  | { resumeOrderId: string; row?: never; orderSystem?: never; customer?: never };
+  | { orderSystem: any; customer: any; resumeOrderId?: never }
+  | { resumeOrderId: string; orderSystem?: never; customer?: never };
 
 export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
-  private blingApi: AxiosInstance;
-  private next: nextStepDelayedOnQueue & nextRemoveOnQueue & getJob;
-  private scrapingNext: nextStepOnQueue;
+  private collectionDateScheduler: CollectionDateSchedulerService;
 
   constructor(
-    next: nextStepDelayedOnQueue & nextRemoveOnQueue & getJob,
-    blingApi: AxiosInstance,
-    scrapingNext: nextStepOnQueue,
+    collectionDateScheduler: CollectionDateSchedulerService,
     options: { workless?: boolean } = {},
   ) {
     super("ML-ORDER-SYNC", {
       // Pedidos diferentes só serializam via lock por pedido (withOrderLock)
-      // agora — antes um mutex global + limiter de 1 job/3s travava a fila
-      // inteira atrás de qualquer backlog (ex: 175 jobs de scraping),
-      // deixando pedidos novos presos atrás de pedidos antigos sem relação
-      // nenhuma, até o reconciler marcá-los como "verificação humana" por
-      // engano.
+      // — pedidos sem relação nenhuma correm 100% em paralelo entre si.
       concurrency: 10,
       // Precisa cobrir o pior caso do retry de 429 da Bling (5 tentativas,
       // até 60s cada = até 300s) — com 60s aqui, o watchdog abortava o job
@@ -70,9 +42,7 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       maxProcessingMs: 5 * 60 * 1000,
       workless: options.workless,
     });
-    this.blingApi = blingApi;
-    this.next = next;
-    this.scrapingNext = scrapingNext;
+    this.collectionDateScheduler = collectionDateScheduler;
   }
 
   async process(job: Job<MLOrderSyncJobData>): Promise<void> {
@@ -81,127 +51,22 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-    if (job.data.orderSystem) {
-      if (job.data.orderSystem?.internal_status === "CANCELLED") {
-        console.log(
-          `[MLOrderSyncQueue] Pedido ${job.data.orderSystem.number_order_channel} cancelado — ignorando`,
-        );
-        return;
-      }
-    }
-
-    if (job.data.row) {
-      const cachedOrders = await redisService.get<FullOrder[]>(
-        `orders_seven_days_ago`,
-      );
-
-      if (!cachedOrders) {
-        console.error("[MISS CACHE] Cache não encontrado na MLOrderSyncQueue");
-        return;
-      }
-
-      console.log("[HIT CACHE] ---------");
-
-      // Origem: scraping — tem todos os dados do Excel para fazer o match
-      await this.syncFromExcel(job.data.row, cachedOrders);
-    } else {
-      // Origem: webhook — tem order/customer do Bling, sem dados ML ainda
-      await this.syncFromWebhook(job.data.orderSystem, job.data.customer);
-    }
-  }
-
-  // ─── Guarda: só segue se o pedido ainda estiver de fato aguardando validação de canal ──
-
-  /**
-   * Rebusca o pedido só com internal_status e actual_situation para confirmar
-   * que ele ainda está em WAITING CHANNEL VALIDATION (748743 na Bling).
-   * Evita processar pedido que já mudou de situação entre o enqueue e o processamento.
-   *
-   * Usa `actual_situation` (não `source_payload.situacao.id`): CNPJQueue
-   * avança o pedido pra 748743 direto na Bling (applyWaitingNfeStatus) e só
-   * grava `internal_status` localmente — não reescreve `source_payload`, que
-   * só é atualizado por um webhook completo (create/updateOrderFromBling).
-   * Checar `source_payload` aqui fazia essa checagem falhar sempre logo
-   * depois do avanço pelo CNPJQueue, já que o snapshot ainda tinha a
-   * situação antiga ("Em Aberto"), mesmo com `internal_status` já correto —
-   * derrubando o agendamento de NFe de todo pedido que passa por ali.
-   */
-  private async isEligibleForSync(orderId: string): Promise<boolean> {
-    const orderData = await ordersService.findById(orderId, {
-      attributes: ["internal_status", "actual_situation"],
-    });
-
-    if (!orderData) return false;
-
-    return (
-      orderData.internal_status === "WAITING CHANNEL VALIDATION" &&
-      String((orderData as any).actual_situation) === "748743"
-    );
-  }
-
-  // ─── Fluxo vindo do scraping ────────────────────────────────────────────
-
-  /**
-   * Tenta fazer match do row do Excel com um pedido no banco.
-   * Se achar: atualiza collection_date e agenda NFe.
-   * Se não achar: loga e segue (pedido pode ainda não ter chegado pelo webhook).
-   */
-  private async syncFromExcel(
-    row: MLExcelRow,
-    ordersSystem: FullOrder[],
-  ): Promise<void> {
-    const filtered = ordersSystem.filter((order) =>
-      matchesOrderByDateAndBuyer(order.date, order.customer?.name, row),
-    );
-
-    if (!filtered.length) {
+    if (job.data.orderSystem?.internal_status === OrderInternalStatus.CANCELLED) {
       console.log(
-        `[MLOrderSyncQueue] Pedido ML ${row.order_number} não encontrado. Aguardando webhook.`,
+        `[MLOrderSyncQueue] Pedido ${job.data.orderSystem.number_order_channel} cancelado — ignorando`,
       );
       return;
     }
 
-    const matchedOrder = this.resolveMatch(
-      filtered,
-      row.sale_date,
-      row.order_number,
-    );
-    if (!matchedOrder) return;
-
-    await this.applyCollectionDate(matchedOrder, row);
-
-    // ── Irmãos: mesmo cliente, mesmo SKU, createdAt próximo ──────────────
-    const siblings = this.findSiblingOrders(
-      matchedOrder,
-      row.sku,
-      ordersSystem,
-    );
-
-    if (siblings.length) {
-      console.log(
-        `[MLOrderSyncQueue] Pedido ${row.order_number} — ${siblings.length} irmão(s) encontrado(s). Aplicando mesma collection_date.`,
-      );
-      for (const sibling of siblings) {
-        await this.applyCollectionDate(sibling, row, true);
-      }
-    }
+    await this.syncFromWebhook(job.data.orderSystem, job.data.customer);
   }
 
   // ─── Fluxo vindo do webhook ─────────────────────────────────────────────
 
-  /**
-   * Pedido chegou pelo webhook, tenta encontrar o número do ML no banco
-   * (number_order_channel já foi salvo pelo BlingOrderService).
-   * Se achar com collection_date já preenchida (scraping rodou antes): agenda NFe direto.
-   * Se não tiver collection_date ainda: marca WAITING CHANNEL VALIDATION e aguarda próximo scraping.
-   */
-  private async syncFromWebhook(
-    orderSystem: any,
-    customer: any,
-  ): Promise<void> {
+  private async syncFromWebhook(orderSystem: any, customer: any): Promise<void> {
     if (!orderSystem) {
       console.warn(
-        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} não encontrado no banco via webhook. Ignorando.`,
+        `[MLOrderSyncQueue] Pedido não encontrado no banco via webhook. Ignorando.`,
       );
       return;
     }
@@ -211,12 +76,16 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     );
   }
 
-  // scheduleNfe é chamado daqui já dentro do lock do pedido acima.
-  private async syncFromWebhookLocked(
-    orderSystem: any,
-    customer: any,
-  ): Promise<void> {
-    const isEligible = await this.isEligibleForSync(orderSystem.id);
+  /**
+   * Consulta a API do marketplace SEMPRE que processa um pedido,
+   * independente de ele já ter collection_date ou não (decisão explícita do
+   * usuário) — sempre grava market_place_label_status quando a chamada tem
+   * sucesso, e usa a collection_date do marketplace quando disponível,
+   * caindo pro valor já existente (gravado por BLING_ORDER_INGESTION via
+   * dataPrevista) só quando a chamada falha após esgotar o retry.
+   */
+  private async syncFromWebhookLocked(orderSystem: any, customer: any): Promise<void> {
+    const isEligible = await isEligibleForSync(orderSystem.id);
     if (!isEligible) {
       console.log(
         `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} não está mais em WAITING CHANNEL VALIDATION (internal_status/situacao.id divergente). Ignorando.`,
@@ -224,363 +93,83 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-    if (orderSystem.collection_date) {
-      // Scraping já rodou antes do webhook chegar — agenda NFe direto
-      console.log(
-        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já tem collection_date. Agendando NFe direto.`,
-      );
-      await this.scheduleNfe(
-        orderSystem.id_order_system!,
-        orderSystem.collection_date,
-        orderSystem,
-      );
-      return;
-    }
-
-    // Sem collection_date — marca como aguardando e dispara scraping sob
-    // demanda (não há mais cron fixo; ML-SCRAPING só roda quando pedido).
-    console.log(
-      `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} sem collection_date. Marcando como WAITING CHANNEL VALIDATION e disparando scraping sob demanda.`,
-    );
-    await ordersService.update(orderSystem.id, {
-      internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
-    });
-    await this.triggerScraping("ml-order-sync");
-  }
-
-  /**
-   * Pede um ciclo de scraping sob demanda na fila ML-SCRAPING (processo
-   * separado — ver startScrapingWorker). jobId fixo faz o BullMQ deduplicar:
-   * se já existe um ciclo pendente/rodando, o pedido novo é ignorado — um
-   * ciclo só resolve TODOS os pedidos pendentes de uma vez (baixa a
-   * planilha inteira), então não há motivo pra empilhar disparos por pedido.
-   */
-  private async triggerScraping(triggeredBy: string): Promise<void> {
-    try {
-      await this.scrapingNext.add(
-        { triggered_by: triggeredBy },
-        "ml-scraping-on-demand",
-      );
-    } catch (error: any) {
-      console.error(
-        `[MLOrderSyncQueue] Falha ao disparar scraping sob demanda (triggered_by=${triggeredBy}):`,
-        error.message,
-      );
-    }
-  }
-
-  // ─── Helpers ────────────────────────────────────────────────────────────
-
-  private resolveMatch(
-    orders: FullOrder[],
-    saleDate: Date,
-    orderNumber: string,
-  ): FullOrder | null {
-    if (orders.length === 1) return orders[0];
-
-    console.warn(
-      `[MLOrderSyncQueue] Pedido ${orderNumber} — ${orders.length} candidatos. Match por horário. ${typeof saleDate}`,
-    );
-    return orders.reduce((closest, current) => {
-      const target = new Date(saleDate).getTime(); // Ponto de atenção: TS nao reclamou de ser string
-
-      const currDiff = Math.abs(
-        new Date(current.createdAt!).getTime() - target,
-      );
-      const closeDiff = Math.abs(
-        new Date(closest.createdAt!).getTime() - target,
-      );
-      return currDiff < closeDiff ? current : closest;
-    });
-  }
-
-  /**
-   * Aplica a collection_date no pedido encontrado via scraping,
-   * atualiza o number_order_channel com o número ML,
-   * muda o status para WAITING FOR NFE EMISSION
-   * e agenda o job de NFe no Redis.
-   */
-  private async applyCollectionDate(
-    order: FullOrder,
-    row: MLExcelRow,
-    isSibling: boolean = false,
-  ): Promise<void> {
-    if (!order.id_order_system) {
+    const storeName = await this.resolveOrderStoreName(orderSystem);
+    if (!storeName) {
       console.warn(
-        `[MLOrderSyncQueue] Pedido ${order.number_order_channel} sem id_order_system. Ignorando.`,
-      );
-      return;
-    }
-
-    const idOrderSystem = order.id_order_system;
-    return this.withOrderLock(idOrderSystem, () =>
-      this.applyCollectionDateLocked(order, idOrderSystem, row, isSibling),
-    );
-  }
-
-  // scheduleNfe é chamado daqui já dentro do lock do pedido acima — não
-  // pega o lock de novo (o Redis NX não é reentrante, ia travar sozinho).
-  private async applyCollectionDateLocked(
-    order: FullOrder,
-    idOrderSystem: string,
-    row: MLExcelRow,
-    isSibling: boolean,
-  ): Promise<void> {
-    if (COMPLETED_ORDER_INTERNAL_STATUSES.includes(order.internal_status!)) {
-      console.log(
-        `[MLOrderSyncQueue] Pedido ${order.number_order_channel} já com processo completo (${order.internal_status}) — ignorando scraping.`,
-      );
-      return;
-    }
-
-    const isEligible = await this.isEligibleForSync(order.id);
-    if (!isEligible) {
-      console.log(
-        `[MLOrderSyncQueue] Pedido ${order.number_order_channel} não está mais em WAITING CHANNEL VALIDATION (internal_status/situacao.id divergente). Ignorando.`,
-      );
-      return;
-    }
-
-    // Valida SKU na Bling antes de confirmar
-    const skuValid = order.items.some((item) => item.sku == row.sku);
-
-    if (!skuValid) {
-      console.warn(
-        `[MLOrderSyncQueue] SKU "${row.sku}" não encontrado no pedido Bling ${order.id_order_system}.`,
+        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} sem store resolvida — não é possível consultar o marketplace.`,
       );
       alertService.sendAlert({
         severity: "LOW",
-        title: "ML Sync — SKU sem match",
-        message: `Pedido Bling ${order.id_order_system} não contém SKU "${row.sku}" vindo do ML. Requer revisão manual.`,
+        title: "ML Sync — pedido sem store",
+        message: `Pedido ${orderSystem.id_order_system} não tem store_id resolvido. Requer revisão manual.`,
       });
       return;
     }
 
-    const newDate = new Date(row.collection_date);
-    const existingDate = order.collection_date
-      ? new Date(order.collection_date)
-      : null;
-
-    // Evita reprocessamento desnecessário
-    if (existingDate && existingDate.getTime() === newDate.getTime()) {
-      console.log(
-        `[MLOrderSyncQueue] Pedido ${order.number_order_channel} já com collection_date correta. Pulando.`,
-      );
-      return;
-    }
-
-    await ordersService.update(order.id, {
-      collection_date: newDate,
-      number_order_channel: row.order_number,
-    });
-
-    const { data } = await blingGet(
-      `/pedidos/vendas/${order.id_order_system}`,
-      this.blingApi,
-    );
-    if (isSibling) {
-      await blingPut(`/pedidos/vendas/${order.id_order_system}`, {
-        ...data.data,
-        observacoesInternas:
-          `${data.data.observacoesInternas} \n Atenção: Há mais de um pedido com estas mesmas informações, número do pedido do Mercado Livre pode estar errado, favor verificar no Mercado Livre. ML: ${row.order_number}`.trim(),
-      }, this.blingApi);
-    } else {
-      await blingPut(`/pedidos/vendas/${order.id_order_system}`, {
-        ...data.data,
-        observacoesInternas:
-          `${data.data.observacoesInternas} \n ML: ${row.order_number}`.trim(),
-      }, this.blingApi);
-    }
-
-    console.log(
-      `[MLOrderSyncQueue] Pedido ${order.number_order_channel} → collection_date: ${newDate.toISOString()}`,
+    const marketplaceResult = await getMarketplaceCollectionAndLabelStatusWithRetry(
+      storeName,
+      orderSystem.number_order_channel,
     );
 
-    await this.scheduleNfe(idOrderSystem, newDate, order);
-  }
-
-  /**
-   * Remove job anterior (se existir) e cria novo job delayed na NFeQueue,
-   * agendado para o mesmo dia da data de coleta, às 07:00. Se já passou das
-   * 13:00 no dia da coleta, agenda para o dia seguinte às 07:00.
-   *
-   * Assume que já está rodando dentro do withOrderLock do pedido (chamado
-   * só por applyCollectionDateLocked/syncFromWebhookLocked) — não pega o
-   * lock de novo aqui.
-   */
-  private async scheduleNfe(
-    idOrderSystem: string,
-    collectionDate: Date,
-    orderSystem?: any,
-  ): Promise<void> {
-    const jobId = `nfe-generation-${idOrderSystem}`;
-
-    const integration = await integrationsService.getFullIntegration({
-      where: { name: "Bling" },
-    });
-
-    if (
-      COMPLETED_ORDER_INTERNAL_STATUSES.includes(orderSystem.internal_status)
-    ) {
-      console.log(
-        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} já com processo completo (${orderSystem.internal_status}). Ignorando.`,
-      );
-      return;
-    }
-
-    const isEligible = await this.isEligibleForSync(orderSystem.id);
-    if (!isEligible) {
-      console.log(
-        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} não está mais em WAITING CHANNEL VALIDATION (internal_status/situacao.id divergente) — não agenda NFe.`,
-      );
-      return;
-    }
-
-    const now = new Date();
-
-    const startOfDay = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-    ).getTime();
-
-    const createdAt = new Date(orderSystem.createdAt).getTime();
-    const collectionMs = new Date(collectionDate).getTime();
-
-    const createdToday = createdAt >= startOfDay;
-
-    const collectionIsTodayOrFuture = collectionMs >= startOfDay;
-
-    if (createdToday && collectionIsTodayOrFuture) {
-      // Cenário 1: chegou hoje, ainda sem job → trava para aceite manual.
-      // `collectionIsTodayOrFuture` inclui qualquer coleta futura, não só
-      // hoje — os logs abaixo não podem dizer "coleta HOJE" nem "emitindo",
-      // já que quem decide a data/hora real do disparo é
-      // setDelayBasedOnDate (via finalizeNfeScheduling logo abaixo), e a
-      // emissão em si só acontece muito depois, quando o job delayed
-      // dispara na NFeQueue — aqui só agenda.
-      const alreadyScheduled = await this.next.getJob(jobId);
-
-      if (integration.lock_today_orders) {
-        if (!alreadyScheduled) {
-          console.log(
-            `[MLOrderSyncQueue] Pedido ${idOrderSystem} chegou hoje e ainda sem job agendado — travando (waiting_acceptance)`,
-          );
-
-          await ordersService.update(orderSystem.id, {
-            internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
-            waiting_acceptance: true,
-          });
-          return;
-        }
-
-        if (orderSystem?.waiting_acceptance) {
-          console.log(
-            `[MLOrderSyncQueue] Pedido ${idOrderSystem} chegou hoje mas waiting_acceptance ainda true — aguardando liberação manual`,
-          );
-          return;
-        }
-      }
-
-      console.log(
-        `[MLOrderSyncQueue] Pedido ${idOrderSystem} chegou hoje e waiting_acceptance liberado — seguindo para agendamento da NFe`,
-      );
-    }
-
-    await this.finalizeNfeScheduling(idOrderSystem, collectionDate, orderSystem);
-  }
-
-  /**
-   * PATCH da situação Bling pra 748748 + grava WAITING_FOR_NFE_EMISSION +
-   * agenda o job delayed na NFeQueue. Chamada só depois que scheduleNfe (ou
-   * resumeAfterAcceptance) já validou o pedido pelo snapshot local — não
-   * confia só nisso: reconfere a situação ao vivo na Bling antes do PATCH,
-   * porque `isEligibleForSync` lê `source_payload` (snapshot do último
-   * webhook processado), que pode estar desatualizado — principalmente pra
-   * resumeAfterAcceptance, onde pode ter passado bastante tempo entre o
-   * pedido ser travado (waiting_acceptance) e alguém liberar manualmente.
-   * Assume que já está dentro do withOrderLock do pedido, igual scheduleNfe.
-   */
-  private async finalizeNfeScheduling(
-    idOrderSystem: string,
-    collectionDate: Date,
-    orderSystem: any,
-  ): Promise<void> {
-    const { data } = await blingGet(
-      `/pedidos/vendas/${idOrderSystem}`,
-      this.blingApi,
-    );
-    const currentSituacaoId = data?.data?.situacao?.id;
-    const mappedStatus = mapOrderInternalStatus(currentSituacaoId);
-
-    if (mappedStatus !== OrderInternalStatus.WAITING_CHANNEL_VALIDATION) {
-      console.log(
-        `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} não está mais em WAITING CHANNEL VALIDATION na Bling (situação atual ${currentSituacaoId} -> ${mappedStatus}) — sincronizando sem agendar NFe.`,
-      );
+    if (marketplaceResult) {
+      // Chamada teve sucesso — sempre grava o status de etiqueta, mesmo que
+      // não tenha vindo collection_date ainda.
       await ordersService.update(orderSystem.id, {
-        internal_status: mappedStatus,
-        ...(COMPLETED_ORDER_INTERNAL_STATUSES.includes(mappedStatus)
-          ? { nfe_emitted: true }
-          : mappedStatus === OrderInternalStatus.CANCELLED
-            ? { nfe_emitted: false }
-            : {}),
+        market_place_label_status: marketplaceResult.labelStatus,
       });
+    }
+    // Se marketplaceResult é null (retry esgotado), market_place_label_status
+    // simplesmente não é tocado nesta passada — sem dado novo pra gravar.
+
+    const dateToUse = marketplaceResult?.collectionDate ?? orderSystem.collection_date;
+
+    if (!dateToUse) {
+      if (!marketplaceResult) {
+        // Todas as tentativas falharam E não há nenhuma collection_date de
+        // fallback (nem local — ex: sem dataPrevista da Bling ainda —, nem
+        // do marketplace). Deixa o job falhar normalmente: a rede de
+        // segurança (MARKETPLACE_WEBHOOK_SYNC / MARKETPLACE_RECONCILER)
+        // tenta de novo depois; não há valor de fallback pra usar aqui.
+        throw new Error(
+          `[MLOrderSyncQueue] Falha ao consultar o marketplace pro pedido ${orderSystem.number_order_channel} e nenhuma collection_date de fallback disponível.`,
+        );
+      }
+      // Chamada teve sucesso mas o shipment ainda não tem data — normal,
+      // aguardando o marketplace processar. Permanece em
+      // WAITING_CHANNEL_VALIDATION, sem erro.
       return;
     }
 
-    const jobId = `nfe-generation-${idOrderSystem}`;
-
-    await this.next.removeJob(jobId);
-
-    const MIN_DELAY_MS = 30_000;
-
-    const delay = Math.max(
-      setDelayBasedOnDate(new Date(collectionDate)),
-      MIN_DELAY_MS,
+    // Se marketplaceResult é null, dateToUse é o valor já existente
+    // (gravado pela Bling via dataPrevista) — syncCollectionDateLocked
+    // aplica esse fallback mesmo assim, em vez de deixar o pedido parado só
+    // porque o marketplace estava fora do ar no momento desta tentativa.
+    await this.collectionDateScheduler.syncCollectionDateLocked(
+      orderSystem.id_order_system!,
+      new Date(dateToUse),
+      orderSystem,
     );
+  }
 
-    await blingPatch(
-      `/pedidos/vendas/${idOrderSystem}/situacoes/748748`,
-      {
-        id: 748748,
-      },
-      this.blingApi,
-    );
-
-    await ordersService.update(orderSystem.id, {
-      internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
+  private async resolveOrderStoreName(orderSystem: any): Promise<string | null> {
+    if (!orderSystem.store_id) return null;
+    const store = await storeService.findById(orderSystem.store_id, {
+      attributes: ["name"],
     });
-
-    await this.next.addDelayed(
-      {
-        order_id: idOrderSystem,
-        collection_date: String(collectionDate),
-        orderSystem,
-      },
-      jobId,
-      delay,
-    );
+    return store?.name ?? null;
   }
 
   /**
    * Retoma o agendamento de NFe de um pedido que ficou travado em
-   * waiting_acceptance (ver scheduleNfe, ramo lock_today_orders) e acabou de
-   * ser liberado por OrdersController.releaseWaitingAcceptanceForToday.
+   * waiting_acceptance (ver CollectionDateSchedulerService.scheduleNfe,
+   * ramo lock_today_orders) e acabou de ser liberado por
+   * OrdersController.releaseWaitingAcceptanceForToday.
    *
    * Não reusa isEligibleForSync (exige internal_status ===
    * WAITING_CHANNEL_VALIDATION, que não é mais o caso pra um pedido já
    * travado em WAITING_FOR_NFE_EMISSION) — confirma diretamente o estado
    * esperado pós-liberação: WAITING_FOR_NFE_EMISSION + waiting_acceptance
-   * já false. Sem isso, o pedido ficava só com a flag zerada no banco, sem
-   * nunca de fato fazer o PATCH pra 748748 na Bling — a próxima vez que a
-   * NFE_EMISSION rodasse pra ele (via reconcileWaitingNfe recriando o job
-   * faltando) via situação ainda 748743 e mandava pra verificação humana.
+   * já false.
    */
   async resumeAfterAcceptance(orderId: string): Promise<void> {
     const order = await ordersService.findById(orderId);
@@ -625,42 +214,10 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-    await this.finalizeNfeScheduling(
+    await this.collectionDateScheduler.finalizeNfeScheduling(
       idOrderSystem,
       new Date(order.collection_date),
       order,
-    );
-  }
-
-  private readonly SIBLING_WINDOW_MS = 10 * 60 * 1_000;
-
-  private findSiblingOrders(
-    matched: FullOrder,
-    sku: string,
-    allOrders: FullOrder[],
-  ): FullOrder[] {
-    const matchedTime = new Date(matched.createdAt!).getTime();
-    const matchedName = matched.customer?.name?.toLowerCase() ?? "";
-
-    return allOrders.filter((order) => {
-      if (order.id === matched.id) return false;
-
-      const sameName = order.customer?.name?.toLowerCase() === matchedName;
-      const hasSku = order.items.some((item) => item.sku === sku);
-      const timeDiff = Math.abs(
-        new Date(order.createdAt!).getTime() - matchedTime,
-      );
-
-      return sameName && hasSku && timeDiff <= this.SIBLING_WINDOW_MS;
-    });
-  }
-
-  private isToday(date: Date): boolean {
-    const now = new Date();
-    return (
-      date.getUTCFullYear() === now.getUTCFullYear() &&
-      date.getUTCMonth() === now.getUTCMonth() &&
-      date.getUTCDate() === now.getUTCDate()
     );
   }
 }

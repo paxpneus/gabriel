@@ -5,6 +5,7 @@ import {
   orderCreationAttributes,
   OrderInternalStatus,
   OrderReasonCancelled,
+  MarketPlaceLabelStatus,
 } from "./orders.types";
 import { v4 as uuidv4 } from "uuid";
 
@@ -32,6 +33,8 @@ class Order
   public unit_business_id?: string;
   public invoice_id?: string;
   public waiting_acceptance?: boolean;
+  public market_place_label_status?: MarketPlaceLabelStatus;
+  public market_place_label_printed?: boolean;
   public source_payload?: Record<string, unknown>;
   public total_products?: number;
   public total_order?: number;
@@ -168,6 +171,16 @@ Order.init(
     reason_cancelled: {
       type: DataTypes.ENUM(...Object.values(OrderReasonCancelled)),
       allowNull: true,
+    },
+    market_place_label_status: {
+      type: DataTypes.ENUM(...Object.values(MarketPlaceLabelStatus)),
+      allowNull: false,
+      defaultValue: MarketPlaceLabelStatus.UNKNOWN,
+    },
+    market_place_label_printed: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     source_payload: {
       type: DataTypes.JSONB,
