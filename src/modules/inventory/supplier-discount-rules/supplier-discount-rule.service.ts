@@ -1,4 +1,4 @@
-import { Transaction } from "sequelize";
+import { Op, Transaction } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import { PaginatedResult, QueryParams } from "../../../shared/query/query.types";
 import SupplierDiscountRule from "./supplier-discount-rule.model";
@@ -13,7 +13,13 @@ import SupplierDiscountRuleBrand from "../supplier-discount-rule-brands/supplier
 import SupplierDiscountRuleRim from "../supplier-discount-rule-rims/supplier-discount-rule-rim.model";
 import SupplierDiscountRuleMeasure from "../supplier-discount-rule-measures/supplier-discount-rule-measure.model";
 import SupplierDiscountUnitBusiness from "../supplier-discount-unit-businesses/supplier-discount-unit-business.model";
+import { buildSupplierDiscountRuleName } from "./helpers/build-name";
+import brandService from "../brands/brands.service";
+import rimService from "../rims/rim.service";
+import unitBusinessService from "../../company/unit-business/unit-business.service";
 import {
+  SupplierDiscountBypassItemInput,
+  SupplierDiscountBypassResult,
   SupplierDiscountCandidateRow,
   SupplierDiscountResolveItemInput,
   SupplierDiscountResolveResult,
@@ -53,6 +59,7 @@ const toDetail = (rule: SupplierDiscountRule): SupplierDiscountRuleDetail => {
     start_date: json.start_date,
     end_date: json.end_date,
     active: json.active,
+    name: json.name,
     brand_ids: (json.ruleBrands ?? []).map((r: any) => r.brand_id),
     rim_ids: (json.ruleRims ?? []).map((r: any) => r.rim_id),
     measure_ids: (json.ruleMeasures ?? []).map((r: any) => r.measure_id),
@@ -119,6 +126,20 @@ export class SupplierDiscountRuleService extends BaseService<
       { include: SCOPE_INCLUDE },
     );
     return { ...result, data: result.data.map(toDetail) };
+  }
+
+  // Usado por outros módulos (ex.: filtro de invoices por supplier discount)
+  // pra resolver o escopo (marca/aro/medida/loja) de um lote de regras de
+  // uma vez só, no mesmo formato achatado de findDetailedById/paginateDetailed.
+  async findManyDetailedByIds(
+    ids: string[],
+  ): Promise<SupplierDiscountRuleDetail[]> {
+    if (!ids.length) return [];
+    const rules = await this.repository.findAll({
+      where: { id: { [Op.in]: ids } },
+      include: SCOPE_INCLUDE,
+    });
+    return rules.map(toDetail);
   }
 
   async create(data: SupplierDiscountRuleInput): Promise<SupplierDiscountRule> {
@@ -203,7 +224,33 @@ export class SupplierDiscountRuleService extends BaseService<
       );
     }
 
+    // Resolve os nomes de exibição (marca/aro/loja) só pra montar `name` —
+    // o matching em si continua todo por id (findOverlapping/matchBatch).
+    const [brands, rims, unitBusinesses] = await Promise.all([
+      brandIds.length
+        ? brandService.findAll({ where: { id: { [Op.in]: brandIds } } })
+        : Promise.resolve([]),
+      rimIds.length
+        ? rimService.findAll({ where: { id: { [Op.in]: rimIds } } })
+        : Promise.resolve([]),
+      unitBusinessService.findAll({
+        where: { id: { [Op.in]: unitBusinessIds } },
+      }),
+    ]);
+
     const ruleFields = {
+      name: buildSupplierDiscountRuleName({
+        quantity_step: data.quantity_step,
+        discount_type: discountType,
+        discount_value: data.discount_value,
+        start_date: startDate,
+        end_date: endDate,
+        brand_names: brands.map((b) => b.name),
+        rim_values: rims.map((r) => r.value),
+        // Nem toda unit business tem `number` cadastrado — cai pra `name`
+        // quando não tem.
+        store_labels: unitBusinesses.map((u) => u.number?.trim() || u.name),
+      }),
       quantity_step: data.quantity_step,
       discount_type: discountType,
       discount_value: data.discount_value,
@@ -354,6 +401,102 @@ export class SupplierDiscountRuleService extends BaseService<
     }
 
     return result;
+  }
+
+  // Variante isolada de resolveForItems, usada SÓ por
+  // InvoiceService.getInvoiceProductReport (dado de leitura pra um relatório
+  // específico, nunca persiste nada e nunca é chamada pelo fluxo real de
+  // desconto/vendas). Pedido explícito do usuário: "burlar" o escopo de
+  // unit_business da regra nesse relatório — uma nota fora do escopo de loja
+  // da regra ainda mostra o desconto que teria recebido se a loja não fosse
+  // restrição. Só regras REAL (PERCENTUAL precisaria do valor fiscal do
+  // item, que esse relatório não busca — decisão explícita do usuário).
+  // Pool é por `pool_id` (a nota, não o pedido) — decomposição em blocos
+  // idêntica ao branch REAL de resolveForItems, sem o eixo unit_business.
+  async resolveRealDiscountsIgnoringUnitBusiness(
+    items: SupplierDiscountBypassItemInput[],
+  ): Promise<Map<string, SupplierDiscountBypassResult>> {
+    const result = new Map<string, { discountValue: number; ruleId: string | null }>();
+    if (!items.length) return new Map();
+
+    const candidates = await this.repository.matchRealRulesIgnoringUnitBusiness(items);
+    const candidatesByItem = groupBy(candidates, (c) => c.item_id);
+    const pools = groupBy(items, (i) =>
+      [i.pool_id, i.brand_id, i.rim_id, i.measure_id].join("|"),
+    );
+
+    for (const poolItems of Object.values(pools)) {
+      const poolRealQuantity = poolItems.reduce(
+        (sum, i) => sum + i.real_quantity,
+        0,
+      );
+
+      const seenRuleIds = new Set<string>();
+      const rules: { rule_id: string; quantity_step: number; discount_value: number }[] = [];
+      for (const item of poolItems) {
+        for (const candidate of candidatesByItem[item.item_id] ?? []) {
+          if (!seenRuleIds.has(candidate.rule_id)) {
+            seenRuleIds.add(candidate.rule_id);
+            rules.push(candidate);
+          }
+        }
+      }
+
+      const sorted = [...rules].sort((a, b) => b.quantity_step - a.quantity_step);
+      let remaining = poolRealQuantity;
+      let totalDiscount = 0;
+      let bestContribution = 0;
+      let primaryRuleId: string | null = null;
+      for (const rule of sorted) {
+        if (rule.quantity_step <= 0) continue;
+        const blocks = Math.floor(remaining / rule.quantity_step);
+        if (blocks <= 0) continue;
+        const contribution = blocks * Number(rule.discount_value);
+        totalDiscount += contribution;
+        remaining -= blocks * rule.quantity_step;
+        if (contribution > bestContribution) {
+          bestContribution = contribution;
+          primaryRuleId = rule.rule_id;
+        }
+      }
+
+      if (totalDiscount <= 0) {
+        for (const item of poolItems) {
+          result.set(item.item_id, { discountValue: 0, ruleId: null });
+        }
+        continue;
+      }
+
+      let allocated = 0;
+      poolItems.forEach((item, idx) => {
+        const isLast = idx === poolItems.length - 1;
+        const share = isLast
+          ? round2(totalDiscount - allocated)
+          : round2(totalDiscount * (item.real_quantity / poolRealQuantity));
+        allocated += share;
+        result.set(item.item_id, { discountValue: share, ruleId: primaryRuleId });
+      });
+    }
+
+    const ruleIds = [
+      ...new Set(
+        [...result.values()]
+          .map((v) => v.ruleId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const rules = ruleIds.length ? await this.findManyDetailedByIds(ruleIds) : [];
+    const nameById = new Map(rules.map((r) => [r.id, r.name]));
+
+    const finalResult = new Map<string, SupplierDiscountBypassResult>();
+    for (const [itemId, { discountValue, ruleId }] of result) {
+      finalResult.set(itemId, {
+        value: discountValue,
+        ruleId,
+        ruleName: ruleId ? (nameById.get(ruleId) ?? null) : null,
+      });
+    }
+    return finalResult;
   }
 }
 

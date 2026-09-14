@@ -741,6 +741,62 @@ explicitly reverted and replaced** with the current, much simpler design:
     controller) — a user can't map an unmapped row belonging to a different
     integration/tenant this way.
 
+## Supplier discount rules (`src/modules/inventory/supplier-discount-rules/`)
+
+- `SupplierDiscountRule` scope is 4 pivot tables (`ruleBrands`/`ruleRims`/
+  `ruleMeasures`/`ruleUnitBusinesses`) — empty on an axis means wildcard
+  (matches anything on that axis), except `unit_business_ids`, which can
+  never be empty (validated at runtime in `createOrUpdate`, "loja não é um
+  eixo curinga"). `resolveForItems`/`matchBatch`
+  (`supplier-discount-rule.repository.ts`) is the actual matching engine
+  used to decide which order items get the discount — see the
+  `supplier_discount` invoice filter entry above for how this same matching
+  is reused read-only from the Invoices module.
+- **`name` column (migrations `m278`/`m279`, this session)** — always
+  computed by the backend, never accepted from the client. Built by
+  `buildSupplierDiscountRuleName` (`helpers/build-name.ts`), which includes
+  ALL of quantity_step/discount/period AND the 3 scope axes that have a
+  display name (brand/rim/unit business — `measure_ids` is left out, no
+  name asked for it), e.g. `"Dinâmica Promocional - A cada 2 Pneus -
+  Marcas: Pirelli, Goodyear - Aros: 15, 16 - Lojas: Loja Centro - Desconto
+  de 400 Reais - Entre 06/08/2026 e 08/08/2026"`. Per-segment rules:
+  - `%` for `PERCENTUAL`, `"Reais"` for `REAL`; `discount_value`
+    (DECIMAL(14,2)) drops trailing zeros via `Number(...)` (`15.00` ->
+    `"15"`, `15.50` -> `"15.5"`); dates formatted `DD/MM/YYYY` in
+    `America/Sao_Paulo` via the shared `toTz()`.
+  - An empty axis (wildcard — matches anything) shows `"Todas as
+    marcas"`/`"Todos os aros"`/`"Todas as lojas"` instead of an empty
+    segment.
+  - More than 3 selected values on an axis: lists only the first 3 (by
+    name/value, alphabetical) then `" +N"` for the rest (e.g. `"Marcas:
+    Pirelli, Goodyear, Michelin +2"`) — never lists everything, to keep the
+    name from growing unbounded.
+  - A unit business shows its `number` when it has one, `name` otherwise
+    (`UnitBusiness.number` is nullable) — same "number ?? name" rule the
+    service applies before calling the formatter (`store_labels`, already
+    resolved, not raw `UnitBusiness` rows — the helper itself stays a pure
+    formatter, doesn't know about `number`/`name` as concepts).
+  - Building the name needs actual brand/rim/unit-business **names**, not
+    just the ids the rule stores — `createOrUpdate` resolves them via
+    `brandService`/`rimService`/`unitBusinessService.findAll({where: {id:
+    {[Op.in]: ids}}})` (service-to-service, per the layering rule) right
+    before building `ruleFields`, in parallel via `Promise.all`.
+  - Recomputed on every create **and** update (the service requires the
+    full field set on both, never a partial patch, so there's always fresh
+    data — and fresh scope-id lookups — to recompute `name` from).
+  - `m278` added the column nullable; `m279` backfilled existing rows with
+    the identical formula in raw SQL (3 correlated subqueries with
+    `ROW_NUMBER()`/`string_agg(...) FILTER (WHERE rn <= 3)` for the
+    axis-truncation logic, `COALESCE(NULLIF(number,''), name)` for the
+    per-store label, double `regexp_replace` for `discount_value`'s
+    trailing zeros) before tightening to `NOT NULL` — same split-migration
+    shape as `m269`, just across two files since this was asked as "one
+    migration to add the column, another to seed it" instead of combined
+    into one. Rewritten mid-session after the user asked for the richer
+    format (brand/rim/store, wildcard labels, the 3-then-`+N` cap) — the
+    version in `m279` right now already matches the final formula, not an
+    earlier simpler one.
+
 ## Integration mapping (`src/modules/integrations/integration-mapping/`)
 
 - Table `integration_mappings`: `entity_type` (e.g. `"PRODUCT"`,
@@ -1235,6 +1291,208 @@ flag is explicitly set.
     field `findInvoicesPendingLogisticOccurrence` already reads as
     "romaneio gerado") — "o que já teve romaneio gerado hoje, antes do
     corte."
+- **`rim` and `supplier_discount` customFields (this session)**, both in
+  `invoice/helpers/custom-filters.ts`, wired into
+  `InvoiceService.queryConfig.customFields`/`listInvoices`:
+  - `productRimWhere(rimIds: string[])` — `rim` filter: notas com algum
+    item cujo `Product.rim_id` está no array informado (OR entre os aros,
+    um id só também funciona). Plain `EXISTS` over `invoice_items`/
+    `products`, no KIT-component resolution (mirrors the pre-existing
+    `brand` customField's own directness, not the discount engine below).
+  - `supplierDiscountMatchWhere(ruleIds: string[])` — `supplier_discount`
+    filter: pass one or more `SupplierDiscountRule` ids, get back invoices
+    with some item that **actually received** the discount from one of
+    them (OR between rule ids). **Revised mid-session — the first version
+    was wrong.** It originally re-checked the rule's *scope* (brand/rim/
+    measure wildcard-if-empty, `unit_business_id`/`start_date`/`end_date`
+    window, same "candidate" logic as `matchBatch`) against
+    `Order.date`/`Order.unit_business_id` — this is a "would this item
+    qualify" check, not "did this item get the discount", and the two
+    genuinely differ: `resolveForItems` also requires the pooled quantity
+    (same order + brand + rim + measure + store) to reach the rule's
+    `quantity_step` before granting anything. Confirmed in production: a
+    single-tire sale (`quantity_step=2` on the matching rule) showed up in
+    the filtered list with `supplier_discount_value: 0` — its product fit
+    the rule's scope, but 1 unit never crosses the "a cada 2" threshold, so
+    no discount was ever recorded for it. User's call once this was
+    explained: "não faz sentido pegar nota onde não bate o desconto" — show
+    only notes where the discount was actually granted. Fixed by reading
+    `sales_order_item_snapshots.supplier_discount_rule_id` directly
+    (`= ANY(ruleIds)`) — the field `resolveForItems` itself writes after
+    already deciding quantity eligibility — instead of recomputing eligibility
+    here. Same KIT-vs-component correlation problem as
+    `InvoiceService.buildSupplierDiscountLookup` (below): the snapshot's
+    `product_id` is the KIT sold on the order, not the component(s) the NF-e
+    actually lists, so the `EXISTS` subquery's `LEFT JOIN kit_components`
+    matches an invoice item either directly (`sois.product_id =
+    ii.product_id`) or via its kit's component (`kc.product_component_id =
+    ii.product_id`).
+  - Net effect of the rewrite: `supplier_discount` no longer needs
+    `Order.date`/`Order.unit_business_id`, a rule's scope axes, or any DB
+    read to resolve before building the `where` — it joins `orders`/
+    `sales_order_item_snapshots`/`kit_components` inline in one `Sequelize.literal`
+    EXISTS, entirely from the `ruleIds` already in the filter value. So
+    it's now a **static, synchronous** entry in the constructor's
+    `queryConfig.customFields`, exactly like `rim` — no more per-request
+    `queryConfig` copy, no more `supplierDiscountRuleService.findManyDetailedByIds`
+    call for this filter specifically (that method is still used
+    elsewhere — see `buildSupplierDiscountLookup` below). `listInvoices`
+    went back to calling `this.repository.listInvoices(params,
+    unitBusinessId, this.queryConfig)` directly, same as before this whole
+    feature existed.
+  - Filter values are now interpolated into raw SQL straight from the
+    client (`?filters[supplier_discount][]=...`), unlike the rejected
+    scope-based version (which only ever touched ids already fetched from
+    the DB) — `sqlUuidArrayLiteral` was hardened accordingly: it validates
+    each value against a real UUID regex and silently drops anything that
+    doesn't match, rather than only escaping quotes. `productRimWhere`'s
+    `rimIds` (always client-supplied too, from the start) now goes through
+    the same hardened helper.
+  - Both `getInvoiceProductReport`/`getInvoiceSupplierReport` still keep
+    their `Order` include (`as: "order"`, `id`/`date`/`unit_business_id`)
+    added this session — no longer needed by the `supplier_discount`
+    *filter* after the rewrite, but still needed by
+    `buildSupplierDiscountLookup` (below) to get `invoice.order.id` for the
+    per-line discount **value** those two reports display.
+  - **Per-line supplier discount value/rule in both reports (this
+    session)**: `getInvoiceProductReport`/`getInvoiceSupplierReport` rows
+    now carry `supplier_discount_value`/`supplier_discount_rule_name`. The
+    actual applied-discount data isn't computed here — it's read from
+    `SalesOrderItemSnapshot.supplier_discount_value`/
+    `.supplier_discount_rule_id` (written once, hourly, by
+    `SalesReportQueue.applySupplierDiscounts` — see the Sales/orders
+    section's `resolveForItems` note), keyed by `(order_id, product_id)`,
+    **not** `invoice_item_id` (the snapshot is an order-side concept; the
+    same physical sale is visible from both `Order`/`InvoiceItems`, joined
+    only via `Invoice.order` + matching `product_id`). Found the same
+    `.init()` gap this session that `Product.category` had before: the
+    columns existed in the DB (`m240`) but were missing from
+    `sales-order-item-snapshot.model.ts` — fixed by adding both to the
+    model's class/`.init()`/`Attributes` type. Pipeline:
+    `InvoiceRepository.findSupplierDiscountsByOrderIds(orderIds)` (new —
+    queries `SalesOrderItemSnapshot` directly, since it has no
+    repository/service of its own, same accepted exception as
+    `InvoiceFiscalItem`) → `InvoiceService.buildSupplierDiscountLookup`
+    (private, shared by both report methods) turns that into a
+    `Map<"orderId|productId", {value, ruleName}>`, resolving
+    `supplier_discount_rule_id → name` via the already-existing
+    `supplierDiscountRuleService.findManyDetailedByIds`. A line with no
+    matching snapshot row (no order, or the order/product was never
+    priced through `SalesReportQueue`) reports `0`/`null`, not an error.
+  - **Two real bugs found and fixed testing this directly against
+    production data (confirmed via `psql` + a standalone `tsx` script
+    calling the service functions directly), not caught by `tsc` since
+    both were runtime-only:**
+    1. **KIT/component mismatch.** A tire sold as a KIT has ONE
+       `sales_order_item_snapshots` row keyed by the **KIT's own**
+       `product_id` (`order_items.product_id` is the kit) — but the NF-e
+       never has a "kit" line item, it has the physical
+       **component**(s) instead (`invoice_items.product_id` is the tire).
+       Since tire discount rules are typically "a cada 2 pneus" (sold as a
+       kit-of-2), this hit essentially every real row: the naive
+       `(order_id, product_id)` key never matched. Fixed by
+       `InvoiceRepository.findKitComponentsByKitIds(kitProductIds)` (new —
+       queries `KitComponent` directly, same no-service-of-its-own
+       exception) + `buildSupplierDiscountLookup` now also registers each
+       kit's discount under `(order_id, component_product_id)` for every
+       component in `kit_components`, alongside the kit's own id — a
+       non-KIT sale (snapshot `product_id` has no `kit_components` row)
+       only gets the direct entry, same as before.
+    2. **Missing `Product.id` in the report's own `attributes` list.**
+       Both report queries' `Product` include already had an explicit
+       `attributes: [...]` (`["line"]` / `["name", "brand"]`) — Sequelize
+       does **not** auto-add an included association's PK to the result
+       just because it's needed to build the nested object; unlike the
+       top-level model of a query, an include with explicit `attributes`
+       only returns exactly what's listed. `item.product.id` came back
+       `undefined` for every row, so the lookup key was always
+       `"<orderId>|undefined"` — silently matching nothing, no error
+       thrown. Fixed by adding `"id"` to both attribute lists. If a new
+       report/method adds a `Product` (or any model) include with a
+       hand-picked `attributes` array and later needs `.id` off of it,
+       remember it's not implicit — list it.
+  - **`getInvoiceProductReport`-only "ignore unit_business" bypass (later
+    same session), explicit user request — read-only, isolated from the
+    real discount engine on purpose.** The real
+    `supplier_discount_value`/`_rule_name` (from `sales_order_item_snapshots`,
+    above) correctly shows `0`/`null` for a note whose STORE isn't in the
+    rule's `unit_business_ids` scope, even if the note's brand/rim/quantity
+    otherwise match perfectly — that's the real engine working as designed
+    (loja is never a wildcard axis). The user wants this ONE report to show
+    the discount the note WOULD have gotten if store weren't a restriction
+    at all — concretely: a rule scoped to "Loja 1" only, a note at "Loja 2"
+    with the matching brand/aro and enough quantity, still shows the
+    discount in this report. Explicitly **only this report** ("SÓ NESSE
+    RELATÓRIO! DADO APENAS DE LEITURA") — `getInvoiceSupplierReport` and the
+    `supplier_discount` filter are untouched, still show the real value.
+    - New, fully separate code path — never touches/reuses the production
+      `matchBatch`/`resolveForItems` (deliberately duplicated instead of
+      refactored-to-share, to keep zero risk to real discount computation):
+      `SupplierDiscountRuleRepository.matchRealRulesIgnoringUnitBusiness`
+      (same brand/rim/measure wildcard-if-empty `EXISTS` shape as
+      `matchBatch`, but **no** `supplier_discount_unit_businesses` join at
+      all, and hardcoded `discount_type = 'REAL'`) →
+      `SupplierDiscountRuleService.resolveRealDiscountsIgnoringUnitBusiness`
+      (same block-decomposition math as `resolveForItems`'s REAL branch,
+      pooled by `pool_id` — **the invoice itself**, not the order — instead
+      of `(order_id, unit_business_id)`; resolves rule names via the
+      already-existing `findManyDetailedByIds`).
+    - **PERCENTUAL rules are excluded from this bypass entirely** (explicit
+      user tradeoff) — computing a percentage needs the item's fiscal
+      value, which this report doesn't fetch (`InvoiceFiscalItem.total_value`
+      would be the source; not wired up). A PERCENTUAL-only rule simply
+      never appears via this path, real REAL-type rules still do.
+    - **Reference date for the rule's `start_date`/`end_date` window**:
+      `Order.date` when the invoice has a linked order (matches how the
+      real engine decides "was the rule active"), else `Invoice.emitted_at`
+      — explicit user choice, so a note truly outside the sales pipeline
+      still gets a sensible date to check against.
+    - **In `getInvoiceProductReport`'s per-item loop, the bypass is only a
+      fallback**: `effectiveDiscount = discount && discount.value > 0 ? discount : bypassDiscount`
+      — a real, already-recorded non-zero discount always wins; the bypass
+      only fires when the real lookup found nothing or explicitly `0`
+      (missing snapshot, `0` for insufficient quantity, or `0`/no-rule for
+      genuinely out-of-scope). Verified directly against production data
+      (`psql` + a synthetic item passed straight to
+      `resolveRealDiscountsIgnoringUnitBusiness`, no unit_business field
+      even accepted by the function): a real production invoice at a
+      store the discount's `unit_business_ids` never included showed
+      `supplier_discount_value: 0` from the real path and the correct
+      non-zero value once the bypass was added; insufficient quantity,
+      wrong aro, and out-of-window date all still correctly yield `0` —
+      only the unit_business axis is actually bypassed, everything else
+      about the rule (brand/aro/período/quantity_step) still applies.
+    - **Follow-up bug found by the user testing the real endpoint (same
+      session): the `supplier_discount` FILTER on this report still only
+      matched the REAL/strict `sales_order_item_snapshots` value** (the
+      shared `customFields.supplier_discount`, same one `listInvoices`/
+      `getInvoiceSupplierReport` use) — so a note that only qualifies via
+      the bypass (out-of-scope store) was excluded from the query's
+      `where` before the bypass calculation ever got a chance to run on
+      it. User's real request (`sender_cnpj=02316749002111` = "Loja 21 -
+      CD MG", filtering by 4 rules all scoped to "Loja Pax Meli, Shopee"
+      only) kept returning the same 127 rows the strict match already
+      found, none of the additional out-of-scope-but-otherwise-matching
+      ones. **Fixed, `getInvoiceProductReport`-only**: `supplier_discount`
+      is stripped out of `params.filters` before it reaches the DB `where`
+      (so the query fetches every candidate row regardless of recorded
+      discount), and applied instead as a **post-fetch** filter — after
+      computing `effectiveDiscount` (real-or-bypass) per item, a row is
+      kept only if `effectiveDiscount.ruleId` is one of the selected ids.
+      This required both `buildSupplierDiscountLookup` and
+      `resolveRealDiscountsIgnoringUnitBusiness`'s returned maps to also
+      carry `ruleId` (previously only `value`/`ruleName` — the display
+      fields; filtering by rule *name* would have been wrong, ids can
+      collide in prose). `getInvoiceSupplierReport`/`listInvoices` keep the
+      original DB-level strict filter untouched. Verified against the
+      user's exact production request: 127 → 133 rows once the 6
+      bypass-only-eligible lines were included, and filtering by a single
+      rule id among the 4 correctly narrowed back down to just that rule's
+      matches (checked every returned row's `rule_name` referenced the
+      right aro). Note: this report has no real pagination to begin with
+      (`BaseRepository.findAll` doesn't apply `limit`/`offset` when called
+      with `params`, a pre-existing gap unrelated to this change) — the
+      post-fetch filter doesn't make that any better or worse.
 
 ## Bling NFe web-scraping automation (`.../bling-nfe/automations/auto-manifest/`)
 

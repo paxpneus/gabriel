@@ -29,7 +29,11 @@ import {
   allTodayMercadoLivreWhere,
   finishedMercadoLivreWhere,
   dispatchedMercadoLivreWhere,
+  productRimWhere,
+  supplierDiscountMatchWhere,
 } from "./helpers/custom-filters";
+import supplierDiscountRuleService from "../../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
+import { SupplierDiscountBypassItemInput } from "../../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import sequelize from "../../../../../config/sequelize";
 import batchInvoicesService from "../../../expedition/batch-invoices/batch-invoices.service";
 import { Product, ProductConfig, Supplier } from "../../../../inventory";
@@ -196,6 +200,19 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
         dispatched_mercado_livre: (value) =>
           value === "true" ? dispatchedMercadoLivreWhere("MercadoLivre") : {},
+
+        // Notas com algum item cujo produto tem um dos aros informados —
+        // aceita um id só ou array (qualquer um dos aros, não todos).
+        rim: (value) =>
+          productRimWhere((Array.isArray(value) ? value : [value]).filter(Boolean)),
+
+        // Notas com algum item que REALMENTE recebeu o desconto de uma das
+        // regras informadas (não só "se encaixaria no escopo dela") — ver
+        // `supplierDiscountMatchWhere` pra detalhe.
+        supplier_discount: (value) =>
+          supplierDiscountMatchWhere(
+            (Array.isArray(value) ? value : [value]).filter(Boolean),
+          ),
       },
     };
   }
@@ -447,15 +464,86 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     return this.repository.getFullInvoiceForAllUnits(id, xml_key, id_system);
   }
 
+  // Usado pelos relatórios (getInvoiceProductReport/getInvoiceSupplierReport)
+  // pra trazer o desconto de fornecedor por linha. O snapshot
+  // (SalesOrderItemSnapshot, sem repository/service próprio — ver nota em
+  // invoice.repository.ts) é keyed por (order_id, product_id), não por
+  // invoice_item_id, então a chave do lookup precisa ser essa mesma
+  // combinação — quem chama monta a chave `${orderId}|${productId}` pra
+  // consultar o Map devolvido.
+  private async buildSupplierDiscountLookup(
+    orderIds: (string | undefined)[],
+  ): Promise<
+    Map<string, { value: number; ruleId: string | null; ruleName: string | null }>
+  > {
+    const uniqueOrderIds = [
+      ...new Set(orderIds.filter((id): id is string => !!id)),
+    ];
+    if (!uniqueOrderIds.length) return new Map();
+
+    const discountRows =
+      await this.repository.findSupplierDiscountsByOrderIds(uniqueOrderIds);
+
+    const ruleIds = [
+      ...new Set(
+        discountRows
+          .map((row) => row.supplier_discount_rule_id)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const rules = ruleIds.length
+      ? await supplierDiscountRuleService.findManyDetailedByIds(ruleIds)
+      : [];
+    const ruleNameById = new Map(rules.map((r) => [r.id, r.name]));
+
+    // Uma venda por KIT é registrada em `sales_order_item_snapshots` com o
+    // `product_id` do KIT, mas a nota fiscal emite o(s) produto(s)
+    // COMPONENTE (a NF-e não tem "kit" como item, tem os pneus físicos) —
+    // sem isso, nenhuma venda via kit encontraria seu desconto aqui, que é
+    // o caso normal pra pneus (regras de desconto são tipicamente "a cada 2
+    // pneus", vendidos como kit). Expande cada linha de kit pros ids dos
+    // seus componentes, apontando pro mesmo valor/regra.
+    const kitProductIds = [
+      ...new Set(
+        discountRows.map((row) => row.product_id).filter((id): id is string => !!id),
+      ),
+    ];
+    const kitComponents = kitProductIds.length
+      ? await this.repository.findKitComponentsByKitIds(kitProductIds)
+      : [];
+    const componentIdsByKitId = new Map<string, string[]>();
+    for (const kc of kitComponents) {
+      const arr = componentIdsByKitId.get(kc.product_kit_id) ?? [];
+      arr.push(kc.product_component_id);
+      componentIdsByKitId.set(kc.product_kit_id, arr);
+    }
+
+    const lookup = new Map<
+      string,
+      { value: number; ruleId: string | null; ruleName: string | null }
+    >();
+    for (const row of discountRows) {
+      if (!row.product_id) continue;
+      const entry = {
+        value: Number(row.supplier_discount_value ?? 0),
+        ruleId: row.supplier_discount_rule_id ?? null,
+        ruleName: row.supplier_discount_rule_id
+          ? (ruleNameById.get(row.supplier_discount_rule_id) ?? null)
+          : null,
+      };
+      lookup.set(`${row.order_id}|${row.product_id}`, entry);
+      for (const componentId of componentIdsByKitId.get(row.product_id) ?? []) {
+        lookup.set(`${row.order_id}|${componentId}`, entry);
+      }
+    }
+    return lookup;
+  }
+
   async listInvoices(
     params: QueryParams,
     unitBusinessId: string,
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
-    return this.repository.listInvoices(
-      params,
-      unitBusinessId,
-      this.queryConfig,
-    );
+    return this.repository.listInvoices(params, unitBusinessId, this.queryConfig);
   }
 
   async updateInvoicesOpen(ids: string[], unitBusinessId: string) {
@@ -604,11 +692,27 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   }
 
   async getInvoiceProductReport(params: QueryParams, unitBusinessId: string) {
+    // `supplier_discount` sai do `where` da query e vira filtro pós-fetch
+    // (mais abaixo) — o customField padrão só bate no desconto REAL
+    // (`sales_order_item_snapshots`), que excluiria de cara qualquer nota
+    // que só se qualifica via o bypass "ignora unit_business" deste
+    // relatório. Sem tirar daqui, uma nota fora do escopo de loja da regra
+    // nunca chegaria a ser buscada pra o bypass sequer ter a chance de
+    // calcular seu desconto.
+    const rawSupplierDiscountFilter = params.filters?.supplier_discount;
+    const supplierDiscountRuleIdsFilter = (
+      Array.isArray(rawSupplierDiscountFilter)
+        ? rawSupplierDiscountFilter
+        : rawSupplierDiscountFilter
+          ? [rawSupplierDiscountFilter]
+          : []
+    ).filter(Boolean);
+
+    const { supplier_discount: _supplierDiscountFilter, ...restFilters } =
+      params.filters ?? {};
     const queryParams: QueryParams = {
       ...params,
-      filters: {
-        ...params.filters,
-      },
+      filters: restFilters,
     };
 
     const rows = await this.findAll(
@@ -649,7 +753,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
               {
                 model: Product,
                 as: "product",
-                attributes: ["line"],
+                // `id` precisa estar explícito aqui — um include com
+                // `attributes` explícito não traz a PK de graça (achado
+                // testando o `supplier_discount_value`/nome da regra: sem
+                // isso, `item.product.id` vinha `undefined` e a correlação
+                // com o desconto nunca batia).
+                attributes: ["id", "line"],
                 required: true,
                 include: [
                   {
@@ -671,11 +780,60 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
               },
             ],
           },
+          // Só pra permitir o customField `supplier_discount` filtrar por
+          // `$order.unit_business_id$`/`$order.date$` — LEFT JOIN
+          // inofensivo quando o filtro não está em uso, igual o de
+          // `invoice.repository.ts`'s `listInvoices`.
+          {
+            model: Order,
+            as: "order",
+            attributes: ["id", "date", "unit_business_id"],
+          },
         ],
       },
       queryParams,
       this.queryConfig,
     );
+
+    const supplierDiscountLookup = await this.buildSupplierDiscountLookup(
+      rows.map((invoice) => (invoice as Invoice & { order?: Order | null }).order?.id),
+    );
+
+    // Regra específica DESTE relatório, pedido explícito do usuário: mesmo
+    // fora do escopo de unit_business da regra, ou sem Order vinculado (ou
+    // com Order mas sem desconto real registrado), mostra o desconto que a
+    // nota TERIA recebido — pool por NOTA (não por pedido), só regras REAL.
+    // Dado só de leitura: não persiste nada, não afeta o motor real de
+    // desconto/vendas. Só entra em jogo quando `supplierDiscountLookup`
+    // (acima) não achou um valor > 0 pra esse item — nunca sobrescreve um
+    // desconto real já encontrado. Ver
+    // `supplierDiscountRuleService.resolveRealDiscountsIgnoringUnitBusiness`.
+    const bypassItems: SupplierDiscountBypassItemInput[] = [];
+    for (const invoice of rows) {
+      const invoiceWithRelations = invoice as Invoice & {
+        items?: (InvoiceItems & { product?: Product | null })[];
+        order?: Order | null;
+      };
+      const referenceDate = invoiceWithRelations.order?.date ?? invoice.emitted_at;
+      if (!referenceDate) continue;
+
+      for (const item of invoiceWithRelations.items ?? []) {
+        if (!item.product?.id) continue;
+        bypassItems.push({
+          item_id: `${invoice.id}|${item.product.id}`,
+          pool_id: invoice.id,
+          brand_id: item.product.brandRegister?.id ?? null,
+          rim_id: item.product.rimRegister?.id ?? null,
+          measure_id: item.product.measureRegister?.id ?? null,
+          reference_date: referenceDate,
+          real_quantity: item.quantity_expected,
+        });
+      }
+    }
+    const supplierDiscountBypassLookup =
+      await supplierDiscountRuleService.resolveRealDiscountsIgnoringUnitBusiness(
+        bypassItems,
+      );
 
     const default_report_seler = await userService.findOne({
       where:{
@@ -707,15 +865,46 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       line: string | null;
       brand: string | null;
       value: number | null;
+      supplier_discount_value: number;
+      supplier_discount_rule_name: string | null;
     }[] = [];
 
     for (const invoice of rows) {
       const invoiceWithRelations = invoice as Invoice & {
         seller?: Contact | null;
         items?: (InvoiceItems & { product?: Product | null })[];
+        order?: Order | null;
       };
 
+      const orderId = invoiceWithRelations.order?.id;
+
       for (const item of invoiceWithRelations.items ?? []) {
+        const discount =
+          orderId && item.product?.id
+            ? supplierDiscountLookup.get(`${orderId}|${item.product.id}`)
+            : undefined;
+        const bypassDiscount = item.product?.id
+          ? supplierDiscountBypassLookup.get(`${invoice.id}|${item.product.id}`)
+          : undefined;
+        // Só usa o bypass quando o lookup "real" não achou nada com valor
+        // > 0 — nunca sobrescreve um desconto real já encontrado.
+        const effectiveDiscount =
+          discount && discount.value > 0 ? discount : bypassDiscount;
+
+        // Filtro `supplier_discount` aplicado aqui (pós-fetch), não no
+        // `where` da query — ver comentário no início do método. Com o
+        // filtro ativo, só entra no resultado o item cujo desconto
+        // efetivo (real OU bypass) veio de uma das regras selecionadas.
+        if (
+          supplierDiscountRuleIdsFilter.length > 0 &&
+          !(
+            effectiveDiscount?.ruleId &&
+            supplierDiscountRuleIdsFilter.includes(effectiveDiscount.ruleId)
+          )
+        ) {
+          continue;
+        }
+
         result.push({
           number_system: invoice.number_system,
           seller: invoiceWithRelations.seller
@@ -736,6 +925,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           line: item.product?.line ?? null,
           brand: item.product?.brandRegister?.name ?? null,
           value: invoice.invoice_value ?? null,
+          supplier_discount_value: effectiveDiscount?.value ?? 0,
+          supplier_discount_rule_name: effectiveDiscount?.ruleName ?? null,
         });
       }
     }
@@ -769,7 +960,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
               {
                 model: Product,
                 as: "product",
-                attributes: ["name", "brand"],
+                // `id` explícito — sem isso `item.product.id` vem
+                // `undefined` e a correlação com o desconto nunca bate
+                // (mesmo achado de getInvoiceProductReport).
+                attributes: ["id", "name", "brand"],
                 required: true,
                 include: [
                   {
@@ -785,10 +979,23 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
               },
             ],
           },
+          // Só pra permitir o customField `supplier_discount` filtrar por
+          // `$order.unit_business_id$`/`$order.date$` — LEFT JOIN
+          // inofensivo quando o filtro não está em uso, igual o de
+          // `invoice.repository.ts`'s `listInvoices`.
+          {
+            model: Order,
+            as: "order",
+            attributes: ["id", "date", "unit_business_id"],
+          },
         ],
       },
       params,
       this.queryConfig,
+    );
+
+    const supplierDiscountLookup = await this.buildSupplierDiscountLookup(
+      rows.map((invoice) => (invoice as Invoice & { order?: Order | null }).order?.id),
     );
 
     const result: {
@@ -799,6 +1006,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       description: string | null;
       quantity: number;
       brand: string | null;
+      supplier_discount_value: number;
+      supplier_discount_rule_name: string | null;
     }[] = [];
 
     for (const invoice of rows) {
@@ -812,11 +1021,18 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
               })
             | null;
         })[];
+        order?: Order | null;
       };
+
+      const orderId = invoiceWithRelations.order?.id;
 
       for (const item of invoiceWithRelations.items ?? []) {
         const product = item.product;
         const productConfig = product?.productConfigs?.[0];
+        const discount =
+          orderId && product?.id
+            ? supplierDiscountLookup.get(`${orderId}|${product.id}`)
+            : undefined;
 
         result.push({
           number_system: invoice.number_system,
@@ -826,6 +1042,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           description: product?.name ?? "",
           quantity: item.quantity_expected,
           brand: product?.brand ?? null,
+          supplier_discount_value: discount?.value ?? 0,
+          supplier_discount_rule_name: discount?.ruleName ?? null,
         });
       }
     }

@@ -36,6 +36,8 @@ class SalesOrderItemSnapshot
   public gross_total?: number | string;
   public discount_value?: number | string;
   public net_total?: number | string;
+  public supplier_discount_value?: number | string;
+  public supplier_discount_rule_id?: string | null;
 
   public average_cost_snapshot?: number | string;
   public total_cost_snapshot?: number | string;
@@ -100,6 +102,20 @@ SalesOrderItemSnapshot.init(
     gross_total: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     discount_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     net_total: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    // Colunas m240 (existem no banco desde aquela migration) — faltavam
+    // aqui no .init(), mesmo gap que já aconteceu com Product.category.
+    supplier_discount_value: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
+    supplier_discount_rule_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: "supplier_discount_rules", key: "id" },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
+    },
 
     average_cost_snapshot: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
     total_cost_snapshot: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },

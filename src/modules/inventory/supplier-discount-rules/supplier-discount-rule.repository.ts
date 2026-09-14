@@ -3,6 +3,8 @@ import sequelize from "../../../config/sequelize";
 import BaseRepository from "../../../shared/utils/base-models/base-repository";
 import SupplierDiscountRule from "./supplier-discount-rule.model";
 import {
+  SupplierDiscountBypassCandidateRow,
+  SupplierDiscountBypassItemInput,
   SupplierDiscountCandidateRow,
   SupplierDiscountResolveItemInput,
   SupplierDiscountType,
@@ -129,6 +131,57 @@ export class SupplierDiscountRuleRepository extends BaseRepository<SupplierDisco
           measureIds: items.map((i) => i.measure_id),
           unitBusinessIds: items.map((i) => i.unit_business_id),
           orderDates: items.map((i) => i.order_date),
+        },
+      },
+    );
+  }
+
+  // Variante de matchBatch usada SÓ por
+  // InvoiceService.getInvoiceProductReport (dado de leitura pra um relatório
+  // específico) — ignora de propósito o join de
+  // `supplier_discount_unit_businesses` (a regra pede pra "burlar" o escopo
+  // de loja nesse relatório) e só considera regras REAL (PERCENTUAL fica de
+  // fora, decisão explícita do usuário — precisaria do valor fiscal do item,
+  // que esse relatório não busca). Nunca usar isso no motor real de
+  // desconto (resolveForItems/matchBatch) — a omissão do unit_business é
+  // proposital e específica deste relatório.
+  async matchRealRulesIgnoringUnitBusiness(
+    items: SupplierDiscountBypassItemInput[],
+  ): Promise<SupplierDiscountBypassCandidateRow[]> {
+    if (!items.length) return [];
+
+    return sequelize.query<SupplierDiscountBypassCandidateRow>(
+      `
+      SELECT batch.item_id, r.id AS rule_id, r.quantity_step, r.discount_value
+      FROM unnest(
+        ARRAY[:itemIds]::text[], ARRAY[:brandIds]::uuid[], ARRAY[:rimIds]::uuid[], ARRAY[:measureIds]::uuid[],
+        ARRAY[:referenceDates]::timestamp[]
+      ) AS batch(item_id, brand_id, rim_id, measure_id, reference_date)
+      JOIN supplier_discount_rules r
+        ON r.active = true
+        AND r.discount_type = 'REAL'
+        AND batch.reference_date BETWEEN r.start_date AND r.end_date
+        AND (
+          NOT EXISTS (SELECT 1 FROM supplier_discount_rule_brands x WHERE x.supplier_discount_rule_id = r.id)
+          OR EXISTS (SELECT 1 FROM supplier_discount_rule_brands x WHERE x.supplier_discount_rule_id = r.id AND x.brand_id = batch.brand_id)
+        )
+        AND (
+          NOT EXISTS (SELECT 1 FROM supplier_discount_rule_rims x WHERE x.supplier_discount_rule_id = r.id)
+          OR EXISTS (SELECT 1 FROM supplier_discount_rule_rims x WHERE x.supplier_discount_rule_id = r.id AND x.rim_id = batch.rim_id)
+        )
+        AND (
+          NOT EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id)
+          OR EXISTS (SELECT 1 FROM supplier_discount_rule_measures x WHERE x.supplier_discount_rule_id = r.id AND x.measure_id = batch.measure_id)
+        )
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: {
+          itemIds: items.map((i) => i.item_id),
+          brandIds: items.map((i) => i.brand_id),
+          rimIds: items.map((i) => i.rim_id),
+          measureIds: items.map((i) => i.measure_id),
+          referenceDates: items.map((i) => i.reference_date),
         },
       },
     );

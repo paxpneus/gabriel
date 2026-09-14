@@ -2,6 +2,7 @@ export type SupplierDiscountType = "REAL" | "PERCENTUAL";
 
 export interface SupplierDiscountRuleAttributes {
   id: string;
+  name: string;
   quantity_step: number;
   discount_type: SupplierDiscountType;
   discount_value: number;
@@ -12,11 +13,16 @@ export interface SupplierDiscountRuleAttributes {
   updatedAt?: Date;
 }
 
+// `name` nunca vem do client — é sempre calculado pelo service
+// (buildSupplierDiscountRuleName) a partir dos outros campos, por isso fica
+// opcional aqui igual `active` (o service sempre preenche antes do
+// create/update, mas o tipo não pode exigir do chamador).
 export interface SupplierDiscountRuleCreationAttributes
   extends Omit<
     SupplierDiscountRuleAttributes,
-    "id" | "active" | "createdAt" | "updatedAt"
+    "id" | "name" | "active" | "createdAt" | "updatedAt"
   > {
+  name?: string;
   active?: boolean;
 }
 
@@ -44,6 +50,7 @@ export interface SupplierDiscountRuleInput {
 // nada no front (fetch pro form de edição -> mesmo shape do submit).
 export interface SupplierDiscountRuleDetail {
   id: string;
+  name: string;
   quantity_step: number;
   discount_type: SupplierDiscountType;
   discount_value: number;
@@ -85,4 +92,38 @@ export interface SupplierDiscountCandidateRow {
   discount_type: SupplierDiscountType;
   quantity_step: number;
   discount_value: number;
+}
+
+// Item de entrada de resolveRealDiscountsIgnoringUnitBusiness — usado SÓ por
+// InvoiceService.getInvoiceProductReport (dado de leitura, não persiste nada
+// e não afeta o motor real de desconto). `pool_id` é a nota fiscal (não o
+// pedido) — cada nota conta sua própria quantidade isoladamente, sem somar
+// com notas irmãs do mesmo pedido. Sem `unit_business_id` de propósito: essa
+// regra ignora explicitamente o escopo de loja da regra. Sem `gross_total`
+// também: só regras REAL são suportadas aqui (PERCENTUAL precisaria do valor
+// fiscal do item, que esse relatório não busca — decisão explícita do
+// usuário).
+export interface SupplierDiscountBypassItemInput {
+  item_id: string;
+  pool_id: string;
+  brand_id: string | null;
+  rim_id: string | null;
+  measure_id: string | null;
+  reference_date: Date;
+  real_quantity: number;
+}
+
+// Linha crua devolvida por matchRealRulesIgnoringUnitBusiness — só regras
+// REAL, sem discount_type (é sempre REAL) nem unit_business no join.
+export interface SupplierDiscountBypassCandidateRow {
+  item_id: string;
+  rule_id: string;
+  quantity_step: number;
+  discount_value: number;
+}
+
+export interface SupplierDiscountBypassResult {
+  value: number;
+  ruleId: string | null;
+  ruleName: string | null;
 }

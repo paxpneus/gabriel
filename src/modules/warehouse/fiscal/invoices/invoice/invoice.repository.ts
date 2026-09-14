@@ -46,6 +46,8 @@ import {
 import { BatchInvoiceItemsAttributes } from "../../../expedition/batch-invoice-items/batch-invoice-items.types";
 import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
 import { LOGISTIC_OCCURRENCE_CODES } from "../../../../handlers/logistic/constants/constants";
+import SalesOrderItemSnapshot from "../../../../reports/daily-sales/sales-order-item-snapshot/sales-order-item-snapshot.model";
+import KitComponent from "../../../../inventory/kit-components/kit-component.model";
 
 export class InvoiceRepository extends BaseRepository<Invoice> {
   constructor() {
@@ -185,6 +187,55 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       WHERE ii.invoice_id = "Invoice"."id"
         AND p.brand IS NOT NULL
     )`);
+  }
+
+  // `SalesOrderItemSnapshot` não tem repository/service próprio (mesma
+  // situação de `InvoiceFiscalItem` — ver nota em invoice.service.ts),
+  // então é consultado direto daqui. Usado pelos relatórios
+  // (getInvoiceProductReport/getInvoiceSupplierReport) pra trazer o
+  // desconto de fornecedor por linha: o snapshot é keyed por
+  // (order_id, product_id), não por invoice_item_id, então quem chama
+  // precisa casar cada item pelo par (invoice.order.id, item.product_id).
+  async findSupplierDiscountsByOrderIds(
+    orderIds: string[],
+  ): Promise<
+    Pick<
+      InstanceType<typeof SalesOrderItemSnapshot>,
+      "order_id" | "product_id" | "supplier_discount_value" | "supplier_discount_rule_id"
+    >[]
+  > {
+    if (!orderIds.length) return [];
+    return SalesOrderItemSnapshot.findAll({
+      where: { order_id: { [Op.in]: orderIds } },
+      attributes: [
+        "order_id",
+        "product_id",
+        "supplier_discount_value",
+        "supplier_discount_rule_id",
+      ],
+      raw: true,
+    });
+  }
+
+  // Uma venda por KIT vira, na nota fiscal, um item por produto COMPONENTE
+  // (a NF-e não emite o "kit" abstrato, emite os pneus físicos) — mas
+  // `sales_order_item_snapshots.product_id` continua sendo o produto KIT
+  // vendido no pedido. Sem isso, `findSupplierDiscountsByOrderIds` nunca
+  // bate com `invoice_items.product_id` pra vendas via kit (o caso normal
+  // pra pneus, dado "a cada 2 pneus"). Usado por
+  // `InvoiceService.buildSupplierDiscountLookup` pra expandir cada snapshot
+  // de KIT pros ids dos seus componentes.
+  async findKitComponentsByKitIds(
+    kitProductIds: string[],
+  ): Promise<
+    Pick<InstanceType<typeof KitComponent>, "product_kit_id" | "product_component_id">[]
+  > {
+    if (!kitProductIds.length) return [];
+    return KitComponent.findAll({
+      where: { product_kit_id: { [Op.in]: kitProductIds } },
+      attributes: ["product_kit_id", "product_component_id"],
+      raw: true,
+    });
   }
 
   // ─── Helper: extrai filtros de invoice_unit_business_attributes ──────────────
@@ -333,11 +384,13 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         },
         // Só pra permitir os customFields de Mercado Livre (invoice.service.ts)
         // filtrarem por `$order.collection_date$` — sem filtro nenhum ativo,
-        // é um LEFT JOIN inofensivo, igual ao de `store`/`batchInvoice`.
+        // é um LEFT JOIN inofensivo, igual ao de `store`/`batchInvoice`. `date`
+        // e `unit_business_id` são usados pelo customField `supplier_discount`
+        // (invoice.service.ts) — período/loja do pedido, não da nota.
         {
           model: Order,
           as: "order",
-          attributes: ["id", "collection_date"],
+          attributes: ["id", "collection_date", "date", "unit_business_id"],
         },
         {
           model: Transporter,

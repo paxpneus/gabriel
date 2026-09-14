@@ -23,6 +23,8 @@ export interface SalesOrderItemSnapshotAttributes {
   gross_total?: number | string;
   discount_value?: number | string;
   net_total?: number | string;
+  supplier_discount_value?: number | string;
+  supplier_discount_rule_id?: string | null;
 
   average_cost_snapshot?: number | string;
   total_cost_snapshot?: number | string;

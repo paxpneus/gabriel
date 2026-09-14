@@ -14,6 +14,7 @@ class SupplierDiscountRule
   implements SupplierDiscountRuleAttributes
 {
   public id!: string;
+  public name!: string;
   public quantity_step!: number;
   public discount_type!: "REAL" | "PERCENTUAL";
   public discount_value!: number;
@@ -31,6 +32,13 @@ SupplierDiscountRule.init(
       type: DataTypes.UUID,
       defaultValue: uuidv4,
       primaryKey: true,
+      allowNull: false,
+    },
+    name: {
+      // Sempre calculado pelo service (buildSupplierDiscountRuleName) —
+      // nunca aceito direto do client. Ver createOrUpdate em
+      // supplier-discount-rule.service.ts.
+      type: DataTypes.STRING(255),
       allowNull: false,
     },
     quantity_step: {
