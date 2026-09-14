@@ -361,6 +361,32 @@ describe("BlingOrderService", () => {
 
       expect(lastUpdateFields()).not.toHaveProperty("collection_date");
     });
+
+    it("dataPrevista com data-sentinela implausível (ex: 1899-11-30, época zero Delphi/OLE): NÃO inclui collection_date, preservando o valor já gravado", async () => {
+      orderData.dataPrevista = "1899-11-30";
+      (ordersService.findOne as jest.Mock).mockResolvedValue(
+        makeExistingOrder({ collection_date: new Date("2026-08-15T00:00:00-03:00") }),
+      );
+
+      await service.updateOrderFromBling({
+        data: { id: orderData.id },
+      } as any);
+
+      expect(lastUpdateFields()).not.toHaveProperty("collection_date");
+    });
+
+    it('dataPrevista com sentinel de data zero do MySQL ("0000-00-00"): NÃO inclui collection_date, preservando o valor já gravado', async () => {
+      orderData.dataPrevista = "0000-00-00";
+      (ordersService.findOne as jest.Mock).mockResolvedValue(
+        makeExistingOrder({ collection_date: new Date("2026-08-15T00:00:00-03:00") }),
+      );
+
+      await service.updateOrderFromBling({
+        data: { id: orderData.id },
+      } as any);
+
+      expect(lastUpdateFields()).not.toHaveProperty("collection_date");
+    });
   });
 
   describe("createOrderFromBling", () => {
@@ -413,6 +439,17 @@ describe("BlingOrderService", () => {
       (ordersService.findOne as jest.Mock).mockResolvedValue(null);
       (UnitBusiness.findOne as jest.Mock).mockResolvedValue({ id: "ub-1" });
       delete orderData.dataPrevista;
+
+      await service.createOrderFromBling({ data: { id: orderData.id } } as any);
+
+      const createdPayload = (ordersService.create as jest.Mock).mock.calls[0][0];
+      expect(createdPayload).not.toHaveProperty("collection_date");
+    });
+
+    it("dataPrevista com data-sentinela implausível (1899-11-30): não inclui collection_date na criação", async () => {
+      (ordersService.findOne as jest.Mock).mockResolvedValue(null);
+      (UnitBusiness.findOne as jest.Mock).mockResolvedValue({ id: "ub-1" });
+      orderData.dataPrevista = "1899-11-30";
 
       await service.createOrderFromBling({ data: { id: orderData.id } } as any);
 

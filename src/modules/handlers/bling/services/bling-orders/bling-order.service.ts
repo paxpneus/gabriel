@@ -46,11 +46,53 @@ function reasonCancelledFields(situacaoId: unknown) {
     : {};
 }
 
+// A Bling às vezes manda dataPrevista preenchida mas com o sentinel de
+// "data zero" do MySQL ("0000-00-00", com ou sem hora) em vez de vir vazia
+// — convenção de coluna NOT NULL sem valor real definido. Checado por regex
+// ANTES de tentar parsear: passar "0000-00-00" pro dayjs.tz cai no ano 0000
+// e, por causa do offset histórico (pré-1914) de America/Sao_Paulo na base
+// IANA (-03:06:28, hora solar média local, não um -03:00 redondo), o
+// resultado é um Date por volta de novembro de 1899 — confirmado batendo
+// exatamente com um caso de produção. Curto-circuita esse parse frágil
+// (o minuto exato varia por versão do ICU) em vez de depender dele pra
+// cair no filtro genérico de ano abaixo.
+const MYSQL_ZERO_DATE_REGEX = /^0000-00-00/;
+
+// Rede de segurança genérica pra qualquer OUTRA data implausível que chegue
+// preenchida (não só o sentinel MySQL acima) — um pedido real nunca tem
+// coleta prevista antes disso. Sem essa checagem, uma data desse tipo virava
+// um delay negativo em setDelayBasedOnDate → NFe agendada pra ~30s (o piso
+// MIN_DELAY_MS de finalizeNfeScheduling), ou seja, emissão praticamente
+// imediata em vez de esperar a coleta de verdade.
+const MIN_PLAUSIBLE_COLLECTION_YEAR = 2000;
+
 // Só inclui a chave collection_date quando a Bling manda dataPrevista
-// preenchida — omitida (nunca null) quando vier vazia, pra não apagar um
-// collection_date já resolvido antes por scraping/ML_ORDER_SYNC.
+// preenchida e plausível — omitida (nunca null, e nunca um valor chutado)
+// quando vier vazia, zerada ou implausível. Isso faz o pedido cair
+// exatamente no mesmo fluxo de "sem collection_date" de quando a Bling não
+// manda nada: MLOrderSyncQueue marca WAITING_CHANNEL_VALIDATION e dispara o
+// scraping do ML pra buscar a data real, em vez de aceitar um valor
+// inventado — e também não apaga um collection_date já resolvido antes por
+// scraping/ML_ORDER_SYNC.
 function collectionDateFromBling(dataPrevista: string | undefined | null) {
-  return dataPrevista ? { collection_date: startOfDayTz(dataPrevista).toDate() } : {};
+  if (!dataPrevista) return {};
+
+  if (MYSQL_ZERO_DATE_REGEX.test(dataPrevista.trim())) {
+    console.warn(
+      `[BlingOrderService] dataPrevista "zerada" (sentinel MySQL) ignorada: "${dataPrevista}"`,
+    );
+    return {};
+  }
+
+  const parsed = startOfDayTz(dataPrevista);
+  if (!parsed.isValid() || parsed.year() < MIN_PLAUSIBLE_COLLECTION_YEAR) {
+    console.warn(
+      `[BlingOrderService] dataPrevista implausível ignorada: "${dataPrevista}"`,
+    );
+    return {};
+  }
+
+  return { collection_date: parsed.toDate() };
 }
 
 export class BlingOrderService {

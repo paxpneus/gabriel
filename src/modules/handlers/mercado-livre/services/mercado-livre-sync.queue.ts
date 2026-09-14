@@ -453,13 +453,19 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
     const collectionIsTodayOrFuture = collectionMs >= startOfDay;
 
     if (createdToday && collectionIsTodayOrFuture) {
-      // Cenário 1: chegou hoje, ainda sem job → trava para aceite manual
+      // Cenário 1: chegou hoje, ainda sem job → trava para aceite manual.
+      // `collectionIsTodayOrFuture` inclui qualquer coleta futura, não só
+      // hoje — os logs abaixo não podem dizer "coleta HOJE" nem "emitindo",
+      // já que quem decide a data/hora real do disparo é
+      // setDelayBasedOnDate (via finalizeNfeScheduling logo abaixo), e a
+      // emissão em si só acontece muito depois, quando o job delayed
+      // dispara na NFeQueue — aqui só agenda.
       const alreadyScheduled = await this.next.getJob(jobId);
 
       if (integration.lock_today_orders) {
         if (!alreadyScheduled) {
           console.log(
-            `[MLOrderSyncQueue] Coleta HOJE e sem job agendado — travando pedido ${idOrderSystem} (waiting_acceptance)`,
+            `[MLOrderSyncQueue] Pedido ${idOrderSystem} chegou hoje e ainda sem job agendado — travando (waiting_acceptance)`,
           );
 
           await ordersService.update(orderSystem.id, {
@@ -471,14 +477,14 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
 
         if (orderSystem?.waiting_acceptance) {
           console.log(
-            `[MLOrderSyncQueue] Coleta HOJE mas waiting_acceptance ainda true — aguardando liberação manual para pedido ${idOrderSystem}`,
+            `[MLOrderSyncQueue] Pedido ${idOrderSystem} chegou hoje mas waiting_acceptance ainda true — aguardando liberação manual`,
           );
           return;
         }
       }
 
       console.log(
-        `[MLOrderSyncQueue] Coleta HOJE e waiting_acceptance liberado — emitindo NFe para pedido ${idOrderSystem}`,
+        `[MLOrderSyncQueue] Pedido ${idOrderSystem} chegou hoje e waiting_acceptance liberado — seguindo para agendamento da NFe`,
       );
     }
 
