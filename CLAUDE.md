@@ -1413,6 +1413,34 @@ em `src/modules/handlers/logistic/`). Peças novas:
   erro "TBD" em `mercado-livre-order-shipment.service.ts`) e se o refresh
   OAuth2 do ML espera Basic Auth ou client_id/secret no body.
 
+- **Duas regressões encontradas e corrigidas ao rebasear esta migração por
+  cima do trabalho de sessão anterior (rate-limiter check-and-claim, gate
+  centralizado de verificação humana, lock por pedido, fix
+  `actual_situation`)** — nenhuma delas aparecia como conflito de merge,
+  só ficaram visíveis comparando o código novo desta migração contra o que
+  a sessão anterior já tinha corrigido no código que ele substituiu:
+  1. **`isEligibleForSync` em `CollectionDateSchedulerService`
+     (`collection-date-scheduler.service.ts`) reintroduzia exatamente o bug
+     #1 documentado acima** — lia `source_payload.situacao.id` em vez de
+     `actual_situation`, o que bloqueava `scheduleNfe` pra praticamente
+     todo pedido logo depois do `CNPJQueue` avançar a situação (mesmo
+     motivo já documentado: `CNPJQueue` grava só `actual_situation`
+     localmente, nunca `source_payload`, que só um webhook completo
+     reescreve). Como toda escrita de `collection_date`/agendamento de NFe
+     passa por este serviço agora, o impacto era maior que o bug original.
+     **Fix**: mudado pra ler `actual_situation`, igual o resto do pipeline.
+  2. **O guard de `dataPrevista` implausível (`"0000-00-00"`/ano < 2000)
+     em `bling-order.service.ts` tinha sido perdido** — a função
+     `collectionDateFromBling`
+     que continha essa checagem foi removida junto com a reescrita que
+     passou a chamar `collectionDateScheduler.syncCollectionDateLocked`
+     diretamente, e os dois call sites (`createOrderFromBling`/
+     `updateOrderFromBling`) ficaram guardando só por truthiness. **Fix**:
+     reinstalado como `isPlausibleDataPrevista()` (mesma regex +
+     piso de ano 2000), chamado antes de acionar o scheduler nos dois call
+     sites — mesmo comportamento de antes (nunca grava um valor chutado,
+     nunca apaga um `collection_date` já resolvido).
+
 - **`collection_date` agora pode vir de `dataPrevista` (payload Bling),
   não só do scraping/planilha do ML; `ML-SCRAPING` deixou de ter cron fixo
   (this session)** — pedido explícito do usuário. `BlingOrderService`

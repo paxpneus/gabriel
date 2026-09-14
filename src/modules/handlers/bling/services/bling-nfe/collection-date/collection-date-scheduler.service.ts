@@ -18,24 +18,31 @@ import { nowTz, startOfDayTz } from "../../../../../../shared/utils/normalizers/
 import { withOrderLock } from "../../../../../../shared/utils/base-models/base-queue-service";
 
 /**
- * Rebusca o pedido só com internal_status e source_payload para confirmar
+ * Rebusca o pedido só com internal_status e actual_situation para confirmar
  * que ele ainda está de fato em WAITING CHANNEL VALIDATION (748743 na
  * Bling). Evita processar um pedido que já mudou de situação entre o
  * enqueue e o processamento. Extraída de MLOrderSyncQueue (usada tanto lá
  * quanto internamente por scheduleNfe abaixo).
+ *
+ * Usa `actual_situation` (não `source_payload.situacao.id`): CNPJQueue
+ * avança o pedido pra 748743 direto na Bling (applyWaitingNfeStatus) e só
+ * grava `internal_status` localmente — não reescreve `source_payload`, que
+ * só é atualizado por um webhook completo (create/updateOrderFromBling).
+ * Checar `source_payload` aqui fazia essa checagem falhar sempre logo
+ * depois do avanço pelo CNPJQueue, já que o snapshot ainda tinha a
+ * situação antiga, mesmo com `internal_status` já correto — derrubando o
+ * agendamento de NFe de todo pedido que passa por ali.
  */
 export async function isEligibleForSync(orderId: string): Promise<boolean> {
   const orderData = await ordersService.findById(orderId, {
-    attributes: ["internal_status", "source_payload"],
+    attributes: ["internal_status", "actual_situation"],
   });
 
   if (!orderData) return false;
 
-  const situacaoId = (orderData as any).source_payload?.situacao?.id;
-
   return (
     orderData.internal_status === OrderInternalStatus.WAITING_CHANNEL_VALIDATION &&
-    String(situacaoId) === "748743"
+    String((orderData as any).actual_situation) === "748743"
   );
 }
 
@@ -247,9 +254,9 @@ export class CollectionDateSchedulerService {
    * agenda o job delayed na NFeQueue. Chamada só depois que scheduleNfe (ou
    * resumeAfterAcceptance, em MLOrderSyncQueue) já validou o pedido pelo
    * snapshot local — não confia só nisso: reconfere a situação ao vivo na
-   * Bling antes do PATCH, porque isEligibleForSync lê source_payload
-   * (snapshot do último webhook processado), que pode estar desatualizado
-   * — principalmente pra resumeAfterAcceptance, onde pode ter passado
+   * Bling antes do PATCH, porque isEligibleForSync lê actual_situation
+   * (última gravação local), que ainda pode estar desatualizada em relação
+   * à Bling — principalmente pra resumeAfterAcceptance, onde pode ter passado
    * bastante tempo entre o pedido ser travado (waiting_acceptance) e
    * alguém liberar manualmente. Assume que já está dentro do withOrderLock
    * do pedido, igual scheduleNfe.

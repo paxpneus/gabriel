@@ -48,6 +48,53 @@ function reasonCancelledFields(situacaoId: unknown) {
     : {};
 }
 
+// A Bling às vezes manda dataPrevista preenchida mas com o sentinel de
+// "data zero" do MySQL ("0000-00-00", com ou sem hora) em vez de vir vazia
+// — convenção de coluna NOT NULL sem valor real definido. Checado por regex
+// ANTES de tentar parsear: passar "0000-00-00" pro dayjs.tz cai no ano 0000
+// e, por causa do offset histórico (pré-1914) de America/Sao_Paulo na base
+// IANA (-03:06:28, hora solar média local, não um -03:00 redondo), o
+// resultado é um Date por volta de novembro de 1899 — confirmado batendo
+// exatamente com um caso de produção. Curto-circuita esse parse frágil
+// (o minuto exato varia por versão do ICU) em vez de depender dele pra
+// cair no filtro genérico de ano abaixo.
+const MYSQL_ZERO_DATE_REGEX = /^0000-00-00/;
+
+// Rede de segurança genérica pra qualquer OUTRA data implausível que chegue
+// preenchida (não só o sentinel MySQL acima) — um pedido real nunca tem
+// coleta prevista antes disso. Sem essa checagem, uma data desse tipo
+// acabava virando um delay negativo lá no fim do agendamento da NFe —
+// emissão praticamente imediata em vez de esperar a coleta de verdade.
+const MIN_PLAUSIBLE_COLLECTION_YEAR = 2000;
+
+// Só retorna true quando a Bling manda dataPrevista preenchida e plausível
+// — false pro sentinel MySQL, pra qualquer outra data implausível, ou pra
+// um parse inválido. Chamado ANTES de acionar o CollectionDateScheduler:
+// omitir a chamada nesses casos faz o pedido cair exatamente no mesmo
+// fluxo de "sem dataPrevista" (ML_ORDER_SYNC resolve via API do
+// marketplace, sem aceitar um valor inventado), e também não apaga um
+// collection_date já resolvido antes por essa via.
+function isPlausibleDataPrevista(dataPrevista: string): boolean {
+  const trimmed = dataPrevista.trim();
+
+  if (MYSQL_ZERO_DATE_REGEX.test(trimmed)) {
+    console.warn(
+      `[BlingOrderService] dataPrevista "zerada" (sentinel MySQL) ignorada: "${dataPrevista}"`,
+    );
+    return false;
+  }
+
+  const parsed = startOfDayTz(trimmed);
+  if (!parsed.isValid() || parsed.year() < MIN_PLAUSIBLE_COLLECTION_YEAR) {
+    console.warn(
+      `[BlingOrderService] dataPrevista implausível ignorada: "${dataPrevista}"`,
+    );
+    return false;
+  }
+
+  return true;
+}
+
 export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService;
@@ -780,7 +827,7 @@ export class BlingOrderService {
       // (BlingOrderQueue.process envolve toda a cadeia), então usa a
       // variante Locked — a pública (syncCollectionDate) tentaria pegar o
       // lock de novo e travaria (não é reentrante).
-      if (orderData.dataPrevista) {
+      if (orderData.dataPrevista && isPlausibleDataPrevista(orderData.dataPrevista)) {
         await this.collectionDateScheduler.syncCollectionDateLocked(
           existingOrder.id_order_system!,
           startOfDayTz(orderData.dataPrevista).toDate(),
@@ -1065,7 +1112,7 @@ export class BlingOrderService {
       // variante Locked. internal_status ainda é OPEN neste ponto
       // (CNPJ_VERIFY_CNAE não rodou) — seguro por construção, ver a nota de
       // segurança em CollectionDateSchedulerService.scheduleNfe.
-      if (orderData.dataPrevista) {
+      if (orderData.dataPrevista && isPlausibleDataPrevista(orderData.dataPrevista)) {
         await this.collectionDateScheduler.syncCollectionDateLocked(
           createdOrder.id_order_system!,
           startOfDayTz(orderData.dataPrevista).toDate(),

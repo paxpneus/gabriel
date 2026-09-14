@@ -397,8 +397,9 @@ esperando aceite manual), ela só sincroniza `internal_status` com a
 situação real e não agenda nada. Isso importa mais pra
 `resumeAfterAcceptance` do que pra `scheduleNfe`: entre um pedido ser
 travado e alguém liberar manualmente pode passar um tempo bem maior do que
-o intervalo normal entre `isEligibleForSync` (que lê o snapshot local de
-`source_payload`) e essa checagem.
+o intervalo normal entre `isEligibleForSync` (que lê `actual_situation`,
+a última gravação local — não necessariamente a situação real na Bling
+neste exato momento) e essa checagem.
 
 ### `reconcileWaitingNfe` e `CollectionDateSchedulerService.scheduleNfe`
 

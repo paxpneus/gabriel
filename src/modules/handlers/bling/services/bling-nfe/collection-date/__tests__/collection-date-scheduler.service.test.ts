@@ -63,9 +63,9 @@ function mockEligible(eligible: boolean) {
     eligible
       ? {
           internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
-          source_payload: { situacao: { id: "748743" } },
+          actual_situation: "748743",
         }
-      : { internal_status: OrderInternalStatus.OPEN, source_payload: { situacao: { id: "6" } } },
+      : { internal_status: OrderInternalStatus.OPEN, actual_situation: "6" },
   );
 }
 

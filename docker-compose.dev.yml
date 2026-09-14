@@ -199,7 +199,6 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3002
-      ML_HEADLESS: "false"
       DB_HOST: postgres
       DB_PORT: ${DB_PORT}
       DB_NAME: ${DB_NAME}
@@ -222,8 +221,6 @@ services:
       BATCH_SIZE: ${BATCH_SIZE:-200}
       RESUME: ${RESUME:-true}
     volumes:
-      - ml_session:/app/ml_session
-      - ml_downloads:/app/ml_downloads
       - stock_movement_csv:/app/data/stock-movements
     cap_add:
       - SYS_ADMIN
@@ -403,8 +400,6 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  ml_session:
-  ml_downloads:
   stock_movement_csv:
   caddy_data:
   caddy_config:
