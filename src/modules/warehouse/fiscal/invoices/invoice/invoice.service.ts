@@ -677,7 +677,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       this.queryConfig,
     );
 
-    const default_report_seler = await userService.findById(default_seller);
+    const default_report_seler = await userService.findOne({
+      where:{
+        name: 'Rafael Minetto'
+      }
+    });
 
     const default_seller_body = {
       id: default_report_seler!.id,
