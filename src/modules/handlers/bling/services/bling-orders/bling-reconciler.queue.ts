@@ -13,16 +13,28 @@ const BLING_SITUACAO_AGUARDANDO_NF_COM_COLETA = 748748;
 
 type ReconcilerTask = "reconcile-open-orders" | "sync-invoiced-or-collected";
 
+// Interface estreita pra checar se uma fila tem job pendente (waiting/
+// active/delayed/prioritized), sem esperar/bloquear.
+type HasPendingJobs = { hasPendingJobs: () => Promise<boolean> };
+
 export class BlingReconcilerQueue extends BaseQueueService<
   Record<string, never>
 > {
   private blingApi: AxiosInstance;
   private blingOrderNext: { add: (data: any, jobId: string) => Promise<any> };
   private blingOrderService: BlingOrderService;
+  private blingOrderIngestionCheck: HasPendingJobs;
+  private cnpjCheck: HasPendingJobs;
+  private mlOrderSyncCheck: HasPendingJobs;
 
   constructor(
     blingApi: AxiosInstance,
     blingOrderNext: { add: (data: any, jobId: string) => Promise<any> },
+    automationQueueChecks: {
+      blingOrderIngestion: HasPendingJobs;
+      cnpjVerifyCnae: HasPendingJobs;
+      mlOrderSync: HasPendingJobs;
+    },
     options: { workless?: boolean } = {},
   ) {
     super("BLING_RECONCILER", {
@@ -33,12 +45,45 @@ export class BlingReconcilerQueue extends BaseQueueService<
     this.blingApi = blingApi;
     this.blingOrderNext = blingOrderNext;
     this.blingOrderService = new BlingOrderService(blingApi);
+    this.blingOrderIngestionCheck = automationQueueChecks.blingOrderIngestion;
+    this.cnpjCheck = automationQueueChecks.cnpjVerifyCnae;
+    this.mlOrderSyncCheck = automationQueueChecks.mlOrderSync;
+  }
+
+  // Mesmo gate usado pelo NFE_RECONCILER (ver nfe-reconciler.queue.ts): só
+  // roda por cima das filas "de fluxo normal" quando elas estão vazias, pra
+  // não competir pelo rate-limit compartilhado da Bling bem no pior momento
+  // (backlog grande). NFE_EMISSION fica de fora de propósito — ela sempre
+  // tem job agendado (delay até a hora da coleta).
+  private async automationQueuesAreClear(): Promise<boolean> {
+    const [orderIngestionPending, cnpjPending, mlOrderSyncPending] =
+      await Promise.all([
+        this.blingOrderIngestionCheck.hasPendingJobs(),
+        this.cnpjCheck.hasPendingJobs(),
+        this.mlOrderSyncCheck.hasPendingJobs(),
+      ]);
+
+    if (orderIngestionPending || cnpjPending || mlOrderSyncPending) {
+      const busy = [
+        orderIngestionPending && "BLING_ORDER_INGESTION",
+        cnpjPending && "CNPJ_VERIFY_CNAE",
+        mlOrderSyncPending && "ML_ORDER_SYNC",
+      ].filter(Boolean);
+      console.log(
+        `[BlingReconciler] Pulando execução — ainda há job(s) pendente(s) em ${busy.join(", ")}.`,
+      );
+      return false;
+    }
+
+    return true;
   }
 
   // ─── Dispatcher: decide qual rotina rodar com base nos dados do job ─────────
   // Job sem "task" (ou task desconhecida) cai no comportamento original,
   // pra não quebrar nenhuma chamada existente (ex: scheduleOpenOrders()).
   async process(job: Job): Promise<void> {
+    if (!(await this.automationQueuesAreClear())) return;
+
     const task: ReconcilerTask = job?.data?.task ?? "reconcile-open-orders";
 
     if (task === "sync-invoiced-or-collected") {

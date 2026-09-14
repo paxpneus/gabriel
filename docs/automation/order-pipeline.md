@@ -81,7 +81,39 @@ pedido preso sem match no scraping), e `mapOrderInternalStatus` colapsa
 todos eles no mesmo `CANCELLED` de um cancelamento real do cliente
 (situação 12/21) — **essa distinção agora existe na coluna `orders.reason_cancelled`**
 (enum, nullable), gravada de forma síncrona pela fila que decide o
-cancelamento, no mesmo momento em que escreve `internal_status=CANCELLED`:
+cancelamento, no mesmo momento em que escreve `internal_status=CANCELLED`.
+
+**Ponto único de decisão pra escalar — `escalateToHumanVerificationIfStillPending`
+(`orders/order/helpers/order-status.ts`, this session)**: os 7 pontos de
+código que decidem mandar um pedido pra `748772` (2 em `CNPJ_VERIFY_CNAE`,
+4 em `NFE_EMISSION`, 1 em `NFE_RECONCILER`) passaram a chamar essa única
+função em vez de decidir/fazer o PATCH cada um por conta própria. Ela
+sempre busca a situação **ao vivo** na Bling logo antes de decidir (nunca
+confia numa checagem feita antes, ainda que segundos atrás) e:
+1. Se a situação ao vivo já é terminal (`EMITTED`/`SENT_TO_TRANSPORTER`/
+   `DELIVERED`/`CANCELLED` — "Atendido"/"Enviado pro transporte"/
+   "Entregue"/"Cancelado"), **nunca escala** — só sincroniza
+   `internal_status` com a realidade. Fecha um caso real: antes, um pedido
+   podia avançar sozinho (ex: cliente cancelou, ou já foi entregue) no
+   intervalo entre a checagem de quem ia chamar `markOrderCancelled`/
+   `markOrderError` e o PATCH de fato, e ainda assim acabava marcado pra
+   verificação humana por cima de um estado já resolvido.
+2. Se não é terminal, só escala se a situação ao vivo bater com o
+   `allowedPendingStatuses` que quem chamou declarou como precondição
+   legítima pra aquele call site específico (`CNPJ_VERIFY_CNAE`: `[OPEN]`;
+   `NFE_EMISSION`'s `NFE_WRONG_STATUS`: `[OPEN, WAITING_CHANNEL_VALIDATION]`;
+   `NFE_EMISSION`'s outros 3 call sites e `NFE_RECONCILER`:
+   `[WAITING_FOR_NFE_EMISSION]`/`[WAITING_CHANNEL_VALIDATION]` respectivamente).
+   Caso contrário, também não escala — só sincroniza.
+3. Fecha de graça o único call site que antes não tinha checagem ao vivo
+   nenhuma: `NFE_EMISSION`'s `onFailed` (`NFE_EMISSION_FAILED`, disparado
+   depois de esgotar os retries do BullMQ) fazia o PATCH `748772` às cegas;
+   agora passa pela mesma checagem que todo o resto.
+
+Cada call site ainda faz sua própria escrita de observação
+(`observacoesInternas`) e pacing (sleeps de 1s/3s) via um hook
+`beforeEscalate`, que só roda **depois** de confirmado que vai escalar
+mesmo — não antes, como no design anterior de alguns call sites.
 
 | `reason_cancelled` | Quem grava | Motivo |
 |---|---|---|
@@ -194,11 +226,56 @@ compartilhada entre filas. Isso significa:
 
 ## Rate limit da Bling
 
-`waitForBlingRateLimit()` (`bling_api.service.ts`) — leaky bucket via Redis,
-independente de qual fila faz a chamada. Não tem relação nenhuma com o lock
-por pedido acima — mesmo com todos os pedidos rodando em paralelo, toda
-chamada HTTP pra Bling ainda respeita o mesmo espaçamento global. Detalhes
-completos no `CLAUDE.md`.
+`waitForBlingRateLimit()` (`bling_api.service.ts`) — gate atômico via
+Redis, independente de qual fila faz a chamada. Não tem relação nenhuma com
+o lock por pedido acima — mesmo com todos os pedidos rodando em paralelo,
+toda chamada HTTP pra Bling ainda respeita o mesmo espaçamento global.
+
+**Redesenhado nesta sessão** — o design anterior *reservava* um horário
+futuro de antemão (via um script Lua que distribuía `now`, `now+interval`,
+`now+2*interval`...) e só dormia (`setTimeout`) até lá antes de disparar,
+sem checar de novo. Cada reserva individual era correta (o `EVAL` é
+atômico), mas nada revalidava nada no momento real do disparo — sob event
+loop mais ocupado (mais filas rodando concorrentemente no mesmo processo),
+vários timers reservados podiam ficar atrasados ao mesmo tempo e, quando o
+loop finalmente liberava, disparavam em rajada sem gap nenhum entre eles.
+Confirmado em produção pelo usuário: pausar todas as filas Bling exceto uma
+de cada vez eliminava o 429 por completo; rodar várias juntas reintroduzia
+rajadas — mesmo com o rate limiter "correto" no papel. O novo design é um
+loop de **checa-e-reivindica**: cada chamada pergunta atomicamente ao Redis
+"já se passou `BLING_RATE_LIMIT_INTERVAL_MS` desde o último disparo REAL
+concedido?"; se sim, reivindica e dispara; se não, dorme o tempo indicado e
+**pergunta de novo** (não dispara só porque o timer venceu). Sob contenção
+real (várias chamadas acordando juntas), só uma vence cada checagem; as
+demais recebem um novo tempo de espera e voltam pro topo do loop — imune a
+jitter de timer por construção, porque nunca confia num plano calculado
+antes, só no que o Redis confirma bem na hora. Detalhes completos, incluindo
+o contador diagnóstico de gap real entre disparos, no `CLAUDE.md`.
+
+## Watchdog de job (`maxProcessingMs`)
+
+`CNPJ_VERIFY_CNAE`/`NFE_EMISSION`/`ML_ORDER_SYNC` tinham `maxProcessingMs:
+60_000` — menor que o pior caso do retry de 429 da Bling (5 tentativas, até
+60s cada, até 300s no total). Como o watchdog usa `Promise.race` (não
+cancela a chamada perdedora), ele abortava o job BullMQ no meio de um retry
+ainda válido, deixando-o órfão segurando o lock do pedido enquanto uma nova
+tentativa (recriada pelo retry normal do BullMQ) esbarrava em "Timeout
+aguardando lock do pedido". **Fixed nesta sessão**: as 3 filas subiram pra
+`5 * 60 * 1000` (300s), cobrindo o pior caso do retry por completo.
+
+## Gate: reconcilers só rodam com o pipeline vazio
+
+`NFE_RECONCILER`/`BLING_RECONCILER` agora checam, no topo do `process()`,
+se `BLING_ORDER_INGESTION`/`CNPJ_VERIFY_CNAE`/`ML_ORDER_SYNC` têm **zero**
+jobs pendentes (`BaseQueueService.hasPendingJobs()`) antes de rodar
+qualquer uma de suas rotinas — se alguma das 3 ainda tem job
+waiting/active/delayed/prioritized, a execução inteira é pulada nesse ciclo
+(o próprio `scheduleRepeat` tenta de novo no próximo). Motivo: os
+reconcilers competem pelo mesmo rate limit compartilhado da Bling bem no
+pior momento (backlog grande), piorando exatamente o travamento que
+existem pra destravar. `NFE_EMISSION` fica de fora do gate de propósito —
+ela sempre tem job agendado (delay até a hora da coleta), então "vazia"
+nunca seria um estado real pra ela.
 
 ## Coordenação entre filas que leem/escrevem o mesmo estado
 

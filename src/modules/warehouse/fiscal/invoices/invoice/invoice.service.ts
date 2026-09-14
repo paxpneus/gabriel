@@ -24,7 +24,12 @@ import {
 import Store from "../../../../sales/stores/stores.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
 import { getBrazilDate } from "../../../../../shared/utils/normalizers/date";
-import { storeCollectionDateTodayWhere } from "./helpers/custom-filters";
+import {
+  pendingMercadoLivreWhere,
+  allTodayMercadoLivreWhere,
+  finishedMercadoLivreWhere,
+  dispatchedMercadoLivreWhere,
+} from "./helpers/custom-filters";
 import sequelize from "../../../../../config/sequelize";
 import batchInvoicesService from "../../../expedition/batch-invoices/batch-invoices.service";
 import { Product, ProductConfig, Supplier } from "../../../../inventory";
@@ -175,40 +180,22 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
         // Fila de embarque Mercado Livre: 4 abas mutuamente exclusivas da
         // mesma tela ("o que precisa/já foi embarcado hoje"). Todas exigem
-        // loja MercadoLivre + pedido (`order`, via Invoice.hasOne) com
-        // collection_date dentro do dia de hoje em America/Sao_Paulo — só
-        // diferem no que mais restringem.
+        // loja MercadoLivre + pedido (`order`, via Invoice.hasOne) — "hoje"
+        // aqui não é só `collection_date` de hoje: uma nota já emitida
+        // (antes do horário-limite de embarque) ou com lote finalizado hoje
+        // também conta, mesmo com `collection_date` num dia futuro. Ver
+        // `helpers/custom-filters.ts` pra definição completa de cada uma.
         pending_mercado_livre: (value) =>
-          value === "true"
-            ? {
-                ...storeCollectionDateTodayWhere("MercadoLivre"),
-                "$unitBusinessAttributes.batch_generated$": false,
-              }
-            : {},
+          value === "true" ? pendingMercadoLivreWhere("MercadoLivre") : {},
 
         all_today_mercado_livre: (value) =>
-          value === "true" ? storeCollectionDateTodayWhere("MercadoLivre") : {},
+          value === "true" ? allTodayMercadoLivreWhere("MercadoLivre") : {},
 
         finished_mercado_livre: (value) =>
-          value === "true"
-            ? {
-                ...storeCollectionDateTodayWhere("MercadoLivre"),
-                "$unitBusinessAttributes.batch_generated$": true,
-                "$unitBusinessAttributes.status$": {
-                  [Op.in]: ["FINISHED", "CANCELLED"],
-                },
-              }
-            : {},
+          value === "true" ? finishedMercadoLivreWhere("MercadoLivre") : {},
 
         dispatched_mercado_livre: (value) =>
-          value === "true"
-            ? {
-                ...storeCollectionDateTodayWhere("MercadoLivre"),
-                "$batchInvoice.batch.delivery_note_generated_at$": {
-                  [Op.ne]: null,
-                },
-              }
-            : {},
+          value === "true" ? dispatchedMercadoLivreWhere("MercadoLivre") : {},
       },
     };
   }

@@ -62,7 +62,12 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       // nenhuma, até o reconciler marcá-los como "verificação humana" por
       // engano.
       concurrency: 10,
-      maxProcessingMs: 60_000,
+      // Precisa cobrir o pior caso do retry de 429 da Bling (5 tentativas,
+      // até 60s cada = até 300s) — com 60s aqui, o watchdog abortava o job
+      // no meio de um retry ainda válido (Promise.race não cancela a
+      // chamada em voo), deixando-a órfã segurando o lock do pedido
+      // enquanto uma nova tentativa esbarrava em "Timeout aguardando lock".
+      maxProcessingMs: 5 * 60 * 1000,
       workless: options.workless,
     });
     this.blingApi = blingApi;

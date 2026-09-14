@@ -87,6 +87,16 @@ const STORE_ID = 205955595;
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
+// Checks default "livre" (sem job pendente) — só os testes do describe
+// "gate das filas do pipeline" abaixo passam um mock que resolve true.
+function makeClearAutomationQueueChecks() {
+  return {
+    blingOrderIngestion: { hasPendingJobs: jest.fn().mockResolvedValue(false) },
+    cnpjVerifyCnae: { hasPendingJobs: jest.fn().mockResolvedValue(false) },
+    mlOrderSync: { hasPendingJobs: jest.fn().mockResolvedValue(false) },
+  };
+}
+
 describe("BlingReconcilerQueue", () => {
   let fakeBlingApi: AxiosInstance;
   let blingOrderNext: { add: jest.Mock };
@@ -97,13 +107,50 @@ describe("BlingReconcilerQueue", () => {
 
     fakeBlingApi = makeFakeBlingApi();
     blingOrderNext = { add: jest.fn() };
-    queue = new BlingReconcilerQueue(fakeBlingApi, blingOrderNext as any, {
-      workless: true,
-    });
+    queue = new BlingReconcilerQueue(
+      fakeBlingApi,
+      blingOrderNext as any,
+      makeClearAutomationQueueChecks(),
+      { workless: true },
+    );
 
     (getBlingIntegration as jest.Mock).mockResolvedValue({ id: "integration-1" });
     mockChannelResponse(fakeBlingApi.get as jest.Mock, STORE_ID);
     (ordersService.findAll as jest.Mock).mockResolvedValue([]);
+  });
+
+  describe("process — gate das filas do pipeline", () => {
+    it.each([
+      ["BLING_ORDER_INGESTION", "blingOrderIngestion"],
+      ["CNPJ_VERIFY_CNAE", "cnpjVerifyCnae"],
+      ["ML_ORDER_SYNC", "mlOrderSync"],
+    ] as const)(
+      "%s ainda tem job pendente: pula a execução inteira sem tocar a Bling",
+      async (_name, key) => {
+        const checks = makeClearAutomationQueueChecks();
+        checks[key].hasPendingJobs.mockResolvedValue(true);
+        const busyQueue = new BlingReconcilerQueue(
+          fakeBlingApi,
+          blingOrderNext as any,
+          checks,
+          { workless: true },
+        );
+
+        await busyQueue.process({ data: {} } as Job);
+
+        expect(fakeBlingApi.get).not.toHaveBeenCalled();
+        expect(blingOrderNext.add).not.toHaveBeenCalled();
+      },
+    );
+
+    it("as 3 filas vazias: segue normalmente pra reconcileOpenOrders", async () => {
+      await queue.process({ data: {} } as Job);
+
+      expect(fakeBlingApi.get).toHaveBeenCalledWith(
+        "/canais-venda",
+        expect.anything(),
+      );
+    });
   });
 
   describe("reconcileOpenOrders (task default/'reconcile-open-orders')", () => {

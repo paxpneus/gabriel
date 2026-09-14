@@ -16,14 +16,13 @@ import { getBlingIntegration } from "../../api/bling_api.service";
 import { FullOrder } from "../../../../sales/orders/order/orders.types";
 import OrderItems from "../../../../sales/orders/order_items/order_items.model";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
-import { blingGet, blingPut, blingPatch } from "../bling/helpers/get-with-sleep";
+import { blingGet, blingPut } from "../bling/helpers/get-with-sleep";
 import Store from "../../../../sales/stores/stores.model";
-import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import {
-  COMPLETED_ORDER_INTERNAL_STATUSES,
   OrderInternalStatus,
   OrderReasonCancelled,
 } from "../../../../sales/orders/order/orders.types";
+import { escalateToHumanVerificationIfStillPending } from "../../../../sales/orders/order/helpers/order-status";
 
 export type NFeReconcilerJobData = Record<string, never>;
 
@@ -31,6 +30,13 @@ export type NFeReconcilerJobData = Record<string, never>;
 // ML_ORDER_SYNC pra decidir se pode varrer pedidos presos com segurança.
 export type WaitUntilIdle = {
   waitUntilIdle: (maxWaitMs: number) => Promise<boolean>;
+};
+
+// Interface estreita pra checar se uma fila tem job pendente (waiting/
+// active/delayed/prioritized), sem esperar/bloquear — usada pro gate no
+// topo de process() abaixo.
+export type HasPendingJobs = {
+  hasPendingJobs: () => Promise<boolean>;
 };
 
 // Teto de espera por ML-SCRAPING e ML_ORDER_SYNC ficarem livres antes de
@@ -48,6 +54,9 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   private mlOrderSyncNext: WaitUntilIdle;
   private mlScrapingNext: nextStepOnQueue;
   private mlScrapingWaitUntilIdle: WaitUntilIdle;
+  private blingOrderIngestionCheck: HasPendingJobs;
+  private cnpjCheck: HasPendingJobs;
+  private mlOrderSyncCheck: HasPendingJobs;
 
   constructor(
     cnpjNext: nextStepOnQueue | getJob,
@@ -56,6 +65,9 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     mlOrderSyncNext: WaitUntilIdle,
     mlScrapingNext: nextStepOnQueue,
     mlScrapingWaitUntilIdle: WaitUntilIdle,
+    blingOrderIngestionCheck: HasPendingJobs,
+    cnpjCheck: HasPendingJobs,
+    mlOrderSyncCheck: HasPendingJobs,
     options: { workless?: boolean } = {},
   ) {
     super("NFE_RECONCILER", {
@@ -72,10 +84,45 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     this.mlOrderSyncNext = mlOrderSyncNext;
     this.mlScrapingNext = mlScrapingNext;
     this.mlScrapingWaitUntilIdle = mlScrapingWaitUntilIdle;
+    this.blingOrderIngestionCheck = blingOrderIngestionCheck;
+    this.cnpjCheck = cnpjCheck;
+    this.mlOrderSyncCheck = mlOrderSyncCheck;
+  }
+
+  // Gate no topo de process(): o reconciler só deve rodar (qualquer uma das
+  // 4 sub-rotinas) quando as filas "de fluxo normal" do pipeline de pedidos
+  // estão vazias — rodar por cima delas some com o Bling rate-limit
+  // compartilhado bem no pior momento (backlog grande) e piora exatamente o
+  // travamento que o reconciler existe pra destravar. NFE_EMISSION fica de
+  // fora de propósito: ela sempre tem job agendado (delay até a hora da
+  // coleta), então "vazia" nunca seria um estado real pra ela.
+  private async automationQueuesAreClear(): Promise<boolean> {
+    const [orderIngestionPending, cnpjPending, mlOrderSyncPending] =
+      await Promise.all([
+        this.blingOrderIngestionCheck.hasPendingJobs(),
+        this.cnpjCheck.hasPendingJobs(),
+        this.mlOrderSyncCheck.hasPendingJobs(),
+      ]);
+
+    if (orderIngestionPending || cnpjPending || mlOrderSyncPending) {
+      const busy = [
+        orderIngestionPending && "BLING_ORDER_INGESTION",
+        cnpjPending && "CNPJ_VERIFY_CNAE",
+        mlOrderSyncPending && "ML_ORDER_SYNC",
+      ].filter(Boolean);
+      console.log(
+        `[NFeReconciler] Pulando execução — ainda há job(s) pendente(s) em ${busy.join(", ")}.`,
+      );
+      return false;
+    }
+
+    return true;
   }
 
   async process(job: Job<NFeReconcilerJobData>): Promise<void> {
     console.log("[NFeReconciler] Iniciando verificação de jobs perdidos...");
+
+    if (!(await this.automationQueuesAreClear())) return;
 
     const results = await Promise.allSettled([
       this.reconcileWaitingNfe(),
@@ -297,70 +344,49 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
         // outras filas do pipeline; só serializa se algo mais tocar esse
         // MESMO pedido ao mesmo tempo.
         await this.withOrderLock(idOrderSystem, async () => {
-          const { data } = await blingGet(
-            `/pedidos/vendas/${idOrderSystem}`,
-            this.blingApi,
-          );
+          const result = await escalateToHumanVerificationIfStillPending({
+            idOrderSystem,
+            blingApi: this.blingApi,
+            allowedPendingStatuses: [OrderInternalStatus.WAITING_CHANNEL_VALIDATION],
+            reasonCancelled: OrderReasonCancelled.ML_SCRAPING_NO_MATCH,
+            beforeEscalate: async (liveOrderData) => {
+              await new Promise((resolve) => setTimeout(resolve, 1000));
 
-          const currentSituacaoId = data?.data?.situacao?.id;
-          const mappedStatus = mapOrderInternalStatus(currentSituacaoId);
+              // PUT de /pedidos/vendas é "salvar a venda inteira", não um patch
+              // de texto — a Bling revalida a integração de estoque de todos
+              // os itens ao salvar, e pode recusar (code 67, saldo
+              // insuficiente) por um motivo que não tem nada a ver com a nota
+              // que estamos tentando gravar. Isolado num try/catch próprio pra
+              // não travar o PATCH de situação, que é o efeito que realmente
+              // importa aqui — sem isso, um pedido caía de novo em WAITING
+              // CHANNEL VALIDATION sem nunca virar "verificação humana", só
+              // reprocessando pra sempre.
+              try {
+                await blingPut(`/pedidos/vendas/${idOrderSystem}`, {
+                  ...liveOrderData,
+                  observacoesInternas: `${liveOrderData.observacoesInternas} \n Pedido marcado como Aguardando verificação humana: Pedido parado em aguardando agendamento de nfe, pelo motivo de não conseguir encontrar o pedido na planilha do mercado livre`,
+                }, this.blingApi);
+              } catch (putError: any) {
+                console.error(
+                  `[NFeReconciler] Falha ao gravar observação do pedido preso ${idOrderSystem} (seguindo pro PATCH de situação mesmo assim):`,
+                  JSON.stringify(putError.response?.data, null, 2),
+                );
+              }
 
-          // Pedido já mudou de situação na Bling por fora do reconciler
-          if (mappedStatus !== "WAITING CHANNEL VALIDATION") {
-            console.log(
-              `[NFeReconciler] Pedido ${idOrderSystem} já mudou de situação na Bling (situacao ${currentSituacaoId} -> ${mappedStatus}). Sincronizando sem editar.`,
-            );
-            await ordersService.update(order.id, {
-              internal_status: mappedStatus,
-              ...(COMPLETED_ORDER_INTERNAL_STATUSES.includes(mappedStatus)
-                ? { nfe_emitted: true }
-                : mappedStatus === OrderInternalStatus.CANCELLED
-                  ? { nfe_emitted: false }
-                  : {}),
-            });
-            synced++;
-            return;
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-
-          // PUT de /pedidos/vendas é "salvar a venda inteira", não um patch de
-          // texto — a Bling revalida a integração de estoque de todos os itens
-          // ao salvar, e pode recusar (code 67, saldo insuficiente) por um
-          // motivo que não tem nada a ver com a nota que estamos tentando
-          // gravar. Isolado num try/catch próprio pra não travar o PATCH de
-          // situação abaixo, que é o efeito que realmente importa aqui — sem
-          // isso, um pedido caía de novo em WAITING CHANNEL VALIDATION sem
-          // nunca virar "verificação humana", só reprocessando pra sempre.
-          try {
-            await blingPut(`/pedidos/vendas/${idOrderSystem}`, {
-              ...data.data,
-              observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana: Pedido parado em aguardando agendamento de nfe, pelo motivo de não conseguir encontrar o pedido na planilha do mercado livre`,
-            }, this.blingApi);
-          } catch (putError: any) {
-            console.error(
-              `[NFeReconciler] Falha ao gravar observação do pedido preso ${idOrderSystem} (seguindo pro PATCH de situação mesmo assim):`,
-              JSON.stringify(putError.response?.data, null, 2),
-            );
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 3000));
-
-          await blingPatch(
-            `/pedidos/vendas/${idOrderSystem}/situacoes/748772`,
-            { id: 748772 },
-            this.blingApi,
-          );
-
-          await ordersService.update(order.id, {
-            internal_status: mapOrderInternalStatus(748772),
-            nfe_emitted: false,
-            reason_cancelled: OrderReasonCancelled.ML_SCRAPING_NO_MATCH,
+              await new Promise((resolve) => setTimeout(resolve, 3000));
+            },
           });
 
-          console.log(
-            `[NFeReconciler] Pedido ${idOrderSystem} marcado como verificação humana.`,
-          );
+          if (result.escalated) {
+            console.log(
+              `[NFeReconciler] Pedido ${idOrderSystem} marcado como verificação humana.`,
+            );
+          } else {
+            console.log(
+              `[NFeReconciler] Pedido ${idOrderSystem} não foi marcado como verificação humana (${result.reason}) — status atual na Bling: ${result.internalStatus}. Sincronizado sem editar.`,
+            );
+            synced++;
+          }
         });
       } catch (error: any) {
         console.error(

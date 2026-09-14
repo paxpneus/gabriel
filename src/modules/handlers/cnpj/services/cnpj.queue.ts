@@ -11,7 +11,7 @@ import {
   blingPut,
   blingPatch,
 } from "../../bling/services/bling/helpers/get-with-sleep";
-import { syncOrderInternalStatus } from "../../../sales/orders/order/helpers/order-status";
+import { escalateToHumanVerificationIfStillPending } from "../../../sales/orders/order/helpers/order-status";
 import {
   OrderInternalStatus,
   OrderReasonCancelled,
@@ -46,7 +46,12 @@ export class CNPJQueue extends BaseQueueService<any> {
       // Pedidos diferentes só serializam via lock por pedido (withOrderLock)
       // agora, não mais por mutex global entre filas.
       concurrency: 5,
-      maxProcessingMs: 60_000,
+      // Precisa cobrir o pior caso do retry de 429 da Bling (5 tentativas,
+      // até 60s cada = até 300s) — com 60s aqui, o watchdog abortava o job
+      // no meio de um retry ainda válido (Promise.race não cancela a
+      // chamada em voo), deixando-a órfã segurando o lock do pedido
+      // enquanto uma nova tentativa esbarrava em "Timeout aguardando lock".
+      maxProcessingMs: 5 * 60 * 1000,
       workless: options.workless,
     });
     this.CNPJService = cnpjService;
@@ -68,29 +73,28 @@ export class CNPJQueue extends BaseQueueService<any> {
 
   private async markOrderError(order: any, errorId: number): Promise<void> {
     const errorMessage = ErrorValues.find((e) => e.id === errorId)?.error;
-    const { data } = await blingGet(
-      `/pedidos/vendas/${order.id_order_system}`,
-      this.blingApi,
-    );
 
-    await blingPut(`/pedidos/vendas/${order.id_order_system}`, {
-      ...data.data,
-      observacoesInternas:
-        `${data.data.observacoesInternas} \n Pedido Cancelado pelo Motivo: ${errorMessage}`.trim(),
-    }, this.blingApi);
+    const result = await escalateToHumanVerificationIfStillPending({
+      idOrderSystem: order.id_order_system,
+      blingApi: this.blingApi,
+      allowedPendingStatuses: [OrderInternalStatus.OPEN],
+      reasonCancelled: REASON_BY_ERROR_ID[errorId],
+      beforeEscalate: async (liveOrderData) => {
+        await blingPut(`/pedidos/vendas/${order.id_order_system}`, {
+          ...liveOrderData,
+          observacoesInternas:
+            `${liveOrderData.observacoesInternas} \n Pedido Cancelado pelo Motivo: ${errorMessage}`.trim(),
+        }, this.blingApi);
+      },
+    });
 
-    await blingPatch(
-      `/pedidos/vendas/${order.id_order_system}/situacoes/748772`,
-      { id: 748772 },
-      this.blingApi,
-    );
-
-    await syncOrderInternalStatus(
-      748772,
-      order.id_order_system,
-      REASON_BY_ERROR_ID[errorId],
-    );
-    console.log(`[CNPJQueue] Pedido ${order.id} marcado com erro: ${errorMessage}`);
+    if (result.escalated) {
+      console.log(`[CNPJQueue] Pedido ${order.id} marcado com erro: ${errorMessage}`);
+    } else {
+      console.log(
+        `[CNPJQueue] Pedido ${order.id} não foi marcado como verificação humana (${result.reason}) — status atual na Bling: ${result.internalStatus}.`,
+      );
+    }
   }
 
   private async applyWaitingNfeStatus(orderSystem: any): Promise<boolean> {

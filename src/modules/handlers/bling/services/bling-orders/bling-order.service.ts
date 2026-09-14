@@ -77,14 +77,16 @@ const MIN_PLAUSIBLE_COLLECTION_YEAR = 2000;
 function collectionDateFromBling(dataPrevista: string | undefined | null) {
   if (!dataPrevista) return {};
 
-  if (MYSQL_ZERO_DATE_REGEX.test(dataPrevista.trim())) {
+  const trimmed = dataPrevista.trim();
+
+  if (MYSQL_ZERO_DATE_REGEX.test(trimmed)) {
     console.warn(
       `[BlingOrderService] dataPrevista "zerada" (sentinel MySQL) ignorada: "${dataPrevista}"`,
     );
     return {};
   }
 
-  const parsed = startOfDayTz(dataPrevista);
+  const parsed = startOfDayTz(trimmed);
   if (!parsed.isValid() || parsed.year() < MIN_PLAUSIBLE_COLLECTION_YEAR) {
     console.warn(
       `[BlingOrderService] dataPrevista implausível ignorada: "${dataPrevista}"`,

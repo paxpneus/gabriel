@@ -30,7 +30,7 @@ let failedQueue: QueueItem[] = [];
 const BLING_RATE_LIMIT_INTERVAL_MS = Number(
   process.env.BLING_RATE_LIMIT_INTERVAL_MS ?? 2000,
 );
-const BLING_RATE_LIMIT_KEY = "rate-limit:bling:next-slot";
+const BLING_RATE_LIMIT_KEY = "rate-limit:bling:last-dispatch-at";
 
 const BLING_429_MAX_RETRIES = Number(process.env.BLING_429_MAX_RETRIES ?? 5);
 const BLING_429_BASE_DELAY_MS = Number(
@@ -44,28 +44,102 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-// Script Lua: reserva atomicamente o próximo slot de horário livre no Redis.
-// Cada chamada concorrente pega um slot distinto (now, now+interval, now+2*interval, ...),
-// garantindo espaçamento fixo entre requests mesmo com múltiplos processos/instâncias.
-const RESERVE_SLOT_SCRIPT = `
+// Script Lua: checa-e-reivindica atomicamente. Substitui um design anterior
+// que RESERVAVA um horário futuro de antemão (now, now+interval, now+2*interval,
+// ...) e só dormia (setTimeout) até lá antes de disparar sem checar de novo.
+// Esse design anterior tinha uma falha real, confirmada em produção: cada
+// reserva individual era correta (EVAL é atômico), mas nada revalidava nada
+// no momento real do disparo — setTimeout só atrasa, nunca antecipa, então
+// sob event loop mais ocupado (mais filas rodando concorrentemente no mesmo
+// processo — worker-automation sozinho chega a ~22 slots concorrentes de
+// job entre CNPJ_VERIFY_CNAE/ML_ORDER_SYNC/NFE_EMISSION/reconcilers) vários
+// timers reservados podiam ficar atrasados ao mesmo tempo e, quando o loop
+// finalmente liberava, disparavam em rajada, sem gap nenhum entre eles —
+// cada um confiando cegamente no delay pré-calculado em vez de checar a
+// realidade. Confirmado experimentalmente: pausar todas as filas Bling
+// exceto uma de cada vez eliminava o 429 por completo (processo mais ocioso,
+// menos jitter), rodar várias juntas reintroduzia rajadas.
+//
+// Este script resolve isso na raiz: só guarda o horário do ÚLTIMO disparo
+// REAL já concedido (não um plano futuro). Toda chamada — mesmo que várias
+// acordem juntas na mesma rajada de jitter — tem que vencer esta checagem
+// atômica pra disparar; quem perde recebe quanto falta esperar e tenta de
+// novo (ver loop em waitForBlingRateLimit abaixo), reconferindo contra a
+// realidade a cada tentativa em vez de confiar num timer.
+const TRY_DISPATCH_SCRIPT = `
   local key = KEYS[1]
   local interval = tonumber(ARGV[1])
   local now = tonumber(ARGV[2])
   local ttl = tonumber(ARGV[3])
 
-  local next_slot = tonumber(redis.call("GET", key))
-  if not next_slot or next_slot < now then
-    next_slot = now
+  local last = tonumber(redis.call("GET", key))
+  local nextAllowed = 0
+  if last then
+    nextAllowed = last + interval
   end
 
-  redis.call("SET", key, next_slot + interval, "PX", ttl)
+  if now >= nextAllowed then
+    redis.call("SET", key, now, "PX", ttl)
+    return 0
+  end
 
-  return next_slot
+  return nextAllowed - now
 `;
 
-// Enfileira (via sleep) até o horário reservado para essa chamada específica.
-// Substitui o antigo sliding-window log por um leaky-bucket com reserva de slot,
-// evitando rajadas e distribuindo as chamadas uniformemente no tempo.
+// Contador diagnóstico: incrementa atomicamente quantas requisições REAIS
+// (pós rate-limit, já prontas pra sair) saíram pra Bling no segundo corrente.
+// Chave em Redis (não em memória) pra contar certo mesmo com múltiplos
+// processos (worker-bling, worker-automation, etc.) batendo na mesma conta.
+const INCR_REQUEST_COUNT_SCRIPT = `
+  local key = KEYS[1]
+  local ttl = tonumber(ARGV[1])
+  local count = redis.call("INCR", key)
+  redis.call("PEXPIRE", key, ttl)
+  return count
+`;
+const BLING_REQUEST_COUNT_KEY_PREFIX = "rate-limit:bling:req-count:";
+
+// GETSET atômico só pra log: devolve o timestamp do disparo anterior (de
+// QUALQUER processo) enquanto grava o atual, pra logar o gap real entre
+// disparos consecutivos — é essa métrica, não a contagem por segundo
+// sozinha, que confirma se o fix do TRY_DISPATCH_SCRIPT eliminou as
+// rajadas (gap sempre >= BLING_RATE_LIMIT_INTERVAL_MS mesmo com várias
+// filas rodando juntas). Chave separada da usada pelo rate limiter em si
+// — isto é só observabilidade, nunca deve influenciar se uma chamada é
+// liberada ou não.
+const BLING_LAST_DISPATCH_LOG_KEY = "rate-limit:bling:last-dispatch-log";
+
+// Loga quantas requisições já saíram pra Bling neste segundo, e o gap real
+// desde o disparo anterior — usado pra diagnosticar 429 (confirmar
+// visualmente a taxa/espaçamento real de saída, já que o limiter é um
+// mecanismo global via Redis, não algo fácil de observar direto). Remover
+// depois que o diagnóstico do rate-limit for concluído.
+async function logOutgoingBlingRequestRate(now: number): Promise<void> {
+  const second = Math.floor(now / 1000);
+  const countKey = `${BLING_REQUEST_COUNT_KEY_PREFIX}${second}`;
+
+  const [count, previousDispatchAt] = await Promise.all([
+    redisConnection.eval(INCR_REQUEST_COUNT_SCRIPT, 1, countKey, "10000"),
+    redisConnection.getset(BLING_LAST_DISPATCH_LOG_KEY, String(now)),
+  ]);
+  await redisConnection.pexpire(BLING_LAST_DISPATCH_LOG_KEY, 10 * 60 * 1000);
+
+  const gapMs = previousDispatchAt ? now - Number(previousDispatchAt) : null;
+
+  console.log(
+    `[BlingApi][ReqCounter] ${new Date(now).toISOString()} — requisição #${count} neste segundo (epoch=${second})` +
+      (gapMs !== null ? `, gap desde a anterior=${gapMs}ms` : ", primeira chamada registrada"),
+  );
+}
+
+// Loop de checa-e-reivindica: chama TRY_DISPATCH_SCRIPT, e se não for
+// liberado, dorme o tempo indicado e TENTA DE NOVO (reconferindo contra o
+// Redis, não confiando que o sleep foi preciso) — ver o comentário do
+// script acima pra entender por que a versão anterior (reservar um slot
+// futuro e disparar sem reconferir) permitia rajadas sob event loop
+// ocupado. Sob contenção real (várias chamadas acordando juntas), só uma
+// vence cada checagem atômica; as demais recebem um novo tempo de espera e
+// voltam pro topo do loop.
 //
 // Exportada porque o limite da Bling é por CONTA inteira, não por app/token
 // (confirmado em developer.bling.com.br/limites) — os scrapers autenticados
@@ -73,22 +147,26 @@ const RESERVE_SLOT_SCRIPT = `
 // batem na mesma cota mesmo não usando esta instância axios, então também
 // chamam esta função antes de cada request pra Bling.
 export async function waitForBlingRateLimit(): Promise<void> {
-  const now = Date.now();
+  while (true) {
+    const now = Date.now();
 
-  const reservedSlot = Number(
-    await redisConnection.eval(
-      RESERVE_SLOT_SCRIPT,
-      1,
-      BLING_RATE_LIMIT_KEY,
-      String(BLING_RATE_LIMIT_INTERVAL_MS),
-      String(now),
-      String(BLING_RATE_LIMIT_INTERVAL_MS * 1000), // TTL generoso pra não travar a chave
-    ),
-  );
+    const waitMs = Number(
+      await redisConnection.eval(
+        TRY_DISPATCH_SCRIPT,
+        1,
+        BLING_RATE_LIMIT_KEY,
+        String(BLING_RATE_LIMIT_INTERVAL_MS),
+        String(now),
+        String(BLING_RATE_LIMIT_INTERVAL_MS * 1000), // TTL generoso pra não travar a chave
+      ),
+    );
 
-  const delayMs = reservedSlot - now;
-  if (delayMs > 0) {
-    await sleep(delayMs);
+    if (waitMs <= 0) {
+      await logOutgoingBlingRequestRate(now);
+      return;
+    }
+
+    await sleep(waitMs);
   }
 }
 

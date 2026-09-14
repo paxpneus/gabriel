@@ -47,7 +47,12 @@ jest.mock("bullmq", () => ({
 
 jest.mock("../../../../../sales/orders/order/orders.service", () => ({
   __esModule: true,
-  default: { findAll: jest.fn(), getFullOrdersByQuery: jest.fn(), update: jest.fn() },
+  default: {
+    findAll: jest.fn(),
+    findOne: jest.fn(),
+    getFullOrdersByQuery: jest.fn(),
+    update: jest.fn(),
+  },
 }));
 
 jest.mock("../../../api/bling_api.service", () => ({
@@ -85,6 +90,18 @@ function makeQueue(
   mlScrapingWaitUntilIdle: { waitUntilIdle: jest.Mock } = {
     waitUntilIdle: jest.fn().mockResolvedValue(true),
   },
+  // Default "livre" (sem job pendente) pra não afetar nenhum teste que não
+  // é sobre o gate em si — só os testes da suite "process — gate" abaixo
+  // passam um mock que resolve true.
+  blingOrderIngestionCheck: { hasPendingJobs: jest.Mock } = {
+    hasPendingJobs: jest.fn().mockResolvedValue(false),
+  },
+  cnpjCheck: { hasPendingJobs: jest.Mock } = {
+    hasPendingJobs: jest.fn().mockResolvedValue(false),
+  },
+  mlOrderSyncCheck: { hasPendingJobs: jest.Mock } = {
+    hasPendingJobs: jest.fn().mockResolvedValue(false),
+  },
 ) {
   return new ReconcilerQueue(
     cnpjNext,
@@ -93,6 +110,9 @@ function makeQueue(
     mlOrderSyncNext,
     mlScrapingNext,
     mlScrapingWaitUntilIdle,
+    blingOrderIngestionCheck,
+    cnpjCheck,
+    mlOrderSyncCheck,
     { workless: true },
   );
 }
@@ -121,6 +141,11 @@ describe("ReconcilerQueue", () => {
     (ordersService.findAll as jest.Mock).mockResolvedValue([]);
     (ordersService.getFullOrdersByQuery as jest.Mock).mockResolvedValue([]);
     (ordersService.update as jest.Mock).mockResolvedValue([1]);
+    // escalateToHumanVerificationIfStillPending (via syncOrderInternalStatus)
+    // faz seu próprio findOne por id_order_system antes de decidir — default
+    // cobre os testes de reconcileStuckOrders, que usam makeStuckOrder()
+    // (id "o1") na maioria dos casos.
+    (ordersService.findOne as jest.Mock).mockResolvedValue({ id: "o1" });
   });
 
   describe("reconcileWaitingNfe", () => {
@@ -464,6 +489,51 @@ describe("ReconcilerQueue", () => {
       await (q as any).reconcileMissingCollectionDate();
 
       expect(mlScrapingNext.add).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("process — gate das filas do pipeline", () => {
+    it.each([
+      ["BLING_ORDER_INGESTION", [true, false, false]],
+      ["CNPJ_VERIFY_CNAE", [false, true, false]],
+      ["ML_ORDER_SYNC", [false, false, true]],
+    ])(
+      "%s ainda tem job pendente: pula a execução inteira sem chamar nenhuma sub-rotina",
+      async (_name, [orderIngestionPending, cnpjPending, mlOrderSyncPending]) => {
+        const busyQueue = makeQueue(
+          fakeBlingApi,
+          cnpjNext,
+          nfeNext,
+          undefined,
+          undefined,
+          undefined,
+          { hasPendingJobs: jest.fn().mockResolvedValue(orderIngestionPending) },
+          { hasPendingJobs: jest.fn().mockResolvedValue(cnpjPending) },
+          { hasPendingJobs: jest.fn().mockResolvedValue(mlOrderSyncPending) },
+        );
+
+        await busyQueue.process({} as Job);
+
+        expect(ordersService.findAll).not.toHaveBeenCalled();
+        expect(ordersService.getFullOrdersByQuery).not.toHaveBeenCalled();
+        expect(alertService.sendAlert).not.toHaveBeenCalled();
+      },
+    );
+
+    it("as 3 filas vazias: segue normalmente pras sub-rotinas", async () => {
+      jest.spyOn(queue as any, "reconcileWaitingNfe").mockResolvedValue(undefined);
+      jest.spyOn(queue as any, "reconcileOpenOrders").mockResolvedValue(undefined);
+      jest.spyOn(queue as any, "reconcileStuckOrders").mockResolvedValue(undefined);
+      jest
+        .spyOn(queue as any, "reconcileMissingCollectionDate")
+        .mockResolvedValue(undefined);
+
+      await queue.process({} as Job);
+
+      expect((queue as any).reconcileWaitingNfe).toHaveBeenCalled();
+      expect((queue as any).reconcileOpenOrders).toHaveBeenCalled();
+      expect((queue as any).reconcileStuckOrders).toHaveBeenCalled();
+      expect((queue as any).reconcileMissingCollectionDate).toHaveBeenCalled();
     });
   });
 

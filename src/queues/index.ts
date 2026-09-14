@@ -137,12 +137,20 @@ function buildQueues(activeWorkers: QueueName[]) {
     { waitUntilIdle: (maxWaitMs: number) => mlOrderSyncQueue.waitUntilIdle(maxWaitMs) },
     { add: (data: any, jobId: string) => mlScrapingQueue.add(data, jobId) },
     { waitUntilIdle: (maxWaitMs: number) => mlScrapingQueue.waitUntilIdle(maxWaitMs) },
+    { hasPendingJobs: () => blingOrderQueue.hasPendingJobs() },
+    { hasPendingJobs: () => cnpjQueue.hasPendingJobs() },
+    { hasPendingJobs: () => mlOrderSyncQueue.hasPendingJobs() },
     { workless: w("NFE_RECONCILER") },
   );
 
   const blingReconcilerQueue = new BlingReconcilerQueue(
     blingApi,
     { add: (data: any, jobId: string) => blingOrderQueue.add(data, jobId) },
+    {
+      blingOrderIngestion: { hasPendingJobs: () => blingOrderQueue.hasPendingJobs() },
+      cnpjVerifyCnae: { hasPendingJobs: () => cnpjQueue.hasPendingJobs() },
+      mlOrderSync: { hasPendingJobs: () => mlOrderSyncQueue.hasPendingJobs() },
+    },
     { workless: w("BLING_RECONCILER") },
   );
 

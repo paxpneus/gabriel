@@ -186,6 +186,7 @@ describe("NFeQueue", () => {
       );
       expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
         internal_status: OrderInternalStatus.CANCELLED,
+        nfe_emitted: false,
         reason_cancelled: "NFE_MISSING_FIELDS",
       });
     });
@@ -243,8 +244,8 @@ describe("NFeQueue", () => {
       expect(fakeBlingApi.patch).not.toHaveBeenCalled();
     });
 
-    it("situacao não tratada (não completa, não cancelada) cai em markOrderCancelled", async () => {
-      order.situacao = { id: 999999 }; // mapeia para UNKNOWN
+    it("situação ainda em aberto/aguardando agendamento (ex: 6=OPEN) cai em markOrderCancelled e escala pra verificação humana", async () => {
+      order.situacao = { id: 6 }; // OPEN — uma das duas situações permitidas pro WRONG_STATUS escalar
 
       await queue.process(
         makeJob({ order_id: order.id, collection_date: "2026-08-11" }),
@@ -266,7 +267,22 @@ describe("NFeQueue", () => {
       );
       expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
         internal_status: OrderInternalStatus.CANCELLED,
+        nfe_emitted: false,
         reason_cancelled: "NFE_WRONG_STATUS",
+      });
+    });
+
+    it("situação realmente inesperada (nem completa/cancelada, nem OPEN/WAITING_CHANNEL_VALIDATION) NÃO escala — só sincroniza", async () => {
+      order.situacao = { id: 999999 }; // mapeia para UNKNOWN — fora do allowlist de WRONG_STATUS
+
+      await queue.process(
+        makeJob({ order_id: order.id, collection_date: "2026-08-11" }),
+      );
+
+      expect(fakeBlingApi.put).not.toHaveBeenCalled();
+      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+      expect(ordersService.update).toHaveBeenCalledWith("order-uuid-1", {
+        internal_status: OrderInternalStatus.UNKNOWN,
       });
     });
   });

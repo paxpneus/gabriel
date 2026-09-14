@@ -198,6 +198,26 @@ export function collectionDateFutureStartCompat(
   return dayjs.utc(tomorrow.format("YYYY-MM-DD")).toDate();
 }
 
+/**
+ * Horário-limite (BRT) até o qual um pedido/nota já emitida ainda pode
+ * embarcar no MESMO dia mesmo com `collection_date` num dia futuro (Mercado
+ * Livre permite despacho antecipado). Depois desse horário, mesmo já
+ * emitida, o pedido vira "embarque futuro" — não há mais tempo hábil no dia
+ * de hoje.
+ */
+export const SHIPPING_CUTOFF_HOUR = 13;
+
+/**
+ * `true` se "agora" (BRT) ainda está antes do horário-limite de embarque do
+ * dia — usado para decidir se uma nota/pedido já emitido mas com
+ * `collection_date` futuro ainda conta como "embarca hoje" (Mercado Livre).
+ * Compara contra o momento em que a query roda, não contra um timestamp de
+ * uma linha — é o mesmo corte pra toda a query.
+ */
+export function isBeforeShippingCutoff(now: Dayjs = nowTz()): boolean {
+  return toTz(now).hour() < SHIPPING_CUTOFF_HOUR;
+}
+
 export function getChunkedDateRangesAsDate(
   startDate: string | Date | Dayjs,
   monthsPerChunk = 2,

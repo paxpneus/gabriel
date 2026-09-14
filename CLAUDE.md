@@ -1181,28 +1181,60 @@ flag is explicitly set.
   null}` or an exact-value match both correctly exclude it) — this is why
   none of the 4 filters (nor the pre-existing `batchStatus`) need to force
   `required: true` on their association to work correctly. All four
-  require `$store.name$ = "MercadoLivre"` and
-  `$order.collection_date$` within today's `America/Sao_Paulo` calendar
-  day (`startOfDayTz()`/`endOfDayTz()` from
-  `shared/utils/normalizers/date.ts`, not a naive UTC day;
-  `storeCollectionDateTodayWhere(storeName)`, exported from
-  `invoice/helpers/custom-filters.ts` per the "Reusable query/filter
-  helpers" rule above, builds this pair and is spread into each of the 4
-  customFields). They differ only in what else they require:
-  - `pending_mercadolivre`: `$unitBusinessAttributes.batch_generated$ =
-    false` (same condition the plain `batch_generated` filter uses) — "o
-    que ainda precisa ser embarcado hoje."
-  - `all_today_mercadolivre`: no `batch_generated` constraint at all — the
-    same set as `pending_mercadolivre` plus whatever already got batched
-    today too.
-  - `finished_mercado_livre`: `$unitBusinessAttributes.batch_generated$ =
-    true` AND `$unitBusinessAttributes.status$ IN (FINISHED, CANCELLED)` —
-    the exact same condition the `pendingProcess=false` ("processo
-    finalizado") filter already uses, just also scoped to Mercado Livre +
-    today's collection.
-  - `dispatched_mercado_livre`: `$batchInvoice.batch.delivery_note_generated_at$
-    IS NOT NULL` (same field `findInvoicesPendingLogisticOccurrence`
-    already reads as "romaneio gerado") — "o que já teve romaneio gerado."
+  require `$store.name$ = "MercadoLivre"`.
+  - **"Embarca hoje" redefined, later session — `collection_date` of today
+    was never the whole story.** The original design (`storeCollectionDateTodayWhere`,
+    now removed) only matched `$order.collection_date$` within today's
+    `America/Sao_Paulo` calendar day. Found wrong by the user: a note can
+    legitimately need to ship today even with a **future** `collection_date`,
+    because Mercado Livre allows early dispatch once the invoice is already
+    emitted — and conversely, `collection_date` alone says nothing about
+    whether the invoice/batch side has actually progressed. Replaced by
+    `shipTodayEligibilityConditions()` (private, `invoice/helpers/custom-filters.ts`),
+    an `[Op.or]` array reused by all 4 filters: a note is eligible for
+    "hoje" if **either** (a) `$order.id$ IS NULL` (no linked `Order` at
+    all — can't know its collection date, so it must never silently
+    disappear from any of the 4 tabs), **or** (b) `$order.collection_date$`
+    falls in today's BRT calendar day (`collectionDateDayRangeCompat()`,
+    still needed for the old-encoding compat window — see that function's
+    own doc), **or** (c) `emitted_at IS NOT NULL` **and**
+    `isBeforeShippingCutoff()` (`shared/utils/normalizers/date.ts`,
+    `SHIPPING_CUTOFF_HOUR = 13`) is true — an already-emitted note can still
+    "jump" into today's shipment as long as today's 13:00 BRT cutoff for
+    early dispatch hasn't passed yet; once it has, an emitted note with a
+    future `collection_date` no longer counts as today (it moves to
+    `ship_to_future` on the Orders side, see below — same cutoff, kept in
+    sync between the two files by using the same helper). The cutoff check
+    is evaluated once per query (`nowTz()` at call time), not per row.
+  - A second, independent signal — **"o lote já foi finalizado hoje, ainda
+    dentro do horário de embarque"** — was added for `finished`/`dispatched`/
+    `all_today`, via `batchFinishedTodayBeforeCutoffCondition()` (same
+    helpers file): `$batchInvoice.batch.finished_at$` within
+    `[startOfDayTz(), startOfDayTz().hour(SHIPPING_CUTOFF_HOUR))`. This is
+    about what has **already** shipped (a recorded fact on the batch),
+    as opposed to `shipTodayEligibilityConditions()` which is about what
+    **can still** ship today. A batch finished after the cutoff does not
+    count as "shipped today" for this pair of filters.
+  - `pendingMercadoLivreWhere`: `shipTodayEligibilityConditions()` AND
+    `$unitBusinessAttributes.batch_generated$ = false` — "o que ainda
+    precisa ser embarcado hoje."
+  - `allTodayMercadoLivreWhere`: `shipTodayEligibilityConditions()` OR
+    `batchFinishedTodayBeforeCutoffCondition()` — union of "precisa
+    embarcar hoje" (pending's own eligibility, without the
+    `batch_generated` restriction) with "já embarcou hoje" (finished
+    today, before the cutoff).
+  - `finishedMercadoLivreWhere`: `shipTodayEligibilityConditions()` AND
+    `batchFinishedTodayBeforeCutoffCondition()` AND
+    `$unitBusinessAttributes.batch_generated$ = true` AND
+    `$unitBusinessAttributes.status$ IN (FINISHED, CANCELLED)` — the exact
+    same condition the `pendingProcess=false` ("processo finalizado")
+    filter already uses, plus the batch-finished-before-cutoff check.
+  - `dispatchedMercadoLivreWhere`: `shipTodayEligibilityConditions()` AND
+    `batchFinishedTodayBeforeCutoffCondition()` AND
+    `$batchInvoice.batch.delivery_note_generated_at$ IS NOT NULL` (same
+    field `findInvoicesPendingLogisticOccurrence` already reads as
+    "romaneio gerado") — "o que já teve romaneio gerado hoje, antes do
+    corte."
 
 ## Bling NFe web-scraping automation (`.../bling-nfe/automations/auto-manifest/`)
 
@@ -1235,6 +1267,59 @@ lock por pedido, e todo par de corrida entre filas já mapeado e tratado):
 `docs/automation/order-pipeline.md`. Mantenha esse arquivo atualizado, não
 este — os bullets abaixo ficam só com o histórico de investigação/fix de
 sessão, não a referência viva.
+
+- **Três bugs reais encontrados e corrigidos nesta sessão, todos no
+  trecho "pedido chega, avança pra 748743, tenta agendar/emitir NFe":**
+  1. **`isEligibleForSync` (`mercado-livre-sync.queue.ts`) confiava em
+     `source_payload.situacao.id` pra confirmar que o pedido ainda estava
+     em WAITING_CHANNEL_VALIDATION antes de agendar/emitir a NFe.**
+     `CNPJQueue.applyWaitingNfeStatus` avança o pedido pra 748743 direto na
+     Bling e só gravava `internal_status` localmente, nunca `source_payload`
+     (que só um webhook `order.updated` completo reescreve, de forma
+     assíncrona). Resultado: toda vez que `CNPJQueue` encaminhava pro
+     `ml-check`, a checagem falhava com "internal_status/situacao.id
+     divergente" e o pedido era ignorado pra sempre — mesmo já tendo
+     `collection_date` preenchida — até o webhook de confirmação da Bling
+     chegar depois, quando já era tarde demais (nada reagenda um pedido já
+     descartado por esse check). **Fix**: `CNPJQueue` agora grava
+     `actual_situation: "748743"` junto com `internal_status` (ele mesmo
+     sabe que o PATCH deu certo, não precisa esperar a Bling confirmar de
+     volta) e passou a checar o retorno de `applyWaitingNfeStatus` antes de
+     prosseguir (uma rejeição 400 da Bling não avança mais nada
+     localmente); `isEligibleForSync` agora compara `actual_situation`
+     (coluna simples, sempre atualizada) em vez de vasculhar
+     `source_payload`.
+  2. **Logs enganosos em `scheduleNfe`** diziam "Coleta HOJE... emitindo
+     NFe" mesmo quando a coleta era no futuro (a variável
+     `collectionIsTodayOrFuture` cobre os dois casos) e mesmo quando o
+     código só agenda (a emissão de fato só acontece bem depois, dentro de
+     `NFeQueue`, quando o job delayed dispara). Comportamento sempre esteve
+     correto — só o texto do log confundia quem lia. Corrigido pra não
+     afirmar "hoje" nem "emitindo" nesses casos.
+  3. **`collectionDateFromBling` (`bling-order.service.ts`) aceitava
+     qualquer `dataPrevista` não-vazia como data real**, incluindo o
+     sentinel de "data zero" do MySQL (`"0000-00-00"`) — convenção de
+     coluna NOT NULL sem valor definido. Passar isso pro `dayjs.tz` cai no
+     ano 0000 e, por causa do offset histórico pré-1914 de
+     `America/Sao_Paulo` na base IANA (-03:06:28, hora solar média local,
+     não um -03:00 redondo), resultava numa data por volta de novembro de
+     1899 — confirmado batendo com um caso real de produção
+     (`collection_date = 1899-11-29 23:59`). Sem checagem, isso virava um
+     delay negativo em `setDelayBasedOnDate`, clampado pro piso de 30s
+     (`MIN_DELAY_MS`) — ou seja, emissão praticamente imediata em vez de
+     esperar a coleta de verdade. **Fix**: `collectionDateFromBling` agora
+     reconhece o sentinel MySQL por regex antes de tentar parsear, e rejeita
+     qualquer resultado com ano < 2000 como rede de segurança genérica —
+     `dataPrevista` é sempre `YYYY-MM-DD` (confirmado pelo tipo em
+     `bling.types.ts`, nunca carrega hora/timezone), então não há risco de
+     um sufixo `Z`/offset ser mal-interpretado por `toTz` aqui (uma hipótese
+     considerada e descartada nesta sessão). Em ambos os casos a chave
+     `collection_date` é omitida (nunca um valor chutado), fazendo o pedido
+     cair no mesmo fluxo de "sem data" que já existia: `MLOrderSyncQueue`
+     marca WAITING_CHANNEL_VALIDATION e dispara
+     scraping sob demanda; se isso nunca resolver, `reconcileStuckOrders`
+     (30min) já escala pra verificação humana (748772) — nunca inventa uma
+     data.
 
 - **`collection_date` agora pode vir de `dataPrevista` (payload Bling),
   não só do scraping/planilha do ML; `ML-SCRAPING` deixou de ter cron fixo
@@ -1423,16 +1508,19 @@ sessão, não a referência viva.
   routes are at `/api/invoice`, not `/api/invoices`) — don't guess
   `/api/orders` if this is touched again. `GET /orders/summary/status-counts`
   (4 counts — `human_verification` = `actual_situation = "748772"`;
-  `ship_today_pending` = `collection_date` today AND (no invoice OR its
-  `InvoiceUnitBusinessAttributes.batch_generated` is false); `ship_to_define`
+  `ship_today_pending` = "embarca hoje" AND (`internal_status IN (OPEN,
+  WAITING_CHANNEL_VALIDATION)` OR its invoice's
+  `InvoiceUnitBusinessAttributes.batch_generated` is false), AND never
+  `internal_status IN COMPLETED_ORDER_INTERNAL_STATUSES` (`EMITTED`,
+  `SENT_TO_TRANSPORTER`, `DELIVERED`); `ship_to_define`
   = `collection_date IS NULL` AND `internal_status IN (OPEN,
   WAITING_CHANNEL_VALIDATION)` — added this session: an order already past
   those two (`CANCELLED`/`EMITTED`/`WAITING_FOR_NFE_EMISSION`/
   `SENT_TO_TRANSPORTER`/`DELIVERED`/`UNKNOWN`) doesn't need a collection
   date defined anymore even if `collection_date` is still null, so it must
-  not count as "a definir"; `ship_to_future` = `collection_date` strictly
-  after today — starts tomorrow, never includes today), `GET
-  /orders/summary/human-verification/detail` (`{reason: count}`, grouped by
+  not count as "a definir"; `ship_to_future` = `collection_date >=` amanhã
+  AND NOT "embarca hoje" — see below for what "embarca hoje" means here),
+  `GET /orders/summary/human-verification/detail` (`{reason: count}`, grouped by
   `reason_cancelled`, `null` bucketed as `"UNSET"`), `GET
   /orders/summary/ship-to-future/detail` (`{"YYYY-MM-DD": count}`, grouped
   by `collection_date`'s calendar day in `America/Sao_Paulo` via
@@ -1511,6 +1599,47 @@ sessão, não a referência viva.
   and detail can never drift out of sync. All 8 repository query methods
   (`orders.repository.ts`) are new — every one of the 4 summary categories
   now has a detail endpoint.
+  - **"Embarca hoje"/"embarque futuro" redefined, later session — same
+    fix as the Mercado Livre invoice filters above, mirrored here.**
+    `shipTodayPendingWhere()` used to require `collection_date` strictly
+    within today's BRT calendar day. Per the user: an order with a
+    **future** `collection_date` that already has an invoice emitted can
+    still ship today (early dispatch), as long as today's 13:00 BRT
+    cutoff (`isBeforeShippingCutoff()`, `SHIPPING_CUTOFF_HOUR = 13`,
+    `shared/utils/normalizers/date.ts`) hasn't passed yet — and
+    conversely, once the cutoff has passed, an order stays "embarque
+    futuro" even with an invoice already emitted. Concretely:
+    `shipTodayPendingWhere()`'s eligibility clause is now `collection_date`
+    today OR (`invoice_id IS NOT NULL` AND `isBeforeShippingCutoff()`),
+    ANDed with the "not yet shipped" clause — **also revised in the same
+    pass**: `invoice_id IS NULL` was replaced with `internal_status IN
+    (OPEN, WAITING_CHANNEL_VALIDATION)`, since `invoice_id IS NULL` is an
+    imprecise proxy for "hasn't shipped yet" (per the user: this bucket
+    should only ever be status `OPEN`/`WAITING_CHANNEL_VALIDATION`, or an
+    invoice with `batch_generated = false`). A plain top-level
+    `internal_status NOT IN COMPLETED_ORDER_INTERNAL_STATUSES` guard (the
+    existing `orders.types.ts` constant — `EMITTED`, `SENT_TO_TRANSPORTER`,
+    `DELIVERED`) was added alongside it — belt-and-suspenders against the
+    documented `internal_status`/`batch_generated` divergence (several
+    queues advance `internal_status` without ever touching the invoice's
+    `batch_generated`, see the `orders.internal_status`/
+    `sales_order_snapshots.status_snapshot` divergence note in the
+    Sales/orders section): without this guard, an order already emitted,
+    sent to the transporter, or delivered, whose `batch_generated` for
+    this unit business hadn't (yet, or due to the divergence) flipped to
+    `true`, would wrongly still show as "ainda precisa embarcar hoje".
+    `countShipToFuture`/
+    `groupShipToFutureByDate` share a new private `futureShipmentWhere(storeId)`
+    that mirrors this from the other side: `collection_date >=` amanhã,
+    and — only while still before the cutoff — additionally excludes
+    orders that already have an invoice (`invoice_id IS NULL`), since
+    those now belong to `ship_today_pending` instead; once the cutoff has
+    passed, every future-`collection_date` order counts as future
+    regardless of invoice state, matching `shipTodayPendingWhere()`'s own
+    cutoff behavior exactly (same `isBeforeShippingCutoff()` call, so the
+    two can never disagree about which side of the cutoff "now" is on
+    within one request). `shipToDefineWhere()` is unaffected — it only
+    concerns orders with no `collection_date` at all.
   - **Scoping — revised twice this session, settled on store-only, no
     `unit_business_id` anywhere.** First attempt scoped every method by the
     logged-in user's `unit_business_id` (`getUserContext`/
@@ -1882,6 +2011,52 @@ sessão, não a referência viva.
     every request fail for the whole ban window regardless of current
     pacing — this can look exactly like "estourando toda hora" in logs
     even though it's really one earlier burst still being paid for.
+- **Root cause actually found this session (later, same incident) —
+  neither hypothesis above; the limiter's own dispatch mechanism had a
+  real race.** The user did a controlled production test: pausing every
+  Bling queue except one at a time (any single queue alone) produced zero
+  429s; running several together reliably reintroduced bursts, even
+  though they all share the same limiter. The pre-existing "leaky bucket"
+  design (`RESERVE_SLOT_SCRIPT`) *pre-reserved* a future dispatch
+  timestamp via an atomic Lua script, then did `await sleep(delayMs)` and
+  fired unconditionally once the sleep resolved — each individual
+  reservation was race-free (`EVAL` is atomic), but **nothing re-verified
+  anything at the actual moment of dispatch**. `setTimeout` can only fire
+  on-time or late, never early; under a busier event loop (more queues
+  running concurrently in the same process — `worker-automation` alone
+  can have ~22 concurrent BullMQ job slots across `CNPJ_VERIFY_CNAE`/
+  `ML_ORDER_SYNC`/`NFE_EMISSION`/both reconcilers, vs. near-idle with only
+  one queue unpaused), several independently-reserved timers could all
+  become overdue at once and fire back-to-back the instant the loop freed
+  up, with no gap between them — each trusting its now-stale pre-computed
+  delay instead of checking reality. This is a genuinely different bug
+  from anything the paragraph above considered (not a different Redis, not
+  an IP ban — same process, same Redis, same limiter, still racy). **Fixed**:
+  `waitForBlingRateLimit()` was redesigned from "reserve a future slot,
+  blind-sleep, then fire" to an atomic **check-and-claim-or-wait loop** —
+  a new script (`TRY_DISPATCH_SCRIPT`, replacing `RESERVE_SLOT_SCRIPT`)
+  only tracks the timestamp of the last *actual granted* dispatch (key
+  renamed `rate-limit:bling:last-dispatch-at`), and on each call either
+  grants immediately (if `now >= last + interval`) or returns how long to
+  wait; the caller sleeps that long and **loops back to re-check
+  atomically** rather than assuming the sleep was precise and dispatching
+  unconditionally. Under contention, only one caller can win each atomic
+  check; every other concurrently-woken caller is forced to wait and
+  retry — true ≥`BLING_RATE_LIMIT_INTERVAL_MS` spacing between real
+  dispatches holds regardless of how bunched the wake-ups are, immune to
+  event-loop jitter by construction. Same external signature (no params),
+  so the `onRequest` interceptor and the two manual scraper callers needed
+  no changes. The diagnostic per-request counter (`logOutgoingBlingRequestRate`,
+  also this session) was extended to log the real gap since the previous
+  dispatch (`GETSET` on a separate diagnostic-only key,
+  `rate-limit:bling:last-dispatch-log` — never influences the actual
+  rate-limit decision) specifically to make this kind of bug directly
+  observable in production logs going forward, instead of only inferable
+  from 429 rates. Covered by
+  `src/modules/handlers/bling/api/__tests__/bling_api.service.test.ts`
+  (new this session) — in particular the contention tests asserting the
+  function always re-queries Redis before dispatching, never fires off a
+  stale wait alone.
 - **Known follow-up, not yet done**: `BlingNfeScrapingQueue`'s
   `scheduleRepeat({ every: 3 * 60 * 60 * 1000 })` (`src/queues/index.ts`)
   has no `cron`/`tz` anchor, so it drifts across all hours of the day

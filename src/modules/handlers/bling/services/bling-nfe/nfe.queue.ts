@@ -15,14 +15,11 @@ import {
   blingPatch,
   blingPost,
 } from "../bling/helpers/get-with-sleep";
-import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import {
-  COMPLETED_ORDER_INTERNAL_STATUSES,
-  CompletedOrderInternalStatus,
   OrderInternalStatus,
   OrderReasonCancelled,
 } from "../../../../sales/orders/order/orders.types";
-import { syncOrderInternalStatus } from "../../../../sales/orders/order/helpers/order-status";
+import { escalateToHumanVerificationIfStillPending } from "../../../../sales/orders/order/helpers/order-status";
 
 const ALLOWED_STORE_NAME = "MercadoLivre";
 
@@ -60,7 +57,12 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
       // já é protegida à parte por waitForBlingRateLimit(). Concurrency mais
       // alta deixa vários pedidos avançarem em paralelo de verdade.
       concurrency: 5,
-      maxProcessingMs: 60_000,
+      // Precisa cobrir o pior caso do retry de 429 da Bling (5 tentativas,
+      // até 60s cada = até 300s) — com 60s aqui, o watchdog abortava o job
+      // no meio de um retry ainda válido (Promise.race não cancela a
+      // chamada em voo), deixando-a órfã segurando o lock do pedido
+      // enquanto uma nova tentativa esbarrava em "Timeout aguardando lock".
+      maxProcessingMs: 5 * 60 * 1000,
       workless: options.workless,
     });
     this.blingApi = blingApi;
@@ -83,41 +85,32 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     orderId: number,
     message: string,
     reasonCancelled: OrderReasonCancelled,
+    allowedPendingStatuses: OrderInternalStatus[],
   ): Promise<void> {
-    const { data } = await blingGet(
-      `/pedidos/vendas/${orderId}`,
-      this.blingApi,
-    );
-
-    await new Promise((r) => setTimeout(r, 1000));
-
-    await blingPut(`/pedidos/vendas/${orderId}`, {
-      ...data.data,
-      observacoesInternas: `${data.data.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`,
-    }, this.blingApi);
-
-    await new Promise((r) => setTimeout(r, 3000));
-
-    await blingPatch(
-      `/pedidos/vendas/${orderId}/situacoes/${STATUS.AGUARDANDO_VERIFICACAO_HUMANA}`,
-      {
-        id: STATUS.AGUARDANDO_VERIFICACAO_HUMANA,
-      },
-      this.blingApi,
-    );
-    const orderSystem = await ordersService.findOne({
-      where: {
-        id_order_system: orderId,
+    const result = await escalateToHumanVerificationIfStillPending({
+      idOrderSystem: orderId,
+      blingApi: this.blingApi,
+      allowedPendingStatuses,
+      reasonCancelled,
+      beforeEscalate: async (liveOrderData) => {
+        await new Promise((r) => setTimeout(r, 1000));
+        await blingPut(`/pedidos/vendas/${orderId}`, {
+          ...liveOrderData,
+          observacoesInternas: `${liveOrderData.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`,
+        }, this.blingApi);
+        await new Promise((r) => setTimeout(r, 3000));
       },
     });
-    if (!orderSystem) return;
-    await ordersService.update(orderSystem.id, {
-      internal_status: OrderInternalStatus.CANCELLED,
-      reason_cancelled: reasonCancelled,
-    });
-    console.log(
-      `[NFeQueue] Pedido ${orderId} Marcado como Aguardando verificação humana: ${message}`,
-    );
+
+    if (result.escalated) {
+      console.log(
+        `[NFeQueue] Pedido ${orderId} Marcado como Aguardando verificação humana: ${message}`,
+      );
+    } else {
+      console.log(
+        `[NFeQueue] Pedido ${orderId} não foi marcado como verificação humana (${result.reason}) — status atual na Bling: ${result.internalStatus}.`,
+      );
+    }
   }
 
   async process(job: Job<NFeJobData>): Promise<void> {
@@ -141,24 +134,19 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
       return;
     }
 
-    // 2. Verifica se ainda está em nfe agendada (status 748748)
+    // 2. Verifica se ainda está em nfe agendada (status 748748) — a decisão
+    // de sincronizar (se já terminou) vs. escalar (se travado em OPEN/
+    // WAITING_CHANNEL_VALIDATION) agora mora inteira dentro de
+    // markOrderCancelled -> escalateToHumanVerificationIfStillPending, que
+    // já busca a situação ao vivo de novo (esta checagem aqui é só pra
+    // decidir SE vale a pena chamar markOrderCancelled, não decide o que
+    // fazer).
     if (order.situacao?.id !== STATUS.NFE_AGENDADA) {
-      const syncResult = await syncOrderInternalStatus(
-        order.situacao?.id,
-        order_id,
-      );
-
-      if (syncResult.handled) {
-        console.log(
-          `[NFeQueue] Pedido ${order_id} sincronizado (outcome=${syncResult.outcome}, status=${syncResult.internalStatus}).`,
-        );
-        return;
-      }
-
       await this.markOrderCancelled(
         order_id,
         NFE_ERRORS.WRONG_STATUS.message,
         OrderReasonCancelled.NFE_WRONG_STATUS,
+        [OrderInternalStatus.OPEN, OrderInternalStatus.WAITING_CHANNEL_VALIDATION],
       );
       return;
     }
@@ -173,6 +161,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         order_id,
         `${NFE_ERRORS.MISSING_FIELDS.message}: ${detail}`,
         OrderReasonCancelled.NFE_MISSING_FIELDS,
+        [OrderInternalStatus.WAITING_FOR_NFE_EMISSION],
       );
       return;
     }
@@ -215,6 +204,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
           order_id,
           "Item(s) sem estoque disponível na Bling. Requer reposição manual.",
           OrderReasonCancelled.NFE_NO_STOCK,
+          [OrderInternalStatus.WAITING_FOR_NFE_EMISSION],
         );
         alertService.sendAlert({
           severity: "HIGH",
@@ -246,6 +236,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         order_id,
         NFE_ERRORS.EMISSION_FAILED.message,
         OrderReasonCancelled.NFE_EMISSION_FAILED,
+        [OrderInternalStatus.WAITING_FOR_NFE_EMISSION],
       ),
     ).catch((lockError: any) => {
       console.error(

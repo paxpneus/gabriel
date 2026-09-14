@@ -8,6 +8,7 @@ import {
   ShipTodayPendingDetailRow,
   ShipToDefineDetailRow,
   OrderInternalStatus,
+  COMPLETED_ORDER_INTERNAL_STATUSES,
 } from "./orders.types";
 import { Op, fn, col, literal, WhereOptions } from "sequelize";
 import { Invoice } from "../../../warehouse";
@@ -15,6 +16,7 @@ import InvoiceUnitBusinessAttributes from "../../../warehouse/fiscal/invoices/in
 import {
   collectionDateDayRangeCompat,
   collectionDateFutureStartCompat,
+  isBeforeShippingCutoff,
 } from "../../../../shared/utils/normalizers/date";
 import { collectionDateBucketLiteral } from "./helpers/aggregates";
 import { translateOrderInternalStatus } from "./helpers/translations";
@@ -90,18 +92,60 @@ export class OrderRepository extends BaseRepository<Order> {
   // findShipTodayPendingDetail — mesmo critério, um só conta e o outro
   // lista. Retorna null quando a loja MercadoLivre nem existe (ambos os
   // chamadores tratam isso como "vazio", sem query nenhuma).
+  //
+  // "Embarca hoje" não é só `collection_date` de hoje: um pedido com
+  // `collection_date` futura mas que já tem invoice emitida ainda conta,
+  // desde que ainda não tenha passado do horário-limite de embarque
+  // (`isBeforeShippingCutoff`) — despacho antecipado. Depois do corte, só
+  // `collection_date` de hoje conta (mesma regra usada pelas 4 abas
+  // Mercado Livre de `invoice.service.ts`, ver `helpers/custom-filters.ts`).
+  //
+  // "Ainda não embarcou" é `internal_status IN (OPEN,
+  // WAITING_CHANNEL_VALIDATION)` (ainda nem tem invoice, no fluxo normal)
+  // OU invoice com `batch_generated = false` (invoice já emitida, mas o
+  // lote dessa filial ainda não foi gerado) — NÃO mais `invoice_id IS
+  // NULL`, que é impreciso pra essa checagem. O guard extra de
+  // `internal_status NOT IN COMPLETED_ORDER_INTERNAL_STATUSES` (EMITTED,
+  // SENT_TO_TRANSPORTER, DELIVERED) existe porque as duas colunas podem
+  // divergir (várias filas avançam `internal_status` sem tocar
+  // `batch_generated`, ver a nota sobre `status_snapshot`/`internal_status`
+  // mais acima neste arquivo/CLAUDE.md) — sem ele, um pedido cujo
+  // `internal_status` já avançou (emitido, enviado ao transportador ou
+  // entregue) mas cuja `InvoiceUnitBusinessAttributes.batch_generated`
+  // (dessa filial) ainda não foi marcada `true` voltaria a aparecer como
+  // pendente.
   private async shipTodayPendingWhere(): Promise<WhereOptions | null> {
     const storeId = await this.resolveMercadoLivreStoreId();
     if (!storeId) return null;
 
     const { start, end } = collectionDateDayRangeCompat();
+    const eligibleToday: WhereOptions[] = [
+      { collection_date: { [Op.between]: [start, end] } },
+    ];
+    if (isBeforeShippingCutoff()) {
+      eligibleToday.push({ invoice_id: { [Op.ne]: null } as any });
+    }
 
     return {
       store_id: storeId,
-      collection_date: { [Op.between]: [start, end] },
-      [Op.or]: [
-        { invoice_id: null },
-        { "$invoice.unitBusinessAttributes.batch_generated$": false },
+      internal_status: {
+        [Op.notIn]: COMPLETED_ORDER_INTERNAL_STATUSES as OrderInternalStatus[],
+      },
+      [Op.and]: [
+        { [Op.or]: eligibleToday },
+        {
+          [Op.or]: [
+            {
+              internal_status: {
+                [Op.in]: [
+                  OrderInternalStatus.OPEN,
+                  OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
+                ],
+              },
+            },
+            { "$invoice.unitBusinessAttributes.batch_generated$": false },
+          ],
+        },
       ],
     };
   }
@@ -168,16 +212,29 @@ export class OrderRepository extends BaseRepository<Order> {
     return this.model.count({ where });
   }
 
+  // Espelha shipTodayPendingWhere: um pedido com collection_date futura mas
+  // já invoice emitida, antes do horário-limite de embarque, já conta como
+  // "embarca hoje" (ver lá) — não pode contar aqui também. Depois do corte,
+  // ninguém mais "sobe" pra hoje, então até quem já tem invoice permanece
+  // "embarque futuro".
+  private futureShipmentWhere(storeId: string): WhereOptions {
+    const where: WhereOptions = {
+      store_id: storeId,
+      collection_date: { [Op.gte]: collectionDateFutureStartCompat() },
+    };
+
+    if (isBeforeShippingCutoff()) {
+      where.invoice_id = { [Op.is]: null } as any;
+    }
+
+    return where;
+  }
+
   async countShipToFuture(): Promise<number> {
     const storeId = await this.resolveMercadoLivreStoreId();
     if (!storeId) return 0;
 
-    return this.model.count({
-      where: {
-        store_id: storeId,
-        collection_date: { [Op.gte]: collectionDateFutureStartCompat() },
-      },
-    });
+    return this.model.count({ where: this.futureShipmentWhere(storeId) });
   }
 
   // ─── Detalhe ──────────────────────────────────────────────────────────────
@@ -302,10 +359,7 @@ export class OrderRepository extends BaseRepository<Order> {
         [collectionDateBucketLiteral(), "date_bucket"],
         [fn("COUNT", col("id")), "quantity"],
       ],
-      where: {
-        store_id: storeId,
-        collection_date: { [Op.gte]: collectionDateFutureStartCompat() },
-      },
+      where: this.futureShipmentWhere(storeId),
       group: ["date_bucket"],
       order: [[literal("date_bucket"), "ASC"]],
       raw: true,
