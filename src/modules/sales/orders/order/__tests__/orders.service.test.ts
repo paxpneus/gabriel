@@ -4,6 +4,22 @@ import Order from "../orders.model";
 import Store from "../../../stores/stores.model";
 import { OrderService } from "../orders.service";
 import orderRepository from "../orders.repository";
+import { Invoice } from "../../../../warehouse";
+
+jest.mock("../../../../warehouse", () => ({
+  Invoice: {
+    findAll: jest.fn(),
+    count: jest.fn(),
+  },
+}));
+
+jest.mock("../../../../../shared/utils/normalizers/date", () => ({
+  ...jest.requireActual("../../../../../shared/utils/normalizers/date"),
+  nowTz: jest.fn(),
+}));
+
+import { nowTz } from "../../../../../shared/utils/normalizers/date";
+import dayjs from "dayjs";
 
 describe("OrderService.releaseWaitingAcceptanceForToday", () => {
   let service: OrderService;
@@ -65,6 +81,7 @@ describe("OrderService — resumo de status", () => {
     // resolver esse id primeiro, tudo retorna 0/[] (guard em
     // OrderRepository.resolveMercadoLivreStoreId).
     (Store.findOne as jest.Mock).mockResolvedValue({ id: "store-ml-1" });
+    (nowTz as jest.Mock).mockReturnValue(dayjs("2026-09-11T10:00:00"));
   });
 
   it("getOrdersStatusSummary: retorna { quantity } pra cada uma das 4 categorias", async () => {
@@ -88,7 +105,7 @@ describe("OrderService — resumo de status", () => {
     });
   });
 
-  it("getShipTodayPendingDetail: lista os pedidos com cliente e nota vinculada (se tiver)", async () => {
+    it("getShipTodayPendingDetail: lista os pedidos com cliente e nota vinculada (se tiver)", async () => {
     const makeRow = (data: any) => ({ get: () => data });
     (Order.findAll as jest.Mock).mockResolvedValue([
       makeRow({
@@ -106,6 +123,8 @@ describe("OrderService — resumo de status", () => {
         invoice: null,
       }),
     ]);
+    // sem notas órfãs nesse cenário
+    (Invoice.findAll as jest.Mock).mockResolvedValue([]);
 
     const result = await service.getShipTodayPendingDetail("ub-1");
 
@@ -125,6 +144,32 @@ describe("OrderService — resumo de status", () => {
         collection_date: new Date("2026-09-11"),
         invoice_number: null,
         invoice_emitted_at: null,
+      },
+    ]);
+  });
+
+    it("getShipTodayPendingDetail: inclui notas órfãs (sem pedido) pendentes de embarque hoje", async () => {
+    (Order.findAll as jest.Mock).mockResolvedValue([]);
+    (Invoice.findAll as jest.Mock).mockResolvedValue([
+      {
+        get: () => ({
+          number_system: "099887",
+          emitted_at: new Date("2026-09-11T07:10:00Z"),
+          receiver_name: "CLIENTE SEM PEDIDO",
+        }),
+      },
+    ]);
+
+    const result = await service.getShipTodayPendingDetail("ub-1");
+
+    expect(result).toEqual([
+      {
+        number_order_system: null,
+        customer_name: "CLIENTE SEM PEDIDO",
+        sale_date: null,
+        collection_date: null,
+        invoice_number: "099887",
+        invoice_emitted_at: new Date("2026-09-11T07:10:00Z"),
       },
     ]);
   });
