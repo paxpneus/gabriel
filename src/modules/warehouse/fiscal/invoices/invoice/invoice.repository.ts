@@ -404,7 +404,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         },
       ],
       attributes: {
-        exclude: ["source_payload"],
+        exclude: ["source_payload", "xml_path"],
         include: [
           [this.productBrandsLiteral(), "product_brands"],
           [totalExpectedLiteral(), "total_expected"],
