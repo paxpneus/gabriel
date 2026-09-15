@@ -201,7 +201,10 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   ): Promise<
     Pick<
       InstanceType<typeof SalesOrderItemSnapshot>,
-      "order_id" | "product_id" | "supplier_discount_value" | "supplier_discount_rule_id"
+      | "order_id"
+      | "product_id"
+      | "supplier_discount_value"
+      | "supplier_discount_rule_id"
     >[]
   > {
     if (!orderIds.length) return [];
@@ -228,7 +231,10 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   async findKitComponentsByKitIds(
     kitProductIds: string[],
   ): Promise<
-    Pick<InstanceType<typeof KitComponent>, "product_kit_id" | "product_component_id">[]
+    Pick<
+      InstanceType<typeof KitComponent>,
+      "product_kit_id" | "product_component_id"
+    >[]
   > {
     if (!kitProductIds.length) return [];
     return KitComponent.findAll({
@@ -249,36 +255,36 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     };
 
     if (filters?.status) {
-      (attrWhere as any).status = Array.isArray(filters.status)
+      (attrWhere).status = Array.isArray(filters.status)
         ? { [Op.in]: filters.status }
         : filters.status;
       delete filters.status;
     }
 
     if (filters?.type) {
-      (attrWhere as any).type = Array.isArray(filters.type)
+      (attrWhere).type = Array.isArray(filters.type)
         ? { [Op.in]: filters.type }
         : filters.type;
       delete filters.type;
     }
 
     if (filters?.batch_generated !== undefined) {
-      (attrWhere as any).batch_generated = filters.batch_generated;
+      (attrWhere).batch_generated = filters.batch_generated;
       delete filters.batch_generated;
     }
 
-    if (filters?.pendingProcess !== undefined) {
-      const val = filters.pendingProcess;
-      delete filters.pendingProcess;
+    if (filters?.processStatus !== undefined) {
+      const val = filters.processStatus;
+      delete filters.processStatus;
 
-      if (val === "true") {
-        (attrWhere as any)[Op.or] = [
-          { batch_generated: false },
-          { status: { [Op.notIn]: ["FINISHED", "CANCELLED"] } },
-        ];
-      } else if (val === "false") {
-        (attrWhere as any).batch_generated = true;
-        (attrWhere as any).status = { [Op.in]: ["FINISHED", "CANCELLED"] };
+      if (val === "pendingProcess") {
+        (attrWhere).status = { [Op.notIn]: ["FINISHED", "CANCELLED"] };
+      } else if (val === "finishedProcess") {
+        (attrWhere).batch_generated = true;
+        (attrWhere).status = { [Op.in]: ["FINISHED", "CANCELLED"] };
+      } else if (val === "notStartedProcess") {
+        (attrWhere).status = { [Op.in]: ["OPEN", "PENDING"] };
+        (attrWhere).batch_generated = false;
       }
     }
 
@@ -661,11 +667,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                     {
                       model: Product,
                       as: "product",
-                      attributes: [
-                        "name",
-                        "type",
-                        "brand",
-                      ],
+                      attributes: ["name", "type", "brand"],
                       include: [
                         {
                           model: ProductConfig,

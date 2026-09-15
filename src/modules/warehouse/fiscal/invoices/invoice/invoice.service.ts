@@ -129,32 +129,28 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             ? { [Op.in]: value }
             : value,
         }),
-        pendingProcess: (value) => {
-          // "Todos" → sem filtro
-          if (value === "" || value === null || value === undefined) return {};
-
-          // "Processo em andamento" (true) → notas que ainda têm algo pendente
-          if (value === "true") {
+        processStatus: (value) => {
+          // Status do processo — "Todos" (sem filtro) se valor vazio/desconhecido
+          if (value === "pendingProcess") {
+            // Nota ainda não chegou num estado terminal
             return {
-              [Op.or]: [
-                { batch_generated: false },
-                {
-                  status: {
-                    [Op.notIn]: ["FINISHED", "CANCELLED"],
-                  },
-                },
-              ],
+              status: { [Op.notIn]: ["FINISHED", "CANCELLED"] },
             };
           }
 
-          // "Processo finalizado" (false) → tudo concluído
-          if (value === "false") {
+          if (value === "finishedProcess") {
+            // Tudo concluído
             return {
               batch_generated: true,
-              printed_label: true,
-              status: {
-                [Op.in]: ["FINISHED", "CANCELLED"],
-              },
+              status: { [Op.in]: ["FINISHED", "CANCELLED"] },
+            };
+          }
+
+          if (value === "notStartedProcess") {
+            // Processo ainda não iniciado: status inicial e lote não gerado
+            return {
+              status: { [Op.in]: ["OPEN", "PENDING"] },
+              batch_generated: false,
             };
           }
 
@@ -204,7 +200,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         // Notas com algum item cujo produto tem um dos aros informados —
         // aceita um id só ou array (qualquer um dos aros, não todos).
         rim: (value) =>
-          productRimWhere((Array.isArray(value) ? value : [value]).filter(Boolean)),
+          productRimWhere(
+            (Array.isArray(value) ? value : [value]).filter(Boolean),
+          ),
 
         // Notas com algum item que REALMENTE recebeu o desconto de uma das
         // regras informadas (não só "se encaixaria no escopo dela") — ver
@@ -474,7 +472,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   private async buildSupplierDiscountLookup(
     orderIds: (string | undefined)[],
   ): Promise<
-    Map<string, { value: number; ruleId: string | null; ruleName: string | null }>
+    Map<
+      string,
+      { value: number; ruleId: string | null; ruleName: string | null }
+    >
   > {
     const uniqueOrderIds = [
       ...new Set(orderIds.filter((id): id is string => !!id)),
@@ -505,7 +506,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     // seus componentes, apontando pro mesmo valor/regra.
     const kitProductIds = [
       ...new Set(
-        discountRows.map((row) => row.product_id).filter((id): id is string => !!id),
+        discountRows
+          .map((row) => row.product_id)
+          .filter((id): id is string => !!id),
       ),
     ];
     const kitComponents = kitProductIds.length
@@ -543,7 +546,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     params: QueryParams,
     unitBusinessId: string,
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
-    return this.repository.listInvoices(params, unitBusinessId, this.queryConfig);
+    return this.repository.listInvoices(
+      params,
+      unitBusinessId,
+      this.queryConfig,
+    );
   }
 
   async updateInvoicesOpen(ids: string[], unitBusinessId: string) {
@@ -796,7 +803,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     );
 
     const supplierDiscountLookup = await this.buildSupplierDiscountLookup(
-      rows.map((invoice) => (invoice as Invoice & { order?: Order | null }).order?.id),
+      rows.map(
+        (invoice) => (invoice as Invoice & { order?: Order | null }).order?.id,
+      ),
     );
 
     // Regra específica DESTE relatório, pedido explícito do usuário: mesmo
@@ -814,7 +823,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         items?: (InvoiceItems & { product?: Product | null })[];
         order?: Order | null;
       };
-      const referenceDate = invoiceWithRelations.order?.date ?? invoice.emitted_at;
+      const referenceDate =
+        invoiceWithRelations.order?.date ?? invoice.emitted_at;
       if (!referenceDate) continue;
 
       for (const item of invoiceWithRelations.items ?? []) {
@@ -836,9 +846,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       );
 
     const default_report_seler = await userService.findOne({
-      where:{
-        name: 'Rafael Minetto'
-      }
+      where: {
+        name: "Rafael Minetto",
+      },
     });
 
     const default_seller_body = {
@@ -995,7 +1005,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     );
 
     const supplierDiscountLookup = await this.buildSupplierDiscountLookup(
-      rows.map((invoice) => (invoice as Invoice & { order?: Order | null }).order?.id),
+      rows.map(
+        (invoice) => (invoice as Invoice & { order?: Order | null }).order?.id,
+      ),
     );
 
     const result: {
@@ -1107,10 +1119,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       }
       await tecincoQueue.upsertInvoiceFromXml(xmlContent, branchId);
     } else {
-      throw new Error(`Integração inválida ou ausente: ${integration ?? "(nenhuma)"}`);
+      throw new Error(
+        `Integração inválida ou ausente: ${integration ?? "(nenhuma)"}`,
+      );
     }
   }
-
 }
 
 export default new InvoiceService();
