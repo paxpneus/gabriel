@@ -64,6 +64,7 @@ function batchFinishedTodayBeforeCutoffCondition(): WhereOptions {
 export function pendingMercadoLivreWhere(storeName: string): WhereOptions {
   return {
     "$store.name$": storeName,
+    "$unitBusinessAttributes.status$": {[Op.in]: ["OPEN", "PENDING"]},
     [Op.or]: shipTodayEligibilityConditions(),
     "$unitBusinessAttributes.batch_generated$": false,
   };
