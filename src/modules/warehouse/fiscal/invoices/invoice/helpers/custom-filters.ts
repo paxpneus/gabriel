@@ -2,103 +2,136 @@ import { WhereOptions, Op, Sequelize } from "sequelize";
 import {
   startOfDayTz,
   collectionDateDayRangeCompat,
-  isBeforeShippingCutoff,
-  SHIPPING_CUTOFF_HOUR,
+  SHIPPING_WINDOW_END_HOUR_OPERATION,
+  SHIPPING_WINDOW_START_HOUR_OPERATION,
+  nowTz,
 } from "../../../../../../shared/utils/normalizers/date";
+import { OrderInternalStatus } from "../../../../../sales/orders/order/orders.types";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * Condições (pra usar dentro de um `[Op.or]`) de "essa nota está elegível
- * pra embarcar HOJE" — usadas pelas 4 abas do filtro de embarque Mercado
- * Livre em `invoice.service.ts`. Não inclui o `$store.name$`, quem chama
- * decide isso (cada `*Where` abaixo adiciona).
- *
- * Uma nota é elegível se:
- * - o pedido (`order`) não existe (`invoice_id` sem `Order` vinculado) —
- *   não dá pra saber a data de coleta, então não some de nenhum filtro;
- * - `$order.collection_date$` cai hoje (em America/Sao_Paulo); OU
- * - a nota já foi emitida E ainda não passou do horário-limite de embarque
- *   (`SHIPPING_CUTOFF_HOUR`) — despacho antecipado, mesmo com
- *   `collection_date` num dia futuro. Depois do corte, uma nota já emitida
- *   com coleta futura deixa de contar como "hoje" (vira embarque futuro).
- *
- * Exige que a query já tenha as associations `store` e `order` no
- * `include` (dot-notation `$assoc.field$` não funciona sem isso).
- */
-function shipTodayEligibilityConditions(): WhereOptions[] {
-  const { start, end } = collectionDateDayRangeCompat();
-
-  const conditions: WhereOptions[] = [
-    { "$order.id$": { [Op.is]: null } as any },
-    { "$order.collection_date$": { [Op.between]: [start, end] } },
-  ];
-
-  if (isBeforeShippingCutoff()) {
-    conditions.push({ emitted_at: { [Op.ne]: null } });
-  }
-
-  return conditions;
-}
-
-/**
- * "O lote (romaneio) da nota foi finalizado hoje, ainda dentro do horário
- * de embarque" — usado por `finished`/`dispatched`/`all_today` pra
- * reconhecer o que JÁ embarcou hoje (ao contrário de
- * `shipTodayEligibilityConditions`, que é sobre o que ainda PODE embarcar
- * hoje). Um lote finalizado depois do corte não conta como "embarcou hoje"
- * pro propósito dessas abas. Exige a mesma association `batchInvoice.batch`
- * que `batchStatus`/`dispatched_mercado_livre` já usam.
- */
-function batchFinishedTodayBeforeCutoffCondition(): WhereOptions {
+// Janela de embarque do dia: 06h–14h, agora centralizada em
+// shared/utils/normalizers/date (SHIPPING_WINDOW_START_HOUR_OPERATION /
+// SHIPPING_WINDOW_END_HOUR_OPERATION) — mesmas constantes usadas por
+// orders.repository.ts#shippingWindowRange, evitando duas fontes de
+// verdade pro mesmo horário.
+function shippingWindowRange(): { start: Date; end: Date } {
   return {
-    "$batchInvoice.batch.finished_at$": {
-      [Op.gte]: startOfDayTz().toDate(),
-      [Op.lt]: startOfDayTz().hour(SHIPPING_CUTOFF_HOUR).toDate(),
-    },
+    start: startOfDayTz().hour(SHIPPING_WINDOW_START_HOUR_OPERATION).toDate(),
+    end: startOfDayTz().hour(SHIPPING_WINDOW_END_HOUR_OPERATION).toDate(),
   };
 }
 
-/** "O que ainda precisa ser embarcado hoje" — elegível pra hoje e ainda não batido lote. */
-export function pendingMercadoLivreWhere(storeName: string): WhereOptions {
+/**
+ * "O pedido dessa nota está cancelado" — usado só pra EXCLUIR de
+ * `pending`. Nota sem `Order` vinculado (`$order.id$ IS NULL`) não é
+ * considerada cancelada — não dá pra saber, então não exclui.
+ * Exige a association `order` (required: false) no include da query.
+ */
+function orderNotCancelledCondition(): WhereOptions {
   return {
-    "$store.name$": storeName,
-    "$unitBusinessAttributes.status$": {[Op.in]: ["OPEN", "PENDING"]},
-    [Op.or]: shipTodayEligibilityConditions(),
-    "$unitBusinessAttributes.batch_generated$": false,
-  };
-}
-
-/** União de "precisa embarcar hoje" com "já embarcou hoje" (lote finalizado hoje). */
-export function allTodayMercadoLivreWhere(storeName: string): WhereOptions {
-  return {
-    "$store.name$": storeName,
     [Op.or]: [
-      ...shipTodayEligibilityConditions(),
-      batchFinishedTodayBeforeCutoffCondition(),
+      { "$order.id$": { [Op.is]: null } as any },
+      {
+        "$order.internal_status$": { [Op.ne]: OrderInternalStatus.CANCELLED },
+      },
     ],
   };
 }
 
-/** Elegível pra hoje, lote já finalizado hoje (antes do corte) e processo concluído. */
-export function finishedMercadoLivreWhere(storeName: string): WhereOptions {
+/**
+ * Espelha `orders.repository.ts#shipTodayPendingWhere` — mesmo critério,
+ * só que do ponto de vista da Invoice (lá se conta Order, aqui se busca
+ * Invoice). Mesmas duas vias:
+ *
+ * (A) O pedido tem essa nota vinculada e a `collection_date` do pedido é
+ *     hoje — não importa se/quando a nota foi emitida.
+ *
+ * (B) A nota foi emitida hoje, na janela 06h–14h — a `collection_date` do
+ *     pedido é irrelevante nesse caso, mesmo que seja amanhã (ou não
+ *     exista pedido vinculado). Exige `batch_generated = false` e status
+ *     da nota em OPEN/PENDING.
+ *
+ * Pedido cancelado exclui os dois casos (`orderNotCancelledCondition`).
+ * Nota sem nenhum pedido vinculado só pode entrar pelo caso (B).
+ */
+export function pendingMercadoLivreWhere(storeName: string): WhereOptions {
+  const { start, end } = collectionDateDayRangeCompat();
+  const { start: windowStart, end: windowEnd } = shippingWindowRange();
+
+  // Depois das 14h a janela de hoje já fechou — nada mais pode ser
+  // "pendente de embarque hoje" (A e B). Espelha
+  // orders.repository.ts#shipTodayPendingWhere.
+  if (nowTz().isAfter(windowEnd)) {
+    return { [Op.and]: [Sequelize.literal("FALSE")] };
+  }
+
   return {
     "$store.name$": storeName,
-    [Op.or]: shipTodayEligibilityConditions(),
-    ...batchFinishedTodayBeforeCutoffCondition(),
-    "$unitBusinessAttributes.batch_generated$": true,
-    "$unitBusinessAttributes.status$": { [Op.in]: ["FINISHED", "CANCELLED"] },
+    "$unitBusinessAttributes.batch_generated$": false,
+    "$unitBusinessAttributes.status$": {
+      [Op.in]: ["OPEN", "PENDING"],
+    },
+    [Op.and]: [
+      orderNotCancelledCondition(),
+      {
+        [Op.or]: [
+          // (A) pedido vinculado com collection_date de hoje
+          {
+            "$order.id$": { [Op.ne]: null } as any,
+            "$order.collection_date$": { [Op.between]: [start, end] },
+          },
+          // (B) nota emitida hoje na janela
+          { emitted_at: { [Op.between]: [windowStart, windowEnd] } },
+        ],
+      },
+    ],
   };
 }
 
-/** Elegível pra hoje, lote já finalizado hoje (antes do corte) e romaneio gerado. */
-export function dispatchedMercadoLivreWhere(storeName: string): WhereOptions {
+/**
+ * União de tudo que "aconteceu hoje" pra essa nota, na janela 06h–14h:
+ * emissão, fechamento de lote (`finished_at`) OU criação de lote
+ * (`created_at`) — qualquer um dos três já qualifica.
+ * CONFIRMAR o nome do campo de criação do lote em `ExpeditionBatch`
+ * (assumido `created_at`, mesmo padrão snake_case de `finished_at`/
+ * `delivery_note_generated_at`).
+ */
+export function allTodayMercadoLivreWhere(storeName: string): WhereOptions {
+  const { start, end } = shippingWindowRange();
+
   return {
     "$store.name$": storeName,
-    [Op.or]: shipTodayEligibilityConditions(),
-    ...batchFinishedTodayBeforeCutoffCondition(),
-    "$batchInvoice.batch.delivery_note_generated_at$": { [Op.ne]: null },
+    [Op.or]: [
+      { emitted_at: { [Op.between]: [start, end] } },
+      { "$batchInvoice.batch.finished_at$": { [Op.between]: [start, end] } },
+      { "$batchInvoice.batch.created_at$": { [Op.between]: [start, end] } },
+    ],
+  };
+}
+
+/** Lote da nota finalizado hoje, na janela 06h–14h, processo concluído. */
+export function finishedMercadoLivreWhere(storeName: string): WhereOptions {
+  const { start, end } = shippingWindowRange();
+
+  return {
+    "$store.name$": storeName,
+    "$batchInvoice.batch.finished_at$": { [Op.between]: [start, end] },
+    "$unitBusinessAttributes.batch_generated$": true,
+    "$unitBusinessAttributes.status$": { [Op.in]: ["FINISHED"] },
+  };
+}
+
+/** Romaneio (delivery note) da nota gerado hoje, na janela 06h–14h. */
+export function dispatchedMercadoLivreWhere(storeName: string): WhereOptions {
+  const { start, end } = shippingWindowRange();
+
+  return {
+    "$store.name$": storeName,
+    "$batchInvoice.batch.delivery_note_generated_at$": {
+      [Op.between]: [start, end],
+    },
   };
 }
 

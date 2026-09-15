@@ -100,9 +100,9 @@ export interface FullOrder extends orderAttributes {
 
 // Uma linha do detalhe de ship_today_pending (GET /summary/ship-today-pending/detail).
 export interface ShipTodayPendingDetailRow {
-  number_order_system: string;
+  number_order_system: string | null;
   customer_name: string | null;
-  sale_date: Date | null;
+  sale_date: Date | null;           
   collection_date: Date | null;
   invoice_number: string | null;
   invoice_emitted_at: Date | null;

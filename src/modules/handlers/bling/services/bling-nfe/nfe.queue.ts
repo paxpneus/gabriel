@@ -215,6 +215,19 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         return;
       }
 
+      // 400 é um erro de negócio da Bling (não transitório) — mesmo com um
+      // código não mapeado, não faz sentido esgotar os retries do BullMQ
+      // pra só então cair no onFailed com a mesma mensagem.
+      if (error.response?.status === 400) {
+        await this.markOrderCancelled(
+          order_id,
+          NFE_ERRORS.EMISSION_FAILED.message,
+          OrderReasonCancelled.NFE_EMISSION_FAILED,
+          [OrderInternalStatus.WAITING_FOR_NFE_EMISSION],
+        );
+        return;
+      }
+
       throw error;
     }
   }

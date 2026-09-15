@@ -8,7 +8,6 @@ import {
   ShipTodayPendingDetailRow,
   ShipToDefineDetailRow,
   OrderInternalStatus,
-  COMPLETED_ORDER_INTERNAL_STATUSES,
 } from "./orders.types";
 import { Op, fn, col, literal, WhereOptions } from "sequelize";
 import { Invoice } from "../../../warehouse";
@@ -16,13 +15,28 @@ import InvoiceUnitBusinessAttributes from "../../../warehouse/fiscal/invoices/in
 import {
   collectionDateDayRangeCompat,
   collectionDateFutureStartCompat,
-  isBeforeShippingCutoff,
+  nowTz,
+  SHIPPING_WINDOW_END_HOUR_OPERATION,
+  SHIPPING_WINDOW_START_HOUR_OPERATION,
+  startOfDayTz,
 } from "../../../../shared/utils/normalizers/date";
-import { collectionDateBucketLiteral } from "./helpers/aggregates";
+import { collectionDateBucketLiteral, tomorrowBucketKey } from "./helpers/aggregates";
 import { translateOrderInternalStatus } from "./helpers/translations";
 import Store from "../../stores/stores.model";
 
 const MERCADO_LIVRE_STORE_NAME = "MercadoLivre";
+
+// Janela de embarque do dia: a nota só "vale pra hoje" se foi emitida
+// entre 06h e 14h. Substitui o antigo `isBeforeShippingCutoff()` —
+// aquilo era uma checagem de RELÓGIO (agora é antes das 14h?), isso aqui
+// é uma checagem de DADO (a nota foi emitida dentro da janela?). A
+// diferença importa: o resultado das abas não muda mais só porque o
+// relógio passou das 14h, muda porque a nota entrou (ou não) na janela.
+
+// Status da NOTA (InvoiceUnitBusinessAttributes.status) que ainda contam
+// como pendente. CONFIRMAR se existe enum próprio pra isso — se existir,
+// trocar as strings pelos membros do enum.
+const PENDING_INVOICE_ATTRIBUTE_STATUSES = ["PENDING", "OPEN"];
 
 export class OrderRepository extends BaseRepository<Order> {
   constructor() {
@@ -51,6 +65,61 @@ export class OrderRepository extends BaseRepository<Order> {
     return this.mercadoLivreStoreId;
   }
 
+  // Nota SEM pedido, ainda pendente de embarque hoje — espelha o caso (B)
+// de pendingMercadoLivreWhere (invoice-filters.helper.ts), mas aqui do
+// lado do OrderRepository, escopado por unitBusinessId (mesmo escopo de
+// countShipTodayPending). Sem isso, uma nota que a Bling nunca amarrou a
+// nenhum Order simplesmente não aparecia em lugar nenhum, mesmo emitida
+// dentro da janela.
+private orphanInvoicePendingWhere(unitBusinessId: string): WhereOptions | null {
+  const { start: windowStart, end: windowEnd } = this.shippingWindowRange();
+  if (nowTz().isAfter(windowEnd)) return null;
+
+  return {
+    "$store.name$": MERCADO_LIVRE_STORE_NAME,
+    "$order.id$": { [Op.is]: null } as any,
+    "$unitBusinessAttributes.unit_business_id$": unitBusinessId,
+    "$unitBusinessAttributes.batch_generated$": false,
+    "$unitBusinessAttributes.status$": {
+      [Op.in]: PENDING_INVOICE_ATTRIBUTE_STATUSES,
+    },
+    emitted_at: { [Op.between]: [windowStart, windowEnd] },
+  };
+}
+
+// Nota SEM pedido que passou da janela de hoje sem se resolver — só
+// existe DEPOIS que a janela fecha (antes disso ela ainda pode virar
+// "pending" ou ganhar um Order a qualquer momento). Sem collection_date
+// pra saber "pra quando", o critério é: passou das 14h → é pra amanhã,
+// não importa se emitiu tarde ou nem emitiu ainda. Se um Order vier a
+// existir depois, ela sai daqui e passa a seguir futureShipmentWhere
+// normal (bucket certo, pelo collection_date do pedido).
+private orphanFutureInvoiceWhere(): WhereOptions | null {
+  const { end: windowEnd } = this.shippingWindowRange();
+  if (!nowTz().isAfter(windowEnd)) return null;
+
+  return {
+    "$store.name$": MERCADO_LIVRE_STORE_NAME,
+    "$order.id$": { [Op.is]: null } as any,
+    [Op.or]: [
+      { emitted_at: { [Op.is]: null } as any },
+      { emitted_at: { [Op.gt]: windowEnd } },
+    ],
+  };
+}
+
+  // Janela 06h–14h de HOJE, derivada do mesmo início-de-dia que
+  // `collectionDateDayRangeCompat()` já usa — assim a janela e o range de
+  // coleta ficam no mesmo referencial de fuso, sem duas fontes de verdade.
+  // Se/quando virar utilitário compartilhado (invoice.service precisa da
+  // mesma janela nas 4 abas), mover pra shared/utils/normalizers/date.
+  private shippingWindowRange(): { start: Date; end: Date } {
+  return {
+    start: startOfDayTz().hour(SHIPPING_WINDOW_START_HOUR_OPERATION).toDate(),
+    end: startOfDayTz().hour(SHIPPING_WINDOW_END_HOUR_OPERATION).toDate(),
+  };
+}
+
   async findWithSalesReportSnapshot(
     orderId: string,
   ): Promise<OrderWithSalesSnapshotRaw | null> {
@@ -76,15 +145,20 @@ export class OrderRepository extends BaseRepository<Order> {
   // preenchido quando a `loja` da Bling mapeia pra uma filial física
   // (UnitBusiness) — pedidos de canal de marketplace (Mercado Livre,
   // Shopee, etc.) não têm essa relação e ficam com unit_business_id nulo
-  // na prática, então escopar por ele zera os 3 que dependem de
-  // collection_date. O escopo real desses 3 é a loja; human_verification
+  // na prática, então escopar por ele zera os que dependem de
+  // collection_date. O escopo real desses é a loja; human_verification
   // nem isso (ver comentário abaixo).
 
   // Situação 748772 é um status geral da Bling, não restrito a nenhum
-  // canal — sem escopo nenhum além do próprio status.
+  // canal. Só conta quando o pedido também está CANCELLED —
+  // 748772 sozinho não basta mais.
   async countHumanVerification(): Promise<number> {
     return this.model.count({
-      where: { actual_situation: "748772" },
+      where: {
+        actual_situation: "748772",
+        internal_status: OrderInternalStatus.CANCELLED,
+        reason_cancelled: {[Op.ne]: null}
+      },
     });
   }
 
@@ -93,100 +167,117 @@ export class OrderRepository extends BaseRepository<Order> {
   // lista. Retorna null quando a loja MercadoLivre nem existe (ambos os
   // chamadores tratam isso como "vazio", sem query nenhuma).
   //
-  // "Embarca hoje" não é só `collection_date` de hoje: um pedido com
-  // `collection_date` futura mas que já tem invoice emitida ainda conta,
-  // desde que ainda não tenha passado do horário-limite de embarque
-  // (`isBeforeShippingCutoff`) — despacho antecipado. Depois do corte, só
-  // `collection_date` de hoje conta (mesma regra usada pelas 4 abas
-  // Mercado Livre de `invoice.service.ts`, ver `helpers/custom-filters.ts`).
+  // Duas formas de um pedido ser "pendente de embarque hoje". O
+  // `internal_status` do PEDIDO só desqualifica em um caso: CANCELLED. Fora
+  // isso não importa se é OPEN, WAITING_CHANNEL_VALIDATION, EMITTED,
+  // SENT_TO_TRANSPORTER ou DELIVERED — quem precisa estar pendente é a
+  // NOTA, não o pedido (as duas colunas divergem: várias filas avançam
+  // `internal_status` sem tocar `batch_generated`/status da nota).
   //
-  // "Ainda não embarcou" é `internal_status IN (OPEN,
-  // WAITING_CHANNEL_VALIDATION)` (ainda nem tem invoice, no fluxo normal)
-  // OU invoice com `batch_generated = false` (invoice já emitida, mas o
-  // lote dessa filial ainda não foi gerado) — NÃO mais `invoice_id IS
-  // NULL`, que é impreciso pra essa checagem. O guard extra de
-  // `internal_status NOT IN COMPLETED_ORDER_INTERNAL_STATUSES` (EMITTED,
-  // SENT_TO_TRANSPORTER, DELIVERED) existe porque as duas colunas podem
-  // divergir (várias filas avançam `internal_status` sem tocar
-  // `batch_generated`, ver a nota sobre `status_snapshot`/`internal_status`
-  // mais acima neste arquivo/CLAUDE.md) — sem ele, um pedido cujo
-  // `internal_status` já avançou (emitido, enviado ao transportador ou
-  // entregue) mas cuja `InvoiceUnitBusinessAttributes.batch_generated`
-  // (dessa filial) ainda não foi marcada `true` voltaria a aparecer como
-  // pendente.
+  // A) JÁ tem nota, mas ela não precisa ter sido emitida hoje — só a
+  //    `collection_date` do pedido precisa ser hoje. Cobre o caso da nota
+  //    emitida em outro dia (ou ainda sem `emitted_at`) cujo pedido, ainda
+  //    assim, tem coleta marcada pra hoje.
+  //
+  // B) A nota manda e a coleta é irrelevante — se a nota foi emitida hoje
+  //    na janela 06h–14h, o pedido embarca hoje mesmo que a
+  //    `collection_date` seja amanhã (ou não exista). Exige
+  //    `batch_generated = false` (lote da filial ainda não gerado) e
+  //    status da nota em PENDING/OPEN.
+  //
+  // Pedido totalmente SEM nota não entra em nenhum dos dois casos.
   private async shipTodayPendingWhere(): Promise<WhereOptions | null> {
     const storeId = await this.resolveMercadoLivreStoreId();
     if (!storeId) return null;
 
     const { start, end } = collectionDateDayRangeCompat();
-    const eligibleToday: WhereOptions[] = [
-      { collection_date: { [Op.between]: [start, end] } },
-    ];
-    if (isBeforeShippingCutoff()) {
-      eligibleToday.push({ invoice_id: { [Op.ne]: null } as any });
-    }
+    const { start: windowStart, end: windowEnd } = this.shippingWindowRange();
+
+    // Depois das 14h a janela de hoje já fechou — nada pode mais ser
+    // "pendente de embarque hoje" (A e B, os dois casos). Quem ainda não
+    // foi batched já é responsabilidade de futureShipmentWhere.
+    if (nowTz().isAfter(windowEnd)) return null;
 
     return {
       store_id: storeId,
-      internal_status: {
-        [Op.notIn]: COMPLETED_ORDER_INTERNAL_STATUSES as OrderInternalStatus[],
+      internal_status: { [Op.ne]: OrderInternalStatus.CANCELLED },
+      invoice_id: { [Op.ne]: null } as any,
+      "$invoice.unitBusinessAttributes.batch_generated$": false,
+      "$invoice.unitBusinessAttributes.status$": {
+        [Op.in]: PENDING_INVOICE_ATTRIBUTE_STATUSES,
       },
-      [Op.and]: [
-        { [Op.or]: eligibleToday },
-        {
-          [Op.or]: [
-            {
-              internal_status: {
-                [Op.in]: [
-                  OrderInternalStatus.OPEN,
-                  OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
-                ],
-              },
-            },
-            { "$invoice.unitBusinessAttributes.batch_generated$": false },
-          ],
-        },
+      [Op.or]: [
+        // (A) collection_date de hoje
+        { collection_date: { [Op.between]: [start, end] } },
+        // (B) nota emitida hoje na janela
+        { "$invoice.emitted_at$": { [Op.between]: [windowStart, windowEnd] } },
       ],
     };
   }
 
-  // batch_generated é por (invoice_id, unit_business_id) — diferente dos
-  // outros escopos deste arquivo, esse aqui é sobre QUEM gerou o lote (a
-  // filial do usuário logado), não sobre o pedido/canal em si. Único
-  // método que recebe unitBusinessId.
-  async countShipTodayPending(unitBusinessId: string): Promise<number> {
-    const where = await this.shipTodayPendingWhere();
-    if (!where) return 0;
+  // batch_generated/status são por (invoice_id, unit_business_id) —
+  // diferente dos outros escopos deste arquivo, esse aqui é sobre QUEM
+  // gerou o lote (a filial do usuário logado), não sobre o pedido/canal em
+  // si. Único método que recebe unitBusinessId.
+ async countShipTodayPending(unitBusinessId: string): Promise<number> {
+  const orderWhere = await this.shipTodayPendingWhere();
+  const orderCount = orderWhere
+    ? await this.model.count({
+        distinct: true,
+        col: "id",
+        where: orderWhere,
+        include: [
+          {
+            model: Invoice,
+            as: "invoice",
+            required: false,
+            attributes: [],
+            include: [
+              {
+                model: InvoiceUnitBusinessAttributes,
+                as: "unitBusinessAttributes",
+                required: false,
+                attributes: [],
+                where: { unit_business_id: unitBusinessId },
+              },
+            ],
+          },
+        ],
+      })
+    : 0;
 
-    return this.model.count({
-      distinct: true,
-      col: "id",
-      where,
-      include: [
-        {
-          model: Invoice,
-          as: "invoice",
-          required: false,
-          attributes: [],
-          include: [
-            {
-              model: InvoiceUnitBusinessAttributes,
-              as: "unitBusinessAttributes",
-              required: false,
-              attributes: [],
-              where: { unit_business_id: unitBusinessId },
-            },
-          ],
-        },
-      ],
-    });
-  }
+  const orphanWhere = this.orphanInvoicePendingWhere(unitBusinessId);
+  const orphanCount = orphanWhere
+    ? await Invoice.count({
+        distinct: true,
+        col: "id",
+        where: orphanWhere,
+        include: [
+          { model: Store, as: "store", required: true, attributes: [] },
+          { model: Order, as: "order", required: false, attributes: [] },
+          {
+            model: InvoiceUnitBusinessAttributes,
+            as: "unitBusinessAttributes",
+            required: true,
+            attributes: [],
+          },
+        ],
+      })
+    : 0;
+
+  return orderCount + orphanCount;
+}
 
   // Where compartilhado entre countShipToDefine e findShipToDefineDetail —
   // mesmo critério pros dois. Só pedidos ainda pendentes: um pedido já
   // FINISHED/CANCELLED/EMITTED/WAITING_FOR_NFE_EMISSION (ou qualquer outro
   // status além dos 2 abaixo) não precisa de coleta "a definir" nenhuma,
   // mesmo sem collection_date.
+  //
+  // E, agora, só pedido SEM nota vinculada: se já existe invoice, o embarque
+  // deixou de ser "a definir" — ele já é resolvido por
+  // shipTodayPendingWhere (nota na janela 06h–14h) ou por
+  // futureShipmentWhere (nota emitida depois das 14h).
   private async shipToDefineWhere(): Promise<WhereOptions | null> {
     const storeId = await this.resolveMercadoLivreStoreId();
     if (!storeId) return null;
@@ -202,6 +293,7 @@ export class OrderRepository extends BaseRepository<Order> {
       // Sequelize tipa Op.is como exigindo um Literal, não `null` puro —
       // cast pontual, é o idiom padrão do Sequelize pra "IS NULL".
       collection_date: { [Op.is]: null } as any,
+      invoice_id: { [Op.is]: null } as any,
     };
   }
 
@@ -212,30 +304,57 @@ export class OrderRepository extends BaseRepository<Order> {
     return this.model.count({ where });
   }
 
-  // Espelha shipTodayPendingWhere: um pedido com collection_date futura mas
-  // já invoice emitida, antes do horário-limite de embarque, já conta como
-  // "embarca hoje" (ver lá) — não pode contar aqui também. Depois do corte,
-  // ninguém mais "sobe" pra hoje, então até quem já tem invoice permanece
-  // "embarque futuro".
+  // Corte de "future" é dinâmico: antes das 14h, só entra quem tem
+  // collection_date >= amanhã (hoje ainda pode embarcar hoje, dando tempo
+  // da nota sair dentro da janela). Depois das 14h, a janela de hoje já
+  // fechou — collection_date de HOJE sem nota emitida a tempo também já
+  // é "future" na prática (só vai embarcar amanhã), então o corte desce
+  // pro início de hoje.
   private futureShipmentWhere(storeId: string): WhereOptions {
-    const where: WhereOptions = {
+    const { end: windowEnd } = this.shippingWindowRange();
+    const pastTodaysCutoff = nowTz().isAfter(windowEnd);
+
+    const futureStart = pastTodaysCutoff
+      ? startOfDayTz().toDate()
+      : collectionDateFutureStartCompat();
+
+    return {
       store_id: storeId,
-      collection_date: { [Op.gte]: collectionDateFutureStartCompat() },
+      collection_date: { [Op.gte]: futureStart },
+      [Op.or]: [
+        { invoice_id: { [Op.is]: null } as any },
+        { "$invoice.emitted_at$": { [Op.is]: null } as any },
+        { "$invoice.emitted_at$": { [Op.gt]: windowEnd } },
+      ],
     };
-
-    if (isBeforeShippingCutoff()) {
-      where.invoice_id = { [Op.is]: null } as any;
-    }
-
-    return where;
   }
 
-  async countShipToFuture(): Promise<number> {
-    const storeId = await this.resolveMercadoLivreStoreId();
-    if (!storeId) return 0;
+async countShipToFuture(): Promise<number> {
+  const storeId = await this.resolveMercadoLivreStoreId();
+  const orderCount = storeId
+    ? await this.model.count({
+        distinct: true,
+        col: "id",
+        where: this.futureShipmentWhere(storeId),
+        include: [{ model: Invoice, as: "invoice", required: false, attributes: [] }],
+      })
+    : 0;
 
-    return this.model.count({ where: this.futureShipmentWhere(storeId) });
-  }
+  const orphanWhere = this.orphanFutureInvoiceWhere();
+  const orphanCount = orphanWhere
+    ? await Invoice.count({
+        distinct: true,
+        col: "id",
+        where: orphanWhere,
+        include: [
+          { model: Store, as: "store", required: true, attributes: [] },
+          { model: Order, as: "order", required: false, attributes: [] },
+        ],
+      })
+    : 0;
+
+  return orderCount + orphanCount;
+}
 
   // ─── Detalhe ──────────────────────────────────────────────────────────────
 
@@ -243,17 +362,21 @@ export class OrderRepository extends BaseRepository<Order> {
   // só contar — mesmo escopo de unit_business_id (via
   // shipTodayPendingWhere/o include de unitBusinessAttributes).
   async findShipTodayPendingDetail(
-    unitBusinessId: string,
-  ): Promise<ShipTodayPendingDetailRow[]> {
-    const where = await this.shipTodayPendingWhere();
-    if (!where) return [];
-
-    const rows = await this.model.findAll({
+  unitBusinessId: string,
+): Promise<ShipTodayPendingDetailRow[]> {
+  const where = await this.shipTodayPendingWhere();
+  const orderRows = where
+  ? await this.model.findAll({
       subQuery: false,
       where,
       attributes: ["number_order_system", "date", "collection_date"],
       include: [
-        { model: Customer, as: "customer", required: false, attributes: ["name"] },
+        {
+          model: Customer,
+          as: "customer",
+          required: false,
+          attributes: ["name"],
+        },
         {
           model: Invoice,
           as: "invoice",
@@ -271,20 +394,58 @@ export class OrderRepository extends BaseRepository<Order> {
         },
       ],
       order: [["collection_date", "ASC"]],
-    });
+    })
+  : [];
 
-    return rows.map((r) => {
-      const plain = r.get({ plain: true }) as any;
-      return {
-        number_order_system: plain.number_order_system,
-        customer_name: plain.customer?.name ?? null,
-        sale_date: plain.date,
-        collection_date: plain.collection_date,
-        invoice_number: plain.invoice?.number_system ?? null,
-        invoice_emitted_at: plain.invoice?.emitted_at ?? null,
-      };
-    });
-  }
+  const orderDetail = orderRows.map((r) => {
+    const plain = r.get({ plain: true }) as any;
+    return {
+      number_order_system: plain.number_order_system,
+      customer_name: plain.customer?.name ?? null,
+      sale_date: plain.date,
+      collection_date: plain.collection_date,
+      invoice_number: plain.invoice?.number_system ?? null,
+      invoice_emitted_at: plain.invoice?.emitted_at ?? null,
+    };
+  });
+
+  const orphanWhere = this.orphanInvoicePendingWhere(unitBusinessId);
+  const orphanRows = orphanWhere
+    ? await Invoice.findAll({
+        subQuery: false,
+        where: orphanWhere,
+        attributes: ["number_system", "emitted_at", "receiver_name"],
+        include: [
+          { model: Store, as: "store", required: true, attributes: [] },
+          { model: Order, as: "order", required: false, attributes: [] },
+          {
+            model: InvoiceUnitBusinessAttributes,
+            as: "unitBusinessAttributes",
+            required: true,
+            attributes: [],
+          },
+        ],
+        order: [["emitted_at", "ASC"]],
+      })
+    : [];
+
+  // Nota sem pedido: customer_name vem do receiver_name da própria
+  // Invoice (não tem Customer/Order pra puxar). number_order_system,
+  // sale_date e collection_date ficam null — não existe pedido.
+  const orphanDetail: ShipTodayPendingDetailRow[] = orphanRows.map((r) => {
+    const plain = r.get({ plain: true }) as any;
+    return {
+      number_order_system: null,
+      customer_name: plain.receiver_name ?? null,
+      sale_date: null,
+      collection_date: null,
+      invoice_number: plain.number_system,
+      invoice_emitted_at: plain.emitted_at,
+    };
+  });
+
+  return [...orderDetail, ...orphanDetail];
+}
 
   // Mesmo where de countShipToDefine, listando os pedidos em vez de só
   // contar.
@@ -311,7 +472,12 @@ export class OrderRepository extends BaseRepository<Order> {
       where,
       attributes: ["number_order_system", "internal_status", "date"],
       include: [
-        { model: Customer, as: "customer", required: false, attributes: ["name"] },
+        {
+          model: Customer,
+          as: "customer",
+          required: false,
+          attributes: ["name"],
+        },
       ],
       order: [["date", "ASC"]],
     });
@@ -334,7 +500,7 @@ export class OrderRepository extends BaseRepository<Order> {
   > {
     const rows = (await this.model.findAll({
       attributes: ["reason_cancelled", [fn("COUNT", col("id")), "quantity"]],
-      where: { actual_situation: "748772" },
+      where: { actual_situation: "748772", reason_cancelled: {[Op.ne]: null}, internal_status: OrderInternalStatus.CANCELLED },
       group: ["reason_cancelled"],
       raw: true,
     })) as unknown as Array<{
@@ -348,28 +514,59 @@ export class OrderRepository extends BaseRepository<Order> {
     }));
   }
 
-  async groupShipToFutureByDate(): Promise<
-    Array<{ date: string; quantity: number }>
-  > {
-    const storeId = await this.resolveMercadoLivreStoreId();
-    if (!storeId) return [];
-
-    const rows = (await this.model.findAll({
+  // `subQuery: false` + include de invoice (mesmo sem atributos) porque
+  // futureShipmentWhere referencia `$invoice.emitted_at$`.
+  // COUNT(DISTINCT id): invoice é 1:1 via orders.invoice_id, mas o DISTINCT
+  // protege o agrupamento caso o join deixe de ser 1:1.
+  async groupShipToFutureByDate(): Promise<Array<{ date: string; quantity: number }>> {
+  const storeId = await this.resolveMercadoLivreStoreId();
+  const orderGroups = storeId
+    ? await this.model.findAll({
+      subQuery: false,
       attributes: [
         [collectionDateBucketLiteral(), "date_bucket"],
-        [fn("COUNT", col("id")), "quantity"],
+        [fn("COUNT", fn("DISTINCT", col("Order.id"))), "quantity"],
       ],
       where: this.futureShipmentWhere(storeId),
+      include: [
+        { model: Invoice, as: "invoice", required: false, attributes: [] },
+      ],
       group: ["date_bucket"],
       order: [[literal("date_bucket"), "ASC"]],
       raw: true,
-    })) as unknown as Array<{ date_bucket: string; quantity: string }>;
+    })
+    : [];
 
-    return rows.map((r) => ({
-      date: r.date_bucket,
-      quantity: Number(r.quantity),
-    }));
+  const buckets = orderGroups.map((r: any) => ({
+    date: r.date_bucket,
+    quantity: Number(r.quantity),
+  }));
+
+  const orphanWhere = this.orphanFutureInvoiceWhere();
+  if (orphanWhere) {
+    const orphanCount = await Invoice.count({
+      distinct: true,
+      col: "id",
+      where: orphanWhere,
+      include: [
+        { model: Store, as: "store", required: true, attributes: [] },
+        { model: Order, as: "order", required: false, attributes: [] },
+      ],
+    });
+
+    if (orphanCount > 0) {
+      const tomorrowKey = tomorrowBucketKey();
+      const existing = buckets.find((b) => b.date === tomorrowKey);
+      if (existing) {
+        existing.quantity += orphanCount;
+      } else {
+        buckets.push({ date: tomorrowKey, quantity: orphanCount });
+      }
+    }
   }
+
+  return buckets;
+}
 }
 
 export default new OrderRepository();

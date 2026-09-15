@@ -10,7 +10,10 @@ import {
   ShipTodayPendingDetailRow,
   ShipToDefineDetailRow,
 } from "./orders.types";
-import { QueryParams, PaginatedResult } from "../../../../shared/query/query.types";
+import {
+  QueryParams,
+  PaginatedResult,
+} from "../../../../shared/query/query.types";
 
 const toNumber = (value: number | string | null | undefined): number =>
   value == null ? 0 : Number(value);
@@ -19,15 +22,20 @@ export class OrderService extends BaseService<Order, OrderRepository> {
   constructor() {
     super(orderRepository);
 
-     this.queryConfig = {
+    this.queryConfig = {
       defaults: {
         perPage: 20,
-        sortBy: ['created_at'],
-        sortDir: 'DESC',
+        sortBy: ["created_at"],
+        sortDir: "DESC",
       },
-      sortableFields: ['created_at', 'date', 'collection_date', 'internal_status'],
-      stringFields: ['number_order_system'],
-      searchFields: ['number_order_system'],
+      sortableFields: [
+        "created_at",
+        "date",
+        "collection_date",
+        "internal_status",
+      ],
+      stringFields: ["number_order_system"],
+      searchFields: ["number_order_system"],
       customFields: {
         // filters[status] filtra pelo status_snapshot congelado em
         // sales_order_snapshots (gerado pelo job do relatório de vendas),
@@ -46,39 +54,50 @@ export class OrderService extends BaseService<Order, OrderRepository> {
             },
           };
         },
+        human_verification: (value) => {
+          if (value !== "true") return {};
+
+          return {
+            internal_status: "CANCELLED",
+            actual_situation: "748772",
+            reason_cancelled: {
+              [Op.ne]: null,
+            },
+          };
+        },
       },
     };
   }
 
-  async paginate(params: QueryParams, extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">): Promise<PaginatedResult<Order>> {
-      const result = await super.paginate(params, {
-        ...extraOptions,
-        attributes: {exclude: [
-          'source_payload'
-        ]},
-        include: [
-          ...(extraOptions?.include as any[] ?? []),
-          {
-            model: SalesOrderSnapshot,
-            as: "salesSnapshot",
-            attributes: ["status_snapshot"],
-            required: false,
-          },
-          { model: Customer, as: "customer" },
-        ],
-      });
+  async paginate(
+    params: QueryParams,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<PaginatedResult<Order>> {
+    const result = await super.paginate(params, {
+      ...extraOptions,
+      attributes: { exclude: ["source_payload"] },
+      include: [
+        ...((extraOptions?.include as any[]) ?? []),
+        {
+          model: SalesOrderSnapshot,
+          as: "salesSnapshot",
+          attributes: ["status_snapshot"],
+          required: false,
+        },
+        { model: Customer, as: "customer" },
+      ],
+    });
 
-     
-      const data = result.data.map((order) => {
-        const { salesSnapshot, ...plain } = order.get({ plain: true }) as any;
+    const data = result.data.map((order) => {
+      const { salesSnapshot, ...plain } = order.get({ plain: true }) as any;
 
-        return {
-          ...plain,
-          status: salesSnapshot?.status_snapshot ?? plain.internal_status ?? null,
-        };
-      });
+      return {
+        ...plain,
+        status: salesSnapshot?.status_snapshot ?? plain.internal_status ?? null,
+      };
+    });
 
-      return { ...result, data: data as unknown as Order[] };
+    return { ...result, data: data as unknown as Order[] };
   }
 
   async getFullOrder(id: string): Promise<FullOrder> {
@@ -100,9 +119,8 @@ export class OrderService extends BaseService<Order, OrderRepository> {
   async getOrderSalesReportDetail(
     orderId: string,
   ): Promise<OrderSalesReportDetail> {
-    const orderData = await this.repository.findWithSalesReportSnapshot(
-      orderId,
-    );
+    const orderData =
+      await this.repository.findWithSalesReportSnapshot(orderId);
 
     if (!orderData) throw new Error("Pedido não encontrado.");
 
@@ -177,10 +195,7 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       return [];
     }
 
-    await this.repository.bulkUpdate(
-      { waiting_acceptance: false },
-      { where },
-    );
+    await this.repository.bulkUpdate({ waiting_acceptance: false }, { where });
 
     return affectedOrders;
   }
@@ -193,17 +208,13 @@ export class OrderService extends BaseService<Order, OrderRepository> {
   // nenhum outro método deste resumo escopa por unit business.
 
   async getOrdersStatusSummary(unitBusinessId: string) {
-    const [
-      humanVerification,
-      shipTodayPending,
-      shipToDefine,
-      shipToFuture,
-    ] = await Promise.all([
-      this.repository.countHumanVerification(),
-      this.repository.countShipTodayPending(unitBusinessId),
-      this.repository.countShipToDefine(),
-      this.repository.countShipToFuture(),
-    ]);
+    const [humanVerification, shipTodayPending, shipToDefine, shipToFuture] =
+      await Promise.all([
+        this.repository.countHumanVerification(),
+        this.repository.countShipTodayPending(unitBusinessId),
+        this.repository.countShipToDefine(),
+        this.repository.countShipToFuture(),
+      ]);
 
     return {
       human_verification: { quantity: humanVerification },

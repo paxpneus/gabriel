@@ -205,7 +205,15 @@ export function collectionDateFutureStartCompat(
  * emitida, o pedido vira "embarque futuro" — não há mais tempo hábil no dia
  * de hoje.
  */
+
+// Data de corte para Emissão da automação
 export const SHIPPING_CUTOFF_HOUR = 13;
+
+// Data de corte mercado livre para operação
+export const SHIPPING_WINDOW_START_HOUR_OPERATION = 6;
+export const SHIPPING_WINDOW_END_HOUR_OPERATION = 14;
+// Para o filtro de todas mercado livre hoje, finalizados hoje e romaneio gerado hoje, para dar folga para aquelas notas e lotes que são finalizados após data de corte mas podem embarcar hoje
+export const SHIPPING_WINDOW_END_HOUR_OPERATION_AFTER_ESTIMATE_CUTOFF = 16;
 
 /**
  * `true` se "agora" (BRT) ainda está antes do horário-limite de embarque do
