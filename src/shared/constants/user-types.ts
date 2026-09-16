@@ -58,6 +58,10 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
               },
             ],
           },
+           {
+            id: "orders",
+            label: "Pedidos de Venda",
+          },
         ],
       },
 
