@@ -110,7 +110,6 @@ jest.mock("../helpers/product.helpers", () => ({
   __esModule: true,
   normalizeEan: jest.fn((ean?: string) => ean),
   resolveProductWithMapping: jest.fn(),
-  resolveProductBySku: jest.fn(),
   resolveProductBySupplierMapping: jest.fn(),
   ensureSupplierMappings: jest.fn(),
   isCodeOwnedByAnotherProduct: jest.fn().mockResolvedValue(false),
@@ -128,7 +127,6 @@ import brandsService from "../../../../inventory/brands/brands.service";
 import productService from "../../../../inventory/products/services/product.service";
 import {
   resolveProductWithMapping,
-  resolveProductBySku,
   resolveProductBySupplierMapping,
   ensureSupplierMappings,
   isCodeOwnedByAnotherProduct,
@@ -199,7 +197,6 @@ describe("TCarUpsertQueue.processProduct", () => {
       cnpj: "11222333000144",
     });
     (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-    (resolveProductBySku as jest.Mock).mockResolvedValue(null);
     (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(null);
     (ensureSupplierMappings as jest.Mock).mockResolvedValue(undefined);
     (isCodeOwnedByAnotherProduct as jest.Mock).mockResolvedValue(false);
@@ -330,45 +327,10 @@ describe("TCarUpsertQueue.processProduct", () => {
   // produto já existente pelo codigoFabrica (pode ter sido criado por outra
   // integração, ex.: Bling) e só mapeia — nunca cria duplicado.
 
-  describe("auto-mapeamento por SKU (codigoFabrica) quando sem mapping", () => {
-    it("codigoFabrica já bate com ProductConfig de um produto existente: mapeia em vez de criar/registrar unmapped", async () => {
+  describe("auto-mapeamento por SupplierMapping (codigoFabrica) quando sem mapping", () => {
+    it("codigoFabrica bate com SupplierMapping (escopado à integração): mapeia em vez de criar/registrar unmapped", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      const matchedProduct = { id: "matched-by-sku-id", name: "Produto já cadastrado" };
-      (resolveProductBySku as jest.Mock).mockResolvedValue(matchedProduct);
-      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
-        makeUpsertedProduct({ id: "matched-by-sku-id" }),
-      );
-
-      await runProductJob("updated", produto);
-
-      expect(resolveProductBySku).toHaveBeenCalledWith(
-        produto.epctb_codigofabrica,
-        expect.any(String),
-      );
-      expect(
-        integrationMappingService.createOrUpdateIntegrationMapping,
-      ).toHaveBeenCalledWith({
-        entity_type: "PRODUCT",
-        internal_id: "matched-by-sku-id",
-        integrations_id: INTEGRATION_ID,
-        external_id: String(produto.epctb_codigo),
-      });
-      expect(unmappedInvoiceProductService.resolveFromCreatedProduct).toHaveBeenCalledWith({
-        externalId: String(produto.epctb_codigo),
-        integrationsId: INTEGRATION_ID,
-      });
-      expect(productService.create).not.toHaveBeenCalled();
-      expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
-      expect(productService.upsertWithComponents).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "matched-by-sku-id" }),
-      );
-    });
-
-    it("codigoFabrica não bate, mas SupplierMapping (escopado à integração) bate: mapeia em vez de criar/registrar unmapped", async () => {
-      const produto = makeTecincoProduto();
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      (resolveProductBySku as jest.Mock).mockResolvedValue(null);
       const matchedProduct = { id: "matched-by-supplier-id", name: "Produto já cadastrado" };
       (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(matchedProduct);
       (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
@@ -390,20 +352,25 @@ describe("TCarUpsertQueue.processProduct", () => {
         integrations_id: INTEGRATION_ID,
         external_id: String(produto.epctb_codigo),
       });
+      expect(unmappedInvoiceProductService.resolveFromCreatedProduct).toHaveBeenCalledWith({
+        externalId: String(produto.epctb_codigo),
+        integrationsId: INTEGRATION_ID,
+      });
       expect(productService.create).not.toHaveBeenCalled();
+      expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
       expect(productService.upsertWithComponents).toHaveBeenCalledWith(
         expect.objectContaining({ id: "matched-by-supplier-id" }),
       );
     });
 
-    it("opts.create:true NUNCA tenta o fallback por SKU/SupplierMapping — usuário mandou criar, então cria mesmo que exista um produto com esse sku/EAN", async () => {
+    it("opts.create:true NUNCA tenta o fallback por SupplierMapping — usuário mandou criar, então cria mesmo que exista um produto com esse sku/EAN", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
       // Mesmo que o fallback ACHARIA um produto se fosse tentado, ele não
       // deve nem ser chamado — criação manual não deve reaproveitar/mapear
       // em cima de outro produto por trás.
-      const matchedProduct = { id: "matched-by-sku-id", name: "Produto já cadastrado" };
-      (resolveProductBySku as jest.Mock).mockResolvedValue(matchedProduct);
+      const matchedProduct = { id: "matched-by-supplier-id", name: "Produto já cadastrado" };
+      (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(matchedProduct);
       (productService.create as jest.Mock).mockResolvedValue(
         makeUpsertedProduct({ id: "created-product-id" }),
       );
@@ -413,7 +380,6 @@ describe("TCarUpsertQueue.processProduct", () => {
 
       await runProductJob("updated", produto, { create: true });
 
-      expect(resolveProductBySku).not.toHaveBeenCalled();
       expect(resolveProductBySupplierMapping).not.toHaveBeenCalled();
       expect(productService.create).toHaveBeenCalled();
       expect(
@@ -423,18 +389,13 @@ describe("TCarUpsertQueue.processProduct", () => {
       );
     });
 
-    it("nem codigoFabrica nem SupplierMapping batem: segue o fluxo normal (registra unmapped)", async () => {
+    it("codigoFabrica não bate com SupplierMapping: segue o fluxo normal (registra unmapped)", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-      (resolveProductBySku as jest.Mock).mockResolvedValue(null);
       (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(null);
 
       await runProductJob("updated", produto);
 
-      expect(resolveProductBySku).toHaveBeenCalledWith(
-        produto.epctb_codigofabrica,
-        expect.any(String),
-      );
       expect(resolveProductBySupplierMapping).toHaveBeenCalledWith(
         produto.epctb_codigofabrica,
         INTEGRATION_ID,
@@ -459,7 +420,6 @@ describe("TCarUpsertQueue.processProduct", () => {
 
       await runProductJob("updated", produto, { skuDuplicated: true });
 
-      expect(resolveProductBySku).not.toHaveBeenCalled();
       expect(resolveProductBySupplierMapping).not.toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -475,7 +435,7 @@ describe("TCarUpsertQueue.processProduct", () => {
 
       await runProductJob("updated", produto, { eanDuplicated: true });
 
-      expect(resolveProductBySku).not.toHaveBeenCalled();
+      expect(resolveProductBySupplierMapping).not.toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({ type: "ERROR_CATALOG_DUPLICATE" }),
       );
@@ -490,7 +450,7 @@ describe("TCarUpsertQueue.processProduct", () => {
         eanDuplicated: false,
       });
 
-      expect(resolveProductBySku).toHaveBeenCalled();
+      expect(resolveProductBySupplierMapping).toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({ type: "ERROR_CATALOG" }),
       );
@@ -917,10 +877,10 @@ describe("TCarUpsertQueue.processProduct", () => {
 
 // ─── ensureProductsFromInvoiceItems (itens de nota fiscal) ────────────────
 // resolveProductWithMapping é mapping-only (sem fallback nenhum). Quando
-// falha, o método tenta resolveProductBySku (global, mesmo padrão do
-// catalog sync) e por fim resolveProductBySupplierMapping (escopado à
-// integração) — nenhum dos dois cria integration_mapping (isso fica
-// exclusivo do catalog sync via autoMapExistingProductBySku).
+// falha, o método tenta resolveProductBySupplierMapping (escopado à
+// integração, mesmo padrão do catalog sync) — não cria integration_mapping
+// (isso fica exclusivo do catalog sync via
+// autoMapExistingProductBySupplierMapping).
 
 describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
   let queue: TCarUpsertQueue;
@@ -950,7 +910,6 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
       cnpj: "11222333000144",
     });
     (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-    (resolveProductBySku as jest.Mock).mockResolvedValue(null);
     (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(null);
     (ensureSupplierMappings as jest.Mock).mockResolvedValue(undefined);
     (ProductConfig.findOne as jest.Mock).mockResolvedValue({
@@ -961,33 +920,7 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
     }));
   });
 
-  it("mapping falha, resolveProductBySku (global) resolve: item vira operational, não tenta SupplierMapping nem cria integration_mapping", async () => {
-    const matchedProduct = { id: "matched-by-sku-id", name: "Produto já cadastrado" };
-    (resolveProductBySku as jest.Mock).mockResolvedValue(matchedProduct);
-
-    const result = await (queue as any).ensureProductsFromInvoiceItems(
-      [makeInvoiceItem()],
-      1,
-    );
-
-    expect(resolveProductBySku).toHaveBeenCalledWith(
-      "FAB-700001",
-      expect.any(String),
-    );
-    expect(resolveProductBySupplierMapping).not.toHaveBeenCalled();
-    expect(result.unmappedItems).toHaveLength(0);
-    expect(result.operationalItems).toEqual([
-      expect.objectContaining({ product_id: "matched-by-sku-id" }),
-    ]);
-    expect(ensureSupplierMappings).toHaveBeenCalledWith(
-      expect.objectContaining({ productId: "matched-by-sku-id" }),
-    );
-    expect(
-      integrationMappingService.createOrUpdateIntegrationMapping,
-    ).not.toHaveBeenCalled();
-  });
-
-  it("mapping e SKU falham, resolveProductBySupplierMapping (escopado à integração) resolve: item vira operational", async () => {
+  it("mapping falha, resolveProductBySupplierMapping (escopado à integração) resolve: item vira operational", async () => {
     const matchedProduct = {
       id: "matched-by-supplier-id",
       name: "Produto já cadastrado",
@@ -1013,7 +946,7 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("mapping, SKU e SupplierMapping falham: item vira unmapped, como hoje (regressão)", async () => {
+  it("mapping e SupplierMapping falham: item vira unmapped, como hoje (regressão)", async () => {
     const result = await (queue as any).ensureProductsFromInvoiceItems(
       [makeInvoiceItem()],
       1,

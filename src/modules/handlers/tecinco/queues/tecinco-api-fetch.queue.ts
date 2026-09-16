@@ -1277,16 +1277,16 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         continue;
       }
 
-      // ─── Resolve produto: mapping → SKU (global) → SupplierMapping (integração) ──
+      // ─── Resolve produto: mapping → SupplierMapping (integração) ──────────────
       // resolveProductWithMapping é mapping-only (só integration_mapping). Se
       // não achar, tenta o mesmo fallback usado no catalog sync (processProduct):
-      // 1. resolveProductBySku — codigoFabrica contra ProductConfig.sku,
-      //    GLOBAL (o produto pode ter sido criado por outra integração).
-      // 2. resolveProductBySupplierMapping — mesmo código, escopado à
-      //    integração Tecinco.
-      // Nenhum dos dois cria/atualiza integration_mapping aqui — esse upsert
-      // fica exclusivo do catalog sync (ver autoMapExistingProductBySku);
-      // aqui só serve pra resolver o produto pra este item da nota.
+      // resolveProductBySupplierMapping — codigoFabrica contra
+      // SupplierMapping.supplier_product_code, escopado à integração Tecinco
+      // (resolução por SKU global está fora de cogitação pra Tecinco, ver
+      // comentário em autoMapExistingProductBySupplierMapping). Não cria/
+      // atualiza integration_mapping aqui — esse upsert fica exclusivo do
+      // catalog sync (ver autoMapExistingProductBySupplierMapping); aqui só
+      // serve pra resolver o produto pra este item da nota.
       let product = await resolveProductWithMapping({
         unitBusinessId: unitBusiness.id,
         systemId,

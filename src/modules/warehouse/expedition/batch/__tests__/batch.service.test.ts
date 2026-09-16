@@ -120,30 +120,26 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
 
   describe("addInvoiceToBatch", () => {
     it("nota com unmapped UNMAPPED: bloqueia ANTES de assertTransshipment, com a mensagem e o número da nota", async () => {
-      (invoiceService.findOne as jest.Mock).mockResolvedValue({
-        id: "invoice-1",
-        number_system: "1001",
-        items: [{ id: "item-1" }],
-        get: () => ({}),
+      const invoice = makeInvoice({
+        xml_key: "29260802036483000614550010004404561245674661",
       });
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([invoice]);
       (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue(
-        [{ id: "unmapped-1", invoice_id: "invoice-1" }],
+        [{ id: "unmapped-1", invoice_id: "invoice-1", invoice: { number_system: "1001" } }],
       );
 
       await expect(
-        service.addInvoiceToBatch("29260802036483000614550010004404561245674661", "ub-1", "OUTGOING"),
+        service.addInvoiceToBatch(["29260802036483000614550010004404561245674661"], "ub-1", "OUTGOING"),
       ).rejects.toThrow(/Nota\(s\) com produtos não mapeados.*1001/);
 
       expect(assertTransshipment).not.toHaveBeenCalled();
     });
 
     it("sem unmapped: não bloqueia — passa da checagem e chega em assertTransshipment", async () => {
-      (invoiceService.findOne as jest.Mock).mockResolvedValue({
-        id: "invoice-1",
-        number_system: "1001",
-        items: [{ id: "item-1" }],
-        get: () => ({}),
+      const invoice = makeInvoice({
+        xml_key: "29260802036483000614550010004404561245674661",
       });
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([invoice]);
       (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue(
         [],
       );
@@ -152,7 +148,7 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
       );
 
       await expect(
-        service.addInvoiceToBatch("29260802036483000614550010004404561245674661", "ub-1", "OUTGOING"),
+        service.addInvoiceToBatch(["29260802036483000614550010004404561245674661"], "ub-1", "OUTGOING"),
       ).rejects.toThrow("SENTINEL_PASSOU_DO_UNMAPPED");
 
       expect(
