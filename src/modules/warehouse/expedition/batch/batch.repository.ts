@@ -87,12 +87,14 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
     options?: FindOptions,
   ): Promise<ExpeditionBatchFull> {
     const batchBase = batchId
-      ? await this.findById(batchId, { attributes: ["id", "unit_business_id"] })
+      ? await this.findById(batchId, { attributes: ["id", "unit_business_id"] , ...options,})
       : await this.findOne({
           where: { number },
           attributes: ["id", "unit_business_id"],
+          ...options,
         });
 
+      
     if (!batchBase) throw new Error("Lote não encontrado");
 
     const unitBusinessId = (batchBase as any).unit_business_id;

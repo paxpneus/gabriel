@@ -111,7 +111,7 @@ export class ExpeditionBatchInvoiceService extends BaseService<
       await invoiceService.updateInvoices(
         [batchInvoice.invoice_id],
         expeditionBatch.unit_business_id,
-        { batch_generated: false, status: "PENDING" },
+        { batch_generated: false, status: "OPEN" },
       );
 
       await scanLogsService.bulkDelete({

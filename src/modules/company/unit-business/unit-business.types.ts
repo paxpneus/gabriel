@@ -15,6 +15,7 @@ export interface UnitBusinessAttributes {
   emails?: string[] | null;
   type?: string;
   config?: UnitBusinessConfigAttributes | null
+  last_outgoing_batch_pending?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }

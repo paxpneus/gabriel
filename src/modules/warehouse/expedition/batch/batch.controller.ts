@@ -20,6 +20,7 @@ export class ExpeditionBatchController extends BaseController<
   protected middlewaresFor() {
     return {
       index: [authenticate, userPermissions],
+      searchPendingOutgoing: [authenticate, userPermissions],
       create: [authenticate, userPermissions],
       update: [authenticate, userPermissions],
       show: [authenticate, userPermissions],
@@ -34,7 +35,8 @@ export class ExpeditionBatchController extends BaseController<
       generateDeliveryNote: [authenticate, userPermissions],
       downloadDeliveryNotes: [authenticate, userPermissions],
       isComplete: [authenticate, userPermissions],
-      batchReport: [authenticate, userPermissions]
+      batchReport: [authenticate, userPermissions],
+      addInvoiceToLastOutgoingBatch: [authenticate],
     };
   }
 
@@ -45,6 +47,8 @@ export class ExpeditionBatchController extends BaseController<
       ...this.mw("generateBatchesFromInvoices"),
       (req, res) => this.generateBatchesFromInvoices(req, res),
     );
+
+    this.router.get("/outgoing-pending/search", ...this.mw("searchPendingOutgoing"), this.searchPendingOutgoing)
 
     this.router.get(
       "/by-invoices/get",
@@ -73,6 +77,12 @@ export class ExpeditionBatchController extends BaseController<
       (req, res) => this.addInvoiceToBatch(req, res),
     );
 
+     this.router.post(
+      "/add-invoice-to-last-outgoing-batch",
+      ...this.mw("addInvoiceToLastOutgoingBatch"),
+      (req, res) => this.addInvoiceToLastOutgoingBatch(req, res),
+    );
+
     this.router.put("/finish/:batchId", ...this.mw("finishBatch"), (req, res) =>
       this.finishBatch(req, res),
     );
@@ -91,6 +101,18 @@ export class ExpeditionBatchController extends BaseController<
 
     this.router.get("/report/get", ...this.mw("batchReport"), (req, res) => this.batchReport(req, res))
   }
+
+  
+   searchPendingOutgoing = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { unitBusinessId } = await getUserContext(req)
+      const params = this.extractQueryParams(req);
+      const result = await this.service.searchPendingOutgoing(params, unitBusinessId);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+   }
 
   /**
    * POST /expedition-batches/generate-from-invoices
@@ -131,9 +153,18 @@ export class ExpeditionBatchController extends BaseController<
     try {
       const { invoiceKey, unitBusinessId, type, batchId, description } = req.body;
 
+      const chaves: string[] = Array.isArray(invoiceKey)
+      ? invoiceKey
+      : invoiceKey
+        ? [invoiceKey]
+        : [];
+
+
+      const unitBusinessResolved = unitBusinessId ? unitBusinessId : (await getUserContext(req)).unitBusinessId
+
       const batches = await ExpeditionBatchService.addInvoiceToBatch(
-        invoiceKey,
-        unitBusinessId,
+        chaves,
+        unitBusinessResolved,
         type,
         batchId,
         description
@@ -143,6 +174,46 @@ export class ExpeditionBatchController extends BaseController<
       return res.status(500).json({ error: error.message });
     }
   };
+
+  addInvoiceToLastOutgoingBatch = async (
+  req: Request,
+  res: Response,
+): Promise<Response> => {
+  try {
+    const { type, description } = req.body;
+    const { invoiceKey } = req.body;
+
+    const chaves: string[] = Array.isArray(invoiceKey)
+      ? invoiceKey
+      : invoiceKey
+        ? [invoiceKey]
+        : [];
+
+    const { unitBusinessId } = await getUserContext(req);
+
+    if (!unitBusinessId) {
+      return res
+        .status(400)
+        .json({ error: "Unit business do usuário não encontrada" });
+    }
+    if (!chaves.length || !type) {
+      return res
+        .status(400)
+        .json({ error: "invoiceKey e type são obrigatórios" });
+    }
+
+    const batch = await this.service.addInvoiceToLastOutgoingBatch(
+      chaves,
+      unitBusinessId,
+      type,
+      description,
+    );
+
+    return res.json(batch);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
+};
 
   getBatchesByInvoice = async (
     req: Request,

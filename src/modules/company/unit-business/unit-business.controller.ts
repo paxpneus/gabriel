@@ -1,5 +1,6 @@
 import { authenticate } from "../../../middlewares/auth-token";
 import { userPermissions } from "../../../middlewares/user-permissions";
+import { getUserContext } from "../../../shared/query/get-logged-user";
 import BaseController from "../../../shared/utils/base-models/base-controller";
 import UnitBusiness from "./unit-business.model";
 import UnitBusinessService from "./unit-business.service";
@@ -13,6 +14,12 @@ export class UnitBusinessController extends BaseController<
     super(UnitBusinessService);
 
     this.router.get("/head-office/get", this.getHeadOffice);
+
+    this.router.get(
+      "/last-outgoing-batch-number/get-or-update",
+      ...this.mw("getOrUpdateLastOutgoingBatchNumber"),
+      (req, res) => this.getOrUpdateLastOutgoingBatchNumber(req, res),
+    );
 
     (this.router.get(
       "/all-unit-business/get",
@@ -36,6 +43,7 @@ export class UnitBusinessController extends BaseController<
       getHeadOffice: [authenticate],
       viewAllUnitBusiness: [authenticate, userPermissions],
       shutdownQueues: [authenticate, userPermissions],
+      getOrUpdateLastOutgoingBatchNumber: [authenticate],
     };
   }
 
@@ -91,6 +99,29 @@ export class UnitBusinessController extends BaseController<
       return res.status(500).json({ error: error.message });
     }
   };
+
+    getOrUpdateLastOutgoingBatchNumber = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const { unitBusinessId } = await getUserContext(req)
+
+      if (!unitBusinessId) {
+        return res
+          .status(400)
+          .json({ error: "Unit business do usuário não encontrada" });
+      }
+
+      const number =
+        await this.service.getOrUpdateLastOutgoingBatchNumber(unitBusinessId);
+
+      return res.json(number);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
 }
 
 export default new UnitBusinessController();

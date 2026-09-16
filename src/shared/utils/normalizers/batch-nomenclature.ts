@@ -1,4 +1,5 @@
 import { Op, Transaction } from "sequelize"
+import sequelize from "../../../config/sequelize"
 import InventoryBatch from "../../../modules/inventory/stock-inventory/inventory-batch/inventory-batch.model"
 import { ExpeditionBatch } from "../../../modules/warehouse"
 import { getBrazilDate } from "./date"
@@ -7,6 +8,18 @@ type batchType = 'INVENTORY' | 'ENTRANCE' | 'EXPEDITION' | 'DIVERGENCY'
 
 const formatSequence = (num: number, digits: number = 4): string => {
   return String(num).padStart(digits, '0')
+}
+
+// Serializa concorrência na geração de número: sem isso, count() + insert não são atômicos
+// e duas transações concorrentes podem calcular a mesma sequência (mesmo com transportadores/números finais diferentes).
+const acquireBatchNumberLock = async (
+  key: string,
+  transaction: Transaction,
+): Promise<void> => {
+  await sequelize.query("SELECT pg_advisory_xact_lock(hashtext(?))", {
+    replacements: [key],
+    transaction,
+  })
 }
 
 const getNextAvailableExpeditionNumber = async (
@@ -44,6 +57,10 @@ export const setBatchNumber = async (
   transporter_name?: string | null,
   transaction?: Transaction
 ): Promise<string> => {
+
+  if (transaction) {
+    await acquireBatchNumberLock(`${type}:${unitBusinessId}`, transaction)
+  }
 
   switch (type) {
     case 'ENTRANCE': {

@@ -24,8 +24,9 @@ class UnitBusiness
   public certificate_path?: string;
   public ult_nsu?: string;
   public emails?: string[] | null;
-  public config?: UnitBusinessConfigAttributes | null
-  public type?: string
+  public config?: UnitBusinessConfigAttributes | null;
+  public type?: string;
+  public last_outgoing_batch_pending?: string | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -96,6 +97,16 @@ UnitBusiness.init(
     transshipment_allowed: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
+    },
+    last_outgoing_batch_pending: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "expedition_batches",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
     },
   },
   {
