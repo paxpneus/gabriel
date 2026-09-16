@@ -37,7 +37,6 @@ import {
   normalizeEan,
   ensureSupplierMappings,
   resolveProductWithMapping,
-  resolveProductBySku,
   resolveProductBySupplierMapping,
   assertEanNotOwnedByAnotherProduct,
   isProductOwnedByIntegration,
@@ -474,16 +473,19 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     });
 
     // Sem mapping ainda: antes de registrar unmapped, tenta auto-mapear pra
-    // um produto físico já existente pelo SKU (codigoFabrica ==
-    // ProductConfig.sku) — pode ter sido criado por outra integração (ex.:
-    // Bling). Tecinco não tem conceito de KIT, então isso sempre roda
-    // quando não tem mapping ainda, a não ser que o código esteja
-    // duplicado no catálogo Tecinco (ambíguo — ver isDuplicatedInCatalog).
-    // NUNCA roda em opts.create: criação manual disparada pelo usuário é
-    // pra criar mesmo, não pra tentar reaproveitar/mapear em cima de um
-    // produto existente por trás — se o usuário mandou criar, cria.
+    // um produto físico já existente via SupplierMapping (codigoFabrica ==
+    // SupplierMapping.supplier_product_code, escopado à integração Tecinco)
+    // — pode ter sido mapeado antes por outra via. Resolver por SKU
+    // (ProductConfig.sku, global) foi removido daqui de propósito — pra
+    // Tecinco isso está fora de cogitação. Tecinco não tem conceito de KIT,
+    // então isso sempre roda quando não tem mapping ainda, a não ser que o
+    // código esteja duplicado no catálogo Tecinco (ambíguo — ver
+    // isDuplicatedInCatalog). NUNCA roda em opts.create: criação manual
+    // disparada pelo usuário é pra criar mesmo, não pra tentar
+    // reaproveitar/mapear em cima de um produto existente por trás — se o
+    // usuário mandou criar, cria.
     if (!product && !isDuplicatedInCatalog && !opts.create) {
-      product = await this.autoMapExistingProductBySku(
+      product = await this.autoMapExistingProductBySupplierMapping(
         codigoFabrica,
         systemId,
         integrations,
@@ -887,32 +889,29 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   }
 
   // ─── Auto-mapeia um produto físico já existente ────────────────────────────
-  // Cascata de 2 níveis, cada um tentado só se o anterior não achar nada:
-  // 1. resolveProductBySku — codigoFabrica contra ProductConfig.sku, GLOBAL
-  //    (sem escopar por unit_business/integração — o mesmo produto pode ter
-  //    sido criado pela Bling).
-  // 2. resolveProductBySupplierMapping — mesmo código, mas escopado à
-  //    integração Tecinco (SupplierMapping é uma tabela por-integração).
-  // Qualquer um dos dois que achar: cria o IntegrationMapping pra essa
-  // integração em vez de criar um Product duplicado, e resolve o
-  // UnmappedInvoiceProduct de origem, igual createProductFromTCarData —
-  // sem isso a próxima passagem de sync criaria unmapped de novo pra esse
+  // Resolução por codigoFabrica contra ProductConfig.sku (GLOBAL, sem
+  // escopar por integração) foi removida deste fallback — pra Tecinco,
+  // resolver por SKU está fora de cogitação, mesmo código de fábrica gera
+  // colisões entre produtos físicos completamente diferentes (ver histórico
+  // no CLAUDE.md). Sobra só resolveProductBySupplierMapping — mesmo código,
+  // mas escopado à integração Tecinco (SupplierMapping é uma tabela
+  // por-integração, não global). Se achar: cria o IntegrationMapping pra
+  // essa integração em vez de criar um Product duplicado, e resolve o
+  // UnmappedInvoiceProduct de origem, igual createProductFromTCarData — sem
+  // isso a próxima passagem de sync criaria unmapped de novo pra esse
   // systemId. Retorna null (sem side effect) se codigoFabrica não vier ou
-  // nenhum dos dois achar nada.
-  private async autoMapExistingProductBySku(
+  // não achar nada.
+  private async autoMapExistingProductBySupplierMapping(
     codigoFabrica: string | undefined,
     systemId: string,
     integrations: Awaited<ReturnType<typeof getTCarIntegration>>,
     logPrefix: string,
   ): Promise<Product | null> {
-    let matched = await resolveProductBySku(codigoFabrica, logPrefix);
-    if (!matched) {
-      matched = await resolveProductBySupplierMapping(
-        codigoFabrica,
-        integrations.id,
-        logPrefix,
-      );
-    }
+    const matched = await resolveProductBySupplierMapping(
+      codigoFabrica,
+      integrations.id,
+      logPrefix,
+    );
     if (!matched) return null;
 
     await integrationMappingService.createOrUpdateIntegrationMapping({
@@ -1295,9 +1294,6 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         logPrefix,
       });
 
-      if (!product) {
-        product = await resolveProductBySku(codigoFabrica, logPrefix);
-      }
       if (!product) {
         product = await resolveProductBySupplierMapping(
           codigoFabrica,
