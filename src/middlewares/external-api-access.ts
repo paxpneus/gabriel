@@ -5,7 +5,7 @@ const PUBLIC_API_ROUTES = new Set([
   "applications/login",
   "applications/test-webhook/post",
 ]);
-const EXTERNAL_ROUTE_PREFIXES = ["bling", "bling-orders"];
+const EXTERNAL_ROUTE_PREFIXES = ["bling", "bling-orders", "mercado_livre"];
 
 function getApiPath(req: Request): string {
   return req.originalUrl
