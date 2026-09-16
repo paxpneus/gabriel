@@ -531,7 +531,7 @@ async addInvoiceToBatch(
       unitBusinessId,
       {
         batch_generated: true,
-        status: "OPEN",
+        status: "PENDING",
         received_at: new Date().toLocaleDateString("en-CA"),
       },
       undefined,
@@ -707,23 +707,26 @@ async addInvoiceToLastOutgoingBatch(
     unitBusinessId: string,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<ExpeditionBatch>> {
-    return super.paginate(params, {
-      ...extraOptions,
-      include: [
-        {
-          model: UnitBusiness,
-          as: "unitBusiness",
-          where: {
-            id: unitBusinessId,
-            status: {[Op.in]: ['OPEN', 'PENDING']}
-          }
-        },
-        {
-          model: Transporter,
-          as: "transporter",
-        },
-      ],
-    });
+    return super.paginate(
+      params,
+      {
+        ...extraOptions,
+        include: [
+          {
+            model: UnitBusiness,
+            as: "unitBusiness",
+            where: {
+              id: unitBusinessId,
+            }
+          },
+          {
+            model: Transporter,
+            as: "transporter",
+          },
+        ],
+      },
+      { status: { [Op.in]: ["OPEN", "PENDING"] } },
+    );
   }
 
   async finishBatch(batchId: string, justification: string, user: any) {

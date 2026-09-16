@@ -102,9 +102,12 @@ export class InvoiceItemsService extends BaseService<
       );
 
       if (incomingAttr?.status !== "WAITING_SCHEDULE_SALES") {
+        // Só reabre unit business attributes fora de lote — as que já
+        // estão em lote (batch_generated) permanecem PENDING.
         await invoiceService.updateInvoicesForAllUnitBusiness(
           [invoiceItemDto.invoice_id!],
           { status: "OPEN" },
+          { batch_generated: false },
         );
       } else {
         console.log(

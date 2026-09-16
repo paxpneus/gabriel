@@ -17,7 +17,7 @@ export class UnitBusinessController extends BaseController<
 
     this.router.get(
       "/last-outgoing-batch-number/get-or-update",
-      ...this.mw("getLastOutgoingBatchNumber"),
+      ...this.mw("getOrUpdateLastOutgoingBatchNumber"),
       (req, res) => this.getOrUpdateLastOutgoingBatchNumber(req, res),
     );
 
