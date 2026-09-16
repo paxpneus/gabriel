@@ -1,0 +1,17 @@
+# Dependências e builds
+/node_modules/
+/dist/
+
+# Dados de sessão e servidores
+/ml_session/
+/ml_downloads/
+/caddy/
+/.history/
+
+# Segredos, logs e arquivos de trava
+.env
+*.env.*
+*.log
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

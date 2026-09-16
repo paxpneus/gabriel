@@ -1,0 +1,14 @@
+# Product core (`src/modules/inventory/products/`)
+
+- `Product` is **not** tenant-scoped itself — shared across integrations by design. Ownership/ambiguity resolved via `ProductConfig` (per `unit_business_id`) and `SupplierMapping` (per `integrations_id`), never via the `Product` row itself.
+- `ProductService.findProductByCode(code, unitBusinessId)` — `GET /by-code/:code`: normalizes code, checks `ProductConfig.gtin` scoped to unitBusinessId, falls back to `supplierMappingService.findByProductCode`.
+- `ProductService.findByCode(code, unitBusinessId)` — older sibling, used by `scan-logs.service.ts`; returns `{ product, matchedCode }`.
+- `create`/`update` optionally manage nested `ProductConfig`; before writing `gtin`, call `assertEanNotOwnedByAnotherProduct` (`product.helpers.ts`) — clear error instead of raw Postgres constraint error.
+- Query config (`product.query-config.ts`/`product.service.ts`): search/sort/filter by `name`, `ProductConfig.sku`, `ProductConfig.gtin`. `gtin_package` fully removed from search/sort/filter — see `config.md`.
+- Routes: `GET /:id/full`, `GET /by-code/:code`, `GET /detailed/get`, `GET /report/get`, `GET /by-unit-business/get`, `GET /sales-report/get`.
+- `products.category` enum (`TIRE`,`PART`,`OIL`,`BATTERY`,`ACCESSORY`,`WHEEL`,`TUBE`,`SERVICE`,`OTHER`; default `TIRE`; migration `20260609225551-add-product-category-and-unit-business-type.js`): existed in DB but was missing from `product.model.ts`'s `.init()` — silently dropped every read/write through Sequelize until fixed. Fixed with the same enum/default.
+- FK on `products` row delete: **CASCADE** — `product_supplier_maps.product_id`, `stocks.product_id`, `product_configs.product_id`, `kit_components.product_id` (KIT/parent side). **SET NULL** — `invoice_fiscal_items.product_id`. **RESTRICT** — `invoice_items.product_id`, `stock_movements.product_id` (`m194`), `expedition_batch_items.product_id`, `inventory_batch_items.product_id`, `kit_components.product_component_id` (component side). No code path hard-deletes a `Product` today.
+
+## Product ↔ external id resolution
+
+No `id_system`-style column on `Product` — it was removed (`m275`) and doesn't exist anymore. Resolving a product by an external integration id always goes through `integrationMappingService.findEntityByMapping("PRODUCT", integrationsId, externalId)`. Reason it was removed, not just left alone: it was **globally unique** across the table, but a physical product can legitimately have more than one external id mapped to it (different integrations, or multiple Tecinco codes for the same product) — a single global-unique column can't represent that; `integration_mappings` scopes per integration and handles it correctly. Don't reintroduce a similar single-column mapping — always resolve via `integrationMappingService`.
