@@ -237,10 +237,11 @@ export class ExpeditionBatchService extends BaseService<
         return;
       }
 
-      const unmappedRows = await unmappedInvoiceProductService.findUnmappedByInvoiceIds(
-        notBatched.map((i) => i.id),
-        t,
-      );
+      const unmappedRows =
+        await unmappedInvoiceProductService.findUnmappedByInvoiceIds(
+          notBatched.map((i) => i.id),
+          t,
+        );
       if (unmappedRows.length) {
         const numbers = [
           ...new Set(
@@ -303,165 +304,294 @@ export class ExpeditionBatchService extends BaseService<
     return (await this.repository.getFullBatch(batchId!)) as ExpeditionBatch;
   }
 
-  async addInvoiceToBatch(
-    chaveAcesso: string,
-    unitBusinessId: string,
-    type: string,
-    batchId?: string,
-    description?: string,
-  ): Promise<ExpeditionBatch> {
-    let resultBatchId: string;
+async addInvoiceToBatch(
+  chavesAcesso: string[],
+  unitBusinessId: string,
+  type: string,
+  batchId?: string,
+  description?: string,
+  externalTransaction?: Transaction,
+): Promise<ExpeditionBatch> {
+  let resultBatchId: string;
 
-    await sequelize.transaction(async (t) => {
-      const invoice = await invoiceService.findOne({
-        where: { xml_key: chaveAcesso.replace(/\s/g, "") },
-        include: [{ model: InvoiceItems, as: "items", required: false }],
-        transaction: t,
-      });
+  const run = async (t: Transaction) => {
+    if (!Array.isArray(chavesAcesso) || !chavesAcesso.length) {
+    throw new Error("Nenhuma chave de acesso informada");
+  }
 
-      if (!invoice)
-        throw new Error("Nota não encontrada para a chave de acesso informada");
-      if (!(invoice as any).items?.length)
-        throw new Error("Nota não possui itens");
+  const cleanedChaves = [
+    ...new Set(
+      chavesAcesso
+        .filter((c): c is string => typeof c === "string" && c.trim() !== "")
+        .map((c) => c.replace(/\s/g, "")),
+    ),
+  ];
 
-      const invoiceUnmapped = await unmappedInvoiceProductService.findUnmappedByInvoiceIds(
-        [invoice.id],
+  if (!cleanedChaves.length) {
+    throw new Error("Nenhuma chave de acesso válida informada");
+  }
+
+    const invoices = await invoiceService.findAll({
+      where: { xml_key: cleanedChaves },
+      include: [{ model: InvoiceItems, as: "items", required: false }],
+      transaction: t,
+    });
+
+    if (!invoices.length) {
+      throw new Error(
+        "Nenhuma nota encontrada para as chaves de acesso informadas",
+      );
+    }
+
+    if (invoices.length !== cleanedChaves.length) {
+      const foundKeys = invoices.map((i: any) => i.xml_key);
+      const missing = cleanedChaves.filter((c) => !foundKeys.includes(c));
+      throw new Error(`Nota(s) não encontrada(s): ${missing.join(", ")}`);
+    }
+
+    const semItens = invoices.filter((i) => !(i as any).items?.length);
+    if (semItens.length) {
+      throw new Error(
+        `As seguintes notas não possuem itens: ${semItens
+          .map((i) => i.number_system)
+          .join(", ")}`,
+      );
+    }
+
+    const invoiceIds = invoices.map((i) => i.id);
+
+    const invoiceUnmapped =
+      await unmappedInvoiceProductService.findUnmappedByInvoiceIds(
+        invoiceIds,
         t,
       );
-      if (invoiceUnmapped.length) {
-        throw new Error(
-          `Nota(s) com produtos não mapeados: ${invoice.number_system}`,
-        );
-      }
+    if (invoiceUnmapped.length) {
+      const numbers = [
+        ...new Set(
+          invoiceUnmapped.map(
+            (u: any) => u.invoice?.number_system ?? u.invoice_id,
+          ),
+        ),
+      ];
+      throw new Error(
+        `Nota(s) com produtos não mapeados: ${numbers.join(", ")}`,
+      );
+    }
 
-      const plainInvoice = invoice.get({ plain: true }) as any;
+    const unitBusiness = await unitBusinessService.findOne({
+      where: { id: unitBusinessId },
+      transaction: t,
+    });
 
-      const unitBusiness = await unitBusinessService.findOne({
-        where: { id: unitBusinessId },
-        transaction: t,
-      });
+    // ── Todas as notas do lote precisam ser da mesma transportadora ──
+    ensureSameBy(
+      invoices,
+      (i: any) => i.transporter_name,
+      "Não é permitido adicionar notas com transportadoras diferentes ao lote!",
+    );
 
+    for (const invoice of invoices) {
       await assertTransshipment(invoice, unitBusiness);
+    }
 
-      // ── Verifica se já existe um batch_invoice para essa nota NESSA unit_business ──
-      const alreadyInBatch = await batchInvoicesService.findOne({
-        where: { invoice_id: invoice.id },
-        include: [
-          {
-            model: ExpeditionBatch,
-            as: "batch",
-            where: { unit_business_id: unitBusinessId },
-            required: true,
-          },
-        ],
-        transaction: t,
-      });
+    // ── Verifica se alguma dessas notas já está em algum batch_invoice NESSA unit_business ──
+    const alreadyInBatch = await batchInvoicesService.findAll({
+      where: { invoice_id: invoiceIds },
+      include: [
+        {
+          model: ExpeditionBatch,
+          as: "batch",
+          where: { unit_business_id: unitBusinessId },
+          required: true,
+        },
+      ],
+      transaction: t,
+    });
 
-      if (alreadyInBatch) {
-        if (alreadyInBatch.expedition_batch_id === batchId) {
-          resultBatchId = batchId!;
-          return;
-        }
+    if (alreadyInBatch.length) {
+      const notInTargetBatch = alreadyInBatch.filter(
+        (bi) => bi.expedition_batch_id !== batchId,
+      );
+
+      if (notInTargetBatch.length) {
+        const conflictingIds = new Set(
+          notInTargetBatch.map((bi) => bi.invoice_id),
+        );
+        const numbers = invoices
+          .filter((i) => conflictingIds.has(i.id))
+          .map((i) => i.number_system)
+          .join(", ");
         throw new Error(
-          `Nota ${invoice.number_system} já pertence a outro lote nesta unidade`,
+          `Nota(s) ${numbers} já pertence(m) a outro lote nesta unidade`,
         );
       }
+    }
 
-      if (batchId) {
-        // ── Lote já existe: trava e valida ──────────────────────────────────
-        await this.findById(batchId, { transaction: t, lock: t.LOCK.UPDATE });
+    // notas que já estão no lote-alvo não precisam ser reprocessadas
+    const alreadyInTargetBatchIds = new Set(
+      alreadyInBatch.map((bi) => bi.invoice_id),
+    );
+    const plainInvoices = invoices
+      .filter((i) => !alreadyInTargetBatchIds.has(i.id))
+      .map((i) => i.get({ plain: true })) as any[];
 
-        const found = await this.findByIdFullBatch(batchId, "", {
-          transaction: t,
-        });
-        if (!found) throw new Error("Lote não encontrado");
-        if (found.status === "FINISHED") throw new Error("Lote já finalizado");
+    if (!plainInvoices.length) {
+      // todas as notas informadas já estavam no lote-alvo
+      resultBatchId = batchId!;
+      return;
+    }
 
-        if (
-          found.mode === "REGULAR" &&
-          found.transporters_id &&
-          invoice.transporter_id &&
-          found.transporters_id !== invoice.transporter_id
-        ) {
+    if (batchId) {
+      // ── Lote já existe: trava e valida ──────────────────────────────────
+      await this.findById(batchId, { transaction: t, lock: t.LOCK.UPDATE });
+
+      const found = await this.findByIdFullBatch(batchId, "", {
+        transaction: t,
+      });
+      if (!found) throw new Error("Lote não encontrado");
+      if (found.status === "FINISHED") throw new Error("Lote já finalizado");
+
+      if (found.mode === "REGULAR" && found.transporters_id) {
+        const conflicting = plainInvoices.find(
+          (i) =>
+            i.transporter_id && i.transporter_id !== found.transporters_id,
+        );
+        if (conflicting) {
           throw new Error(
             "Não é permitido adicionar notas com transportadoras diferentes ao lote!",
           );
         }
+      }
 
-        const { volumesAdded } =
-          await batchInvoicesService.createBatchInvoiceWithItems(
-            batchId,
-            [plainInvoice] as any,
-            t,
-          );
-
-        await this.increment("total_volumes", {
-          by: volumesAdded,
-          where: { id: batchId },
-          transaction: t,
-        });
-
-        if (description)
-          await invoiceService.update(
-            invoice.id,
-            { description },
-            { transaction: t },
-          );
-
-        resultBatchId = batchId;
-      } else {
-        // ── Lote não existe: cria do zero via createBatchStructure ─────────
-        let transporter;
-
-        if (invoice.transporter_id) {
-          transporter = await transporterService.findById(
-            invoice.transporter_id,
-          );
-        }
-
-        const batchData = {
-          number: await setBatchNumber(
-            "ENTRANCE",
-            unitBusiness?.number!,
-            unitBusinessId,
-            transporter?.name ?? invoice.transporter_name ?? null,
-            t,
-          ),
-          status: "OPEN",
-          unit_business_id: unitBusinessId,
-          total_volumes: 0,
-          total_volumes_received: 0,
-          integrations_id: invoice.integrations_id,
-          type,
-          transporters_id: invoice.transporter_id || null,
-        };
-
-        const { batch } = await this.createBatchStructure(
-          batchData,
-          [plainInvoice as any],
+      const { volumesAdded } =
+        await batchInvoicesService.createBatchInvoiceWithItems(
+          batchId,
+          plainInvoices as any,
           t,
         );
 
-        resultBatchId = batch.id;
+      await this.increment("total_volumes", {
+        by: volumesAdded,
+        where: { id: batchId },
+        transaction: t,
+      });
+
+      if (description) {
+        await invoiceService.updateInvoices(
+          plainInvoices.map((i) => i.id),
+          unitBusinessId,
+          { description },
+          undefined,
+          t,
+        );
       }
 
-      await invoiceService.updateInvoices(
-        [invoice.id],
-        unitBusinessId,
-        {
-          batch_generated: true,
-          status: "OPEN",
-          received_at: new Date().toLocaleDateString("en-CA"),
-        },
-        undefined,
+      resultBatchId = batchId;
+    } else {
+      // ── Lote não existe: cria do zero via createBatchStructure ─────────
+      const firstInvoice = plainInvoices[0];
+      let transporter;
+
+      if (firstInvoice.transporter_id) {
+        transporter = await transporterService.findById(
+          firstInvoice.transporter_id,
+        );
+      }
+
+      const batchType = type == "OUTGOING" ? "EXPEDITION" : "ENTRANCE";
+
+      const batchData = {
+        number: await setBatchNumber(
+          batchType,
+          unitBusiness?.number!,
+          unitBusinessId,
+          transporter?.name ?? firstInvoice.transporter_name ?? null,
+          t,
+        ),
+        status: "OPEN",
+        unit_business_id: unitBusinessId,
+        total_volumes: 0,
+        total_volumes_received: 0,
+        integrations_id: firstInvoice.integrations_id,
+        type,
+        transporters_id: firstInvoice.transporter_id || null,
+      };
+
+      const { batch } = await this.createBatchStructure(
+        batchData,
+        plainInvoices as any,
         t,
       );
-    });
 
-    return (await this.repository.getFullBatch(
-      resultBatchId!,
-    )) as ExpeditionBatch;
+      resultBatchId = batch.id;
+    }
+
+    await invoiceService.updateInvoices(
+      plainInvoices.map((i) => i.id),
+      unitBusinessId,
+      {
+        batch_generated: true,
+        status: "OPEN",
+        received_at: new Date().toLocaleDateString("en-CA"),
+      },
+      undefined,
+      t,
+    );
+  };
+
+  if (externalTransaction) {
+    await run(externalTransaction);
+    // mesma transação também na leitura final — senão lê antes do commit
+
+    return this.repository.getFullBatch(resultBatchId!, "", {
+      transaction: externalTransaction,
+    }) as Promise<ExpeditionBatch>;
   }
+
+  await sequelize.transaction(run);
+  return (await this.repository.getFullBatch(
+    resultBatchId!,
+  )) as ExpeditionBatch;
+}
+
+/**
+ * Adiciona uma ou mais notas ao último lote pendente
+ * (last_outgoing_batch_pending) da unit_business. Se não houver lote
+ * pendente ainda, addInvoiceToBatch cria um novo normalmente. Ao final,
+ * atualiza o ponteiro pro lote resultante. Tudo numa única transação —
+ * leitura do ponteiro, escrita no lote e atualização do ponteiro não podem
+ * ficar inconsistentes entre si.
+ */
+async addInvoiceToLastOutgoingBatch(
+  chavesAcesso: string[],
+  unitBusinessId: string,
+  type: string,
+  description?: string,
+): Promise<ExpeditionBatch> {
+  return sequelize.transaction(async (t) => {
+    const unitBusiness = await unitBusinessService.findById(unitBusinessId, {
+      transaction: t,
+    });
+    if (!unitBusiness) throw new Error("Unit business não encontrada");
+
+    const batch = await this.addInvoiceToBatch(
+      chavesAcesso,
+      unitBusinessId,
+      type,
+      unitBusiness.last_outgoing_batch_pending ?? undefined,
+      description,
+      t,
+    );
+
+    await unitBusinessService.update(
+      unitBusinessId,
+      { last_outgoing_batch_pending: batch.id },
+      { transaction: t },
+    );
+
+    return batch;
+  });
+}
 
   async getBatchesByInvoiceIds(
     invoiceIds: string[],
@@ -501,9 +631,15 @@ export class ExpeditionBatchService extends BaseService<
             {
               model: Product,
               as: "product",
-              include: [{ model: Stock, as: "stocks", where: {
-                unit_business_id: unitBusinessId
-              } }],
+              include: [
+                {
+                  model: Stock,
+                  as: "stocks",
+                  where: {
+                    unit_business_id: unitBusinessId,
+                  },
+                },
+              ],
             },
           ],
         },
@@ -557,6 +693,30 @@ export class ExpeditionBatchService extends BaseService<
         {
           model: UnitBusiness,
           as: "unitBusiness",
+        },
+        {
+          model: Transporter,
+          as: "transporter",
+        },
+      ],
+    });
+  }
+
+    async searchPendingOutgoing(
+    params: QueryParams,
+    unitBusinessId: string,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<PaginatedResult<ExpeditionBatch>> {
+    return super.paginate(params, {
+      ...extraOptions,
+      include: [
+        {
+          model: UnitBusiness,
+          as: "unitBusiness",
+          where: {
+            id: unitBusinessId,
+            status: {[Op.in]: ['OPEN', 'PENDING']}
+          }
         },
         {
           model: Transporter,
@@ -701,9 +861,9 @@ export class ExpeditionBatchService extends BaseService<
 
   async batchReport(id: string): Promise<ExpeditionBatchFull> {
     if (!id) {
-      throw new Error("Id do lode não informado!")
+      throw new Error("Id do lode não informado!");
     }
-    
+
     const data = await this.repository.getFullBatch(id);
 
     return data;

@@ -191,6 +191,12 @@ export function setupAssociations() {
 
   // ===== WAREHOUSE - UNIT BUSINESS =====
 
+  // Unit Business -> último lote pendente de nota (atalho)
+UnitBusiness.belongsTo(ExpeditionBatch, {
+  foreignKey: "last_outgoing_batch_pending",
+  as: "lastOutgoingBatchPending",
+});
+
   // Unit Business -> Users
   UnitBusiness.hasMany(User, {
     foreignKey: "unit_business_id",

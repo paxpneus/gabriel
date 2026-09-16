@@ -1,49 +1,58 @@
-import { FindOptions, Op } from 'sequelize';
-import { QueryParams, PaginatedResult } from '../../../shared/query/query.types';
-import BaseService from '../../../shared/utils/base-models/base-service';
-import sequelize from '../../../config/sequelize';
-import UnitBusiness from './unit-business.model';
-import unitBusinessRepository, { UnitBusinessRepository } from './unit-business.repository';
-import { UnitBusinessAttributes } from './unit-business.types';
-import UnitBusinessConfig from './unit-business-config/unit-business-config.model';
-import { resolveAllowedUnitBusinessIds } from '../../../shared/utils/entities/users/resolve-user-unit-business';
-import redisService from '../../../shared/utils/base-models/base-redis';
-import User from '../users/users/user.model';
-import { UserAttributes } from '../users/users/user.types';
-import Role from '../users/roles/role.model';
+import { FindOptions, Op, Transaction } from "sequelize";
+import {
+  QueryParams,
+  PaginatedResult,
+} from "../../../shared/query/query.types";
+import BaseService from "../../../shared/utils/base-models/base-service";
+import sequelize from "../../../config/sequelize";
+import UnitBusiness from "./unit-business.model";
+import unitBusinessRepository, {
+  UnitBusinessRepository,
+} from "./unit-business.repository";
+import { UnitBusinessAttributes } from "./unit-business.types";
+import UnitBusinessConfig from "./unit-business-config/unit-business-config.model";
+import { resolveAllowedUnitBusinessIds } from "../../../shared/utils/entities/users/resolve-user-unit-business";
+import redisService from "../../../shared/utils/base-models/base-redis";
+import User from "../users/users/user.model";
+import { UserAttributes } from "../users/users/user.types";
+import Role from "../users/roles/role.model";
+import expeditionBatchService from "../../warehouse/expedition/batch/batch.service";
 
-export class UnitBusinessService extends BaseService<UnitBusiness, UnitBusinessRepository> {
+export class UnitBusinessService extends BaseService<
+  UnitBusiness,
+  UnitBusinessRepository
+> {
   constructor() {
     super(unitBusinessRepository);
 
     this.queryConfig = {
-      filterableFields: ['id', 'head_office', 'type'],
-      sortableFields: ['name', 'number', 'createdAt', 'type'],
-      searchFields: ['name', 'cnpj'],
+      filterableFields: ["id", "head_office", "type"],
+      sortableFields: ["name", "number", "createdAt", "type"],
+      searchFields: ["name", "cnpj"],
       defaults: {
         perPage: 20,
-        sortBy: 'name',
-        sortDir: 'ASC',
+        sortBy: "name",
+        sortDir: "ASC",
       },
     };
   }
 
   async findByIdWithConfig(id: string): Promise<UnitBusinessAttributes> {
-      const result = await this.repository.findByIdWithConfig(id)
+    const result = await this.repository.findByIdWithConfig(id);
 
-      return result
+    return result;
   }
 
   async getHeadOffice(): Promise<UnitBusinessAttributes> {
     const headOffice = await this.repository.findOne({
-      where: { head_office: true }
-    })
+      where: { head_office: true },
+    });
 
     if (!headOffice) {
-      throw Error('Matriz não cadastrada')
+      throw Error("Matriz não cadastrada");
     }
 
-    return headOffice
+    return headOffice;
   }
 
   async update(
@@ -52,16 +61,21 @@ export class UnitBusinessService extends BaseService<UnitBusiness, UnitBusinessR
       label_stock_id?: string | null;
       label_shipping_id?: string | null;
     },
+    options?: { transaction?: Transaction },
   ): Promise<UnitBusiness | null> {
     const { label_stock_id, label_shipping_id, ...unitBusinessData } = data;
 
-    return sequelize.transaction(async (transaction) => {
-      const updated = await this.repository.update(id, unitBusinessData, { transaction });
+    const run = async (transaction: Transaction) => {
+      const updated = await this.repository.update(id, unitBusinessData, {
+        transaction,
+      });
 
       if (label_stock_id !== undefined || label_shipping_id !== undefined) {
         const configPatch: Record<string, unknown> = {};
-        if (label_stock_id !== undefined) configPatch.label_stock_id = label_stock_id;
-        if (label_shipping_id !== undefined) configPatch.label_shipping_id = label_shipping_id;
+        if (label_stock_id !== undefined)
+          configPatch.label_stock_id = label_stock_id;
+        if (label_shipping_id !== undefined)
+          configPatch.label_shipping_id = label_shipping_id;
 
         const existingConfig = await UnitBusinessConfig.findOne({
           where: { unit_business_id: id },
@@ -79,53 +93,105 @@ export class UnitBusinessService extends BaseService<UnitBusiness, UnitBusinessR
       }
 
       return updated;
-    });
+    };
+
+    if (options?.transaction) {
+      return run(options.transaction);
+    }
+
+    return sequelize.transaction(run);
   }
 
   async paginate(
     params: QueryParams,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<UnitBusiness>> {
-
-    let user: UserAttributes | null = await redisService.get(`user:${params.userId}`)
+    let user: UserAttributes | null = await redisService.get(
+      `user:${params.userId}`,
+    );
     if (!user) {
       user = await User.findByPk(params.userId, {
-        include: [{ model: Role, as: 'role' }]
-      })
+        include: [{ model: Role, as: "role" }],
+      });
     }
 
     const allowedIds = await resolveAllowedUnitBusinessIds(
       params.userId,
-      params.filters?.unit_business_id
+      params.filters?.unit_business_id,
     );
 
-    const canViewAll = user?.role?.permissions.find(s => s.entity === 'visualize-all-unit-business')
+    const canViewAll = user?.role?.permissions.find(
+      (s) => s.entity === "visualize-all-unit-business",
+    );
 
     const { userId, ...safeParams } = params;
 
-    const finalParams: QueryParams = (allowedIds && !canViewAll)
-      ? { ...safeParams, filters: { ...safeParams.filters, id: allowedIds } }
-      : safeParams;
+    const finalParams: QueryParams =
+      allowedIds && !canViewAll
+        ? { ...safeParams, filters: { ...safeParams.filters, id: allowedIds } }
+        : safeParams;
 
-    return this.repository.findPaginated(finalParams, this.queryConfig, extraOptions);
+    return this.repository.findPaginated(
+      finalParams,
+      this.queryConfig,
+      extraOptions,
+    );
   }
 
   async getComercialUnitBusinessOnly(): Promise<UnitBusinessAttributes[]> {
-
     const result = await this.findAll({
       where: {
         type: "PHYSICAL",
         number: {
           [Op.ne]: "0",
-        }
+        },
       },
-      order: [["number", "DESC"]]
-    })
+      order: [["number", "DESC"]],
+    });
 
-    if (!result) throw new Error("Nenhuma unit business válida para negócio cadastrada")
+    if (!result)
+      throw new Error("Nenhuma unit business válida para negócio cadastrada");
 
+    return result;
+  }
 
-    return result
+  /**
+   * Devolve o número do último lote OUTGOING pendente (não finalizado) da
+   * unit business. Consulta expedition_batches diretamente (mesma fonte de
+   * verdade que setBatchNumber usa) em vez de confiar cegamente no ponteiro
+   * last_outgoing_batch_pending — se ele estiver desatualizado (lote criado
+   * por outro fluxo, ou já finalizado), essa função corrige o ponteiro pra
+   * refletir a realidade antes de retornar.
+   */
+  async getOrUpdateLastOutgoingBatchNumber(
+    unitBusinessId: string,
+  ): Promise<string | null> {
+    const realBatch = await expeditionBatchService.findOne({
+      where: {
+        unit_business_id: unitBusinessId,
+        type: "OUTGOING",
+        status: { [Op.ne]: "FINISHED" },
+      },
+      order: [["createdAt", "DESC"]],
+      attributes: ["id", "number"],
+    });
+
+    if (!realBatch) {
+      // não há lote pendente real — garante que o ponteiro reflita isso
+      await this.update(unitBusinessId, { last_outgoing_batch_pending: null });
+      return null;
+    }
+
+    const unitBusiness = await this.findById(unitBusinessId);
+
+    // ponteiro desatualizado/dessincronizado - corrige
+    if (unitBusiness?.last_outgoing_batch_pending !== realBatch.id) {
+      await this.update(unitBusinessId, {
+        last_outgoing_batch_pending: realBatch.id,
+      });
+    }
+
+    return realBatch.number ?? null;
   }
 
   async shutdownRedis() {

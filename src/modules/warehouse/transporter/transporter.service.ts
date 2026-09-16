@@ -18,7 +18,7 @@ export class TransporterService extends BaseService<
     super(transporterRepository);
 
     this.queryConfig = {
-      defaults: { perPage: 50, sortBy: "createdAt", sortDir: "DESC" },
+      defaults: { perPage: 20, sortBy: "createdAt", sortDir: "DESC" },
       searchFields: ["name"],
       sortableFields: ["createdAt"],
     };
