@@ -247,6 +247,15 @@ export class BlingManifestacaoService {
     }
 
     await page.waitForTimeout(4_000);
+
+    // Única chance de capturar o motivo real da falha (senha incorreta,
+    // CAPTCHA, 2FA): o goto abaixo pra NOTAS_ENTRADA_URL pode fazer a Bling
+    // redirecionar de volta pro /login, mas aí já é uma página nova — sem
+    // a mensagem de erro que a Bling mostrou logo após o submit.
+    if (page.url().includes("/login")) {
+      await this.logLoginPageState(page, "logo após submeter login (antes do redirect pra notas.entrada.php)");
+    }
+
     await waitForBlingRateLimit();
     await page.goto(NOTAS_ENTRADA_URL, {
       waitUntil: "networkidle",

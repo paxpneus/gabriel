@@ -436,6 +436,15 @@ async function doAutoLogin(page: Page): Promise<boolean> {
 
 
  await page.waitForTimeout(4_000);
+
+ // Única chance de capturar o motivo real da falha (senha incorreta,
+ // CAPTCHA, 2FA): o goto abaixo pra ESTOQUE_URL pode fazer a Bling
+ // redirecionar de volta pro /login, mas aí já é uma página nova — sem
+ // a mensagem de erro que a Bling mostrou logo após o submit.
+ if (page.url().includes("/login")) {
+   await logLoginPageState(page, "logo após submeter login (antes do redirect pra estoque.php)");
+ }
+
  await page.goto(ESTOQUE_URL, { waitUntil: "networkidle", timeout: 30_000 });
  // Pequena folga extra pra cookies/JS de tracking assentarem antes de
  // começarmos a bater na API — evita falsos positivos de "sessão caída"
