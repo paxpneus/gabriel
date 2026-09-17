@@ -6,6 +6,12 @@ import { OrderService } from "../orders.service";
 import orderRepository from "../orders.repository";
 import { Invoice } from "../../../../warehouse";
 import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import integrationService from "../../../../integrations/integrations/integrations.service";
+import { getBlingIntegration } from "../../../../handlers/bling/api/bling_api.service";
+
+jest.mock("../../../../handlers/bling/api/bling_api.service", () => ({
+  getBlingIntegration: jest.fn(),
+}));
 
 jest.mock("../../../../warehouse", () => ({
   Invoice: {
@@ -83,6 +89,11 @@ describe("OrderService — resumo de status", () => {
     // OrderRepository.resolveMercadoLivreStoreId).
     (Store.findOne as jest.Mock).mockResolvedValue({ id: "store-ml-1" });
     (nowTz as jest.Mock).mockReturnValue(dayjs("2026-09-11T10:00:00"));
+    // Resumo ML só é calculado quando o unit business é da integração Bling.
+    (getBlingIntegration as jest.Mock).mockResolvedValue({ name: "Bling" });
+    jest
+      .spyOn(integrationService, "getIntegrationByUnitBusiness")
+      .mockResolvedValue({ name: "Bling" } as any);
   });
 
   it("getOrdersStatusSummary: retorna { quantity } pra cada uma das 4 categorias", async () => {
@@ -110,6 +121,24 @@ describe("OrderService — resumo de status", () => {
         pending_batch_by_transporter: [],
       }),
     );
+  });
+
+  it("getOrdersStatusSummary: unit business não-Bling retorna só pending_batch_by_transporter", async () => {
+    jest
+      .spyOn(integrationService, "getIntegrationByUnitBusiness")
+      .mockResolvedValue({ name: "Tecinco" } as any);
+    jest
+      .spyOn(invoiceService, "getPendingBatchByTransporter")
+      .mockResolvedValue([]);
+    const countHumanVerification = jest.spyOn(
+      orderRepository,
+      "countHumanVerification",
+    );
+
+    const result = await service.getOrdersStatusSummary("ub-2");
+
+    expect(result).toEqual({ pending_batch_by_transporter: [] });
+    expect(countHumanVerification).not.toHaveBeenCalled();
   });
 
     it("getShipTodayPendingDetail: lista os pedidos com cliente e nota vinculada (se tiver)", async () => {
