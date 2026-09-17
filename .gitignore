@@ -5,3 +5,4 @@ caddy/
 dist
 .env
 .history
+bling_session/

@@ -28,6 +28,11 @@ const IS_HEADLESS =
   process.env.NODE_ENV === "production" ||
   process.env.BLING_HEADLESS === "true";
 
+/** Delay aleatório dentro de uma faixa, pra imitar cadência humana de digitação/clique. */
+function randomDelayMs(min: number, max: number): number {
+  return Math.floor(min + Math.random() * (max - min));
+}
+
 export interface ManifestacaoResult {
   success: boolean;
   notasProcessadas?: number; // não é possível saber o número exato via UI, fica opcional
@@ -221,25 +226,63 @@ export class BlingManifestacaoService {
     // `p-inputtext`/`p-button-primary`, sem `.login-button-submit`). Qual
     // delas aparece varia até entre execuções do mesmo processo, então os
     // seletores abaixo evitam classes específicas de layout e usam só o que
-    // é estável nas duas versões: o id do usuário, o type="password" da
-    // senha (só existe um campo desse tipo na página) e o texto do botão —
+    // é estável nas duas versões: o id do usuário e o texto do botão —
     // esperando cada um ficar visível antes de interagir, já que a página é
     // renderizada via JS e pode não estar pronta logo após o domcontentloaded.
+    //
+    // O campo de senha NÃO pode ser localizado só por `input[type="password"]`
+    // nem só por `data-gtm-form-interact-field-id`: confirmado em produção e
+    // localmente (2026-09-17) que os dois layouts usam esquemas de atributo
+    // DIFERENTES pro mesmo campo —
+    //   • layout "clássico": campo visível é `type="text"` (mascarado via JS,
+    //     não nativamente) e tem `data-gtm-form-interact-field-id="1"`; existe
+    //     TAMBÉM um `input[type="password"]` escondido na página (provável
+    //     honeypot anti-bot), que `input[type="password"]` sozinho casava —
+    //     preenchendo a senha certa no campo errado e fazendo a Bling recusar
+    //     como "credenciais inválidas" mesmo com email/senha corretos.
+    //   • layout PrimeReact: campo é `input#login-password[type="password"]`
+    //     de verdade, mas SEM o atributo `data-gtm-form-interact-field-id` —
+    //     um seletor que dependa só desse atributo simplesmente não encontra
+    //     o campo aqui e estoura timeout.
+    // O único ponto em comum confirmado nos dois é o texto do placeholder
+    // ("Insira sua senha"), por isso ele é o critério principal; os outros
+    // dois entram só como fallback caso o placeholder mude de novo.
     const usernameField = page.locator("#username");
-    const passwordField = page.locator('input[type="password"]');
+    const passwordField = page
+      .locator(
+        'input[placeholder="Insira sua senha"], input#login-password, input[data-gtm-form-interact-field-id="1"]',
+      )
+      .first();
     const submitButton = page.getByRole("button", {
       name: "Entrar",
       exact: true,
     });
 
+    // Preenchimento "humanizado": `.fill()` seta o valor direto via DOM, sem
+    // eventos de tecla reais nem cadência entre caracteres — um dos sinais
+    // comportamentais que sistemas anti-fraude de login (o que bloqueia com
+    // "Não permitido") usam pra pontuar automação, independente da senha
+    // estar certa (confirmado 2026-09-17 em get-stock-movements.ts: login
+    // manual com as mesmas credenciais funciona, o mesmo preenchimento via
+    // `.fill()` + `.click()` imediato não). `pressSequentially` dispara
+    // teclas de verdade com delay entre elas; as pausas extras abaixo imitam
+    // o tempo de "tab" entre campos e de conferir antes de clicar.
     try {
       await usernameField.waitFor({ state: "visible", timeout: 15_000 });
-      await usernameField.fill(BLING_EMAIL);
+      await usernameField.click();
+      await usernameField.pressSequentially(BLING_EMAIL, { delay: randomDelayMs(70, 160) });
+
+      await page.waitForTimeout(randomDelayMs(300, 800));
 
       await passwordField.waitFor({ state: "visible", timeout: 15_000 });
-      await passwordField.fill(BLING_PASSWORD);
+      await passwordField.click();
+      await passwordField.pressSequentially(BLING_PASSWORD, { delay: randomDelayMs(70, 160) });
+
+      await page.waitForTimeout(randomDelayMs(400, 900));
 
       await submitButton.waitFor({ state: "visible", timeout: 15_000 });
+      await submitButton.hover();
+      await page.waitForTimeout(randomDelayMs(150, 400));
       await submitButton.click();
     } catch (err: any) {
       await this.logLoginPageState(page, "preenchimento do formulário de login");
