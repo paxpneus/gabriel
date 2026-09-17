@@ -22,7 +22,7 @@ import {
   PaginatedResult,
   QueryParams,
 } from "../../../../shared/query/query.types";
-import { FindOptions, Op, Transaction } from "sequelize";
+import { DestroyOptions, FindOptions, Op, Transaction } from "sequelize";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
@@ -39,6 +39,7 @@ import InvoiceUnitBusinessAttributes from "../../fiscal/invoices/invoice-unit-bu
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import { FullInvoice } from "../../fiscal/invoices/invoice/invoice.types";
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import scanLogsService from "../scan-logs/scan-logs.service";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -860,6 +861,51 @@ async addInvoiceToLastOutgoingBatch(
   async downloadDeliveryNotes(batchesId: string[]) {
     const batches = await this.repository.getFullBatches(batchesId);
     return batches;
+  }
+
+  private async assertDeletable(batchIds: string[]): Promise<void> {
+    const batchInvoices = await batchInvoicesService.findAll({
+      where: { expedition_batch_id: { [Op.in]: batchIds } },
+    });
+
+    const [batchItem, batchInvoiceItem, scanLog] = await Promise.all([
+      batchItemsService.findOne({
+        where: { expedition_batch_id: { [Op.in]: batchIds } },
+      }),
+      batchInvoices.length
+        ? batchInvoiceItemsService.findOne({
+            where: {
+              expedition_batch_invoice_id: batchInvoices.map((bi) => bi.id),
+            },
+          })
+        : null,
+      scanLogsService.findOne({
+        where: { expedition_batch_id: { [Op.in]: batchIds } },
+      }),
+    ]);
+
+    if (batchItem || batchInvoices.length || batchInvoiceItem || scanLog) {
+      throw new Error("Não é possível excluir um lote com itens");
+    }
+  }
+
+  async delete(id: string, options?: DestroyOptions): Promise<any> {
+    await this.assertDeletable([id]);
+
+    return super.delete(id, options);
+  }
+
+  async bulkDelete(options: DestroyOptions): Promise<number> {
+    const whereId = (options.where as any)?.id;
+    const batchIds: string[] = Array.isArray(whereId)
+      ? whereId
+      : whereId?.[Op.in] ?? (whereId ? [whereId] : []);
+
+    if (batchIds.length) {
+      await this.assertDeletable(batchIds);
+    }
+
+    return super.bulkDelete(options);
   }
 
   async batchReport(id: string): Promise<ExpeditionBatchFull> {

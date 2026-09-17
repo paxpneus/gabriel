@@ -1,4 +1,5 @@
 import { DestroyOptions, FindOptions, Op, Transaction } from "sequelize";
+import { randomUUID } from "node:crypto";
 import {
   PaginatedResult,
   QueryParams,
@@ -79,53 +80,64 @@ export class UnmappedInvoiceProductService extends BaseService<
     image: UploadInput,
     integrations_id: string
   ): Promise<UnmappedInvoiceProductAttributes> {
-    let id: string;
+    const id = randomUUID();
     let imagePath: string;
-    console.log(ean
 
-      
-    )
+    const integration = await integrationsService.findById(integrations_id);
+    if (!integration) {
+      throw new Error("Integração não encontrada");
+    }
+
+    // Nome do arquivo no uploader identifica o registro sem precisar abrir o
+    // sistema: data + id do unmapped + integração (ex.: "17/09/2026 - <id> -
+    // Tecinco.jpg"). preserveFilename:true faz o uploader sanitizar as
+    // barras da data em vez de gerar um UUID aleatório pro nome.
+    const extension = image.mimeType.split("/")[1] || "bin";
+    const filename = `${new Date().toLocaleDateString("pt-BR")} - ${id} - ${integration.name}.${extension}`;
 
     try {
-      imagePath = await uploaderService.upload(image);
+      imagePath = await uploaderService.upload({
+        ...image,
+        filename,
+        preserveFilename: true,
+      });
     } catch (error) {
       throw new Error(`Erro ao fazer upload de imagem: ${error}`);
     }
     try {
-    await sequelize.transaction(async (t) => {
-      const alreadyExists = await this.repository.findOne({
-        where: {
+      await sequelize.transaction(async (t) => {
+        const alreadyExists = await this.repository.findOne({
+          where: {
+            ean,
+            invoice_id: { [Op.eq]: null },
+          },
+          transaction: t,
+        });
+
+        if (alreadyExists) {
+          throw new Error(
+            "Produto não mapeado já registrado para ajuste no ERP!",
+          );
+        }
+
+        const payload = {
+          id,
           ean,
-          invoice_id: { [Op.eq]: null },
-        },
-        transaction: t,
+          integrations_id,
+          reason:
+            "EAN não encontrado no sistema, verificar ERP para ajustar cadastro!",
+          type: "ERROR_SCAN" as const,
+          image_path: imagePath,
+        };
+        await this.repository.create(payload, {
+          transaction: t,
+        });
       });
-
-      if (alreadyExists) {
-        throw new Error(
-          "Produto não mapeado já registrado para ajuste no ERP!",
-        );
-      }
-
-      const payload = {
-        ean,
-        integrations_id,
-        reason:
-          "EAN não encontrado no sistema, verificar ERP para ajustar cadastro!",
-        type: "ERROR_SCAN" as const,
-        image_path: imagePath,
-      };
-      const createdUnmapped = await this.repository.create(payload, {
-        transaction: t,
-      });
-
-      id = createdUnmapped.id;
-    });
-  } catch (error) {
-     await uploaderService.delete?.(imagePath);
-    throw error;
-  }
-    return (await this.findById(id!))!;
+    } catch (error) {
+      await uploaderService.delete(imagePath);
+      throw error;
+    }
+    return (await this.findById(id))!;
   }
 
   async markMapped(ids: string[]): Promise<void> {
@@ -151,6 +163,14 @@ export class UnmappedInvoiceProductService extends BaseService<
           },
           transaction: t,
         },
+      );
+
+      const imagePaths = unmapped
+        .map((u) => u.image_path)
+        .filter((path): path is string => !!path);
+
+      await Promise.all(
+        imagePaths.map((path) => uploaderService.delete(path)),
       );
     });
   }
@@ -375,8 +395,10 @@ export class UnmappedInvoiceProductService extends BaseService<
   }
 
   async delete(id: string, options?: DestroyOptions) {
-    const unMapped = await this.repository.findById(id)
-    // await uploaderService.delete?.(unMapped!.image_path);
+    const unMapped = await this.repository.findById(id);
+    if (unMapped?.image_path) {
+      await uploaderService.delete(unMapped.image_path);
+    }
     return this.repository.delete(id, options);
   }
 }
