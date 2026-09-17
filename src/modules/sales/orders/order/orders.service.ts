@@ -5,6 +5,8 @@ import SalesOrderSnapshot from "../../../reports/daily-sales/sales-order-snapsho
 import Order from "./orders.model";
 import orderRepository, { OrderRepository } from "./orders.repository";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import integrationService from "../../../integrations/integrations/integrations.service";
+import { getBlingIntegration } from "../../../handlers/bling/api/bling_api.service";
 import {
   FullOrder,
   OrderSalesReportDetail,
@@ -208,25 +210,53 @@ export class OrderService extends BaseService<Order, OrderRepository> {
   // incluso) não têm unit_business_id preenchido no pedido em si, então
   // nenhum outro método deste resumo escopa por unit business.
 
+  // Contadores de humanVerification/shipToday/shipToDefine/shipToFuture são específicos
+  // do fluxo Mercado Livre → só fazem sentido pra integração Bling (ver validação abaixo).
   async getOrdersStatusSummary(unitBusinessId: string) {
+    const [integration, blingIntegration] = await Promise.all([
+      integrationService.getIntegrationByUnitBusiness(unitBusinessId),
+      getBlingIntegration(),
+    ]);
+    const isBlingUnitBusiness = integration?.name === blingIntegration.name;
+
+    const pendingBatchByTransporter =
+      await invoiceService.getPendingBatchByTransporter(unitBusinessId);
+
+    const pendingBatchByTransporterSummary = pendingBatchByTransporter.map(
+      ({ transporter_id, transporter_name, quantity }) => {
+        const name = transporter_name ?? "Sem transportadora";
+        return {
+          transporter_id,
+          label: `Pendente - ${name}`,
+          highlighted_words: [name],
+          label_color: "blue",
+          quantity,
+        };
+      },
+    );
+
+    if (!isBlingUnitBusiness) {
+      return {
+        pending_batch_by_transporter: pendingBatchByTransporterSummary,
+      };
+    }
+
     const [
-      humanVerification,
-      shipTodayPending,
-      shipToDefine,
-      shipToFuture,
-      pendingBatchByTransporter,
+      mlHumanVerification,
+      mlShipTodayPending,
+      mlShipToDefine,
+      mlShipToFuture,
     ] = await Promise.all([
       this.repository.countHumanVerification(),
       this.repository.countShipTodayPending(unitBusinessId),
       this.repository.countShipToDefine(),
       this.repository.countShipToFuture(),
-      invoiceService.getPendingBatchByTransporter(unitBusinessId),
     ]);
 
     return {
       human_verification: {
         label: "Verificação Humana",
-        quantity: humanVerification,
+        quantity: mlHumanVerification,
       },
       // highlighted_words: substrings de `label` que o frontend deve
       // destacar em negrito + label_color — os dois contadores abaixo são
@@ -235,30 +265,19 @@ export class OrderService extends BaseService<Order, OrderRepository> {
         label: "Embarques Hoje Pendente Mercado Livre",
         highlighted_words: ["Mercado Livre"],
         label_color: "yellow",
-        quantity: shipTodayPending,
+        quantity: mlShipTodayPending,
       },
       ship_to_define: {
         label: "Pendentes Automação Mercado Livre",
         highlighted_words: ["Mercado Livre"],
         label_color: "yellow",
-        quantity: shipToDefine,
+        quantity: mlShipToDefine,
       },
       ship_to_future: {
         label: "Pendentes Embarque Futuro",
-        quantity: shipToFuture,
+        quantity: mlShipToFuture,
       },
-      pending_batch_by_transporter: pendingBatchByTransporter.map(
-        ({ transporter_id, transporter_name, quantity }) => {
-          const name = transporter_name ?? "Sem transportadora";
-          return {
-            transporter_id,
-            label: `Pendente - ${name}`,
-            highlighted_words: [name],
-            label_color: "blue",
-            quantity,
-          };
-        },
-      ),
+      pending_batch_by_transporter: pendingBatchByTransporterSummary,
     };
   }
 

@@ -77,5 +77,9 @@ export class IntegrationService extends BaseService<
     }
 
   }
+
+  async getIntegrationByUnitBusiness(unitBusinessId: string): Promise<Integration | null> {
+    return this.repository.findByUnitBusinessId(unitBusinessId);
+  }
 }
 export default new IntegrationService();

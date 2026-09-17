@@ -18,6 +18,10 @@ Antes de criar método pra buscar dado de outra entidade: checar `BaseRepository
 
 Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e reutilizável por mais de um filtro/método: função nomeada, exportada, parametrizada em `helpers/` da própria entidade (ex: `invoice/helpers/`) — nunca função solta/closure dentro do service/repository. Parametrizar pelo que varia entre chamadas (nome de loja, unit business id, alias de tabela, data de referência), não hardcoded pro primeiro caso de uso. Referência: `invoice/helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`), `invoice/helpers/custom-filters.ts` (`storeCollectionDateTodayWhere`) — funções puras, importadas por `invoice.service.ts`/`invoice.repository.ts`. É organização de código, não muda layering acima: o helper pertence à mesma entidade e é usado pela camada que precisar.
 
+## Evitar valores hardcoded
+
+Valor que identifica uma entidade específica (nome de integração, status, etc.) e é comparado/usado em mais de um lugar: nunca literal solto no código (`=== "Bling"`). Buscar/centralizar numa função ou variável já existente que resolve aquele valor (ex: `getBlingIntegration()` em `bling_api.service.ts`) e comparar contra o resultado dela — não recriar o literal. Assim, se o valor mudar, muda em um lugar só. Referência: `orders.service.ts`'s `getOrdersStatusSummary` compara `integration.name` com `(await getBlingIntegration()).name`, não com `"Bling"`.
+
 ## Comentários de código
 
 Curtos, diretos, 1-2 linhas. Só a razão não-óbvia (constraint escondida, workaround, por que não o óbvio) — nunca parágrafo explicando o que o código já mostra.
