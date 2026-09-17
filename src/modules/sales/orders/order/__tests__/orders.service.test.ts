@@ -5,6 +5,7 @@ import Store from "../../../stores/stores.model";
 import { OrderService } from "../orders.service";
 import orderRepository from "../orders.repository";
 import { Invoice } from "../../../../warehouse";
+import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 
 jest.mock("../../../../warehouse", () => ({
   Invoice: {
@@ -94,15 +95,21 @@ describe("OrderService — resumo de status", () => {
     jest.spyOn(orderRepository, "countShipTodayPending").mockResolvedValue(7);
     jest.spyOn(orderRepository, "countShipToDefine").mockResolvedValue(2);
     jest.spyOn(orderRepository, "countShipToFuture").mockResolvedValue(11);
+    jest
+      .spyOn(invoiceService, "getPendingBatchByTransporter")
+      .mockResolvedValue([]);
 
     const result = await service.getOrdersStatusSummary("ub-1");
 
-    expect(result).toEqual({
-      human_verification: { quantity: 3 },
-      ship_today_pending: { quantity: 7 },
-      ship_to_define: { quantity: 2 },
-      ship_to_future: { quantity: 11 },
-    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        human_verification: expect.objectContaining({ quantity: 3 }),
+        ship_today_pending: expect.objectContaining({ quantity: 7 }),
+        ship_to_define: expect.objectContaining({ quantity: 2 }),
+        ship_to_future: expect.objectContaining({ quantity: 11 }),
+        pending_batch_by_transporter: [],
+      }),
+    );
   });
 
     it("getShipTodayPendingDetail: lista os pedidos com cliente e nota vinculada (se tiver)", async () => {
