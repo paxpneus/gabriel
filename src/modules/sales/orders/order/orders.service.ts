@@ -4,6 +4,7 @@ import Customer from "../../customers/customers.model";
 import SalesOrderSnapshot from "../../../reports/daily-sales/sales-order-snapshot/sales-order-snapshot.model";
 import Order from "./orders.model";
 import orderRepository, { OrderRepository } from "./orders.repository";
+import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import {
   FullOrder,
   OrderSalesReportDetail,
@@ -208,19 +209,56 @@ export class OrderService extends BaseService<Order, OrderRepository> {
   // nenhum outro método deste resumo escopa por unit business.
 
   async getOrdersStatusSummary(unitBusinessId: string) {
-    const [humanVerification, shipTodayPending, shipToDefine, shipToFuture] =
-      await Promise.all([
-        this.repository.countHumanVerification(),
-        this.repository.countShipTodayPending(unitBusinessId),
-        this.repository.countShipToDefine(),
-        this.repository.countShipToFuture(),
-      ]);
+    const [
+      humanVerification,
+      shipTodayPending,
+      shipToDefine,
+      shipToFuture,
+      pendingBatchByTransporter,
+    ] = await Promise.all([
+      this.repository.countHumanVerification(),
+      this.repository.countShipTodayPending(unitBusinessId),
+      this.repository.countShipToDefine(),
+      this.repository.countShipToFuture(),
+      invoiceService.getPendingBatchByTransporter(unitBusinessId),
+    ]);
 
     return {
-      human_verification: { quantity: humanVerification },
-      ship_today_pending: { quantity: shipTodayPending },
-      ship_to_define: { quantity: shipToDefine },
-      ship_to_future: { quantity: shipToFuture },
+      human_verification: {
+        label: "Verificação Humana",
+        quantity: humanVerification,
+      },
+      // highlighted_words: substrings de `label` que o frontend deve
+      // destacar em negrito + label_color — os dois contadores abaixo são
+      // especificamente sobre pedidos Mercado Livre.
+      ship_today_pending: {
+        label: "Embarques Hoje Pendente Mercado Livre",
+        highlighted_words: ["Mercado Livre"],
+        label_color: "yellow",
+        quantity: shipTodayPending,
+      },
+      ship_to_define: {
+        label: "Pendentes Automação Mercado Livre",
+        highlighted_words: ["Mercado Livre"],
+        label_color: "yellow",
+        quantity: shipToDefine,
+      },
+      ship_to_future: {
+        label: "Pendentes Embarque Futuro",
+        quantity: shipToFuture,
+      },
+      pending_batch_by_transporter: pendingBatchByTransporter.map(
+        ({ transporter_id, transporter_name, quantity }) => {
+          const name = transporter_name ?? "Sem transportadora";
+          return {
+            transporter_id,
+            label: `Pendente - ${name}`,
+            highlighted_words: [name],
+            label_color: "blue",
+            quantity,
+          };
+        },
+      ),
     };
   }
 

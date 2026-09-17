@@ -6,6 +6,7 @@ import {
   InvoiceAttributes,
   InvoiceCreationData,
   ItemWithFiscal,
+  PendingBatchByTransporterRow,
 } from "./invoice.types";
 import BaseRepository from "../../../../../shared/utils/base-models/base-repository";
 import UnmappedInvoiceProduct from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
@@ -13,6 +14,8 @@ import InvoiceItems from "../invoice-items/invoice-items.model";
 import Invoice from "./invoice.model";
 import { Product, ProductConfig, Supplier } from "../../../../inventory";
 import {
+  col,
+  fn,
   FindOptions,
   Op,
   Sequelize,
@@ -48,6 +51,11 @@ import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
 import { LOGISTIC_OCCURRENCE_CODES } from "../../../../handlers/logistic/constants/constants";
 import SalesOrderItemSnapshot from "../../../../reports/daily-sales/sales-order-item-snapshot/sales-order-item-snapshot.model";
 import KitComponent from "../../../../inventory/kit-components/kit-component.model";
+
+// Mesmo valor de MERCADO_LIVRE_STORE_NAME em orders.repository.ts — ainda
+// não extraído pra um lugar compartilhado (mesma situação já assumida pra
+// shippingWindowRange nos dois arquivos).
+const MERCADO_LIVRE_STORE_NAME = "MercadoLivre";
 
 export class InvoiceRepository extends BaseRepository<Invoice> {
   constructor() {
@@ -291,6 +299,31 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     return attrWhere;
   }
 
+  // ─── Helper: extrai filtro de transporterStatus ──────────────────────────────
+  // `?filters[transporterStatus]=pending-<transporterId>` — usado pelos cards
+  // de "pendente por transportadora" (OrderService.getOrdersStatusSummary)
+  // pra abrir a listagem já filtrada pela mesma transportadora/status.
+
+  private extractTransporterStatusFilter(
+    filters: QueryParams["filters"],
+  ): { attrWhere: WhereOptions; transporterId: string } | null {
+    const value = filters?.transporterStatus;
+    delete filters?.transporterStatus;
+
+    if (typeof value !== "string") return null;
+
+    const match = value.match(/^pending-(.+)$/);
+    if (!match) return null;
+
+    return {
+      transporterId: match[1],
+      attrWhere: {
+        status: { [Op.in]: ["PENDING", "OPEN"] },
+        batch_generated: false,
+      },
+    };
+  }
+
   // ─── Helper: extrai filtro de batchStatus ───────────────────────────────────
 
   private extractBatchStatusFilter(
@@ -342,7 +375,13 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     unitBusinessId: string,
     queryConfig: QueryConfig = {},
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
-    const attrWhere = this.extractAttrFilters(params.filters, unitBusinessId);
+    const transporterStatusFilter = this.extractTransporterStatusFilter(
+      params.filters,
+    );
+    const attrWhere = {
+      ...this.extractAttrFilters(params.filters, unitBusinessId),
+      ...(transporterStatusFilter?.attrWhere ?? {}),
+    };
     const batchStatusWhere = this.extractBatchStatusFilter(params.filters);
     const hasBatchFilter = !!batchStatusWhere;
 
@@ -387,6 +426,10 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           model: Store,
           as: "store",
           attributes: ["name"],
+          required: !!transporterStatusFilter,
+          where: transporterStatusFilter
+            ? { name: { [Op.ne]: MERCADO_LIVRE_STORE_NAME } }
+            : undefined,
         },
         // Só pra permitir os customFields de Mercado Livre (invoice.service.ts)
         // filtrarem por `$order.collection_date$` — sem filtro nenhum ativo,
@@ -419,9 +462,14 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       },
     };
 
-    const result = await this.findPaginated(params, queryConfig, {
-      ...extraOptions,
-    });
+    const result = await this.findPaginated(
+      params,
+      queryConfig,
+      { ...extraOptions },
+      transporterStatusFilter
+        ? { transporter_id: transporterStatusFilter.transporterId }
+        : undefined,
+    );
 
     return {
       ...result,
@@ -875,6 +923,63 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       transaction,
     });
     return results.map((ub) => ({ id: ub.id, cnpj: (ub as any).cnpj }));
+  }
+
+  // Notas PENDING/OPEN dessa unit business que ainda não entraram em
+  // romaneio (batch_generated = false), agrupadas por transportadora —
+  // usado pelo resumo de pedidos (OrderService.getOrdersStatusSummary).
+  async countPendingBatchByTransporter(
+    unitBusinessId: string,
+  ): Promise<PendingBatchByTransporterRow[]> {
+    const rows = (await this.model.findAll({
+      subQuery: false,
+      attributes: [
+        "transporter_id",
+        [col("transporter.name"), "transporter_name"],
+        [fn("COUNT", col("Invoice.id")), "quantity"],
+      ],
+      include: [
+        {
+          model: InvoiceUnitBusinessAttributes,
+          as: "unitBusinessAttributes",
+          required: true,
+          attributes: [],
+          where: {
+            unit_business_id: unitBusinessId,
+            status: { [Op.in]: ["PENDING", "OPEN"] },
+            batch_generated: false,
+          },
+        },
+        {
+          model: Transporter,
+          as: "transporter",
+          required: false,
+          attributes: [],
+        },
+        // Exclui notas da loja Mercado Livre — pedidos ML têm fluxo de
+        // envio próprio (ML-SCRAPING), esse contador é só pra romaneio
+        // "normal" por transportadora.
+        {
+          model: Store,
+          as: "store",
+          required: true,
+          attributes: [],
+          where: { name: { [Op.ne]: MERCADO_LIVRE_STORE_NAME } },
+        },
+      ],
+      group: ["Invoice.transporter_id", "transporter.id", "transporter.name"],
+      raw: true,
+    })) as unknown as Array<{
+      transporter_id: string | null;
+      transporter_name: string | null;
+      quantity: string;
+    }>;
+
+    return rows.map((r) => ({
+      transporter_id: r.transporter_id,
+      transporter_name: r.transporter_name,
+      quantity: Number(r.quantity),
+    }));
   }
 
   async findXmlPathsByIds(

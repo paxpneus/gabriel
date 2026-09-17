@@ -20,6 +20,7 @@ import {
   InvoiceAttributes,
   InvoiceCreationData,
   ItemWithFiscal,
+  PendingBatchByTransporterRow,
 } from "./invoice.types";
 import Store from "../../../../sales/stores/stores.model";
 import InvoiceItems from "../invoice-items/invoice-items.model";
@@ -1123,6 +1124,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         `Integração inválida ou ausente: ${integration ?? "(nenhuma)"}`,
       );
     }
+  }
+
+  async getPendingBatchByTransporter(
+    unitBusinessId: string,
+  ): Promise<PendingBatchByTransporterRow[]> {
+    return this.repository.countPendingBatchByTransporter(unitBusinessId);
   }
 }
 
