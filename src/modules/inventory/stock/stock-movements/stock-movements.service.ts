@@ -411,6 +411,12 @@ export class StockMovementService extends BaseService<
       { transaction },
     );
 
+    // `refers_to` é a única proteção contra apagar/recriar. Um
+    // MANUAL_ADJUSTMENT sem refers_to mas com manual_average_cost_value não
+    // precisa de proteção especial: calculateNextState já reaplica esse
+    // valor como override toda vez que é chamada (ver o bloco de override
+    // no fim da função), então recalcular esse movimento pela cadeia normal
+    // atualiza o saldo corretamente sem nunca mudar o custo.
     const isProtected = (m: StockMovement) => m.refers_to != null;
     const isBeforeOrAtCutoff = (m: StockMovement) =>
       cutoffDate != null &&
@@ -525,9 +531,37 @@ export class StockMovementService extends BaseService<
 
     for (const entry of timeline) {
       if (entry.kind === "protected") {
+        // refers_to trava o CUSTO (resulting_average_cost/manual override)
+        // como um fato imutável — mas o SALDO ainda precisa acompanhar a
+        // cadeia real: se um lançamento mais antigo, recém-descoberto,
+        // entra antes dele na timeline, o saldo desse movimento protegido
+        // fica desatualizado se só repetirmos o que já estava gravado.
+        // Recalcula pra pegar o saldo certo e força o custo a continuar o
+        // que já estava salvo — só grava se o saldo realmente mudou
+        // (hasDrifted, abaixo).
+        const movement = entry.movement;
+        const direction = movement.direction as "IN" | "OUT" | null;
+        const recalculated = this.calculateNextState(previousState, {
+          movement_type: movement.movement_type,
+          movement_quantity: Number(movement.movement_quantity),
+          unit_cost_invoice:
+            movement.unit_cost_invoice != null
+              ? Number(movement.unit_cost_invoice)
+              : undefined,
+          manual_average_cost_value: movement.manual_average_cost_value,
+          direction,
+        });
+        const fixedCost = Number(movement.resulting_average_cost);
+        const nextState = {
+          balance_quantity: recalculated.balance_quantity,
+          resulting_average_cost: fixedCost,
+          total_stock_value: recalculated.balance_quantity * fixedCost,
+        };
+
+        toUpdate.push({ movement, nextState });
         previousState = {
-          balance_quantity: Number(entry.movement.balance_quantity),
-          resulting_average_cost: Number(entry.movement.resulting_average_cost),
+          balance_quantity: nextState.balance_quantity,
+          resulting_average_cost: nextState.resulting_average_cost,
         };
         continue;
       }
@@ -743,6 +777,11 @@ export class StockMovementService extends BaseService<
       isAfterCutoff(new Date(movement.movement_date)),
     );
 
+    // Diferente de syncCsvBaseline: aqui só refers_to protege.
+    // reindexProduct é um rebuild completo — manual_average_cost_value sem
+    // refers_to é intencionalmente descartado e recalculado do zero a partir
+    // da nova fonte (ver testes "recria uma linha com custo manual..." e
+    // "MANUAL_ADJUSTMENT ... NÃO é protegido" logo abaixo).
     const isProtected = (m: StockMovement) => m.refers_to != null;
 
     const protectedMovements = mutableExistingMovements.filter(isProtected);

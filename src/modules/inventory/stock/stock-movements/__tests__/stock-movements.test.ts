@@ -713,6 +713,110 @@ describe("StockMovementService", () => {
         });
       },
     );
+
+    it(
+      "recalcula o saldo de um MANUAL_ADJUSTMENT sem refers_to quando um " +
+        "lançamento mais antigo é descoberto, mas preserva o custo via " +
+        "manual_average_cost_value (calculateNextState reaplica o override " +
+        "de qualquer forma — não precisa de proteção especial)",
+      async () => {
+        const manualAdjustment = makeExistingMovement({
+          id: "manual-1",
+          invoice_id: null,
+          invoice_number: undefined,
+          movement_type: "MANUAL_ADJUSTMENT",
+          direction: "IN",
+          movement_date: new Date("2026-09-10T00:00:00Z"),
+          movement_quantity: 50,
+          balance_quantity: 50,
+          resulting_average_cost: 20,
+          manual_average_cost_value: 20,
+          status: "SYNCHED",
+          refers_to: null,
+        });
+        (service as any).repository.findHistoryByProduct.mockResolvedValue([
+          manualAdjustment,
+        ]);
+
+        await service.syncCsvBaseline(
+          PRODUCT_ID,
+          UNIT_BUSINESS_ID,
+          [
+            // Lançamento novo, mais antigo, descoberto na mesma janela.
+            {
+              product_id: PRODUCT_ID,
+              invoice_id: null,
+              invoice_number: "phantom-old",
+              movement_type: "PURCHASE_ENTRY",
+              movement_date: new Date("2025-01-01T00:00:00Z"),
+              movement_quantity: 5,
+              unit_cost_invoice: 1,
+            },
+          ] as any,
+          null,
+          new Date("2026-09-17T00:00:00Z"),
+        );
+
+        expect(manualAdjustment.update).toHaveBeenCalledWith(
+          expect.objectContaining({ balance_quantity: 55 }),
+          expect.anything(),
+        );
+        // custo continua o override, nunca é recalculado a partir da cadeia
+        expect(manualAdjustment.resulting_average_cost).toBe(20);
+      },
+    );
+
+    it(
+      "recalcula o saldo de um movimento ANCORADO (refers_to) quando um " +
+        "lançamento mais antigo é descoberto, mas nunca mexe no custo " +
+        "(resulting_average_cost/manual_average_cost_value ficam fixos, " +
+        "só o balance_quantity acompanha a cadeia)",
+      async () => {
+        const anchored = makeExistingMovement({
+          id: "anchored-1",
+          invoice_id: null,
+          invoice_number: undefined,
+          movement_type: "MANUAL_ADJUSTMENT",
+          direction: "IN",
+          movement_date: new Date("2026-09-10T00:00:00Z"),
+          movement_quantity: 50,
+          balance_quantity: 50,
+          resulting_average_cost: 20,
+          manual_average_cost_value: 20,
+          status: "SYNCHED",
+          refers_to: "1", // ancorado — nunca apagado/recriado
+        });
+        (service as any).repository.findHistoryByProduct.mockResolvedValue([
+          anchored,
+        ]);
+
+        await service.syncCsvBaseline(
+          PRODUCT_ID,
+          UNIT_BUSINESS_ID,
+          [
+            {
+              product_id: PRODUCT_ID,
+              invoice_id: null,
+              invoice_number: "phantom-old",
+              movement_type: "PURCHASE_ENTRY",
+              movement_date: new Date("2025-01-01T00:00:00Z"),
+              movement_quantity: 5,
+              unit_cost_invoice: 1,
+            },
+          ] as any,
+          null,
+          new Date("2026-09-17T00:00:00Z"),
+        );
+
+        expect(anchored.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            balance_quantity: 55,
+            resulting_average_cost: 20,
+          }),
+          expect.anything(),
+        );
+      },
+    );
   });
 
   // ══════════════════════════════════════════════════════════════════════════
