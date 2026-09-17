@@ -1,3 +1,4 @@
+import { Op } from "sequelize";
 import IntegrationOrderStatusMapping from "./integration-order-status-mapping.model";
 //AJUSTAR DEPOIS QUANDO AUTOMACAO VOLTAR NA BLING E AQUI PARA OS STATUS QUE ESTAO COMO CANCELADOS ANALISAR QUAIS DEVEM IR PARA EM OPEN COMPLETED E CANCELLED
 export const BLING_STATUS_DEFAULTS = [
@@ -26,6 +27,34 @@ export class IntegrationOrderStatusMappingService {
     return IntegrationOrderStatusMapping.findOne({
       where: { integration_id: integrationId, external_status_id: externalStatusId },
     });
+  }
+
+  // Uma query só pra todas as integrações de uma vez — usado por
+  // OrderService.paginate() pra montar o lookup integration_id+external_status_id
+  // -> display_name de uma página inteira de pedidos sem N+1.
+  async findByIntegrations(integrationIds: string[]) {
+    if (!integrationIds.length) return [];
+
+    return IntegrationOrderStatusMapping.findAll({
+      where: { integration_id: { [Op.in]: integrationIds } },
+    });
+  }
+
+  // Traduz normalized_status (ex: "CANCELADO", "ATENDIDO" — o vocabulário
+  // que o filtro filters[status] usa há tempos) pros external_status_id
+  // (actual_situation) correspondentes, pra filtrar orders direto por
+  // actual_situation sem depender de sales_order_snapshots.
+  async findExternalStatusIdsByNormalizedStatus(
+    normalizedStatuses: string[],
+  ): Promise<string[]> {
+    if (!normalizedStatuses.length) return [];
+
+    const rows = await IntegrationOrderStatusMapping.findAll({
+      where: { normalized_status: { [Op.in]: normalizedStatuses } },
+      attributes: ["external_status_id"],
+    });
+
+    return rows.map((row) => row.external_status_id);
   }
 
   async upsert(

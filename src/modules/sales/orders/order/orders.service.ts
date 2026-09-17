@@ -1,11 +1,11 @@
-import { FindOptions, Op, literal } from "sequelize";
+import { FindOptions, Op } from "sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import Customer from "../../customers/customers.model";
-import SalesOrderSnapshot from "../../../reports/daily-sales/sales-order-snapshot/sales-order-snapshot.model";
 import Order from "./orders.model";
 import orderRepository, { OrderRepository } from "./orders.repository";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import integrationService from "../../../integrations/integrations/integrations.service";
+import integrationOrderStatusMappingService from "../integration-order-status-mapping/integration-order-status-mapping.service";
 import { getBlingIntegration } from "../../../handlers/bling/api/bling_api.service";
 import {
   FullOrder,
@@ -40,21 +40,17 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       stringFields: ["number_order_system"],
       searchFields: ["number_order_system"],
       customFields: {
-        // filters[status] filtra pelo status_snapshot congelado em
-        // sales_order_snapshots (gerado pelo job do relatório de vendas),
-        // não por nenhum campo de orders.
+        // filters[status] chega no vocabulário normalized_status (ex:
+        // "CANCELADO", "ATENDIDO") — já resolvido pros external_status_id
+        // (actual_situation) correspondentes em paginate(), antes do
+        // QueryParser rodar, via integrationOrderStatusMappingService. Aqui
+        // é só um IN direto no próprio campo actual_situation de Order —
+        // não depende mais de sales_order_snapshots.
         status: (value) => {
           const values = Array.isArray(value) ? value : [value];
-          const escapedValues = values
-            .map((v) => `'${String(v).replace(/'/g, "''")}'`)
-            .join(", ");
 
           return {
-            id: {
-              [Op.in]: literal(
-                `(SELECT order_id FROM sales_order_snapshots WHERE status_snapshot IN (${escapedValues}))`,
-              ),
-            },
+            actual_situation: { [Op.in]: values },
           };
         },
         human_verification: (value) => {
@@ -76,31 +72,75 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<Order>> {
-    const result = await super.paginate(params, {
+    const resolvedParams = await this.resolveStatusFilter(params);
+
+    const result = await super.paginate(resolvedParams, {
       ...extraOptions,
       attributes: { exclude: ["source_payload"] },
       include: [
         ...((extraOptions?.include as any[]) ?? []),
-        {
-          model: SalesOrderSnapshot,
-          as: "salesSnapshot",
-          attributes: ["status_snapshot"],
-          required: false,
-        },
         { model: Customer, as: "customer" },
       ],
     });
 
+    const integrationIds = [
+      ...new Set(result.data.map((order) => order.integrations_id)),
+    ];
+    const statusMappings =
+      await integrationOrderStatusMappingService.findByIntegrations(
+        integrationIds,
+      );
+    const displayNameByKey = new Map<string, string>(
+      statusMappings.map((mapping) => [
+        `${mapping.integration_id}:${mapping.external_status_id}`,
+        mapping.display_name,
+      ]),
+    );
+
     const data = result.data.map((order) => {
-      const { salesSnapshot, ...plain } = order.get({ plain: true }) as any;
+      const plain = order.get({ plain: true }) as any;
+      const key = `${plain.integrations_id}:${plain.actual_situation}`;
 
       return {
         ...plain,
-        status: salesSnapshot?.status_snapshot ?? plain.internal_status ?? null,
+        status: displayNameByKey.get(key) ?? plain.actual_situation ?? null,
       };
     });
 
     return { ...result, data: data as unknown as Order[] };
+  }
+
+  // Traduz filters[status] (normalized_status, ex: "CANCELADO") pros
+  // external_status_id correspondentes ANTES do QueryParser rodar — o
+  // customField "status" (queryConfig acima) só sabe fazer IN direto em
+  // actual_situation, não conhece normalized_status.
+  private async resolveStatusFilter(
+    params: QueryParams,
+  ): Promise<QueryParams> {
+    const statusValue = params.filters?.status;
+    if (!statusValue) return params;
+
+    const normalizedStatuses = Array.isArray(statusValue)
+      ? statusValue
+      : [statusValue];
+    const externalStatusIds =
+      await integrationOrderStatusMappingService.findExternalStatusIdsByNormalizedStatus(
+        normalizedStatuses,
+      );
+
+    // Sem match nenhum: mantém o filtro restritivo (zero pedidos), em vez
+    // de o QueryParser descartar um array vazio e devolver a lista inteira.
+    const UNMATCHABLE_STATUS_FILTER = "__no_matching_status__";
+
+    return {
+      ...params,
+      filters: {
+        ...params.filters,
+        status: externalStatusIds.length
+          ? externalStatusIds
+          : [UNMATCHABLE_STATUS_FILTER],
+      },
+    };
   }
 
   async getFullOrder(id: string): Promise<FullOrder> {
