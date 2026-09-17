@@ -1,14 +1,41 @@
-import { execFile } from "child_process";
+import { spawn } from "child_process";
 import { Dirent, promises as fs } from "fs";
 import path from "path";
-import { promisify } from "util";
 import { Job } from "bullmq";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
 import { SCRAPING_SHARED_QUEUE_LOCK } from "./scraping-queue-lock";
 
-const execFileAsync = promisify(execFile);
 const CSV_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Roda um script Node filho transmitindo stdout/stderr linha a linha pro
+ * console do processo pai em tempo real. Usado no lugar de
+ * execFile/execFileAsync, que bufferizam a saída inteira em memória e só a
+ * entregam quando o processo filho termina — nesse caso específico
+ * (extração que roda por horas, com uma linha de progresso por
+ * produto/depósito) isso deixa o `docker logs` mudo durante toda a
+ * execução, sem forma de saber se está travado ou só demorando, e ainda
+ * arrisca estourar `maxBuffer` num run completo com muitas linhas.
+ */
+function runWithLiveLogs(
+  command: string,
+  args: string[],
+  options: { env?: NodeJS.ProcessEnv } = {},
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env: options.env ?? process.env });
+
+    child.stdout.on("data", (chunk) => process.stdout.write(chunk));
+    child.stderr.on("data", (chunk) => process.stderr.write(chunk));
+
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} ${args.join(" ")} saiu com código ${code}`));
+    });
+  });
+}
 const CSV_STORAGE_DIR = path.resolve(
   process.env.STOCK_MOVEMENTS_CSV_DIR ?? "./data/stock-movements",
 );
@@ -74,39 +101,27 @@ export class BlingStockMovementsScrapingQueue extends BaseQueueService<void> {
     try {
       await this.removeExpiredCsvFiles();
 
-      const { stdout, stderr } = await execFileAsync(
-        "node",
-        ["dist/scripts/bling/get-stock-movements.js"],
-        { maxBuffer: 10 * 1024 * 1024 },
-      );
-
-      if (stdout) console.log(stdout);
-      if (stderr) console.error(stderr);
+      await runWithLiveLogs("node", ["dist/scripts/bling/get-stock-movements.js"]);
 
       if (AUTO_POPULATE) {
         console.log(
           `[BlingStockMovementsScrapingQueue] Iniciando populate automático (DRY_RUN=${AUTO_POPULATE_DRY_RUN})...`,
         );
 
-        const { stdout: populateStdout, stderr: populateStderr } =
-          await execFileAsync(
-            "node",
-            ["dist/scripts/bling/populate-stock-movements.js"],
-            {
-              maxBuffer: 10 * 1024 * 1024,
-              // Não permite que um CSV_PATH legado aponte para outro arquivo
-              // (ou diretório). Sem override, o populate usa a fonte recém
-              // registrada pelo scraper.
-              env: {
-                ...process.env,
-                CSV_PATH: "",
-                DRY_RUN: AUTO_POPULATE_DRY_RUN ? "true" : "false",
-              },
+        await runWithLiveLogs(
+          "node",
+          ["dist/scripts/bling/populate-stock-movements.js"],
+          {
+            // Não permite que um CSV_PATH legado aponte para outro arquivo
+            // (ou diretório). Sem override, o populate usa a fonte recém
+            // registrada pelo scraper.
+            env: {
+              ...process.env,
+              CSV_PATH: "",
+              DRY_RUN: AUTO_POPULATE_DRY_RUN ? "true" : "false",
             },
-          );
-
-        if (populateStdout) console.log(populateStdout);
-        if (populateStderr) console.error(populateStderr);
+          },
+        );
       } else {
         console.log(
           "[BlingStockMovementsScrapingQueue] Populate automático desabilitado.",

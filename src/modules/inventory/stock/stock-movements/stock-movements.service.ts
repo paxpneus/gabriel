@@ -446,10 +446,23 @@ export class StockMovementService extends BaseService<
         }
       : null;
 
-    const pendingAfterExtraction = remaining.filter(
-      (m) =>
-        !isProtected(m) &&
-        new Date(m.movement_date).getTime() > extractionDate.getTime(),
+    // Todo movimento não-protegido fora da baseline (depois do cutoff) tem
+    // que participar do recálculo da cadeia, esteja ele PENDING no futuro
+    // (comportamento original) ou já SYNCHED dentro da própria janela — esse
+    // segundo caso é o do lançamento que o dedup por fingerprint abaixo
+    // decide não recriar (já existe). Sem incluí-lo aqui, ele vira um ponto
+    // cego: quando o cutoff é resetado (ex: extraction_date perdida em
+    // stock_movement_source_data, forçando get-stock-movements.ts a tratar
+    // a extração como se fosse a primeira de todas), a baseline por cutoff
+    // fica vazia, esse movimento simplesmente some do cálculo, e a cadeia
+    // nova recomeça do zero desencontrada da cadeia antiga (confirmado em
+    // produção: saldo pulando de 0 pra 63 numa entrada de 8 unidades, porque
+    // um lançamento novo descoberto pela Bling entrava antes dele na
+    // timeline sem nunca propagar o novo saldo pra frente). Tratando-o igual
+    // a um PENDING — recalculado e, se tiver mudado, atualizado — a cadeia
+    // se mantém coesa nos dois sentidos.
+    const existingMutableAfterCutoff = remaining.filter(
+      (m) => !isProtected(m) && !isBeforeOrAtCutoff(m),
     );
     const protectedAfterCutoff = remaining.filter(
       (m) => !isBeforeOrAtCutoff(m) && isProtected(m),
@@ -497,7 +510,7 @@ export class StockMovementService extends BaseService<
         date: new Date(movement.movement_date),
         movement,
       })),
-      ...pendingAfterExtraction.map((movement) => ({
+      ...existingMutableAfterCutoff.map((movement) => ({
         kind: "pending" as const,
         date: new Date(movement.movement_date),
         movement,
@@ -549,8 +562,10 @@ export class StockMovementService extends BaseService<
         continue;
       }
 
-      // PENDING pós-cutoff: preserva o "fato" (quantidade/direção/invoice),
-      // só recalcula o resultado — igual upsertProductStockMovements faz.
+      // Existente pós-cutoff (PENDING futuro ou SYNCHED dentro da janela):
+      // preserva o "fato" (quantidade/direção/invoice), só recalcula o
+      // resultado — igual upsertProductStockMovements faz. Só grava
+      // (hasDrifted, abaixo) se o resultado realmente mudou.
       const movement = entry.movement;
       const direction = movement.direction as "IN" | "OUT" | null;
       const nextState = this.calculateNextState(previousState, {

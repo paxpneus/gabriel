@@ -634,6 +634,88 @@ describe("StockMovementService", () => {
   });
 
   // ══════════════════════════════════════════════════════════════════════════
+  // syncCsvBaseline
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("syncCsvBaseline", () => {
+    beforeEach(() => {
+      (service as any).repository.deletePendingInCsvWindow = jest
+        .fn()
+        .mockResolvedValue([]);
+    });
+
+    it(
+      "recalcula um movimento já SYNCHED (em vez de ignorá-lo) quando um " +
+        "lançamento novo, mais antigo, entra na mesma janela — regressão " +
+        "confirmada em produção: saldo pulando de 0 pra 63 numa entrada de " +
+        "8 unidades porque o lançamento SYNCHED intermediário (016958, " +
+        "saldo 0) ficava de fora do recálculo e nunca propagava o saldo " +
+        "de um lançamento mais antigo descoberto na mesma extração",
+      async () => {
+        const alreadySynched = makeExistingMovement({
+          id: "synched-1",
+          invoice_number: "016958",
+          movement_type: "SALE_OUT",
+          movement_date: new Date("2026-09-06T11:42:14Z"),
+          movement_quantity: 1,
+          balance_quantity: 0,
+          resulting_average_cost: 570.9999,
+          status: "SYNCHED",
+          refers_to: null,
+        });
+        (service as any).repository.findHistoryByProduct.mockResolvedValue([
+          alreadySynched,
+        ]);
+
+        // cutoffDate null simula a extração tratada como "primeira de
+        // todas" (INITIAL_CUTOFF_DATE em get-stock-movements.ts), que é o
+        // que acontece quando stock_movement_source_data fica vazia. Nessa
+        // situação a Bling pode devolver um lançamento antigo (aqui,
+        // "phantom-old") que nunca tinha sido sincronizado antes e que cai
+        // ANTES do 016958 na timeline.
+        const created = await service.syncCsvBaseline(
+          PRODUCT_ID,
+          UNIT_BUSINESS_ID,
+          [
+            {
+              product_id: PRODUCT_ID,
+              invoice_id: null,
+              invoice_number: "phantom-old",
+              movement_type: "PURCHASE_ENTRY",
+              movement_date: new Date("2025-01-01T00:00:00Z"),
+              movement_quantity: 56,
+              unit_cost_invoice: 500,
+            },
+            {
+              product_id: PRODUCT_ID,
+              invoice_id: null,
+              invoice_number: "2754322",
+              movement_type: "PURCHASE_ENTRY",
+              movement_date: new Date("2026-09-16T14:35:19Z"),
+              movement_quantity: 8,
+              unit_cost_invoice: 717.465,
+            },
+          ] as any,
+          null,
+          new Date("2026-09-17T00:00:00Z"),
+        );
+
+        // O 016958 tem que ser corrigido (55, não mais o 0 stale) porque
+        // agora existe um lançamento antes dele na cadeia.
+        expect(alreadySynched.balance_quantity).toBe(55);
+
+        const newEntry = created.find(
+          (m: any) => m.invoice_number === "2754322",
+        );
+        expect(newEntry).toMatchObject({
+          balance_quantity: 63,
+          status: "SYNCHED",
+        });
+      },
+    );
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
   // upsertProductStockMovements
   // ══════════════════════════════════════════════════════════════════════════
 
