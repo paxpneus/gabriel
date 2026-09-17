@@ -222,7 +222,6 @@ const eanFallbackMap = await this.findEanFromInvoiceItems(invoiceId, unitBusines
 let somaQtd = 0;
 const produtos: string[] = [];
 const productVolumes: LabelProductVolume[] = [];
-let ean = "";
 
 for (let idx = 0; idx < itens.length; idx++) {
   const det = itens[idx];
@@ -242,8 +241,6 @@ for (let idx = 0; idx < itens.length; idx++) {
     // Fallback: busca pelo índice do item no cadastro
     itemEan = eanFallbackMap.get(idx) ?? "";
   }
-
-  if (itemEan && !ean) ean = itemEan;
 
   const labelQuantity = Math.max(0, Math.round(qtd));
   for (let i = 0; i < labelQuantity; i++) {
@@ -292,7 +289,6 @@ for (let idx = 0; idx < itens.length; idx++) {
       destUF,
       destCEP,
       produtos,
-      ean,
       productVolumes,
       transportador,
       volumeTotal,
@@ -314,7 +310,7 @@ for (let idx = 0; idx < itens.length; idx++) {
       const produtos = productVolume?.produtos?.length
         ? productVolume.produtos
         : params.produtos;
-      const ean = productVolume?.ean || params.ean;
+      const ean = productVolume?.ean ?? "";
       const codigoBarras = this.buildBarcode(
         params.cnpjEmit,
         params.numero,
