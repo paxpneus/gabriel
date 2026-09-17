@@ -16,6 +16,8 @@ const CNPJ_PROVIDERS = [
         String(data.cnae_principal),
         ...(data.cnaes_secundarios || []).map((c: any) => String(c)),
       ],
+      municipio: data.municipio,
+      uf: data.uf,
     }),
   },
   {
@@ -31,6 +33,8 @@ const CNPJ_PROVIDERS = [
         String(data.cnae_fiscal),
         ...(data.cnaes_secundarios || []).map((c: any) => String(c.codigo)),
       ],
+      municipio: data.municipio,
+      uf: data.uf,
     }),
   },
 ];

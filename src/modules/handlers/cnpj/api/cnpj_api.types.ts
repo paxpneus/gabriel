@@ -3,5 +3,7 @@ export interface NormalizedCNPJ {
   razao_social: string;
   situacao_cadastral: string;
   cnae_principal: string;
-  cnaes: string[]; 
+  cnaes: string[];
+  municipio: string;
+  uf: string;
 }

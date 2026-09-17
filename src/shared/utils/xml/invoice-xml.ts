@@ -7,7 +7,6 @@ import {
   Invoice,
   InvoiceItems,
   UnitBusiness,
-  Transporter,
 } from "../../../modules/warehouse";
 import {
   Product,
@@ -31,9 +30,7 @@ import unitBusinessService from "../../../modules/company/unit-business/unit-bus
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";
 import { resolveIntegrationsIdForUnitBusiness } from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
-
-const NO_TRANSPORTER_NAME = "Sem transporte";
-const NO_TRANSPORTER_DOCUMENT = "0000000";
+import transporterService from "../../../modules/warehouse/transporter/transporter.service";
 
 /**
  * Extrai só o número (ide.nNF) e a chave de acesso de 44 dígitos de um XML
@@ -174,60 +171,6 @@ function extractInvoiceFiscalTotalsFromXml(xml: string) {
     ibsValue: 0,
     cbsValue: 0,
   };
-}
-
-async function findOrCreateTransporter(params: {
-  document: string | null;
-  name: string | null;
-  city?: string | null;
-  uf?: string | null;
-}): Promise<Transporter | null> {
-  const { document, name, city, uf } = params;
-
-  const isNoTransporterFallback =
-    name === NO_TRANSPORTER_NAME &&
-    (!document || cleanDocument(document) === NO_TRANSPORTER_DOCUMENT);
-
-  if (isNoTransporterFallback) {
-    const existing = await Transporter.findOne({
-      where: {
-        [Op.or]: [
-          { cnpj: NO_TRANSPORTER_DOCUMENT },
-          { name: NO_TRANSPORTER_NAME },
-        ],
-      },
-    });
-
-    if (existing) {
-      if (!existing.cnpj)
-        await existing.update({ cnpj: NO_TRANSPORTER_DOCUMENT });
-      return existing;
-    }
-
-    return Transporter.create({
-      name: NO_TRANSPORTER_NAME,
-      cnpj: NO_TRANSPORTER_DOCUMENT,
-      city: city ?? "",
-      uf: uf ?? "",
-    });
-  }
-
-  if (!document) return null;
-
-  const cleanDoc = cleanDocument(document);
-  if (!cleanDoc) return null;
-
-  const existing = await Transporter.findOne({ where: { cnpj: cleanDoc } });
-  if (existing) return existing;
-
-  if (!name) return null;
-
-  return Transporter.create({
-    name,
-    cnpj: cleanDoc,
-    city: city ?? "",
-    uf: uf ?? "",
-  });
 }
 
 async function upsertTecincoCrossConfig(
@@ -857,8 +800,6 @@ export async function upsertInvoiceFromXml(
   const senderName = extracted.senderName;
   const receiverCnpj = cleanDocument(extracted.receiverCnpj);
   const receiverName = extracted.receiverName;
-  let transporterName = extracted.transporterName || null;
-  let transporterDocument = extracted.transporterDocument || null;
   const nfeRef = extracted.refNFe || null;
   const destinationUf = extracted.destinationUf || null;
   const destinationCity = extracted.destinationCity || null;
@@ -869,19 +810,21 @@ export async function upsertInvoiceFromXml(
     where: { name: integrationName, type: "SYSTEM" },
   });
 
-  if (!transporterDocument) {
-    transporterName = NO_TRANSPORTER_NAME;
-    transporterDocument = NO_TRANSPORTER_DOCUMENT;
-  } else if (!transporterName) {
-    transporterName = NO_TRANSPORTER_NAME;
-  }
-
-  const transporter = await findOrCreateTransporter({
-    document: transporterDocument,
-    name: transporterName,
+  // A API da Tecinco não expõe dado de transportador — o XML da NF-e
+  // (transp.transporta) é sempre a única fonte aqui.
+  const transporter = await transporterService.resolveTransporter({
+    document: extracted.transporterDocument || null,
+    name: extracted.transporterName || null,
     city: extracted.transporterCity,
     uf: extracted.transporterUf,
+    integrationsId: integration.id,
   });
+
+  // transporter_document/transporter_name espelham o que foi de fato
+  // resolvido (placeholder "Sem transporte" incluso) — nunca o dado cru do
+  // XML quando ele já foi substituído pela consulta de CNPJ.
+  const transporterDocument = transporter?.cnpj ?? extracted.transporterDocument ?? null;
+  const transporterName = transporter?.name ?? extracted.transporterName ?? null;
 
   // ─── Invoice existente ─────────────────────────────────────────────────────
 

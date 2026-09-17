@@ -19,7 +19,6 @@ import {
   Invoice,
   InvoiceItems,
   UnitBusiness,
-  Transporter,
   ExpeditionBatch,
   ExpeditionBatchItems,
   ExpeditionBatchInvoice,
@@ -71,11 +70,10 @@ import { blingGet } from "../helpers/get-with-sleep";
 import productService from "../../../../../inventory/products/services/product.service";
 import supplierMappingService from "../../../../../inventory/supplier-mapping/supplier-mapping.service";
 import productConfigService from "../../../../../inventory/product-config/product_config.service";
+import transporterService from "../../../../../warehouse/transporter/transporter.service";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
-const NO_TRANSPORTER_NAME = "Sem transporte";
-const NO_TRANSPORTER_DOCUMENT = "0000000";
 const BLING_DEFAULT_TIRE_GROUP_NAME = "PNEUS";
 
 function parseBlingDate(date: string) {
@@ -778,76 +776,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       );
       return { sku: null, productId: null };
     }
-  }
-
-  // ─── Helper: busca ou cria transportadora ────────────────────────────────────
-  private async findOrCreateTransporter(params: {
-    document: string | null;
-    name: string | null;
-    city?: string | null;
-    uf?: string | null;
-  }): Promise<Transporter | null> {
-    const { document, name, city, uf } = params;
-    const isNoTransporterFallback =
-      name === NO_TRANSPORTER_NAME &&
-      (!document || cleanDocument(document) === NO_TRANSPORTER_DOCUMENT);
-
-    if (isNoTransporterFallback) {
-      const existingNoTransporter = await Transporter.findOne({
-        where: {
-          [Op.or]: [
-            { cnpj: NO_TRANSPORTER_DOCUMENT },
-            { name: NO_TRANSPORTER_NAME },
-          ],
-        },
-      });
-
-      if (existingNoTransporter) {
-        if (!existingNoTransporter.cnpj) {
-          await existingNoTransporter.update({ cnpj: NO_TRANSPORTER_DOCUMENT });
-        }
-        return existingNoTransporter;
-      }
-
-      const createdNoTransporter = await Transporter.create({
-        name: NO_TRANSPORTER_NAME,
-        cnpj: NO_TRANSPORTER_DOCUMENT,
-        city: city ?? "",
-        uf: uf ?? "",
-      });
-
-      console.log(
-        `[TRANSPORTER] Transportadora padrão criada automaticamente: cnpj=${NO_TRANSPORTER_DOCUMENT}, nome=${NO_TRANSPORTER_NAME}`,
-      );
-      return createdNoTransporter;
-    }
-
-    if (!document) return null;
-
-    const cleanDoc = cleanDocument(document);
-    if (!cleanDoc) return null;
-
-    const existing = await Transporter.findOne({ where: { cnpj: cleanDoc } });
-    if (existing) return existing;
-
-    if (!name) {
-      console.warn(
-        `[TRANSPORTER] Documento ${cleanDoc} sem nome — transportadora não criada.`,
-      );
-      return null;
-    }
-
-    const created = await Transporter.create({
-      name,
-      cnpj: cleanDoc,
-      city: city ?? "",
-      uf: uf ?? "",
-    });
-
-    console.log(
-      `[TRANSPORTER] Transportadora criada automaticamente: cnpj=${cleanDoc}, nome=${name}`,
-    );
-    return created;
   }
 
   private async findProductForInvoiceItem(params: {
@@ -1736,33 +1664,37 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     // ─── Transportador ────────────────────────────────────────────────────────
+    // Prioriza o que a própria resposta da Bling traz em transporte.transportador
+    // — só cai pro que veio do XML (extraído acima, via extractPartiesFromXml)
+    // quando a Bling não retorna documento nenhum pra essa nota.
+    const blingTransporterDoc = String(
+      nf.transporte?.transportador?.numeroDocumento ?? "",
+    ).trim();
+    const blingTransporterName = String(
+      nf.transporte?.transportador?.nome ?? "",
+    ).trim();
 
-    if (!transporter_document) {
-      const blingDoc = String(
-        nf.transporte?.transportador?.numeroDocumento ?? "",
-      ).trim();
-      const blingName = String(nf.transporte?.transportador?.nome ?? "").trim();
-      if (blingDoc) {
-        transporter_document = blingDoc;
-        transporter_name = transporter_name || blingName || null;
-        console.log(
-          `[BLING_API_FETCH] Transportador não encontrado no XML — usando dados da API Bling: doc=${blingDoc}, nome=${blingName}`,
-        );
-      }
+    if (blingTransporterDoc) {
+      transporter_document = blingTransporterDoc;
+      transporter_name = blingTransporterName || null;
+    } else if (blingTransporterName.toLowerCase() === "entrega própria") {
+      // Bling não manda numeroDocumento pra "Entrega Própria" — o nome sozinho
+      // já identifica essa transportadora pro resolveTransporter (sem cair no
+      // documento que porventura tenha vindo do XML).
+      transporter_name = blingTransporterName;
+      transporter_document = null;
+    } else if (transporter_document) {
+      console.log(
+        `[BLING_API_FETCH] Bling sem documento de transportador — usando dado do XML: doc=${transporter_document}`,
+      );
     }
 
-    if (!transporter_document) {
-      transporter_name = NO_TRANSPORTER_NAME;
-      transporter_document = NO_TRANSPORTER_DOCUMENT;
-    } else if (!transporter_name) {
-      transporter_name = NO_TRANSPORTER_NAME;
-    }
-
-    const transporter = await this.findOrCreateTransporter({
+    const transporter = await transporterService.resolveTransporter({
       document: transporter_document,
       name: transporter_name,
       city: transporter_city,
       uf: transporter_uf,
+      integrationsId: integration.id,
     });
 
     // ─── Totais fiscais ───────────────────────────────────────────────────────
@@ -1813,8 +1745,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       store_id: store_id!.id ?? null,
       seller_id: sellerId,
       transporter_id: transporter?.id ?? null,
-      transporter_document: transporter_document ?? null,
-      transporter_name: transporter_name ?? null,
+      transporter_document: transporter?.cnpj ?? transporter_document ?? null,
+      transporter_name: transporter?.name ?? transporter_name ?? null,
       description: invoiceFound?.description
         ? invoiceFound.description
         : nfeRef
