@@ -68,7 +68,13 @@ app.set('query parser', (str: string) => {
   })
 })
 
+app.use((_, res, next) => {
+  res.setHeader('X-App-Version', process.env.APP_VERSION ?? 'unknown')
+  next()
+})
+
 app.get('/health', (_, res) => res.json({status: 'ok'}))
+app.get('/version', (_, res) => res.json({version: process.env.APP_VERSION ?? 'unknown'}))
 
 export const initApp = async () => {
   await setupAdminJS(app)

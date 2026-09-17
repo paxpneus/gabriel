@@ -13,7 +13,9 @@ services:
     networks:
       - backend
     depends_on:
-      - api
+      - api-blue
+      - api-green
+      - deployer
 
   # ── 1. PostgreSQL ─────────────────────────────────────────────────────────
   postgres:
@@ -53,6 +55,8 @@ services:
     build:
       context: .
       target: app
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     image: autoinvoice_node-app
     command: npx sequelize-cli db:migrate
     environment:
@@ -69,11 +73,16 @@ services:
       - backend
     restart: "no"
 
-  # ── 4. API ────────────────────────────────────────────────────────────────
-  api:
+  # ── 4. API (blue-green: os dois sobem com a mesma imagem/env; o Caddyfile
+  #      decide pra qual mandar tráfego via health check ativo. O
+  #      scripts/deploy.sh builda/sobe sempre no slot ocioso e só remove o
+  #      outro depois do healthcheck do Docker confirmar 'healthy'.) ────────
+  api-blue: &api
     build:
       context: .
       target: app
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     image: autoinvoice_node-app
     restart: unless-stopped
     expose:
@@ -148,16 +157,25 @@ services:
     networks:
       - backend
     healthcheck:
+      # Intervalo curto de propósito: é o gate autoritativo que
+      # scripts/deploy.sh espera virar "healthy" antes de trocar o
+      # tráfego pro slot novo - 30s deixaria o deploy artificialmente lento.
       test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
-      interval: 30s
-      timeout: 10s
+      interval: 5s
+      timeout: 5s
       retries: 3
+      start_period: 10s
+
+  api-green:
+    <<: *api
 
   # ── 5. Workers gerais ─────────────────────────────────────────────────────
   workers:
     build:
       context: .
       target: app
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     image: autoinvoice_node-app
     restart: unless-stopped
     command: ["node", "dist/workers/worker.js"]
@@ -223,6 +241,8 @@ services:
     build:
       context: .
       target: worker-scraping
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     command: ["node", "dist/workers/worker-scraping.js"]
     environment:
@@ -291,6 +311,8 @@ services:
     build:
       context: .
       target: app
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     image: autoinvoice_node-app
     restart: unless-stopped
     command: ["node", "dist/workers/worker-automation.js"]
@@ -357,6 +379,8 @@ services:
     build:
       context: .
       target: app
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     command: ["node", "dist/workers/worker-bling.js"]
     environment:
@@ -415,6 +439,8 @@ services:
     build:
       context: .
       target: app
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     command: ["node", "dist/workers/worker-tecinco.js"]
     environment:
@@ -467,9 +493,36 @@ services:
     networks:
       - backend
 
+  # ── 10. Deployer ──────────────────────────────────────────────────────────
+  # Recebe o webhook do GitHub e roda scripts/deploy.sh (build + blue-green
+  # swap + lock). Mantém seu próprio clone do repo (deploy_repo, decoupled de
+  # onde o Portainer guarda o checkout da stack) e fala com o daemon do
+  # Docker do host via docker.sock - por isso COMPOSE_PROJECT_NAME precisa
+  # bater exatamente com o nome da stack no Portainer, senão o deploy cria
+  # um segundo project/stack em paralelo em vez de atualizar os containers
+  # existentes. Ver README de scripts/deployer/ pra configuração.
+  deployer:
+    build:
+      context: ./scripts/deployer
+    restart: unless-stopped
+    expose:
+      - "4000"
+    environment:
+      REPO_URL: ${DEPLOY_REPO_URL}
+      GIT_BRANCH: ${DEPLOY_GIT_BRANCH:-main}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+      DEPLOY_WEBHOOK_SECRET: ${DEPLOY_WEBHOOK_SECRET}
+      DEPLOY_HEALTH_TIMEOUT: ${DEPLOY_HEALTH_TIMEOUT:-60}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - deploy_repo:/repo
+    networks:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:
+  deploy_repo:
   ml_session:
   ml_downloads:
   stock_movement_csv:

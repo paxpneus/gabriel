@@ -6,6 +6,7 @@ import { startAutomationWorkers } from "../queues";
 async function start(): Promise<void> {
   await sequelize.authenticate();
   console.log("------------------- DB: Banco Conectado! -------------------");
+  console.log(`Versão ativa: ${process.env.APP_VERSION ?? "unknown"}`);
   setupAssociations();
   startAutomationWorkers();
 }

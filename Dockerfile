@@ -67,6 +67,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Diretório para sessão/downloads do ML (será sobrescrito pelo worker-scraping)
 RUN mkdir -p /app/ml_session /app/ml_downloads
 
+# ARG/ENV do SHA ficam por último de propósito: mudam a cada deploy, então
+# colocá-los antes invalidaria o cache das camadas de build acima.
+ARG GIT_SHA=unknown
+ENV APP_VERSION=$GIT_SHA
+
+# Sem HEALTHCHECK aqui: este stage também vira imagem dos workers, que não
+# sobem servidor HTTP - um HEALTHCHECK fixo em /health os marcaria unhealthy
+# pra sempre. O healthcheck real fica só no docker-compose.yml, por serviço
+# (api-blue/api-green).
 CMD ["node", "dist/server.js"]
 
 # ─── Stage 4: Worker de Scraping (com Playwright + Chromium) ──────────────────
@@ -91,5 +100,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /app/ml_session /app/ml_downloads
+
+ARG GIT_SHA=unknown
+ENV APP_VERSION=$GIT_SHA
 
 CMD ["node", "dist/worker-scraping.js"]

@@ -37,6 +37,7 @@ async function start(): Promise<void> {
 
   httpServer.listen(PORT, HOST, () => {
     console.log(`Servidor rodando em http://187.50.246.187:${PORT}`);
+    console.log(`Versão ativa: ${process.env.APP_VERSION ?? "unknown"}`);
   });
 }
 

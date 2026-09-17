@@ -1,7 +1,22 @@
 ml.paxpneus.com.br {
-    reverse_proxy api:3000 {
+    reverse_proxy api-blue:3000 api-green:3000 {
+        lb_policy first
+        lb_try_duration 5s
+
+        health_uri /health
+        health_interval 5s
+        health_timeout 2s
+        health_status 200
+
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-For {remote_host}
         header_up Host {host}
     }
+}
+
+# Endpoint dedicado pro webhook de deploy (GitHub -> deployer). Autenticação
+# é HMAC no corpo da requisição (DEPLOY_WEBHOOK_SECRET), feita pelo próprio
+# deployer - aqui é só roteamento.
+deploy.paxpneus.com.br {
+    reverse_proxy deployer:4000
 }
