@@ -4,7 +4,6 @@ import eventRepository, { EventRepository } from "./event.repository";
 import userService from "../../users/users/user.service";
 import userEventService from "../users-event/users-event.service";
 import sequelize from "../../../../config/sequelize";
-import { Op, Transaction, where } from "sequelize";
 import socketService from "../../../handlers/socket/services/socket.service";
 import {
   EventAttributes,
@@ -42,12 +41,10 @@ export class EventService extends BaseService<Event, EventRepository> {
       return cached;
     }
 
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
     const userEvents = await userEventService.findAll({
       where: {
         user_id: userId,
-        [Op.or]: [{ read_at: null }, { read_at: { [Op.gte]: oneDayAgo } }],
+        read_at: null,
       },
       include: [{ association: "event", required: true }],
     });

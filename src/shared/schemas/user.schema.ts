@@ -176,9 +176,24 @@ export const LoginSchema = z.object({
   password: z
     .string({ error: "Senha é obrigatória" })
     .min(1, "Senha é obrigatória"),
+
+  unit_business_to_join: z.string().uuid("ID deve ser um UUID válido").optional(),
 });
 
 export type LoginInput = z.infer<typeof LoginSchema>;
+
+/**
+ * Schema para troca de unit business do usuário logado
+ */
+export const SwitchUnitBusinessSchema = z
+  .object({
+    unit_business_id: z
+      .string({ error: "ID da unidade de negócio é obrigatório" })
+      .uuid("ID da unidade deve ser um UUID válido"),
+  })
+  .strict();
+
+export type SwitchUnitBusinessInput = z.infer<typeof SwitchUnitBusinessSchema>;
 
 /**
  * Schema para mudança de senha

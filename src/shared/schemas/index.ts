@@ -10,11 +10,13 @@ export {
   UserIdSchema,
   LoginSchema,
   ChangePasswordSchema,
+  SwitchUnitBusinessSchema,
   type CreateUserInput,
   type UpdateUserInput,
   type UserIdInput,
   type LoginInput,
   type ChangePasswordInput,
+  type SwitchUnitBusinessInput,
 } from './user.schema';
 
 // Invoice (Exemplo)

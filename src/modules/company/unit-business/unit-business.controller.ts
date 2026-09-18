@@ -31,6 +31,18 @@ export class UnitBusinessController extends BaseController<
         ...this.mw("shutdownQueues"),
         (req, res) => this.shutdownQueues(req, res),
       ));
+
+    this.router.get(
+      "/public/list",
+      ...this.mw("getUnitBusinessPublic"),
+      (req, res) => this.getUnitBusinessPublic(req, res),
+    );
+
+    this.router.get(
+      "/comercial/allowed",
+      ...this.mw("getComercialUnitBusinessOnlyForUser"),
+      (req, res) => this.getComercialUnitBusinessOnlyForUser(req, res),
+    );
   }
 
   protected middlewaresFor() {
@@ -44,6 +56,8 @@ export class UnitBusinessController extends BaseController<
       viewAllUnitBusiness: [authenticate, userPermissions],
       shutdownQueues: [authenticate, userPermissions],
       getOrUpdateLastOutgoingBatchNumber: [authenticate],
+      getUnitBusinessPublic: [],
+      getComercialUnitBusinessOnlyForUser: [authenticate],
     };
   }
 
@@ -97,6 +111,39 @@ export class UnitBusinessController extends BaseController<
       });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
+    }
+  };
+
+  getUnitBusinessPublic = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      const result = await this.service.getUnitBusinessPublic(params);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  getComercialUnitBusinessOnlyForUser = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const { userId } = await getUserContext(req);
+
+      if (!userId) {
+        return res.status(401).json({ error: "Não autenticado." });
+      }
+
+      const result =
+        await this.service.getComercialUnitBusinessOnlyForUser(userId);
+
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
     }
   };
 

@@ -17,6 +17,8 @@ import User from "../users/users/user.model";
 import { UserAttributes } from "../users/users/user.types";
 import Role from "../users/roles/role.model";
 import expeditionBatchService from "../../warehouse/expedition/batch/batch.service";
+import { comercialUnitBusinessWhere } from "./helpers/comercial-unit-business";
+import roleService from "../users/roles/role.service";
 
 export class UnitBusinessService extends BaseService<
   UnitBusiness,
@@ -102,34 +104,57 @@ export class UnitBusinessService extends BaseService<
     return sequelize.transaction(run);
   }
 
-  async paginate(
-    params: QueryParams,
-    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-  ): Promise<PaginatedResult<UnitBusiness>> {
+  private async resolveUser(userId: string): Promise<UserAttributes | null> {
     let user: UserAttributes | null = await redisService.get(
-      `user:${params.userId}`,
+      `user:${userId}`,
     );
     if (!user) {
-      user = await User.findByPk(params.userId, {
+      user = await User.findByPk(userId, {
         include: [{ model: Role, as: "role" }],
       });
     }
 
+    return user;
+  }
+
+  /**
+   * IDs de unit business que o usuário pode ver, ou undefined se ele tem
+   * a permissão "visualize-all-unit-business" (sem restrição).
+   */
+  private async resolveEffectiveAllowedUnitBusinessIds(
+    userId?: string,
+    requestedIds?: string | string[],
+  ): Promise<string[] | undefined> {
+    if (!userId) return undefined;
+
+    const user = await this.resolveUser(userId);
+
     const allowedIds = await resolveAllowedUnitBusinessIds(
-      params.userId,
-      params.filters?.unit_business_id,
+      userId,
+      requestedIds,
     );
 
     const canViewAll = user?.role?.permissions.find(
       (s) => s.entity === "visualize-all-unit-business",
     );
 
+    return allowedIds && !canViewAll ? allowedIds : undefined;
+  }
+
+  async paginate(
+    params: QueryParams,
+    extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+  ): Promise<PaginatedResult<UnitBusiness>> {
+    const allowedIds = await this.resolveEffectiveAllowedUnitBusinessIds(
+      params.userId,
+      params.filters?.unit_business_id,
+    );
+
     const { userId, ...safeParams } = params;
 
-    const finalParams: QueryParams =
-      allowedIds && !canViewAll
-        ? { ...safeParams, filters: { ...safeParams.filters, id: allowedIds } }
-        : safeParams;
+    const finalParams: QueryParams = allowedIds
+      ? { ...safeParams, filters: { ...safeParams.filters, id: allowedIds } }
+      : safeParams;
 
     return this.repository.findPaginated(
       finalParams,
@@ -138,15 +163,58 @@ export class UnitBusinessService extends BaseService<
     );
   }
 
+  async getUnitBusinessPublic(
+    params: QueryParams,
+  ): Promise<PaginatedResult<UnitBusiness>> {
+    return this.repository.findPaginated(
+      params,
+      this.queryConfig,
+      { attributes: ["id", "name", "number"] },
+      comercialUnitBusinessWhere(),
+      [["number", "DESC"]],
+    );
+  }
+
   async getComercialUnitBusinessOnly(): Promise<UnitBusinessAttributes[]> {
     const result = await this.findAll({
-      where: {
-        type: "PHYSICAL",
-        number: {
-          [Op.ne]: "0",
-        },
-      },
+      where: comercialUnitBusinessWhere(),
       order: [["number", "DESC"]],
+    });
+
+    if (!result)
+      throw new Error("Nenhuma unit business válida para negócio cadastrada");
+
+    return result;
+  }
+
+  /**
+   * IDs de unit business que o usuário pode trocar/operar: admin vê tudo,
+   * senão só as lojas atribuídas (ignora "visualize-all-unit-business",
+   * que só afeta escopo de visualização de dados, não de troca de loja).
+   */
+  private async resolveSwitchableUnitBusinessIds(
+    userId: string,
+  ): Promise<string[] | undefined> {
+    const user = await this.resolveUser(userId);
+    if (!user) return undefined;
+
+    const isAdmin = await roleService.isAdminRole(user.role_id);
+    if (isAdmin) return undefined;
+
+    return resolveAllowedUnitBusinessIds(userId);
+  }
+
+  async getComercialUnitBusinessOnlyForUser(
+    userId: string,
+  ): Promise<UnitBusinessAttributes[]> {
+    const allowedIds = await this.resolveSwitchableUnitBusinessIds(userId);
+
+    const result = await this.findAll({
+      where: allowedIds
+        ? { ...comercialUnitBusinessWhere(), id: allowedIds }
+        : comercialUnitBusinessWhere(),
+      order: [["number", "DESC"]],
+      attributes: ["id", "name", "number"],
     });
 
     if (!result)

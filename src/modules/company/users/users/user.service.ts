@@ -6,6 +6,7 @@ import bcrypt from "bcrypt";
 import "dotenv/config";
 import jwt from "jsonwebtoken";
 import Role from "../roles/role.model";
+import roleService from "../roles/role.service";
 const SECRET = process.env.JWT_SECRET!;
 import {
   PaginatedResult,
@@ -21,6 +22,7 @@ import UserUnitBusiness from "../user_unit_business/user_unit_business.model";
 import sequelize from "../../../../config/sequelize";
 import { USER_TYPES } from "../../../../shared/constants/user-types";
 import Contact from "../../../sales/contacts/contacts.model";
+import { UserAttributes } from "./user.types";
 
 export class UserService extends BaseService<User, UserRepository> {
   constructor() {
@@ -282,7 +284,43 @@ export class UserService extends BaseService<User, UserRepository> {
     return count;
   }
 
-  async login(email: string, password: string) {
+  private async assertUnitBusinessAccess(
+    user: UserAttributes,
+    unitBusinessId: string,
+  ): Promise<void> {
+    const isAdmin = await roleService.isAdminRole(user.role_id);
+    const hasAccess =
+      isAdmin ||
+      user.availableUnitBusinesses?.some((ub) => ub.id === unitBusinessId);
+
+    if (!hasAccess) {
+      throw new Error("Usuário não tem acesso a essa unidade de negócio");
+    }
+  }
+
+  async switchUnitBusiness(
+    userId: string,
+    unitBusinessId: string,
+  ): Promise<UserAttributes> {
+    const user = await this.repository.getFullUser({ where: { id: userId } });
+    if (!user) throw new Error("Usuário não encontrado");
+
+    await this.assertUnitBusinessAccess(user, unitBusinessId);
+
+    await this.repository.update(userId, {
+      unit_business_id: unitBusinessId,
+    });
+    await redisService.delete(`user:${userId}`);
+
+    const updated = await this.repository.getFullUser({
+      where: { id: userId },
+    });
+    if (!updated) throw new Error("Usuário não encontrado");
+
+    return updated;
+  }
+
+  async login(email: string, password: string, unitBusinessToJoin?: string) {
     let user = await this.repository.getFullUser({
       where: { email },
     });
@@ -293,6 +331,17 @@ export class UserService extends BaseService<User, UserRepository> {
 
     const incorrectPassword = await bcrypt.compare(password, user.password);
     if (!incorrectPassword) throw new Error("Senha Incorreta");
+
+    if (unitBusinessToJoin && unitBusinessToJoin !== user.unit_business_id) {
+      await this.assertUnitBusinessAccess(user, unitBusinessToJoin);
+
+      await this.repository.update(user.id, {
+        unit_business_id: unitBusinessToJoin,
+      });
+      await redisService.delete(`user:${user.id}`);
+      user = await this.repository.getFullUser({ where: { email } });
+      if (!user) throw new Error("Usuário não encontrado");
+    }
 
     const token = jwt.sign({ id: user.id, role: user.role_id }, SECRET, {
       expiresIn: "8h",

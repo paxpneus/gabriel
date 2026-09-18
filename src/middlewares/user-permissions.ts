@@ -47,6 +47,45 @@ function resolvePermissionEntity(entity: string): { entity: string; type: RoleTy
   return { entity, type: 'REGULAR' };
 }
 
+function normalizedIdList(ids: unknown): string {
+  return Array.isArray(ids) ? [...ids].sort().join(",") : "";
+}
+
+// user_unit_business/main_unit_business_id só podem mudar com a permissão
+// normal de "Atualizar Usuários" — o body pode trazer esses campos sem
+// alterá-los (form completo do front), então só bloqueia o bypass quando
+// o valor enviado realmente diverge do atual.
+function isSelfUserUpdate(
+  requesterId: string,
+  entity: string,
+  action: Actions,
+  req: AuthRequest,
+  currentUser?: any,
+): boolean {
+  if (entity !== "users" || action !== "update") return false;
+  if (req.params?.id !== requesterId) return false;
+
+  const body = req.body ?? {};
+
+  if (
+    "main_unit_business_id" in body &&
+    body.main_unit_business_id !== (currentUser?.main_unit_business_id ?? null)
+  ) {
+    return false;
+  }
+
+  if ("user_unit_business" in body) {
+    const currentIds = (currentUser?.availableUnitBusinesses ?? []).map(
+      (ub: any) => ub.id,
+    );
+    if (normalizedIdList(body.user_unit_business) !== normalizedIdList(currentIds)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function userHasPermission(
   role: any,
   entity: string,
@@ -83,7 +122,10 @@ export async function userPermissions(
       const entity = resolveEntityFromRoute(req.originalUrl);
       if (!entity) return next();
 
-      if (!userHasPermission(req.application.role, entity, action)) {
+      if (
+        !userHasPermission(req.application.role, entity, action) &&
+        !isSelfUserUpdate(req.application.id, entity, action, req)
+      ) {
         return res.status(400).json({
           error: `Acesso negado: sem permissão de "${ACTION_LABEL[action]}" em "${MODEL_LABEL(entity)}".`,
         });
@@ -127,7 +169,10 @@ export async function userPermissions(
       
     }
 
-    if (!userHasPermission(user.role, entity, action)) {
+    if (
+      !userHasPermission(user.role, entity, action) &&
+      !isSelfUserUpdate(decoded.id, entity, action, req, user)
+    ) {
       const scope =
         ROLE_PERMISSIONS.find((s) => s.entity === entity)?.scope ?? entity;
 

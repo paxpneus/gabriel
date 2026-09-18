@@ -12,6 +12,7 @@ import {
   UpdateUserSchema,
   UserIdSchema,
   LoginSchema,
+  SwitchUnitBusinessSchema,
 } from "../../../../shared/schemas";
 import { Request, Response } from "express";
 import { authenticate } from "../../../../middlewares/auth-token";
@@ -27,6 +28,12 @@ export class UserController extends BaseController<User, typeof UserService> {
     this.router.post(`/logout`, this.logout);
 
     this.router.get('/me/get', ...this.mw('getMe'), this.getMe)
+
+    this.router.put(
+      '/me/unit-business',
+      ...this.mw('switchUnitBusiness'),
+      this.switchUnitBusiness,
+    )
   }
 
    protected middlewaresFor() {
@@ -42,7 +49,11 @@ export class UserController extends BaseController<User, typeof UserService> {
       show: [authenticate, validateId(UserIdSchema), userPermissions],
       destroy: [authenticate, validateId(UserIdSchema), userPermissions],
       login: [validateLoginSchema(LoginSchema)],
-      getMe: [authenticate]
+      getMe: [authenticate],
+      switchUnitBusiness: [
+        authenticate,
+        validateUpdate(SwitchUnitBusinessSchema),
+      ],
     };
   }
 
@@ -70,9 +81,13 @@ export class UserController extends BaseController<User, typeof UserService> {
 
   login = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { email, password } = req.body;
+      const { email, password, unit_business_to_join } = req.body;
 
-      const { token, user } = await this.service.login(email, password);
+      const { token, user } = await this.service.login(
+        email,
+        password,
+        unit_business_to_join,
+      );
 
       res.cookie("token", token, {
         httpOnly: true,
@@ -99,6 +114,24 @@ export class UserController extends BaseController<User, typeof UserService> {
         maxAge: 8 * 60 * 60 * 1000,
       });
       return res.json({ user });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  switchUnitBusiness = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!userId) return res.status(401).json({ error: "Não autenticado" });
+
+      const { unit_business_id } = req.body;
+
+      const user = await this.service.switchUnitBusiness(
+        userId,
+        unit_business_id,
+      );
+
+      return res.json(user);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
