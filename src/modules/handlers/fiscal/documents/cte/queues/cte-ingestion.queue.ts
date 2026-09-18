@@ -22,6 +22,7 @@ import { getDatafreteIntegration } from "../../../../logistic/transporters/data-
 import {
   describeDatafreteCodigoRetorno,
   extractDatafreteCodigoRetorno,
+  extractDatafreteMensagem,
 } from "../../../../logistic/transporters/data-frete/helpers/error-codes";
 import integrationLoggerService from "../../../../../integrations/integration-errors/integration-logger.service";
 import { IntegrationErrorEntity } from "../../../../../integrations/integration-errors/integration-error.types";
@@ -234,9 +235,11 @@ export class CteIngestionQueue extends BaseQueueService<void> {
         integrationsId: integration.id,
         internalId: cte.id,
         reference: cte.xml_key ?? String(cte.number),
-        message: codigoRetorno
-          ? describeDatafreteCodigoRetorno(codigoRetorno)
-          : (err?.message ?? "Erro desconhecido ao sincronizar CT-e com a Datafrete"),
+        message:
+          extractDatafreteMensagem(err) ??
+          (codigoRetorno
+            ? describeDatafreteCodigoRetorno(codigoRetorno)
+            : (err?.message ?? "Erro desconhecido ao sincronizar CT-e com a Datafrete")),
         createIntegrationError: true,
       });
     }

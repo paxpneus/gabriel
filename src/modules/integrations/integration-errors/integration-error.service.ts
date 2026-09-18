@@ -77,7 +77,12 @@ export class IntegrationErrorService extends BaseService<
     const { eventId } = await eventService.notifyByRoles({
       types: [DEVELOPER_USER_TYPE],
       title: `Novo erro de integração: ${params.entity}/${params.type}`,
-      description: params.message ?? params.reference ?? undefined,
+      description: [
+        params.reference ? `Referência: ${params.reference}` : null,
+        params.message,
+      ]
+        .filter(Boolean)
+        .join(' — ') || undefined,
     });
 
     if (eventId) {

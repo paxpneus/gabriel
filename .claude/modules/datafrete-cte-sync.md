@@ -21,7 +21,7 @@ Ao final de cada execução (`process` e `runBackfill`, ambos passam por `runFor
 
 ## Códigos de erro da Datafrete (`codigo_retorno`)
 
-Mapa central em `src/modules/handlers/logistic/transporters/data-frete/helpers/error-codes.ts` (`DatafreteCodigoRetorno`, `describeDatafreteCodigoRetorno`, `extractDatafreteCodigoRetorno`, `isDatafreteCteAlreadyCadastrado`) — **nunca comparar `codigo_retorno` como número solto no código, sempre via esse helper**. Confirmados em produção:
+Mapa central em `src/modules/handlers/logistic/transporters/data-frete/helpers/error-codes.ts` (`DatafreteCodigoRetorno`, `describeDatafreteCodigoRetorno`, `extractDatafreteCodigoRetorno`, `extractDatafreteMensagem`, `isDatafreteCteAlreadyCadastrado`) — **nunca comparar `codigo_retorno` como número solto no código, sempre via esse helper**. Confirmados em produção:
 - **714** (`CTE_JA_CADASTRADO`, HTTP 400): `"O conhecimento de transporte já está cadastrada na base de dados do DATAFRETE"` — duplicidade genuína, não é erro real.
 - **712** (`TRANSPORTADOR_NAO_ENCONTRADO`, HTTP 302): `"O documento do transportador '<cnpj>' não encontrado na base de dados"` — erro real (transportador emissor do CT-e não cadastrado na conta Datafrete), não tem relação com duplicidade apesar do HTTP 302.
 
@@ -50,6 +50,8 @@ Por isso `importCteXml`/`importCteJson` propagam a exception normalmente em qual
 ## Falhas registradas em `integration_errors`
 
 Além dos `console.error`/`console.warn` já existentes (mantidos como estão), todo `catch` que hoje só loga e segue (batch `syncPendingCtes`, envio inline `syncCteWithDatafrete`, fetch/upsert do Sieg em `fetchAndProcess`) também chama `integrationLoggerService.log(...)` (ver `.claude/entities/integration-error.md`) — persiste/atualiza uma linha em `integration_errors` (`entity: CTE`) com `createIntegrationError: true`, exceto o retry intermediário do Sieg (ainda tentando, `createIntegrationError: false`). Isso não muda nenhum comportamento de retry/backoff nem o fluxo de sucesso (`isDatafreteCteAlreadyCadastrado` continua sem gerar log nenhum, é sucesso) — só resolve o problema de "falha só existe no stdout, se perde depois que o log rola".
+
+O `message` gravado nos dois catches da Datafrete (`syncPendingCtes` e `syncCteWithDatafrete`) prioriza `extractDatafreteMensagem(error)` — a `mensagem` crua da resposta da própria Datafrete — em vez do label genérico de `describeDatafreteCodigoRetorno`, porque a mensagem crua já vem com o dado específico do erro (ex.: `"O documento do transportador '35635824001518' não encontrado na base de dados"`, com o CNPJ do transportador incluído), enquanto o label genérico (`"Transportador do CT-e não cadastrado na conta Datafrete"`) não identifica qual transportador. Cai pro label genérico só se a resposta não tiver `mensagem` (ex.: erro que não veio da API da Datafrete).
 
 ### Retry de 429 (rate limit)
 

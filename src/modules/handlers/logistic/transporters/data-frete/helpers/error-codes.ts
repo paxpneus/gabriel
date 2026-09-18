@@ -25,6 +25,16 @@ export function extractDatafreteCodigoRetorno(error: unknown): number | null {
   return typeof data?.codigo_retorno === 'number' ? data.codigo_retorno : null;
 }
 
+// `mensagem` da própria resposta da Datafrete — mais específica que o label
+// genérico de `describeDatafreteCodigoRetorno` (ex.: já vem com o CNPJ do
+// transportador não encontrado, o label genérico não tem esse dado).
+export function extractDatafreteMensagem(error: unknown): string | null {
+  if (!axios.isAxiosError(error)) return null;
+
+  const data = error.response?.data as { mensagem?: string } | undefined;
+  return typeof data?.mensagem === 'string' ? data.mensagem : null;
+}
+
 export function isDatafreteCteAlreadyCadastrado(error: unknown): boolean {
   return extractDatafreteCodigoRetorno(error) === DatafreteCodigoRetorno.CTE_JA_CADASTRADO;
 }

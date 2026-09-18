@@ -25,6 +25,8 @@ Chave de dedup: `(entity, type, integrations_id, internal_id, external_id)` (ín
 
 `UserType` "developer" (`user_config.type`, `USER_TYPES`/`DEVELOPER_USER_TYPE` em `shared/constants/user-types.ts`) tem `modules: "*"`, igual `admin` — mesmo acesso total ao sistema. Notificação de nota fiscal entrando (`invoice.service.ts`, `notifyByRoles({ types: ["operator", "admin"] })`) continua não incluindo `developer` — é lista explícita, não teve troca pra "todos exceto developer".
 
+`description` do evento inclui sempre o `reference` (quando presente), prefixado `"Referência: ..."`, seguido de `message` — pra quem receber o alerta identificar de cara qual entidade falhou sem precisar abrir a tabela.
+
 ## Logger centralizado (`IntegrationLoggerService.log`)
 
 Ponto único de entrada que todo módulo chama pra reportar evento de integração (`integration-logger.service.ts`) — não é um `BaseService`/entidade, é uma fachada cross-cutting. Recebe a flag `createIntegrationError`:

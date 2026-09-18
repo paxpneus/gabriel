@@ -6,6 +6,7 @@ import { importCteJson } from "../transporters/data-frete/services/invoices/cte/
 import {
   describeDatafreteCodigoRetorno,
   extractDatafreteCodigoRetorno,
+  extractDatafreteMensagem,
   isDatafreteCteAlreadyCadastrado,
 } from "../transporters/data-frete/helpers/error-codes";
 import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
@@ -100,9 +101,11 @@ export class SyncDatafreteCteService {
           integrationsId: integration.id,
           internalId: cte.id,
           reference: cte.xml_key ?? String(cte.number),
-          message: codigoRetorno
-            ? describeDatafreteCodigoRetorno(codigoRetorno)
-            : (error?.message ?? "Erro desconhecido ao sincronizar CT-e com a Datafrete"),
+          message:
+            extractDatafreteMensagem(error) ??
+            (codigoRetorno
+              ? describeDatafreteCodigoRetorno(codigoRetorno)
+              : (error?.message ?? "Erro desconhecido ao sincronizar CT-e com a Datafrete")),
           createIntegrationError: true,
         });
       }
