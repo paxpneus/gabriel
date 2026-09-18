@@ -54,8 +54,14 @@ export const datafreteApi: AxiosInstance = createAxiosInstance({
   onResponseError: async (error: unknown) => {
     if (!axios.isAxiosError(error)) return Promise.reject(error);
 
-    console.error(
-      `[DatafreteApi] Erro na requisição: ${error.response?.status} ${error.response?.statusText}`,
+    // 302 não é erro real pra Datafrete — significa "dado já consta na base"
+    // (ex.: CT-e já importado). Quem chama decide o que fazer com isso.
+    const logFn = error.response?.status === 302 ? console.warn : console.error;
+
+    logFn(
+      `[DatafreteApi] ${error.response?.status === 302 ? "302 (já existe na base)" : "Erro na requisição"}: ` +
+        `${error.response?.status} ${error.response?.statusText}`,
+      JSON.stringify(error.response?.data, null, 2),
     );
 
     return Promise.reject(error);

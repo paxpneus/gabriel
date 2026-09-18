@@ -8,8 +8,10 @@ import {
   DocumentSearchHandler,
 } from "../../../helpers/mappers/documents/map-fiscal-documents.types";
 import { fetchAndUpsertCte } from "../../../helpers/mappers/documents/cte/cte-upsert.service";
+import Cte from "../../../../../warehouse/fiscal/ctes/cte/cte.model";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 import { getIncrementalDateRangeAsDate } from "../../../../../../shared/utils/normalizers/date";
+import syncDatafreteCteService from "../../../../logistic/services/sync-datafrete-cte.service";
 
 const DELAY_BETWEEN_REQUESTS_MS = 30 * 1000;
 const PROVIDER_NAME = "Sieg";
@@ -174,6 +176,42 @@ export class CteIngestionQueue extends BaseQueueService<void> {
     }
 
     console.log(`[CteIngestionQueue] Busca finalizada. jobId=${jobId}`);
+
+    await this.syncPendingCtesWithDatafrete();
+  }
+
+  private async syncPendingCtesWithDatafrete(): Promise<void> {
+    console.log(
+      "[CteIngestionQueue] Sincronizando CT-es pendentes com a Datafrete...",
+    );
+
+    try {
+      const result = await syncDatafreteCteService.syncPendingCtes();
+
+      console.log(
+        `[CteIngestionQueue] Sincronização Datafrete concluída: ` +
+          `processados=${result.ctesProcessed}, já importados=${result.alreadyImported}, falhas=${result.failed}`,
+      );
+    } catch (err: any) {
+      console.warn(
+        `[CteIngestionQueue] Falha ao sincronizar CT-es com a Datafrete: ${err?.message}`,
+      );
+    }
+  }
+
+  private async syncCteWithDatafrete(cte: Cte, logLabel: string): Promise<void> {
+    try {
+      const wasAlreadyImported = await syncDatafreteCteService.syncCte(cte);
+
+      console.log(
+        `[CteIngestionQueue] Datafrete | ${logLabel} | chave=${cte.xml_key} ` +
+          `${wasAlreadyImported ? "já existia na Datafrete" : "importado"}, synched=true.`,
+      );
+    } catch (err: any) {
+      console.warn(
+        `[CteIngestionQueue] Falha ao sincronizar CT-e com a Datafrete | ${logLabel} | chave=${cte.xml_key} | erro=${err?.message}`,
+      );
+    }
   }
 
   private async fetchAndProcess(
@@ -192,7 +230,11 @@ export class CteIngestionQueue extends BaseQueueService<void> {
 
       for (const doc of documents) {
         try {
-          await fetchAndUpsertCte(doc);
+          const cte = await fetchAndUpsertCte(doc);
+
+          if (cte && !cte.synched) {
+            await this.syncCteWithDatafrete(cte, logLabel);
+          }
         } catch (err: any) {
           console.warn(
             `[CteIngestionQueue] Falha ao upsertar CTe | ${logLabel} | erro=${err?.message}`,

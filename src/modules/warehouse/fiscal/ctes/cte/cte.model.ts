@@ -36,6 +36,8 @@ class Cte
 
   public xml_path!: string | null;
 
+  public synched!: boolean;
+
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -148,6 +150,12 @@ Cte.init(
     xml_path: {
       type: DataTypes.TEXT,
       allowNull: true,
+    },
+
+    synched: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
   },
   {

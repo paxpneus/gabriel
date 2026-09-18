@@ -93,5 +93,6 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `bling-nfe-scraping.md` — automação Playwright do Bling pra manifestação de NFe
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login
 - `reports.md` — módulo de snapshot de sales-report
+- `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
 
 Migração: como qualquer outra deste repo, **usuário roda `db:migrate` (ou qualquer DDL) manualmente — nunca automatizar.**

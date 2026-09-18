@@ -2,6 +2,7 @@
 import { XmlDocumentResult } from "../map-fiscal-documents.types";
 import { extractCteFromXml } from "./cte-xml-parser";
 import cteService from "../../../../../../warehouse/fiscal/ctes/cte/services/cte.service";
+import Cte from "../../../../../../warehouse/fiscal/ctes/cte/cte.model";
 import { resolveCteIssuerAsTransporter } from "./cte-party-resolver.service";
 import { encryptXml } from "../../../../../../../shared/utils/xml/xml-cipher";
 import { CteCreationAttributes } from "../../../../../../warehouse/fiscal/ctes/cte/cte.types";
@@ -55,7 +56,7 @@ async function uploadXmlToCloud(
   console.log(`[CTE_UPSERT] XML enviado para nuvem: ${path}`);
 }
 
-export async function fetchAndUpsertCte(doc: XmlDocumentResult): Promise<void> {
+export async function fetchAndUpsertCte(doc: XmlDocumentResult): Promise<Cte | null> {
   const xmlContent = Buffer.from(doc.xmlBase64, "base64").toString("utf-8");
   const extracted = extractCteFromXml(xmlContent);
 
@@ -63,7 +64,7 @@ export async function fetchAndUpsertCte(doc: XmlDocumentResult): Promise<void> {
     console.warn(
       "[CTE_UPSERT] CTe sem chave de acesso identificável. Ignorado.",
     );
-    return;
+    return null;
   }
 
   // ─── Issuer: sempre Transportador — único papel com mapeamento fixo,
@@ -111,17 +112,17 @@ export async function fetchAndUpsertCte(doc: XmlDocumentResult): Promise<void> {
     where: { xml_key: extracted.chave },
   });
 
-  let cteId: string;
+  let cte: Cte;
 
   if (existing) {
-    await cteService.update(existing.id, cteData);
-    cteId = existing.id;
+    cte = (await cteService.update(existing.id, cteData)) ?? existing;
     console.log(`[CTE_UPSERT] CTe atualizado: chave=${extracted.chave}`);
   } else {
-    const created = await cteService.create(cteData);
-    cteId = created.id;
+    cte = await cteService.create(cteData);
     console.log(`[CTE_UPSERT] CTe criado: chave=${extracted.chave}`);
   }
 
-  await uploadXmlToCloud(cteId, extracted.number ?? 0, xmlContent);
+  await uploadXmlToCloud(cte.id, extracted.number ?? 0, xmlContent);
+
+  return cte;
 }

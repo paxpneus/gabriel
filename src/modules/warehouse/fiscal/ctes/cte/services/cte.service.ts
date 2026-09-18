@@ -62,6 +62,21 @@ export class CteService extends BaseService<Cte, CteRepository> {
       },
     };
   }
+
+  async findUnsyncedTakenByCnpjs(cnpjs: string[]): Promise<Cte[]> {
+    if (!cnpjs.length) return [];
+
+    return this.findAll({
+      where: {
+        taker_tax_id: { [Op.in]: cnpjs },
+        synched: false,
+      },
+    });
+  }
+
+  async markAsSynched(id: string): Promise<void> {
+    await this.update(id, { synched: true });
+  }
 }
 
 export default new CteService();
