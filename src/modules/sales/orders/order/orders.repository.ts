@@ -70,7 +70,8 @@ export class OrderRepository extends BaseRepository<Order> {
 // lado do OrderRepository, escopado por unitBusinessId (mesmo escopo de
 // countShipTodayPending). Sem isso, uma nota que a Bling nunca amarrou a
 // nenhum Order simplesmente não aparecia em lugar nenhum, mesmo emitida
-// dentro da janela.
+// dentro da janela. type: OUTGOING — nota onde a loja é quem despacha,
+// não a recebedora (ela pode ter attributes INCOMING pra outra ponta).
 private orphanInvoicePendingWhere(unitBusinessId: string): WhereOptions | null {
   const { start: windowStart, end: windowEnd } = this.shippingWindowRange();
   if (nowTz().isAfter(windowEnd)) return null;
@@ -79,6 +80,7 @@ private orphanInvoicePendingWhere(unitBusinessId: string): WhereOptions | null {
     "$store.name$": MERCADO_LIVRE_STORE_NAME,
     "$order.id$": { [Op.is]: null } as any,
     "$unitBusinessAttributes.unit_business_id$": unitBusinessId,
+    "$unitBusinessAttributes.type$": "OUTGOING",
     "$unitBusinessAttributes.batch_generated$": false,
     "$unitBusinessAttributes.status$": {
       [Op.in]: PENDING_INVOICE_ATTRIBUTE_STATUSES,
@@ -238,7 +240,7 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
                 as: "unitBusinessAttributes",
                 required: false,
                 attributes: [],
-                where: { unit_business_id: unitBusinessId },
+                where: { unit_business_id: unitBusinessId, type: "OUTGOING" },
               },
             ],
           },
@@ -388,7 +390,7 @@ async countShipToFuture(): Promise<number> {
               as: "unitBusinessAttributes",
               required: false,
               attributes: [],
-              where: { unit_business_id: unitBusinessId },
+              where: { unit_business_id: unitBusinessId, type: "OUTGOING" },
             },
           ],
         },

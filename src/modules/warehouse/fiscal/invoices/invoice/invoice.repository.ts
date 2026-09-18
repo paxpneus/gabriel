@@ -946,6 +946,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           attributes: [],
           where: {
             unit_business_id: unitBusinessId,
+            type: "OUTGOING",
             status: { [Op.in]: ["PENDING", "OPEN"] },
             batch_generated: false,
           },
