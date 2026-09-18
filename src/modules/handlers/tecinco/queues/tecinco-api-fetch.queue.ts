@@ -54,6 +54,8 @@ import { GroupType } from "../../../inventory/groups/group/group.types";
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
 import { IntegrationMappingCreationAttributes } from "../../../integrations/integration-mapping/integration-mapping.types";
 import productService from "../../../inventory/products/services/product.service";
+import integrationLoggerService from "../../../integrations/integration-errors/integration-logger.service";
+import { IntegrationErrorEntity } from "../../../integrations/integration-errors/integration-error.types";
 import { tecincoAllowedGroupNames } from "../../../../shared/constants/tecinco-groups";
 import {
   getCachedTecincoDuplicateValueSets,
@@ -657,10 +659,15 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             });
           } catch (error: any) {
             if (error instanceof EanConflictError) {
-              alertService.sendAlert({
-                severity: "CRITICAL",
-                title: "Conflito de EAN entre produtos (Tecinco)",
+              await integrationLoggerService.log({
+                entity: IntegrationErrorEntity.PRODUCT,
+                type: "EAN_CONFLICT",
+                integrationsId: integrations.id,
+                internalId: product.id,
+                externalId: systemId,
+                reference: ean ?? undefined,
                 message: `${error.message} | systemId=${systemId} | filial=${filialNumber}`,
+                createIntegrationError: true,
               });
               console.warn(
                 `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
@@ -715,10 +722,15 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             });
           } catch (error: any) {
             if (error instanceof SupplierMappingConflictError) {
-              alertService.sendAlert({
-                severity: "CRITICAL",
-                title: "Conflito de SupplierMapping entre produtos (Tecinco)",
+              await integrationLoggerService.log({
+                entity: IntegrationErrorEntity.PRODUCT,
+                type: "SUPPLIER_MAPPING_CONFLICT",
+                integrationsId: integrations.id,
+                internalId: product.id,
+                externalId: systemId,
+                reference: ean ?? codigoFabrica ?? undefined,
                 message: `${error.message} | systemId=${systemId} | filial=${filialNumber}`,
+                createIntegrationError: true,
               });
               throw new UnrecoverableError(error.message);
             }
@@ -824,10 +836,15 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         });
       } catch (error: any) {
         if (error instanceof EanConflictError) {
-          alertService.sendAlert({
-            severity: "CRITICAL",
-            title: "Conflito de EAN entre produtos (Tecinco)",
+          await integrationLoggerService.log({
+            entity: IntegrationErrorEntity.PRODUCT,
+            type: "EAN_CONFLICT",
+            integrationsId: integrations.id,
+            internalId: product.id,
+            externalId: systemId,
+            reference: ean ?? undefined,
             message: `${error.message} | systemId=${systemId} | filial=${filialNumber}`,
+            createIntegrationError: true,
           });
           console.warn(
             `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
@@ -882,10 +899,15 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         });
       } catch (error: any) {
         if (error instanceof SupplierMappingConflictError) {
-          alertService.sendAlert({
-            severity: "CRITICAL",
-            title: "Conflito de SupplierMapping entre produtos (Tecinco)",
+          await integrationLoggerService.log({
+            entity: IntegrationErrorEntity.PRODUCT,
+            type: "SUPPLIER_MAPPING_CONFLICT",
+            integrationsId: integrations.id,
+            internalId: product.id,
+            externalId: systemId,
+            reference: ean ?? codigoFabrica ?? undefined,
             message: `${error.message} | systemId=${systemId} | filial=${filialNumber}`,
+            createIntegrationError: true,
           });
           throw new UnrecoverableError(error.message);
         }
@@ -1394,10 +1416,15 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             });
           } catch (error: any) {
             if (error instanceof EanConflictError) {
-              alertService.sendAlert({
-                severity: "CRITICAL",
-                title: "Conflito de EAN entre produtos (Tecinco)",
+              await integrationLoggerService.log({
+                entity: IntegrationErrorEntity.PRODUCT,
+                type: "EAN_CONFLICT",
+                integrationsId: integrations.id,
+                internalId: product.id,
+                externalId: systemId,
+                reference: ean ?? undefined,
                 message: `${error.message} | systemId=${systemId}`,
+                createIntegrationError: true,
               });
               console.warn(
                 `${logPrefix} — ProductConfig não criado por conflito de EAN`,
@@ -1455,10 +1482,15 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         });
       } catch (error: any) {
         if (error instanceof SupplierMappingConflictError) {
-          alertService.sendAlert({
-            severity: "CRITICAL",
-            title: "Conflito de SupplierMapping entre produtos (Tecinco)",
+          await integrationLoggerService.log({
+            entity: IntegrationErrorEntity.PRODUCT,
+            type: "SUPPLIER_MAPPING_CONFLICT",
+            integrationsId: integrations.id,
+            internalId: product.id,
+            externalId: systemId,
+            reference: ean ?? codigoFabrica ?? undefined,
             message: `${error.message} | systemId=${systemId}`,
+            createIntegrationError: true,
           });
           console.warn(
             `${logPrefix} — SupplierMapping não registrado por conflito de código`,
