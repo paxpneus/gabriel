@@ -77,6 +77,17 @@ export class CteService extends BaseService<Cte, CteRepository> {
   async markAsSynched(id: string): Promise<void> {
     await this.update(id, { synched: true });
   }
+
+  async findExistingXmlKeys(xmlKeys: string[]): Promise<Set<string>> {
+    if (!xmlKeys.length) return new Set();
+
+    const rows = await this.findAll({
+      where: { xml_key: { [Op.in]: xmlKeys } },
+      attributes: ["xml_key"],
+    });
+
+    return new Set(rows.map((row) => row.xml_key));
+  }
 }
 
 export default new CteService();

@@ -8,10 +8,15 @@ import {
   DocumentSearchHandler,
 } from "../../../helpers/mappers/documents/map-fiscal-documents.types";
 import { fetchAndUpsertCte } from "../../../helpers/mappers/documents/cte/cte-upsert.service";
+import { extractCteFromXml } from "../../../helpers/mappers/documents/cte/cte-xml-parser";
 import Cte from "../../../../../warehouse/fiscal/ctes/cte/cte.model";
+import cteService from "../../../../../warehouse/fiscal/ctes/cte/services/cte.service";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 import { getIncrementalDateRangeAsDate } from "../../../../../../shared/utils/normalizers/date";
-import syncDatafreteCteService from "../../../../logistic/services/sync-datafrete-cte.service";
+import syncDatafreteCteService, {
+  isDatafreteFreightTakerNumber,
+} from "../../../../logistic/services/sync-datafrete-cte.service";
+import { XmlDocumentResult } from "../../../helpers/mappers/documents/map-fiscal-documents.types";
 
 const DELAY_BETWEEN_REQUESTS_MS = 30 * 1000;
 const PROVIDER_NAME = "Sieg";
@@ -163,6 +168,7 @@ export class CteIngestionQueue extends BaseQueueService<void> {
             handler,
             params,
             `bloco=${rangeIdx + 1}/${dateRanges.length} | loja=${unit.name} | ${role}=${unit.cnpj}`,
+            isDatafreteFreightTakerNumber(unit.number),
           );
 
           const isLastRole = r === ROLES_TO_QUERY.length - 1;
@@ -214,25 +220,53 @@ export class CteIngestionQueue extends BaseQueueService<void> {
     }
   }
 
+  // Evita gastar o pipeline completo (parse pesado, resolve de transportador,
+  // encrypt, upload) em documentos que a Sieg já mandou antes — só a chave é
+  // extraída aqui, o parse completo continua dentro de fetchAndUpsertCte.
+  private async filterNewDocuments(
+    documents: XmlDocumentResult[],
+  ): Promise<XmlDocumentResult[]> {
+    const chavesByDoc = documents.map((doc) => ({
+      doc,
+      chave: extractCteFromXml(
+        Buffer.from(doc.xmlBase64, "base64").toString("utf-8"),
+      ).chave,
+    }));
+
+    const chaves = chavesByDoc
+      .map(({ chave }) => chave)
+      .filter((chave): chave is string => !!chave);
+
+    const existingChaves = await cteService.findExistingXmlKeys(chaves);
+
+    return chavesByDoc
+      .filter(({ chave }) => !chave || !existingChaves.has(chave))
+      .map(({ doc }) => doc);
+  }
+
   private async fetchAndProcess(
     handler: DocumentSearchHandler,
     genericParams: GenericXmlDocumentParams,
     logLabel: string,
+    isFreightTaker: boolean,
   ): Promise<void> {
     try {
       const providerParams = handler.mapParams(genericParams);
       const response = await handler.fetchXmlDocuments(providerParams);
       const documents = handler.mapXmlDocuments(response);
 
+      const newDocuments = await this.filterNewDocuments(documents);
+
       console.log(
-        `[CteIngestionQueue] ${logLabel} -> ${documents.length} documento(s) recebido(s).`,
+        `[CteIngestionQueue] ${logLabel} -> ${documents.length} documento(s) recebido(s), ` +
+          `${newDocuments.length} novo(s) (${documents.length - newDocuments.length} já no sistema, pulado).`,
       );
 
-      for (const doc of documents) {
+      for (const doc of newDocuments) {
         try {
           const cte = await fetchAndUpsertCte(doc);
 
-          if (cte && !cte.synched) {
+          if (cte && !cte.synched && isFreightTaker) {
             await this.syncCteWithDatafrete(cte, logLabel);
           }
         } catch (err: any) {

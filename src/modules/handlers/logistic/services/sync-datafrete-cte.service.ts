@@ -1,10 +1,13 @@
+import { Op } from "sequelize";
 import cteService from "../../../warehouse/fiscal/ctes/cte/services/cte.service";
 import Cte from "../../../warehouse/fiscal/ctes/cte/cte.model";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
+import { importCteJson } from "../transporters/data-frete/services/invoices/cte/cte.service";
 import {
-  importCteJson,
-  isCteImported,
-} from "../transporters/data-frete/services/invoices/cte/cte.service";
+  describeDatafreteCodigoRetorno,
+  extractDatafreteCodigoRetorno,
+  isDatafreteCteAlreadyCadastrado,
+} from "../transporters/data-frete/helpers/error-codes";
 import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
 
 export interface SyncPendingCtesResult {
@@ -12,6 +15,13 @@ export interface SyncPendingCtesResult {
   alreadyImported: number;
   failed: number;
 }
+
+// Só essas lojas são tomadoras de frete de verdade — outras aparecem como
+// "tom" no Sieg (CNPJ do documento) mas não devem ir pra Datafrete.
+export const DATAFRETE_TAKER_UNIT_BUSINESS_NUMBERS = ["21", "12", "17", "15"];
+
+export const isDatafreteFreightTakerNumber = (number: string): boolean =>
+  DATAFRETE_TAKER_UNIT_BUSINESS_NUMBERS.includes(number);
 
 // Limita quantos CT-es pendentes são sincronizados por execução — útil pra testar
 // o fluxo contra a API real da Datafrete sem disparar o backlog inteiro de uma vez.
@@ -26,7 +36,9 @@ export class SyncDatafreteCteService {
       failed: 0,
     };
 
-    const unitBusinesses = await unitBusinessService.getComercialUnitBusinessOnly();
+    const unitBusinesses = await unitBusinessService.findAll({
+      where: { number: { [Op.in]: DATAFRETE_TAKER_UNIT_BUSINESS_NUMBERS } },
+    });
     const cnpjs = unitBusinesses
       .map((unit) => unit.cnpj)
       .filter((cnpj): cnpj is string => !!cnpj);
@@ -85,16 +97,9 @@ export class SyncDatafreteCteService {
   // pública pra ser chamada logo após o upsert de um CT-e, sem esperar o
   // catch-up em lote de `syncPendingCtes`
   async syncCte(cte: Cte): Promise<boolean> {
-    const alreadyImported = await isCteImported(cte.xml_key);
-
-    console.log(
-      `[SyncDatafreteCte] chave=${cte.xml_key} já importado na Datafrete? ${alreadyImported}`,
-    );
-
-    if (alreadyImported) {
-      await cteService.markAsSynched(cte.id);
-      return true;
-    }
+    // Guarda redundante: os dois chamadores já filtram por synched=false,
+    // mas isso evita gastar requisição na Datafrete se alguém chamar direto.
+    if (cte.synched) return true;
 
     if (!cte.xml_path || cte.xml_path.startsWith("http")) {
       throw new Error("CT-e sem XML disponível para envio.");
@@ -110,7 +115,23 @@ export class SyncDatafreteCteService {
       `[SyncDatafreteCte] chave=${cte.xml_key} enviando XML (${xml.length} chars) para a Datafrete...`,
     );
 
-    await importCteJson(xmlBase64);
+    // Insere direto, sem checar existência antes — a Datafrete já retorna
+    // codigo_retorno=714 se o CT-e já estiver cadastrado (ver error-codes.ts).
+    try {
+      await importCteJson(xmlBase64);
+    } catch (error) {
+      if (!isDatafreteCteAlreadyCadastrado(error)) throw error;
+
+      console.log(
+        `[SyncDatafreteCte] chave=${cte.xml_key} já cadastrado na Datafrete (${describeDatafreteCodigoRetorno(
+          extractDatafreteCodigoRetorno(error)!,
+        )}).`,
+      );
+
+      await cteService.markAsSynched(cte.id);
+      return true;
+    }
+
     await cteService.markAsSynched(cte.id);
     return false;
   }

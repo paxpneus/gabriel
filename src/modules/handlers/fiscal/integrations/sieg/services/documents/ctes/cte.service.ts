@@ -13,13 +13,24 @@ import {
   SiegTipoXml,
 } from "./cte.types";
 
-const SIEG_XML_PAGE_SIZE = Number(process.env.SIEG_XML_PAGE_SIZE ?? 50);
+// Limite documentado da Sieg pra /v1/baixar-xmls: 2 requisições/minuto, até 50 XMLs por requisição.
+// Hard limits (não vêm de env — são o próprio contrato da Sieg, nunca ultrapassar mesmo com env mal configurada).
+const SIEG_BAIXAR_XMLS_MAX_PAGE_SIZE = 50;
+const SIEG_BAIXAR_XMLS_MIN_INTERVAL_MS = 30_000; // 60s / 2 req
+
+const SIEG_XML_PAGE_SIZE = Math.min(
+  Number(process.env.SIEG_XML_PAGE_SIZE ?? 50),
+  SIEG_BAIXAR_XMLS_MAX_PAGE_SIZE,
+);
 
 const SIEG_XML_REQUEST_TIMEOUT_MS = Number(
   process.env.SIEG_XML_REQUEST_TIMEOUT_MS ?? 60_000,
 );
 
-const SIEG_MIN_INTERVAL_MS = Number(process.env.SIEG_MIN_INTERVAL_MS ?? 35_000);
+const SIEG_MIN_INTERVAL_MS = Math.max(
+  Number(process.env.SIEG_MIN_INTERVAL_MS ?? 35_000),
+  SIEG_BAIXAR_XMLS_MIN_INTERVAL_MS,
+);
 
 // Retry específico para falha no meio da paginação: em vez de descartar
 // tudo que já foi baixado, tenta a MESMA página de novo depois de um tempo.
@@ -64,10 +75,18 @@ const fetchXmlPage = async (
   params: SiegBaixarXmlsRequest,
 ): Promise<string[] | "no-results"> => {
   await throttleSiegRequest();
+
+  // Nunca deixa passar do máximo de 50 XMLs/requisição da Sieg, mesmo se
+  // um chamador passar um Take explícito maior.
+  const boundedParams: SiegBaixarXmlsRequest =
+    params.Take && params.Take > SIEG_BAIXAR_XMLS_MAX_PAGE_SIZE
+      ? { ...params, Take: SIEG_BAIXAR_XMLS_MAX_PAGE_SIZE }
+      : params;
+
   try {
     const { data } = await siegApi.post<ArrayBuffer | unknown[]>(
       "/v1/baixar-xmls",
-      params,
+      boundedParams,
       {
         responseType: "arraybuffer",
         timeout: SIEG_XML_REQUEST_TIMEOUT_MS,
