@@ -415,9 +415,9 @@ export function startWorkers() {
     cteIngestionQueue,
     cteDownloadQueue,
   } = buildQueues([
-    // "DAILY_OPERATION_REPORT",
-    // "DAILY_SALES_REPORT",
-    // "AUTO_BACKUP",
+    "DAILY_OPERATION_REPORT",
+    "DAILY_SALES_REPORT",
+    "AUTO_BACKUP",
     "CTE_INGESTION",
     "CTE_XML_BATCH",
   ]);
