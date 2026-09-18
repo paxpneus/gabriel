@@ -45,9 +45,13 @@ export interface CteAttributes {
   taker_name?: string | null; // Nome correspondente à entidade indicada por taker_type/taker_tax_id
 
   xml_path?: string | null;
+
+  // true = já importado na Datafrete, não precisa reenviar
+  synched: boolean;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export interface CteCreationAttributes
-  extends Optional<CteAttributes, "id" | "createdAt" | "updatedAt"> {}
+  extends Optional<CteAttributes, "id" | "createdAt" | "updatedAt" | "synched"> {}

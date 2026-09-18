@@ -9,7 +9,7 @@
  * de catálogo (mesmo endpoint de listagem que migrateProdutos usa).
  *
  * Reaproveita buildTecincoDuplicateValueSets/findTecincoCollidingFields de
- * tecinco-migration.runner.ts de propósito — assim essa verificação nunca
+ * tecinco-duplicate-detection.ts de propósito — assim essa verificação nunca
  * diverge da lógica real de duplicidade usada em produção.
  *
  * Checa 5 coisas, tudo escopado à integração Tecinco:
@@ -40,7 +40,7 @@ import { fetchTecincoCatalog, TecincoCatalogItem } from "./dump-tecinco-catalog"
 import {
   buildTecincoDuplicateValueSets,
   findTecincoCollidingFields,
-} from "./tecinco-migration.runner";
+} from "./tecinco-duplicate-detection";
 
 interface Item extends TecincoCatalogItem {
   skuDuplicated: boolean;

@@ -17,13 +17,13 @@ import {
   TCarUpsertJobPayload,
 } from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { getTCarIntegration } from "../../modules/handlers/tecinco/api/tecinco_api";
-import { normalizeEan } from "../../modules/handlers/tecinco/queues/helpers/product.helpers";
 import integrationMappingService from "../../modules/integrations/integration-mapping/integration-mapping.service";
+import { fetchTecincoCatalog, CATALOG_OUTPUT_PATH } from "./dump-tecinco-catalog";
 import {
-  fetchTecincoCatalog,
-  CATALOG_OUTPUT_PATH,
-  TecincoCatalogItem,
-} from "./dump-tecinco-catalog";
+  buildTecincoDuplicateValueSets,
+  findTecincoCollidingFields,
+  setCachedTecincoDuplicateValueSets,
+} from "./tecinco-duplicate-detection";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -141,66 +141,6 @@ export async function* paginateTCar<T>(
 // então a linha nunca chega a virar job: vira ERROR_CATALOG_DUPLICATE em
 // unmapped_invoice_products pra revisão manual.
 
-interface TecincoDuplicateValueSets {
-  sku: Set<string>;
-  ean: Set<string>;
-}
-
-function normalizeCatalogCode(value: string | null | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-// "sku" pra fins de detecção de duplicidade = código de fábrica, com
-// epctb_coded só como fallback quando não tem código de fábrica — mesma
-// regra usada pra decidir o sku persistido em UnmappedInvoiceProduct.
-function effectiveSku(item: { sku?: string | null; coded?: string | null }): string | undefined {
-  return normalizeCatalogCode(item.sku) ?? normalizeCatalogCode(item.coded);
-}
-
-// Só valores que aparecem em mais de um produto entram nos sets — um valor
-// repetido 2x ou 200x é igualmente ambíguo pra auto-mapear, não tem "muito
-// comum, deve ser só um preenchimento padrão" que torne isso seguro (foi
-// exatamente esse tipo de valor reaproveitado que causou o incidente real
-// que motivou esta camada).
-export function buildTecincoDuplicateValueSets(
-  items: TecincoCatalogItem[],
-): TecincoDuplicateValueSets {
-  const counts = {
-    sku: new Map<string, number>(),
-    ean: new Map<string, number>(),
-  };
-
-  for (const item of items) {
-    const sku = effectiveSku(item);
-    const ean = normalizeEan(item.ean ?? undefined);
-    if (sku) counts.sku.set(sku, (counts.sku.get(sku) ?? 0) + 1);
-    if (ean) counts.ean.set(ean, (counts.ean.get(ean) ?? 0) + 1);
-  }
-
-  const toDuplicateSet = (m: Map<string, number>) =>
-    new Set([...m.entries()].filter(([, n]) => n > 1).map(([v]) => v));
-
-  return {
-    sku: toDuplicateSet(counts.sku),
-    ean: toDuplicateSet(counts.ean),
-  };
-}
-
-// Pra um produto específico, quais dos seus 2 códigos colidem com outro
-// produto do catálogo — vazio significa que é seguro auto-mapear por
-// código de fábrica/SupplierMapping.
-export function findTecincoCollidingFields(
-  item: { coded?: string | null; sku?: string | null; ean?: string | null },
-  sets: TecincoDuplicateValueSets,
-): string[] {
-  const collided: string[] = [];
-  const sku = effectiveSku(item);
-  const ean = normalizeEan(item.ean ?? undefined);
-  if (sku && sets.sku.has(sku)) collided.push(`sku=${sku}`);
-  if (ean && sets.ean.has(ean)) collided.push(`ean=${ean}`);
-  return collided;
-}
 
 // ─── Etapas ───────────────────────────────────────────────────────────────────
 
@@ -248,6 +188,10 @@ export async function migrateProdutos(
   fs.writeFileSync(CATALOG_OUTPUT_PATH, JSON.stringify(fullCatalog, null, 2));
 
   const duplicateValueSets = buildTecincoDuplicateValueSets(fullCatalog);
+  // Alimenta o mesmo cache que ensureProductsFromInvoiceItems consulta na
+  // resolução de nota fiscal — já buscamos o catálogo inteiro pra este run,
+  // não faz sentido deixar a próxima nota buscar de novo do zero.
+  setCachedTecincoDuplicateValueSets(branchIds, duplicateValueSets);
   const integrations = await getTCarIntegration("Tecinco");
   const validExternalIds = await integrationMappingService.findValidExternalIdsSet(
     integrations.id,
@@ -383,15 +327,16 @@ export async function migrateNotasFiscais(
   const service = new TCarConferenciaEstoqueService();
 
   const TIPOS: Array<"E" | "S"> = ["E", "S"];
-  // "A" pega as ativas recentes; "C" é necessário à parte porque uma nota
-  // cancelada some da listagem "A" — sem isso o cancelamento na Tecinco nunca
-  // é reenfileirado e a invoice já importada fica presa no status antigo.
-  const SITUACOES: Array<"A" | "C"> = ["A", "C"];
+  // "A" pega as ativas recentes; "N" é uma nota normal (mesmo tratamento de
+  // "A", confirmado com o usuário); "C" é necessário à parte porque uma nota
+  // cancelada some da listagem "A"/"N" — sem isso o cancelamento na Tecinco
+  // nunca é reenfileirado e a invoice já importada fica presa no status antigo.
+  const SITUACOES: Array<"A" | "N" | "C"> = ["A", "N", "C"];
 
   for (const branchId of branchIds) {
     console.log(`\n  🏢 Filial ${branchId}`);
 
-    // As 4 combinações (tipo × situação) são independentes — buscadas em
+    // As 6 combinações (tipo × situação) são independentes — buscadas em
     // paralelo em vez de uma por vez.
     const combos = TIPOS.flatMap((tipo) =>
       SITUACOES.map((situacao) => ({ tipo, situacao })),

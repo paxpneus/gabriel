@@ -60,6 +60,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `bling/deactivation.md` — Bling situacao=E
 - `supplier-discount-rule.md` — matching engine, eixos de escopo, coluna computada `name`
 - `integration-mapping.md` — tabela `integration_mappings`, incidente de mapping órfão, regras cross-external-id
+- `integration-error.md` — tabela genérica `integration_errors`, upsert-by-find/dedup, logger centralizado (`IntegrationLoggerService`, flag `createIntegrationError`)
 - `unmapped-invoice-product/` — fila de revisão manual
   - `index.md` — regras `type`/dedup, schema
   - `create-flow.md` — fluxo create-product-from-unmapped
@@ -93,5 +94,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `bling-nfe-scraping.md` — automação Playwright do Bling pra manifestação de NFe
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login
 - `reports.md` — módulo de snapshot de sales-report
+- `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
+- `sieg-rate-limits.md` — limites documentados por rota da API Sieg (ex.: `/v1/baixar-xmls` = 2 req/min, 50 XMLs/req) vs. limite genérico não-confirmado, onde cada um é aplicado no código
 
 Migração: como qualquer outra deste repo, **usuário roda `db:migrate` (ou qualquer DDL) manualmente — nunca automatizar.**

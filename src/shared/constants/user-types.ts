@@ -28,10 +28,22 @@ export interface USER_TYPE_CONFIG {
   initialPage: string;
 }
 
+// Único user type, além de "admin", com acesso total (modules: "*") — alvo
+// das notificações de erro de integração (ver integration-error.service.ts).
+export const DEVELOPER_USER_TYPE: UserType = "developer";
+
 export const USER_TYPES: USER_TYPE_CONFIG[] = [
   {
     type: "admin",
     label: "Administrador",
+    description: "Acesso completo a todos os módulos e telas do sistema.",
+    modules: "*",
+    initialPage: "daily-operation-report",
+  },
+
+  {
+    type: DEVELOPER_USER_TYPE,
+    label: "Desenvolvedor",
     description: "Acesso completo a todos os módulos e telas do sistema.",
     modules: "*",
     initialPage: "daily-operation-report",

@@ -55,6 +55,17 @@ jest.mock("../../service/produtos/produtos.service", () => ({
   default: jest.fn().mockImplementation(() => ({ obterProduto: jest.fn() })),
 }));
 
+// Evita bater na API Tecinco de verdade pra montar o índice de duplicidade
+// (getCachedTecincoDuplicateValueSets chama fetchTecincoCatalog por baixo) —
+// por padrão nenhum código é duplicado, testes específicos sobrescrevem.
+jest.mock("../../../../../scripts/tecinco/tecinco-duplicate-detection", () => ({
+  __esModule: true,
+  getCachedTecincoDuplicateValueSets: jest
+    .fn()
+    .mockResolvedValue({ sku: new Set(), ean: new Set() }),
+  findTecincoCollidingFields: jest.fn().mockReturnValue([]),
+}));
+
 jest.mock("../../service/clientes/clientes.service", () => ({
   __esModule: true,
   default: jest.fn().mockImplementation(() => ({})),
@@ -147,6 +158,7 @@ import {
   TCarProdutoPayload,
   TCarNotaFiscalItem,
 } from "../../service/tecinco/tecinco.types";
+import { findTecincoCollidingFields } from "../../../../../scripts/tecinco/tecinco-duplicate-detection";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -957,6 +969,25 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
       expect.objectContaining({
         reason:
           "Produto Tecinco presente na nota mas sem produto correspondente no banco",
+      }),
+    ]);
+  });
+
+  it("mapping falha e codigoFabrica está duplicado no catálogo Tecinco: não tenta o fallback por SupplierMapping, item vira unmapped em vez de resolver pro produto errado", async () => {
+    (findTecincoCollidingFields as jest.Mock).mockReturnValue(["sku=FAB-700001"]);
+    const wrongProduct = { id: "wrong-product-id", name: "Produto de outro pneu" };
+    (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(wrongProduct);
+
+    const result = await (queue as any).ensureProductsFromInvoiceItems(
+      [makeInvoiceItem()],
+      1,
+    );
+
+    expect(resolveProductBySupplierMapping).not.toHaveBeenCalled();
+    expect(result.operationalItems).toHaveLength(0);
+    expect(result.unmappedItems).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("Código de fábrica/EAN duplicado no catálogo da Tecinco"),
       }),
     ]);
   });
