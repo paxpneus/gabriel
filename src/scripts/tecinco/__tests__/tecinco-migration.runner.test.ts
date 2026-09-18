@@ -97,11 +97,11 @@ jest.mock("../../../modules/handlers/tecinco/service/produtos/produtos.service",
 }));
 
 import * as fs from "fs";
+import { migrateProdutos } from "../tecinco-migration.runner";
 import {
   buildTecincoDuplicateValueSets,
   findTecincoCollidingFields,
-  migrateProdutos,
-} from "../tecinco-migration.runner";
+} from "../tecinco-duplicate-detection";
 import { TecincoCatalogItem, CATALOG_OUTPUT_PATH } from "../dump-tecinco-catalog";
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
 import integrationMappingService from "../../../modules/integrations/integration-mapping/integration-mapping.service";

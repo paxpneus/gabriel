@@ -55,6 +55,10 @@ import integrationMappingService from "../../../integrations/integration-mapping
 import { IntegrationMappingCreationAttributes } from "../../../integrations/integration-mapping/integration-mapping.types";
 import productService from "../../../inventory/products/services/product.service";
 import { tecincoAllowedGroupNames } from "../../../../shared/constants/tecinco-groups";
+import {
+  getCachedTecincoDuplicateValueSets,
+  findTecincoCollidingFields,
+} from "../../../../scripts/tecinco/tecinco-duplicate-detection";
 
 function normalizeTCarDescription(value?: string | null): string {
   return String(value ?? "")
@@ -1245,6 +1249,16 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     const produtoService = new TCarProdutoService();
     const integrations = await getTCarIntegration("Tecinco");
 
+    // Mesmo índice de duplicidade do preflight do catalog sync
+    // (catalog-preflight.md), mas cacheado por branchId — diferente do
+    // preflight (que roda por sync e pode pagar o catálogo inteiro fresco),
+    // esta função roda por nota fiscal, e não dá pra arcar com uma busca de
+    // catálogo completo a cada nota.
+    const duplicateValueSets = await getCachedTecincoDuplicateValueSets(
+      [branchId],
+      `[TCAR_UPSERT][ensureProducts] branchId=${branchId}`,
+    );
+
     // Busca o detalhe de cada item na Tecinco em paralelo em vez de uma por
     // vez; o resto (resolução/upserts) continua sequencial abaixo.
     const productLookups = new Map<string, any>();
@@ -1315,7 +1329,23 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         logPrefix,
       });
 
-      if (!product) {
+      // Código de fábrica/EAN duplicado no catálogo Tecinco (mais de um
+      // produto usa o mesmo valor, ver catalog-preflight.md) — o fallback
+      // por SupplierMapping ficaria ambíguo, então nem tenta: mesma decisão
+      // que processProduct já toma no catalog sync (isDuplicatedInCatalog).
+      const collidingFields = tcarPayload
+        ? findTecincoCollidingFields(
+            {
+              coded: tcarPayload.epctb_coded,
+              sku: tcarPayload.epctb_codigofabrica,
+              ean: tcarPayload.epctb_ean,
+            },
+            duplicateValueSets,
+          )
+        : [];
+      const isDuplicatedInCatalog = collidingFields.length > 0;
+
+      if (!product && !isDuplicatedInCatalog) {
         product = await resolveProductBySupplierMapping(
           codigoFabrica,
           integrations.id,
@@ -1325,20 +1355,22 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
       // ─── Produto não encontrado → ignora item ─────────────────────────────────
       if (!product) {
-        console.warn(`${logPrefix} — produto não encontrado, ignorando item`);
         const skuToStore =
           codigoFabrica ??
           (tcarPayload?.epctb_coded
             ? String(tcarPayload.epctb_coded).trim()
             : undefined) ??
           null;
+        const reason = isDuplicatedInCatalog
+          ? `Código de fábrica/EAN duplicado no catálogo da Tecinco (${collidingFields.join(", ")}) — mais de um produto usa o mesmo valor, não dá pra resolver por SupplierMapping com segurança. Precisa de revisão manual.`
+          : "Produto Tecinco presente na nota mas sem produto correspondente no banco";
+        console.warn(`${logPrefix} — ${reason}`);
         unmappedItems.push({
           sku: skuToStore,
           gtin: ean ?? null,
           qty: Number(item.epeit_qtdade ?? 0),
           xProd: item.produto_nome ?? null,
-          reason:
-            "Produto Tecinco presente na nota mas sem produto correspondente no banco",
+          reason,
         });
         continue;
       }
@@ -1404,13 +1436,19 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       // ─── SupplierMappings ─────────────────────────────────────────────────────
       // Erro de conflito aqui só afeta este item da nota — não deve abortar
       // a nota inteira (mesmo padrão do eanConflict logo acima), então só
-      // alerta e segue pros próximos itens em vez de propagar.
+      // alerta e segue pros próximos itens em vez de propagar. Campo
+      // sinalizado como duplicado no catálogo é omitido aqui mesmo quando o
+      // produto já foi resolvido por outra via (integration_mapping) —
+      // mesmo padrão do processProduct's skuOmitted/eanOmitted: nunca
+      // vincula um código ambíguo a um único produto, mesmo "de passagem".
+      const skuDuplicated = collidingFields.some((f) => f.startsWith("sku="));
+      const eanDuplicated = collidingFields.some((f) => f.startsWith("ean="));
       try {
         await ensureSupplierMappings({
           productId: product.id,
           supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
-          ean,
-          codigoFabrica,
+          ean: eanDuplicated ? undefined : ean,
+          codigoFabrica: skuDuplicated ? undefined : codigoFabrica,
           unitBusinessId: unitBusiness.id,
           logPrefix,
           systemId,

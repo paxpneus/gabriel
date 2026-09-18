@@ -37,6 +37,11 @@
   through the same `invoice_xml`/`sync` job (same jobId format — safe to
   reuse since completed BullMQ jobs are removed via `removeOnComplete:
   true`) and picked up by the existing cancellation-detection logic.
+- **`situacao: "N"` also queried** (confirmed with the user: a normal nota,
+  same handling as `"A"` — not a rejection/error status) alongside `"A"`/`"C"`
+  in `migrateNotasFiscais`'s `SITUACOES` array. No special-casing needed
+  beyond adding it to the fetch list — `isInvoiceCancellationStatus` is
+  unaffected since `"N"` was never in its cancellation-status list.
 - **Perf — parallelized independent Tecinco calls that were needlessly
   sequential**: none of these touch the login mutex, the per-branch session
   cache, or the "no shared lock between `TCAR_UPSERT`/`TCAR_SYNC`" rule
@@ -95,9 +100,9 @@
     together via `Promise.all` into a `Map<systemId, payload>` before the
     existing per-item resolution/upsert loop runs (that loop itself stays
     sequential, since it does DB writes per item).
-  - `migrateNotasFiscais` (`tecinco-migration.runner.ts`): the 4
-    `listarNotasFiscais` calls per branch (2 tipos × 2 situacoes — see the
-    cancellation-resync fix above) now run via `Promise.all` instead of
-    nested sequential loops; enqueueing the resulting notas stays
-    sequential per branch (local BullMQ `add`, not a Tecinco call, so no
-    benefit to parallelizing it).
+  - `migrateNotasFiscais` (`tecinco-migration.runner.ts`): the
+    `listarNotasFiscais` calls per branch (2 tipos × 3 situacoes = 6 — see
+    the cancellation-resync and `situacao: "N"` notes above) now run via
+    `Promise.all` instead of nested sequential loops; enqueueing the
+    resulting notas stays sequential per branch (local BullMQ `add`, not a
+    Tecinco call, so no benefit to parallelizing it).
