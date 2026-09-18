@@ -17,6 +17,14 @@ import syncDatafreteCteService, {
   isDatafreteFreightTakerNumber,
 } from "../../../../logistic/services/sync-datafrete-cte.service";
 import { XmlDocumentResult } from "../../../helpers/mappers/documents/map-fiscal-documents.types";
+import { getSiegIntegration } from "../../../../fiscal/integrations/sieg/api/sieg_api.service";
+import { getDatafreteIntegration } from "../../../../logistic/transporters/data-frete/api/data-frete_api.service";
+import {
+  describeDatafreteCodigoRetorno,
+  extractDatafreteCodigoRetorno,
+} from "../../../../logistic/transporters/data-frete/helpers/error-codes";
+import integrationLoggerService from "../../../../../integrations/integration-errors/integration-logger.service";
+import { IntegrationErrorEntity } from "../../../../../integrations/integration-errors/integration-error.types";
 
 const DELAY_BETWEEN_REQUESTS_MS = 30 * 1000;
 const PROVIDER_NAME = "Sieg";
@@ -217,6 +225,20 @@ export class CteIngestionQueue extends BaseQueueService<void> {
       console.warn(
         `[CteIngestionQueue] Falha ao sincronizar CT-e com a Datafrete | ${logLabel} | chave=${cte.xml_key} | erro=${err?.message}`,
       );
+
+      const codigoRetorno = extractDatafreteCodigoRetorno(err);
+      const integration = await getDatafreteIntegration();
+      await integrationLoggerService.log({
+        entity: IntegrationErrorEntity.CTE,
+        type: codigoRetorno?.toString() ?? "UNKNOWN",
+        integrationsId: integration.id,
+        internalId: cte.id,
+        reference: cte.xml_key ?? String(cte.number),
+        message: codigoRetorno
+          ? describeDatafreteCodigoRetorno(codigoRetorno)
+          : (err?.message ?? "Erro desconhecido ao sincronizar CT-e com a Datafrete"),
+        createIntegrationError: true,
+      });
     }
   }
 
@@ -273,12 +295,32 @@ export class CteIngestionQueue extends BaseQueueService<void> {
           console.warn(
             `[CteIngestionQueue] Falha ao upsertar CTe | ${logLabel} | erro=${err?.message}`,
           );
+
+          const integration = await getSiegIntegration();
+          await integrationLoggerService.log({
+            entity: IntegrationErrorEntity.CTE,
+            type: "CTE_UPSERT_FAILED",
+            integrationsId: integration.id,
+            reference: logLabel,
+            message: err?.message ?? "Erro desconhecido ao upsertar CT-e",
+            createIntegrationError: true,
+          });
         }
       }
     } catch (err: any) {
       console.warn(
         `[CteIngestionQueue] Falha ao buscar documentos | ${logLabel} | erro=${err?.message}`,
       );
+
+      const integration = await getSiegIntegration();
+      await integrationLoggerService.log({
+        entity: IntegrationErrorEntity.CTE,
+        type: "SIEG_FETCH_FAILED",
+        integrationsId: integration.id,
+        reference: logLabel,
+        message: err?.message ?? "Erro desconhecido ao buscar documentos na Sieg",
+        createIntegrationError: true,
+      });
     }
   }
 }

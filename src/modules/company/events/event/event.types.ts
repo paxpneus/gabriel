@@ -12,7 +12,10 @@ export interface EventCreationAttributes extends Omit<EventAttributes, 'id' | 'c
 
 export interface NotifyByUserTypeParams {
   types: string[]; // ex: ['operator', 'admin']
-  unitBusinessId: string;
+  // omitido: notifica os usuários do(s) tipo(s) em TODAS as unit businesses
+  // (evento de sistema, ex.: erro de integração pra developer) em vez de
+  // uma loja específica.
+  unitBusinessId?: string;
   title: string;
   description?: string;
   transaction?: Transaction;

@@ -60,6 +60,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `bling/deactivation.md` — Bling situacao=E
 - `supplier-discount-rule.md` — matching engine, eixos de escopo, coluna computada `name`
 - `integration-mapping.md` — tabela `integration_mappings`, incidente de mapping órfão, regras cross-external-id
+- `integration-error.md` — tabela genérica `integration_errors`, upsert-by-find/dedup, logger centralizado (`IntegrationLoggerService`, flag `createIntegrationError`)
 - `unmapped-invoice-product/` — fila de revisão manual
   - `index.md` — regras `type`/dedup, schema
   - `create-flow.md` — fluxo create-product-from-unmapped

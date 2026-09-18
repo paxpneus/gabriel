@@ -9,6 +9,9 @@ import {
   isDatafreteCteAlreadyCadastrado,
 } from "../transporters/data-frete/helpers/error-codes";
 import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
+import { getDatafreteIntegration } from "../transporters/data-frete/api/data-frete_api.service";
+import integrationLoggerService from "../../../integrations/integration-errors/integration-logger.service";
+import { IntegrationErrorEntity } from "../../../integrations/integration-errors/integration-error.types";
 
 export interface SyncPendingCtesResult {
   ctesProcessed: number;
@@ -88,6 +91,20 @@ export class SyncDatafreteCteService {
           `[SyncDatafreteCte] Falha ao sincronizar CT-e ${cte.xml_key}:`,
           error?.response?.data ?? error?.message ?? error,
         );
+
+        const codigoRetorno = extractDatafreteCodigoRetorno(error);
+        const integration = await getDatafreteIntegration();
+        await integrationLoggerService.log({
+          entity: IntegrationErrorEntity.CTE,
+          type: codigoRetorno?.toString() ?? "UNKNOWN",
+          integrationsId: integration.id,
+          internalId: cte.id,
+          reference: cte.xml_key ?? String(cte.number),
+          message: codigoRetorno
+            ? describeDatafreteCodigoRetorno(codigoRetorno)
+            : (error?.message ?? "Erro desconhecido ao sincronizar CT-e com a Datafrete"),
+          createIntegrationError: true,
+        });
       }
     }
 

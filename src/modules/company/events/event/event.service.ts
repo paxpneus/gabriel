@@ -120,7 +120,7 @@ export class EventService extends BaseService<Event, EventRepository> {
 
     try {
       const users = await userService.findAll({
-        where: { unit_business_id: unitBusinessId },
+        where: unitBusinessId ? { unit_business_id: unitBusinessId } : undefined,
         include: [
           {
             association: "config",

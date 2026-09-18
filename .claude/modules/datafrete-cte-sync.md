@@ -47,6 +47,10 @@ A doc da Datafrete diz "302 significa que o dado já consta na base... analisar 
 
 Por isso `importCteXml`/`importCteJson` propagam a exception normalmente em qualquer status fora de 2xx (incluindo 302) — quem decide o que fazer com isso é `syncCte`, via `codigo_retorno` (ver seção "Códigos de erro" abaixo), nunca via status HTTP. O `onResponseError` em `data-frete_api.service.ts` só loga o body da resposta em qualquer erro, não interpreta nada.
 
+## Falhas registradas em `integration_errors`
+
+Além dos `console.error`/`console.warn` já existentes (mantidos como estão), todo `catch` que hoje só loga e segue (batch `syncPendingCtes`, envio inline `syncCteWithDatafrete`, fetch/upsert do Sieg em `fetchAndProcess`) também chama `integrationLoggerService.log(...)` (ver `.claude/entities/integration-error.md`) — persiste/atualiza uma linha em `integration_errors` (`entity: CTE`) com `createIntegrationError: true`, exceto o retry intermediário do Sieg (ainda tentando, `createIntegrationError: false`). Isso não muda nenhum comportamento de retry/backoff nem o fluxo de sucesso (`isDatafreteCteAlreadyCadastrado` continua sem gerar log nenhum, é sucesso) — só resolve o problema de "falha só existe no stdout, se perde depois que o log rola".
+
 ### Retry de 429 (rate limit)
 
 `data-frete_api.service.ts` tem retry automático com backoff pra 429, no mesmo padrão do client da Sieg (`sieg_api.service.ts`) e da Jadlog: até `DATAFRETE_429_MAX_RETRIES` tentativas (default 5), respeitando o header `Retry-After` quando presente, senão delay exponencial `DATAFRETE_429_BASE_DELAY_MS` (default 3s) até `DATAFRETE_429_MAX_DELAY_MS` (default 60s). Esgotadas as tentativas, propaga o erro normalmente (mesmo tratamento de falha de sempre). Isso cobre tanto o envio inline quanto o catch-up em lote, já que ambos passam pelo mesmo `datafreteApi`. Só 429 tem retry — outros erros (incluindo 302, 5xx) não retentam automaticamente, só via reprocessamento do próximo ciclo da fila (`synched` continua `false`).

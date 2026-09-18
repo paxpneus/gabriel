@@ -12,6 +12,9 @@ import {
   SiegBaixarXmlsResponse,
   SiegTipoXml,
 } from "./cte.types";
+import { getSiegIntegration } from "../../../api/sieg_api.service";
+import integrationLoggerService from "../../../../../../../integrations/integration-errors/integration-logger.service";
+import { IntegrationErrorEntity } from "../../../../../../../integrations/integration-errors/integration-error.types";
 
 // Limite documentado da Sieg pra /v1/baixar-xmls: 2 requisições/minuto, até 50 XMLs por requisição.
 // Hard limits (não vêm de env — são o próprio contrato da Sieg, nunca ultrapassar mesmo com env mal configurada).
@@ -141,6 +144,18 @@ const fetchXmlPageWithRetry = async (
       `Retry ${attempt}/${SIEG_PAGE_MAX_RETRIES} em ${SIEG_PAGE_RETRY_DELAY_MS / 1000}s. ` +
       `erro=${error?.message}`,
     );
+
+    const integration = await getSiegIntegration();
+    await integrationLoggerService.log({
+      entity: IntegrationErrorEntity.CTE,
+      type: "SIEG_PAGE_RETRY",
+      integrationsId: integration.id,
+      reference: `Skip=${params.Skip}`,
+      message: error?.message ?? "Falha na página, tentando novamente",
+      // ainda tentando — só vira falha real se esgotar SIEG_PAGE_MAX_RETRIES
+      // (ver o outro catch, mais acima em fetchXmlPage/fetchAndProcess).
+      createIntegrationError: false,
+    });
 
     await sleep(SIEG_PAGE_RETRY_DELAY_MS);
     return fetchXmlPageWithRetry(params, attempt + 1);
