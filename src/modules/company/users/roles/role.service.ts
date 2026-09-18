@@ -10,6 +10,20 @@ export class RoleService extends BaseService<Role, RoleRepository> {
     super(roleRepository);
   }
 
+  /**
+   * Role administradora do sistema. Fonte única do nome "Administrador" —
+   * qualquer checagem de admin deve comparar contra o id retornado aqui,
+   * nunca contra o literal.
+   */
+  async getAdminRole(): Promise<Role | null> {
+    return this.findOne({ where: { name: "Administrador" } });
+  }
+
+  async isAdminRole(roleId: string): Promise<boolean> {
+    const adminRole = await this.getAdminRole();
+    return !!adminRole && adminRole.id === roleId;
+  }
+
    async update(
       id: string,
       data: Partial<RoleCreationAttributes>,

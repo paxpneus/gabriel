@@ -1,8 +1,8 @@
 import { authenticate, AuthRequest } from '../../../../middlewares/auth-token';
 import { userPermissions } from '../../../../middlewares/user-permissions';
 import BaseController from '../../../../shared/utils/base-models/base-controller';
+import { getUserContext } from '../../../../shared/query/get-logged-user';
 import UnitBusiness from '../../../company/unit-business/unit-business.model';
-import User from '../../../company/users/users/user.model';
 import ExpeditionScanLog from './scan-logs.model';
 import ExpeditionScanLogService from './scan-logs.service';
 import { Request, Response } from 'express';
@@ -19,6 +19,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
   this.router.post("/scan/product/incoming", ...this.mw("scanProductIncoming"), (req, res) => this.scanProductIncoming(req, res))
 
   this.router.post("/scan/product/incoming/by-invoice", ...this.mw("scanProductIncomingByInvoice"), (req, res) => this.scanProductIncomingByInvoice(req, res))
+
+  this.router.post("/scan/product/by-invoice", ...this.mw("scanProductByInvoice"), (req, res) => this.scanProductByInvoice(req, res))
 
   this.router.post("/bulk-remove-logs", ...this.mw("bulkRemoveScanLogsOutgoing"), (req, res) => this.bulkRemoveScanLogsOutgoing(req, res))
 
@@ -37,21 +39,17 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
         destroy: [authenticate, userPermissions],
         scanProduct: [authenticate, userPermissions],
         scanProductIncoming: [authenticate, userPermissions],
+        scanProductByInvoice: [authenticate, userPermissions],
+        scanProductIncomingByInvoice: [authenticate, userPermissions],
         bulkRemoveScanLogsOutgoing: [authenticate, userPermissions],
         bulkRemoveScanLogsIncoming: [authenticate, userPermissions]
       };
     }
 
     private async getUnitBusiness(req: Request) {
-  const userId = (req as AuthRequest).user?.id;
-  if (!userId) return null;
+  const { unitBusinessId } = await getUserContext(req);
 
-  const user = await User.findByPk(userId, {
-    attributes: ['unit_business_id'],
-  });
-  if (!user?.unit_business_id) return null;
-
-  return UnitBusiness.findByPk(user.unit_business_id, {
+  return UnitBusiness.findByPk(unitBusinessId, {
     attributes: ['cnpj', 'transshipment_allowed'],
   });
 }
@@ -59,10 +57,10 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
   scanProduct = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { labelcode, productcode, batchId } = req.body;
-    const userId = (req as AuthRequest).user?.id;
+    const { userId } = await getUserContext(req);
     const unitBusiness = await this.getUnitBusiness(req);
 
-    await this.service.scanProduct(labelcode, productcode, batchId, userId as string, unitBusiness);
+    await this.service.scanProduct(labelcode, productcode, batchId, userId, unitBusiness);
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
   } catch (error: any) {
@@ -97,10 +95,10 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
     scanProductIncoming = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { labelcode, batchId, quantity } = req.body;
-    const userId = (req as AuthRequest).user?.id;
+    const { userId } = await getUserContext(req);
     const unitBusiness = await this.getUnitBusiness(req);
 
-    await this.service.scanProductIncoming(labelcode, batchId, userId as string, quantity, unitBusiness );
+    await this.service.scanProductIncoming(labelcode, batchId, userId, quantity, unitBusiness );
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
   } catch (error: any) {
@@ -110,10 +108,25 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
 
   scanProductIncomingByInvoice = async (req: Request, res: Response): Promise<Response> => {
   try {
-    const { labelcode, batchId, userId, invoiceId, quantity } = req.body;
+    const { productId, batchId, invoiceId, quantity } = req.body;
+    const roleId = (req as AuthRequest).user?.role;
     const unitBusiness = await this.getUnitBusiness(req);
 
-    await this.service.scanProductIncomingByInvoice(labelcode, batchId, invoiceId,  userId, quantity, unitBusiness);
+    await this.service.scanProductIncomingByInvoice(productId, batchId, invoiceId, quantity, unitBusiness, roleId as string);
+
+    return res.status(201).json({ message: "Produto escaneado com sucesso" });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
+};
+
+  scanProductByInvoice = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const { productId, batchId, invoiceId, quantity } = req.body;
+    const roleId = (req as AuthRequest).user?.role;
+    const unitBusiness = await this.getUnitBusiness(req);
+
+    await this.service.scanProductByInvoice(productId, batchId, invoiceId, quantity, unitBusiness, roleId as string);
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
   } catch (error: any) {

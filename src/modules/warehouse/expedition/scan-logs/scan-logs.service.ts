@@ -25,6 +25,7 @@ import batchService from "../batch/batch.service";
 import batchInvoicesService from "../batch-invoices/batch-invoices.service";
 import { assertTransshipment } from "../utils/helpers/transshipment-resolver";
 import InvoiceUnitBusinessAttributes from "../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
+import roleService from "../../../company/users/roles/role.service";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
@@ -69,6 +70,37 @@ export class ExpeditionScanLogService extends BaseService<
     if (!result) throw new Error("Produto não encontrado!");
 
     return result;
+  }
+
+  /**
+   * Valida a quantidade informada nas funções *ByInvoice contra o
+   * saldo do BatchItem. Positiva: não pode passar do restante a bipar,
+   * exceto quando allowOverflow (INCOMING aceita over-receiving).
+   * Negativa: subtrai, mas não pode deixar quantity_scanned abaixo de zero.
+   */
+  private validateScanQuantity(
+    batchItem: { quantity: number; quantity_scanned: number },
+    quantity: number,
+    allowOverflow: boolean = false,
+  ): void {
+    if (quantity > 0 && !allowOverflow) {
+      if (batchItem.quantity_scanned >= batchItem.quantity) {
+        throw new Error("Produto já totalmente bipado");
+      }
+
+      if (batchItem.quantity_scanned + quantity > batchItem.quantity) {
+        const remaining = batchItem.quantity - batchItem.quantity_scanned;
+        throw new Error(
+          `Quantidade informada (${quantity}) excede o restante a bipar (${remaining})`,
+        );
+      }
+    } else if (quantity < 0) {
+      if (batchItem.quantity_scanned + quantity < 0) {
+        throw new Error(
+          `Quantidade a subtrair (${Math.abs(quantity)}) maior que o já bipado (${batchItem.quantity_scanned})`,
+        );
+      }
+    }
   }
 
   /**
@@ -465,13 +497,19 @@ export class ExpeditionScanLogService extends BaseService<
   }
 
   async scanProductIncomingByInvoice(
-    labelcode: string,
+    productId: string,
     batchid: string,
     invoiceId: string,
-    userId: string,
     quantity: number = 1,
     unitBusiness: { cnpj: string; transshipment_allowed?: boolean } | null,
+    roleId: string,
   ) {
+    if (!(await roleService.isAdminRole(roleId))) {
+      throw new Error("Apenas administradores podem executar esta ação");
+    }
+
+    if (!productId) throw new Error("Produto não informado");
+
     return await sequelize.transaction(async (t) => {
       // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
       const batch = await batchService.findById(batchid, {
@@ -483,12 +521,12 @@ export class ExpeditionScanLogService extends BaseService<
       if (batch.type !== "INCOMING") throw new Error("Lote não é de entrada");
       if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
 
-      // ── 2. Busca produto centralizada (EAN + supplier mapping) ─────────────
-      const {product} = await this.findProductByCode(
-        labelcode,
-        batch.unit_business_id,
-        t,
-      );
+      // ── 2. Confia no produto informado pelo front, só valida existência ────
+      const product = await productsService.findById(productId, {
+        transaction: t,
+      });
+
+      if (!product) throw new Error("Produto não encontrado!");
 
       // ── 3. Busca o BatchItem do produto neste lote (com lock) ──────────────
       const batchItem = await batchItemsService.findOne({
@@ -543,19 +581,109 @@ export class ExpeditionScanLogService extends BaseService<
 
       await assertTransshipment(batchInvoice.invoice, unitBusiness);
 
-      // ── 5. Cria os ScanLogs ────────────────────────────────────────────────
-      const scanLogs = Array.from({ length: quantity }, () => ({
-        expedition_batch_id: batchid,
-        expedition_batch_items_id: batchItem.id,
-        expedition_batch_invoices_id: batchInvoice.id,
-        label_full_code: labelcode,
-        vol_number: "000000",
-        user_id: userId,
-      }));
+      this.validateScanQuantity(batchItem, quantity, true);
 
-      await this.bulkCreate(scanLogs, { transaction: t });
+      // ── 5. Sincroniza contadores e status (edita quantidade, sem criar ScanLog)
+      await this.syncFromScanning(
+        batchid,
+        batchItem.id,
+        batchInvoice.id,
+        quantity,
+        t,
+      );
 
-      // ── 6. Sincroniza contadores e status ──────────────────────────────────
+      return true;
+    });
+  }
+
+  async scanProductByInvoice(
+    productId: string,
+    batchid: string,
+    invoiceId: string,
+    quantity: number = 1,
+    unitBusiness: { cnpj: string; transshipment_allowed?: boolean } | null,
+    roleId: string,
+  ) {
+    if (!productId) throw new Error("Produto não informado");
+
+    if (!(await roleService.isAdminRole(roleId))) {
+      throw new Error("Apenas administradores podem executar esta ação");
+    }
+
+    return await sequelize.transaction(async (t) => {
+      // ── 1. Valida e bloqueia o lote ────────────────────────────────────────
+      const batch = await batchService.findById(batchid, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!batch) throw new Error("Lote não encontrado");
+      if (batch.type === "INCOMING") throw new Error("Lote não é de saída");
+      if (batch.status === "FINISHED") throw new Error("Lote já finalizado");
+
+      // ── 2. Confia no produto informado pelo front, só valida existência ────
+      const product = await productsService.findById(productId, {
+        transaction: t,
+      });
+
+      if (!product) throw new Error("Produto não encontrado!");
+
+      // ── 3. Busca o BatchItem do produto neste lote (com lock) ──────────────
+      const batchItem = await batchItemsService.findOne({
+        where: {
+          expedition_batch_id: batchid,
+          product_id: product.id,
+        },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!batchItem) {
+        throw new Error(
+          `Produto não encontrado nos itens do lote. ` +
+            `Verifique se a nota fiscal contém este produto.`,
+        );
+      }
+
+      // ── 4. Busca a batchInvoice vinculada ao invoiceId informado ───────────
+      const batchInvoice = (await ExpeditionBatchInvoice.findOne({
+        where: { expedition_batch_id: batchid },
+        include: [
+          {
+            model: Invoice,
+            as: "invoice",
+            where: { id: invoiceId },
+            required: true,
+            include: [
+              {
+                model: InvoiceUnitBusinessAttributes,
+                as: "unitBusinessAttributes",
+                where: { type: "OUTGOING", unit_business_id: batch.unit_business_id },
+                required: true,
+              },
+            ],
+          },
+          {
+            model: BatchInvoiceItems,
+            as: "items",
+            where: { expedition_batch_item_id: batchItem.id },
+            required: true,
+          },
+        ],
+        transaction: t,
+      })) as any;
+
+      if (!batchInvoice) {
+        throw new Error(
+          "Nota fiscal não encontrada no lote ou não contém este produto",
+        );
+      }
+
+      await assertTransshipment(batchInvoice.invoice, unitBusiness);
+
+      this.validateScanQuantity(batchItem, quantity);
+
+      // ── 5. Sincroniza contadores e status (edita quantidade, sem criar ScanLog)
       await this.syncFromScanning(
         batchid,
         batchItem.id,
