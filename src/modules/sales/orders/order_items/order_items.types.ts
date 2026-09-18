@@ -54,7 +54,7 @@ export interface OrderSalesDetailRow {
 
   produto: {
     identificacao: {
-      integracoes: {nome_integracao: string, id_integracao: string}[]
+      codigo_tecinco: string | null;
       nome: string | null;
       ean: string | null;
       sku_bling: string | null;

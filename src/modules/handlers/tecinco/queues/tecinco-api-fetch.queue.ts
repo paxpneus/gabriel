@@ -147,7 +147,9 @@ export interface TCarUpsertJobPayload {
 export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   constructor(options: { workless?: boolean } = {}) {
     super("TCAR_UPSERT", {
-      concurrency: 1,
+      // Rate limit da Tecinco é protegido pelo limitador global em
+      // tcar_api.ts (waitForTecincoRateLimit), não por esta concurrency.
+      concurrency: 3,
       limiter: { max: 50, duration: 1000 },
       maxProcessingMs: 120_000,
       workless: options.workless,
@@ -1102,24 +1104,36 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       const itens = notaFiscal?.data?.itens ?? [];
       const clnCodigo = notaFiscal?.data?.cliente?.codigo ?? data.cln_codigo;
 
-      // ─── Upsert do customer da nota ──────────────────────────────────────
-      if (clnCodigo) {
-        await upsertCustomerFromTCar(branchId, clnCodigo, logPrefix);
-      } else {
+      if (!clnCodigo) {
         console.warn(
           `${logPrefix} — cln_codigo não resolvido, customer não sincronizado`,
         );
       }
+      if (!(Array.isArray(itens) && itens.length > 0)) {
+        console.warn(`${logPrefix} — nota fiscal sem itens retornados`);
+      }
 
-      if (Array.isArray(itens) && itens.length > 0) {
-        const ensuredItems = await this.ensureProductsFromInvoiceItems(
-          itens,
-          branchId,
-        );
+      // Falha no customer não pode derrubar a resolução dos itens — senão a
+      // nota inteira fica sem item (ver fallback vazio em upsertInvoiceFromXml).
+      const customerUpsertPromise = clnCodigo
+        ? upsertCustomerFromTCar(branchId, clnCodigo, logPrefix).catch(
+            (err: any) =>
+              console.error(
+                `${logPrefix} — falha ao upsertar customer: ${err?.message ?? err}`,
+              ),
+          )
+        : Promise.resolve();
+
+      const [, ensuredItems] = await Promise.all([
+        customerUpsertPromise,
+        Array.isArray(itens) && itens.length > 0
+          ? this.ensureProductsFromInvoiceItems(itens, branchId)
+          : Promise.resolve(null),
+      ]);
+
+      if (ensuredItems) {
         operationalItems = ensuredItems.operationalItems;
         unmappedItems = ensuredItems.unmappedItems;
-      } else {
-        console.warn(`${logPrefix} — nota fiscal sem itens retornados`);
       }
     } catch (err: any) {
       detailFetchFailed = true;
@@ -1231,29 +1245,36 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     const produtoService = new TCarProdutoService();
     const integrations = await getTCarIntegration("Tecinco");
 
+    // Busca o detalhe de cada item na Tecinco em paralelo em vez de uma por
+    // vez; o resto (resolução/upserts) continua sequencial abaixo.
+    const productLookups = new Map<string, any>();
+    await Promise.all(
+      itens.map(async (item) => {
+        const systemId = String(item.epctb_codigo).trim();
+        const logPrefix = `[TCAR_UPSERT][ensureProducts] seq=${item.epeit_seq} systemId=${systemId}`;
+        try {
+          const resultado = await produtoService.obterProduto(branchId, systemId);
+          productLookups.set(systemId, resultado?.data ?? resultado);
+        } catch (err: any) {
+          console.warn(
+            `${logPrefix} — falha ao buscar produto na Tecinco: ${err?.message ?? err}`,
+          );
+        }
+      }),
+    );
+
     for (const item of itens) {
       // hasItemWithoutCode já garantiu, acima, que todo item aqui tem
       // epctb_codigo.
       const systemId = String(item.epctb_codigo).trim();
       const logPrefix = `[TCAR_UPSERT][ensureProducts] seq=${item.epeit_seq} systemId=${systemId}`;
 
-      // ─── Busca Tecinco API para obter codigoFabrica e EAN ────────────────────
-      let tcarPayload: any = null;
-      let codigoFabrica: string | undefined;
-      let ean: string | undefined;
-
-      try {
-        const resultado = await produtoService.obterProduto(branchId, systemId);
-        tcarPayload = resultado?.data ?? resultado;
-        codigoFabrica = tcarPayload?.epctb_codigofabrica
-          ? String(tcarPayload.epctb_codigofabrica).trim()
-          : undefined;
-        ean = normalizeEan(tcarPayload?.epctb_ean);
-      } catch (err: any) {
-        console.warn(
-          `${logPrefix} — falha ao buscar produto na Tecinco: ${err?.message ?? err}`,
-        );
-      }
+      // ─── Detalhe já buscado na Tecinco em paralelo acima ──────────────────────
+      const tcarPayload: any = productLookups.get(systemId) ?? null;
+      const codigoFabrica: string | undefined = tcarPayload?.epctb_codigofabrica
+        ? String(tcarPayload.epctb_codigofabrica).trim()
+        : undefined;
+      const ean: string | undefined = normalizeEan(tcarPayload?.epctb_ean);
 
       // ─── Fora do grupo pneu → ignora o item da nota ────────────────────────────
       // Mesmo critério do catalog sync (processProduct): só nos interessam

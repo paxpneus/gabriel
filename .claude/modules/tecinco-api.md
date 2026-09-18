@@ -21,3 +21,83 @@
   a narrower lock scoped to the individual Tecinco API calls inside
   `migrateProdutos`/`migrateClientes`/`migrateNotasFiscais`, not the whole
   job — the `waitForQueueToDrain` step must stay outside any such lock.
+- **Fixed — cancelled invoice never re-synced**: there is no Tecinco webhook
+  push for invoices; the only sync mechanism is `migrateNotasFiscais`
+  (`src/scripts/tecinco/tecinco-migration.runner.ts`), polled every 10min by
+  `TCarSyncQueue`. It lists notas via `GET /notas-fiscais` filtered by
+  `situacao`. It queried only `situacao: "A"` (ativa), so once an
+  already-imported invoice got cancelled in Tecinco (`situacao` flips to
+  `"C"`) it dropped out of that list entirely and was never re-enqueued —
+  `isCancelledInvoice`/`isInvoiceCancellationStatus` in
+  `src/shared/utils/xml/invoice-xml.ts` (which does correctly read
+  `cabecalho.situacao`/`fiscal.situacao_nfe === "C"` and set the invoice to
+  `PENDING_CANCELLED_SYSTEM`) simply never received fresh data for that
+  invoice again. **Fixed** by also querying `situacao: "C"` per
+  branch/tipo in `migrateNotasFiscais`, so cancelled notas get re-enqueued
+  through the same `invoice_xml`/`sync` job (same jobId format — safe to
+  reuse since completed BullMQ jobs are removed via `removeOnComplete:
+  true`) and picked up by the existing cancellation-detection logic.
+- **Perf — parallelized independent Tecinco calls that were needlessly
+  sequential**: none of these touch the login mutex, the per-branch session
+  cache, or the "no shared lock between `TCAR_UPSERT`/`TCAR_SYNC`" rule
+  above — they only parallelize calls that don't depend on each other and
+  reuse the same already-cached branch session token.
+  - `TCarUpsertQueue` (`tecinco-api-fetch.queue.ts`) `concurrency` raised
+    from `1` to `3`. This raises concurrent DB load though:
+    `src/config/sequelize.ts` has a single Sequelize instance shared by the
+    **entire app** (147+ files, not just Tecinco), and had no explicit
+    `pool` config (Sequelize default `max: 5`). Raised to `pool: { max: 10,
+    min: 0, acquire: 60000, idle: 10000 }` (only `max` changed from
+    Sequelize's own defaults) alongside the concurrency bump so
+    `TCAR_UPSERT` jobs (each doing several sequential DB reads/writes per
+    item) don't starve unrelated queues/HTTP requests of connections.
+  - **Fixed — 429s in production from this parallelization**: raising
+    `concurrency` + the `Promise.all` changes below caused real Tecinco
+    429s once deployed — the previous per-request 429 exponential-backoff
+    retry in `tcar_api.ts` only *reacts* to hitting the limit, it doesn't
+    *prevent* bursts. **Fixed** by adding a proper global rate limiter,
+    mirroring `waitForBlingRateLimit` in
+    `bling_api.service.ts`/`.claude/modules/ml-order-pipeline/rate-limit.md`
+    exactly: `waitForTecincoRateLimit()` in `tecinco_api.ts`, a Redis-backed
+    check-and-claim Lua script (`TCAR_TRY_DISPATCH_SCRIPT`) storing only the
+    last real dispatch timestamp (not a reserved future slot — avoids the
+    same burst-under-event-loop-contention bug documented for Bling),
+    default `TCAR_RATE_LIMIT_INTERVAL_MS=334` (3 req/s), called at the top
+    of the `tcarApi` `onRequest` interceptor. Since `tcarRequest(branchId,
+    ...)` builds its scoped axios instance by directly reusing `tcarApi`'s
+    `interceptors.request`/`interceptors.response` objects (not copying
+    them), this one limiter call covers every Tecinco call in the app,
+    including concurrent ones from `Promise.all` — each has to win the same
+    atomic Redis check to fire, so throughput self-serializes to the
+    configured rate process-wide regardless of `concurrency` or how many
+    calls fire at once. Env var added to all 4 `docker-compose.yml` service
+    blocks that already had `TCAR_429_MAX_DELAY` (and to local `.env`).
+  - `TCarUpsertQueue.processInvoiceXml`: `upsertCustomerFromTCar` and
+    `ensureProductsFromInvoiceItems` now run via `Promise.all` instead of
+    one awaiting the other — both only read from the same already-fetched
+    `notaFiscal` detail, neither depends on the other's result.
+  - **Fixed — invoice imported with empty `items`/`unmappedProducts` despite
+    the nota having real items on Tecinco**: `processInvoiceXml` wraps
+    detail-fetch + customer upsert + item resolution in one `try`; any
+    throw (including from `upsertCustomerFromTCar`, unrelated to items) set
+    `detailFetchFailed=true` and both arrays stayed empty. In
+    `upsertInvoiceFromXml` (invoice-xml.ts), when the caller provides
+    neither `operationalItems` nor `unmappedItems`, it deliberately skips
+    the invoice's items entirely for that pass (no raw-XML fallback despite
+    a stale comment implying one) rather than guess from XML `det`. Fixed by
+    catching `upsertCustomerFromTCar` failures locally (logged, not
+    rethrown) so a customer-upsert error can no longer blank out the items.
+    A note stuck like this heals on the next sync pass once fixed (update
+    path calls `addMissingInvoiceItems`).
+  - `TCarUpsertQueue.ensureProductsFromInvoiceItems`: the per-item
+    `produtoService.obterProduto` calls (previously one Tecinco API round
+    trip per invoice line item, sequential — an N+1) are now pre-fetched
+    together via `Promise.all` into a `Map<systemId, payload>` before the
+    existing per-item resolution/upsert loop runs (that loop itself stays
+    sequential, since it does DB writes per item).
+  - `migrateNotasFiscais` (`tecinco-migration.runner.ts`): the 4
+    `listarNotasFiscais` calls per branch (2 tipos × 2 situacoes — see the
+    cancellation-resync fix above) now run via `Promise.all` instead of
+    nested sequential loops; enqueueing the resulting notas stays
+    sequential per branch (local BullMQ `add`, not a Tecinco call, so no
+    benefit to parallelizing it).

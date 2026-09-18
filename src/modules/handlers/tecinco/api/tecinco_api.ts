@@ -4,6 +4,7 @@ import { createAxiosInstance } from "../../../../config/axios";
 import { QueueItem, TCarBranchSession, TCarLoginResponse } from "./tecinco_api.types";
 import integrationsService from "../../../integrations/integrations/integrations.service";
 import { FullIntegration } from "../../../integrations/integrations/integrations.types";
+import { redisConnection } from "../../../../shared/utils/base-models/base-redis";
 
 // ---------------------------------------------------------------------------
 // Credenciais — via integrationsService igual à Bling
@@ -61,6 +62,57 @@ const httpsAgent =
 const TCAR_429_MAX_RETRIES = Number(process.env.TCAR_429_MAX_RETRIES   ?? 5);
 const TCAR_429_BASE_DELAY  = Number(process.env.TCAR_429_BASE_DELAY_MS ?? 2000);
 const TCAR_429_MAX_DELAY   = Number(process.env.TCAR_429_MAX_DELAY_MS  ?? 60000);
+
+// Limitador global via Redis, mesmo padrão de waitForBlingRateLimit.
+const TCAR_RATE_LIMIT_INTERVAL_MS = Number(
+  process.env.TCAR_RATE_LIMIT_INTERVAL_MS || 334,
+);
+const TCAR_RATE_LIMIT_KEY = "rate-limit:tecinco:last-dispatch-at";
+
+function sleepRateLimit(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const TCAR_TRY_DISPATCH_SCRIPT = `
+  local key = KEYS[1]
+  local interval = tonumber(ARGV[1])
+  local now = tonumber(ARGV[2])
+  local ttl = tonumber(ARGV[3])
+
+  local last = tonumber(redis.call("GET", key))
+  local nextAllowed = 0
+  if last then
+    nextAllowed = last + interval
+  end
+
+  if now >= nextAllowed then
+    redis.call("SET", key, now, "PX", ttl)
+    return 0
+  end
+
+  return nextAllowed - now
+`;
+
+async function waitForTecincoRateLimit(): Promise<void> {
+  while (true) {
+    const now = Date.now();
+
+    const waitMs = Number(
+      await redisConnection.eval(
+        TCAR_TRY_DISPATCH_SCRIPT,
+        1,
+        TCAR_RATE_LIMIT_KEY,
+        String(TCAR_RATE_LIMIT_INTERVAL_MS),
+        String(now),
+        String(TCAR_RATE_LIMIT_INTERVAL_MS * 1000),
+      ),
+    );
+
+    if (waitMs <= 0) return;
+
+    await sleepRateLimit(waitMs);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Pool de sessões — uma entrada por branch_id, criada sob demanda
@@ -241,6 +293,8 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
   },
 
   onRequest: async (config) => {
+    await waitForTecincoRateLimit();
+
     const { baseUrl, apiKey, companyId } = await getTCarToken();
 
     const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;

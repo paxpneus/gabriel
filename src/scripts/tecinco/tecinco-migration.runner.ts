@@ -383,26 +383,44 @@ export async function migrateNotasFiscais(
   const service = new TCarConferenciaEstoqueService();
 
   const TIPOS: Array<"E" | "S"> = ["E", "S"];
+  // "A" pega as ativas recentes; "C" é necessário à parte porque uma nota
+  // cancelada some da listagem "A" — sem isso o cancelamento na Tecinco nunca
+  // é reenfileirado e a invoice já importada fica presa no status antigo.
+  const SITUACOES: Array<"A" | "C"> = ["A", "C"];
 
   for (const branchId of branchIds) {
     console.log(`\n  🏢 Filial ${branchId}`);
 
-    for (const tipo of TIPOS) {
-      // Sempre busca as 50 notas mais recentes (ordenação padrão EPENF_DTAINS DESC),
-      // sem filtro de data — dedup por jobId evita reprocessamento das já enfileiradas.
-      const resultado = await service.listarNotasFiscais(branchId, {
-        modelo_documento: 55,
-        situacao: "A",
-        entrada_saida: tipo,
-        limit: 50,
-        offset: 0,
-      });
+    // As 4 combinações (tipo × situação) são independentes — buscadas em
+    // paralelo em vez de uma por vez.
+    const combos = TIPOS.flatMap((tipo) =>
+      SITUACOES.map((situacao) => ({ tipo, situacao })),
+    );
+    const resultados = await Promise.all(
+      combos.map(({ tipo, situacao }) =>
+        // Sempre busca as 50 notas mais recentes (ordenação padrão EPENF_DTAINS DESC),
+        // sem filtro de data — dedup por jobId evita reprocessamento das já enfileiradas.
+        service.listarNotasFiscais(branchId, {
+          modelo_documento: 55,
+          situacao,
+          entrada_saida: tipo,
+          limit: 50,
+          offset: 0,
+        }),
+      ),
+    );
+
+    for (let i = 0; i < combos.length; i++) {
+      const { tipo, situacao } = combos[i];
+      const resultado = resultados[i];
 
       const notas: any[] = (resultado?.data ?? []).filter(
         (n: any) => n.entrada_saida === tipo && n.chave_nfe,
       );
 
-      console.log(`  → [${tipo}] ${notas.length} nota(s) encontrada(s)`);
+      console.log(
+        `  → [${tipo}/${situacao}] ${notas.length} nota(s) encontrada(s)`,
+      );
 
       for (const nota of notas) {
         const { chave } = nota;

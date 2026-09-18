@@ -233,9 +233,13 @@ export class OrderItemsService extends BaseService<
       ),
     ] as string[];
 
-    const [productIntegrationMappingsMap, sellerExternalIdsMap] =
+    const [productTecincoExternalIdsMap, sellerExternalIdsMap] =
       await Promise.all([
-        integrationMappingService.findGroupedMappingsMap("PRODUCT", productIds),
+        integrationMappingService.findExternalIdsMap(
+          "PRODUCT",
+          tecincoIntegrationId,
+          productIds,
+        ),
         integrationMappingService.findExternalIdsMap(
           "CONTACT",
           tecincoIntegrationId,
@@ -304,16 +308,9 @@ export class OrderItemsService extends BaseService<
           : undefined;
       const ean = productConfig?.gtin ?? null;
 
-      const integracoesProduto = item.product_id
-        ? (productIntegrationMappingsMap.get(item.product_id) ?? [])
-        : [];
-
-      const integration_data_normalized = integracoesProduto.map((i) => {
-        return {
-          nome_integracao: i.integration_name,
-          id_integracao: i.integration_id,
-        };
-      });
+      const codigoTecinco = item.product_id
+        ? (productTecincoExternalIdsMap.get(item.product_id) ?? null)
+        : null;
 
       return {
         pedido: {
@@ -339,7 +336,7 @@ export class OrderItemsService extends BaseService<
         },
         produto: {
           identificacao: {
-            integracoes: integration_data_normalized,
+            codigo_tecinco: codigoTecinco,
             nome: item.product?.name ?? null,
             ean,
             sku_bling: item.sku,

@@ -24,7 +24,7 @@ Valor que identifica uma entidade específica (nome de integração, status, etc
 
 ## Comentários de código
 
-Curtos, diretos, 1-2 linhas. Só a razão não-óbvia (constraint escondida, workaround, por que não o óbvio) — nunca parágrafo explicando o que o código já mostra.
+**Regra dura, sem exceção mesmo pra lógica nova/complexa (rate limiter, lock, migration): 1-2 linhas, sempre.** Só a razão não-óbvia (constraint escondida, workaround, por que não o óbvio) — nunca parágrafo, nunca bloco de 5+ linhas explicando o que o código já mostra, mesmo que pareça "merecer" mais contexto. Se a explicação não cabe em 1-2 linhas, ela pertence em `.claude/` (ver seção seguinte), não no comentário.
 
 ## Contexto (`.claude/`)
 

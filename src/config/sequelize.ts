@@ -20,6 +20,8 @@ const sequelize = new Sequelize(
         username: process.env.DB_USER,
         password: process.env.DB_PASS,
         logging: false,
+        // max subido de 5 (default) — pool é único, compartilhado por todo o app.
+        pool: { max: 10, min: 0, acquire: 60000, idle: 10000 },
       },
 )
 
