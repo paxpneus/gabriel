@@ -1180,10 +1180,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     // ─── Chamadas externas (Magento/Bling) — sempre FORA da transaction ────────
-    const magentoProduct = await this.fetchMagentoProduct(
-      magentoLookupSku,
-      logPrefix,
-    );
+    // KIT nunca sincroniza com o Magento (preço/custo_medio/unmapped) — só UNIT.
+    const magentoProduct = isKit
+      ? null
+      : await this.fetchMagentoProduct(magentoLookupSku, logPrefix);
     const resolvedPrice =
       magentoProduct?.price !== undefined && magentoProduct?.price !== null
         ? Number(magentoProduct.price)
@@ -1253,21 +1253,23 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           { conflictFields: ["product_id", "unit_business_id"], transaction },
         );
 
-        try {
-          await this.syncProductWithMagento({
-            product,
-            sku: configSku,
-            ean: blingProduct.gtin,
-            productName: blingProduct.nome,
-            magentoProduct,
-            magentoIntegration,
-            logPrefix,
-            transaction,
-          });
-        } catch (magentoSyncErr: any) {
-          console.warn(
-            `${logPrefix} Falha ao sincronizar com Magento (produto será salvo normalmente) | erro=${magentoSyncErr?.message}`,
-          );
+        if (!isKit) {
+          try {
+            await this.syncProductWithMagento({
+              product,
+              sku: configSku,
+              ean: blingProduct.gtin,
+              productName: blingProduct.nome,
+              magentoProduct,
+              magentoIntegration,
+              logPrefix,
+              transaction,
+            });
+          } catch (magentoSyncErr: any) {
+            console.warn(
+              `${logPrefix} Falha ao sincronizar com Magento (produto será salvo normalmente) | erro=${magentoSyncErr?.message}`,
+            );
+          }
         }
 
         // ─── Kardex + estoque físico + batches, tudo atômico ─────────────────
@@ -1322,47 +1324,50 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     // ─── custo_medio no Magento — best effort, fora da transaction ────────────
-    try {
-      const config = await ProductConfig.findOne({
-        where: {
-          product_id: product!.id,
-          unit_business_id: BLING_UNIT_BUSINESS_ID,
-        },
-      });
+    // KIT nunca sincroniza com o Magento — só UNIT.
+    if (!isKit) {
+      try {
+        const config = await ProductConfig.findOne({
+          where: {
+            product_id: product!.id,
+            unit_business_id: BLING_UNIT_BUSINESS_ID,
+          },
+        });
 
-      if (config?.average_cost) {
-        const magentoSkuMap =
-          await integrationMappingService.findExternalIdsMap(
-            "PRODUCT",
-            magentoIntegration.id,
-            [product!.id],
-          );
-        const magentoSku = magentoSkuMap.get(product!.id);
+        if (config?.average_cost) {
+          const magentoSkuMap =
+            await integrationMappingService.findExternalIdsMap(
+              "PRODUCT",
+              magentoIntegration.id,
+              [product!.id],
+            );
+          const magentoSku = magentoSkuMap.get(product!.id);
 
-        if (magentoSku) {
-          await magentoCatalogService.atualizarCustomAttribute(
-            magentoSku,
-            "custo_medio",
-            Number(config.average_cost).toFixed(2),
-          );
+          if (magentoSku) {
+            await magentoCatalogService.atualizarCustomAttribute(
+              magentoSku,
+              "custo_medio",
+              Number(config.average_cost).toFixed(2),
+            );
+            console.log(
+              `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${magentoSku} | average_cost=${config.average_cost}`,
+            );
+          } else {
+            console.log(
+              `[BLING_API_FETCH] Produto sem mapping no Magento — custo_medio não sincronizado: sku_bling=${blingProduct.codigo}`,
+            );
+          }
+        }
+      } catch (magentoErr: any) {
+        if (magentoErr?.response?.status === 404) {
           console.log(
-            `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${magentoSku} | average_cost=${config.average_cost}`,
+            `[BLING_API_FETCH] Produto não encontrado no Magento — custo_medio ignorado: sku=${blingProduct.codigo}`,
           );
         } else {
-          console.log(
-            `[BLING_API_FETCH] Produto sem mapping no Magento — custo_medio não sincronizado: sku_bling=${blingProduct.codigo}`,
+          console.warn(
+            `[BLING_API_FETCH] Falha ao sincronizar custo_medio para Magento | sku=${blingProduct.codigo} | erro=${magentoErr?.message}`,
           );
         }
-      }
-    } catch (magentoErr: any) {
-      if (magentoErr?.response?.status === 404) {
-        console.log(
-          `[BLING_API_FETCH] Produto não encontrado no Magento — custo_medio ignorado: sku=${blingProduct.codigo}`,
-        );
-      } else {
-        console.warn(
-          `[BLING_API_FETCH] Falha ao sincronizar custo_medio para Magento | sku=${blingProduct.codigo} | erro=${magentoErr?.message}`,
-        );
       }
     }
 
