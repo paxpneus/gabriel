@@ -26,6 +26,10 @@ Valor que identifica uma entidade específica (nome de integração, status, etc
 
 **Regra dura, sem exceção mesmo pra lógica nova/complexa (rate limiter, lock, migration): 1-2 linhas, sempre.** Só a razão não-óbvia (constraint escondida, workaround, por que não o óbvio) — nunca parágrafo, nunca bloco de 5+ linhas explicando o que o código já mostra, mesmo que pareça "merecer" mais contexto. Se a explicação não cabe em 1-2 linhas, ela pertence em `.claude/` (ver seção seguinte), não no comentário.
 
+## Idioma do código
+
+Tudo dentro do código — nome de função, variável, classe, arquivo, chave de objeto, mensagem de log/erro no código-fonte — é em inglês, sem exceção. Português só em documentação (`.claude/`, comentários) e em texto voltado pro usuário final (mensagens de erro exibidas na UI, alertas).
+
 ## Contexto (`.claude/`)
 
 - Reflete estado ATUAL do código, nunca histórico. Mudou lógica → sobrescreve; sem changelog.

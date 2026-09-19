@@ -50,7 +50,11 @@ jest.mock(
   "../../../../../magentoV2/service/catalog/products/products.service",
   () => ({
     __esModule: true,
-    default: { obterProduto: jest.fn(), atualizarCustomAttribute: jest.fn() },
+    default: {
+      obterProduto: jest.fn(),
+      atualizarCustomAttribute: jest.fn(),
+      buscarProdutosPorNome: jest.fn(),
+    },
   }),
 );
 
@@ -382,6 +386,95 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       expect(
         integrationMappingService.createOrUpdateIntegrationMapping,
       ).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Magento: fallback por nome quando SKU não é encontrado ───────────────
+
+  describe("Magento: fallback por nome quando o SKU não é encontrado", () => {
+    it("SKU não encontrado (404), nome bate exatamente e vem 1 resultado só: mapeia pelo SKU real do Magento", async () => {
+      const blingProduct = makeBlingProduct({ nome: "Pneu Aro 14 Continental" });
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-product-id",
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-product-id" }),
+      );
+      (magentoCatalogService.obterProduto as jest.Mock).mockRejectedValue({
+        response: { status: 404 },
+      });
+      (magentoCatalogService.buscarProdutosPorNome as jest.Mock).mockResolvedValue({
+        items: [{ sku: "MAGENTO-SKU-1", name: "Pneu Aro 14 Continental" }],
+      });
+
+      await runProductJob(blingProduct);
+
+      expect(magentoCatalogService.buscarProdutosPorNome).toHaveBeenCalledWith(
+        "Pneu Aro 14 Continental",
+      );
+      expect(
+        integrationMappingService.createOrUpdateIntegrationMapping,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entity_type: "PRODUCT",
+          external_id: "MAGENTO-SKU-1",
+          integrations_id: "magento-1",
+        }),
+        expect.anything(),
+      );
+      expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
+    });
+
+    it("SKU não encontrado (404) e vem mais de 1 resultado por nome: não mapeia, registra unmapped", async () => {
+      const blingProduct = makeBlingProduct({ nome: "Pneu Aro 14 Continental" });
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-product-id",
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-product-id" }),
+      );
+      (magentoCatalogService.obterProduto as jest.Mock).mockRejectedValue({
+        response: { status: 404 },
+      });
+      (magentoCatalogService.buscarProdutosPorNome as jest.Mock).mockResolvedValue({
+        items: [
+          { sku: "MAGENTO-SKU-1", name: "Pneu Aro 14 Continental" },
+          { sku: "MAGENTO-SKU-2", name: "Pneu Aro 14 Continental" },
+        ],
+      });
+
+      await runProductJob(blingProduct);
+
+      expect(
+        integrationMappingService.createOrUpdateIntegrationMapping,
+      ).not.toHaveBeenCalled();
+      expect(UnmappedInvoiceProduct.create).toHaveBeenCalled();
+    });
+
+    it("SKU não encontrado (404) e nome só bate parcialmente: não mapeia, registra unmapped", async () => {
+      const blingProduct = makeBlingProduct({ nome: "Pneu Aro 14 Continental" });
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-product-id",
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-product-id" }),
+      );
+      (magentoCatalogService.obterProduto as jest.Mock).mockRejectedValue({
+        response: { status: 404 },
+      });
+      (magentoCatalogService.buscarProdutosPorNome as jest.Mock).mockResolvedValue({
+        items: [{ sku: "MAGENTO-SKU-1", name: "Pneu Aro 14 Continental XL" }],
+      });
+
+      await runProductJob(blingProduct);
+
+      expect(
+        integrationMappingService.createOrUpdateIntegrationMapping,
+      ).not.toHaveBeenCalled();
+      expect(UnmappedInvoiceProduct.create).toHaveBeenCalled();
     });
   });
 

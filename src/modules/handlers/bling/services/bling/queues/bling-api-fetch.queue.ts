@@ -630,17 +630,56 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   }
 
   // ─── Magento: busca produto por SKU (usado tanto pro price quanto pro mapping) ──
+  // Se não achar por SKU, cai pro fallback por nome (fetchMagentoProductByName)
+  // antes de desistir — cobre produto cujo SKU no Magento diverge do nosso.
   private async fetchMagentoProduct(
     sku: string,
+    productName: string,
     logPrefix: string,
   ): Promise<any | null> {
     try {
       return await magentoCatalogService.obterProduto(sku);
     } catch (error: any) {
-      if (error?.response?.status === 404) return null;
+      if (error?.response?.status === 404) {
+        return await this.fetchMagentoProductByName(productName, sku, logPrefix);
+      }
 
       console.warn(
         `${logPrefix} Falha ao consultar produto no Magento | sku=${sku} | erro=${error?.message}`,
+      );
+      return null;
+    }
+  }
+
+  // ─── Magento: fallback por nome quando o SKU não é encontrado ─────────────
+  // Só aceita o match se vier exatamente 1 resultado e o nome bater
+  // integralmente (normalizado) — nome ambíguo/parcial cai pro unmapped, não
+  // arrisca vincular o produto errado.
+  private async fetchMagentoProductByName(
+    productName: string,
+    sku: string,
+    logPrefix: string,
+  ): Promise<any | null> {
+    if (!productName?.trim()) return null;
+
+    try {
+      const result = await magentoCatalogService.buscarProdutosPorNome(
+        productName,
+      );
+      const items = result?.items ?? [];
+      if (items.length !== 1) return null;
+
+      const normalize = (value: string) =>
+        value?.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      if (normalize(items[0].name) !== normalize(productName)) return null;
+
+      console.log(
+        `${logPrefix} Produto do Magento resolvido por nome (SKU=${sku} não encontrado) | magento_sku=${items[0].sku}`,
+      );
+      return items[0];
+    } catch (error: any) {
+      console.warn(
+        `${logPrefix} Falha ao buscar produto no Magento por nome | nome=${productName} | erro=${error?.message}`,
       );
       return null;
     }
@@ -1183,7 +1222,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // KIT nunca sincroniza com o Magento (preço/custo_medio/unmapped) — só UNIT.
     const magentoProduct = isKit
       ? null
-      : await this.fetchMagentoProduct(magentoLookupSku, logPrefix);
+      : await this.fetchMagentoProduct(
+          magentoLookupSku,
+          blingProduct.nome,
+          logPrefix,
+        );
     const resolvedPrice =
       magentoProduct?.price !== undefined && magentoProduct?.price !== null
         ? Number(magentoProduct.price)

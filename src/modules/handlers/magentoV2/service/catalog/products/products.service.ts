@@ -2,6 +2,7 @@ import { magentoApi } from "../../../api/magentoV2_api";
 import {
   buildSearchCriteria,
   buildListAll,
+  buildFilterBy,
   MagentoSearchParams,
 } from "../../../helpers/magentoV2_params.helper";
 import { MagentoProductPayload, MagentoLinkType } from "./products.types";
@@ -43,6 +44,15 @@ export class MagentoCatalogService {
     return magentoApi
       .get(`/products/${encodeURIComponent(sku)}`)
       .then((r) => r.data);
+  }
+
+  /**
+   * Busca produtos por nome (LIKE, case/acento sensível ao Magento).
+   * GET /rest/V1/products — usado como fallback quando não há SKU/mapping.
+   */
+  async buscarProdutosPorNome(name: string): Promise<any> {
+    const params = buildFilterBy("name", `%${name}%`, "like");
+    return magentoApi.get("/products", { params }).then((r) => r.data);
   }
 
   /**
