@@ -629,10 +629,36 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     );
   }
 
-  // ─── Magento: busca produto por SKU (usado tanto pro price quanto pro mapping) ──
+  // ─── Magento: busca o produto já mapeado ───────────────────────────────────
+  // external_id do integration_mapping é o entity_id do Magento (estável),
+  // não o sku (que pode mudar) — por isso a busca é sempre via searchCriteria
+  // (não existe GET /products/:id na REST API do Magento, só por sku).
+  private async fetchMagentoProductById(
+    magentoId: string,
+    logPrefix: string,
+  ): Promise<any | null> {
+    try {
+      const result = await magentoCatalogService.buscarProdutoPorId(magentoId);
+      const items = result?.items ?? [];
+      if (items.length !== 1) {
+        console.warn(
+          `${logPrefix} Produto do Magento com id=${magentoId} (mapeado) não encontrado — pode ter sido excluído no Magento.`,
+        );
+        return null;
+      }
+      return items[0];
+    } catch (error: any) {
+      console.warn(
+        `${logPrefix} Falha ao consultar produto no Magento por id | id=${magentoId} | erro=${error?.message}`,
+      );
+      return null;
+    }
+  }
+
+  // ─── Magento: busca produto por SKU (primeira vez, sem mapping ainda) ──────
   // Se não achar por SKU, cai pro fallback por nome (fetchMagentoProductByName)
   // antes de desistir — cobre produto cujo SKU no Magento diverge do nosso.
-  private async fetchMagentoProduct(
+  private async fetchMagentoProductBySku(
     sku: string,
     productName: string,
     logPrefix: string,
@@ -649,6 +675,19 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       );
       return null;
     }
+  }
+
+  // ─── Magento: resolve o produto — por id (já mapeado) ou por sku/nome (1ª vez) ──
+  private async fetchMagentoProduct(
+    magentoId: string | null,
+    sku: string,
+    productName: string,
+    logPrefix: string,
+  ): Promise<any | null> {
+    if (magentoId) {
+      return await this.fetchMagentoProductById(magentoId, logPrefix);
+    }
+    return await this.fetchMagentoProductBySku(sku, productName, logPrefix);
   }
 
   // ─── Magento: fallback por nome quando o SKU não é encontrado ─────────────
@@ -771,14 +810,16 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       {
         entity_type: "PRODUCT",
         internal_id: product.id,
-        external_id: String(magentoProduct.sku ?? sku),
+        // external_id é o entity_id do Magento (estável), não o sku (que
+        // pode ser renomeado no catálogo sem que o produto mude de fato).
+        external_id: String(magentoProduct.id),
         integrations_id: magentoIntegration.id,
       },
       transaction,
     );
 
     console.log(
-      `${logPrefix} Produto mapeado no Magento | sku=${sku} | magento_sku=${magentoProduct.sku ?? sku}`,
+      `${logPrefix} Produto mapeado no Magento | sku=${sku} | magento_id=${magentoProduct.id} | magento_sku=${magentoProduct.sku ?? sku}`,
     );
   }
 
@@ -1198,23 +1239,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Resolve a integration do Magento uma única vez (reaproveitada abaixo) ──
     const magentoIntegration = await getMagentoIntegration("Magento");
 
-    // ─── Prioriza o SKU já mapeado; só cai pro código da Bling se não existir mapping ──
-    let magentoSkuFromMapping: string | null = null;
+    // ─── Prioriza o id do Magento já mapeado (estável); só cai pro sku/nome da ──
+    // Bling na 1ª vez, quando ainda não existe mapping.
+    let magentoIdFromMapping: string | null = null;
 
     if (existingProduct) {
-      const magentoSkuMap = await integrationMappingService.findExternalIdsMap(
+      const magentoIdMap = await integrationMappingService.findExternalIdsMap(
         "PRODUCT",
         magentoIntegration.id,
         [existingProduct.id],
       );
-      magentoSkuFromMapping = magentoSkuMap.get(existingProduct.id) ?? null;
+      magentoIdFromMapping = magentoIdMap.get(existingProduct.id) ?? null;
     }
 
-    const magentoLookupSku = magentoSkuFromMapping ?? configSku;
-
-    if (magentoSkuFromMapping) {
+    if (magentoIdFromMapping) {
       console.log(
-        `${logPrefix} SKU do Magento resolvido via integration mapping: ${magentoSkuFromMapping}`,
+        `${logPrefix} Produto do Magento resolvido via integration mapping: id=${magentoIdFromMapping}`,
       );
     }
 
@@ -1223,7 +1263,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const magentoProduct = isKit
       ? null
       : await this.fetchMagentoProduct(
-          magentoLookupSku,
+          magentoIdFromMapping,
+          configSku,
           blingProduct.nome,
           logPrefix,
         );
@@ -1378,22 +1419,28 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         });
 
         if (config?.average_cost) {
-          const magentoSkuMap =
+          const magentoIdMap =
             await integrationMappingService.findExternalIdsMap(
               "PRODUCT",
               magentoIntegration.id,
               [product!.id],
             );
-          const magentoSku = magentoSkuMap.get(product!.id);
+          const magentoId = magentoIdMap.get(product!.id);
+          // atualizarCustomAttribute (PUT /products/:sku) exige o sku atual —
+          // resolve pelo id (estável) antes, já que o sku pode ter mudado
+          // desde que o mapping foi criado.
+          const magentoProductForCost = magentoId
+            ? await this.fetchMagentoProductById(magentoId, logPrefix)
+            : null;
 
-          if (magentoSku) {
+          if (magentoProductForCost?.sku) {
             await magentoCatalogService.atualizarCustomAttribute(
-              magentoSku,
+              magentoProductForCost.sku,
               "custo_medio",
               Number(config.average_cost).toFixed(2),
             );
             console.log(
-              `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${magentoSku} | average_cost=${config.average_cost}`,
+              `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${magentoProductForCost.sku} | average_cost=${config.average_cost}`,
             );
           } else {
             console.log(

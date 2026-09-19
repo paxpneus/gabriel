@@ -56,6 +56,17 @@ export class MagentoCatalogService {
   }
 
   /**
+   * Busca produto pelo id interno (entity_id) — não existe GET /products/:id
+   * na REST API do Magento (só por sku), então isso é sempre via searchCriteria.
+   * Usado como identificador estável no integration_mapping (sku pode mudar).
+   * GET /rest/V1/products
+   */
+  async buscarProdutoPorId(id: number | string): Promise<any> {
+    const params = buildFilterBy("entity_id", id, "eq");
+    return magentoApi.get("/products", { params }).then((r) => r.data);
+  }
+
+  /**
    * Cria um produto.
    * POST /rest/V1/products
    * Body requer sku, attribute_set_id, type_id.

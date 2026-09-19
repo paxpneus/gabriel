@@ -54,6 +54,7 @@ jest.mock(
       obterProduto: jest.fn(),
       atualizarCustomAttribute: jest.fn(),
       buscarProdutosPorNome: jest.fn(),
+      buscarProdutoPorId: jest.fn(),
     },
   }),
 );
@@ -389,6 +390,39 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
     });
   });
 
+  // ── Magento: produto já mapeado, busca pelo id estável ────────────────────
+
+  describe("Magento: produto já mapeado", () => {
+    it("existe mapping (external_id = entity_id do Magento): busca por id, nunca por sku/nome", async () => {
+      const blingProduct = makeBlingProduct();
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-product-id",
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-product-id" }),
+      );
+      (integrationMappingService.findExternalIdsMap as jest.Mock).mockResolvedValue(
+        new Map([["existing-product-id", "751"]]),
+      );
+      (magentoCatalogService.buscarProdutoPorId as jest.Mock).mockResolvedValue({
+        items: [{ id: 751, sku: "MAGENTO-SKU-ATUAL", name: blingProduct.nome }],
+      });
+
+      await runProductJob(blingProduct);
+
+      expect(magentoCatalogService.buscarProdutoPorId).toHaveBeenCalledWith("751");
+      expect(magentoCatalogService.obterProduto).not.toHaveBeenCalled();
+      expect(magentoCatalogService.buscarProdutosPorNome).not.toHaveBeenCalled();
+      expect(
+        integrationMappingService.createOrUpdateIntegrationMapping,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({ external_id: "751" }),
+        expect.anything(),
+      );
+    });
+  });
+
   // ── Magento: fallback por nome quando SKU não é encontrado ───────────────
 
   describe("Magento: fallback por nome quando o SKU não é encontrado", () => {
@@ -405,7 +439,9 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
         response: { status: 404 },
       });
       (magentoCatalogService.buscarProdutosPorNome as jest.Mock).mockResolvedValue({
-        items: [{ sku: "MAGENTO-SKU-1", name: "Pneu Aro 14 Continental" }],
+        items: [
+          { id: 751, sku: "MAGENTO-SKU-1", name: "Pneu Aro 14 Continental" },
+        ],
       });
 
       await runProductJob(blingProduct);
@@ -418,7 +454,7 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       ).toHaveBeenCalledWith(
         expect.objectContaining({
           entity_type: "PRODUCT",
-          external_id: "MAGENTO-SKU-1",
+          external_id: "751",
           integrations_id: "magento-1",
         }),
         expect.anything(),

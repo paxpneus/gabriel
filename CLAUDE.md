@@ -100,5 +100,6 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `reports.md` — módulo de snapshot de sales-report
 - `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
 - `sieg-rate-limits.md` — limites documentados por rota da API Sieg (ex.: `/v1/baixar-xmls` = 2 req/min, 50 XMLs/req) vs. limite genérico não-confirmado, onde cada um é aplicado no código
+- `magento-sync.md` — sync Bling→Magento de produtos: `external_id` = `entity_id` do Magento (não sku), resolução por id (mapeado) vs. sku/nome (1ª vez)
 
 Migração: como qualquer outra deste repo, **usuário roda `db:migrate` (ou qualquer DDL) manualmente — nunca automatizar.**
