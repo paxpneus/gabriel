@@ -421,6 +421,33 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
         expect.anything(),
       );
     });
+
+    it("produto mapeado cujo id não é encontrado no Magento: não cai pro sku/nome, registra unmapped direto", async () => {
+      const blingProduct = makeBlingProduct();
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-product-id",
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-product-id" }),
+      );
+      (integrationMappingService.findExternalIdsMap as jest.Mock).mockResolvedValue(
+        new Map([["existing-product-id", "751"]]),
+      );
+      (magentoCatalogService.buscarProdutoPorId as jest.Mock).mockResolvedValue({
+        items: [],
+      });
+
+      await runProductJob(blingProduct);
+
+      expect(magentoCatalogService.buscarProdutoPorId).toHaveBeenCalledWith("751");
+      expect(magentoCatalogService.obterProduto).not.toHaveBeenCalled();
+      expect(magentoCatalogService.buscarProdutosPorNome).not.toHaveBeenCalled();
+      expect(
+        integrationMappingService.createOrUpdateIntegrationMapping,
+      ).not.toHaveBeenCalled();
+      expect(UnmappedInvoiceProduct.create).toHaveBeenCalled();
+    });
   });
 
   // ── Magento: fallback por nome quando SKU não é encontrado ───────────────

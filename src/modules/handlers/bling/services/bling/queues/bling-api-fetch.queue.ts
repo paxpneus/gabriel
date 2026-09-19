@@ -632,7 +632,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   // ─── Magento: busca o produto já mapeado ───────────────────────────────────
   // external_id do integration_mapping é o entity_id do Magento (estável),
   // não o sku (que pode mudar) — por isso a busca é sempre via searchCriteria
-  // (não existe GET /products/:id na REST API do Magento, só por sku).
+  // (não existe GET /products/:id na REST API do Magento, só por sku). Sem
+  // fallback pra sku/nome aqui — produto já mapeado que não resolve por id
+  // foi excluído no Magento (cai pro unmapped normalmente).
   private async fetchMagentoProductById(
     magentoId: string,
     logPrefix: string,
@@ -640,13 +642,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     try {
       const result = await magentoCatalogService.buscarProdutoPorId(magentoId);
       const items = result?.items ?? [];
-      if (items.length !== 1) {
-        console.warn(
-          `${logPrefix} Produto do Magento com id=${magentoId} (mapeado) não encontrado — pode ter sido excluído no Magento.`,
-        );
-        return null;
-      }
-      return items[0];
+      if (items.length === 1) return items[0];
+
+      console.warn(
+        `${logPrefix} Produto do Magento com id=${magentoId} (mapeado) não encontrado — pode ter sido excluído no Magento.`,
+      );
+      return null;
     } catch (error: any) {
       console.warn(
         `${logPrefix} Falha ao consultar produto no Magento por id | id=${magentoId} | erro=${error?.message}`,

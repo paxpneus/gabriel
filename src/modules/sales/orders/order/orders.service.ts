@@ -267,7 +267,7 @@ export class OrderService extends BaseService<Order, OrderRepository> {
         const name = transporter_name ?? "Sem transportadora";
         return {
           transporter_id,
-          label: `Pendente - ${name}`,
+          label: `${name}`,
           highlighted_words: [name],
           label_color: "blue",
           quantity,
@@ -302,19 +302,19 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       // destacar em negrito + label_color — os dois contadores abaixo são
       // especificamente sobre pedidos Mercado Livre.
       ship_today_pending: {
-        label: "Embarques Hoje Pendente Mercado Livre",
-        highlighted_words: ["Mercado Livre"],
+        label: "Embarques Hoje ML",
+        highlighted_words: ["ML"],
         label_color: "yellow",
         quantity: mlShipTodayPending,
       },
       ship_to_define: {
-        label: "Pendentes Automação Mercado Livre",
-        highlighted_words: ["Mercado Livre"],
+        label: "Pendentes Automação ML",
+        highlighted_words: ["ML"],
         label_color: "yellow",
         quantity: mlShipToDefine,
       },
       ship_to_future: {
-        label: "Pendentes Embarque Futuro",
+        label: "Embarque Futuro ML",
         quantity: mlShipToFuture,
       },
       pending_batch_by_transporter: pendingBatchByTransporterSummary,
