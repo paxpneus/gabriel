@@ -37,6 +37,14 @@ jest.mock("../../../../../shared/providers/mail-provider/nodemailer.alert", () =
   alertService: { sendAlert: jest.fn() },
 }));
 
+jest.mock(
+  "../../../../integrations/integration-errors/integration-logger.service",
+  () => ({
+    __esModule: true,
+    default: { log: jest.fn() },
+  }),
+);
+
 // tecinco-api-fetch.queue.ts arrasta shared/utils/xml/invoice-xml ->
 // invoice.service, que abre uma conexão real (sqlite) via config/sequelize —
 // mocka-se aqui só pra evitar carregar o binding nativo do sqlite3 no teste.
@@ -144,6 +152,8 @@ import {
   SupplierMappingConflictError,
 } from "../helpers/product.helpers";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
+import integrationLoggerService from "../../../../integrations/integration-errors/integration-logger.service";
+import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import Product from "../../../../inventory/products/product.model";
 import ProductConfig from "../../../../inventory/product-config/product_config.model";
 import UnitBusiness from "../../../../company/unit-business/unit-business.model";
@@ -732,7 +742,7 @@ describe("TCarUpsertQueue.processProduct", () => {
       );
     });
 
-    it("ensureSupplierMappings lança SupplierMappingConflictError: processProduct propaga como UnrecoverableError (erro amigável, sem retry) e alerta", async () => {
+    it("ensureSupplierMappings lança SupplierMappingConflictError: processProduct propaga como UnrecoverableError (erro amigável, sem retry) e registra no integration-logger, sem mandar email", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue({
         id: "existing-tecinco-product-id",
@@ -750,6 +760,15 @@ describe("TCarUpsertQueue.processProduct", () => {
       await expect(runProductJob("updated", produto)).rejects.toThrow(
         /já está mapeado pra outro produto/,
       );
+
+      expect(integrationLoggerService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "SUPPLIER_MAPPING_CONFLICT",
+          internalId: "existing-tecinco-product-id",
+          createIntegrationError: true,
+        }),
+      );
+      expect(alertService.sendAlert).not.toHaveBeenCalled();
     });
 
     it("skuDuplicated:true num produto JÁ MAPEADO: sync normal continua (sem erro), mas ProductConfig/SupplierMapping não recebem o codigoFabrica ambíguo", async () => {
