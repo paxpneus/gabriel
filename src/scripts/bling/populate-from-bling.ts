@@ -7,6 +7,7 @@
  */
 
 import { v4 as uuidv4 } from "uuid";
+import { Op } from "sequelize";
 import { Queue } from "bullmq";
 import { blingApi } from "../../modules/handlers/bling/api/bling_api.service";
 import { ApiFetchJobPayload } from "../../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
@@ -22,6 +23,11 @@ import {
   getBlingInvoiceReferenceDate,
   isKnownBlingInvoiceBeforeCutoff,
 } from "../../modules/handlers/bling/services/bling/bling-invoice-cutoff";
+
+import StockMovement from "../../modules/inventory/stock/stock-movements/stock-movements.model";
+import IntegrationMapping from "../../modules/integrations/integration-mapping/integration-mapping.model";
+import { getBlingIntegration } from './../../modules/handlers/bling/api/bling_api.service';
+
 
 // ─── Bootstrap do banco ───────────────────────────────────────────────────────
 
@@ -48,8 +54,9 @@ const QUEUE_POLL_MS = 5_000;
 
 /**
  * Quantos dias para trás considerar no filtro incremental `dataAlteracaoInicial`.
- * Todas as entidades (exceto Estoques) só buscam registros criados/alterados
- * dentro desta janela.
+ * Usado apenas por produtos / fornecedores / vendedores / produto-fornecedor.
+ * Notas fiscais, pedidos e estoque usam a janela "hoje" (ver TODAY_START/END
+ * e daysAgo(0) mais abaixo).
  */
 const INCREMENTAL_LOOKBACK_DAYS = Number(
   process.env.BLING_INCREMENTAL_LOOKBACK_DAYS ?? 2,
@@ -103,15 +110,32 @@ function daysAgo(days: number): Date {
   return date;
 }
 
+/**
+ * Início/fim do dia de hoje (00:00:00.000 → 23:59:59.999), usado para
+ * consultar `stock_movements.movement_date` no banco local (etapa de
+ * Estoques). Independente da janela "5h–21h" usada nos filtros da API da
+ * Bling logo abaixo (pedidos/notas), que existe só por causa do fuso da
+ * Bling.
+ */
+const TODAY_START = (() => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+})();
+
+const TODAY_END = (() => {
+  const d = new Date();
+  d.setHours(23, 59, 59, 999);
+  return d;
+})();
+
 /** Janela usada em /pedidos/vendas → dataInicial / dataFinal (formato "YYYY-MM-DD") */
-const ORDERS_DATA_INICIAL = formatBlingDateOnly(
-  daysAgo(INCREMENTAL_LOOKBACK_DAYS),
-);
+const ORDERS_DATA_INICIAL = formatBlingDateOnly(daysAgo(0));
 const ORDERS_DATA_FINAL = formatBlingDateOnly(new Date());
 
 /** Janela usada em /nfe e /nfce → dataEmissaoInicial / dataEmissaoFinal (formato completo com horário) */
 const INVOICE_DATA_EMISSAO_INICIAL = (() => {
-  const d = daysAgo(INCREMENTAL_LOOKBACK_DAYS);
+  const d = daysAgo(0);
   d.setHours(5, 0, 0, 0);
   return formatBlingDateTime(d);
 })();
@@ -544,25 +568,86 @@ async function migrateProductSuppliers() {
 }
 
 // ─── 4. Estoques ──────────────────────────────────────────────────────────────
-// ⚠️  Única entidade que busca TODOS os produtos (sem filtro de data), pois o
-//     saldo em estoque pode mudar sem que o produto em si seja "alterado".
+// ⚠️  Diferente das demais entidades (que filtram por `dataAlteracaoInicial`
+//     direto na Bling), estoque não tem esse parâmetro na API. Em vez disso,
+//     descobrimos LOCALMENTE quais produtos tiveram stock_movement hoje e só
+//     consultamos o saldo desses produtos na Bling.
+
+/**
+ * Retorna os ids (locais) de produtos que tiveram pelo menos um
+ * stock_movement com movement_date dentro do dia de hoje.
+ */
+async function findProductIdsWithStockMovementToday(): Promise<string[]> {
+  const rows = await StockMovement.findAll({
+    attributes: ["product_id"],
+    where: {
+      movement_date: { [Op.between]: [TODAY_START, TODAY_END] },
+    },
+    group: ["product_id"],
+    raw: true,
+  });
+
+  return rows.map((row: any) => row.product_id as string);
+}
+
+/**
+ * Resolve os ids externos (Bling) para uma lista de ids de produto locais,
+ * via integration_mappings (entity_type = "PRODUCT", integrations_id = Bling,
+ * internal_id = productId → external_id = blingId).
+ */
+async function resolveBlingIdsForProducts(
+  productIds: string[],
+): Promise<number[]> {
+  if (!productIds.length) return [];
+
+  const blingIntegration = await getBlingIntegration();
+
+  const mappings = await IntegrationMapping.findAll({
+    where: {
+      entity_type: "PRODUCT",
+      integrations_id: blingIntegration.id,
+      internal_id: { [Op.in]: productIds },
+    },
+    attributes: ["external_id"],
+    raw: true,
+  });
+
+  const blingIds = mappings
+    .map((mapping: any) => Number(mapping.external_id))
+    .filter((id: number) => !Number.isNaN(id));
+
+  if (blingIds.length < productIds.length) {
+    console.warn(
+      `  ⚠️  ${productIds.length - blingIds.length} produto(s) com stock_movement hoje não têm ` +
+        `integration_mapping pra Bling — ignorados nesta etapa.`,
+    );
+  }
+
+  return blingIds;
+}
 
 async function migrateStocks() {
   console.log("─".repeat(55));
-  console.log("📊  ETAPA 4 — Estoques (busca completa, sem filtro de data)");
+  console.log(
+    `📊  ETAPA 4 — Estoques (somente produtos com stock_movement hoje: ${formatBlingDateOnly(TODAY_START)})`,
+  );
   console.log("─".repeat(55));
 
-  // Coleta TODOS os blingIds — sem filtro de dataAlteracao de propósito
-  const allBlingIds: number[] = [];
+  const productIds = await findProductIdsWithStockMovementToday();
+  console.log(
+    `  → ${productIds.length} produto(s) local(is) com movimentação de estoque hoje`,
+  );
 
-  for await (const page of paginateBling<{ id: number }>("/produtos")) {
-    for (const p of page) allBlingIds.push(p.id);
+  if (!productIds.length) {
+    console.log("  ✅ Nenhuma movimentação hoje — etapa ignorada\n");
+    return;
   }
 
-  console.log(`  → ${allBlingIds.length} produto(s) para consulta de estoque`);
+  const allBlingIds = await resolveBlingIdsForProducts(productIds);
+  console.log(`  → ${allBlingIds.length} produto(s) mapeado(s) pra Bling`);
 
   if (!allBlingIds.length) {
-    console.log("  ✅ Nenhum produto — etapa ignorada\n");
+    console.log("  ✅ Nenhum produto mapeado — etapa ignorada\n");
     return;
   }
 
@@ -621,7 +706,7 @@ async function migrateOrders() {
   console.log("─".repeat(55));
   console.log("🛒  ETAPA — Pedidos");
   console.log(
-    `  🔄 Filtro: dataInicial=${ORDERS_DATA_INICIAL} | dataFinal=${ORDERS_DATA_FINAL}`,
+    `  🔄 Filtro (hoje): dataInicial=${ORDERS_DATA_INICIAL} | dataFinal=${ORDERS_DATA_FINAL}`,
   );
   console.log("─".repeat(55));
 
@@ -685,7 +770,7 @@ async function migrateInvoices(
   console.log("─".repeat(55));
   console.log(`${icon}  ETAPA ${etapa} — Notas Fiscais ${type}`);
   console.log(
-    `  🔄 Filtro: dataEmissaoInicial=${INVOICE_DATA_EMISSAO_INICIAL} | dataEmissaoFinal=${INVOICE_DATA_EMISSAO_FINAL}`,
+    `  🔄 Filtro (hoje): dataEmissaoInicial=${INVOICE_DATA_EMISSAO_INICIAL} | dataEmissaoFinal=${INVOICE_DATA_EMISSAO_FINAL}`,
   );
   console.log("─".repeat(55));
 
@@ -758,7 +843,7 @@ async function migrateCancelledInvoices(type: "NF-e" | "NFC-e") {
   console.log("─".repeat(55));
   console.log(`🚫  ETAPA — Notas Fiscais ${label}`);
   console.log(
-    `  🔄 Filtro: dataEmissaoInicial=${INVOICE_DATA_EMISSAO_INICIAL} | dataEmissaoFinal=${INVOICE_DATA_EMISSAO_FINAL}`,
+    `  🔄 Filtro (hoje): dataEmissaoInicial=${INVOICE_DATA_EMISSAO_INICIAL} | dataEmissaoFinal=${INVOICE_DATA_EMISSAO_FINAL}`,
   );
   console.log("─".repeat(55));
 
@@ -840,15 +925,15 @@ async function main() {
 
   try {
     // Ordem garantida + espera entre cada etapa
-    await migrateProducts(); // 1 — sem dependências
-    await migrateStocks(); // 4 — depende de produto (única etapa sem filtro de data)
-    await migrateSuppliers(); // 2 — sem dependências
-    await migrateSellers(); // 2.1 — sem dependências
-    // await migrateProductSuppliers();  // 3 — depende de produto + fornecedor
-    await migrateInvoices("NF-e", 0); // 6 — depende de UnitBusiness
-    await migrateInvoices("NF-e", 1); // 5 — depende de UnitBusiness
-    await migrateCancelledInvoices("NF-e");
-    await migrateOrders(); // pedidos depois de notas: mais lento e faz mais chamadas
+    // await migrateProducts(); // 1 — sem dependências
+    await migrateStocks(); // 4 — depende de produto (só produtos com stock_movement hoje)
+    // await migrateSuppliers(); // 2 — sem dependências
+    // await migrateSellers(); // 2.1 — sem dependências
+    // // await migrateProductSuppliers();  // 3 — depende de produto + fornecedor
+    await migrateInvoices("NF-e", 0); // 6 — depende de UnitBusiness — somente hoje
+    await migrateInvoices("NF-e", 1); // 5 — depende de UnitBusiness — somente hoje
+    await migrateCancelledInvoices("NF-e"); // somente hoje
+    await migrateOrders(); // pedidos depois de notas: mais lento e faz mais chamadas — somente hoje
   } catch (err: any) {
     console.error("\n❌ Erro durante a migração:", err.message);
     process.exit(1);

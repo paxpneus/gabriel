@@ -18,6 +18,8 @@ import {
 import { ProductWithStock } from "../../products/product.types";
 import { InventoryBatchItemsCreationAttributes } from "../inventory-batch-items/inventory-batch-items.types";
 import InventorySubgroup from "../inventory-subgroups/inventory-subgroups.model";
+import { sortByMeasure } from "../../products/helpers/measure-sort";
+import TireMeasure from "../../tire-measures/tire-measure.model";
 
 export class InventoryBatchService extends BaseService<
   InventoryBatch,
@@ -355,6 +357,10 @@ export class InventoryBatchService extends BaseService<
       attributes: ["id", "name"],
       include: [
         {
+          model: TireMeasure,
+          as: 'measureRegister'
+        },
+        {
           model: ProductConfig,
           as: "productConfigs",
           required: false,
@@ -402,6 +408,11 @@ export class InventoryBatchService extends BaseService<
           quantity_read_by_user: userRead,
         };
       });
+
+      batchJson.items = sortByMeasure(
+        batchJson.items,
+        (item: any) => item.product?.measure,
+      );
 
       Object.assign(batchJson, this.calculateDivergencyTotals(batchJson.items));
 

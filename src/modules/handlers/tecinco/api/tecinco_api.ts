@@ -1,7 +1,11 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from "axios";
 import https from "https";
 import { createAxiosInstance } from "../../../../config/axios";
-import { QueueItem, TCarBranchSession, TCarLoginResponse } from "./tecinco_api.types";
+import {
+  QueueItem,
+  TCarBranchSession,
+  TCarLoginResponse,
+} from "./tecinco_api.types";
 import integrationsService from "../../../integrations/integrations/integrations.service";
 import { FullIntegration } from "../../../integrations/integrations/integrations.types";
 import { redisConnection } from "../../../../shared/utils/base-models/base-redis";
@@ -16,33 +20,39 @@ export const getTCarIntegration = async (
   const integration = await integrationsService.getFullIntegration(
     {
       where: {
-        name: 'Tecinco',
-        type: 'SYSTEM',
+        name: "Tecinco",
+        type: "SYSTEM",
       },
     },
-    cacheKey ? 'Tecinco' : undefined,
+    cacheKey ? "Tecinco" : undefined,
   );
 
-  if (!integration) throw new Error('[TCarApi] Integração "Tecinco" não encontrada.');
+  if (!integration)
+    throw new Error('[TCarApi] Integração "Tecinco" não encontrada.');
 
   return integration;
 };
 
 const getTCarToken = async () => {
-  const integration = await getTCarIntegration('Tecinco');
+  const integration = await getTCarIntegration("Tecinco");
 
   const token = integration.tokens;
 
-  if (!token) throw new Error('[TCarApi] ConfigToken da integração Tecinco não encontrado.');
-  if (!token.api_key) throw new Error('[TCarApi] api_key ausente no ConfigToken Tecinco.');
-  if (!token.username) throw new Error('[TCarApi] username ausente no ConfigToken Tecinco.');
+  if (!token)
+    throw new Error(
+      "[TCarApi] ConfigToken da integração Tecinco não encontrado.",
+    );
+  if (!token.api_key)
+    throw new Error("[TCarApi] api_key ausente no ConfigToken Tecinco.");
+  if (!token.username)
+    throw new Error("[TCarApi] username ausente no ConfigToken Tecinco.");
 
   return {
     baseUrl: integration.api_url,
     apiKey: token.api_key,
     username: token.username,
-    password: process.env.TCAR_PASSWORD ?? '',
-    companyId: Number(process.env.TCAR_COMPANY_ID ?? '0'),
+    password: process.env.TCAR_PASSWORD ?? "",
+    companyId: Number(process.env.TCAR_COMPANY_ID ?? "0"),
   };
 };
 
@@ -51,7 +61,7 @@ const getTCarToken = async () => {
 // ---------------------------------------------------------------------------
 
 const httpsAgent =
-  process.env.TCAR_TLS_REJECT_UNAUTHORIZED === 'false'
+  process.env.TCAR_TLS_REJECT_UNAUTHORIZED === "false"
     ? new https.Agent({ rejectUnauthorized: false })
     : undefined;
 
@@ -59,9 +69,9 @@ const httpsAgent =
 // Rate limit
 // ---------------------------------------------------------------------------
 
-const TCAR_429_MAX_RETRIES = Number(process.env.TCAR_429_MAX_RETRIES   ?? 5);
-const TCAR_429_BASE_DELAY  = Number(process.env.TCAR_429_BASE_DELAY_MS ?? 2000);
-const TCAR_429_MAX_DELAY   = Number(process.env.TCAR_429_MAX_DELAY_MS  ?? 60000);
+const TCAR_429_MAX_RETRIES = Number(process.env.TCAR_429_MAX_RETRIES ?? 5);
+const TCAR_429_BASE_DELAY = Number(process.env.TCAR_429_BASE_DELAY_MS ?? 2000);
+const TCAR_429_MAX_DELAY = Number(process.env.TCAR_429_MAX_DELAY_MS ?? 60000);
 
 // Limitador global via Redis, mesmo padrão de waitForBlingRateLimit.
 const TCAR_RATE_LIMIT_INTERVAL_MS = Number(
@@ -122,7 +132,11 @@ const sessionPool = new Map<number, TCarBranchSession>();
 
 function getSession(branchId: number): TCarBranchSession {
   if (!sessionPool.has(branchId)) {
-    sessionPool.set(branchId, { sessionToken: null, isRefreshing: false, failedQueue: [] });
+    sessionPool.set(branchId, {
+      sessionToken: null,
+      isRefreshing: false,
+      failedQueue: [],
+    });
   }
   return sessionPool.get(branchId)!;
 }
@@ -135,7 +149,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function processQueue(session: TCarBranchSession, error: unknown, token: string | null = null): void {
+function processQueue(
+  session: TCarBranchSession,
+  error: unknown,
+  token: string | null = null,
+): void {
   session.failedQueue.forEach(({ resolve, reject }) =>
     error ? reject(error) : resolve(token!),
   );
@@ -165,7 +183,8 @@ async function withTCarLoginLock<T>(fn: () => Promise<T>): Promise<T> {
 
 export async function doTCarLogin(branchId: number): Promise<string> {
   return withTCarLoginLock(async () => {
-    const { baseUrl, apiKey, username, password, companyId } = await getTCarToken();
+    const { baseUrl, apiKey, username, password, companyId } =
+      await getTCarToken();
 
     const axiosInstance = axios.create({
       baseURL: baseUrl,
@@ -178,15 +197,15 @@ export async function doTCarLogin(branchId: number): Promise<string> {
       {
         params: { company_id: companyId },
         headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
         },
       },
     );
 
     const body = loginRes.data as TCarLoginResponse;
 
-    if (body.status !== 'success') {
+    if (body.status !== "success") {
       throw new Error(
         `[TCarApi] Login rejeitado (branch ${branchId}): ${JSON.stringify(body)}`,
       );
@@ -201,9 +220,9 @@ export async function doTCarLogin(branchId: number): Promise<string> {
         {
           params: { company_id: companyId },
           headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'x-tcar-session': session_token,
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "x-tcar-session": session_token,
           },
         },
       );
@@ -247,16 +266,16 @@ async function ensureSession(branchId: number): Promise<string> {
 // ---------------------------------------------------------------------------
 
 export const tcarApi: AxiosInstance = createAxiosInstance({
-  baseURL: 'http://placeholder',
+  baseURL: "http://placeholder",
+  timeout: 60_000,
   ...(httpsAgent ? { httpsAgent } : {}),
 
-   onResponse: (response) => {
+  onResponse: (response) => {
     // Alguns endpoints (ex.: XML da nota fiscal) legitimamente retornam
     // texto puro, não JSON — só tenta corrigir/parsear quando a resposta
     // realmente parece um objeto/array JSON.
     const looksLikeJson =
-      typeof response.data === 'string' &&
-      /^\s*[\{\[]/.test(response.data);
+      typeof response.data === "string" && /^\s*[\{\[]/.test(response.data);
 
     if (looksLikeJson) {
       try {
@@ -266,24 +285,27 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
         // dígitos, não só 2.
         const fixed = response.data.replace(
           /:\s*(-?\d+),(\d+)([,\}\]])/g,
-          ': $1.$2$3',
+          ": $1.$2$3",
         );
         response.data = JSON.parse(fixed);
       } catch (e) {
         const message = (e as Error).message;
-        console.error('[TCarApi] Falha ao parsear resposta como JSON:', message);
+        console.error(
+          "[TCarApi] Falha ao parsear resposta como JSON:",
+          message,
+        );
 
         const positionMatch = message.match(/position (\d+)/);
         if (positionMatch) {
           const pos = Number(positionMatch[1]);
           const start = Math.max(0, pos - 150);
           console.error(
-            '[TCarApi] Trecho ao redor da posição do erro:',
+            "[TCarApi] Trecho ao redor da posição do erro:",
             response.data.slice(start, pos + 150),
           );
         } else {
           console.error(
-            '[TCarApi] Trecho bruto (primeiros 500 chars):',
+            "[TCarApi] Trecho bruto (primeiros 500 chars):",
             response.data.slice(0, 500),
           );
         }
@@ -297,27 +319,29 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
 
     const { baseUrl, apiKey, companyId } = await getTCarToken();
 
-    const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    const url  = new URL(config.url ?? '', base);
+    const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+    const url = new URL(config.url ?? "", base);
 
-    if (!url.searchParams.has('company_id')) {
-      url.searchParams.set('company_id', String(companyId));
+    if (!url.searchParams.has("company_id")) {
+      url.searchParams.set("company_id", String(companyId));
     }
 
-    const branchId = Number(url.searchParams.get('branch_id') ?? '0');
+    const branchId = Number(url.searchParams.get("branch_id") ?? "0");
 
     if (!branchId) {
       throw new Error(
-        '[TCarApi] branch_id ausente na requisição. Use tcarRequest(branchId, ...) ou passe ?branch_id= na URL.',
+        "[TCarApi] branch_id ausente na requisição. Use tcarRequest(branchId, ...) ou passe ?branch_id= na URL.",
       );
     }
 
     const token = await ensureSession(branchId);
 
-    config.headers['x-api-key']      = apiKey;
-    config.headers['x-tcar-session'] = token;
-    config.url    = url.pathname + url.search;
+    config.headers["x-api-key"] = apiKey;
+    config.headers["x-tcar-session"] = token;
+    config.url = url.pathname + url.search;
     config.baseURL = baseUrl;
+
+    if (httpsAgent) config.httpsAgent = httpsAgent;
 
     return config;
   },
@@ -337,10 +361,16 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
 
       originalRequest._tcar429Retries = attempt + 1;
 
-      const retryAfter    = error.response.headers?.['retry-after'];
-      const retryAfterMs  = retryAfter ? Number(retryAfter) * 1000 : null;
-      const exponentialMs = Math.min(TCAR_429_BASE_DELAY * 2 ** attempt, TCAR_429_MAX_DELAY);
-      const delayMs       = Math.min(retryAfterMs ?? exponentialMs, TCAR_429_MAX_DELAY);
+      const retryAfter = error.response.headers?.["retry-after"];
+      const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : null;
+      const exponentialMs = Math.min(
+        TCAR_429_BASE_DELAY * 2 ** attempt,
+        TCAR_429_MAX_DELAY,
+      );
+      const delayMs = Math.min(
+        retryAfterMs ?? exponentialMs,
+        TCAR_429_MAX_DELAY,
+      );
 
       console.warn(
         `[TCarApi] 429 rate limit. Retentando em ${Math.ceil(delayMs / 1000)}s (${attempt + 1}/${TCAR_429_MAX_RETRIES})`,
@@ -358,9 +388,9 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
     originalRequest._retry = true;
 
     const { baseUrl } = await getTCarToken();
-    const base        = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    const url         = new URL(originalRequest.url ?? '', base);
-    const branchId    = Number(url.searchParams.get('branch_id') ?? '0');
+    const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+    const url = new URL(originalRequest.url ?? "", base);
+    const branchId = Number(url.searchParams.get("branch_id") ?? "0");
 
     const session = getSession(branchId);
     session.sessionToken = null;
@@ -370,7 +400,7 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
         session.failedQueue.push({ resolve, reject });
       }).then((token) => {
         if (originalRequest.headers) {
-          originalRequest.headers['x-tcar-session'] = token;
+          originalRequest.headers["x-tcar-session"] = token;
         }
         return tcarApi(originalRequest);
       });
@@ -383,12 +413,15 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
       processQueue(session, null, newToken);
 
       if (originalRequest.headers) {
-        originalRequest.headers['x-tcar-session'] = newToken;
+        originalRequest.headers["x-tcar-session"] = newToken;
       }
       return tcarApi(originalRequest);
     } catch (loginError) {
       processQueue(session, loginError);
-      console.error(`[TCarApi] Re-login falhou para branch ${branchId}.`, loginError);
+      console.error(
+        `[TCarApi] Re-login falhou para branch ${branchId}.`,
+        loginError,
+      );
       return Promise.reject(loginError);
     } finally {
       session.isRefreshing = false;
@@ -405,32 +438,50 @@ export async function tcarRequest<T>(
   fn: (api: AxiosInstance) => Promise<T>,
 ): Promise<T> {
   const { baseUrl, companyId } = await getTCarToken();
+  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 
-  const scoped = axios.create({ baseURL: baseUrl, ...(httpsAgent ? { httpsAgent } : {}), });
-
-  scoped.interceptors.request  = tcarApi.interceptors.request  as typeof scoped.interceptors.request;
-  scoped.interceptors.response = tcarApi.interceptors.response as typeof scoped.interceptors.response;
-
-  // Injeta como params padrão E como transformRequest para garantir que
-  // o interceptor já encontre na URL antes de processar
-  scoped.defaults.params = {
-    ...scoped.defaults.params,
-    company_id: companyId,
-    branch_id: branchId,
+  // Mesma lógica do interceptor antigo, mas aplicada na chamada,
+  // sem registrar nada em tcarApi.interceptors.
+  const scopeUrl = (rawUrl = ""): string => {
+    const url = new URL(rawUrl, base);
+    if (!url.searchParams.has("branch_id")) {
+      url.searchParams.set("branch_id", String(branchId));
+    }
+    if (!url.searchParams.has("company_id")) {
+      url.searchParams.set("company_id", String(companyId));
+    }
+    return url.pathname + url.search;
   };
 
-  // Cria um adapter que força os params na URL antes do interceptor rodar
-  scoped.interceptors.request.use((config) => {
-    const url = new URL(config.url ?? '', baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
-    if (!url.searchParams.has('branch_id')) {
-      url.searchParams.set('branch_id', String(branchId));
-    }
-    if (!url.searchParams.has('company_id')) {
-      url.searchParams.set('company_id', String(companyId));
-    }
-    config.url = url.pathname + url.search;
-    return config;
-  }, undefined, { runWhen: () => true });
+  const scoped = new Proxy(tcarApi, {
+    // api({ url, ... })
+    apply: (target, _thisArg, args: [AxiosRequestConfig]) =>
+      target({ ...args[0], url: scopeUrl(args[0]?.url) }),
+
+    get(target, prop) {
+      switch (prop) {
+        case "request":
+          return (config: AxiosRequestConfig) =>
+            target.request({ ...config, url: scopeUrl(config.url) });
+
+        case "get":
+        case "delete":
+        case "head":
+        case "options":
+          return (url: string, config?: AxiosRequestConfig) =>
+            (target as any)[prop](scopeUrl(url), config);
+
+        case "post":
+        case "put":
+        case "patch":
+          return (url: string, data?: unknown, config?: AxiosRequestConfig) =>
+            (target as any)[prop](scopeUrl(url), data, config);
+
+        default:
+          return Reflect.get(target, prop);
+      }
+    },
+  });
 
   return fn(scoped);
 }
@@ -462,8 +513,8 @@ export async function tcarLogout(branchId: number): Promise<void> {
       {
         params: { company_id: companyId },
         headers: {
-          'x-api-key': apiKey,
-          'x-tcar-session': session.sessionToken,
+          "x-api-key": apiKey,
+          "x-tcar-session": session.sessionToken,
         },
       },
     );
