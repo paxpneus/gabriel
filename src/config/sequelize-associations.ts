@@ -28,6 +28,9 @@ import IntegrationMapping from "../modules/integrations/integration-mapping/inte
 import Integration from "../modules/integrations/integrations/integrations.model";
 import ConfigToken from "../modules/integrations/config_tokens/config_tokens.model";
 import Order from "../modules/sales/orders/order/orders.model";
+import PaymentMethod from "../modules/sales/orders/payment_method/payment_method.model";
+import PdvSalesRequest from "../modules/sales/pdv-management/sales-request/pdv-sales-request.model";
+import PdvSalesRequestHistory from "../modules/sales/pdv-management/sales-request-history/pdv-sales-request-history.model";
 import Customer from "../modules/sales/customers/customers.model";
 import Contact from "../modules/sales/contacts/contacts.model";
 import OrderHistory from "../modules/sales/orders/order_history/order_history.model";
@@ -152,6 +155,10 @@ export function setupAssociations() {
 
   // Order -> Invoice (1:1)
   Order.belongsTo(Invoice, { foreignKey: "invoice_id", as: "invoice" });
+  Order.belongsTo(PaymentMethod, {
+    foreignKey: "payment_method_id",
+    as: "paymentMethod",
+  });
   Invoice.hasOne(Order, { foreignKey: "invoice_id", as: "order" });
 
   Step.belongsToMany(Order, {
@@ -1588,5 +1595,32 @@ export function setupCteAssociations() {
     foreignKey: "taker_tax_id",
     targetKey: "tax_id",
     as: "taker_transporter",
+  });
+
+  // PDV Management — solicitação de pedido de venda
+  PdvSalesRequest.belongsTo(Order, { foreignKey: "order_id", as: "order" });
+  PdvSalesRequest.belongsTo(Invoice, {
+    foreignKey: "sale_invoice_id",
+    as: "saleInvoice",
+  });
+  PdvSalesRequest.belongsTo(Invoice, {
+    foreignKey: "transfer_invoice_id",
+    as: "transferInvoice",
+  });
+  PdvSalesRequest.belongsTo(User, {
+    foreignKey: "created_by_user_id",
+    as: "createdBy",
+  });
+  PdvSalesRequest.hasMany(PdvSalesRequestHistory, {
+    foreignKey: "pdv_sales_request_id",
+    as: "history",
+  });
+  PdvSalesRequestHistory.belongsTo(PdvSalesRequest, {
+    foreignKey: "pdv_sales_request_id",
+    as: "salesRequest",
+  });
+  PdvSalesRequestHistory.belongsTo(User, {
+    foreignKey: "user_id",
+    as: "user",
   });
 }

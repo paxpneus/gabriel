@@ -25,6 +25,13 @@ import { blingGet } from "../bling/helpers/get-with-sleep";
 import productService from "../../../../inventory/products/services/product.service";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
+import paymentMethodService from "../../../../sales/orders/payment_method/payment_method.service";
+
+interface BlingPaymentMethodApi {
+  id: number;
+  descricao: string;
+  tipoPagamento?: number;
+}
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
@@ -173,6 +180,38 @@ export class BlingOrderService {
     });
 
     return invoice?.id ?? null;
+  }
+
+  // Cacheia a forma de pagamento da Bling localmente (id_system) — evita
+  // bater em /formas-pagamentos/{id} toda vez que um pedido é sincronizado,
+  // já que o rate-limit da Bling é compartilhado entre todas as filas.
+  private async resolvePaymentMethod(
+    formaPagamentoId: number | string | undefined,
+  ): Promise<string | null> {
+    if (!formaPagamentoId) return null;
+
+    const idSystem = String(formaPagamentoId);
+    const existing = await paymentMethodService.findOne({
+      where: { id_system: idSystem },
+    });
+    if (existing) return existing.id;
+
+    const { data } = await blingGet<{ data: BlingPaymentMethodApi }>(
+      `/formas-pagamentos/${formaPagamentoId}`,
+      this.blingApi,
+    );
+
+    const integration = await getBlingIntegration();
+
+    const created = await paymentMethodService.create({
+      integrations_id: integration.id,
+      id_system: idSystem,
+      description: data.data.descricao,
+      payment_type: data.data.tipoPagamento ?? null,
+      raw_payload: data.data as unknown as Record<string, unknown>,
+    });
+
+    return created.id;
   }
 
   private async upsertSellerContact(
@@ -751,6 +790,9 @@ export class BlingOrderService {
       const store = await this.resolveStore(orderData.loja?.id);
 
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
+      const paymentMethodId = await this.resolvePaymentMethod(
+        orderData.formaPagamento?.id,
+      );
 
       // ─── Processa itens primeiro para obter custo_total_produtos ──────────
       const hasSellerCommission =
@@ -779,6 +821,7 @@ export class BlingOrderService {
       const orderUpdateFields = {
         unit_business_id: unitBusinessId,
         invoice_id: invoiceId,
+        payment_method_id: paymentMethodId,
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
         // Sempre grava meia-noite no timezone da aplicação (America/Sao_Paulo),
@@ -1004,6 +1047,9 @@ export class BlingOrderService {
       const destination = await this.resolveDestination(orderData.contato?.id);
       const fiscalFields = this.extractFiscalFields(orderData, destination);
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
+      const paymentMethodId = await this.resolvePaymentMethod(
+        orderData.formaPagamento?.id,
+      );
       const sellerId = await this.upsertSellerContact(
         orderData.vendedor,
         integration.id,
@@ -1035,6 +1081,7 @@ export class BlingOrderService {
         integrations_id: integration.id,
         customer_id: customer.id,
         invoice_id: invoiceId,
+        payment_method_id: paymentMethodId,
         actual_situation: String(orderData.situacao.id),
         internal_status: internalStatus,
         ...reasonCancelledFields(orderData.situacao.id),

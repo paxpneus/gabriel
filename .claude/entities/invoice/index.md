@@ -31,3 +31,12 @@ Split by subject:
 
 ## Auth
 `invoice.controller.ts` has HIGH-severity scoping gaps — see `../../modules/auth.md`. Not fixed: `show`/`destroy`/`create` unscoped; other actions trust a client-supplied `?unitBusinessId=` over the logged user's own; DANFE/XML batch downloads have no store filter.
+
+## `danfe_path` — now actually populated
+`invoices.danfe_path` existed as a column but was always written as `""` (dead field) until the PDV Management module needed it. Now populated on create, never touched on update (a note's fiscal content doesn't change after emission, so there's no reason to redo this per re-sync):
+- **Bling**: the API already returns a rendered PDF — `BlingApiInvoice.linkPDF` (typed, was previously unused). `bling-api-fetch.queue.ts::fetchAndUpsertInvoice` downloads it (same `fetch()` pattern already used for `nf.xml`) and uploads the buffer via `uploaderService` (`/danfes` directory) — no PDF generation involved.
+- **Tecinco**: no rendered PDF comes from the API, only XML — `invoice-xml.ts::upsertInvoiceFromXml` generates it from `xmlContent` via `generateDanfePdfBuffer` (`src/shared/utils/xml/danfe-generator.ts`, extracted from `invoice.controller.ts::getDanfeBatch`'s pre-existing `gerarPDF`/`PassThrough` logic — that endpoint now calls the same shared helper instead of duplicating it) and uploads it the same way. Only runs in the `!existingInvoice` (create) branch.
+- Both paths reuse `uploaderService.upload({..., directory: "/danfes", preserveFilename: true})` (WebDAV storage, `src/modules/handlers/uploader/`).
+
+## Cancellation hook into PDV Management
+When `upsertInvoiceFromXml` detects `cancelledInvoice` (its own existing `isCancelledInvoice` check, unchanged) or `bling-api-fetch.queue.ts` sees `nf.situacao === 2` on an update, both now call `pdvSalesRequestService.handleInvoiceCancelled(invoice.id)` after the invoice upsert finishes — see `.claude/entities/pdv-sales-request/index.md`. This is the only place invoice cancellation is currently surfaced to another module; it does not change any invoice-side behavior (still sets `invoice_unit_business_attributes.status = PENDING_CANCELLED_SYSTEM`, same as before).

@@ -86,9 +86,11 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `add-invoice-to-batch.md` — rewrite bulk + fix de numeração
   - `last-outgoing-batch.md` — ponteiro `last_outgoing_batch_pending`
 - `order/` — Orders
-  - `index.md` — base, auth, divergência `internal_status`/`status_snapshot`
+  - `index.md` — base, auth, divergência `internal_status`/`status_snapshot`, catálogo `payment_methods`/`payment_method_id`
   - `status-sync.md` — `reason_cancelled`, `syncOrderInternalStatus`/`escalateToHumanVerificationIfStillPending`
   - `summary-endpoints.md` — repository facts dos endpoints de summary
+- `pdv-sales-request/` — módulo PDV Management (solicitação Loja→Financeiro→CD21), Etapa 1/Passo A
+  - `index.md` — schema, máquina de estados, vínculo de nota de transferência, pendências (IA/Etapa 2)
 
 **Modules** (`.claude/modules/`):
 - `auth.md` — modelo de tenant/auth scoping cross-cutting, controllers corrigidos vs. ainda vazando entre tenants. Ler primeiro antes de mexer em auth.

@@ -61,6 +61,7 @@ export interface orderAttributes {
   store_id?: string | null;
   unit_business_id?: string | null;
   invoice_id?: string | null;
+  payment_method_id?: string | null;
   waiting_acceptance?: boolean;
   source_payload?: Record<string, unknown>;
   total_products?: number;

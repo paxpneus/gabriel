@@ -31,6 +31,9 @@ import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinc
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";
 import { resolveIntegrationsIdForUnitBusiness } from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
 import transporterService from "../../../modules/warehouse/transporter/transporter.service";
+import { generateDanfePdfBuffer } from "./danfe-generator";
+import uploaderService from "../../../modules/handlers/uploader/services/uploader.service";
+import pdvSalesRequestService from "../../../modules/sales/pdv-management/sales-request/pdv-sales-request.service";
 
 /**
  * Extrai só o número (ide.nNF) e a chave de acesso de 44 dígitos de um XML
@@ -850,7 +853,6 @@ export async function upsertInvoiceFromXml(
     sender_name: senderName,
     receiver_cnpj: receiverCnpj,
     receiver_name: receiverName,
-    danfe_path: "",
     xml_path: encryptXml(xmlContent),
     xml_key: chaveAcesso || null,
     emitted_at: ide.dhEmi ? parseBlingDate(ide.dhEmi) : new Date(),
@@ -982,11 +984,33 @@ export async function upsertInvoiceFromXml(
   let invoice: FullInvoiceForAllUnits | null;
 
   if (!existingInvoice) {
+    // A Tecinco não manda um DANFE pronto (só XML) — diferente da Bling, que
+    // já retorna o PDF via linkPDF. Gera só na criação, não a cada update
+    // (a nota não muda de conteúdo fiscal depois de emitida).
+    let danfePath = "";
+    try {
+      const danfeBuffer = await generateDanfePdfBuffer(xmlContent);
+      danfePath = await uploaderService.upload({
+        buffer: danfeBuffer,
+        filename: `${chaveAcesso || idSystem}.pdf`,
+        mimeType: "application/pdf",
+        directory: "/danfes",
+        preserveFilename: true,
+      });
+    } catch (err) {
+      logDbError("[IMPORT_XML] Falha ao gerar/upload DANFE", err as Error, {
+        idSystem,
+        numero,
+        chaveAcesso,
+      });
+    }
+
     const created = await invoiceService
       .createWithRelations(
         {
           ...invoiceBaseData,
           id_system: idSystem,
+          danfe_path: danfePath,
         },
         invoiceItemsForCreate,
         {
@@ -1051,6 +1075,10 @@ export async function upsertInvoiceFromXml(
   }
 
   console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
+
+  if (cancelledInvoice) {
+    await pdvSalesRequestService.handleInvoiceCancelled(invoice.id);
+  }
 
   // ─── Reconcilia UnmappedInvoiceProduct com o estado atual da passagem ─────
   // (no create, invoice.id ainda não existia antes, então esse loop é no-op)

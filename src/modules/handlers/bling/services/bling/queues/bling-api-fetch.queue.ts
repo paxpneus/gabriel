@@ -67,6 +67,8 @@ import InventoryBatchItems from "../../../../../inventory/stock-inventory/invent
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import sequelize from "../../../../../../config/sequelize";
 import { blingGet } from "../helpers/get-with-sleep";
+import uploaderService from "../../../../uploader/services/uploader.service";
+import pdvSalesRequestService from "../../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import productService from "../../../../../inventory/products/services/product.service";
 import supplierMappingService from "../../../../../inventory/supplier-mapping/supplier-mapping.service";
 import productConfigService from "../../../../../inventory/product-config/product_config.service";
@@ -1713,6 +1715,28 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
     }
 
+    // ─── DANFE ────────────────────────────────────────────────────────────────
+    // A Bling já manda o PDF pronto (linkPDF) — diferente da Tecinco, que só
+    // manda XML. Só baixa e sobe pro uploader; não precisa gerar nada aqui.
+    let danfePath = "";
+    if (nf.linkPDF) {
+      try {
+        const danfeArrayBuffer = await fetch(nf.linkPDF).then((r) =>
+          r.arrayBuffer(),
+        );
+        const danfeBuffer = Buffer.from(new Uint8Array(danfeArrayBuffer));
+        danfePath = await uploaderService.upload({
+          buffer: danfeBuffer,
+          filename: `${nf.chaveAcesso ?? nf.id}.pdf`,
+          mimeType: "application/pdf",
+          directory: "/danfes",
+          preserveFilename: true,
+        });
+      } catch (err) {
+        console.warn("[DANFE DOWNLOAD ERROR]", { blingId: apiFetch.blingId, err });
+      }
+    }
+
     const destinationUf =
       destinationUfFromXml || nf.contato?.endereco?.uf || null;
     const destinationCity =
@@ -1830,7 +1854,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       sender_name: senderName,
       receiver_cnpj: receiverCnpj,
       receiver_name: receiverName,
-      danfe_path: "",
+      danfe_path: danfePath,
       xml_path: xmlContent ? encryptXml(xmlContent) : null,
       xml_key: nf.chaveAcesso ?? null,
       xml_url: nf.xml ?? null,
@@ -2035,6 +2059,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     console.log(
       `[BLING_API_FETCH] Invoice upsertada: id_system=${nf.id}, key=${key}`,
     );
+
+    if (nf.situacao === 2) {
+      await pdvSalesRequestService.handleInvoiceCancelled(invoice.id);
+    }
 
     // ─── Limpa UnmappedInvoiceProduct dos itens que resolveram nessa passagem ──
     // (no create, invoice.id ainda não existia antes, então esse loop é no-op)
