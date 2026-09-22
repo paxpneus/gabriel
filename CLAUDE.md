@@ -1,3 +1,7 @@
+# Git
+
+**Nunca commitar sozinho.** `git commit` só quando o usuário pedir explicitamente naquele turno — mesmo depois de terminar uma tarefa grande, corrigir bug, ou aplicar fix que o usuário claramente vai querer versionado. Terminar o código não é permissão pra commitar; perguntar/avisar que está pronto pra commit, sim.
+
 # Architecture rules
 
 ## Layer separation: repository / service / controller
