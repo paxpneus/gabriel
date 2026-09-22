@@ -1,14 +1,12 @@
 // mercado-livre-scraping.service.ts
 import * as path from "path";
 import * as fs from "fs";
-import * as XLSX from "xlsx";
 import { BrowserContext, Page } from "playwright";
 // @ts-ignore
 import { chromium as chromiumExtra } from "playwright-extra";
 // @ts-ignore
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import { MLExcelRow } from "./mercado-livre.types";
-import { parseBRL } from "../../../../shared/utils/normalizers/dotToPoint";
+import { MLOrderDetailResult } from "./mercado-livre.types";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import { nowTz, startOfDayTz } from "../../../../shared/utils/normalizers/date";
 
@@ -16,22 +14,17 @@ chromiumExtra.use(StealthPlugin());
 
 // ─── Configurações ────────────────────────────────────────────────────────────
 const SESSION_DIR = path.resolve("./ml_session");
-const DOWNLOAD_DIR = path.resolve("./ml_downloads");
 
 const LOGIN_URL =
   "https://www.mercadolivre.com/jms/mlb/lgz/msl/login/H4sIAAAAAAAEAz2P0W7DMAhF_8XPVVpF6lLlcT9ikZikaDj2MIk3Vf334U7bGxzuvcDDcVpp8_qd0Y0u4AI7qzu5zKBLkugpGI9sqJDiXzs1CQhEVJTixkfLWTG8o5laksqOpoFd737hVA29Nhmj4vHLbBuwrzgdhG26AJd_h-DnjsU0NqDtAKbgX-vMviaDd9VcxvO51tpFlBlCYjoEuznFbhL3PFlgUa8C84cb2zV2TM5MMyil7fePt_52uQz9MFhxvfY39_wBUeUbRhABAAA/user";
 const SALES_URL =
   "https://www.mercadolivre.com.br/vendas/omni/lista?filters=&subFilters=&search=&limit=300&offset=0&startPeriod=WITH_DATE_CLOSED_7D_OLD&pagingRequest=true&page=1&sort=DATE_CLOSED_DESC";
 
-const DOWNLOAD_BTN_SELECTOR =
-  'button.report-link:has-text("Baixar arquivo Excel de vendas")';
-const MAX_DOWNLOAD_ATTEMPTS = 3;
-
 // Headless: false localmente para depurar login/CAPTCHA, true no servidor
 const IS_HEADLESS =
   process.env.NODE_ENV === "production" || process.env.ML_HEADLESS === "true";
 
-const COLLECTION_DATE_REGEX = /coleta do dia (\d{1,2}) de (\w+)/i;
+const NFE_ALREADY_EMITTED_REGEX = /informe a nf-e já emitida/i;
 
 const TOMORROW_DELIVERY_REGEX = /para entregar na coleta de amanhã/i;
 
@@ -50,22 +43,23 @@ const MONTHS: Record<string, number> = {
   dezembro: 11,
 };
 
-const SALE_DATE_REGEX =
-  /(\d{1,2}) de ([\w\u00C0-\u017F]+) de (\d{4})\s+(\d{1,2}):(\d{2})/i;
+// Alternância com os nomes de mês conhecidos em vez de `\w+` genérico — a
+// textContent da página não tem espaço entre blocos adjacentes (ex: "...de
+// setembro" + "Para entregar..." do próximo card viram "setembroPara"
+// colados), e um `\w+` guloso engolia esse texto seguinte junto.
+const COLLECTION_DATE_REGEX = new RegExp(
+  `para entregar na coleta do dia (\\d{1,2}) de (${Object.keys(MONTHS).join("|")})`,
+  "i",
+);
 
-function parseSaleDate(raw: string): Date | null {
-  const match = raw.match(SALE_DATE_REGEX);
-  if (!match) return null;
-
-  const day = parseInt(match[1], 10);
-  const month = MONTHS[match[2].toLowerCase()];
-  const year = parseInt(match[3], 10);
-  const hours = parseInt(match[4], 10);
-  const minutes = parseInt(match[5], 10);
-
-  if (month === undefined || isNaN(day) || isNaN(year)) return null;
-
-  return new Date(Date.UTC(year, month, day, hours, minutes));
+function buildOrderDetailUrl(orderNumber: string): string {
+  const template = process.env.ML_ORDER_DETAIL_URL;
+  if (!template) {
+    throw new Error(
+      "[MLScraping] ML_ORDER_DETAIL_URL não configurada no .env",
+    );
+  }
+  return template.split("{orderNumber}").join(encodeURIComponent(orderNumber));
 }
 
 export class MLScrapingService {
@@ -73,22 +67,19 @@ export class MLScrapingService {
   // Ponto de entrada público
   // ─────────────────────────────────────────────────────────────────────────
 
-  async downloadAndParseExcel(): Promise<MLExcelRow[]> {
+  /**
+   * Abre a tela de detalhe do pedido no Mercado Livre
+   * (ML_ORDER_DETAIL_URL com {orderNumber} substituído) e extrai a
+   * collection_date direto do DOM — substitui o download/parse da planilha.
+   */
+  async scrapeOrderDetail(orderNumber: string): Promise<MLOrderDetailResult | null> {
     if (this.isRunning) {
       console.log("[MLScraping] Já existe uma execução em andamento — pulando");
-      return [];
+      return null;
     }
     this.isRunning = true;
 
     fs.mkdirSync(SESSION_DIR, { recursive: true });
-    fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
-
-    const oldFiles = fs
-      .readdirSync(DOWNLOAD_DIR)
-      .filter((f) => f.endsWith(".xlsx"));
-    for (const file of oldFiles) {
-      fs.unlinkSync(path.join(DOWNLOAD_DIR, file));
-    }
 
     const context = await this.launchContext();
     const page = await context.newPage();
@@ -115,9 +106,7 @@ export class MLScrapingService {
         throw new Error("[MLScraping] Login manual necessário");
       }
 
-      const filePath = await this.downloadExcelWithRetry(page);
-      const rows = this.parseExcel(filePath);
-      return rows;
+      return await this.extractOrderDetail(page, orderNumber);
     } finally {
       await page.close();
       await context.close();
@@ -142,7 +131,6 @@ export class MLScrapingService {
 
     return chromiumExtra.launchPersistentContext(SESSION_DIR, {
       headless,
-      acceptDownloads: true,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -150,7 +138,6 @@ export class MLScrapingService {
         // Necessário no servidor para headless sem GPU
         "--disable-gpu",
         "--disable-dev-shm-usage",
-        // ...(headless ? ["--disable-gpu", "--single-process"] : []),
       ],
       userAgent:
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -292,7 +279,7 @@ export class MLScrapingService {
   /**
    * Apenas em ambiente local (headless: false).
    * Reabre o browser visível para o operador resolver o login manualmente.
-   * Polling a cada 5s por até 5 minutos.
+   * Polling a cada 5s por até 10 minutos.
    */
   private async waitForManualLoginLocal(
     context: BrowserContext,
@@ -350,203 +337,79 @@ export class MLScrapingService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Download do Excel
+  // Extração da tela de detalhe
   // ─────────────────────────────────────────────────────────────────────────
 
-  private async downloadExcelWithRetry(page: Page): Promise<string> {
-    for (
-      let globalAttempt = 1;
-      globalAttempt <= MAX_DOWNLOAD_ATTEMPTS;
-      globalAttempt++
-    ) {
+  /**
+   * Navega até a tela de detalhe do pedido e deriva collection_date a
+   * partir do texto da página, com as mesmas regras de negócio que antes
+   * vinham da coluna "Estado" da planilha:
+   *   - "Informe a NF-e já emitida" → hoje (o corte 6h-13h que decide se
+   *     fica pra hoje ou empurra pra amanhã 6h já é aplicado depois, em
+   *     setDelayBasedOnDate/scheduleNfe — não muda aqui).
+   *   - "Para entregar na coleta de amanhã" → amanhã.
+   *   - "Para entregar na coleta do dia {dia} de {mês}" → aquela data.
+   */
+  async extractOrderDetail(
+    page: Page,
+    orderNumber: string,
+  ): Promise<MLOrderDetailResult | null> {
+    const url = buildOrderDetailUrl(orderNumber);
+
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.waitForTimeout(5_000);
+
+    const bodyText = (await page.textContent("body")) ?? "";
+
+    if (NFE_ALREADY_EMITTED_REGEX.test(bodyText)) {
+      const collectionDate = startOfDayTz().toDate();
       console.log(
-        `[MLScraping] Tentativa global ${globalAttempt}/${MAX_DOWNLOAD_ATTEMPTS}`,
+        `[MLScraping] Pedido ${orderNumber} "informe a nf-e já emitida" — collection_date definida para hoje: ${collectionDate.toISOString()}`,
       );
-
-      if (globalAttempt > 1) {
-        console.log("[MLScraping] Recarregando página (F5)...");
-        await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
-        await page.waitForTimeout(3_000);
-      }
-
-      const filePath = await this.trySingleDownloadCycle(page);
-      if (filePath) return filePath;
+      return { order_number: orderNumber, collection_date: collectionDate };
     }
 
-    throw new Error(
-      "[MLScraping] Falha ao baixar Excel após todas as tentativas",
-    );
-  }
-
-  private async trySingleDownloadCycle(page: Page): Promise<string | null> {
-    for (
-      let clickAttempt = 1;
-      clickAttempt <= MAX_DOWNLOAD_ATTEMPTS;
-      clickAttempt++
-    ) {
+    if (TOMORROW_DELIVERY_REGEX.test(bodyText)) {
+      const collectionDate = startOfDayTz(nowTz().add(1, "day")).toDate();
       console.log(
-        `[MLScraping] Clique ${clickAttempt}/${MAX_DOWNLOAD_ATTEMPTS} no botão de download`,
+        `[MLScraping] Pedido ${orderNumber} "para entregar na coleta de amanhã" — collection_date definida para amanhã: ${collectionDate.toISOString()}`,
       );
-
-      try {
-        // Primeiro clique — abre o componente de download
-        const downloadBtn = await page.waitForSelector(DOWNLOAD_BTN_SELECTOR, {
-          timeout: 15_000,
-          state: "visible",
-        });
-        await downloadBtn.click();
-        console.log(
-          "[MLScraping] Componente de download aberto, aguardando link de baixar...",
-        );
-
-        // Segundo clique — linka no <a> que aparece dentro do componente
-        const downloadLink = await page.waitForSelector(
-          'a.process-notification-link[href="widget-download-excel"]',
-          {
-            timeout: 60_000,
-            state: "visible",
-          },
-        );
-
-        const [download] = await Promise.all([
-          page.waitForEvent("download", { timeout: 60_000 }),
-          downloadLink.click(),
-        ]);
-
-        const filePath = path.join(
-          DOWNLOAD_DIR,
-          `ml_export_${Date.now()}.xlsx`,
-        );
-        await download.saveAs(filePath);
-
-        try {
-          const closeBtn = await page.waitForSelector(
-            "button.process-notification-header__close",
-            { timeout: 5_000, state: "visible" },
-          );
-          await closeBtn.click();
-          console.log("[MLScraping] Componente de download fechado");
-        } catch {
-          console.warn(
-            "[MLScraping] Não foi possível fechar o componente de download — seguindo",
-          );
-        }
-
-        console.log(`[MLScraping] Excel salvo em: ${filePath}`);
-        return filePath;
-      } catch (err) {
-        console.warn(
-          `[MLScraping] Clique ${clickAttempt} falhou:`,
-          (err as Error).message,
-        );
-
-        if (clickAttempt === MAX_DOWNLOAD_ATTEMPTS) {
-          console.warn("[MLScraping] Ciclo de cliques esgotado — vai para F5");
-          return null;
-        }
-
-        await page.waitForTimeout(2_000);
-      }
+      return { order_number: orderNumber, collection_date: collectionDate };
     }
 
-    return null;
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Parse do Excel
-  // ─────────────────────────────────────────────────────────────────────────
-
-  parseExcel(filePath: string): MLExcelRow[] {
-    const workbook = XLSX.readFile(filePath);
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-
-    const raw: any[] = XLSX.utils.sheet_to_json(sheet, { range: 5 });
-    const results: MLExcelRow[] = [];
-
-    for (const row of raw) {
-      const orderNumber = row["N.º de venda"];
-      const status = row["Estado"] ?? "";
-
-      if (!orderNumber || !status) continue;
-
-      const saleDate = parseSaleDate(String(row["Data da venda"] ?? "").trim());
-
-      if (!saleDate) {
-        console.warn(
-          `[MLScraping] Data da venda inválida para pedido ${orderNumber}: "${row["Data da venda"]}"`,
-        );
-        continue;
-      }
-
-      // ── Determina collection_date ──────────────────────────────────────
-      let collectionDate: Date;
-
-      const isReadyForPickup = String(status)
-        .toLowerCase()
-        .includes("pronto para coleta");
-
-      const isNFeAlreadyEmitted = String(status)
-        .toLowerCase()
-        .includes("informe a nf-e já emitida");
-
-      const isTomorrowDelivery = TOMORROW_DELIVERY_REGEX.test(String(status));
-
-      if (isReadyForPickup || isNFeAlreadyEmitted) {
-        // Pedidos prontos para coleta sem data prevista → hoje, meia-noite
-        // em APP_TIMEZONE (não meia-noite UTC — Date.UTC(y,m,d) cai às 21h
-        // do dia anterior em America/Sao_Paulo, empurrando a nota pro dia
-        // errado em qualquer filtro/agrupamento por dia calendário BRT).
-        collectionDate = startOfDayTz().toDate();
-        console.log(
-          `[MLScraping] Pedido ${orderNumber} "pronto para coleta" — collection_date definida para hoje: ${collectionDate.toISOString()}`,
-        );
-      } else if (isTomorrowDelivery) {
-        collectionDate = startOfDayTz(nowTz().add(1, "day")).toDate();
-        console.log(
-          `[MLScraping] Pedido ${orderNumber} "para entregar na coleta de amanhã" — collection_date definida para amanhã: ${collectionDate.toISOString()}`,
-        );
-      } else {
-        const match = String(status).match(COLLECTION_DATE_REGEX);
-        if (!match) continue;
-
-        const day = parseInt(match[1], 10);
-        const monthName = match[2].toLowerCase();
-        const month = MONTHS[monthName];
-
-        if (month === undefined) {
-          console.warn(
-            `[MLScraping] Mês não reconhecido: "${match[2]}" — pedido ${orderNumber}`,
-          );
-          continue;
-        }
-
-        const now = nowTz();
-        let year = now.year();
-        if (month < now.month() || (month === now.month() && day < now.date())) {
-          year += 1;
-        }
-
-        collectionDate = startOfDayTz(
-          `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-        ).toDate();
-      }
-      // ──────────────────────────────────────────────────────────────────
-
-      results.push({
-        order_number: String(orderNumber).trim(),
-        collection_date: collectionDate,
-        sale_date: saleDate,
-        sku: String(row["SKU"] ?? "").trim(),
-        revenue_brl: parseBRL(row["Receita por produtos (BRL)"]),
-        buyer: String(row["Comprador"] ?? "").trim(),
-        business: String(row["Negócio"] ?? "").trim(),
-        cpf: String(row["CPF"] ?? "").trim(),
-      });
+    const match = bodyText.match(COLLECTION_DATE_REGEX);
+    if (!match) {
+      console.warn(
+        `[MLScraping] Pedido ${orderNumber} — nenhuma das três condições de collection_date foi encontrada na página.`,
+      );
+      return null;
     }
+
+    const day = parseInt(match[1], 10);
+    const monthName = match[2].toLowerCase();
+    const month = MONTHS[monthName];
+
+    if (month === undefined) {
+      console.warn(
+        `[MLScraping] Mês não reconhecido: "${match[2]}" — pedido ${orderNumber}`,
+      );
+      return null;
+    }
+
+    const now = nowTz();
+    let year = now.year();
+    if (month < now.month() || (month === now.month() && day < now.date())) {
+      year += 1;
+    }
+
+    const collectionDate = startOfDayTz(
+      `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    ).toDate();
 
     console.log(
-      `[MLScraping] ${results.length} pedidos com data de coleta encontrados`,
+      `[MLScraping] Pedido ${orderNumber} "para entregar na coleta do dia ${day} de ${monthName}" — collection_date: ${collectionDate.toISOString()}`,
     );
-    return results;
+
+    return { order_number: orderNumber, collection_date: collectionDate };
   }
 }

@@ -1,6 +1,6 @@
-// Agenda sempre para o mesmo dia da coleta, às 07:00 BRT (10:00 UTC). Se já
+// Agenda sempre para o mesmo dia da coleta, às 06:00 BRT (09:00 UTC). Se já
 // passou das 13:00 BRT (16:00 UTC) nesse dia, empurra para o dia seguinte às
-// 07:00 — cobre tanto "coleta é hoje mas já passou das 13h" quanto qualquer
+// 06:00 — cobre tanto "coleta é hoje mas já passou das 13h" quanto qualquer
 // collection_date já no passado.
 export const setDelayBasedOnDate = (date: Date): number => {
     const collectionDate = new Date(date);

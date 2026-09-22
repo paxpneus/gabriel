@@ -39,21 +39,17 @@ export type HasPendingJobs = {
   hasPendingJobs: () => Promise<boolean>;
 };
 
-// Teto de espera por ML-SCRAPING e ML_ORDER_SYNC ficarem livres antes de
-// reconcileStuckOrders desistir e pular o sweep desta execução — os dois
-// somados (15min) cabem dentro do maxProcessingMs de 25min do
-// NFE_RECONCILER (ver constructor), deixando ~10min de folga pro sweep em
+// Teto de espera por ML_ORDER_SYNC ficar livre antes de reconcileStuckOrders
+// desistir e pular o sweep desta execução — cabe dentro do maxProcessingMs
+// de 25min do NFE_RECONCILER (ver constructor), deixando folga pro sweep em
 // si e pras outras rotinas que rodam em paralelo no mesmo Promise.allSettled.
-const ML_SCRAPING_IDLE_WAIT_MS = 10 * 60 * 1000;
 const ML_ORDER_SYNC_IDLE_WAIT_MS = 5 * 60 * 1000;
 
 export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   private blingApi: AxiosInstance;
   private cnpjNext: nextStepOnQueue | getJob;
   private nfeNext: nextStepDelayedOnQueue | getJob;
-  private mlOrderSyncNext: WaitUntilIdle;
-  private mlScrapingNext: nextStepOnQueue;
-  private mlScrapingWaitUntilIdle: WaitUntilIdle;
+  private mlOrderSyncNext: WaitUntilIdle & nextStepOnQueue;
   private blingOrderIngestionCheck: HasPendingJobs;
   private cnpjCheck: HasPendingJobs;
   private mlOrderSyncCheck: HasPendingJobs;
@@ -62,9 +58,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     cnpjNext: nextStepOnQueue | getJob,
     nfeNext: nextStepDelayedOnQueue | getJob,
     blingApi: AxiosInstance,
-    mlOrderSyncNext: WaitUntilIdle,
-    mlScrapingNext: nextStepOnQueue,
-    mlScrapingWaitUntilIdle: WaitUntilIdle,
+    mlOrderSyncNext: WaitUntilIdle & nextStepOnQueue,
     blingOrderIngestionCheck: HasPendingJobs,
     cnpjCheck: HasPendingJobs,
     mlOrderSyncCheck: HasPendingJobs,
@@ -72,9 +66,6 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   ) {
     super("NFE_RECONCILER", {
       concurrency: 1,
-      // Subiu de 15 pra 25min junto com ML_SCRAPING_IDLE_WAIT_MS (10min) —
-      // reconcileStuckOrders sozinha já pode esperar até 15min (10 de
-      // scraping + 5 de ML_ORDER_SYNC) antes mesmo de começar o sweep.
       maxProcessingMs: 25 * 60 * 1000,
       workless: options.workless,
     });
@@ -82,8 +73,6 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     this.cnpjNext = cnpjNext;
     this.nfeNext = nfeNext;
     this.mlOrderSyncNext = mlOrderSyncNext;
-    this.mlScrapingNext = mlScrapingNext;
-    this.mlScrapingWaitUntilIdle = mlScrapingWaitUntilIdle;
     this.blingOrderIngestionCheck = blingOrderIngestionCheck;
     this.cnpjCheck = cnpjCheck;
     this.mlOrderSyncCheck = mlOrderSyncCheck;
@@ -275,30 +264,13 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   }
 
   private async reconcileStuckOrders(): Promise<void> {
-    // Espera event-driven (sem polling — bloqueia no "drained" do BullMQ),
-    // primeiro por ML-SCRAPING ficar livre, depois por ML_ORDER_SYNC ficar
-    // livre — nessa ordem, porque scraping alimenta ML_ORDER_SYNC, não o
-    // contrário. Motivo: "situação ainda 748743" pode significar tanto
-    // "pedido abandonado de verdade" quanto "ainda não chegou a vez do
-    // ML_ORDER_SYNC processar" — e, agora que o scraping roda sob demanda
-    // (não tem mais cron fixo), pode até haver um ciclo de scraping em
-    // andamento (inclusive disparado por reconcileMissingCollectionDate,
-    // rodando em paralelo neste mesmo Promise.allSettled) que ainda nem
-    // terminou de distribuir os jobs {row} pro ML_ORDER_SYNC — nesse
-    // instante o ML_ORDER_SYNC está vazio, mas não porque o pedido foi
-    // abandonado. Sem esperar o scraping primeiro, este sweep marcaria como
-    // "verificação humana" pedidos que um ciclo já em voo estava prestes a
-    // resolver corretamente.
-    const scrapingIsClear = await this.mlScrapingWaitUntilIdle.waitUntilIdle(
-      ML_SCRAPING_IDLE_WAIT_MS,
-    );
-    if (!scrapingIsClear) {
-      console.log(
-        `[NFeReconciler] ML-SCRAPING ainda ocupado após ${ML_SCRAPING_IDLE_WAIT_MS / 60000}min de espera — pulando sweep de pedidos presos nesta execução (pode haver um ciclo capaz de resolvê-los).`,
-      );
-      return;
-    }
-
+    // Espera event-driven (sem polling — bloqueia no "drained" do BullMQ)
+    // por ML_ORDER_SYNC ficar livre. Motivo: "situação ainda 748743" pode
+    // significar tanto "pedido abandonado de verdade" quanto "ainda não
+    // chegou a vez do ML_ORDER_SYNC processar" — o scraping da tela de
+    // detalhe do ML agora roda dentro do próprio job do ML_ORDER_SYNC (não
+    // é mais uma fila separada), então esperar só esta fila já cobre o
+    // caso de um scraping em andamento.
     const mlSyncIsClear = await this.mlOrderSyncNext.waitUntilIdle(
       ML_ORDER_SYNC_IDLE_WAIT_MS,
     );
@@ -404,24 +376,24 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   }
 
   /**
-   * Rede de segurança pro scraping sob demanda. Pergunta pra Bling (ao
-   * vivo, não confia num snapshot local) todos os pedidos ainda em
-   * WAITING_CHANNEL_VALIDATION (situação 748743) e separa os que a própria
-   * Bling ainda não tem dataPrevista — só pra esses vale a pena rodar
-   * scraping, já que os demais já vão resolver via
-   * BlingOrderService/ML_ORDER_SYNC no próximo webhook sem precisar de
-   * planilha nenhuma. Só então cruza com o banco: se o pedido local
-   * correspondente ainda não tem collection_date (pode já ter sido
-   * resolvido nesse meio-tempo por um scraping anterior), dispara um ciclo
-   * de scraping — rede de segurança pro caso do disparo original
+   * Rede de segurança pro scraping da tela de detalhe do ML sob demanda.
+   * Pergunta pra Bling (ao vivo, não confia num snapshot local) todos os
+   * pedidos ainda em WAITING_CHANNEL_VALIDATION (situação 748743) e separa
+   * os que a própria Bling ainda não tem dataPrevista — só pra esses vale a
+   * pena extrair da tela do ML, já que os demais já vão resolver via
+   * BlingOrderService/ML_ORDER_SYNC no próximo webhook. Só então cruza com
+   * o banco: se o pedido local correspondente ainda não tem collection_date
+   * (pode já ter sido resolvido nesse meio-tempo), reenfileira um job por
+   * pedido na própria ML_ORDER_SYNC (mesmo job shape do webhook,
+   * {orderSystem}) — rede de segurança pro caso do disparo original
    * (MLOrderSyncQueue.syncFromWebhookLocked, na chegada do pedido) ter
-   * falhado silenciosamente ou nunca ter ocorrido.
+   * falhado silenciosamente, nunca ter ocorrido, ou a tela do ML ainda não
+   * ter nenhuma das duas condições esperadas na 1ª tentativa.
    *
-   * Sem withOrderLock: não faz leitura-decisão-escrita sobre nenhum pedido
-   * específico — só decide "existe algum pendente?" e dispara um .add()
-   * compartilhado e idempotente (mesmo jobId fixo usado por
-   * MLOrderSyncQueue.triggerScraping), então não há corrida sobre o MESMO
-   * pedido que precise de lock aqui.
+   * Sem withOrderLock aqui: cada pedido vira um job próprio (jobId fixo por
+   * pedido, deduplicado pelo BullMQ) — quem serializa contra qualquer outro
+   * fluxo tocando o MESMO pedido é o withOrderLock dentro do processamento
+   * da ML_ORDER_SYNC, não este loop de disparo.
    */
   private async reconcileMissingCollectionDate(): Promise<void> {
     const integration = await getBlingIntegration("Bling");
@@ -470,25 +442,43 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
         number_order_system: numbers,
         collection_date: null,
       },
-      attributes: ["id", "id_order_system", "number_order_system"],
+      attributes: [
+        "id",
+        "id_order_system",
+        "number_order_system",
+        "number_order_channel",
+        "internal_status",
+        "collection_date",
+        "waiting_acceptance",
+        "createdAt",
+      ],
     });
 
     if (pendingOrders.length === 0) return;
 
     console.log(
-      `[GlobalReconciler][SCRAPING] ${pendingOrders.length} pedido(s) em WAITING CHANNEL VALIDATION sem dataPrevista na Bling e sem collection_date local — disparando scraping sob demanda.`,
+      `[GlobalReconciler][SCRAPING] ${pendingOrders.length} pedido(s) em WAITING CHANNEL VALIDATION sem dataPrevista na Bling e sem collection_date local — reenfileirando na ML_ORDER_SYNC.`,
     );
 
-    try {
-      await this.mlScrapingNext.add(
-        { triggered_by: "nfe-reconciler" },
-        "ml-scraping-on-demand",
-      );
-    } catch (error: any) {
-      console.error(
-        "[GlobalReconciler][SCRAPING] Falha ao disparar scraping sob demanda:",
-        error.message,
-      );
+    for (const order of pendingOrders) {
+      if (!order.number_order_channel) {
+        console.warn(
+          `[GlobalReconciler][SCRAPING] Pedido ${order.id} sem number_order_channel — não é possível extrair da tela do ML. Pulando.`,
+        );
+        continue;
+      }
+
+      try {
+        await this.mlOrderSyncNext.add(
+          { orderSystem: order, customer: null },
+          `ml-order-sync-collection-${order.id}`,
+        );
+      } catch (error: any) {
+        console.error(
+          `[GlobalReconciler][SCRAPING] Falha ao reenfileirar pedido ${order.id} na ML_ORDER_SYNC:`,
+          error.message,
+        );
+      }
     }
   }
 }

@@ -67,9 +67,7 @@ jest.mock("../../../../../shared/providers/mail-provider/nodemailer.alert", () =
 }));
 
 import ordersService from "../../../../sales/orders/order/orders.service";
-import redisService from "../../../../../shared/utils/base-models/base-redis";
 import integrationsService from "../../../../integrations/integrations/integrations.service";
-import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { MLOrderSyncQueue } from "../mercado-livre-sync.queue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -124,7 +122,7 @@ describe("MLOrderSyncQueue", () => {
     removeJob: jest.Mock;
     addDelayed: jest.Mock;
   };
-  let scrapingNextFake: { add: jest.Mock };
+  let scrapingServiceFake: { scrapeOrderDetail: jest.Mock };
   let queue: MLOrderSyncQueue;
 
   beforeEach(() => {
@@ -136,11 +134,11 @@ describe("MLOrderSyncQueue", () => {
       removeJob: jest.fn(),
       addDelayed: jest.fn(),
     };
-    scrapingNextFake = { add: jest.fn().mockResolvedValue(undefined) };
+    scrapingServiceFake = { scrapeOrderDetail: jest.fn() };
     queue = new MLOrderSyncQueue(
       nextFake as any,
       fakeBlingApi,
-      scrapingNextFake as any,
+      scrapingServiceFake as any,
       { workless: true },
     );
 
@@ -162,30 +160,10 @@ describe("MLOrderSyncQueue", () => {
       expect(ordersService.update).not.toHaveBeenCalled();
       expect(fakeBlingApi.patch).not.toHaveBeenCalled();
     });
-
-    it("row do Excel sem cache disponível: loga MISS CACHE e não quebra", async () => {
-      (redisService.get as jest.Mock).mockResolvedValue(null);
-
-      await expect(
-        queue.process(
-          makeJob({
-            row: {
-              order_number: "1",
-              sale_date: new Date(),
-              collection_date: new Date(),
-              sku: "x",
-              buyer: "fulano",
-            },
-          }),
-        ),
-      ).resolves.toBeUndefined();
-
-      expect(ordersService.update).not.toHaveBeenCalled();
-    });
   });
 
   describe("syncFromWebhook", () => {
-    it("elegível e com collection_date já preenchida (ex: vinda de dataPrevista): agenda NFe direto, sem disparar scraping", async () => {
+    it("elegível e com collection_date já preenchida (ex: vinda de dataPrevista): agenda NFe direto, sem chamar o scraping", async () => {
       mockEligible(true);
       const orderSystem = makeOrder({ collection_date: new Date("2026-08-20") });
 
@@ -199,12 +177,13 @@ describe("MLOrderSyncQueue", () => {
       expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
         internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
       });
-      expect(scrapingNextFake.add).not.toHaveBeenCalled();
+      expect(scrapingServiceFake.scrapeOrderDetail).not.toHaveBeenCalled();
     });
 
-    it("elegível e sem collection_date: marca WAITING_CHANNEL_VALIDATION e dispara scraping sob demanda", async () => {
+    it("elegível e sem collection_date: marca WAITING_CHANNEL_VALIDATION e extrai da tela de detalhe do ML pelo number_order_channel", async () => {
       mockEligible(true);
       const orderSystem = makeOrder({ collection_date: null });
+      scrapingServiceFake.scrapeOrderDetail.mockResolvedValue(null);
 
       await queue.process(makeJob({ orderSystem, customer: {} }));
 
@@ -212,9 +191,8 @@ describe("MLOrderSyncQueue", () => {
         internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
       });
       expect(fakeBlingApi.patch).not.toHaveBeenCalled();
-      expect(scrapingNextFake.add).toHaveBeenCalledWith(
-        { triggered_by: "ml-order-sync" },
-        "ml-scraping-on-demand",
+      expect(scrapingServiceFake.scrapeOrderDetail).toHaveBeenCalledWith(
+        orderSystem.number_order_channel,
       );
     });
 
@@ -229,77 +207,71 @@ describe("MLOrderSyncQueue", () => {
     });
   });
 
-  describe("applyCollectionDate (via syncFromExcel)", () => {
-    function makeCachedOrders(order: any) {
-      return [
-        {
-          ...order,
-          date: new Date("2026-08-11"),
-          customer: { name: "Daniel Campos Paiva" },
-        },
-      ];
-    }
+  describe("scrapeAndApplyCollectionDate / applyCollectionDate", () => {
+    it("scraping não encontra nenhuma das duas condições na tela: não atualiza nada (fica pra próxima tentativa)", async () => {
+      mockEligible(true);
+      const orderSystem = makeOrder();
+      scrapingServiceFake.scrapeOrderDetail.mockResolvedValue(null);
 
-    function makeRow(overrides: Partial<any> = {}) {
-      return {
-        order_number: "000000461_239",
-        sale_date: new Date("2026-08-11"),
-        collection_date: new Date("2026-08-12"),
-        sku: "10117005",
-        buyer: "Daniel Campos Paiva",
-        ...overrides,
-      };
-    }
-
-    it("pedido já com processo completo: ignora o scraping sem tocar no banco", async () => {
-      const order = makeOrder({ internal_status: OrderInternalStatus.EMITTED });
-      (redisService.get as jest.Mock).mockResolvedValue(makeCachedOrders(order));
-
-      await queue.process(makeJob({ row: makeRow() }));
+      await queue.scrapeAndApplyCollectionDate(orderSystem);
 
       expect(ordersService.update).not.toHaveBeenCalled();
     });
 
-    it("SKU do Excel não bate com nenhum item do pedido: dispara alerta MEDIUM e não atualiza", async () => {
+    it("scraping lança erro (ex: falha de login/Playwright): não quebra, não atualiza nada", async () => {
       mockEligible(true);
-      const order = makeOrder({ items: [{ sku: "outro-sku" }] });
-      (redisService.get as jest.Mock).mockResolvedValue(makeCachedOrders(order));
+      const orderSystem = makeOrder();
+      scrapingServiceFake.scrapeOrderDetail.mockRejectedValue(new Error("boom"));
 
-      await queue.process(makeJob({ row: makeRow() }));
-
-      expect(alertService.sendAlert).toHaveBeenCalledWith(
-        expect.objectContaining({ severity: "LOW", title: "ML Sync — SKU sem match" }),
-      );
+      await expect(
+        queue.scrapeAndApplyCollectionDate(orderSystem),
+      ).resolves.toBeUndefined();
       expect(ordersService.update).not.toHaveBeenCalled();
     });
 
-    it("match válido: grava collection_date, anota na Bling e encadeia scheduleNfe (PATCH 748748 + WAITING_FOR_NFE_EMISSION)", async () => {
+    it("scraping encontrado: grava collection_date, anota na Bling e encadeia scheduleNfe (PATCH 748748 + WAITING_FOR_NFE_EMISSION)", async () => {
       mockEligible(true);
-      const order = makeOrder();
-      (redisService.get as jest.Mock).mockResolvedValue(makeCachedOrders(order));
-
-      await queue.process(makeJob({ row: makeRow() }));
-
-      expect(ordersService.update).toHaveBeenCalledWith(order.id, {
+      const orderSystem = makeOrder();
+      scrapingServiceFake.scrapeOrderDetail.mockResolvedValue({
+        order_number: orderSystem.number_order_channel,
         collection_date: new Date("2026-08-12"),
-        number_order_channel: "000000461_239",
+      });
+
+      await queue.scrapeAndApplyCollectionDate(orderSystem);
+
+      expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
+        collection_date: new Date("2026-08-12"),
       });
       expect(fakeBlingApi.put).toHaveBeenCalledWith(
-        `/pedidos/vendas/${order.id_order_system}`,
+        `/pedidos/vendas/${orderSystem.id_order_system}`,
         expect.objectContaining({
-          observacoesInternas: expect.stringContaining("ML: 000000461_239"),
+          observacoesInternas: expect.stringContaining(
+            `ML: ${orderSystem.number_order_channel}`,
+          ),
         }),
         { timeout: 20000 },
       );
       // scheduleNfe encadeado a partir do mesmo fluxo:
       expect(fakeBlingApi.patch).toHaveBeenCalledWith(
-        `/pedidos/vendas/${order.id_order_system}/situacoes/748748`,
+        `/pedidos/vendas/${orderSystem.id_order_system}/situacoes/748748`,
         { id: 748748 },
         { timeout: 20000 },
       );
-      expect(ordersService.update).toHaveBeenCalledWith(order.id, {
+      expect(ordersService.update).toHaveBeenCalledWith(orderSystem.id, {
         internal_status: OrderInternalStatus.WAITING_FOR_NFE_EMISSION,
       });
+    });
+
+    it("pedido já com processo completo: ignora sem tocar no banco", async () => {
+      const orderSystem = makeOrder({ internal_status: OrderInternalStatus.EMITTED });
+      scrapingServiceFake.scrapeOrderDetail.mockResolvedValue({
+        order_number: orderSystem.number_order_channel,
+        collection_date: new Date("2026-08-12"),
+      });
+
+      await queue.scrapeAndApplyCollectionDate(orderSystem);
+
+      expect(ordersService.update).not.toHaveBeenCalled();
     });
   });
 

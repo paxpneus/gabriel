@@ -8,7 +8,7 @@ Ver `../../entities/order/status-sync.md` pra `escalateToHumanVerificationIfStil
 
 Split por assunto:
 - `bug-fixes.md` — 3 bugs reais no fluxo de sync ML, `reason_cancelled`, escrita antecipada de status, limiar do `reconcileStuckOrders`
-- `collection-date.md` — origem do `collection_date`, redesign do `ML-SCRAPING`, bug de timezone UTC, `setDelayBasedOnDate`
+- `collection-date.md` — origem do `collection_date` (dataPrevista da Bling ou scraping da tela de detalhe do pedido no ML, direto dentro do job da `ML_ORDER_SYNC`), bug de timezone UTC, `setDelayBasedOnDate`
 - `summary-endpoints.md` — `GET /api/order/summary/...`, janela de embarque 06h–14h, escopo store-only
 - `locks.md` — `BLING_SHARED_QUEUE_LOCK`, aging, lock por pedido
 - `rate-limit.md` — `waitForBlingRateLimit`, race no dispatch, env do docker-compose
