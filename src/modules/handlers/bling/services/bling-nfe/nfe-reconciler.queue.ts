@@ -39,10 +39,12 @@ export type HasPendingJobs = {
   hasPendingJobs: () => Promise<boolean>;
 };
 
-// Teto de espera por ML_ORDER_SYNC ficar livre antes de reconcileStuckOrders
-// desistir e pular o sweep desta execução — cabe dentro do maxProcessingMs
-// de 25min do NFE_RECONCILER (ver constructor), deixando folga pro sweep em
-// si e pras outras rotinas que rodam em paralelo no mesmo Promise.allSettled.
+// Teto de espera por ML-SCRAPING e ML_ORDER_SYNC ficarem livres antes de
+// reconcileStuckOrders desistir e pular o sweep desta execução — os dois
+// somados cabem dentro do maxProcessingMs de 25min do NFE_RECONCILER (ver
+// constructor), deixando folga pro sweep em si e pras outras rotinas que
+// rodam em paralelo no mesmo Promise.allSettled.
+const ML_SCRAPING_IDLE_WAIT_MS = 10 * 60 * 1000;
 const ML_ORDER_SYNC_IDLE_WAIT_MS = 5 * 60 * 1000;
 
 export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
@@ -50,6 +52,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   private cnpjNext: nextStepOnQueue | getJob;
   private nfeNext: nextStepDelayedOnQueue | getJob;
   private mlOrderSyncNext: WaitUntilIdle & nextStepOnQueue;
+  private mlScrapingWaitUntilIdle: WaitUntilIdle;
   private blingOrderIngestionCheck: HasPendingJobs;
   private cnpjCheck: HasPendingJobs;
   private mlOrderSyncCheck: HasPendingJobs;
@@ -59,6 +62,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     nfeNext: nextStepDelayedOnQueue | getJob,
     blingApi: AxiosInstance,
     mlOrderSyncNext: WaitUntilIdle & nextStepOnQueue,
+    mlScrapingWaitUntilIdle: WaitUntilIdle,
     blingOrderIngestionCheck: HasPendingJobs,
     cnpjCheck: HasPendingJobs,
     mlOrderSyncCheck: HasPendingJobs,
@@ -73,6 +77,7 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
     this.cnpjNext = cnpjNext;
     this.nfeNext = nfeNext;
     this.mlOrderSyncNext = mlOrderSyncNext;
+    this.mlScrapingWaitUntilIdle = mlScrapingWaitUntilIdle;
     this.blingOrderIngestionCheck = blingOrderIngestionCheck;
     this.cnpjCheck = cnpjCheck;
     this.mlOrderSyncCheck = mlOrderSyncCheck;
@@ -264,13 +269,29 @@ export class ReconcilerQueue extends BaseQueueService<NFeReconcilerJobData> {
   }
 
   private async reconcileStuckOrders(): Promise<void> {
-    // Espera event-driven (sem polling — bloqueia no "drained" do BullMQ)
-    // por ML_ORDER_SYNC ficar livre. Motivo: "situação ainda 748743" pode
-    // significar tanto "pedido abandonado de verdade" quanto "ainda não
-    // chegou a vez do ML_ORDER_SYNC processar" — o scraping da tela de
-    // detalhe do ML agora roda dentro do próprio job do ML_ORDER_SYNC (não
-    // é mais uma fila separada), então esperar só esta fila já cobre o
-    // caso de um scraping em andamento.
+    // Espera event-driven (sem polling — bloqueia no "drained" do BullMQ),
+    // primeiro por ML-SCRAPING ficar livre, depois por ML_ORDER_SYNC ficar
+    // livre — nessa ordem, porque o scraping (container worker-scraping,
+    // único com Playwright) alimenta o ML_ORDER_SYNC de volta via
+    // resumeAfterScrape, não o contrário. Motivo: "situação ainda 748743"
+    // pode significar tanto "pedido abandonado de verdade" quanto "ainda
+    // não chegou a vez do ML_ORDER_SYNC processar" — pode haver um ciclo de
+    // scraping em andamento (inclusive um que o próprio
+    // reconcileMissingCollectionDate acabou de disparar, rodando em
+    // paralelo no mesmo Promise.allSettled) enquanto o ML_ORDER_SYNC está
+    // momentaneamente vazio, só porque o resultado ainda não voltou. Sem
+    // esperar o scraping primeiro, este sweep marcaria como "verificação
+    // humana" pedidos que um ciclo já em voo estava prestes a resolver.
+    const scrapingIsClear = await this.mlScrapingWaitUntilIdle.waitUntilIdle(
+      ML_SCRAPING_IDLE_WAIT_MS,
+    );
+    if (!scrapingIsClear) {
+      console.log(
+        `[NFeReconciler] ML-SCRAPING ainda ocupado após ${ML_SCRAPING_IDLE_WAIT_MS / 60000}min de espera — pulando sweep de pedidos presos nesta execução (pode haver um ciclo capaz de resolvê-los).`,
+      );
+      return;
+    }
+
     const mlSyncIsClear = await this.mlOrderSyncNext.waitUntilIdle(
       ML_ORDER_SYNC_IDLE_WAIT_MS,
     );

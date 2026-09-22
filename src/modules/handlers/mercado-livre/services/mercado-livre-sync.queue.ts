@@ -1,10 +1,10 @@
 import { Job } from "bullmq";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
-import { MLScrapingService } from "./mercado-livre-scraping.service";
 import ordersService from "../../../sales/orders/order/orders.service";
 import {
   nextRemoveOnQueue,
   nextStepDelayedOnQueue,
+  nextStepOnQueue,
   getJob,
 } from "../../../../shared/types/queue/base-queue";
 import { AxiosInstance } from "axios";
@@ -20,27 +20,48 @@ import {
   blingPatch,
 } from "../../bling/services/bling/helpers/get-with-sleep";
 import { mapOrderInternalStatus } from "../../../../shared/utils/normalizers/bling/status-mapper";
+import { MLOrderDetailResult } from "./mercado-livre.types";
 
 /**
- * Job pode vir de duas origens:
+ * Job pode vir de três origens:
  * 1. MLOrderQueue (webhook) — traz { orderSystem, customer } com dados do Bling/webhook
  * 2. OrdersController.releaseWaitingAcceptanceForToday — traz { resumeOrderId }
  *    pra retomar o agendamento de um pedido que ficou preso em
  *    waiting_acceptance e acabou de ser liberado (ver resumeAfterAcceptance)
+ * 3. MLScrapingQueue — traz { scrapedOrderId, scrapeResult } com o resultado
+ *    da extração da tela de detalhe do ML pra um pedido específico (ver
+ *    triggerScraping/resumeAfterScrape)
  */
 export type MLOrderSyncJobData =
-  | { orderSystem: any; customer: any; resumeOrderId?: never }
-  | { resumeOrderId: string; orderSystem?: never; customer?: never };
+  | {
+      orderSystem: any;
+      customer: any;
+      resumeOrderId?: never;
+      scrapedOrderId?: never;
+    }
+  | {
+      resumeOrderId: string;
+      orderSystem?: never;
+      customer?: never;
+      scrapedOrderId?: never;
+    }
+  | {
+      scrapedOrderId: string;
+      scrapeResult: MLOrderDetailResult | null;
+      orderSystem?: never;
+      customer?: never;
+      resumeOrderId?: never;
+    };
 
 export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
   private blingApi: AxiosInstance;
   private next: nextStepDelayedOnQueue & nextRemoveOnQueue & getJob;
-  private scrapingService: MLScrapingService;
+  private scrapingNext: nextStepOnQueue;
 
   constructor(
     next: nextStepDelayedOnQueue & nextRemoveOnQueue & getJob,
     blingApi: AxiosInstance,
-    scrapingService: MLScrapingService,
+    scrapingNext: nextStepOnQueue,
     options: { workless?: boolean } = {},
   ) {
     super("ML-ORDER-SYNC", {
@@ -50,23 +71,30 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       // atrás de pedidos antigos sem relação nenhuma.
       concurrency: 10,
       // Precisa cobrir o pior caso do retry de 429 da Bling (5 tentativas,
-      // até 60s cada = até 300s) e o próprio scraping da tela de detalhe
-      // (Playwright: login + navegação) — com um teto curto aqui, o
-      // watchdog abortava o job no meio de uma chamada ainda válida
-      // (Promise.race não cancela a chamada em voo), deixando-a órfã
-      // segurando o lock do pedido enquanto uma nova tentativa esbarrava em
-      // "Timeout aguardando lock".
+      // até 60s cada = até 300s) — com um teto curto aqui, o watchdog
+      // abortava o job no meio de um retry ainda válido (Promise.race não
+      // cancela a chamada em voo), deixando-a órfã segurando o lock do
+      // pedido enquanto uma nova tentativa esbarrava em "Timeout aguardando
+      // lock". O scraping em si NÃO roda neste job — este container
+      // (worker-automation) não tem Playwright/Chromium instalado (ver
+      // Dockerfile); só enfileira na ML-SCRAPING (worker-scraping) e espera
+      // o resultado voltar como um novo job.
       maxProcessingMs: 5 * 60 * 1000,
       workless: options.workless,
     });
     this.blingApi = blingApi;
     this.next = next;
-    this.scrapingService = scrapingService;
+    this.scrapingNext = scrapingNext;
   }
 
   async process(job: Job<MLOrderSyncJobData>): Promise<void> {
     if (job.data.resumeOrderId) {
       await this.resumeAfterAcceptance(job.data.resumeOrderId);
+      return;
+    }
+
+    if (job.data.scrapedOrderId) {
+      await this.resumeAfterScrape(job.data.scrapedOrderId, job.data.scrapeResult);
       return;
     }
 
@@ -159,28 +187,26 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-    // Sem collection_date — extrai direto da tela de detalhe do pedido no
-    // Mercado Livre (por number_order_channel), no mesmo job, sem passar
-    // por outra fila.
+    // Sem collection_date — dispara um job na ML-SCRAPING (container
+    // worker-scraping, único com Playwright) pra extrair da tela de
+    // detalhe do ML pelo number_order_channel. O resultado volta como um
+    // job novo (ver resumeAfterScrape) — não fica esperando aqui, então
+    // solta o lock do pedido enquanto o scraping roda.
     console.log(
-      `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} sem collection_date. Marcando como WAITING CHANNEL VALIDATION e extraindo da tela de detalhe do ML.`,
+      `[MLOrderSyncQueue] Pedido ${orderSystem.number_order_channel} sem collection_date. Marcando como WAITING CHANNEL VALIDATION e disparando scraping da tela de detalhe.`,
     );
     await ordersService.update(orderSystem.id, {
       internal_status: OrderInternalStatus.WAITING_CHANNEL_VALIDATION,
     });
-    await this.scrapeAndApplyCollectionDate(orderSystem);
+    await this.triggerScraping(orderSystem);
   }
 
   /**
-   * Abre a tela de detalhe do pedido no Mercado Livre (via
-   * number_order_channel) e, se conseguir extrair a collection_date,
-   * aplica no pedido e segue para o agendamento da NFe. Se a tela não tiver
-   * nenhuma das três condições esperadas (NF-e já emitida / coleta de
-   * amanhã / coleta do dia X), o pedido fica em WAITING CHANNEL VALIDATION
-   * para uma nova tentativa
-   * (ver ReconcilerQueue.reconcileMissingCollectionDate).
+   * Enfileira a extração da tela de detalhe do pedido no Mercado Livre na
+   * ML-SCRAPING (jobId fixo por pedido — o BullMQ deduplica se já houver
+   * um scraping pendente/ativo pra esse mesmo pedido).
    */
-  async scrapeAndApplyCollectionDate(orderSystem: any): Promise<void> {
+  private async triggerScraping(orderSystem: any): Promise<void> {
     if (!orderSystem.number_order_channel) {
       console.warn(
         `[MLOrderSyncQueue] Pedido ${orderSystem.id} sem number_order_channel — não é possível localizar a tela do Mercado Livre.`,
@@ -188,37 +214,67 @@ export class MLOrderSyncQueue extends BaseQueueService<MLOrderSyncJobData> {
       return;
     }
 
-    let result: Awaited<
-      ReturnType<MLScrapingService["scrapeOrderDetail"]>
-    >;
     try {
-      result = await this.scrapingService.scrapeOrderDetail(
-        orderSystem.number_order_channel,
+      await this.scrapingNext.add(
+        {
+          orderId: orderSystem.id,
+          numberOrderChannel: orderSystem.number_order_channel,
+        },
+        `ml-scrape-${orderSystem.id}`,
       );
     } catch (error: any) {
       console.error(
-        `[MLOrderSyncQueue] Falha ao extrair a tela de detalhe do pedido ML ${orderSystem.number_order_channel}:`,
+        `[MLOrderSyncQueue] Falha ao disparar scraping do pedido ML ${orderSystem.number_order_channel}:`,
         error.message,
+      );
+    }
+  }
+
+  /**
+   * Recebe de volta o resultado do scraping (MLScrapingQueue) pra um
+   * pedido específico. Se não achou nenhuma das três condições esperadas
+   * (NF-e já emitida / coleta de amanhã / coleta do dia X) ainda, o pedido
+   * fica em WAITING CHANNEL VALIDATION pra uma nova tentativa (ver
+   * ReconcilerQueue.reconcileMissingCollectionDate). Pega o lock do pedido
+   * de novo aqui — o job original que disparou o scraping já soltou o dele.
+   */
+  async resumeAfterScrape(
+    orderId: string,
+    result: MLOrderDetailResult | null,
+  ): Promise<void> {
+    const order = await ordersService.findById(orderId);
+    if (!order) {
+      console.warn(
+        `[MLOrderSyncQueue] resumeAfterScrape: pedido ${orderId} não encontrado.`,
+      );
+      return;
+    }
+
+    const idOrderSystem = order.id_order_system;
+    if (!idOrderSystem) {
+      console.warn(
+        `[MLOrderSyncQueue] resumeAfterScrape: pedido ${orderId} sem id_order_system.`,
       );
       return;
     }
 
     if (!result) {
       console.log(
-        `[MLOrderSyncQueue] Pedido ML ${orderSystem.number_order_channel} — nenhuma condição de collection_date encontrada na tela ainda. Aguardando próxima tentativa.`,
+        `[MLOrderSyncQueue] resumeAfterScrape: pedido ${order.number_order_channel} — nenhuma condição de collection_date encontrada na tela ainda. Aguardando próxima tentativa.`,
       );
       return;
     }
 
-    await this.applyCollectionDate(orderSystem, result.collection_date);
+    return this.withOrderLock(idOrderSystem, () =>
+      this.applyCollectionDate(order, result.collection_date),
+    );
   }
 
   /**
    * Aplica a collection_date extraída da tela de detalhe do ML no pedido,
    * muda o status para WAITING FOR NFE EMISSION e agenda o job de NFe.
    * Assume que já está dentro do withOrderLock do pedido (chamado só por
-   * scrapeAndApplyCollectionDate, que por sua vez só roda dentro de
-   * syncFromWebhookLocked) — não pega o lock de novo.
+   * resumeAfterScrape/syncFromWebhookLocked) — não pega o lock de novo.
    */
   private async applyCollectionDate(
     order: any,

@@ -231,6 +231,7 @@ services:
       NODE_ENV: production
       PORT: 3002
       ML_HEADLESS: "false"
+      ML_ORDER_DETAIL_URL: ${ML_ORDER_DETAIL_URL}
       DB_HOST: postgres
       DB_PORT: ${DB_PORT}
       DB_NAME: ${DB_NAME}
@@ -343,7 +344,6 @@ services:
       BLING_ORDER_REQUEST_DELAY_MS: ${BLING_ORDER_REQUEST_DELAY_MS}
       BLING_RATE_LIMIT_INTERVAL_MS: ${BLING_RATE_LIMIT_INTERVAL_MS}
       CTE_XML_DIRECTORY: ${CTE_XML_DIRECTORY}
-      ML_ORDER_DETAIL_URL: ${ML_ORDER_DETAIL_URL}
 
     depends_on:
       postgres:

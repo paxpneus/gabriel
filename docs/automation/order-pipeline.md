@@ -20,18 +20,31 @@ BLING_ORDER_INGESTION → CNPJ_VERIFY_CNAE → ML_ORDER_SYNC → NFE_EMISSION
 próprios, como rede de segurança — recriam jobs perdidos e corrigem
 pedidos que ficaram presos, sem fazer parte do fluxo principal.
 
-Não existe mais uma fila `ML-SCRAPING` separada. A extração da
-`collection_date` a partir da tela de detalhe do pedido no Mercado Livre
-(`MLScrapingService.scrapeOrderDetail`, Playwright) roda **dentro do
-próprio job da `ML_ORDER_SYNC`**, de forma síncrona, assim que ela detecta
-que um pedido não tem `collection_date` ainda — não é mais um download em
-lote da planilha de vendas seguido de matching por data+comprador; é uma
-navegação direta pra
-`ML_ORDER_DETAIL_URL` (env, com `{orderNumber}` substituído pelo
-`number_order_channel` do pedido, já disponível desde o webhook via
-`orderData.numeroLoja`). Cada pedido resolve seu próprio
-`collection_date` independentemente, sem depender de nenhum lote ou cache
-intermediário.
+`ML-SCRAPING` (extrai a `collection_date` da tela de detalhe do pedido no
+Mercado Livre, `MLScrapingService.scrapeOrderDetail`, Playwright) continua
+existindo como fila separada — **não** roda dentro do container
+`worker-automation` (onde `ML_ORDER_SYNC` processa): esse container usa a
+imagem `app` do Dockerfile, que é explicitamente "sem Playwright"; só o
+container `worker-scraping` (stage `worker-scraping`, base
+`mcr.microsoft.com/playwright`, com Chromium instalado + `cap_add:
+SYS_ADMIN` + volume `ml_session`) tem o browser disponível. `ML_ORDER_SYNC`
+só enfileira `{orderId, numberOrderChannel}` na `ML-SCRAPING` (jobId fixo
+por pedido, `ml-scrape-${orderId}`) e segue — não fica esperando a resposta
+no mesmo job. O resultado volta como um job novo `{scrapedOrderId,
+scrapeResult}` na própria `ML_ORDER_SYNC` (`MLOrderSyncQueue.
+resumeAfterScrape`), que então aplica a `collection_date` e segue pro
+agendamento da NFe.
+
+A diferença pro design anterior (antes desta sessão) não é a fila em si,
+que sempre existiu — é o que ela faz: não baixa mais a planilha de vendas
+em lote nem faz matching por data+comprador contra uma lista de pedidos
+pendentes. Ela navega direto pra `ML_ORDER_DETAIL_URL` (env, com
+`{orderNumber}` substituído pelo `number_order_channel` do pedido — já
+disponível desde o webhook via `orderData.numeroLoja`) e extrai a data só
+daquele pedido específico. Cada pedido resolve seu próprio
+`collection_date` independentemente, sem lote nem cache intermediário
+(`orders_seven_days_ago`, `matchesOrderByDateAndBuyer`, `findSiblingOrders`
+não existem mais).
 
 Cada pedido avança por essas etapas sequencialmente, mas **pedidos
 diferentes correm 100% em paralelo entre si**, em todas as filas ao mesmo
@@ -134,28 +147,47 @@ motivo nenhum.
   WAITING_CHANNEL_VALIDATION`, enfileira pro `ML_ORDER_SYNC`. Falha
   (documento inválido ou CNAE bloqueado): PATCH `748772` +
   `internal_status: CANCELLED`.
-- **`ML_ORDER_SYNC`** (`mercado-livre-sync.queue.ts`) — a única fila que
-  escreve `collection_date` (além de `BLING_ORDER_INGESTION`, que agora
-  também pode gravá-la direto a partir de `dataPrevista` — ver abaixo). Job
-  sempre `{orderSystem, customer}` (webhook) ou `{resumeOrderId}`. Confirma
-  sempre, ao vivo, que o pedido ainda está em
+- **`ML_ORDER_SYNC`** (`mercado-livre-sync.queue.ts`, roda no container
+  `worker-automation`) — a única fila que escreve `collection_date` (além
+  de `BLING_ORDER_INGESTION`, que agora também pode gravá-la direto a
+  partir de `dataPrevista` — ver abaixo). Job vem de `{orderSystem,
+  customer}` (webhook), `{resumeOrderId}`, ou `{scrapedOrderId,
+  scrapeResult}` (resultado de volta da `ML-SCRAPING`, ver abaixo).
+  Confirma sempre, ao vivo, que o pedido ainda está em
   `WAITING_CHANNEL_VALIDATION`/`748743` antes de agir (`isEligibleForSync`).
   Se o pedido já chega com `collection_date` preenchida (porque
   `BLING_ORDER_INGESTION` já gravou a partir de `dataPrevista` da Bling),
   agenda a NFe direto; se não tiver, marca `WAITING_CHANNEL_VALIDATION` e
-  chama `MLScrapingService.scrapeOrderDetail(number_order_channel)`
-  (Playwright, tela de detalhe do pedido no Mercado Livre) **no mesmo
-  job**, sem passar por outra fila — extrai a `collection_date` de três
-  condições possíveis na tela ("Informe a NF-e já emitida" → hoje; "Para
-  entregar na coleta de amanhã" → amanhã; "Para entregar na coleta do dia
-  X de Y" → aquela data). Se a tela não tiver nenhuma delas ainda, o
-  pedido fica em `WAITING_CHANNEL_VALIDATION`
-  para uma nova tentativa (ver `reconcileMissingCollectionDate` abaixo). Ao
-  achar `collection_date` (por qualquer via): PATCH situação `748748` +
+  enfileira `{orderId, numberOrderChannel}` na `ML-SCRAPING` (`triggerScraping`,
+  jobId fixo `ml-scrape-${orderId}`) — **não** roda o Playwright neste
+  container, que não tem Chromium instalado. Quando o resultado volta como
+  job `{scrapedOrderId, scrapeResult}`, `resumeAfterScrape` aplica a
+  `collection_date` (se achou) ou deixa o pedido em
+  `WAITING_CHANNEL_VALIDATION` pra uma nova tentativa (se `scrapeResult` for
+  `null` — ver `reconcileMissingCollectionDate` abaixo). Ao achar
+  `collection_date` (por qualquer via): PATCH situação `748748` +
   `internal_status: WAITING_FOR_NFE_EMISSION`, agenda job delayed no
   `NFE_EMISSION`. Também expõe `resumeAfterAcceptance`, usada pra retomar o
   agendamento de um pedido que ficou travado esperando aceite manual (ver
   "Coordenação entre filas" abaixo).
+- **`ML-SCRAPING`** (`mercado-livre.scraping.queue.ts`) — não é uma das 6
+  filas do pipeline principal (não lê/escreve `internal_status`) — roda só
+  no container `worker-scraping` (stage `worker-scraping` do Dockerfile,
+  base `mcr.microsoft.com/playwright`, único com Chromium instalado;
+  `worker-automation` usa a imagem `app`, "sem Playwright"). Job
+  `{orderId, numberOrderChannel}`: chama
+  `MLScrapingService.scrapeOrderDetail(numberOrderChannel)` (navega pra
+  `ML_ORDER_DETAIL_URL` com `{orderNumber}` substituído, extrai a
+  `collection_date` de três condições possíveis no texto da página —
+  "Informe a NF-e já emitida" → hoje; "Para entregar na coleta de amanhã" →
+  amanhã; "Para entregar na coleta do dia X de Y" → aquela data) e devolve
+  o resultado (`MLOrderDetailResult` ou `null`, mesmo em caso de erro —
+  nunca deixa a exceção subir) como job `{scrapedOrderId, scrapeResult}` de
+  volta na `ML_ORDER_SYNC`, jobId fixo `ml-order-sync-scraped-${orderId}`.
+  `concurrency: 1` — `MLScrapingService` só sustenta uma navegação
+  Playwright por vez (guarda `isRunning`); a fila serializa no nível do
+  BullMQ em vez de deixar jobs concorrentes caírem nesse guard e voltarem
+  `null` à toa.
 - **`NFE_EMISSION`** (`nfe.queue.ts`) — confirma ao vivo que a situação
   ainda é `748748` (`NFE_AGENDADA`) antes de emitir. Sucesso: `nfe_emitted:
   true`, `internal_status: EMITTED`. Falha (situação divergente, campos
@@ -168,10 +200,8 @@ motivo nenhum.
     `CNPJ_VERIFY_CNAE`, pra pedido preso em `OPEN`.
   - `reconcileStuckOrders`: pedido em `WAITING_CHANNEL_VALIDATION` há mais
     de 30min — se a situação ao vivo ainda confirmar isso, marca `748772`
-    (verificação humana). Espera `ML_ORDER_SYNC` ficar livre antes de rodar
-    (ver "Coordenação entre filas" abaixo) — não existe mais uma fila de
-    scraping separada pra esperar também, já que o scraping roda dentro do
-    próprio job da `ML_ORDER_SYNC`.
+    (verificação humana). Espera `ML-SCRAPING` e depois `ML_ORDER_SYNC`
+    ficarem livres antes de rodar (ver "Coordenação entre filas" abaixo).
   - `reconcileMissingCollectionDate` (rede de segurança pro scraping sob
     demanda): busca ao vivo na Bling todos os pedidos em situação `748743`
     (`GET /pedidos/vendas?idsSituacoes[]=748743`, paginado), separa os que
@@ -179,10 +209,12 @@ motivo nenhum.
     achar os que ainda estão com `collection_date` nulo, e reenfileira um
     job `{orderSystem, customer: null}` por pedido direto na própria
     `ML_ORDER_SYNC` (`jobId` fixo por pedido,
-    `ml-order-sync-collection-${order.id}`, deduplicado pelo BullMQ). Cobre
-    o caso do disparo original (feito por `ML_ORDER_SYNC` na chegada do
-    pedido) ter falhado silenciosamente, nunca ter ocorrido, ou a tela do
-    ML ainda não ter nenhuma das três condições esperadas na 1ª tentativa.
+    `ml-order-sync-collection-${order.id}`, deduplicado pelo BullMQ) —
+    `ML_ORDER_SYNC` então dispara o scraping normalmente
+    (`triggerScraping`), como se fosse a chegada do webhook. Cobre o caso
+    do disparo original (feito por `ML_ORDER_SYNC` na chegada do pedido)
+    ter falhado silenciosamente, nunca ter ocorrido, ou a tela do ML ainda
+    não ter nenhuma das três condições esperadas na 1ª tentativa.
 - **`BLING_RECONCILER`** (`bling-reconciler.queue.ts`) — 2 rotinas:
   - `reconcileOpenOrders` (a cada 2h): cria localmente pedidos que já
     existem na Bling em situação `6` mas ainda não foram sincronizados.
@@ -277,20 +309,29 @@ mesmo assim levar a uma decisão que só faz sentido enquanto a outra fila
 ainda não terminou o trabalho dela naquele pedido. Cada caso abaixo
 descreve como isso é evitado hoje.
 
-### `reconcileStuckOrders` e `ML_ORDER_SYNC`
+### `reconcileStuckOrders` e `ML_ORDER_SYNC`/`ML-SCRAPING`
 
 `reconcileStuckOrders` considera um pedido preso quando a situação ainda é
 `748743` (`WAITING_CHANNEL_VALIDATION`) há mais de 30min. Essa leitura
 sozinha não diferencia um pedido genuinamente abandonado de um que só está
-esperando a vez de ser processado pelo `ML_ORDER_SYNC` — a única fila que
-move um pedido pra fora desse status (via scraping da tela de detalhe,
-rodando dentro do próprio job). Por isso, antes de rodar o sweep,
-`reconcileStuckOrders` espera `ML_ORDER_SYNC` (teto de 5min) ficar sem
-nenhum job pendente (`BaseQueueService.waitUntilIdle`, event-driven via o
-evento `"drained"` do BullMQ — não faz polling por intervalo). Se estourar
-o teto, pula o sweep desta execução e tenta de novo no próximo ciclo
-agendado. Esse gate é restrito a essa rotina especificamente — as demais
-rotinas do pipeline não competem pelo mesmo status.
+esperando a vez de ser processado pelo `ML_ORDER_SYNC`/`ML-SCRAPING` — a
+única dupla de filas que move um pedido pra fora desse status via
+scraping. Como o scraping roda num container separado (`worker-scraping`,
+único com Playwright) e a resposta volta como um job novo na
+`ML_ORDER_SYNC`, pode haver um ciclo de scraping *em andamento* (inclusive
+um que o próprio `reconcileMissingCollectionDate` acabou de disparar,
+rodando em paralelo no mesmo `Promise.allSettled`) enquanto o
+`ML_ORDER_SYNC` está momentaneamente vazio — o job saiu de lá pra
+`ML-SCRAPING` e o resultado ainda não voltou. Por isso, antes de rodar o
+sweep, `reconcileStuckOrders` espera **primeiro** `ML-SCRAPING` (teto de
+10min) e **depois** `ML_ORDER_SYNC` (teto de 5min) ficarem sem nenhum job
+pendente (`BaseQueueService.waitUntilIdle`, event-driven via o evento
+`"drained"` do BullMQ — não faz polling por intervalo), nessa ordem porque
+o resultado do scraping alimenta o `ML_ORDER_SYNC`, não o contrário. Se
+qualquer um dos dois estourar seu teto, pula o sweep desta execução e
+tenta de novo no próximo ciclo agendado. Esse gate é restrito a essa
+rotina especificamente — as demais rotinas do pipeline não competem pelo
+mesmo status.
 
 ### Retomada de `waiting_acceptance` (`ML_ORDER_SYNC` ↔ `NFE_EMISSION`)
 
@@ -329,18 +370,19 @@ rotinas do arquivo — evita que ela tente recriar um job de emissão
 (`addDelayed`) na mesma janela em que `scheduleNfe` está no meio de gravar
 `WAITING_FOR_NFE_EMISSION` e agendar esse mesmo job.
 
-### `reconcileMissingCollectionDate` e `ML_ORDER_SYNC` (rede de segurança do scraping)
+### `reconcileMissingCollectionDate` e `ML_ORDER_SYNC`/`ML-SCRAPING` (rede de segurança do scraping)
 
-`reconcileMissingCollectionDate` (rede de segurança, a cada 15min) não
-dispara mais um ciclo de scraping em lote — ela reenfileira, por pedido
-ainda pendente, um job `{orderSystem, customer: null}` direto na própria
-`ML_ORDER_SYNC`, com `jobId` fixo por pedido
-(`ml-order-sync-collection-${order.id}`). O dedupe nativo do BullMQ por
-`jobId` evita reenfileirar um job pro mesmo pedido enquanto o anterior
-ainda está pendente/ativo, mas não há mais coordenação entre "dois
-disparadores de um mesmo ciclo global" — cada pedido resolve seu próprio
-scraping de forma independente, protegido pelo `withOrderLock` de dentro
-do processamento da `ML_ORDER_SYNC` (não por esta rotina).
+`reconcileMissingCollectionDate` (rede de segurança, a cada 15min)
+reenfileira, por pedido ainda pendente, um job `{orderSystem, customer:
+null}` direto na `ML_ORDER_SYNC`, com `jobId` fixo por pedido
+(`ml-order-sync-collection-${order.id}`) — que por sua vez dispara o
+scraping desse pedido na `ML-SCRAPING` normalmente
+(`triggerScraping`/`ml-scrape-${orderId}`, também deduplicado por
+`jobId`). O dedupe nativo do BullMQ em cada uma das duas filas evita
+reenfileirar um job pro mesmo pedido enquanto o anterior ainda está
+pendente/ativo — cada pedido resolve seu próprio scraping de forma
+independente, protegido pelo `withOrderLock` de dentro do processamento da
+`ML_ORDER_SYNC` (não por esta rotina).
 
 ### `reconcileOpenOrders` (NFE_RECONCILER)
 

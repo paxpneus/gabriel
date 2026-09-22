@@ -16,6 +16,7 @@ import { NFeQueue } from "./../modules/handlers/bling/services/bling-nfe/nfe.que
 import { NFeValidationService } from "./../modules/handlers/bling/services/bling-nfe/nfe-validation.service";
 
 import { MLScrapingService } from "../modules/handlers/mercado-livre/services/mercado-livre-scraping.service";
+import { MLScrapingQueue } from "../modules/handlers/mercado-livre/services/mercado-livre.scraping.queue";
 import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mercado-livre-sync.queue";
 
 import { ReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
@@ -47,6 +48,7 @@ export const serverAdapter = new ExpressAdapter();
 export type QueueName =
   | "NFE_EMISSION"
   | "ML_ORDER_SYNC"
+  | "ML_SCRAPING"
   | "CNPJ_VERIFY_CNAE"
   | "BLING_ORDER_INGESTION"
   | "NFE_RECONCILER"
@@ -83,15 +85,30 @@ function buildQueues(activeWorkers: QueueName[]) {
     getJob: (jobId: string) => nfeQueue.getJob(jobId),
   };
 
-  // MLOrderSyncQueue agora extrai a collection_date direto da tela de
-  // detalhe do pedido no Mercado Livre (Playwright) dentro do próprio job,
-  // via MLScrapingService — não depende mais de uma fila separada de
-  // scraping em lote.
+  // Cliente (workless) da fila ML-SCRAPING — o Worker real só existe no
+  // container startScrapingWorker() (único com Playwright/Chromium
+  // instalado, ver Dockerfile); esta instância aqui só serve pra
+  // MLOrderSyncQueue disparar jobs pela mesma fila compartilhada no Redis.
+  // Predeclarado como `let` por causa da referência circular:
+  // MLScrapingQueue precisa de um `next` apontando pra mlOrderSyncQueue.add
+  // (devolve o resultado do scraping), e MLOrderSyncQueue precisa de um
+  // `scrapingNext` apontando pra mlScrapingQueue.add — as closures abaixo só
+  // capturam a variável (resolvida no momento da chamada, não da
+  // definição), então é seguro contanto que nada invoque `.add()` durante a
+  // própria construção, o que não acontece aqui.
+  let mlScrapingQueue!: MLScrapingQueue;
+
   const mlOrderSyncQueue = new MLOrderSyncQueue(
     nfeNext,
     blingApi,
-    new MLScrapingService(),
+    { add: (data: any, jobId: string) => mlScrapingQueue.add(data, jobId) },
     { workless: w("ML_ORDER_SYNC") },
+  );
+
+  mlScrapingQueue = new MLScrapingQueue(
+    new MLScrapingService(),
+    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
+    { workless: true },
   );
 
   const cnpjQueue = new CNPJQueue(
@@ -120,6 +137,7 @@ function buildQueues(activeWorkers: QueueName[]) {
       waitUntilIdle: (maxWaitMs: number) => mlOrderSyncQueue.waitUntilIdle(maxWaitMs),
       add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId),
     },
+    { waitUntilIdle: (maxWaitMs: number) => mlScrapingQueue.waitUntilIdle(maxWaitMs) },
     { hasPendingJobs: () => blingOrderQueue.hasPendingJobs() },
     { hasPendingJobs: () => cnpjQueue.hasPendingJobs() },
     { hasPendingJobs: () => mlOrderSyncQueue.hasPendingJobs() },
@@ -182,6 +200,7 @@ function buildQueues(activeWorkers: QueueName[]) {
   return {
     nfeQueue,
     mlOrderSyncQueue,
+    mlScrapingQueue,
     cnpjQueue,
     blingOrderQueue,
     reconcilerQueue,
@@ -207,6 +226,7 @@ export function registerQueues(app: Express) {
   const {
     nfeQueue,
     mlOrderSyncQueue,
+    mlScrapingQueue,
     cnpjQueue,
     reconcilerQueue,
     blingReconcilerQueue,
@@ -254,6 +274,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(nfeQueue.queue),
       new BullMQAdapter(reconcilerQueue.queue),
       new BullMQAdapter(mlOrderSyncQueue.queue),
+      new BullMQAdapter(mlScrapingQueue.queue),
       new BullMQAdapter(cnpjQueue.queue),
       new BullMQAdapter(blingOrderQueue.queue),
       new BullMQAdapter(blingReconcilerQueue.queue),
@@ -336,6 +357,7 @@ export function startAutomationWorkers() {
   const {
     nfeQueue,
     mlOrderSyncQueue,
+    mlScrapingQueue,
     cnpjQueue,
     reconcilerQueue,
     blingReconcilerQueue,
@@ -363,6 +385,7 @@ export function startAutomationWorkers() {
 
   void nfeQueue;
   void mlOrderSyncQueue;
+  void mlScrapingQueue;
   void cnpjQueue;
   void reconcilerQueue;
   void blingReconcilerQueue;
@@ -437,15 +460,23 @@ export function startTecincoWorkers() {
 
 // ─── container: worker-scraping ───────────────────────────────────────────────
 export function startScrapingWorker() {
-  const { blingStockMovementsScrapingQueue } = buildQueues([
+  const { mlOrderSyncQueue, blingStockMovementsScrapingQueue } = buildQueues([
     "BLING_STOCK_MOVEMENTS_SCRAPING",
     "BLING_NFE_SCRAPING",
   ]);
 
-  // O scraping do Mercado Livre não roda mais como Worker separado — a
-  // extração da tela de detalhe do pedido (MLScrapingService) acontece
-  // dentro do próprio job da ML_ORDER_SYNC, no container
-  // startAutomationWorkers.
+  // Sem cron fixo — este Worker (junto com o de manifestação de NFe abaixo,
+  // o único container com Playwright/Chromium instalado — ver Dockerfile)
+  // só roda quando um job chega pelo Redis, disparado por
+  // MLOrderSyncQueue.triggerScraping (pedido sem collection_date) ou por
+  // ReconcilerQueue.reconcileMissingCollectionDate (rede de segurança),
+  // ambos rodando no container startAutomationWorkers.
+  const mlScrapingQueue = new MLScrapingQueue(
+    new MLScrapingService(),
+    { add: (data: any, jobId: string) => mlOrderSyncQueue.add(data, jobId) },
+    { workless: false },
+  );
+
   const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
     new BlingManifestacaoService(),
     { workless: false },
@@ -458,6 +489,7 @@ export function startScrapingWorker() {
     jobId: "bling-stock-movements-daily",
   });
 
+  void mlScrapingQueue;
   void blingNfeScrapingQueue;
   void blingStockMovementsScrapingQueue;
 
@@ -465,4 +497,5 @@ export function startScrapingWorker() {
     "------------------- QUEUE: Scraping Worker Ativo! -------------------",
   );
   console.log("  → BLING_STOCK_MOVEMENTS_SCRAPING (05:00 BRT)");
+  console.log("  → ML-SCRAPING (sob demanda, sem cron)");
 }

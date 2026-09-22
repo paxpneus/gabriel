@@ -87,6 +87,9 @@ function makeQueue(
     waitUntilIdle: jest.fn().mockResolvedValue(true),
     add: jest.fn().mockResolvedValue(undefined),
   },
+  mlScrapingWaitUntilIdle: { waitUntilIdle: jest.Mock } = {
+    waitUntilIdle: jest.fn().mockResolvedValue(true),
+  },
   // Default "livre" (sem job pendente) pra não afetar nenhum teste que não
   // é sobre o gate em si — só os testes da suite "process — gate" abaixo
   // passam um mock que resolve true.
@@ -105,6 +108,7 @@ function makeQueue(
     nfeNext,
     blingApi,
     mlOrderSyncNext,
+    mlScrapingWaitUntilIdle,
     blingOrderIngestionCheck,
     cnpjCheck,
     mlOrderSyncCheck,
@@ -244,7 +248,31 @@ describe("ReconcilerQueue", () => {
       return { id: "o1", id_order_system: "1001", ...overrides };
     }
 
-    it("ML_ORDER_SYNC ainda ocupado: pula o sweep sem consultar/tocar nenhum pedido", async () => {
+    it("ML-SCRAPING ainda ocupado: pula o sweep sem sequer checar ML_ORDER_SYNC", async () => {
+      const mlScrapingWaitUntilIdle = {
+        waitUntilIdle: jest.fn().mockResolvedValue(false),
+      };
+      const mlOrderSyncNext = { waitUntilIdle: jest.fn(), add: jest.fn() };
+      const busyQueue = makeQueue(
+        fakeBlingApi,
+        cnpjNext,
+        nfeNext,
+        mlOrderSyncNext,
+        mlScrapingWaitUntilIdle,
+      );
+      (ordersService.findAll as jest.Mock).mockResolvedValue([makeStuckOrder()]);
+
+      await (busyQueue as any).reconcileStuckOrders();
+
+      expect(mlScrapingWaitUntilIdle.waitUntilIdle).toHaveBeenCalledWith(
+        10 * 60 * 1000,
+      );
+      expect(mlOrderSyncNext.waitUntilIdle).not.toHaveBeenCalled();
+      expect(ordersService.findAll).not.toHaveBeenCalled();
+      expect(fakeBlingApi.get).not.toHaveBeenCalled();
+    });
+
+    it("ML-SCRAPING livre mas ML_ORDER_SYNC ainda ocupado: pula o sweep sem consultar/tocar nenhum pedido", async () => {
       const mlOrderSyncNext = {
         waitUntilIdle: jest.fn().mockResolvedValue(false),
         add: jest.fn(),
@@ -259,7 +287,7 @@ describe("ReconcilerQueue", () => {
       expect(fakeBlingApi.get).not.toHaveBeenCalled();
     });
 
-    it("ML_ORDER_SYNC livre: espera ela e segue com o sweep normalmente", async () => {
+    it("ML-SCRAPING e ML_ORDER_SYNC livres: espera os dois e segue com o sweep normalmente", async () => {
       const mlOrderSyncNext = {
         waitUntilIdle: jest.fn().mockResolvedValue(true),
         add: jest.fn(),
@@ -490,6 +518,7 @@ describe("ReconcilerQueue", () => {
           fakeBlingApi,
           cnpjNext,
           nfeNext,
+          undefined,
           undefined,
           { hasPendingJobs: jest.fn().mockResolvedValue(orderIngestionPending) },
           { hasPendingJobs: jest.fn().mockResolvedValue(cnpjPending) },
