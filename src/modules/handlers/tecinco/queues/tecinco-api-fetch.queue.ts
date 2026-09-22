@@ -351,7 +351,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       data.filiais && data.filiais.length > 0
         ? data.filiais.map((f) => ({
             fll_codigo: f.fll_codigo,
-            estoque: Number(f.estoque_fisico ?? 0),
+            estoque: Number(f.estoque_disponivel ?? 0),
             preco: Number(f.preco ?? 0),
             custoContabil: Number(f.custo_contabil ?? 0),
           }))
