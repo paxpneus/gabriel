@@ -15,6 +15,7 @@ class PdvSalesRequest
 {
   public id!: string;
   public order_id!: string;
+  public unit_business_id!: string | null;
   public sale_invoice_id!: string | null;
   public transfer_invoice_id!: string | null;
   public status!: PdvSalesRequestStatus;
@@ -50,6 +51,18 @@ PdvSalesRequest.init(
       },
       onUpdate: "CASCADE",
       onDelete: "CASCADE",
+    },
+    // Espelhado automaticamente de order.unit_business_id pelo service —
+    // nunca setado via API.
+    unit_business_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "unit_businesses",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
     },
     // Espelhado automaticamente de order.invoice_id pelo service — nunca
     // setado via API.

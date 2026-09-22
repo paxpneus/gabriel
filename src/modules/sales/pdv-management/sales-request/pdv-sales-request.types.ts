@@ -33,6 +33,9 @@ export enum PdvCorrectionOrigin {
   FINANCE = "FINANCE",
   CD21_ANALYSIS = "CD21_ANALYSIS",
   EXPEDITION = "EXPEDITION",
+  // CD21 decidiu devolver pra loja em vez de reenviar direto pra reanálise,
+  // depois de handleInvoiceCancelled — ver cd21ResolveInvoiceCancelled.
+  INVOICE_CANCELLED = "INVOICE_CANCELLED",
 }
 
 export enum PdvCorrectionReason {
@@ -51,6 +54,7 @@ export enum PdvCorrectionReason {
   PRODUCT_UNAVAILABLE = "PRODUCT_UNAVAILABLE",
   ITEM_DIVERGENCE = "ITEM_DIVERGENCE",
   DAMAGED_PRODUCT = "DAMAGED_PRODUCT",
+  INVOICE_CANCELLED = "INVOICE_CANCELLED",
 }
 
 export const CORRECTION_REASONS_BY_ORIGIN: Record<
@@ -78,6 +82,9 @@ export const CORRECTION_REASONS_BY_ORIGIN: Record<
     PdvCorrectionReason.DAMAGED_PRODUCT,
     PdvCorrectionReason.OTHER_INFO,
   ],
+  [PdvCorrectionOrigin.INVOICE_CANCELLED]: [
+    PdvCorrectionReason.INVOICE_CANCELLED,
+  ],
 };
 
 export interface PdvSalesRequestErrors {
@@ -89,6 +96,10 @@ export interface PdvSalesRequestErrors {
 export interface PdvSalesRequestAttributes {
   id: string;
   order_id: string;
+  // Espelhado de order.unit_business_id na criação, nunca setado via API —
+  // usado pela Etapa 2 (token de link) pra resolver/filtrar a filial sem
+  // precisar buscar a order de novo.
+  unit_business_id: string | null;
   sale_invoice_id: string | null;
   transfer_invoice_id: string | null;
   status: PdvSalesRequestStatus;

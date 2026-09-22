@@ -64,11 +64,21 @@ jest.mock("../../../../../shared/utils/xml/access-key", () => ({
   extractAccessKeyFromXmlContent: jest.fn(),
 }));
 
+jest.mock(
+  "../../../../handlers/bling/services/bling-nfe/nfe-emission.service",
+  () => ({
+    __esModule: true,
+    default: { emitForOrder: jest.fn() },
+  }),
+);
+
 import pdvSalesRequestRepository from "../pdv-sales-request.repository";
 import pdvSalesRequestHistoryService from "../../sales-request-history/pdv-sales-request-history.service";
 import orderService from "../../../orders/order/orders.service";
 import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import uploaderService from "../../../../handlers/uploader/services/uploader.service";
 import { getTCarIntegration } from "../../../../handlers/tecinco/api/tecinco_api";
+import nfeEmissionService from "../../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import { PdvSalesRequestService } from "../pdv-sales-request.service";
 import {
   PdvCorrectionOrigin,
@@ -109,6 +119,7 @@ describe("PdvSalesRequestService", () => {
       (orderService.findById as jest.Mock).mockResolvedValue({
         id: "order-1",
         invoice_id: "invoice-1",
+        unit_business_id: "unit-1",
       });
       (pdvSalesRequestRepository.create as jest.Mock).mockResolvedValue({
         id: "request-1",
@@ -123,6 +134,7 @@ describe("PdvSalesRequestService", () => {
       expect(pdvSalesRequestRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({
           order_id: "order-1",
+          unit_business_id: "unit-1",
           sale_invoice_id: "invoice-1",
           transfer_invoice_id: null,
           status: PdvSalesRequestStatus.OPEN,
@@ -210,11 +222,24 @@ describe("PdvSalesRequestService", () => {
   });
 
   describe("resolveCorrection", () => {
-    it("origem PENDING_FINANCE: volta pra PENDING_FINANCE", async () => {
+    it("origem PENDING_FINANCE: recusa — resolve-se anexando novo comprovante, não por aqui", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
         status: PdvSalesRequestStatus.PENDING_CORRECTION,
         correction_origin_status: PdvSalesRequestStatus.PENDING_FINANCE,
+      });
+
+      await expect(service.resolveCorrection("r1", {})).rejects.toThrow(
+        /anexando um novo comprovante/,
+      );
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("origem CD21_ANALYSIS: volta pra PENDING_CD21_ANALYSIS (ajuste feito direto na Bling)", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CORRECTION,
+        correction_origin_status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -224,7 +249,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_FINANCE },
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
         { transaction: mockTransaction },
       );
     });
@@ -280,15 +305,24 @@ describe("PdvSalesRequestService", () => {
     });
   });
 
-  describe("markSaleInvoiceReady", () => {
+  // markSaleInvoiceReady em si é privado — o único caminho de chamada real é
+  // o hook automático do sync de pedidos (bling-order.service.ts), via
+  // markSaleInvoiceReadyIfPending(orderId).
+  describe("markSaleInvoiceReadyIfPending", () => {
     it("envio ADT: vai pra PENDING_NF_TRANSFER", async () => {
-      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+      const request = {
         id: "r1",
         order_id: "order-1",
         status: PdvSalesRequestStatus.PENDING_NF_SALE,
         shipping_type: PdvShippingType.ADT,
         sale_invoice_id: "invoice-1",
-      });
+      };
+      (
+        pdvSalesRequestRepository.findActiveByOrderId as jest.Mock
+      ).mockResolvedValue(request);
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue(
+        request,
+      );
       (orderService.findById as jest.Mock).mockResolvedValue({
         invoice_id: "invoice-1",
       });
@@ -296,7 +330,7 @@ describe("PdvSalesRequestService", () => {
         id: "r1",
       });
 
-      await service.markSaleInvoiceReady("r1");
+      await service.markSaleInvoiceReadyIfPending("order-1");
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
@@ -306,13 +340,19 @@ describe("PdvSalesRequestService", () => {
     });
 
     it("envio TRANSPORTADORA: vai direto pra SHIPPING", async () => {
-      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+      const request = {
         id: "r1",
         order_id: "order-1",
         status: PdvSalesRequestStatus.PENDING_NF_SALE,
         shipping_type: PdvShippingType.TRANSPORTADORA,
         sale_invoice_id: "invoice-1",
-      });
+      };
+      (
+        pdvSalesRequestRepository.findActiveByOrderId as jest.Mock
+      ).mockResolvedValue(request);
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue(
+        request,
+      );
       (orderService.findById as jest.Mock).mockResolvedValue({
         invoice_id: "invoice-1",
       });
@@ -320,7 +360,7 @@ describe("PdvSalesRequestService", () => {
         id: "r1",
       });
 
-      await service.markSaleInvoiceReady("r1");
+      await service.markSaleInvoiceReadyIfPending("order-1");
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
@@ -330,13 +370,19 @@ describe("PdvSalesRequestService", () => {
     });
 
     it("re-sincroniza sale_invoice_id quando order.invoice_id mudou desde a criação", async () => {
-      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+      const request = {
         id: "r1",
         order_id: "order-1",
         status: PdvSalesRequestStatus.PENDING_NF_SALE,
         shipping_type: PdvShippingType.TRANSPORTADORA,
         sale_invoice_id: "invoice-old",
-      });
+      };
+      (
+        pdvSalesRequestRepository.findActiveByOrderId as jest.Mock
+      ).mockResolvedValue(request);
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue(
+        request,
+      );
       (orderService.findById as jest.Mock).mockResolvedValue({
         invoice_id: "invoice-new",
       });
@@ -344,11 +390,138 @@ describe("PdvSalesRequestService", () => {
         id: "r1",
       });
 
-      await service.markSaleInvoiceReady("r1");
+      await service.markSaleInvoiceReadyIfPending("order-1");
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
         sale_invoice_id: "invoice-new",
       });
+    });
+
+    it("sem solicitação ativa pro pedido: não faz nada", async () => {
+      (
+        pdvSalesRequestRepository.findActiveByOrderId as jest.Mock
+      ).mockResolvedValue(null);
+
+      await service.markSaleInvoiceReadyIfPending("order-1");
+
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("solicitação ativa mas não em PENDING_NF_SALE: não faz nada", async () => {
+      (
+        pdvSalesRequestRepository.findActiveByOrderId as jest.Mock
+      ).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIPPING,
+      });
+
+      await service.markSaleInvoiceReadyIfPending("order-1");
+
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("generateSaleInvoice", () => {
+    it("dispara a emissão na Bling sem mudar status quando em PENDING_NF_SALE", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.PENDING_NF_SALE,
+      });
+      (nfeEmissionService.emitForOrder as jest.Mock).mockResolvedValue(
+        undefined,
+      );
+
+      await service.generateSaleInvoice("r1");
+
+      expect(nfeEmissionService.emitForOrder).toHaveBeenCalledWith("order-1");
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("recusa quando a solicitação não está em PENDING_NF_SALE", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+      });
+
+      await expect(service.generateSaleInvoice("r1")).rejects.toThrow(
+        /Ação inválida/,
+      );
+      expect(nfeEmissionService.emitForOrder).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("attachReceiptAndShippingType", () => {
+    it("cria o comprovante inicial e avança OPEN -> PENDING_FINANCE", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      (uploaderService.upload as jest.Mock).mockResolvedValue(
+        "/pdv-receipts/comprovante.png",
+      );
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.attachReceiptAndShippingType("r1", {
+        buffer: Buffer.from(""),
+        filename: "comprovante.png",
+        mimeType: "image/png",
+        shippingType: PdvShippingType.TRANSPORTADORA,
+      });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.PENDING_FINANCE },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("resolve correção de comprovante (PENDING_CORRECTION + origem financeiro) anexando um novo", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CORRECTION,
+        correction_origin_status: PdvSalesRequestStatus.PENDING_FINANCE,
+      });
+      (uploaderService.upload as jest.Mock).mockResolvedValue(
+        "/pdv-receipts/novo.png",
+      );
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.attachReceiptAndShippingType("r1", {
+        buffer: Buffer.from(""),
+        filename: "novo.png",
+        mimeType: "image/png",
+        shippingType: PdvShippingType.TRANSPORTADORA,
+      });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.PENDING_FINANCE },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("recusa anexar comprovante quando a correção pendente não é de financeiro", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CORRECTION,
+        correction_origin_status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+      });
+
+      await expect(
+        service.attachReceiptAndShippingType("r1", {
+          buffer: Buffer.from(""),
+          filename: "novo.png",
+          mimeType: "image/png",
+          shippingType: PdvShippingType.TRANSPORTADORA,
+        }),
+      ).rejects.toThrow(/endpoint de correção/);
+      expect(uploaderService.upload).not.toHaveBeenCalled();
     });
   });
 
@@ -469,6 +642,129 @@ describe("PdvSalesRequestService", () => {
       await service.handleInvoiceCancelled("invoice-x");
 
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("cd21ResolveInvoiceCancelled", () => {
+    it("RETRY_ANALYSIS: zera sale/transfer invoice e volta pra PENDING_CD21_ANALYSIS", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.INVOICE_CANCELLED,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.cd21ResolveInvoiceCancelled("r1", {
+        decision: "RETRY_ANALYSIS",
+      });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        sale_invoice_id: null,
+        transfer_invoice_id: null,
+      });
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("REQUEST_CORRECTION: grava origem INVOICE_CANCELLED e vai pra PENDING_CORRECTION", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.INVOICE_CANCELLED,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.cd21ResolveInvoiceCancelled("r1", {
+        decision: "REQUEST_CORRECTION",
+      });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        correction_origin_status: PdvSalesRequestStatus.INVOICE_CANCELLED,
+        errors: {
+          origin: PdvCorrectionOrigin.INVOICE_CANCELLED,
+          reasons: [PdvCorrectionReason.INVOICE_CANCELLED],
+          note: "Nota fiscal cancelada",
+        },
+      });
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.PENDING_CORRECTION },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("recusa quando a solicitação não está em INVOICE_CANCELLED", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+      });
+
+      await expect(
+        service.cd21ResolveInvoiceCancelled("r1", {
+          decision: "RETRY_ANALYSIS",
+        }),
+      ).rejects.toThrow(/Ação inválida/);
+    });
+  });
+
+  describe("resolveCorrection — origem INVOICE_CANCELLED", () => {
+    it("decision CANCEL: vai pra CANCELLED", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CORRECTION,
+        correction_origin_status: PdvSalesRequestStatus.INVOICE_CANCELLED,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.resolveCorrection("r1", { decision: "CANCEL" });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.CANCELLED },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("decision RETRY_ANALYSIS: zera invoices e volta pra PENDING_CD21_ANALYSIS", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CORRECTION,
+        correction_origin_status: PdvSalesRequestStatus.INVOICE_CANCELLED,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.resolveCorrection("r1", { decision: "RETRY_ANALYSIS" });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        sale_invoice_id: null,
+        transfer_invoice_id: null,
+      });
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("sem decision válida: recusa", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CORRECTION,
+        correction_origin_status: PdvSalesRequestStatus.INVOICE_CANCELLED,
+      });
+
+      await expect(service.resolveCorrection("r1", {})).rejects.toThrow(
+        /CANCEL ou RETRY_ANALYSIS/,
+      );
     });
   });
 });

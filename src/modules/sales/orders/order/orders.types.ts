@@ -26,6 +26,13 @@ export const COMPLETED_ORDER_INTERNAL_STATUSES: readonly OrderInternalStatus[] =
   OrderInternalStatus.DELIVERED,
 ];
 
+// Status finalizadores pra automação em geral (mesmo conceito que
+// escalateToHumanVerificationIfStillPending já trata como terminal: completo
+// OU cancelado) — usado por qualquer fluxo que só precise checar "o pedido
+// ainda está em andamento?" sem se importar com qual dos dois.
+export const TERMINAL_ORDER_INTERNAL_STATUSES: readonly OrderInternalStatus[] =
+  [...COMPLETED_ORDER_INTERNAL_STATUSES, OrderInternalStatus.CANCELLED];
+
 // Motivo por trás de internal_status=CANCELLED — inclui tanto as causas de
 // situação Bling 748772 ("aguardando verificação humana", escrita por 3
 // filas diferentes) quanto cancelamento real do cliente/Bling (situação

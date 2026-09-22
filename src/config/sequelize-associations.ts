@@ -1599,6 +1599,10 @@ export function setupCteAssociations() {
 
   // PDV Management — solicitação de pedido de venda
   PdvSalesRequest.belongsTo(Order, { foreignKey: "order_id", as: "order" });
+  PdvSalesRequest.belongsTo(UnitBusiness, {
+    foreignKey: "unit_business_id",
+    as: "unitBusiness",
+  });
   PdvSalesRequest.belongsTo(Invoice, {
     foreignKey: "sale_invoice_id",
     as: "saleInvoice",

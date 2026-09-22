@@ -24,6 +24,18 @@ module.exports = {
         onUpdate: 'CASCADE',
         onDelete: 'CASCADE',
       },
+      // Espelhado automaticamente de order.unit_business_id pelo service —
+      // nunca setado via API.
+      unit_business_id: {
+        type: Sequelize.UUID,
+        allowNull: true,
+        references: {
+          model: 'unit_businesses',
+          key: 'id',
+        },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL',
+      },
       // Espelhado automaticamente de order.invoice_id pelo service — nunca
       // setado via API.
       sale_invoice_id: {
@@ -118,6 +130,10 @@ module.exports = {
 
     await queryInterface.addIndex('pdv_sales_requests', ['order_id'], {
       name: 'idx_pdv_sales_requests_order_id',
+    });
+
+    await queryInterface.addIndex('pdv_sales_requests', ['unit_business_id'], {
+      name: 'idx_pdv_sales_requests_unit_business_id',
     });
   },
 

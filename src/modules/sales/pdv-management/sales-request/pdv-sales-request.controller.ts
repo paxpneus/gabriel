@@ -32,7 +32,11 @@ export class PdvSalesRequestController extends BaseController<
     this.router.post("/:id/cd21-analysis/approve", this.cd21AnalysisApprove);
     this.router.post("/:id/cd21-analysis/reject", this.cd21AnalysisReject);
     this.router.post("/:id/correction/resolve", this.resolveCorrection);
-    this.router.post("/:id/sale-invoice/ready", this.markSaleInvoiceReady);
+    this.router.post(
+      "/:id/invoice-cancelled/resolve",
+      this.cd21ResolveInvoiceCancelled,
+    );
+    this.router.post("/:id/sale-invoice/generate", this.generateSaleInvoice);
     this.router.get(
       "/transfer-invoice/search",
       this.searchTransferInvoiceCandidates,
@@ -200,14 +204,32 @@ export class PdvSalesRequestController extends BaseController<
     }
   };
 
-  markSaleInvoiceReady = async (
+  cd21ResolveInvoiceCancelled = async (
     req: Request,
     res: Response,
   ): Promise<Response> => {
     try {
-      const updated = await this.service.markSaleInvoiceReady(
+      const { decision, userId, note } = req.body;
+      const updated = await this.service.cd21ResolveInvoiceCancelled(
         req.params.id as string,
-        req.body.userId,
+        { decision, userId, note },
+      );
+      return res.json(updated);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // Só dispara a emissão na Bling — o avanço de status é automático, feito
+  // pelo sync de pedidos assim que order.invoice_id for confirmado (cobre
+  // tanto essa geração quanto uma feita manualmente na Bling).
+  generateSaleInvoice = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const updated = await this.service.generateSaleInvoice(
+        req.params.id as string,
       );
       return res.json(updated);
     } catch (error: any) {

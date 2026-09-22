@@ -26,6 +26,7 @@ import productService from "../../../../inventory/products/services/product.serv
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 import paymentMethodService from "../../../../sales/orders/payment_method/payment_method.service";
+import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 
 interface BlingPaymentMethodApi {
   id: number;
@@ -862,6 +863,16 @@ export class BlingOrderService {
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
 
+      // Avança automaticamente uma solicitação PDV em PENDING_NF_SALE assim
+      // que a nota de venda é confirmada — cobre tanto NFe gerada pelo
+      // sistema (nfe-emission.service.ts) quanto manualmente na Bling, já
+      // que as duas acabam ressincronizando o pedido por aqui.
+      if (invoiceId) {
+        await pdvSalesRequestService.markSaleInvoiceReadyIfPending(
+          existingOrder.id,
+        );
+      }
+
       // ─── NOVO: acumula os itens sincronizados pra devolver no orderSystem ────
       const syncedItems: any[] = [];
 
@@ -1120,6 +1131,12 @@ export class BlingOrderService {
       };
 
       const createdOrder = await ordersService.create(ordersPayload);
+
+      if (invoiceId) {
+        await pdvSalesRequestService.markSaleInvoiceReadyIfPending(
+          createdOrder.id,
+        );
+      }
 
       const itemsPayload: orderItemsCreationAttributes[] =
         itemsPayloadWithoutOrderId.map((item) => ({
