@@ -270,6 +270,7 @@ services:
       SEFAZ_CNPJ: ${SEFAZ_CNPJ}
       SEFAZ_UF: ${SEFAZ_UF}
       SEFAZ_AMBIENTE: ${SEFAZ_AMBIENTE}
+      ML_ORDER_DETAIL_URL: ${ML_ORDER_DETAIL_URL}
     depends_on:
       postgres:
         condition: service_healthy
