@@ -20,7 +20,17 @@ export class NodeMailerService implements IMailProvider {
 
     this.transporter = nodemailer.createTransport(config);
 
-    this.checkMailerService()
+    // Pula a verificação SMTP real (rede) sob Jest — esse singleton é
+    // reimportado por praticamente toda fila (via alertService), então
+    // cada arquivo de teste disparava uma nova conexão real contra o
+    // Gmail. Além de deixar a suíte lenta, a chamada pendente (handle
+    // aberto) sobrevivia ao fim dos testes ("Cannot log after tests are
+    // done"), e em ambientes de rede mais restritos (ex: build Docker)
+    // isso derrubava `npm test` com exit code != 0 mesmo com todos os
+    // testes passando.
+    if (!process.env.JEST_WORKER_ID) {
+      this.checkMailerService();
+    }
   }
 
   async checkMailerService(): Promise<void> {
