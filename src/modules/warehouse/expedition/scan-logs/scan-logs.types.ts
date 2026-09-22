@@ -13,4 +13,11 @@ export interface ExpeditionScanLogAttributes {
 
 export interface ExpeditionScanLogCreationAttributes extends Omit<ExpeditionScanLogAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
 
+export interface PendingVolume {
+  productName: string;
+  invoiceNumberSystem: string;
+  expeditionBatchInvoiceId: string;
+  vol: string;
+}
+
 

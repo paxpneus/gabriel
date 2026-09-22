@@ -29,9 +29,11 @@ export interface LabelVolume {
   destCEP: string;
   produtos: string[];
   ean: string;
+  productId: string;
   transportador: string;
   volumeAtual: number;
   volumeTotal: number;
+  volNumber: string;
   codigoBarras: string;
    routeAcronym: string | null;
    destination: string | null;
@@ -49,11 +51,12 @@ export interface LabelData {
 interface LabelProductVolume {
   produtos: string[];
   ean: string;
+  productId: string;
 }
 
 export class LabelService {
 
-  private async findEanFromInvoiceItems(invoiceId: string, unitBusinessId: string): Promise<Map<number, string>> {
+  private async findItemMetaFromInvoiceItems(invoiceId: string, unitBusinessId: string): Promise<Map<number, { ean: string; productId: string }>> {
   const items = await InvoiceItems.findAll({
     where: { invoice_id: invoiceId },
     include: [
@@ -73,15 +76,17 @@ export class LabelService {
     order: [['createdAt', 'ASC']],
   });
 
-  const eanMap = new Map<number, string>();
+  const metaMap = new Map<number, { ean: string; productId: string }>();
   items.forEach((item, index) => {
     const product = (item as any).product as (Product & { productConfigs?: ProductConfig[] }) | undefined;
     const config = product?.productConfigs?.[0];
-    const ean = config?.gtin || '';
-    if (ean) eanMap.set(index, ean);
+    metaMap.set(index, {
+      ean: config?.gtin || '',
+      productId: (item as any).product_id,
+    });
   });
 
-  return eanMap;
+  return metaMap;
 }
   /**
    * Busca os dados para etiquetas utilizando Sequelize
@@ -216,8 +221,8 @@ private async findCarrierRange(
     let itens = infNFe.det ?? [];
 if (!Array.isArray(itens)) itens = [itens];
 
-// Pré-carrega EANs do cadastro para usar como fallback
-const eanFallbackMap = await this.findEanFromInvoiceItems(invoiceId, unitBusinessId);
+// Pré-carrega EAN + product_id do cadastro (fallback de EAN e correlação de produto por índice)
+const itemMetaMap = await this.findItemMetaFromInvoiceItems(invoiceId, unitBusinessId);
 
 let somaQtd = 0;
 const produtos: string[] = [];
@@ -233,13 +238,15 @@ for (let idx = 0; idx < itens.length; idx++) {
   if (desc && desc !== "***" && !produtos.includes(desc))
     produtos.push(desc);
 
+  const itemMeta = itemMetaMap.get(idx);
+
   let itemEan = "";
   const cEAN = String(prod.cEAN ?? prod.cEANTrib ?? "");
   if (cEAN && cEAN !== "SEM GTIN" && /^\d{8,14}$/.test(cEAN)) {
     itemEan = cEAN;
   } else {
     // Fallback: busca pelo índice do item no cadastro
-    itemEan = eanFallbackMap.get(idx) ?? "";
+    itemEan = itemMeta?.ean ?? "";
   }
 
   const labelQuantity = Math.max(0, Math.round(qtd));
@@ -247,6 +254,7 @@ for (let idx = 0; idx < itens.length; idx++) {
     productVolumes.push({
       produtos: desc && desc !== "***" ? [desc] : [],
       ean: itemEan,
+      productId: itemMeta?.productId ?? "",
     });
   }
 }
@@ -323,11 +331,17 @@ for (let idx = 0; idx < itens.length; idx++) {
         ...params,
         produtos,
         ean,
+        productId: productVolume?.productId ?? "",
         volumeAtual: va,
+        volNumber: this.buildVolNumber(va, params.volumeTotal),
         codigoBarras,
       });
     }
     return volumes;
+  }
+
+  private buildVolNumber(va: number, vt: number): string {
+    return String(va).padStart(3, "0") + String(vt).padStart(3, "0");
   }
 
   private buildBarcode(
@@ -346,8 +360,20 @@ for (let idx = 0; idx < itens.length; idx++) {
       pad(cnpj, 14) +
       pad(nf, 8) +
       pad(ean, 13) +
-      String(va).padStart(3, "0") +
-      String(vt).padStart(3, "0")
+      this.buildVolNumber(va, vt)
     );
   }
+
+  /**
+   * Volumes da etiqueta de uma nota, sem efeitos colaterais (não marca printed_label).
+   */
+  async getInvoiceVolumes(invoiceId: string, unitBusinessId: string): Promise<LabelVolume[]> {
+    const invoice = await Invoice.findByPk(invoiceId);
+    if (!invoice) throw new Error("Nota fiscal não encontrada");
+
+    const data = await this.extractFromXml(invoice, unitBusinessId);
+    return data.volumes;
+  }
 }
+
+export default new LabelService();

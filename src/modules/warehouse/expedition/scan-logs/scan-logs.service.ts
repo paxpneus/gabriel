@@ -26,6 +26,11 @@ import batchInvoicesService from "../batch-invoices/batch-invoices.service";
 import { assertTransshipment } from "../utils/helpers/transshipment-resolver";
 import InvoiceUnitBusinessAttributes from "../../fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import roleService from "../../../company/users/roles/role.service";
+import { pendingQuantityWhere } from "../batch-invoice-items/helpers/pending-filter";
+import { PendingVolume } from "./scan-logs.types";
+import labelService, {
+  LabelVolume,
+} from "../../fiscal/invoices/invoice/invoice-label.service";
 
 export class ExpeditionScanLogService extends BaseService<
   ExpeditionScanLog,
@@ -186,7 +191,7 @@ export class ExpeditionScanLogService extends BaseService<
     const pendingBatchInvoiceItem = await batchInvoiceItemsService.findOne({
       where: {
         expedition_batch_invoice_id: batchInvoiceId,
-        quantity_read: { [Op.lt]: sequelize.col("quantity_expected") },
+        ...pendingQuantityWhere(),
       },
       transaction: t,
     });
@@ -864,6 +869,73 @@ export class ExpeditionScanLogService extends BaseService<
 
       return true;
     });
+  }
+
+  /**
+   * Volumes ainda não bipados de um produto do lote, por nota fiscal.
+   * O vol_number real (últimos 6 dígitos do código de barras da etiqueta,
+   * ver invoice-label.service.ts's buildVolNumber) é volumeAtual+volumeTotal
+   * DA NOTA INTEIRA, não um sequencial por produto — por isso os volumes
+   * esperados são reconstruídos a partir da própria etiqueta da nota
+   * (labelService.getInvoiceVolumes), filtrados pelo product_id do item.
+   */
+  async getPendingVolumesByBatchItem(
+    batchItemId: string,
+    expeditionBatchInvoiceId?: string,
+  ): Promise<PendingVolume[]> {
+    const pending: any[] =
+      await batchInvoiceItemsService.findPendingByBatchItemId(
+        batchItemId,
+        expeditionBatchInvoiceId,
+      );
+
+    if (!pending.length) return [];
+
+    const batch = await batchService.findById(
+      pending[0].batchItem.expedition_batch_id,
+    );
+    if (!batch) throw new Error("Lote não encontrado");
+
+    const invoiceVolumesCache = new Map<string, LabelVolume[]>();
+    const result: PendingVolume[] = [];
+
+    for (const item of pending) {
+      const invoiceId: string = item.batchInvoice.invoice.id;
+      const productId: string = item.batchItem.product_id;
+
+      let invoiceVolumes = invoiceVolumesCache.get(invoiceId);
+      if (!invoiceVolumes) {
+        invoiceVolumes = await labelService.getInvoiceVolumes(
+          invoiceId,
+          batch.unit_business_id,
+        );
+        invoiceVolumesCache.set(invoiceId, invoiceVolumes);
+      }
+
+      const scannedLogs = await this.findAll({
+        where: {
+          expedition_batch_items_id: batchItemId,
+          expedition_batch_invoices_id: item.expedition_batch_invoice_id,
+        },
+        attributes: ["vol_number"],
+      });
+      const scannedVols = new Set(scannedLogs.map((l: any) => l.vol_number));
+
+      const missingVolumes = invoiceVolumes.filter(
+        (v) => v.productId === productId && !scannedVols.has(v.volNumber),
+      );
+
+      for (const volume of missingVolumes) {
+        result.push({
+          productName: item.batchItem.product.name,
+          invoiceNumberSystem: item.batchInvoice.invoice.number_system,
+          expeditionBatchInvoiceId: item.expedition_batch_invoice_id,
+          vol: `${volume.volumeAtual}/${volume.volumeTotal}`,
+        });
+      }
+    }
+
+    return result;
   }
 }
 

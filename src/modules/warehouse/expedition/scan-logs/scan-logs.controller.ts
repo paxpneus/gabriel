@@ -25,6 +25,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
   this.router.post("/bulk-remove-logs", ...this.mw("bulkRemoveScanLogsOutgoing"), (req, res) => this.bulkRemoveScanLogsOutgoing(req, res))
 
    this.router.post("/bulk-remove-logs-incoming", ...this.mw("bulkRemoveScanLogsIncoming"), (req, res) => this.bulkRemoveScanLogsIncoming(req, res))
+
+  this.router.get("/pending-volumes/:batchItemId", ...this.mw("getPendingVolumesByBatchItem"), (req, res) => this.getPendingVolumesByBatchItem(req, res))
 }
 
   protected middlewaresFor() {
@@ -42,7 +44,8 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
         scanProductByInvoice: [authenticate, userPermissions],
         scanProductIncomingByInvoice: [authenticate, userPermissions],
         bulkRemoveScanLogsOutgoing: [authenticate, userPermissions],
-        bulkRemoveScanLogsIncoming: [authenticate, userPermissions]
+        bulkRemoveScanLogsIncoming: [authenticate, userPermissions],
+        getPendingVolumesByBatchItem: [authenticate, userPermissions]
       };
     }
 
@@ -129,6 +132,22 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
     await this.service.scanProductByInvoice(productId, batchId, invoiceId, quantity, unitBusiness, roleId as string);
 
     return res.status(201).json({ message: "Produto escaneado com sucesso" });
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
+};
+
+  getPendingVolumesByBatchItem = async (req: Request, res: Response): Promise<Response> => {
+  try {
+    const { batchItemId } = req.params;
+    const { expeditionBatchInvoiceId } = req.query;
+
+    const pendingVolumes = await this.service.getPendingVolumesByBatchItem(
+      batchItemId as string,
+      expeditionBatchInvoiceId as string | undefined,
+    );
+
+    return res.status(200).json(pendingVolumes);
   } catch (error: any) {
     return res.status(400).json({ error: error.message });
   }
