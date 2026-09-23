@@ -149,7 +149,7 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
     return this.model.findAll({
       where: {
         unit_business_id: unitBusinessId,
-        internal_status: { [Op.notIn]: TERMINAL_ORDER_INTERNAL_STATUSES },
+        // internal_status: { [Op.notIn]: TERMINAL_ORDER_INTERNAL_STATUSES },
       },
       attributes: { exclude: ["source_payload"] },
       include: [

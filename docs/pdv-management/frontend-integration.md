@@ -415,19 +415,20 @@ finalizada:
 
 ## 10. Obter o link/token de uma tela
 
-Token não fica salvo em lugar nenhum — é derivado. Pra montar/copiar o
-link de uma loja (ex.: tela de administração cadastrando uma loja nova),
+Token não fica salvo em lugar nenhum — é derivado. Pra montar/copiar o(s)
+link(s) de uma loja (ex.: tela de administração cadastrando uma loja nova),
 chame (precisa de acesso a alguma tela, via login ou link):
 
 | Método | Rota | Resposta |
 |---|---|---|
-| GET | `/api/pdv-access/store/:unitBusinessId` | `{ screen, unitBusinessNumber, url }[]` — as 3 telas da loja |
-| GET | `/api/pdv-access/telesales` | `{ url }` — token único, não varia por loja |
+| GET | `/api/pdv-access/links?unitBusinessId=<id>` | `{ unitBusinessId, unitBusinessNumber, unitBusinessName, storeRequestUrl, financeUrl, cd21Url, telesalesUrl }` — os 4 links dessa loja |
+| GET | `/api/pdv-access/links` (sem query) | o mesmo objeto acima, em array — uma entrada por loja comercial cadastrada |
 
-`url` já é o link completo pronto pra abrir no browser/mandar pra pessoa —
-não é mais sugestão, é o contrato fixo. Rota única no front, tela vem na
-query string (confirmado testando contra o router real — não é path por
-tela):
+`cd21Url`/`telesalesUrl` são globais — o mesmo valor se repete em toda loja
+do array, já que não variam por `unitBusinessNumber`. Cada `*Url` já é o
+link completo pronto pra abrir no browser/mandar pra pessoa — não é mais
+sugestão, é o contrato fixo. Rota única no front, tela vem na query string
+(confirmado testando contra o router real — não é path por tela):
 
 ```
 https://hub.paxpneus.com.br/pdv-management?token=<token>&screen=<tela>&number=<número>

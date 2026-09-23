@@ -178,7 +178,7 @@ export class PdvSalesRequestService extends BaseService<
     const activeRequests = await this.repository.findAll({
       where: {
         order_id: { [Op.in]: orders.map((order) => order.id) },
-        status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
+        // status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
       },
       attributes: ["order_id"],
     });
@@ -708,7 +708,30 @@ export class PdvSalesRequestService extends BaseService<
     id: string,
     userId?: string,
   ): Promise<PdvSalesRequest> {
-    await this.assertStatus(id, PdvSalesRequestStatus.PENDING_CD21_ANALYSIS);
+    const request = await this.assertStatus(
+      id,
+      PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+    );
+
+    // Pedido pode chegar aqui já com nota de venda emitida (gerada direto na
+    // Bling antes da análise do CD21) — nesse caso não faz sentido passar por
+    // PENDING_NF_SALE, já pula pro próximo passo real do fluxo.
+    const order = await orderService.findById(request.order_id);
+    if (order?.invoice_id) {
+      if (order.invoice_id !== request.sale_invoice_id) {
+        await this.repository.update(id, { sale_invoice_id: order.invoice_id });
+      }
+      return this.transitionTo(
+        id,
+        this.resolvePostSaleInvoiceTarget(request.shipping_type),
+        {
+          userId,
+          description:
+            "Pedido aprovado na análise do CD21 — nota de venda já existente",
+        },
+      );
+    }
+
     return this.transitionTo(id, PdvSalesRequestStatus.PENDING_NF_SALE, {
       userId,
       description: "Pedido aprovado na análise do CD21",
@@ -885,15 +908,25 @@ export class PdvSalesRequestService extends BaseService<
       await this.repository.update(id, { sale_invoice_id: order.invoice_id });
     }
 
-    const target =
-      request.shipping_type === PdvShippingType.ADT
-        ? PdvSalesRequestStatus.PENDING_NF_TRANSFER
-        : PdvSalesRequestStatus.SHIPPING;
+    return this.transitionTo(
+      id,
+      this.resolvePostSaleInvoiceTarget(request.shipping_type),
+      {
+        userId,
+        description: "NF de venda gerada",
+      },
+    );
+  }
 
-    return this.transitionTo(id, target, {
-      userId,
-      description: "NF de venda gerada",
-    });
+  // Compartilhado entre markSaleInvoiceReady (avanço normal a partir de
+  // PENDING_NF_SALE) e cd21AnalysisApprove (pedido que já chega com nota de
+  // venda emitida e pula PENDING_NF_SALE) — mesma regra ADT nos dois casos.
+  private resolvePostSaleInvoiceTarget(
+    shippingType: PdvShippingType | null,
+  ): PdvSalesRequestStatus {
+    return shippingType === PdvShippingType.ADT
+      ? PdvSalesRequestStatus.PENDING_NF_TRANSFER
+      : PdvSalesRequestStatus.SHIPPING;
   }
 
   // Chamado pelo sync de pedidos da Bling (bling-order.service.ts) sempre
@@ -1102,10 +1135,8 @@ export class PdvSalesRequestService extends BaseService<
 
   // Chamado por batch.service.ts::generateDeliveryNote sempre que um
   // romaneio é gerado — finaliza sozinho quem estava só esperando isso.
-  // TRANSPORTADORA não tem nota de transferência: basta a nota de venda
-  // entrar num romaneio. ADT tem as duas notas fisicamente expedidas (venda
-  // + transferência pro CD21) — só finaliza quando o romaneio de AMBAS já
-  // foi gerado, nunca com uma pendente.
+  // Finaliza só com o romaneio da nota de VENDA gerado — mesmo em ADT, o
+  // romaneio da nota de transferência não é mais exigido pra finalizar.
   async finishIfDeliveryNoteGenerated(invoiceIds: string[]): Promise<void> {
     if (!invoiceIds.length) return;
 
@@ -1122,18 +1153,16 @@ export class PdvSalesRequestService extends BaseService<
     const cd21 = await unitBusinessService.getCd21UnitBusiness();
     if (!cd21) throw new Error("Unidade CD21 não cadastrada");
 
-    const relevantInvoiceIds = Array.from(
+    const saleInvoiceIds = Array.from(
       new Set(
-        candidates.flatMap((request) =>
-          [request.sale_invoice_id, request.transfer_invoice_id].filter(
-            (invoiceId): invoiceId is string => !!invoiceId,
-          ),
-        ),
+        candidates
+          .map((request) => request.sale_invoice_id)
+          .filter((invoiceId): invoiceId is string => !!invoiceId),
       ),
     );
     const readyInvoiceIds = new Set(
       await invoiceService.findDeliveryNoteGeneratedInvoiceIds(
-        relevantInvoiceIds,
+        saleInvoiceIds,
         cd21.id,
       ),
     );
@@ -1141,16 +1170,8 @@ export class PdvSalesRequestService extends BaseService<
     for (const request of candidates) {
       const saleReady =
         !!request.sale_invoice_id && readyInvoiceIds.has(request.sale_invoice_id);
-      const transferReady =
-        !!request.transfer_invoice_id &&
-        readyInvoiceIds.has(request.transfer_invoice_id);
 
-      const ready =
-        request.shipping_type === PdvShippingType.ADT
-          ? saleReady && transferReady
-          : saleReady;
-
-      if (ready) await this.finish(request.id);
+      if (saleReady) await this.finish(request.id);
     }
   }
 

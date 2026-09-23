@@ -1,6 +1,6 @@
 import { Request, RequestHandler, Response } from "express";
 import RouterController from "../../../../shared/utils/base-models/base-router-controller";
-import { pdvAccess, PdvAccessRequest } from "./pdv-access.middleware";
+import { pdvAccess } from "./pdv-access.middleware";
 import { PdvAccessScreen } from "./pdv-access.types";
 import pdvAccessLinkService from "./pdv-access-link.service";
 
@@ -22,32 +22,25 @@ export class PdvAccessLinkController extends RouterController {
 
   protected middlewaresFor(): Record<string, RequestHandler[]> {
     return {
-      store: [pdvAccess(ALL_SCREENS)],
-      telesales: [pdvAccess(ALL_SCREENS)],
+      links: [pdvAccess(ALL_SCREENS)],
     };
   }
 
   protected registerRoutes(): void {
-    this.router.get("/store/:unitBusinessId", ...this.mw("store"), this.getStoreLinks);
-    this.router.get("/telesales", ...this.mw("telesales"), this.getTelesalesLink);
+    this.router.get("/links", ...this.mw("links"), this.getLinks);
   }
 
-  getStoreLinks = async (req: Request, res: Response): Promise<Response> => {
+  // ?unitBusinessId=<id> → só os links dessa loja; omitido → de todas as
+  // lojas comerciais.
+  getLinks = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const links = await pdvAccessLinkService.getLinksForStore(
-        req.params.unitBusinessId as string,
+      const links = await pdvAccessLinkService.getAccessLinks(
+        req.query.unitBusinessId as string | undefined,
       );
       return res.json(links);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
-  };
-
-  getTelesalesLink = async (
-    _req: PdvAccessRequest,
-    res: Response,
-  ): Promise<Response> => {
-    return res.json(pdvAccessLinkService.getTelesalesLink());
   };
 }
 
