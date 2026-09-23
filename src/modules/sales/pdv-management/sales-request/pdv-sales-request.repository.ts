@@ -1,7 +1,10 @@
 import { Op, WhereOptions } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import PdvSalesRequest from "./pdv-sales-request.model";
-import { TERMINAL_PDV_SALES_REQUEST_STATUSES } from "./pdv-sales-request.types";
+import {
+  PdvSalesRequestStatus,
+  TERMINAL_PDV_SALES_REQUEST_STATUSES,
+} from "./pdv-sales-request.types";
 import Order from "../../orders/order/orders.model";
 import Customer from "../../customers/customers.model";
 import PaymentMethod from "../../orders/payment_method/payment_method.model";
@@ -92,6 +95,25 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
           { transfer_invoice_id: invoiceId },
         ],
         status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
+      },
+    });
+  }
+
+  // Candidatas ao auto-finish (finishIfDeliveryNoteGenerated) — status
+  // restrito a SHIPPING de propósito, diferente do "ativo" genérico acima:
+  // só faz sentido finalizar sozinho quem já está aguardando expedição.
+  async findShippingBySaleOrTransferInvoiceIds(
+    invoiceIds: string[],
+  ): Promise<PdvSalesRequest[]> {
+    if (!invoiceIds.length) return [];
+
+    return this.findAll({
+      where: {
+        [Op.or]: [
+          { sale_invoice_id: { [Op.in]: invoiceIds } },
+          { transfer_invoice_id: { [Op.in]: invoiceIds } },
+        ],
+        status: PdvSalesRequestStatus.SHIPPING,
       },
     });
   }

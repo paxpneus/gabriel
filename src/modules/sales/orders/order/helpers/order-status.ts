@@ -12,6 +12,7 @@ import {
   blingGet,
   blingPatch,
 } from "../../../../../modules/handlers/bling/services/bling/helpers/get-with-sleep";
+import pdvSalesRequestService from "../../../pdv-management/sales-request/pdv-sales-request.service";
 
 export type OrderStatusSyncResult =
   | { handled: true; outcome: "completed"; internalStatus: OrderInternalStatus }
@@ -68,6 +69,11 @@ export const syncOrderInternalStatus = async (
       internal_status: mappedStatus,
       ...(reasonCancelled ? { reason_cancelled: reasonCancelled } : {}),
     });
+
+    // Cancela sozinho uma PdvSalesRequest ativa pro pedido — diferente de
+    // handleInvoiceCancelled (nota cancelada bloqueia pra decisão humana),
+    // aqui o pedido em si já foi cancelado na origem, não há o que decidir.
+    await pdvSalesRequestService.cancelIfActiveByOrderId(internalOrder.id);
 
     return { handled: true, outcome: "cancelled", internalStatus: mappedStatus };
   }
@@ -181,6 +187,8 @@ export async function escalateToHumanVerificationIfStillPending({
     nfe_emitted: false,
     reason_cancelled: reasonCancelled,
   });
+
+  await pdvSalesRequestService.cancelIfActiveByOrderId(order.id);
 
   return { escalated: true };
 }

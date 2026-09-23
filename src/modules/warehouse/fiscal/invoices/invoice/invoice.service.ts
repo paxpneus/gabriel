@@ -591,6 +591,16 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     );
   }
 
+  async findDeliveryNoteGeneratedInvoiceIds(
+    invoiceIds: string[],
+    unitBusinessId: string,
+  ): Promise<string[]> {
+    return this.repository.findDeliveryNoteGeneratedInvoiceIds(
+      invoiceIds,
+      unitBusinessId,
+    );
+  }
+
   async updateInvoicesForAllUnitBusiness(
     invoiceIds: string[],
     data: Partial<

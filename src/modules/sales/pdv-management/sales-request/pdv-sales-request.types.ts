@@ -36,6 +36,9 @@ export enum PdvCorrectionOrigin {
   // CD21 decidiu devolver pra loja em vez de reenviar direto pra reanálise,
   // depois de handleInvoiceCancelled — ver cd21ResolveInvoiceCancelled.
   INVOICE_CANCELLED = "INVOICE_CANCELLED",
+  // CD21 reabriu uma solicitação já FINISHED pra correção — ver
+  // correctFinishedRequest.
+  FINISHED = "FINISHED",
 }
 
 export enum PdvCorrectionReason {
@@ -84,6 +87,12 @@ export const CORRECTION_REASONS_BY_ORIGIN: Record<
   ],
   [PdvCorrectionOrigin.INVOICE_CANCELLED]: [
     PdvCorrectionReason.INVOICE_CANCELLED,
+  ],
+  [PdvCorrectionOrigin.FINISHED]: [
+    PdvCorrectionReason.PRODUCT_UNAVAILABLE,
+    PdvCorrectionReason.ITEM_DIVERGENCE,
+    PdvCorrectionReason.DAMAGED_PRODUCT,
+    PdvCorrectionReason.OTHER_INFO,
   ],
 };
 

@@ -29,11 +29,18 @@ OPEN → PENDING_FINANCE → PENDING_CD21_ANALYSIS → PENDING_NF_SALE
                                 SHIPPING → FINISHED
 ```
 
-`PENDING_CORRECTION` é alcançável de `PENDING_FINANCE`, `PENDING_CD21_ANALYSIS`
-e `SHIPPING` — a loja resolve, mas o jeito de resolver muda conforme
+`SHIPPING → FINISHED` acontece por **clique manual do CD21** (`POST
+/:id/finish`) **ou sozinho**, assim que o romaneio da nota é gerado —
+ver seção 9.
+
+`PENDING_CORRECTION` é alcançável de `PENDING_FINANCE`, `PENDING_CD21_ANALYSIS`,
+`SHIPPING` **e também de `FINISHED`** (correção pós-finalização, seção 9) —
+a loja resolve, mas o jeito de resolver muda conforme
 `correction_origin_status` (ver seção 6). `INVOICE_CANCELLED` é alcançável
 a qualquer momento se a nota vinculada for cancelada na Bling/Tecinco —
-foge do fluxo normal (seção 7).
+foge do fluxo normal (seção 7). `CANCELLED` também é alcançável fora do
+fluxo normal, sozinho, se o **pedido** (não a nota) for cancelado na Bling
+(seção 8).
 
 | Status | Significado | Quem tira daqui |
 |---|---|---|
@@ -43,8 +50,8 @@ foge do fluxo normal (seção 7).
 | `PENDING_CD21_ANALYSIS` | Aguardando conferência do pedido | CD21 |
 | `PENDING_NF_SALE` | Aguardando NF de Venda (Bling) | Automático (sync Bling) |
 | `PENDING_NF_TRANSFER` | Aguardando NF de Transferência (Tecinco) — só ADT | CD21 |
-| `SHIPPING` | Pendente expedição/romaneio | CD21 |
-| `FINISHED` | Concluído | — |
+| `SHIPPING` | Pendente expedição/romaneio | CD21 ou automático (romaneio gerado, seção 9) |
+| `FINISHED` | Concluído | — (mas pode ser reaberto pelo CD21, seção 9) |
 | `CANCELLED` | Pedido cancelado | — |
 | `INVOICE_CANCELLED` | Nota vinculada foi cancelada na origem | CD21 |
 
@@ -95,7 +102,7 @@ e token embutidos), o front:
    `/api/sales-request/*` a partir daí. Pronto — já pode criar solicitação,
    aprovar, etc.
 
-`GET /api/pdv-access/*` (seção 8) **não faz parte desse fluxo** — é o
+`GET /api/pdv-access/*` (seção 10) **não faz parte desse fluxo** — é o
 caminho contrário: serve pra alguém que **já tem acesso** (por login, ou
 por outro link) consultar/gerar o token de uma loja **pra entregar o link
 pra outra pessoa**. Quem já recebeu o link pronto nunca precisa chamar
@@ -112,7 +119,7 @@ x-pdv-token: <token>
 
 - `token` é fixo por (loja, tela) e **não expira**. Foi copiado da URL do
   link que a pessoa recebeu, ou obtido via `GET /api/pdv-access/...`
-  (seção 8).
+  (seção 10).
 - Televendas usa o **mesmo token pra qualquer loja** (só muda o número da
   loja no header) — exceto a loja CD21, que é sempre rejeitada (`403`)
   nesse modo.
@@ -230,7 +237,7 @@ precisa disso); o detalhe (`GET /:id`) traz a versão completa
 (`PdvSalesRequestOrderDetail`), com `installments` derivado de
 `order.source_payload.parcelas.length` (não é coluna própria — a Bling não
 expõe parcelas como campo estruturado, só dentro do payload cru, que o
-back nunca repassa ao front). Ver os dois tipos na seção 9.
+back nunca repassa ao front). Ver os dois tipos na seção 11.
 
 ### 5.2 Loja — Operação (`STORE_REQUEST`)
 
@@ -296,8 +303,9 @@ back nunca repassa ao front). Ver os dois tipos na seção 9.
 | POST | `/:id/transfer-invoice` | `{ invoiceId: string }` **ou** multipart `xml`/`danfe` | `PdvSalesRequest` (vincula, não avança status sozinho) |
 | POST | `/:id/transfer-invoice/confirm` | — | `PdvSalesRequest` (avança pra `SHIPPING`, exige nota já vinculada) |
 | POST | `/:id/expedition/reject` | `{ reasons: PdvCorrectionReason[], note: string }` | `PdvSalesRequest` (vai pra `PENDING_CORRECTION`) |
-| POST | `/:id/finish` | — | `PdvSalesRequest` (avança pra `FINISHED`) |
+| POST | `/:id/finish` | — | `PdvSalesRequest` (avança pra `FINISHED`) — normalmente nem precisa ser chamado: acontece sozinho quando o romaneio é gerado, ver seção 9 |
 | POST | `/:id/invoice-cancelled/resolve` | `{ decision: "RETRY_ANALYSIS" \| "REQUEST_CORRECTION", note?: string }` | `PdvSalesRequest` — ver seção 7 |
+| POST | `/:id/correction/finished` (`correctFinishedRequest`) | `{ decision: "REQUEST_CORRECTION" \| "RESET_INVOICES", reasons?: PdvCorrectionReason[], note?: string }` | `PdvSalesRequest` — reabre uma solicitação já `FINISHED`, ver seção 9 |
 
 `POST /:id/transfer-invoice` — manda **um dos três**: `invoiceId` (nota já
 existente, ver autocomplete acima), `xml` (valida contra a Tecinco e já
@@ -319,9 +327,10 @@ o quê:
 ```
 
 `correction_origin_status` guarda de onde veio (`PENDING_FINANCE`,
-`PENDING_CD21_ANALYSIS` ou `SHIPPING`) — o front usa pra decidir **como**
-a loja resolve. Motivos disponíveis por origem (pra montar checklist na
-tela de "devolver pra correção", usado pelo Financeiro/CD21/Expedição):
+`PENDING_CD21_ANALYSIS`, `SHIPPING`, `INVOICE_CANCELLED` ou `FINISHED`) —
+o front usa pra decidir **como** a loja resolve. Motivos disponíveis por
+origem (pra montar checklist na tela de "devolver pra correção", usado
+pelo Financeiro/CD21/Expedição):
 
 | Origem (`PdvCorrectionOrigin`) | Quem devolve | Motivos (`PdvCorrectionReason`) |
 |---|---|---|
@@ -329,6 +338,7 @@ tela de "devolver pra correção", usado pelo Financeiro/CD21/Expedição):
 | `CD21_ANALYSIS` | CD21 — Análise | `CUSTOMER_NAME`, `CUSTOMER_DOCUMENT`, `PAYMENT_METHOD`, `INSTALLMENTS`, `SHIPPING_TYPE`, `ORDER_NUMBER`, `ORDER_DATE`, `TOTAL_VALUE`, `DISCOUNT_VALUE`, `BLING_PDF`, `PAYMENT_RECEIPT`, `OTHER_INFO` |
 | `EXPEDITION` | CD21 — Expedição | `PRODUCT_UNAVAILABLE`, `ITEM_DIVERGENCE`, `DAMAGED_PRODUCT`, `OTHER_INFO` |
 | `INVOICE_CANCELLED` | CD21 (automático, seção 7) | `INVOICE_CANCELLED` (só esse) |
+| `FINISHED` | CD21 (`POST /:id/correction/finished`, seção 9) | `PRODUCT_UNAVAILABLE`, `ITEM_DIVERGENCE`, `DAMAGED_PRODUCT`, `OTHER_INFO` |
 
 Como a loja resolve cada origem:
 
@@ -338,6 +348,7 @@ Como a loja resolve cada origem:
 | `PENDING_CD21_ANALYSIS` | `POST /:id/correction/resolve` sem `decision` | Ajuste é feito direto na Bling (fora do sistema); este endpoint só confirma e reenvia pra `PENDING_CD21_ANALYSIS` |
 | `SHIPPING` | `POST /:id/correction/resolve` com `decision: "CANCEL" \| "EXCHANGE_PRODUCT"` | `CANCEL` → `CANCELLED`. `EXCHANGE_PRODUCT` → `PENDING_CD21_ANALYSIS` (reanálise completa, pode impactar a nota já gerada) |
 | `INVOICE_CANCELLED` | `POST /:id/correction/resolve` com `decision: "CANCEL" \| "RETRY_ANALYSIS"` | Ver seção 7 |
+| `FINISHED` | `POST /:id/correction/resolve` sem `decision` | Ajuste é feito fora do sistema (ex.: fisicamente); este endpoint só confirma e volta **direto pra `FINISHED`** (não passa por `SHIPPING` de novo) — ver seção 9 |
 
 ## 7. Nota fiscal cancelada (`INVOICE_CANCELLED`)
 
@@ -353,7 +364,56 @@ sync, sem ação do front). CD21 decide o desfecho:
   `correction_origin_status = INVOICE_CANCELLED`) — loja resolve pela
   tabela da seção 6.
 
-## 8. Obter o link/token de uma tela
+## 8. Pedido cancelado na Bling
+
+Diferente da seção 7 (nota cancelada): se o **pedido** em si for cancelado
+na Bling — não a nota, o pedido — qualquer solicitação PDV ativa pra ele
+vai **direto pra `CANCELLED`**, sozinho, sem passar por `INVOICE_CANCELLED`
+e sem decisão nenhuma do CD21. Não existe endpoint aqui — é 100% automático,
+disparado pelo sync de pedidos da Bling. Uma solicitação já `FINISHED` não é
+afetada por um cancelamento tardio do pedido.
+
+## 9. Finalização automática (romaneio) e correção pós-`FINISHED`
+
+### 9.1 Auto-finish
+
+`finish` (`POST /:id/finish`, seção 5.4) continua existindo pra clique
+manual, mas na prática a solicitação normalmente se finaliza **sozinha**
+assim que o romaneio da nota é gerado no CD21 (tela de expedição, fora
+deste módulo). Critério de prontidão depende de `shipping_type`:
+
+- `TRANSPORTADORA` — não tem nota de transferência, então basta o romaneio
+  da NF de Venda ser gerado.
+- `ADT` — só finaliza quando o romaneio de **AMBAS** as notas (Venda e
+  Transferência) já foi gerado. As duas podem entrar em romaneios
+  diferentes, em momentos diferentes — nunca finaliza com uma pendente.
+
+Front não precisa fazer nada especial pra isso: se a tela de detalhe
+estiver com polling/websocket, `status` muda pra `FINISHED` sozinho quando
+o critério acima for satisfeito. `POST /:id/finish` manual continua
+disponível como fallback, mas só funciona a partir de `SHIPPING`.
+
+### 9.2 Correção pós-`FINISHED`
+
+`FINISHED` não é 100% definitivo — o CD21 pode reabrir uma solicitação já
+finalizada:
+
+`POST /:id/correction/finished` (`PdvSalesRequestService.correctFinishedRequest`) — `{ decision: "REQUEST_CORRECTION" | "RESET_INVOICES", reasons?: PdvCorrectionReason[], note?: string }`
+
+- **`REQUEST_CORRECTION`** (padrão/mais comum) — não mexe nas notas.
+  `note` é **obrigatório**; `reasons` é opcional (default `[OTHER_INFO]` se
+  omitido). Vai pra `PENDING_CORRECTION` com `correction_origin_status =
+  FINISHED` e `errors` preenchido (mesmo formato da seção 6, motivos
+  disponíveis na tabela lá). A loja resolve confirmando por
+  `POST /:id/correction/resolve` **sem** `decision` — volta direto pra
+  `FINISHED` (não passa por `SHIPPING` de novo).
+- **`RESET_INVOICES`** — zera `sale_invoice_id` **e** `transfer_invoice_id`
+  e manda direto pra `PENDING_NF_SALE`, refazendo o faturamento do zero
+  (as duas notas precisam ser reemitidas, mesmo em `TRANSPORTADORA` onde só
+  a de venda existia). Não passa por `PENDING_CD21_ANALYSIS` — os dados do
+  pedido não são o problema, só as notas emitidas.
+
+## 10. Obter o link/token de uma tela
 
 Token não fica salvo em lugar nenhum — é derivado. Pra montar/copiar o
 link de uma loja (ex.: tela de administração cadastrando uma loja nova),
@@ -380,7 +440,7 @@ chamada pra `/api/sales-request/*`. Pro link de televendas não vem `number`
 (a loja é escolhida em tempo de navegação, dentro do front) — as outras 3
 sempre vêm com `number` embutido.
 
-## 9. Tipos
+## 11. Tipos
 
 ```ts
 enum PdvSalesRequestStatus {
@@ -391,7 +451,7 @@ enum PdvSalesRequestStatus {
 
 enum PdvShippingType { TRANSPORTADORA, ADT }
 
-enum PdvCorrectionOrigin { FINANCE, CD21_ANALYSIS, EXPEDITION, INVOICE_CANCELLED }
+enum PdvCorrectionOrigin { FINANCE, CD21_ANALYSIS, EXPEDITION, INVOICE_CANCELLED, FINISHED }
 
 enum PdvCorrectionReason {
   PAYMENT_RECEIPT, CUSTOMER_NAME, CUSTOMER_DOCUMENT, PAYMENT_METHOD,
@@ -476,7 +536,7 @@ interface PdvSalesRequestOrderDetail extends PdvSalesRequestOrderSummary {
 }
 ```
 
-## 10. Erros
+## 12. Erros
 
 | Status | Quando |
 |---|---|

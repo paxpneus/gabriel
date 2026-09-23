@@ -831,6 +831,18 @@ export class PdvSalesRequestService extends BaseService<
       });
     }
 
+    // Origem FINISHED: CD21 reabriu uma solicitação já finalizada e pediu
+    // pra loja corrigir algo pontual sem refazer as notas (ver
+    // correctFinishedRequest) — a loja resolve fisicamente/direto na Bling e
+    // este endpoint só confirma, voltando direto pra FINISHED (não passa por
+    // SHIPPING de novo).
+    if (request.correction_origin_status === PdvSalesRequestStatus.FINISHED) {
+      return this.transitionTo(id, PdvSalesRequestStatus.FINISHED, {
+        userId: params.userId,
+        description: "Correção confirmada pela loja — solicitação finalizada novamente",
+      });
+    }
+
     // Única origem restante aqui é CD21_ANALYSIS — o ajuste em si (produto,
     // dados do pedido) é feito direto na Bling e reflete sozinho no pedido
     // via sync; este endpoint só confirma que foi corrigido e manda de volta
@@ -1088,6 +1100,60 @@ export class PdvSalesRequestService extends BaseService<
     });
   }
 
+  // Chamado por batch.service.ts::generateDeliveryNote sempre que um
+  // romaneio é gerado — finaliza sozinho quem estava só esperando isso.
+  // TRANSPORTADORA não tem nota de transferência: basta a nota de venda
+  // entrar num romaneio. ADT tem as duas notas fisicamente expedidas (venda
+  // + transferência pro CD21) — só finaliza quando o romaneio de AMBAS já
+  // foi gerado, nunca com uma pendente.
+  async finishIfDeliveryNoteGenerated(invoiceIds: string[]): Promise<void> {
+    if (!invoiceIds.length) return;
+
+    const candidates =
+      await this.repository.findShippingBySaleOrTransferInvoiceIds(
+        invoiceIds,
+      );
+    if (!candidates.length) return;
+
+    // Romaneio de PDV é sempre gerado pelo CD21 (única tela que aciona
+    // finish/gera lote de saída pra esse fluxo) — checagem de
+    // delivery_note_generated_at precisa ser escopada a ela, senão um lote
+    // de OUTRA loja pra essa mesma nota daria falso positivo.
+    const cd21 = await unitBusinessService.getCd21UnitBusiness();
+    if (!cd21) throw new Error("Unidade CD21 não cadastrada");
+
+    const relevantInvoiceIds = Array.from(
+      new Set(
+        candidates.flatMap((request) =>
+          [request.sale_invoice_id, request.transfer_invoice_id].filter(
+            (invoiceId): invoiceId is string => !!invoiceId,
+          ),
+        ),
+      ),
+    );
+    const readyInvoiceIds = new Set(
+      await invoiceService.findDeliveryNoteGeneratedInvoiceIds(
+        relevantInvoiceIds,
+        cd21.id,
+      ),
+    );
+
+    for (const request of candidates) {
+      const saleReady =
+        !!request.sale_invoice_id && readyInvoiceIds.has(request.sale_invoice_id);
+      const transferReady =
+        !!request.transfer_invoice_id &&
+        readyInvoiceIds.has(request.transfer_invoice_id);
+
+      const ready =
+        request.shipping_type === PdvShippingType.ADT
+          ? saleReady && transferReady
+          : saleReady;
+
+      if (ready) await this.finish(request.id);
+    }
+  }
+
   // ─── Cancelamento de nota fiscal (Bling/Tecinco) ────────────────────────────
   // Chamado a partir de invoice-xml.ts e bling-api-fetch.queue.ts quando uma
   // invoice é detectada como cancelada — não decide sozinho pra onde volta,
@@ -1150,6 +1216,78 @@ export class PdvSalesRequestService extends BaseService<
       userId: params.userId,
       description:
         "CD21 devolveu pra loja após nota cancelada — cancelar o pedido na Bling ou corrigir",
+    });
+  }
+
+  // ─── Cancelamento de pedido (Bling) ─────────────────────────────────────────
+  // Chamado a partir de order-status.ts sempre que um pedido é marcado
+  // CANCELLED na Bling — diferente de handleInvoiceCancelled (bloqueia em
+  // INVOICE_CANCELLED pra decisão humana): aqui o pedido em si já foi
+  // cancelado na origem, não há o que decidir, vai direto pra CANCELLED.
+  // No-op se não houver solicitação ativa pro pedido (findActiveByOrderId já
+  // exclui os status terminais).
+  async cancelIfActiveByOrderId(orderId: string): Promise<void> {
+    const request = await this.repository.findActiveByOrderId(orderId);
+    if (!request) return;
+
+    await this.transitionTo(request.id, PdvSalesRequestStatus.CANCELLED, {
+      description: "Pedido cancelado na Bling",
+    });
+  }
+
+  // ─── Correção pós-finalização (CD21) ────────────────────────────────────────
+  // finish() é terminal — depois de FINISHED, só este endpoint reabre a
+  // solicitação. Duas decisões, sempre a critério do CD21 (mesma tela que já
+  // aciona finish sozinha):
+  // - REQUEST_CORRECTION (padrão): não mexe nas notas, só devolve pra loja
+  //   com o motivo anexado — mesmo formato de errors dos outros origins.
+  // - RESET_INVOICES: zera as duas notas e manda direto pra PENDING_NF_SALE,
+  //   refazendo o faturamento do zero (nunca deixa pra reanálise do CD21 —
+  //   os dados do pedido não são o problema, só as notas emitidas).
+  async correctFinishedRequest(
+    id: string,
+    params: {
+      decision: "REQUEST_CORRECTION" | "RESET_INVOICES";
+      reasons?: PdvCorrectionReason[];
+      note?: string;
+      userId?: string;
+    },
+  ): Promise<PdvSalesRequest> {
+    await this.assertStatus(id, PdvSalesRequestStatus.FINISHED);
+
+    if (params.decision === "RESET_INVOICES") {
+      await this.repository.update(id, {
+        sale_invoice_id: null,
+        transfer_invoice_id: null,
+      });
+
+      return this.transitionTo(id, PdvSalesRequestStatus.PENDING_NF_SALE, {
+        userId: params.userId,
+        description:
+          "CD21 removeu as notas de uma solicitação finalizada — reenviado para faturamento",
+      });
+    }
+
+    if (!params.note) {
+      throw new Error("Informe o motivo da correção");
+    }
+
+    const errors: PdvSalesRequestErrors = {
+      origin: PdvCorrectionOrigin.FINISHED,
+      reasons: params.reasons?.length
+        ? params.reasons
+        : [PdvCorrectionReason.OTHER_INFO],
+      note: params.note,
+    };
+
+    await this.repository.update(id, {
+      correction_origin_status: PdvSalesRequestStatus.FINISHED,
+      errors,
+    });
+
+    return this.transitionTo(id, PdvSalesRequestStatus.PENDING_CORRECTION, {
+      userId: params.userId,
+      description: `CD21 reabriu solicitação finalizada para correção: ${params.note}`,
     });
   }
 

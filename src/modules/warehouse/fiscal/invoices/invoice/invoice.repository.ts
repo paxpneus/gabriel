@@ -913,6 +913,49 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     await InvoiceUnitBusinessAttributes.bulkCreate(attributes, { transaction });
   }
 
+  // Notas cujo romaneio (delivery note) já foi gerado NA unit business
+  // informada — via associação própria Invoice -> batchInvoice -> batch,
+  // mesmo caminho de getFullInvoiceWithBatch. Escopo por unit_business_id é
+  // obrigatório: uma mesma nota pode estar em lotes de mais de uma loja
+  // (não há unique em expedition_batch_invoices.invoice_id — ver
+  // generateBatchFromInvoices's "alreadyInBatch", que também escopa por
+  // unit_business_id), então checar sem esse filtro daria falso positivo pro
+  // romaneio de uma loja errada. Consumido pelo auto-finish do PDV (ver
+  // pdv-sales-request.service.ts::finishIfDeliveryNoteGenerated).
+  async findDeliveryNoteGeneratedInvoiceIds(
+    invoiceIds: string[],
+    unitBusinessId: string,
+  ): Promise<string[]> {
+    if (!invoiceIds.length) return [];
+
+    const rows = await Invoice.findAll({
+      where: { id: { [Op.in]: invoiceIds } },
+      attributes: ["id"],
+      include: [
+        {
+          model: ExpeditionBatchInvoice,
+          as: "batchInvoice",
+          required: true,
+          attributes: [],
+          include: [
+            {
+              model: ExpeditionBatch,
+              as: "batch",
+              required: true,
+              attributes: [],
+              where: {
+                unit_business_id: unitBusinessId,
+                delivery_note_generated_at: { [Op.ne]: null },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    return rows.map((row) => row.id);
+  }
+
   async findUnitBusinessesByCnpj(
     cnpjs: string[],
     transaction?: Transaction,
