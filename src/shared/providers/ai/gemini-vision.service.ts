@@ -1,34 +1,31 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 dotenv.config();
 
+// No SDK novo (@google/genai), utilize gemini-2.5-flash ou gemini-2.0-flash.
+// Se quiser garantir compatibilidade total, gemini-2.5-flash é a versão estável atual.
 const DEFAULT_MODEL = "gemini-3.6-flash";
-// 500/503 do Gemini são quase sempre pico de demanda passageiro (visto em produção) — vale retry.
-const RETRYABLE_STATUSES = new Set([500, 503]);
-// A análise roda em background (ver PdvSalesRequestService.attachReceiptAndShippingType)
-// e não bloqueia mais a resposta HTTP — pode ser mais tolerante aqui sem
-// piorar a UX, importante com várias lojas subindo comprovante ao mesmo tempo.
-const MAX_RETRIES = 4;
-const RETRY_DELAY_MS = 1000;
 
-// Cliente único, prompt-parametrizado — não sabe nada sobre comprovante,
-// DANFE ou qualquer outro domínio específico. Cada caller (payment-receipt-
-// extraction.service.ts, danfe-interpreter.ts) traz seu próprio prompt.
+// Incluído 429 para que picos de chamadas simultâneas no PDV aguardem o retry
+const RETRYABLE_STATUSES = new Set([429, 500, 503]);
+const MAX_RETRIES = 4;
+const RETRY_DELAY_MS = 2000;
+
 export class GeminiVisionService {
-  private client: GoogleGenerativeAI | null = null;
+  private client: GoogleGenAI | null = null;
   private modelName: string;
 
   constructor() {
     this.modelName = process.env.GEMINI_MODEL || DEFAULT_MODEL;
   }
 
-  private getClient(): GoogleGenerativeAI {
+  private getClient(): GoogleGenAI {
     if (!this.client) {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         throw new Error("GEMINI_API_KEY não configurada");
       }
-      this.client = new GoogleGenerativeAI(apiKey);
+      this.client = new GoogleGenAI({ apiKey });
     }
     return this.client;
   }
@@ -52,13 +49,13 @@ export class GeminiVisionService {
     text: string;
     prompt: string;
   }): Promise<string> {
-    const model = this.getClient().getGenerativeModel({
-      model: this.modelName,
-    });
     const result = await this.withRetry(() =>
-      model.generateContent([params.prompt, params.text]),
+      this.getClient().models.generateContent({
+        model: this.modelName,
+        contents: [params.prompt, params.text],
+      }),
     );
-    return result.response.text();
+    return result.text ?? "";
   }
 
   async extractFromInlineData(params: {
@@ -66,21 +63,21 @@ export class GeminiVisionService {
     mimeType: string;
     prompt: string;
   }): Promise<string> {
-    const model = this.getClient().getGenerativeModel({
-      model: this.modelName,
-    });
     const result = await this.withRetry(() =>
-      model.generateContent([
-        params.prompt,
-        {
-          inlineData: {
-            data: params.buffer.toString("base64"),
-            mimeType: params.mimeType,
+      this.getClient().models.generateContent({
+        model: this.modelName,
+        contents: [
+          params.prompt,
+          {
+            inlineData: {
+              data: params.buffer.toString("base64"),
+              mimeType: params.mimeType,
+            },
           },
-        },
-      ]),
+        ],
+      }),
     );
-    return result.response.text();
+    return result.text ?? "";
   }
 }
 

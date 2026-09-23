@@ -150,7 +150,7 @@ export class PdvSalesRequestController extends BaseController<
   // é confiável pra ação anônima por link, sem usuário real.
   private actorUserId(req: Request): string | undefined {
     const access = this.access(req);
-    return access.via === "LOGIN" ? access.userId : req.body.userId;
+    return access.via === "LOGIN" ? access.userId : req.body?.userId;
   }
 
   index = async (req: Request, res: Response): Promise<Response> => {

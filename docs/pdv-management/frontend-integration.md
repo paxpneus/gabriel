@@ -184,8 +184,9 @@ socket.on("payment-receipt-analysis:done", (payload) => {
 ```
 
 Formato do `payload`:
-- Sucesso (inclusive quando a IA não conseguiu extrair nada — conta como
-  sucesso, só sem dado, igual sempre foi `payment_receipt_analysis: null`):
+- Sucesso (inclusive quando a IA não conseguiu extrair nada, ou demorou
+  demais — conta como sucesso, só sem dado, igual sempre foi
+  `payment_receipt_analysis: null`):
   `{ requestId, success: true, analysis: PaymentReceiptExtraction | null, validated: boolean | null, paymentMethodMatchesReceipt: boolean | null }`.
   `analysis: null` aqui é o sinal pra mostrar "Extração automática indisponível
   — revise o comprovante manualmente antes de enviar" (mesma mensagem de sempre).
@@ -194,6 +195,13 @@ Formato do `payload`:
   comprovante já foi usado em outra solicitação — peça pra trocar) ou
   `{ requestId, success: false, reason: "ANALYSIS_UNAVAILABLE", message }`
   (erro inesperado, raro).
+
+**Prazo máximo pra esse evento chegar: ~5 segundos** do momento em que
+`POST /:id/receipt` respondeu — se a IA estiver lenta/sobrecarregada, o back
+desiste e manda `success: true, analysis: null` nesse teto, em vez de deixar
+o front esperando indefinidamente. Front não precisa de timeout próprio pra
+esse evento; se não chegar em ~5-10s (margem de rede), trate como se tivesse
+chegado `analysis: null`.
 
 ## 5. Rotas — `/api/sales-request`
 

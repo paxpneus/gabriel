@@ -46,6 +46,12 @@ export class DuplicateReceiptError extends Error {}
 // ver .claude/entities/pdv-sales-request/index.md ("Card do Kanban").
 const ELIGIBLE_ORDERS_LIMIT = 200;
 
+// Acima disso, o job assíncrono desiste e trata como falha de IA (financeiro
+// revisa manualmente) em vez de deixar o front esperando indefinidamente —
+// a extração em si (com retries) pode continuar rodando depois, só não é
+// mais esperada por quem chamou.
+const RECEIPT_ANALYSIS_TIMEOUT_MS = 5000;
+
 export class PdvSalesRequestService extends BaseService<
   PdvSalesRequest,
   PdvSalesRequestRepository
@@ -337,13 +343,26 @@ export class PdvSalesRequestService extends BaseService<
 
   // ─── Loja: comprovante + tipo de envio ──────────────────────────────────────
 
-  // Roda a extração por IA (Gemini) e a checagem de duplicidade ANTES do
-  // upload pro uploader — barato desistir aqui se for duplicado, sem gastar
-  // uma chamada de storage à toa. Nunca bloqueia o anexo por falha da IA em
-  // si (Gemini fora do ar, resposta malformada): o financeiro ainda revisa
-  // manualmente, então segue com os campos de análise em null. A duplicidade
-  // de comprovante É bloqueante — é o único caso em que a IA de fato barra o
-  // fluxo (pedido do usuário: "Este comprovante já foi utilizado...").
+  // Limpa o timer assim que qualquer lado resolve — sem isso, o setTimeout
+  // fica pendurado até disparar mesmo quando a análise já terminou rápido.
+  private withReceiptAnalysisTimeout<T>(promise: Promise<T>): Promise<T> {
+    let timer: NodeJS.Timeout;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Análise excedeu ${RECEIPT_ANALYSIS_TIMEOUT_MS}ms`)),
+        RECEIPT_ANALYSIS_TIMEOUT_MS,
+      );
+    });
+
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
+  // Roda a extração por IA (Gemini) em background (ver runReceiptAnalysisAsync)
+  // — nunca bloqueia o anexo por falha/demora da IA (Gemini fora do ar,
+  // resposta malformada, ou análise passando de RECEIPT_ANALYSIS_TIMEOUT_MS):
+  // financeiro revisa manualmente, análise segue com os campos em null.
+  // Duplicidade de comprovante é a única falha tratada como erro de verdade
+  // dentro do job (ver DuplicateReceiptError/finalizeReceiptAnalysis).
   private async analyzeReceipt(
     requestId: string,
     orderId: string,
@@ -357,7 +376,9 @@ export class PdvSalesRequestService extends BaseService<
   }> {
     let result;
     try {
-      result = await paymentReceiptExtractionService.analyze(buffer, mimeType);
+      result = await this.withReceiptAnalysisTimeout(
+        paymentReceiptExtractionService.analyze(buffer, mimeType),
+      );
     } catch (err) {
       console.warn(
         "[PDV] Falha ao analisar comprovante via IA — seguindo sem análise",

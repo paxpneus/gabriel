@@ -830,6 +830,50 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
+    it("análise que passa de RECEIPT_ANALYSIS_TIMEOUT_MS vira falha de IA — front não fica esperando indefinidamente", async () => {
+      jest.useFakeTimers();
+      try {
+        (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+          id: "r1",
+          order_id: "order-1",
+          status: PdvSalesRequestStatus.OPEN,
+          payment_receipt_path: "/pdv-receipts/r1/comprovante.png",
+        });
+        (uploaderService.upload as jest.Mock).mockResolvedValue(
+          "/pdv-receipts/r1/comprovante.png",
+        );
+        (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+          id: "r1",
+        });
+        // nunca resolve — simula IA lenta (pico de demanda, retries em andamento)
+        (paymentReceiptExtractionService.analyze as jest.Mock).mockReturnValue(
+          new Promise(() => {}),
+        );
+
+        await service.attachReceiptAndShippingType("r1", {
+          buffer: Buffer.from(""),
+          filename: "comprovante.png",
+          mimeType: "image/png",
+          shippingType: PdvShippingType.TRANSPORTADORA,
+        });
+
+        await jest.advanceTimersByTimeAsync(5000);
+
+        expect(socketService.emitToNamespaceRoom).toHaveBeenCalledWith(
+          "/pdv",
+          "pdv-sales-request:r1",
+          "payment-receipt-analysis:done",
+          expect.objectContaining({
+            requestId: "r1",
+            success: true,
+            analysis: null,
+          }),
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("erro inesperado (não relacionado à IA) na análise assíncrona notifica falha genérica", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock)
         .mockResolvedValueOnce({
