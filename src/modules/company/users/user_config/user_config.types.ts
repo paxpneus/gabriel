@@ -2,7 +2,7 @@ import { USER_TYPE_CONFIG } from "../../../../shared/constants/user-types";
 
 export type UserTheme = "dark" | "light";
 
-export type UserType = "admin" | "developer" | "stock-requester" | "operator" | "manager" | "seller" | (string & {});
+export type UserType = "admin" | "developer" | "stock-requester" | "operator" | "manager" | "seller" | "finance" | (string & {});
 
 export interface UserConfigAttributes {
   id: string;

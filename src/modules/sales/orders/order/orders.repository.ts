@@ -24,6 +24,8 @@ import { collectionDateBucketLiteral, tomorrowBucketKey } from "./helpers/aggreg
 import { translateOrderInternalStatus } from "./helpers/translations";
 import Store from "../../stores/stores.model";
 import PaymentMethod from "../payment_method/payment_method.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
+import OrderItems from "../order_items/order_items.model";
 
 const MERCADO_LIVRE_STORE_NAME = "MercadoLivre";
 
@@ -129,6 +131,39 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
     return this.model.findOne({
       where: { id: orderId },
       include: [{ model: PaymentMethod, as: "paymentMethod" }],
+    });
+  }
+
+  // Usado pelo PDV (pdv-sales-request.service.ts) pra listar pedidos de uma
+  // loja elegíveis pra virar solicitação — cliente + loja só, sem os
+  // includes pesados de pagamento/itens.
+  async findByUnitBusinessWithCustomer(
+    unitBusinessId: string,
+    limit: number,
+  ): Promise<Order[]> {
+    return this.model.findAll({
+      where: { unit_business_id: unitBusinessId },
+      attributes: { exclude: ["source_payload"] },
+      include: [
+        { model: Customer, as: "customer" },
+        { model: UnitBusiness, as: "unitBusiness" },
+      ],
+      order: [["date", "DESC"]],
+      limit,
+    });
+  }
+
+  // Usado pelo PDV pro card expandido do pedido — cliente, forma de
+  // pagamento e itens completos.
+  async findByIdWithFullDetail(orderId: string): Promise<Order | null> {
+    return this.model.findOne({
+      where: { id: orderId },
+      include: [
+        { model: Customer, as: "customer" },
+        { model: PaymentMethod, as: "paymentMethod" },
+        { model: UnitBusiness, as: "unitBusiness" },
+        { model: OrderItems, as: "items" },
+      ],
     });
   }
 

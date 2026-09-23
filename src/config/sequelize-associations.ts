@@ -864,6 +864,37 @@ UnitBusiness.belongsTo(ExpeditionBatch, {
     foreignKey: "point_to",
     as: "parentComment",
   });
+
+  // PDV Management — solicitação de pedido de venda
+  PdvSalesRequest.belongsTo(Order, { foreignKey: "order_id", as: "order" });
+  PdvSalesRequest.belongsTo(UnitBusiness, {
+    foreignKey: "unit_business_id",
+    as: "unitBusiness",
+  });
+  PdvSalesRequest.belongsTo(Invoice, {
+    foreignKey: "sale_invoice_id",
+    as: "saleInvoice",
+  });
+  PdvSalesRequest.belongsTo(Invoice, {
+    foreignKey: "transfer_invoice_id",
+    as: "transferInvoice",
+  });
+  PdvSalesRequest.belongsTo(User, {
+    foreignKey: "created_by_user_id",
+    as: "createdBy",
+  });
+  PdvSalesRequest.hasMany(PdvSalesRequestHistory, {
+    foreignKey: "pdv_sales_request_id",
+    as: "history",
+  });
+  PdvSalesRequestHistory.belongsTo(PdvSalesRequest, {
+    foreignKey: "pdv_sales_request_id",
+    as: "salesRequest",
+  });
+  PdvSalesRequestHistory.belongsTo(User, {
+    foreignKey: "user_id",
+    as: "user",
+  });
 }
 
 // ===== STOCKS =====
@@ -1503,6 +1534,9 @@ TicketStatusHistory.belongsTo(User, {
 
 // CTE(s)
 
+// Nunca chamada em lugar nenhum (não está em server.ts) — e quebra se chamada: todo
+// targetKey: "tax_id" abaixo é errado (Transporter usa cnpj, Customer/Supplier usam
+// document; nenhum tem tax_id). Corrigir os targetKey antes de invocar esta função.
 export function setupCteAssociations() {
   // -------------------------------------------------------------
   // 1. ISSUER (Emitente é SEMPRE a Transportadora)
@@ -1595,36 +1629,5 @@ export function setupCteAssociations() {
     foreignKey: "taker_tax_id",
     targetKey: "tax_id",
     as: "taker_transporter",
-  });
-
-  // PDV Management — solicitação de pedido de venda
-  PdvSalesRequest.belongsTo(Order, { foreignKey: "order_id", as: "order" });
-  PdvSalesRequest.belongsTo(UnitBusiness, {
-    foreignKey: "unit_business_id",
-    as: "unitBusiness",
-  });
-  PdvSalesRequest.belongsTo(Invoice, {
-    foreignKey: "sale_invoice_id",
-    as: "saleInvoice",
-  });
-  PdvSalesRequest.belongsTo(Invoice, {
-    foreignKey: "transfer_invoice_id",
-    as: "transferInvoice",
-  });
-  PdvSalesRequest.belongsTo(User, {
-    foreignKey: "created_by_user_id",
-    as: "createdBy",
-  });
-  PdvSalesRequest.hasMany(PdvSalesRequestHistory, {
-    foreignKey: "pdv_sales_request_id",
-    as: "history",
-  });
-  PdvSalesRequestHistory.belongsTo(PdvSalesRequest, {
-    foreignKey: "pdv_sales_request_id",
-    as: "salesRequest",
-  });
-  PdvSalesRequestHistory.belongsTo(User, {
-    foreignKey: "user_id",
-    as: "user",
   });
 }

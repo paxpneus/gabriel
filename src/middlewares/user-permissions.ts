@@ -6,7 +6,7 @@ import { AuthRequest } from "./auth-token";
 import { ROLE_PERMISSIONS, RoleType } from "../shared/constants/roles";
 import { resolveEntityFromRoute } from "../config/routes";
 
-type Actions = "read" | "write" | "delete" | "update";
+export type Actions = "read" | "write" | "delete" | "update";
 
 const METHOD_ACTION_MAP: Record<string, Actions> = {
   GET: "read",
@@ -35,7 +35,7 @@ const MODEL_LABEL = (entity: string): string => {
   return entity;
 };
 
-function resolvePermissionEntity(entity: string): { entity: string; type: RoleType } {
+export function resolvePermissionEntity(entity: string): { entity: string; type: RoleType } {
   const primary = ROLE_PERMISSIONS.find((r) => r.entity === entity);
   if (primary) return { entity: primary.entity, type: primary.type };
 
@@ -86,7 +86,7 @@ function isSelfUserUpdate(
   return true;
 }
 
-function userHasPermission(
+export function userHasPermission(
   role: any,
   entity: string,
   action: Actions,

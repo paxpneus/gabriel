@@ -26,6 +26,7 @@ type Scopes =
   | 'Demandas'
   | 'Setores'
   | 'Descontos de Fornecedor'
+  | 'PDV Management'
 
 interface ChildEntity {
   entity: string
@@ -243,6 +244,33 @@ export const ROLE_PERMISSIONS: Roles[] = [
     route: '',
     type: 'CUSTOM',
     permissions: ['read'],
+  },
+  // Telas do PDV Management (Loja/Financeiro/CD21) — entries irmãs e
+  // independentes (não pai/filho: um child sempre herda a permissão do
+  // pai via resolvePermissionEntity, e aqui cada tela precisa ser
+  // concedível separadamente). Só a action "write": é uma flag de "a
+  // role enxerga essa tela ou não", mesmo espírito de financial-pdt /
+  // visualize-all-unit-business acima.
+  {
+    scope: 'PDV Management',
+    entity: 'pdv_sales_request_store',
+    route: '',
+    type: 'CUSTOM',
+    permissions: ['write'],
+  },
+  {
+    scope: 'PDV Management',
+    entity: 'pdv_sales_request_finance',
+    route: '',
+    type: 'CUSTOM',
+    permissions: ['write'],
+  },
+  {
+    scope: 'PDV Management',
+    entity: 'pdv_sales_request_cd21',
+    route: '',
+    type: 'CUSTOM',
+    permissions: ['write'],
   },
 ]
 

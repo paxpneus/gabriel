@@ -148,3 +148,52 @@ export type PdvSalesRequestCreationAttributes = Omit<
   PdvSalesRequestAttributes,
   "id" | "createdAt" | "updatedAt"
 >;
+
+// ─── Pedido (Bling) embutido na resposta ────────────────────────────────────
+// Nunca persistido nesta tabela — resolvido on-the-fly, ver "Card do Kanban"
+// em .claude/entities/pdv-sales-request/index.md.
+
+export interface PdvSalesRequestOrderCustomer {
+  id: string;
+  name: string;
+  document: string;
+}
+
+export interface PdvSalesRequestOrderUnitBusiness {
+  id: string;
+  number: string;
+  name: string;
+}
+
+export interface PdvSalesRequestOrderPaymentMethod {
+  id: string;
+  description: string;
+}
+
+export interface PdvSalesRequestOrderItem {
+  id: string;
+  name: string;
+  sku: string;
+  quantity: number;
+  price: number;
+}
+
+// Versão leve, usada na listagem (index) — sem forma de pagamento/parcelas/
+// itens, que só a tela de detalhe (show) precisa.
+export interface PdvSalesRequestOrderSummary {
+  id: string;
+  number_order_channel: string;
+  number_order_system: string | null;
+  date: string | null;
+  total_order: number | null;
+  customer: PdvSalesRequestOrderCustomer | null;
+  unitBusiness: PdvSalesRequestOrderUnitBusiness | null;
+}
+
+// Versão completa, usada no detalhe (show). `installments` deriva de
+// `order.source_payload.parcelas.length` — não é coluna própria.
+export interface PdvSalesRequestOrderDetail extends PdvSalesRequestOrderSummary {
+  paymentMethod: PdvSalesRequestOrderPaymentMethod | null;
+  installments: number | null;
+  items: PdvSalesRequestOrderItem[];
+}

@@ -226,6 +226,7 @@ export const doRefreshToken = async (): Promise<string> => {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Authorization: `Basic ${basic}`,
+      "enable-jwt": "1",
     },
     body: new URLSearchParams({
       grant_type: "refresh_token",
@@ -255,6 +256,10 @@ export const doRefreshToken = async (): Promise<string> => {
 export const blingApi: AxiosInstance = createAxiosInstance({
   baseURL: process.env.NODE_ENV == 'development' ? 'nothing' : "https://api.bling.com.br/Api/v3",
   // baseURL: 'http',
+  // Bling desativa tokens opacos em 15/10; sem este header a API para de aceitar as requisições
+  headers: {
+    "enable-jwt": "1",
+  },
 
   // Interceptor de request: injeta o token atual
   onRequest: async (config) => {
@@ -377,6 +382,7 @@ export const handleBlingOAuthCallback = async (code: string): Promise<void> => {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Authorization: `Basic ${basic}`,
+      "enable-jwt": "1",
     },
     body: new URLSearchParams({
       grant_type: "authorization_code",

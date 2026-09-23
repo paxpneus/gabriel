@@ -20,6 +20,10 @@ import expeditionBatchService from "../../warehouse/expedition/batch/batch.servi
 import { comercialUnitBusinessWhere } from "./helpers/comercial-unit-business";
 import roleService from "../users/roles/role.service";
 
+// Não existe flag/coluna própria pra marcar a loja CD21 — identificação
+// centralizada aqui (evita comparar "21"/"CD21" solto em vários lugares).
+const CD21_UNIT_BUSINESS_NUMBER = "21";
+
 export class UnitBusinessService extends BaseService<
   UnitBusiness,
   UnitBusinessRepository
@@ -55,6 +59,12 @@ export class UnitBusinessService extends BaseService<
     }
 
     return headOffice;
+  }
+
+  async getCd21UnitBusiness(): Promise<UnitBusiness | null> {
+    return this.repository.findOne({
+      where: { number: CD21_UNIT_BUSINESS_NUMBER },
+    });
   }
 
   async update(

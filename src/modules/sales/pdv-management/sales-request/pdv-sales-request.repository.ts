@@ -1,11 +1,67 @@
-import { Op } from "sequelize";
+import { Op, WhereOptions } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import PdvSalesRequest from "./pdv-sales-request.model";
 import { TERMINAL_PDV_SALES_REQUEST_STATUSES } from "./pdv-sales-request.types";
+import Order from "../../orders/order/orders.model";
+import Customer from "../../customers/customers.model";
+import PaymentMethod from "../../orders/payment_method/payment_method.model";
+import OrderItems from "../../orders/order_items/order_items.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
+import type {
+  QueryParams,
+  QueryConfig,
+  PaginatedResult,
+} from "../../../../shared/query/query.types";
 
 export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   constructor() {
     super(PdvSalesRequest);
+  }
+
+  // Pedido (Bling) embutido, com cliente/pagamento/itens — card expandido
+  // do Kanban. `order` é associação própria (belongsTo), o resto é join
+  // dela — ver .claude/entities/pdv-sales-request/index.md ("Card do Kanban").
+  async findByIdWithOrder(id: string): Promise<PdvSalesRequest | null> {
+    return this.findById(id, {
+      include: [
+        {
+          model: Order,
+          as: "order",
+          include: [
+            { model: Customer, as: "customer" },
+            { model: PaymentMethod, as: "paymentMethod" },
+            { model: UnitBusiness, as: "unitBusiness" },
+            { model: OrderItems, as: "items" },
+          ],
+        },
+      ],
+    });
+  }
+
+  // Mesmo embed, versão resumida (sem pagamento/itens) pra listagem.
+  async findPaginatedWithOrder(
+    params: QueryParams,
+    config: QueryConfig,
+    forcedWhere?: WhereOptions,
+  ): Promise<PaginatedResult<PdvSalesRequest>> {
+    return this.findPaginated(
+      params,
+      config,
+      {
+        include: [
+          {
+            model: Order,
+            as: "order",
+            attributes: { exclude: ["source_payload"] },
+            include: [
+              { model: Customer, as: "customer" },
+              { model: UnitBusiness, as: "unitBusiness" },
+            ],
+          },
+        ],
+      },
+      forcedWhere,
+    );
   }
 
   async findActiveByOrderId(orderId: string): Promise<PdvSalesRequest | null> {

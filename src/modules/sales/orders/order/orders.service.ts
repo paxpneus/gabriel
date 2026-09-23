@@ -352,6 +352,20 @@ export class OrderService extends BaseService<Order, OrderRepository> {
   async findByIdWithPaymentMethod(orderId: string): Promise<Order | null> {
     return this.repository.findByIdWithPaymentMethod(orderId);
   }
+
+  async findByUnitBusiness(
+    unitBusinessId: string,
+    limit: number,
+  ): Promise<Order[]> {
+    return this.repository.findByUnitBusinessWithCustomer(
+      unitBusinessId,
+      limit,
+    );
+  }
+
+  async findByIdWithFullDetail(orderId: string): Promise<Order | null> {
+    return this.repository.findByIdWithFullDetail(orderId);
+  }
 }
 
 export default new OrderService();

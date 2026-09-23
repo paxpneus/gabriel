@@ -74,6 +74,10 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
             id: "orders",
             label: "Pedidos de Venda",
           },
+          {
+            id: "pdv_sales_request_cd21",
+            label: "PDV — Gerenciamento CD21",
+          },
         ],
       },
 
@@ -230,6 +234,25 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
           {
             id: "seller-report",
             label: "Relatório de Vendedor - Visão Vendedor",
+          },
+        ],
+      },
+    ],
+  },
+
+  {
+    type: "finance",
+    label: "Financeiro",
+    description: "Acesso à análise financeira do PDV Management.",
+    initialPage: "/pdv-management/financeiro",
+    modules: [
+      {
+        module: "sales",
+        label: "Vendas",
+        permissions: [
+          {
+            id: "pdv_sales_request_finance",
+            label: "PDV — Análise Financeira",
           },
         ],
       },

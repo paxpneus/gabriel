@@ -1,4 +1,4 @@
-import { Op } from "sequelize";
+import { Op, WhereOptions } from "sequelize";
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import PdvSalesRequest from "./pdv-sales-request.model";
@@ -12,6 +12,9 @@ import {
   PdvSalesRequestStatus,
   PdvShippingType,
   PaymentReceiptExtraction,
+  PdvSalesRequestOrderDetail,
+  PdvSalesRequestOrderSummary,
+  TERMINAL_PDV_SALES_REQUEST_STATUSES,
 } from "./pdv-sales-request.types";
 import pdvSalesRequestHistoryService from "../sales-request-history/pdv-sales-request-history.service";
 import { extractAccessKeyFromDanfe } from "./helpers/danfe-interpreter";
@@ -25,6 +28,11 @@ import { extractAccessKeyFromXmlContent } from "../../../../shared/utils/xml/acc
 import nfeEmissionService from "../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "./payment-receipt-extraction.service";
 import { paymentMethodMatchesReceipt } from "./helpers/payment-method-match";
+import { QueryParams } from "../../../../shared/query/query.types";
+
+// Teto de segurança pra findEligibleOrders — sem paginação própria ainda,
+// ver .claude/entities/pdv-sales-request/index.md ("Card do Kanban").
+const ELIGIBLE_ORDERS_LIMIT = 200;
 
 export class PdvSalesRequestService extends BaseService<
   PdvSalesRequest,
@@ -43,6 +51,139 @@ export class PdvSalesRequestService extends BaseService<
       ],
       sortableFields: ["createdAt", "status"],
     };
+  }
+
+  // ─── Leitura enriquecida (card do Kanban) ────────────────────────────────────
+  // Pedido (Bling) embutido na resposta — ver "Card do Kanban" em
+  // .claude/entities/pdv-sales-request/index.md.
+
+  private toOrderDetail(order: any): PdvSalesRequestOrderDetail | null {
+    if (!order) return null;
+
+    const parcelas = order.source_payload?.parcelas;
+
+    return {
+      id: order.id,
+      number_order_channel: order.number_order_channel,
+      number_order_system: order.number_order_system ?? null,
+      date: order.date ?? null,
+      total_order: order.total_order ?? null,
+      customer: order.customer
+        ? {
+            id: order.customer.id,
+            name: order.customer.name,
+            document: order.customer.document,
+          }
+        : null,
+      unitBusiness: order.unitBusiness
+        ? {
+            id: order.unitBusiness.id,
+            number: order.unitBusiness.number,
+            name: order.unitBusiness.name,
+          }
+        : null,
+      paymentMethod: order.paymentMethod
+        ? { id: order.paymentMethod.id, description: order.paymentMethod.description }
+        : null,
+      installments: Array.isArray(parcelas) ? parcelas.length : null,
+      items: (order.items ?? []).map((item: any) => ({
+        id: item.id,
+        name: item.name,
+        sku: item.sku,
+        quantity: item.quantity,
+        price: item.price,
+      })),
+    };
+  }
+
+  private toOrderSummary(order: any): PdvSalesRequestOrderSummary | null {
+    if (!order) return null;
+
+    return {
+      id: order.id,
+      number_order_channel: order.number_order_channel,
+      number_order_system: order.number_order_system ?? null,
+      date: order.date ?? null,
+      total_order: order.total_order ?? null,
+      customer: order.customer
+        ? { id: order.customer.id, name: order.customer.name, document: order.customer.document }
+        : null,
+      unitBusiness: order.unitBusiness
+        ? {
+            id: order.unitBusiness.id,
+            number: order.unitBusiness.number,
+            name: order.unitBusiness.name,
+          }
+        : null,
+    };
+  }
+
+  // Detalhe (tela expandida do card) — pedido com cliente, forma de
+  // pagamento, parcelas e itens.
+  async findByIdWithOrder(id: string): Promise<any | null> {
+    const record = await this.repository.findByIdWithOrder(id);
+    if (!record) return null;
+
+    const plain = record.get({ plain: true }) as any;
+    return { ...plain, order: this.toOrderDetail(plain.order) };
+  }
+
+  // Listagem (cards reduzidos do Kanban) — só cliente + loja, sem forma de
+  // pagamento/parcelas/itens.
+  async paginateWithOrder(params: QueryParams, forcedWhere?: WhereOptions) {
+    const result = await this.repository.findPaginatedWithOrder(
+      params,
+      this.queryConfig,
+      forcedWhere,
+    );
+
+    return {
+      ...result,
+      data: result.data.map((record) => {
+        const plain = (record as any).get({ plain: true }) as any;
+        return { ...plain, order: this.toOrderSummary(plain.order) };
+      }),
+    };
+  }
+
+  // Pedidos da loja sem solicitação PDV ativa — coluna "Em Aberto" do Kanban
+  // (ver "Card do Kanban" em .claude/entities/pdv-sales-request/index.md).
+  async findEligibleOrders(
+    unitBusinessId: string,
+  ): Promise<PdvSalesRequestOrderSummary[]> {
+    console.log("LOJA", unitBusinessId)
+    const orders = await orderService.findByUnitBusiness(
+      unitBusinessId,
+      ELIGIBLE_ORDERS_LIMIT,
+    );
+    if (!orders.length) return [];
+
+    const activeRequests = await this.repository.findAll({
+      where: {
+        order_id: { [Op.in]: orders.map((order) => order.id) },
+        status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
+      },
+      attributes: ["order_id"],
+    });
+    const orderIdsWithActiveRequest = new Set(
+      activeRequests.map((request) => request.order_id),
+    );
+
+    return orders
+      .filter((order) => !orderIdsWithActiveRequest.has(order.id))
+      .map((order) => this.toOrderSummary(order.get({ plain: true })))
+      .filter((order): order is PdvSalesRequestOrderSummary => order !== null);
+  }
+
+  // Card expandido de um pedido de /orders/eligible, ainda sem
+  // PdvSalesRequest — mesma forma que findByIdWithOrder, buscada por order_id.
+  async findOrderDetail(
+    orderId: string,
+  ): Promise<PdvSalesRequestOrderDetail | null> {
+    const order = await orderService.findByIdWithFullDetail(orderId);
+    if (!order) return null;
+
+    return this.toOrderDetail(order.get({ plain: true }));
   }
 
   // ─── Máquina de estados ─────────────────────────────────────────────────────
@@ -128,6 +269,7 @@ export class PdvSalesRequestService extends BaseService<
     orderId: string;
     name: string;
     createdByUserId?: string;
+    unitBusinessId?: string | null;
   }): Promise<PdvSalesRequest> {
     const existingActive = await this.repository.findActiveByOrderId(
       params.orderId,
@@ -139,6 +281,12 @@ export class PdvSalesRequestService extends BaseService<
     const order = await orderService.findById(params.orderId);
     if (!order) {
       throw new Error("Pedido não encontrado");
+    }
+    if (
+      params.unitBusinessId &&
+      order.unit_business_id !== params.unitBusinessId
+    ) {
+      throw new Error("Pedido não pertence à loja deste acesso");
     }
 
     return sequelize.transaction(async (t) => {

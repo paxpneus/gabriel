@@ -15,6 +15,7 @@ Cross-cutting tenant/auth scoping model. Read before touching auth/scoping on an
 ## Known tenant-scoping status by controller
 
 **Fixed:**
+- `pdv-sales-request.controller.ts` (módulo PDV Management) — não usa o RBAC genérico (`authenticate`/`userPermissions`); usa middleware próprio `pdvAccess()` (`src/modules/sales/pdv-management/pdv-access/pdv-access.middleware.ts`) que aceita login (loja atual + permissão de role) OU link/token sem login (derivado por HMAC, sem tabela) — ver `.claude/entities/pdv-sales-request/index.md` § "Rotas e auth". Antes ficava com zero proteção em toda rota.
 - `supplier-mapping.controller.ts` — all actions scope by `integrations_id` derived from the logged user; `show`/`update`/`destroy` verify ownership (404 on mismatch); `update`/`bulkUpdate` strip any client-supplied `integrations_id`.
 - `product_config.controller.ts` — previously **no auth at all** on any route; now `authenticate` + `userPermissions` on all actions, same ownership-scoping pattern keyed on `unit_business_id`.
 - `batch.repository.ts` (expedition) — `ProductConfig` include inside `batchInvoicesInclude` was missing `where: { unit_business_id }`, leaking another store's `sku`/`gtin`/`price` on `/api/batch/full/get`. Fixed.

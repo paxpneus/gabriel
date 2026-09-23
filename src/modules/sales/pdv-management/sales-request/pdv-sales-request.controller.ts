@@ -7,14 +7,20 @@ import pdvSalesRequestService, {
 } from "./pdv-sales-request.service";
 import { PdvShippingType } from "./pdv-sales-request.types";
 import { TCarUpsertQueue } from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { pdvAccess, PdvAccessRequest } from "../pdv-access/pdv-access.middleware";
+import { PdvAccessContext, PdvAccessScreen } from "../pdv-access/pdv-access.types";
+import uploaderService from "../../../handlers/uploader/services/uploader.service";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Sem authenticate/userPermissions de propósito — este módulo não usa o
-// RBAC normal de usuário logado; controle de acesso é inteiramente via
-// token de link, na Etapa 2 (ainda não implementada). Até lá estas rotas
-// ficam sem proteção alguma — pendência bloqueante antes de produção, não
-// esquecimento.
+const READ_SCREENS = [
+  PdvAccessScreen.STORE_REQUEST,
+  PdvAccessScreen.FINANCE,
+  PdvAccessScreen.CD21,
+];
+
+// Nenhuma rota exige login — acesso via pdvAccess() (link/token OU usuário
+// logado), ver "Rotas e auth" em .claude/entities/pdv-sales-request/index.md.
 export class PdvSalesRequestController extends BaseController<
   PdvSalesRequest,
   PdvSalesRequestService
@@ -24,26 +30,63 @@ export class PdvSalesRequestController extends BaseController<
 
     this.router.post(
       "/:id/receipt",
+      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
       upload.single("receipt"),
       this.attachReceipt,
     );
-    this.router.post("/:id/receipt/confirm", this.confirmReceiptSubmission);
-    this.router.post("/:id/finance/approve", this.financeApprove);
-    this.router.post("/:id/finance/reject", this.financeReject);
-    this.router.post("/:id/cd21-analysis/approve", this.cd21AnalysisApprove);
-    this.router.post("/:id/cd21-analysis/reject", this.cd21AnalysisReject);
-    this.router.post("/:id/correction/resolve", this.resolveCorrection);
+    this.router.post(
+      "/:id/receipt/confirm",
+      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      this.confirmReceiptSubmission,
+    );
+    this.router.get(
+      "/:id/receipt/image",
+      pdvAccess(READ_SCREENS),
+      this.getReceiptImage,
+    );
+    this.router.post(
+      "/:id/finance/approve",
+      pdvAccess([PdvAccessScreen.FINANCE]),
+      this.financeApprove,
+    );
+    this.router.post(
+      "/:id/finance/reject",
+      pdvAccess([PdvAccessScreen.FINANCE]),
+      this.financeReject,
+    );
+    this.router.post(
+      "/:id/cd21-analysis/approve",
+      pdvAccess([PdvAccessScreen.CD21]),
+      this.cd21AnalysisApprove,
+    );
+    this.router.post(
+      "/:id/cd21-analysis/reject",
+      pdvAccess([PdvAccessScreen.CD21]),
+      this.cd21AnalysisReject,
+    );
+    this.router.post(
+      "/:id/correction/resolve",
+      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      this.resolveCorrection,
+    );
     this.router.post(
       "/:id/invoice-cancelled/resolve",
+      pdvAccess([PdvAccessScreen.CD21]),
       this.cd21ResolveInvoiceCancelled,
     );
-    this.router.post("/:id/sale-invoice/generate", this.generateSaleInvoice);
+    this.router.post(
+      "/:id/sale-invoice/generate",
+      pdvAccess([PdvAccessScreen.CD21]),
+      this.generateSaleInvoice,
+    );
     this.router.get(
       "/transfer-invoice/search",
+      pdvAccess([PdvAccessScreen.CD21]),
       this.searchTransferInvoiceCandidates,
     );
     this.router.post(
       "/:id/transfer-invoice",
+      pdvAccess([PdvAccessScreen.CD21]),
       upload.fields([
         { name: "xml", maxCount: 1 },
         { name: "danfe", maxCount: 1 },
@@ -52,20 +95,108 @@ export class PdvSalesRequestController extends BaseController<
     );
     this.router.post(
       "/:id/transfer-invoice/confirm",
+      pdvAccess([PdvAccessScreen.CD21]),
       this.confirmTransferInvoice,
     );
-    this.router.post("/:id/expedition/reject", this.expeditionReject);
-    this.router.post("/:id/finish", this.finish);
-    this.router.get("/:id/history", this.getHistory);
+    this.router.post(
+      "/:id/expedition/reject",
+      pdvAccess([PdvAccessScreen.CD21]),
+      this.expeditionReject,
+    );
+    this.router.post(
+      "/:id/finish",
+      pdvAccess([PdvAccessScreen.CD21]),
+      this.finish,
+    );
+    this.router.get(
+      "/:id/history",
+      pdvAccess(READ_SCREENS),
+      this.getHistory,
+    );
+    // 2 segmentos de propósito — 1 segmento cairia em show() (GET /:id do
+    // BaseController).
+    this.router.get(
+      "/orders/eligible",
+      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      this.eligibleOrders,
+    );
+    // Precisa vir DEPOIS de "/orders/eligible" — mesmo formato de path, a
+    // literal tem que vencer antes de :orderId.
+    this.router.get(
+      "/orders/:orderId",
+      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      this.getOrderDetail,
+    );
   }
+
+  protected middlewaresFor() {
+    return {
+      index: [pdvAccess(READ_SCREENS)],
+      show: [pdvAccess(READ_SCREENS)],
+      create: [pdvAccess([PdvAccessScreen.STORE_REQUEST])],
+    };
+  }
+
+  private access(req: Request): PdvAccessContext {
+    return (req as PdvAccessRequest).pdvAccess!;
+  }
+
+  // Via LOGIN, o autor é sempre o usuário logado (nunca o body) — o body só
+  // é confiável pra ação anônima por link, sem usuário real.
+  private actorUserId(req: Request): string | undefined {
+    const access = this.access(req);
+    return access.via === "LOGIN" ? access.userId : req.body.userId;
+  }
+
+  index = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const access = this.access(req);
+      const params = this.extractQueryParams(req);
+
+      const result = await this.service.paginateWithOrder(
+        params,
+        access.screen === PdvAccessScreen.CD21
+          ? undefined
+          : { unit_business_id: access.unitBusinessId },
+      );
+
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  show = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const access = this.access(req);
+      const record = await this.service.findByIdWithOrder(
+        req.params.id as string,
+      );
+
+      if (
+        !record ||
+        (access.screen !== PdvAccessScreen.CD21 &&
+          record.unit_business_id !== access.unitBusinessId)
+      ) {
+        return res.status(404).json({ error: "Não encontrado" });
+      }
+
+      return res.json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
 
   create = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { orderId, name, createdByUserId } = req.body;
+      const access = this.access(req);
+      const { orderId, name } = req.body;
+
       const created = await this.service.createRequest({
         orderId,
         name,
-        createdByUserId,
+        createdByUserId: this.actorUserId(req),
+        unitBusinessId: access.unitBusinessId,
       });
       return res.status(201).json(created);
     } catch (error: any) {
@@ -115,12 +246,30 @@ export class PdvSalesRequestController extends BaseController<
     });
   };
 
+  // Loja/Financeiro só agem sobre solicitação da própria loja — 404 (não
+  // 403) se o :id pertencer a outra, mesmo padrão de product_config.controller.ts.
+  private async assertOwnedByAccess(
+    req: Request,
+    res: Response,
+  ): Promise<PdvSalesRequest | null> {
+    const access = this.access(req);
+    const record = await this.service.findById(req.params.id as string);
+
+    if (!record || record.unit_business_id !== access.unitBusinessId) {
+      res.status(404).json({ error: "Não encontrado" });
+      return null;
+    }
+
+    return record;
+  }
+
   attachReceipt = async (req: Request, res: Response): Promise<Response> => {
     try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
       if (!req.file) {
         return res.status(400).json({ error: "Comprovante obrigatório" });
       }
-      const { shippingType, userId } = req.body;
+      const { shippingType } = req.body;
       const updated = await this.service.attachReceiptAndShippingType(
         req.params.id as string,
         {
@@ -128,7 +277,7 @@ export class PdvSalesRequestController extends BaseController<
           filename: req.file.originalname,
           mimeType: req.file.mimetype,
           shippingType: shippingType as PdvShippingType,
-          userId,
+          userId: this.actorUserId(req),
         },
       );
       return res.json(updated);
@@ -142,9 +291,10 @@ export class PdvSalesRequestController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
       const updated = await this.service.confirmReceiptSubmission(
         req.params.id as string,
-        req.body.userId,
+        this.actorUserId(req),
       );
       return res.json(updated);
     } catch (error: any) {
@@ -152,11 +302,37 @@ export class PdvSalesRequestController extends BaseController<
     }
   };
 
+  getReceiptImage = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (
+        this.access(req).screen !== PdvAccessScreen.CD21 &&
+        !(await this.assertOwnedByAccess(req, res))
+      ) {
+        return res;
+      }
+
+      const record = await this.service.findById(req.params.id as string);
+      if (!record?.payment_receipt_path) {
+        return res.status(404).json({ error: "Comprovante não encontrado" });
+      }
+
+      const buffer = await uploaderService.getFile(record.payment_receipt_path);
+      const ext = record.payment_receipt_path.split(".").pop() || "jpeg";
+
+      res.set("Content-Type", `image/${ext}`);
+      res.set("Cache-Control", "public, max-age=86400");
+      return res.send(buffer);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
   financeApprove = async (req: Request, res: Response): Promise<Response> => {
     try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
       const updated = await this.service.financeApprove(
         req.params.id as string,
-        req.body.userId,
+        this.actorUserId(req),
       );
       return res.json(updated);
     } catch (error: any) {
@@ -166,10 +342,11 @@ export class PdvSalesRequestController extends BaseController<
 
   financeReject = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { note, userId } = req.body;
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
+      const { note } = req.body;
       const updated = await this.service.financeReject(
         req.params.id as string,
-        { note, userId },
+        { note, userId: this.actorUserId(req) },
       );
       return res.json(updated);
     } catch (error: any) {
@@ -184,7 +361,7 @@ export class PdvSalesRequestController extends BaseController<
     try {
       const updated = await this.service.cd21AnalysisApprove(
         req.params.id as string,
-        req.body.userId,
+        this.actorUserId(req),
       );
       return res.json(updated);
     } catch (error: any) {
@@ -197,10 +374,10 @@ export class PdvSalesRequestController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { reasons, note, userId } = req.body;
+      const { reasons, note } = req.body;
       const updated = await this.service.cd21AnalysisReject(
         req.params.id as string,
-        { reasons, note, userId },
+        { reasons, note, userId: this.actorUserId(req) },
       );
       return res.json(updated);
     } catch (error: any) {
@@ -213,10 +390,11 @@ export class PdvSalesRequestController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { userId, decision } = req.body;
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
+      const { decision } = req.body;
       const updated = await this.service.resolveCorrection(
         req.params.id as string,
-        { userId, decision },
+        { userId: this.actorUserId(req), decision },
       );
       return res.json(updated);
     } catch (error: any) {
@@ -229,10 +407,10 @@ export class PdvSalesRequestController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { decision, userId, note } = req.body;
+      const { decision, note } = req.body;
       const updated = await this.service.cd21ResolveInvoiceCancelled(
         req.params.id as string,
-        { decision, userId, note },
+        { decision, userId: this.actorUserId(req), note },
       );
       return res.json(updated);
     } catch (error: any) {
@@ -281,7 +459,7 @@ export class PdvSalesRequestController extends BaseController<
         | undefined;
       const xmlFile = files?.xml?.[0];
       const danfeFile = files?.danfe?.[0];
-      const { invoiceId, userId } = req.body;
+      const { invoiceId } = req.body;
 
       const updated = await this.service.attachTransferInvoice(
         req.params.id as string,
@@ -291,7 +469,7 @@ export class PdvSalesRequestController extends BaseController<
           danfeBuffer: danfeFile?.buffer,
           danfeMimeType: danfeFile?.mimetype,
           tcarUpsertQueue: req.app.locals.TCarUpsertQueue as TCarUpsertQueue,
-          userId,
+          userId: this.actorUserId(req),
         },
       );
       return res.json(updated);
@@ -307,7 +485,7 @@ export class PdvSalesRequestController extends BaseController<
     try {
       const updated = await this.service.confirmTransferInvoice(
         req.params.id as string,
-        req.body.userId,
+        this.actorUserId(req),
       );
       return res.json(updated);
     } catch (error: any) {
@@ -317,10 +495,10 @@ export class PdvSalesRequestController extends BaseController<
 
   expeditionReject = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { reasons, note, userId } = req.body;
+      const { reasons, note } = req.body;
       const updated = await this.service.expeditionReject(
         req.params.id as string,
-        { reasons, note, userId },
+        { reasons, note, userId: this.actorUserId(req) },
       );
       return res.json(updated);
     } catch (error: any) {
@@ -332,7 +510,7 @@ export class PdvSalesRequestController extends BaseController<
     try {
       const updated = await this.service.finish(
         req.params.id as string,
-        req.body.userId,
+        this.actorUserId(req),
       );
       return res.json(updated);
     } catch (error: any) {
@@ -340,8 +518,48 @@ export class PdvSalesRequestController extends BaseController<
     }
   };
 
+  // Coluna "Em Aberto" do Kanban — ver .claude/entities/pdv-sales-request/index.md.
+  eligibleOrders = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const access = this.access(req);
+      if (!access.unitBusinessId) return res.json([]);
+
+      const orders = await this.service.findEligibleOrders(
+        access.unitBusinessId,
+      );
+      return res.json(orders);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // Card expandido de pedido ainda sem solicitação (vindo de
+  // /orders/eligible) — mesma forma que /:id embute, buscada por order_id.
+  getOrderDetail = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const access = this.access(req);
+      const order = await this.service.findOrderDetail(
+        req.params.orderId as string,
+      );
+
+      if (!order || order.unitBusiness?.id !== access.unitBusinessId) {
+        return res.status(404).json({ error: "Não encontrado" });
+      }
+
+      return res.json(order);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
   getHistory = async (req: Request, res: Response): Promise<Response> => {
     try {
+      if (
+        this.access(req).screen !== PdvAccessScreen.CD21 &&
+        !(await this.assertOwnedByAccess(req, res))
+      ) {
+        return res;
+      }
       const history = await this.service.getHistory(req.params.id as string);
       return res.json(history);
     } catch (error: any) {
