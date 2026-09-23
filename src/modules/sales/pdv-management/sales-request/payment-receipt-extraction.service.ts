@@ -25,8 +25,17 @@ export class PaymentReceiptExtractionService {
 
     const extraction = PaymentReceiptExtractionSchema.parse(this.parseJson(raw));
 
+    return { extraction, ...this.computeDerived(extraction) };
+  }
+
+  // Extraído pra fora de analyze() pra ser reaproveitado quando o front edita
+  // a análise manualmente (updateReceiptAnalysis em pdv-sales-request.service.ts)
+  // — mesma regra de validação/fingerprint, seja o dado vindo da IA ou de edição.
+  computeDerived(extraction: PaymentReceiptExtraction): {
+    validated: boolean | null;
+    fingerprint: string | null;
+  } {
     return {
-      extraction,
       validated: this.validateMath(extraction),
       fingerprint: this.buildFingerprint(extraction),
     };

@@ -16,6 +16,7 @@ const baseExtraction = {
   data_transacao: "2026-01-10",
   hora_transacao: "14:30",
   bandeira_cartao: "Visa",
+  instituicao_pagamento: "Itaú",
   titular_cartao: "Fulano",
   cartao_final: "1234",
   codigo_autorizacao: "AUTH1",

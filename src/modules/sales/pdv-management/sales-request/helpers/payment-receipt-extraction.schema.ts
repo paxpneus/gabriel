@@ -16,6 +16,7 @@ export const PaymentReceiptExtractionSchema = z.object({
   data_transacao: z.string().nullable(),
   hora_transacao: z.string().nullable(),
   bandeira_cartao: z.string().nullable(),
+  instituicao_pagamento: z.string().nullable(),
   titular_cartao: z.string().nullable(),
   cartao_final: z.string().nullable(),
   codigo_autorizacao: z.string().nullable(),

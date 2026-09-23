@@ -112,11 +112,35 @@ export interface PaymentReceiptExtraction {
   data_transacao: string | null;
   hora_transacao: string | null;
   bandeira_cartao: string | null;
+  // Texto literal do comprovante — banco/instituição (ex.: "Itaú", "Mercado
+  // Pago") OU nome/apelido da maquininha (ex.: "Laranjinha Itaú"), que nem
+  // sempre bate com o nome "limpo" da instituição.
+  instituicao_pagamento: string | null;
   titular_cartao: string | null;
   cartao_final: string | null;
   codigo_autorizacao: string | null;
   nsu_cv: string | null;
 }
+
+// Base pra merge de edição manual (updateReceiptAnalysis) quando a análise
+// da IA ainda é null (falhou ou nunca rodou) — nunca espalhar esse literal
+// em mais de um lugar.
+export const EMPTY_PAYMENT_RECEIPT_EXTRACTION: PaymentReceiptExtraction = {
+  tipo_comprovante: null,
+  estabelecimento_nome: null,
+  estabelecimento_cnpj: null,
+  valor_total: null,
+  qtd_parcelas: null,
+  valor_parcela: null,
+  data_transacao: null,
+  hora_transacao: null,
+  bandeira_cartao: null,
+  instituicao_pagamento: null,
+  titular_cartao: null,
+  cartao_final: null,
+  codigo_autorizacao: null,
+  nsu_cv: null,
+};
 
 export interface PdvSalesRequestAttributes {
   id: string;

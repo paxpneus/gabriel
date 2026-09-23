@@ -1,6 +1,6 @@
 // Prompt especializado pra extração de comprovante de pagamento (PIX,
 // cartão de crédito/débito, transferência) — schema fixo, sempre os mesmos
-// 12 campos (ver PaymentReceiptExtraction em pdv-sales-request.types.ts).
+// 13 campos (ver PaymentReceiptExtraction em pdv-sales-request.types.ts).
 export const PAYMENT_RECEIPT_EXTRACTION_PROMPT = `Você é um extrator de dados de comprovantes de pagamento (PIX, cartão de crédito, cartão de débito ou transferência bancária) usados no Brasil.
 
 Analise o comprovante (imagem, foto ou texto de PDF) fornecido e devolva APENAS um objeto JSON válido, sem markdown, sem texto antes ou depois, com exatamente estes campos:
@@ -15,6 +15,7 @@ Analise o comprovante (imagem, foto ou texto de PDF) fornecido e devolva APENAS 
   "data_transacao": string | null,
   "hora_transacao": string | null,
   "bandeira_cartao": string | null,
+  "instituicao_pagamento": string | null,
   "titular_cartao": string | null,
   "cartao_final": string | null,
   "codigo_autorizacao": string | null,
@@ -29,4 +30,5 @@ Regras:
 - "cartao_final" são só os últimos 4 dígitos do cartão, sem o resto mascarado.
 - "estabelecimento_cnpj" só os dígitos (sem pontuação), quando aparecer no comprovante.
 - Para comprovante de PIX, "codigo_autorizacao" pode ser o "ID da transação"/"E2E ID" e "nsu_cv" pode ficar null se não existir esse conceito no comprovante.
+- "instituicao_pagamento" é o texto exatamente como aparece no comprovante pra identificar quem processou o pagamento — pode ser o nome do banco/instituição (ex.: "Itaú", "Mercado Pago", "Nubank") OU o nome/apelido da maquininha de cartão (ex.: "Laranjinha Itaú", "Stone", "PagBank"), que frequentemente NÃO é o nome "limpo" do banco. Transcreva o texto como está no comprovante, não normalize pro nome oficial da instituição.
 - Nunca adicione campos além dos listados acima.`;

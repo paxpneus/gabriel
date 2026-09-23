@@ -75,7 +75,12 @@ jest.mock(
 
 jest.mock("../payment-receipt-extraction.service", () => ({
   __esModule: true,
-  default: { analyze: jest.fn() },
+  default: { analyze: jest.fn(), computeDerived: jest.fn() },
+}));
+
+jest.mock("../../../../handlers/socket/services/socket.service", () => ({
+  __esModule: true,
+  default: { emitToNamespaceRoom: jest.fn() },
 }));
 
 import pdvSalesRequestRepository from "../pdv-sales-request.repository";
@@ -86,6 +91,7 @@ import uploaderService from "../../../../handlers/uploader/services/uploader.ser
 import { getTCarIntegration } from "../../../../handlers/tecinco/api/tecinco_api";
 import nfeEmissionService from "../../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "../payment-receipt-extraction.service";
+import socketService from "../../../../handlers/socket/services/socket.service";
 import { PdvSalesRequestService } from "../pdv-sales-request.service";
 import {
   PdvCorrectionOrigin,
@@ -95,6 +101,11 @@ import {
 } from "../pdv-sales-request.types";
 
 const mockTransaction = {} as any;
+
+// A análise do comprovante roda fire-and-forget (não é aguardada por
+// attachReceiptAndShippingType) — testes que dependem do resultado dela
+// precisam deixar o event loop drenar as microtasks antes de checar.
+const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
 
 const emptyReceiptExtraction = {
   tipo_comprovante: null,
@@ -106,6 +117,7 @@ const emptyReceiptExtraction = {
   data_transacao: null,
   hora_transacao: null,
   bandeira_cartao: null,
+  instituicao_pagamento: null,
   titular_cartao: null,
   cartao_final: null,
   codigo_autorizacao: null,
@@ -125,6 +137,9 @@ describe("PdvSalesRequestService", () => {
       validated: null,
       fingerprint: null,
     });
+    (paymentReceiptExtractionService.computeDerived as jest.Mock).mockReturnValue(
+      { validated: null, fingerprint: null },
+    );
   });
 
   // ─── createRequest ──────────────────────────────────────────────────────────
@@ -574,14 +589,56 @@ describe("PdvSalesRequestService", () => {
       expect(uploaderService.upload).not.toHaveBeenCalled();
     });
 
-    it("persiste a análise da IA (extração, validação matemática, fingerprint, match de forma de pagamento)", async () => {
+    it("resposta imediata zera a análise anterior; upload usa diretório escopado pela solicitação", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_path: "/pdv-receipts/r1/comprovante.png",
       });
       (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/comprovante.png",
+        "/pdv-receipts/r1/comprovante.png",
+      );
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+      (
+        paymentReceiptExtractionService.analyze as jest.Mock
+      ).mockResolvedValue({
+        extraction: emptyReceiptExtraction,
+        validated: null,
+        fingerprint: null,
+      });
+
+      await service.attachReceiptAndShippingType("r1", {
+        buffer: Buffer.from(""),
+        filename: "comprovante.png",
+        mimeType: "image/png",
+        shippingType: PdvShippingType.TRANSPORTADORA,
+      });
+
+      expect(uploaderService.upload).toHaveBeenCalledWith(
+        expect.objectContaining({ directory: "/pdv-receipts/r1" }),
+      );
+      expect(pdvSalesRequestRepository.update).toHaveBeenNthCalledWith(1, "r1", {
+        payment_receipt_path: "/pdv-receipts/r1/comprovante.png",
+        shipping_type: PdvShippingType.TRANSPORTADORA,
+        payment_receipt_analysis: null,
+        payment_receipt_validated: null,
+        payment_receipt_fingerprint: null,
+        payment_method_matches_receipt: null,
+      });
+    });
+
+    it("faz a análise da IA em background e emite websocket de sucesso quando termina", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_path: "/pdv-receipts/r1/comprovante.png",
+      });
+      (uploaderService.upload as jest.Mock).mockResolvedValue(
+        "/pdv-receipts/r1/comprovante.png",
       );
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -608,10 +665,9 @@ describe("PdvSalesRequestService", () => {
         mimeType: "image/png",
         shippingType: PdvShippingType.TRANSPORTADORA,
       });
+      await flushAsync();
 
-      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
-        payment_receipt_path: "/pdv-receipts/comprovante.png",
-        shipping_type: PdvShippingType.TRANSPORTADORA,
+      expect(pdvSalesRequestRepository.update).toHaveBeenNthCalledWith(2, "r1", {
         payment_receipt_analysis: {
           ...emptyReceiptExtraction,
           tipo_comprovante: "pix",
@@ -620,13 +676,26 @@ describe("PdvSalesRequestService", () => {
         payment_receipt_fingerprint: "fingerprint-1",
         payment_method_matches_receipt: true,
       });
+      expect(socketService.emitToNamespaceRoom).toHaveBeenCalledWith(
+        "/pdv",
+        "pdv-sales-request:r1",
+        "payment-receipt-analysis:done",
+        expect.objectContaining({ requestId: "r1", success: true }),
+      );
     });
 
-    it("recusa quando o fingerprint já existe em outra solicitação, sem subir o arquivo", async () => {
+    it("detecta duplicidade na análise assíncrona e notifica falha por websocket — não bloqueia o attach, que já tinha respondido", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_path: "/pdv-receipts/r1/comprovante.png",
+      });
+      (uploaderService.upload as jest.Mock).mockResolvedValue(
+        "/pdv-receipts/r1/comprovante.png",
+      );
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
       });
       (
         paymentReceiptExtractionService.analyze as jest.Mock
@@ -646,8 +715,23 @@ describe("PdvSalesRequestService", () => {
           mimeType: "image/png",
           shippingType: PdvShippingType.TRANSPORTADORA,
         }),
-      ).rejects.toThrow(/já foi utilizado em outra solicitação/);
-      expect(uploaderService.upload).not.toHaveBeenCalled();
+      ).resolves.toBeDefined();
+      expect(uploaderService.upload).toHaveBeenCalled();
+
+      await flushAsync();
+
+      expect(socketService.emitToNamespaceRoom).toHaveBeenCalledWith(
+        "/pdv",
+        "pdv-sales-request:r1",
+        "payment-receipt-analysis:done",
+        expect.objectContaining({
+          requestId: "r1",
+          success: false,
+          reason: "DUPLICATE_RECEIPT",
+        }),
+      );
+      // só a escrita síncrona (análise zerada) — duplicidade nunca grava fingerprint
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledTimes(1);
     });
 
     it("mesmo fingerprint na PRÓPRIA solicitação (reenvio) não é tratado como duplicidade", async () => {
@@ -655,9 +739,10 @@ describe("PdvSalesRequestService", () => {
         id: "r1",
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_path: "/pdv-receipts/r1/comprovante.png",
       });
       (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/comprovante.png",
+        "/pdv-receipts/r1/comprovante.png",
       );
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -682,16 +767,26 @@ describe("PdvSalesRequestService", () => {
         }),
       ).resolves.toBeDefined();
       expect(uploaderService.upload).toHaveBeenCalled();
+
+      await flushAsync();
+
+      expect(socketService.emitToNamespaceRoom).toHaveBeenCalledWith(
+        "/pdv",
+        "pdv-sales-request:r1",
+        "payment-receipt-analysis:done",
+        expect.objectContaining({ requestId: "r1", success: true }),
+      );
     });
 
-    it("falha da IA (Gemini fora do ar) não bloqueia o anexo — segue com análise nula", async () => {
+    it("falha da IA (Gemini fora do ar) não bloqueia o anexo — segue com análise nula e notifica indisponibilidade", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_path: "/pdv-receipts/r1/comprovante.png",
       });
       (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/comprovante.png",
+        "/pdv-receipts/r1/comprovante.png",
       );
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -708,14 +803,117 @@ describe("PdvSalesRequestService", () => {
       });
 
       expect(uploaderService.upload).toHaveBeenCalled();
-      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
-        payment_receipt_path: "/pdv-receipts/comprovante.png",
+      expect(pdvSalesRequestRepository.update).toHaveBeenNthCalledWith(1, "r1", {
+        payment_receipt_path: "/pdv-receipts/r1/comprovante.png",
         shipping_type: PdvShippingType.TRANSPORTADORA,
         payment_receipt_analysis: null,
         payment_receipt_validated: null,
         payment_receipt_fingerprint: null,
         payment_method_matches_receipt: null,
       });
+
+      await flushAsync();
+
+      // Falha da IA vira sucesso com análise null (mesmo grau de "sucesso"
+      // de um attach sem IA nenhuma) — front trata analysis: null como
+      // "revise manualmente", não como erro; ANALYSIS_UNAVAILABLE é só pra
+      // erro inesperado de verdade (ver teste de erro inesperado abaixo).
+      expect(socketService.emitToNamespaceRoom).toHaveBeenCalledWith(
+        "/pdv",
+        "pdv-sales-request:r1",
+        "payment-receipt-analysis:done",
+        expect.objectContaining({
+          requestId: "r1",
+          success: true,
+          analysis: null,
+        }),
+      );
+    });
+
+    it("erro inesperado (não relacionado à IA) na análise assíncrona notifica falha genérica", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock)
+        .mockResolvedValueOnce({
+          id: "r1",
+          order_id: "order-1",
+          status: PdvSalesRequestStatus.OPEN,
+          payment_receipt_path: null,
+        })
+        .mockRejectedValueOnce(new Error("banco fora do ar"));
+      (uploaderService.upload as jest.Mock).mockResolvedValue(
+        "/pdv-receipts/r1/comprovante.png",
+      );
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+      (
+        paymentReceiptExtractionService.analyze as jest.Mock
+      ).mockResolvedValue({
+        extraction: emptyReceiptExtraction,
+        validated: null,
+        fingerprint: null,
+      });
+
+      await service.attachReceiptAndShippingType("r1", {
+        buffer: Buffer.from(""),
+        filename: "comprovante.png",
+        mimeType: "image/png",
+        shippingType: PdvShippingType.TRANSPORTADORA,
+      });
+      await flushAsync();
+
+      expect(socketService.emitToNamespaceRoom).toHaveBeenCalledWith(
+        "/pdv",
+        "pdv-sales-request:r1",
+        "payment-receipt-analysis:done",
+        expect.objectContaining({
+          requestId: "r1",
+          success: false,
+          reason: "ANALYSIS_UNAVAILABLE",
+        }),
+      );
+    });
+
+    it("descarta o resultado da análise se o comprovante foi trocado de novo antes dela terminar", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock)
+        .mockResolvedValueOnce({
+          id: "r1",
+          order_id: "order-1",
+          status: PdvSalesRequestStatus.OPEN,
+          payment_receipt_path: null,
+        })
+        .mockResolvedValueOnce({
+          id: "r1",
+          payment_receipt_path: "/pdv-receipts/r1/outro-arquivo.png",
+        });
+      (uploaderService.upload as jest.Mock).mockResolvedValue(
+        "/pdv-receipts/r1/comprovante.png",
+      );
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+      (
+        paymentReceiptExtractionService.analyze as jest.Mock
+      ).mockResolvedValue({
+        extraction: { ...emptyReceiptExtraction, tipo_comprovante: "pix" },
+        validated: null,
+        fingerprint: "fingerprint-x",
+      });
+      (
+        orderService.findByIdWithPaymentMethod as jest.Mock
+      ).mockResolvedValue({ paymentMethod: null });
+
+      await service.attachReceiptAndShippingType("r1", {
+        buffer: Buffer.from(""),
+        filename: "comprovante.png",
+        mimeType: "image/png",
+        shippingType: PdvShippingType.TRANSPORTADORA,
+      });
+      await flushAsync();
+
+      // só a escrita síncrona — a segunda (com a análise) nunca acontece
+      // porque o path já não é mais o mesmo que essa análise processou
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledTimes(1);
+      expect(socketService.emitToNamespaceRoom).not.toHaveBeenCalled();
     });
   });
 
@@ -773,6 +971,119 @@ describe("PdvSalesRequestService", () => {
         { status: PdvSalesRequestStatus.PENDING_FINANCE },
         { transaction: mockTransaction },
       );
+    });
+  });
+
+  describe("updateReceiptAnalysis", () => {
+    it("mescla os campos enviados sobre a análise atual, preservando o resto", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_path: "/pdv-receipts/comprovante.png",
+        payment_receipt_analysis: {
+          ...emptyReceiptExtraction,
+          tipo_comprovante: "cartao_credito",
+          instituicao_pagamento: "Laranjinha Itaú",
+        },
+      });
+      (
+        orderService.findByIdWithPaymentMethod as jest.Mock
+      ).mockResolvedValue({ paymentMethod: { description: "Cartão de Crédito" } });
+      (
+        paymentReceiptExtractionService.computeDerived as jest.Mock
+      ).mockReturnValue({ validated: true, fingerprint: "fp-1" });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.updateReceiptAnalysis("r1", {
+        instituicao_pagamento: "Itaú",
+      });
+
+      expect(paymentReceiptExtractionService.computeDerived).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tipo_comprovante: "cartao_credito",
+          instituicao_pagamento: "Itaú",
+        }),
+      );
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        payment_receipt_analysis: expect.objectContaining({
+          tipo_comprovante: "cartao_credito",
+          instituicao_pagamento: "Itaú",
+        }),
+        payment_receipt_validated: true,
+        payment_receipt_fingerprint: "fp-1",
+        payment_method_matches_receipt: true,
+      });
+      expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Análise do comprovante editada manualmente",
+        }),
+      );
+    });
+
+    it("recusa quando ainda não existe comprovante anexado", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_path: null,
+      });
+
+      await expect(
+        service.updateReceiptAnalysis("r1", { instituicao_pagamento: "Itaú" }),
+      ).rejects.toThrow(/Anexe um comprovante/);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("recusa editar fora da janela de edição (ex.: já em PENDING_FINANCE)", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_FINANCE,
+        payment_receipt_path: "/pdv-receipts/comprovante.png",
+      });
+
+      await expect(
+        service.updateReceiptAnalysis("r1", { instituicao_pagamento: "Itaú" }),
+      ).rejects.toThrow(/Ação inválida/);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("rejeita edição com tipo inválido (validação Zod)", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_path: "/pdv-receipts/comprovante.png",
+        payment_receipt_analysis: null,
+      });
+
+      await expect(
+        service.updateReceiptAnalysis("r1", { valor_total: "não é número" as any }),
+      ).rejects.toThrow();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("recusa quando o fingerprint recalculado colide com OUTRA solicitação", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_path: "/pdv-receipts/comprovante.png",
+        payment_receipt_analysis: emptyReceiptExtraction,
+      });
+      (
+        paymentReceiptExtractionService.computeDerived as jest.Mock
+      ).mockReturnValue({ validated: null, fingerprint: "fp-dup" });
+      (
+        pdvSalesRequestRepository.findByReceiptFingerprint as jest.Mock
+      ).mockResolvedValue({ id: "outra-solicitacao" });
+
+      await expect(
+        service.updateReceiptAnalysis("r1", {
+          estabelecimento_cnpj: "12345678000199",
+        }),
+      ).rejects.toThrow(/já foi utilizado em outra solicitação/);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
     });
   });
 

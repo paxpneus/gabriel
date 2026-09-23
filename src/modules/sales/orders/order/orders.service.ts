@@ -353,11 +353,11 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     return this.repository.findByIdWithPaymentMethod(orderId);
   }
 
-  async findByUnitBusiness(
+  async findEligibleForPdvByUnitBusiness(
     unitBusinessId: string,
     limit: number,
   ): Promise<Order[]> {
-    return this.repository.findByUnitBusinessWithCustomer(
+    return this.repository.findEligibleForPdvByUnitBusiness(
       unitBusinessId,
       limit,
     );

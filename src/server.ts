@@ -10,6 +10,7 @@ import { redisConnection } from "./shared/utils/base-models/base-redis";
 import socketService from "./modules/handlers/socket/services/socket.service";
 import { socketAuthMiddleware } from "./modules/handlers/socket/middlewares/socket-auth.middleware";
 import { registerSocketHandlers } from "./modules/handlers/socket/services/socket.handler";
+import { registerPdvSocketNamespace } from "./modules/sales/pdv-management/sales-request/pdv-sales-request.socket";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = "0.0.0.0";
@@ -30,6 +31,7 @@ async function start(): Promise<void> {
 
   socketService.useMiddleware(socketAuthMiddleware);
   socketService.registerHandlers(registerSocketHandlers);
+  registerPdvSocketNamespace();
 
   setupAssociations();
   registerQueues(app);

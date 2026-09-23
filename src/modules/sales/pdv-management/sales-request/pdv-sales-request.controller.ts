@@ -39,6 +39,11 @@ export class PdvSalesRequestController extends BaseController<
       pdvAccess([PdvAccessScreen.STORE_REQUEST]),
       this.confirmReceiptSubmission,
     );
+    this.router.patch(
+      "/:id/receipt/analysis",
+      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      this.updateReceiptAnalysis,
+    );
     this.router.get(
       "/:id/receipt/image",
       pdvAccess(READ_SCREENS),
@@ -280,7 +285,11 @@ export class PdvSalesRequestController extends BaseController<
           userId: this.actorUserId(req),
         },
       );
-      return res.json(updated);
+      // Análise por IA roda em background — front deve entrar na room do
+      // websocket (pdv-sales-request.socket.ts) e aguardar o resultado.
+      return res
+        .status(202)
+        .json({ ...updated.toJSON(), paymentReceiptAnalysisStatus: "PROCESSING" });
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
@@ -294,6 +303,23 @@ export class PdvSalesRequestController extends BaseController<
       if (!(await this.assertOwnedByAccess(req, res))) return res;
       const updated = await this.service.confirmReceiptSubmission(
         req.params.id as string,
+        this.actorUserId(req),
+      );
+      return res.json(updated);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  updateReceiptAnalysis = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
+      const updated = await this.service.updateReceiptAnalysis(
+        req.params.id as string,
+        req.body,
         this.actorUserId(req),
       );
       return res.json(updated);
@@ -320,7 +346,9 @@ export class PdvSalesRequestController extends BaseController<
       const ext = record.payment_receipt_path.split(".").pop() || "jpeg";
 
       res.set("Content-Type", `image/${ext}`);
-      res.set("Cache-Control", "public, max-age=86400");
+      // "no-cache" força revalidar toda vez — ETag automático do Express
+      // (res.send) resolve o 304 quando o conteúdo não mudou.
+      res.set("Cache-Control", "no-cache");
       return res.send(buffer);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

@@ -8,6 +8,7 @@ import {
   ShipTodayPendingDetailRow,
   ShipToDefineDetailRow,
   OrderInternalStatus,
+  TERMINAL_ORDER_INTERNAL_STATUSES,
 } from "./orders.types";
 import { Op, fn, col, literal, WhereOptions } from "sequelize";
 import { Invoice } from "../../../warehouse";
@@ -134,21 +135,28 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
     });
   }
 
-  // Usado pelo PDV (pdv-sales-request.service.ts) pra listar pedidos de uma
-  // loja elegíveis pra virar solicitação — cliente + loja só, sem os
-  // includes pesados de pagamento/itens.
-  async findByUnitBusinessWithCustomer(
+  // Usado só pelo PDV (pdv-sales-request.service.ts) pra listar pedidos de
+  // uma loja elegíveis pra virar solicitação — cliente + loja só, sem os
+  // includes pesados de pagamento/itens. Exclui pedido em status
+  // finalizador (completo ou cancelado, TERMINAL_ORDER_INTERNAL_STATUSES) —
+  // não faz sentido abrir solicitação PDV pra pedido que já terminou. Regra
+  // é específica desse fluxo, não um "find genérico por loja" — nome reflete
+  // isso.
+  async findEligibleForPdvByUnitBusiness(
     unitBusinessId: string,
     limit: number,
   ): Promise<Order[]> {
     return this.model.findAll({
-      where: { unit_business_id: unitBusinessId },
+      where: {
+        unit_business_id: unitBusinessId,
+        internal_status: { [Op.notIn]: TERMINAL_ORDER_INTERNAL_STATUSES },
+      },
       attributes: { exclude: ["source_payload"] },
       include: [
         { model: Customer, as: "customer" },
         { model: UnitBusiness, as: "unitBusiness" },
       ],
-      order: [["date", "DESC"]],
+      order: [["date", "ASC"]],
       limit,
     });
   }
