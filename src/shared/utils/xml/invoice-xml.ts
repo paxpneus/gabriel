@@ -18,6 +18,7 @@ import UnmappedInvoiceProduct from "../../../modules/inventory/unmapped-invoice-
 import Store from "../../../modules/sales/stores/stores.model";
 import parser from "../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../shared/utils/normalizers/document";
+import { normalizeMatchValue } from "../../../shared/utils/normalizers/text";
 import { encryptXml } from "../../../shared/utils/xml/xml-cipher";
 import { getBlingIntegration } from "../../../modules/handlers/bling/api/bling_api.service";
 import { logDbError } from "../logging/db-errors-logs";
@@ -589,12 +590,6 @@ function buildFiscalItemFromXml(params: {
       Number(ibsCbsGroup?.gIBSMun?.vIBSMun ?? 0),
     cbs_value: Number(ibsCbsGroup?.gCBS?.vCBS ?? 0),
   };
-}
-
-function normalizeMatchValue(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim().toUpperCase();
-  return normalized || null;
 }
 
 function numbersAreClose(a?: number, b?: number): boolean {

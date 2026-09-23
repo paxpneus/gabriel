@@ -27,6 +27,7 @@ export class PdvSalesRequestController extends BaseController<
       upload.single("receipt"),
       this.attachReceipt,
     );
+    this.router.post("/:id/receipt/confirm", this.confirmReceiptSubmission);
     this.router.post("/:id/finance/approve", this.financeApprove);
     this.router.post("/:id/finance/reject", this.financeReject);
     this.router.post("/:id/cd21-analysis/approve", this.cd21AnalysisApprove);
@@ -48,6 +49,10 @@ export class PdvSalesRequestController extends BaseController<
         { name: "danfe", maxCount: 1 },
       ]),
       this.attachTransferInvoice,
+    );
+    this.router.post(
+      "/:id/transfer-invoice/confirm",
+      this.confirmTransferInvoice,
     );
     this.router.post("/:id/expedition/reject", this.expeditionReject);
     this.router.post("/:id/finish", this.finish);
@@ -125,6 +130,21 @@ export class PdvSalesRequestController extends BaseController<
           shippingType: shippingType as PdvShippingType,
           userId,
         },
+      );
+      return res.json(updated);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  confirmReceiptSubmission = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const updated = await this.service.confirmReceiptSubmission(
+        req.params.id as string,
+        req.body.userId,
       );
       return res.json(updated);
     } catch (error: any) {
@@ -273,6 +293,21 @@ export class PdvSalesRequestController extends BaseController<
           tcarUpsertQueue: req.app.locals.TCarUpsertQueue as TCarUpsertQueue,
           userId,
         },
+      );
+      return res.json(updated);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  confirmTransferInvoice = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const updated = await this.service.confirmTransferInvoice(
+        req.params.id as string,
+        req.body.userId,
       );
       return res.json(updated);
     } catch (error: any) {

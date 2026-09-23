@@ -93,6 +93,31 @@ export interface PdvSalesRequestErrors {
   note: string;
 }
 
+export type PaymentReceiptType =
+  | "cartao_credito"
+  | "cartao_debito"
+  | "pix"
+  | "transferencia";
+
+// Schema fixo do que o Gemini deve extrair do comprovante — nunca um JSON
+// solto/genérico. Todo campo é nullable: o prompt instrui a IA a devolver
+// null pra qualquer campo ilegível/coberto/rasurado em vez de inventar.
+export interface PaymentReceiptExtraction {
+  tipo_comprovante: PaymentReceiptType | null;
+  estabelecimento_nome: string | null;
+  estabelecimento_cnpj: string | null;
+  valor_total: number | null;
+  qtd_parcelas: number | null;
+  valor_parcela: number | null;
+  data_transacao: string | null;
+  hora_transacao: string | null;
+  bandeira_cartao: string | null;
+  titular_cartao: string | null;
+  cartao_final: string | null;
+  codigo_autorizacao: string | null;
+  nsu_cv: string | null;
+}
+
 export interface PdvSalesRequestAttributes {
   id: string;
   order_id: string;
@@ -107,6 +132,12 @@ export interface PdvSalesRequestAttributes {
   shipping_type: PdvShippingType | null;
   name: string;
   payment_receipt_path: string | null;
+  // Preenchidos por payment-receipt-extraction.service.ts (Passo B) — null
+  // enquanto o comprovante não foi analisado, ou quando a análise falhou.
+  payment_receipt_analysis: PaymentReceiptExtraction | null;
+  payment_receipt_validated: boolean | null;
+  payment_receipt_fingerprint: string | null;
+  payment_method_matches_receipt: boolean | null;
   errors: PdvSalesRequestErrors | null;
   created_by_user_id: string | null;
   createdAt?: Date;

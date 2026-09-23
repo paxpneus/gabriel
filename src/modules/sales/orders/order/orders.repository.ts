@@ -23,6 +23,7 @@ import {
 import { collectionDateBucketLiteral, tomorrowBucketKey } from "./helpers/aggregates";
 import { translateOrderInternalStatus } from "./helpers/translations";
 import Store from "../../stores/stores.model";
+import PaymentMethod from "../payment_method/payment_method.model";
 
 const MERCADO_LIVRE_STORE_NAME = "MercadoLivre";
 
@@ -121,6 +122,15 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
     end: startOfDayTz().hour(SHIPPING_WINDOW_END_HOUR_OPERATION).toDate(),
   };
 }
+
+  // Usado pra comparar a forma de pagamento do pedido (Bling) com o
+  // comprovante extraído por IA (pdv-sales-request — payment-method-match.ts).
+  async findByIdWithPaymentMethod(orderId: string): Promise<Order | null> {
+    return this.model.findOne({
+      where: { id: orderId },
+      include: [{ model: PaymentMethod, as: "paymentMethod" }],
+    });
+  }
 
   async findWithSalesReportSnapshot(
     orderId: string,

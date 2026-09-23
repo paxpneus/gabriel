@@ -17,6 +17,15 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
     });
   }
 
+  // Checagem de duplicidade de comprovante — não escopa por status ativo de
+  // propósito: um comprovante já usado numa solicitação FINISHED continua
+  // sendo o mesmo comprovante, não pode ser reaproveitado numa nova.
+  async findByReceiptFingerprint(
+    fingerprint: string,
+  ): Promise<PdvSalesRequest | null> {
+    return this.findOne({ where: { payment_receipt_fingerprint: fingerprint } });
+  }
+
   async findActiveBySaleOrTransferInvoiceId(
     invoiceId: string,
   ): Promise<PdvSalesRequest[]> {

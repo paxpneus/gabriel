@@ -348,6 +348,10 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       return acc;
     }, {});
   }
+
+  async findByIdWithPaymentMethod(orderId: string): Promise<Order | null> {
+    return this.repository.findByIdWithPaymentMethod(orderId);
+  }
 }
 
 export default new OrderService();

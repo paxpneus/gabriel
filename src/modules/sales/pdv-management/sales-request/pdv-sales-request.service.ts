@@ -11,6 +11,7 @@ import {
   PdvSalesRequestErrors,
   PdvSalesRequestStatus,
   PdvShippingType,
+  PaymentReceiptExtraction,
 } from "./pdv-sales-request.types";
 import pdvSalesRequestHistoryService from "../sales-request-history/pdv-sales-request-history.service";
 import { extractAccessKeyFromDanfe } from "./helpers/danfe-interpreter";
@@ -22,6 +23,8 @@ import { getTCarIntegration } from "../../../handlers/tecinco/api/tecinco_api";
 import { TCarUpsertQueue } from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { extractAccessKeyFromXmlContent } from "../../../../shared/utils/xml/access-key";
 import nfeEmissionService from "../../../handlers/bling/services/bling-nfe/nfe-emission.service";
+import paymentReceiptExtractionService from "./payment-receipt-extraction.service";
+import { paymentMethodMatchesReceipt } from "./helpers/payment-method-match";
 
 export class PdvSalesRequestService extends BaseService<
   PdvSalesRequest,
@@ -100,6 +103,25 @@ export class PdvSalesRequestService extends BaseService<
     return unitBusiness?.number ? Number(unitBusiness.number) : undefined;
   }
 
+  // Registra uma ação que NÃO muda `status` (edição de comprovante/nota de
+  // transferência antes de confirmar) — todo o resto do histórico passa por
+  // transitionTo, mas "cada ação na solicitação" (spec original do módulo)
+  // inclui edições que ainda não avançaram etapa. `step` repete o status
+  // atual, já que ele não mudou.
+  private async logAction(
+    id: string,
+    step: PdvSalesRequestStatus,
+    params: { userId?: string; description: string },
+  ): Promise<void> {
+    await pdvSalesRequestHistoryService.create({
+      pdv_sales_request_id: id,
+      step,
+      description: params.description,
+      date: new Date(),
+      user_id: params.userId ?? null,
+    });
+  }
+
   // ─── Criação ────────────────────────────────────────────────────────────────
 
   async createRequest(params: {
@@ -156,20 +178,73 @@ export class PdvSalesRequestService extends BaseService<
 
   // ─── Loja: comprovante + tipo de envio ──────────────────────────────────────
 
-  async attachReceiptAndShippingType(
-    id: string,
-    params: {
-      buffer: Buffer;
-      filename: string;
-      mimeType: string;
-      shippingType: PdvShippingType;
-      userId?: string;
-    },
-  ): Promise<PdvSalesRequest> {
-    // Também serve pra resolver uma correção vinda do financeiro (comprovante
-    // rejeitado): a loja não "decide" nada num endpoint de correção genérico,
-    // ela resolve anexando um comprovante novo, que já reenvia pro
-    // financeiro sozinho.
+  // Roda a extração por IA (Gemini) e a checagem de duplicidade ANTES do
+  // upload pro uploader — barato desistir aqui se for duplicado, sem gastar
+  // uma chamada de storage à toa. Nunca bloqueia o anexo por falha da IA em
+  // si (Gemini fora do ar, resposta malformada): o financeiro ainda revisa
+  // manualmente, então segue com os campos de análise em null. A duplicidade
+  // de comprovante É bloqueante — é o único caso em que a IA de fato barra o
+  // fluxo (pedido do usuário: "Este comprovante já foi utilizado...").
+  private async analyzeReceipt(
+    requestId: string,
+    orderId: string,
+    buffer: Buffer,
+    mimeType: string,
+  ): Promise<{
+    payment_receipt_analysis: PaymentReceiptExtraction | null;
+    payment_receipt_validated: boolean | null;
+    payment_receipt_fingerprint: string | null;
+    payment_method_matches_receipt: boolean | null;
+  }> {
+    const empty = {
+      payment_receipt_analysis: null,
+      payment_receipt_validated: null,
+      payment_receipt_fingerprint: null,
+      payment_method_matches_receipt: null,
+    };
+
+    let result;
+    try {
+      result = await paymentReceiptExtractionService.analyze(buffer, mimeType);
+    } catch (err) {
+      console.warn(
+        "[PDV] Falha ao analisar comprovante via IA — seguindo sem análise",
+        err,
+      );
+      return empty;
+    }
+
+    if (result.fingerprint) {
+      const duplicate = await this.repository.findByReceiptFingerprint(
+        result.fingerprint,
+      );
+      if (duplicate && duplicate.id !== requestId) {
+        throw new Error(
+          "Este comprovante já foi utilizado em outra solicitação",
+        );
+      }
+    }
+
+    const order = await orderService.findByIdWithPaymentMethod(orderId);
+    const paymentMethodDescription =
+      (order as any)?.paymentMethod?.description ?? null;
+
+    return {
+      payment_receipt_analysis: result.extraction,
+      payment_receipt_validated: result.validated,
+      payment_receipt_fingerprint: result.fingerprint,
+      payment_method_matches_receipt: paymentMethodMatchesReceipt(
+        paymentMethodDescription,
+        result.extraction.tipo_comprovante,
+      ),
+    };
+  }
+
+  // Também serve pra resolver uma correção vinda do financeiro (comprovante
+  // rejeitado): a loja não "decide" nada num endpoint de correção genérico,
+  // ela resolve anexando um comprovante novo — mas só depois de confirmar
+  // (confirmReceiptSubmission), não automaticamente aqui.
+  private async assertReceiptEditable(id: string): Promise<PdvSalesRequest> {
     const request = await this.assertStatus(id, [
       PdvSalesRequestStatus.OPEN,
       PdvSalesRequestStatus.PENDING_CORRECTION,
@@ -184,6 +259,36 @@ export class PdvSalesRequestService extends BaseService<
       );
     }
 
+    return request;
+  }
+
+  // NÃO avança status sozinho — só grava comprovante/tipo de envio e devolve
+  // a solicitação atualizada pro front validar. Pode ser chamado quantas
+  // vezes precisar (troca de arquivo, ajuste do tipo de envio) enquanto não
+  // for confirmado via confirmReceiptSubmission. Editando um comprovante já
+  // existente, apaga o arquivo antigo do uploader só depois que o novo já
+  // está salvo e referenciado no banco — nunca fica sem nenhum arquivo
+  // referenciado em caso de falha no meio do caminho.
+  async attachReceiptAndShippingType(
+    id: string,
+    params: {
+      buffer: Buffer;
+      filename: string;
+      mimeType: string;
+      shippingType: PdvShippingType;
+      userId?: string;
+    },
+  ): Promise<PdvSalesRequest> {
+    const request = await this.assertReceiptEditable(id);
+    const previousPath = request.payment_receipt_path;
+
+    const analysis = await this.analyzeReceipt(
+      id,
+      request.order_id,
+      params.buffer,
+      params.mimeType,
+    );
+
     const path = await uploaderService.upload({
       buffer: params.buffer,
       filename: params.filename,
@@ -192,17 +297,55 @@ export class PdvSalesRequestService extends BaseService<
       preserveFilename: true,
     });
 
-    await this.repository.update(id, {
+    const updated = await this.repository.update(id, {
       payment_receipt_path: path,
       shipping_type: params.shippingType,
+      ...analysis,
+    });
+    if (!updated) throw new Error("Solicitação não encontrada");
+
+    if (previousPath && previousPath !== path) {
+      try {
+        await uploaderService.delete(previousPath);
+      } catch (err) {
+        console.warn(
+          "[PDV] Falha ao apagar comprovante antigo do uploader",
+          err,
+        );
+      }
+    }
+
+    await this.logAction(id, request.status, {
+      userId: params.userId,
+      description: previousPath
+        ? "Comprovante substituído"
+        : "Comprovante e tipo de envio anexados",
     });
 
+    return updated;
+  }
+
+  // Confirmação explícita do front — só agora a solicitação avança pra
+  // PENDING_FINANCE. Exige que comprovante + tipo de envio já tenham sido
+  // anexados (attachReceiptAndShippingType).
+  async confirmReceiptSubmission(
+    id: string,
+    userId?: string,
+  ): Promise<PdvSalesRequest> {
+    const request = await this.assertReceiptEditable(id);
+
+    if (!request.payment_receipt_path || !request.shipping_type) {
+      throw new Error(
+        "Anexe o comprovante e o tipo de envio antes de confirmar",
+      );
+    }
+
     return this.transitionTo(id, PdvSalesRequestStatus.PENDING_FINANCE, {
-      userId: params.userId,
+      userId,
       description:
         request.status === PdvSalesRequestStatus.PENDING_CORRECTION
-          ? "Novo comprovante anexado — correção resolvida, aguardando financeiro"
-          : "Comprovante e tipo de envio anexados — aguardando análise do financeiro",
+          ? "Novo comprovante confirmado — correção resolvida, aguardando financeiro"
+          : "Comprovante e tipo de envio confirmados — aguardando análise do financeiro",
     });
   }
 
@@ -460,6 +603,12 @@ export class PdvSalesRequestService extends BaseService<
     });
   }
 
+  // NÃO avança status sozinho — só vincula/troca a nota de transferência e
+  // devolve a solicitação atualizada pro front validar. Permitido tanto em
+  // PENDING_NF_TRANSFER (primeira vinculação) quanto em SHIPPING (edição
+  // depois de já confirmado, ex.: CD21/expedição percebeu a nota errada) —
+  // sempre como TROCA (nunca deixa `transfer_invoice_id` nulo: quem chama
+  // precisa mandar uma nota válida pra substituir a atual).
   async attachTransferInvoice(
     id: string,
     params: {
@@ -471,10 +620,10 @@ export class PdvSalesRequestService extends BaseService<
       userId?: string;
     },
   ): Promise<PdvSalesRequest> {
-    const request = await this.assertStatus(
-      id,
+    const request = await this.assertStatus(id, [
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
-    );
+      PdvSalesRequestStatus.SHIPPING,
+    ]);
 
     const tecinco = await getTCarIntegration();
     let invoiceId = params.invoiceId ?? null;
@@ -515,7 +664,7 @@ export class PdvSalesRequestService extends BaseService<
         );
         if (!accessKey) {
           throw new Error(
-            "Não foi possível ler a chave de acesso do DANFE (documento escaneado/foto ainda não suportado nesta etapa) — envie o XML da nota",
+            "Não foi possível ler a chave de acesso do DANFE — envie o XML da nota",
           );
         }
 
@@ -545,11 +694,44 @@ export class PdvSalesRequestService extends BaseService<
       );
     }
 
-    await this.repository.update(id, { transfer_invoice_id: invoiceId });
+    const wasAlreadyLinked = !!request.transfer_invoice_id;
+
+    const updated = await this.repository.update(id, {
+      transfer_invoice_id: invoiceId,
+    });
+    if (!updated) throw new Error("Solicitação não encontrada");
+
+    await this.logAction(id, request.status, {
+      userId: params.userId,
+      description: wasAlreadyLinked
+        ? "Nota de transferência substituída"
+        : "Nota de transferência vinculada",
+    });
+
+    return updated;
+  }
+
+  // Confirmação explícita do front — só agora a solicitação avança pra
+  // SHIPPING. Exige que uma nota de transferência já tenha sido vinculada
+  // (attachTransferInvoice). Só a partir de PENDING_NF_TRANSFER — uma
+  // solicitação já em SHIPPING não tem mais o que confirmar aqui, editar a
+  // nota nesse ponto é só attachTransferInvoice mesmo, sem transição.
+  async confirmTransferInvoice(
+    id: string,
+    userId?: string,
+  ): Promise<PdvSalesRequest> {
+    const request = await this.assertStatus(
+      id,
+      PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+    );
+
+    if (!request.transfer_invoice_id) {
+      throw new Error("Vincule uma nota de transferência antes de confirmar");
+    }
 
     return this.transitionTo(id, PdvSalesRequestStatus.SHIPPING, {
-      userId: params.userId,
-      description: "Nota de transferência vinculada",
+      userId,
+      description: "Nota de transferência confirmada",
     });
   }
 

@@ -89,8 +89,8 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `index.md` — base, auth, divergência `internal_status`/`status_snapshot`, catálogo `payment_methods`/`payment_method_id`
   - `status-sync.md` — `reason_cancelled`, `syncOrderInternalStatus`/`escalateToHumanVerificationIfStillPending`
   - `summary-endpoints.md` — repository facts dos endpoints de summary
-- `pdv-sales-request/` — módulo PDV Management (solicitação Loja→Financeiro→CD21), Etapa 1/Passo A
-  - `index.md` — schema, máquina de estados, vínculo de nota de transferência, pendências (IA/Etapa 2)
+- `pdv-sales-request/` — módulo PDV Management (solicitação Loja→Financeiro→CD21), Etapa 1 completa (Passo A + Passo B)
+  - `index.md` — schema, máquina de estados, vínculo de nota de transferência, análise de comprovante por IA, pendência (Etapa 2)
 
 **Modules** (`.claude/modules/`):
 - `auth.md` — modelo de tenant/auth scoping cross-cutting, controllers corrigidos vs. ainda vazando entre tenants. Ler primeiro antes de mexer em auth.
@@ -107,5 +107,6 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
 - `sieg-rate-limits.md` — limites documentados por rota da API Sieg (ex.: `/v1/baixar-xmls` = 2 req/min, 50 XMLs/req) vs. limite genérico não-confirmado, onde cada um é aplicado no código
 - `magento-sync.md` — sync Bling→Magento de produtos: `external_id` = `entity_id` do Magento (não sku), resolução por id (mapeado) vs. sku/nome (1ª vez)
+- `ai-vision-extraction.md` — cliente Gemini (`GeminiVisionService`) + pipeline de extração de documento (PDF nativo vs. binário/IA), consumido hoje só pelo módulo PDV (comprovante + fallback de DANFE)
 
 Migração: como qualquer outra deste repo, **usuário roda `db:migrate` (ou qualquer DDL) manualmente — nunca automatizar.**

@@ -7,6 +7,7 @@ import {
   PdvSalesRequestErrors,
   PdvShippingType,
   PdvSalesRequestStatus,
+  PaymentReceiptExtraction,
 } from "./pdv-sales-request.types";
 
 class PdvSalesRequest
@@ -23,6 +24,10 @@ class PdvSalesRequest
   public shipping_type!: PdvShippingType | null;
   public name!: string;
   public payment_receipt_path!: string | null;
+  public payment_receipt_analysis!: PaymentReceiptExtraction | null;
+  public payment_receipt_validated!: boolean | null;
+  public payment_receipt_fingerprint!: string | null;
+  public payment_method_matches_receipt!: boolean | null;
   public errors!: PdvSalesRequestErrors | null;
   public created_by_user_id!: string | null;
 
@@ -106,6 +111,30 @@ PdvSalesRequest.init(
     },
     payment_receipt_path: {
       type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    // Preenchidos por payment-receipt-extraction.service.ts — null enquanto
+    // não analisado ou quando a análise falha.
+    payment_receipt_analysis: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+    },
+    // Validação matemática (qtd_parcelas * valor_parcela ≈ valor_total) —
+    // null quando não aplicável (ex.: PIX, débito à vista).
+    payment_receipt_validated: {
+      type: DataTypes.BOOLEAN,
+      allowNull: true,
+    },
+    // Chave de duplicidade — sha256(cnpj|data|hora|valor_total|instrumento).
+    // Unique parcial (WHERE NOT NULL) na migration.
+    payment_receipt_fingerprint: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    // Comparação forma de pagamento (Bling) x tipo_comprovante extraído —
+    // null quando não dá pra comparar (sem payment_method_id ou sem análise).
+    payment_method_matches_receipt: {
+      type: DataTypes.BOOLEAN,
       allowNull: true,
     },
     errors: {
