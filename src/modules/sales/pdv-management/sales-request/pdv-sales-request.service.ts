@@ -57,7 +57,7 @@ export class DuplicateReceiptError extends Error {}
 
 // Teto de segurança pra findEligibleOrders — sem paginação própria ainda,
 // ver .claude/entities/pdv-sales-request/index.md ("Card do Kanban").
-const ELIGIBLE_ORDERS_LIMIT = 200;
+const ELIGIBLE_ORDERS_LIMIT = null;
 
 // Acima disso, o job assíncrono desiste e trata como falha de extração
 // (financeiro revisa manualmente) em vez de deixar o front esperando

@@ -832,6 +832,8 @@ export class BlingOrderService {
         // isso é 03:00. Pedido pra normalizar a granularidade da venda pro
         // dia, independente da hora que o Bling registrou.
         date: startOfDayTz(orderData.data).toDate(),
+        customer_id: customer.id,
+
         internal_status: internalStatus,
         ...reasonCancelledFields(orderData.situacao.id),
         nfe_emitted: isCompleted

@@ -146,22 +146,22 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
   // pdv-sales-request.service.ts::findEligibleOrders).
   async findEligibleForPdvByUnitBusiness(
     unitBusinessId: string | string[],
-    limit: number,
+    limit?: number | null,
   ): Promise<Order[]> {
     return this.model.findAll({
       where: {
         unit_business_id: Array.isArray(unitBusinessId)
           ? { [Op.in]: unitBusinessId }
           : unitBusinessId,
-        internal_status: { [Op.notIn]: TERMINAL_ORDER_INTERNAL_STATUSES },
+        internal_status: { [Op.notIn]: ['CANCELLED'] },
       },
       attributes: { exclude: ["source_payload"] },
       include: [
-        { model: Customer, as: "customer" },
+        { model: Customer, as: "customer", required: false },
         { model: UnitBusiness, as: "unitBusiness" },
       ],
       order: [["date", "ASC"]],
-      limit,
+      limit: limit ?? undefined,
     });
   }
 
