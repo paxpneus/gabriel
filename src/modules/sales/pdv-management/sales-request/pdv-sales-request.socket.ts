@@ -7,8 +7,10 @@ import {
 import { PdvAccessScreen } from "../pdv-access/pdv-access.types";
 import pdvSalesRequestService from "./pdv-sales-request.service";
 import {
+  PDV_CD21_ROOM,
   PDV_SOCKET_NAMESPACE,
   pdvSalesRequestRoom,
+  pdvStoreRoom,
 } from "./helpers/pdv-sales-request-room";
 
 const WATCH_EVENT = "pdv-sales-request:watch";
@@ -23,6 +25,17 @@ export function registerPdvSocketNamespace(): void {
   namespace.use(pdvSocketAuthMiddleware);
 
   namespace.on("connection", (socket: Socket) => {
+    // Auto-join na room de sync do Kanban — unitBusinessId já vem resolvido/
+    // autenticado pelo middleware (login ou link), sem exigir evento próprio
+    // do front. CD21 (unitBusinessId null, acesso global) entra na room
+    // própria em vez de uma por loja (ver notify-pdv-store-sync.ts).
+    const access = (socket.data as PdvSocketData).pdvAccess;
+    if (access.unitBusinessId) {
+      socket.join(pdvStoreRoom(access.unitBusinessId));
+    } else {
+      socket.join(PDV_CD21_ROOM);
+    }
+
     socket.on(
       WATCH_EVENT,
       async (payload: { requestId?: string }, callback?: WatchAck) => {

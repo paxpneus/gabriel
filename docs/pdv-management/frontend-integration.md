@@ -210,6 +210,35 @@ o front esperando indefinidamente. Front não precisa de timeout próprio pra
 esse evento; se não chegar em ~5-10s (margem de rede), trate como se tivesse
 chegado `analysis: null`.
 
+### 4.4 Websocket — sync do Kanban em tempo real
+
+Mesmo socket/namespace da seção 4.3 (`${API_URL}/pdv`, mesma conexão —
+**não abra um segundo socket**). Cobre 3 gatilhos: mudança de status de uma
+solicitação (inclusive criação), mudança de status de um pedido, e pedido
+novo entrando (pipeline Bling → sistema).
+
+**Nenhum evento próprio de "watch" é necessário** — ao conectar, o back já
+coloca o socket na "sala" da loja do próprio acesso (login ou link, mesmo
+`unitBusinessId`/CD21 resolvido na auth da seção 4). Basta escutar:
+
+```js
+socket.on("pdv-store:sync", (payload) => {
+  // payload: { unitBusinessId, event }
+  // event: "SALES_REQUEST_STATUS_CHANGED" | "ORDER_STATUS_CHANGED" | "NEW_ORDER"
+  refetchKanban(); // sempre um refetch simples — nenhum dado de negócio vem no payload
+});
+```
+
+O evento é **só um sinal pra buscar de novo** — não carrega o registro
+atualizado (nem `event` muda o que o front faz: os 3 casos pedem o mesmo
+refetch). Recomendado aplicar debounce (~300–500ms) no listener antes de
+disparar o fetch: mudanças em sequência (ex.: várias lojas atualizando ao
+mesmo tempo, ou um pedido passando por 2 status seguidos) podem gerar mais
+de um evento em poucos segundos.
+
+Tela `CD21` recebe o evento de **qualquer loja** (acesso global, mesmo
+scoping das rotas HTTP da seção 3) — as outras telas só da própria loja.
+
 ## 5. Rotas — `/api/sales-request`
 
 Base: `/api/sales-request`. Todas retornam `{ error: string }` com status

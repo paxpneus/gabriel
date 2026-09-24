@@ -37,6 +37,7 @@ import {
   pdvSalesRequestRoom,
   PAYMENT_RECEIPT_ANALYSIS_DONE_EVENT,
 } from "./helpers/pdv-sales-request-room";
+import { notifyPdvStoreSync } from "./helpers/notify-pdv-store-sync";
 
 // Fingerprint duplicado em OUTRA solicitação — tipo próprio pra distinguir
 // esse caso de qualquer outro erro dentro do job assíncrono de análise.
@@ -214,7 +215,7 @@ export class PdvSalesRequestService extends BaseService<
     target: PdvSalesRequestStatus,
     params: { userId?: string; description: string },
   ): Promise<PdvSalesRequest> {
-    return sequelize.transaction(async (t) => {
+    const updated = await sequelize.transaction(async (t) => {
       const updated = await this.repository.update(
         id,
         { status: target },
@@ -235,6 +236,10 @@ export class PdvSalesRequestService extends BaseService<
 
       return updated;
     });
+
+    notifyPdvStoreSync(updated.unit_business_id, "SALES_REQUEST_STATUS_CHANGED");
+
+    return updated;
   }
 
   private async assertStatus(
@@ -306,7 +311,7 @@ export class PdvSalesRequestService extends BaseService<
       throw new Error("Pedido não pertence à loja deste acesso");
     }
 
-    return sequelize.transaction(async (t) => {
+    const created = await sequelize.transaction(async (t) => {
       const created = await this.repository.create(
         {
           order_id: params.orderId,
@@ -339,6 +344,10 @@ export class PdvSalesRequestService extends BaseService<
 
       return created;
     });
+
+    notifyPdvStoreSync(created.unit_business_id, "SALES_REQUEST_STATUS_CHANGED");
+
+    return created;
   }
 
   // ─── Loja: comprovante + tipo de envio ──────────────────────────────────────

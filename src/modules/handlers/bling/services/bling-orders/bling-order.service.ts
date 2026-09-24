@@ -27,6 +27,7 @@ import integrationMappingService from "../../../../integrations/integration-mapp
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 import paymentMethodService from "../../../../sales/orders/payment_method/payment_method.service";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
+import { notifyPdvStoreSync } from "../../../../sales/pdv-management/sales-request/helpers/notify-pdv-store-sync";
 
 interface BlingPaymentMethodApi {
   id: number;
@@ -760,6 +761,7 @@ export class BlingOrderService {
           internal_status: internalStatus,
           ...reasonCancelledFields(orderData.situacao.id),
         });
+        notifyPdvStoreSync(existingOrder.unit_business_id, "ORDER_STATUS_CHANGED");
       } catch (statusError: any) {
         console.error(
           `[BlingOrderService] Falha ao gravar actual_situation/internal_status do pedido ${orderData.numero} (seguindo mesmo assim):`,
@@ -862,6 +864,11 @@ export class BlingOrderService {
       };
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
+      // Segunda emissão de propósito: cobre o caso em que unit_business_id
+      // só foi resolvido agora (linhas acima, pedido chegou sem loja) — a
+      // primeira emissão (write defensivo logo no início) já usou o valor
+      // antigo, possivelmente null.
+      notifyPdvStoreSync(unitBusinessId, "ORDER_STATUS_CHANGED");
 
       // Avança automaticamente uma solicitação PDV em PENDING_NF_SALE assim
       // que a nota de venda é confirmada — cobre tanto NFe gerada pelo
@@ -1131,6 +1138,7 @@ export class BlingOrderService {
       };
 
       const createdOrder = await ordersService.create(ordersPayload);
+      notifyPdvStoreSync(createdOrder.unit_business_id, "NEW_ORDER");
 
       if (invoiceId) {
         await pdvSalesRequestService.markSaleInvoiceReadyIfPending(
