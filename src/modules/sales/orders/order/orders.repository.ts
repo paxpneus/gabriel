@@ -8,6 +8,7 @@ import {
   ShipTodayPendingDetailRow,
   ShipToDefineDetailRow,
   OrderInternalStatus,
+  TERMINAL_ORDER_INTERNAL_STATUSES,
 } from "./orders.types";
 import { Op, fn, col, literal, WhereOptions } from "sequelize";
 import { Invoice } from "../../../warehouse";
@@ -23,6 +24,9 @@ import {
 import { collectionDateBucketLiteral, tomorrowBucketKey } from "./helpers/aggregates";
 import { translateOrderInternalStatus } from "./helpers/translations";
 import Store from "../../stores/stores.model";
+import PaymentMethod from "../payment_method/payment_method.model";
+import UnitBusiness from "../../../company/unit-business/unit-business.model";
+import OrderItems from "../order_items/order_items.model";
 
 const MERCADO_LIVRE_STORE_NAME = "MercadoLivre";
 
@@ -121,6 +125,59 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
     end: startOfDayTz().hour(SHIPPING_WINDOW_END_HOUR_OPERATION).toDate(),
   };
 }
+
+  // Usado pra comparar a forma de pagamento do pedido (Bling) com o
+  // comprovante extraído por IA (pdv-sales-request — payment-method-match.ts).
+  async findByIdWithPaymentMethod(orderId: string): Promise<Order | null> {
+    return this.model.findOne({
+      where: { id: orderId },
+      include: [{ model: PaymentMethod, as: "paymentMethod" }],
+    });
+  }
+
+  // Usado só pelo PDV (pdv-sales-request.service.ts) pra listar pedidos de
+  // uma loja elegíveis pra virar solicitação — cliente + loja só, sem os
+  // includes pesados de pagamento/itens. Exclui pedido em status
+  // finalizador (completo ou cancelado, TERMINAL_ORDER_INTERNAL_STATUSES) —
+  // não faz sentido abrir solicitação PDV pra pedido que já terminou. Regra
+  // é específica desse fluxo, não um "find genérico por loja" — nome reflete
+  // isso. `unitBusinessId` aceita uma loja só (fluxo normal) ou uma lista
+  // (acesso global sem loja selecionada, ex.: Televendas — ver
+  // pdv-sales-request.service.ts::findEligibleOrders).
+  async findEligibleForPdvByUnitBusiness(
+    unitBusinessId: string | string[],
+    limit: number,
+  ): Promise<Order[]> {
+    return this.model.findAll({
+      where: {
+        unit_business_id: Array.isArray(unitBusinessId)
+          ? { [Op.in]: unitBusinessId }
+          : unitBusinessId,
+        internal_status: { [Op.notIn]: TERMINAL_ORDER_INTERNAL_STATUSES },
+      },
+      attributes: { exclude: ["source_payload"] },
+      include: [
+        { model: Customer, as: "customer" },
+        { model: UnitBusiness, as: "unitBusiness" },
+      ],
+      order: [["date", "ASC"]],
+      limit,
+    });
+  }
+
+  // Usado pelo PDV pro card expandido do pedido — cliente, forma de
+  // pagamento e itens completos.
+  async findByIdWithFullDetail(orderId: string): Promise<Order | null> {
+    return this.model.findOne({
+      where: { id: orderId },
+      include: [
+        { model: Customer, as: "customer" },
+        { model: PaymentMethod, as: "paymentMethod" },
+        { model: UnitBusiness, as: "unitBusiness" },
+        { model: OrderItems, as: "items" },
+      ],
+    });
+  }
 
   async findWithSalesReportSnapshot(
     orderId: string,

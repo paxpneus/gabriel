@@ -18,6 +18,7 @@ import UnmappedInvoiceProduct from "../../../modules/inventory/unmapped-invoice-
 import Store from "../../../modules/sales/stores/stores.model";
 import parser from "../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../shared/utils/normalizers/document";
+import { normalizeMatchValue } from "../../../shared/utils/normalizers/text";
 import { encryptXml } from "../../../shared/utils/xml/xml-cipher";
 import { getBlingIntegration } from "../../../modules/handlers/bling/api/bling_api.service";
 import { logDbError } from "../logging/db-errors-logs";
@@ -31,6 +32,9 @@ import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinc
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";
 import { resolveIntegrationsIdForUnitBusiness } from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
 import transporterService from "../../../modules/warehouse/transporter/transporter.service";
+import { generateDanfePdfBuffer } from "./danfe-generator";
+import uploaderService from "../../../modules/handlers/uploader/services/uploader.service";
+import pdvSalesRequestService from "../../../modules/sales/pdv-management/sales-request/pdv-sales-request.service";
 
 /**
  * Extrai só o número (ide.nNF) e a chave de acesso de 44 dígitos de um XML
@@ -588,12 +592,6 @@ function buildFiscalItemFromXml(params: {
   };
 }
 
-function normalizeMatchValue(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim().toUpperCase();
-  return normalized || null;
-}
-
 function numbersAreClose(a?: number, b?: number): boolean {
   if (a === undefined || b === undefined) return false;
   return Math.abs(Number(a) - Number(b)) < 0.01;
@@ -603,6 +601,27 @@ function toIntegerQuantity(value: unknown): number {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
   return Math.trunc(parsed);
+}
+
+const DANFE_UPLOAD_INTERVAL_MS = 5000;
+let danfeUploadQueue: Promise<void> = Promise.resolve();
+let lastDanfeUploadStartedAt = 0;
+
+// A fila da Tecinco processa notas novas com concurrency>1 — sem isso, vários
+// upload de DANFE disparam juntos e o storage responde 429. Serializa pra no
+// máximo 1 upload a cada 5s; não espera o upload em si terminar, só o início
+// do próximo.
+function waitForDanfeUploadSlot(): Promise<void> {
+  const acquire = danfeUploadQueue.then(async () => {
+    const waitMs = Math.max(
+      0,
+      DANFE_UPLOAD_INTERVAL_MS - (Date.now() - lastDanfeUploadStartedAt),
+    );
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    lastDanfeUploadStartedAt = Date.now();
+  });
+  danfeUploadQueue = acquire.catch(() => undefined);
+  return acquire;
 }
 
 function findXmlItemForOperationalItem(params: {
@@ -850,7 +869,6 @@ export async function upsertInvoiceFromXml(
     sender_name: senderName,
     receiver_cnpj: receiverCnpj,
     receiver_name: receiverName,
-    danfe_path: "",
     xml_path: encryptXml(xmlContent),
     xml_key: chaveAcesso || null,
     emitted_at: ide.dhEmi ? parseBlingDate(ide.dhEmi) : new Date(),
@@ -982,11 +1000,34 @@ export async function upsertInvoiceFromXml(
   let invoice: FullInvoiceForAllUnits | null;
 
   if (!existingInvoice) {
+    // A Tecinco não manda um DANFE pronto (só XML) — diferente da Bling, que
+    // já retorna o PDF via linkPDF. Gera só na criação, não a cada update
+    // (a nota não muda de conteúdo fiscal depois de emitida).
+    let danfePath = "";
+    try {
+      await waitForDanfeUploadSlot();
+      const danfeBuffer = await generateDanfePdfBuffer(xmlContent);
+      danfePath = await uploaderService.upload({
+        buffer: danfeBuffer,
+        filename: `${chaveAcesso || idSystem}.pdf`,
+        mimeType: "application/pdf",
+        directory: "/danfes",
+        preserveFilename: true,
+      });
+    } catch (err) {
+      logDbError("[IMPORT_XML] Falha ao gerar/upload DANFE", err as Error, {
+        idSystem,
+        numero,
+        chaveAcesso,
+      });
+    }
+
     const created = await invoiceService
       .createWithRelations(
         {
           ...invoiceBaseData,
           id_system: idSystem,
+          danfe_path: danfePath,
         },
         invoiceItemsForCreate,
         {
@@ -1051,6 +1092,10 @@ export async function upsertInvoiceFromXml(
   }
 
   console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
+
+  if (cancelledInvoice) {
+    await pdvSalesRequestService.handleInvoiceCancelled(invoice.id);
+  }
 
   // ─── Reconcilia UnmappedInvoiceProduct com o estado atual da passagem ─────
   // (no create, invoice.id ainda não existia antes, então esse loop é no-op)

@@ -5,13 +5,12 @@ import InvoiceService from "./invoice.service";
 import { Request, Response } from "express";
 import { authenticate } from "../../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../../middlewares/user-permissions";
-import { gerarPDF } from "@alexssmusica/node-pdf-nfe";
 import archiver from "archiver";
 import {
   decryptXml,
   isEncrypted,
 } from "../../../../../shared/utils/xml/xml-cipher";
-import { PassThrough } from "stream";
+import { generateDanfePdfBuffer } from "../../../../../shared/utils/xml/danfe-generator";
 import { PDFDocument, radians } from "pdf-lib";
 import { Op } from "sequelize";
 import { InvoiceAttributes } from "./invoice.types";
@@ -282,16 +281,7 @@ export class InvoiceController extends BaseController<
         if (isEncrypted(xml)) xml = decryptXml(xml);
 
         try {
-          const doc = await gerarPDF(xml, { cancelada: false });
-
-          const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-            const pass = new PassThrough();
-            const chunks: Buffer[] = [];
-            pass.on("data", (chunk: Buffer) => chunks.push(chunk));
-            pass.on("end", () => resolve(Buffer.concat(chunks)));
-            pass.on("error", reject);
-            doc.pipe(pass);
-          });
+          const pdfBuffer = await generateDanfePdfBuffer(xml);
 
           const invoicePdf = await PDFDocument.load(pdfBuffer);
           const pages = await mergedPdf.copyPages(

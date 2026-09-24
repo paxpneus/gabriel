@@ -5,7 +5,14 @@ const PUBLIC_API_ROUTES = new Set([
   "applications/login",
   "applications/test-webhook/post",
 ]);
-const EXTERNAL_ROUTE_PREFIXES = ["bling", "bling-orders", "mercado_livre"];
+// Prefixos com auth própria (integração externa OU pdvAccess por link) — dispensam origin/cookie/bearer/api-key deste gate.
+const GATE_EXEMPT_ROUTE_PREFIXES = [
+  "bling",
+  "bling-orders",
+  "mercado_livre",
+  "sales-request",
+  "pdv-access",
+];
 
 function getApiPath(req: Request): string {
   return req.originalUrl
@@ -26,7 +33,7 @@ export function externalApiAccess(
   if (origin && allowedOrigins.includes(origin)) return next();
   if (req.cookies?.token) return next();
   if (PUBLIC_API_ROUTES.has(apiPath)) return next();
-  if (EXTERNAL_ROUTE_PREFIXES.includes(baseSegment)) return next();
+  if (GATE_EXEMPT_ROUTE_PREFIXES.includes(baseSegment)) return next();
   if (req.headers.authorization?.startsWith("Bearer ")) return next();
   if (req.headers["x-api-key"] && req.headers["x-api-secret"]) return next();
 

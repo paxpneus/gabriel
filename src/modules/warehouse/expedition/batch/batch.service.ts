@@ -40,6 +40,7 @@ import unitBusinessService from "../../../company/unit-business/unit-business.se
 import { FullInvoice } from "../../fiscal/invoices/invoice/invoice.types";
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import scanLogsService from "../scan-logs/scan-logs.service";
+import pdvSalesRequestService from "../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -854,6 +855,13 @@ async addInvoiceToLastOutgoingBatch(
     });
 
     const updatedBatch = await this.findByIdFullBatch(batchId);
+
+    // Auto-finish de solicitações PDV que só esperavam o romaneio pra
+    // finalizar — ver pdv-sales-request.service.ts::finishIfDeliveryNoteGenerated.
+    // No-op pra lotes sem nenhuma nota vinculada a uma PdvSalesRequest.
+    await pdvSalesRequestService.finishIfDeliveryNoteGenerated(
+      (updatedBatch.batchInvoices ?? []).map((bi) => bi.invoice_id),
+    );
 
     return updatedBatch;
   }

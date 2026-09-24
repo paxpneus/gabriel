@@ -22,6 +22,14 @@ Antes de criar método pra buscar dado de outra entidade: checar `BaseRepository
 
 Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e reutilizável por mais de um filtro/método: função nomeada, exportada, parametrizada em `helpers/` da própria entidade (ex: `invoice/helpers/`) — nunca função solta/closure dentro do service/repository. Parametrizar pelo que varia entre chamadas (nome de loja, unit business id, alias de tabela, data de referência), não hardcoded pro primeiro caso de uso. Referência: `invoice/helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`), `invoice/helpers/custom-filters.ts` (`storeCollectionDateTodayWhere`) — funções puras, importadas por `invoice.service.ts`/`invoice.repository.ts`. É organização de código, não muda layering acima: o helper pertence à mesma entidade e é usado pela camada que precisar.
 
+## Performance de queries e chamadas
+
+**Attributes explícitos.** Toda função nova que chama algo do backend (query Sequelize, chamada a API externa/integração) deve pedir só os campos que vai efetivamente usar — `attributes` na query Sequelize, ou equivalente na chamada externa (params/fields da API). Nunca trazer a entidade inteira "pra garantir"; resposta grande sem uso é o padrão a evitar.
+
+**N+1 não é aceito.** Loop fazendo `await` de query (ou chamada externa) por iteração é violação, mesmo que funcione. Resolver com uma das opções, conforme o caso: rodar em paralelo (`Promise.all`), bulk (`bulkCreate`/`bulkUpdate`/`findAll` com `where: { id: { [Op.in]: ids } }`), ou passar os vários ids numa chamada só. Preferir `map`/agregação em memória sobre re-consultar por item.
+
+**Sugestão de índices, só sob demanda.** Não sugerir índice proativamente. Se o usuário pedir (ou perguntar sobre performance de uma task que mexe numa entidade), olhar a tabela dessa entidade e onde ela é usada (filtros, joins, ordenação nas queries existentes) e sugerir os índices que ajudariam — sem criar a migration sozinho (ver regra de migração no fim deste arquivo: usuário roda `db:migrate` manualmente).
+
 ## Evitar valores hardcoded
 
 Valor que identifica uma entidade específica (nome de integração, status, etc.) e é comparado/usado em mais de um lugar: nunca literal solto no código (`=== "Bling"`). Buscar/centralizar numa função ou variável já existente que resolve aquele valor (ex: `getBlingIntegration()` em `bling_api.service.ts`) e comparar contra o resultado dela — não recriar o literal. Assim, se o valor mudar, muda em um lugar só. Referência: `orders.service.ts`'s `getOrdersStatusSummary` compara `integration.name` com `(await getBlingIntegration()).name`, não com `"Bling"`.
@@ -86,9 +94,11 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `add-invoice-to-batch.md` — rewrite bulk + fix de numeração
   - `last-outgoing-batch.md` — ponteiro `last_outgoing_batch_pending`
 - `order/` — Orders
-  - `index.md` — base, auth, divergência `internal_status`/`status_snapshot`
+  - `index.md` — base, auth, divergência `internal_status`/`status_snapshot`, catálogo `payment_methods`/`payment_method_id`
   - `status-sync.md` — `reason_cancelled`, `syncOrderInternalStatus`/`escalateToHumanVerificationIfStillPending`
   - `summary-endpoints.md` — repository facts dos endpoints de summary
+- `pdv-sales-request/` — módulo PDV Management (solicitação Loja→Financeiro→CD21), Etapa 1 completa (Passo A + Passo B)
+  - `index.md` — schema, máquina de estados, vínculo de nota de transferência, análise de comprovante por IA, pendência (Etapa 2)
 
 **Modules** (`.claude/modules/`):
 - `auth.md` — modelo de tenant/auth scoping cross-cutting, controllers corrigidos vs. ainda vazando entre tenants. Ler primeiro antes de mexer em auth.
@@ -105,5 +115,6 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
 - `sieg-rate-limits.md` — limites documentados por rota da API Sieg (ex.: `/v1/baixar-xmls` = 2 req/min, 50 XMLs/req) vs. limite genérico não-confirmado, onde cada um é aplicado no código
 - `magento-sync.md` — sync Bling→Magento de produtos: `external_id` = `entity_id` do Magento (não sku), resolução por id (mapeado) vs. sku/nome (1ª vez)
+- `ai-vision-extraction.md` — cliente Gemini (`GeminiVisionService`) + pipeline de extração de documento (PDF nativo vs. binário/IA), consumido hoje só pelo módulo PDV (comprovante + fallback de DANFE)
 
 Migração: como qualquer outra deste repo, **usuário roda `db:migrate` (ou qualquer DDL) manualmente — nunca automatizar.**

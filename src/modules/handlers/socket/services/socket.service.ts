@@ -1,5 +1,5 @@
 import { ISocketEmitter } from './socket.types';
-import { Server, Socket } from "socket.io";
+import { Server, Socket, Namespace } from "socket.io";
 import { Server as HttpServer } from "http";
 import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
@@ -58,6 +58,23 @@ class SocketService implements ISocketEmitter {
 
   broadcast<T>(event: string, payload: T): void {
     this.safeEmit(() => this.getIo().emit(event, payload));
+  }
+
+  // Namespace próprio (ex.: "/pdv") pra fluxo com auth diferente do socket
+  // genérico (JWT) — criado sob demanda, herda o adapter Redis de init().
+  of(namespace: string): Namespace {
+    return this.getIo().of(namespace);
+  }
+
+  emitToNamespaceRoom<T>(
+    namespace: string,
+    room: string,
+    event: string,
+    payload: T,
+  ): void {
+    this.safeEmit(() =>
+      this.getIo().of(namespace).to(room).emit(event, payload),
+    );
   }
 
   private safeEmit(emit: PendingEmit): void {

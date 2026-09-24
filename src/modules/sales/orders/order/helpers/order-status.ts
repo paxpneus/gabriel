@@ -12,6 +12,8 @@ import {
   blingGet,
   blingPatch,
 } from "../../../../../modules/handlers/bling/services/bling/helpers/get-with-sleep";
+import pdvSalesRequestService from "../../../pdv-management/sales-request/pdv-sales-request.service";
+import { notifyPdvStoreSync } from "../../../pdv-management/sales-request/helpers/notify-pdv-store-sync";
 
 export type OrderStatusSyncResult =
   | { handled: true; outcome: "completed"; internalStatus: OrderInternalStatus }
@@ -58,6 +60,7 @@ export const syncOrderInternalStatus = async (
       nfe_emitted: true,
       internal_status: mappedStatus,
     });
+    notifyPdvStoreSync(internalOrder.unit_business_id, "ORDER_STATUS_CHANGED");
 
     return { handled: true, outcome: "completed", internalStatus: mappedStatus };
   }
@@ -68,6 +71,12 @@ export const syncOrderInternalStatus = async (
       internal_status: mappedStatus,
       ...(reasonCancelled ? { reason_cancelled: reasonCancelled } : {}),
     });
+    notifyPdvStoreSync(internalOrder.unit_business_id, "ORDER_STATUS_CHANGED");
+
+    // Cancela sozinho uma PdvSalesRequest ativa pro pedido — diferente de
+    // handleInvoiceCancelled (nota cancelada bloqueia pra decisão humana),
+    // aqui o pedido em si já foi cancelado na origem, não há o que decidir.
+    await pdvSalesRequestService.cancelIfActiveByOrderId(internalOrder.id);
 
     return { handled: true, outcome: "cancelled", internalStatus: mappedStatus };
   }
@@ -147,6 +156,7 @@ export async function escalateToHumanVerificationIfStillPending({
     });
     if (order) {
       await ordersService.update(order.id, { internal_status: mappedStatus });
+      notifyPdvStoreSync(order.unit_business_id, "ORDER_STATUS_CHANGED");
     }
     return {
       escalated: false,
@@ -181,6 +191,12 @@ export async function escalateToHumanVerificationIfStillPending({
     nfe_emitted: false,
     reason_cancelled: reasonCancelled,
   });
+  notifyPdvStoreSync(order.unit_business_id, "ORDER_STATUS_CHANGED");
 
+  // NÃO cancela a PdvSalesRequest aqui — verificação humana (situação
+  // 748772) não é "pedido cancelado" pra Bling, é só um estado interno
+  // nosso pra registrar que precisou de intervenção manual. Só
+  // syncOrderInternalStatus (acima) cancela a solicitação, quando o status
+  // ao vivo já é CANCELLED de verdade.
   return { escalated: true };
 }
