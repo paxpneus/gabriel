@@ -103,6 +103,13 @@ export class PdvSalesRequestController extends BaseController<
       pdvAccess([PdvAccessScreen.CD21]),
       this.confirmTransferInvoice,
     );
+    // Leitura pro front decidir se mostra o botão de troca — sem precisar
+    // chamar attachTransferInvoice só pra descobrir se toma 400.
+    this.router.get(
+      "/:id/transfer-invoice/editable",
+      pdvAccess([PdvAccessScreen.CD21]),
+      this.canEditTransferInvoice,
+    );
     this.router.post(
       "/:id/expedition/reject",
       pdvAccess([PdvAccessScreen.CD21]),
@@ -531,6 +538,20 @@ export class PdvSalesRequestController extends BaseController<
     }
   };
 
+  canEditTransferInvoice = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const editable = await this.service.canEditTransferInvoice(
+        req.params.id as string,
+      );
+      return res.json({ editable });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
   expeditionReject = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { reasons, note } = req.body;
@@ -596,7 +617,11 @@ export class PdvSalesRequestController extends BaseController<
         req.params.orderId as string,
       );
 
-      if (!order || order.unitBusiness?.id !== access.unitBusinessId) {
+      if (
+        !order ||
+        (access.unitBusinessId !== null &&
+          order.unitBusiness?.id !== access.unitBusinessId)
+      ) {
         return res.status(404).json({ error: "Não encontrado" });
       }
 

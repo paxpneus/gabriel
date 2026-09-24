@@ -86,4 +86,36 @@ describe("PdvAccessLinkService", () => {
     expect(result.store?.storeRequestUrl).toContain("number=15");
     expect(result.stores).toBeUndefined();
   });
+
+  it("sempre expõe unsupportedUnitBusinessNumbers (CD21 + PDV_EXCLUDED_STORE_NUMBERS)", async () => {
+    (unitBusinessService.findById as jest.Mock).mockResolvedValue(storeA);
+
+    const result = await service.getAccessLinks(storeA.id);
+
+    expect(result.unsupportedUnitBusinessNumbers).toEqual(["21", "12", "17"]);
+  });
+
+  it("recusa link individual pra CD21/12/17 — não participam do fluxo PDV", async () => {
+    (unitBusinessService.findById as jest.Mock).mockResolvedValue({
+      id: "loja-12",
+      number: "12",
+      name: "Loja 12",
+    });
+
+    await expect(service.getAccessLinks("loja-12")).rejects.toThrow(
+      /não participa do fluxo do PDV Management/,
+    );
+  });
+
+  it("filtra CD21/12/17 de `stores` na listagem completa", async () => {
+    const excludedStore = { id: "loja-17", number: "17", name: "Loja 17" };
+    (
+      unitBusinessService.getComercialUnitBusinessOnly as jest.Mock
+    ).mockResolvedValue([storeA, excludedStore]);
+
+    const result = await service.getAccessLinks();
+
+    expect(result.stores).toHaveLength(1);
+    expect(result.stores?.[0].unitBusinessNumber).toBe("15");
+  });
 });

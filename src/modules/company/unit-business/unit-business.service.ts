@@ -19,11 +19,10 @@ import Role from "../users/roles/role.model";
 import expeditionBatchService from "../../warehouse/expedition/batch/batch.service";
 import { comercialUnitBusinessWhere } from "./helpers/comercial-unit-business";
 import { isWithinPhysicalStoreRange } from "./helpers/physical-numbered-unit-business";
+import { CD21_UNIT_BUSINESS_NUMBER } from "./helpers/cd21-unit-business-number";
 import roleService from "../users/roles/role.service";
 
-// Não existe flag/coluna própria pra marcar a loja CD21 — identificação
-// centralizada aqui (evita comparar "21"/"CD21" solto em vários lugares).
-const CD21_UNIT_BUSINESS_NUMBER = "21";
+export { CD21_UNIT_BUSINESS_NUMBER };
 
 export class UnitBusinessService extends BaseService<
   UnitBusiness,

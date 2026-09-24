@@ -1236,6 +1236,67 @@ describe("PdvSalesRequestService", () => {
         service.attachTransferInvoice("r1", { tcarUpsertQueue: {} as any }),
       ).rejects.toThrow(/Informe o id/);
     });
+
+    it("permite trocar em FINISHED quando o romaneio da nota de venda ainda não foi gerado", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.FINISHED,
+        sale_invoice_id: "invoice-sale",
+        transfer_invoice_id: "invoice-antiga",
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21-1",
+      });
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue([]);
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-nova",
+        integrations_id: "tecinco-1",
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.attachTransferInvoice("r1", {
+        invoiceId: "invoice-nova",
+        tcarUpsertQueue: {} as any,
+      });
+
+      expect(
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds,
+      ).toHaveBeenCalledWith(["invoice-sale"], "cd21-1");
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        transfer_invoice_id: "invoice-nova",
+      });
+    });
+
+    it("recusa trocar em SHIPPING/FINISHED quando o romaneio da nota de venda já foi gerado", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.SHIPPING,
+        sale_invoice_id: "invoice-sale",
+        transfer_invoice_id: "invoice-antiga",
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21-1",
+      });
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue(["invoice-sale"]);
+
+      await expect(
+        service.attachTransferInvoice("r1", {
+          invoiceId: "invoice-nova",
+          tcarUpsertQueue: {} as any,
+        }),
+      ).rejects.toThrow(/romaneio da nota de venda já foi gerado/);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
   });
 
   describe("confirmTransferInvoice", () => {
@@ -1281,6 +1342,77 @@ describe("PdvSalesRequestService", () => {
       await expect(service.confirmTransferInvoice("r1")).rejects.toThrow(
         /Ação inválida/,
       );
+    });
+  });
+
+  describe("canEditTransferInvoice", () => {
+    it("recusa se a solicitação não existe", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue(
+        null,
+      );
+
+      await expect(
+        service.canEditTransferInvoice("r1"),
+      ).rejects.toThrow(/não encontrada/);
+    });
+
+    it.each([
+      PdvSalesRequestStatus.OPEN,
+      PdvSalesRequestStatus.PENDING_FINANCE,
+      PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+      PdvSalesRequestStatus.PENDING_NF_SALE,
+      PdvSalesRequestStatus.CANCELLED,
+    ])("false quando o status é %s (fora do fluxo de nota de transferência)", async (status) => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status,
+        sale_invoice_id: null,
+      });
+
+      await expect(service.canEditTransferInvoice("r1")).resolves.toBe(false);
+      expect(unitBusinessService.getCd21UnitBusiness).not.toHaveBeenCalled();
+    });
+
+    it("true em PENDING_NF_TRANSFER mesmo sem sale_invoice_id (nunca tem romaneio possível ainda)", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        sale_invoice_id: null,
+      });
+
+      await expect(service.canEditTransferInvoice("r1")).resolves.toBe(true);
+    });
+
+    it("true em SHIPPING/FINISHED quando o romaneio da nota de venda ainda não foi gerado", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.FINISHED,
+        sale_invoice_id: "invoice-sale",
+      });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21-1",
+      });
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue([]);
+
+      await expect(service.canEditTransferInvoice("r1")).resolves.toBe(true);
+    });
+
+    it("false em SHIPPING/FINISHED quando o romaneio da nota de venda já foi gerado", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIPPING,
+        sale_invoice_id: "invoice-sale",
+      });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21-1",
+      });
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue(["invoice-sale"]);
+
+      await expect(service.canEditTransferInvoice("r1")).resolves.toBe(false);
     });
   });
 

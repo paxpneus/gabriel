@@ -193,7 +193,10 @@ export async function escalateToHumanVerificationIfStillPending({
   });
   notifyPdvStoreSync(order.unit_business_id, "ORDER_STATUS_CHANGED");
 
-  await pdvSalesRequestService.cancelIfActiveByOrderId(order.id);
-
+  // NÃO cancela a PdvSalesRequest aqui — verificação humana (situação
+  // 748772) não é "pedido cancelado" pra Bling, é só um estado interno
+  // nosso pra registrar que precisou de intervenção manual. Só
+  // syncOrderInternalStatus (acima) cancela a solicitação, quando o status
+  // ao vivo já é CANCELLED de verdade.
   return { escalated: true };
 }

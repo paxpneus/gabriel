@@ -1023,11 +1023,15 @@ export class PdvSalesRequestService extends BaseService<
   }
 
   // NÃO avança status sozinho — só vincula/troca a nota de transferência e
-  // devolve a solicitação atualizada pro front validar. Permitido tanto em
-  // PENDING_NF_TRANSFER (primeira vinculação) quanto em SHIPPING (edição
-  // depois de já confirmado, ex.: CD21/expedição percebeu a nota errada) —
-  // sempre como TROCA (nunca deixa `transfer_invoice_id` nulo: quem chama
-  // precisa mandar uma nota válida pra substituir a atual).
+  // devolve a solicitação atualizada pro front validar. Permitido em
+  // PENDING_NF_TRANSFER (primeira vinculação), SHIPPING e FINISHED (edição
+  // depois de já confirmado — CD21/expedição percebeu a nota errada, ou
+  // reabertura pontual pós-finalização) — sempre como TROCA (nunca deixa
+  // `transfer_invoice_id` nulo: quem chama precisa mandar uma nota válida
+  // pra substituir a atual). Em SHIPPING/FINISHED, só permite a troca se o
+  // romaneio da nota de VENDA ainda não foi gerado — depois de gerado, o
+  // pedido já saiu fisicamente com a nota de transferência que está
+  // vinculada, trocar aqui só bagunçaria o que já foi expedido.
   async attachTransferInvoice(
     id: string,
     params: {
@@ -1042,7 +1046,12 @@ export class PdvSalesRequestService extends BaseService<
     const request = await this.assertStatus(id, [
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
       PdvSalesRequestStatus.SHIPPING,
+      PdvSalesRequestStatus.FINISHED,
     ]);
+
+    await this.assertSaleInvoiceDeliveryNoteNotGenerated(
+      request.sale_invoice_id,
+    );
 
     const tecinco = await getTCarIntegration();
     let invoiceId = params.invoiceId ?? null;
@@ -1227,6 +1236,62 @@ export class PdvSalesRequestService extends BaseService<
 
       if (saleReady) await this.finish(request.id);
     }
+  }
+
+  // Fato puro, sem lançar erro — usado tanto pela guarda de
+  // attachTransferInvoice (assertSaleInvoiceDeliveryNoteNotGenerated) quanto
+  // por canEditTransferInvoice (pro front decidir se exibe o componente de
+  // troca, sem precisar tentar a troca e tratar o 400). Mesma escopagem por
+  // CD21 de finishIfDeliveryNoteGenerated (uma nota pode estar em lote de
+  // mais de uma loja). Sem sale_invoice_id ainda (PENDING_NF_TRANSFER), não
+  // há romaneio possível.
+  private async isSaleInvoiceDeliveryNoteGenerated(
+    saleInvoiceId: string | null,
+  ): Promise<boolean> {
+    if (!saleInvoiceId) return false;
+
+    const cd21 = await unitBusinessService.getCd21UnitBusiness();
+    if (!cd21) throw new Error("Unidade CD21 não cadastrada");
+
+    const [generatedInvoiceId] =
+      await invoiceService.findDeliveryNoteGeneratedInvoiceIds(
+        [saleInvoiceId],
+        cd21.id,
+      );
+
+    return !!generatedInvoiceId;
+  }
+
+  // Guarda de attachTransferInvoice pra SHIPPING/FINISHED.
+  private async assertSaleInvoiceDeliveryNoteNotGenerated(
+    saleInvoiceId: string | null,
+  ): Promise<void> {
+    if (await this.isSaleInvoiceDeliveryNoteGenerated(saleInvoiceId)) {
+      throw new Error(
+        "Não é possível trocar a nota de transferência — o romaneio da nota de venda já foi gerado",
+      );
+    }
+  }
+
+  // Pro front decidir se mostra o componente de troca de nota de
+  // transferência, sem precisar disparar attachTransferInvoice só pra
+  // descobrir se vai tomar 400. Mesmas duas condições de
+  // attachTransferInvoice: status elegível + (em SHIPPING/FINISHED) romaneio
+  // da nota de venda ainda não gerado.
+  async canEditTransferInvoice(id: string): Promise<boolean> {
+    const request = await this.repository.findById(id);
+    if (!request) throw new Error("Solicitação não encontrada");
+
+    const editableStatuses = [
+      PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      PdvSalesRequestStatus.SHIPPING,
+      PdvSalesRequestStatus.FINISHED,
+    ];
+    if (!editableStatuses.includes(request.status)) return false;
+
+    return !(await this.isSaleInvoiceDeliveryNoteGenerated(
+      request.sale_invoice_id,
+    ));
   }
 
   // ─── Cancelamento de nota fiscal (Bling/Tecinco) ────────────────────────────

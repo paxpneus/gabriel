@@ -7,7 +7,7 @@ import {
   computeTelesalesToken,
 } from "./helpers/pdv-access-token.helper";
 import redisService from "../../../../shared/utils/base-models/base-redis";
-import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
+import { PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 
 // Front tem uma única rota /pdv-management (query string carrega screen,
 // não path por tela) — confirmado testando contra o router real.
@@ -48,6 +48,11 @@ export interface PdvGeneralAccessLinks {
 
 export interface PdvAccessLinksResult {
   general: PdvGeneralAccessLinks;
+  // Números de unit business que o front deve tratar como "sem PDV" (ex.:
+  // esconder a ação de gerar link numa tela que lista todas as unit
+  // businesses do sistema) — mesma lista que já filtra `store`/`stores`
+  // aqui, exposta pra quem lista lojas por outra via.
+  unsupportedUnitBusinessNumbers: string[];
   store?: PdvStoreRequestLink;
   stores?: PdvStoreRequestLink[];
 }
@@ -105,26 +110,25 @@ export class PdvAccessLinkService {
       : "pdv-access:links:all";
   }
 
-  // CD21 e PDV_EXCLUDED_STORE_NUMBERS nunca têm storeRequestUrl — não
-  // participam do fluxo PDV (ver helpers/pdv-excluded-unit-business.ts).
-  // CD21 continua tendo seu próprio link (cd21Url, em `general`), só não um
-  // storeRequestUrl "como se fosse uma loja normal".
+  // CD21 e PDV_EXCLUDED_STORE_NUMBERS (juntos, PDV_UNSUPPORTED_UNIT_BUSINESS_
+  // NUMBERS) nunca têm storeRequestUrl — não participam do fluxo PDV (ver
+  // helpers/pdv-excluded-unit-business.ts). CD21 continua tendo seu próprio
+  // link (cd21Url, em `general`), só não um storeRequestUrl "como se fosse
+  // uma loja normal".
   private isExcludedFromStoreRequestLink(
-    unitBusiness: Pick<UnitBusinessAttributes, "id" | "number">,
-    cd21: Pick<UnitBusinessAttributes, "id">,
+    unitBusiness: Pick<UnitBusinessAttributes, "number">,
   ): boolean {
-    return (
-      unitBusiness.id === cd21.id ||
-      PDV_EXCLUDED_STORE_NUMBERS.includes(unitBusiness.number)
+    return PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS.includes(
+      unitBusiness.number,
     );
   }
 
   // unitBusinessId informado: `store` com o link dessa loja. Omitido:
   // `stores` com todas as lojas comerciais (mesmo filtro de
-  // getComercialUnitBusinessOnly — exclui marketplace/loja "0" — mais CD21/
-  // PDV_EXCLUDED_STORE_NUMBERS, ver isExcludedFromStoreRequestLink).
-  // `general` vem sempre, calculado uma única vez (nunca por loja, evita
-  // N+1 e repetição do mesmo link em cada entrada da listagem completa).
+  // getComercialUnitBusinessOnly — exclui marketplace/loja "0" — mais
+  // PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS, ver isExcludedFromStoreRequestLink).
+  // `general`/`unsupportedUnitBusinessNumbers` vêm sempre, calculados uma
+  // única vez (nunca por loja, evita N+1 e repetição na listagem completa).
   async getAccessLinks(unitBusinessId?: string): Promise<PdvAccessLinksResult> {
     const cacheKey = this.accessLinksCacheKey(unitBusinessId);
     const cached = await redisService.get<PdvAccessLinksResult>(cacheKey);
@@ -134,21 +138,27 @@ export class PdvAccessLinkService {
     if (!cd21) throw new Error("Unidade CD21 não cadastrada");
 
     const general = this.buildGeneralLinks(cd21);
+    const unsupportedUnitBusinessNumbers = PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS;
 
     let result: PdvAccessLinksResult;
     if (unitBusinessId) {
       const unitBusiness = await unitBusinessService.findById(unitBusinessId);
       if (!unitBusiness) throw new Error("Loja não encontrada");
-      if (this.isExcludedFromStoreRequestLink(unitBusiness, cd21)) {
+      if (this.isExcludedFromStoreRequestLink(unitBusiness)) {
         throw new Error("Loja não participa do fluxo do PDV Management");
       }
-      result = { general, store: this.buildStoreRequestLink(unitBusiness) };
+      result = {
+        general,
+        unsupportedUnitBusinessNumbers,
+        store: this.buildStoreRequestLink(unitBusiness),
+      };
     } else {
       const stores = await unitBusinessService.getComercialUnitBusinessOnly();
       result = {
         general,
+        unsupportedUnitBusinessNumbers,
         stores: stores
-          .filter((store) => !this.isExcludedFromStoreRequestLink(store, cd21))
+          .filter((store) => !this.isExcludedFromStoreRequestLink(store))
           .map((store) => this.buildStoreRequestLink(store)),
       };
     }

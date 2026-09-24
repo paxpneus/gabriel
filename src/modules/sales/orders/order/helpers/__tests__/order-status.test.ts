@@ -4,6 +4,14 @@ jest.mock("../../orders.service", () => ({
 }));
 
 jest.mock(
+  "../../../../pdv-management/sales-request/pdv-sales-request.service",
+  () => ({
+    __esModule: true,
+    default: { cancelIfActiveByOrderId: jest.fn() },
+  }),
+);
+
+jest.mock(
   "../../../../../handlers/bling/services/bling/helpers/get-with-sleep",
   () => ({
     __esModule: true,
@@ -17,6 +25,7 @@ import {
   blingGet,
   blingPatch,
 } from "../../../../../handlers/bling/services/bling/helpers/get-with-sleep";
+import pdvSalesRequestService from "../../../../pdv-management/sales-request/pdv-sales-request.service";
 import { escalateToHumanVerificationIfStillPending } from "../order-status";
 import {
   OrderInternalStatus,
@@ -143,6 +152,12 @@ describe("escalateToHumanVerificationIfStillPending", () => {
       nfe_emitted: false,
       reason_cancelled: OrderReasonCancelled.DOCUMENT_INVALID,
     });
+    // Verificação humana grava internal_status=CANCELLED só como estado
+    // interno nosso — não é "pedido cancelado" pra Bling, então não deve
+    // cancelar (nem mudar o status de) uma PdvSalesRequest ativa.
+    expect(
+      pdvSalesRequestService.cancelIfActiveByOrderId,
+    ).not.toHaveBeenCalled();
   });
 
   it("situação ao vivo não é terminal nem está em allowedPendingStatuses: não escala, só sincroniza internal_status com a realidade", async () => {

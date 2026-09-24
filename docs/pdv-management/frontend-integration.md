@@ -371,6 +371,7 @@ identificar a loja sem entrar no objeto `order`.
 | GET | `/transfer-invoice/search?q=` | — | `InvoiceCandidate[]` (autocomplete, busca local por número/id da nota) |
 | POST | `/:id/transfer-invoice` | `{ invoiceId: string }` **ou** multipart `xml`/`danfe` | `PdvSalesRequest` (vincula, não avança status sozinho) |
 | POST | `/:id/transfer-invoice/confirm` | — | `PdvSalesRequest` (avança pra `SHIPPING`, exige nota já vinculada) |
+| GET | `/:id/transfer-invoice/editable` | — | `{ editable: boolean }` — chame antes de mostrar o componente de troca (ver abaixo) |
 | POST | `/:id/expedition/reject` | `{ reasons: PdvCorrectionReason[], note: string }` | `PdvSalesRequest` (vai pra `PENDING_CORRECTION`) |
 | POST | `/:id/finish` | — | `PdvSalesRequest` (avança pra `FINISHED`) — normalmente nem precisa ser chamado: acontece sozinho quando o romaneio é gerado, ver seção 9 |
 | POST | `/:id/invoice-cancelled/resolve` | `{ decision: "RETRY_ANALYSIS" \| "REQUEST_CORRECTION", note?: string }` | `PdvSalesRequest` — ver seção 7 |
@@ -380,6 +381,23 @@ identificar a loja sem entrar no objeto `order`.
 existente, ver autocomplete acima), `xml` (valida contra a Tecinco e já
 cadastra a nota), ou `danfe` (extrai a chave e busca localmente — se a nota
 ainda não existir no sistema, pede pra mandar o XML em vez disso).
+
+Aceito com a solicitação em `PENDING_NF_TRANSFER`, `SHIPPING` **ou
+`FINISHED`** — em `FINISHED` é a forma de reabrir só pra corrigir a nota de
+transferência sem passar por `correction/finished` (que muda status): o
+`status` não muda, só o `transfer_invoice_id`. Em `SHIPPING`/`FINISHED` a
+troca só é aceita se o romaneio da nota de **venda** ainda não tiver sido
+gerado — depois de gerado, `400 { "error": "Não é possível trocar a nota de
+transferência — o romaneio da nota de venda já foi gerado" }`.
+
+`GET /:id/transfer-invoice/editable` existe pra evitar chamar `POST
+/:id/transfer-invoice` só pra descobrir se toma esse 400 — devolve
+`{ editable: boolean }` já considerando as duas condições (status elegível +
+romaneio da venda ainda não gerado, se aplicável). Use pra decidir se mostra
+o componente de troca de nota de transferência: chame com o card em
+`PENDING_NF_TRANSFER`, `SHIPPING` ou `FINISHED` (nos outros status já dá
+`false` sem nem checar romaneio); em qualquer outro status nem precisa
+chamar, o componente não aparece.
 
 `InvoiceCandidate`:
 ```ts
@@ -490,20 +508,25 @@ chame (precisa de acesso a alguma tela, via login ou link):
 
 | Método | Rota | Resposta |
 |---|---|---|
-| GET | `/api/pdv-access/links?unitBusinessId=<id>` | `{ general: PdvGeneralAccessLinks, store: PdvStoreRequestLink }` — `store` é o link `STORE_REQUEST` dessa loja |
-| GET | `/api/pdv-access/links` (sem query) | `{ general: PdvGeneralAccessLinks, stores: PdvStoreRequestLink[] }` — `stores` com uma entrada por loja comercial cadastrada |
+| GET | `/api/pdv-access/links?unitBusinessId=<id>` | `{ general, unsupportedUnitBusinessNumbers, store: PdvStoreRequestLink }` — `store` é o link `STORE_REQUEST` dessa loja |
+| GET | `/api/pdv-access/links` (sem query) | `{ general, unsupportedUnitBusinessNumbers, stores: PdvStoreRequestLink[] }` — `stores` com uma entrada por loja comercial cadastrada |
 
 `STORE_REQUEST` é a única tela escopada por loja — por isso só ela aparece
 em `store`/`stores`, um objeto por loja. `general` (CD21/Financeiro/
-Televendas) vem **sempre**, calculado uma única vez, igual nos dois casos —
-essas 3 telas são acesso global, o mesmo link/token de sempre não muda por
-loja nem se repete numa listagem.
+Televendas) e `unsupportedUnitBusinessNumbers` vêm **sempre**, calculados uma
+única vez, iguais nos dois casos — `general` porque essas 3 telas são acesso
+global (o mesmo link/token de sempre não muda por loja nem se repete numa
+listagem); `unsupportedUnitBusinessNumbers` porque é metadado fixo, não
+depende de qual loja foi consultada.
 
 **Lojas 21 (CD21), 12 e 17 nunca aparecem em `stores`** (listagem completa,
 sem query) — não participam do fluxo do PDV (mesma regra da seção 3/5.2).
 Pedindo uma delas explicitamente (`?unitBusinessId=<id>` de uma dessas 3),
 a resposta é erro em vez de `store`: `400 { "error": "Loja não participa do
-fluxo do PDV Management" }`.
+fluxo do PDV Management" }`. Pra telas do front que listam unit businesses
+por outra via (não por este endpoint), `unsupportedUnitBusinessNumbers`
+(`string[]`, sempre `["21", "12", "17"]`) é a mesma lista pronta pra decidir
+onde esconder a ação de PDV, sem precisar hardcodar os números no front.
 
 ```ts
 interface PdvStoreRequestLink {
