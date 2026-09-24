@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-// Valida a resposta do Gemini antes de persistir — o schema é o mesmo
-// contrato fixo do prompt (payment-receipt-prompt.ts); qualquer desvio
-// (campo faltando, tipo errado, valor fora do enum) é rejeitado em vez de
-// salvo como está.
+// Valida a saída do parser local (payment-receipt-text-parser.ts) antes de
+// persistir — qualquer desvio (campo faltando, tipo errado, valor fora do
+// enum) é rejeitado em vez de salvo como está. Também usado pra validar
+// edição manual do front (PATCH /:id/receipt/analysis).
 export const PaymentReceiptExtractionSchema = z.object({
   tipo_comprovante: z
     .enum(["cartao_credito", "cartao_debito", "pix", "transferencia"])

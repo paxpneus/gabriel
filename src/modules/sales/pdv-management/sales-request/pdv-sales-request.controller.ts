@@ -144,6 +144,7 @@ export class PdvSalesRequestController extends BaseController<
       index: [pdvAccess(READ_SCREENS)],
       show: [pdvAccess(READ_SCREENS)],
       create: [pdvAccess([PdvAccessScreen.STORE_REQUEST])],
+      destroy: [pdvAccess([PdvAccessScreen.STORE_REQUEST])],
     };
   }
 
@@ -226,11 +227,16 @@ export class PdvSalesRequestController extends BaseController<
       });
   };
 
-  destroy = async (_req: Request, res: Response): Promise<Response> => {
-    return res.status(405).json({
-      error:
-        "Exclusão não é permitida — resolva pelo fluxo de correção/cancelamento.",
-    });
+  // Permitido só em OPEN/PENDING_CORRECTION — a validação de status em si
+  // fica no service (deleteRequest), aqui só ownership + tradução de erro.
+  destroy = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
+      await this.service.deleteRequest(req.params.id as string);
+      return res.status(204).send();
+    } catch (error: any) {
+      return res.status(405).json({ error: error.message });
+    }
   };
 
   // Mesma razão de update/destroy: as ações em lote genéricas do

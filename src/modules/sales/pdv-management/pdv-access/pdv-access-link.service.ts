@@ -5,10 +5,16 @@ import {
   computeStoreScreenToken,
   computeTelesalesToken,
 } from "./helpers/pdv-access-token.helper";
+import redisService from "../../../../shared/utils/base-models/base-redis";
 
 // Front tem uma única rota /pdv-management (query string carrega screen,
 // não path por tela) — confirmado testando contra o router real.
 const TELESALES_SCREEN_PARAM = "telesales";
+
+// Token/URL não mudam sozinhos (só se a loja for renomeada ou o secret
+// rotacionar, ambos raros) — 1h de cache é aceitável mesmo sem invalidação
+// ativa (evita acoplar esse módulo ao write path de unit-business).
+const ACCESS_LINKS_CACHE_TTL_SECONDS = 60 * 60;
 
 function buildFrontendUrl(
   token: string,
@@ -74,6 +80,12 @@ export class PdvAccessLinkService {
     };
   }
 
+  private accessLinksCacheKey(unitBusinessId?: string): string {
+    return unitBusinessId
+      ? `pdv-access:links:store:${unitBusinessId}`
+      : "pdv-access:links:all";
+  }
+
   // unitBusinessId informado: só os links dessa loja. Omitido: todas as lojas
   // comerciais (mesmo filtro de getComercialUnitBusinessOnly — exclui
   // marketplace/loja "0"). cd21 é resolvido uma única vez fora do map, nunca
@@ -81,17 +93,30 @@ export class PdvAccessLinkService {
   async getAccessLinks(
     unitBusinessId?: string,
   ): Promise<PdvStoreAccessLinks | PdvStoreAccessLinks[]> {
+    const cacheKey = this.accessLinksCacheKey(unitBusinessId);
+    const cached = await redisService.get<
+      PdvStoreAccessLinks | PdvStoreAccessLinks[]
+    >(cacheKey);
+    if (cached !== null) return cached;
+
     const cd21 = await unitBusinessService.getCd21UnitBusiness();
     if (!cd21) throw new Error("Unidade CD21 não cadastrada");
 
+    let result: PdvStoreAccessLinks | PdvStoreAccessLinks[];
     if (unitBusinessId) {
       const unitBusiness = await unitBusinessService.findById(unitBusinessId);
       if (!unitBusiness) throw new Error("Loja não encontrada");
-      return this.buildLinksForStore(unitBusiness, cd21);
+      result = this.buildLinksForStore(unitBusiness, cd21);
+    } else {
+      const stores = await unitBusinessService.getComercialUnitBusinessOnly();
+      result = stores.map((store) => this.buildLinksForStore(store, cd21));
     }
 
-    const stores = await unitBusinessService.getComercialUnitBusinessOnly();
-    return stores.map((store) => this.buildLinksForStore(store, cd21));
+    await redisService.set(cacheKey, result, {
+      mode: "EX",
+      duration: ACCESS_LINKS_CACHE_TTL_SECONDS,
+    });
+    return result;
   }
 }
 

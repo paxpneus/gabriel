@@ -16,6 +16,7 @@ RUN npm ci
 COPY jest.config.ts tsconfig.json .sequelizerc ./
 COPY src ./src
 COPY migrations ./migrations
+COPY resources ./resources
 
 RUN npm test -- --runInBand
 
@@ -39,6 +40,7 @@ COPY --from=builder /app/node_modules ./node_modules
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/resources ./resources
 COPY package*.json ./
 COPY .sequelizerc ./
 COPY src/config/database.js ./src/config/database.js
@@ -82,6 +84,7 @@ ENV NODE_ENV=production \
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/resources ./resources
 COPY package*.json ./
 COPY .sequelizerc ./
 COPY src/config/database.js ./src/config/database.js

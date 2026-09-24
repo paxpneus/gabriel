@@ -250,7 +250,14 @@ back nunca repassa ao front). Ver os dois tipos na seção 11.
 | PATCH | `/:id/receipt/analysis` | `Partial<PaymentReceiptExtraction>` (só os campos que mudaram) | `PdvSalesRequest` |
 | POST | `/:id/receipt/confirm` | — | `PdvSalesRequest` (avança pra `PENDING_FINANCE`) |
 | POST | `/:id/correction/resolve` | `{ decision?: "CANCEL" \| "EXCHANGE_PRODUCT" \| "RETRY_ANALYSIS" }` — ver seção 6 | `PdvSalesRequest` |
+| DELETE | `/:id` | — | `204` (404 se não for da sua loja) |
 
+- `DELETE /:id` — só permitido com `status` em `OPEN` ou `PENDING_CORRECTION`
+  (ainda não saiu do lugar, ou foi devolvida pra loja corrigir). Qualquer
+  outro status responde `405 { "error": "Exclusão não é permitida — resolva
+  pelo fluxo de correção/cancelamento." }` — a partir daí já existe
+  pedido/nota em andamento no fluxo, resolve cancelando (seção 6) em vez de
+  apagar.
 - `GET /orders/eligible` — elegibilidade: `order.unit_business_id` igual à
   loja do acesso (pedido de canal de marketplace, ex. Mercado Livre, nunca
   tem isso preenchido — já sai de fora sozinho) e sem `PdvSalesRequest`

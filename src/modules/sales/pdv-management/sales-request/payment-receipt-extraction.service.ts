@@ -1,6 +1,6 @@
 import crypto from "crypto";
-import { extractStructuredDataFromDocument } from "../../../../shared/utils/documents/document-extraction";
-import { PAYMENT_RECEIPT_EXTRACTION_PROMPT } from "./helpers/payment-receipt-prompt";
+import { extractReceiptText } from "./helpers/receipt-text-extraction";
+import { parsePaymentReceiptText } from "./helpers/payment-receipt-text-parser";
 import { PaymentReceiptExtractionSchema } from "./helpers/payment-receipt-extraction.schema";
 import { PaymentReceiptExtraction } from "./pdv-sales-request.types";
 
@@ -13,17 +13,19 @@ export interface PaymentReceiptAnalysisResult {
 }
 
 export class PaymentReceiptExtractionService {
+  // Sem IA — texto extraído localmente (pdf-parse ou OCR via Tesseract, ver
+  // helpers/receipt-text-extraction.ts) e interpretado por regex/heurísticas
+  // (helpers/payment-receipt-text-parser.ts). PaymentReceiptExtractionSchema
+  // continua validando a saída antes de persistir, mesmo o parser sendo
+  // interno (garante que nenhum campo escapa do contrato/enum esperado).
   async analyze(
     buffer: Buffer,
     mimeType: string,
   ): Promise<PaymentReceiptAnalysisResult> {
-    const raw = await extractStructuredDataFromDocument({
-      buffer,
-      mimeType,
-      prompt: PAYMENT_RECEIPT_EXTRACTION_PROMPT,
-    });
-
-    const extraction = PaymentReceiptExtractionSchema.parse(this.parseJson(raw));
+    const text = await extractReceiptText(buffer, mimeType);
+    const extraction = PaymentReceiptExtractionSchema.parse(
+      parsePaymentReceiptText(text),
+    );
 
     return { extraction, ...this.computeDerived(extraction) };
   }
@@ -39,22 +41,6 @@ export class PaymentReceiptExtractionService {
       validated: this.validateMath(extraction),
       fingerprint: this.buildFingerprint(extraction),
     };
-  }
-
-  // O prompt pede JSON puro, mas o Gemini às vezes envolve a resposta em
-  // ```json ... ``` mesmo assim — remove o fence antes de tentar parsear.
-  private parseJson(raw: string): unknown {
-    const cleaned = raw
-      .trim()
-      .replace(/^```(?:json)?/i, "")
-      .replace(/```$/, "")
-      .trim();
-
-    try {
-      return JSON.parse(cleaned);
-    } catch {
-      throw new Error("Resposta da IA não é um JSON válido");
-    }
   }
 
   // Só faz sentido pra crédito parcelado — PIX/débito/crédito à vista não

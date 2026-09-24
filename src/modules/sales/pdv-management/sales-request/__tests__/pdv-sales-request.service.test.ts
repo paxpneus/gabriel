@@ -1503,7 +1503,7 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
-    it("ADT: NÃO finaliza enquanto só uma das duas notas tem romaneio gerado", async () => {
+    it("ADT: finaliza só com a nota de venda com romaneio, mesmo com a de transferência pendente", async () => {
       (
         pdvSalesRequestRepository.findShippingBySaleOrTransferInvoiceIds as jest.Mock
       ).mockResolvedValue([
@@ -1517,13 +1517,28 @@ describe("PdvSalesRequestService", () => {
       (
         invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
       ).mockResolvedValue(["invoice-sale"]);
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIPPING,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
 
       await service.finishIfDeliveryNoteGenerated(["invoice-sale"]);
 
-      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+      // Nem consulta romaneio da nota de transferência — só a de venda importa.
+      expect(
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds,
+      ).toHaveBeenCalledWith(["invoice-sale"], "cd21-id");
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.FINISHED },
+        { transaction: mockTransaction },
+      );
     });
 
-    it("ADT: finaliza quando venda E transferência já têm romaneio gerado", async () => {
+    it("ADT: NÃO finaliza enquanto a nota de venda ainda não tem romaneio gerado", async () => {
       (
         pdvSalesRequestRepository.findShippingBySaleOrTransferInvoiceIds as jest.Mock
       ).mockResolvedValue([
@@ -1536,22 +1551,11 @@ describe("PdvSalesRequestService", () => {
       ]);
       (
         invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
-      ).mockResolvedValue(["invoice-sale", "invoice-transfer"]);
-      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
-        id: "r1",
-        status: PdvSalesRequestStatus.SHIPPING,
-      });
-      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
-        id: "r1",
-      });
+      ).mockResolvedValue([]);
 
       await service.finishIfDeliveryNoteGenerated(["invoice-transfer"]);
 
-      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
-        "r1",
-        { status: PdvSalesRequestStatus.FINISHED },
-        { transaction: mockTransaction },
-      );
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
     });
 
     it("sem solicitação SHIPPING candidata: não consulta CD21 nem romaneio", async () => {

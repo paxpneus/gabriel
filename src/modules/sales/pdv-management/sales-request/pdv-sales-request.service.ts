@@ -46,10 +46,10 @@ export class DuplicateReceiptError extends Error {}
 // ver .claude/entities/pdv-sales-request/index.md ("Card do Kanban").
 const ELIGIBLE_ORDERS_LIMIT = 200;
 
-// Acima disso, o job assíncrono desiste e trata como falha de IA (financeiro
-// revisa manualmente) em vez de deixar o front esperando indefinidamente —
-// a extração em si (com retries) pode continuar rodando depois, só não é
-// mais esperada por quem chamou.
+// Acima disso, o job assíncrono desiste e trata como falha de extração
+// (financeiro revisa manualmente) em vez de deixar o front esperando
+// indefinidamente — o OCR em si pode continuar rodando depois, só não é
+// mais esperado por quem chamou.
 const RECEIPT_ANALYSIS_TIMEOUT_MS = 5000;
 
 export class PdvSalesRequestService extends BaseService<
@@ -178,7 +178,7 @@ export class PdvSalesRequestService extends BaseService<
     const activeRequests = await this.repository.findAll({
       where: {
         order_id: { [Op.in]: orders.map((order) => order.id) },
-        // status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
+        status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
       },
       attributes: ["order_id"],
     });
@@ -357,12 +357,13 @@ export class PdvSalesRequestService extends BaseService<
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
   }
 
-  // Roda a extração por IA (Gemini) em background (ver runReceiptAnalysisAsync)
-  // — nunca bloqueia o anexo por falha/demora da IA (Gemini fora do ar,
-  // resposta malformada, ou análise passando de RECEIPT_ANALYSIS_TIMEOUT_MS):
-  // financeiro revisa manualmente, análise segue com os campos em null.
-  // Duplicidade de comprovante é a única falha tratada como erro de verdade
-  // dentro do job (ver DuplicateReceiptError/finalizeReceiptAnalysis).
+  // Roda a extração local (pdf-parse/OCR, ver payment-receipt-extraction.service.ts)
+  // em background (ver runReceiptAnalysisAsync) — nunca bloqueia o anexo por
+  // falha/demora da extração (documento ilegível, OCR malformado, ou análise
+  // passando de RECEIPT_ANALYSIS_TIMEOUT_MS): financeiro revisa manualmente,
+  // análise segue com os campos em null. Duplicidade de comprovante é a única
+  // falha tratada como erro de verdade dentro do job (ver
+  // DuplicateReceiptError/finalizeReceiptAnalysis).
   private async analyzeReceipt(
     requestId: string,
     orderId: string,
@@ -381,7 +382,7 @@ export class PdvSalesRequestService extends BaseService<
       );
     } catch (err) {
       console.warn(
-        "[PDV] Falha ao analisar comprovante via IA — seguindo sem análise",
+        "[PDV] Falha ao analisar comprovante — seguindo sem análise",
         err,
       );
       return {
@@ -1310,6 +1311,37 @@ export class PdvSalesRequestService extends BaseService<
       userId: params.userId,
       description: `CD21 reabriu solicitação finalizada para correção: ${params.note}`,
     });
+  }
+
+  // ─── Exclusão ───────────────────────────────────────────────────────────────
+  // Só permitido em OPEN (nunca saiu do lugar) ou PENDING_CORRECTION (devolvida
+  // pra loja) — qualquer outro status já tem nota/pedido em andamento na Bling/
+  // Tecinco, resolve pelo fluxo de correção/cancelamento em vez de apagar.
+  async deleteRequest(id: string): Promise<void> {
+    const request = await this.repository.findById(id);
+    if (!request) throw new Error("Solicitação não encontrada");
+
+    if (
+      request.status !== PdvSalesRequestStatus.OPEN &&
+      request.status !== PdvSalesRequestStatus.PENDING_CORRECTION
+    ) {
+      throw new Error(
+        "Exclusão não é permitida — resolva pelo fluxo de correção/cancelamento.",
+      );
+    }
+
+    if (request.payment_receipt_path) {
+      try {
+        await uploaderService.delete(request.payment_receipt_path);
+      } catch (err) {
+        console.warn(
+          "[PDV] Falha ao apagar comprovante do uploader ao excluir solicitação",
+          err,
+        );
+      }
+    }
+
+    await this.repository.delete(id);
   }
 
   async getHistory(id: string) {

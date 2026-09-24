@@ -1,9 +1,15 @@
-jest.mock("../../../../../shared/utils/documents/document-extraction", () => ({
+jest.mock("../helpers/receipt-text-extraction", () => ({
   __esModule: true,
-  extractStructuredDataFromDocument: jest.fn(),
+  extractReceiptText: jest.fn(),
 }));
 
-import { extractStructuredDataFromDocument } from "../../../../../shared/utils/documents/document-extraction";
+jest.mock("../helpers/payment-receipt-text-parser", () => ({
+  __esModule: true,
+  parsePaymentReceiptText: jest.fn(),
+}));
+
+import { extractReceiptText } from "../helpers/receipt-text-extraction";
+import { parsePaymentReceiptText } from "../helpers/payment-receipt-text-parser";
 import { PaymentReceiptExtractionService } from "../payment-receipt-extraction.service";
 
 const baseExtraction = {
@@ -28,13 +34,12 @@ describe("PaymentReceiptExtractionService", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (extractReceiptText as jest.Mock).mockResolvedValue("texto qualquer");
     service = new PaymentReceiptExtractionService();
   });
 
-  it("faz parse do JSON, valida com Zod e calcula validated/fingerprint", async () => {
-    (extractStructuredDataFromDocument as jest.Mock).mockResolvedValue(
-      JSON.stringify(baseExtraction),
-    );
+  it("valida a extração com Zod e calcula validated/fingerprint", async () => {
+    (parsePaymentReceiptText as jest.Mock).mockReturnValue(baseExtraction);
 
     const result = await service.analyze(Buffer.from(""), "image/png");
 
@@ -48,61 +53,43 @@ describe("PaymentReceiptExtractionService", () => {
     );
   });
 
-  it("remove fence de markdown (```json ... ```) antes de parsear", async () => {
-    (extractStructuredDataFromDocument as jest.Mock).mockResolvedValue(
-      "```json\n" + JSON.stringify(baseExtraction) + "\n```",
-    );
-
-    const result = await service.analyze(Buffer.from(""), "image/png");
-    expect(result.extraction.estabelecimento_nome).toBe("Loja X");
-  });
-
   it("validated = false quando parcelas x valor não bate com o total", async () => {
-    (extractStructuredDataFromDocument as jest.Mock).mockResolvedValue(
-      JSON.stringify({ ...baseExtraction, valor_total: 999 }),
-    );
+    (parsePaymentReceiptText as jest.Mock).mockReturnValue({
+      ...baseExtraction,
+      valor_total: 999,
+    });
 
     const result = await service.analyze(Buffer.from(""), "image/png");
     expect(result.validated).toBe(false);
   });
 
   it("validated = null quando não é cartão de crédito (ex.: PIX)", async () => {
-    (extractStructuredDataFromDocument as jest.Mock).mockResolvedValue(
-      JSON.stringify({
-        ...baseExtraction,
-        tipo_comprovante: "pix",
-        qtd_parcelas: null,
-        valor_parcela: null,
-      }),
-    );
+    (parsePaymentReceiptText as jest.Mock).mockReturnValue({
+      ...baseExtraction,
+      tipo_comprovante: "pix",
+      qtd_parcelas: null,
+      valor_parcela: null,
+    });
 
     const result = await service.analyze(Buffer.from(""), "image/png");
     expect(result.validated).toBeNull();
   });
 
   it("fingerprint = null quando falta algum campo-chave (ex.: sem cnpj)", async () => {
-    (extractStructuredDataFromDocument as jest.Mock).mockResolvedValue(
-      JSON.stringify({ ...baseExtraction, estabelecimento_cnpj: null }),
-    );
+    (parsePaymentReceiptText as jest.Mock).mockReturnValue({
+      ...baseExtraction,
+      estabelecimento_cnpj: null,
+    });
 
     const result = await service.analyze(Buffer.from(""), "image/png");
     expect(result.fingerprint).toBeNull();
   });
 
-  it("rejeita resposta que não é JSON válido", async () => {
-    (extractStructuredDataFromDocument as jest.Mock).mockResolvedValue(
-      "não é json",
-    );
-
-    await expect(
-      service.analyze(Buffer.from(""), "image/png"),
-    ).rejects.toThrow(/JSON válido/);
-  });
-
-  it("rejeita resposta com campo fora do schema (Zod)", async () => {
-    (extractStructuredDataFromDocument as jest.Mock).mockResolvedValue(
-      JSON.stringify({ ...baseExtraction, tipo_comprovante: "boleto" }),
-    );
+  it("rejeita extração com campo fora do schema (Zod)", async () => {
+    (parsePaymentReceiptText as jest.Mock).mockReturnValue({
+      ...baseExtraction,
+      tipo_comprovante: "boleto",
+    });
 
     await expect(
       service.analyze(Buffer.from(""), "image/png"),
