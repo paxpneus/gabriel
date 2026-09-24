@@ -11,6 +11,7 @@ import PaymentMethod from "../../orders/payment_method/payment_method.model";
 import OrderItems from "../../orders/order_items/order_items.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import Invoice from "../../../warehouse/fiscal/invoices/invoice/invoice.model";
+import PdvSalesRequestReceipt from "../sales-request-receipt/pdv-sales-request-receipt.model";
 import type {
   QueryParams,
   QueryConfig,
@@ -23,6 +24,16 @@ const INVOICE_SUMMARY_INCLUDE = [
   { model: Invoice, as: "saleInvoice", attributes: ["id", "number_system"] },
   { model: Invoice, as: "transferInvoice", attributes: ["id", "number_system"] },
 ];
+
+// Um item por comprovante anexado — nunca fingerprint (token interno de
+// dedup, não é dado pro front). `analysis` aqui é a extração CRUA de CADA
+// comprovante, distinta da conciliação em payment_receipt_analysis (coluna
+// própria de PdvSalesRequest).
+const RECEIPTS_INCLUDE = {
+  model: PdvSalesRequestReceipt,
+  as: "receipts",
+  attributes: ["id", "path", "analysis", "validated", "createdAt"],
+};
 
 export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   constructor() {
@@ -49,6 +60,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         },
         { model: UnitBusiness, as: "unitBusiness", attributes: ["id", "number"] },
         ...INVOICE_SUMMARY_INCLUDE,
+        RECEIPTS_INCLUDE,
       ],
     });
   }
@@ -75,6 +87,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
           },
           { model: UnitBusiness, as: "unitBusiness", attributes: ["id", "number"] },
           ...INVOICE_SUMMARY_INCLUDE,
+          RECEIPTS_INCLUDE,
         ],
       },
       forcedWhere,
@@ -88,15 +101,6 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
       },
     });
-  }
-
-  // Checagem de duplicidade de comprovante — não escopa por status ativo de
-  // propósito: um comprovante já usado numa solicitação FINISHED continua
-  // sendo o mesmo comprovante, não pode ser reaproveitado numa nova.
-  async findByReceiptFingerprint(
-    fingerprint: string,
-  ): Promise<PdvSalesRequest | null> {
-    return this.findOne({ where: { payment_receipt_fingerprint: fingerprint } });
   }
 
   async findActiveBySaleOrTransferInvoiceId(

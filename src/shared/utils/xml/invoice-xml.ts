@@ -603,6 +603,27 @@ function toIntegerQuantity(value: unknown): number {
   return Math.trunc(parsed);
 }
 
+const DANFE_UPLOAD_INTERVAL_MS = 5000;
+let danfeUploadQueue: Promise<void> = Promise.resolve();
+let lastDanfeUploadStartedAt = 0;
+
+// A fila da Tecinco processa notas novas com concurrency>1 — sem isso, vários
+// upload de DANFE disparam juntos e o storage responde 429. Serializa pra no
+// máximo 1 upload a cada 5s; não espera o upload em si terminar, só o início
+// do próximo.
+function waitForDanfeUploadSlot(): Promise<void> {
+  const acquire = danfeUploadQueue.then(async () => {
+    const waitMs = Math.max(
+      0,
+      DANFE_UPLOAD_INTERVAL_MS - (Date.now() - lastDanfeUploadStartedAt),
+    );
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    lastDanfeUploadStartedAt = Date.now();
+  });
+  danfeUploadQueue = acquire.catch(() => undefined);
+  return acquire;
+}
+
 function findXmlItemForOperationalItem(params: {
   det: any[];
   operationalItem: InvoiceOperationalItemFromXml;
@@ -984,6 +1005,7 @@ export async function upsertInvoiceFromXml(
     // (a nota não muda de conteúdo fiscal depois de emitida).
     let danfePath = "";
     try {
+      await waitForDanfeUploadSlot();
       const danfeBuffer = await generateDanfePdfBuffer(xmlContent);
       danfePath = await uploaderService.upload({
         buffer: danfeBuffer,

@@ -1,5 +1,5 @@
 // Fonte única pros dois lados (quem entra na room e quem emite pra ela) não
-// divergirem — ver pdv-sales-request.socket.ts e attachReceiptAndShippingType.
+// divergirem — ver pdv-sales-request.socket.ts e attachReceipt.
 export const PDV_SOCKET_NAMESPACE = "/pdv";
 
 export function pdvSalesRequestRoom(requestId: string): string {

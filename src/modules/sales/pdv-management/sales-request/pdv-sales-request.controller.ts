@@ -9,7 +9,6 @@ import { PdvShippingType } from "./pdv-sales-request.types";
 import { TCarUpsertQueue } from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { pdvAccess, PdvAccessRequest } from "../pdv-access/pdv-access.middleware";
 import { PdvAccessContext, PdvAccessScreen } from "../pdv-access/pdv-access.types";
-import uploaderService from "../../../handlers/uploader/services/uploader.service";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -28,11 +27,24 @@ export class PdvSalesRequestController extends BaseController<
   constructor() {
     super(pdvSalesRequestService);
 
+    // Solicitação pode ter mais de um comprovante anexado (ex.: 50% PIX +
+    // 50% cartão) — POST adiciona, nunca substitui; pra trocar um errado,
+    // DELETE + anexar outro.
+    this.router.post(
+      "/:id/shipping-type",
+      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      this.setShippingType,
+    );
     this.router.post(
       "/:id/receipt",
       pdvAccess([PdvAccessScreen.STORE_REQUEST]),
       upload.single("receipt"),
       this.attachReceipt,
+    );
+    this.router.delete(
+      "/:id/receipt/:receiptId",
+      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      this.deleteReceipt,
     );
     this.router.post(
       "/:id/receipt/confirm",
@@ -40,12 +52,19 @@ export class PdvSalesRequestController extends BaseController<
       this.confirmReceiptSubmission,
     );
     this.router.patch(
-      "/:id/receipt/analysis",
+      "/:id/receipt/:receiptId/analysis",
       pdvAccess([PdvAccessScreen.STORE_REQUEST]),
       this.updateReceiptAnalysis,
     );
+    // Edita o resumo CONCILIADO direto — nunca a análise de um comprovante
+    // isolado (isso é PATCH /:id/receipt/:receiptId/analysis, acima).
+    this.router.patch(
+      "/:id/payment-receipt-analysis",
+      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      this.updatePaymentReceiptAnalysis,
+    );
     this.router.get(
-      "/:id/receipt/image",
+      "/:id/receipt/:receiptId/image",
       pdvAccess(READ_SCREENS),
       this.getReceiptImage,
     );
@@ -297,20 +316,38 @@ export class PdvSalesRequestController extends BaseController<
     return record;
   }
 
+  // Separado do anexo de comprovante — shipping_type é propriedade da
+  // solicitação, não de um comprovante específico (pode haver mais de um).
+  setShippingType = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
+      const { shippingType } = req.body;
+      const updated = await this.service.setShippingType(
+        req.params.id as string,
+        shippingType as PdvShippingType,
+        this.actorUserId(req),
+      );
+      return res.json(updated);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // Adiciona UM comprovante — nunca substitui os já anexados (ex.: 50% PIX +
+  // 50% cartão). Devolve a linha do comprovante recém-criado, não a
+  // solicitação inteira.
   attachReceipt = async (req: Request, res: Response): Promise<Response> => {
     try {
       if (!(await this.assertOwnedByAccess(req, res))) return res;
       if (!req.file) {
         return res.status(400).json({ error: "Comprovante obrigatório" });
       }
-      const { shippingType } = req.body;
-      const updated = await this.service.attachReceiptAndShippingType(
+      const receipt = await this.service.attachReceipt(
         req.params.id as string,
         {
           buffer: req.file.buffer,
           filename: req.file.originalname,
           mimeType: req.file.mimetype,
-          shippingType: shippingType as PdvShippingType,
           userId: this.actorUserId(req),
         },
       );
@@ -318,7 +355,21 @@ export class PdvSalesRequestController extends BaseController<
       // websocket (pdv-sales-request.socket.ts) e aguardar o resultado.
       return res
         .status(202)
-        .json({ ...updated.toJSON(), paymentReceiptAnalysisStatus: "PROCESSING" });
+        .json({ ...receipt.toJSON(), paymentReceiptAnalysisStatus: "PROCESSING" });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  deleteReceipt = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
+      const updated = await this.service.deleteReceipt(
+        req.params.id as string,
+        req.params.receiptId as string,
+        this.actorUserId(req),
+      );
+      return res.json(updated);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
@@ -348,6 +399,24 @@ export class PdvSalesRequestController extends BaseController<
       if (!(await this.assertOwnedByAccess(req, res))) return res;
       const updated = await this.service.updateReceiptAnalysis(
         req.params.id as string,
+        req.params.receiptId as string,
+        req.body,
+        this.actorUserId(req),
+      );
+      return res.json(updated);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  updatePaymentReceiptAnalysis = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
+      const updated = await this.service.updatePaymentReceiptAnalysis(
+        req.params.id as string,
         req.body,
         this.actorUserId(req),
       );
@@ -361,15 +430,12 @@ export class PdvSalesRequestController extends BaseController<
     try {
       if (!(await this.assertOwnedByAccess(req, res))) return res;
 
-      const record = await this.service.findById(req.params.id as string);
-      if (!record?.payment_receipt_path) {
-        return res.status(404).json({ error: "Comprovante não encontrado" });
-      }
+      const { buffer, extension } = await this.service.getReceiptBuffer(
+        req.params.id as string,
+        req.params.receiptId as string,
+      );
 
-      const buffer = await uploaderService.getFile(record.payment_receipt_path);
-      const ext = record.payment_receipt_path.split(".").pop() || "jpeg";
-
-      res.set("Content-Type", `image/${ext}`);
+      res.set("Content-Type", `image/${extension}`);
       // "no-cache" força revalidar toda vez — ETag automático do Express
       // (res.send) resolve o 304 quando o conteúdo não mudou.
       res.set("Cache-Control", "no-cache");

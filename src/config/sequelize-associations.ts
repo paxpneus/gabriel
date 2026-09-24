@@ -31,6 +31,7 @@ import Order from "../modules/sales/orders/order/orders.model";
 import PaymentMethod from "../modules/sales/orders/payment_method/payment_method.model";
 import PdvSalesRequest from "../modules/sales/pdv-management/sales-request/pdv-sales-request.model";
 import PdvSalesRequestHistory from "../modules/sales/pdv-management/sales-request-history/pdv-sales-request-history.model";
+import PdvSalesRequestReceipt from "../modules/sales/pdv-management/sales-request-receipt/pdv-sales-request-receipt.model";
 import Customer from "../modules/sales/customers/customers.model";
 import Contact from "../modules/sales/contacts/contacts.model";
 import OrderHistory from "../modules/sales/orders/order_history/order_history.model";
@@ -894,6 +895,18 @@ UnitBusiness.belongsTo(ExpeditionBatch, {
   PdvSalesRequestHistory.belongsTo(User, {
     foreignKey: "user_id",
     as: "user",
+  });
+  PdvSalesRequest.hasMany(PdvSalesRequestReceipt, {
+    foreignKey: "pdv_sales_request_id",
+    as: "receipts",
+  });
+  PdvSalesRequestReceipt.belongsTo(PdvSalesRequest, {
+    foreignKey: "pdv_sales_request_id",
+    as: "salesRequest",
+  });
+  PdvSalesRequestReceipt.belongsTo(User, {
+    foreignKey: "created_by_user_id",
+    as: "createdBy",
   });
 }
 

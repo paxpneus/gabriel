@@ -26,3 +26,13 @@ export const PaymentReceiptExtractionSchema = z.object({
 export type PaymentReceiptExtractionInput = z.infer<
   typeof PaymentReceiptExtractionSchema
 >;
+
+// Mesmo shape, mas tipo_comprovante é texto livre em vez do enum fechado —
+// a conciliação (ver receipt-reconciliation.ts) pode juntar mais de um tipo
+// num só campo (ex.: "pix + cartao_credito"). Usado só pra validar edição
+// manual de PdvSalesRequest.payment_receipt_analysis (PATCH
+// /:id/payment-receipt-analysis), nunca a análise de um comprovante isolado.
+export const PaymentReceiptReconciledAnalysisSchema =
+  PaymentReceiptExtractionSchema.extend({
+    tipo_comprovante: z.string().nullable(),
+  });

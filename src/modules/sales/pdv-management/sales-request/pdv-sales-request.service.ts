@@ -12,12 +12,15 @@ import {
   PdvSalesRequestStatus,
   PdvShippingType,
   PaymentReceiptExtraction,
+  PaymentReceiptReconciledAnalysis,
   EMPTY_PAYMENT_RECEIPT_EXTRACTION,
   PdvSalesRequestOrderDetail,
   PdvSalesRequestOrderSummary,
   TERMINAL_PDV_SALES_REQUEST_STATUSES,
 } from "./pdv-sales-request.types";
 import pdvSalesRequestHistoryService from "../sales-request-history/pdv-sales-request-history.service";
+import pdvSalesRequestReceiptService from "../sales-request-receipt/pdv-sales-request-receipt.service";
+import PdvSalesRequestReceipt from "../sales-request-receipt/pdv-sales-request-receipt.model";
 import { extractAccessKeyFromDanfe } from "./helpers/danfe-interpreter";
 import orderService from "../../orders/order/orders.service";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
@@ -28,8 +31,16 @@ import { TCarUpsertQueue } from "../../../handlers/tecinco/queues/tecinco-api-fe
 import { extractAccessKeyFromXmlContent } from "../../../../shared/utils/xml/access-key";
 import nfeEmissionService from "../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "./payment-receipt-extraction.service";
-import { PaymentReceiptExtractionSchema } from "./helpers/payment-receipt-extraction.schema";
+import {
+  PaymentReceiptExtractionSchema,
+  PaymentReceiptReconciledAnalysisSchema,
+} from "./helpers/payment-receipt-extraction.schema";
 import { paymentMethodMatchesReceipt } from "./helpers/payment-method-match";
+import {
+  reconcileReceiptAnalyses,
+  reconcileReceiptValidation,
+  receiptTotalMatchesOrder,
+} from "./helpers/receipt-reconciliation";
 import { QueryParams } from "../../../../shared/query/query.types";
 import socketService from "../../../handlers/socket/services/socket.service";
 import {
@@ -368,7 +379,6 @@ export class PdvSalesRequestService extends BaseService<
           correction_origin_status: null,
           shipping_type: null,
           name: params.name,
-          payment_receipt_path: null,
           errors: null,
           created_by_user_id: params.createdByUserId ?? null,
         },
@@ -394,7 +404,14 @@ export class PdvSalesRequestService extends BaseService<
     return created;
   }
 
-  // ─── Loja: comprovante + tipo de envio ──────────────────────────────────────
+  // ─── Loja: comprovantes + tipo de envio ─────────────────────────────────────
+  // Pode haver mais de um comprovante por solicitação (ex.: 50% PIX + 50%
+  // cartão) — cada anexo cria uma linha em PdvSalesRequestReceipt, nunca
+  // substitui as demais. payment_receipt_analysis/validated/
+  // payment_method_matches_receipt em PdvSalesRequest deixam de ser "a
+  // análise do único comprovante" e passam a ser a CONCILIAÇÃO de todos os
+  // comprovantes anexados no momento (reconcileReceipts), recalculada toda
+  // vez que um comprovante é adicionado/editado/removido.
 
   // Limpa o timer assim que qualquer lado resolve — sem isso, o setTimeout
   // fica pendurado até disparar mesmo quando a análise já terminou rápido.
@@ -411,90 +428,109 @@ export class PdvSalesRequestService extends BaseService<
   }
 
   // Roda a extração local (pdf-parse/OCR, ver payment-receipt-extraction.service.ts)
-  // em background (ver runReceiptAnalysisAsync) — nunca bloqueia o anexo por
-  // falha/demora da extração (documento ilegível, OCR malformado, ou análise
-  // passando de RECEIPT_ANALYSIS_TIMEOUT_MS): financeiro revisa manualmente,
-  // análise segue com os campos em null. Duplicidade de comprovante é a única
-  // falha tratada como erro de verdade dentro do job (ver
-  // DuplicateReceiptError/finalizeReceiptAnalysis).
-  private async analyzeReceipt(
-    requestId: string,
-    orderId: string,
+  // de UM comprovante — nunca bloqueia o anexo por falha/demora da extração
+  // (documento ilegível, OCR malformado, ou análise passando de
+  // RECEIPT_ANALYSIS_TIMEOUT_MS): financeiro revisa manualmente, análise
+  // segue null. Devolve a extração crua — quem chama decide se persiste
+  // (runReceiptAnalysisAsync checa duplicidade antes).
+  private async analyzeReceiptFile(
     buffer: Buffer,
     mimeType: string,
   ): Promise<{
-    payment_receipt_analysis: PaymentReceiptExtraction | null;
-    payment_receipt_validated: boolean | null;
-    payment_receipt_fingerprint: string | null;
-    payment_method_matches_receipt: boolean | null;
+    analysis: PaymentReceiptExtraction | null;
+    validated: boolean | null;
+    fingerprint: string | null;
   }> {
-    let result;
     try {
-      result = await this.withReceiptAnalysisTimeout(
+      const result = await this.withReceiptAnalysisTimeout(
         paymentReceiptExtractionService.analyze(buffer, mimeType),
       );
+      return {
+        analysis: result.extraction,
+        validated: result.validated,
+        fingerprint: result.fingerprint,
+      };
     } catch (err) {
       console.warn(
         "[PDV] Falha ao analisar comprovante — seguindo sem análise",
         err,
       );
-      return {
-        payment_receipt_analysis: null,
-        payment_receipt_validated: null,
-        payment_receipt_fingerprint: null,
-        payment_method_matches_receipt: null,
-      };
+      return { analysis: null, validated: null, fingerprint: null };
     }
-
-    return this.finalizeReceiptAnalysis(
-      requestId,
-      orderId,
-      result.extraction,
-      result.validated,
-      result.fingerprint,
-    );
   }
 
-  // Compartilhado entre a análise automática (IA, a partir do buffer) e a
-  // edição manual do front (updateReceiptAnalysis) — mesma checagem de
-  // duplicidade (única falha que bloqueia de propósito, ver
-  // .claude/modules/ai-vision-extraction.md) e o mesmo cálculo de match com a
-  // forma de pagamento do pedido.
-  private async finalizeReceiptAnalysis(
+  // Duplicidade é global (mesmo comprovante em QUALQUER solicitação, não só
+  // nesta) — única falha tratada como erro de verdade dentro do fluxo de
+  // análise (ver .claude/modules/ai-vision-extraction.md). excludeReceiptId
+  // evita que editar a análise de uma linha a autobloqueie contra ela mesma.
+  private async assertReceiptNotDuplicate(
+    fingerprint: string | null,
+    excludeReceiptId?: string,
+  ): Promise<void> {
+    if (!fingerprint) return;
+
+    const duplicate = await pdvSalesRequestReceiptService.findByFingerprint(
+      fingerprint,
+      excludeReceiptId,
+    );
+    if (duplicate) {
+      throw new DuplicateReceiptError(
+        "Este comprovante já foi utilizado em outra solicitação",
+      );
+    }
+  }
+
+  // Recalcula e persiste payment_receipt_analysis/validated/
+  // payment_method_matches_receipt a partir de TODOS os comprovantes
+  // atualmente anexados — chamado depois de qualquer mutação numa linha de
+  // comprovante (criar, editar análise, apagar). payment_method_matches_receipt
+  // só é calculado com exatamente 1 comprovante: com 2+, os tipos podem
+  // divergir entre si (ex.: PIX + cartão) e a comparação 1:1 contra
+  // order.paymentMethod não faz mais sentido — financeiro revisa manualmente.
+  private async reconcileReceipts(
     requestId: string,
     orderId: string,
-    extraction: PaymentReceiptExtraction,
-    validated: boolean | null,
-    fingerprint: string | null,
-  ): Promise<{
-    payment_receipt_analysis: PaymentReceiptExtraction;
-    payment_receipt_validated: boolean | null;
-    payment_receipt_fingerprint: string | null;
-    payment_method_matches_receipt: boolean | null;
-  }> {
-    if (fingerprint) {
-      const duplicate =
-        await this.repository.findByReceiptFingerprint(fingerprint);
-      if (duplicate && duplicate.id !== requestId) {
-        throw new DuplicateReceiptError(
-          "Este comprovante já foi utilizado em outra solicitação",
-        );
-      }
+  ): Promise<PdvSalesRequest> {
+    const receipts =
+      await pdvSalesRequestReceiptService.findAllByRequestId(requestId);
+    const analyses = receipts
+      .map((r) => r.analysis)
+      .filter((a): a is PaymentReceiptExtraction => a !== null);
+
+    const analysis = reconcileReceiptAnalyses(analyses);
+    const validated = reconcileReceiptValidation(
+      receipts.map((r) => r.validated),
+    );
+
+    // Busca a order uma vez só — usada tanto pro match de forma de
+    // pagamento (só com 1 comprovante) quanto pro match de valor total
+    // (sempre, qualquer quantidade de comprovantes).
+    const order = await orderService.findByIdWithPaymentMethod(orderId);
+
+    let matchesReceipt: boolean | null = null;
+    if (receipts.length === 1 && receipts[0].analysis) {
+      const paymentMethodDescription =
+        (order as any)?.paymentMethod?.description ?? null;
+      matchesReceipt = paymentMethodMatchesReceipt(
+        paymentMethodDescription,
+        receipts[0].analysis.tipo_comprovante,
+      );
     }
 
-    const order = await orderService.findByIdWithPaymentMethod(orderId);
-    const paymentMethodDescription =
-      (order as any)?.paymentMethod?.description ?? null;
+    const totalMatchesOrder = receiptTotalMatchesOrder(
+      analysis?.valor_total ?? null,
+      (order as any)?.total_order ?? null,
+    );
 
-    return {
-      payment_receipt_analysis: extraction,
+    const updated = await this.repository.update(requestId, {
+      payment_receipt_analysis: analysis,
       payment_receipt_validated: validated,
-      payment_receipt_fingerprint: fingerprint,
-      payment_method_matches_receipt: paymentMethodMatchesReceipt(
-        paymentMethodDescription,
-        extraction.tipo_comprovante,
-      ),
-    };
+      payment_method_matches_receipt: matchesReceipt,
+      receipt_total_matches_order: totalMatchesOrder,
+    });
+    if (!updated) throw new Error("Solicitação não encontrada");
+
+    return updated;
   }
 
   // Também serve pra resolver uma correção vinda do financeiro (comprovante
@@ -519,61 +555,66 @@ export class PdvSalesRequestService extends BaseService<
     return request;
   }
 
-  // NÃO avança status sozinho — só grava comprovante/tipo de envio e devolve
-  // a solicitação atualizada pro front validar. Editando um comprovante já
-  // existente, apaga o arquivo antigo do uploader só depois que o novo já
-  // está salvo e referenciado no banco. Análise por IA roda em background
-  // (runReceiptAnalysisAsync) — ver .claude/modules/ai-vision-extraction.md.
-  async attachReceiptAndShippingType(
+  // Separado do anexo de comprovante desde que a solicitação passou a aceitar
+  // N comprovantes — shipping_type é propriedade da PRÓPRIA solicitação, não
+  // de um comprovante específico. Não avança status sozinho.
+  async setShippingType(
+    id: string,
+    shippingType: PdvShippingType,
+    userId?: string,
+  ): Promise<PdvSalesRequest> {
+    const request = await this.assertReceiptEditable(id);
+
+    const updated = await this.repository.update(id, {
+      shipping_type: shippingType,
+    });
+    if (!updated) throw new Error("Solicitação não encontrada");
+
+    await this.logAction(id, request.status, {
+      userId,
+      description: "Tipo de envio definido",
+    });
+
+    return updated;
+  }
+
+  // Adiciona UM comprovante — nunca substitui os já anexados (pode haver mais
+  // de um, ex.: 50% PIX + 50% cartão; pra trocar um errado, DELETE
+  // /:id/receipt/:receiptId e anexe outro). Análise roda em background (ver
+  // runReceiptAnalysisAsync) e, ao terminar, reconcilia com os demais
+  // comprovantes já anexados.
+  async attachReceipt(
     id: string,
     params: {
       buffer: Buffer;
       filename: string;
       mimeType: string;
-      shippingType: PdvShippingType;
       userId?: string;
     },
-  ): Promise<PdvSalesRequest> {
+  ): Promise<PdvSalesRequestReceipt> {
     const request = await this.assertReceiptEditable(id);
-    const previousPath = request.payment_receipt_path;
 
-    // Escopado por solicitação — upload é determinístico por nome de arquivo
-    // (preserveFilename), duas lojas com nome de foto igual se sobrescreveriam
-    // num diretório único.
+    // Diretório por solicitação — nome do arquivo gerado (sem
+    // preserveFilename) pra não colidir entre comprovantes diferentes.
     const path = await uploaderService.upload({
       buffer: params.buffer,
       filename: params.filename,
       mimeType: params.mimeType,
       directory: `/pdv-receipts/${id}`,
-      preserveFilename: true,
     });
 
-    const updated = await this.repository.update(id, {
-      payment_receipt_path: path,
-      shipping_type: params.shippingType,
-      payment_receipt_analysis: null,
-      payment_receipt_validated: null,
-      payment_receipt_fingerprint: null,
-      payment_method_matches_receipt: null,
+    const receipt = await pdvSalesRequestReceiptService.create({
+      pdv_sales_request_id: id,
+      path,
+      analysis: null,
+      validated: null,
+      fingerprint: null,
+      created_by_user_id: params.userId ?? null,
     });
-    if (!updated) throw new Error("Solicitação não encontrada");
-
-    if (previousPath && previousPath !== path) {
-      try {
-        await uploaderService.delete(previousPath);
-      } catch (err) {
-        console.warn(
-          "[PDV] Falha ao apagar comprovante antigo do uploader",
-          err,
-        );
-      }
-    }
 
     await this.logAction(id, request.status, {
       userId: params.userId,
-      description: previousPath
-        ? "Comprovante substituído"
-        : "Comprovante e tipo de envio anexados",
+      description: "Comprovante adicionado",
     });
 
     // .catch aqui é só rede de segurança pra erro inesperado não virar
@@ -581,7 +622,7 @@ export class PdvSalesRequestService extends BaseService<
     this.runReceiptAnalysisAsync(
       id,
       request.order_id,
-      path,
+      receipt.id,
       params.buffer,
       params.mimeType,
     ).catch((err) =>
@@ -591,31 +632,69 @@ export class PdvSalesRequestService extends BaseService<
       ),
     );
 
+    return receipt;
+  }
+
+  // Remove um comprovante antes de confirmar — apaga o arquivo do uploader
+  // (best-effort, mesmo padrão de deleteRequest) e reconcilia os que
+  // sobraram.
+  async deleteReceipt(
+    id: string,
+    receiptId: string,
+    userId?: string,
+  ): Promise<PdvSalesRequest> {
+    const request = await this.assertReceiptEditable(id);
+    const receipt = await pdvSalesRequestReceiptService.findById(receiptId);
+    if (!receipt || receipt.pdv_sales_request_id !== id) {
+      throw new Error("Comprovante não encontrado nesta solicitação");
+    }
+
+    await pdvSalesRequestReceiptService.delete(receiptId);
+
+    try {
+      await uploaderService.delete(receipt.path);
+    } catch (err) {
+      console.warn("[PDV] Falha ao apagar comprovante do uploader", err);
+    }
+
+    const updated = await this.reconcileReceipts(id, request.order_id);
+
+    await this.logAction(id, request.status, {
+      userId,
+      description: "Comprovante removido",
+    });
+
     return updated;
   }
 
-  // Roda em background, depois do attach já ter respondido. Reconfere
-  // payment_receipt_path antes de gravar — se a loja trocou o comprovante de
-  // novo enquanto essa análise rodava, descarta (resultado é de arquivo velho).
+  // Roda em background, depois do attach já ter respondido. Reconfere que a
+  // linha do comprovante ainda existe antes de gravar — se a loja apagou
+  // esse comprovante enquanto a análise rodava, descarta.
   private async runReceiptAnalysisAsync(
     requestId: string,
     orderId: string,
-    uploadedPath: string,
+    receiptId: string,
     buffer: Buffer,
     mimeType: string,
   ): Promise<void> {
     try {
-      const analysis = await this.analyzeReceipt(
-        requestId,
-        orderId,
-        buffer,
-        mimeType,
-      );
+      const result = await this.analyzeReceiptFile(buffer, mimeType);
 
-      const current = await this.repository.findById(requestId);
-      if (!current || current.payment_receipt_path !== uploadedPath) return;
+      const current = await pdvSalesRequestReceiptService.findById(receiptId);
+      if (!current) return;
 
-      await this.repository.update(requestId, analysis);
+      // Verifica duplicidade ANTES de persistir — em caso de duplicidade,
+      // a linha do comprovante fica com analysis/validated/fingerprint null
+      // (comprovante segue anexado, usuário troca), mesmo espírito de antes.
+      await this.assertReceiptNotDuplicate(result.fingerprint, receiptId);
+
+      await pdvSalesRequestReceiptService.update(receiptId, {
+        analysis: result.analysis,
+        validated: result.validated,
+        fingerprint: result.fingerprint,
+      });
+
+      const reconciled = await this.reconcileReceipts(requestId, orderId);
 
       socketService.emitToNamespaceRoom(
         PDV_SOCKET_NAMESPACE,
@@ -623,10 +702,17 @@ export class PdvSalesRequestService extends BaseService<
         PAYMENT_RECEIPT_ANALYSIS_DONE_EVENT,
         {
           requestId,
+          receiptId,
           success: true,
-          analysis: analysis.payment_receipt_analysis,
-          validated: analysis.payment_receipt_validated,
-          paymentMethodMatchesReceipt: analysis.payment_method_matches_receipt,
+          analysis: result.analysis,
+          validated: result.validated,
+          reconciled: {
+            analysis: reconciled.payment_receipt_analysis,
+            validated: reconciled.payment_receipt_validated,
+            paymentMethodMatchesReceipt:
+              reconciled.payment_method_matches_receipt,
+            totalMatchesOrder: reconciled.receipt_total_matches_order,
+          },
         },
       );
     } catch (err: any) {
@@ -642,6 +728,7 @@ export class PdvSalesRequestService extends BaseService<
         PAYMENT_RECEIPT_ANALYSIS_DONE_EVENT,
         {
           requestId,
+          receiptId,
           success: false,
           reason: isDuplicate ? "DUPLICATE_RECEIPT" : "ANALYSIS_UNAVAILABLE",
           message: isDuplicate
@@ -653,17 +740,19 @@ export class PdvSalesRequestService extends BaseService<
   }
 
   // Confirmação explícita do front — só agora a solicitação avança pra
-  // PENDING_FINANCE. Exige que comprovante + tipo de envio já tenham sido
-  // anexados (attachReceiptAndShippingType).
+  // PENDING_FINANCE. Exige ao menos 1 comprovante anexado (attachReceipt) e
+  // o tipo de envio definido (setShippingType).
   async confirmReceiptSubmission(
     id: string,
     userId?: string,
   ): Promise<PdvSalesRequest> {
     const request = await this.assertReceiptEditable(id);
+    const receipts =
+      await pdvSalesRequestReceiptService.findAllByRequestId(id);
 
-    if (!request.payment_receipt_path || !request.shipping_type) {
+    if (!receipts.length || !request.shipping_type) {
       throw new Error(
-        "Anexe o comprovante e o tipo de envio antes de confirmar",
+        "Anexe ao menos um comprovante e o tipo de envio antes de confirmar",
       );
     }
 
@@ -676,44 +765,43 @@ export class PdvSalesRequestService extends BaseService<
     });
   }
 
-  // Loja corrige manualmente um ou mais campos da análise (a IA pode errar,
-  // ex.: comprovante de maquininha mostra o apelido da máquina em vez do
-  // nome do banco) antes de confirmar pro financeiro — mesma janela de
-  // edição do comprovante em si (assertReceiptEditable), nunca depois de
-  // confirmado. `updates` é parcial: só os campos enviados são sobrescritos,
-  // o resto da análise atual é preservado. Revalida/recalcula validated,
-  // fingerprint (com a mesma checagem de duplicidade) e o match com a forma
-  // de pagamento — os três dependem do conteúdo da análise, e editar um
-  // campo-chave (ex.: valor_total) sem recalcular deixaria os outros três
-  // desatualizados.
+  // Loja corrige manualmente um ou mais campos da análise de UM comprovante
+  // (a IA pode errar, ex.: comprovante de maquininha mostra o apelido da
+  // máquina em vez do nome do banco) antes de confirmar pro financeiro —
+  // mesma janela de edição do comprovante em si (assertReceiptEditable),
+  // nunca depois de confirmado. `updates` é parcial: só os campos enviados
+  // são sobrescritos, o resto da análise atual é preservada. Revalida/
+  // recalcula validated/fingerprint (com a mesma checagem de duplicidade)
+  // desta linha e reconcilia a solicitação inteira em seguida.
   async updateReceiptAnalysis(
     id: string,
+    receiptId: string,
     updates: Partial<PaymentReceiptExtraction>,
     userId?: string,
   ): Promise<PdvSalesRequest> {
     const request = await this.assertReceiptEditable(id);
-    if (!request.payment_receipt_path) {
-      throw new Error("Anexe um comprovante antes de editar a análise");
+    const receipt = await pdvSalesRequestReceiptService.findById(receiptId);
+    if (!receipt || receipt.pdv_sales_request_id !== id) {
+      throw new Error("Comprovante não encontrado nesta solicitação");
     }
 
     const parsedUpdates = PaymentReceiptExtractionSchema.partial().parse(updates);
     const merged: PaymentReceiptExtraction = {
-      ...(request.payment_receipt_analysis ?? EMPTY_PAYMENT_RECEIPT_EXTRACTION),
+      ...(receipt.analysis ?? EMPTY_PAYMENT_RECEIPT_EXTRACTION),
       ...parsedUpdates,
     };
 
     const { validated, fingerprint } =
       paymentReceiptExtractionService.computeDerived(merged);
-    const fields = await this.finalizeReceiptAnalysis(
-      id,
-      request.order_id,
-      merged,
+    await this.assertReceiptNotDuplicate(fingerprint, receiptId);
+
+    await pdvSalesRequestReceiptService.update(receiptId, {
+      analysis: merged,
       validated,
       fingerprint,
-    );
+    });
 
-    const updated = await this.repository.update(id, fields);
-    if (!updated) throw new Error("Solicitação não encontrada");
+    const updated = await this.reconcileReceipts(id, request.order_id);
 
     await this.logAction(id, request.status, {
       userId,
@@ -721,6 +809,69 @@ export class PdvSalesRequestService extends BaseService<
     });
 
     return updated;
+  }
+
+  // Sobrescreve o resumo conciliado (payment_receipt_analysis) direto na
+  // solicitação — nunca mexe em nenhum PdvSalesRequestReceipt individual.
+  // Simples, sem lock: se depois um comprovante for adicionado, editado ou
+  // removido, reconcileReceipts roda de novo e sobrescreve este valor
+  // manual (mesmo espírito de hoje — a conciliação automática é sempre a
+  // fonte, isso aqui é só um ajuste pontual). Mesma janela de edição que
+  // updateReceiptAnalysis; não toca payment_receipt_validated/
+  // payment_method_matches_receipt (esses dois são sobre CADA comprovante,
+  // não sobre o resumo). receipt_total_matches_order É recalculado — é
+  // literalmente a comparação do campo que este endpoint acabou de mudar
+  // (valor_total) contra order.total_order, deixaria o aviso desatualizado
+  // se não recalculasse.
+  async updatePaymentReceiptAnalysis(
+    id: string,
+    updates: Partial<PaymentReceiptReconciledAnalysis>,
+    userId?: string,
+  ): Promise<PdvSalesRequest> {
+    const request = await this.assertReceiptEditable(id);
+
+    const parsedUpdates =
+      PaymentReceiptReconciledAnalysisSchema.partial().parse(updates);
+    const merged: PaymentReceiptReconciledAnalysis = {
+      ...(request.payment_receipt_analysis ?? EMPTY_PAYMENT_RECEIPT_EXTRACTION),
+      ...parsedUpdates,
+    };
+
+    const order = await orderService.findById(request.order_id);
+    const totalMatchesOrder = receiptTotalMatchesOrder(
+      merged.valor_total,
+      (order as any)?.total_order ?? null,
+    );
+
+    const updated = await this.repository.update(id, {
+      payment_receipt_analysis: merged,
+      receipt_total_matches_order: totalMatchesOrder,
+    });
+    if (!updated) throw new Error("Solicitação não encontrada");
+
+    await this.logAction(id, request.status, {
+      userId,
+      description: "Resumo do pagamento editado manualmente",
+    });
+
+    return updated;
+  }
+
+  // Buffer do arquivo de UM comprovante — mesmo padrão de
+  // getInvoiceDanfeBuffer: confere que o comprovante pertence a esta
+  // solicitação antes de servir.
+  async getReceiptBuffer(
+    id: string,
+    receiptId: string,
+  ): Promise<{ buffer: Buffer; extension: string }> {
+    const receipt = await pdvSalesRequestReceiptService.findById(receiptId);
+    if (!receipt || receipt.pdv_sales_request_id !== id) {
+      throw new Error("Comprovante não encontrado nesta solicitação");
+    }
+
+    const buffer = await uploaderService.getFile(receipt.path);
+    const extension = receipt.path.split(".").pop() || "jpeg";
+    return { buffer, extension };
   }
 
   // ─── Financeiro ─────────────────────────────────────────────────────────────
@@ -849,8 +1000,8 @@ export class PdvSalesRequestService extends BaseService<
     }
 
     // Correção de comprovante (origem financeiro) não passa por aqui — é
-    // resolvida anexando um comprovante novo (attachReceiptAndShippingType),
-    // que já reenvia pro financeiro sozinho.
+    // resolvida anexando um comprovante novo (attachReceipt) + confirmando
+    // (confirmReceiptSubmission), que já reenvia pro financeiro sozinho.
     if (
       request.correction_origin_status === PdvSalesRequestStatus.PENDING_FINANCE
     ) {
@@ -1467,16 +1618,20 @@ export class PdvSalesRequestService extends BaseService<
       );
     }
 
-    if (request.payment_receipt_path) {
-      try {
-        await uploaderService.delete(request.payment_receipt_path);
-      } catch (err) {
-        console.warn(
-          "[PDV] Falha ao apagar comprovante do uploader ao excluir solicitação",
-          err,
-        );
-      }
-    }
+    // Um arquivo por comprovante — em paralelo (Promise.all), nunca um await
+    // por iteração (N+1). As linhas em si somem sozinhas via onDelete:
+    // CASCADE quando a solicitação for apagada logo abaixo.
+    const receipts = await pdvSalesRequestReceiptService.findAllByRequestId(id);
+    await Promise.all(
+      receipts.map((receipt) =>
+        uploaderService.delete(receipt.path).catch((err) =>
+          console.warn(
+            "[PDV] Falha ao apagar comprovante do uploader ao excluir solicitação",
+            err,
+          ),
+        ),
+      ),
+    );
 
     await this.repository.delete(id);
   }

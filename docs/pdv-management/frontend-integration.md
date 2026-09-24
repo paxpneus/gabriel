@@ -64,6 +64,44 @@ fluxo normal, sozinho, se o **pedido** (não a nota) for cancelado na Bling
 | Vínculo | Automático (sync Bling) | Manual (loja/CD21 anexa XML/DANFE ou digita) |
 | Campo | `sale_invoice_id` | `transfer_invoice_id` |
 
+**Comprovantes de pagamento (pode ser mais de um):**
+
+Uma solicitação pode ter **mais de um comprovante anexado** — ex.: cliente
+pagou metade no PIX e metade no cartão. Cada comprovante é uma entrada
+separada e independente, nunca "um substituindo o outro":
+
+- `receipts[]` (seção 5.1) é a lista crua — um item por comprovante, cada um
+  com sua própria extração por IA (`analysis: PaymentReceiptExtraction`,
+  seção 11). É daqui que o front lê/edita/remove um comprovante específico.
+- `payment_receipt_analysis` (topo da própria `PdvSalesRequest`, também
+  seção 11) é a **conciliação** de TODOS os comprovantes de `receipts[]` —
+  valores somados, tipos combinados (`"pix + cartao_credito"`), calculada
+  pelo backend toda vez que um comprovante é anexado/editado/removido. É o
+  que o front mostra como "resumo do pagamento" pro financeiro/CD21, sem
+  precisar somar nada no cliente.
+- `receipt_total_matches_order` (sibling de `payment_receipt_analysis`,
+  também no topo) já vem pronto pro front mostrar o aviso de divergência —
+  o backend compara `payment_receipt_analysis.valor_total` (a soma acima)
+  com `order.total_order` (tolerância de 1 centavo) e devolve
+  `true`/`false`/`null` (null = ainda não dá pra comparar). Só informativo,
+  **nunca bloqueia** `POST /:id/receipt/confirm` nem nenhum outro endpoint —
+  front decide o que fazer com `false` (ex.: alerta visual, não trava botão).
+- `POST /:id/receipt` recebe **um arquivo por chamada** (`upload.single`,
+  campo `receipt`) — não existe upload em lote. Pra N comprovantes, o front
+  chama o endpoint N vezes em sequência, uma request HTTP por arquivo (não
+  precisa esperar a análise de um terminar antes de anexar o próximo).
+- Fluxo esperado no front: loja anexa 1º comprovante (`POST /:id/receipt`),
+  vê o card aparecer em `receipts[]`; se faltar valor, chama `POST
+  /:id/receipt` de novo com o próximo arquivo (nunca "editar" o arquivo de
+  um já existente); anexou o errado, remove (`DELETE /:id/receipt/:receiptId`)
+  e anexa o certo; confirma (`POST /:id/receipt/confirm`) quando
+  `receipt_total_matches_order` estiver `true` (ou a loja decidir seguir
+  mesmo com `false`/`null`) — o backend só exige **pelo menos 1** comprovante
+  anexado pra liberar a confirmação, não força a soma bater (é conferência
+  visual da loja, mesma filosofia de "IA nunca bloqueia o fluxo").
+- Ver seção 5.2 pras rotas exatas e seção 4.3 pro websocket (agora identifica
+  qual comprovante terminou de analisar via `receiptId`).
+
 ## 3. Perfis de acesso (telas)
 
 Existem **3 telas** (`screen`) no back. Cada perfil de usuário mapeia pra
@@ -194,8 +232,9 @@ A mesma auth dual da seção 4: se o cookie de login bater, usa ele; senão,
 tenta `unitBusinessNumber`/`token` do `auth`. Conexão recusada (`connect_error`)
 se nenhum dos dois validar.
 
-**Entrar na "sala" da solicitação** — depois de anexar o comprovante
-(`POST /:id/receipt`, que já devolve o `id`), emite:
+**Entrar na "sala" da solicitação** — depois de anexar o primeiro comprovante
+(`POST /:id/receipt`, ver seção 5.2), emite (uma vez por `requestId`, cobre
+todos os comprovantes que forem anexados a ela):
 
 ```js
 socket.emit("pdv-sales-request:watch", { requestId: id }, (ack) => {
@@ -207,21 +246,33 @@ socket.emit("pdv-sales-request:watch", { requestId: id }, (ack) => {
 
 ```js
 socket.on("payment-receipt-analysis:done", (payload) => {
-  // payload.requestId === id da solicitação
+  // payload.requestId === id da solicitação; payload.receiptId === id do
+  // comprovante específico que terminou de ser analisado
 });
 ```
 
-Formato do `payload`:
+Formato do `payload` (uma solicitação pode ter mais de um comprovante — ver
+seção 5.2 — então o evento sempre identifica qual `receiptId` terminou, além
+de trazer a CONCILIAÇÃO de todos os comprovantes já anexados em `reconciled`):
 - Sucesso (inclusive quando a IA não conseguiu extrair nada, ou demorou
-  demais — conta como sucesso, só sem dado, igual sempre foi
-  `payment_receipt_analysis: null`):
-  `{ requestId, success: true, analysis: PaymentReceiptExtraction | null, validated: boolean | null, paymentMethodMatchesReceipt: boolean | null }`.
-  `analysis: null` aqui é o sinal pra mostrar "Extração automática indisponível
-  — revise o comprovante manualmente antes de enviar" (mesma mensagem de sempre).
-- Falha — só 2 casos, **o comprovante continua anexado nos dois**:
-  `{ requestId, success: false, reason: "DUPLICATE_RECEIPT", message }` (esse
-  comprovante já foi usado em outra solicitação — peça pra trocar) ou
-  `{ requestId, success: false, reason: "ANALYSIS_UNAVAILABLE", message }`
+  demais — conta como sucesso, só sem dado):
+  `{ requestId, receiptId, success: true, analysis: PaymentReceiptExtraction | null, validated: boolean | null, reconciled: { analysis: PaymentReceiptReconciledAnalysis | null, validated: boolean | null, paymentMethodMatchesReceipt: boolean | null, totalMatchesOrder: boolean | null } }`.
+  `reconciled.totalMatchesOrder` é o mesmo `receipt_total_matches_order` do
+  topo da `PdvSalesRequest` (seção 5.1/11) — já vem atualizado aqui, sem
+  precisar refazer o GET pra saber se o aviso de divergência de valor deve
+  aparecer.
+  `analysis`/`validated` no topo são DESSE comprovante (`receiptId`);
+  `reconciled` é o mesmo formato que `saleInvoice`/`payment_receipt_analysis`
+  no topo da `PdvSalesRequest` (seção 5.1) — já pronto pra sobrescrever o
+  estado local sem precisar refazer o GET. `analysis: null` (do comprovante)
+  é o sinal pra mostrar "Extração automática indisponível — revise o
+  comprovante manualmente antes de enviar" (mesma mensagem de sempre).
+- Falha — só 2 casos, **o comprovante continua anexado nos dois, com
+  `analysis: null`**:
+  `{ requestId, receiptId, success: false, reason: "DUPLICATE_RECEIPT", message }`
+  (esse comprovante já foi usado em OUTRO comprovante, de qualquer
+  solicitação — peça pra remover e anexar outro) ou
+  `{ requestId, receiptId, success: false, reason: "ANALYSIS_UNAVAILABLE", message }`
   (erro inesperado, raro).
 
 **Prazo máximo pra esse evento chegar: ~5 segundos** do momento em que
@@ -269,10 +320,11 @@ de erro em caso de falha.
 
 | Método | Rota | Query params | Resposta |
 |---|---|---|---|
-| GET | `/` | `page`, `perPage`, `sortBy`, `sortDir`, `filters[status]`, `filters[shipping_type]`, `filters[unit_business_id]`, `filters[order_id]` | `PaginatedResult<PdvSalesRequest & { order: PdvSalesRequestOrderSummary \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null; saleInvoice: PdvSalesRequestInvoiceSummary \| null; transferInvoice: PdvSalesRequestInvoiceSummary \| null }>` — default `sortBy=createdAt&sortDir=ASC` (mais antigo primeiro, fila FIFO), sobrescrevível via query string |
-| GET | `/:id` | — | `PdvSalesRequest & { order: PdvSalesRequestOrderDetail \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null; saleInvoice: PdvSalesRequestInvoiceSummary \| null; transferInvoice: PdvSalesRequestInvoiceSummary \| null }` (404 se não for da sua loja, exceto CD21/Financeiro/Televendas) |
+| GET | `/` | `page`, `perPage`, `sortBy`, `sortDir`, `filters[status]`, `filters[shipping_type]`, `filters[unit_business_id]`, `filters[order_id]` | `PaginatedResult<PdvSalesRequest & { order: PdvSalesRequestOrderSummary \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null; saleInvoice: PdvSalesRequestInvoiceSummary \| null; transferInvoice: PdvSalesRequestInvoiceSummary \| null; receipts: PdvSalesRequestReceiptSummary[] }>` — default `sortBy=createdAt&sortDir=ASC` (mais antigo primeiro, fila FIFO), sobrescrevível via query string |
+| GET | `/:id` | — | `PdvSalesRequest & { order: PdvSalesRequestOrderDetail \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null; saleInvoice: PdvSalesRequestInvoiceSummary \| null; transferInvoice: PdvSalesRequestInvoiceSummary \| null; receipts: PdvSalesRequestReceiptSummary[] }` (404 se não for da sua loja, exceto CD21/Financeiro/Televendas) |
 | GET | `/:id/history` | — | `PdvSalesRequestHistory[]` — ordenado por `date DESC` (mais recente primeiro, fixo, não aceita `sortBy`/`sortDir`) |
 | GET | `/:id/invoice/:invoiceId/danfe` | — | `200` binário `application/pdf` — DANFE da nota de venda ou de transferência vinculada (`invoiceId` = `saleInvoice.id` ou `transferInvoice.id` da própria solicitação; `400` se não bater com nenhuma das duas) |
+| GET | `/:id/receipt/:receiptId/image` | — | `200` binário `image/<ext>` — imagem/PDF de UM comprovante anexado (`receiptId` = `id` de um item em `receipts[]`) |
 
 Loja só vê solicitação da própria loja (escopo automático, não precisa
 mandar `filters[unit_business_id]`). CD21/Financeiro/Televendas, sem
@@ -304,6 +356,15 @@ vinculada/gerada. Front usa `number_system` pra exibir o número da nota no
 card e `id` pra montar `GET /:id/invoice/:invoiceId/danfe` (botão "Visualizar
 DANFE", um par por tipo de nota quando aplicável).
 
+`receipts` (sibling de `order`/`unitBusiness`/`saleInvoice`/`transferInvoice`)
+é um array, um item por comprovante anexado (`[]` se nenhum ainda) — cada
+item é `{ id, path, analysis: PaymentReceiptExtraction | null, validated: boolean | null, createdAt }`,
+a extração CRUA daquele comprovante específico. `id` serve pra montar
+`GET/DELETE/PATCH /:id/receipt/:receiptId/*` (seção 5.2). A CONCILIAÇÃO de
+todos os comprovantes (soma de valores, tipos combinados, etc.) é o
+`payment_receipt_analysis` no TOPO da própria `PdvSalesRequest` (não dentro
+de `receipts[]`) — ver `PaymentReceiptReconciledAnalysis` na seção 11.
+
 ### 5.2 Loja — Operação (`STORE_REQUEST`)
 
 | Método | Rota | Body | Resposta |
@@ -311,11 +372,18 @@ DANFE", um par por tipo de nota quando aplicável).
 | GET | `/orders/eligible` | — | `PdvSalesRequestOrderSummary[]` — pedidos da loja do acesso (Televendas: de **todas** as lojas físicas normais de uma vez, sem escolher loja), sem status finalizador (completo/cancelado) e sem solicitação PDV ativa ainda (coluna "Em Aberto" do Kanban, ação "Criar solicitação"), ordenado por `date ASC` (mais antigo primeiro, fixo) |
 | GET | `/orders/:orderId` | — | `PdvSalesRequestOrderDetail` (404 se não existir ou não for da loja do acesso) — card expandido de um pedido de `/orders/eligible`, antes de existir solicitação |
 | POST | `/` | `{ orderId: string, name: string }` | `201 PdvSalesRequest` |
-| POST | `/:id/receipt` | multipart: campo `receipt` (arquivo) + campo `shippingType: "TRANSPORTADORA" \| "ADT"` | `202 PdvSalesRequest & { paymentReceiptAnalysisStatus: "PROCESSING" }` |
-| PATCH | `/:id/receipt/analysis` | `Partial<PaymentReceiptExtraction>` (só os campos que mudaram) | `PdvSalesRequest` |
+| POST | `/:id/shipping-type` | `{ shippingType: "TRANSPORTADORA" \| "ADT" }` | `PdvSalesRequest` |
+| POST | `/:id/receipt` | multipart: campo `receipt` (arquivo) | `202 PdvSalesRequestReceipt & { paymentReceiptAnalysisStatus: "PROCESSING" }` — **adiciona** um comprovante, nunca substitui os já anexados |
+| DELETE | `/:id/receipt/:receiptId` | — | `PdvSalesRequest` — remove um comprovante (pra trocar um errado: remove + `POST /:id/receipt` de novo) |
+| PATCH | `/:id/receipt/:receiptId/analysis` | `Partial<PaymentReceiptExtraction>` (só os campos que mudaram, DESSE comprovante) | `PdvSalesRequest` |
+| PATCH | `/:id/payment-receipt-analysis` | `Partial<PaymentReceiptReconciledAnalysis>` (só os campos que mudaram, do RESUMO conciliado) | `PdvSalesRequest` |
 | POST | `/:id/receipt/confirm` | — | `PdvSalesRequest` (avança pra `PENDING_FINANCE`) |
 | POST | `/:id/correction/resolve` | `{ decision?: "CANCEL" \| "EXCHANGE_PRODUCT" \| "RETRY_ANALYSIS" }` — ver seção 6 | `PdvSalesRequest` |
 | DELETE | `/:id` | — | `204` (404 se não for da sua loja) |
+
+Uma solicitação pode ter **mais de um comprovante anexado** — ver "Comprovantes
+de pagamento (pode ser mais de um)" na seção 2 pro conceito geral e o fluxo
+esperado no front.
 
 - `DELETE /:id` — só permitido com `status` em `OPEN` ou `PENDING_CORRECTION`
   (ainda não saiu do lugar, ou foi devolvida pra loja corrigir). Qualquer
@@ -336,30 +404,54 @@ DANFE", um par por tipo de nota quando aplicável).
   Televendas/CD21).
 - `POST /` — `orderId` precisa ser um pedido da **mesma loja** do acesso
   (número do header/loja atual do login), senão `403`.
-- `POST /:id/receipt` pode ser chamado várias vezes (troca de comprovante)
-  antes de confirmar — não muda status. Responde **`202`** na hora, com
-  `payment_receipt_analysis` sempre `null` nesse ponto (zerado de propósito)
-  e `paymentReceiptAnalysisStatus: "PROCESSING"` — a extração roda em
-  background, resultado chega pelo websocket (seção 4.3), nunca por essa
-  resposta. Front deve conectar/entrar na room ANTES ou logo depois de
-  chamar esse endpoint, senão pode perder o evento se ele chegar rápido.
-- `PATCH /:id/receipt/analysis` deixa a loja corrigir campo a campo a
-  análise extraída pela IA antes de confirmar (ex.: a IA leu o apelido da
-  maquininha em `instituicao_pagamento` errado, ou não bateu o
-  `estabelecimento_cnpj`) — manda só os campos que mudaram, o resto da
-  análise atual é preservado (merge, nunca substitui o objeto inteiro).
-  Precisa de um comprovante já anexado (`POST /:id/receipt` primeiro), e só
-  funciona na mesma janela de edição do comprovante (antes de confirmar, ou
-  numa correção de origem financeiro). Resposta já vem com
-  `payment_receipt_validated`/`payment_receipt_fingerprint`/
-  `payment_method_matches_receipt` recalculados a partir da análise
-  editada — inclusive a checagem de comprovante duplicado (`400` se a
-  edição fizer a análise colidir com outra solicitação). Só chame depois de
-  receber `payment-receipt-analysis:done` pelo websocket (seção 4.3) — editar
-  antes disso corre o risco de a análise assíncrona ainda em andamento
-  sobrescrever a edição manual quando terminar.
-- Só `POST /:id/receipt/confirm` avança o status — exige que já exista
-  `payment_receipt_path` e `shipping_type` salvos.
+- `POST /:id/shipping-type` — separado do anexo de comprovante (propriedade
+  da solicitação, não de um comprovante específico). Pode ser chamado antes,
+  depois ou entre anexos de comprovante, na mesma janela de edição.
+- `POST /:id/receipt` pode ser chamado várias vezes (um comprovante por
+  chamada, nunca substitui os anteriores) antes de confirmar — não muda
+  status. Responde **`202`** com a linha do comprovante recém-criado
+  (`analysis: null` nesse ponto) e `paymentReceiptAnalysisStatus:
+  "PROCESSING"` — a extração roda em background, resultado chega pelo
+  websocket (seção 4.3, evento agora traz `receiptId`), nunca por essa
+  resposta. Front deve conectar/entrar na room ANTES ou logo depois do
+  PRIMEIRO anexo, senão pode perder o evento se ele chegar rápido (a mesma
+  room serve pra todos os comprovantes dessa solicitação).
+- `DELETE /:id/receipt/:receiptId` remove um comprovante anexado por
+  engano — apaga o arquivo e recalcula a conciliação (`payment_receipt_analysis`
+  no topo da solicitação) com os que sobraram. Mesma janela de edição de
+  `POST /:id/receipt`.
+- `PATCH /:id/receipt/:receiptId/analysis` deixa a loja corrigir campo a
+  campo a análise extraída pela IA de UM comprovante específico antes de
+  confirmar (ex.: a IA leu o apelido da maquininha em
+  `instituicao_pagamento` errado, ou não bateu o `estabelecimento_cnpj`) —
+  manda só os campos que mudaram, o resto da análise DESSE comprovante é
+  preservado (merge, nunca substitui o objeto inteiro, e nunca mexe nos
+  outros comprovantes). Só funciona na mesma janela de edição do comprovante
+  (antes de confirmar, ou numa correção de origem financeiro). Resposta é a
+  `PdvSalesRequest` inteira, já com `payment_receipt_analysis`/
+  `payment_receipt_validated`/`payment_method_matches_receipt`
+  RECONCILIADOS a partir de todos os comprovantes (inclusive a checagem de
+  comprovante duplicado — `400` se a edição fizer a análise colidir com
+  OUTRO comprovante, de qualquer solicitação). Só chame depois de receber
+  `payment-receipt-analysis:done` pelo websocket (seção 4.3) pra ESSE
+  `receiptId` — editar antes disso corre o risco de a análise assíncrona
+  ainda em andamento sobrescrever a edição manual quando terminar.
+- `PATCH /:id/payment-receipt-analysis` edita o **resumo conciliado**
+  (`payment_receipt_analysis` no topo da `PdvSalesRequest`) direto — nunca
+  mexe em nenhum comprovante de `receipts[]` individualmente. Útil pra
+  loja ajustar o resumo final sem precisar reeditar comprovante por
+  comprovante (ex.: soma não bateu por um motivo que não é erro de leitura
+  de nenhum comprovante em si). Manda só os campos que mudaram
+  (`Partial<PaymentReceiptReconciledAnalysis>`, seção 11 — `tipo_comprovante`
+  aqui é texto livre, não o enum fechado, já que pode ser mais de um tipo
+  combinado). **Sem lock**: se depois disso a loja anexar, editar ou remover
+  um comprovante, a conciliação automática roda de novo e sobrescreve esse
+  ajuste manual — comportamento esperado, não um bug. Não recalcula
+  `payment_receipt_validated`/`payment_method_matches_receipt` (só o campo
+  `payment_receipt_analysis` é tocado). Mesma janela de edição dos outros
+  endpoints de comprovante.
+- Só `POST /:id/receipt/confirm` avança o status — exige AO MENOS 1
+  comprovante anexado (`receipts.length > 0`) e `shipping_type` salvo.
 
 ### 5.3 Financeiro (`FINANCE`) — acesso global, qualquer loja
 
@@ -438,7 +530,7 @@ Como a loja resolve cada origem:
 
 | `correction_origin_status` | Endpoint que resolve | Detalhe |
 |---|---|---|
-| `PENDING_FINANCE` | `POST /:id/receipt` + `POST /:id/receipt/confirm` | **Não** usa `/correction/resolve` — troca o comprovante e confirma de novo, mesmo fluxo da seção 5.2 |
+| `PENDING_FINANCE` | `DELETE /:id/receipt/:receiptId` (comprovante rejeitado) + `POST /:id/receipt` (novo) + `POST /:id/receipt/confirm` | **Não** usa `/correction/resolve` — remove/anexa comprovante e confirma de novo, mesmo fluxo da seção 5.2 |
 | `PENDING_CD21_ANALYSIS` | `POST /:id/correction/resolve` sem `decision` | Ajuste é feito direto na Bling (fora do sistema); este endpoint só confirma e reenvia pra `PENDING_CD21_ANALYSIS` |
 | `SHIPPING` | `POST /:id/correction/resolve` com `decision: "CANCEL" \| "EXCHANGE_PRODUCT"` | `CANCEL` → `CANCELLED`. `EXCHANGE_PRODUCT` → `PENDING_CD21_ANALYSIS` (reanálise completa, pode impactar a nota já gerada) |
 | `INVOICE_CANCELLED` | `POST /:id/correction/resolve` com `decision: "CANCEL" \| "RETRY_ANALYSIS"` | Ver seção 7 |
@@ -597,11 +689,20 @@ interface PdvSalesRequest {
   correction_origin_status: PdvSalesRequestStatus | null;
   shipping_type: PdvShippingType | null;
   name: string;
-  payment_receipt_path: string | null;
-  payment_receipt_analysis: PaymentReceiptExtraction | null;
-  payment_receipt_validated: boolean | null;   // null = não aplicável (ex.: PIX)
-  payment_receipt_fingerprint: string | null;
-  payment_method_matches_receipt: boolean | null; // informativo, nunca bloqueia
+  // Conciliação de TODOS os comprovantes anexados (ver receipts[], seção
+  // 5.1) — nunca a extração de um comprovante isolado. Sem
+  // payment_receipt_path/payment_receipt_fingerprint (removidos — não fazem
+  // mais sentido com N comprovantes, ver PdvSalesRequestReceipt).
+  payment_receipt_analysis: PaymentReceiptReconciledAnalysis | null;
+  payment_receipt_validated: boolean | null;   // AND lógico do validated de cada comprovante
+  payment_method_matches_receipt: boolean | null; // só calculado com exatamente 1 comprovante anexado
+  // Informativo, NUNCA bloqueia nenhuma transição (inclusive
+  // POST /:id/receipt/confirm) — payment_receipt_analysis.valor_total x
+  // order.total_order (tolerância de R$ 0,01). null enquanto não há
+  // nenhum comprovante com valor ainda, ou o pedido não tem total. Front
+  // usa só pra mostrar aviso — não existe endpoint que force os dois
+  // baterem antes de confirmar.
+  receipt_total_matches_order: boolean | null;
   errors: { origin: PdvCorrectionOrigin; reasons: PdvCorrectionReason[]; note: string } | null;
   created_by_user_id: string | null;
   createdAt: string;
@@ -623,6 +724,17 @@ interface PdvSalesRequestInvoiceSummary {
   number_system: string;
 }
 
+// Um item por comprovante anexado, embutido em `receipts` no topo de GET /
+// e GET /:id (seção 5.1) — `analysis` é a extração CRUA DESSE comprovante,
+// nunca a conciliada (essa é PdvSalesRequest.payment_receipt_analysis).
+interface PdvSalesRequestReceiptSummary {
+  id: string;
+  path: string;
+  analysis: PaymentReceiptExtraction | null;
+  validated: boolean | null;
+  createdAt: string;
+}
+
 interface PdvSalesRequestHistory {
   id: string;
   pdv_sales_request_id: string;
@@ -632,8 +744,10 @@ interface PdvSalesRequestHistory {
   user_id: string | null;        // null = ação anônima (via link)
 }
 
-// Schema fixo da extração por IA do comprovante — todo campo nullable
-// (null = ilegível/coberto na imagem, a IA nunca inventa valor)
+// Schema fixo da extração por IA de UM comprovante — todo campo nullable
+// (null = ilegível/coberto na imagem, a IA nunca inventa valor). Usado em
+// PdvSalesRequestReceiptSummary.analysis e no body de
+// PATCH /:id/receipt/:receiptId/analysis (Partial<PaymentReceiptExtraction>).
 interface PaymentReceiptExtraction {
   tipo_comprovante: "cartao_credito" | "cartao_debito" | "pix" | "transferencia" | null;
   estabelecimento_nome: string | null;
@@ -647,6 +761,37 @@ interface PaymentReceiptExtraction {
   // Transcrito literalmente do comprovante — banco/instituição (ex.:
   // "Itaú") OU nome/apelido da maquininha de cartão (ex.: "Laranjinha
   // Itaú"), que nem sempre bate com o nome oficial do banco.
+  instituicao_pagamento: string | null;
+  titular_cartao: string | null;
+  cartao_final: string | null;
+  codigo_autorizacao: string | null;
+  nsu_cv: string | null;
+}
+
+// Conciliação de N PaymentReceiptExtraction (um por comprovante anexado) —
+// PdvSalesRequest.payment_receipt_analysis. Mesmos nomes de campo que
+// PaymentReceiptExtraction, mas regra de junção própria por campo (nunca
+// merge genérico): valor_total SOMA os comprovantes; tipo_comprovante e os
+// demais campos textuais/identificadores juntam os valores DISTINTOS com
+// " + " (ex.: 2 comprovantes PIX+cartão → tipo_comprovante:
+// "pix + cartao_credito" — por isso é string livre aqui, não o enum fechado
+// de PaymentReceiptExtraction); data_transacao/hora_transacao pegam
+// qualquer um dos comprovantes (mesma transação); qtd_parcelas/valor_parcela
+// só vêm preenchidos quando EXATAMENTE 1 comprovante tem esse dado — com 2+
+// comprovantes de parcela cada, fica null (sem soma que faça sentido; olhe
+// receipts[] individualmente). Também é o body de
+// PATCH /:id/payment-receipt-analysis (Partial<PaymentReceiptReconciledAnalysis>,
+// seção 5.2) — edição manual do resumo, sem tocar em nenhum comprovante.
+interface PaymentReceiptReconciledAnalysis {
+  tipo_comprovante: string | null;
+  estabelecimento_nome: string | null;
+  estabelecimento_cnpj: string | null;
+  valor_total: number | null;
+  qtd_parcelas: number | null;
+  valor_parcela: number | null;
+  data_transacao: string | null;
+  hora_transacao: string | null;
+  bandeira_cartao: string | null;
   instituicao_pagamento: string | null;
   titular_cartao: string | null;
   cartao_final: string | null;

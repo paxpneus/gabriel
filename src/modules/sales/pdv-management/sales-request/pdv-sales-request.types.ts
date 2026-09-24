@@ -151,6 +151,32 @@ export const EMPTY_PAYMENT_RECEIPT_EXTRACTION: PaymentReceiptExtraction = {
   nsu_cv: null,
 };
 
+// Visão CONCILIADA de N comprovantes (um PdvSalesRequestReceipt por
+// comprovante, ver sales-request-receipt/) — nunca a extração de um
+// comprovante só. Tipo próprio, não PaymentReceiptExtraction:
+// tipo_comprovante deixa de ser um enum único (pode ser "pix +
+// cartao_credito", ver helpers/receipt-reconciliation.ts) e alguns campos têm
+// regra de junção diferente de "pegar o valor". Persistido em
+// pdv_sales_requests.payment_receipt_analysis, recalculado a cada
+// comprovante adicionado/editado/removido — nunca lido/gravado direto pelos
+// endpoints de comprovante individual.
+export interface PaymentReceiptReconciledAnalysis {
+  tipo_comprovante: string | null;
+  estabelecimento_nome: string | null;
+  estabelecimento_cnpj: string | null;
+  valor_total: number | null;
+  qtd_parcelas: number | null;
+  valor_parcela: number | null;
+  data_transacao: string | null;
+  hora_transacao: string | null;
+  bandeira_cartao: string | null;
+  instituicao_pagamento: string | null;
+  titular_cartao: string | null;
+  cartao_final: string | null;
+  codigo_autorizacao: string | null;
+  nsu_cv: string | null;
+}
+
 export interface PdvSalesRequestAttributes {
   id: string;
   order_id: string;
@@ -164,13 +190,19 @@ export interface PdvSalesRequestAttributes {
   correction_origin_status: PdvSalesRequestStatus | null;
   shipping_type: PdvShippingType | null;
   name: string;
-  payment_receipt_path: string | null;
-  // Preenchidos por payment-receipt-extraction.service.ts (Passo B) — null
-  // enquanto o comprovante não foi analisado, ou quando a análise falhou.
-  payment_receipt_analysis: PaymentReceiptExtraction | null;
+  // Conciliação de todos os PdvSalesRequestReceipt anexados no momento — ver
+  // PaymentReceiptReconciledAnalysis. null enquanto não há nenhum comprovante
+  // com análise ainda.
+  payment_receipt_analysis: PaymentReceiptReconciledAnalysis | null;
   payment_receipt_validated: boolean | null;
-  payment_receipt_fingerprint: string | null;
+  // Só calculado com exatamente 1 comprovante anexado — com 2+, os tipos
+  // podem divergir entre si (ex.: PIX + cartão) e a comparação 1:1 contra
+  // order.paymentMethod não faz mais sentido; financeiro revisa manualmente.
   payment_method_matches_receipt: boolean | null;
+  // Informativo, nunca bloqueia nenhuma transição — payment_receipt_analysis
+  // (conciliado).valor_total x order.total_order. null quando não dá pra
+  // comparar (nenhum comprovante com valor ainda, ou pedido sem total).
+  receipt_total_matches_order: boolean | null;
   errors: PdvSalesRequestErrors | null;
   created_by_user_id: string | null;
   createdAt?: Date;
@@ -212,6 +244,19 @@ export interface PdvSalesRequestUnitBusiness {
 export interface PdvSalesRequestInvoiceSummary {
   id: string;
   number_system: string;
+}
+
+// `receipts` (sibling de order/unitBusiness/saleInvoice/transferInvoice),
+// embutido no topo da resposta — um item por PdvSalesRequestReceipt
+// anexado. `analysis` aqui é a extração CRUA desse comprovante específico
+// (PaymentReceiptExtraction), nunca a conciliada (essa fica em
+// payment_receipt_analysis, no topo da própria PdvSalesRequest).
+export interface PdvSalesRequestReceiptSummary {
+  id: string;
+  path: string;
+  analysis: PaymentReceiptExtraction | null;
+  validated: boolean | null;
+  createdAt: Date;
 }
 
 export interface PdvSalesRequestOrderPaymentMethod {

@@ -18,7 +18,7 @@ type WatchAck = (result: { ok: boolean; error?: string }) => void;
 
 // Cliente conecta e emite WATCH_EVENT com o id da solicitação recém-anexada
 // pra entrar na room e receber a análise quando terminar (ver
-// PdvSalesRequestService.attachReceiptAndShippingType).
+// PdvSalesRequestService.attachReceipt).
 export function registerPdvSocketNamespace(): void {
   const namespace = socketService.of(PDV_SOCKET_NAMESPACE);
   namespace.use(pdvSocketAuthMiddleware);
