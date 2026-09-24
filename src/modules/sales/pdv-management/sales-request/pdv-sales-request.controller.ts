@@ -49,6 +49,13 @@ export class PdvSalesRequestController extends BaseController<
       pdvAccess(READ_SCREENS),
       this.getReceiptImage,
     );
+    // Mesmo endpoint pra nota de venda e de transferência — invoiceId
+    // validado contra a própria solicitação no service.
+    this.router.get(
+      "/:id/invoice/:invoiceId/danfe",
+      pdvAccess(READ_SCREENS),
+      this.getInvoiceDanfe,
+    );
     this.router.post(
       "/:id/finance/approve",
       pdvAccess([PdvAccessScreen.FINANCE]),
@@ -369,6 +376,26 @@ export class PdvSalesRequestController extends BaseController<
       return res.send(buffer);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
+    }
+  };
+
+  getInvoiceDanfe = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
+
+      const buffer = await this.service.getInvoiceDanfeBuffer(
+        req.params.id as string,
+        req.params.invoiceId as string,
+      );
+
+      res.set("Content-Type", "application/pdf");
+      res.set(
+        "Content-Disposition",
+        `inline; filename="danfe-${req.params.invoiceId}.pdf"`,
+      );
+      return res.send(buffer);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
     }
   };
 

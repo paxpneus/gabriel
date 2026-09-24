@@ -10,11 +10,19 @@ import Customer from "../../customers/customers.model";
 import PaymentMethod from "../../orders/payment_method/payment_method.model";
 import OrderItems from "../../orders/order_items/order_items.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
+import Invoice from "../../../warehouse/fiscal/invoices/invoice/invoice.model";
 import type {
   QueryParams,
   QueryConfig,
   PaginatedResult,
 } from "../../../../shared/query/query.types";
+
+// Só id/number_system — o front usa pra exibir o número da nota + montar a
+// rota de DANFE (GET /:id/invoice/:invoiceId/danfe), nunca a nota inteira.
+const INVOICE_SUMMARY_INCLUDE = [
+  { model: Invoice, as: "saleInvoice", attributes: ["id", "number_system"] },
+  { model: Invoice, as: "transferInvoice", attributes: ["id", "number_system"] },
+];
 
 export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   constructor() {
@@ -40,6 +48,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
           ],
         },
         { model: UnitBusiness, as: "unitBusiness", attributes: ["id", "number"] },
+        ...INVOICE_SUMMARY_INCLUDE,
       ],
     });
   }
@@ -65,6 +74,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
             ],
           },
           { model: UnitBusiness, as: "unitBusiness", attributes: ["id", "number"] },
+          ...INVOICE_SUMMARY_INCLUDE,
         ],
       },
       forcedWhere,

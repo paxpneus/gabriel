@@ -60,6 +60,8 @@ import Brand from "../../../../inventory/brands/brands.model";
 import Rim from "../../../../inventory/rims/rim.model";
 import TireMeasure from "../../../../inventory/tire-measures/tire-measure.model";
 import { resolveTecincoBranchId } from "../../../../../shared/utils/tecinco/resolve-branch-id";
+import { generateDanfePdfBuffer } from "../../../../../shared/utils/xml/danfe-generator";
+import uploaderService from "../../../../handlers/uploader/services/uploader.service";
 
 const default_seller = "5ff76374-4d67-4ef3-a566-349a015f86b1";
 
@@ -599,6 +601,29 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       invoiceIds,
       unitBusinessId,
     );
+  }
+
+  // DANFE de uma única nota — já salvo (Bling entrega pronto, Tecinco gera na
+  // criação, ver bling-api-fetch.queue.ts/invoice-xml.ts) serve o arquivo
+  // direto; sem danfe_path, gera na hora a partir do XML, mesma rotina de
+  // getDanfeBatch (invoice.controller.ts). Leitura pura, nunca grava
+  // danfe_path aqui.
+  async getDanfeBuffer(id: string): Promise<Buffer> {
+    const invoice = await this.repository.findById(id, {
+      attributes: ["id", "danfe_path", "xml_path"],
+    });
+    if (!invoice) throw new Error("Nota fiscal não encontrada");
+
+    if (invoice.danfe_path) {
+      return uploaderService.getFile(invoice.danfe_path);
+    }
+
+    const xml = invoice.xml_path;
+    if (!xml || xml.startsWith("http")) {
+      throw new Error("XML da nota não disponível para gerar o DANFE");
+    }
+
+    return generateDanfePdfBuffer(isEncrypted(xml) ? decryptXml(xml) : xml);
   }
 
   async updateInvoicesForAllUnitBusiness(

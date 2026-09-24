@@ -269,9 +269,10 @@ de erro em caso de falha.
 
 | Método | Rota | Query params | Resposta |
 |---|---|---|---|
-| GET | `/` | `page`, `perPage`, `sortBy`, `sortDir`, `filters[status]`, `filters[shipping_type]`, `filters[unit_business_id]`, `filters[order_id]` | `PaginatedResult<PdvSalesRequest & { order: PdvSalesRequestOrderSummary \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null }>` — default `sortBy=createdAt&sortDir=ASC` (mais antigo primeiro, fila FIFO), sobrescrevível via query string |
-| GET | `/:id` | — | `PdvSalesRequest & { order: PdvSalesRequestOrderDetail \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null }` (404 se não for da sua loja, exceto CD21/Financeiro/Televendas) |
+| GET | `/` | `page`, `perPage`, `sortBy`, `sortDir`, `filters[status]`, `filters[shipping_type]`, `filters[unit_business_id]`, `filters[order_id]` | `PaginatedResult<PdvSalesRequest & { order: PdvSalesRequestOrderSummary \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null; saleInvoice: PdvSalesRequestInvoiceSummary \| null; transferInvoice: PdvSalesRequestInvoiceSummary \| null }>` — default `sortBy=createdAt&sortDir=ASC` (mais antigo primeiro, fila FIFO), sobrescrevível via query string |
+| GET | `/:id` | — | `PdvSalesRequest & { order: PdvSalesRequestOrderDetail \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null; saleInvoice: PdvSalesRequestInvoiceSummary \| null; transferInvoice: PdvSalesRequestInvoiceSummary \| null }` (404 se não for da sua loja, exceto CD21/Financeiro/Televendas) |
 | GET | `/:id/history` | — | `PdvSalesRequestHistory[]` — ordenado por `date DESC` (mais recente primeiro, fixo, não aceita `sortBy`/`sortDir`) |
+| GET | `/:id/invoice/:invoiceId/danfe` | — | `200` binário `application/pdf` — DANFE da nota de venda ou de transferência vinculada (`invoiceId` = `saleInvoice.id` ou `transferInvoice.id` da própria solicitação; `400` se não bater com nenhuma das duas) |
 
 Loja só vê solicitação da própria loja (escopo automático, não precisa
 mandar `filters[unit_business_id]`). CD21/Financeiro/Televendas, sem
@@ -296,6 +297,12 @@ back nunca repassa ao front). Ver os dois tipos na seção 11.
 PRÓPRIA solicitação (`unit_business_id`), não a loja aninhada dentro de
 `order` — só `{ id, number }`, sem `name`. Útil quando o front só precisa
 identificar a loja sem entrar no objeto `order`.
+
+`saleInvoice`/`transferInvoice` (siblings de `order`/`unitBusiness`) só
+`{ id, number_system }` — `null` enquanto a respectiva nota ainda não foi
+vinculada/gerada. Front usa `number_system` pra exibir o número da nota no
+card e `id` pra montar `GET /:id/invoice/:invoiceId/danfe` (botão "Visualizar
+DANFE", um par por tipo de nota quando aplicável).
 
 ### 5.2 Loja — Operação (`STORE_REQUEST`)
 
@@ -606,6 +613,14 @@ interface PdvSalesRequest {
 interface PdvSalesRequestUnitBusiness {
   id: string;
   number: string;
+}
+
+// saleInvoice/transferInvoice, embutidas no topo de GET / e GET /:id — null
+// enquanto a nota ainda não foi vinculada/gerada. id serve pra montar
+// GET /:id/invoice/:invoiceId/danfe (seção 5.1).
+interface PdvSalesRequestInvoiceSummary {
+  id: string;
+  number_system: string;
 }
 
 interface PdvSalesRequestHistory {

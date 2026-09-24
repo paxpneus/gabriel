@@ -1022,6 +1022,25 @@ export class PdvSalesRequestService extends BaseService<
     });
   }
 
+  // DANFE da nota de venda ou de transferência vinculada — mesmo endpoint pra
+  // ambas, já que as duas são só um invoiceId. Confere que a nota pertence a
+  // ESTA solicitação antes de servir (nunca pega o id de outra por engano);
+  // a geração/serving em si é responsabilidade do invoiceService, nunca lida
+  // com Invoice diretamente aqui.
+  async getInvoiceDanfeBuffer(id: string, invoiceId: string): Promise<Buffer> {
+    const request = await this.repository.findById(id);
+    if (!request) throw new Error("Solicitação não encontrada");
+
+    if (
+      request.sale_invoice_id !== invoiceId &&
+      request.transfer_invoice_id !== invoiceId
+    ) {
+      throw new Error("Nota não pertence a esta solicitação");
+    }
+
+    return invoiceService.getDanfeBuffer(invoiceId);
+  }
+
   // NÃO avança status sozinho — só vincula/troca a nota de transferência e
   // devolve a solicitação atualizada pro front validar. Permitido em
   // PENDING_NF_TRANSFER (primeira vinculação), SHIPPING e FINISHED (edição

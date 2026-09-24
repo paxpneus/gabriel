@@ -206,6 +206,14 @@ export interface PdvSalesRequestUnitBusiness {
   number: string;
 }
 
+// saleInvoice/transferInvoice (associações own sale_invoice_id/
+// transfer_invoice_id), embutidas no topo da resposta — front usa
+// number_system pra exibir e id pra montar GET /:id/invoice/:invoiceId/danfe.
+export interface PdvSalesRequestInvoiceSummary {
+  id: string;
+  number_system: string;
+}
+
 export interface PdvSalesRequestOrderPaymentMethod {
   id: string;
   description: string;
