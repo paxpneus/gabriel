@@ -18,6 +18,7 @@ import { UserAttributes } from "../users/users/user.types";
 import Role from "../users/roles/role.model";
 import expeditionBatchService from "../../warehouse/expedition/batch/batch.service";
 import { comercialUnitBusinessWhere } from "./helpers/comercial-unit-business";
+import { isWithinPhysicalStoreRange } from "./helpers/physical-numbered-unit-business";
 import roleService from "../users/roles/role.service";
 
 // Não existe flag/coluna própria pra marcar a loja CD21 — identificação
@@ -183,6 +184,37 @@ export class UnitBusinessService extends BaseService<
       comercialUnitBusinessWhere(),
       [["number", "DESC"]],
     );
+  }
+
+  /**
+   * IDs das lojas físicas "normais" (número 1-24), excluindo a CD21 (número
+   * 21) de propósito — usado quando um acesso global sem loja selecionada
+   * (Televendas sem escolher loja, ver .claude/entities/pdv-sales-request/
+   * index.md) precisa enxergar "todas as lojas" sem incluir a CD21 nem
+   * canais online/marketplace (nunca tiveram essa regra de exclusão antes
+   * porque Televendas sempre operava sobre uma loja por vez).
+   *
+   * `excludeNumbers` é pra exclusão adicional específica de quem chama (ex.:
+   * PDV_EXCLUDED_STORE_NUMBERS em pdv-management/helpers — lojas fora do
+   * fluxo PDV por decisão de produto, não por critério genérico de loja
+   * física) — este método continua agnóstico de PDV, só soma o filtro.
+   */
+  async getPhysicalNumberedUnitBusinessIds(
+    excludeNumbers: string[] = [],
+  ): Promise<string[]> {
+    const stores = await this.findAll({
+      where: { type: "PHYSICAL" },
+      attributes: ["id", "number"],
+    });
+
+    return stores
+      .filter(
+        (store) =>
+          isWithinPhysicalStoreRange(store.number) &&
+          store.number !== CD21_UNIT_BUSINESS_NUMBER &&
+          !excludeNumbers.includes(store.number ?? ""),
+      )
+      .map((store) => store.id);
   }
 
   async getComercialUnitBusinessOnly(): Promise<UnitBusinessAttributes[]> {

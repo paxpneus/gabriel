@@ -166,9 +166,7 @@ export class PdvSalesRequestController extends BaseController<
 
       const result = await this.service.paginateWithOrder(
         params,
-        access.screen === PdvAccessScreen.CD21
-          ? undefined
-          : { unit_business_id: access.unitBusinessId },
+        access.unitBusinessId,
       );
 
       return res.json(result);
@@ -186,7 +184,7 @@ export class PdvSalesRequestController extends BaseController<
 
       if (
         !record ||
-        (access.screen !== PdvAccessScreen.CD21 &&
+        (access.unitBusinessId !== null &&
           record.unit_business_id !== access.unitBusinessId)
       ) {
         return res.status(404).json({ error: "Não encontrado" });
@@ -262,8 +260,10 @@ export class PdvSalesRequestController extends BaseController<
     });
   };
 
-  // Loja/Financeiro só agem sobre solicitação da própria loja — 404 (não
-  // 403) se o :id pertencer a outra, mesmo padrão de product_config.controller.ts.
+  // Loja só age sobre solicitação da própria loja — 404 (não 403) se o :id
+  // pertencer a outra, mesmo padrão de product_config.controller.ts.
+  // unitBusinessId null (CD21/Financeiro, acesso global) pula a checagem —
+  // qualquer solicitação é "própria" pra quem enxerga todas as lojas.
   private async assertOwnedByAccess(
     req: Request,
     res: Response,
@@ -271,7 +271,11 @@ export class PdvSalesRequestController extends BaseController<
     const access = this.access(req);
     const record = await this.service.findById(req.params.id as string);
 
-    if (!record || record.unit_business_id !== access.unitBusinessId) {
+    if (
+      !record ||
+      (access.unitBusinessId !== null &&
+        record.unit_business_id !== access.unitBusinessId)
+    ) {
       res.status(404).json({ error: "Não encontrado" });
       return null;
     }
@@ -341,12 +345,7 @@ export class PdvSalesRequestController extends BaseController<
 
   getReceiptImage = async (req: Request, res: Response): Promise<Response> => {
     try {
-      if (
-        this.access(req).screen !== PdvAccessScreen.CD21 &&
-        !(await this.assertOwnedByAccess(req, res))
-      ) {
-        return res;
-      }
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
 
       const record = await this.service.findById(req.params.id as string);
       if (!record?.payment_receipt_path) {
@@ -574,11 +573,11 @@ export class PdvSalesRequestController extends BaseController<
   };
 
   // Coluna "Em Aberto" do Kanban — ver .claude/entities/pdv-sales-request/index.md.
+  // unitBusinessId null (Televendas sem loja escolhida) traz de todas as
+  // lojas físicas normais — resolvido em PdvSalesRequestService.
   eligibleOrders = async (req: Request, res: Response): Promise<Response> => {
     try {
       const access = this.access(req);
-      if (!access.unitBusinessId) return res.json([]);
-
       const orders = await this.service.findEligibleOrders(
         access.unitBusinessId,
       );
@@ -609,12 +608,7 @@ export class PdvSalesRequestController extends BaseController<
 
   getHistory = async (req: Request, res: Response): Promise<Response> => {
     try {
-      if (
-        this.access(req).screen !== PdvAccessScreen.CD21 &&
-        !(await this.assertOwnedByAccess(req, res))
-      ) {
-        return res;
-      }
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
       const history = await this.service.getHistory(req.params.id as string);
       return res.json(history);
     } catch (error: any) {

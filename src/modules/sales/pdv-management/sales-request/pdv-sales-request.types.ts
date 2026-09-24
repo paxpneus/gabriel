@@ -198,6 +198,14 @@ export interface PdvSalesRequestOrderUnitBusiness {
   name: string;
 }
 
+// Loja da PRÓPRIA PdvSalesRequest (association own unit_business_id),
+// distinta de PdvSalesRequestOrderUnitBusiness (loja do order aninhado) —
+// versão enxuta, id+number apenas, embutida no topo da resposta.
+export interface PdvSalesRequestUnitBusiness {
+  id: string;
+  number: string;
+}
+
 export interface PdvSalesRequestOrderPaymentMethod {
   id: string;
   description: string;

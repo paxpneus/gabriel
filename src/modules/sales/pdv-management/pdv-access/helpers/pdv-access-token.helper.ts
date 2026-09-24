@@ -3,7 +3,8 @@ import { PdvAccessScreen } from "../pdv-access.types";
 
 // Sem tabela/persistência: o token de cada link é derivado deterministicamente
 // (HMAC) de (número da loja, tela) + um segredo que mora só em variável de
-// ambiente — nunca no banco. Televendas usa a mesma função com um input fixo.
+// ambiente — nunca no banco. Televendas/Financeiro usam a mesma função com um
+// input fixo (acesso global, não amarrado a nenhuma loja real).
 function getSecret(): string {
   const secret = process.env.PDV_ACCESS_TOKEN_SECRET;
   if (!secret) {
@@ -27,6 +28,10 @@ export function computeStoreScreenToken(
 
 export function computeTelesalesToken(): string {
   return hmac("telesales");
+}
+
+export function computeFinanceToken(): string {
+  return hmac("finance");
 }
 
 export function tokensMatch(a: string, b: string): boolean {

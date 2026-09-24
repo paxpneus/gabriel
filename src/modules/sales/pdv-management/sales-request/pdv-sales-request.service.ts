@@ -38,6 +38,7 @@ import {
   PAYMENT_RECEIPT_ANALYSIS_DONE_EVENT,
 } from "./helpers/pdv-sales-request-room";
 import { notifyPdvStoreSync } from "./helpers/notify-pdv-store-sync";
+import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 
 // Fingerprint duplicado em OUTRA solicitação — tipo próprio pra distinguir
 // esse caso de qualquer outro erro dentro do job assíncrono de análise.
@@ -147,9 +148,43 @@ export class PdvSalesRequestService extends BaseService<
     return { ...plain, order: this.toOrderDetail(plain.order) };
   }
 
+  // Acesso global sem loja selecionada (CD21/Financeiro sempre, Televendas
+  // quando não escolhe loja) — resolve pra "todas as lojas físicas normais"
+  // (número 1-24, exceto CD21 e PDV_EXCLUDED_STORE_NUMBERS), nunca online/
+  // marketplace. Ver unitBusinessService.getPhysicalNumberedUnitBusinessIds.
+  private async resolveUnitBusinessScope(
+    unitBusinessId: string | null,
+  ): Promise<string | string[]> {
+    if (unitBusinessId) return unitBusinessId;
+    return unitBusinessService.getPhysicalNumberedUnitBusinessIds(
+      PDV_EXCLUDED_STORE_NUMBERS,
+    );
+  }
+
+  // Loja explicitamente fora do fluxo PDV (CD21, ou PDV_EXCLUDED_STORE_NUMBERS)
+  // — diferente do caso "sem loja selecionada" acima, aqui a loja É uma
+  // específica, só que uma que nunca participa do PDV. Único lugar que
+  // precisa buscar a UnitBusiness pelo id pra checar (as outras exclusões
+  // já filtram na origem, por número, sem precisar de round-trip extra).
+  private async isExcludedFromPdvFlow(unitBusinessId: string): Promise<boolean> {
+    const [unitBusiness, cd21] = await Promise.all([
+      unitBusinessService.findById(unitBusinessId),
+      unitBusinessService.getCd21UnitBusiness(),
+    ]);
+    if (!unitBusiness) return false;
+    if (cd21 && unitBusiness.id === cd21.id) return true;
+    return PDV_EXCLUDED_STORE_NUMBERS.includes(unitBusiness.number ?? "");
+  }
+
   // Listagem (cards reduzidos do Kanban) — só cliente + loja, sem forma de
-  // pagamento/parcelas/itens.
-  async paginateWithOrder(params: QueryParams, forcedWhere?: WhereOptions) {
+  // pagamento/parcelas/itens. unitBusinessId null (CD21/Financeiro/
+  // Televendas sem loja) enxerga todas as lojas físicas normais.
+  async paginateWithOrder(params: QueryParams, unitBusinessId: string | null) {
+    const scope = await this.resolveUnitBusinessScope(unitBusinessId);
+    const forcedWhere: WhereOptions = {
+      unit_business_id: Array.isArray(scope) ? { [Op.in]: scope } : scope,
+    };
+
     const result = await this.repository.findPaginatedWithOrder(
       params,
       this.queryConfig,
@@ -167,11 +202,20 @@ export class PdvSalesRequestService extends BaseService<
 
   // Pedidos da loja sem solicitação PDV ativa — coluna "Em Aberto" do Kanban
   // (ver "Card do Kanban" em .claude/entities/pdv-sales-request/index.md).
+  // unitBusinessId null (Televendas sem loja) traz de todas as lojas
+  // físicas normais. Loja explicitamente fora do fluxo PDV (CD21 ou
+  // PDV_EXCLUDED_STORE_NUMBERS) nunca tem pedido elegível — vazio, não erro
+  // (mesmo espírito de "sem pedido elegível", não "acesso inválido").
   async findEligibleOrders(
-    unitBusinessId: string,
+    unitBusinessId: string | null,
   ): Promise<PdvSalesRequestOrderSummary[]> {
+    if (unitBusinessId && (await this.isExcludedFromPdvFlow(unitBusinessId))) {
+      return [];
+    }
+
+    const scope = await this.resolveUnitBusinessScope(unitBusinessId);
     const orders = await orderService.findEligibleForPdvByUnitBusiness(
-      unitBusinessId,
+      scope,
       ELIGIBLE_ORDERS_LIMIT,
     );
     if (!orders.length) return [];

@@ -60,14 +60,15 @@ describe("PdvAccessLinkService", () => {
     expect(redisService.set).not.toHaveBeenCalled();
   });
 
-  it("sem unitBusinessId, usa a chave de cache 'all' e lista todas as lojas comerciais", async () => {
+  it("sem unitBusinessId, usa a chave de cache 'all' e lista todas as lojas comerciais em `stores`", async () => {
     (
       unitBusinessService.getComercialUnitBusinessOnly as jest.Mock
     ).mockResolvedValue([storeA]);
 
     const result = await service.getAccessLinks();
 
-    expect(Array.isArray(result)).toBe(true);
+    expect(Array.isArray(result.stores)).toBe(true);
+    expect(result.store).toBeUndefined();
     expect(redisService.get).toHaveBeenCalledWith("pdv-access:links:all");
     expect(redisService.set).toHaveBeenCalledWith(
       "pdv-access:links:all",
@@ -76,12 +77,13 @@ describe("PdvAccessLinkService", () => {
     );
   });
 
-  it("cd21Url usa o número da unidade CD21, não o da loja consultada", async () => {
+  it("uma loja: `store` só tem storeRequestUrl, `general` vem separado (cd21Url com número da CD21, não da loja consultada)", async () => {
     (unitBusinessService.findById as jest.Mock).mockResolvedValue(storeA);
 
-    const result = (await service.getAccessLinks(storeA.id)) as any;
+    const result = await service.getAccessLinks(storeA.id);
 
-    expect(result.cd21Url).toContain("number=21");
-    expect(result.storeRequestUrl).toContain("number=15");
+    expect(result.general.cd21Url).toContain("number=21");
+    expect(result.store?.storeRequestUrl).toContain("number=15");
+    expect(result.stores).toBeUndefined();
   });
 });

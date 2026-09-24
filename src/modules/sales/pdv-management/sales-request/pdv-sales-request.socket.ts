@@ -4,7 +4,6 @@ import {
   pdvSocketAuthMiddleware,
   PdvSocketData,
 } from "../pdv-access/pdv-socket-auth.middleware";
-import { PdvAccessScreen } from "../pdv-access/pdv-access.types";
 import pdvSalesRequestService from "./pdv-sales-request.service";
 import {
   PDV_CD21_ROOM,
@@ -47,13 +46,14 @@ export function registerPdvSocketNamespace(): void {
           }
 
           // Mesmo scoping de assertOwnedByAccess (pdv-sales-request.controller.ts):
-          // CD21 vê qualquer solicitação, as outras só a da própria loja.
+          // CD21/Financeiro (unitBusinessId null, acesso global) veem
+          // qualquer solicitação, as outras só a da própria loja.
           const access = (socket.data as PdvSocketData).pdvAccess;
           const record = await pdvSalesRequestService.findById(requestId);
 
           if (
             !record ||
-            (access.screen !== PdvAccessScreen.CD21 &&
+            (access.unitBusinessId !== null &&
               record.unit_business_id !== access.unitBusinessId)
           ) {
             callback?.({ ok: false, error: "Não encontrado" });

@@ -30,8 +30,9 @@ export class PdvAccessLinkController extends RouterController {
     this.router.get("/links", ...this.mw("links"), this.getLinks);
   }
 
-  // ?unitBusinessId=<id> → só os links dessa loja; omitido → de todas as
-  // lojas comerciais.
+  // ?unitBusinessId=<id> → `store` (link dessa loja); omitido → `stores`
+  // (todas as lojas comerciais). `general` (CD21/financeiro/televendas,
+  // acesso global) vem sempre, nos dois casos — ver pdv-access-link.service.ts.
   getLinks = async (req: Request, res: Response): Promise<Response> => {
     try {
       const links = await pdvAccessLinkService.getAccessLinks(

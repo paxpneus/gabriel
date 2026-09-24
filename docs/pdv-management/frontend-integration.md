@@ -72,13 +72,25 @@ uma ou mais:
 | Perfil | Tela | O que faz |
 |---|---|---|
 | **Loja — Operação** | `STORE_REQUEST` | Cria solicitação, anexa comprovante + tipo de envio, resolve correção |
-| **Loja — Financeiro** | `FINANCE` | Aprova/rejeita comprovante da própria loja |
-| **Televendas** | `STORE_REQUEST` (dinâmico) | Igual Loja — Operação, mas escolhe a loja a cada acesso. **Nunca acessa a loja CD21** |
+| **Financeiro** | `FINANCE` | Aprova/rejeita comprovante — vê e age sobre pedido de **qualquer loja física normal** (acesso global, sem escopo, um único link/token — não varia por loja) |
+| **Televendas** | `STORE_REQUEST` | Igual Loja — Operação, mas sem escolher loja nenhuma: acesso global, vê pedido de **qualquer loja física normal** de uma vez (mesmo mecanismo de Financeiro) |
 | **CD21 — Operação** | `CD21` | Analisa pedido, gera/vincula notas, expede, resolve nota cancelada. Vê e age sobre pedido de **qualquer loja** (hub central, sem escopo) |
-| **CD21 — Financeiro** | `FINANCE` (loja = CD21) | Mesma tela/rotas do Financeiro de loja, só que pra pedidos "da loja CD21" — na prática pouco usado, mas o mecanismo é idêntico |
 
-Uma tela só enxerga/edita a solicitação da própria loja — **exceto CD21**,
-que não tem escopo de loja nenhum.
+Uma tela só enxerga/edita a solicitação da própria loja — **exceto CD21,
+Financeiro e Televendas**, que não têm escopo de loja nenhum (veem/agem
+sobre pedido de qualquer loja). Financeiro/Televendas/CD21, quando listam
+sem filtrar por loja, enxergam **lojas físicas normais** (número 1-24,
+nunca lojas online/marketplace) — CD21 (loja 21) fica de fora dessa
+listagem "todas as lojas" por decisão de produto (era a regra de "Televendas
+nunca acessa CD21", generalizada pro conceito de "loja normal").
+
+**Lojas 12 e 17 não participam do fluxo do PDV Management** (decisão de
+produto, junto com a CD21/21 acima) — nenhuma das duas nunca tem pedido
+elegível (`GET /orders/eligible`, mesmo pedindo a loja explicitamente por
+número/token/login) nem `storeRequestUrl` (seção 10). Se alguém pedir o
+link de uma dessas 3 lojas explicitamente via `GET /api/pdv-access/links?
+unitBusinessId=<id>`, a resposta é erro (`400`, "Loja não participa do
+fluxo do PDV Management" — ver seção 12), não um link inválido/vazio.
 
 ## 4. Autenticação
 
@@ -110,21 +122,26 @@ pra outra pessoa**. Quem já recebeu o link pronto nunca precisa chamar
 
 ### 4.1 Sem login (link/token) — Loja, Financeiro, Televendas, CD21
 
-Todo request manda 2 headers:
+Loja/CD21 mandam 2 headers; **Financeiro e Televendas mandam só o token**
+(nenhum dos dois tem loja pra informar):
 
 ```
-x-pdv-unit-business-number: <número da loja>
+x-pdv-unit-business-number: <número da loja>   # Financeiro/Televendas: omitir
 x-pdv-token: <token>
 ```
 
 - `token` é fixo por (loja, tela) e **não expira**. Foi copiado da URL do
   link que a pessoa recebeu, ou obtido via `GET /api/pdv-access/...`
   (seção 10).
-- Televendas usa o **mesmo token pra qualquer loja** (só muda o número da
-  loja no header) — exceto a loja CD21, que é sempre rejeitada (`403`)
-  nesse modo.
+- Financeiro e Televendas usam token fixo (`computeFinanceToken`/
+  `computeTelesalesToken`, não amarrado a loja nenhuma) e **não selecionam
+  loja nenhuma** — o token sozinho já dá acesso a pedidos de todas as lojas
+  físicas normais (número 1-24, nunca online/marketplace, e sem a CD21 —
+  ver seção 3). `x-pdv-unit-business-number` é ignorado/desnecessário pros
+  dois.
 - Token errado/faltando → `401`. Loja não encontrada pelo número → `404`.
-  Faltando algum dos dois headers → `400`.
+  `x-pdv-token` faltando → `400` (`x-pdv-unit-business-number` só é exigido
+  quando o token não bate com o de Financeiro nem de Televendas).
 
 ### 4.2 Com login (usuário logado normalmente no sistema)
 
@@ -139,6 +156,10 @@ Regra de tela por login:
 |---|---|
 | CD21 | `CD21` e/ou `FINANCE` |
 | Qualquer outra | `STORE_REQUEST` e/ou `FINANCE` |
+
+`FINANCE` é global — não importa a loja atual do usuário logado, a
+permissão sozinha já libera acesso a pedidos de qualquer loja (mesmo
+comportamento do acesso por link, seção 4.1).
 
 Permissões de role: `pdv_sales_request_store`, `pdv_sales_request_finance`,
 `pdv_sales_request_cd21` (uma flag por tela, concedida na tela de roles).
@@ -248,13 +269,16 @@ de erro em caso de falha.
 
 | Método | Rota | Query params | Resposta |
 |---|---|---|---|
-| GET | `/` | `page`, `perPage`, `sortBy`, `sortDir`, `filters[status]`, `filters[shipping_type]`, `filters[unit_business_id]`, `filters[order_id]` | `PaginatedResult<PdvSalesRequest & { order: PdvSalesRequestOrderSummary \| null }>` — default `sortBy=createdAt&sortDir=ASC` (mais antigo primeiro, fila FIFO), sobrescrevível via query string |
-| GET | `/:id` | — | `PdvSalesRequest & { order: PdvSalesRequestOrderDetail \| null }` (404 se não for da sua loja, exceto CD21) |
+| GET | `/` | `page`, `perPage`, `sortBy`, `sortDir`, `filters[status]`, `filters[shipping_type]`, `filters[unit_business_id]`, `filters[order_id]` | `PaginatedResult<PdvSalesRequest & { order: PdvSalesRequestOrderSummary \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null }>` — default `sortBy=createdAt&sortDir=ASC` (mais antigo primeiro, fila FIFO), sobrescrevível via query string |
+| GET | `/:id` | — | `PdvSalesRequest & { order: PdvSalesRequestOrderDetail \| null; unitBusiness: PdvSalesRequestUnitBusiness \| null }` (404 se não for da sua loja, exceto CD21/Financeiro/Televendas) |
 | GET | `/:id/history` | — | `PdvSalesRequestHistory[]` — ordenado por `date DESC` (mais recente primeiro, fixo, não aceita `sortBy`/`sortDir`) |
 
-Loja/Financeiro só veem solicitação da própria loja (escopo automático,
-não precisa mandar `filters[unit_business_id]`). CD21 vê tudo — pode usar
-`filters[unit_business_id]` pra filtrar por loja se quiser.
+Loja só vê solicitação da própria loja (escopo automático, não precisa
+mandar `filters[unit_business_id]`). CD21/Financeiro/Televendas, sem
+`filters[unit_business_id]`, veem de **todas as lojas físicas normais**
+(número 1-24, nunca online/marketplace, sem a CD21) — podem usar
+`filters[unit_business_id]` pra restringir a uma loja específica se
+quiserem.
 
 `order` é montado on-the-fly a partir de `order_id` (join com Bling `orders`
 + `customers`/`unit_businesses`/`payment_methods`/`order_items`) — nunca
@@ -268,11 +292,16 @@ precisa disso); o detalhe (`GET /:id`) traz a versão completa
 expõe parcelas como campo estruturado, só dentro do payload cru, que o
 back nunca repassa ao front). Ver os dois tipos na seção 11.
 
+`unitBusiness` (sibling de `order`, no topo da resposta) é a loja da
+PRÓPRIA solicitação (`unit_business_id`), não a loja aninhada dentro de
+`order` — só `{ id, number }`, sem `name`. Útil quando o front só precisa
+identificar a loja sem entrar no objeto `order`.
+
 ### 5.2 Loja — Operação (`STORE_REQUEST`)
 
 | Método | Rota | Body | Resposta |
 |---|---|---|---|
-| GET | `/orders/eligible` | — | `PdvSalesRequestOrderSummary[]` — pedidos da loja do acesso, sem status finalizador (completo/cancelado) e sem solicitação PDV ativa ainda (coluna "Em Aberto" do Kanban, ação "Criar solicitação"), ordenado por `date ASC` (mais antigo primeiro, fixo) |
+| GET | `/orders/eligible` | — | `PdvSalesRequestOrderSummary[]` — pedidos da loja do acesso (Televendas: de **todas** as lojas físicas normais de uma vez, sem escolher loja), sem status finalizador (completo/cancelado) e sem solicitação PDV ativa ainda (coluna "Em Aberto" do Kanban, ação "Criar solicitação"), ordenado por `date ASC` (mais antigo primeiro, fixo) |
 | GET | `/orders/:orderId` | — | `PdvSalesRequestOrderDetail` (404 se não existir ou não for da loja do acesso) — card expandido de um pedido de `/orders/eligible`, antes de existir solicitação |
 | POST | `/` | `{ orderId: string, name: string }` | `201 PdvSalesRequest` |
 | POST | `/:id/receipt` | multipart: campo `receipt` (arquivo) + campo `shippingType: "TRANSPORTADORA" \| "ADT"` | `202 PdvSalesRequest & { paymentReceiptAnalysisStatus: "PROCESSING" }` |
@@ -293,7 +322,11 @@ back nunca repassa ao front). Ver os dois tipos na seção 11.
   ativa pra esse `order_id` ainda (mesma noção de "ativa" de `errors`/status
   terminal — um pedido cuja última solicitação já terminou pode gerar outra
   nova). Sem paginação por enquanto (`limit` interno de 200, sem filtro de
-  data) — revisar se a lista crescer demais na prática.
+  data) — revisar se a lista crescer demais na prática. **Lojas 21 (CD21),
+  12 e 17 nunca retornam nada aqui** (array vazio, não erro) — não
+  participam do fluxo do PDV, mesmo que a loja do acesso seja uma dessas 3
+  explicitamente (não só no agregado "todas as lojas" de Financeiro/
+  Televendas/CD21).
 - `POST /` — `orderId` precisa ser um pedido da **mesma loja** do acesso
   (número do header/loja atual do login), senão `403`.
 - `POST /:id/receipt` pode ser chamado várias vezes (troca de comprovante)
@@ -321,7 +354,7 @@ back nunca repassa ao front). Ver os dois tipos na seção 11.
 - Só `POST /:id/receipt/confirm` avança o status — exige que já exista
   `payment_receipt_path` e `shipping_type` salvos.
 
-### 5.3 Financeiro (`FINANCE`) — loja ou CD21
+### 5.3 Financeiro (`FINANCE`) — acesso global, qualquer loja
 
 | Método | Rota | Body | Resposta |
 |---|---|---|---|
@@ -457,14 +490,40 @@ chame (precisa de acesso a alguma tela, via login ou link):
 
 | Método | Rota | Resposta |
 |---|---|---|
-| GET | `/api/pdv-access/links?unitBusinessId=<id>` | `{ unitBusinessId, unitBusinessNumber, unitBusinessName, storeRequestUrl, financeUrl, cd21Url, telesalesUrl }` — os 4 links dessa loja |
-| GET | `/api/pdv-access/links` (sem query) | o mesmo objeto acima, em array — uma entrada por loja comercial cadastrada |
+| GET | `/api/pdv-access/links?unitBusinessId=<id>` | `{ general: PdvGeneralAccessLinks, store: PdvStoreRequestLink }` — `store` é o link `STORE_REQUEST` dessa loja |
+| GET | `/api/pdv-access/links` (sem query) | `{ general: PdvGeneralAccessLinks, stores: PdvStoreRequestLink[] }` — `stores` com uma entrada por loja comercial cadastrada |
 
-`cd21Url`/`telesalesUrl` são globais — o mesmo valor se repete em toda loja
-do array, já que não variam por `unitBusinessNumber`. Cada `*Url` já é o
-link completo pronto pra abrir no browser/mandar pra pessoa — não é mais
-sugestão, é o contrato fixo. Rota única no front, tela vem na query string
-(confirmado testando contra o router real — não é path por tela):
+`STORE_REQUEST` é a única tela escopada por loja — por isso só ela aparece
+em `store`/`stores`, um objeto por loja. `general` (CD21/Financeiro/
+Televendas) vem **sempre**, calculado uma única vez, igual nos dois casos —
+essas 3 telas são acesso global, o mesmo link/token de sempre não muda por
+loja nem se repete numa listagem.
+
+**Lojas 21 (CD21), 12 e 17 nunca aparecem em `stores`** (listagem completa,
+sem query) — não participam do fluxo do PDV (mesma regra da seção 3/5.2).
+Pedindo uma delas explicitamente (`?unitBusinessId=<id>` de uma dessas 3),
+a resposta é erro em vez de `store`: `400 { "error": "Loja não participa do
+fluxo do PDV Management" }`.
+
+```ts
+interface PdvStoreRequestLink {
+  unitBusinessId: string;
+  unitBusinessNumber: string;
+  unitBusinessName: string;
+  storeRequestUrl: string;
+}
+
+interface PdvGeneralAccessLinks {
+  cd21Url: string;
+  financeUrl: string;
+  telesalesUrl: string;
+}
+```
+
+Cada `*Url` já é o link completo pronto pra abrir no browser/mandar pra
+pessoa — não é mais sugestão, é o contrato fixo. Rota única no front, tela
+vem na query string (confirmado testando contra o router real — não é path
+por tela):
 
 ```
 https://hub.paxpneus.com.br/pdv-management?token=<token>&screen=<tela>&number=<número>
@@ -473,9 +532,10 @@ https://hub.paxpneus.com.br/pdv-management?token=<token>&screen=<tela>&number=<n
 (`FRONTEND_URL` no ambiente sobrescreve o domínio; `<tela>` é `store_request`
 | `finance` | `cd21` | `telesales`). O front lê `number`/`token`/`screen` da
 própria URL e manda os dois primeiros como os headers da seção 4.1 em toda
-chamada pra `/api/sales-request/*`. Pro link de televendas não vem `number`
-(a loja é escolhida em tempo de navegação, dentro do front) — as outras 3
-sempre vêm com `number` embutido.
+chamada pra `/api/sales-request/*`. `storeRequestUrl`/`cd21Url` sempre vêm
+com `number` embutido; `financeUrl`/`telesalesUrl` **nunca** vêm com
+`number` — Financeiro não precisa de loja nenhuma (seção 4.1), Televendas
+escolhe a loja em tempo de navegação, dentro do front.
 
 ## 11. Tipos
 
@@ -516,6 +576,13 @@ interface PdvSalesRequest {
   created_by_user_id: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// Loja da PRÓPRIA solicitação (unit_business_id), embutida no topo da
+// resposta de GET / e GET /:id — distinta da loja aninhada em order.
+interface PdvSalesRequestUnitBusiness {
+  id: string;
+  number: string;
 }
 
 interface PdvSalesRequestHistory {
@@ -577,9 +644,9 @@ interface PdvSalesRequestOrderDetail extends PdvSalesRequestOrderSummary {
 
 | Status | Quando |
 |---|---|
-| `400` | Header de link faltando, ou parâmetro obrigatório faltando no body |
+| `400` | Header de link faltando, parâmetro obrigatório faltando no body, ou `GET /api/pdv-access/links?unitBusinessId=` de uma loja fora do fluxo PDV (21/CD21, 12, 17) |
 | `401` | Token inválido/não bate com a tela da rota, sem login e sem headers |
-| `403` | Televendas tentando acessar a loja CD21; `orderId` de outra loja no `POST /` |
+| `403` | `orderId` de outra loja no `POST /` |
 | `404` | Solicitação/loja não encontrada, ou não pertence à loja do acesso |
 | `500` | Erro interno (inclui: variável de ambiente do segredo de token não configurada no servidor — reportar pro back, não é algo que o front resolve) |
 

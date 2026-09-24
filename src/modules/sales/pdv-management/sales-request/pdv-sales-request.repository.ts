@@ -24,6 +24,8 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   // Pedido (Bling) embutido, com cliente/pagamento/itens — card expandido
   // do Kanban. `order` é associação própria (belongsTo), o resto é join
   // dela — ver .claude/entities/pdv-sales-request/index.md ("Card do Kanban").
+  // `unitBusiness` no topo é a loja da PRÓPRIA solicitação (own
+  // unit_business_id, distinta de order.unitBusiness) — só id/number.
   async findByIdWithOrder(id: string): Promise<PdvSalesRequest | null> {
     return this.findById(id, {
       include: [
@@ -37,6 +39,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
             { model: OrderItems, as: "items" },
           ],
         },
+        { model: UnitBusiness, as: "unitBusiness", attributes: ["id", "number"] },
       ],
     });
   }
@@ -61,6 +64,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
               { model: UnitBusiness, as: "unitBusiness" },
             ],
           },
+          { model: UnitBusiness, as: "unitBusiness", attributes: ["id", "number"] },
         ],
       },
       forcedWhere,

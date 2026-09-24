@@ -141,14 +141,18 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
   // finalizador (completo ou cancelado, TERMINAL_ORDER_INTERNAL_STATUSES) —
   // não faz sentido abrir solicitação PDV pra pedido que já terminou. Regra
   // é específica desse fluxo, não um "find genérico por loja" — nome reflete
-  // isso.
+  // isso. `unitBusinessId` aceita uma loja só (fluxo normal) ou uma lista
+  // (acesso global sem loja selecionada, ex.: Televendas — ver
+  // pdv-sales-request.service.ts::findEligibleOrders).
   async findEligibleForPdvByUnitBusiness(
-    unitBusinessId: string,
+    unitBusinessId: string | string[],
     limit: number,
   ): Promise<Order[]> {
     return this.model.findAll({
       where: {
-        unit_business_id: unitBusinessId,
+        unit_business_id: Array.isArray(unitBusinessId)
+          ? { [Op.in]: unitBusinessId }
+          : unitBusinessId,
         internal_status: { [Op.notIn]: TERMINAL_ORDER_INTERNAL_STATUSES },
       },
       attributes: { exclude: ["source_payload"] },

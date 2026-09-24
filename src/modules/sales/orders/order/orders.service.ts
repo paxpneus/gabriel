@@ -354,7 +354,7 @@ export class OrderService extends BaseService<Order, OrderRepository> {
   }
 
   async findEligibleForPdvByUnitBusiness(
-    unitBusinessId: string,
+    unitBusinessId: string | string[],
     limit: number,
   ): Promise<Order[]> {
     return this.repository.findEligibleForPdvByUnitBusiness(

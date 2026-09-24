@@ -2,10 +2,12 @@ import unitBusinessService from "../../../company/unit-business/unit-business.se
 import { UnitBusinessAttributes } from "../../../company/unit-business/unit-business.types";
 import { PdvAccessScreen } from "./pdv-access.types";
 import {
+  computeFinanceToken,
   computeStoreScreenToken,
   computeTelesalesToken,
 } from "./helpers/pdv-access-token.helper";
 import redisService from "../../../../shared/utils/base-models/base-redis";
+import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 
 // Front tem uma única rota /pdv-management (query string carrega screen,
 // não path por tela) — confirmado testando contra o router real.
@@ -27,14 +29,27 @@ function buildFrontendUrl(
   return `${baseUrl}/pdv-management?${params.toString()}`;
 }
 
-export interface PdvStoreAccessLinks {
+// STORE_REQUEST é a única tela realmente escopada por loja — cada uma tem
+// seu próprio link/token.
+export interface PdvStoreRequestLink {
   unitBusinessId: string;
   unitBusinessNumber: string;
   unitBusinessName: string;
   storeRequestUrl: string;
-  financeUrl: string;
+}
+
+// CD21, financeiro e televendas são acesso global — um único link cada,
+// nunca varia por loja (nem repetido por loja na resposta).
+export interface PdvGeneralAccessLinks {
   cd21Url: string;
+  financeUrl: string;
   telesalesUrl: string;
+}
+
+export interface PdvAccessLinksResult {
+  general: PdvGeneralAccessLinks;
+  store?: PdvStoreRequestLink;
+  stores?: PdvStoreRequestLink[];
 }
 
 export class PdvAccessLinkService {
@@ -42,15 +57,9 @@ export class PdvAccessLinkService {
   // — este service só resolve os valores computados pra quem já tem acesso a
   // alguma tela (via pdvAccess), pra montar/distribuir o link pro time que
   // ainda não tem.
-  //
-  // CD21 e televendas são globais (mesmo link pra qualquer loja) — cd21Url
-  // usa sempre o número da própria unidade CD21 (nunca o da loja consultada,
-  // já que a fórmula é HMAC(secret, `store:<número>:CD21`) e só o número real
-  // da CD21 autentica como acesso global de verdade).
-  private buildLinksForStore(
+  private buildStoreRequestLink(
     unitBusiness: Pick<UnitBusinessAttributes, "id" | "number" | "name">,
-    cd21: Pick<UnitBusinessAttributes, "number">,
-  ): PdvStoreAccessLinks {
+  ): PdvStoreRequestLink {
     return {
       unitBusinessId: unitBusiness.id,
       unitBusinessNumber: unitBusiness.number,
@@ -63,15 +72,25 @@ export class PdvAccessLinkService {
         PdvAccessScreen.STORE_REQUEST.toLowerCase(),
         unitBusiness.number,
       ),
-      financeUrl: buildFrontendUrl(
-        computeStoreScreenToken(unitBusiness.number, PdvAccessScreen.FINANCE),
-        PdvAccessScreen.FINANCE.toLowerCase(),
-        unitBusiness.number,
-      ),
+    };
+  }
+
+  // cd21Url usa sempre o número da própria unidade CD21 (nunca de uma loja
+  // qualquer), já que a fórmula é HMAC(secret, `store:<número>:CD21`) e só o
+  // número real da CD21 autentica como acesso global de verdade. financeUrl/
+  // telesalesUrl são token fixo, não amarrados a loja nenhuma.
+  private buildGeneralLinks(
+    cd21: Pick<UnitBusinessAttributes, "number">,
+  ): PdvGeneralAccessLinks {
+    return {
       cd21Url: buildFrontendUrl(
         computeStoreScreenToken(cd21.number, PdvAccessScreen.CD21),
         PdvAccessScreen.CD21.toLowerCase(),
         cd21.number,
+      ),
+      financeUrl: buildFrontendUrl(
+        computeFinanceToken(),
+        PdvAccessScreen.FINANCE.toLowerCase(),
       ),
       telesalesUrl: buildFrontendUrl(
         computeTelesalesToken(),
@@ -86,30 +105,52 @@ export class PdvAccessLinkService {
       : "pdv-access:links:all";
   }
 
-  // unitBusinessId informado: só os links dessa loja. Omitido: todas as lojas
-  // comerciais (mesmo filtro de getComercialUnitBusinessOnly — exclui
-  // marketplace/loja "0"). cd21 é resolvido uma única vez fora do map, nunca
-  // por loja (evitaria N+1 na listagem completa).
-  async getAccessLinks(
-    unitBusinessId?: string,
-  ): Promise<PdvStoreAccessLinks | PdvStoreAccessLinks[]> {
+  // CD21 e PDV_EXCLUDED_STORE_NUMBERS nunca têm storeRequestUrl — não
+  // participam do fluxo PDV (ver helpers/pdv-excluded-unit-business.ts).
+  // CD21 continua tendo seu próprio link (cd21Url, em `general`), só não um
+  // storeRequestUrl "como se fosse uma loja normal".
+  private isExcludedFromStoreRequestLink(
+    unitBusiness: Pick<UnitBusinessAttributes, "id" | "number">,
+    cd21: Pick<UnitBusinessAttributes, "id">,
+  ): boolean {
+    return (
+      unitBusiness.id === cd21.id ||
+      PDV_EXCLUDED_STORE_NUMBERS.includes(unitBusiness.number)
+    );
+  }
+
+  // unitBusinessId informado: `store` com o link dessa loja. Omitido:
+  // `stores` com todas as lojas comerciais (mesmo filtro de
+  // getComercialUnitBusinessOnly — exclui marketplace/loja "0" — mais CD21/
+  // PDV_EXCLUDED_STORE_NUMBERS, ver isExcludedFromStoreRequestLink).
+  // `general` vem sempre, calculado uma única vez (nunca por loja, evita
+  // N+1 e repetição do mesmo link em cada entrada da listagem completa).
+  async getAccessLinks(unitBusinessId?: string): Promise<PdvAccessLinksResult> {
     const cacheKey = this.accessLinksCacheKey(unitBusinessId);
-    const cached = await redisService.get<
-      PdvStoreAccessLinks | PdvStoreAccessLinks[]
-    >(cacheKey);
+    const cached = await redisService.get<PdvAccessLinksResult>(cacheKey);
     if (cached !== null) return cached;
 
     const cd21 = await unitBusinessService.getCd21UnitBusiness();
     if (!cd21) throw new Error("Unidade CD21 não cadastrada");
 
-    let result: PdvStoreAccessLinks | PdvStoreAccessLinks[];
+    const general = this.buildGeneralLinks(cd21);
+
+    let result: PdvAccessLinksResult;
     if (unitBusinessId) {
       const unitBusiness = await unitBusinessService.findById(unitBusinessId);
       if (!unitBusiness) throw new Error("Loja não encontrada");
-      result = this.buildLinksForStore(unitBusiness, cd21);
+      if (this.isExcludedFromStoreRequestLink(unitBusiness, cd21)) {
+        throw new Error("Loja não participa do fluxo do PDV Management");
+      }
+      result = { general, store: this.buildStoreRequestLink(unitBusiness) };
     } else {
       const stores = await unitBusinessService.getComercialUnitBusinessOnly();
-      result = stores.map((store) => this.buildLinksForStore(store, cd21));
+      result = {
+        general,
+        stores: stores
+          .filter((store) => !this.isExcludedFromStoreRequestLink(store, cd21))
+          .map((store) => this.buildStoreRequestLink(store)),
+      };
     }
 
     await redisService.set(cacheKey, result, {
