@@ -548,7 +548,7 @@ export class PdvSalesRequestService extends BaseService<
       request.correction_origin_status !== PdvSalesRequestStatus.PENDING_FINANCE
     ) {
       throw new Error(
-        "Correção pendente não é de comprovante — resolva pelo endpoint de correção",
+        "Comprovante já aprovado pelo financeiro!",
       );
     }
 
