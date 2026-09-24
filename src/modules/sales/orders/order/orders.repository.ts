@@ -23,6 +23,7 @@ import {
 } from "../../../../shared/utils/normalizers/date";
 import { collectionDateBucketLiteral, tomorrowBucketKey } from "./helpers/aggregates";
 import { translateOrderInternalStatus } from "./helpers/translations";
+import { orderMissingGeneratedDeliveryNoteLiteral } from "./helpers/eligible-for-pdv-filters";
 import Store from "../../stores/stores.model";
 import PaymentMethod from "../payment_method/payment_method.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
@@ -137,12 +138,14 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
 
   // Usado só pelo PDV (pdv-sales-request.service.ts) pra listar pedidos de
   // uma loja elegíveis pra virar solicitação — cliente + loja só, sem os
-  // includes pesados de pagamento/itens. Exclui pedido em status
-  // finalizador (completo ou cancelado, TERMINAL_ORDER_INTERNAL_STATUSES) —
-  // não faz sentido abrir solicitação PDV pra pedido que já terminou. Regra
-  // é específica desse fluxo, não um "find genérico por loja" — nome reflete
-  // isso. `unitBusinessId` aceita uma loja só (fluxo normal) ou uma lista
-  // (acesso global sem loja selecionada, ex.: Televendas — ver
+  // includes pesados de pagamento/itens. Elegível independente do
+  // internal_status (completo, em andamento etc.), só não pode CANCELLED, e
+  // só se o invoice do pedido ainda não tiver romaneio gerado na loja do
+  // próprio pedido (orderMissingGeneratedDeliveryNoteLiteral — pedido já
+  // expedido não deveria abrir nova solicitação). Regra é específica desse
+  // fluxo, não um "find genérico por loja" — nome reflete isso.
+  // `unitBusinessId` aceita uma loja só (fluxo normal) ou uma lista (acesso
+  // global sem loja selecionada, ex.: Televendas — ver
   // pdv-sales-request.service.ts::findEligibleOrders).
   async findEligibleForPdvByUnitBusiness(
     unitBusinessId: string | string[],
@@ -153,7 +156,8 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
         unit_business_id: Array.isArray(unitBusinessId)
           ? { [Op.in]: unitBusinessId }
           : unitBusinessId,
-        internal_status: { [Op.notIn]: ['CANCELLED'] },
+        internal_status: { [Op.ne]: OrderInternalStatus.CANCELLED },
+        [Op.and]: [orderMissingGeneratedDeliveryNoteLiteral()],
       },
       attributes: { exclude: ["source_payload"] },
       include: [
@@ -163,6 +167,23 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
       order: [["date", "ASC"]],
       limit: limit ?? undefined,
     });
+  }
+
+  // Mesmo critério de elegibilidade de findEligibleForPdvByUnitBusiness
+  // (CANCELLED fora, sem romaneio já gerado pro invoice/loja do pedido), só
+  // que pra UM pedido específico — usado por
+  // bling-order.service.ts::createOrderFromBling pra decidir se a
+  // PdvSalesRequest vazia nasce junto do pedido.
+  async isEligibleForPdv(orderId: string): Promise<boolean> {
+    const order = await this.model.findOne({
+      where: {
+        id: orderId,
+        internal_status: { [Op.ne]: OrderInternalStatus.CANCELLED },
+        [Op.and]: [orderMissingGeneratedDeliveryNoteLiteral()],
+      },
+      attributes: ["id"],
+    });
+    return !!order;
   }
 
   // Usado pelo PDV pro card expandido do pedido — cliente, forma de

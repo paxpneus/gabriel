@@ -7,11 +7,28 @@ jest.mock("../../../../../sales/orders/order/orders.service", () => ({
   __esModule: true,
   default: {
     findOne: jest.fn(),
+    findById: jest.fn(),
     update: jest.fn(),
     create: jest.fn(),
     delete: jest.fn(),
+    isEligibleForPdv: jest.fn(),
   },
 }));
+
+// createEmptyRequestForNewOrderIfEligible roda incondicionalmente em toda
+// criação de pedido (ver bling-order.service.ts) — mockado pra não exercitar
+// a repository real do PDV (sqlite em memória sem as tabelas do módulo)
+// nestes testes, que são só do fluxo de criação/atualização de Order.
+jest.mock(
+  "../../../../../sales/pdv-management/sales-request/pdv-sales-request.service",
+  () => ({
+    __esModule: true,
+    default: {
+      createEmptyRequestForNewOrderIfEligible: jest.fn(),
+      markSaleInvoiceReadyIfPending: jest.fn(),
+    },
+  }),
+);
 
 jest.mock("../../../../../sales/orders/order_items/order_items.service", () => ({
   __esModule: true,

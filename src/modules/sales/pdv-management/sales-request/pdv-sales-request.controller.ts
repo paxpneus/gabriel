@@ -318,12 +318,37 @@ export class PdvSalesRequestController extends BaseController<
 
   // Separado do anexo de comprovante — shipping_type é propriedade da
   // solicitação, não de um comprovante específico (pode haver mais de um).
+  // :id continua sendo o id da PdvSalesRequest — mas se não existir mais
+  // nenhuma solicitação com esse id (ex.: pedido ainda não teve
+  // POST / chamado por algum motivo), aceita orderId no body como fallback
+  // pra criar a solicitação vazia na hora, igual createRequest, e já aplicar
+  // o shipping_type nela.
   setShippingType = async (req: Request, res: Response): Promise<Response> => {
     try {
-      if (!(await this.assertOwnedByAccess(req, res))) return res;
+      const access = this.access(req);
+      const requestedId = req.params.id as string;
+      let record = await this.service.findById(requestedId);
+
+      if (!record) {
+        const { orderId } = req.body;
+        if (!orderId) {
+          return res.status(404).json({ error: "Não encontrado" });
+        }
+        record = await this.service.createRequest({
+          orderId,
+          createdByUserId: this.actorUserId(req),
+          unitBusinessId: access.unitBusinessId,
+        });
+      } else if (
+        access.unitBusinessId !== null &&
+        record.unit_business_id !== access.unitBusinessId
+      ) {
+        return res.status(404).json({ error: "Não encontrado" });
+      }
+
       const { shippingType } = req.body;
       const updated = await this.service.setShippingType(
-        req.params.id as string,
+        record.id,
         shippingType as PdvShippingType,
         this.actorUserId(req),
       );

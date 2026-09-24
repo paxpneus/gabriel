@@ -1142,6 +1142,13 @@ export class BlingOrderService {
       const createdOrder = await ordersService.create(ordersPayload);
       notifyPdvStoreSync(createdOrder.unit_business_id, "NEW_ORDER");
 
+      // Só na criação (nunca no update) — pedido já nasce com uma
+      // PdvSalesRequest vazia se for elegível pro fluxo PDV (ver
+      // createEmptyRequestForNewOrderIfEligible).
+      await pdvSalesRequestService.createEmptyRequestForNewOrderIfEligible(
+        createdOrder.id,
+      );
+
       if (invoiceId) {
         await pdvSalesRequestService.markSaleInvoiceReadyIfPending(
           createdOrder.id,

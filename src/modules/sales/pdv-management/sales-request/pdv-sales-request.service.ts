@@ -47,9 +47,11 @@ import {
   PDV_SOCKET_NAMESPACE,
   pdvSalesRequestRoom,
   PAYMENT_RECEIPT_ANALYSIS_DONE_EVENT,
+  PDV_SALES_REQUEST_UPDATED_EVENT,
 } from "./helpers/pdv-sales-request-room";
 import { notifyPdvStoreSync } from "./helpers/notify-pdv-store-sync";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
+import { orderNumberSystemMatchesLiteral } from "./helpers/custom-filters";
 
 // Fingerprint duplicado em OUTRA solicitação — tipo próprio pra distinguir
 // esse caso de qualquer outro erro dentro do job assíncrono de análise.
@@ -81,6 +83,15 @@ export class PdvSalesRequestService extends BaseService<
         "shipping_type",
       ],
       sortableFields: ["createdAt", "status"],
+      customFields: {
+        // WHERE fragment sobre a association "order" já embutida em
+        // findPaginatedWithOrder — só um filtro isolado, não precisa de
+        // método novo na repository (ver "list-filters" no CLAUDE.md).
+        number_order_system: (value) => {
+          const term = Array.isArray(value) ? value[0] : value;
+          return { [Op.and]: [orderNumberSystemMatchesLiteral(String(term))] };
+        },
+      },
     };
   }
 
@@ -259,6 +270,25 @@ export class PdvSalesRequestService extends BaseService<
     return this.toOrderDetail(order.get({ plain: true }));
   }
 
+  // Chamado por bling-order.service.ts::createOrderFromBling (só create,
+  // nunca update) sempre que um pedido nasce — cria a PdvSalesRequest vazia
+  // (status OPEN sempre) já junto do pedido, pro front só precisar atrelar
+  // os dados depois em vez de dar o passo extra de "Criar solicitação".
+  // Mesmos 3 critérios de findEligibleOrders/isEligibleForPdv: loja física
+  // normal (fora de CD21/PDV_EXCLUDED_STORE_NUMBERS, nunca marketplace sem
+  // unit_business_id), pedido não CANCELLED, sem romaneio já gerado pro
+  // invoice/loja do pedido (não deveria acontecer pra um pedido recém-
+  // -criado, mas reusa o mesmo critério em vez de assumir). No-op
+  // silencioso pra qualquer pedido não elegível.
+  async createEmptyRequestForNewOrderIfEligible(orderId: string): Promise<void> {
+    const order = await orderService.findById(orderId);
+    if (!order?.unit_business_id) return;
+    if (await this.isExcludedFromPdvFlow(order.unit_business_id)) return;
+    if (!(await orderService.isEligibleForPdv(orderId))) return;
+
+    await this.createRequest({ orderId });
+  }
+
   // ─── Máquina de estados ─────────────────────────────────────────────────────
   // Ponto único de escrita de status: toda transição passa por aqui e grava a
   // linha de histórico correspondente na mesma transação — nunca escreve
@@ -344,7 +374,11 @@ export class PdvSalesRequestService extends BaseService<
 
   async createRequest(params: {
     orderId: string;
-    name: string;
+    // Sem name ainda (ex.: auto-criação vazia — ver bling-order.service.ts e
+    // setShippingType) — usa um rótulo derivado do próprio pedido; front
+    // "atrela os dados" depois, name nunca fica preso sem valor (coluna
+    // NOT NULL).
+    name?: string;
     createdByUserId?: string;
     unitBusinessId?: string | null;
   }): Promise<PdvSalesRequest> {
@@ -378,7 +412,7 @@ export class PdvSalesRequestService extends BaseService<
           status: PdvSalesRequestStatus.OPEN,
           correction_origin_status: null,
           shipping_type: null,
-          name: params.name,
+          name: params.name ?? `Pedido ${order.number_order_channel}`,
           errors: null,
           created_by_user_id: params.createdByUserId ?? null,
         },
@@ -480,6 +514,18 @@ export class PdvSalesRequestService extends BaseService<
     }
   }
 
+  // Front conectado na room desta solicitação (mesma usada pelo evento de
+  // análise de comprovante) só usa isso pra decidir refetch — nunca lê dado
+  // de negócio do payload, mesmo espírito de notifyPdvStoreSync.
+  private notifySalesRequestUpdated(requestId: string): void {
+    socketService.emitToNamespaceRoom(
+      PDV_SOCKET_NAMESPACE,
+      pdvSalesRequestRoom(requestId),
+      PDV_SALES_REQUEST_UPDATED_EVENT,
+      { requestId },
+    );
+  }
+
   // Recalcula e persiste payment_receipt_analysis/validated/
   // payment_method_matches_receipt a partir de TODOS os comprovantes
   // atualmente anexados — chamado depois de qualquer mutação numa linha de
@@ -529,6 +575,8 @@ export class PdvSalesRequestService extends BaseService<
       receipt_total_matches_order: totalMatchesOrder,
     });
     if (!updated) throw new Error("Solicitação não encontrada");
+
+    this.notifySalesRequestUpdated(requestId);
 
     return updated;
   }
@@ -853,6 +901,8 @@ export class PdvSalesRequestService extends BaseService<
       userId,
       description: "Resumo do pagamento editado manualmente",
     });
+
+    this.notifySalesRequestUpdated(id);
 
     return updated;
   }

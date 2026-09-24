@@ -366,6 +366,10 @@ export class OrderService extends BaseService<Order, OrderRepository> {
   async findByIdWithFullDetail(orderId: string): Promise<Order | null> {
     return this.repository.findByIdWithFullDetail(orderId);
   }
+
+  async isEligibleForPdv(orderId: string): Promise<boolean> {
+    return this.repository.isEligibleForPdv(orderId);
+  }
 }
 
 export default new OrderService();
