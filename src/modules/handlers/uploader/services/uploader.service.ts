@@ -12,6 +12,11 @@ export type UploadInput = {
 };
 
 export class UploaderService {
+  // Diretórios já confirmados via MKCOL nesta vida do processo — evita
+  // reemitir o MKCOL a cada upload pra um diretório que não muda, reduzindo
+  // volume de requisições contra a conta no Nextcloud.
+  private knownDirectories = new Set<string>();
+
   constructor(private api: AxiosInstance) {}
 
   async upload(file: UploadInput) {
@@ -45,6 +50,8 @@ export class UploaderService {
     for (const segment of segments) {
       currentPath += `/${segment}`;
 
+      if (this.knownDirectories.has(currentPath)) continue;
+
       try {
         await this.api.request({
           method: 'MKCOL',
@@ -59,6 +66,8 @@ export class UploaderService {
           );
         }
       }
+
+      this.knownDirectories.add(currentPath);
     }
   }
 
