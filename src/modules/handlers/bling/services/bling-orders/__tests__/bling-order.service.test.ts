@@ -281,6 +281,7 @@ describe("BlingOrderService", () => {
         {
           actual_situation: "9",
           internal_status: OrderInternalStatus.EMITTED,
+          unit_business_id: "ub-existing",
         },
       ]);
     });
