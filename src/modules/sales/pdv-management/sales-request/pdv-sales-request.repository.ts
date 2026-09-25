@@ -1,4 +1,4 @@
-import { Op, WhereOptions } from "sequelize";
+import { Op, WhereOptions, fn, col } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import PdvSalesRequest from "./pdv-sales-request.model";
 import {
@@ -134,6 +134,58 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         status: PdvSalesRequestStatus.SHIPPING,
       },
     });
+  }
+
+  // Contagem por status, agrupada em uma query só — base de getStatusSummary
+  // (pdv-sales-request.service.ts). `where` já vem com o escopo de loja
+  // aplicado (unit_business_id).
+  async countGroupedByStatus(
+    where: WhereOptions,
+  ): Promise<Partial<Record<PdvSalesRequestStatus, number>>> {
+    const rows = (await this.model.findAll({
+      where,
+      attributes: ["status", [fn("COUNT", col("id")), "quantity"]],
+      group: ["status"],
+      raw: true,
+    })) as unknown as { status: PdvSalesRequestStatus; quantity: string }[];
+
+    return rows.reduce<Partial<Record<PdvSalesRequestStatus, number>>>(
+      (acc, row) => {
+        acc[row.status] = Number(row.quantity);
+        return acc;
+      },
+      {},
+    );
+  }
+
+  // Contagem por correction_origin_status, restrita a PENDING_CORRECTION
+  // (único status onde essa coluna é relevante) — sub_stats de
+  // getStatusSummary.
+  async countGroupedByCorrectionOrigin(
+    where: WhereOptions,
+  ): Promise<Partial<Record<PdvSalesRequestStatus, number>>> {
+    const rows = (await this.model.findAll({
+      where: { ...where, status: PdvSalesRequestStatus.PENDING_CORRECTION },
+      attributes: [
+        "correction_origin_status",
+        [fn("COUNT", col("id")), "quantity"],
+      ],
+      group: ["correction_origin_status"],
+      raw: true,
+    })) as unknown as {
+      correction_origin_status: PdvSalesRequestStatus | null;
+      quantity: string;
+    }[];
+
+    return rows.reduce<Partial<Record<PdvSalesRequestStatus, number>>>(
+      (acc, row) => {
+        if (row.correction_origin_status) {
+          acc[row.correction_origin_status] = Number(row.quantity);
+        }
+        return acc;
+      },
+      {},
+    );
   }
 }
 

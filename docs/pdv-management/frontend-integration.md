@@ -44,6 +44,59 @@ aceita múltiplos valores.
 — filtra pelo período de `date` do pedido vinculado (qualquer um dos dois é
 opcional).
 
+## Novo: `GET /sales-request/summary/status-counts` (indicativos)
+
+Igual em espírito ao `GET /orders/summary/status-counts` já existente — um
+contador por indicativo, escopado pela tela do acesso (mesma auth de
+`GET /sales-request`). Resposta: objeto por indicativo, `{ label, quantity,
+sub_stats? }` — `sub_stats` só aparece no indicativo `pending_correction`
+(tela loja/Televendas), chaveado por `correction_origin_status`. **Contrato
+de `sub_stats` ainda pode mudar** (rótulo/formatação final a definir com o
+front).
+
+Indicativos por tela:
+- **Loja/Televendas** (`STORE_REQUEST`): `open`, `pending_finance`,
+  `pending_correction` (com `sub_stats`), `pending_cd21_analysis`,
+  `cd21_billing` (soma NF de venda + NF de transferência + expedição).
+- **Financeiro** (`FINANCE`): `pending_finance`,
+  `pending_correction_finance_origin` (só correção originada do financeiro).
+- **CD21**: `pending_nf_transfer`, `pending_nf_sale`,
+  `pending_cd21_analysis`, `pending_expedition`.
+
+Exemplo (Loja/Televendas):
+
+```json
+{
+  "open": { "label": "Em aberto", "quantity": 3 },
+  "pending_finance": { "label": "Análise financeiro", "quantity": 5 },
+  "pending_correction": {
+    "label": "Pendente correção",
+    "quantity": 10,
+    "sub_stats": {
+      "PENDING_FINANCE": 4,
+      "PENDING_CD21_ANALYSIS": 3,
+      "SHIPPING": 2,
+      "INVOICE_CANCELLED": 1,
+      "FINISHED": 0
+    }
+  },
+  "pending_cd21_analysis": { "label": "CD21 análise", "quantity": 2 },
+  "cd21_billing": { "label": "CD21 faturamento", "quantity": 7 }
+}
+```
+
+## Novo: filtro `indicator` na listagem
+
+`GET /sales-request?filters[indicator]=<key>` — filtra pelo MESMO critério
+que popula o indicativo correspondente do `summary/status-counts` acima (ex.:
+`filters[indicator]=cd21_billing` traz as solicitações em `PENDING_NF_SALE`
+OU `PENDING_NF_TRANSFER` OU `SHIPPING`). `<key>` é uma das chaves da resposta
+de `summary/status-counts` (`open`, `pending_finance`, `pending_correction`,
+`pending_correction_finance_origin`, `pending_cd21_analysis`,
+`pending_nf_sale`, `pending_nf_transfer`, `pending_expedition`,
+`cd21_billing`) — clicar num indicativo do resumo e aplicar esse filtro deve
+sempre bater com o número mostrado nele.
+
 ## Mudou: `/orders/eligible`
 
 Não filtra mais por "status finalizador" — agora entra qualquer pedido

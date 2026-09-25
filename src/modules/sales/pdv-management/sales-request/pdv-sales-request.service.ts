@@ -57,6 +57,14 @@ import {
   orderDateWithinLiteral,
   errorsReasonsOverlapLiteral,
 } from "./helpers/custom-filters";
+import {
+  PDV_STATUS_INDICATORS,
+  PDV_STATUS_INDICATORS_BY_SCREEN,
+  PDV_CORRECTION_ORIGINS_BY_SCREEN,
+  PdvStatusIndicatorKey,
+  indicatorWhere,
+} from "./helpers/status-summary";
+import { PdvAccessContext } from "../pdv-access/pdv-access.types";
 
 // Fingerprint duplicado em OUTRA solicitação — tipo próprio pra distinguir
 // esse caso de qualquer outro erro dentro do job assíncrono de análise.
@@ -121,6 +129,14 @@ export class PdvSalesRequestService extends BaseService<
           return {
             [Op.and]: [errorsReasonsOverlapLiteral(reasons.map(String))],
           };
+        },
+        // Filtra pelo mesmo critério que popula um indicativo de
+        // getStatusSummary (ex.: filters[indicator]=cd21_billing) — nunca
+        // duplicar o critério status/correction_origin_status de cada
+        // indicativo, ver helpers/status-summary.ts.
+        indicator: (value) => {
+          const key = (Array.isArray(value) ? value[0] : value) as PdvStatusIndicatorKey;
+          return indicatorWhere(key);
         },
       },
     };
@@ -288,6 +304,57 @@ export class PdvSalesRequestService extends BaseService<
       .filter((order) => !orderIdsWithActiveRequest.has(order.id))
       .map((order) => this.toOrderSummary(order.get({ plain: true })))
       .filter((order): order is PdvSalesRequestOrderSummary => order !== null);
+  }
+
+  // ─── Resumo de status (indicativos) ──────────────────────────────────────
+  // Igual em espírito a OrderService.getOrdersStatusSummary: um contador por
+  // indicativo, escopado pela tela do acesso (cada tela só vê os
+  // indicativos que fazem sentido pro fluxo dela — ver
+  // helpers/status-summary.ts). Cada indicativo tem um filtro correspondente
+  // na listagem (filters[indicator]=<key>), com o mesmo critério.
+  async getStatusSummary(access: PdvAccessContext): Promise<
+    Record<string, { label: string; quantity: number; sub_stats?: Record<string, number> }>
+  > {
+    const scope = await this.resolveUnitBusinessScope(access.unitBusinessId);
+    const where: WhereOptions = {
+      unit_business_id: Array.isArray(scope) ? { [Op.in]: scope } : scope,
+    };
+
+    const [statusCounts, correctionOriginCounts] = await Promise.all([
+      this.repository.countGroupedByStatus(where),
+      this.repository.countGroupedByCorrectionOrigin(where),
+    ]);
+
+    const keys = PDV_STATUS_INDICATORS_BY_SCREEN[access.screen];
+    const correctionOrigins = PDV_CORRECTION_ORIGINS_BY_SCREEN[access.screen];
+
+    const summary: Record<
+      string,
+      { label: string; quantity: number; sub_stats?: Record<string, number> }
+    > = {};
+
+    for (const key of keys) {
+      const definition = PDV_STATUS_INDICATORS[key];
+      const quantity = definition.correctionOrigin
+        ? (correctionOriginCounts[definition.correctionOrigin] ?? 0)
+        : definition.statuses.reduce(
+            (sum, status) => sum + (statusCounts[status] ?? 0),
+            0,
+          );
+
+      summary[key] = { label: definition.label, quantity };
+
+      if (key === "pending_correction" && correctionOrigins?.length) {
+        summary[key].sub_stats = correctionOrigins.reduce<
+          Record<string, number>
+        >((acc, origin) => {
+          acc[origin] = correctionOriginCounts[origin] ?? 0;
+          return acc;
+        }, {});
+      }
+    }
+
+    return summary;
   }
 
   // Card expandido de um pedido de /orders/eligible, ainda sem

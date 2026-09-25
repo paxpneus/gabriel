@@ -156,6 +156,13 @@ export class PdvSalesRequestController extends BaseController<
       pdvAccess(READ_SCREENS),
       this.getHistory,
     );
+    // Indicativos por tela — igual em espírito a
+    // orders.controller.ts's GET /summary/status-counts.
+    this.router.get(
+      "/summary/status-counts",
+      pdvAccess(READ_SCREENS),
+      this.getStatusSummary,
+    );
     // 2 segmentos de propósito — 1 segmento cairia em show() (GET /:id do
     // BaseController).
     this.router.get(
@@ -756,6 +763,15 @@ export class PdvSalesRequestController extends BaseController<
       return res.json(history);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
+    }
+  };
+
+  getStatusSummary = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const data = await this.service.getStatusSummary(this.access(req));
+      return res.json(data);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
     }
   };
 }
