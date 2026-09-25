@@ -51,7 +51,12 @@ import {
 } from "./helpers/pdv-sales-request-room";
 import { notifyPdvStoreSync } from "./helpers/notify-pdv-store-sync";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
-import { orderNumberSystemMatchesLiteral } from "./helpers/custom-filters";
+import {
+  orderNumberSystemMatchesLiteral,
+  orderCustomerNameMatchesLiteral,
+  orderDateWithinLiteral,
+  errorsReasonsOverlapLiteral,
+} from "./helpers/custom-filters";
 
 // Fingerprint duplicado em OUTRA solicitação — tipo próprio pra distinguir
 // esse caso de qualquer outro erro dentro do job assíncrono de análise.
@@ -81,6 +86,7 @@ export class PdvSalesRequestService extends BaseService<
         "order_id",
         "unit_business_id",
         "shipping_type",
+        "correction_origin_status",
       ],
       sortableFields: ["createdAt", "status"],
       customFields: {
@@ -90,6 +96,31 @@ export class PdvSalesRequestService extends BaseService<
         number_order_system: (value) => {
           const term = Array.isArray(value) ? value[0] : value;
           return { [Op.and]: [orderNumberSystemMatchesLiteral(String(term))] };
+        },
+        // Nome do cliente do pedido vinculado — mesmo espírito de
+        // number_order_system (order não é coluna própria, EXISTS correlacionado).
+        customer_name: (value) => {
+          const term = Array.isArray(value) ? value[0] : value;
+          return {
+            [Op.and]: [orderCustomerNameMatchesLiteral(String(term))],
+          };
+        },
+        // Período de order.date — mesmo formato { start, end } do filtro
+        // genérico de range do QueryParser (ver query.parser.ts), só que via
+        // EXISTS porque order.date não é coluna de PdvSalesRequest.
+        date: (value) => {
+          const range = (
+            Array.isArray(value) ? {} : value
+          ) as { start?: string; end?: string };
+          return { [Op.and]: [orderDateWithinLiteral(range)] };
+        },
+        // errors.reasons é array dentro de JSONB — sem coluna própria pra
+        // filtrar direto, precisa do literal jsonb (ver custom-filters.ts).
+        reason: (value) => {
+          const reasons = Array.isArray(value) ? value : [value];
+          return {
+            [Op.and]: [errorsReasonsOverlapLiteral(reasons.map(String))],
+          };
         },
       },
     };
