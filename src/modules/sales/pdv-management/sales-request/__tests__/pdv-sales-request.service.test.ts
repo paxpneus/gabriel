@@ -61,9 +61,14 @@ jest.mock("../../../../company/unit-business/unit-business.service", () => ({
   default: { findById: jest.fn(), getCd21UnitBusiness: jest.fn() },
 }));
 
-jest.mock("../../../../handlers/uploader/services/uploader.service", () => ({
+jest.mock("../../../../handlers/temp-file/temp-file.service", () => ({
   __esModule: true,
-  default: { upload: jest.fn(), delete: jest.fn() },
+  default: { create: jest.fn() },
+}));
+
+jest.mock("../../../../handlers/uploader/uploader.queue", () => ({
+  __esModule: true,
+  default: { enqueueUpload: jest.fn(), enqueueDelete: jest.fn() },
 }));
 
 jest.mock("../../../../handlers/tecinco/api/tecinco_api", () => ({
@@ -110,7 +115,8 @@ import pdvSalesRequestHistoryService from "../../sales-request-history/pdv-sales
 import orderService from "../../../orders/order/orders.service";
 import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
-import uploaderService from "../../../../handlers/uploader/services/uploader.service";
+import tempFileService from "../../../../handlers/temp-file/temp-file.service";
+import uploaderQueue from "../../../../handlers/uploader/uploader.queue";
 import { getTCarIntegration } from "../../../../handlers/tecinco/api/tecinco_api";
 import nfeEmissionService from "../../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "../payment-receipt-extraction.service";
@@ -169,6 +175,12 @@ describe("PdvSalesRequestService", () => {
     (pdvSalesRequestReceiptService.update as jest.Mock).mockResolvedValue(
       undefined,
     );
+    // Default: staging do comprovante resolve com um id fixo — testes que
+    // não se importam com o tempFileId em si não precisam mockar isso.
+    (tempFileService.create as jest.Mock).mockResolvedValue({ id: "temp-1" });
+    // enqueueDelete é sempre encadeado com .catch — precisa resolver algo.
+    (uploaderQueue.enqueueUpload as jest.Mock).mockResolvedValue(undefined);
+    (uploaderQueue.enqueueDelete as jest.Mock).mockResolvedValue(undefined);
   });
 
   // ─── createRequest ──────────────────────────────────────────────────────────
@@ -595,13 +607,10 @@ describe("PdvSalesRequestService", () => {
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
       });
-      (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/r1/comprovante.png",
-      );
       (pdvSalesRequestReceiptService.create as jest.Mock).mockResolvedValue({
         id: "receipt-1",
         pdv_sales_request_id: "r1",
-        path: "/pdv-receipts/r1/comprovante.png",
+        path: "temp://temp-1",
       });
       // Reconfere que a linha ainda existe antes de gravar a análise —
       // mockar como null aqui faz o job assíncrono desistir cedo, sem sujar
@@ -616,17 +625,29 @@ describe("PdvSalesRequestService", () => {
         mimeType: "image/png",
       });
 
-      expect(uploaderService.upload).toHaveBeenCalledWith(
-        expect.objectContaining({ directory: "/pdv-receipts/r1" }),
+      expect(tempFileService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          upload_directory: "/pdv-receipts/r1",
+          entity_type: "PDV_SALES_REQUEST_RECEIPT",
+        }),
+        { transaction: mockTransaction },
       );
-      expect(pdvSalesRequestReceiptService.create).toHaveBeenCalledWith({
-        pdv_sales_request_id: "r1",
-        path: "/pdv-receipts/r1/comprovante.png",
-        analysis: null,
-        validated: null,
-        fingerprint: null,
-        created_by_user_id: null,
-      });
+      expect(uploaderQueue.enqueueUpload).toHaveBeenCalledWith(
+        "temp-1",
+        "PDV_SALES_REQUEST_RECEIPT",
+      );
+      expect(pdvSalesRequestReceiptService.create).toHaveBeenCalledWith(
+        {
+          id: expect.any(String),
+          pdv_sales_request_id: "r1",
+          path: "temp://temp-1",
+          analysis: null,
+          validated: null,
+          fingerprint: null,
+          created_by_user_id: null,
+        },
+        { transaction: mockTransaction },
+      );
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
       expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -651,7 +672,7 @@ describe("PdvSalesRequestService", () => {
           mimeType: "image/png",
         }),
       ).rejects.toThrow(/endpoint de correção/);
-      expect(uploaderService.upload).not.toHaveBeenCalled();
+      expect(tempFileService.create).not.toHaveBeenCalled();
     });
 
     it("faz a análise da IA em background, persiste na linha do comprovante e reconcilia com exatamente 1 comprovante", async () => {
@@ -660,9 +681,6 @@ describe("PdvSalesRequestService", () => {
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
       });
-      (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/r1/comprovante.png",
-      );
       (pdvSalesRequestReceiptService.create as jest.Mock).mockResolvedValue({
         id: "receipt-1",
       });
@@ -743,9 +761,6 @@ describe("PdvSalesRequestService", () => {
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
       });
-      (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/r1/cartao.png",
-      );
       (pdvSalesRequestReceiptService.create as jest.Mock).mockResolvedValue({
         id: "receipt-2",
       });
@@ -814,9 +829,6 @@ describe("PdvSalesRequestService", () => {
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
       });
-      (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/r1/comprovante.png",
-      );
       (pdvSalesRequestReceiptService.create as jest.Mock).mockResolvedValue({
         id: "receipt-1",
       });
@@ -865,9 +877,6 @@ describe("PdvSalesRequestService", () => {
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
       });
-      (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/r1/comprovante.png",
-      );
       (pdvSalesRequestReceiptService.create as jest.Mock).mockResolvedValue({
         id: "receipt-1",
       });
@@ -919,9 +928,6 @@ describe("PdvSalesRequestService", () => {
           order_id: "order-1",
           status: PdvSalesRequestStatus.OPEN,
         });
-        (uploaderService.upload as jest.Mock).mockResolvedValue(
-          "/pdv-receipts/r1/comprovante.png",
-        );
         (pdvSalesRequestReceiptService.create as jest.Mock).mockResolvedValue({
           id: "receipt-1",
         });
@@ -970,9 +976,6 @@ describe("PdvSalesRequestService", () => {
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
       });
-      (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/r1/comprovante.png",
-      );
       (pdvSalesRequestReceiptService.create as jest.Mock).mockResolvedValue({
         id: "receipt-1",
       });
@@ -1016,9 +1019,6 @@ describe("PdvSalesRequestService", () => {
         order_id: "order-1",
         status: PdvSalesRequestStatus.OPEN,
       });
-      (uploaderService.upload as jest.Mock).mockResolvedValue(
-        "/pdv-receipts/r1/comprovante.png",
-      );
       (pdvSalesRequestReceiptService.create as jest.Mock).mockResolvedValue({
         id: "receipt-1",
       });
@@ -1072,8 +1072,10 @@ describe("PdvSalesRequestService", () => {
       expect(pdvSalesRequestReceiptService.delete).toHaveBeenCalledWith(
         "receipt-1",
       );
-      expect(uploaderService.delete).toHaveBeenCalledWith(
-        "/pdv-receipts/r1/comprovante.png",
+      expect(uploaderQueue.enqueueDelete).toHaveBeenCalledWith(
+        { type: "real-path", path: "/pdv-receipts/r1/comprovante.png" },
+        "PDV_SALES_REQUEST_RECEIPT",
+        "PDV_SALES_REQUEST_RECEIPT:receipt-1",
       );
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
         payment_receipt_analysis: null,
