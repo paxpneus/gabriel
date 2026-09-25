@@ -116,5 +116,6 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `sieg-rate-limits.md` — limites documentados por rota da API Sieg (ex.: `/v1/baixar-xmls` = 2 req/min, 50 XMLs/req) vs. limite genérico não-confirmado, onde cada um é aplicado no código
 - `magento-sync.md` — sync Bling→Magento de produtos: `external_id` = `entity_id` do Magento (não sku), resolução por id (mapeado) vs. sku/nome (1ª vez)
 - `ai-vision-extraction.md` — cliente Gemini (`GeminiVisionService`) + pipeline de extração de documento (PDF nativo vs. binário/IA), consumido hoje só pelo módulo PDV (comprovante + fallback de DANFE)
+- `uploader-queue.md` — fila única (`UploaderQueue`) pra todo upload/delete no `UploaderService`: staging genérico `temp_files`, dois modos de uso (resposta instantânea com finalização automática vs. espera síncrona), prioridade, cache de imagem, rate limit e sweep de reconciliação
 
 Migração: como qualquer outra deste repo, **usuário roda `db:migrate` (ou qualquer DDL) manualmente — nunca automatizar.**

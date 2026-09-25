@@ -1,4 +1,5 @@
 import { Op, WhereOptions } from "sequelize";
+import { randomUUID } from "node:crypto";
 import sequelize from "../../../../config/sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import PdvSalesRequest from "./pdv-sales-request.model";
@@ -26,6 +27,15 @@ import orderService from "../../orders/order/orders.service";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import uploaderService from "../../../handlers/uploader/services/uploader.service";
+import uploaderQueue from "../../../handlers/uploader/uploader.queue";
+import { buildEntityCacheKey } from "../../../handlers/uploader/uploader-image-cache";
+import tempFileService from "../../../handlers/temp-file/temp-file.service";
+import {
+  buildTempFileSentinelPath,
+  isTempFileSentinelPath,
+  extractTempFileId,
+  resolveDeleteTarget,
+} from "../../../handlers/temp-file/temp-file.constants";
 import { getTCarIntegration } from "../../../handlers/tecinco/api/tecinco_api";
 import { TCarUpsertQueue } from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { extractAccessKeyFromXmlContent } from "../../../../shared/utils/xml/access-key";
@@ -758,23 +768,42 @@ export class PdvSalesRequestService extends BaseService<
   ): Promise<PdvSalesRequestReceipt> {
     const request = await this.assertReceiptEditable(id);
 
-    // Diretório por solicitação — nome do arquivo gerado (sem
-    // preserveFilename) pra não colidir entre comprovantes diferentes.
-    const path = await uploaderService.upload({
-      buffer: params.buffer,
-      filename: params.filename,
-      mimeType: params.mimeType,
-      directory: `/pdv-receipts/${id}`,
+    // Resposta instantânea: staging + linha com path sentinela na mesma
+    // transação; upload real roda em background (ver .claude/modules/uploader-queue.md).
+    const receiptId = randomUUID();
+    let tempFileId!: string;
+    let receipt!: PdvSalesRequestReceipt;
+
+    await sequelize.transaction(async (t) => {
+      const tempFile = await tempFileService.create(
+        {
+          buffer: params.buffer,
+          mime_type: params.mimeType,
+          original_filename: params.filename,
+          upload_directory: `/pdv-receipts/${id}`,
+          preserve_filename: false,
+          entity_type: "PDV_SALES_REQUEST_RECEIPT",
+          entity_id: receiptId,
+        },
+        { transaction: t },
+      );
+      tempFileId = tempFile.id;
+
+      const payload = {
+        id: receiptId,
+        pdv_sales_request_id: id,
+        path: buildTempFileSentinelPath(tempFile.id),
+        analysis: null,
+        validated: null,
+        fingerprint: null,
+        created_by_user_id: params.userId ?? null,
+      };
+      receipt = await pdvSalesRequestReceiptService.create(payload, {
+        transaction: t,
+      });
     });
 
-    const receipt = await pdvSalesRequestReceiptService.create({
-      pdv_sales_request_id: id,
-      path,
-      analysis: null,
-      validated: null,
-      fingerprint: null,
-      created_by_user_id: params.userId ?? null,
-    });
+    await uploaderQueue.enqueueUpload(tempFileId, "PDV_SALES_REQUEST_RECEIPT");
 
     await this.logAction(id, request.status, {
       userId: params.userId,
@@ -815,11 +844,15 @@ export class PdvSalesRequestService extends BaseService<
 
     await pdvSalesRequestReceiptService.delete(receiptId);
 
-    try {
-      await uploaderService.delete(receipt.path);
-    } catch (err) {
-      console.warn("[PDV] Falha ao apagar comprovante do uploader", err);
-    }
+    await uploaderQueue
+      .enqueueDelete(
+        resolveDeleteTarget(receipt.path),
+        "PDV_SALES_REQUEST_RECEIPT",
+        buildEntityCacheKey("PDV_SALES_REQUEST_RECEIPT", receiptId),
+      )
+      .catch((err) =>
+        console.warn("[PDV] Falha ao enfileirar limpeza do comprovante", err),
+      );
 
     const updated = await this.reconcileReceipts(id, request.order_id);
 
@@ -1035,7 +1068,35 @@ export class PdvSalesRequestService extends BaseService<
       throw new Error("Comprovante não encontrado nesta solicitação");
     }
 
-    const buffer = await uploaderService.getFile(receipt.path);
+    if (isTempFileSentinelPath(receipt.path)) {
+      const tempFile = await tempFileService.findById(
+        extractTempFileId(receipt.path),
+        { attributes: ["id", "buffer", "mime_type"] },
+      );
+      if (tempFile) {
+        return {
+          buffer: tempFile.buffer,
+          extension: tempFile.mime_type.split("/").pop() || "jpeg",
+        };
+      }
+
+      // corrida: o job de upload já terminou entre a leitura acima e agora —
+      // recarrega o path real já atualizado.
+      const refreshed = await pdvSalesRequestReceiptService.findById(receiptId);
+      if (!refreshed || isTempFileSentinelPath(refreshed.path)) {
+        throw new Error("Comprovante ainda não disponível, tente novamente");
+      }
+      const buffer = await uploaderService.getFile(
+        refreshed.path,
+        buildEntityCacheKey("PDV_SALES_REQUEST_RECEIPT", receiptId),
+      );
+      return { buffer, extension: refreshed.path.split(".").pop() || "jpeg" };
+    }
+
+    const buffer = await uploaderService.getFile(
+      receipt.path,
+      buildEntityCacheKey("PDV_SALES_REQUEST_RECEIPT", receiptId),
+    );
     const extension = receipt.path.split(".").pop() || "jpeg";
     return { buffer, extension };
   }
@@ -1793,12 +1854,18 @@ export class PdvSalesRequestService extends BaseService<
     const receipts = await pdvSalesRequestReceiptService.findAllByRequestId(id);
     await Promise.all(
       receipts.map((receipt) =>
-        uploaderService.delete(receipt.path).catch((err) =>
-          console.warn(
-            "[PDV] Falha ao apagar comprovante do uploader ao excluir solicitação",
-            err,
+        uploaderQueue
+          .enqueueDelete(
+            resolveDeleteTarget(receipt.path),
+            "PDV_SALES_REQUEST_RECEIPT",
+            buildEntityCacheKey("PDV_SALES_REQUEST_RECEIPT", receipt.id),
+          )
+          .catch((err) =>
+            console.warn(
+              "[PDV] Falha ao enfileirar limpeza do comprovante ao excluir solicitação",
+              err,
+            ),
           ),
-        ),
       ),
     );
 

@@ -40,6 +40,7 @@ import { BlingNfeScrapingQueue } from "../modules/handlers/bling/services/bling-
 
 import { CteIngestionQueue } from "../modules/handlers/fiscal/documents/cte/queues/cte-ingestion.queue";
 import { CteXmlBatchQueue } from "../modules/warehouse/fiscal/ctes/cte/queues/cte-download.queue";
+import { UploaderQueue } from "../modules/handlers/uploader/uploader.queue";
 import queueMonitorService from "../modules/queues/services/queue.service";
 
 export const serverAdapter = new ExpressAdapter();
@@ -65,7 +66,8 @@ export type QueueName =
   | "DAILY_SALES_REPORT"
   | "AUTO_BACKUP"
   | "CTE_INGESTION"
-  | "CTE_XML_BATCH";
+  | "CTE_XML_BATCH"
+  | "UPLOADER";
 
 // ─── buildQueues: só ativa worker nas filas explicitamente listadas ───────────
 function buildQueues(activeWorkers: QueueName[]) {
@@ -197,6 +199,10 @@ function buildQueues(activeWorkers: QueueName[]) {
     workless: w("CTE_XML_BATCH"),
   });
 
+  const uploaderQueue = new UploaderQueue({
+    workless: w("UPLOADER"),
+  });
+
   return {
     nfeQueue,
     mlOrderSyncQueue,
@@ -218,6 +224,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     blingNfeScrapingQueue,
     cteIngestionQueue,
     cteDownloadQueue,
+    uploaderQueue,
   };
 }
 
@@ -243,6 +250,7 @@ export function registerQueues(app: Express) {
     blingNfeScrapingQueue,
     cteIngestionQueue,
     cteDownloadQueue,
+    uploaderQueue,
   } = buildQueues([]);
 
   const blingOrderQueue = new BlingOrderQueue(
@@ -266,6 +274,7 @@ export function registerQueues(app: Express) {
   app.locals.DailySalesReportQueue = dailySalesReportQueue;
   app.locals.AutoBackupQueue = autoBackupQueue;
   app.locals.TCarSyncQueue = tcarSyncQueue;
+  app.locals.UploaderQueue = uploaderQueue;
 
   serverAdapter.setBasePath("/admin/queues");
 
@@ -291,6 +300,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(blingNfeScrapingQueue.queue),
       new BullMQAdapter(cteIngestionQueue.queue),
       new BullMQAdapter(cteDownloadQueue.queue),
+      new BullMQAdapter(uploaderQueue.queue),
     ],
     serverAdapter,
   });
@@ -409,12 +419,14 @@ export function startWorkers() {
     autoBackupQueue,
     cteIngestionQueue,
     cteDownloadQueue,
+    uploaderQueue,
   } = buildQueues([
     "DAILY_OPERATION_REPORT",
     "DAILY_SALES_REPORT",
     "AUTO_BACKUP",
     "CTE_INGESTION",
     "CTE_XML_BATCH",
+    "UPLOADER",
   ]);
 
   dailyOperationReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
@@ -423,6 +435,17 @@ export function startWorkers() {
     tz: "America/Sao_Paulo",
   });
   cteIngestionQueue.scheduleRepeat({ every: 30 * 60 * 1000 });
+
+  // Bypassa scheduleRepeat() pra poder passar {kind:"reconcile"}; jobId fixo
+  // evita duplicar o agendamento a restart (ver .claude/modules/uploader-queue.md).
+  uploaderQueue.queue.add(
+    "reconcile",
+    { kind: "reconcile" },
+    {
+      repeat: { pattern: "0 22 * * *", tz: "America/Sao_Paulo" },
+      jobId: "uploader-reconcile-cron",
+    },
+  );
 
   setTimeout(
     () => {
@@ -435,12 +458,14 @@ export function startWorkers() {
   void autoBackupQueue;
   void cteIngestionQueue;
   void cteDownloadQueue;
+  void uploaderQueue;
 
   console.log("🚀 Workers de relatórios/backup ativos:");
   console.log("  → DAILY_OPERATION_REPORT (1h)");
   console.log("  → DAILY_SALES_REPORT (1h, offset 30min)");
   console.log("  → AUTO_BACKUP (19h BRT)");
   console.log("  → CTE_INGESTION (30min)");
+  console.log("  → UPLOADER (throttle 3/5s, reconcile 22h BRT)");
 }
 
 export function startTecincoWorkers() {

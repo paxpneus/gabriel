@@ -10,6 +10,7 @@ import { randomUUID } from "crypto";
 import cteXmlBatchQueue from './queues/cte-download.queue'
 import { JobTracker } from './helpers/cte-download.tracker';
 import uploaderService from "../../../../handlers/uploader/services/uploader.service";
+import uploaderQueue from "../../../../handlers/uploader/uploader.queue";
 
 const SYNC_THRESHOLD = 500;
 
@@ -80,7 +81,7 @@ export class CteController extends BaseController<Cte, typeof CteService> {
       const jobId = randomUUID();
       const userId = (req as any).user.id;
 
-      await JobTracker.init(jobId, ids.length);
+      await JobTracker.init(jobId, ids.length, userId);
       await cteXmlBatchQueue.add({ jobId, userId, ids }, jobId);
 
       res.status(202).json({ jobId, total: ids.length, async: true });
@@ -115,8 +116,11 @@ export class CteController extends BaseController<Cte, typeof CteService> {
       res.setHeader("Content-Disposition", `attachment; filename="xmls-${jobId}.zip"`);
       res.send(buffer);
 
-      // limpeza: sucesso na entrega -> apaga da nuvem e do tracker
-      await uploaderService.delete(state.filePath);
+      // limpeza: sucesso na entrega -> enfileira apagar da nuvem, tracker já
+      // pode limpar na hora (fire-and-forget, resposta HTTP já foi enviada)
+      await uploaderQueue
+        .enqueueDelete({ type: "real-path", path: state.filePath }, "CTE")
+        .catch((err) => console.warn(`[XML BATCH] Falha ao enfileirar limpeza job=${jobId}:`, err));
       await JobTracker.update(jobId as string, { status: "done", filePath: undefined });
     } catch (err: any) {
       if (!res.headersSent) res.status(500).json({ error: "Falha ao recuperar o arquivo." });

@@ -63,12 +63,13 @@ async function enqueue(
   payload: TCarUpsertJobPayload,
   jobId: string,
   dryRun: boolean,
+  jobOptions?: { priority?: number },
 ) {
   if (dryRun) {
     console.log(`[DRY_RUN] ${jobId}`);
     return;
   }
-  const job = await upsertQueue.add(payload, jobId);
+  const job = await upsertQueue.add(payload, jobId, jobOptions);
   console.log(`enfileirado: ${job?.id ?? "DUPLICADO/IGNORADO"}`);
 }
 
@@ -370,6 +371,9 @@ export async function migrateNotasFiscais(
       for (const nota of notas) {
         const { chave } = nota;
 
+        // Nota fiscal fura a fila (mesma convenção de priority:1 usada em
+        // unmapped-invoice-product.service.ts) — relevante quando um sync
+        // manual de produto/cliente concorre com este estágio na mesma fila.
         await enqueue(
           upsertQueue,
           {
@@ -391,6 +395,7 @@ export async function migrateNotasFiscais(
           },
           `invoice-xml-${branchId}-${tipo}-${chave.nota}`,
           dryRun,
+          { priority: 1 },
         );
 
         console.log(`  [NF ${tipo} nota=${chave.nota}] enfileirada`);

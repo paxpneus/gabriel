@@ -67,7 +67,8 @@ import InventoryBatchItems from "../../../../../inventory/stock-inventory/invent
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import sequelize from "../../../../../../config/sequelize";
 import { blingGet } from "../helpers/get-with-sleep";
-import uploaderService from "../../../../uploader/services/uploader.service";
+import uploaderQueue from "../../../../uploader/uploader.queue";
+import tempFileService from "../../../../temp-file/temp-file.service";
 import pdvSalesRequestService from "../../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import productService from "../../../../../inventory/products/services/product.service";
 import supplierMappingService from "../../../../../inventory/supplier-mapping/supplier-mapping.service";
@@ -1628,6 +1629,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       blingApi,
     );
     const nf = data.data;
+    // Bling manda chaveAcesso="" (não null/undefined) enquanto a NFe ainda
+    // não foi processada — sem isso, cai direto no xml_key/busca como string
+    // vazia e colide com a unique constraint entre notas ainda pendentes.
+    const chaveAcesso = nf.chaveAcesso || undefined;
     const invoiceReferenceDate = getBlingInvoiceReferenceDate(nf);
 
     if (!invoiceReferenceDate) {
@@ -1704,22 +1709,15 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     // ─── DANFE ────────────────────────────────────────────────────────────────
-    // A Bling já manda o PDF pronto (linkPDF) — diferente da Tecinco, que só
-    // manda XML. Só baixa e sobe pro uploader; não precisa gerar nada aqui.
-    let danfePath = "";
+    // Bling já manda o PDF pronto (linkPDF) — só baixa aqui; upload real fica
+    // pra depois do upsert (staging com finalização, ver .claude/modules/uploader-queue.md).
+    let danfeBuffer: Buffer | null = null;
     if (nf.linkPDF) {
       try {
         const danfeArrayBuffer = await fetch(nf.linkPDF).then((r) =>
           r.arrayBuffer(),
         );
-        const danfeBuffer = Buffer.from(new Uint8Array(danfeArrayBuffer));
-        danfePath = await uploaderService.upload({
-          buffer: danfeBuffer,
-          filename: `${nf.chaveAcesso ?? nf.id}.pdf`,
-          mimeType: "application/pdf",
-          directory: "/danfes",
-          preserveFilename: true,
-        });
+        danfeBuffer = Buffer.from(new Uint8Array(danfeArrayBuffer));
       } catch (err) {
         console.warn("[DANFE DOWNLOAD ERROR]", { blingId: apiFetch.blingId, err });
       }
@@ -1732,7 +1730,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     const customerDoc =
       nf.contato?.numeroDocumento ?? nf.destinatario?.nome ?? "";
     const customerName = nf.contato?.nome ?? nf.destinatario?.nome ?? "";
-    const key = nf.chaveAcesso ?? `PENDING-KEY-${nf.id}`;
+    const key = chaveAcesso ?? `PENDING-KEY-${nf.id}`;
 
     // ─── UnitBusiness + Store + Integration ───────────────────────────────────
 
@@ -1828,7 +1826,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     const existingInvoice = await invoiceService.findByIdFullForAllUnits(
       undefined,
-      nf.chaveAcesso ?? undefined,
+      chaveAcesso,
       String(nf.id),
     );
 
@@ -1842,9 +1840,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       sender_name: senderName,
       receiver_cnpj: receiverCnpj,
       receiver_name: receiverName,
-      danfe_path: danfePath,
+      danfe_path: null, // finalizado async pela UploaderQueue depois do upsert abaixo
       xml_path: xmlContent ? encryptXml(xmlContent) : null,
-      xml_key: nf.chaveAcesso ?? null,
+      xml_key: chaveAcesso ?? null,
       xml_url: nf.xml ?? null,
       source_payload: nf as unknown as Record<string, unknown>,
       emitted_at: emittedAt,
@@ -2047,6 +2045,21 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     console.log(
       `[BLING_API_FETCH] Invoice upsertada: id_system=${nf.id}, key=${key}`,
     );
+
+    // Staging com finalização automática — sobe em background e grava
+    // invoice.danfe_path sozinho quando terminar.
+    if (danfeBuffer) {
+      const tempFile = await tempFileService.create({
+        buffer: danfeBuffer,
+        mime_type: "application/pdf",
+        original_filename: `${chaveAcesso ?? nf.id}.pdf`,
+        upload_directory: "/danfes",
+        preserve_filename: true,
+        entity_type: "INVOICE_DANFE",
+        entity_id: invoice.id,
+      });
+      await uploaderQueue.enqueueUpload(tempFile.id, "INVOICE_DANFE");
+    }
 
     if (nf.situacao === 2) {
       await pdvSalesRequestService.handleInvoiceCancelled(invoice.id);

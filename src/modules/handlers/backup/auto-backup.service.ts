@@ -1,5 +1,5 @@
 import { downloadDatabaseDump } from "../../../shared/utils/database/database-dump";
-import uploaderService from "../uploader/services/uploader.service";
+import uploaderQueue from "../uploader/uploader.queue";
 
 const DEFAULT_BACKUP_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -14,14 +14,17 @@ export type AutoBackupResult = {
 export class AutoBackupService {
   async run(): Promise<AutoBackupResult> {
     const dump = await downloadDatabaseDump();
-    const path = await uploaderService.upload({
-      buffer: dump.buffer,
-      filename: dump.filename,
-      mimeType: dump.mimeType,
-      directory: "/backups",
-      preserveFilename: true,
-      timeoutMs: this.getUploadTimeoutMs(),
-    });
+    const path = await uploaderQueue.uploadAndWait(
+      {
+        buffer: dump.buffer,
+        filename: dump.filename,
+        mimeType: dump.mimeType,
+        directory: "/backups",
+        preserveFilename: true,
+        timeoutMs: this.getUploadTimeoutMs(),
+      },
+      "BACKUP",
+    );
 
     return {
       filename: dump.filename,

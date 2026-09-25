@@ -7,6 +7,7 @@ import { resolveCteIssuerAsTransporter } from "./cte-party-resolver.service";
 import { encryptXml } from "../../../../../../../shared/utils/xml/xml-cipher";
 import { CteCreationAttributes } from "../../../../../../warehouse/fiscal/ctes/cte/cte.types";
 import uploaderService from "../../../../../uploader/services/uploader.service";
+import uploaderQueue from "../../../../../uploader/uploader.queue";
 
 const CTE_XML_DIRECTORY = process.env.CTE_XML_DIRECTORY;
 
@@ -45,15 +46,20 @@ async function uploadXmlToCloud(
     return;
   }
 
-  await uploaderService.upload({
-    buffer: Buffer.from(xml, "utf-8"),
-    filename,
-    mimeType: "application/xml",
-    directory: CTE_XML_DIRECTORY,
-    preserveFilename: true,
-  });
+  // Sem entity_type: nada no Cte guarda o path da nuvem (xml_path é o XML
+  // criptografado, não um path) — fire-and-forget, sem espera nem finalização.
+  await uploaderQueue.uploadFireAndForget(
+    {
+      buffer: Buffer.from(xml, "utf-8"),
+      filename,
+      mimeType: "application/xml",
+      directory: CTE_XML_DIRECTORY,
+      preserveFilename: true,
+    },
+    "CTE",
+  );
 
-  console.log(`[CTE_UPSERT] XML enviado para nuvem: ${path}`);
+  console.log(`[CTE_UPSERT] Upload do XML enfileirado em background: ${path}`);
 }
 
 export async function fetchAndUpsertCte(doc: XmlDocumentResult): Promise<Cte | null> {
@@ -122,7 +128,16 @@ export async function fetchAndUpsertCte(doc: XmlDocumentResult): Promise<Cte | n
     console.log(`[CTE_UPSERT] CTe criado: chave=${extracted.chave}`);
   }
 
-  await uploadXmlToCloud(cte.id, extracted.number ?? 0, xmlContent);
+  // Erro de upload não pode derrubar o upsert do CT-e — mesmo padrão do
+  // DANFE em bling-api-fetch.queue.ts / invoice-xml.ts: loga e segue.
+  try {
+    await uploadXmlToCloud(cte.id, extracted.number ?? 0, xmlContent);
+  } catch (err) {
+    console.warn("[CTE_UPSERT] Falha ao enviar XML para nuvem", {
+      xmlKey: extracted.chave,
+      err,
+    });
+  }
 
   return cte;
 }

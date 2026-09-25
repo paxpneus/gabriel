@@ -20,6 +20,15 @@ import uploaderService, {
   UploaderService,
   UploadInput,
 } from "../../handlers/uploader/services/uploader.service";
+import uploaderQueue from "../../handlers/uploader/uploader.queue";
+import { buildEntityCacheKey } from "../../handlers/uploader/uploader-image-cache";
+import tempFileService from "../../handlers/temp-file/temp-file.service";
+import {
+  buildTempFileSentinelPath,
+  isTempFileSentinelPath,
+  extractTempFileId,
+  resolveDeleteTarget,
+} from "../../handlers/temp-file/temp-file.constants";
 import { cleanDocument } from "../../../shared/utils/normalizers/document";
 import integrationsService from "../../integrations/integrations/integrations.service";
 import { BlingApiFetchQueue } from "../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
@@ -81,7 +90,6 @@ export class UnmappedInvoiceProductService extends BaseService<
     integrations_id: string
   ): Promise<UnmappedInvoiceProductAttributes> {
     const id = randomUUID();
-    let imagePath: string;
 
     const integration = await integrationsService.findById(integrations_id);
     if (!integration) {
@@ -95,49 +103,95 @@ export class UnmappedInvoiceProductService extends BaseService<
     const extension = image.mimeType.split("/")[1] || "bin";
     const filename = `${new Date().toLocaleDateString("pt-BR")} - ${id} - ${integration.name}.${extension}`;
 
-    try {
-      imagePath = await uploaderService.upload({
-        ...image,
-        filename,
-        preserveFilename: true,
-      });
-    } catch (error) {
-      throw new Error(`Erro ao fazer upload de imagem: ${error}`);
-    }
-    try {
-      await sequelize.transaction(async (t) => {
-        const alreadyExists = await this.repository.findOne({
-          where: {
-            ean,
-            invoice_id: { [Op.eq]: null },
-          },
-          transaction: t,
-        });
+    // Resposta instantânea: staging + linha com path sentinela na mesma
+    // transação; upload real roda em background (ver .claude/modules/uploader-queue.md).
+    let tempFileId!: string;
 
-        if (alreadyExists) {
-          throw new Error(
-            "Produto não mapeado já registrado para ajuste no ERP!",
-          );
-        }
-
-        const payload = {
-          id,
+    await sequelize.transaction(async (t) => {
+      const alreadyExists = await this.repository.findOne({
+        where: {
           ean,
-          integrations_id,
-          reason:
-            "EAN não encontrado no sistema, verificar ERP para ajustar cadastro!",
-          type: "ERROR_SCAN" as const,
-          image_path: imagePath,
-        };
-        await this.repository.create(payload, {
-          transaction: t,
-        });
+          invoice_id: { [Op.eq]: null },
+        },
+        transaction: t,
       });
-    } catch (error) {
-      await uploaderService.delete(imagePath);
-      throw error;
-    }
+
+      if (alreadyExists) {
+        throw new Error(
+          "Produto não mapeado já registrado para ajuste no ERP!",
+        );
+      }
+
+      const tempFile = await tempFileService.create(
+        {
+          buffer: image.buffer,
+          mime_type: image.mimeType,
+          original_filename: filename,
+          upload_directory: null,
+          preserve_filename: true,
+          entity_type: "UNMAPPED_INVOICE_PRODUCT",
+          entity_id: id,
+        },
+        { transaction: t },
+      );
+      tempFileId = tempFile.id;
+
+      const payload = {
+        id,
+        ean,
+        integrations_id,
+        reason:
+          "EAN não encontrado no sistema, verificar ERP para ajustar cadastro!",
+        type: "ERROR_SCAN" as const,
+        image_path: buildTempFileSentinelPath(tempFile.id),
+      };
+      await this.repository.create(payload, {
+        transaction: t,
+      });
+    });
+
+    await uploaderQueue.enqueueUpload(tempFileId, "UNMAPPED_INVOICE_PRODUCT");
+
     return (await this.findById(id))!;
+  }
+
+  // Mesma lógica de sentinela+cache do getReceiptBuffer do PDV.
+  async getImageBuffer(
+    id: string,
+  ): Promise<{ buffer: Buffer; extension: string } | null> {
+    const unmapped = await this.findById(id);
+    if (!unmapped?.image_path) return null;
+
+    if (isTempFileSentinelPath(unmapped.image_path)) {
+      const tempFile = await tempFileService.findById(
+        extractTempFileId(unmapped.image_path),
+        { attributes: ["id", "buffer", "mime_type"] },
+      );
+      if (tempFile) {
+        return {
+          buffer: tempFile.buffer,
+          extension: tempFile.mime_type.split("/").pop() || "jpeg",
+        };
+      }
+
+      // corrida: o job de upload já terminou entre a leitura acima e agora —
+      // recarrega o path real já atualizado.
+      const refreshed = await this.findById(id);
+      if (!refreshed?.image_path || isTempFileSentinelPath(refreshed.image_path)) {
+        throw new Error("Imagem ainda não disponível, tente novamente");
+      }
+      const buffer = await uploaderService.getFile(
+        refreshed.image_path,
+        buildEntityCacheKey("UNMAPPED_INVOICE_PRODUCT", id),
+      );
+      return { buffer, extension: refreshed.image_path.split(".").pop() || "jpeg" };
+    }
+
+    const buffer = await uploaderService.getFile(
+      unmapped.image_path,
+      buildEntityCacheKey("UNMAPPED_INVOICE_PRODUCT", id),
+    );
+    return { buffer, extension: unmapped.image_path.split(".").pop() || "jpeg" };
   }
 
   async markMapped(ids: string[]): Promise<void> {
@@ -165,12 +219,18 @@ export class UnmappedInvoiceProductService extends BaseService<
         },
       );
 
-      const imagePaths = unmapped
-        .map((u) => u.image_path)
-        .filter((path): path is string => !!path);
+      const withImage = unmapped.filter(
+        (u): u is typeof u & { image_path: string } => !!u.image_path,
+      );
 
       await Promise.all(
-        imagePaths.map((path) => uploaderService.delete(path)),
+        withImage.map((u) =>
+          uploaderQueue.enqueueDelete(
+            resolveDeleteTarget(u.image_path),
+            "UNMAPPED_INVOICE_PRODUCT",
+            buildEntityCacheKey("UNMAPPED_INVOICE_PRODUCT", u.id),
+          ),
+        ),
       );
     });
   }
@@ -494,7 +554,15 @@ export class UnmappedInvoiceProductService extends BaseService<
   async delete(id: string, options?: DestroyOptions) {
     const unMapped = await this.repository.findById(id);
     if (unMapped?.image_path) {
-      await uploaderService.delete(unMapped.image_path);
+      await uploaderQueue
+        .enqueueDelete(
+          resolveDeleteTarget(unMapped.image_path),
+          "UNMAPPED_INVOICE_PRODUCT",
+          buildEntityCacheKey("UNMAPPED_INVOICE_PRODUCT", id),
+        )
+        .catch((err) =>
+          console.warn("[Unmapped] Falha ao enfileirar limpeza da imagem", err),
+        );
     }
     return this.repository.delete(id, options);
   }

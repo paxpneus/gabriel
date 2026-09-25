@@ -1,6 +1,7 @@
 import { AxiosInstance } from "axios";
 import { randomUUID } from "node:crypto";
 import uploaderApi from "../api/uploader_api";
+import { getCachedImage, setCachedImage, invalidateCachedImage } from "../uploader-image-cache";
 
 export type UploadInput = {
   buffer: Buffer;
@@ -9,6 +10,8 @@ export type UploadInput = {
   directory?: string;
   preserveFilename?: boolean;
   timeoutMs?: number;
+  // Opcional — quem passar ganha cache automático (ver uploader-image-cache.ts).
+  cacheKey?: string;
 };
 
 export class UploaderService {
@@ -36,6 +39,12 @@ export class UploaderService {
         'Content-Type': file.mimeType
       }
     });
+
+    if (file.cacheKey) {
+      // buffer já em memória — sem round-trip extra no WebDAV pra cachear
+      const cacheExtension = file.mimeType.split('/')[1] || 'bin';
+      await setCachedImage(file.cacheKey, file.buffer, cacheExtension);
+    }
 
     return path;
   }
@@ -83,12 +92,23 @@ export class UploaderService {
     return filename.replace(/[\\/]/g, "-");
   }
 
-  async getFile(path: string): Promise<Buffer> {
+  async getFile(path: string, cacheKey?: string): Promise<Buffer> {
+    if (cacheKey) {
+      const cached = await getCachedImage(cacheKey);
+      if (cached) return cached.buffer;
+    }
+
     const response = await this.api.get(path, {
       responseType: 'arraybuffer'
     });
+    const buffer = Buffer.from(response.data);
 
-    return Buffer.from(response.data);
+    if (cacheKey) {
+      const extension = path.split('.').pop() || 'bin';
+      await setCachedImage(cacheKey, buffer, extension);
+    }
+
+    return buffer;
   }
 
     async exists(path: string): Promise<boolean> {
@@ -104,16 +124,16 @@ export class UploaderService {
     }
   }
 
-  async delete(path: string): Promise<void> {
+  async delete(path: string, cacheKey?: string): Promise<void> {
     try {
       await this.api.delete(path);
     } catch (error: any) {
-      if (error.response?.status === 404) {
-        return;
+      if (error.response?.status !== 404) {
+        throw new Error(`Erro ao deletar arquivo: ${error}`);
       }
-
-      throw new Error(`Erro ao deletar arquivo: ${error}`);
     }
+
+    if (cacheKey) await invalidateCachedImage(cacheKey);
   }
 }
 

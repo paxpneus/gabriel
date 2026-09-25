@@ -7,7 +7,6 @@ import { Request, Response } from "express";
 import { UnmappedInvoiceProductCreationAttributes } from "./unmapped-invoice-product.types";
 
 import multer from "multer";
-import uploaderService from "../../handlers/uploader/services/uploader.service";
 import { UnitBusiness, User } from "../../warehouse";
 import { BlingApiFetchQueue } from "../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { TCarUpsertQueue } from "../../handlers/tecinco/queues/tecinco-api-fetch.queue";
@@ -102,18 +101,15 @@ export class UnmappedInvoiceProductController extends BaseController<
 
   getImage = async (req: Request, res: Response): Promise<void> => {
   try {
-    const unmapped = await this.service.findById(req.params.id as string);
-    if (!unmapped?.image_path) {
+    const result = await this.service.getImageBuffer(req.params.id as string);
+    if (!result) {
       res.status(404).end();
       return;
     }
 
-    const buffer = await uploaderService.getFile(unmapped.image_path);
-    const ext = unmapped.image_path.split('.').pop() || 'jpeg';
-
-    res.set('Content-Type', `image/${ext}`);
-    res.set('Cache-Control', 'public, max-age=86400'); 
-    res.send(buffer);
+    res.set('Content-Type', `image/${result.extension}`);
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(result.buffer);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

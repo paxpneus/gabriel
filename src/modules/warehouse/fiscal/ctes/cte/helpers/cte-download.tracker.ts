@@ -6,17 +6,18 @@ export interface JobState {
   status: JobStatus;
   total: number;
   processed: number;
-  filePath?: string; 
+  filePath?: string;
   error?: string;
+  userId?: string | number; // pra notificar via socket quando o upload real terminar
 }
 
 const key = (jobId: string) => `cte-xml-job:${jobId}`;
 
 export const JobTracker = {
-  async init(jobId: string, total: number) {
+  async init(jobId: string, total: number, userId?: string | number) {
     await redisConnection.set(
       key(jobId),
-      JSON.stringify({ status: "queued", total, processed: 0 } as JobState),
+      JSON.stringify({ status: "queued", total, processed: 0, userId } as JobState),
       "EX",
       3600,
     );

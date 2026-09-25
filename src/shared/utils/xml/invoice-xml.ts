@@ -33,7 +33,8 @@ import integrationsService from "../../../modules/integrations/integrations/inte
 import { resolveIntegrationsIdForUnitBusiness } from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
 import transporterService from "../../../modules/warehouse/transporter/transporter.service";
 import { generateDanfePdfBuffer } from "./danfe-generator";
-import uploaderService from "../../../modules/handlers/uploader/services/uploader.service";
+import uploaderQueue from "../../../modules/handlers/uploader/uploader.queue";
+import tempFileService from "../../../modules/handlers/temp-file/temp-file.service";
 import pdvSalesRequestService from "../../../modules/sales/pdv-management/sales-request/pdv-sales-request.service";
 
 /**
@@ -594,27 +595,6 @@ function toIntegerQuantity(value: unknown): number {
   return Math.trunc(parsed);
 }
 
-const DANFE_UPLOAD_INTERVAL_MS = 5000;
-let danfeUploadQueue: Promise<void> = Promise.resolve();
-let lastDanfeUploadStartedAt = 0;
-
-// A fila da Tecinco processa notas novas com concurrency>1 — sem isso, vários
-// upload de DANFE disparam juntos e o storage responde 429. Serializa pra no
-// máximo 1 upload a cada 5s; não espera o upload em si terminar, só o início
-// do próximo.
-function waitForDanfeUploadSlot(): Promise<void> {
-  const acquire = danfeUploadQueue.then(async () => {
-    const waitMs = Math.max(
-      0,
-      DANFE_UPLOAD_INTERVAL_MS - (Date.now() - lastDanfeUploadStartedAt),
-    );
-    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
-    lastDanfeUploadStartedAt = Date.now();
-  });
-  danfeUploadQueue = acquire.catch(() => undefined);
-  return acquire;
-}
-
 function findXmlItemForOperationalItem(params: {
   det: any[];
   operationalItem: InvoiceOperationalItemFromXml;
@@ -991,22 +971,13 @@ export async function upsertInvoiceFromXml(
   let invoice: FullInvoiceForAllUnits | null;
 
   if (!existingInvoice) {
-    // A Tecinco não manda um DANFE pronto (só XML) — diferente da Bling, que
-    // já retorna o PDF via linkPDF. Gera só na criação, não a cada update
-    // (a nota não muda de conteúdo fiscal depois de emitida).
-    let danfePath = "";
+    // Tecinco só manda XML (gera o PDF aqui, só na criação — nota não muda
+    // depois de emitida). Upload real fica pra depois do create, em background.
+    let danfeBuffer: Buffer | null = null;
     try {
-      await waitForDanfeUploadSlot();
-      const danfeBuffer = await generateDanfePdfBuffer(xmlContent);
-      danfePath = await uploaderService.upload({
-        buffer: danfeBuffer,
-        filename: `${chaveAcesso || idSystem}.pdf`,
-        mimeType: "application/pdf",
-        directory: "/danfes",
-        preserveFilename: true,
-      });
+      danfeBuffer = await generateDanfePdfBuffer(xmlContent);
     } catch (err) {
-      logDbError("[IMPORT_XML] Falha ao gerar/upload DANFE", err as Error, {
+      logDbError("[IMPORT_XML] Falha ao gerar DANFE", err as Error, {
         idSystem,
         numero,
         chaveAcesso,
@@ -1018,7 +989,7 @@ export async function upsertInvoiceFromXml(
         {
           ...invoiceBaseData,
           id_system: idSystem,
-          danfe_path: danfePath,
+          danfe_path: null,
         },
         invoiceItemsForCreate,
         {
@@ -1039,6 +1010,19 @@ export async function upsertInvoiceFromXml(
 
     if (!invoice) {
       throw new Error("Invoice não encontrada.");
+    }
+
+    if (danfeBuffer) {
+      const tempFile = await tempFileService.create({
+        buffer: danfeBuffer,
+        mime_type: "application/pdf",
+        original_filename: `${chaveAcesso || idSystem}.pdf`,
+        upload_directory: "/danfes",
+        preserve_filename: true,
+        entity_type: "INVOICE_DANFE",
+        entity_id: invoice.id,
+      });
+      await uploaderQueue.enqueueUpload(tempFile.id, "INVOICE_DANFE");
     }
 
     if (cancelledInvoice) {

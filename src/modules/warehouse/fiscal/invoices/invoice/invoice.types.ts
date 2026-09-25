@@ -23,7 +23,7 @@ export interface InvoiceAttributes {
   customer_document: string;
   xml_path?: string | null;
   xml_key?: string | null;
-  danfe_path?: string;
+  danfe_path?: string | null;
   store_id: string;
   sender_cnpj: string;
   sender_name: string;
@@ -81,7 +81,7 @@ export interface FullInvoiceAttributes {
   customer_document: string;
   xml_path?: string | null;
   xml_key?: string | null;
-  danfe_path?: string;
+  danfe_path?: string | null;
   store_id: string;
   sender_cnpj: string;
   sender_name: string;
@@ -139,7 +139,7 @@ export interface FullInvoiceAttributesForAllUnits {
   customer_document: string;
   xml_path?: string | null;
   xml_key?: string | null;
-  danfe_path?: string;
+  danfe_path?: string | null;
   store_id: string;
   sender_cnpj: string;
   sender_name: string;

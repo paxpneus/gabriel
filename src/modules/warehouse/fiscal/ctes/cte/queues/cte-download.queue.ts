@@ -3,7 +3,8 @@ import archiver from "archiver";
 import { PassThrough } from "stream";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
 import cteXmlService from "../services/cte-xml.service";
-import uploaderService from "../../../../../handlers/uploader/services/uploader.service";
+import uploaderQueue from "../../../../../handlers/uploader/uploader.queue";
+import tempFileService from "../../../../../handlers/temp-file/temp-file.service";
 import socketService from "../../../../../handlers/socket/services/socket.service";
 import { JobTracker } from "./../helpers/cte-download.tracker";
 
@@ -86,23 +87,20 @@ export class CteXmlBatchQueue extends BaseQueueService<CteXmlBatchJobData> {
         });
       });
 
-      const cloudPath = await uploaderService.upload({
+      // Staging com finalização automática — este job conclui sem esperar o
+      // upload real (ver .claude/modules/uploader-queue.md).
+      const tempFile = await tempFileService.create({
         buffer,
-        filename: `xmls-${jobId}.zip`,
-        mimeType: "application/zip",
-        directory: "/tmp-exports/cte-xml",
-        preserveFilename: true,
-        timeoutMs: 60_000,
+        mime_type: "application/zip",
+        original_filename: `xmls-${jobId}.zip`,
+        upload_directory: "/tmp-exports/cte-xml",
+        preserve_filename: true,
+        entity_type: "CTE",
+        entity_id: jobId,
       });
+      await uploaderQueue.enqueueUpload(tempFile.id, "CTE");
 
-      await JobTracker.update(jobId, { status: "done", filePath: cloudPath });
-
-      socketService.emitToUser(userId, "job:completed", {
-        jobId,
-        resultado: { path: cloudPath },
-      });
-
-      console.log(`[CteXmlBatchQueue] job=${jobId} concluído -> ${cloudPath}`);
+      console.log(`[CteXmlBatchQueue] job=${jobId} zip pronto, upload enfileirado em background`);
     } catch (err: any) {
       console.error(`[CteXmlBatchQueue] job=${jobId} falhou:`, err);
       await JobTracker.update(jobId, { status: "error", error: err.message });

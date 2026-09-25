@@ -54,7 +54,9 @@ type SharedLockPriorityTicket = {
   timestamp: number;
 };
 
-export abstract class BaseQueueService<T> {
+// R: tipo de retorno de process() (default void) — usado por filas cujo job
+// precisa devolver valor via job.waitUntilFinished() (ex.: UploaderQueue).
+export abstract class BaseQueueService<T, R = void> {
   public queue: Queue;
   protected worker: Worker | undefined;
   protected queueEvents: QueueEvents;
@@ -127,12 +129,12 @@ export abstract class BaseQueueService<T> {
     }
   }
 
-  abstract process(job: Job<T>): Promise<void>;
+  abstract process(job: Job<T>): Promise<R>;
 
   private async runProcessWithTimeout(
     job: Job<T>,
     maxProcessingMs?: number,
-  ): Promise<void> {
+  ): Promise<R> {
     if (!maxProcessingMs) {
       return this.process(job);
     }
@@ -150,7 +152,7 @@ export abstract class BaseQueueService<T> {
     });
 
     try {
-      await Promise.race([this.process(job), timeoutPromise]);
+      return await Promise.race([this.process(job), timeoutPromise]);
     } finally {
       clearTimeout(timeoutHandle!);
     }
@@ -183,7 +185,7 @@ export abstract class BaseQueueService<T> {
     job: Job<T>,
     sharedLock: NonNullable<baseQueueOptions["sharedLock"]>,
     token: string,
-  ): Promise<void> {
+  ): Promise<R> {
     const ttlMs = sharedLock.ttlMs ?? 15 * 60 * 1000;
     const retryDelayMs = sharedLock.retryDelayMs ?? 1000;
 
@@ -244,7 +246,7 @@ export abstract class BaseQueueService<T> {
     }, sharedLockRefreshMs);
 
     try {
-      await this.runProcessWithTimeout(job, this.maxProcessingMs);
+      return await this.runProcessWithTimeout(job, this.maxProcessingMs);
     } finally {
       clearInterval(workerLockInterval);
       clearInterval(sharedLockInterval);

@@ -46,7 +46,11 @@ export interface OrchestratorDependencies {
   };
   /** Fila para eventos que precisam buscar dados adicionais na API Bling */
   blingApiFetchQueue: {
-    add: (payload: unknown, jobId: string) => Promise<void>;
+    add: (
+      payload: unknown,
+      jobId: string,
+      jobOptions?: { priority?: number },
+    ) => Promise<void>;
   };
   /** client_secret do aplicativo Bling (para validar HMAC) */
   clientSecret: string;
@@ -86,6 +90,7 @@ export async function orchestrateBlingWebhook(
 
   const { resource, action } = parsed;
   const jobId = `bling-${resource}-${action}-${envelope.eventId}`;
+  const isInvoiceResource = resource === 'invoice' || resource === 'consumer_invoice';
 
   if (
     (resource === 'invoice' || resource === 'consumer_invoice') &&
@@ -154,9 +159,13 @@ export async function orchestrateBlingWebhook(
 
   if (mapped.requiresApiFetch) {
     // TODO FILA — enfileirar para worker que faz req na API Bling
+    // Nota fiscal fura a fila (mesma convenção de priority:1 usada em
+    // unmapped-invoice-product.service.ts): não fica atrás de product/stock/
+    // supplier já esperando na mesma fila.
     await deps.blingApiFetchQueue.add(
       { ...queuePayload, apiFetch: mapped.requiresApiFetch },
       `${jobId}-fetch`,
+      isInvoiceResource ? { priority: 1 } : undefined,
     );
   }
 
