@@ -4,7 +4,19 @@
 
 jest.mock("../../../handlers/uploader/services/uploader.service", () => ({
   __esModule: true,
-  default: { upload: jest.fn(), delete: jest.fn() },
+  default: { upload: jest.fn(), delete: jest.fn(), getFile: jest.fn() },
+}));
+
+// uploaderQueue extends BaseQueueService, que cria Queue/QueueEvents BullMQ
+// reais no construtor mesmo com workless:true — sem mockar, o import abre
+// conexão de verdade com o Redis (mesmo sem nenhum teste chamar o método).
+jest.mock("../../../handlers/uploader/uploader.queue", () => ({
+  __esModule: true,
+  default: { enqueueUpload: jest.fn(), enqueueDelete: jest.fn() },
+}));
+jest.mock("../../../handlers/temp-file/temp-file.service", () => ({
+  __esModule: true,
+  default: { create: jest.fn(), findById: jest.fn() },
 }));
 
 jest.mock("../../../integrations/integrations/integrations.service", () => ({
