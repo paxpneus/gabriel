@@ -1,5 +1,11 @@
 import { Sequelize } from "sequelize";
 
+// Código Bling (actual_situation) de pedido cancelado. Elegibilidade pro
+// PDV olha só esse código — qualquer outra situação (ex.: "21" em
+// digitação) conta como aceito, independente de como internal_status
+// mapeia aquele código.
+export const BLING_CANCELLED_SITUACAO_ID = "12";
+
 // Pedido cujo invoice_id já tem romaneio gerado (ExpeditionBatch com
 // delivery_note_generated_at preenchido) NA LOJA DO PRÓPRIO PEDIDO — mesma
 // cadeia Invoice → batchInvoice → batch de
