@@ -32,6 +32,14 @@ export class PdvSalesRequestHistoryService extends BaseService<
       "Histórico da solicitação não pode ser excluído diretamente — só via exclusão em cascata da própria solicitação",
     );
   }
+
+  // Único ponto que de fato apaga histórico — usado só por
+  // PdvSalesRequestService.deleteRequest (zera a solicitação, não apaga a
+  // linha), distinto do bulkDelete acima que continua bloqueado pra
+  // qualquer outra chamada.
+  async deleteAllByRequestId(requestId: string): Promise<number> {
+    return this.repository.deleteAllByRequestId(requestId);
+  }
 }
 
 export default new PdvSalesRequestHistoryService();

@@ -16,6 +16,10 @@ export class PdvSalesRequestReceiptRepository extends BaseRepository<PdvSalesReq
     });
   }
 
+  async deleteAllByRequestId(requestId: string): Promise<number> {
+    return this.bulkDelete({ where: { pdv_sales_request_id: requestId } });
+  }
+
   // Duplicidade é global — mesmo comprovante já usado em QUALQUER solicitação
   // (não só na mesma). excludeId evita que editar a análise de uma linha a
   // autobloqueie contra ela mesma.

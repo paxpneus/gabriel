@@ -18,6 +18,10 @@ export class PdvSalesRequestReceiptService extends BaseService<
     return this.repository.findAllByRequestId(requestId);
   }
 
+  async deleteAllByRequestId(requestId: string): Promise<number> {
+    return this.repository.deleteAllByRequestId(requestId);
+  }
+
   async findByFingerprint(
     fingerprint: string,
     excludeId?: string,

@@ -12,6 +12,10 @@ export enum PdvSalesRequestStatus {
   // Tecinco (ver PdvSalesRequestService.handleInvoiceCancelled) — bloqueia
   // o fluxo até uma ação humana decidir reabrir ou criar nova solicitação.
   INVOICE_CANCELLED = "INVOICE_CANCELLED",
+  // Destino de deleteRequest — a solicitação nunca é apagada de fato, só
+  // zerada (ver PdvSalesRequestService.deleteRequest): mantém sale_invoice_id,
+  // limpa o resto, apaga comprovantes e histórico, e cai aqui.
+  EXCLUDED = "EXCLUDED",
 }
 
 // Status que encerram o ciclo de vida da solicitação — usado tanto pra saber
@@ -22,6 +26,7 @@ export const TERMINAL_PDV_SALES_REQUEST_STATUSES: readonly PdvSalesRequestStatus
     PdvSalesRequestStatus.FINISHED,
     PdvSalesRequestStatus.CANCELLED,
     PdvSalesRequestStatus.INVOICE_CANCELLED,
+    PdvSalesRequestStatus.EXCLUDED,
   ];
 
 export enum PdvShippingType {

@@ -51,6 +51,7 @@ import {
 } from "./helpers/pdv-sales-request-room";
 import { notifyPdvStoreSync } from "./helpers/notify-pdv-store-sync";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
+import { isWithinPhysicalStoreRange } from "../../../company/unit-business/helpers/physical-numbered-unit-business";
 import {
   orderNumberSystemMatchesLiteral,
   orderCustomerNameMatchesLiteral,
@@ -230,11 +231,14 @@ export class PdvSalesRequestService extends BaseService<
     );
   }
 
-  // Loja explicitamente fora do fluxo PDV (CD21, ou PDV_EXCLUDED_STORE_NUMBERS)
-  // — diferente do caso "sem loja selecionada" acima, aqui a loja É uma
-  // específica, só que uma que nunca participa do PDV. Único lugar que
-  // precisa buscar a UnitBusiness pelo id pra checar (as outras exclusões
-  // já filtram na origem, por número, sem precisar de round-trip extra).
+  // Loja explicitamente fora do fluxo PDV — diferente do caso "sem loja
+  // selecionada" acima, aqui a loja É uma específica, só que uma que nunca
+  // participa do PDV. Mesmo critério de unitBusinessService.
+  // getPhysicalNumberedUnitBusinessIds (type PHYSICAL + número 1-24),
+  // checado por instância em vez de na query — pega tanto ONLINE quanto a
+  // loja placeholder "SEM_LOJA" (bling-order.service.ts, pedido cuja loja
+  // não resolveu no Bling: number "0", fora do range, sem type PHYSICAL),
+  // que senão ganhava PdvSalesRequest órfã e invisível em qualquer tela.
   private async isExcludedFromPdvFlow(unitBusinessId: string): Promise<boolean> {
     const [unitBusiness, cd21] = await Promise.all([
       unitBusinessService.findById(unitBusinessId),
@@ -242,6 +246,8 @@ export class PdvSalesRequestService extends BaseService<
     ]);
     if (!unitBusiness) return false;
     if (cd21 && unitBusiness.id === cd21.id) return true;
+    if (unitBusiness.type !== "PHYSICAL") return true;
+    if (!isWithinPhysicalStoreRange(unitBusiness.number)) return true;
     return PDV_EXCLUDED_STORE_NUMBERS.includes(unitBusiness.number ?? "");
   }
 
@@ -496,6 +502,18 @@ export class PdvSalesRequestService extends BaseService<
       order.unit_business_id !== params.unitBusinessId
     ) {
       throw new Error("Pedido não pertence à loja deste acesso");
+    }
+
+    // Acesso global (Televendas/Financeiro, unitBusinessId null) não passa
+    // pela checagem de ownership acima — sem isso, um orderId arbitrário no
+    // body criaria solicitação pra pedido de CD21/ONLINE/SEM_LOJA ou já
+    // com romaneio gerado. Mesmo critério de createEmptyRequestForNewOrderIfEligible.
+    if (
+      !order.unit_business_id ||
+      (await this.isExcludedFromPdvFlow(order.unit_business_id)) ||
+      !(await orderService.isEligibleForPdv(params.orderId))
+    ) {
+      throw new Error("Pedido não é elegível para o fluxo PDV");
     }
 
     const created = await sequelize.transaction(async (t) => {
@@ -1753,6 +1771,10 @@ export class PdvSalesRequestService extends BaseService<
   // Só permitido em OPEN (nunca saiu do lugar) ou PENDING_CORRECTION (devolvida
   // pra loja) — qualquer outro status já tem nota/pedido em andamento na Bling/
   // Tecinco, resolve pelo fluxo de correção/cancelamento em vez de apagar.
+  // Nunca apaga a linha: zera tudo exceto sale_invoice_id, apaga comprovantes
+  // (arquivo + linha) e histórico, e transiciona pra EXCLUDED — mantém o
+  // order_id pra reabrir criação de nova solicitação (findActiveByOrderId
+  // trata EXCLUDED como terminal).
   async deleteRequest(id: string): Promise<void> {
     const request = await this.repository.findById(id);
     if (!request) throw new Error("Solicitação não encontrada");
@@ -1767,8 +1789,7 @@ export class PdvSalesRequestService extends BaseService<
     }
 
     // Um arquivo por comprovante — em paralelo (Promise.all), nunca um await
-    // por iteração (N+1). As linhas em si somem sozinhas via onDelete:
-    // CASCADE quando a solicitação for apagada logo abaixo.
+    // por iteração (N+1).
     const receipts = await pdvSalesRequestReceiptService.findAllByRequestId(id);
     await Promise.all(
       receipts.map((receipt) =>
@@ -1781,7 +1802,26 @@ export class PdvSalesRequestService extends BaseService<
       ),
     );
 
-    await this.repository.delete(id);
+    await sequelize.transaction(async (t) => {
+      await pdvSalesRequestReceiptService.deleteAllByRequestId(id);
+      await pdvSalesRequestHistoryService.deleteAllByRequestId(id);
+
+      await this.repository.update(
+        id,
+        {
+          status: PdvSalesRequestStatus.EXCLUDED,
+          transfer_invoice_id: null,
+          correction_origin_status: null,
+          shipping_type: null,
+          payment_receipt_analysis: null,
+          payment_receipt_validated: null,
+          payment_method_matches_receipt: null,
+          receipt_total_matches_order: null,
+          errors: null,
+        },
+        { transaction: t },
+      );
+    });
   }
 
   async getHistory(id: string) {

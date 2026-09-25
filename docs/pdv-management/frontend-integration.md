@@ -97,6 +97,26 @@ de `summary/status-counts` (`open`, `pending_finance`, `pending_correction`,
 `cd21_billing`) — clicar num indicativo do resumo e aplicar esse filtro deve
 sempre bater com o número mostrado nele.
 
+## Mudou: `DELETE /sales-request/:id` não apaga mais o registro
+
+Continua permitido só em `OPEN`/`PENDING_CORRECTION` (`405` fora disso), mas
+agora zera a solicitação em vez de apagar a linha: some o histórico, os
+comprovantes anexados, `transfer_invoice_id` e todo campo de análise/erro,
+mantém só `sale_invoice_id`, e o `status` vai pra um novo valor,
+`EXCLUDED` (é terminal — o pedido volta a poder receber uma nova
+solicitação). Resposta continua `204`. Se o front cacheava/exibia essa
+solicitação em algum lugar por id, ela ainda existe, só que zerada e
+`EXCLUDED` — não vai mais dar `404` depois de excluída.
+
+## Mudou: pedido de loja `ONLINE` não ganha mais sale request automática
+
+`createEmptyRequestForNewOrderIfEligible` (roda na criação do pedido vindo da
+Bling) agora também exclui unit business com `type: ONLINE`, além de CD21 e
+`PDV_EXCLUDED_STORE_NUMBERS` — antes só CD21/`PDV_EXCLUDED_STORE_NUMBERS`
+eram excluídos, então pedido de loja online podia ganhar uma `PdvSalesRequest`
+por engano. Regra final: toda order de loja física ganha sale request
+automática, exceto CD21 e `PDV_EXCLUDED_STORE_NUMBERS`.
+
 ## Mudou: `/orders/eligible`
 
 Não filtra mais por "status finalizador" — agora entra qualquer pedido

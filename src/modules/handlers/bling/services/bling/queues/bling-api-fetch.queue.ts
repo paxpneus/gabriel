@@ -874,23 +874,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // SKU (nf.itens[].codigo) é a chave mais confiável — vem direto do
     // catálogo da Bling e bate com ProductConfig.sku, sempre escopado na
-    // unit_business da Bling. EAN é usado só como fallback quando não há
-    // SKU ou não há ProductConfig correspondente — e mora em
-    // ProductConfig.gtin (escopado por unit_business_id), não mais em
-    // Product.ean. gtin_package não participa da resolução — é só um
-    // campo guardado para uso futuro.
+    // unit_business da Bling. SupplierMapping é o único fallback quando não
+    // há SKU ou não há ProductConfig correspondente — EAN via
+    // ProductConfig.gtin não é mais usado pra resolver produto da nota.
     if (sku) {
       const config = await findProductConfigBySku(sku, BLING_UNIT_BUSINESS_ID!);
-      if (config) product = await Product.findByPk(config.product_id);
-    }
-
-    if (!product && ean) {
-      const config = await ProductConfig.findOne({
-        where: {
-          unit_business_id: BLING_UNIT_BUSINESS_ID,
-          gtin: ean,
-        },
-      });
       if (config) product = await Product.findByPk(config.product_id);
     }
 

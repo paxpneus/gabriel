@@ -747,24 +747,53 @@ export class BlingOrderService {
       const isCompleted =
         COMPLETED_ORDER_INTERNAL_STATUSES.includes(internalStatus);
 
-      // Grava actual_situation/internal_status JÁ, antes de qualquer etapa
-      // de enriquecimento abaixo (contato, endereço, custo/comissão de
-      // item, financeiro) que pode lançar em pedido com dado faltante ou
-      // inesperado. Sem isso, um erro em qualquer uma dessas etapas
-      // secundárias deixava o pedido com status desatualizado no banco,
-      // mesmo já sabendo o status real vindo da Bling. O update completo
-      // mais abaixo regrava os dois de novo — redundante, mas garante que
-      // o essencial nunca fica pra trás por causa de algo secundário.
+      // Resolve unit_business_id se ainda estiver nulo — precisa vir antes
+      // do write defensivo abaixo (não depois, como antes) pra já entrar
+      // nele e disparar a criação da PdvSalesRequest o quanto antes, mesmo
+      // que as etapas de enriquecimento mais abaixo (contato, endereço,
+      // item, financeiro) falhem.
+      let unitBusinessId: string | null =
+        existingOrder.unit_business_id ?? null;
+      if (!unitBusinessId && orderData.loja?.id) {
+        const unitBusiness = await UnitBusiness.findOne({
+          where: { id_system: String(orderData.loja.id) },
+        });
+        unitBusinessId = unitBusiness?.id ?? null;
+      }
+
+      // Grava actual_situation/internal_status/unit_business_id JÁ, antes de
+      // qualquer etapa de enriquecimento abaixo (contato, endereço,
+      // custo/comissão de item, financeiro) que pode lançar em pedido com
+      // dado faltante ou inesperado. Sem isso, um erro em qualquer uma
+      // dessas etapas secundárias deixava o pedido com status desatualizado
+      // no banco, mesmo já sabendo o status real vindo da Bling. O update
+      // completo mais abaixo regrava os campos de novo — redundante, mas
+      // garante que o essencial nunca fica pra trás por causa de algo
+      // secundário.
       try {
         await ordersService.update(existingOrder.id, {
           actual_situation: String(orderData.situacao.id),
           internal_status: internalStatus,
+          unit_business_id: unitBusinessId,
           ...reasonCancelledFields(orderData.situacao.id),
         });
-        notifyPdvStoreSync(existingOrder.unit_business_id, "ORDER_STATUS_CHANGED");
+        notifyPdvStoreSync(unitBusinessId, "ORDER_STATUS_CHANGED");
+
+        // Pedido nasceu sem loja (ex.: marketplace ainda sem
+        // unit_business_id resolvida) e só ganhou uma agora —
+        // createOrderFromBling não criou a PdvSalesRequest na hora
+        // (early-return por unit_business_id nulo), e esse é o único
+        // disparo automático depois disso. Fica junto do write defensivo
+        // acima, como garantia — não pode depender de nenhuma etapa de
+        // enriquecimento abaixo que possa falhar.
+        if (!existingOrder.unit_business_id && unitBusinessId) {
+          await pdvSalesRequestService.createEmptyRequestForNewOrderIfEligible(
+            existingOrder.id,
+          );
+        }
       } catch (statusError: any) {
         console.error(
-          `[BlingOrderService] Falha ao gravar actual_situation/internal_status do pedido ${orderData.numero} (seguindo mesmo assim):`,
+          `[BlingOrderService] Falha ao gravar actual_situation/internal_status/unit_business_id do pedido ${orderData.numero} (seguindo mesmo assim):`,
           statusError.message,
         );
       }
@@ -779,16 +808,6 @@ export class BlingOrderService {
         orderData.vendedor,
         integration.id,
       );
-
-      // ─── Resolve unit_business_id se ainda estiver nulo ──────────────────
-      let unitBusinessId: string | null =
-        existingOrder.unit_business_id ?? null;
-      if (!unitBusinessId && orderData.loja?.id) {
-        const unitBusiness = await UnitBusiness.findOne({
-          where: { id_system: String(orderData.loja.id) },
-        });
-        unitBusinessId = unitBusiness?.id ?? null;
-      }
 
       const store = await this.resolveStore(orderData.loja?.id);
 
@@ -866,11 +885,6 @@ export class BlingOrderService {
       };
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
-      // Segunda emissão de propósito: cobre o caso em que unit_business_id
-      // só foi resolvido agora (linhas acima, pedido chegou sem loja) — a
-      // primeira emissão (write defensivo logo no início) já usou o valor
-      // antigo, possivelmente null.
-      notifyPdvStoreSync(unitBusinessId, "ORDER_STATUS_CHANGED");
 
       // Avança automaticamente uma solicitação PDV em PENDING_NF_SALE assim
       // que a nota de venda é confirmada — cobre tanto NFe gerada pelo

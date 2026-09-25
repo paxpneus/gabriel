@@ -345,20 +345,11 @@ async function findProductForInvoiceItem(params: {
     return null;
   }
 
-  // SKU (cProd) é a chave mais confiável e tem prioridade — EAN é usado só
-  // como fallback quando não há SKU ou não há ProductConfig correspondente.
+  // SKU (cProd) é a chave mais confiável e tem prioridade — SupplierMapping é
+  // o único fallback quando não há SKU ou não há ProductConfig correspondente.
+  // EAN via ProductConfig.gtin não é mais usado pra resolver produto da nota.
   if (sku) {
     const config = await findProductConfigBySku(sku, unitBusiness.id);
-    if (config) product = await Product.findByPk(config.product_id);
-  }
-
-  if (!product && ean) {
-    const config = await ProductConfig.findOne({
-      where: {
-        unit_business_id: unitBusiness.id,
-        gtin: ean,
-      },
-    });
     if (config) product = await Product.findByPk(config.product_id);
   }
 

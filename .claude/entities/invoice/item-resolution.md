@@ -1,6 +1,6 @@
 # Invoice item → product resolution
 
-Standard product-resolution order used across the Bling queue, NF-e XML import, and maintenance scripts: `ProductConfig.sku` first → `ProductConfig.gtin` → `SupplierMapping` by code + integration. SKU wins when it matches; EAN/gtin is only a fallback when there's no SKU match. `gtin_package` does **not** participate (removed in `m265`, see `../product/index.md`).
+Standard product-resolution order used across the Bling queue, NF-e XML import, and maintenance scripts: `ProductConfig.sku` first → `SupplierMapping` by code + integration (matched against the item's `cEAN`) as the only fallback. SKU wins when it matches. `ProductConfig.gtin` (EAN) is **no longer used** to resolve the product from an invoice item — removed because EAN-to-`ProductConfig` matches were unreliable; `SupplierMapping` (scoped by supplier CNPJ + integration) is the sole fallback now. `gtin_package` does **not** participate either (removed in `m265`, see `../product/index.md`).
 
 `src/shared/utils/xml/invoice-xml.ts` parses NF-e XML and resolves each item's product using that same order.
 

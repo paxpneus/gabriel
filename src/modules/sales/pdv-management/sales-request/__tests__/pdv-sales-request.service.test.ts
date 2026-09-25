@@ -39,7 +39,11 @@ jest.mock("../../sales-request-history/pdv-sales-request-history.service", () =>
 
 jest.mock("../../../orders/order/orders.service", () => ({
   __esModule: true,
-  default: { findById: jest.fn(), findByIdWithPaymentMethod: jest.fn() },
+  default: {
+    findById: jest.fn(),
+    findByIdWithPaymentMethod: jest.fn(),
+    isEligibleForPdv: jest.fn(),
+  },
 }));
 
 jest.mock("../../../../warehouse/fiscal/invoices/invoice/invoice.service", () => ({
@@ -191,6 +195,16 @@ describe("PdvSalesRequestService", () => {
         invoice_id: "invoice-1",
         unit_business_id: "unit-1",
       });
+      (unitBusinessService.findById as jest.Mock).mockResolvedValue({
+        id: "unit-1",
+        type: "PHYSICAL",
+        number: "3",
+      });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21",
+        number: "25",
+      });
+      (orderService.isEligibleForPdv as jest.Mock).mockResolvedValue(true);
       (pdvSalesRequestRepository.create as jest.Mock).mockResolvedValue({
         id: "request-1",
         status: PdvSalesRequestStatus.OPEN,
@@ -219,6 +233,32 @@ describe("PdvSalesRequestService", () => {
         { transaction: mockTransaction },
       );
       expect(created.id).toBe("request-1");
+    });
+
+    it("recusa criar quando o pedido é de loja ONLINE (acesso global, sem ownership check)", async () => {
+      (pdvSalesRequestRepository.findActiveByOrderId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        id: "order-online",
+        invoice_id: "invoice-1",
+        unit_business_id: "unit-online",
+      });
+      (unitBusinessService.findById as jest.Mock).mockResolvedValue({
+        id: "unit-online",
+        type: "ONLINE",
+        number: "50",
+      });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21",
+        number: "25",
+      });
+
+      await expect(
+        service.createRequest({ orderId: "order-online" }),
+      ).rejects.toThrow("Pedido não é elegível para o fluxo PDV");
+
+      expect(pdvSalesRequestRepository.create).not.toHaveBeenCalled();
     });
   });
 
