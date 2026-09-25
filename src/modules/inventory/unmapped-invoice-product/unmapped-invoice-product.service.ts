@@ -332,6 +332,11 @@ export class UnmappedInvoiceProductService extends BaseService<
     if (!unmapped) {
       throw new Error("Produto não mapeado não encontrado!");
     }
+    if (!unmapped.external_id) {
+      throw new Error(
+        "Produto não mapeado não tem id do ERP, não é possível criar produto automaticamente",
+      );
+    }
 
     const integration = await integrationsService.findById(
       unmapped.integrations_id!,
