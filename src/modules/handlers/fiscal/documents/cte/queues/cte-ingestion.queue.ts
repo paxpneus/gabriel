@@ -24,6 +24,7 @@ import {
   extractDatafreteCodigoRetorno,
   extractDatafreteMensagem,
 } from "../../../../logistic/transporters/data-frete/helpers/error-codes";
+import { buildCteDatafreteErrorLogFields } from "../../../../logistic/transporters/data-frete/helpers/cte-error-log.helper";
 import integrationLoggerService from "../../../../../integrations/integration-errors/integration-logger.service";
 import { IntegrationErrorEntity } from "../../../../../integrations/integration-errors/integration-error.types";
 
@@ -229,12 +230,14 @@ export class CteIngestionQueue extends BaseQueueService<void> {
 
       const codigoRetorno = extractDatafreteCodigoRetorno(err);
       const integration = await getDatafreteIntegration();
+      const { internalId, externalId, reference } = buildCteDatafreteErrorLogFields(err, cte);
       await integrationLoggerService.log({
         entity: IntegrationErrorEntity.CTE,
         type: codigoRetorno?.toString() ?? "UNKNOWN",
         integrationsId: integration.id,
-        internalId: cte.id,
-        reference: cte.xml_key ?? String(cte.number),
+        internalId,
+        externalId,
+        reference,
         message:
           extractDatafreteMensagem(err) ??
           (codigoRetorno

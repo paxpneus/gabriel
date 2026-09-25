@@ -9,6 +9,7 @@ import {
   extractDatafreteMensagem,
   isDatafreteCteAlreadyCadastrado,
 } from "../transporters/data-frete/helpers/error-codes";
+import { buildCteDatafreteErrorLogFields } from "../transporters/data-frete/helpers/cte-error-log.helper";
 import { decryptXml, isEncrypted } from "../../../../shared/utils/xml/xml-cipher";
 import { getDatafreteIntegration } from "../transporters/data-frete/api/data-frete_api.service";
 import integrationLoggerService from "../../../integrations/integration-errors/integration-logger.service";
@@ -95,12 +96,14 @@ export class SyncDatafreteCteService {
 
         const codigoRetorno = extractDatafreteCodigoRetorno(error);
         const integration = await getDatafreteIntegration();
+        const { internalId, externalId, reference } = buildCteDatafreteErrorLogFields(error, cte);
         await integrationLoggerService.log({
           entity: IntegrationErrorEntity.CTE,
           type: codigoRetorno?.toString() ?? "UNKNOWN",
           integrationsId: integration.id,
-          internalId: cte.id,
-          reference: cte.xml_key ?? String(cte.number),
+          internalId,
+          externalId,
+          reference,
           message:
             extractDatafreteMensagem(error) ??
             (codigoRetorno

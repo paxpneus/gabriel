@@ -38,3 +38,18 @@ export function extractDatafreteMensagem(error: unknown): string | null {
 export function isDatafreteCteAlreadyCadastrado(error: unknown): boolean {
   return extractDatafreteCodigoRetorno(error) === DatafreteCodigoRetorno.CTE_JA_CADASTRADO;
 }
+
+export function isDatafreteTransportadorNaoEncontrado(error: unknown): boolean {
+  return extractDatafreteCodigoRetorno(error) === DatafreteCodigoRetorno.TRANSPORTADOR_NAO_ENCONTRADO;
+}
+
+// `mensagem` vem como "O documento do transportador '<cnpj>' não encontrado
+// na base de dados" — extrai o CNPJ pra agrupar por transportador em vez de
+// por CT-e (ver cte-error-log.helper.ts).
+export function extractDatafreteTransportadorCnpj(error: unknown): string | null {
+  const mensagem = extractDatafreteMensagem(error);
+  if (!mensagem) return null;
+
+  const match = mensagem.match(/'(\d+)'/);
+  return match ? match[1] : null;
+}

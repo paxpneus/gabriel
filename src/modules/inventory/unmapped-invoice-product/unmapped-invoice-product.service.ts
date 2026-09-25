@@ -235,35 +235,24 @@ export class UnmappedInvoiceProductService extends BaseService<
     );
   }
 
-  // Único disparador de criação de produto a partir de um unmapped — sempre
-  // manual, via POST .../create-product (nunca automático em nenhum outro
-  // fluxo). Só funciona pra unmapped com external_id preenchido (ver
-  // fetchAndUpsertProduct/processProduct com create:true). Enfileira com
+  // Núcleo compartilhado de createProduct/createProducts — enfileira com
   // prioridade máxima (BullMQ priority:1) na própria fila de fetch da
-  // integração — não cria fila/lock dedicados, só fura a fila de espera.
-  async createProduct(
-    id: string,
+  // integração, não cria fila/lock dedicados, só fura a fila de espera.
+  // branchId já resolvido é passado pronto (createProducts resolve uma vez
+  // só pro lote inteiro, em vez de por item).
+  private async enqueueCreateProduct(
+    unmapped: UnmappedInvoiceProduct,
+    integration: { name: string },
     params: {
       blingApiFetchQueue: BlingApiFetchQueue;
       tcarUpsertQueue: TCarUpsertQueue;
-      userId?: string;
+      branchId?: number;
     },
   ): Promise<void> {
-    const unmapped = await this.findById(id);
-    if (!unmapped) {
-      throw new Error("Produto não mapeado não encontrado!");
-    }
     if (!unmapped.external_id) {
       throw new Error(
         "Produto não mapeado não tem id do ERP, não é possível criar produto automaticamente",
       );
-    }
-
-    const integration = await integrationsService.findById(
-      unmapped.integrations_id!,
-    );
-    if (!integration) {
-      throw new Error("Integração do produto não mapeado não encontrada");
     }
 
     if (integration.name === "Bling") {
@@ -291,8 +280,7 @@ export class UnmappedInvoiceProductService extends BaseService<
         { priority: 1, removeOnComplete: { age: CREATE_PRODUCT_JOB_RETENTION_SECONDS } },
       );
     } else if (integration.name === "Tecinco") {
-      const branchId = await resolveTecincoBranchId(params.userId);
-      if (!branchId) {
+      if (!params.branchId) {
         throw new Error(
           "Não foi possível resolver a filial Tecinco do usuário",
         );
@@ -303,7 +291,7 @@ export class UnmappedInvoiceProductService extends BaseService<
       // (processProduct, quando create:true), não o request HTTP; assim o
       // endpoint só enfileira e responde rápido.
       const minimalData: TCarProdutoPayload = {
-        fll_codigo: branchId,
+        fll_codigo: params.branchId,
         epctb_codigo: unmapped.external_id,
         epctb_nome: unmapped.product_name ?? "",
       };
@@ -314,7 +302,7 @@ export class UnmappedInvoiceProductService extends BaseService<
           resource: "product",
           action: "created",
           companyId: "",
-          branchId,
+          branchId: params.branchId,
           data: minimalData,
           create: true,
         },
@@ -326,6 +314,110 @@ export class UnmappedInvoiceProductService extends BaseService<
         `Integração "${integration.name}" não suportada para criação automática de produto`,
       );
     }
+  }
+
+  // Único disparador de criação de produto a partir de um unmapped — sempre
+  // manual, via POST .../create-product (nunca automático em nenhum outro
+  // fluxo). Só funciona pra unmapped com external_id preenchido (ver
+  // fetchAndUpsertProduct/processProduct com create:true).
+  async createProduct(
+    id: string,
+    params: {
+      blingApiFetchQueue: BlingApiFetchQueue;
+      tcarUpsertQueue: TCarUpsertQueue;
+      userId?: string;
+    },
+  ): Promise<void> {
+    const unmapped = await this.findById(id);
+    if (!unmapped) {
+      throw new Error("Produto não mapeado não encontrado!");
+    }
+
+    const integration = await integrationsService.findById(
+      unmapped.integrations_id!,
+    );
+    if (!integration) {
+      throw new Error("Integração do produto não mapeado não encontrada");
+    }
+
+    const branchId =
+      integration.name === "Tecinco"
+        ? await resolveTecincoBranchId(params.userId)
+        : undefined;
+
+    await this.enqueueCreateProduct(unmapped, integration, {
+      blingApiFetchQueue: params.blingApiFetchQueue,
+      tcarUpsertQueue: params.tcarUpsertQueue,
+      branchId,
+    });
+  }
+
+  // Versão em lote de createProduct — pra quando o usuário seleciona vários
+  // unmapped de catálogo de uma vez (ex.: revisão em lote na fila de
+  // pendências). Busca unmapped e integrações em bulk (evita N+1) e resolve
+  // o branchId Tecinco uma única vez pro lote inteiro. Cada item enfileira
+  // (ou falha) independente dos outros — um id inválido não derruba o resto
+  // do lote.
+  async createProducts(
+    ids: string[],
+    params: {
+      blingApiFetchQueue: BlingApiFetchQueue;
+      tcarUpsertQueue: TCarUpsertQueue;
+      userId?: string;
+    },
+  ): Promise<{ id: string; error?: string }[]> {
+    const unmappedList = await this.findAll({
+      where: { id: { [Op.in]: ids } },
+      attributes: ["id", "external_id", "integrations_id", "product_name"],
+    });
+    const unmappedById = new Map(unmappedList.map((u) => [u.id, u]));
+
+    const integrationIds = [
+      ...new Set(
+        unmappedList
+          .map((u) => u.integrations_id)
+          .filter((v): v is string => !!v),
+      ),
+    ];
+    const integrations = await integrationsService.findAll({
+      where: { id: { [Op.in]: integrationIds } },
+      attributes: ["id", "name"],
+    });
+    const integrationById = new Map(integrations.map((i) => [i.id, i]));
+
+    const branchId = integrations.some((i) => i.name === "Tecinco")
+      ? await resolveTecincoBranchId(params.userId)
+      : undefined;
+
+    return Promise.all(
+      ids.map(async (id) => {
+        try {
+          const unmapped = unmappedById.get(id);
+          if (!unmapped) {
+            throw new Error("Produto não mapeado não encontrado!");
+          }
+
+          const integration = unmapped.integrations_id
+            ? integrationById.get(unmapped.integrations_id)
+            : undefined;
+          if (!integration) {
+            throw new Error(
+              "Integração do produto não mapeado não encontrada",
+            );
+          }
+
+          await this.enqueueCreateProduct(unmapped, integration, {
+            blingApiFetchQueue: params.blingApiFetchQueue,
+            tcarUpsertQueue: params.tcarUpsertQueue,
+            branchId,
+          });
+
+          return { id };
+        } catch (error: any) {
+          return { id, error: error.message };
+        }
+      }),
+    );
   }
 
   // Status do job de criação de produto enfileirado por createProduct — o

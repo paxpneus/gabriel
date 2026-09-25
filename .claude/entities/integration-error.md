@@ -35,8 +35,9 @@ Ponto único de entrada que todo módulo chama pra reportar evento de integraç�
 
 ## Call sites instrumentados
 
-- `sync-datafrete-cte.service.ts`, catch de `syncPendingCtes` (caminho batch) — `entity: CTE`, `type` = `codigo_retorno` da Datafrete ou `"UNKNOWN"`, `internalId: cte.id`, `createIntegrationError: true`.
+- `sync-datafrete-cte.service.ts`, catch de `syncPendingCtes` (caminho batch) — `entity: CTE`, `type` = `codigo_retorno` da Datafrete ou `"UNKNOWN"`, `internalId: cte.id` (default), `createIntegrationError: true`.
 - `cte-ingestion.queue.ts`, catch de `syncCteWithDatafrete` (caminho inline por CT-e recém-importado) — mesmo padrão do item acima.
+- Exceção nos dois itens acima: erro 712 (`TRANSPORTADOR_NAO_ENCONTRADO`) usa `buildCteDatafreteErrorLogFields` (`.claude/modules/datafrete-cte-sync.md`) pra trocar a chave de dedup pra `internalId: null` + `externalId: <cnpj do transportador>` — agrupa todo CT-e do mesmo transportador não cadastrado numa linha só, em vez de uma por CT-e.
 - `cte-ingestion.queue.ts`, catch externo de `fetchAndProcess` (falha ao buscar documentos na Sieg, sem CT-e resolvido ainda) — `type: "SIEG_FETCH_FAILED"`, `reference: logLabel`, `createIntegrationError: true`.
 - `cte-ingestion.queue.ts`, catch interno de `fetchAndProcess` (falha no upsert de um CT-e específico) — `type: "CTE_UPSERT_FAILED"`, `createIntegrationError: true`.
 - Sieg `cte.service.ts`, `fetchXmlPageWithRetry` (retry intermediário, ainda dentro do limite de tentativas) — `type: "SIEG_PAGE_RETRY"`, `createIntegrationError: false` (só vira falha real, com `createIntegrationError: true`, se esgotar as tentativas e propagar até o catch externo de `fetchAndProcess`, acima).

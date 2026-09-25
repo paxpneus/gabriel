@@ -37,6 +37,11 @@ export class UnmappedInvoiceProductController extends BaseController<
       ...this.mw("createProduct"),
       this.createProduct,
     );
+    this.router.post(
+      "/create-product/batch",
+      ...this.mw("createProducts"),
+      this.createProducts,
+    );
     this.router.get(
       "/:id/create-product/job",
       ...this.mw("getJob"),
@@ -57,6 +62,7 @@ export class UnmappedInvoiceProductController extends BaseController<
       markMapped: [authenticate, userPermissions],
       getImage: [authenticate, userPermissions],
       createProduct: [authenticate, userPermissions],
+      createProducts: [authenticate, userPermissions],
       getJob: [authenticate, userPermissions],
       createUnmappedFromReadingEan: [
         authenticate,
@@ -127,6 +133,25 @@ export class UnmappedInvoiceProductController extends BaseController<
       return res
         .status(202)
         .json({ message: "Criação de produto enfileirada" });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  createProducts = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { ids } = req.body;
+
+      const results = await this.service.createProducts(ids as string[], {
+        blingApiFetchQueue: req.app.locals
+          .BlingApiFetchQueue as BlingApiFetchQueue,
+        tcarUpsertQueue: req.app.locals.TCarUpsertQueue as TCarUpsertQueue,
+        userId: (req as any).user?.id,
+      });
+
+      return res
+        .status(202)
+        .json({ message: "Criação de produtos enfileirada", results });
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
