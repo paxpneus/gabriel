@@ -1,3 +1,35 @@
+// ─── Mocks de infraestrutura (Redis/BullMQ) — este arquivo importa (mesmo
+// que só pelo tipo) algo que puxa BlingApiFetchQueue/TCarUpsertQueue, que
+// por sua vez importam uploaderQueue (BaseQueueService cria Queue/QueueEvents
+// reais no construtor mesmo com workless:true). Sem isso, o import abre
+// conexão de verdade com o Redis e o processo nunca sai (--runInBand trava). ──
+
+jest.mock("../../../../config/redis", () => ({
+  __esModule: true,
+  redisConfig: {},
+  redisClient: {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    eval: jest.fn(),
+    zadd: jest.fn(),
+    zrem: jest.fn(),
+    zrange: jest.fn(),
+    exists: jest.fn(),
+    scan: jest.fn(),
+    on: jest.fn(),
+  },
+}));
+
+jest.mock("bullmq", () => ({
+  __esModule: true,
+  Queue: jest.fn().mockImplementation(() => ({ add: jest.fn(), getJob: jest.fn() })),
+  QueueEvents: jest.fn().mockImplementation(() => ({})),
+  Worker: jest.fn().mockImplementation(() => ({ on: jest.fn() })),
+  DelayedError: class DelayedError extends Error {},
+  UnrecoverableError: class UnrecoverableError extends Error {},
+}));
+
 // IntegrationMapping (*.model.ts) é auto-mocado globalmente via
 // src/__tests__/setup.ts — usa o model direto (via o repository real,
 // que é só um wrapper fino) pra testar a lógica de matching de verdade.

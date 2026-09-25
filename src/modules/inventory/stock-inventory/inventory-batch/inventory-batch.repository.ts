@@ -14,6 +14,11 @@ export class InventoryBatchRepository extends BaseRepository<InventoryBatch> {
     forceBatchFinish: boolean = true,
     t: Transaction,
   ): Promise<void> {
+    const batch = await InventoryBatch.findByPk(batchId, {
+      attributes: ["mode"],
+      transaction: t,
+    });
+
     const items = await InventoryBatchItems.findAll({
       where: { inventory_batch_id: batchId },
       include: [
@@ -38,16 +43,14 @@ export class InventoryBatchRepository extends BaseRepository<InventoryBatch> {
 
     const totalPrice = items.reduce((sum, item) => sum + Number(item.price), 0);
 
-    const allFinished =
-      items.length > 0 && items.every((i) => i.status === "FINISHED");
-
     const payload: Partial<InventoryBatch> = {
       total_quantity_read: totalQuantityRead,
       total_quantity_stock: totalQuantityStock,
       total_price: totalPrice,
     };
 
-    if (forceBatchFinish) {
+    // Lote CYCLIC nunca finaliza sozinho — só via finishBatch manual, senão bloquearia novas leituras no meio da contagem
+    if (forceBatchFinish && batch?.mode !== "CYCLIC") {
       const allFinished =
         items.length > 0 && items.every((i) => i.status === "FINISHED");
       payload.status = allFinished ? "FINISHED" : "PENDING";

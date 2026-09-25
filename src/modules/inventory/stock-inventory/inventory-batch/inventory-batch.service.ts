@@ -10,6 +10,8 @@ import { Product, ProductConfig, Stock } from "../../../inventory";
 import User from "../../../company/users/users/user.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import { UnitBusiness } from "../../../warehouse";
+import unitBusinessService from "../../../company/unit-business/unit-business.service";
+import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
 import { FindOptions } from "sequelize";
 import {
   PaginatedResult,
@@ -75,8 +77,8 @@ export class InventoryBatchService extends BaseService<
     const normalizedSubgroupIds = this.normalizeSubgroupIds(subgroupIds);
 
     await sequelize.transaction(async (t) => {
-      const unitBusiness = await UnitBusiness.findOne({
-        where: { id: unitBusinessId },
+      const unitBusiness = await unitBusinessService.findById(unitBusinessId, {
+        attributes: ["number", "integrations_id"],
       });
 
       const batch = await InventoryBatch.create(
@@ -142,8 +144,21 @@ export class InventoryBatchService extends BaseService<
           ],
         })) as ProductWithStock[];
 
+        // só entra no lote o produto mapeado na integração da loja — sem integração configurada, nenhum produto qualifica
+        const mappedProductIds = unitBusiness?.integrations_id
+          ? await integrationMappingService.findExternalIdsMap(
+              "PRODUCT",
+              unitBusiness.integrations_id,
+              products.map((p) => p.id),
+            )
+          : new Map<string, string>();
+
+        const mappedProducts = products.filter((p) =>
+          mappedProductIds.has(p.id),
+        );
+
         const payloadBatchItem: InventoryBatchItemsCreationAttributes[] =
-          products.map((p) => {
+          mappedProducts.map((p) => {
             const stock = p.stocks[0];
             const config = (p as any).productConfigs?.[0];
 

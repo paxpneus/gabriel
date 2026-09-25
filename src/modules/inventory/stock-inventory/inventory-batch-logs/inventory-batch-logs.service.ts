@@ -14,6 +14,8 @@ import inventoryBatchItemsRepository from "../inventory-batch-items/inventory-ba
 import ProductConfig from "../../product-config/product_config.model";
 import inventorySubgroupsService from "../inventory-subgroups/inventory-subgroups.service";
 import { resolveProductByEanWithStock } from "../../../handlers/tecinco/queues/helpers/product.helpers";
+import unitBusinessService from "../../../company/unit-business/unit-business.service";
+import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
 
 export class InventoryBatchLogsService extends BaseService<
   InventoryBatchLogs,
@@ -83,6 +85,26 @@ export class InventoryBatchLogsService extends BaseService<
         throw new Error("Produto sem estoque ou não encontrado no estoque da loja");
       const stock = productFound.stocks[0];
       const config = (productFound as any).productConfigs?.[0];
+
+      // ── 3.4 Valida mapeamento do produto na integração da loja ─────────────────
+      const unitBusiness = await unitBusinessService.findById(unitBusinessId, {
+        attributes: ["integrations_id"],
+        transaction: t,
+      });
+
+      const mappedProductIds = unitBusiness?.integrations_id
+        ? await integrationMappingService.findExternalIdsMap(
+            "PRODUCT",
+            unitBusiness.integrations_id,
+            [productFound.id],
+          )
+        : new Map<string, string>();
+
+      if (!mappedProductIds.has(productFound.id)) {
+        throw new Error(
+          "Produto não possui mapeamento para a integração desta loja",
+        );
+      }
 
       // ── 3.5 Valida subgroup do produto (só se o lote tiver subgroups configurados) ──
       const batchSubgroups = await inventorySubgroupsService.findAll({
@@ -284,9 +306,9 @@ export class InventoryBatchLogsService extends BaseService<
         { transaction: t },
       );
 
-      // ─── Recalcula status do batch ────────────────────────────────────────────
+      // ─── Recalcula status do batch (CYCLIC nunca finaliza sozinho, só manual) ──
 
-      if (newStatus === "FINISHED") {
+      if (newStatus === "FINISHED" && inventoryBatch.mode !== "CYCLIC") {
         const allBatchItems = await InventoryBatchItems.findAll({
           where: { inventory_batch_id: inventoryBatch.id },
           transaction: t,
