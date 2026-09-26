@@ -1,5 +1,6 @@
 import { AxiosInstance } from "axios";
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import uploaderApi from "../api/uploader_api";
 import { getCachedImage, setCachedImage, invalidateCachedImage } from "../uploader-image-cache";
 
@@ -12,6 +13,15 @@ export type UploadInput = {
   timeoutMs?: number;
   // Opcional — quem passar ganha cache automático (ver uploader-image-cache.ts).
   cacheKey?: string;
+};
+
+export type UploadStreamInput = {
+  stream: Readable;
+  filename: string;
+  mimeType: string;
+  directory?: string;
+  preserveFilename?: boolean;
+  timeoutMs?: number;
 };
 
 export class UploaderService {
@@ -45,6 +55,31 @@ export class UploaderService {
       const cacheExtension = file.mimeType.split('/')[1] || 'bin';
       await setCachedImage(file.cacheKey, file.buffer, cacheExtension);
     }
+
+    return path;
+  }
+
+  // Como upload(), mas recebe um stream em vez de Buffer — nunca materializa
+  // o arquivo inteiro em memória (usado pelo dump de backup, que pode ter
+  // vários GB). Por isso não passa pela UploaderQueue: um job BullMQ precisa
+  // serializar seus dados no Redis, e um stream de processo filho não serializa.
+  async uploadStream(file: UploadStreamInput): Promise<string> {
+    const extension = file.mimeType.split('/')[1] || 'bin';
+    const filename = file.preserveFilename
+      ? this.sanitizeFilename(file.filename)
+      : `${randomUUID()}.${extension}`;
+    const directory = this.normalizeDirectory(file.directory ?? "/uploads");
+
+    await this.ensureDirectoryExists(directory);
+
+    const path = `${directory}/${filename}`;
+
+    await this.api.put(path, file.stream, {
+      timeout: file.timeoutMs,
+      headers: {
+        'Content-Type': file.mimeType
+      }
+    });
 
     return path;
   }

@@ -4,7 +4,6 @@ export const UPLOADER_PRIORITY_CATEGORIES = [
   "UNMAPPED_INVOICE_PRODUCT",
   "INVOICE_DANFE",
   "CTE",
-  "BACKUP",
 ] as const;
 
 export type UploaderPriorityCategory = (typeof UPLOADER_PRIORITY_CATEGORIES)[number];
@@ -14,7 +13,6 @@ const PRIORITY_BY_CATEGORY: Record<UploaderPriorityCategory, number> = {
   UNMAPPED_INVOICE_PRODUCT: 2, // operação de loja esperando confirmação
   INVOICE_DANFE: 3, // nota já existe, mas usuário quer ver o DANFE disponível logo
   CTE: 4, // arquivamento, ninguém no front está esperando
-  BACKUP: 5, // manutenção diária, sem urgência
 };
 
 export function resolveUploaderPriority(category: UploaderPriorityCategory): number {

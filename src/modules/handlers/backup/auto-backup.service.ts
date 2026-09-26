@@ -1,5 +1,5 @@
-import { downloadDatabaseDump } from "../../../shared/utils/database/database-dump";
-import uploaderQueue from "../uploader/uploader.queue";
+import { streamDatabaseDump } from "../../../shared/utils/database/database-dump";
+import uploaderService from "../uploader/services/uploader.service";
 
 const DEFAULT_BACKUP_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -13,26 +13,29 @@ export type AutoBackupResult = {
 
 export class AutoBackupService {
   async run(): Promise<AutoBackupResult> {
-    const dump = await downloadDatabaseDump();
-    const path = await uploaderQueue.uploadAndWait(
-      {
-        buffer: dump.buffer,
+    const dump = streamDatabaseDump();
+
+    try {
+      const path = await uploaderService.uploadStream({
+        stream: dump.stream,
         filename: dump.filename,
         mimeType: dump.mimeType,
         directory: "/backups",
         preserveFilename: true,
         timeoutMs: this.getUploadTimeoutMs(),
-      },
-      "BACKUP",
-    );
+      });
 
-    return {
-      filename: dump.filename,
-      database: dump.database,
-      size: dump.size,
-      path,
-      created_at: new Date().toLocaleString("pt-BR"),
-    };
+      return {
+        filename: dump.filename,
+        database: dump.database,
+        size: dump.getSize(),
+        path,
+        created_at: new Date().toLocaleString("pt-BR"),
+      };
+    } finally {
+      // no-op se o pg_dump já terminou — evita processo órfão se o upload falhar antes de consumir todo o stream.
+      dump.kill();
+    }
   }
 
   private getUploadTimeoutMs(): number {

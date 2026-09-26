@@ -1,4 +1,24 @@
 import { spawn } from "node:child_process";
+import { Readable, Transform, TransformCallback } from "node:stream";
+
+// Transform (não PassThrough + listener "data"): um listener "data" força o
+// stream a modo flowing assim que é criado, antes do axios anexar o próprio
+// consumo — qualquer chunk emitido nesse intervalo seria perdido (evento
+// "data" só entrega a quem já está inscrito no momento da emissão). Um
+// Transform só processa/conta o que cabe no buffer interno até ter um
+// consumidor de verdade (pipe do axios), sem descartar nada.
+class ByteCountingStream extends Transform {
+  private bytes = 0;
+
+  _transform(chunk: Buffer, _encoding: string, callback: TransformCallback): void {
+    this.bytes += chunk.length;
+    callback(null, chunk);
+  }
+
+  get size(): number {
+    return this.bytes;
+  }
+}
 
 export type DatabaseDumpConfig = {
   host: string;
@@ -8,17 +28,18 @@ export type DatabaseDumpConfig = {
   password: string;
 };
 
-export type DatabaseDumpFile = {
-  buffer: Buffer;
-  filename: string;
-  mimeType: string;
-  database: string;
-  size: number;
-};
-
 export type DownloadDatabaseDumpOptions = {
   config?: Partial<DatabaseDumpConfig>;
   filename?: string;
+};
+
+export type DatabaseDumpStream = {
+  stream: Readable;
+  filename: string;
+  mimeType: string;
+  database: string;
+  getSize: () => number;
+  kill: () => void;
 };
 
 const DEFAULT_DATABASE_NAME = "autointegration_node";
@@ -51,63 +72,63 @@ function buildDumpFilename(database: string): string {
   return `${database}-${timestamp}.sql`;
 }
 
-export async function downloadDatabaseDump(
+// Streama o pg_dump direto pro consumidor (upload), sem nunca materializar o
+// dump inteiro em memória — bancos grandes geravam picos de RAM/swap na VM.
+export function streamDatabaseDump(
   options: DownloadDatabaseDumpOptions = {},
-): Promise<DatabaseDumpFile> {
+): DatabaseDumpStream {
   const config = getRequiredDatabaseConfig(options.config);
 
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const errorChunks: Buffer[] = [];
-
-    const dumpProcess = spawn("pg_dump", [
-      "--format=plain",
-      "--no-owner",
-      "--no-privileges",
-      "--host",
-      config.host,
-      "--port",
-      String(config.port),
-      "--username",
-      config.username,
-      "--dbname",
-      config.database,
-    ], {
-      env: {
-        ...process.env,
-        PGPASSWORD: config.password,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    dumpProcess.stdout.on("data", (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
-
-    dumpProcess.stderr.on("data", (chunk: Buffer) => {
-      errorChunks.push(chunk);
-    });
-
-    dumpProcess.on("error", (error) => {
-      reject(new Error(`Erro ao executar pg_dump: ${error.message}`));
-    });
-
-    dumpProcess.on("close", (code) => {
-      if (code !== 0) {
-        const stderr = Buffer.concat(errorChunks).toString("utf-8").trim();
-        reject(new Error(`pg_dump finalizou com código ${code}${stderr ? `: ${stderr}` : ""}`));
-        return;
-      }
-
-      const buffer = Buffer.concat(chunks);
-
-      resolve({
-        buffer,
-        filename: options.filename ?? buildDumpFilename(config.database),
-        mimeType: SQL_MIME_TYPE,
-        database: config.database,
-        size: buffer.length,
-      });
-    });
+  const dumpProcess = spawn("pg_dump", [
+    "--format=plain",
+    "--no-owner",
+    "--no-privileges",
+    "--host",
+    config.host,
+    "--port",
+    String(config.port),
+    "--username",
+    config.username,
+    "--dbname",
+    config.database,
+  ], {
+    env: {
+      ...process.env,
+      PGPASSWORD: config.password,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
   });
+
+  const errorChunks: Buffer[] = [];
+  dumpProcess.stderr.on("data", (chunk: Buffer) => {
+    errorChunks.push(chunk);
+  });
+
+  const output = new ByteCountingStream();
+
+  dumpProcess.on("error", (error) => {
+    output.destroy(new Error(`Erro ao executar pg_dump: ${error.message}`));
+  });
+
+  // "exit" (não "close"): aborta o stream antes que o consumidor ache que já
+  // recebeu o dump completo — "close" só dispara depois do stdout ser drenado.
+  dumpProcess.on("exit", (code) => {
+    if (code !== 0) {
+      const stderr = Buffer.concat(errorChunks).toString("utf-8").trim();
+      output.destroy(new Error(`pg_dump finalizou com código ${code}${stderr ? `: ${stderr}` : ""}`));
+    }
+  });
+
+  dumpProcess.stdout.pipe(output);
+
+  return {
+    stream: output,
+    filename: options.filename ?? buildDumpFilename(config.database),
+    mimeType: SQL_MIME_TYPE,
+    database: config.database,
+    getSize: () => output.size,
+    kill: () => {
+      dumpProcess.kill();
+    },
+  };
 }
