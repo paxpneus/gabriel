@@ -14,10 +14,12 @@ import {
   TCarProdutoPayload,
   TCarClientePayload,
   TCarInvoiceXmlPayload,
+  TCarInvoiceTransferPayload,
   TCarResource,
   TCarAction,
   TCarNotaFiscalItem,
 } from "../service/tecinco/tecinco.types";
+import { notifySalesRequestUpdated } from "../../../sales/pdv-management/sales-request/helpers/notify-sales-request-updated";
 import { getTCarIntegration } from "../api/tecinco_api";
 import {
   TCarConferenciaEstoqueService,
@@ -189,6 +191,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       chave_nfe: chaveAcesso,
     };
 
+    console.log(
+      `${logPrefix} — consultando nota fiscal na Tecinco: numero=${numero} branchId=${branchId} identificacao=${JSON.stringify(identificacao)}`,
+    );
+
     let notaFiscal: any;
     try {
       notaFiscal = await conferenciaService.getNotaFiscal(
@@ -249,6 +255,82 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
   }
 
+  /**
+   * Mesmo fluxo de `upsertInvoiceFromXml`, mas sem depender de upload manual
+   * de XML — baixa o XML real direto da Tecinco (GET /notas-fiscais/:numero/xml,
+   * mesmo endpoint que o sync periódico já usa em `processInvoiceXml`) a
+   * partir de número + chave de acesso já identificados (ex.: lidos do
+   * DANFE). 404 aqui significa que a Tecinco não reconhece essa nota.
+   */
+  async upsertInvoiceFromTecinco(
+    numero: string,
+    chaveAcesso: string,
+    branchId: number,
+  ): Promise<void> {
+    const conferenciaService = new TCarConferenciaEstoqueService();
+    const identificacao: TCarNotaFiscalXmlByChaveNfe = {
+      chave_nfe: chaveAcesso,
+    };
+
+    console.log(
+      `[TCAR_UPSERT] upsertInvoiceFromTecinco — buscando XML na Tecinco: numero=${numero} branchId=${branchId} identificacao=${JSON.stringify(identificacao)}`,
+    );
+
+    let xmlContent: string;
+    try {
+      xmlContent = await conferenciaService.buscarXmlNotaFiscal(
+        branchId,
+        numero,
+        identificacao,
+      );
+    } catch (err: any) {
+      const tecincoMessage = err?.response?.data?.message;
+      throw new Error(
+        tecincoMessage
+          ? `Nota fiscal não encontrada na Tecinco: ${tecincoMessage}`
+          : `Falha ao consultar nota fiscal na Tecinco: ${err?.message ?? err}`,
+      );
+    }
+
+    if (!xmlContent) {
+      throw new Error("Nota fiscal não encontrada na Tecinco");
+    }
+
+    await this.upsertInvoiceFromXml(xmlContent, branchId);
+  }
+
+  /**
+   * Enriquecimento em background da nota de transferência vinculada rápido
+   * pelo front (ver pdv-sales-request.service.ts::attachTransferInvoice) —
+   * a solicitação PDV já está com a nota provisória vinculada; este job só
+   * busca a nota real na Tecinco e atualiza a mesma linha (match por
+   * xml_key, ver upsertInvoiceFromTecinco/upsertInvoiceFromXml). Notifica a
+   * solicitação ao final SEMPRE (sucesso ou falha) — o front que estava
+   * esperando refaz o fetch e vê o estado atual, mesmo se a tentativa falhou
+   * e o BullMQ for tentar de novo depois.
+   */
+  private async processInvoiceTransfer(
+    data: TCarInvoiceTransferPayload,
+    branchId?: number,
+  ): Promise<void> {
+    if (!branchId) {
+      console.warn(
+        "[TCAR_UPSERT] processInvoiceTransfer sem branchId — ignorado",
+      );
+      return;
+    }
+
+    try {
+      await this.upsertInvoiceFromTecinco(
+        data.numero,
+        data.chaveAcesso,
+        branchId,
+      );
+    } finally {
+      notifySalesRequestUpdated(data.pdvSalesRequestId);
+    }
+  }
+
   async process(job: Job<TCarUpsertJobPayload>): Promise<void> {
     const { resource, action, data, branchId } = job.data;
 
@@ -271,6 +353,13 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
       case "customer":
         await this.processCustomer(action, data as TCarClientePayload);
+        break;
+
+      case "invoice_transfer":
+        await this.processInvoiceTransfer(
+          data as TCarInvoiceTransferPayload,
+          branchId,
+        );
         break;
 
       default:

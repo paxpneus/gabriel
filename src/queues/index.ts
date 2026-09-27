@@ -471,7 +471,7 @@ export function startWorkers() {
 export function startTecincoWorkers() {
   const { tcarUpsertQueue, tcarSyncQueue } = buildQueues([
     "TCAR_UPSERT",
-    "TCAR_SYNC",
+    // "TCAR_SYNC",
   ]);
 
   scheduleTCarSync(tcarSyncQueue, tcarUpsertQueue);

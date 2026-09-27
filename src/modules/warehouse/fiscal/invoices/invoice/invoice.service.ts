@@ -62,6 +62,12 @@ import TireMeasure from "../../../../inventory/tire-measures/tire-measure.model"
 import { resolveTecincoBranchId } from "../../../../../shared/utils/tecinco/resolve-branch-id";
 import { generateDanfePdfBuffer } from "../../../../../shared/utils/xml/danfe-generator";
 import uploaderService from "../../../../handlers/uploader/services/uploader.service";
+import storeService from "../../../../sales/stores/stores.service";
+import tempFileService from "../../../../handlers/temp-file/temp-file.service";
+import {
+  isTempFileSentinelPath,
+  extractTempFileId,
+} from "../../../../handlers/temp-file/temp-file.constants";
 
 const default_seller = "5ff76374-4d67-4ef3-a566-349a015f86b1";
 
@@ -615,6 +621,46 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     if (!invoice) throw new Error("Nota fiscal não encontrada");
 
     if (invoice.danfe_path) {
+      // Link hospedado externamente (ex.: linkPDF da nota de venda Bling,
+      // salvo direto no vínculo rápido do pedido — ver
+      // bling-order.service.ts::resolveInvoiceId) — busca direto por HTTP,
+      // nunca via uploaderService (que anexaria a credencial do storage
+      // interno numa requisição pra fora).
+      if (invoice.danfe_path.startsWith("http")) {
+        const response = await fetch(invoice.danfe_path);
+        if (!response.ok) {
+          throw new Error(
+            `Falha ao baixar DANFE externo: ${response.status}`,
+          );
+        }
+        return Buffer.from(await response.arrayBuffer());
+      }
+
+      // Anexo em staging (vínculo rápido de nota de transferência — ver
+      // pdv-sales-request.service.ts::attachTransferInvoice) cujo upload
+      // real pro storage ainda não terminou — lê o buffer direto de
+      // temp_files, mesmo padrão de getReceiptBuffer.
+      if (isTempFileSentinelPath(invoice.danfe_path)) {
+        const tempFile = await tempFileService.findById(
+          extractTempFileId(invoice.danfe_path),
+          { attributes: ["id", "buffer"] },
+        );
+        if (tempFile) return tempFile.buffer;
+
+        // corrida: o job de upload terminou entre a leitura acima e agora —
+        // recarrega o path já atualizado.
+        const refreshed = await this.repository.findById(id, {
+          attributes: ["id", "danfe_path"],
+        });
+        if (
+          !refreshed?.danfe_path ||
+          isTempFileSentinelPath(refreshed.danfe_path)
+        ) {
+          throw new Error("DANFE ainda não disponível, tente novamente");
+        }
+        return uploaderService.getFile(refreshed.danfe_path);
+      }
+
       return uploaderService.getFile(invoice.danfe_path);
     }
 
@@ -624,6 +670,129 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     }
 
     return generateDanfePdfBuffer(isEncrypted(xml) ? decryptXml(xml) : xml);
+  }
+
+  // Nota "provisória" — vínculo rápido (pedido/solicitação PDV não pode
+  // esperar o processo lento de importação): só os campos já conhecidos no
+  // momento do vínculo são preenchidos, o resto fica vazio até o upsert real
+  // da integração (Tecinco/Bling) completar a nota. Localiza esta mesma
+  // linha por xml_key/id_system (ver upsertInvoiceFromXml em
+  // shared/utils/xml/invoice-xml.ts e fetchAndUpsertInvoice em
+  // bling-api-fetch.queue.ts) e atualiza em cima dela — nunca cria uma
+  // segunda linha, desde que idSystem/xmlKey aqui sejam os mesmos que aquele
+  // upsert real vai resolver.
+  async createStub(params: {
+    id?: string;
+    integrationsId: string;
+    numberSystem: string;
+    idSystem?: string | null;
+    xmlKey?: string | null;
+    danfePath?: string | null;
+    senderCnpj?: string | null;
+    senderName?: string | null;
+  }): Promise<Invoice> {
+    const defaultStore = await storeService.findOne({
+      where: { name: "Outros" },
+    });
+    if (!defaultStore) {
+      throw new Error(
+        'Loja padrão "Outros" não cadastrada — não é possível criar a nota provisória',
+      );
+    }
+
+    return this.create({
+      ...(params.id ? { id: params.id } : {}),
+      integrations_id: params.integrationsId,
+      number_system: params.numberSystem,
+      id_system: params.idSystem ?? undefined,
+      xml_key: params.xmlKey ?? null,
+      danfe_path: params.danfePath ?? null,
+      store_id: defaultStore.id,
+      customer_name: params.senderName ?? "",
+      customer_document: params.senderCnpj ?? "",
+      sender_cnpj: params.senderCnpj ?? "",
+      sender_name: params.senderName ?? "",
+      receiver_cnpj: "",
+      receiver_name: "",
+    });
+  }
+
+  // Backfill de InvoiceUnitBusinessAttributes pra uma invoice que JÁ existe
+  // mas nunca passou por createWithRelations — hoje só acontece com uma nota
+  // "provisória" (createStub) sendo enriquecida depois pelo upsert real
+  // (Tecinco/Bling), que sempre cai no branch de UPDATE (a linha já existe,
+  // achada por xml_key/id_system) e NUNCA cria attributes (só o branch de
+  // CREATE faz isso). Sem isso, a nota nunca aparece em nenhuma tela/filtro
+  // que dependa de unitBusinessAttributes.status, mesmo depois de totalmente
+  // enriquecida. Chamado por invoice-xml.ts/bling-api-fetch.queue.ts logo
+  // após updateInvoicesForAllUnitBusiness, com o sender_cnpj/receiver_cnpj já
+  // resolvidos por esse upsert. Idempotente — nunca duplica uma linha já
+  // existente (checa por invoice_id+unit_business_id antes de criar), então é
+  // seguro chamar em toda nota, não só nas provisórias.
+  async ensureUnitBusinessAttributes(
+    invoiceId: string,
+    params: {
+      senderCnpj?: string | null;
+      receiverCnpj?: string | null;
+      initialStatus?: InvoiceUnitBusinessAttributesStatus;
+      invoiceType?: "INCOMING" | "OUTGOING";
+      transaction?: Transaction;
+    },
+  ): Promise<void> {
+    const {
+      senderCnpj,
+      receiverCnpj,
+      initialStatus = "OPEN",
+      invoiceType,
+      transaction,
+    } = params;
+
+    const cnpjs = [senderCnpj, receiverCnpj].filter(Boolean) as string[];
+    if (cnpjs.length === 0) return;
+
+    const unitBusinesses = await this.repository.findUnitBusinessesByCnpj(
+      cnpjs,
+      transaction,
+    );
+    const cnpjMap = new Map(unitBusinesses.map((ub) => [ub.cnpj, ub.id]));
+    const senderUbId = senderCnpj ? cnpjMap.get(senderCnpj) : undefined;
+    const receiverUbId = receiverCnpj ? cnpjMap.get(receiverCnpj) : undefined;
+
+    const toCreate: InvoiceUnitBusinessAttributesCreationAttributes[] = [];
+
+    const maybeAdd = async (
+      unitBusinessId: string | undefined,
+      type: "INCOMING" | "OUTGOING",
+      status: InvoiceUnitBusinessAttributesStatus,
+    ) => {
+      if (!unitBusinessId) return;
+      const existing = await this.repository.findInvoiceAttribute(
+        invoiceId,
+        unitBusinessId,
+        transaction,
+      );
+      if (existing) return;
+      toCreate.push({
+        invoice_id: invoiceId,
+        unit_business_id: unitBusinessId,
+        type,
+        status,
+        batch_generated: false,
+      });
+    };
+
+    if (senderUbId && receiverUbId) {
+      await maybeAdd(senderUbId, "OUTGOING", "OPEN");
+      await maybeAdd(receiverUbId, "INCOMING", initialStatus);
+    } else if (senderUbId) {
+      await maybeAdd(senderUbId, invoiceType ?? "OUTGOING", initialStatus);
+    } else if (receiverUbId) {
+      await maybeAdd(receiverUbId, invoiceType ?? "INCOMING", initialStatus);
+    }
+
+    if (toCreate.length > 0) {
+      await this.repository.createInvoiceAttributes(toCreate, transaction);
+    }
   }
 
   async updateInvoicesForAllUnitBusiness(

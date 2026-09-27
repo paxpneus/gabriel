@@ -96,6 +96,14 @@ jest.mock("../helpers/customer.helper", () => ({
   upsertCustomerFromTCar: jest.fn(),
 }));
 
+jest.mock(
+  "../../../../sales/pdv-management/sales-request/helpers/notify-sales-request-updated",
+  () => ({
+    __esModule: true,
+    notifySalesRequestUpdated: jest.fn(),
+  }),
+);
+
 jest.mock("../../../../inventory/brands/brands.service", () => ({
   __esModule: true,
   default: { findSimilarBrand: jest.fn(), findOrCreateBrand: jest.fn() },
@@ -169,6 +177,7 @@ import {
   TCarNotaFiscalItem,
 } from "../../service/tecinco/tecinco.types";
 import { findTecincoCollidingFields } from "../../../../../scripts/tecinco/tecinco-duplicate-detection";
+import { notifySalesRequestUpdated } from "../../../../sales/pdv-management/sales-request/helpers/notify-sales-request-updated";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1009,5 +1018,85 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
         reason: expect.stringContaining("Código de fábrica/EAN duplicado no catálogo da Tecinco"),
       }),
     ]);
+  });
+});
+
+describe("TCarUpsertQueue.processInvoiceTransfer (enriquecimento em background da nota vinculada rápido)", () => {
+  let queue: TCarUpsertQueue;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    queue = new TCarUpsertQueue({ workless: true });
+  });
+
+  it("job invoice_transfer: chama upsertInvoiceFromTecinco com os dados do payload e notifica a solicitação ao terminar", async () => {
+    const upsertSpy = jest
+      .spyOn(queue, "upsertInvoiceFromTecinco")
+      .mockResolvedValue(undefined);
+
+    await queue.process({
+      data: {
+        eventId: "evt-1",
+        resource: "invoice_transfer",
+        action: "sync",
+        companyId: "",
+        branchId: 12,
+        data: {
+          numero: "020309",
+          chaveAcesso: "chave-44",
+          pdvSalesRequestId: "r1",
+        },
+      },
+    } as any);
+
+    expect(upsertSpy).toHaveBeenCalledWith("020309", "chave-44", 12);
+    expect(notifySalesRequestUpdated).toHaveBeenCalledWith("r1");
+  });
+
+  it("upsertInvoiceFromTecinco falha: ainda notifica a solicitação (front refaz o fetch) mas propaga o erro (BullMQ tenta de novo)", async () => {
+    const error = new Error("Nota fiscal não encontrada na Tecinco");
+    jest.spyOn(queue, "upsertInvoiceFromTecinco").mockRejectedValue(error);
+
+    await expect(
+      queue.process({
+        data: {
+          eventId: "evt-2",
+          resource: "invoice_transfer",
+          action: "sync",
+          companyId: "",
+          branchId: 12,
+          data: {
+            numero: "020309",
+            chaveAcesso: "chave-44",
+            pdvSalesRequestId: "r1",
+          },
+        },
+      } as any),
+    ).rejects.toThrow("Nota fiscal não encontrada na Tecinco");
+
+    expect(notifySalesRequestUpdated).toHaveBeenCalledWith("r1");
+  });
+
+  it("sem branchId: ignora sem chamar upsertInvoiceFromTecinco nem notificar", async () => {
+    const upsertSpy = jest
+      .spyOn(queue, "upsertInvoiceFromTecinco")
+      .mockResolvedValue(undefined);
+
+    await queue.process({
+      data: {
+        eventId: "evt-3",
+        resource: "invoice_transfer",
+        action: "sync",
+        companyId: "",
+        data: {
+          numero: "020309",
+          chaveAcesso: "chave-44",
+          pdvSalesRequestId: "r1",
+        },
+      },
+    } as any);
+
+    expect(upsertSpy).not.toHaveBeenCalled();
+    expect(notifySalesRequestUpdated).not.toHaveBeenCalled();
   });
 });

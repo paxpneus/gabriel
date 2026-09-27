@@ -53,12 +53,17 @@ jest.mock("../../../../warehouse/fiscal/invoices/invoice/invoice.service", () =>
     findOne: jest.fn(),
     findAll: jest.fn(),
     findDeliveryNoteGeneratedInvoiceIds: jest.fn(),
+    createStub: jest.fn(),
   },
 }));
 
 jest.mock("../../../../company/unit-business/unit-business.service", () => ({
   __esModule: true,
-  default: { findById: jest.fn(), getCd21UnitBusiness: jest.fn() },
+  default: {
+    findById: jest.fn(),
+    findOne: jest.fn(),
+    getCd21UnitBusiness: jest.fn(),
+  },
 }));
 
 jest.mock("../../../../handlers/temp-file/temp-file.service", () => ({
@@ -83,7 +88,7 @@ jest.mock("../../../../handlers/tecinco/queues/tecinco-api-fetch.queue", () => (
 
 jest.mock("../helpers/danfe-interpreter", () => ({
   __esModule: true,
-  extractAccessKeyFromDanfe: jest.fn(),
+  extractDanfeIdentification: jest.fn(),
 }));
 
 jest.mock("../../../../../shared/utils/xml/access-key", () => ({
@@ -118,6 +123,7 @@ import unitBusinessService from "../../../../company/unit-business/unit-business
 import tempFileService from "../../../../handlers/temp-file/temp-file.service";
 import uploaderQueue from "../../../../handlers/uploader/uploader.queue";
 import { getTCarIntegration } from "../../../../handlers/tecinco/api/tecinco_api";
+import { extractDanfeIdentification } from "../helpers/danfe-interpreter";
 import nfeEmissionService from "../../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "../payment-receipt-extraction.service";
 import socketService from "../../../../handlers/socket/services/socket.service";
@@ -1600,6 +1606,169 @@ describe("PdvSalesRequestService", () => {
           tcarUpsertQueue: {} as any,
         }),
       ).rejects.toThrow(/romaneio da nota de venda já foi gerado/);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("danfeBuffer: nota já existe localmente pela chave — não chama a Tecinco", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (extractDanfeIdentification as jest.Mock).mockResolvedValue({
+        accessKey: "chave-44",
+        number: "020309",
+      });
+      (invoiceService.findOne as jest.Mock).mockResolvedValue({
+        id: "invoice-local",
+      });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-local",
+        integrations_id: "tecinco-1",
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+      const tcarUpsertQueue = {
+        upsertInvoiceFromTecinco: jest.fn(),
+      } as any;
+
+      await service.attachTransferInvoice("r1", {
+        danfeBuffer: Buffer.from(""),
+        tcarUpsertQueue,
+      });
+
+      expect(tcarUpsertQueue.upsertInvoiceFromTecinco).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        transfer_invoice_id: "invoice-local",
+      });
+    });
+
+    it("danfeBuffer: nota não existe localmente E a regex local não achou o CNPJ do emitente — recusa (sem fallback de IA)", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        unit_business_id: "unit-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (extractDanfeIdentification as jest.Mock).mockResolvedValue({
+        accessKey: "chave-44",
+        number: "020309",
+        emitterCnpj: null,
+      });
+      (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
+      const tcarUpsertQueue = { add: jest.fn() } as any;
+
+      await expect(
+        service.attachTransferInvoice("r1", {
+          danfeBuffer: Buffer.from(""),
+          tcarUpsertQueue,
+        }),
+      ).rejects.toThrow(/CNPJ do emitente no DANFE/);
+      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("danfeBuffer: nota não existe localmente — vincula nota provisória na hora e enfileira o import real em background", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        unit_business_id: "unit-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (extractDanfeIdentification as jest.Mock).mockResolvedValue({
+        accessKey: "chave-44",
+        number: "020309",
+        emitterCnpj: "02316749002383",
+      });
+      (unitBusinessService.findOne as jest.Mock).mockResolvedValue({
+        number: "12",
+      });
+      (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
+      (tempFileService.create as jest.Mock).mockResolvedValue({
+        id: "temp-1",
+      });
+      (invoiceService.createStub as jest.Mock).mockResolvedValue({
+        id: "invoice-provisoria",
+      });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-provisoria",
+        integrations_id: "tecinco-1",
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+      const tcarUpsertQueue = {
+        upsertInvoiceFromTecinco: jest.fn(),
+        add: jest.fn().mockResolvedValue(undefined),
+      } as any;
+
+      await service.attachTransferInvoice("r1", {
+        danfeBuffer: Buffer.from(""),
+        tcarUpsertQueue,
+      });
+
+      // Nunca espera a importação real (Tecinco) pra responder — só
+      // enfileira. upsertInvoiceFromTecinco é chamado pelo próprio worker,
+      // não sincronamente por attachTransferInvoice.
+      expect(tcarUpsertQueue.upsertInvoiceFromTecinco).not.toHaveBeenCalled();
+      expect(invoiceService.createStub).toHaveBeenCalledWith(
+        expect.objectContaining({
+          integrationsId: "tecinco-1",
+          numberSystem: "020309",
+          idSystem: "chave-44",
+          xmlKey: "chave-44",
+          senderCnpj: "02316749002383",
+        }),
+      );
+      expect(uploaderQueue.enqueueUpload).toHaveBeenCalledWith(
+        "temp-1",
+        "INVOICE_DANFE",
+      );
+      expect(tcarUpsertQueue.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource: "invoice_transfer",
+          branchId: 12,
+          data: {
+            numero: "020309",
+            chaveAcesso: "chave-44",
+            pdvSalesRequestId: "r1",
+          },
+        }),
+        expect.any(String),
+      );
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        transfer_invoice_id: "invoice-provisoria",
+      });
+    });
+
+    it("danfeBuffer: CNPJ do emitente não resolve nenhuma filial Tecinco — recusa antes de criar qualquer coisa", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        unit_business_id: "unit-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (extractDanfeIdentification as jest.Mock).mockResolvedValue({
+        accessKey: "chave-44",
+        number: "020309",
+        emitterCnpj: "02316749002383",
+      });
+      (unitBusinessService.findOne as jest.Mock).mockResolvedValue(null);
+      (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
+      const tcarUpsertQueue = { add: jest.fn() } as any;
+
+      await expect(
+        service.attachTransferInvoice("r1", {
+          danfeBuffer: Buffer.from(""),
+          tcarUpsertQueue,
+        }),
+      ).rejects.toThrow(/filial Tecinco a partir do CNPJ do emitente/);
+      expect(invoiceService.createStub).not.toHaveBeenCalled();
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
     });
   });

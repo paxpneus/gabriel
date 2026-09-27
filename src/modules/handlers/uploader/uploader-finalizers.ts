@@ -50,11 +50,18 @@ export const FINALIZE_CHECKERS: Record<
     if (!unmapped) return "missing";
     return isTempFileSentinelPath(unmapped.image_path) ? "still-sentinel" : "already-real";
   },
-  // Sem sentinela — danfe_path aceita NULL, então "ainda não subiu" = falsy.
+  // danfe_path aceita NULL (falsy = "ainda não subiu"), MAS o vínculo rápido
+  // de nota de transferência (pdv-sales-request.service.ts::attachTransferInvoice)
+  // grava um path sentinela temp:// antes do upload real terminar — sem essa
+  // checagem, o sweep achava que "já tem valor" e apagava o temp_files ainda
+  // em uso pelo job de upload em andamento.
   INVOICE_DANFE: async (entityId) => {
     const invoice = await invoiceService.findById(entityId);
     if (!invoice) return "missing";
-    return invoice.danfe_path ? "already-real" : "still-sentinel";
+    if (!invoice.danfe_path) return "still-sentinel";
+    return isTempFileSentinelPath(invoice.danfe_path)
+      ? "still-sentinel"
+      : "already-real";
   },
   CTE: async (entityId) => {
     const state = await JobTracker.get(entityId);

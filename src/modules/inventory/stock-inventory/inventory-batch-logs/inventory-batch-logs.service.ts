@@ -41,9 +41,13 @@ export class InventoryBatchLogsService extends BaseService<
         throw new Error("Lote de Inventário não informado [ERRO DO SISTEMA]");
 
       // ── 1. Valida batch ───────────────────────────────────────────────────────
+      // Leitura sem lock: o lock que protege o total agregado do batch fica em
+      // syncBatchTotals, perto da escrita, não aqui — travar a linha do batch
+      // durante toda a cadeia de queries do scan serializa os 2 conferentes
+      // permitidos por batch mesmo quando bipam produtos diferentes.
       const inventoryBatch = await InventoryBatch.findByPk(inventoryBatchId, {
+        attributes: ["id", "status", "type", "BatchIdForDivergency"],
         transaction: t,
-        lock: t.LOCK.UPDATE,
       });
       if (!inventoryBatch) throw new Error("Lote de Inventário não encontrado");
       if (!["OPEN", "PENDING"].includes(inventoryBatch.status))
@@ -97,6 +101,7 @@ export class InventoryBatchLogsService extends BaseService<
             "PRODUCT",
             unitBusiness.integrations_id,
             [productFound.id],
+            t,
           )
         : new Map<string, string>();
 
@@ -169,7 +174,7 @@ export class InventoryBatchLogsService extends BaseService<
       }
 
       // ── 6. Sincroniza item + batch após leitura (centralizado) ────────────────
-      await inventoryBatchLogsRepository.syncItemAndBatchAfterScan(
+      const syncResult = await inventoryBatchLogsRepository.syncItemAndBatchAfterScan(
         inventoryBatchItem.id,
         inventoryBatchId,
         userId,
@@ -200,6 +205,19 @@ export class InventoryBatchLogsService extends BaseService<
         product_name: productFound.name,
         ean: config?.gtin ?? null,
         ean_tribut: config?.gtin_package ?? null,
+        item: {
+          quantity_stock: syncResult.quantityStock,
+          quantity_read: syncResult.quantityRead,
+          quantity_read_by_user: syncResult.newUserRead,
+          divergency: syncResult.divergency,
+          status: syncResult.newStatus,
+        },
+        batch: {
+          total_quantity_stock: syncResult.totalQuantityStock,
+          total_quantity_read: syncResult.totalQuantityRead,
+          item_count: syncResult.itemCount,
+          finished_count: syncResult.finishedCount,
+        },
       };
     });
   }

@@ -4,8 +4,15 @@ import {
   handleBlingOAuthCallback,
 } from "../../api/bling_api.service";
 import { v4 as uuidv4 } from "uuid";
-import { BlingOrderQueue } from "./bling-order.queue";
+import {
+  BlingOrderQueue,
+  ORDER_WEBHOOK_INGESTION_DELAY_MS,
+  FORCE_UPDATE_PRIORITY,
+} from "./bling-order.queue";
 import { alertService } from "../../../../../shared/providers/mail-provider/nodemailer.alert";
+import { authenticate } from "../../../../../middlewares/auth-token";
+import { userPermissions } from "../../../../../middlewares/user-permissions";
+import ordersService from "../../../../sales/orders/order/orders.service";
 
 const router = Router();
 
@@ -52,9 +59,10 @@ router.post("/webhook", async (req: Request, res: Response) => {
 
     const action = event.split(".")[1]; // "created" | "updated" | "deleted"
 
-    await blingOrderQueue.add(
+    await blingOrderQueue.addDelayed(
       { ...req.body, action },
       `bling-order-${action}-${orderId}`,
+      ORDER_WEBHOOK_INGESTION_DELAY_MS,
     );
 
     res.status(200).json({ received: true });
@@ -67,6 +75,48 @@ router.post("/webhook", async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+/**
+ * POST /bling-orders/:orderId/force-update
+ *
+ * Uso do front-end: força a reingestão imediata de um pedido específico
+ * (busca direta em GET /pedidos/vendas/{id} na Bling), furando tanto o
+ * delay de 30s quanto qualquer backlog de webhook já enfileirado — usa a
+ * maior prioridade possível na fila BLING_ORDER_INGESTION.
+ */
+router.post(
+  "/:orderId/force-update",
+  authenticate,
+  userPermissions,
+  async (req: Request, res: Response) => {
+    try {
+      const blingOrderQueue: BlingOrderQueue = req.app.locals.BlingOrderQueue;
+      const { orderId } = req.params;
+
+      const order = await ordersService.findOne({ where: { id: orderId } });
+      if (!order?.id_order_system) {
+        res
+          .status(404)
+          .json({ error: "Pedido não encontrado ou sem vínculo com a Bling." });
+        return;
+      }
+
+      await blingOrderQueue.add(
+        {
+          event: "order.updated",
+          action: "updated",
+          data: { id: Number(order.id_order_system) },
+        },
+        `bling-order-force-update-${order.id_order_system}`,
+        { priority: FORCE_UPDATE_PRIORITY },
+      );
+
+      res.status(202).json({ enqueued: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
 
 // Rota para primeiro contato com a bling, para registrar o refresh token e estabelecer a conexão com a api da bling
 router.get("/auth/bling", async (req: Request, res: Response) => {

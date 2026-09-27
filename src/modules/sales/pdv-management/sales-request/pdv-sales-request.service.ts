@@ -22,7 +22,8 @@ import {
 import pdvSalesRequestHistoryService from "../sales-request-history/pdv-sales-request-history.service";
 import pdvSalesRequestReceiptService from "../sales-request-receipt/pdv-sales-request-receipt.service";
 import PdvSalesRequestReceipt from "../sales-request-receipt/pdv-sales-request-receipt.model";
-import { extractAccessKeyFromDanfe } from "./helpers/danfe-interpreter";
+import { extractDanfeIdentification } from "./helpers/danfe-interpreter";
+import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import orderService from "../../orders/order/orders.service";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
@@ -57,9 +58,9 @@ import {
   PDV_SOCKET_NAMESPACE,
   pdvSalesRequestRoom,
   PAYMENT_RECEIPT_ANALYSIS_DONE_EVENT,
-  PDV_SALES_REQUEST_UPDATED_EVENT,
 } from "./helpers/pdv-sales-request-room";
 import { notifyPdvStoreSync } from "./helpers/notify-pdv-store-sync";
+import { notifySalesRequestUpdated } from "./helpers/notify-sales-request-updated";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 import { isWithinPhysicalStoreRange } from "../../../company/unit-business/helpers/physical-numbered-unit-business";
 import {
@@ -465,6 +466,19 @@ export class PdvSalesRequestService extends BaseService<
     return unitBusiness?.number ? Number(unitBusiness.number) : undefined;
   }
 
+  // Nota de transferência é emitida pela filial de origem, não pela loja que
+  // abriu a solicitação PDV (que só recebe a mercadoria) — as duas podem ser
+  // unit_business diferentes, então a filial Tecinco tem que vir do CNPJ do
+  // emitente lido no próprio documento, nunca do unit_business da solicitação.
+  private async resolveBranchIdByCnpj(
+    cnpj: string,
+  ): Promise<number | undefined> {
+    const unitBusiness = await unitBusinessService.findOne({
+      where: { cnpj: cleanDocument(cnpj) },
+    });
+    return unitBusiness?.number ? Number(unitBusiness.number) : undefined;
+  }
+
   // Registra uma ação que NÃO muda `status` (edição de comprovante/nota de
   // transferência antes de confirmar) — todo o resto do histórico passa por
   // transitionTo, mas "cada ação na solicitação" (spec original do módulo)
@@ -640,18 +654,6 @@ export class PdvSalesRequestService extends BaseService<
     }
   }
 
-  // Front conectado na room desta solicitação (mesma usada pelo evento de
-  // análise de comprovante) só usa isso pra decidir refetch — nunca lê dado
-  // de negócio do payload, mesmo espírito de notifyPdvStoreSync.
-  private notifySalesRequestUpdated(requestId: string): void {
-    socketService.emitToNamespaceRoom(
-      PDV_SOCKET_NAMESPACE,
-      pdvSalesRequestRoom(requestId),
-      PDV_SALES_REQUEST_UPDATED_EVENT,
-      { requestId },
-    );
-  }
-
   // Recalcula e persiste payment_receipt_analysis/validated/
   // payment_method_matches_receipt a partir de TODOS os comprovantes
   // atualmente anexados — chamado depois de qualquer mutação numa linha de
@@ -702,7 +704,7 @@ export class PdvSalesRequestService extends BaseService<
     });
     if (!updated) throw new Error("Solicitação não encontrada");
 
-    this.notifySalesRequestUpdated(requestId);
+    notifySalesRequestUpdated(requestId);
 
     return updated;
   }
@@ -1051,7 +1053,7 @@ export class PdvSalesRequestService extends BaseService<
       description: "Resumo do pagamento editado manualmente",
     });
 
-    this.notifySalesRequestUpdated(id);
+    notifySalesRequestUpdated(id);
 
     return updated;
   }
@@ -1483,25 +1485,87 @@ export class PdvSalesRequestService extends BaseService<
         }
         invoiceId = upserted.id;
       } else if (params.danfeBuffer) {
-        const accessKey = await extractAccessKeyFromDanfe(
+        const {
+          accessKey,
+          number,
+          emitterCnpj: nativeEmitterCnpj,
+        } = await extractDanfeIdentification(
           params.danfeBuffer,
           params.danfeMimeType ?? "application/pdf",
         );
-        if (!accessKey) {
+        if (!accessKey || !number) {
           throw new Error(
-            "Não foi possível ler a chave de acesso do DANFE — envie o XML da nota",
+            "Não foi possível ler a chave de acesso e o número da nota no DANFE — envie o XML da nota",
           );
         }
 
-        const found = await invoiceService.findOne({
+        let found = await invoiceService.findOne({
           where: { xml_key: accessKey },
         });
+
+        // Não achou localmente: em vez de esperar a busca/importação real na
+        // Tecinco (lenta — login, rate limit global, itens da nota), vincula
+        // na hora uma nota PROVISÓRIA (só o número + o próprio DANFE
+        // enviado) e enfileira o processo lento em background — ver
+        // invoiceService.createStub e TCarUpsertQueue "invoice_transfer".
+        // A filial Tecinco é a de quem EMITIU a nota de transferência, nunca
+        // a loja que abriu a solicitação PDV — as duas podem ser diferentes.
         if (!found) {
-          throw new Error(
-            "Nota não encontrada no sistema a partir do DANFE — envie o XML da nota de transferência",
+          // Sem fallback de IA aqui por decisão explícita (ver
+          // danfe-interpreter.ts) — só o que a regex local achou no PDF.
+          const emitterCnpj = nativeEmitterCnpj;
+          if (!emitterCnpj) {
+            throw new Error(
+              "Não foi possível ler o CNPJ do emitente no DANFE — envie o XML da nota",
+            );
+          }
+
+          const branchId = await this.resolveBranchIdByCnpj(emitterCnpj);
+          if (!branchId) {
+            throw new Error(
+              "Não foi possível resolver a filial Tecinco a partir do CNPJ do emitente da nota",
+            );
+          }
+
+          const stubId = randomUUID();
+          const tempFile = await tempFileService.create({
+            buffer: params.danfeBuffer,
+            mime_type: params.danfeMimeType ?? "application/pdf",
+            original_filename: `${accessKey}.pdf`,
+            upload_directory: "/danfes",
+            preserve_filename: true,
+            entity_type: "INVOICE_DANFE",
+            entity_id: stubId,
+          });
+
+          found = await invoiceService.createStub({
+            id: stubId,
+            integrationsId: tecinco.id,
+            numberSystem: number,
+            idSystem: accessKey,
+            xmlKey: accessKey,
+            danfePath: buildTempFileSentinelPath(tempFile.id),
+            senderCnpj: emitterCnpj,
+          });
+
+          await uploaderQueue.enqueueUpload(tempFile.id, "INVOICE_DANFE");
+
+          await params.tcarUpsertQueue.add(
+            {
+              eventId: `invoice-transfer-${stubId}`,
+              resource: "invoice_transfer",
+              action: "sync",
+              companyId: "",
+              branchId,
+              data: { numero: number, chaveAcesso: accessKey, pdvSalesRequestId: id },
+            },
+            `tecinco-invoice-transfer-${stubId}`,
           );
         }
+
         invoiceId = found.id;
+        notifySalesRequestUpdated(id);
+
       } else {
         throw new Error(
           "Informe o id de uma nota já existente, ou anexe XML/DANFE",

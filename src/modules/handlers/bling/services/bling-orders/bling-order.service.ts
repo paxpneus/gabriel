@@ -15,7 +15,9 @@ import { orderItemsCreationAttributes } from "../../../../sales/orders/order_ite
 import { StoreService } from "../../../../sales/stores/stores.service";
 import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/bling/status-mapper";
 import { Product, ProductConfig } from "../../../../inventory";
-import { Invoice, UnitBusiness } from "../../../../warehouse";
+import { UnitBusiness } from "../../../../warehouse";
+import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import type { BlingApiInvoice } from "../bling/queues/bling-api-fetch.queue";
 import Contact from "../../../../sales/contacts/contacts.model";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import { ProductAttributes } from "../../../../inventory/products/product.types";
@@ -171,17 +173,51 @@ export class BlingOrderService {
     return update;
   }
 
+  // Pedido já chega com o id da nota fiscal na Bling (orderData.notaFiscal.id)
+  // antes do webhook de invoice/consumer_invoice terminar o import completo
+  // dela (assíncrono, pode demorar) — sem isso, o pedido ficava com
+  // invoice_id nulo até essa outra fila processar por conta própria. Busca
+  // local primeiro (id_system); sem achar, busca só o essencial na Bling
+  // (GET /nfe/:id, uma chamada) e vincula uma nota PROVISÓRIA (só
+  // number_system + o link do DANFE que a própria Bling hospeda) — o
+  // processo lento de verdade (itens, totais fiscais, notificação) continua
+  // sendo o webhook/reconciler de invoice, que localiza esta mesma linha por
+  // id_system e atualiza em cima dela (ver fetchAndUpsertInvoice).
   private async resolveInvoiceId(
     notaFiscalId: string | number | undefined,
   ): Promise<string | null> {
     if (!notaFiscalId) return null;
 
-    const invoice = await Invoice.findOne({
-      where: { id_system: String(notaFiscalId) },
-      attributes: ["id"],
+    const idSystem = String(notaFiscalId);
+    const existing = await invoiceService.findOne({
+      where: { id_system: idSystem },
     });
+    if (existing) return existing.id;
 
-    return invoice?.id ?? null;
+    try {
+      const { data } = await blingGet<{ data: BlingApiInvoice }>(
+        `/nfe/${notaFiscalId}`,
+        this.blingApi,
+      );
+      const nf = data.data;
+      if (!nf?.numero) return null;
+
+      const integration = await getBlingIntegration();
+      const created = await invoiceService.createStub({
+        integrationsId: integration.id,
+        numberSystem: nf.numero,
+        idSystem,
+        danfePath: nf.linkPDF ?? null,
+        senderCnpj: nf.emitente?.cnpj,
+        senderName: nf.emitente?.nome,
+      });
+      return created.id;
+    } catch (err: any) {
+      console.warn(
+        `[BLING_ORDER] Falha ao vincular nota provisória (notaFiscalId=${notaFiscalId}): ${err?.message ?? err}`,
+      );
+      return null;
+    }
   }
 
   // Cacheia a forma de pagamento da Bling localmente (id_system) — evita

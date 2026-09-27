@@ -1,6 +1,6 @@
 # Extração estruturada de documentos (IA + OCR local)
 
-Dois pipelines **independentes**, um por domínio — deixaram de compartilhar um pipeline único desde que o comprovante de pagamento saiu do Gemini (ver seção própria abaixo). O cliente Gemini e `document-extraction.ts` continuam existindo, mas hoje só atendem o fallback de DANFE fotografado.
+Dois pipelines **independentes**, um por domínio — deixaram de compartilhar um pipeline único desde que o comprovante de pagamento saiu do Gemini (ver seção própria abaixo). **O cliente Gemini e `document-extraction.ts` continuam existindo no código mas hoje não têm nenhum consumidor** — o fallback de DANFE fotografado que era o último usuário foi removido por decisão explícita (custo/latência do Gemini, ~10-30s por chamada, tornando `attachTransferInvoice` lento mesmo pra nota já conhecida — ver seção "DANFE" abaixo). Documentado aqui como referência caso algum fluxo volte a precisar de extração via IA — não apagar o cliente/pipeline por estarem "sem uso" sem checar esta nota primeiro.
 
 ## Cliente Gemini (`src/shared/providers/ai/gemini-vision.service.ts`)
 
@@ -8,7 +8,7 @@ Dois pipelines **independentes**, um por domínio — deixaram de compartilhar u
 
 **Migração do SDK legado, `@google/generative-ai` → `@google/genai`.** Motivo: 404 recorrente de modelo (nomes de modelo saindo de suporte com frequência, ver incidente abaixo) e o SDK antigo estava sem atualização/suporte oficial da Google. `ApiError.status` (novo SDK) mantém o mesmo formato de erro do antigo (`error.status` numérico), então `withRetry` não precisou mudar a lógica, só a chamada em si.
 
-`extractFromText`/`extractFromInlineData` passam pelo `withRetry` privado: até 4 retries com backoff linear (2s, 4s, 6s, 8s), pra erro com `status` 429/500/503. Hoje só quem chama isso é o fallback de DANFE (seção abaixo) — o comprovante de pagamento não usa mais Gemini, então o timeout de 5s do PDV (`RECEIPT_ANALYSIS_TIMEOUT_MS`) não compete mais com esse retry no caso do comprovante.
+`extractFromText`/`extractFromInlineData` passam pelo `withRetry` privado: até 4 retries com backoff linear (2s, 4s, 6s, 8s), pra erro com `status` 429/500/503. **Sem consumidor ativo hoje** (ver nota no topo do arquivo) — nem o fallback de DANFE (removido) nem o comprovante de pagamento (nunca usou Gemini de novo desde que migrou pro pipeline local) chamam isso mais.
 
 **Incidente já corrigido: default hardcoded apontava pra modelo descontinuado.** `DEFAULT_MODEL` era `gemini-2.0-flash`, que a API do Google passou a rejeitar com 404 ("no longer available") — corrigido pro modelo vigente, `gemini-3.6-flash`. Se a extração de DANFE via IA parar de funcionar silenciosamente, suspeitar primeiro de `DEFAULT_MODEL`/`GEMINI_MODEL` desatualizado.
 
@@ -24,11 +24,11 @@ Ambos retornam a resposta bruta (string) do modelo — quem chama decide como pa
 1. Se `mimeType === "application/pdf"`, tenta `pdf-parse` local primeiro. Texto extraído com `length >= minNativeTextLength` (default 40) → `extractFromText` (barato, sem visão computacional).
 2. Caso contrário (imagem, PDF escaneado/sem texto suficiente, ou `pdf-parse` falhou) → `extractFromInlineData` com o binário original.
 
-Hoje o único consumidor é o fallback de DANFE fotografado (seção abaixo) — o comprovante de pagamento tem seu próprio pipeline local, não passa mais por aqui (ver "Comprovante de pagamento" abaixo antes de reusar isto pra outro caso).
+**Sem consumidor ativo hoje** — ver nota no topo do arquivo.
 
-## DANFE fotografado/escaneado — `pdv-sales-request/helpers/danfe-interpreter.ts`
+## DANFE (upload de imagem/PDF) — `pdv-sales-request/helpers/danfe-interpreter.ts`
 
-Regex local (PDF nativo) tenta primeiro; só cai pro pipeline de IA acima (prompt em `helpers/danfe-access-key-prompt.ts`) quando a regex não encontra nada — cobre o caso de documento sem texto selecionável (foto/scan). **Não mudou** nesta sessão — só o comprovante de pagamento saiu do Gemini.
+**Sem fallback de IA por decisão explícita** (removido — era a causa de `attachTransferInvoice` levar ~10-30s por anexo, mesmo pra nota já conhecida localmente, já que a extração rodava ANTES de checar se a nota existia). `extractDanfeIdentification` é 100% regex local sobre o texto nativo do PDF (`pdf-parse`) pra chave de acesso, número da nota e CNPJ do emitente — documento sem texto nativo selecionável (foto/scan) ou PDF onde alguma regex não bate simplesmente devolve `null` nesse campo, sem tentar nada além disso; quem chama (`attachTransferInvoice`) pede o XML da nota nesse caso. Consumido também por `attachTransferInvoice` pra buscar/importar a nota direto na Tecinco por número+chave quando ela não existe localmente (ver `.claude/entities/pdv-sales-request/index.md`, seção "Nota de transferência").
 
 ## Comprovante de pagamento — pipeline local, sem IA (`pdv-sales-request/payment-receipt-extraction.service.ts`)
 

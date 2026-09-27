@@ -6,6 +6,7 @@ import {
   getBlingInvoiceReferenceDate,
   isKnownBlingInvoiceBeforeCutoff,
 } from './bling-invoice-cutoff';
+import { ORDER_WEBHOOK_INGESTION_DELAY_MS } from '../bling-orders/bling-order.queue';
 
 // ─── HMAC Signature ───────────────────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ export function validateBlingSignature(
 export interface OrchestratorDependencies {
   /** Fila já existente para pedidos */
   blingOrderQueue: {
-    add: (payload: unknown, jobId: string) => Promise<void>;
+    addDelayed: (payload: unknown, jobId: string, delayMs: number) => Promise<void>;
   };
   /** Fila para eventos que necessitam de upsert direto (estoque, supplier) */
   blingDirectUpsertQueue: {
@@ -114,9 +115,10 @@ export async function orchestrateBlingWebhook(
     const orderId = (envelope.data as any)?.id;
     if (!orderId) return { status: 'ignored', reason: 'Missing order id' };
 
-    await deps.blingOrderQueue.add(
+    await deps.blingOrderQueue.addDelayed(
       { ...envelope, action },
       `bling-order-${action}-${orderId}`,
+      ORDER_WEBHOOK_INGESTION_DELAY_MS,
     );
     return { status: 'received' };
   }

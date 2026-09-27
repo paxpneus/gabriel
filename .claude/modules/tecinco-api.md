@@ -106,3 +106,20 @@
     `Promise.all` instead of nested sequential loops; enqueueing the
     resulting notas stays sequential per branch (local BullMQ `add`, not a
     Tecinco call, so no benefit to parallelizing it).
+- **New `TCarUpsertQueue` resource: `invoice_transfer`** — background
+  enrichment of a PDV transfer-invoice linked instantly via a provisional
+  `Invoice` row (see `.claude/entities/pdv-sales-request/index.md`'s "Nota de
+  transferência" section and `.claude/entities/invoice/index.md`'s
+  "Provisional/stub invoices"). `attachTransferInvoice` enqueues `{ resource:
+  "invoice_transfer", data: { numero, chaveAcesso, pdvSalesRequestId } }`
+  instead of calling `upsertInvoiceFromTecinco` synchronously (that method,
+  and `upsertInvoiceFromXml`, still exist and still run synchronously for
+  their *other* callers — see their own doc comments, "roda síncrono, fora da
+  fila, pra propagar erro de verdade pro chamador" — this is a genuinely new,
+  separate call path, not a change to those methods). The worker
+  (`processInvoiceTransfer`) just calls the same `upsertInvoiceFromTecinco`
+  method — same login mutex/rate-limiter/session-cache rules as every other
+  Tecinco call in this file apply unchanged — then always calls
+  `notifySalesRequestUpdated(pdvSalesRequestId)` in a `finally`, success or
+  failure, so the front refetches either way; a thrown error still propagates
+  after that so BullMQ retries the job normally.

@@ -1047,6 +1047,17 @@ export async function upsertInvoiceFromXml(
       },
     );
 
+    // Backfill — só tem efeito quando a linha nunca passou por
+    // createWithRelations (nota "provisória" vinculada rápido, ver
+    // invoiceService.createStub/ensureUnitBusinessAttributes); em qualquer
+    // outra invoice (o caso normal, já criada com attributes) é um no-op.
+    await invoiceService.ensureUnitBusinessAttributes(existingInvoice.id, {
+      senderCnpj: invoiceBaseData.sender_cnpj,
+      receiverCnpj: invoiceBaseData.receiver_cnpj,
+      initialStatus: resolveInitialStatus(),
+      invoiceType: options?.invoiceType,
+    });
+
     // Reprocesso: cria os InvoiceItems que faltam pros itens que agora
     // resolvem a um Product (ex.: produto conciliado depois da primeira
     // passagem) — não duplica os que já existem.

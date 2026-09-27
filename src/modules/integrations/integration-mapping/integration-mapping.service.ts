@@ -104,6 +104,7 @@ export class IntegrationMappingService extends BaseService<
     entityType: EntityType,
     integrations_id: string,
     internalIds: string[],
+    transaction?: Transaction,
   ): Promise<Map<string, string>> {
     if (!internalIds.length) return new Map();
 
@@ -113,6 +114,7 @@ export class IntegrationMappingService extends BaseService<
         integrations_id,
         internal_id: { [Op.in]: internalIds },
       },
+      transaction,
     });
 
     return new Map(mappings.map((m) => [m.internal_id, m.external_id]));

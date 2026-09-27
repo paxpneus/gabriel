@@ -38,21 +38,42 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
     });
 
     if (!item) {
-      item = await InventoryBatchItems.create(
-        {
-          product_id: productId,
-          inventory_batch_id: batchId,
-          ean,
-          sku,
-          quantity_stock: quantityStock,
-          quantity_read: 0,
-          divergency: quantityStock,
-          initial_divergency: quantityStock,
-          stock_id: stockId,
-          status: "PENDING",
-        },
-        { transaction: t },
-      );
+      // "SELECT ... FOR UPDATE" acima não trava nada quando a linha ainda não
+      // existe, então 2 conferentes bipando o mesmo produto novo ao mesmo
+      // tempo podem cair os dois aqui. A constraint uq_inventory_batch_items_batch_product
+      // barra a segunda insert; savepoint isola só esse INSERT pra poder
+      // recuperar o erro sem abortar a transação inteira do scan.
+      try {
+        item = await sequelize.transaction({ transaction: t }, (savepoint) =>
+          InventoryBatchItems.create(
+            {
+              product_id: productId,
+              inventory_batch_id: batchId,
+              ean,
+              sku,
+              quantity_stock: quantityStock,
+              quantity_read: 0,
+              divergency: quantityStock,
+              initial_divergency: quantityStock,
+              stock_id: stockId,
+              status: "PENDING",
+            },
+            { transaction: savepoint },
+          ),
+        );
+      } catch (error: any) {
+        if (error.name !== "SequelizeUniqueConstraintError") throw error;
+
+        item = await InventoryBatchItems.findOne({
+          where: { product_id: productId, inventory_batch_id: batchId, stock_id: stockId },
+          transaction: t,
+          lock: t.LOCK.UPDATE,
+        });
+        if (!item)
+          throw new Error(
+            "Erro do sistema ao bipar, tentando criar produto já existente no lote, tente novamente!",
+          );
+      }
     }
 
     await  inventoryBatchRepository.syncBatchTotals(batchId, true, t);

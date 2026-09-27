@@ -18,7 +18,17 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
     batchType: string,
     t: Transaction,
     options?: { skipInitialDivergency?: boolean; unitPrice?: number },
-  ): Promise<{ newStatus: string; newUserRead: number }> {
+  ): Promise<{
+    newStatus: string;
+    newUserRead: number;
+    quantityStock: number;
+    quantityRead: number;
+    divergency: number;
+    totalQuantityRead: number;
+    totalQuantityStock: number;
+    itemCount: number;
+    finishedCount: number;
+  }> {
     const allLogs = await InventoryBatchLogs.findAll({
       where: { inventory_batch_item_id: itemId },
       transaction: t,
@@ -77,10 +87,12 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
           ? "FINISHED"
           : "PENDING";
 
+    const divergency = Number(item.quantity_stock) - newItemQuantityRead;
+
     await item.update(
       {
         quantity_read: newItemQuantityRead,
-        divergency: Number(item.quantity_stock) - newItemQuantityRead,
+        divergency,
         price: newItemQuantityRead * (options?.unitPrice ?? 0),
         status: newStatus,
         ...(batchType === "REGULAR" &&
@@ -91,9 +103,23 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
       { transaction: t },
     );
 
-    await inventoryBatchRepository.syncBatchTotals(batchId, false, t);
+    const batchTotals = await inventoryBatchRepository.syncBatchTotals(
+      batchId,
+      false,
+      t,
+    );
 
-    return { newStatus, newUserRead };
+    return {
+      newStatus,
+      newUserRead,
+      quantityStock: Number(item.quantity_stock),
+      quantityRead: newItemQuantityRead,
+      divergency,
+      totalQuantityRead: batchTotals.totalQuantityRead,
+      totalQuantityStock: batchTotals.totalQuantityStock,
+      itemCount: batchTotals.itemCount,
+      finishedCount: batchTotals.finishedCount,
+    };
   }
 
   async syncDivergencyParent(

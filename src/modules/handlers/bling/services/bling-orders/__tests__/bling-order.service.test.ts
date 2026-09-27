@@ -97,10 +97,22 @@ jest.mock("../../../api/bling_api.service", () => ({
   getBlingIntegration: jest.fn(),
 }));
 
+jest.mock(
+  "../../../../../warehouse/fiscal/invoices/invoice/invoice.service",
+  () => ({
+    __esModule: true,
+    default: {
+      findOne: jest.fn(),
+      createStub: jest.fn(),
+    },
+  }),
+);
+
 import ordersService from "../../../../../sales/orders/order/orders.service";
 import orderItemsService from "../../../../../sales/orders/order_items/order_items.service";
 import { getBlingIntegration } from "../../../api/bling_api.service";
 import UnitBusiness from "../../../../../company/unit-business/unit-business.model";
+import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import BlingOrderService from "../bling-order.service";
 import { startOfDayTz } from "../../../../../../shared/utils/normalizers/date";
 
@@ -168,13 +180,19 @@ function makeOrderData(overrides: Partial<any> = {}) {
   };
 }
 
-function makeFakeBlingApi(orderData: any): AxiosInstance {
+function makeFakeBlingApi(
+  orderData: any,
+  nfeResponse: any = {},
+): AxiosInstance {
   const get = jest.fn().mockImplementation((url: string) => {
     if (url.startsWith("/pedidos/vendas/")) {
       return Promise.resolve({ data: { data: orderData } });
     }
     if (url.startsWith("/contatos/")) {
       return Promise.resolve({ data: { data: {} } });
+    }
+    if (url.startsWith("/nfe/")) {
+      return Promise.resolve({ data: { data: nfeResponse } });
     }
     return Promise.resolve({ data: { data: {} } });
   });
@@ -505,6 +523,98 @@ describe("BlingOrderService", () => {
 
       const createdPayload = (ordersService.create as jest.Mock).mock.calls[0][0];
       expect(createdPayload).not.toHaveProperty("collection_date");
+    });
+  });
+
+  describe("resolveInvoiceId — vínculo rápido da nota via notaFiscal.id", () => {
+    it("nota já existe localmente (id_system) — vincula sem chamar a Bling", async () => {
+      (invoiceService.findOne as jest.Mock).mockResolvedValue({
+        id: "invoice-local",
+      });
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(invoiceService.findOne).toHaveBeenCalledWith({
+        where: { id_system: String(orderData.notaFiscal.id) },
+      });
+      expect(lastUpdateFields()).toEqual(
+        expect.objectContaining({ invoice_id: "invoice-local" }),
+      );
+      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      const blingApi = (service as any).blingApi;
+      expect(blingApi.get).not.toHaveBeenCalledWith(
+        expect.stringContaining("/nfe/"),
+      );
+    });
+
+    it("nota ainda não existe localmente — busca só o essencial na Bling e vincula uma nota provisória (number_system + linkPDF)", async () => {
+      (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
+      (invoiceService.createStub as jest.Mock).mockResolvedValue({
+        id: "invoice-provisoria",
+      });
+      service = new BlingOrderService(
+        makeFakeBlingApi(orderData, {
+          id: orderData.notaFiscal.id,
+          numero: "16603",
+          linkPDF: "https://bling.com.br/danfe/16603.pdf",
+          emitente: { cnpj: "11222333000144", nome: "Loja Origem" },
+        }) as any,
+      );
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(invoiceService.createStub).toHaveBeenCalledWith(
+        expect.objectContaining({
+          integrationsId: INTEGRATION_ID,
+          numberSystem: "16603",
+          idSystem: String(orderData.notaFiscal.id),
+          danfePath: "https://bling.com.br/danfe/16603.pdf",
+          senderCnpj: "11222333000144",
+        }),
+      );
+      expect(lastUpdateFields()).toEqual(
+        expect.objectContaining({ invoice_id: "invoice-provisoria" }),
+      );
+    });
+
+    it("busca na Bling falha — não derruba o sync do pedido, só segue sem invoice_id", async () => {
+      (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
+      const failingApi = {
+        get: jest.fn().mockImplementation((url: string) => {
+          if (url.startsWith("/pedidos/vendas/")) {
+            return Promise.resolve({ data: { data: orderData } });
+          }
+          if (url.startsWith("/nfe/")) {
+            return Promise.reject(new Error("timeout"));
+          }
+          return Promise.resolve({ data: { data: {} } });
+        }),
+        post: jest.fn(),
+        put: jest.fn(),
+        patch: jest.fn(),
+      };
+      service = new BlingOrderService(failingApi as any);
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(lastUpdateFields()).toEqual(
+        expect.objectContaining({ invoice_id: null }),
+      );
+    });
+
+    it("nota da Bling sem número resolvido — não cria nota provisória", async () => {
+      (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
+      service = new BlingOrderService(
+        makeFakeBlingApi(orderData, { id: orderData.notaFiscal.id }) as any,
+      );
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(lastUpdateFields()).toEqual(
+        expect.objectContaining({ invoice_id: null }),
+      );
     });
   });
 });

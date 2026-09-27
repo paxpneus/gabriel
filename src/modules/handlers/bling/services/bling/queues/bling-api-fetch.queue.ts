@@ -361,7 +361,7 @@ interface BlingApiProductSupplier {
 }
 
 // CORREÇÃO 2: campos fiscais adicionados ao tipo
-interface BlingApiInvoice {
+export interface BlingApiInvoice {
   id: number;
   tipo?: number;
   situacao?: number;
@@ -2022,6 +2022,18 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           ...(nf.situacao === 2 ? { status: "PENDING_CANCELLED_SYSTEM" } : {}),
         },
       );
+
+      // Backfill — só tem efeito quando a linha nunca passou por
+      // createWithRelations (nota "provisória" vinculada rápido pelo pedido
+      // — ver bling-order.service.ts::resolveInvoiceId e
+      // invoiceService.ensureUnitBusinessAttributes); em qualquer outra
+      // invoice (o caso normal, já criada com attributes) é um no-op.
+      await invoiceService.ensureUnitBusinessAttributes(existingInvoice.id, {
+        senderCnpj: invoiceBaseData.sender_cnpj,
+        receiverCnpj: invoiceBaseData.receiver_cnpj,
+        initialStatus: resolveInitialStatus(),
+        invoiceType,
+      });
 
       // Reprocesso: cria os InvoiceItems que faltam pros itens que agora
       // resolvem a um Product (ex.: produto conciliado no Bling depois da

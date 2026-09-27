@@ -5,6 +5,17 @@ import { nextStepOnQueue } from "../../../../../shared/types/queue/base-queue";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 
+// Webhook de pedido pode chegar antes de a nota fiscal ficar visível em
+// GET /pedidos/vendas/{id} na Bling (notaFiscal.id ainda vazio) — delay dá
+// tempo da Bling propagar o vínculo antes do fetch, em vez de gravar
+// invoice_id nulo e nunca mais tentar de novo.
+export const ORDER_WEBHOOK_INGESTION_DELAY_MS = 30_000;
+
+// BullMQ: menor número = maior prioridade. 1 é o topo já usado por outras
+// filas (ver bling-webhook.orchestrator.ts) — pedido de atualização manual
+// via front-end nunca deve esperar atrás do backlog normal de webhook.
+export const FORCE_UPDATE_PRIORITY = 1;
+
 export class BlingOrderQueue extends BaseQueueService<any> {
   private orderService: BlingOrderService;
   private next: nextStepOnQueue;

@@ -3,9 +3,20 @@
 export type TCarResource =
   | 'product'
   | 'invoice_xml'
-  | 'customer';
+  | 'customer'
+  | 'invoice_transfer';
 
 export type TCarAction = 'created' | 'updated' | 'deleted' | 'sync';
+
+// Enriquecimento em background da nota de transferência vinculada rápido
+// (ver pdv-sales-request.service.ts::attachTransferInvoice) — a nota
+// provisória já está vinculada, este job só busca o XML real na Tecinco e
+// atualiza a mesma linha (match por xml_key).
+export interface TCarInvoiceTransferPayload {
+  numero: string;
+  chaveAcesso: string;
+  pdvSalesRequestId: string;
+}
 
 export interface TCarWebhookEnvelope {
   eventId: string;
