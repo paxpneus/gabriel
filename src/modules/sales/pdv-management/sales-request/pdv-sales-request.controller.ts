@@ -32,18 +32,25 @@ export class PdvSalesRequestController extends BaseController<
     // DELETE + anexar outro.
     this.router.post(
       "/:id/shipping-type",
-      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      pdvAccess([
+        PdvAccessScreen.STORE_REQUEST,
+        PdvAccessScreen.FINANCE,
+        PdvAccessScreen.CD21,
+      ]),
       this.setShippingType,
     );
+    // Upload/delete de comprovante fica só com quem recebe o comprovante da
+    // loja (STORE_REQUEST) ou revisa (FINANCE) — CD21 nunca anexa/remove,
+    // só edita a análise de um comprovante já existente (rotas abaixo).
     this.router.post(
       "/:id/receipt",
-      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      pdvAccess([PdvAccessScreen.STORE_REQUEST, PdvAccessScreen.FINANCE]),
       upload.single("receipt"),
       this.attachReceipt,
     );
     this.router.delete(
       "/:id/receipt/:receiptId",
-      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      pdvAccess([PdvAccessScreen.STORE_REQUEST, PdvAccessScreen.FINANCE]),
       this.deleteReceipt,
     );
     this.router.post(
@@ -53,14 +60,22 @@ export class PdvSalesRequestController extends BaseController<
     );
     this.router.patch(
       "/:id/receipt/:receiptId/analysis",
-      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      pdvAccess([
+        PdvAccessScreen.STORE_REQUEST,
+        PdvAccessScreen.FINANCE,
+        PdvAccessScreen.CD21,
+      ]),
       this.updateReceiptAnalysis,
     );
     // Edita o resumo CONCILIADO direto — nunca a análise de um comprovante
     // isolado (isso é PATCH /:id/receipt/:receiptId/analysis, acima).
     this.router.patch(
       "/:id/payment-receipt-analysis",
-      pdvAccess([PdvAccessScreen.STORE_REQUEST]),
+      pdvAccess([
+        PdvAccessScreen.STORE_REQUEST,
+        PdvAccessScreen.FINANCE,
+        PdvAccessScreen.CD21,
+      ]),
       this.updatePaymentReceiptAnalysis,
     );
     this.router.get(
@@ -337,6 +352,13 @@ export class PdvSalesRequestController extends BaseController<
       let record = await this.service.findById(requestedId);
 
       if (!record) {
+        // Fallback de criação por orderId é só pra loja (pedido antigo,
+        // anterior à auto-criação, que ela nunca chegou a criar via POST /)
+        // — Financeiro/CD21 atuam sobre solicitação já existente, nunca
+        // abrem uma nova solicitação vazia por essa rota.
+        if (access.screen !== PdvAccessScreen.STORE_REQUEST) {
+          return res.status(404).json({ error: "Não encontrado" });
+        }
         const { orderId } = req.body;
         if (!orderId) {
           return res.status(404).json({ error: "Não encontrado" });
@@ -357,6 +379,7 @@ export class PdvSalesRequestController extends BaseController<
       const updated = await this.service.setShippingType(
         record.id,
         shippingType as PdvShippingType,
+        access.screen,
         this.actorUserId(req),
       );
       return res.json(updated);
@@ -380,6 +403,7 @@ export class PdvSalesRequestController extends BaseController<
           buffer: req.file.buffer,
           filename: req.file.originalname,
           mimeType: req.file.mimetype,
+          screen: this.access(req).screen,
           userId: this.actorUserId(req),
         },
       );
@@ -399,6 +423,7 @@ export class PdvSalesRequestController extends BaseController<
       const updated = await this.service.deleteReceipt(
         req.params.id as string,
         req.params.receiptId as string,
+        this.access(req).screen,
         this.actorUserId(req),
       );
       return res.json(updated);
@@ -415,6 +440,7 @@ export class PdvSalesRequestController extends BaseController<
       if (!(await this.assertOwnedByAccess(req, res))) return res;
       const updated = await this.service.confirmReceiptSubmission(
         req.params.id as string,
+        this.access(req).screen,
         this.actorUserId(req),
       );
       return res.json(updated);
@@ -433,6 +459,7 @@ export class PdvSalesRequestController extends BaseController<
         req.params.id as string,
         req.params.receiptId as string,
         req.body,
+        this.access(req).screen,
         this.actorUserId(req),
       );
       return res.json(updated);
@@ -450,6 +477,7 @@ export class PdvSalesRequestController extends BaseController<
       const updated = await this.service.updatePaymentReceiptAnalysis(
         req.params.id as string,
         req.body,
+        this.access(req).screen,
         this.actorUserId(req),
       );
       return res.json(updated);

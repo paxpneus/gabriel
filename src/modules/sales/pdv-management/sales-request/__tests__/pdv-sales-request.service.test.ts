@@ -134,6 +134,7 @@ import {
   PdvSalesRequestStatus,
   PdvShippingType,
 } from "../pdv-sales-request.types";
+import { PdvAccessScreen } from "../../pdv-access/pdv-access.types";
 
 const mockTransaction = {} as any;
 
@@ -604,6 +605,70 @@ describe("PdvSalesRequestService", () => {
         }),
       );
     });
+
+    it("FINANCE consegue editar em PENDING_FINANCE, mas não em PENDING_CD21_ANALYSIS", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_FINANCE,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+        shipping_type: PdvShippingType.ADT,
+      });
+
+      await service.setShippingType(
+        "r1",
+        PdvShippingType.ADT,
+        PdvAccessScreen.FINANCE,
+      );
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        shipping_type: PdvShippingType.ADT,
+      });
+
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+      });
+      await expect(
+        service.setShippingType(
+          "r1",
+          PdvShippingType.ADT,
+          PdvAccessScreen.FINANCE,
+        ),
+      ).rejects.toThrow(/Ação inválida/);
+    });
+
+    it("CD21 consegue editar em PENDING_CD21_ANALYSIS e PENDING_NF_SALE, mas não em OPEN", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_NF_SALE,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+        shipping_type: PdvShippingType.ADT,
+      });
+
+      await service.setShippingType(
+        "r1",
+        PdvShippingType.ADT,
+        PdvAccessScreen.CD21,
+      );
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        shipping_type: PdvShippingType.ADT,
+      });
+
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      await expect(
+        service.setShippingType(
+          "r1",
+          PdvShippingType.ADT,
+          PdvAccessScreen.CD21,
+        ),
+      ).rejects.toThrow(/Ação inválida/);
+    });
   });
 
   describe("attachReceipt", () => {
@@ -1073,7 +1138,12 @@ describe("PdvSalesRequestService", () => {
         id: "r1",
       });
 
-      await service.deleteReceipt("r1", "receipt-1", "user-1");
+      await service.deleteReceipt(
+        "r1",
+        "receipt-1",
+        PdvAccessScreen.STORE_REQUEST,
+        "user-1",
+      );
 
       expect(pdvSalesRequestReceiptService.delete).toHaveBeenCalledWith(
         "receipt-1",

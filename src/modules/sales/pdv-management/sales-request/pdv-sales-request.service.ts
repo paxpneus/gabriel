@@ -76,7 +76,7 @@ import {
   PdvStatusIndicatorKey,
   indicatorWhere,
 } from "./helpers/status-summary";
-import { PdvAccessContext } from "../pdv-access/pdv-access.types";
+import { PdvAccessContext, PdvAccessScreen } from "../pdv-access/pdv-access.types";
 
 // Fingerprint duplicado em OUTRA solicitação — tipo próprio pra distinguir
 // esse caso de qualquer outro erro dentro do job assíncrono de análise.
@@ -709,17 +709,44 @@ export class PdvSalesRequestService extends BaseService<
     return updated;
   }
 
+  // Janela de status em que cada tela pode editar comprovante/tipo de envio —
+  // a loja ainda está montando a solicitação (OPEN/PENDING_CORRECTION);
+  // Financeiro complementa/corrige durante a própria análise
+  // (PENDING_FINANCE); CD21 corrige a análise depois, já em faturamento
+  // (PENDING_CD21_ANALYSIS/PENDING_NF_SALE). Upload/delete de comprovante
+  // fica de fora pra CD21 mesmo dentro dessa janela — não por checagem
+  // aqui, e sim porque as rotas de upload/delete nunca incluem CD21 no
+  // pdvAccess([...]) (pdv-sales-request.controller.ts).
+  private static readonly RECEIPT_EDITABLE_STATUSES_BY_SCREEN: Record<
+    PdvAccessScreen,
+    PdvSalesRequestStatus[]
+  > = {
+    [PdvAccessScreen.STORE_REQUEST]: [
+      PdvSalesRequestStatus.OPEN,
+      PdvSalesRequestStatus.PENDING_CORRECTION,
+    ],
+    [PdvAccessScreen.FINANCE]: [PdvSalesRequestStatus.PENDING_FINANCE],
+    [PdvAccessScreen.CD21]: [
+      PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+      PdvSalesRequestStatus.PENDING_NF_SALE,
+    ],
+  };
+
   // Também serve pra resolver uma correção vinda do financeiro (comprovante
   // rejeitado): a loja não "decide" nada num endpoint de correção genérico,
   // ela resolve anexando um comprovante novo — mas só depois de confirmar
   // (confirmReceiptSubmission), não automaticamente aqui.
-  private async assertReceiptEditable(id: string): Promise<PdvSalesRequest> {
-    const request = await this.assertStatus(id, [
-      PdvSalesRequestStatus.OPEN,
-      PdvSalesRequestStatus.PENDING_CORRECTION,
-    ]);
+  private async assertReceiptEditable(
+    id: string,
+    screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
+  ): Promise<PdvSalesRequest> {
+    const request = await this.assertStatus(
+      id,
+      PdvSalesRequestService.RECEIPT_EDITABLE_STATUSES_BY_SCREEN[screen],
+    );
 
     if (
+      screen === PdvAccessScreen.STORE_REQUEST &&
       request.status === PdvSalesRequestStatus.PENDING_CORRECTION &&
       request.correction_origin_status !== PdvSalesRequestStatus.PENDING_FINANCE
     ) {
@@ -737,9 +764,10 @@ export class PdvSalesRequestService extends BaseService<
   async setShippingType(
     id: string,
     shippingType: PdvShippingType,
+    screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
-    const request = await this.assertReceiptEditable(id);
+    const request = await this.assertReceiptEditable(id, screen);
 
     const updated = await this.repository.update(id, {
       shipping_type: shippingType,
@@ -765,10 +793,11 @@ export class PdvSalesRequestService extends BaseService<
       buffer: Buffer;
       filename: string;
       mimeType: string;
+      screen?: PdvAccessScreen;
       userId?: string;
     },
   ): Promise<PdvSalesRequestReceipt> {
-    const request = await this.assertReceiptEditable(id);
+    const request = await this.assertReceiptEditable(id, params.screen);
 
     // Resposta instantânea: staging + linha com path sentinela na mesma
     // transação; upload real roda em background (ver .claude/modules/uploader-queue.md).
@@ -836,9 +865,10 @@ export class PdvSalesRequestService extends BaseService<
   async deleteReceipt(
     id: string,
     receiptId: string,
+    screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
-    const request = await this.assertReceiptEditable(id);
+    const request = await this.assertReceiptEditable(id, screen);
     const receipt = await pdvSalesRequestReceiptService.findById(receiptId);
     if (!receipt || receipt.pdv_sales_request_id !== id) {
       throw new Error("Comprovante não encontrado nesta solicitação");
@@ -943,9 +973,10 @@ export class PdvSalesRequestService extends BaseService<
   // o tipo de envio definido (setShippingType).
   async confirmReceiptSubmission(
     id: string,
+    screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
-    const request = await this.assertReceiptEditable(id);
+    const request = await this.assertReceiptEditable(id, screen);
     const receipts =
       await pdvSalesRequestReceiptService.findAllByRequestId(id);
 
@@ -976,9 +1007,10 @@ export class PdvSalesRequestService extends BaseService<
     id: string,
     receiptId: string,
     updates: Partial<PaymentReceiptExtraction>,
+    screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
-    const request = await this.assertReceiptEditable(id);
+    const request = await this.assertReceiptEditable(id, screen);
     const receipt = await pdvSalesRequestReceiptService.findById(receiptId);
     if (!receipt || receipt.pdv_sales_request_id !== id) {
       throw new Error("Comprovante não encontrado nesta solicitação");
@@ -1025,9 +1057,10 @@ export class PdvSalesRequestService extends BaseService<
   async updatePaymentReceiptAnalysis(
     id: string,
     updates: Partial<PaymentReceiptReconciledAnalysis>,
+    screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
-    const request = await this.assertReceiptEditable(id);
+    const request = await this.assertReceiptEditable(id, screen);
 
     const parsedUpdates =
       PaymentReceiptReconciledAnalysisSchema.partial().parse(updates);
