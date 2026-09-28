@@ -70,6 +70,7 @@ import {
   orderCustomerNameMatchesLiteral,
   orderDateWithinLiteral,
   errorsReasonsOverlapLiteral,
+  pdvSalesRequestSearchLiteral,
 } from "./helpers/custom-filters";
 import {
   PDV_STATUS_INDICATORS,
@@ -269,12 +270,21 @@ export class PdvSalesRequestService extends BaseService<
   // Televendas sem loja) enxerga todas as lojas físicas normais.
   async paginateWithOrder(params: QueryParams, unitBusinessId: string | null) {
     const scope = await this.resolveUnitBusinessScope(unitBusinessId);
+    const { search, ...restParams } = params;
+    const term = search?.trim();
+
+    // `search` sai de restParams antes do QueryParser genérico: esta
+    // entidade não tem `searchFields` (os campos buscáveis são todos de
+    // outra tabela — cliente do pedido, nota de venda/transferência), e o
+    // caminho genérico zera o resultado (`where.id = null`) quando
+    // `searchFields` está vazio. Ver pdvSalesRequestSearchLiteral.
     const forcedWhere: WhereOptions = {
       unit_business_id: Array.isArray(scope) ? { [Op.in]: scope } : scope,
+      ...(term ? { [Op.and]: [pdvSalesRequestSearchLiteral(term)] } : {}),
     };
 
     const result = await this.repository.findPaginatedWithOrder(
-      params,
+      restParams,
       this.queryConfig,
       forcedWhere,
     );

@@ -31,6 +31,32 @@ export function orderCustomerNameMatchesLiteral(term: string) {
   )`);
 }
 
+// Busca livre da listagem (`search`) — combina nome/documento do cliente
+// do pedido vinculado e number_system da nota de venda OU de transferência
+// (as duas são FK própria de PdvSalesRequest, sem precisar passar por
+// order) num único OR. Usada só por `search`, nunca por `filters[...]` —
+// ver PdvSalesRequestService.paginateWithOrder: o `search` genérico do
+// QueryParser não serve aqui, já que `searchFields` fica vazio pra essa
+// entidade e zeraria o resultado (`where.id = null`).
+export function pdvSalesRequestSearchLiteral(term: string) {
+  const escaped = term.replace(/'/g, "''");
+  const like = `'%${escaped}%'`;
+
+  return Sequelize.literal(`(
+    EXISTS (
+      SELECT 1 FROM orders o
+      JOIN customers c ON c.id = o.customer_id
+      WHERE o.id = "PdvSalesRequest"."order_id"
+        AND (c.name ILIKE ${like} OR c.document ILIKE ${like})
+    )
+    OR EXISTS (
+      SELECT 1 FROM invoices i
+      WHERE i.id IN ("PdvSalesRequest"."sale_invoice_id", "PdvSalesRequest"."transfer_invoice_id")
+        AND i.number_system ILIKE ${like}
+    )
+  )`);
+}
+
 // Filtro por período de order.date — mesmo EXISTS correlacionado acima.
 // start/end validados como YYYY-MM-DD antes de entrar no literal (nunca
 // interpolar direto o que vier de fora sem validar formato).

@@ -57,6 +57,14 @@ jest.mock("../../../../warehouse/fiscal/invoices/invoice/invoice.service", () =>
   },
 }));
 
+jest.mock(
+  "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service",
+  () => ({
+    __esModule: true,
+    default: { findAll: jest.fn() },
+  }),
+);
+
 jest.mock("../../../../company/unit-business/unit-business.service", () => ({
   __esModule: true,
   default: {
@@ -119,6 +127,7 @@ import pdvSalesRequestReceiptService from "../../sales-request-receipt/pdv-sales
 import pdvSalesRequestHistoryService from "../../sales-request-history/pdv-sales-request-history.service";
 import orderService from "../../../orders/order/orders.service";
 import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import tempFileService from "../../../../handlers/temp-file/temp-file.service";
 import uploaderQueue from "../../../../handlers/uploader/uploader.queue";
@@ -1640,6 +1649,12 @@ describe("PdvSalesRequestService", () => {
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
       });
+      (invoiceItemsService.findAll as jest.Mock).mockImplementation(
+        ({ where }: any) =>
+          where.invoice_id === "invoice-sale"
+            ? [{ product_id: "p1", quantity_expected: 2 }]
+            : [{ product_id: "p1", quantity_expected: 2 }],
+      );
 
       await service.attachTransferInvoice("r1", {
         invoiceId: "invoice-nova",
@@ -1651,6 +1666,11 @@ describe("PdvSalesRequestService", () => {
       ).toHaveBeenCalledWith(["invoice-sale"], "cd21-1");
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
         transfer_invoice_id: "invoice-nova",
+      });
+      // Itens batem (mesmo produto/quantidade nas duas notas) — conciliação
+      // marca match = true.
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        transfer_invoice_products_match_sale: true,
       });
     });
 
@@ -1802,11 +1822,16 @@ describe("PdvSalesRequestService", () => {
         expect.objectContaining({
           resource: "invoice_transfer",
           branchId: 12,
-          data: {
+          // transferInvoiceId é o id da nota provisória (randomUUID gerado
+          // dentro do service) — o worker usa pra reconferir contra troca
+          // de nota antes de gravar transfer_invoice_products_match_sale
+          // (ver validateTransferInvoiceProducts).
+          data: expect.objectContaining({
             numero: "020309",
             chaveAcesso: "chave-44",
             pdvSalesRequestId: "r1",
-          },
+            transferInvoiceId: expect.any(String),
+          }),
         }),
         expect.any(String),
       );

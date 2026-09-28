@@ -567,17 +567,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       );
     }
 
-    const data = await this.findOne({
-      where: {
-        ...(invoiceId
-          ? { id: invoiceId }
-          : {
-              [Op.or]: [
-                ...(invoiceKey ? [{ xml_key: invoiceKey }] : []),
-                ...(idSystem ? [{ id_system: idSystem }] : []),
-              ],
-            }),
-      },
+    const queryOptions: Omit<FindOptions, "where"> = {
       attributes: {
         exclude: ["xml_path", "source_payload"],
         include: [[totalExpectedLiteral(), "total_expected"]],
@@ -611,11 +601,44 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           as: "unmappedProducts",
         },
       ],
-    });
+    };
 
-    if (!data) return null;
+    if (invoiceId) {
+      const data = await this.findOne({
+        where: { id: invoiceId },
+        ...queryOptions,
+      });
+      return data ? (data.get({ plain: true }) as FullInvoiceForAllUnits) : null;
+    }
 
-    return data.get({ plain: true }) as FullInvoiceForAllUnits;
+    // xml_key (chaveAcesso da NF-e) é a chave fiscal única — busca por ela
+    // primeiro e, se bater, é sempre autoritativa.
+    if (invoiceKey) {
+      const byKey = await this.findOne({
+        where: { xml_key: invoiceKey },
+        ...queryOptions,
+      });
+      if (byKey) return byKey.get({ plain: true }) as FullInvoiceForAllUnits;
+    }
+
+    if (idSystem) {
+      const byIdSystem = await this.findOne({
+        where: { id_system: idSystem },
+        ...queryOptions,
+      });
+      // Só aceita o match por id_system se a linha não tiver um xml_key já
+      // divergente do atual — evita tratar como "mesma nota" um id da Bling
+      // reaproveitado (stub, retry, ou colisão entre NF-e/NFC-e) e colidir
+      // com invoices_xml_key ao sobrescrever o xml_key da linha errada.
+      if (
+        byIdSystem &&
+        (!byIdSystem.xml_key || byIdSystem.xml_key === invoiceKey)
+      ) {
+        return byIdSystem.get({ plain: true }) as FullInvoiceForAllUnits;
+      }
+    }
+
+    return null;
   }
 
   async getInvoice(

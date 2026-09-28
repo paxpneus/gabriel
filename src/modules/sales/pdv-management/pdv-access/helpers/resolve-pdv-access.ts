@@ -1,6 +1,7 @@
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import userService from "../../../../company/users/users/user.service";
-import { userHasPermission } from "../../../../../middlewares/user-permissions";
+import { CD21_UNIT_BUSINESS_NUMBER } from "../../../../company/unit-business/helpers/cd21-unit-business-number";
+import { PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS } from "../../helpers/pdv-excluded-unit-business";
 import { PdvAccessContext, PdvAccessScreen } from "../pdv-access.types";
 import {
   computeFinanceToken,
@@ -12,18 +13,39 @@ import {
 // Núcleo de resolução do pdvAccess, sem nada de Express/Socket.IO — reaproveitado
 // pelo middleware HTTP e pelo auth de socket (pdv-socket-auth.middleware.ts).
 
-// Cada tela vira uma entity própria em ROLE_PERMISSIONS (src/shared/constants/roles.ts),
-// concedível independentemente por role.
-const SCREEN_PERMISSION_ENTITY: Record<PdvAccessScreen, string> = {
-  [PdvAccessScreen.STORE_REQUEST]: "pdv_sales_request_store",
-  [PdvAccessScreen.FINANCE]: "pdv_sales_request_finance",
-  [PdvAccessScreen.CD21]: "pdv_sales_request_cd21",
-};
+// Determinístico a partir dos próprios dados do usuário — NUNCA via
+// ROLE_PERMISSIONS/userHasPermission (havia um caminho antigo por lá, mas
+// `pdv_sales_request_store` nunca ficou concedível em USER_TYPES — nenhuma
+// role real conseguia a permissão —, então usuário de loja de verdade sempre
+// falhava esse check e, em rota que aceita mais de uma tela, caía errado em
+// FINANCE/CD21 por permissão residual do resto do role). A tela é 100%
+// função de user_config.type + unit_business do próprio usuário:
+// - type === "finance" → FINANCE (global, sem loja);
+// - loja é a CD21 (number da unit business) → CD21 (global, sem loja);
+// - qualquer outra loja, exceto as que o PDV não atende (CD21/12/17, ver
+//   PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS) → STORE_REQUEST, escopado nela.
+// unit_business_id/unitBusiness.number/config.type já vêm de graça em
+// getMe/getFullUser (user.repository.ts) — sem query extra aqui.
+function resolveScreenForUser(user: any): PdvAccessScreen | null {
+  if (user.config?.type === "finance") return PdvAccessScreen.FINANCE;
+
+  const storeNumber: string | undefined = user.unitBusiness?.number;
+  if (storeNumber === CD21_UNIT_BUSINESS_NUMBER) return PdvAccessScreen.CD21;
+
+  if (
+    !storeNumber ||
+    PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS.includes(storeNumber)
+  ) {
+    return null;
+  }
+
+  return PdvAccessScreen.STORE_REQUEST;
+}
 
 // Login não é uma rota separada — é só outro jeito de satisfazer a mesma
-// checagem de tela, usando a loja atual do usuário (users.unit_business_id)
-// em vez do header/handshake do link. Cookie ausente/inválido não é erro
-// fatal aqui — só significa "login não se aplica", cai pro link.
+// checagem de tela, usando a loja/tipo atuais do usuário em vez do
+// header/handshake do link. Cookie ausente/inválido não é erro fatal aqui —
+// só significa "login não se aplica", cai pro link.
 export async function resolveLoginAccess(
   cookieToken: string | undefined,
   requiredScreens: PdvAccessScreen[],
@@ -36,48 +58,20 @@ export async function resolveLoginAccess(
   } catch {
     return null;
   }
-  if (!user?.role) return null;
+  if (!user) return null;
 
-  const cd21 = await unitBusinessService.getCd21UnitBusiness();
-  const userUnitBusinessId: string | null = user.unit_business_id ?? null;
+  const screen = resolveScreenForUser(user);
+  if (!screen || !requiredScreens.includes(screen)) return null;
 
-  // FINANCE não depende de loja (storeContextOk sempre true) — checa por
-  // último, senão um usuário com permissão em mais de uma tela sempre cairia
-  // nela, mesmo estando fisicamente noutra.
-  const orderedScreens = [...requiredScreens].sort((a, b) =>
-    a === PdvAccessScreen.FINANCE ? 1 : b === PdvAccessScreen.FINANCE ? -1 : 0,
-  );
-
-  for (const screen of orderedScreens) {
-    let storeContextOk: boolean;
-    if (screen === PdvAccessScreen.CD21) {
-      storeContextOk = !!cd21 && userUnitBusinessId === cd21.id;
-    } else if (screen === PdvAccessScreen.STORE_REQUEST) {
-      storeContextOk = !!userUnitBusinessId && userUnitBusinessId !== cd21?.id;
-    } else if (screen === PdvAccessScreen.FINANCE) {
-      // Financeiro é global (igual CD21) — não depende da loja do usuário.
-      storeContextOk = true;
-    } else {
-      storeContextOk = !!userUnitBusinessId;
-    }
-    if (!storeContextOk) continue;
-
-    if (!userHasPermission(user.role, SCREEN_PERMISSION_ENTITY[screen], "write")) {
-      continue;
-    }
-
-    return {
-      screen,
-      via: "LOGIN",
-      unitBusinessId:
-        screen === PdvAccessScreen.CD21 || screen === PdvAccessScreen.FINANCE
-          ? null
-          : userUnitBusinessId,
-      userId: user.id,
-    };
-  }
-
-  return null;
+  return {
+    screen,
+    via: "LOGIN",
+    unitBusinessId:
+      screen === PdvAccessScreen.CD21 || screen === PdvAccessScreen.FINANCE
+        ? null
+        : (user.unit_business_id ?? null),
+    userId: user.id,
+  };
 }
 
 export type LinkAccessResult =

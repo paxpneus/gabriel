@@ -123,3 +123,13 @@ Não filtra mais por "status finalizador" — agora entra qualquer pedido
 independente do `internal_status`, só não `CANCELLED`. Passou a excluir
 também pedido cujo invoice já tem romaneio gerado na própria loja do pedido
 (evita reabrir solicitação de pedido já expedido).
+
+## Novo: busca livre (`search`) na listagem
+
+`GET /sales-request?search=<valor>` — busca parcial (case-insensitive), OR
+entre: nome do cliente do pedido vinculado, documento (CPF/CNPJ) do cliente,
+`number_system` da nota de venda e `number_system` da nota de transferência
+(as duas da própria solicitação). Antes, mandar `search` nessa listagem
+zerava o resultado (a entidade não tem campo próprio buscável pelo `search`
+genérico) — agora tem tratamento dedicado. Combina normalmente com
+`filters[...]` (ex.: `status`, `customer_name`) na mesma chamada.

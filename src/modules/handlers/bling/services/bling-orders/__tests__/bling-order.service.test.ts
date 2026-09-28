@@ -392,6 +392,44 @@ describe("BlingOrderService", () => {
     });
   });
 
+  describe("updateOrderFromBling — pedido não encontrado (cria em vez de pular)", () => {
+    it("existingOrder não encontrado — cria o pedido via createOrderFromBling reaproveitando o orderData já buscado, sem 2ª chamada à Bling", async () => {
+      const fakeApi = makeFakeBlingApi(orderData);
+      service = new BlingOrderService(fakeApi as any);
+      (ordersService.findOne as jest.Mock).mockResolvedValue(null);
+      (UnitBusiness.findOne as jest.Mock).mockResolvedValue({ id: "ub-1" });
+
+      await service.updateOrderFromBling({
+        data: { id: orderData.id },
+      } as any);
+
+      expect(ordersService.create).toHaveBeenCalledTimes(1);
+      expect(ordersService.update).not.toHaveBeenCalled();
+      const orderFetchCalls = (fakeApi.get as jest.Mock).mock.calls.filter(
+        ([url]: [string]) => String(url).startsWith("/pedidos/vendas/"),
+      );
+      expect(orderFetchCalls).toHaveLength(1);
+    });
+
+    it("existingOrder não encontrado no update, mas já existe pelo número (corrida) — createOrderFromBling delega de volta pro update em vez de duplicar", async () => {
+      const fakeApi = makeFakeBlingApi(orderData);
+      service = new BlingOrderService(fakeApi as any);
+      // 1ª chamada (dentro de updateOrderFromBling): não encontrado. 2ª
+      // chamada (dentro de createOrderFromBling, mesmo orderData): já
+      // existe — outra escrita concorrente criou o pedido nesse meio-tempo.
+      (ordersService.findOne as jest.Mock)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(makeExistingOrder());
+
+      await service.updateOrderFromBling({
+        data: { id: orderData.id },
+      } as any);
+
+      expect(ordersService.create).not.toHaveBeenCalled();
+      expect(ordersService.update).toHaveBeenCalled();
+    });
+  });
+
   describe("updateOrderFromBling — collection_date (dataPrevista)", () => {
     it("dataPrevista preenchida: grava collection_date em meia-noite BRT", async () => {
       orderData.dataPrevista = "2026-08-20";

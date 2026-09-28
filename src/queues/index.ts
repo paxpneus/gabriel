@@ -480,10 +480,10 @@ export function startTecincoWorkers() {
   const { tcarUpsertQueue, tcarInvoiceQueue, tcarSyncQueue } = buildQueues([
     "TCAR_API_FETCH",
     "TCAR_INVOICE",
-    // "TCAR_SYNC",
+    "TCAR_SYNC",
   ]);
 
-  // void scheduleTCarSync(tcarSyncQueue);
+  void scheduleTCarSync(tcarSyncQueue);
 
   void tcarUpsertQueue;
   void tcarInvoiceQueue;
