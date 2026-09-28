@@ -495,7 +495,12 @@ export class PdvSalesRequestController extends BaseController<
         req.params.receiptId as string,
       );
 
-      res.set("Content-Type", `image/${extension}`);
+      // extension vem do mime_type real (temp file) ou do path já persistido —
+      // "pdf" não é subtipo de image/*, precisa do content-type certo.
+      res.set(
+        "Content-Type",
+        extension === "pdf" ? "application/pdf" : `image/${extension}`,
+      );
       // "no-cache" força revalidar toda vez — ETag automático do Express
       // (res.send) resolve o 304 quando o conteúdo não mudou.
       res.set("Cache-Control", "no-cache");
