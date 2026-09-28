@@ -202,11 +202,27 @@ export class BlingOrderService {
       const nf = data.data;
       if (!nf?.numero) return null;
 
+      // Pode já existir uma linha criada pelo fluxo Tecinco/XML (ver
+      // upsertInvoiceFromXml) pela mesma chaveAcesso, antes do pedido Bling
+      // chegar — reaproveita em vez de criar uma segunda linha pra mesma nota.
+      if (nf.chaveAcesso) {
+        const existingByKey = await invoiceService.findOne({
+          where: { xml_key: nf.chaveAcesso },
+        });
+        if (existingByKey) {
+          if (!existingByKey.id_system) {
+            await invoiceService.update(existingByKey.id, { id_system: idSystem });
+          }
+          return existingByKey.id;
+        }
+      }
+
       const integration = await getBlingIntegration();
       const created = await invoiceService.createStub({
         integrationsId: integration.id,
         numberSystem: nf.numero,
         idSystem,
+        xmlKey: nf.chaveAcesso ?? null,
         danfePath: nf.linkPDF ?? null,
         senderCnpj: nf.emitente?.cnpj,
         senderName: nf.emitente?.nome,

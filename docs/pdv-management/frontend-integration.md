@@ -127,9 +127,10 @@ também pedido cujo invoice já tem romaneio gerado na própria loja do pedido
 ## Novo: busca livre (`search`) na listagem
 
 `GET /sales-request?search=<valor>` — busca parcial (case-insensitive), OR
-entre: nome do cliente do pedido vinculado, documento (CPF/CNPJ) do cliente,
-`number_system` da nota de venda e `number_system` da nota de transferência
-(as duas da própria solicitação). Antes, mandar `search` nessa listagem
-zerava o resultado (a entidade não tem campo próprio buscável pelo `search`
-genérico) — agora tem tratamento dedicado. Combina normalmente com
+entre: `number_order_system` do pedido vinculado, nome do cliente do pedido,
+documento (CPF/CNPJ) do cliente, `number_system` da nota de venda e
+`number_system` da nota de transferência (as duas da própria solicitação).
+Antes, mandar `search` nessa listagem zerava o resultado (a entidade não tem
+campo próprio buscável pelo `search` genérico) — agora tem tratamento
+dedicado. Combina normalmente com
 `filters[...]` (ex.: `status`, `customer_name`) na mesma chamada.
