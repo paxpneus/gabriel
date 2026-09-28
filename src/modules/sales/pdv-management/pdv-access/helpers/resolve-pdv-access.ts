@@ -41,7 +41,14 @@ export async function resolveLoginAccess(
   const cd21 = await unitBusinessService.getCd21UnitBusiness();
   const userUnitBusinessId: string | null = user.unit_business_id ?? null;
 
-  for (const screen of requiredScreens) {
+  // FINANCE não depende de loja (storeContextOk sempre true) — checa por
+  // último, senão um usuário com permissão em mais de uma tela sempre cairia
+  // nela, mesmo estando fisicamente noutra.
+  const orderedScreens = [...requiredScreens].sort((a, b) =>
+    a === PdvAccessScreen.FINANCE ? 1 : b === PdvAccessScreen.FINANCE ? -1 : 0,
+  );
+
+  for (const screen of orderedScreens) {
     let storeContextOk: boolean;
     if (screen === PdvAccessScreen.CD21) {
       storeContextOk = !!cd21 && userUnitBusinessId === cd21.id;

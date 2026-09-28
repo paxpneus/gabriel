@@ -774,9 +774,14 @@ export class BlingOrderService {
 
       if (!existingOrder) {
         console.log(
-          `[BlingOrderService] Pedido ${orderData.numero} não encontrado para atualizar, pulando...`,
+          `[BlingOrderService] Pedido ${orderData.numero} não encontrado para atualizar, criando...`,
         );
-        return null;
+        return await this.createOrderFromBling(
+          {
+            data: { id: orderData.id, numero: orderData.numero },
+          },
+          orderData,
+        );
       }
 
       const internalStatus = mapOrderInternalStatus(orderData.situacao.id);
@@ -1054,16 +1059,20 @@ export class BlingOrderService {
     body:
       | blingOrderWebHookData
       | { data: { id: number | string; numero?: string | number } },
+    prefetchedOrderData?: any,
   ): Promise<{ customer: any; cnaes: any[]; orderSystem: any } | null> {
     console.log(body.data.id);
     try {
       const integration = await getBlingIntegration("Bling");
 
-      const { data } = await blingGet(
-        `/pedidos/vendas/${body.data.id}`,
-        this.blingApi,
-      );
-      const orderData = data.data;
+      let orderData = prefetchedOrderData;
+      if (!orderData) {
+        const { data } = await blingGet(
+          `/pedidos/vendas/${body.data.id}`,
+          this.blingApi,
+        );
+        orderData = data.data;
+      }
 
       const existingOrder = await ordersService.findOne({
         where: {

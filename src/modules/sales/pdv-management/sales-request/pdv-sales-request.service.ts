@@ -26,6 +26,7 @@ import { extractDanfeIdentification } from "./helpers/danfe-interpreter";
 import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import orderService from "../../orders/order/orders.service";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import uploaderService from "../../../handlers/uploader/services/uploader.service";
 import uploaderQueue from "../../../handlers/uploader/uploader.queue";
@@ -61,6 +62,7 @@ import {
 } from "./helpers/pdv-sales-request-room";
 import { notifyPdvStoreSync } from "./helpers/notify-pdv-store-sync";
 import { notifySalesRequestUpdated } from "./helpers/notify-sales-request-updated";
+import { invoiceProductsMatch } from "./helpers/invoice-product-quantity-match";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 import { isWithinPhysicalStoreRange } from "../../../company/unit-business/helpers/physical-numbered-unit-business";
 import {
@@ -552,6 +554,7 @@ export class PdvSalesRequestService extends BaseService<
           status: PdvSalesRequestStatus.OPEN,
           correction_origin_status: null,
           shipping_type: null,
+          transfer_invoice_products_match_sale: null,
           name: params.name ?? `Pedido ${order.number_order_channel}`,
           errors: null,
           created_by_user_id: params.createdByUserId ?? null,
@@ -1474,7 +1477,7 @@ export class PdvSalesRequestService extends BaseService<
       tcarUpsertQueue: TCarInvoiceQueue;
       userId?: string;
     },
-  ): Promise<PdvSalesRequest> {
+  ): Promise<{ salesRequest: PdvSalesRequest; message: string }> {
     const request = await this.assertStatus(id, [
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
       PdvSalesRequestStatus.SHIPPING,
@@ -1487,6 +1490,7 @@ export class PdvSalesRequestService extends BaseService<
 
     const tecinco = await getTCarIntegration();
     let invoiceId = params.invoiceId ?? null;
+    let pendingTransferInvoiceImport = false;
 
     if (!invoiceId) {
       if (params.xmlBuffer) {
@@ -1582,6 +1586,7 @@ export class PdvSalesRequestService extends BaseService<
           });
 
           await uploaderQueue.enqueueUpload(tempFile.id, "INVOICE_DANFE");
+          pendingTransferInvoiceImport = true;
 
           await params.tcarUpsertQueue.add(
             {
@@ -1590,7 +1595,12 @@ export class PdvSalesRequestService extends BaseService<
               action: "sync",
               companyId: "",
               branchId,
-              data: { numero: number, chaveAcesso: accessKey, pdvSalesRequestId: id },
+              data: {
+                numero: number,
+                chaveAcesso: accessKey,
+                pdvSalesRequestId: id,
+                transferInvoiceId: stubId,
+              },
             },
             `tecinco-invoice-transfer-${stubId}`,
           );
@@ -1623,6 +1633,17 @@ export class PdvSalesRequestService extends BaseService<
     });
     if (!updated) throw new Error("Solicitação não encontrada");
 
+    const productsMatch = pendingTransferInvoiceImport
+      ? null
+      : await this.getTransferInvoiceProductsMatch(
+          request.sale_invoice_id,
+          invoiceId,
+        );
+    const salesRequest = await this.repository.update(id, {
+      transfer_invoice_products_match_sale: productsMatch,
+    });
+    if (!salesRequest) throw new Error("Solicitação não encontrada");
+
     await this.logAction(id, request.status, {
       userId: params.userId,
       description: wasAlreadyLinked
@@ -1630,7 +1651,57 @@ export class PdvSalesRequestService extends BaseService<
         : "Nota de transferência vinculada",
     });
 
-    return updated;
+    return {
+      salesRequest,
+      message: pendingTransferInvoiceImport
+        ? "Nota de transferência anexada. Buscando dados na Tecinco."
+        : "Nota de transferência anexada com sucesso",
+    };
+  }
+
+  // Reexecutada pelo worker quando a nota provisória termina de ser importada.
+  // expectedTransferInvoiceId impede que um job antigo sobrescreva uma troca.
+  async validateTransferInvoiceProducts(
+    requestId: string,
+    expectedTransferInvoiceId?: string,
+  ): Promise<void> {
+    const request = await this.repository.findById(requestId);
+    if (
+      !request?.sale_invoice_id ||
+      !request.transfer_invoice_id ||
+      (expectedTransferInvoiceId &&
+        request.transfer_invoice_id !== expectedTransferInvoiceId)
+    ) {
+      return;
+    }
+
+    const productsMatch = await this.getTransferInvoiceProductsMatch(
+      request.sale_invoice_id,
+      request.transfer_invoice_id,
+    );
+    await this.repository.update(request.id, {
+      transfer_invoice_products_match_sale: productsMatch,
+    });
+  }
+
+  private async getTransferInvoiceProductsMatch(
+    saleInvoiceId: string | null,
+    transferInvoiceId: string,
+  ): Promise<boolean | null> {
+    if (!saleInvoiceId) return null;
+
+    const [saleItems, transferItems] = await Promise.all([
+      invoiceItemsService.findAll({
+        where: { invoice_id: saleInvoiceId },
+        attributes: ["product_id", "quantity_expected"],
+      }),
+      invoiceItemsService.findAll({
+        where: { invoice_id: transferInvoiceId },
+        attributes: ["product_id", "quantity_expected"],
+      }),
+    ]);
+
+    return invoiceProductsMatch(saleItems, transferItems);
   }
 
   // Confirmação explícita do front — só agora a solicitação avança pra
@@ -1981,6 +2052,7 @@ export class PdvSalesRequestService extends BaseService<
           payment_receipt_validated: null,
           payment_method_matches_receipt: null,
           receipt_total_matches_order: null,
+          transfer_invoice_products_match_sale: null,
           errors: null,
         },
         { transaction: t },

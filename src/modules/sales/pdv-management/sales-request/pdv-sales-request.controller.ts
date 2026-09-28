@@ -659,7 +659,7 @@ export class PdvSalesRequestController extends BaseController<
       const danfeFile = files?.danfe?.[0];
       const { invoiceId } = req.body;
 
-      const updated = await this.service.attachTransferInvoice(
+      const result = await this.service.attachTransferInvoice(
         req.params.id as string,
         {
           invoiceId,
@@ -670,7 +670,10 @@ export class PdvSalesRequestController extends BaseController<
           userId: this.actorUserId(req),
         },
       );
-      return res.json(updated);
+      return res.json({
+        ...result.salesRequest.toJSON(),
+        message: result.message,
+      });
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

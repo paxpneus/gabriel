@@ -13,6 +13,8 @@ import { alertService } from "../../../../../shared/providers/mail-provider/node
 import { authenticate } from "../../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../../middlewares/user-permissions";
 import ordersService from "../../../../sales/orders/order/orders.service";
+import { pdvAccess } from "../../../../sales/pdv-management/pdv-access/pdv-access.middleware";
+import { PdvAccessScreen } from "../../../../sales/pdv-management/pdv-access/pdv-access.types";
 
 const router = Router();
 
@@ -86,8 +88,7 @@ router.post("/webhook", async (req: Request, res: Response) => {
  */
 router.post(
   "/:orderId/force-update",
-  authenticate,
-  userPermissions,
+  pdvAccess([PdvAccessScreen.CD21, PdvAccessScreen.FINANCE, PdvAccessScreen.STORE_REQUEST]),
   async (req: Request, res: Response) => {
     try {
       const blingOrderQueue: BlingOrderQueue = req.app.locals.BlingOrderQueue;

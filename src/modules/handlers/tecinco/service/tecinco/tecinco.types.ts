@@ -16,6 +16,7 @@ export interface TCarInvoiceTransferPayload {
   numero: string;
   chaveAcesso: string;
   pdvSalesRequestId: string;
+  transferInvoiceId?: string;
 }
 
 export interface TCarWebhookEnvelope {

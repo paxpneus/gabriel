@@ -63,6 +63,7 @@ import {
   getCachedTecincoDuplicateValueSets,
   findTecincoCollidingFields,
 } from "../../../../scripts/tecinco/tecinco-duplicate-detection";
+import pdvSalesRequestService from "../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 
 function normalizeTCarDescription(value?: string | null): string {
   return String(value ?? "")
@@ -326,6 +327,11 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         data.numero,
         data.chaveAcesso,
         branchId,
+      );
+     
+      await pdvSalesRequestService.validateTransferInvoiceProducts(
+        data.pdvSalesRequestId,
+        data.transferInvoiceId,
       );
     } finally {
       notifySalesRequestUpdated(data.pdvSalesRequestId);

@@ -27,6 +27,7 @@ class PdvSalesRequest
   public payment_receipt_validated!: boolean | null;
   public payment_method_matches_receipt!: boolean | null;
   public receipt_total_matches_order!: boolean | null;
+  public transfer_invoice_products_match_sale!: boolean | null;
   public errors!: PdvSalesRequestErrors | null;
   public created_by_user_id!: string | null;
 
@@ -135,6 +136,12 @@ PdvSalesRequest.init(
     // updatePaymentReceiptAnalysis). null quando não dá pra comparar (sem
     // comprovante com valor ainda, ou sem total do pedido).
     receipt_total_matches_order: {
+      type: DataTypes.BOOLEAN,
+      allowNull: true,
+    },
+    // Comparação informativa entre os itens da nota de venda e os da nota de
+    // transferência. null enquanto uma das notas ainda não tem itens salvos.
+    transfer_invoice_products_match_sale: {
       type: DataTypes.BOOLEAN,
       allowNull: true,
     },
