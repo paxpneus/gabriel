@@ -45,23 +45,25 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
     });
     if (!item) throw new Error("Item não encontrado");
 
-    // Max entre todos os logs = quantity_read do item
-    const userLog = allLogs.find((l) => l.user_id === userId);
-    const newUserRead = userLog ? Number(userLog.quantity_read) : 0;
-    const maxOtherRead = allLogs
-      .filter((l) => l.user_id !== userId)
-      .reduce((max, l) => Math.max(max, Number(l.quantity_read)), 0);
-
-    const newItemQuantityRead = Math.max(newUserRead, maxOtherRead);
-
+    // Soma por usuário primeiro: correção manual sempre cria um novo log em vez
+    // de editar o existente, então um mesmo usuário pode ter vários logs aqui.
     const userReadsByUser = allLogs.reduce<Record<string, number>>(
       (acc, log) => {
-        const userId = log.user_id;
-        acc[userId] = (acc[userId] ?? 0) + Number(log.quantity_read);
+        const logUserId = log.user_id;
+        acc[logUserId] = (acc[logUserId] ?? 0) + Number(log.quantity_read);
         return acc;
       },
       {},
     );
+
+    // Max entre a soma do usuário atual e a maior soma entre os demais usuários = quantity_read do item
+    const newUserRead = userReadsByUser[userId] ?? 0;
+    const otherUserReads = Object.entries(userReadsByUser)
+      .filter(([logUserId]) => logUserId !== userId)
+      .map(([, value]) => value);
+    const maxOtherRead = otherUserReads.length ? Math.max(...otherUserReads) : 0;
+
+    const newItemQuantityRead = Math.max(newUserRead, maxOtherRead);
 
     const userReadValues = Object.values(userReadsByUser);
     const hasMultipleUserReads = userReadValues.length > 1;

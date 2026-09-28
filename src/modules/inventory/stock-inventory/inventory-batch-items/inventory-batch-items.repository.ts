@@ -31,8 +31,12 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
     },
     t: Transaction,
   ): Promise<InventoryBatchItems> {
+    // Where só por (inventory_batch_id, product_id): é exatamente o que a constraint
+    // uq_inventory_batch_items_batch_product cobre — sem stock_id, senão um produto
+    // com mais de uma linha em Stock pode resolver stock_id diferente entre 2 bipagens
+    // e o findOne não acha a linha que a constraint acabou de barrar no insert.
     let item = await InventoryBatchItems.findOne({
-      where: { product_id: productId, inventory_batch_id: batchId, stock_id: stockId },
+      where: { product_id: productId, inventory_batch_id: batchId },
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
@@ -65,7 +69,7 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
         if (error.name !== "SequelizeUniqueConstraintError") throw error;
 
         item = await InventoryBatchItems.findOne({
-          where: { product_id: productId, inventory_batch_id: batchId, stock_id: stockId },
+          where: { product_id: productId, inventory_batch_id: batchId },
           transaction: t,
           lock: t.LOCK.UPDATE,
         });

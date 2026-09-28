@@ -39,6 +39,7 @@ jest.mock(
 jest.mock("../../../handlers/tecinco/queues/tecinco-api-fetch.queue", () => ({
   __esModule: true,
   TCarUpsertQueue: class {},
+  TCAR_CREATE_PRODUCT_PRIORITY: 1,
 }));
 
 import UnmappedInvoiceProduct from "../unmapped-invoice-product.model";

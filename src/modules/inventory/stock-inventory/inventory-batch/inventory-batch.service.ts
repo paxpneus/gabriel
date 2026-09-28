@@ -68,6 +68,35 @@ export class InventoryBatchService extends BaseService<
     );
   }
 
+  // Soma quantity_read por usuário: um usuário pode ter vários logs pro mesmo item
+  // (cada correção manual via updateItemQuantity cria um novo, nunca edita o existente),
+  // então o front não pode inferir o total lido a partir só do último log.
+  private summarizeReadsByUser(
+    logs: any[] = [],
+  ): { user_id: string; user_name: string | null; quantity_read: number }[] {
+    const totals = new Map<
+      string,
+      { user_id: string; user_name: string | null; quantity_read: number }
+    >();
+
+    for (const log of logs) {
+      const existing = totals.get(log.user_id);
+      const quantity = Number(log.quantity_read);
+
+      if (existing) {
+        existing.quantity_read += quantity;
+      } else {
+        totals.set(log.user_id, {
+          user_id: log.user_id,
+          user_name: log.user?.name ?? null,
+          quantity_read: quantity,
+        });
+      }
+    }
+
+    return Array.from(totals.values());
+  }
+
   async createInventoryBatch(
     unitBusinessId: string,
     mode: string,
@@ -466,6 +495,10 @@ export class InventoryBatchService extends BaseService<
     if (!batch) throw new Error("Lote de inventário não encontrado");
 
     const batchJson = batch.toJSON() as any;
+    batchJson.items = batchJson.items.map((item: any) => ({
+      ...item,
+      read_by_user: this.summarizeReadsByUser(item.logs),
+    }));
     Object.assign(batchJson, this.calculateDivergencyTotals(batchJson.items));
 
     return batchJson;

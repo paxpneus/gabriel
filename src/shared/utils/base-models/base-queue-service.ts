@@ -414,6 +414,49 @@ export abstract class BaseQueueService<T, R = void> {
     return Object.values(counts).some((count) => count > 0);
   }
 
+  // Busca todos os jobIds ainda pendentes numa chamada só, pra quem precisa
+  // checar "esse jobId já está na fila?" pra vários candidatos sem N+1 (um
+  // getJob por item).
+  async getPendingJobIds(): Promise<Set<string>> {
+    const jobs = await this.queue.getJobs([
+      "waiting",
+      "active",
+      "delayed",
+      "prioritized",
+    ]);
+    return new Set(jobs.map((job) => job.id).filter((id): id is string => !!id));
+  }
+
+  // Existe job pendente com um desses `name` (o nome passado em
+  // jobOptions.name no add())? Usado por quem precisa dar prioridade a um
+  // tipo de job sobre outro dentro da MESMA fila sem lock/rank (ver
+  // TCarSyncQueue: full sync se auto-redelaya enquanto houver "invoice-new"
+  // pendente na fila de notas).
+  async hasPendingJobsNamed(names: string[]): Promise<boolean> {
+    const jobs = await this.queue.getJobs([
+      "waiting",
+      "active",
+      "delayed",
+      "prioritized",
+    ]);
+    const nameSet = new Set(names);
+    return jobs.some((job) => nameSet.has(job.name));
+  }
+
+  // Redelay: devolve o job pra fila de delayed e sai do processor sem marcar
+  // sucesso/falha — libera o slot de concurrency imediatamente (diferente de
+  // um sleep/poll dentro do processor, que segura o slot o tempo todo).
+  // BullMQ reprocessa o job do zero (novo process(job)) quando o delay vence.
+  protected async retryJobLater(job: Job<T>, delayMs: number): Promise<never> {
+    if (!job.token) {
+      throw new Error(
+        `[QUEUE] job.token ausente ao tentar redelay em "${this.queueName}"`,
+      );
+    }
+    await job.moveToDelayed(Date.now() + delayMs, job.token);
+    throw new DelayedError();
+  }
+
   // Espera esta fila ficar sem nenhum job pendente, de forma event-driven —
   // não faz polling: fica bloqueada no evento "drained" do BullMQ (disparado
   // via Redis Stream quando a lista de espera esvazia), não numa checagem
@@ -549,10 +592,15 @@ export abstract class BaseQueueService<T, R = void> {
 
     return this.queue.add(jobOptions?.name ?? this.queueName, data, {
       jobId,
-      // BullMQ nativo: menor número = maior prioridade, jobs sem `priority`
-      // ficam atrás de qualquer job que tenha uma definida. Usado pra fazer
-      // um job específico furar a fila de espera de uma fila já existente,
-      // sem precisar de fila/lock dedicados.
+      // BullMQ nativo: menor número = maior prioridade dentro do sorted-set
+      // de prioridade — mas um job sem `priority` nenhuma entra na lista
+      // "wait" comum, que é sempre esvaziada ANTES do sorted-set ser sequer
+      // olhado (ver moveToActive.lua). Ou seja: se o resto da fila não
+      // passar `priority`, um job com priority:1 NÃO fura a fila — fica
+      // parado atrás de todo o resto (bug real, ver TCarUpsertQueue.add em
+      // tecinco-api-fetch.queue.ts, que dá priority default a todo job seu
+      // exatamente por isso). Pra "furar a fila" de verdade, a fila inteira
+      // precisa sempre passar alguma `priority` (nem que seja um baseline).
       ...(jobOptions?.priority ? { priority: jobOptions.priority } : {}),
       // Default true: filas de alto volume (sync normal) não devem acumular
       // job concluído no Redis. Jobs cujo resultado alguém vai consultar

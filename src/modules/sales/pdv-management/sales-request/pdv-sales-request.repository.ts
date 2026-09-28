@@ -103,6 +103,15 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
     });
   }
 
+  // Qualquer status, inclusive terminal — usado pela auto-criação
+  // (createEmptyRequestForNewOrderIfEligible) pra nunca criar uma segunda
+  // solicitação pro mesmo pedido, mesmo depois que a primeira já terminou
+  // (FINISHED/CANCELLED/etc.). Diferente de findActiveByOrderId, que só
+  // bloqueia duplicidade de solicitação ainda em andamento.
+  async findByOrderId(orderId: string): Promise<PdvSalesRequest | null> {
+    return this.findOne({ where: { order_id: orderId } });
+  }
+
   async findActiveBySaleOrTransferInvoiceId(
     invoiceId: string,
   ): Promise<PdvSalesRequest[]> {

@@ -32,7 +32,10 @@ import {
 import { cleanDocument } from "../../../shared/utils/normalizers/document";
 import integrationsService from "../../integrations/integrations/integrations.service";
 import { BlingApiFetchQueue } from "../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
-import { TCarUpsertQueue } from "../../handlers/tecinco/queues/tecinco-api-fetch.queue";
+import {
+  TCarUpsertQueue,
+  TCAR_CREATE_PRODUCT_PRIORITY,
+} from "../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { resolveTecincoBranchId } from "../../../shared/utils/tecinco/resolve-branch-id";
 import { TCarProdutoPayload } from "../../handlers/tecinco/service/tecinco/tecinco.types";
 
@@ -367,7 +370,10 @@ export class UnmappedInvoiceProductService extends BaseService<
           create: true,
         },
         `tecinco-product-create-${unmapped.id}`,
-        { priority: 1, removeOnComplete: { age: CREATE_PRODUCT_JOB_RETENTION_SECONDS } },
+        {
+          priority: TCAR_CREATE_PRODUCT_PRIORITY,
+          removeOnComplete: { age: CREATE_PRODUCT_JOB_RETENTION_SECONDS },
+        },
       );
     } else {
       throw new Error(

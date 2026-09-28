@@ -2,7 +2,10 @@ import { Job, Queue } from "bullmq";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import { TCarUpsertQueue } from "./tecinco-api-fetch.queue";
-import { TCarInvoiceQueue } from "./tecinco-invoice.queue";
+import {
+  TCarInvoiceQueue,
+  TCAR_INVOICE_NEW_JOB_NAME,
+} from "./tecinco-invoice.queue";
 import {
   migrateNovasNotasFiscais,
   runMigration,
@@ -22,6 +25,7 @@ export interface TCarSyncJobPayload {
 const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? "default";
 const INVOICE_SYNC_INTERVAL_MS = 60 * 1000;
 const FULL_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const FULL_SYNC_REDELAY_MS = 15 * 1000;
 
 function formatAlteradoDesde(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -44,6 +48,23 @@ export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
 
   async process(job: Job<TCarSyncJobPayload>): Promise<void> {
     const { branchId, companyId, alteradoDesde, kind } = job.data;
+
+    // full sync (produtos/clientes/notas) e o job de notas novas competem
+    // pelo mesmo concurrency de TCAR_SYNC (2 slots pras 2 filiais); notas
+    // novas são o fluxo urgente e não podem esperar atrás de um full sync
+    // que já está no meio de uma migração longa. Em vez de segurar o slot
+    // com um sleep/poll, redelay libera o slot pro job de "invoices"
+    // pendente e este mesmo job full volta a ser tentado em breve.
+    if (
+      kind === "full" &&
+      (await this.invoiceQueue.hasPendingJobsNamed([TCAR_INVOICE_NEW_JOB_NAME]))
+    ) {
+      console.log(
+        `[TCAR_SYNC] Notas novas ainda pendentes — adiando full sync | branchId=${branchId}`,
+      );
+      return this.retryJobLater(job, FULL_SYNC_REDELAY_MS);
+    }
+
     console.log(`[TCAR_SYNC] Iniciando ${kind} | branchId=${branchId}`);
 
     if (kind === "invoices") {

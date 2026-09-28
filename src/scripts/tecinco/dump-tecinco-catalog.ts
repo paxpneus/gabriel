@@ -22,7 +22,7 @@ import { TCarProdutoService } from "../../modules/handlers/tecinco/service/produ
 import { TCarProdutoPayload } from "../../modules/handlers/tecinco/service/tecinco/tecinco.types";
 import { tecincoUnitBusinessForPopulate } from "../../shared/constants/tecinco-units";
 import { tecincoTireGrupoIds } from "../../shared/constants/tecinco-groups";
-import { paginateTCar } from "./tecinco-migration.runner";
+import { paginateTCar } from "./paginate-tcar";
 
 export interface TecincoCatalogItem {
   id_sistema: string;

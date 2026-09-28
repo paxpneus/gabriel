@@ -12,6 +12,7 @@ jest.mock("../pdv-sales-request.repository", () => ({
     update: jest.fn(),
     create: jest.fn(),
     findActiveByOrderId: jest.fn(),
+    findByOrderId: jest.fn(),
     findActiveBySaleOrTransferInvoiceId: jest.fn(),
     findShippingBySaleOrTransferInvoiceIds: jest.fn(),
   },
@@ -287,6 +288,98 @@ describe("PdvSalesRequestService", () => {
       ).rejects.toThrow("Pedido não é elegível para o fluxo PDV");
 
       expect(pdvSalesRequestRepository.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("createEmptyRequestForNewOrderIfEligible", () => {
+    it("já existe solicitação ativa pro pedido: não chama createRequest (no-op)", async () => {
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        id: "order-1",
+        unit_business_id: "unit-1",
+      });
+      (unitBusinessService.findById as jest.Mock).mockResolvedValue({
+        id: "unit-1",
+        type: "PHYSICAL",
+        number: "3",
+      });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21",
+        number: "25",
+      });
+      (orderService.isEligibleForPdv as jest.Mock).mockResolvedValue(true);
+      (pdvSalesRequestRepository.findByOrderId as jest.Mock).mockResolvedValue(
+        { id: "existing", status: PdvSalesRequestStatus.OPEN },
+      );
+      const createRequestSpy = jest.spyOn(service, "createRequest");
+
+      await service.createEmptyRequestForNewOrderIfEligible("order-1");
+
+      expect(createRequestSpy).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.create).not.toHaveBeenCalled();
+    });
+
+    it("já existe solicitação em status terminal (FINISHED) pro pedido: não recria", async () => {
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        id: "order-1",
+        unit_business_id: "unit-1",
+      });
+      (unitBusinessService.findById as jest.Mock).mockResolvedValue({
+        id: "unit-1",
+        type: "PHYSICAL",
+        number: "3",
+      });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21",
+        number: "25",
+      });
+      (orderService.isEligibleForPdv as jest.Mock).mockResolvedValue(true);
+      (pdvSalesRequestRepository.findByOrderId as jest.Mock).mockResolvedValue(
+        { id: "existing", status: PdvSalesRequestStatus.FINISHED },
+      );
+      const createRequestSpy = jest.spyOn(service, "createRequest");
+
+      await service.createEmptyRequestForNewOrderIfEligible("order-1");
+
+      expect(createRequestSpy).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.create).not.toHaveBeenCalled();
+    });
+
+    it("sem nenhuma solicitação pro pedido e elegível: cria a solicitação vazia", async () => {
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        id: "order-1",
+        invoice_id: null,
+        unit_business_id: "unit-1",
+      });
+      (unitBusinessService.findById as jest.Mock).mockResolvedValue({
+        id: "unit-1",
+        type: "PHYSICAL",
+        number: "3",
+      });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21",
+        number: "25",
+      });
+      (orderService.isEligibleForPdv as jest.Mock).mockResolvedValue(true);
+      (pdvSalesRequestRepository.findByOrderId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (pdvSalesRequestRepository.findActiveByOrderId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (pdvSalesRequestRepository.create as jest.Mock).mockResolvedValue({
+        id: "request-1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+
+      await service.createEmptyRequestForNewOrderIfEligible("order-1");
+
+      expect(pdvSalesRequestRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          order_id: "order-1",
+          status: PdvSalesRequestStatus.OPEN,
+        }),
+        { transaction: mockTransaction },
+      );
     });
   });
 

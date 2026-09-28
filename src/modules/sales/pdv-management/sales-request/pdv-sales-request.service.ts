@@ -397,21 +397,28 @@ export class PdvSalesRequestService extends BaseService<
     return this.toOrderDetail(order.get({ plain: true }));
   }
 
-  // Chamado por bling-order.service.ts::createOrderFromBling (só create,
-  // nunca update) sempre que um pedido nasce — cria a PdvSalesRequest vazia
-  // (status OPEN sempre) já junto do pedido, pro front só precisar atrelar
-  // os dados depois em vez de dar o passo extra de "Criar solicitação".
-  // Mesmos 3 critérios de findEligibleOrders/isEligibleForPdv: loja física
-  // normal (fora de CD21/PDV_EXCLUDED_STORE_NUMBERS, nunca marketplace sem
+  // Chamado por bling-order.service.ts em toda criação/atualização de
+  // pedido — cria a PdvSalesRequest vazia (status OPEN sempre) assim que o
+  // pedido se torna elegível, pro front só precisar atrelar os dados depois
+  // em vez de dar o passo extra de "Criar solicitação". Idempotente: se já
+  // existe QUALQUER solicitação pro pedido, mesmo terminal
+  // (FINISHED/CANCELLED/etc.), é no-op — nunca cria uma segunda pro mesmo
+  // pedido por essa via automática (diferente de createRequest/POST manual,
+  // que só bloqueia duplicidade de solicitação ainda ATIVA). Só assim pode
+  // ser chamado em toda atualização, não só na criação do pedido, sem
+  // re-lançar uma nova solicitação toda vez que o pedido volta a ficar
+  // elegível depois de ter sido cancelado. Mesmos 3 critérios de
+  // findEligibleOrders/isEligibleForPdv: loja física normal (fora de
+  // CD21/PDV_EXCLUDED_STORE_NUMBERS, nunca marketplace sem
   // unit_business_id), pedido não CANCELLED, sem romaneio já gerado pro
-  // invoice/loja do pedido (não deveria acontecer pra um pedido recém-
-  // -criado, mas reusa o mesmo critério em vez de assumir). No-op
-  // silencioso pra qualquer pedido não elegível.
+  // invoice/loja do pedido. No-op silencioso pra qualquer pedido não
+  // elegível ou que já tenha solicitação (de qualquer status).
   async createEmptyRequestForNewOrderIfEligible(orderId: string): Promise<void> {
     const order = await orderService.findById(orderId);
     if (!order?.unit_business_id) return;
     if (await this.isExcludedFromPdvFlow(order.unit_business_id)) return;
     if (!(await orderService.isEligibleForPdv(orderId))) return;
+    if (await this.repository.findByOrderId(orderId)) return;
 
     await this.createRequest({ orderId });
   }

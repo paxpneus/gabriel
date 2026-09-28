@@ -17,11 +17,16 @@ import {
   TCarUpsertQueue,
   TCarUpsertJobPayload,
 } from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
-import { TCarInvoiceQueue } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
+import {
+  TCarInvoiceQueue,
+  TCAR_INVOICE_NEW_JOB_NAME,
+  TCAR_INVOICE_UPDATE_JOB_NAME,
+} from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
 import { getTCarIntegration } from "../../modules/handlers/tecinco/api/tecinco_api";
 import integrationMappingService from "../../modules/integrations/integration-mapping/integration-mapping.service";
 import { fetchTecincoCatalog, CATALOG_OUTPUT_PATH } from "./dump-tecinco-catalog";
+import { paginateTCar } from "./paginate-tcar";
 import {
   buildTecincoDuplicateValueSets,
   findTecincoCollidingFields,
@@ -54,9 +59,6 @@ export type ResolvedMigrationOptions = Omit<Required<RunMigrationOptions>, "invo
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
-const PAGE_SIZE = 50;
-const PAGE_DELAY_MS = Number(process.env.TCAR_PAGE_DELAY_MS ?? 300);
-const MAX_ITEMS = Number(process.env.TCAR_MAX_ITEMS ?? Infinity);
 const QUEUE_POLL_MS = 5_000;
 
 
@@ -108,36 +110,6 @@ async function waitForQueueToDrain(
   console.log(`  ✅ Fila vazia. Avançando...\n`);
 }
 
-export async function* paginateTCar<T>(
-  fetcher: (offset: number, limit: number) => Promise<any>,
-  max = MAX_ITEMS,
-): AsyncGenerator<T[]> {
-  let offset = 0;
-  let total = 0;
-
-  while (true) {
-    const response = await fetcher(offset, PAGE_SIZE);
-
-    if (typeof response === "string") {
-      console.error("  ❌ Resposta ainda em string — onResponse não aplicado");
-      break;
-    }
-
-    const items: T[] = Array.isArray(response?.data) ? response.data : [];
-    if (!items.length) break;
-
-    const remaining = max - total;
-    const slice = items.slice(0, remaining);
-    yield slice;
-
-    total += slice.length;
-
-    if (total >= max || items.length < PAGE_SIZE) break;
-
-    offset += PAGE_SIZE;
-    await sleep(PAGE_DELAY_MS);
-  }
-}
 
 // ─── Camada de segurança: dedup dentro do catálogo Tecinco ───────────────────
 // A Tecinco reaproveita/duplica epctb_codigofabrica (com fallback pro campo
@@ -413,7 +385,7 @@ export async function migrateNotasFiscais(
           },
           `invoice-update-${branchId}-${tipo}-${chave.nota}`,
           dryRun,
-          { priority: 2, name: "invoice-update" },
+          { priority: 2, name: TCAR_INVOICE_UPDATE_JOB_NAME },
         );
 
         console.log(`  [NF ${tipo} nota=${chave.nota}] enfileirada`);
@@ -470,12 +442,18 @@ export async function migrateNovasNotasFiscais(
         .map((invoice) => invoice.xml_key)
         .filter((key): key is string => !!key),
     );
+    // Além do que já está no banco, pula quem já tem job pendente na fila:
+    // job de nota anterior pode ainda não ter concluído quando o próximo
+    // tick de 1min roda de novo.
+    const jobIdsPendentes = await targetInvoiceQueue.getPendingJobIds();
 
     let enfileiradas = 0;
     for (const nota of notas) {
       if (existentes.has(String(nota.chave_nfe))) continue;
       const { chave } = nota;
       if (!chave?.nota) continue;
+      const jobId = `invoice-new-${branchId}-${nota.entrada_saida}-${chave.nota}`;
+      if (jobIdsPendentes.has(jobId)) continue;
       await enqueue(
         targetInvoiceQueue,
         {
@@ -495,9 +473,9 @@ export async function migrateNovasNotasFiscais(
             seq_cancelamento: chave.seq_cancelamento ?? "0",
           },
         },
-        `invoice-new-${branchId}-${nota.entrada_saida}-${chave.nota}`,
+        jobId,
         dryRun ?? false,
-        { priority: 1, name: "invoice-new" },
+        { priority: 1, name: TCAR_INVOICE_NEW_JOB_NAME },
       );
       enfileiradas++;
     }

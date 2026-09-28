@@ -153,6 +153,20 @@ export interface TCarUpsertJobPayload {
   eanDuplicated?: boolean;
 }
 
+// BullMQ nunca olha pro sorted-set de prioridade enquanto o "wait" list
+// (jobs sem `priority`) não esvaziar — um job sem `priority` sempre é
+// desenfileirado antes de QUALQUER job com `priority`, não importa o valor
+// (ver moveToActive.lua: RPOPLPUSH de wait vem antes do fallback pro sorted
+// set). Sync de catálogo (tecinco-migration.runner.ts) enfileira sem
+// `priority` — em volume alto, isso mantinha o job de criação manual
+// (priority:1, ver enqueueCreateProduct em unmapped-invoice-product.service.ts)
+// preso atrás de toda a fila normal, nunca "furando a fila" como o comentário
+// original prometia. Dar um `priority` padrão pra todo job desta fila (nunca
+// omitir) resolve: todos caem no mesmo sorted-set e são comparados pelo
+// valor de verdade.
+export const TCAR_CREATE_PRODUCT_PRIORITY = 1;
+export const TCAR_NORMAL_PRIORITY = 2;
+
 export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   constructor(
     options: { workless?: boolean } = {},
@@ -163,6 +177,21 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       limiter: { max: 2, duration: 1000 },
       maxProcessingMs: 120_000,
       workless: options.workless,
+    });
+  }
+
+  override async add(
+    data: TCarUpsertJobPayload,
+    jobId?: string,
+    jobOptions?: {
+      priority?: number;
+      name?: string;
+      removeOnComplete?: boolean | { age: number; count?: number };
+    },
+  ) {
+    return super.add(data, jobId, {
+      ...jobOptions,
+      priority: jobOptions?.priority ?? TCAR_NORMAL_PRIORITY,
     });
   }
 

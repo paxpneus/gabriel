@@ -836,18 +836,17 @@ export class BlingOrderService {
         });
         notifyPdvStoreSync(unitBusinessId, "ORDER_STATUS_CHANGED");
 
-        // Pedido nasceu sem loja (ex.: marketplace ainda sem
-        // unit_business_id resolvida) e só ganhou uma agora —
-        // createOrderFromBling não criou a PdvSalesRequest na hora
-        // (early-return por unit_business_id nulo), e esse é o único
-        // disparo automático depois disso. Fica junto do write defensivo
-        // acima, como garantia — não pode depender de nenhuma etapa de
-        // enriquecimento abaixo que possa falhar.
-        if (!existingOrder.unit_business_id && unitBusinessId) {
-          await pdvSalesRequestService.createEmptyRequestForNewOrderIfEligible(
-            existingOrder.id,
-          );
-        }
+        // Reavalia elegibilidade PDV em TODO update, não só quando a loja
+        // resolve de nula pra preenchida — um pedido pode voltar a ficar
+        // elegível depois de ter sido cancelado (situação Bling 12/21) e
+        // reemitido, e nenhum outro código recria a solicitação nesse caso.
+        // createEmptyRequestForNewOrderIfEligible é idempotente (no-op se
+        // já existe solicitação ativa), então é seguro chamar sempre. Fica
+        // junto do write defensivo acima, como garantia — não pode depender
+        // de nenhuma etapa de enriquecimento abaixo que possa falhar.
+        await pdvSalesRequestService.createEmptyRequestForNewOrderIfEligible(
+          existingOrder.id,
+        );
       } catch (statusError: any) {
         console.error(
           `[BlingOrderService] Falha ao gravar actual_situation/internal_status/unit_business_id do pedido ${orderData.numero} (seguindo mesmo assim):`,

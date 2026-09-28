@@ -16,6 +16,7 @@ import inventorySubgroupsService from "../inventory-subgroups/inventory-subgroup
 import { resolveProductByEanWithStock } from "../../../handlers/tecinco/queues/helpers/product.helpers";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
+import roleService from "../../../company/users/roles/role.service";
 
 export class InventoryBatchLogsService extends BaseService<
   InventoryBatchLogs,
@@ -343,6 +344,67 @@ export class InventoryBatchLogsService extends BaseService<
           );
         }
       }
+
+      return true;
+    });
+  }
+
+  // Correção manual de admin: seta a leitura de um conferente pro item (userId vem do body, mesma convenção do scanProduct; se o front não mandar, cai pro usuário logado), reusando syncItemAndBatchAfterScan (mesmo caminho do scanProduct) em vez de recalcular status/divergência na mão.
+  async updateItemQuantity(
+    itemId: string,
+    quantity: number,
+    userId: string,
+    roleId: string,
+  ): Promise<boolean> {
+    if (!(await roleService.isAdminRole(roleId))) {
+      throw new Error("Apenas administradores podem executar esta ação");
+    }
+    if (quantity < 0) throw new Error("Quantidade não pode ser negativa");
+
+    return await sequelize.transaction(async (t) => {
+      const inventoryBatchItem = await InventoryBatchItems.findByPk(itemId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (!inventoryBatchItem) throw new Error("Item do lote não encontrado");
+
+      const inventoryBatch = await InventoryBatch.findByPk(
+        inventoryBatchItem.inventory_batch_id,
+        { transaction: t, lock: t.LOCK.UPDATE },
+      );
+      if (!inventoryBatch) throw new Error("Lote não encontrado");
+      if (!["OPEN", "PENDING"].includes(inventoryBatch.status))
+        throw new Error(
+          "Não permitido editar itens de lotes com processo encerrado!",
+        );
+
+      // "quantity" é o total absoluto que a leitura desse usuário deve passar a ter (ex: igualar ao outro conferente e zerar a divergência).
+      // Nunca edita um log já existente — sempre cria um novo com o delta necessário pra chegar nesse total, preservando o histórico das leituras anteriores.
+      const currentUserTotal = Number(
+        (await InventoryBatchLogs.sum("quantity_read", {
+          where: { user_id: userId, inventory_batch_item_id: itemId },
+          transaction: t,
+        })) ?? 0,
+      );
+
+      await InventoryBatchLogs.create(
+        {
+          user_id: userId,
+          quantity_read: quantity - currentUserTotal,
+          label_code: "MANUAL_ADMIN_EDIT",
+          inventory_batch_item_id: itemId,
+          date: new Date(),
+        },
+        { transaction: t },
+      );
+
+      await inventoryBatchLogsRepository.syncItemAndBatchAfterScan(
+        itemId,
+        inventoryBatch.id,
+        userId,
+        inventoryBatch.type,
+        t,
+      );
 
       return true;
     });
