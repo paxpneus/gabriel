@@ -2,7 +2,11 @@ import { Job, Queue } from "bullmq";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import { TCarUpsertQueue } from "./tecinco-api-fetch.queue";
-import { runMigration } from "../../../../scripts/tecinco/tecinco-migration.runner";
+import { TCarInvoiceQueue } from "./tecinco-invoice.queue";
+import {
+  migrateNovasNotasFiscais,
+  runMigration,
+} from "../../../../scripts/tecinco/tecinco-migration.runner";
 import { UnitBusiness } from "../../../../modules/warehouse";
 import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
 import { tecincoTireGrupoIds } from "../../../../shared/constants/tecinco-groups";
@@ -12,113 +16,122 @@ export interface TCarSyncJobPayload {
   branchId: number;
   companyId: string;
   alteradoDesde: string;
+  kind: "invoices" | "full";
 }
 
 const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? "default";
-const SYNC_INTERVAL_MS = 10 * 60 * 1000;
-const SYNC_RETRY_MS = 20 * 60 * 1000;
-
+const INVOICE_SYNC_INTERVAL_MS = 60 * 1000;
+const FULL_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 
 function formatAlteradoDesde(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
-    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-  );
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
-  private readonly upsertQueue: TCarUpsertQueue;
-
   constructor(
-    upsertQueue: TCarUpsertQueue,
+    private readonly apiFetchQueue: TCarUpsertQueue,
+    private readonly invoiceQueue: TCarInvoiceQueue,
     options: { workless?: boolean } = {},
   ) {
     super("TCAR_SYNC", {
       concurrency: 2,
-      limiter: { max: 5, duration: 1000 },
+      limiter: { max: 2, duration: 1000 },
       workless: options.workless,
-      maxProcessingMs: 15 * 60 * 60 * 1000
+      maxProcessingMs: 15 * 60 * 60 * 1000,
     });
-    this.upsertQueue = upsertQueue; 
   }
 
   async process(job: Job<TCarSyncJobPayload>): Promise<void> {
-    const { branchId, companyId, alteradoDesde } = job.data;
+    const { branchId, companyId, alteradoDesde, kind } = job.data;
+    console.log(`[TCAR_SYNC] Iniciando ${kind} | branchId=${branchId}`);
 
-    console.log(
-      `[TCAR_SYNC] Iniciando sync | branchId=${branchId} | alterado_desde=${alteradoDesde}`,
-    );
+    if (kind === "invoices") {
+      await migrateNovasNotasFiscais({
+        branchIds: [branchId],
+        companyId,
+        alteradoDesde,
+        upsertQueue: this.apiFetchQueue,
+        invoiceQueue: this.invoiceQueue,
+      });
+      return;
+    }
 
     await runMigration({
       branchIds: [branchId],
       companyId,
       alteradoDesde,
-      upsertQueue: this.upsertQueue,
+      upsertQueue: this.apiFetchQueue,
+      invoiceQueue: this.invoiceQueue,
       grupos: tecincoTireGrupoIds,
     });
+    console.log(`[TCAR_SYNC] Sync completo concluído | branchId=${branchId}`);
+  }
 
-    console.log(`[TCAR_SYNC] Sync concluído | branchId=${branchId}`);
+  async areTargetQueuesIdle(): Promise<boolean> {
+    const [apiFetchPending, invoicePending] = await Promise.all([
+      this.apiFetchQueue.hasPendingJobs(),
+      this.invoiceQueue.hasPendingJobs(),
+    ]);
+    return !apiFetchPending && !invoicePending;
   }
 
   protected override onFailed(job: Job<TCarSyncJobPayload>, error: Error): void {
     alertService.sendAlert({
       severity: "MEDIUM",
       title: "TCarSyncQueue — job falhou",
-      message: `branchId=${job.data.branchId} | alterado_desde=${job.data.alteradoDesde} | Erro: ${error.message}`,
+      message: `kind=${job.data.kind} | branchId=${job.data.branchId} | Erro: ${error.message}`,
     });
   }
 }
 
-export async function scheduleTCarSync(
-  syncQueue: TCarSyncQueue,
-  upsertQueue: TCarUpsertQueue, 
-) {
+export async function scheduleTCarSync(syncQueue: TCarSyncQueue) {
   const units = await UnitBusiness.findAll({
-    attributes: ["id", "id_system", "number"],
-    where: {
-      number: {
-        [Op.in]: tecincoUnitBusinessForPopulate,
-      },
-    },
+    attributes: ["number"],
+    where: { number: { [Op.in]: tecincoUnitBusinessForPopulate } },
   });
-  const branchIds: number[] = units.map((u) => Number(u.number));
-
+  const branchIds = units.map((unit) => Number(unit.number));
   const syncBullQueue: Queue = (syncQueue as any).queue;
-  const upsertBullQueue: Queue = (upsertQueue as any).queue;
 
-  const getPendingCount = async (queue: Queue) => {
-    const counts = await queue.getJobCounts("active", "waiting", "delayed");
-    return (counts.active ?? 0) + (counts.waiting ?? 0) + (counts.delayed ?? 0);
-  };
-
-  const dispatchSync = async () => {
-    const [syncPending, upsertPending] = await Promise.all([
-      getPendingCount(syncBullQueue),
-      getPendingCount(upsertBullQueue),
+  const dispatch = async (kind: TCarSyncJobPayload["kind"], intervalMs: number) => {
+    const jobs = await syncBullQueue.getJobs([
+      "active",
+      "waiting",
+      "delayed",
+      "prioritized",
     ]);
+    const sameKindPending = jobs.some((job) => job.data.kind === kind);
+    const targetsAreIdle =
+      kind === "invoices" || (await syncQueue.areTargetQueuesIdle());
 
-    const pending = syncPending + upsertPending;
+    const shouldDispatch =
+      kind === "invoices" || (!sameKindPending && targetsAreIdle);
 
-    if (pending > 0) {
+    if (shouldDispatch) {
+      const alteradoDesde = formatAlteradoDesde(
+        new Date(Date.now() - 2 * 60 * 60 * 1000),
+      );
+      await Promise.all(
+        branchIds.map((branchId) =>
+          syncQueue.add(
+            { branchId, companyId: COMPANY_ID, alteradoDesde, kind },
+            kind === "invoices"
+              ? `tcar-sync-${kind}-${branchId}-${Date.now()}`
+              : `tcar-sync-${kind}-${branchId}`,
+          ),
+        ),
+      );
+    } else if (kind === "full" && !targetsAreIdle) {
       console.log(
-        `[TCAR_SYNC] Fila ainda ocupada (sync=${syncPending}, upsert=${upsertPending}) — pulando dispatch, tentando de novo em 20min`,
+        "[TCAR_SYNC] TCAR_INVOICE ou TCAR_API_FETCH ainda possui jobs; pulando sync completo",
       );
-      setTimeout(dispatchSync, SYNC_RETRY_MS);
-      return;
+    } else {
+      console.log(`[TCAR_SYNC] Já há job(s) ${kind} em andamento; pulando dispatch`);
     }
 
-    const alteradoDesde = formatAlteradoDesde(new Date(Date.now() - 2 * 60 * 60 * 1000));
-    for (const branchId of branchIds) {
-      await syncQueue.add(
-        { branchId, companyId: COMPANY_ID, alteradoDesde },
-        `tcar-sync-${branchId}`,
-      );
-      console.log(`[TCAR_SYNC] Job agendado | branchId=${branchId}`);
-    }
-
-    setTimeout(dispatchSync, SYNC_INTERVAL_MS);
+    setTimeout(() => void dispatch(kind, intervalMs), intervalMs);
   };
 
-  dispatchSync();
+  void dispatch("invoices", INVOICE_SYNC_INTERVAL_MS);
+  void dispatch("full", FULL_SYNC_INTERVAL_MS);
 }

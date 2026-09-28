@@ -28,6 +28,7 @@ import { BlingTokenRefreshQueue } from "./../modules/handlers/bling/services/bli
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
 import { BlingStockMovementsScrapingQueue } from "../modules/handlers/bling/services/bling/queues/bling-stock-movements-scraping.queue";
 import { TCarUpsertQueue } from "../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { TCarInvoiceQueue } from "../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import {
   scheduleTCarSync,
   TCarSyncQueue,
@@ -60,7 +61,8 @@ export type QueueName =
   | "BLING_MIGRATION"
   | "BLING_STOCK_MOVEMENTS_SCRAPING"
   | "BLING_NFE_SCRAPING"
-  | "TCAR_UPSERT"
+  | "TCAR_API_FETCH"
+  | "TCAR_INVOICE"
   | "TCAR_SYNC"
   | "DAILY_OPERATION_REPORT"
   | "DAILY_SALES_REPORT"
@@ -174,8 +176,9 @@ function buildQueues(activeWorkers: QueueName[]) {
       workless: w("BLING_STOCK_MOVEMENTS_SCRAPING"),
     },
   );
-  const tcarUpsertQueue = new TCarUpsertQueue({ workless: w("TCAR_UPSERT") });
-  const tcarSyncQueue = new TCarSyncQueue(tcarUpsertQueue, {
+  const tcarUpsertQueue = new TCarUpsertQueue({ workless: w("TCAR_API_FETCH") });
+  const tcarInvoiceQueue = new TCarInvoiceQueue({ workless: w("TCAR_INVOICE") });
+  const tcarSyncQueue = new TCarSyncQueue(tcarUpsertQueue, tcarInvoiceQueue, {
     workless: w("TCAR_SYNC"),
   });
   const dailyOperationReportQueue = new DailyOperationReportQueue({
@@ -220,6 +223,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     dailySalesReportQueue,
     autoBackupQueue,
     tcarUpsertQueue,
+    tcarInvoiceQueue,
     tcarSyncQueue,
     blingNfeScrapingQueue,
     cteIngestionQueue,
@@ -246,6 +250,7 @@ export function registerQueues(app: Express) {
     dailySalesReportQueue,
     autoBackupQueue,
     tcarUpsertQueue,
+    tcarInvoiceQueue,
     tcarSyncQueue,
     blingNfeScrapingQueue,
     cteIngestionQueue,
@@ -270,6 +275,7 @@ export function registerQueues(app: Express) {
   app.locals.BlingStockMovementsScrapingQueue =
     blingStockMovementsScrapingQueue;
   app.locals.TCarUpsertQueue = tcarUpsertQueue;
+  app.locals.TCarInvoiceQueue = tcarInvoiceQueue;
   app.locals.DailyOperationReportQueue = dailyOperationReportQueue;
   app.locals.DailySalesReportQueue = dailySalesReportQueue;
   app.locals.AutoBackupQueue = autoBackupQueue;
@@ -296,6 +302,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(dailySalesReportQueue.queue),
       new BullMQAdapter(autoBackupQueue.queue),
       new BullMQAdapter(tcarUpsertQueue.queue),
+      new BullMQAdapter(tcarInvoiceQueue.queue),
       new BullMQAdapter(tcarSyncQueue.queue),
       new BullMQAdapter(blingNfeScrapingQueue.queue),
       new BullMQAdapter(cteIngestionQueue.queue),
@@ -317,7 +324,8 @@ export function registerQueues(app: Express) {
     BlingTokenRefreshQueue: "BLING_TOKEN_REFRESH",
     BlingMigrationQueue: "BLING_MIGRATION",
     BlingStockMovementsScrapingQueue: "BLING_STOCK_MOVEMENTS_SCRAPING",
-    TCarUpsertQueue: "TCAR_UPSERT",
+    TCarUpsertQueue: "TCAR_API_FETCH",
+    TCarInvoiceQueue: "TCAR_INVOICE",
     TCarSyncQueue: "TCAR_SYNC",
     DailyOperationReportQueue: "DAILY_OPERATION_REPORT",
     DailySalesReportQueue: "DAILY_SALES_REPORT",
@@ -469,18 +477,22 @@ export function startWorkers() {
 }
 
 export function startTecincoWorkers() {
-  const { tcarUpsertQueue, tcarSyncQueue } = buildQueues([
-    "TCAR_UPSERT",
-    // "TCAR_SYNC",
+  const { tcarUpsertQueue, tcarInvoiceQueue, tcarSyncQueue } = buildQueues([
+    "TCAR_API_FETCH",
+    "TCAR_INVOICE",
+    "TCAR_SYNC",
   ]);
 
-  scheduleTCarSync(tcarSyncQueue, tcarUpsertQueue);
+  void scheduleTCarSync(tcarSyncQueue);
 
   void tcarUpsertQueue;
+  void tcarInvoiceQueue;
   void tcarSyncQueue;
 
   console.log("🚀 Workers da Tecinco ativos!:");
-  console.log("  → TCAR_SYNC (10min)!");
+  console.log("  → TCAR_INVOICE (2 jobs/s)");
+  console.log("  → TCAR_API_FETCH (2 jobs/s)");
+  console.log("  → TCAR_SYNC (notas: 1min; completo: 5min)");
 }
 
 // ─── container: worker-scraping ───────────────────────────────────────────────

@@ -9,6 +9,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { Queue } from "bullmq";
+import { Op } from "sequelize";
 import { TCarProdutoService } from "../../modules/handlers/tecinco/service/produtos/produtos.service";
 import TCarClienteService from "../../modules/handlers/tecinco/service/clientes/clientes.service";
 import { TCarConferenciaEstoqueService } from "../../modules/handlers/tecinco/service/conferencias-estoque/conferencias-estoque.service";
@@ -16,6 +17,8 @@ import {
   TCarUpsertQueue,
   TCarUpsertJobPayload,
 } from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { TCarInvoiceQueue } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
+import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
 import { getTCarIntegration } from "../../modules/handlers/tecinco/api/tecinco_api";
 import integrationMappingService from "../../modules/integrations/integration-mapping/integration-mapping.service";
 import { fetchTecincoCatalog, CATALOG_OUTPUT_PATH } from "./dump-tecinco-catalog";
@@ -36,6 +39,7 @@ export interface RunMigrationOptions {
    */
   alteradoDesde?: string;
   upsertQueue: TCarUpsertQueue;
+  invoiceQueue?: TCarInvoiceQueue;
   /**
    * Se true, apenas loga os job IDs sem enfileirar nada.
    * Padrão: process.env.DRY_RUN === "true"
@@ -43,6 +47,10 @@ export interface RunMigrationOptions {
   dryRun?: boolean;
   grupos?: string[];
 }
+
+export type ResolvedMigrationOptions = Omit<Required<RunMigrationOptions>, "invoiceQueue"> & {
+  invoiceQueue?: TCarInvoiceQueue;
+};
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
@@ -63,7 +71,7 @@ async function enqueue(
   payload: TCarUpsertJobPayload,
   jobId: string,
   dryRun: boolean,
-  jobOptions?: { priority?: number },
+  jobOptions?: { priority?: number; name?: string },
 ) {
   if (dryRun) {
     console.log(`[DRY_RUN] ${jobId}`);
@@ -146,7 +154,7 @@ export async function* paginateTCar<T>(
 // ─── Etapas ───────────────────────────────────────────────────────────────────
 
 export async function migrateProdutos(
-  opts: Required<RunMigrationOptions>,
+  opts: ResolvedMigrationOptions,
 ): Promise<void> {
   const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun, grupos } =
     opts;
@@ -265,7 +273,7 @@ export async function migrateProdutos(
 }
 
 export async function migrateClientes(
-  opts: Required<RunMigrationOptions>,
+  opts: ResolvedMigrationOptions,
 ): Promise<void> {
   const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun } = opts;
 
@@ -317,9 +325,10 @@ export async function migrateClientes(
 }
 
 export async function migrateNotasFiscais(
-  opts: Required<RunMigrationOptions>,
+  opts: ResolvedMigrationOptions,
 ): Promise<void> {
-  const { branchIds, companyId, upsertQueue, dryRun } = opts;
+  const { branchIds, companyId, invoiceQueue, upsertQueue, dryRun } = opts;
+  const targetInvoiceQueue = invoiceQueue ?? (upsertQueue as TCarInvoiceQueue);
 
   console.log("─".repeat(55));
   console.log("🧾  Notas Fiscais via XML");
@@ -360,22 +369,31 @@ export async function migrateNotasFiscais(
       const { tipo, situacao } = combos[i];
       const resultado = resultados[i];
 
-      const notas: any[] = (resultado?.data ?? []).filter(
+      const notasEncontradas: any[] = (resultado?.data ?? []).filter(
         (n: any) => n.entrada_saida === tipo && n.chave_nfe,
+      );
+      const chaves = [...new Set(notasEncontradas.map((nota) => String(nota.chave_nfe)))];
+      const chavesExistentes = new Set(
+        (await Invoice.findAll({
+          attributes: ["xml_key"],
+          where: { xml_key: { [Op.in]: chaves } },
+        }))
+          .map((invoice) => invoice.xml_key)
+          .filter((key): key is string => !!key),
+      );
+      const notas = notasEncontradas.filter((nota) =>
+        chavesExistentes.has(String(nota.chave_nfe)),
       );
 
       console.log(
-        `  → [${tipo}/${situacao}] ${notas.length} nota(s) encontrada(s)`,
+        `  → [${tipo}/${situacao}] ${notas.length}/${notasEncontradas.length} nota(s) existente(s) para atualizar`,
       );
 
       for (const nota of notas) {
         const { chave } = nota;
 
-        // Nota fiscal fura a fila (mesma convenção de priority:1 usada em
-        // unmapped-invoice-product.service.ts) — relevante quando um sync
-        // manual de produto/cliente concorre com este estágio na mesma fila.
         await enqueue(
-          upsertQueue,
+          targetInvoiceQueue,
           {
             eventId: `invoice-xml-${branchId}-${tipo}-${chave.nota}-${uuidv4()}`,
             resource: "invoice_xml",
@@ -393,9 +411,9 @@ export async function migrateNotasFiscais(
               seq_cancelamento: chave.seq_cancelamento ?? "0",
             },
           },
-          `invoice-xml-${branchId}-${tipo}-${chave.nota}`,
+          `invoice-update-${branchId}-${tipo}-${chave.nota}`,
           dryRun,
-          { priority: 1 },
+          { priority: 2, name: "invoice-update" },
         );
 
         console.log(`  [NF ${tipo} nota=${chave.nota}] enfileirada`);
@@ -403,19 +421,100 @@ export async function migrateNotasFiscais(
     }
   }
 
-  await waitForQueueToDrain(upsertQueue, "Notas Fiscais", dryRun);
+  await waitForQueueToDrain(targetInvoiceQueue, "Notas Fiscais", dryRun);
 }
 
 // ─── Entry point público ──────────────────────────────────────────────────────
 
+/** Busca as notas recentes e enfileira somente as que ainda não têm XML no sistema. */
+export async function migrateNovasNotasFiscais(
+  opts: RunMigrationOptions,
+): Promise<void> {
+  const { branchIds, companyId, invoiceQueue, upsertQueue, dryRun } = opts;
+  const targetInvoiceQueue = invoiceQueue ?? (upsertQueue as TCarInvoiceQueue);
+  const service = new TCarConferenciaEstoqueService();
+  const tipos: Array<"E" | "S"> = ["E", "S"];
+  const situacoes: Array<"A" | "N" | "C"> = ["A", "N", "C"];
+
+  console.log("─".repeat(55));
+  console.log("🧾  Novas notas fiscais via XML");
+  console.log("─".repeat(55));
+
+  for (const branchId of branchIds) {
+    const combos = tipos.flatMap((entrada_saida) =>
+      situacoes.map((situacao) => ({ entrada_saida, situacao })),
+    );
+    const resultados = await Promise.all(
+      combos.map(({ entrada_saida, situacao }) =>
+        service.listarNotasFiscais(branchId, {
+          modelo_documento: 55,
+          situacao,
+          entrada_saida,
+          limit: 50,
+          offset: 0,
+        }),
+      ),
+    );
+    const notas = resultados.flatMap((resultado, index) => {
+      const { entrada_saida } = combos[index];
+      return (resultado?.data ?? []).filter(
+        (nota: any) => nota.entrada_saida === entrada_saida && nota.chave_nfe,
+      );
+    });
+    const chaves = [...new Set(notas.map((nota: any) => String(nota.chave_nfe)))];
+    const existentes = new Set(
+      (await Invoice.findAll({
+        attributes: ["xml_key"],
+        where: { xml_key: { [Op.in]: chaves } },
+      }))
+        .map((invoice) => invoice.xml_key)
+        .filter((key): key is string => !!key),
+    );
+
+    let enfileiradas = 0;
+    for (const nota of notas) {
+      if (existentes.has(String(nota.chave_nfe))) continue;
+      const { chave } = nota;
+      if (!chave?.nota) continue;
+      await enqueue(
+        targetInvoiceQueue,
+        {
+          eventId: `invoice-xml-${branchId}-${nota.entrada_saida}-${chave.nota}-${uuidv4()}`,
+          resource: "invoice_xml",
+          action: "sync",
+          companyId,
+          branchId,
+          data: {
+            numero: chave.nota,
+            entrada_saida: nota.entrada_saida,
+            cln_codigo: chave.cln_codigo,
+            tpneg_codigo: chave.tpneg_codigo,
+            ntz_codigo: chave.ntz_codigo,
+            opr_codigo: chave.opr_codigo,
+            serie: chave.serie,
+            seq_cancelamento: chave.seq_cancelamento ?? "0",
+          },
+        },
+        `invoice-new-${branchId}-${nota.entrada_saida}-${chave.nota}`,
+        dryRun ?? false,
+        { priority: 1, name: "invoice-new" },
+      );
+      enfileiradas++;
+    }
+    console.log(`[TCAR_INVOICE] Filial ${branchId}: ${enfileiradas} nota(s) nova(s) enfileirada(s)`);
+  }
+}
+
 export async function runMigration(opts: RunMigrationOptions): Promise<void> {
-  const resolved: Required<RunMigrationOptions> = {
+  const resolved: ResolvedMigrationOptions = {
     dryRun: process.env.DRY_RUN === "true",
     alteradoDesde: "", // string vazia = sem filtro (full)
     grupos: [],
+    invoiceQueue: opts.invoiceQueue ?? (opts.upsertQueue as TCarInvoiceQueue),
 
     ...opts,
   };
+  resolved.invoiceQueue ??= resolved.upsertQueue as TCarInvoiceQueue;
 
   if (resolved.dryRun) {
     console.log("⚠️  MODO DRY_RUN ativo — nenhum job será enfileirado.\n");

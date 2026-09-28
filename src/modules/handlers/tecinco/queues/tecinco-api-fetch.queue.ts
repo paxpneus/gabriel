@@ -153,12 +153,13 @@ export interface TCarUpsertJobPayload {
 }
 
 export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
-  constructor(options: { workless?: boolean } = {}) {
-    super("TCAR_UPSERT", {
-      // Rate limit da Tecinco é protegido pelo limitador global em
-      // tcar_api.ts (waitForTecincoRateLimit), não por esta concurrency.
-      concurrency: 3,
-      limiter: { max: 50, duration: 1000 },
+  constructor(
+    options: { workless?: boolean } = {},
+    queueName = "TCAR_API_FETCH",
+  ) {
+    super(queueName, {
+      concurrency: 2,
+      limiter: { max: 2, duration: 1000 },
       maxProcessingMs: 120_000,
       workless: options.workless,
     });
@@ -309,7 +310,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
    * esperando refaz o fetch e vê o estado atual, mesmo se a tentativa falhou
    * e o BullMQ for tentar de novo depois.
    */
-  private async processInvoiceTransfer(
+  protected async processInvoiceTransfer(
     data: TCarInvoiceTransferPayload,
     branchId?: number,
   ): Promise<void> {
@@ -1188,7 +1189,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     return undefined;
   }
 
-  private async processInvoiceXml(
+  protected async processInvoiceXml(
     data: TCarInvoiceXmlPayload,
     branchId?: number,
   ): Promise<void> {
@@ -1309,7 +1310,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
   }
 
-  private async ensureProductsFromInvoiceItems(
+  protected async ensureProductsFromInvoiceItems(
     itens: TCarNotaFiscalItem[],
     branchId: number,
   ): Promise<{

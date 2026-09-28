@@ -38,7 +38,7 @@ import {
   resolveDeleteTarget,
 } from "../../../handlers/temp-file/temp-file.constants";
 import { getTCarIntegration } from "../../../handlers/tecinco/api/tecinco_api";
-import { TCarUpsertQueue } from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { TCarInvoiceQueue } from "../../../handlers/tecinco/queues/tecinco-invoice.queue";
 import { extractAccessKeyFromXmlContent } from "../../../../shared/utils/xml/access-key";
 import nfeEmissionService from "../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "./payment-receipt-extraction.service";
@@ -1471,7 +1471,7 @@ export class PdvSalesRequestService extends BaseService<
       xmlBuffer?: Buffer;
       danfeBuffer?: Buffer;
       danfeMimeType?: string;
-      tcarUpsertQueue: TCarUpsertQueue;
+      tcarUpsertQueue: TCarInvoiceQueue;
       userId?: string;
     },
   ): Promise<PdvSalesRequest> {
@@ -1540,7 +1540,7 @@ export class PdvSalesRequestService extends BaseService<
         // Tecinco (lenta — login, rate limit global, itens da nota), vincula
         // na hora uma nota PROVISÓRIA (só o número + o próprio DANFE
         // enviado) e enfileira o processo lento em background — ver
-        // invoiceService.createStub e TCarUpsertQueue "invoice_transfer".
+        // invoiceService.createStub e TCarInvoiceQueue "invoice_transfer".
         // A filial Tecinco é a de quem EMITIU a nota de transferência, nunca
         // a loja que abriu a solicitação PDV — as duas podem ser diferentes.
         if (!found) {

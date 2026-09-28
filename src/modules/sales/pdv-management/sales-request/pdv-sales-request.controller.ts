@@ -6,7 +6,7 @@ import pdvSalesRequestService, {
   PdvSalesRequestService,
 } from "./pdv-sales-request.service";
 import { PdvShippingType } from "./pdv-sales-request.types";
-import { TCarUpsertQueue } from "../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { TCarInvoiceQueue } from "../../../handlers/tecinco/queues/tecinco-invoice.queue";
 import { pdvAccess, PdvAccessRequest } from "../pdv-access/pdv-access.middleware";
 import { PdvAccessContext, PdvAccessScreen } from "../pdv-access/pdv-access.types";
 
@@ -666,7 +666,7 @@ export class PdvSalesRequestController extends BaseController<
           xmlBuffer: xmlFile?.buffer,
           danfeBuffer: danfeFile?.buffer,
           danfeMimeType: danfeFile?.mimetype,
-          tcarUpsertQueue: req.app.locals.TCarUpsertQueue as TCarUpsertQueue,
+          tcarUpsertQueue: req.app.locals.TCarInvoiceQueue as TCarInvoiceQueue,
           userId: this.actorUserId(req),
         },
       );

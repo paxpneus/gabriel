@@ -21,6 +21,7 @@ import { UnitBusiness } from "../../modules/warehouse";
 import { TCarUpsertQueue } from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
 import {
   RunMigrationOptions,
+  ResolvedMigrationOptions,
   migrateProdutos,
   migrateClientes,
   migrateNotasFiscais,
@@ -48,17 +49,17 @@ const STEPS = [
   {
     key: "products",
     label: "📦  Produtos",
-    fn: (opts: Required<RunMigrationOptions>) => migrateProdutos(opts),
+    fn: (opts: ResolvedMigrationOptions) => migrateProdutos(opts),
   },
   {
     key: "invoices",
     label: "🧾  Notas Fiscais",
-    fn: (opts: Required<RunMigrationOptions>) => migrateNotasFiscais(opts),
+    fn: (opts: ResolvedMigrationOptions) => migrateNotasFiscais(opts),
   },
   {
     key: "customers",
     label: "👥  Clientes",
-    fn: (opts: Required<RunMigrationOptions>) => migrateClientes(opts),
+    fn: (opts: ResolvedMigrationOptions) => migrateClientes(opts),
   },
 ] as const;
 
@@ -221,7 +222,7 @@ async function main() {
 
   const upsertQueue = new TCarUpsertQueue({ workless: true });
 
-  const resolved: Required<RunMigrationOptions> = {
+  const resolved: ResolvedMigrationOptions = {
     branchIds,
     companyId: COMPANY_ID,
     alteradoDesde: ALTERADO_DESDE ?? "",

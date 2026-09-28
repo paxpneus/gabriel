@@ -532,6 +532,7 @@ export abstract class BaseQueueService<T, R = void> {
     jobId?: string,
     jobOptions?: {
       priority?: number;
+      name?: string;
       removeOnComplete?: boolean | { age: number; count?: number };
     },
   ) {
@@ -546,7 +547,7 @@ export abstract class BaseQueueService<T, R = void> {
       }
     }
 
-    return this.queue.add(this.queueName, data, {
+    return this.queue.add(jobOptions?.name ?? this.queueName, data, {
       jobId,
       // BullMQ nativo: menor número = maior prioridade, jobs sem `priority`
       // ficam atrás de qualquer job que tenha uma definida. Usado pra fazer
@@ -576,7 +577,12 @@ export abstract class BaseQueueService<T, R = void> {
     });
   }
 
-  async addDelayed(data: T, jobId: string, delayMs: number) {
+  async addDelayed(
+    data: T,
+    jobId: string,
+    delayMs: number,
+    jobOptions?: { priority?: number; name?: string },
+  ) {
     if (jobId) {
       const existingJob = await this.queue.getJob(jobId);
       if (existingJob) {
@@ -590,9 +596,10 @@ export abstract class BaseQueueService<T, R = void> {
       }
     }
 
-    return this.queue.add(this.queueName, data, {
+    return this.queue.add(jobOptions?.name ?? this.queueName, data, {
       jobId,
       delay: delayMs,
+      ...(jobOptions?.priority ? { priority: jobOptions.priority } : {}),
       removeOnComplete: true,
       removeOnFail: {
         age: 24 * 3600 * 7,

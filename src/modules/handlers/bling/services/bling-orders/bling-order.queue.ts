@@ -15,6 +15,7 @@ export const ORDER_WEBHOOK_INGESTION_DELAY_MS = 30_000;
 // filas (ver bling-webhook.orchestrator.ts) — pedido de atualização manual
 // via front-end nunca deve esperar atrás do backlog normal de webhook.
 export const FORCE_UPDATE_PRIORITY = 1;
+export const NORMAL_ORDER_PRIORITY = 2;
 
 export class BlingOrderQueue extends BaseQueueService<any> {
   private orderService: BlingOrderService;
@@ -39,6 +40,23 @@ export class BlingOrderQueue extends BaseQueueService<any> {
     });
     this.orderService = orderService;
     this.next = next;
+  }
+
+  override async add(
+    data: any,
+    jobId?: string,
+    jobOptions?: { priority?: number; removeOnComplete?: boolean | { age: number; count?: number } },
+  ) {
+    return super.add(data, jobId, {
+      ...jobOptions,
+      priority: jobOptions?.priority ?? NORMAL_ORDER_PRIORITY,
+    });
+  }
+
+  override async addDelayed(data: any, jobId: string, delayMs: number) {
+    return super.addDelayed(data, jobId, delayMs, {
+      priority: NORMAL_ORDER_PRIORITY,
+    });
   }
 
   async process(job: Job<any, any, string>): Promise<void> {

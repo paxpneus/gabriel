@@ -1,6 +1,7 @@
 import { setupAssociations } from "../../config/sequelize-associations";
 import sequelize from "../../config/sequelize";
 import { TCarUpsertQueue } from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { TCarInvoiceQueue } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import { runMigration } from "./tecinco-migration.runner";
 import { UnitBusiness } from "../../modules/warehouse";
 import { Op } from "sequelize";
@@ -34,6 +35,7 @@ async function main() {
   console.log("═".repeat(55));
 
   const upsertQueue = new TCarUpsertQueue({ workless: true });
+  const invoiceQueue = new TCarInvoiceQueue({ workless: true });
   const start = Date.now();
 
   try {
@@ -42,6 +44,7 @@ async function main() {
       companyId: COMPANY_ID,
       alteradoDesde: ALTERADO_DESDE,
       upsertQueue,
+      invoiceQueue,
       grupos: GRUPOS,
     });
   } catch (err: any) {
