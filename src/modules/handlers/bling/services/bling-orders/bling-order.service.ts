@@ -30,6 +30,10 @@ import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 import paymentMethodService from "../../../../sales/orders/payment_method/payment_method.service";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { notifyPdvStoreSync } from "../../../../sales/pdv-management/sales-request/helpers/notify-pdv-store-sync";
+import {
+  SEM_LOJA_ID_SYSTEM,
+  findOrCreateSemLojaUnitBusiness,
+} from "./helpers/sem-loja-unit-business";
 
 interface BlingPaymentMethodApi {
   id: number;
@@ -804,18 +808,36 @@ export class BlingOrderService {
       const isCompleted =
         COMPLETED_ORDER_INTERNAL_STATUSES.includes(internalStatus);
 
-      // Resolve unit_business_id se ainda estiver nulo — precisa vir antes
-      // do write defensivo abaixo (não depois, como antes) pra já entrar
-      // nele e disparar a criação da PdvSalesRequest o quanto antes, mesmo
-      // que as etapas de enriquecimento mais abaixo (contato, endereço,
-      // item, financeiro) falhem.
+      // Resolve unit_business_id se ainda estiver nulo (ou em "Sem Loja",
+      // ver isUnresolved abaixo) — precisa vir antes do write defensivo
+      // abaixo (não depois, como antes) pra já entrar nele e disparar a
+      // criação da PdvSalesRequest o quanto antes, mesmo que as etapas de
+      // enriquecimento mais abaixo (contato, endereço, item, financeiro)
+      // falhem.
       let unitBusinessId: string | null =
         existingOrder.unit_business_id ?? null;
-      if (!unitBusinessId && orderData.loja?.id) {
+
+      // Além de nulo, também tenta re-resolver quando a loja atual é o
+      // fallback "Sem Loja" — pedido pode ter caído nele por falta de
+      // mapeamento na Bling (id_system ainda não cadastrado) e a loja
+      // certa ser configurada depois; sem isso, ficaria presa em "Sem
+      // Loja" pra sempre, já que nenhum outro código corrige esse campo.
+      const isUnresolved =
+        !unitBusinessId ||
+        unitBusinessId ===
+          (
+            await UnitBusiness.findOne({
+              where: { id_system: SEM_LOJA_ID_SYSTEM },
+              attributes: ["id"],
+            })
+          )?.id;
+
+      if (isUnresolved && orderData.loja?.id) {
         const unitBusiness = await UnitBusiness.findOne({
           where: { id_system: String(orderData.loja.id) },
+          attributes: ["id"],
         });
-        unitBusinessId = unitBusiness?.id ?? null;
+        unitBusinessId = unitBusiness?.id ?? unitBusinessId;
       }
 
       // Grava actual_situation/internal_status/unit_business_id JÁ, antes de
@@ -1120,19 +1142,7 @@ export class BlingOrderService {
       }
 
       if (!unitBusiness) {
-        unitBusiness = await UnitBusiness.findOne({
-          where: { id_system: "SEM_LOJA" },
-        });
-
-        if (!unitBusiness) {
-          unitBusiness = await UnitBusiness.create({
-            id_system: "SEM_LOJA",
-            name: "Sem Loja",
-            cnpj: "00000000000000",
-            head_office: false,
-            number: "0",
-          });
-        }
+        unitBusiness = await findOrCreateSemLojaUnitBusiness();
       }
 
       const customer = await this.blingCustomerService.getOrCreateCustomer(

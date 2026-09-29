@@ -1384,6 +1384,14 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         `${logPrefix} — erro ao buscar XML (status=${err?.response?.status}):`,
         JSON.stringify(err?.response?.data) ?? err?.message,
       );
+      // 500 na Tecinco pra essa nota é persistente (visto em produção), não
+      // transitório — 5 tentativas com backoff só atrasam a próxima rodada
+      // de sync sem nunca resolver. UnrecoverableError pula direto pra
+      // "failed", liberando o slot pra próxima nota; o próprio dedup do
+      // sync tenta de novo na rodada seguinte.
+      if (err?.response?.status === 500) {
+        throw new UnrecoverableError(err.message);
+      }
       throw err;
     }
 
