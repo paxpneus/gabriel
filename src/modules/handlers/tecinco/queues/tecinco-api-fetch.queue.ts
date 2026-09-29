@@ -48,6 +48,7 @@ import {
 } from "./helpers/product.helpers";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
 import brandsService from "../../../inventory/brands/brands.service";
 import Group from "../../../inventory/groups/group/group.model";
@@ -59,10 +60,6 @@ import productService from "../../../inventory/products/services/product.service
 import integrationLoggerService from "../../../integrations/integration-errors/integration-logger.service";
 import { IntegrationErrorEntity } from "../../../integrations/integration-errors/integration-error.types";
 import { tecincoAllowedGroupNames } from "../../../../shared/constants/tecinco-groups";
-import {
-  getCachedTecincoDuplicateValueSets,
-  findTecincoCollidingFields,
-} from "../../../../scripts/tecinco/tecinco-duplicate-detection";
 import pdvSalesRequestService from "../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 
 function normalizeTCarDescription(value?: string | null): string {
@@ -147,6 +144,8 @@ export interface TCarUpsertJobPayload {
   data: unknown;
   /** Criação manual de produto a partir de um UnmappedInvoiceProduct — ver processProduct */
   create?: boolean;
+  /** Id do UnmappedInvoiceProduct de origem que deve levar o mapeamento completo pra invoice (com cascata) assim que o produto for resolvido — ver UnmappedInvoiceProductService.createProductAndMapToInvoice */
+  cascadeMapUnmappedId?: string;
   /** Calculado no migrateProdutos: código de fábrica duplicado no catálogo Tecinco completo */
   skuDuplicated?: boolean;
   /** Calculado no migrateProdutos: EAN duplicado no catálogo Tecinco completo */
@@ -384,6 +383,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           create: !!job.data.create,
           skuDuplicated: !!job.data.skuDuplicated,
           eanDuplicated: !!job.data.eanDuplicated,
+          cascadeMapUnmappedId: job.data.cascadeMapUnmappedId,
         });
         break;
 
@@ -409,7 +409,12 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     action: TCarAction,
     data: TCarProdutoPayload,
     branchId?: number,
-    opts: { create?: boolean; skuDuplicated?: boolean; eanDuplicated?: boolean } = {},
+    opts: {
+      create?: boolean;
+      skuDuplicated?: boolean;
+      eanDuplicated?: boolean;
+      cascadeMapUnmappedId?: string;
+    } = {},
   ): Promise<void> {
     const systemId = String(data.epctb_codigo);
     const logPrefix = `[TCAR_UPSERT][processProduct] id_system=${systemId}`;
@@ -675,6 +680,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           operationUnitBusiness,
           filiaisToProcess,
           logPrefix,
+          cascadeMapUnmappedId: opts.cascadeMapUnmappedId,
         });
       } else {
         // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
@@ -1077,6 +1083,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     await unmappedInvoiceProductService.resolveFromCreatedProduct({
       externalId: systemId,
       integrationsId: integrations.id,
+      productId: matched.id,
     });
 
     return matched as Product;
@@ -1107,6 +1114,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       custoContabil: number;
     }>;
     logPrefix: string;
+    cascadeMapUnmappedId?: string;
   }): Promise<Product> {
     const {
       data,
@@ -1118,6 +1126,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       operationUnitBusiness,
       filiaisToProcess,
       logPrefix,
+      cascadeMapUnmappedId,
     } = params;
 
     const resolvedBranchId = Number(operationUnitBusiness.number);
@@ -1156,12 +1165,55 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       `${logPrefix} — produto criado manualmente a partir de unmapped (product_id=${newProduct.id})`,
     );
 
-    await unmappedInvoiceProductService.resolveFromCreatedProduct({
+    await this.resolveUnmappedAndCascade({
       externalId: systemId,
       integrationsId: integrations.id,
+      productId: newProduct.id,
+      cascadeMapUnmappedId,
     });
 
     return newProduct;
+  }
+
+  // Wrapper de resolveFromCreatedProduct: fecha as demais linhas UNMAPPED
+  // com esse systemId pelo caminho simples de sempre, e — só quando
+  // cascadeMapUnmappedId vier preenchido (ver
+  // UnmappedInvoiceProductService.createProductAndMapToInvoice) — exclui
+  // essa linha do fechamento simples e roda o mapeamento completo pra
+  // invoice nela (InvoiceItem + InvoiceFiscalItem + batch + SupplierMapping
+  // + cascata pros irmãos), reaproveitando o fluxo do mapeamento manual
+  // (POST /add/item) em vez de duplicar a lógica aqui.
+  private async resolveUnmappedAndCascade(params: {
+    externalId: string;
+    integrationsId: string;
+    productId: string;
+    cascadeMapUnmappedId?: string;
+  }): Promise<void> {
+    await unmappedInvoiceProductService.resolveFromCreatedProduct({
+      externalId: params.externalId,
+      integrationsId: params.integrationsId,
+      productId: params.productId,
+      excludeIds: params.cascadeMapUnmappedId
+        ? [params.cascadeMapUnmappedId]
+        : undefined,
+    });
+
+    if (!params.cascadeMapUnmappedId) return;
+
+    const unmapped = await unmappedInvoiceProductService.findById(
+      params.cascadeMapUnmappedId,
+    );
+    if (!unmapped?.invoice_id) return;
+
+    await invoiceItemsService.createInvoiceItemForUnmappedProducts(
+      {
+        product_id: params.productId,
+        invoice_id: unmapped.invoice_id,
+        quantity_expected: unmapped.quantity,
+      },
+      unmapped.ean ?? "",
+      unmapped.id,
+    );
   }
 
   // ─── Cliente ───────────────────────────────────────────────────────────────
@@ -1327,6 +1379,11 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         console.warn(`${logPrefix} — XML não disponível (404), ignorando`);
         return;
       }
+      // axios err.message só traz o status; logar o corpo pra saber a causa real da Tecinco.
+      console.error(
+        `${logPrefix} — erro ao buscar XML (status=${err?.response?.status}):`,
+        JSON.stringify(err?.response?.data) ?? err?.message,
+      );
       throw err;
     }
 
@@ -1396,16 +1453,6 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     const produtoService = new TCarProdutoService();
     const integrations = await getTCarIntegration("Tecinco");
 
-    // Mesmo índice de duplicidade do preflight do catalog sync
-    // (catalog-preflight.md), mas cacheado por branchId — diferente do
-    // preflight (que roda por sync e pode pagar o catálogo inteiro fresco),
-    // esta função roda por nota fiscal, e não dá pra arcar com uma busca de
-    // catálogo completo a cada nota.
-    const duplicateValueSets = await getCachedTecincoDuplicateValueSets(
-      [branchId],
-      `[TCAR_UPSERT][ensureProducts] branchId=${branchId}`,
-    );
-
     // Busca o detalhe de cada item na Tecinco em paralelo em vez de uma por
     // vez; o resto (resolução/upserts) continua sequencial abaixo.
     const productLookups = new Map<string, any>();
@@ -1424,6 +1471,29 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       }),
     );
 
+    // Produto de grupo não-pneu presente na nota invalida a nota inteira —
+    // mesmo critério de "sem dado confiável" que hasItemWithoutCode já aplica
+    // acima, só que descoberto depois do fetch (precisa do grupo resolvido).
+    // Só filtra quando o grupo foi de fato resolvido (tcarPayload
+    // disponível); falha na busca do produto não bloqueia a nota.
+    const hasNonTireItem = itens.some((item) => {
+      const payload = productLookups.get(String(item.epctb_codigo).trim());
+      if (!payload) return false;
+      const resolvedGroupName = normalizeTCarDescription(payload.grupo_descricao);
+      return (
+        resolvedGroupName.length > 0 &&
+        !tecincoAllowedGroupNames.some(
+          (name) => name.toLowerCase() === resolvedGroupName.toLowerCase(),
+        )
+      );
+    });
+    if (hasNonTireItem) {
+      console.warn(
+        `[TCAR_UPSERT][ensureProducts] item fora dos grupos de pneus permitidos na nota (branchId=${branchId}) — nota ignorada por completo`,
+      );
+      return { operationalItems: [], unmappedItems: [] };
+    }
+
     for (const item of itens) {
       // hasItemWithoutCode já garantiu, acima, que todo item aqui tem
       // epctb_codigo.
@@ -1437,70 +1507,19 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         : undefined;
       const ean: string | undefined = normalizeEan(tcarPayload?.epctb_ean);
 
-      // ─── Fora do grupo pneu → ignora o item da nota ────────────────────────────
-      // Mesmo critério do catalog sync (processProduct): só nos interessam
-      // produtos de pneu. Item de outro grupo (óleo, válvula, chumbo etc.) não
-      // vira unmapped nem operational — é só ignorado. Só filtra quando o
-      // grupo foi de fato resolvido (tcarPayload disponível); falha na busca
-      // do produto não deve bloquear a resolução por mapping como antes.
-      const resolvedGroupName = tcarPayload
-        ? normalizeTCarDescription(tcarPayload.grupo_descricao)
-        : "";
-      const isKnownNonTireGroup =
-        resolvedGroupName.length > 0 &&
-        !tecincoAllowedGroupNames.some(
-          (name) => name.toLowerCase() === resolvedGroupName.toLowerCase(),
-        );
-
-      if (isKnownNonTireGroup) {
-        console.log(
-          `${logPrefix} — grupo "${resolvedGroupName}" fora dos grupos de pneus permitidos — item da nota ignorado`,
-        );
-        continue;
-      }
-
-      // ─── Resolve produto: mapping → SupplierMapping (integração) ──────────────
-      // resolveProductWithMapping é mapping-only (só integration_mapping). Se
-      // não achar, tenta o mesmo fallback usado no catalog sync (processProduct):
-      // resolveProductBySupplierMapping — codigoFabrica contra
-      // SupplierMapping.supplier_product_code, escopado à integração Tecinco
-      // (resolução por SKU global está fora de cogitação pra Tecinco, ver
-      // comentário em autoMapExistingProductBySupplierMapping). Não cria/
-      // atualiza integration_mapping aqui — esse upsert fica exclusivo do
-      // catalog sync (ver autoMapExistingProductBySupplierMapping); aqui só
-      // serve pra resolver o produto pra este item da nota.
-      let product = await resolveProductWithMapping({
+      // ─── Resolve produto SÓ por integration mapping ────────────────────────────
+      // Fonte de verdade única: sem fallback por SupplierMapping/código de
+      // fábrica aqui dentro (esse fallback fica exclusivo do catalog sync,
+      // ver autoMapExistingProductBySupplierMapping). Não cria/atualiza
+      // integration_mapping aqui — só resolve o produto pra este item da nota.
+      const product = await resolveProductWithMapping({
         unitBusinessId: unitBusiness.id,
         systemId,
         ean,
         logPrefix,
       });
 
-      // Código de fábrica/EAN duplicado no catálogo Tecinco (mais de um
-      // produto usa o mesmo valor, ver catalog-preflight.md) — o fallback
-      // por SupplierMapping ficaria ambíguo, então nem tenta: mesma decisão
-      // que processProduct já toma no catalog sync (isDuplicatedInCatalog).
-      const collidingFields = tcarPayload
-        ? findTecincoCollidingFields(
-            {
-              coded: tcarPayload.epctb_coded,
-              sku: tcarPayload.epctb_codigofabrica,
-              ean: tcarPayload.epctb_ean,
-            },
-            duplicateValueSets,
-          )
-        : [];
-      const isDuplicatedInCatalog = collidingFields.length > 0;
-
-      if (!product && !isDuplicatedInCatalog) {
-        product = await resolveProductBySupplierMapping(
-          codigoFabrica,
-          integrations.id,
-          logPrefix,
-        );
-      }
-
-      // ─── Produto não encontrado → ignora item ─────────────────────────────────
+      // ─── Produto sem integration_mapping → registra unmapped de catálogo ──────
       if (!product) {
         const skuToStore =
           codigoFabrica ??
@@ -1508,9 +1527,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             ? String(tcarPayload.epctb_coded).trim()
             : undefined) ??
           null;
-        const reason = isDuplicatedInCatalog
-          ? `Código de fábrica/EAN duplicado no catálogo da Tecinco (${collidingFields.join(", ")}) — mais de um produto usa o mesmo valor, não dá pra resolver por SupplierMapping com segurança. Precisa de revisão manual.`
-          : "Produto Tecinco presente na nota mas sem produto correspondente no banco";
+        const reason = "Produto Tecinco presente na nota mas sem produto correspondente no banco";
         console.warn(`${logPrefix} — ${reason}`);
         unmappedItems.push({
           sku: skuToStore,
@@ -1518,6 +1535,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
           qty: Number(item.epeit_qtdade ?? 0),
           xProd: item.produto_nome ?? null,
           reason,
+          type: "ERROR_CATALOG",
+          external_id: systemId,
         });
         continue;
       }
@@ -1585,45 +1604,10 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         }
       }
 
-      // ─── SupplierMappings ─────────────────────────────────────────────────────
-      // Erro de conflito aqui só afeta este item da nota — não deve abortar
-      // a nota inteira (mesmo padrão do eanConflict logo acima), então só
-      // alerta e segue pros próximos itens em vez de propagar. Campo
-      // sinalizado como duplicado no catálogo é omitido aqui mesmo quando o
-      // produto já foi resolvido por outra via (integration_mapping) —
-      // mesmo padrão do processProduct's skuOmitted/eanOmitted: nunca
-      // vincula um código ambíguo a um único produto, mesmo "de passagem".
-      const skuDuplicated = collidingFields.some((f) => f.startsWith("sku="));
-      const eanDuplicated = collidingFields.some((f) => f.startsWith("ean="));
-      try {
-        await ensureSupplierMappings({
-          productId: product.id,
-          supplierCnpj: unitBusiness.cnpj ?? "00000000000000",
-          ean: eanDuplicated ? undefined : ean,
-          codigoFabrica: skuDuplicated ? undefined : codigoFabrica,
-          unitBusinessId: unitBusiness.id,
-          logPrefix,
-          systemId,
-        });
-      } catch (error: any) {
-        if (error instanceof SupplierMappingConflictError) {
-          await integrationLoggerService.log({
-            entity: IntegrationErrorEntity.PRODUCT,
-            type: "SUPPLIER_MAPPING_CONFLICT",
-            integrationsId: integrations.id,
-            internalId: product.id,
-            externalId: systemId,
-            reference: ean ?? codigoFabrica ?? undefined,
-            message: `${error.message} | systemId=${systemId}`,
-            createIntegrationError: true,
-          });
-          console.warn(
-            `${logPrefix} — SupplierMapping não registrado por conflito de código`,
-          );
-        } else {
-          throw error;
-        }
-      }
+      // SupplierMapping não é mais backfillado a partir daqui: resolução é só
+      // por integration_mapping, então registrar um código do item nesta
+      // tabela pra um produto já resolvido não serve pra este fluxo — outros
+      // fluxos (Bling invoice, catalog sync) mantêm seus próprios backfills.
 
       operationalItems.push({
         product_id: product.id,

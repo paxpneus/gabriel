@@ -146,6 +146,8 @@ export interface ApiFetchRequest {
   partialData?: Partial<MappedInvoice>;
   /** Criação manual de produto a partir de um UnmappedInvoiceProduct — ver fetchAndUpsertProduct */
   create?: boolean;
+  /** Id do UnmappedInvoiceProduct de origem que deve levar o mapeamento completo pra invoice (com cascata) assim que o produto for resolvido — ver UnmappedInvoiceProductService.createProductAndMapToInvoice */
+  cascadeMapUnmappedId?: string;
 }
 
 // ─── Mapped entity shapes (espelham os models) ────────────────────────────────

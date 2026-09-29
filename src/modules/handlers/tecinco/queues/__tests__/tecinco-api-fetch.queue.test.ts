@@ -129,7 +129,15 @@ jest.mock(
   "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service",
   () => ({
     __esModule: true,
-    default: { resolveFromCreatedProduct: jest.fn() },
+    default: { resolveFromCreatedProduct: jest.fn(), findById: jest.fn() },
+  }),
+);
+
+jest.mock(
+  "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service",
+  () => ({
+    __esModule: true,
+    default: { createInvoiceItemForUnmappedProducts: jest.fn() },
   }),
 );
 
@@ -170,6 +178,7 @@ import Subgroup from "../../../../inventory/groups/subgroup/subgroup.model";
 import Stock from "../../../../inventory/stock/stock/stock.model";
 import UnmappedInvoiceProduct from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import TCarProdutoService from "../../service/produtos/produtos.service";
 import { TCarUpsertQueue } from "../tecinco-api-fetch.queue";
 import {
@@ -386,6 +395,7 @@ describe("TCarUpsertQueue.processProduct", () => {
       expect(unmappedInvoiceProductService.resolveFromCreatedProduct).toHaveBeenCalledWith({
         externalId: String(produto.epctb_codigo),
         integrationsId: INTEGRATION_ID,
+        productId: "matched-by-supplier-id",
       });
       expect(productService.create).not.toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
@@ -548,6 +558,7 @@ describe("TCarUpsertQueue.processProduct", () => {
       ).toHaveBeenCalledWith({
         externalId: String(fullDetail.epctb_codigo),
         integrationsId: INTEGRATION_ID,
+        productId: "created-product-id",
       });
 
       // Cai pro resto do fluxo (fall-through) — produto próprio recém-criado
@@ -562,6 +573,61 @@ describe("TCarUpsertQueue.processProduct", () => {
       );
       expect(ensureSupplierMappings).toHaveBeenCalledWith(
         expect.objectContaining({ productId: "created-product-id" }),
+      );
+    });
+
+    it("create:true + cascadeMapUnmappedId (ver createProductAndMapToInvoice): exclui essa linha do fechamento simples e mapeia pra invoice com o fluxo completo (cascata)", async () => {
+      const minimalPayload = {
+        fll_codigo: 1,
+        epctb_codigo: "700001",
+        epctb_nome: "",
+      } as TCarProdutoPayload;
+      const fullDetail = makeTecincoProduto();
+      (TCarProdutoService as unknown as jest.Mock).mockImplementation(() => ({
+        obterProduto: jest.fn().mockResolvedValue({ data: fullDetail }),
+      }));
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (productService.create as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+        id: "unmapped-origin-id",
+        invoice_id: "invoice-1",
+        quantity: 3,
+        ean: "7891234567890",
+      });
+
+      await runProductJob("created", minimalPayload, {
+        create: true,
+        cascadeMapUnmappedId: "unmapped-origin-id",
+      });
+
+      expect(
+        unmappedInvoiceProductService.resolveFromCreatedProduct,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          externalId: String(fullDetail.epctb_codigo),
+          integrationsId: INTEGRATION_ID,
+          productId: "created-product-id",
+          excludeIds: ["unmapped-origin-id"],
+        }),
+      );
+      expect(unmappedInvoiceProductService.findById).toHaveBeenCalledWith(
+        "unmapped-origin-id",
+      );
+      expect(
+        invoiceItemsService.createInvoiceItemForUnmappedProducts,
+      ).toHaveBeenCalledWith(
+        {
+          product_id: "created-product-id",
+          invoice_id: "invoice-1",
+          quantity_expected: 3,
+        },
+        "7891234567890",
+        "unmapped-origin-id",
       );
     });
 
@@ -950,8 +1016,6 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
       cnpj: "11222333000144",
     });
     (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-    (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(null);
-    (ensureSupplierMappings as jest.Mock).mockResolvedValue(undefined);
     (ProductConfig.findOne as jest.Mock).mockResolvedValue({
       id: "existing-config-id",
     });
@@ -960,52 +1024,7 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
     }));
   });
 
-  it("mapping falha, resolveProductBySupplierMapping (escopado à integração) resolve: item vira operational", async () => {
-    const matchedProduct = {
-      id: "matched-by-supplier-id",
-      name: "Produto já cadastrado",
-    };
-    (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(matchedProduct);
-
-    const result = await (queue as any).ensureProductsFromInvoiceItems(
-      [makeInvoiceItem()],
-      1,
-    );
-
-    expect(resolveProductBySupplierMapping).toHaveBeenCalledWith(
-      "FAB-700001",
-      INTEGRATION_ID,
-      expect.any(String),
-    );
-    expect(result.unmappedItems).toHaveLength(0);
-    expect(result.operationalItems).toEqual([
-      expect.objectContaining({ product_id: "matched-by-supplier-id" }),
-    ]);
-    expect(
-      integrationMappingService.createOrUpdateIntegrationMapping,
-    ).not.toHaveBeenCalled();
-  });
-
-  it("mapping e SupplierMapping falham: item vira unmapped, como hoje (regressão)", async () => {
-    const result = await (queue as any).ensureProductsFromInvoiceItems(
-      [makeInvoiceItem()],
-      1,
-    );
-
-    expect(result.operationalItems).toHaveLength(0);
-    expect(result.unmappedItems).toEqual([
-      expect.objectContaining({
-        reason:
-          "Produto Tecinco presente na nota mas sem produto correspondente no banco",
-      }),
-    ]);
-  });
-
-  it("mapping falha e codigoFabrica está duplicado no catálogo Tecinco: não tenta o fallback por SupplierMapping, item vira unmapped em vez de resolver pro produto errado", async () => {
-    (findTecincoCollidingFields as jest.Mock).mockReturnValue(["sku=FAB-700001"]);
-    const wrongProduct = { id: "wrong-product-id", name: "Produto de outro pneu" };
-    (resolveProductBySupplierMapping as jest.Mock).mockResolvedValue(wrongProduct);
-
+  it("mapping falha: item vira unmapped ERROR_CATALOG com external_id preenchido, sem tentar SupplierMapping como fallback", async () => {
     const result = await (queue as any).ensureProductsFromInvoiceItems(
       [makeInvoiceItem()],
       1,
@@ -1015,9 +1034,44 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
     expect(result.operationalItems).toHaveLength(0);
     expect(result.unmappedItems).toEqual([
       expect.objectContaining({
-        reason: expect.stringContaining("Código de fábrica/EAN duplicado no catálogo da Tecinco"),
+        reason:
+          "Produto Tecinco presente na nota mas sem produto correspondente no banco",
+        type: "ERROR_CATALOG",
+        external_id: "700001",
       }),
     ]);
+  });
+
+  it("mapping resolve: item vira operational, sem chamar o fallback por SupplierMapping", async () => {
+    const matchedProduct = { id: "matched-by-mapping-id", name: "Produto já cadastrado" };
+    (resolveProductWithMapping as jest.Mock).mockResolvedValue(matchedProduct);
+
+    const result = await (queue as any).ensureProductsFromInvoiceItems(
+      [makeInvoiceItem()],
+      1,
+    );
+
+    expect(resolveProductBySupplierMapping).not.toHaveBeenCalled();
+    expect(result.unmappedItems).toHaveLength(0);
+    expect(result.operationalItems).toEqual([
+      expect.objectContaining({ product_id: "matched-by-mapping-id" }),
+    ]);
+  });
+
+  it("item de grupo fora de pneu presente na nota: nota inteira ignorada (nem unmapped nem operational)", async () => {
+    (TCarProdutoService as unknown as jest.Mock).mockImplementation(() => ({
+      obterProduto: jest
+        .fn()
+        .mockResolvedValue({ data: makeTecincoProduto({ grupo_descricao: "OLEO" }) }),
+    }));
+
+    const result = await (queue as any).ensureProductsFromInvoiceItems(
+      [makeInvoiceItem()],
+      1,
+    );
+
+    expect(result.operationalItems).toHaveLength(0);
+    expect(result.unmappedItems).toHaveLength(0);
   });
 });
 

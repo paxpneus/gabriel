@@ -11,10 +11,10 @@ In Tecinco's `processProduct` (`tecinco-api-fetch.queue.ts`), 2-level fallback (
 1. `integration_mapping` (`resolveProductWithMapping`).
 2. `resolveProductBySupplierMapping(codigoFabrica, integrationsId, logPrefix)` — `epctb_codigofabrica` via `SupplierMapping.supplier_product_code`, scoped to the Tecinco integration.
 
-Either match auto-maps to the existing product (creates the `integration_mappings` row, calls `unmappedInvoiceProductService.resolveFromCreatedProduct`) instead of duplicating the `Product`; runs before the `opts.create`/unmapped branch, so manual create-product tries this first too.
+Either match auto-maps to the existing product (creates the `integration_mappings` row, calls `unmappedInvoiceProductService.resolveFromCreatedProduct({ externalId, integrationsId, productId })`) instead of duplicating the `Product`; runs before the `opts.create`/unmapped branch, so manual create-product tries this first too. `resolveFromCreatedProduct` now needs `productId` (not just `externalId`/`integrationsId`) because it also closes `invoice_id`-linked unmapped rows for that same `external_id` (see `create-flow.md` for what it does with each).
 
 Carve-outs:
 - KIT (Bling only, `formato === "E"`) never calls this — its `ProductConfig.sku` is synthesized, never expected to collide.
-- Tecinco's `ensureProductsFromInvoiceItems` gets the same fallback as `processProduct` (mapping → `resolveProductBySupplierMapping`, no SKU step), minus the mapping upsert (stays catalog-sync-only).
-- `ensureSupplierMappings` (`product.helpers.ts`) creates a `SupplierMapping` for whichever of `ean`/`codigoFabrica`/`systemId` are present and not yet registered — all three, not EAN-only.
+- Tecinco's `ensureProductsFromInvoiceItems` (invoice resolution) **no longer has this fallback at all** — it resolves strictly via `integration_mapping`; no match means an immediate `ERROR_CATALOG` unmapped row (`type`/`external_id` set, see `catalog-preflight.md`'s history of why the fallback was there and why it got removed instead of just gated). The `resolveProductBySupplierMapping`/duplicate-catalog fallback stays exclusive to `processProduct` (catalog sync).
+- `ensureSupplierMappings` (`product.helpers.ts`) creates a `SupplierMapping` for whichever of `ean`/`codigoFabrica`/`systemId` are present and not yet registered — all three, not EAN-only. `ensureProductsFromInvoiceItems` no longer calls it either (no fallback to backfill for, in that function): SupplierMapping backfill from Tecinco data stays exclusive to `processProduct`'s own per-filial loop.
 - `resolveProductBySku` still exists in `product.helpers.ts` and is still used by Bling — it's just no longer called anywhere in the Tecinco queue.

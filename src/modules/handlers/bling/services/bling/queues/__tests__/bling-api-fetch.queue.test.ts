@@ -140,7 +140,15 @@ jest.mock(
   "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service",
   () => ({
     __esModule: true,
-    default: { resolveFromCreatedProduct: jest.fn() },
+    default: { resolveFromCreatedProduct: jest.fn(), findById: jest.fn() },
+  }),
+);
+
+jest.mock(
+  "../../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service",
+  () => ({
+    __esModule: true,
+    default: { createInvoiceItemForUnmappedProducts: jest.fn() },
   }),
 );
 
@@ -172,6 +180,7 @@ import Subgroup from "../../../../../../inventory/groups/subgroup/subgroup.model
 import InventoryBatch from "../../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import UnmappedInvoiceProduct from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import invoiceItemsService from "../../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { BlingApiFetchQueue } from "../bling-api-fetch.queue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -574,6 +583,7 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       expect(unmappedInvoiceProductService.resolveFromCreatedProduct).toHaveBeenCalledWith({
         externalId: String(blingProduct.id),
         integrationsId: INTEGRATION_ID,
+        productId: "matched-by-sku-id",
       });
       expect(productService.create).not.toHaveBeenCalled();
       // A criação de unmapped do ramo Magento (mais abaixo no fluxo, não
@@ -812,6 +822,7 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       ).toHaveBeenCalledWith({
         externalId: String(blingProduct.id),
         integrationsId: INTEGRATION_ID,
+        productId: "created-product-id",
       });
 
       // Cai pro resto do fluxo normal (fall-through) — não retorna cedo.
@@ -877,6 +888,51 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
         unmappedInvoiceProductService.resolveFromCreatedProduct,
       ).not.toHaveBeenCalled();
       expect(ProductConfig.upsert).not.toHaveBeenCalled();
+    });
+
+    it("create:true + cascadeMapUnmappedId (ver createProductAndMapToInvoice): exclui essa linha do fechamento simples e mapeia pra invoice com o fluxo completo (cascata)", async () => {
+      const blingProduct = makeBlingProduct();
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
+      (productService.create as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "created-product-id" }),
+      );
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+        id: "unmapped-origin-id",
+        invoice_id: "invoice-1",
+        quantity: 3,
+        ean: "7890000000001",
+      });
+
+      await runProductJob(blingProduct, {
+        create: true,
+        cascadeMapUnmappedId: "unmapped-origin-id",
+      });
+
+      expect(
+        unmappedInvoiceProductService.resolveFromCreatedProduct,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          externalId: String(blingProduct.id),
+          integrationsId: INTEGRATION_ID,
+          productId: "created-product-id",
+          excludeIds: ["unmapped-origin-id"],
+        }),
+      );
+      expect(unmappedInvoiceProductService.findById).toHaveBeenCalledWith(
+        "unmapped-origin-id",
+      );
+      expect(
+        invoiceItemsService.createInvoiceItemForUnmappedProducts,
+      ).toHaveBeenCalledWith(
+        {
+          product_id: "created-product-id",
+          invoice_id: "invoice-1",
+          quantity_expected: 3,
+        },
+        "7890000000001",
+        "unmapped-origin-id",
+      );
     });
 
     it("opts.create ausente (comportamento padrão, ex.: sync normal): mesmo sem mapping, NÃO cria produto — continua só registrando unmapped", async () => {

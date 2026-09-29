@@ -38,6 +38,7 @@ import {
 } from "../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { resolveTecincoBranchId } from "../../../shared/utils/tecinco/resolve-branch-id";
 import { TCarProdutoPayload } from "../../handlers/tecinco/service/tecinco/tecinco.types";
+import invoiceService from "../../warehouse/fiscal/invoices/invoice/invoice.service";
 
 // Quanto tempo o job de criação de produto fica visível no Redis depois de
 // concluir (ver createProduct/getCreateProductJobStatus) — a fila por
@@ -245,30 +246,56 @@ export class UnmappedInvoiceProductService extends BaseService<
     return this.repository.findUnmappedByInvoiceIds(invoiceIds, transaction);
   }
 
-  // Apaga a linha unmapped de catálogo que originou a criação manual de um
-  // Product (ver fetchAndUpsertProduct/processProduct com create:true).
-  // NÃO cria invoice item nem toca em nenhuma nota — criar o produto é um
-  // passo isolado. Pra vincular o produto recém-criado a uma nota, o
-  // usuário usa o fluxo de mapeamento manual (POST /add/item, ver
-  // InvoiceItemsService.createInvoiceItemForUnmappedProducts), que já
-  // cascateia sozinho pra outras notas com o mesmo código+CNPJ emissor —
-  // funciona igual esteja o produto atrás do product_id recém-criado ou
-  // já existente antes.
+  // Fecha toda linha unmapped pendente pra esse external_id (mesmo
+  // systemId/produto do ERP, mesma integração) quando o produto acaba de
+  // ser resolvido/criado — seja a linha de catálogo (invoice_id: null) ou
+  // uma ou mais linhas de nota (invoice_id preenchido, ver
+  // ensureProductsFromInvoiceItems, que agora grava external_id nelas
+  // também por resolver só via integration_mapping).
+  //
+  // Linha de catálogo: só apaga, nunca teve invoice pra vincular.
+  // Linha de nota: reusa addMissingInvoiceItems (mesmo método do
+  // reprocessamento de invoice) — se a invoice ainda não tem InvoiceItem
+  // pra esse produto, cria; se já tem (ex.: mapeamento manual via
+  // POST /add/item já rodou nesse meio tempo), addMissingInvoiceItems é
+  // idempotente e não duplica. De qualquer forma a linha some — o item já
+  // está resolvido, mapeado ou não.
   async resolveFromCreatedProduct(params: {
     externalId: string;
     integrationsId: string;
+    productId: string;
+    // Linhas a pular aqui — quem chamou já vai tratá-las por fora com o
+    // fluxo completo (ver createProductAndMapToInvoice/
+    // InvoiceItemsService.createInvoiceItemForUnmappedProducts), não com o
+    // addMissingInvoiceItems simples abaixo.
+    excludeIds?: string[];
   }): Promise<void> {
-    const unmapped = await this.findOne({
+    const pendingRows = await this.findAll({
       where: {
         external_id: params.externalId,
         integrations_id: params.integrationsId,
         status: "UNMAPPED",
+        ...(params.excludeIds?.length
+          ? { id: { [Op.notIn]: params.excludeIds } }
+          : {}),
       },
     });
 
-    if (!unmapped) return;
+    if (!pendingRows.length) return;
 
-    await this.delete(unmapped.id);
+    await Promise.all(
+      pendingRows.map(async (row) => {
+        if (row.invoice_id) {
+          await invoiceService.addMissingInvoiceItems(row.invoice_id, [
+            {
+              product_id: params.productId,
+              quantity_expected: Math.trunc(Number(row.quantity ?? 0)),
+            },
+          ]);
+        }
+        await this.delete(row.id);
+      }),
+    );
   }
 
   // Busca outros unmapped (em outras notas) com o mesmo código de
@@ -310,6 +337,13 @@ export class UnmappedInvoiceProductService extends BaseService<
       blingApiFetchQueue: BlingApiFetchQueue;
       tcarUpsertQueue: TCarUpsertQueue;
       branchId?: number;
+      // Sinaliza pro worker (fetchAndUpsertProduct/processProduct) que,
+      // além do fechamento simples que resolveFromCreatedProduct já faz
+      // pras outras linhas com esse external_id, ESSA linha específica deve
+      // levar o tratamento completo de mapeamento pra invoice — fiscal
+      // item, sync de batch, SupplierMapping e cascata pros irmãos (ver
+      // createProductAndMapToInvoice).
+      cascadeMapToInvoice?: boolean;
     },
   ): Promise<void> {
     if (!unmapped.external_id) {
@@ -317,6 +351,10 @@ export class UnmappedInvoiceProductService extends BaseService<
         "Produto não mapeado não tem id do ERP, não é possível criar produto automaticamente",
       );
     }
+
+    const cascadeMapUnmappedId = params.cascadeMapToInvoice
+      ? unmapped.id
+      : undefined;
 
     if (integration.name === "Bling") {
       await params.blingApiFetchQueue.add(
@@ -333,6 +371,7 @@ export class UnmappedInvoiceProductService extends BaseService<
             action: "created",
             companyId: "",
             create: true,
+            cascadeMapUnmappedId,
           },
         },
         `bling-product-create-${unmapped.id}`,
@@ -368,6 +407,7 @@ export class UnmappedInvoiceProductService extends BaseService<
           branchId: params.branchId,
           data: minimalData,
           create: true,
+          cascadeMapUnmappedId,
         },
         `tecinco-product-create-${unmapped.id}`,
         {
@@ -420,6 +460,67 @@ export class UnmappedInvoiceProductService extends BaseService<
       blingApiFetchQueue: params.blingApiFetchQueue,
       tcarUpsertQueue: params.tcarUpsertQueue,
       branchId,
+    });
+  }
+
+  // Combina, num fluxo só, os dois passos que hoje o usuário fazia em
+  // separado pra um item de nota sem produto (unmapped com invoice_id):
+  // 1) criar o produto no ERP a partir do unmapped (mesmo pipeline
+  // assíncrono do createProduct — enfileira na mesma fila
+  // Bling/Tecinco, mesmo job id, mesmo polling de status);
+  // 2) assim que o worker terminar de criar o produto, mapear ESSE item
+  // pra invoice com o tratamento completo de InvoiceItemsService.
+  // createInvoiceItemForUnmappedProducts (InvoiceItem + InvoiceFiscalItem +
+  // sync de batch + SupplierMapping + cascata automática pra outros
+  // unmapped do mesmo fornecedor em outras notas) — em vez do vínculo
+  // simples (só InvoiceItem, sem cascata) que resolveFromCreatedProduct
+  // aplica sozinho pras demais linhas que porventura compartilhem o mesmo
+  // external_id. Só a linha que disparou a criação recebe o tratamento
+  // completo; as outras seguem pelo caminho simples de sempre (ver
+  // cascadeMapToInvoice em enqueueCreateProduct/resolveFromCreatedProduct).
+  //
+  // Só faz sentido pra unmapped vinculado a nota — de catálogo
+  // (invoice_id: null) não tem invoice pra mapear, usa createProduct puro.
+  async createProductAndMapToInvoice(
+    id: string,
+    params: {
+      blingApiFetchQueue: BlingApiFetchQueue;
+      tcarUpsertQueue: TCarUpsertQueue;
+      userId?: string;
+    },
+  ): Promise<void> {
+    const unmapped = await this.findById(id);
+    if (!unmapped) {
+      throw new Error("Produto não mapeado não encontrado!");
+    }
+    if (!unmapped.invoice_id) {
+      throw new Error(
+        "Produto não mapeado não está vinculado a uma nota fiscal — use a criação de produto simples",
+      );
+    }
+    if (!unmapped.external_id) {
+      throw new Error(
+        "Produto não mapeado não tem id do ERP, não é possível criar produto automaticamente",
+      );
+    }
+
+    const integration = await integrationsService.findById(
+      unmapped.integrations_id!,
+    );
+    if (!integration) {
+      throw new Error("Integração do produto não mapeado não encontrada");
+    }
+
+    const branchId =
+      integration.name === "Tecinco"
+        ? await resolveTecincoBranchId(params.userId)
+        : undefined;
+
+    await this.enqueueCreateProduct(unmapped, integration, {
+      blingApiFetchQueue: params.blingApiFetchQueue,
+      tcarUpsertQueue: params.tcarUpsertQueue,
+      branchId,
+      cascadeMapToInvoice: true,
     });
   }
 

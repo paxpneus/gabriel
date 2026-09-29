@@ -60,6 +60,10 @@ export type ResolvedMigrationOptions = Omit<Required<RunMigrationOptions>, "invo
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
 const QUEUE_POLL_MS = 5_000;
+// processInvoiceXml pode completar com sucesso sem criar Invoice (nota sem
+// item de pneu, XML 404/vazio) — sem retenção, o job some do Redis na hora e
+// migrateNovasNotasFiscais reenfileira a mesma nota todo tick pra sempre.
+const INVOICE_NEW_JOB_RETENTION_SECONDS = 2 * 3600;
 
 
 // ─── Helpers internos ─────────────────────────────────────────────────────────
@@ -73,7 +77,11 @@ async function enqueue(
   payload: TCarUpsertJobPayload,
   jobId: string,
   dryRun: boolean,
-  jobOptions?: { priority?: number; name?: string },
+  jobOptions?: {
+    priority?: number;
+    name?: string;
+    removeOnComplete?: boolean | { age: number; count?: number };
+  },
 ) {
   if (dryRun) {
     console.log(`[DRY_RUN] ${jobId}`);
@@ -442,10 +450,10 @@ export async function migrateNovasNotasFiscais(
         .map((invoice) => invoice.xml_key)
         .filter((key): key is string => !!key),
     );
-    // Além do que já está no banco, pula quem já tem job pendente na fila:
-    // job de nota anterior pode ainda não ter concluído quando o próximo
-    // tick de 1min roda de novo.
-    const jobIdsPendentes = await targetInvoiceQueue.getPendingJobIds();
+    // Além do que já está no banco, pula quem já tem job pendente OU já
+    // completou recentemente (mesmo sem criar Invoice — ver
+    // INVOICE_NEW_JOB_RETENTION_SECONDS acima) na fila.
+    const jobIdsPendentes = await targetInvoiceQueue.getPendingJobIds(true);
 
     let enfileiradas = 0;
     for (const nota of notas) {
@@ -475,7 +483,11 @@ export async function migrateNovasNotasFiscais(
         },
         jobId,
         dryRun ?? false,
-        { priority: 1, name: TCAR_INVOICE_NEW_JOB_NAME },
+        {
+          priority: 1,
+          name: TCAR_INVOICE_NEW_JOB_NAME,
+          removeOnComplete: { age: INVOICE_NEW_JOB_RETENTION_SECONDS },
+        },
       );
       enfileiradas++;
     }

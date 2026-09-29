@@ -37,6 +37,11 @@ export class UnmappedInvoiceProductController extends BaseController<
       this.createProduct,
     );
     this.router.post(
+      "/:id/create-product-and-map",
+      ...this.mw("createProductAndMapToInvoice"),
+      this.createProductAndMapToInvoice,
+    );
+    this.router.post(
       "/create-product/batch",
       ...this.mw("createProducts"),
       this.createProducts,
@@ -61,6 +66,7 @@ export class UnmappedInvoiceProductController extends BaseController<
       markMapped: [authenticate, userPermissions],
       getImage: [authenticate, userPermissions],
       createProduct: [authenticate, userPermissions],
+      createProductAndMapToInvoice: [authenticate, userPermissions],
       createProducts: [authenticate, userPermissions],
       getJob: [authenticate, userPermissions],
       createUnmappedFromReadingEan: [
@@ -129,6 +135,28 @@ export class UnmappedInvoiceProductController extends BaseController<
       return res
         .status(202)
         .json({ message: "Criação de produto enfileirada" });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  createProductAndMapToInvoice = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const { id } = req.params;
+
+      await this.service.createProductAndMapToInvoice(id as string, {
+        blingApiFetchQueue: req.app.locals
+          .BlingApiFetchQueue as BlingApiFetchQueue,
+        tcarUpsertQueue: req.app.locals.TCarUpsertQueue as TCarUpsertQueue,
+        userId: (req as any).user?.id,
+      });
+
+      return res
+        .status(202)
+        .json({ message: "Criação de produto e mapeamento para a nota enfileirados" });
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

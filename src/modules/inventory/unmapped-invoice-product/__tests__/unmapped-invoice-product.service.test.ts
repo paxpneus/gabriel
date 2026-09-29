@@ -42,8 +42,15 @@ jest.mock("../../../handlers/tecinco/queues/tecinco-api-fetch.queue", () => ({
   TCAR_CREATE_PRODUCT_PRIORITY: 1,
 }));
 
+jest.mock("../../../warehouse/fiscal/invoices/invoice/invoice.service", () => ({
+  __esModule: true,
+  default: { addMissingInvoiceItems: jest.fn() },
+}));
+
+import { Op } from "sequelize";
 import UnmappedInvoiceProduct from "../unmapped-invoice-product.model";
 import integrationsService from "../../../integrations/integrations/integrations.service";
+import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import { resolveTecincoBranchId } from "../../../../shared/utils/tecinco/resolve-branch-id";
 import { UnmappedInvoiceProductService } from "../unmapped-invoice-product.service";
 
@@ -56,16 +63,16 @@ describe("UnmappedInvoiceProductService", () => {
   });
 
   // ─── resolveFromCreatedProduct ──────────────────────────────────────────
-  // Único efeito colateral esperado: apagar a linha unmapped de catálogo
-  // que originou a criação. Nunca cria invoice item nem toca em notas —
-  // isso é responsabilidade exclusiva do mapeamento manual (POST /add/item).
+  // Fecha TODA linha unmapped pendente pro mesmo external_id+integrations_id
+  // — tanto a de catálogo (invoice_id: null, só apaga) quanto qualquer linha
+  // de nota (invoice_id preenchido: cria o InvoiceItem que faltava via
+  // addMissingInvoiceItems, depois apaga).
 
   describe("resolveFromCreatedProduct", () => {
-    it("apaga a linha unmapped de catálogo encontrada por external_id+integrations_id", async () => {
-      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue({
-        id: "unmapped-catalog-id",
-        invoice_id: null,
-      });
+    it("linha de catálogo (invoice_id null): só apaga, nunca chama addMissingInvoiceItems", async () => {
+      (UnmappedInvoiceProduct.findAll as jest.Mock).mockResolvedValue([
+        { id: "unmapped-catalog-id", invoice_id: null, quantity: 0 },
+      ]);
       const deleteSpy = jest
         .spyOn(service, "delete")
         .mockResolvedValue(undefined as any);
@@ -73,9 +80,10 @@ describe("UnmappedInvoiceProductService", () => {
       await service.resolveFromCreatedProduct({
         externalId: "90001",
         integrationsId: "integration-1",
+        productId: "product-1",
       });
 
-      expect(UnmappedInvoiceProduct.findOne).toHaveBeenCalledWith(
+      expect(UnmappedInvoiceProduct.findAll).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
             external_id: "90001",
@@ -84,18 +92,61 @@ describe("UnmappedInvoiceProductService", () => {
           }),
         }),
       );
+      expect(invoiceService.addMissingInvoiceItems).not.toHaveBeenCalled();
       expect(deleteSpy).toHaveBeenCalledWith("unmapped-catalog-id");
     });
 
+    it("linha de nota (invoice_id preenchido): cria o InvoiceItem que faltava e apaga o unmapped", async () => {
+      (UnmappedInvoiceProduct.findAll as jest.Mock).mockResolvedValue([
+        { id: "unmapped-invoice-id", invoice_id: "invoice-1", quantity: 3 },
+      ]);
+      const deleteSpy = jest
+        .spyOn(service, "delete")
+        .mockResolvedValue(undefined as any);
+
+      await service.resolveFromCreatedProduct({
+        externalId: "90002",
+        integrationsId: "integration-1",
+        productId: "product-2",
+      });
+
+      expect(invoiceService.addMissingInvoiceItems).toHaveBeenCalledWith(
+        "invoice-1",
+        [{ product_id: "product-2", quantity_expected: 3 }],
+      );
+      expect(deleteSpy).toHaveBeenCalledWith("unmapped-invoice-id");
+    });
+
     it("nenhum unmapped encontrado (já foi resolvido/apagado antes) — não lança erro, não tenta apagar nada", async () => {
-      (UnmappedInvoiceProduct.findOne as jest.Mock).mockResolvedValue(null);
+      (UnmappedInvoiceProduct.findAll as jest.Mock).mockResolvedValue([]);
 
       await expect(
         service.resolveFromCreatedProduct({
           externalId: "90001",
           integrationsId: "integration-1",
+          productId: "product-1",
         }),
       ).resolves.toBeUndefined();
+      expect(invoiceService.addMissingInvoiceItems).not.toHaveBeenCalled();
+    });
+
+    it("excludeIds: exclui a linha do fechamento simples (quem chamou vai tratá-la por fora, ver createProductAndMapToInvoice)", async () => {
+      (UnmappedInvoiceProduct.findAll as jest.Mock).mockResolvedValue([]);
+
+      await service.resolveFromCreatedProduct({
+        externalId: "90001",
+        integrationsId: "integration-1",
+        productId: "product-1",
+        excludeIds: ["unmapped-invoice-id"],
+      });
+
+      expect(UnmappedInvoiceProduct.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: { [Op.notIn]: ["unmapped-invoice-id"] },
+          }),
+        }),
+      );
     });
   });
 
@@ -302,6 +353,118 @@ describe("UnmappedInvoiceProductService", () => {
       ).rejects.toThrow(/filial/i);
 
       expect(tcarQueue.add).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── createProductAndMapToInvoice ────────────────────────────────────────
+  // Combina createProduct com o mapeamento completo pra invoice (com
+  // cascata) assim que o produto for criado — só faz sentido pra unmapped
+  // vinculado a nota (invoice_id preenchido).
+
+  describe("createProductAndMapToInvoice", () => {
+    const baseUnmapped = {
+      id: "unmapped-1",
+      external_id: "90001",
+      integrations_id: "integration-1",
+      invoice_id: "invoice-1",
+      product_name: "Pneu Aro 14",
+    };
+
+    it("unmapped não encontrado: lança erro claro", async () => {
+      jest.spyOn(service, "findById").mockResolvedValue(null as any);
+
+      await expect(
+        service.createProductAndMapToInvoice("nao-existe", {
+          blingApiFetchQueue: { add: jest.fn() } as any,
+          tcarUpsertQueue: { add: jest.fn() } as any,
+        }),
+      ).rejects.toThrow(/não encontrado/i);
+    });
+
+    it("unmapped sem invoice_id (de catálogo): lança erro claro, não enfileira", async () => {
+      jest
+        .spyOn(service, "findById")
+        .mockResolvedValue({ ...baseUnmapped, invoice_id: null } as any);
+      const blingQueue = { add: jest.fn() };
+
+      await expect(
+        service.createProductAndMapToInvoice("unmapped-1", {
+          blingApiFetchQueue: blingQueue as any,
+          tcarUpsertQueue: { add: jest.fn() } as any,
+        }),
+      ).rejects.toThrow(/não está vinculado a uma nota fiscal/i);
+
+      expect(blingQueue.add).not.toHaveBeenCalled();
+    });
+
+    it("unmapped sem external_id: lança erro claro, não enfileira", async () => {
+      jest
+        .spyOn(service, "findById")
+        .mockResolvedValue({ ...baseUnmapped, external_id: null } as any);
+      const blingQueue = { add: jest.fn() };
+
+      await expect(
+        service.createProductAndMapToInvoice("unmapped-1", {
+          blingApiFetchQueue: blingQueue as any,
+          tcarUpsertQueue: { add: jest.fn() } as any,
+        }),
+      ).rejects.toThrow(/não tem id do ERP/i);
+
+      expect(blingQueue.add).not.toHaveBeenCalled();
+    });
+
+    it("Bling: enfileira com create:true e cascadeMapUnmappedId apontando pro próprio unmapped", async () => {
+      jest.spyOn(service, "findById").mockResolvedValue(baseUnmapped as any);
+      (integrationsService.findById as jest.Mock).mockResolvedValue({
+        id: "integration-1",
+        name: "Bling",
+      });
+      const blingQueue = { add: jest.fn().mockResolvedValue(undefined) };
+
+      await service.createProductAndMapToInvoice("unmapped-1", {
+        blingApiFetchQueue: blingQueue as any,
+        tcarUpsertQueue: { add: jest.fn() } as any,
+      });
+
+      expect(blingQueue.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource: "product",
+          apiFetch: expect.objectContaining({
+            blingId: 90001,
+            create: true,
+            cascadeMapUnmappedId: "unmapped-1",
+          }),
+        }),
+        `bling-product-create-${baseUnmapped.id}`,
+        expect.objectContaining({ priority: 1 }),
+      );
+    });
+
+    it("Tecinco: resolve a filial do usuário e enfileira com cascadeMapUnmappedId apontando pro próprio unmapped", async () => {
+      jest.spyOn(service, "findById").mockResolvedValue(baseUnmapped as any);
+      (integrationsService.findById as jest.Mock).mockResolvedValue({
+        id: "integration-1",
+        name: "Tecinco",
+      });
+      (resolveTecincoBranchId as jest.Mock).mockResolvedValue(3);
+      const tcarQueue = { add: jest.fn().mockResolvedValue(undefined) };
+
+      await service.createProductAndMapToInvoice("unmapped-1", {
+        blingApiFetchQueue: { add: jest.fn() } as any,
+        tcarUpsertQueue: tcarQueue as any,
+        userId: "user-1",
+      });
+
+      expect(tcarQueue.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource: "product",
+          branchId: 3,
+          create: true,
+          cascadeMapUnmappedId: "unmapped-1",
+        }),
+        `tecinco-product-create-${baseUnmapped.id}`,
+        expect.objectContaining({ priority: 1 }),
+      );
     });
   });
 

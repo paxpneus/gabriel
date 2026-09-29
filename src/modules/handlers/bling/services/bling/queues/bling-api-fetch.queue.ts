@@ -1044,6 +1044,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         blingProduct,
         integration,
         logPrefix,
+        apiFetch.cascadeMapUnmappedId,
       );
     }
 
@@ -1059,6 +1060,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           unitBusiness,
           integration,
           logPrefix,
+          apiFetch.cascadeMapUnmappedId,
         );
       } else {
         // ─── Sem mapping → não cria produto sozinho, registra pra revisão manual ──
@@ -1474,6 +1476,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     blingProduct: BlingApiProduct,
     integration: Awaited<ReturnType<typeof getBlingIntegration>>,
     logPrefix: string,
+    cascadeMapUnmappedId?: string,
   ): Promise<Product | null> {
     let matched = await resolveProductBySku(blingProduct.codigo, logPrefix);
     if (!matched) {
@@ -1492,9 +1495,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       external_id: String(blingProduct.id),
     });
 
-    await unmappedInvoiceProductService.resolveFromCreatedProduct({
+    await this.resolveUnmappedAndCascade({
       externalId: String(blingProduct.id),
       integrationsId: integration.id,
+      productId: matched.id,
+      cascadeMapUnmappedId,
     });
 
     return matched as Product;
@@ -1511,6 +1516,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     unitBusiness: UnitBusiness,
     integration: Awaited<ReturnType<typeof getBlingIntegration>>,
     logPrefix: string,
+    cascadeMapUnmappedId?: string,
   ): Promise<Product> {
     let newProduct: Product;
     try {
@@ -1544,12 +1550,56 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       `${logPrefix} — produto criado manualmente a partir de unmapped (product_id=${newProduct.id})`,
     );
 
-    await unmappedInvoiceProductService.resolveFromCreatedProduct({
+    await this.resolveUnmappedAndCascade({
       externalId: String(blingProduct.id),
       integrationsId: integration.id,
+      productId: newProduct.id,
+      cascadeMapUnmappedId,
     });
 
     return newProduct;
+  }
+
+  // Wrapper de resolveFromCreatedProduct usado por toda resolução de
+  // produto (automap por sku ou criação de fato): fecha as demais linhas
+  // UNMAPPED com esse external_id pelo caminho simples de sempre, e — só
+  // quando cascadeMapUnmappedId vier preenchido (ver
+  // UnmappedInvoiceProductService.createProductAndMapToInvoice) — exclui
+  // essa linha do fechamento simples e roda o mapeamento completo pra
+  // invoice nela (InvoiceItem + InvoiceFiscalItem + batch + SupplierMapping
+  // + cascata pros irmãos), reaproveitando o mesmo fluxo do mapeamento
+  // manual (POST /add/item) em vez de duplicar a lógica aqui.
+  private async resolveUnmappedAndCascade(params: {
+    externalId: string;
+    integrationsId: string;
+    productId: string;
+    cascadeMapUnmappedId?: string;
+  }): Promise<void> {
+    await unmappedInvoiceProductService.resolveFromCreatedProduct({
+      externalId: params.externalId,
+      integrationsId: params.integrationsId,
+      productId: params.productId,
+      excludeIds: params.cascadeMapUnmappedId
+        ? [params.cascadeMapUnmappedId]
+        : undefined,
+    });
+
+    if (!params.cascadeMapUnmappedId) return;
+
+    const unmapped = await unmappedInvoiceProductService.findById(
+      params.cascadeMapUnmappedId,
+    );
+    if (!unmapped?.invoice_id) return;
+
+    await invoiceItemsService.createInvoiceItemForUnmappedProducts(
+      {
+        product_id: params.productId,
+        invoice_id: unmapped.invoice_id,
+        quantity_expected: unmapped.quantity,
+      },
+      unmapped.ean ?? "",
+      unmapped.id,
+    );
   }
 
   // ─── Produto marcado situacao=E (desativado) na Bling ──────────────────────

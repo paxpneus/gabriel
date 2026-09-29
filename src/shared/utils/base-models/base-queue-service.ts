@@ -416,13 +416,17 @@ export abstract class BaseQueueService<T, R = void> {
 
   // Busca todos os jobIds ainda pendentes numa chamada só, pra quem precisa
   // checar "esse jobId já está na fila?" pra vários candidatos sem N+1 (um
-  // getJob por item).
-  async getPendingJobIds(): Promise<Set<string>> {
+  // getJob por item). includeCompleted: também considera "já tentado" um job
+  // que terminou com sucesso mas sem side-effect nenhum (ex.: nota sem item
+  // de pneu) — só funciona se o job foi enfileirado com removeOnComplete de
+  // retenção, senão ele já saiu do Redis e nunca aparece aqui.
+  async getPendingJobIds(includeCompleted = false): Promise<Set<string>> {
     const jobs = await this.queue.getJobs([
       "waiting",
       "active",
       "delayed",
       "prioritized",
+      ...(includeCompleted ? (["completed"] as const) : []),
     ]);
     return new Set(jobs.map((job) => job.id).filter((id): id is string => !!id));
   }

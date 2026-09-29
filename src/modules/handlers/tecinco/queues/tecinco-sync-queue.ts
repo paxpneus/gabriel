@@ -125,8 +125,7 @@ export async function scheduleTCarSync(syncQueue: TCarSyncQueue) {
     const targetsAreIdle =
       kind === "invoices" || (await syncQueue.areTargetQueuesIdle());
 
-    const shouldDispatch =
-      kind === "invoices" || (!sameKindPending && targetsAreIdle);
+    const shouldDispatch = !sameKindPending && targetsAreIdle;
 
     if (shouldDispatch) {
       const alteradoDesde = formatAlteradoDesde(

@@ -15,6 +15,7 @@ import {
 } from "../../../modules/inventory";
 import InvoiceFiscalItem from "../../../modules/warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import UnmappedInvoiceProduct from "../../../modules/inventory/unmapped-invoice-product/unmapped-invoice-product.model";
+import { UnmappedInvoiceProductType } from "../../../modules/inventory/unmapped-invoice-product/unmapped-invoice-product.types";
 import Store from "../../../modules/sales/stores/stores.model";
 import parser from "../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../shared/utils/normalizers/document";
@@ -108,6 +109,15 @@ export interface UnmappedInvoiceItemFromXml {
   qty: number;
   xProd: string | null;
   reason: string;
+  /** Motivo real da falta de mapeamento (ex.: ERROR_CATALOG quando o item não
+   * tem integration_mapping) — quem resolve o item sabe; default ERROR_INVOICE
+   * quando o chamador não informa (falha estrutural da nota, não de catálogo). */
+  type?: UnmappedInvoiceProductType;
+  /** Id do produto no ERP de origem (Tecinco epctb_codigo) — só disponível
+   * quando a resolução do item já passou por integration_mapping; permite
+   * UnmappedInvoiceProductService.resolveFromCreatedProduct achar e fechar
+   * esta linha depois, mesmo sendo invoice_id-linked. */
+  external_id?: string | null;
 }
 
 // ─── Helpers privados ─────────────────────────────────────────────────────────
@@ -1132,17 +1142,19 @@ export async function upsertInvoiceFromXml(
           integrations_id: integration.id,
           ean: u.gtin ?? null,
           sku: u.sku ?? null,
+          external_id: u.external_id ?? null,
           product_name: u.xProd,
           quantity,
           reason: u.reason,
-          type: "ERROR_INVOICE",
+          type: u.type ?? "ERROR_INVOICE",
           status: "UNMAPPED",
         });
       } else {
         await existing.update({
           quantity,
           integrations_id: integration.id,
-          type: "ERROR_INVOICE",
+          external_id: u.external_id ?? null,
+          type: u.type ?? "ERROR_INVOICE",
         });
       }
 
