@@ -230,15 +230,26 @@ export class InvoiceController extends BaseController<
           .filter(Boolean);
       }
 
+      const cursor =
+        typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+      const limit = Math.min(
+        200,
+        Math.max(1, Number(req.query.limit) || 50),
+      );
+
       const context = await getUserContext(req);
       const unitBusinessId = this.resolveUnitBusinessId(
         req,
         context.unitBusinessId,
       );
 
-      const data = await this.labelService.getLabelData(ids, unitBusinessId);
+      const { data, nextCursor, totalVolumes } =
+        await this.labelService.getLabelDataPage(ids, unitBusinessId, {
+          cursor,
+          limit,
+        });
 
-      return res.json({ data });
+      return res.json({ data, nextCursor, totalVolumes });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

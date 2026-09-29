@@ -78,6 +78,10 @@ export class UnitBusinessService extends BaseService<
     const { label_stock_id, label_shipping_id, ...unitBusinessData } = data;
 
     const run = async (transaction: Transaction) => {
+      // Usuários vinculados a essa loja têm dados dela (nome/labels) congelados
+      // em cache — invalida pra getMe refletir a mudança na próxima leitura.
+      await redisService.deleteByPattern("user:*");
+
       const updated = await this.repository.update(id, unitBusinessData, {
         transaction,
       });
