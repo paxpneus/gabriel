@@ -17,6 +17,17 @@ export const ORDER_WEBHOOK_INGESTION_DELAY_MS = 30_000;
 export const FORCE_UPDATE_PRIORITY = 1;
 export const NORMAL_ORDER_PRIORITY = 2;
 
+// Force-update em massa (filtro + fila): número bem maior que
+// NORMAL_ORDER_PRIORITY — nunca deve furar webhook/automação, é o oposto do
+// force-update individual (FORCE_UPDATE_PRIORITY).
+export const BULK_FORCE_UPDATE_PRIORITY = 10;
+
+// Nome (jobOptions.name) de todo job enfileirado por um force-update em
+// massa — permite distinguir esses jobs dos demais via hasPendingJobsNamed,
+// pra bloquear um novo disparo em massa enquanto o anterior ainda não
+// esvaziou (ver GET /bling-orders/force-update-bulk/can-run).
+export const BULK_FORCE_UPDATE_JOB_NAME = "bling-order-force-update-bulk";
+
 export class BlingOrderQueue extends BaseQueueService<any> {
   private orderService: BlingOrderService;
   private next: nextStepOnQueue;
@@ -45,7 +56,11 @@ export class BlingOrderQueue extends BaseQueueService<any> {
   override async add(
     data: any,
     jobId?: string,
-    jobOptions?: { priority?: number; removeOnComplete?: boolean | { age: number; count?: number } },
+    jobOptions?: {
+      priority?: number;
+      name?: string;
+      removeOnComplete?: boolean | { age: number; count?: number };
+    },
   ) {
     return super.add(data, jobId, {
       ...jobOptions,

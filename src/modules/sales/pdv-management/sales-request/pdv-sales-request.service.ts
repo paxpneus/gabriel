@@ -335,6 +335,15 @@ export class PdvSalesRequestService extends BaseService<
       .filter((order): order is PdvSalesRequestOrderSummary => order !== null);
   }
 
+  // order_id de toda solicitação existente, opcionalmente filtrada por
+  // status — usado por rotas de outra entidade pra cruzar "tem/não tem PDV
+  // request" (ex.: force-update em massa de orders), sem expor a repository.
+  async findOrderIdsByStatus(
+    statuses?: PdvSalesRequestStatus[],
+  ): Promise<string[]> {
+    return this.repository.findOrderIdsByStatus(statuses);
+  }
+
   // ─── Resumo de status (indicativos) ──────────────────────────────────────
   // Igual em espírito a OrderService.getOrdersStatusSummary: um contador por
   // indicativo, escopado pela tela do acesso (cada tela só vê os

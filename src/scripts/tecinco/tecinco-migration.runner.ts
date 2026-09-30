@@ -135,6 +135,7 @@ async function waitForQueueToDrain(
 
 export async function migrateProdutos(
   opts: ResolvedMigrationOptions,
+  { waitForDrain = true }: { waitForDrain?: boolean } = {},
 ): Promise<void> {
   const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun, grupos } =
     opts;
@@ -249,11 +250,12 @@ export async function migrateProdutos(
     `  ✅ ${count} produtos (filiais: ${branchIdsParam}) — ${duplicateCount} sinalizado(s) como duplicado no catálogo`,
   );
 
-  await waitForQueueToDrain(upsertQueue, "Produtos", dryRun);
+  if (waitForDrain) await waitForQueueToDrain(upsertQueue, "Produtos", dryRun);
 }
 
 export async function migrateClientes(
   opts: ResolvedMigrationOptions,
+  { waitForDrain = true }: { waitForDrain?: boolean } = {},
 ): Promise<void> {
   const { branchIds, companyId, alteradoDesde, upsertQueue, dryRun } = opts;
 
@@ -301,11 +303,12 @@ export async function migrateClientes(
     console.log(`  ✅ Filial ${branchId}: ${count} clientes`);
   }
 
-  await waitForQueueToDrain(upsertQueue, "Clientes", dryRun);
+  if (waitForDrain) await waitForQueueToDrain(upsertQueue, "Clientes", dryRun);
 }
 
 export async function migrateNotasFiscais(
   opts: ResolvedMigrationOptions,
+  { waitForDrain = true }: { waitForDrain?: boolean } = {},
 ): Promise<void> {
   const { branchIds, companyId, invoiceQueue, upsertQueue, dryRun } = opts;
   const targetInvoiceQueue = invoiceQueue ?? (upsertQueue as TCarInvoiceQueue);
@@ -401,7 +404,9 @@ export async function migrateNotasFiscais(
     }
   }
 
-  await waitForQueueToDrain(targetInvoiceQueue, "Notas Fiscais", dryRun);
+  if (waitForDrain) {
+    await waitForQueueToDrain(targetInvoiceQueue, "Notas Fiscais", dryRun);
+  }
 }
 
 // ─── Entry point público ──────────────────────────────────────────────────────
@@ -495,7 +500,9 @@ export async function migrateNovasNotasFiscais(
   }
 }
 
-export async function runMigration(opts: RunMigrationOptions): Promise<void> {
+function resolveMigrationOptions(
+  opts: RunMigrationOptions,
+): ResolvedMigrationOptions {
   const resolved: ResolvedMigrationOptions = {
     dryRun: process.env.DRY_RUN === "true",
     alteradoDesde: "", // string vazia = sem filtro (full)
@@ -505,6 +512,27 @@ export async function runMigration(opts: RunMigrationOptions): Promise<void> {
     ...opts,
   };
   resolved.invoiceQueue ??= resolved.upsertQueue as TCarInvoiceQueue;
+  return resolved;
+}
+
+/** Só produtos (fila TCAR_API_FETCH), sem esperar drenar; clientes vêm via nota fiscal. */
+export async function runProductsMigration(
+  opts: RunMigrationOptions,
+): Promise<void> {
+  await migrateProdutos(resolveMigrationOptions(opts), { waitForDrain: false });
+}
+
+/** Enfileira updates de notas existentes sem esperar a fila esvaziar. */
+export async function enqueueInvoiceUpdates(
+  opts: RunMigrationOptions,
+): Promise<void> {
+  await migrateNotasFiscais(resolveMigrationOptions(opts), {
+    waitForDrain: false,
+  });
+}
+
+export async function runMigration(opts: RunMigrationOptions): Promise<void> {
+  const resolved = resolveMigrationOptions(opts);
 
   if (resolved.dryRun) {
     console.log("⚠️  MODO DRY_RUN ativo — nenhum job será enfileirado.\n");

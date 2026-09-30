@@ -187,6 +187,7 @@ import {
 } from "../../service/tecinco/tecinco.types";
 import { findTecincoCollidingFields } from "../../../../../scripts/tecinco/tecinco-duplicate-detection";
 import { notifySalesRequestUpdated } from "../../../../sales/pdv-management/sales-request/helpers/notify-sales-request-updated";
+import { clearTCarLookupCache } from "../helpers/lookup-cache";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -225,6 +226,7 @@ describe("TCarUpsertQueue.processProduct", () => {
   let queue: TCarUpsertQueue;
 
   beforeEach(() => {
+    clearTCarLookupCache();
     jest.clearAllMocks();
 
     queue = new TCarUpsertQueue({ workless: true });
@@ -1006,6 +1008,7 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
   }
 
   beforeEach(() => {
+    clearTCarLookupCache();
     jest.clearAllMocks();
 
     queue = new TCarUpsertQueue({ workless: true });
@@ -1079,6 +1082,7 @@ describe("TCarUpsertQueue.processInvoiceTransfer (enriquecimento em background d
   let queue: TCarUpsertQueue;
 
   beforeEach(() => {
+    clearTCarLookupCache();
     jest.clearAllMocks();
     queue = new TCarUpsertQueue({ workless: true });
   });

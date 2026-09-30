@@ -141,6 +141,35 @@ motivo nenhum.
   `dataPrevista` vier vazia, o campo é simplesmente omitido do payload de
   update, nunca zerado, preservando qualquer valor já gravado por
   `ML_ORDER_SYNC` antes.
+  Prioridade (BullMQ, menor número = mais urgente; job sem `priority`
+  explícita nunca fura fila de verdade — `BlingOrderQueue.add()` sempre
+  aplica um default): webhook/automação usam `NORMAL_ORDER_PRIORITY` (2);
+  `POST /bling-orders/:orderId/force-update` (força reingestão imediata de
+  1 pedido) usa `FORCE_UPDATE_PRIORITY` (1), a maior prioridade da fila;
+  `POST /bling-orders/force-update-bulk` (mesmo job, mas por filtro —
+  `onlyMineUnitBusiness: true` escopa pro `unit_business_id` do usuário
+  logado; `false`/omitido escopa pro mesmo universo de lojas que o link de
+  Televendas enxerga (`unitBusinessService.getPhysicalNumberedUnitBusinessIds(PDV_EXCLUDED_STORE_NUMBERS)`
+  — só loja física normal, nunca CD21/online/marketplace/loja fora do fluxo
+  PDV; sem isso o "todas as lojas" pegava pedido de fora do universo PDV
+  também, contagem maior que a do link de Televendas), `orderStatus` do
+  order, `hasPdvSalesRequest`/`pdvStatus` da `PdvSalesRequest` vinculada) usa
+  `BULK_FORCE_UPDATE_PRIORITY` (10), a menor prioridade — nunca fura webhook
+  nem force-update individual, só preenche o fim do backlog. Só admin
+  (`authenticate` + `roleService.isAdminRole`, não `pdvAccess`) pode chamar
+  os dois endpoints de force-update-bulk (`POST` e o `GET .../can-run`
+  abaixo) — diferente do force-update individual, que ainda usa
+  `pdvAccess([CD21, FINANCE, STORE_REQUEST])`. Job id determinístico
+  `bling-order-force-update-${id_order_system}` é o mesmo nos dois
+  endpoints, então um force-update em massa nunca duplica um force-update
+  individual já enfileirado pro mesmo pedido. Todo job do disparo em massa
+  leva `name: BULK_FORCE_UPDATE_JOB_NAME`
+  (`"bling-order-force-update-bulk"`) — `GET
+  /bling-orders/force-update-bulk/can-run` usa
+  `hasPendingJobsNamed([BULK_FORCE_UPDATE_JOB_NAME])` (helper genérico de
+  `BaseQueueService`) pra dizer se ainda há job desse disparo pendente na
+  fila; front usa isso pra desabilitar o botão até o disparo anterior
+  esvaziar.
 - **`CNPJ_VERIFY_CNAE`** (`cnpj.queue.ts`) — rebusca o pedido ao vivo,
   confirma que ainda está em situação `6`, valida documento/CNAE do
   cliente. Sucesso: PATCH situação `748743` + `internal_status:

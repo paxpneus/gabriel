@@ -182,6 +182,7 @@ import UnmappedInvoiceProduct from "../../../../../../inventory/unmapped-invoice
 import unmappedInvoiceProductService from "../../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import invoiceItemsService from "../../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { BlingApiFetchQueue } from "../bling-api-fetch.queue";
+import { MagentoSyncQueue } from "../../../../../magentoV2/queues/magento-sync.queue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -264,11 +265,19 @@ function makeUpsertedProduct(overrides: Partial<any> = {}) {
 
 describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
   let queue: BlingApiFetchQueue;
+  let magentoSyncAddSpy: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
     process.env.BLING_UNIT_BUSINESS_ID = UNIT_BUSINESS_ID;
+
+    // BlingApiFetchQueue não sincroniza mais com o Magento diretamente — só
+    // enfileira um job "sync-product" na MAGENTO_SYNC (ver magento-sync.queue.ts,
+    // que tem sua própria suite pros detalhes de mapping/unmapped/custo_medio).
+    magentoSyncAddSpy = jest
+      .spyOn(MagentoSyncQueue.prototype, "add")
+      .mockResolvedValue(undefined as any);
 
     queue = new BlingApiFetchQueue({ workless: true });
 
@@ -399,10 +408,13 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
     });
   });
 
-  // ── Magento: produto já mapeado, busca pelo id estável ────────────────────
+  // ── Magento: desacoplado numa fila própria (MAGENTO_SYNC) ────────────────
+  // BlingApiFetchQueue não fala mais com a API do Magento — só enfileira e
+  // segue. Ver magento-sync.queue.test.ts pros detalhes de mapping por id/
+  // sku/nome, unmapped e custo_medio, que agora rodam no worker dessa fila.
 
-  describe("Magento: produto já mapeado", () => {
-    it("existe mapping (external_id = entity_id do Magento): busca por id, nunca por sku/nome", async () => {
+  describe("Magento: enfileira sync-product em vez de sincronizar inline", () => {
+    it("produto UNIT criado/atualizado: enfileira sync-product com o id do produto e não chama a API do Magento", async () => {
       const blingProduct = makeBlingProduct();
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue({
@@ -411,27 +423,19 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
         makeUpsertedProduct({ id: "existing-product-id" }),
       );
-      (integrationMappingService.findExternalIdsMap as jest.Mock).mockResolvedValue(
-        new Map([["existing-product-id", "751"]]),
-      );
-      (magentoCatalogService.buscarProdutoPorId as jest.Mock).mockResolvedValue({
-        items: [{ id: 751, sku: "MAGENTO-SKU-ATUAL", name: blingProduct.nome }],
-      });
 
       await runProductJob(blingProduct);
 
-      expect(magentoCatalogService.buscarProdutoPorId).toHaveBeenCalledWith("751");
+      expect(magentoSyncAddSpy).toHaveBeenCalledWith(
+        { kind: "sync-product", productId: "existing-product-id" },
+        "magento-sync-product-existing-product-id",
+      );
+      expect(magentoCatalogService.buscarProdutoPorId).not.toHaveBeenCalled();
       expect(magentoCatalogService.obterProduto).not.toHaveBeenCalled();
       expect(magentoCatalogService.buscarProdutosPorNome).not.toHaveBeenCalled();
-      expect(
-        integrationMappingService.createOrUpdateIntegrationMapping,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({ external_id: "751" }),
-        expect.anything(),
-      );
     });
 
-    it("produto mapeado cujo id não é encontrado no Magento: não cai pro sku/nome, registra unmapped direto", async () => {
+    it("falha ao enfileirar na MAGENTO_SYNC não derruba o job da Bling", async () => {
       const blingProduct = makeBlingProduct();
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue({
@@ -440,30 +444,20 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
         makeUpsertedProduct({ id: "existing-product-id" }),
       );
-      (integrationMappingService.findExternalIdsMap as jest.Mock).mockResolvedValue(
-        new Map([["existing-product-id", "751"]]),
-      );
-      (magentoCatalogService.buscarProdutoPorId as jest.Mock).mockResolvedValue({
-        items: [],
-      });
+      magentoSyncAddSpy.mockRejectedValueOnce(new Error("redis indisponível"));
 
-      await runProductJob(blingProduct);
-
-      expect(magentoCatalogService.buscarProdutoPorId).toHaveBeenCalledWith("751");
-      expect(magentoCatalogService.obterProduto).not.toHaveBeenCalled();
-      expect(magentoCatalogService.buscarProdutosPorNome).not.toHaveBeenCalled();
-      expect(
-        integrationMappingService.createOrUpdateIntegrationMapping,
-      ).not.toHaveBeenCalled();
-      expect(UnmappedInvoiceProduct.create).toHaveBeenCalled();
+      await expect(runProductJob(blingProduct)).resolves.toBeUndefined();
     });
   });
 
-  // ── Magento: fallback por nome quando SKU não é encontrado ───────────────
+  // ── Magento: dono do preço uma vez mapeado ────────────────────────────────
+  // A Bling só escreve ProductConfig.price enquanto o produto ainda não tem
+  // integration_mapping pro Magento — depois disso o preço é responsabilidade
+  // exclusiva da MAGENTO_SYNC (ver .claude/modules/magento-sync.md).
 
-  describe("Magento: fallback por nome quando o SKU não é encontrado", () => {
-    it("SKU não encontrado (404), nome bate exatamente e vem 1 resultado só: mapeia pelo SKU real do Magento", async () => {
-      const blingProduct = makeBlingProduct({ nome: "Pneu Aro 14 Continental" });
+  describe("Magento: preço só é escrito pela Bling se ainda não houver mapping", () => {
+    it("sem mapping pro Magento: ProductConfig.upsert inclui o preço vindo da Bling", async () => {
+      const blingProduct = makeBlingProduct({ preco: 555 });
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue({
         id: "existing-product-id",
@@ -471,35 +465,20 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
         makeUpsertedProduct({ id: "existing-product-id" }),
       );
-      (magentoCatalogService.obterProduto as jest.Mock).mockRejectedValue({
-        response: { status: 404 },
-      });
-      (magentoCatalogService.buscarProdutosPorNome as jest.Mock).mockResolvedValue({
-        items: [
-          { id: 751, sku: "MAGENTO-SKU-1", name: "Pneu Aro 14 Continental" },
-        ],
-      });
+      (integrationMappingService.findExternalIdsMap as jest.Mock).mockResolvedValue(
+        new Map(),
+      );
 
       await runProductJob(blingProduct);
 
-      expect(magentoCatalogService.buscarProdutosPorNome).toHaveBeenCalledWith(
-        "Pneu Aro 14 Continental",
-      );
-      expect(
-        integrationMappingService.createOrUpdateIntegrationMapping,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({
-          entity_type: "PRODUCT",
-          external_id: "751",
-          integrations_id: "magento-1",
-        }),
+      expect(ProductConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ price: 555 }),
         expect.anything(),
       );
-      expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
     });
 
-    it("SKU não encontrado (404) e vem mais de 1 resultado por nome: não mapeia, registra unmapped", async () => {
-      const blingProduct = makeBlingProduct({ nome: "Pneu Aro 14 Continental" });
+    it("já mapeado pro Magento: ProductConfig.upsert NÃO inclui/sobrescreve o preço", async () => {
+      const blingProduct = makeBlingProduct({ preco: 555 });
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue({
         id: "existing-product-id",
@@ -507,46 +486,14 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
         makeUpsertedProduct({ id: "existing-product-id" }),
       );
-      (magentoCatalogService.obterProduto as jest.Mock).mockRejectedValue({
-        response: { status: 404 },
-      });
-      (magentoCatalogService.buscarProdutosPorNome as jest.Mock).mockResolvedValue({
-        items: [
-          { sku: "MAGENTO-SKU-1", name: "Pneu Aro 14 Continental" },
-          { sku: "MAGENTO-SKU-2", name: "Pneu Aro 14 Continental" },
-        ],
-      });
-
-      await runProductJob(blingProduct);
-
-      expect(
-        integrationMappingService.createOrUpdateIntegrationMapping,
-      ).not.toHaveBeenCalled();
-      expect(UnmappedInvoiceProduct.create).toHaveBeenCalled();
-    });
-
-    it("SKU não encontrado (404) e nome só bate parcialmente: não mapeia, registra unmapped", async () => {
-      const blingProduct = makeBlingProduct({ nome: "Pneu Aro 14 Continental" });
-      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
-        id: "existing-product-id",
-      });
-      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
-        makeUpsertedProduct({ id: "existing-product-id" }),
+      (integrationMappingService.findExternalIdsMap as jest.Mock).mockResolvedValue(
+        new Map([["existing-product-id", "751"]]),
       );
-      (magentoCatalogService.obterProduto as jest.Mock).mockRejectedValue({
-        response: { status: 404 },
-      });
-      (magentoCatalogService.buscarProdutosPorNome as jest.Mock).mockResolvedValue({
-        items: [{ sku: "MAGENTO-SKU-1", name: "Pneu Aro 14 Continental XL" }],
-      });
 
       await runProductJob(blingProduct);
 
-      expect(
-        integrationMappingService.createOrUpdateIntegrationMapping,
-      ).not.toHaveBeenCalled();
-      expect(UnmappedInvoiceProduct.create).toHaveBeenCalled();
+      const configUpsertCall = (ProductConfig.upsert as jest.Mock).mock.calls[0][0];
+      expect(configUpsertCall).not.toHaveProperty("price");
     });
   });
 

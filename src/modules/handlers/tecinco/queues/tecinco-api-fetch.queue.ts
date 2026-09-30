@@ -50,6 +50,10 @@ import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
+import {
+  getCachedTCarIntegration,
+  getCachedUnitBusinessByNumber,
+} from "./helpers/lookup-cache";
 import brandsService from "../../../inventory/brands/brands.service";
 import Group from "../../../inventory/groups/group/group.model";
 import Subgroup from "../../../inventory/groups/subgroup/subgroup.model";
@@ -170,10 +174,11 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   constructor(
     options: { workless?: boolean } = {},
     queueName = "TCAR_API_FETCH",
+    jobsPerSecond = 3,
   ) {
     super(queueName, {
-      concurrency: 2,
-      limiter: { max: 2, duration: 1000 },
+      concurrency: jobsPerSecond,
+      limiter: { max: jobsPerSecond, duration: 1000 },
       maxProcessingMs: 120_000,
       workless: options.workless,
     });
@@ -422,7 +427,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     if (action === "deleted") {
       // Produto nunca mais é deletado pelo sistema — fica de histórico, só
       // desativado (is_active=false) quando encontrado via integration mapping.
-      const integrations = await getTCarIntegration("Tecinco");
+      const integrations = await getCachedTCarIntegration();
       const mapped = await integrationMappingService.findEntityByMapping(
         "PRODUCT",
         integrations.id,
@@ -494,7 +499,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
             },
           ];
 
-    const integrations = await getTCarIntegration("Tecinco");
+    const integrations = await getCachedTCarIntegration();
     // let (não const): sanitizados mais abaixo quando o produto é criado
     // manualmente (opts.create) a partir de um unmapped e o código já
     // pertence a outro produto na mesma integração — ver isCodeOwnedByAnotherProduct.
@@ -509,9 +514,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     // originou esse evento; sem ela não há como escopar com segurança.
     const resolvedBranchId = branchId ?? Number(data.fll_codigo);
     const operationUnitBusiness = resolvedBranchId
-      ? await UnitBusiness.findOne({
-          where: { number: String(resolvedBranchId).padStart(2, "0") },
-        })
+      ? await getCachedUnitBusinessByNumber(
+          String(resolvedBranchId).padStart(2, "0"),
+        )
       : null;
 
     if (!operationUnitBusiness) {
@@ -760,9 +765,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
 
       for (const filial of filiaisToProcess) {
         const filialNumber = String(filial.fll_codigo).padStart(2, "0");
-        const unitBusiness = await UnitBusiness.findOne({
-          where: { number: filialNumber },
-        });
+        const unitBusiness = await getCachedUnitBusinessByNumber(filialNumber);
         const supplierCnpj = unitBusiness?.cnpj ?? null;
 
         if (supplierCnpj && unitBusiness) {
@@ -926,9 +929,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     // ─── ProductConfig + Stock por filial ──────────────────────────────────────
     for (const filial of filiaisToProcess) {
       const filialNumber = String(filial.fll_codigo).padStart(2, "0");
-      const unitBusiness = await UnitBusiness.findOne({
-        where: { number: filialNumber },
-      });
+      const unitBusiness = await getCachedUnitBusinessByNumber(filialNumber);
 
       if (!unitBusiness) {
         console.warn(
@@ -1434,9 +1435,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       return { operationalItems: [], unmappedItems: [] };
     }
 
-    const unitBusiness = await UnitBusiness.findOne({
-      where: { number: String(branchId).padStart(2, "0") },
-    });
+    const unitBusiness = await getCachedUnitBusinessByNumber(
+      String(branchId).padStart(2, "0"),
+    );
 
     if (!unitBusiness) {
       // Sem unit business não há como escopar a resolução por EAN/
@@ -1459,7 +1460,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
 
     const produtoService = new TCarProdutoService();
-    const integrations = await getTCarIntegration("Tecinco");
+    const integrations = await getCachedTCarIntegration();
 
     // Busca o detalhe de cada item na Tecinco em paralelo em vez de uma por
     // vez; o resto (resolução/upserts) continua sequencial abaixo.

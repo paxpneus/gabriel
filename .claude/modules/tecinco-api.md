@@ -3,15 +3,15 @@
 `src/modules/handlers/tecinco/api/tecinco_api.ts`
 
 - `sessionPool` (a `Map<branchId, TCarBranchSession>`) caches one session token per branch, in memory only — lost on every process restart. Both `ensureSession` (cache-miss login) and `onResponseError`'s 401 handler (session-expired relogin) call `doTCarLogin(branchId)`, and each already serializes concurrent calls *for the same branch* via the branch's own `isRefreshing`/`failedQueue`.
-- **Fixed — intermittent 403 on `/auth/login`**: `doTCarLogin` uses the *same* account credentials (username/password/api_key/company_id) for every branch — only the later `/auth/session/branch` call differs by branch. The per-branch lock above doesn't stop two *different* branches from calling `/auth/login` at the same time (e.g. `TCarSyncQueue` dispatches one job per branch — currently branches `12`/`17` — both can run concurrently right after a process restart or whenever both branches' cached tokens are empty at once). Tecinco's API rejects one of two concurrent logins for the same account with a bare 403 (not 401/429, so neither existing retry path in the response interceptor catches it) — matched the observed pattern of ~3% of requests failing with a plain "Request failed with status code 403" bottoming out in `doTCarLogin`. **Fixed** by wrapping `doTCarLogin`'s entire body in a **module-level** (not per-branch) promise-chain mutex (`withTCarLoginLock`), so logins for different branches queue up instead of racing — covers both call sites (`ensureSession`, the 401 relogin path) since both go through `doTCarLogin`.
+- **Fixed — intermittent 403 on `/auth/login`**: `doTCarLogin` uses the *same* account credentials (username/password/api_key/company_id) for every branch — only the later `/auth/session/branch` call differs by branch. The per-branch lock above doesn't stop two *different* branches from calling `/auth/login` at the same time (e.g. `TCarSyncQueue` dispatches one `invoices`/`invoice-updates` job per branch — currently branches `12`/`17` — both can run concurrently right after a process restart or whenever both branches' cached tokens are empty at once). Tecinco's API rejects one of two concurrent logins for the same account with a bare 403 (not 401/429, so neither existing retry path in the response interceptor catches it) — matched the observed pattern of ~3% of requests failing with a plain "Request failed with status code 403" bottoming out in `doTCarLogin`. **Fixed** by wrapping `doTCarLogin`'s entire body in a **module-level** (not per-branch) promise-chain mutex (`withTCarLoginLock`), so logins for different branches queue up instead of racing — covers both call sites (`ensureSession`, the 401 relogin path) since both go through `doTCarLogin`.
 - **`TCAR_UPSERT`/`TCAR_SYNC` deliberately do NOT share a BullMQ
   `sharedLock`** (unlike Bling's queues, which share
   `BLING_SHARED_QUEUE_LOCK` — see `.claude/modules/ml-order-pipeline/locks.md`
   and `bling-queue-lock.ts`). This was considered and rejected:
-  `TCarSyncQueue.process` (`tecinco-sync-queue.ts`) calls `runMigration`
+  `TCarSyncQueue.process` (`tecinco-sync-queue.ts`) calls `runProductsMigration`
   (`tecinco-migration.runner.ts`), which enqueues jobs onto `TCAR_UPSERT`
-  and then blocks on `waitForQueueToDrain(upsertQueue, ...)` as part of the
-  *same* sync job. A full job-level `sharedLock` between the two queues
+  (the full-migration script's `runMigration` still blocks on
+  `waitForQueueToDrain(upsertQueue, ...)` as part of the *same* run). A full job-level `sharedLock` between the two queues
   would deadlock: the sync job holds the lock while waiting for
   `TCAR_UPSERT` to drain, but `TCAR_UPSERT` jobs can never acquire that
   same lock to run and drain. The module-level login mutex above already
@@ -23,8 +23,8 @@
   job — the `waitForQueueToDrain` step must stay outside any such lock.
 - **Fixed — cancelled invoice never re-synced**: there is no Tecinco webhook
   push for invoices; the only sync mechanism is `migrateNotasFiscais`
-  (`src/scripts/tecinco/tecinco-migration.runner.ts`), polled every 10min by
-  `TCarSyncQueue`. It lists notas via `GET /notas-fiscais` filtered by
+  (`src/scripts/tecinco/tecinco-migration.runner.ts`), polled every 5min by
+  `TCarSyncQueue` (`invoice-updates` kind, no drain wait). It lists notas via `GET /notas-fiscais` filtered by
   `situacao`. It queried only `situacao: "A"` (ativa), so once an
   already-imported invoice got cancelled in Tecinco (`situacao` flips to
   `"C"`) it dropped out of that list entirely and was never re-enqueued —
@@ -123,3 +123,7 @@
   `notifySalesRequestUpdated(pdvSalesRequestId)` in a `finally`, success or
   failure, so the front refetches either way; a thrown error still propagates
   after that so BullMQ retries the job normally.
+
+- **`TCarSyncQueue` dispatch (`tecinco-sync-queue.ts`)**: 3 kinds, each skipped if a same-kind sync job is pending. `invoices` (60s, `invoice-new`, always dispatches); `products` (5min, ONE job for all branches — payload `branchIds`; single `include=filiais` fetch; products only — customers are upserted per invoice by `processInvoiceXml`/`upsertCustomerFromTCar`, not synced periodically; no drain wait, dispatches only if `TCAR_API_FETCH` is empty; ignores `TCAR_INVOICE` entirely); `invoice-updates` (5min, `migrateNotasFiscais` without waiting for drain, dispatches only if no `invoice-update` job is pending in `TCAR_INVOICE`). Previously the 5/10min sync required `TCAR_INVOICE` fully empty, so a failing `invoice-new` retried every minute starved it.
+  No sync job waits for a queue to drain and `TCAR_INVOICE` has no update-vs-new redelay: `invoice-new` (priority 1) and `invoice-update` (priority 2) just share `TCAR_INVOICE`'s slots by priority. `TCAR_API_FETCH` runs concurrency 5 / limiter 5 jobs per second (products only); `TCAR_INVOICE` runs 2 / 2.
+- **Lookup cache (`tecinco/queues/helpers/lookup-cache.ts`)**: `TCarUpsertQueue` jobs read the Tecinco integration, `UnitBusiness` by branch number and `integrations_id` per unit business from an in-process cache (TTL 5min, null/not-found never cached) instead of querying per job. `resolveIntegrationsIdForUnitBusiness` bypasses it when called inside a `transaction`. Tests must call `clearTCarLookupCache()` in `beforeEach`.

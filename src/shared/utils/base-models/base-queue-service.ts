@@ -433,9 +433,7 @@ export abstract class BaseQueueService<T, R = void> {
 
   // Existe job pendente com um desses `name` (o nome passado em
   // jobOptions.name no add())? Usado por quem precisa dar prioridade a um
-  // tipo de job sobre outro dentro da MESMA fila sem lock/rank (ver
-  // TCarSyncQueue: full sync se auto-redelaya enquanto houver "invoice-new"
-  // pendente na fila de notas).
+  // tipo de job sobre outro dentro da MESMA fila sem lock/rank.
   async hasPendingJobsNamed(names: string[]): Promise<boolean> {
     const jobs = await this.queue.getJobs([
       "waiting",

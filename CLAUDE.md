@@ -2,6 +2,10 @@
 
 **Nunca commitar sozinho.** `git commit` só quando o usuário pedir explicitamente naquele turno — mesmo depois de terminar uma tarefa grande, corrigir bug, ou aplicar fix que o usuário claramente vai querer versionado. Terminar o código não é permissão pra commitar; perguntar/avisar que está pronto pra commit, sim.
 
+# Testes
+
+**Nunca `npm run test`/`npx jest` sozinho (sem flag).** Rodar a suite inteira em paralelo (workers default do Jest) consome memória demais e derruba o VS Code. Sempre `--runInBand` (ex.: `npx jest --runInBand`, ou escopado num arquivo/pasta com `--runInBand` também) — mesmo rodando só um subconjunto de arquivos.
+
 # Architecture rules
 
 ## Layer separation: repository / service / controller

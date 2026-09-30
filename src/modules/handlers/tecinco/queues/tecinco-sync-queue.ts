@@ -4,11 +4,12 @@ import { alertService } from "../../../../shared/providers/mail-provider/nodemai
 import { TCarUpsertQueue } from "./tecinco-api-fetch.queue";
 import {
   TCarInvoiceQueue,
-  TCAR_INVOICE_NEW_JOB_NAME,
+  TCAR_INVOICE_UPDATE_JOB_NAME,
 } from "./tecinco-invoice.queue";
 import {
+  enqueueInvoiceUpdates,
   migrateNovasNotasFiscais,
-  runMigration,
+  runProductsMigration,
 } from "../../../../scripts/tecinco/tecinco-migration.runner";
 import { UnitBusiness } from "../../../../modules/warehouse";
 import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
@@ -16,16 +17,15 @@ import { tecincoTireGrupoIds } from "../../../../shared/constants/tecinco-groups
 import { Op } from "sequelize";
 
 export interface TCarSyncJobPayload {
-  branchId: number;
+  branchIds: number[];
   companyId: string;
   alteradoDesde: string;
-  kind: "invoices" | "full";
+  kind: "invoices" | "products" | "invoice-updates";
 }
 
 const COMPANY_ID = process.env.TCAR_COMPANY_ID ?? "default";
 const INVOICE_SYNC_INTERVAL_MS = 60 * 1000;
-const FULL_SYNC_INTERVAL_MS = 10 * 60 * 1000;
-const FULL_SYNC_REDELAY_MS = 15 * 1000;
+const SLOW_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 function formatAlteradoDesde(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -47,61 +47,47 @@ export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
   }
 
   async process(job: Job<TCarSyncJobPayload>): Promise<void> {
-    const { branchId, companyId, alteradoDesde, kind } = job.data;
+    const { branchIds, companyId, alteradoDesde, kind } = job.data;
 
-    // full sync (produtos/clientes/notas) e o job de notas novas competem
-    // pelo mesmo concurrency de TCAR_SYNC (2 slots pras 2 filiais); notas
-    // novas são o fluxo urgente e não podem esperar atrás de um full sync
-    // que já está no meio de uma migração longa. Em vez de segurar o slot
-    // com um sleep/poll, redelay libera o slot pro job de "invoices"
-    // pendente e este mesmo job full volta a ser tentado em breve.
-    if (
-      kind === "full" &&
-      (await this.invoiceQueue.hasPendingJobsNamed([TCAR_INVOICE_NEW_JOB_NAME]))
-    ) {
-      console.log(
-        `[TCAR_SYNC] Notas novas ainda pendentes — adiando full sync | branchId=${branchId}`,
-      );
-      return this.retryJobLater(job, FULL_SYNC_REDELAY_MS);
-    }
+    console.log(`[TCAR_SYNC] Iniciando ${kind} | branchIds=${branchIds.join(",")}`);
 
-    console.log(`[TCAR_SYNC] Iniciando ${kind} | branchId=${branchId}`);
-
-    if (kind === "invoices") {
-      await migrateNovasNotasFiscais({
-        branchIds: [branchId],
-        companyId,
-        alteradoDesde,
-        upsertQueue: this.apiFetchQueue,
-        invoiceQueue: this.invoiceQueue,
-      });
-      return;
-    }
-
-    await runMigration({
-      branchIds: [branchId],
+    const migrationOptions = {
+      branchIds,
       companyId,
       alteradoDesde,
       upsertQueue: this.apiFetchQueue,
       invoiceQueue: this.invoiceQueue,
-      grupos: tecincoTireGrupoIds,
-    });
-    console.log(`[TCAR_SYNC] Sync completo concluído | branchId=${branchId}`);
+    };
+
+    if (kind === "invoices") {
+      await migrateNovasNotasFiscais(migrationOptions);
+      return;
+    }
+
+    if (kind === "invoice-updates") {
+      await enqueueInvoiceUpdates(migrationOptions);
+      return;
+    }
+
+    await runProductsMigration({ ...migrationOptions, grupos: tecincoTireGrupoIds });
+    console.log(`[TCAR_SYNC] Sync de produtos concluído | branchIds=${branchIds.join(",")}`);
   }
 
-  async areTargetQueuesIdle(): Promise<boolean> {
-    const [apiFetchPending, invoicePending] = await Promise.all([
-      this.apiFetchQueue.hasPendingJobs(),
-      this.invoiceQueue.hasPendingJobs(),
-    ]);
-    return !apiFetchPending && !invoicePending;
+  // Products só roda com TCAR_API_FETCH vazia; updates de nota só se não há
+  // update pendente (rodam em prioridade menor que invoice-new).
+  async shouldDispatch(kind: TCarSyncJobPayload["kind"]): Promise<boolean> {
+    if (kind === "invoices") return true;
+    if (kind === "products") return !(await this.apiFetchQueue.hasPendingJobs());
+    return !(await this.invoiceQueue.hasPendingJobsNamed([
+      TCAR_INVOICE_UPDATE_JOB_NAME,
+    ]));
   }
 
   protected override onFailed(job: Job<TCarSyncJobPayload>, error: Error): void {
     alertService.sendAlert({
       severity: "MEDIUM",
       title: "TCarSyncQueue — job falhou",
-      message: `kind=${job.data.kind} | branchId=${job.data.branchId} | Erro: ${error.message}`,
+      message: `kind=${job.data.kind} | branchIds=${job.data.branchIds.join(",")} | Erro: ${error.message}`,
     });
   }
 }
@@ -122,36 +108,39 @@ export async function scheduleTCarSync(syncQueue: TCarSyncQueue) {
       "prioritized",
     ]);
     const sameKindPending = jobs.some((job) => job.data.kind === kind);
-    const targetsAreIdle =
-      kind === "invoices" || (await syncQueue.areTargetQueuesIdle());
+    const canDispatch = await syncQueue.shouldDispatch(kind);
 
-    const shouldDispatch = !sameKindPending && targetsAreIdle;
-
-    if (shouldDispatch) {
+    if (!sameKindPending && canDispatch) {
       const alteradoDesde = formatAlteradoDesde(
         new Date(Date.now() - 2 * 60 * 60 * 1000),
       );
+      // products roda uma vez pra todas as filiais (produtos vêm numa busca só)
+      const payloads =
+        kind === "products"
+          ? [{ branchIds, jobId: `tcar-sync-${kind}` }]
+          : branchIds.map((branchId) => ({
+              branchIds: [branchId],
+              jobId:
+                kind === "invoices"
+                  ? `tcar-sync-${kind}-${branchId}-${Date.now()}`
+                  : `tcar-sync-${kind}-${branchId}`,
+            }));
       await Promise.all(
-        branchIds.map((branchId) =>
+        payloads.map(({ branchIds: ids, jobId }) =>
           syncQueue.add(
-            { branchId, companyId: COMPANY_ID, alteradoDesde, kind },
-            kind === "invoices"
-              ? `tcar-sync-${kind}-${branchId}-${Date.now()}`
-              : `tcar-sync-${kind}-${branchId}`,
+            { branchIds: ids, companyId: COMPANY_ID, alteradoDesde, kind },
+            jobId,
           ),
         ),
       );
-    } else if (kind === "full" && !targetsAreIdle) {
-      console.log(
-        "[TCAR_SYNC] TCAR_INVOICE ou TCAR_API_FETCH ainda possui jobs; pulando sync completo",
-      );
     } else {
-      console.log(`[TCAR_SYNC] Já há job(s) ${kind} em andamento; pulando dispatch`);
+      console.log(`[TCAR_SYNC] Pulando dispatch ${kind} (job em andamento ou fila alvo ocupada)`);
     }
 
     setTimeout(() => void dispatch(kind, intervalMs), intervalMs);
   };
 
   void dispatch("invoices", INVOICE_SYNC_INTERVAL_MS);
-  void dispatch("full", FULL_SYNC_INTERVAL_MS);
+  void dispatch("products", SLOW_SYNC_INTERVAL_MS);
+  void dispatch("invoice-updates", SLOW_SYNC_INTERVAL_MS);
 }

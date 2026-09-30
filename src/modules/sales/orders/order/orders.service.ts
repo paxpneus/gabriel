@@ -143,6 +143,17 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     };
   }
 
+  // Igual paginate(), mas devolve só ids — usado por rotas que precisam do
+  // conjunto de pedidos que casa com um filtro (ex.: force-update em massa
+  // na fila BLING_ORDER_INGESTION) sem paginar. findAllIds do BaseService
+  // não passa por resolveStatusFilter sozinho, então filters[status] tem
+  // que ser traduzido aqui antes, senão compararia normalized_status direto
+  // contra actual_situation.
+  async findIdsMatchingFilters(params: QueryParams): Promise<string[]> {
+    const resolvedParams = await this.resolveStatusFilter(params);
+    return this.findAllIds(resolvedParams);
+  }
+
   async getFullOrder(id: string): Promise<FullOrder> {
     const orderData = await this.repository.findOne({
       where: { id },

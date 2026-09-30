@@ -6,6 +6,7 @@ import {
   Stock,
 } from "../../../../inventory";
 import UnitBusiness from "../../../../company/unit-business/unit-business.model";
+import { getCachedIntegrationsIdForUnitBusiness } from "./lookup-cache";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 
 export function normalizeEan(ean?: string): string | undefined {
@@ -32,16 +33,21 @@ export async function resolveIntegrationsIdForUnitBusiness(
   unitBusinessId: string,
   transaction?: Transaction,
 ): Promise<string> {
-  const unitBusiness = await UnitBusiness.findByPk(unitBusinessId, {
-    attributes: ["integrations_id"],
-    transaction,
-  });
-  if (!unitBusiness?.integrations_id) {
+  // Dentro de transaction lê direto (pode enxergar escrita ainda não commitada).
+  const integrationsId = transaction
+    ? (
+        await UnitBusiness.findByPk(unitBusinessId, {
+          attributes: ["integrations_id"],
+          transaction,
+        })
+      )?.integrations_id
+    : await getCachedIntegrationsIdForUnitBusiness(unitBusinessId);
+  if (!integrationsId) {
     throw new Error(
       `UnitBusiness ${unitBusinessId} sem integrations_id configurado`,
     );
   }
-  return unitBusiness.integrations_id;
+  return integrationsId;
 }
 
 // Product.integrations_id é o "dono" dos campos descritivos compartilhados

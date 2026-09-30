@@ -145,6 +145,22 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
     });
   }
 
+  // order_id de toda PdvSalesRequest existente, opcionalmente restrita a um
+  // conjunto de status — usado pra cruzar contra order.id em filtros de
+  // outra entidade (ex.: force-update em massa por "tem/não tem PDV
+  // request" + status do PDV), sem fazer join com Order aqui.
+  async findOrderIdsByStatus(
+    statuses?: PdvSalesRequestStatus[],
+  ): Promise<string[]> {
+    const rows = await this.model.findAll({
+      where: statuses?.length ? { status: { [Op.in]: statuses } } : {},
+      attributes: ["order_id"],
+      raw: true,
+    });
+
+    return rows.map((r: any) => r.order_id);
+  }
+
   // Contagem por status, agrupada em uma query só — base de getStatusSummary
   // (pdv-sales-request.service.ts). `where` já vem com o escopo de loja
   // aplicado (unit_business_id).

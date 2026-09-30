@@ -40,7 +40,7 @@ import {
   logDbError,
   rethrowWithLog,
 } from "../../../../../../shared/utils/logging/db-errors-logs";
-import magentoCatalogService from "../../../../magentoV2/service/catalog/products/products.service";
+import { MagentoSyncQueue } from "../../../../magentoV2/queues/magento-sync.queue";
 import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import invoiceItemsService from "../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
@@ -426,6 +426,11 @@ interface BlingApiInvoiceItem {
 
 export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   private api: AxiosInstance;
+  // Client workless: só produz jobs na fila MAGENTO_SYNC (Redis), nunca
+  // consome — o Worker real roda no container que registra essa fila (ver
+  // queues/index.ts). Seguro instanciar em todo lugar que cria esta classe
+  // (scripts, sefaz-procnfe-retry, etc.) sem precisar injetar a instância.
+  private magentoSyncQueue: MagentoSyncQueue;
 
   constructor(options: { workless?: boolean } = {}) {
     super("BLING_API_FETCH", {
@@ -482,6 +487,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
 
     this.api = blingApi;
+    this.magentoSyncQueue = new MagentoSyncQueue({ workless: true });
   }
 
   private async fetchPhysicalStock(
@@ -629,201 +635,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     console.log(
       `${logPrefix} ${affectedBatches.length} batch(es) sincronizado(s)`,
-    );
-  }
-
-  // ─── Magento: busca o produto já mapeado ───────────────────────────────────
-  // external_id do integration_mapping é o entity_id do Magento (estável),
-  // não o sku (que pode mudar) — por isso a busca é sempre via searchCriteria
-  // (não existe GET /products/:id na REST API do Magento, só por sku). Sem
-  // fallback pra sku/nome aqui — produto já mapeado que não resolve por id
-  // foi excluído no Magento (cai pro unmapped normalmente).
-  private async fetchMagentoProductById(
-    magentoId: string,
-    logPrefix: string,
-  ): Promise<any | null> {
-    try {
-      const result = await magentoCatalogService.buscarProdutoPorId(magentoId);
-      const items = result?.items ?? [];
-      if (items.length === 1) return items[0];
-
-      console.warn(
-        `${logPrefix} Produto do Magento com id=${magentoId} (mapeado) não encontrado — pode ter sido excluído no Magento.`,
-      );
-      return null;
-    } catch (error: any) {
-      console.warn(
-        `${logPrefix} Falha ao consultar produto no Magento por id | id=${magentoId} | erro=${error?.message}`,
-      );
-      return null;
-    }
-  }
-
-  // ─── Magento: busca produto por SKU (primeira vez, sem mapping ainda) ──────
-  // Se não achar por SKU, cai pro fallback por nome (fetchMagentoProductByName)
-  // antes de desistir — cobre produto cujo SKU no Magento diverge do nosso.
-  private async fetchMagentoProductBySku(
-    sku: string,
-    productName: string,
-    logPrefix: string,
-  ): Promise<any | null> {
-    try {
-      return await magentoCatalogService.obterProduto(sku);
-    } catch (error: any) {
-      if (error?.response?.status === 404) {
-        return await this.fetchMagentoProductByName(productName, sku, logPrefix);
-      }
-
-      console.warn(
-        `${logPrefix} Falha ao consultar produto no Magento | sku=${sku} | erro=${error?.message}`,
-      );
-      return null;
-    }
-  }
-
-  // ─── Magento: resolve o produto — por id (já mapeado) ou por sku/nome (1ª vez) ──
-  private async fetchMagentoProduct(
-    magentoId: string | null,
-    sku: string,
-    productName: string,
-    logPrefix: string,
-  ): Promise<any | null> {
-    if (magentoId) {
-      return await this.fetchMagentoProductById(magentoId, logPrefix);
-    }
-    return await this.fetchMagentoProductBySku(sku, productName, logPrefix);
-  }
-
-  // ─── Magento: fallback por nome quando o SKU não é encontrado ─────────────
-  // Só aceita o match se vier exatamente 1 resultado e o nome bater
-  // integralmente (normalizado) — nome ambíguo/parcial cai pro unmapped, não
-  // arrisca vincular o produto errado.
-  private async fetchMagentoProductByName(
-    productName: string,
-    sku: string,
-    logPrefix: string,
-  ): Promise<any | null> {
-    if (!productName?.trim()) return null;
-
-    try {
-      const result = await magentoCatalogService.buscarProdutosPorNome(
-        productName,
-      );
-      const items = result?.items ?? [];
-      if (items.length !== 1) return null;
-
-      const normalize = (value: string) =>
-        value?.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-      if (normalize(items[0].name) !== normalize(productName)) return null;
-
-      console.log(
-        `${logPrefix} Produto do Magento resolvido por nome (SKU=${sku} não encontrado) | magento_sku=${items[0].sku}`,
-      );
-      return items[0];
-    } catch (error: any) {
-      console.warn(
-        `${logPrefix} Falha ao buscar produto no Magento por nome | nome=${productName} | erro=${error?.message}`,
-      );
-      return null;
-    }
-  }
-
-  // ─── Sincronização de produto com o Magento (mapping / unmapped) ──────────
-  private async syncProductWithMagento(params: {
-    product: Product;
-    sku: string | null;
-    ean?: string | null;
-    productName: string;
-    magentoProduct: any | null;
-    magentoIntegration: { id: string };
-    logPrefix: string;
-    transaction: Transaction;
-  }): Promise<void> {
-    const {
-      product,
-      sku,
-      ean,
-      productName,
-      magentoProduct,
-      magentoIntegration,
-      logPrefix,
-      transaction,
-    } = params;
-
-    if (!sku) {
-      console.warn(
-        `${logPrefix} Sem SKU para sincronizar com Magento — ignorado.`,
-      );
-      return;
-    }
-
-    if (!magentoProduct) {
-      const normalizedEan = ean && ean.trim() !== "" ? ean : null;
-
-      // unique_ean_integration_null_invoice é UNIQUE(ean, integrations_id)
-      // WHERE invoice_id IS NULL — dois skus diferentes com o mesmo EAN na
-      // mesma integração batem nesse índice, então o dedup precisa checar
-      // por ean também, não só por sku (mas sempre escopado à integração,
-      // já que o mesmo EAN pode legitimamente existir em integrações
-      // diferentes).
-      const existingUnmapped = await UnmappedInvoiceProduct.findOne({
-        where: {
-          invoice_id: null,
-          integrations_id: magentoIntegration.id,
-          ...(normalizedEan
-            ? { [Op.or]: [{ sku }, { ean: normalizedEan }] }
-            : { sku }),
-        },
-        transaction,
-      });
-
-      if (!existingUnmapped) {
-        await UnmappedInvoiceProduct.create(
-          {
-            invoice_id: null,
-            integrations_id: magentoIntegration.id,
-            sku,
-            ean: normalizedEan,
-            product_name: productName,
-            quantity: 0,
-            reason: "Produto não encontrado no Magento",
-            type: "ERROR_INTEGRATION",
-            status: "UNMAPPED",
-          },
-          { transaction },
-        );
-        console.warn(
-          `${logPrefix} Produto não encontrado no Magento — unmapped registrado | sku=${sku}`,
-        );
-      } else {
-        // Upsert: mantém sku/ean/nome sincronizados com o que a Bling manda,
-        // mesmo que o unmapped já exista de uma passagem anterior.
-        await existingUnmapped.update(
-          { sku, ean: normalizedEan, product_name: productName, type: "ERROR_INTEGRATION" },
-          { transaction },
-        );
-        console.log(
-          `${logPrefix} Produto já registrado como unmapped no Magento (dados sincronizados) | sku=${sku}`,
-        );
-      }
-
-      return;
-    }
-
-    await integrationMappingService.createOrUpdateIntegrationMapping(
-      {
-        entity_type: "PRODUCT",
-        internal_id: product.id,
-        // external_id é o entity_id do Magento (estável), não o sku (que
-        // pode ser renomeado no catálogo sem que o produto mude de fato).
-        external_id: String(magentoProduct.id),
-        integrations_id: magentoIntegration.id,
-      },
-      transaction,
-    );
-
-    console.log(
-      `${logPrefix} Produto mapeado no Magento | sku=${sku} | magento_id=${magentoProduct.id} | magento_sku=${magentoProduct.sku ?? sku}`,
     );
   }
 
@@ -1230,42 +1041,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
     }
 
-    // ─── Resolve a integration do Magento uma única vez (reaproveitada abaixo) ──
-    const magentoIntegration = await getMagentoIntegration("Magento");
-
-    // ─── Prioriza o id do Magento já mapeado (estável); só cai pro sku/nome da ──
-    // Bling na 1ª vez, quando ainda não existe mapping.
-    let magentoIdFromMapping: string | null = null;
-
-    if (existingProduct) {
-      const magentoIdMap = await integrationMappingService.findExternalIdsMap(
-        "PRODUCT",
-        magentoIntegration.id,
-        [existingProduct.id],
-      );
-      magentoIdFromMapping = magentoIdMap.get(existingProduct.id) ?? null;
-    }
-
-    if (magentoIdFromMapping) {
-      console.log(
-        `${logPrefix} Produto do Magento resolvido via integration mapping: id=${magentoIdFromMapping}`,
-      );
-    }
-
-    // ─── Chamadas externas (Magento/Bling) — sempre FORA da transaction ────────
-    // KIT nunca sincroniza com o Magento (preço/custo_medio/unmapped) — só UNIT.
-    const magentoProduct = isKit
-      ? null
-      : await this.fetchMagentoProduct(
-          magentoIdFromMapping,
-          configSku,
-          blingProduct.nome,
-          logPrefix,
-        );
-    const resolvedPrice =
-      magentoProduct?.price !== undefined && magentoProduct?.price !== null
-        ? Number(magentoProduct.price)
-        : Number(blingProduct.preco);
+    // ─── Preço vem da Bling aqui — o valor do Magento (quando existir) é
+    // aplicado depois, de forma assíncrona, pelo job "sync-product" da
+    // MAGENTO_SYNC (ver enqueue após a transaction, abaixo).
+    const resolvedPrice = Number(blingProduct.preco);
 
     const physicalQuantity =
       (await this.fetchPhysicalStock([blingProduct.id])).get(blingProduct.id) ??
@@ -1311,12 +1090,28 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           product = existingProduct;
         }
 
+        // ─── Preço: só a Bling escreve enquanto o produto não tem mapping pro
+        // Magento — a partir do momento que mapeia, o Magento passa a ser o
+        // dono do preço (sincronizado por MAGENTO_SYNC) e a Bling nunca mais
+        // sobrescreve esse campo.
+        let hasMagentoMapping = false;
+        if (!isKit) {
+          const magentoIntegration = await getMagentoIntegration("Magento");
+          const magentoIdMap = await integrationMappingService.findExternalIdsMap(
+            "PRODUCT",
+            magentoIntegration.id,
+            [product.id],
+            transaction,
+          );
+          hasMagentoMapping = magentoIdMap.has(product.id);
+        }
+
         await ProductConfig.upsert(
           {
             product_id: product.id,
             unit_business_id: unitBusiness.id,
             sku: configSku,
-            price: resolvedPrice,
+            ...(hasMagentoMapping ? {} : { price: resolvedPrice }),
             gtin: blingProduct.gtin,
             gtin_package: blingProduct.gtinEmbalagem,
             ncm: blingProduct.tributacao?.ncm,
@@ -1330,25 +1125,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           },
           { conflictFields: ["product_id", "unit_business_id"], transaction },
         );
-
-        if (!isKit) {
-          try {
-            await this.syncProductWithMagento({
-              product,
-              sku: configSku,
-              ean: blingProduct.gtin,
-              productName: blingProduct.nome,
-              magentoProduct,
-              magentoIntegration,
-              logPrefix,
-              transaction,
-            });
-          } catch (magentoSyncErr: any) {
-            console.warn(
-              `${logPrefix} Falha ao sincronizar com Magento (produto será salvo normalmente) | erro=${magentoSyncErr?.message}`,
-            );
-          }
-        }
 
         // ─── Kardex + estoque físico + batches, tudo atômico ─────────────────
         const { average_cost, created } =
@@ -1401,57 +1177,20 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       throw error;
     }
 
-    // ─── custo_medio no Magento — best effort, fora da transaction ────────────
+    // ─── Magento — desacoplado: só enfileira e retorna, nunca bloqueia o
+    // job da Bling nem sua transaction. Preço/mapping/unmapped/custo_medio
+    // são todos resolvidos pelo worker da MAGENTO_SYNC (ver magento-sync.queue.ts).
     // KIT nunca sincroniza com o Magento — só UNIT.
     if (!isKit) {
       try {
-        const config = await ProductConfig.findOne({
-          where: {
-            product_id: product!.id,
-            unit_business_id: BLING_UNIT_BUSINESS_ID,
-          },
-        });
-
-        if (config?.average_cost) {
-          const magentoIdMap =
-            await integrationMappingService.findExternalIdsMap(
-              "PRODUCT",
-              magentoIntegration.id,
-              [product!.id],
-            );
-          const magentoId = magentoIdMap.get(product!.id);
-          // atualizarCustomAttribute (PUT /products/:sku) exige o sku atual —
-          // resolve pelo id (estável) antes, já que o sku pode ter mudado
-          // desde que o mapping foi criado.
-          const magentoProductForCost = magentoId
-            ? await this.fetchMagentoProductById(magentoId, logPrefix)
-            : null;
-
-          if (magentoProductForCost?.sku) {
-            await magentoCatalogService.atualizarCustomAttribute(
-              magentoProductForCost.sku,
-              "custo_medio",
-              Number(config.average_cost).toFixed(2),
-            );
-            console.log(
-              `[BLING_API_FETCH] custo_medio sincronizado para Magento: sku=${magentoProductForCost.sku} | average_cost=${config.average_cost}`,
-            );
-          } else {
-            console.log(
-              `[BLING_API_FETCH] Produto sem mapping no Magento — custo_medio não sincronizado: sku_bling=${blingProduct.codigo}`,
-            );
-          }
-        }
-      } catch (magentoErr: any) {
-        if (magentoErr?.response?.status === 404) {
-          console.log(
-            `[BLING_API_FETCH] Produto não encontrado no Magento — custo_medio ignorado: sku=${blingProduct.codigo}`,
-          );
-        } else {
-          console.warn(
-            `[BLING_API_FETCH] Falha ao sincronizar custo_medio para Magento | sku=${blingProduct.codigo} | erro=${magentoErr?.message}`,
-          );
-        }
+        await this.magentoSyncQueue.add(
+          { kind: "sync-product", productId: product!.id },
+          `magento-sync-product-${product!.id}`,
+        );
+      } catch (magentoSyncErr: any) {
+        console.warn(
+          `${logPrefix} Falha ao enfileirar sincronização com Magento | erro=${magentoSyncErr?.message}`,
+        );
       }
     }
 
