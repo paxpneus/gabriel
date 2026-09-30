@@ -33,6 +33,7 @@ import {
   productRimWhere,
   supplierDiscountMatchWhere,
 } from "./helpers/custom-filters";
+import { deliveryNoteGeneratedWhere } from "./helpers/delivery-note";
 import supplierDiscountRuleService from "../../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
 import { SupplierDiscountBypassItemInput } from "../../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import sequelize from "../../../../../config/sequelize";
@@ -186,6 +187,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             ? { [Op.in]: value }
             : value,
         }),
+
+        // Romaneio gerado em qualquer ponta da transferência (remetente OU
+        // destinatária) — ver `helpers/delivery-note.ts`.
+        delivery_note_generated: (value) =>
+          deliveryNoteGeneratedWhere(
+            (Array.isArray(value) ? value[0] : value) === "true",
+          ),
 
         // Fila de embarque Mercado Livre: 4 abas mutuamente exclusivas da
         // mesma tela ("o que precisa/já foi embarcado hoje"). Todas exigem
@@ -556,6 +564,34 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     unitBusinessId: string,
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
     return this.repository.listInvoices(
+      params,
+      unitBusinessId,
+      this.queryConfig,
+    );
+  }
+
+  // Mesma listagem paginada de `listInvoices`, restrita a notas de
+  // transferência (remetente E destinatário são ambos unit_businesses
+  // próprias). `unitBusinessId` é opcional — o front decide se filtra por
+  // uma loja específica; sem ele, lista transferências de todas.
+  async listTransferInvoices(
+    params: QueryParams,
+    unitBusinessId?: string,
+  ): Promise<PaginatedResult<FullInvoiceAttributes>> {
+    return this.repository.listTransferInvoices(
+      params,
+      unitBusinessId,
+      this.queryConfig,
+    );
+  }
+
+  // Relatório (sem paginação) das mesmas notas de `listTransferInvoices` —
+  // mesmos filtros, mesma linha por nota.
+  async getTransferInvoicesReport(
+    params: QueryParams,
+    unitBusinessId?: string,
+  ): Promise<FullInvoiceAttributes[]> {
+    return this.repository.findAllTransferInvoices(
       params,
       unitBusinessId,
       this.queryConfig,

@@ -105,6 +105,7 @@ export interface FullInvoiceAttributes {
   transporter_document?: string | null;
   total_read?: number;
   total_expected?: number;
+  delivery_note_generated?: boolean;
   description?: string | null;
   bonded_invoice?: string | null;
   invoice_series?: string | null;

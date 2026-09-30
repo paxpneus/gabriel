@@ -102,16 +102,25 @@ export class InvoiceController extends BaseController<
       ...this.mw("listInvoicesPendingLogisticOccurrence"),
       this.listInvoicesPendingLogisticOccurrence,
     );
+
+    this.router.get(
+      "/transfer/list",
+      ...this.mw("listTransferInvoices"),
+      this.listTransferInvoices,
+    );
+
+    this.router.get(
+      "/report/transfer",
+      ...this.mw("getTransferInvoicesReport"),
+      this.getTransferInvoicesReport,
+    );
   }
 
-  private resolveUnitBusinessId(
-    req: Request,
-    contextUnitBusinessId: string,
-  ): string {
-    // filters[unit_business_id] também é lido aqui — antes só valia
-    // ?unitBusinessId=, e ter os dois convivendo sem se sobrepor causava um
-    // AND impossível entre esse escopo e o customField unit_business_id do
-    // queryConfig (mesmo campo, valores diferentes = zero resultados).
+  // filters[unit_business_id] também é lido aqui — antes só valia
+  // ?unitBusinessId=, e ter os dois convivendo sem se sobrepor causava um
+  // AND impossível entre esse escopo e o customField unit_business_id do
+  // queryConfig (mesmo campo, valores diferentes = zero resultados).
+  private extractUnitBusinessIdFromRequest(req: Request): string | undefined {
     const filtersUnitBusinessId = (
       req.query.filters as Record<string, unknown> | undefined
     )?.unit_business_id;
@@ -122,7 +131,14 @@ export class InvoiceController extends BaseController<
         ? filtersUnitBusinessId
         : undefined)) as string | undefined;
 
-    return fromParams && fromParams.trim() ? fromParams : contextUnitBusinessId;
+    return fromParams && fromParams.trim() ? fromParams : undefined;
+  }
+
+  private resolveUnitBusinessId(
+    req: Request,
+    contextUnitBusinessId: string,
+  ): string {
+    return this.extractUnitBusinessIdFromRequest(req) ?? contextUnitBusinessId;
   }
 
   protected registerCustomRoutes(): void {}
@@ -151,6 +167,8 @@ export class InvoiceController extends BaseController<
       getInvoiceSupplierReport: [authenticate, userPermissions],
       listInvoicesPendingLogisticOccurrence: [authenticate, userPermissions],
       markAsInternalUse: [authenticate, userPermissions],
+      listTransferInvoices: [authenticate, userPermissions],
+      getTransferInvoicesReport: [authenticate, userPermissions],
     };
   }
 
@@ -164,6 +182,46 @@ export class InvoiceController extends BaseController<
       );
       const result = await this.service.listInvoices(params, unitBusinessId);
       return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  // Notas de transferência (remetente E destinatário são ambas unit
+  // businesses próprias) — igual a `index`, mas sem cair no unit_business_id
+  // do contexto logado quando o front não manda nenhum: sem filtro, lista
+  // transferências de todas as unit businesses.
+  listTransferInvoices = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      const unitBusinessId = this.extractUnitBusinessIdFromRequest(req);
+      const result = await this.service.listTransferInvoices(
+        params,
+        unitBusinessId,
+      );
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  // Relatório (sem paginação) das notas de transferência — mesmos filtros de
+  // `listTransferInvoices`.
+  getTransferInvoicesReport = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      const unitBusinessId = this.extractUnitBusinessIdFromRequest(req);
+      const data = await this.service.getTransferInvoicesReport(
+        params,
+        unitBusinessId,
+      );
+      return res.json({ data });
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }

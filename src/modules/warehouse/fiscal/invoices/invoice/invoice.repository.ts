@@ -35,6 +35,7 @@ import {
   QueryParams,
   QueryConfig,
 } from "../../../../../shared/query/query.types";
+import { QueryParser } from "../../../../../shared/query/query.parser";
 import {
   InvoiceUnitBusinessAttributesCreationAttributes,
   InvoiceUnitBusinessAttributesStatus,
@@ -48,6 +49,7 @@ import {
 } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 import { BatchInvoiceItemsAttributes } from "../../../expedition/batch-invoice-items/batch-invoice-items.types";
 import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
+import { deliveryNoteGeneratedLiteral } from "./helpers/delivery-note";
 import { LOGISTIC_OCCURRENCE_CODES } from "../../../../handlers/logistic/constants/constants";
 import SalesOrderItemSnapshot from "../../../../reports/daily-sales/sales-order-item-snapshot/sales-order-item-snapshot.model";
 import KitComponent from "../../../../inventory/kit-components/kit-component.model";
@@ -256,11 +258,11 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
   private extractAttrFilters(
     filters: QueryParams["filters"],
-    unitBusinessId: string,
+    unitBusinessId?: string,
   ): WhereOptions {
-    const attrWhere: WhereOptions = {
-      unit_business_id: unitBusinessId,
-    };
+    const attrWhere: WhereOptions = unitBusinessId
+      ? { unit_business_id: unitBusinessId }
+      : {};
 
     if (filters?.status) {
       (attrWhere).status = Array.isArray(filters.status)
@@ -370,11 +372,22 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
   // ─── Listagem paginada ───────────────────────────────────────────────────────
 
-  async listInvoices(
+  // Monta os includes/attributes compartilhados por `listInvoices` e
+  // `listTransferInvoices` — a única diferença de verdade entre as duas é o
+  // `forcedWhere` que cada uma passa pro `findPaginated` (escopo por
+  // unit_business_id vs. escopo por CNPJ de transferência). `unitBusinessId`
+  // opcional: quando ausente (listagem de transferência sem loja escolhida
+  // pelo front), o join de `unitBusinessAttributes`/`batch` deixa de ser
+  // `required`/escopado — só bate como filtro quando algum outro filtro
+  // (status/type/batch_generated/processStatus/transporterStatus) foi
+  // realmente informado.
+  private buildListedInvoiceQueryOptions(
     params: QueryParams,
-    unitBusinessId: string,
-    queryConfig: QueryConfig = {},
-  ): Promise<PaginatedResult<FullInvoiceAttributes>> {
+    unitBusinessId?: string,
+  ): {
+    extraOptions: Omit<FindOptions, "where" | "limit" | "offset" | "order">;
+    forcedWhere: WhereOptions | undefined;
+  } {
     const transporterStatusFilter = this.extractTransporterStatusFilter(
       params.filters,
     );
@@ -382,6 +395,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       ...this.extractAttrFilters(params.filters, unitBusinessId),
       ...(transporterStatusFilter?.attrWhere ?? {}),
     };
+    const hasAttrFilter = Object.keys(attrWhere).length > 0;
     const batchStatusWhere = this.extractBatchStatusFilter(params.filters);
     const hasBatchFilter = !!batchStatusWhere;
 
@@ -394,8 +408,8 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         {
           model: InvoiceUnitBusinessAttributes,
           as: "unitBusinessAttributes",
-          where: attrWhere,
-          required: true,
+          where: hasAttrFilter ? attrWhere : undefined,
+          required: hasAttrFilter,
           attributes: ["status", "type", "batch_generated", "unit_business_id"],
           include: [
             {
@@ -416,7 +430,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
               required: hasBatchFilter,
               attributes: ["number", "status", "mode", "id"],
               where: {
-                unit_business_id: unitBusinessId,
+                ...(unitBusinessId ? { unit_business_id: unitBusinessId } : {}),
                 ...(batchStatusWhere ?? {}),
               },
             },
@@ -458,42 +472,140 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           [this.productBrandsLiteral(), "product_brands"],
           [totalExpectedLiteral(), "total_expected"],
           [totalReadLiteral(unitBusinessId), "total_read"],
+          [deliveryNoteGeneratedLiteral(), "delivery_note_generated"],
         ],
       },
     };
 
+    return {
+      extraOptions,
+      forcedWhere: transporterStatusFilter
+        ? { transporter_id: transporterStatusFilter.transporterId }
+        : undefined,
+    };
+  }
+
+  private mapListedInvoice(invoice: Invoice): FullInvoiceAttributes {
+    const plain = invoice.get({ plain: true }) as any;
+    return {
+      ...plain,
+      unitBusinessAttributes: plain.unitBusinessAttributes?.[0] ?? null,
+      product_brands: plain.product_brands ?? [],
+      transporter: plain.transporter
+        ? {
+            ...plain.transporter,
+            name: [
+              plain.transporter.name,
+              plain.transporter.uf,
+              plain.transporter.cnpj,
+            ]
+              .filter(Boolean)
+              .join(" | "),
+          }
+        : plain.transporter,
+    } as unknown as FullInvoiceAttributes;
+  }
+
+  async listInvoices(
+    params: QueryParams,
+    unitBusinessId: string,
+    queryConfig: QueryConfig = {},
+  ): Promise<PaginatedResult<FullInvoiceAttributes>> {
+    const { extraOptions, forcedWhere } = this.buildListedInvoiceQueryOptions(
+      params,
+      unitBusinessId,
+    );
+
     const result = await this.findPaginated(
       params,
       queryConfig,
-      { ...extraOptions },
-      transporterStatusFilter
-        ? { transporter_id: transporterStatusFilter.transporterId }
-        : undefined,
+      extraOptions,
+      forcedWhere,
     );
 
     return {
       ...result,
-      data: result.data.map((invoice) => {
-        const plain = invoice.get({ plain: true });
-        return {
-          ...plain,
-          unitBusinessAttributes: plain.unitBusinessAttributes?.[0] ?? null,
-          product_brands: (plain as any).product_brands ?? [],
-          transporter: plain.transporter
-            ? {
-                ...plain.transporter,
-                name: [
-                  plain.transporter.name,
-                  plain.transporter.uf,
-                  plain.transporter.cnpj,
-                ]
-                  .filter(Boolean)
-                  .join(" | "),
-              }
-            : plain.transporter,
-        };
-      }) as unknown as FullInvoiceAttributes[],
+      data: result.data.map((invoice) => this.mapListedInvoice(invoice)),
     };
+  }
+
+  // Notas fiscais "de transferência" — remetente E destinatário são ambos
+  // unit_businesses próprias (não um cliente/fornecedor externo). Resolve
+  // isso comparando `sender_cnpj`/`receiver_cnpj` contra o conjunto de CNPJs
+  // cadastrados em `unit_businesses`, não por um flag/tipo próprio na nota.
+  // `unitBusinessId` é opcional (quem chama decide se filtra por uma loja
+  // específica) — ausente, lista transferências de todas as unit businesses.
+  async findAllUnitBusinessCnpjs(): Promise<string[]> {
+    const rows = await UnitBusiness.findAll({
+      attributes: ["cnpj"],
+      where: { cnpj: { [Op.ne]: null } } as WhereOptions,
+      raw: true,
+    });
+    return rows.map((r) => (r as any).cnpj).filter((cnpj): cnpj is string => !!cnpj);
+  }
+
+  async listTransferInvoices(
+    params: QueryParams,
+    unitBusinessId: string | undefined,
+    queryConfig: QueryConfig = {},
+  ): Promise<PaginatedResult<FullInvoiceAttributes>> {
+    const unitBusinessCnpjs = await this.findAllUnitBusinessCnpjs();
+
+    const { extraOptions, forcedWhere } = this.buildListedInvoiceQueryOptions(
+      params,
+      unitBusinessId,
+    );
+
+    const result = await this.findPaginated(params, queryConfig, extraOptions, {
+      ...forcedWhere,
+      sender_cnpj: { [Op.in]: unitBusinessCnpjs },
+      receiver_cnpj: { [Op.in]: unitBusinessCnpjs },
+    });
+
+    return {
+      ...result,
+      data: result.data.map((invoice) => this.mapListedInvoice(invoice)),
+    };
+  }
+
+  // Relatório de notas de transferência: mesmos filtros/inclusões/mapeamento
+  // de `listTransferInvoices`, mas sem paginação — devolve de uma vez tudo
+  // que bate no filtro (pensado pra exportação). `findPaginated`/`findAll`
+  // do `BaseRepository` não servem aqui: o primeiro sempre limita por
+  // page/perPage, o segundo (`this.findAll`) sobrescreve `where` com só o
+  // resolvido pelo QueryParser, sem como combinar com o `forcedWhere` de CNPJ
+  // — por isso monta a query direto contra o model, do mesmo jeito que
+  // `findPaginated` monta (resolved.where + forcedWhere via `Op.and`).
+  async findAllTransferInvoices(
+    params: QueryParams,
+    unitBusinessId: string | undefined,
+    queryConfig: QueryConfig = {},
+  ): Promise<FullInvoiceAttributes[]> {
+    const unitBusinessCnpjs = await this.findAllUnitBusinessCnpjs();
+
+    const { extraOptions, forcedWhere } = this.buildListedInvoiceQueryOptions(
+      params,
+      unitBusinessId,
+    );
+
+    const combinedForcedWhere: WhereOptions = {
+      ...forcedWhere,
+      sender_cnpj: { [Op.in]: unitBusinessCnpjs },
+      receiver_cnpj: { [Op.in]: unitBusinessCnpjs },
+    };
+
+    const resolved = QueryParser.parse(params, queryConfig);
+    const where = resolved.where
+      ? { [Op.and]: [resolved.where, combinedForcedWhere] }
+      : combinedForcedWhere;
+
+    const rows = await this.model.findAll({
+      ...extraOptions,
+      where,
+      order: resolved.order,
+    });
+
+    return rows.map((invoice) => this.mapListedInvoice(invoice));
   }
 
   // ─── Detalhe completo (sem batch) ───────────────────────────────────────────
