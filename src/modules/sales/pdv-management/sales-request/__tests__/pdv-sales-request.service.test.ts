@@ -884,7 +884,7 @@ describe("PdvSalesRequestService", () => {
         orderService.findByIdWithPaymentMethod as jest.Mock
       ).mockResolvedValue({
         paymentMethod: { description: "Pix" },
-        total_order: 100,
+        net_total_order: 100,
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -909,7 +909,7 @@ describe("PdvSalesRequestService", () => {
         { analysis: pixExtraction, validated: null, fingerprint: "fingerprint-1" },
       );
       // Exatamente 1 comprovante -> payment_method_matches_receipt calculado.
-      // valor_total do comprovante bate com order.total_order (100 == 100).
+      // valor_total do comprovante bate com order.net_total_order (100 == 100).
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
         payment_receipt_analysis: pixExtraction,
         payment_receipt_validated: null,
@@ -967,7 +967,7 @@ describe("PdvSalesRequestService", () => {
       ]);
       (
         orderService.findByIdWithPaymentMethod as jest.Mock
-      ).mockResolvedValue({ paymentMethod: null, total_order: 100 });
+      ).mockResolvedValue({ paymentMethod: null, net_total_order: 100 });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
       });
@@ -1524,7 +1524,7 @@ describe("PdvSalesRequestService", () => {
         },
       });
       (orderService.findById as jest.Mock).mockResolvedValue({
-        total_order: 120,
+        net_total_order: 120,
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -1555,7 +1555,7 @@ describe("PdvSalesRequestService", () => {
         payment_receipt_analysis: null,
       });
       (orderService.findById as jest.Mock).mockResolvedValue({
-        total_order: null,
+        net_total_order: null,
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",

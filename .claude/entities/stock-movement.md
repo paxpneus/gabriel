@@ -4,7 +4,13 @@
 
 - `stock_movements` columns: `movement_type`, `direction`, `status`,
   `movement_quantity`, `balance_quantity`, `resulting_average_cost`,
-  `unit_business_id`, `product_id`, `invoice_number`, `movement_date`.
+  `unit_business_id`, `product_id`, `invoice_number`, `movement_date`,
+  + valores da nota (m295, todos NULL-áveis): `gross_total_amount`,
+  `net_total_amount`, `unit_discount_amount`, `discount_amount`,
+  `discount_percentage`, `unit_price_invoice` (`preco` do lançamento Bling),
+  `bling_entry_ids` (`lancamento_id`, `"a+b"` quando NF mesclada),
+  `bling_origin_id` (`idOrigem`). Loja 21 = `unit_businesses.number='21'`
+  (`CD21_UNIT_BUSINESS_NUMBER`); não existe `store_id`.
   Anchor/correlation columns reference `invoice_number`, not a row id,
   because rows get hard-deleted and recreated.
   Has trigger `trigger_prevent_delete_manual_adjustment_with_cost`
@@ -73,3 +79,41 @@
   if `stock_movement_source_data` is unexpectedly empty in production,
   treat it as a signal that a prior extraction failed partway, not as
   routine cleanup.
+
+## Valores da nota / desconto (PURCHASE_ENTRY)
+
+- Ordem canônica do Kardex: `movement_date, created_at, id` por
+  `product_id + unit_business_id`, só `is_active`. Sem coluna de sequência.
+- Desconto vive num `MANUAL_ADJUSTMENT` com `refers_to = invoice_number` da
+  entrada (`qty=0` tipicamente). `computePurchaseEntryDiscounts`
+  (`helpers/purchase-entry-discount.ts`, puro, BigInt escala 4):
+  `net = total_stock_value(pós-ajuste) - total_stock_value(pré-entrada)`;
+  sem ajuste `net = qty * unit_cost_invoice`; `gross = qty * unit_cost_invoice`;
+  `discount = gross - net`; `unit_discount = unit_cost - net/qty`;
+  `pct = discount/gross*100` (DECIMAL(5,2); fora de ±999.99 vira NULL).
+  Mais de um ajuste pra mesma NF: vale o último. Ajuste com `qty>0`: tira
+  `±qty * resulting_average_cost` do `total_stock_value` pra isolar o custo.
+- `qty=0` / `gross=0` / sem `unit_cost_invoice`: `unit_discount_amount` e
+  `discount_percentage` (ou tudo) ficam NULL — nunca 0. Anomalias
+  (`multiple_adjustments`, `non_adjacent_adjustment`, `adjustment_with_quantity`,
+  `negative_discount`, `negative_previous_balance`, `missing_unit_cost`,
+  `percentage_out_of_range`) são só logadas/contadas.
+- `StockMovementService.recalculatePurchaseEntryDiscounts(productIds, ub, tx)`
+  roda no fim de `syncCsvBaseline`, `reindexProduct` e
+  `upsertProductStockMovements`; UPDATE em lote via `unnest` com
+  `IS DISTINCT FROM` (idempotente). Backfill histórico:
+  `src/scripts/stock/backfill-purchase-entry-discounts.ts`
+  (`UNIT_BUSINESS_ID`, `DRY_RUN` default true = rollback, `BATCH_SIZE`=200,
+  `MAX_PRODUCTS`); 2ª execução reporta `alteradas=0`.
+- `preco` Bling: `populate-stock-movements.ts` lê `preco` (E/S) via
+  `parseBlingEntryPrice` (`shared/utils/normalizers/bling/stock-entry-price.ts`;
+  ausente/zero/inválido = NULL, contados no log final); NF mesclada usa média
+  ponderada (`weightedAveragePrice`). `syncCsvBaseline` grava nas linhas novas e,
+  pra lançamento já SYNCHED casado por fingerprint, faz fill-only
+  (`fillMissingInvoiceValues`, COALESCE — nunca sobrescreve). `reindexProduct`
+  preserva `unit_price_invoice`/`bling_*` da linha apagada equivalente.
+  Dedup de criação continua por `buildCsvEntryFingerprint`, não pelo id Bling.
+  `tipoEntrada` do Bling é ignorado (só existe no CSV).
+- Aritmética monetária: `shared/utils/normalizers/decimal.ts` (BigInt, sem
+  float). Pedido de venda do CSV vira `MANUAL_ADJUSTMENT` OUT com
+  `invoice_number` = nº do pedido (não `SALE_OUT`).

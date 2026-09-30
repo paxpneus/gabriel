@@ -25,6 +25,14 @@ export interface StockMovementAttributes {
   total_stock_value: number;
   manual_average_cost_value?: number | null;
   refers_to?: string | null;
+  gross_total_amount?: string | null;
+  net_total_amount?: string | null;
+  unit_discount_amount?: string | null;
+  discount_amount?: string | null;
+  discount_percentage?: string | null;
+  unit_price_invoice?: string | null;
+  bling_entry_ids?: string | null;
+  bling_origin_id?: string | null;
   is_active: Boolean;
   status: StockMovementStatus;
   createdAt?: Date;
@@ -55,6 +63,9 @@ export interface ReindexProductPayload extends Pick<
   | "invoice_number"
   | "manual_average_cost_value"
   | "direction"
+  | "unit_price_invoice"
+  | "bling_entry_ids"
+  | "bling_origin_id"
 > {}
 
 export interface StockMovementCreationAttributes extends Omit<

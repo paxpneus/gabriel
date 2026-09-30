@@ -124,6 +124,9 @@ describe("StockMovementService", () => {
         .fn()
         .mockImplementation((rows: any[]) => Promise.resolve(rows)),
       bulkDelete: jest.fn().mockResolvedValue(0),
+      findDiscountHistoryByProducts: jest.fn().mockResolvedValue(new Map()),
+      bulkUpdateDiscountFields: jest.fn().mockResolvedValue(0),
+      fillMissingInvoiceValues: jest.fn().mockResolvedValue(0),
       setActiveStatus: jest.fn().mockResolvedValue(undefined),
       create: jest
         .fn()
@@ -817,6 +820,167 @@ describe("StockMovementService", () => {
         );
       },
     );
+  });
+
+  describe("syncCsvBaseline — preco da nota e desconto", () => {
+    beforeEach(() => {
+      (service as any).repository.deletePendingInCsvWindow = jest
+        .fn()
+        .mockResolvedValue([]);
+    });
+
+    it("grava unit_price_invoice e ids Bling nas movimentações novas", async () => {
+      const created = await service.syncCsvBaseline(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [
+          {
+            product_id: PRODUCT_ID,
+            invoice_id: null,
+            invoice_number: "8418",
+            movement_type: "SALE_OUT",
+            movement_date: new Date("2026-05-15T14:08:30Z"),
+            movement_quantity: 4,
+            unit_price_invoice: "1700.0000",
+            bling_entry_ids: "22905545756",
+            bling_origin_id: "25822488657",
+          },
+        ] as any,
+        null,
+        new Date("2026-09-17T00:00:00Z"),
+      );
+
+      expect(created[0]).toMatchObject({
+        unit_price_invoice: "1700.0000",
+        bling_entry_ids: "22905545756",
+        bling_origin_id: "25822488657",
+      });
+    });
+
+    it("reimportar lançamento já SYNCHED não duplica: só preenche valores faltantes", async () => {
+      const alreadySynched = makeExistingMovement({
+        id: "synched-1",
+        invoice_number: "8418",
+        movement_type: "SALE_OUT",
+        movement_date: new Date("2026-05-15T14:08:30Z"),
+        movement_quantity: 4,
+        balance_quantity: 0,
+        resulting_average_cost: 10,
+        status: "SYNCHED",
+        unit_price_invoice: null,
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        alreadySynched,
+      ]);
+
+      await service.syncCsvBaseline(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [
+          {
+            product_id: PRODUCT_ID,
+            invoice_id: null,
+            invoice_number: "8418",
+            movement_type: "SALE_OUT",
+            movement_date: new Date("2026-05-15T14:08:30Z"),
+            movement_quantity: 4,
+            unit_price_invoice: "1700.0000",
+            bling_entry_ids: "22905545756",
+            bling_origin_id: "25822488657",
+          },
+        ] as any,
+        null,
+        new Date("2026-09-17T00:00:00Z"),
+      );
+
+      expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
+      expect(
+        (service as any).repository.fillMissingInvoiceValues,
+      ).toHaveBeenCalledWith(
+        [
+          {
+            id: "synched-1",
+            unit_price_invoice: "1700.0000",
+            bling_entry_ids: "22905545756",
+            bling_origin_id: "25822488657",
+          },
+        ],
+        undefined,
+      );
+    });
+
+    it("não chama fill quando o CSV não traz preco/ids pro lançamento existente", async () => {
+      const alreadySynched = makeExistingMovement({
+        id: "synched-1",
+        invoice_number: "8418",
+        movement_type: "SALE_OUT",
+        movement_date: new Date("2026-05-15T14:08:30Z"),
+        movement_quantity: 4,
+        status: "SYNCHED",
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        alreadySynched,
+      ]);
+
+      await service.syncCsvBaseline(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [
+          {
+            product_id: PRODUCT_ID,
+            invoice_id: null,
+            invoice_number: "8418",
+            movement_type: "SALE_OUT",
+            movement_date: new Date("2026-05-15T14:08:30Z"),
+            movement_quantity: 4,
+          },
+        ] as any,
+        null,
+        new Date("2026-09-17T00:00:00Z"),
+      );
+
+      expect(
+        (service as any).repository.fillMissingInvoiceValues,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("recalcula o desconto das PURCHASE_ENTRY do produto ao final", async () => {
+      const history = new Map([
+        [
+          PRODUCT_ID,
+          [
+            {
+              id: "entry",
+              movement_type: "PURCHASE_ENTRY",
+              invoice_number: "100",
+              movement_quantity: "10.0000",
+              unit_cost_invoice: "100.0000",
+              balance_quantity: "10.0000",
+              resulting_average_cost: "100.0000",
+              total_stock_value: "1000.0000",
+            },
+          ],
+        ],
+      ]);
+      (service as any).repository.findDiscountHistoryByProducts.mockResolvedValue(
+        history,
+      );
+
+      await service.syncCsvBaseline(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [],
+        null,
+        new Date("2026-09-17T00:00:00Z"),
+      );
+
+      expect(
+        (service as any).repository.bulkUpdateDiscountFields,
+      ).toHaveBeenCalledWith(
+        [expect.objectContaining({ id: "entry", net_total_amount: "1000.0000" })],
+        undefined,
+      );
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════════

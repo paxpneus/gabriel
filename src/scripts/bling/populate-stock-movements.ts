@@ -123,6 +123,10 @@ import stockMovementSourceDataService from "../../modules/inventory/stock/stock-
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
 import InvoiceUnitBusinessAttributes from "../../modules/warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.model";
 import { parseBrazilianDateTime as parseBlingDate } from "../../shared/utils/normalizers/date";
+import {
+  parseBlingEntryPrice,
+  weightedAveragePrice,
+} from "../../shared/utils/normalizers/bling/stock-entry-price";
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
@@ -266,9 +270,30 @@ interface CsvRow {
   balanco: number;
   saldo_anterior: number;
   custo_lancamento: number;
+  unit_price_invoice: string | null;
+  id_origem: string;
   origem_tipo: string;
   origem_numero: string;
   origem_titulo?: string;
+}
+
+// Contagem de `preco` ausente/zero por motivo — logada no fim, em vez de uma
+// linha por lançamento (balanços e ajustes nunca têm preço).
+const priceStats = { missing: 0, zero: 0, invalid: 0 };
+
+function resolveEntryPrice(raw: Record<string, string>): string | null {
+  if (raw.es !== "E" && raw.es !== "S") return null;
+
+  const result = parseBlingEntryPrice(raw.preco);
+  if (result.status === "ok") return result.value;
+
+  priceStats[result.status]++;
+  if (result.status === "invalid") {
+    console.warn(
+      `  ⚠️  preco inválido no lançamento ${raw.lancamento_id}: "${raw.preco}" — gravando NULL.`,
+    );
+  }
+  return null;
 }
 
 function toCsvRow(raw: Record<string, string>): CsvRow {
@@ -284,6 +309,8 @@ function toCsvRow(raw: Record<string, string>): CsvRow {
     balanco: parseNum(raw.balanco),
     saldo_anterior: parseNum(raw.saldo_anterior),
     custo_lancamento: parseNum(raw.custo_lancamento),
+    unit_price_invoice: resolveEntryPrice(raw),
+    id_origem: (raw.id_origem ?? "").trim(),
     origem_tipo: (raw.origem_tipo ?? "").trim(),
     origem_numero: (raw.origem_numero ?? "").trim(),
     origem_titulo: (raw.origem_titulo ?? "").trim(),
@@ -454,6 +481,12 @@ function mergeSameInvoiceRows(rows: CsvRow[]): CsvRow[] {
       ...sortedGroup[sortedGroup.length - 1],
       entrada: totalEntrada,
       saida: totalSaida,
+      unit_price_invoice: weightedAveragePrice(
+        sortedGroup.map((r) => ({
+          quantity: r.es === "S" ? r.saida : r.entrada,
+          price: r.unit_price_invoice,
+        })),
+      ),
       custo_lancamento: totalEntrada > 0 ? custoTotal / totalEntrada : sortedGroup[sortedGroup.length - 1].custo_lancamento,
       lancamento_id: sortedGroup.map((r) => r.lancamento_id).join("+"),
     });
@@ -929,6 +962,15 @@ async function buildIncomingInvoiceMovementTypeMap(
   return types;
 }
 
+// bling_entry_ids é STRING(255) e bling_origin_id STRING(50).
+function blingReferenceFields(row: CsvRow) {
+  return {
+    unit_price_invoice: row.unit_price_invoice,
+    bling_entry_ids: row.lancamento_id.slice(0, 255) || null,
+    bling_origin_id: row.id_origem.slice(0, 50) || null,
+  };
+}
+
 function movementFromCsvRow(
   row: CsvRow,
   balance: RunningBalance,
@@ -987,6 +1029,7 @@ function movementFromCsvRow(
       unit_cost_invoice:
         movement_type === "PURCHASE_ENTRY" ? row.custo_lancamento : undefined,
       manual_average_cost_value: null,
+      ...blingReferenceFields(row),
     };
   }
 
@@ -1004,6 +1047,7 @@ function movementFromCsvRow(
       direction === "IN" && !hasEarlierPurchaseEntry && row.custo_lancamento > 0
         ? row.custo_lancamento
         : null,
+    ...blingReferenceFields(row),
   };
 }
 
@@ -1187,6 +1231,9 @@ async function main() {
   );
   console.log(`  Produtos processados: ${results.length}`);
   console.log(`  Movimentos do CSV ${DRY_RUN ? "a sincronizar" : "sincronizados"}: ${totalCsvMovements}`);
+  console.log(
+    `  preco não gravado (NULL): ausente=${priceStats.missing}, zero=${priceStats.zero}, inválido=${priceStats.invalid}`,
+  );
   console.log(`  Erros: ${errors.length}`);
   if (errors.length) {
     console.log("  Produtos com erro:");

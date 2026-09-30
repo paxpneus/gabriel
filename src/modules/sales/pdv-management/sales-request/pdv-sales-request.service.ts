@@ -171,7 +171,7 @@ export class PdvSalesRequestService extends BaseService<
       number_order_channel: order.number_order_channel,
       number_order_system: order.number_order_system ?? null,
       date: order.date ?? null,
-      total_order: order.total_order ?? null,
+      net_total_order: order.net_total_order ?? null,
       customer: order.customer
         ? {
             id: order.customer.id,
@@ -208,7 +208,7 @@ export class PdvSalesRequestService extends BaseService<
       number_order_channel: order.number_order_channel,
       number_order_system: order.number_order_system ?? null,
       date: order.date ?? null,
-      total_order: order.total_order ?? null,
+      net_total_order: order.net_total_order ?? null,
       customer: order.customer
         ? { id: order.customer.id, name: order.customer.name, document: order.customer.document }
         : null,
@@ -722,7 +722,7 @@ export class PdvSalesRequestService extends BaseService<
 
     const totalMatchesOrder = receiptTotalMatchesOrder(
       analysis?.valor_total ?? null,
-      (order as any)?.total_order ?? null,
+      (order as any)?.net_total_order ?? null,
     );
 
     const updated = await this.repository.update(requestId, {
@@ -1081,7 +1081,7 @@ export class PdvSalesRequestService extends BaseService<
   // payment_method_matches_receipt (esses dois são sobre CADA comprovante,
   // não sobre o resumo). receipt_total_matches_order É recalculado — é
   // literalmente a comparação do campo que este endpoint acabou de mudar
-  // (valor_total) contra order.total_order, deixaria o aviso desatualizado
+  // (valor_total) contra order.net_total_order, deixaria o aviso desatualizado
   // se não recalculasse.
   async updatePaymentReceiptAnalysis(
     id: string,
@@ -1101,7 +1101,7 @@ export class PdvSalesRequestService extends BaseService<
     const order = await orderService.findById(request.order_id);
     const totalMatchesOrder = receiptTotalMatchesOrder(
       merged.valor_total,
-      (order as any)?.total_order ?? null,
+      (order as any)?.net_total_order ?? null,
     );
 
     const updated = await this.repository.update(id, {
