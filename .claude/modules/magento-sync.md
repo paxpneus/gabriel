@@ -22,7 +22,7 @@ Consequência prática: a REST API do Magento **não tem** `GET /products/:id` (
 - **Já mapeado** (existe `integration_mapping` com `external_id`): busca só por id (`fetchMagentoProductById`). Não encontrar (produto excluído no Magento) → trata como não encontrado, não tenta sku/nome de novo.
 - **Sem mapping ainda** (1ª vez): tenta por sku (`ProductConfig.sku`, via `GET /products/:sku`). Se der 404, cai no fallback por nome (`fetchMagentoProductByName` → `buscarProdutosPorNome`, `LIKE` no nome) — só aceita o match se vier **exatamente 1 resultado** e o nome bater igual (normalizado: trim/lowercase/sem acento). Nome ambíguo ou parcial não mapeia, cai pro fluxo de `unmapped_invoice_products`.
 
-Ao mapear (achou o produto, por qualquer via), grava `external_id: String(magentoProduct.id)`.
+Ao mapear (achou o produto, por qualquer via), grava `external_id: String(magentoProduct.id)` e apaga qualquer `unmapped_invoice_products` obsoleto pro mesmo sku/ean+integração (`status=UNMAPPED`, `invoice_id IS NULL`) — roda sempre que o produto resolve no Magento nessa passada, tanto mapping novo quanto já existente, então também limpa retroativamente unmapped antigo de produto que já tinha sido mapeado antes dessa limpeza existir (basta o `sync-all` diário passar por ele de novo).
 
 ## Preço (`ProductConfig.price`): a Bling só escreve antes de existir mapping
 

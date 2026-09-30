@@ -61,7 +61,7 @@ jest.mock(
   "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service",
   () => ({
     __esModule: true,
-    default: { upsertByFind: jest.fn() },
+    default: { upsertByFind: jest.fn(), bulkDelete: jest.fn() },
   }),
 );
 
@@ -139,6 +139,7 @@ describe("MagentoSyncQueue", () => {
     (unmappedInvoiceProductService.upsertByFind as jest.Mock).mockResolvedValue(
       undefined,
     );
+    (unmappedInvoiceProductService.bulkDelete as jest.Mock).mockResolvedValue(0);
     (magentoCatalogService.atualizarCustomAttribute as jest.Mock).mockResolvedValue(
       undefined,
     );
@@ -227,6 +228,16 @@ describe("MagentoSyncQueue", () => {
         "custo_medio",
         "250.00",
       );
+      // Produto resolvido no Magento: limpa unmapped obsoleto pro mesmo sku/ean.
+      expect(unmappedInvoiceProductService.bulkDelete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            integrations_id: MAGENTO_INTEGRATION_ID,
+            status: "UNMAPPED",
+          }),
+          transaction: mockTransaction,
+        }),
+      );
     });
 
     it("sem mapping ainda: acha por SKU e mapeia (sem cair pro fallback por nome)", async () => {
@@ -271,6 +282,12 @@ describe("MagentoSyncQueue", () => {
       );
       // Sem average_cost: não tenta empurrar custo_medio.
       expect(magentoCatalogService.atualizarCustomAttribute).not.toHaveBeenCalled();
+      expect(unmappedInvoiceProductService.bulkDelete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: "UNMAPPED" }),
+          transaction: mockTransaction,
+        }),
+      );
     });
 
     it("SKU não encontrado (404) e nome bate exatamente com 1 resultado: mapeia pelo fallback de nome", async () => {
@@ -308,6 +325,12 @@ describe("MagentoSyncQueue", () => {
         mockTransaction,
       );
       expect(unmappedInvoiceProductService.upsertByFind).not.toHaveBeenCalled();
+      expect(unmappedInvoiceProductService.bulkDelete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: "UNMAPPED" }),
+          transaction: mockTransaction,
+        }),
+      );
     });
 
     it("SKU não encontrado e nome ambíguo (mais de 1 resultado): não mapeia, registra unmapped", async () => {
@@ -355,6 +378,9 @@ describe("MagentoSyncQueue", () => {
         }),
         { transaction: mockTransaction },
       );
+      // Produto não resolvido no Magento: não há mapping novo, então não
+      // limpa nenhum unmapped (a linha acima de cima é a atual, não obsoleta).
+      expect(unmappedInvoiceProductService.bulkDelete).not.toHaveBeenCalled();
     });
 
     it("custo_medio: 404 no Magento não derruba o job (best effort)", async () => {

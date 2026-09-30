@@ -261,23 +261,23 @@ export class MagentoSyncQueue extends BaseQueueService<MagentoSyncJobPayload> {
       transaction,
     } = params;
 
-    if (!magentoProduct) {
-      const normalizedEan = ean && ean.trim() !== "" ? ean : null;
+    // unique_ean_integration_null_invoice é UNIQUE(ean, integrations_id)
+    // WHERE invoice_id IS NULL — dois skus diferentes com o mesmo EAN na
+    // mesma integração batem nesse índice, então o dedup precisa checar por
+    // ean também, não só por sku (mas sempre escopado à integração, já que
+    // o mesmo EAN pode legitimamente existir em integrações diferentes).
+    const normalizedEan = ean && ean.trim() !== "" ? ean : null;
+    const unmappedWhere = {
+      invoice_id: null,
+      integrations_id: magentoIntegration.id,
+      ...(normalizedEan
+        ? { [Op.or]: [{ sku }, { ean: normalizedEan }] }
+        : { sku }),
+    };
 
-      // unique_ean_integration_null_invoice é UNIQUE(ean, integrations_id)
-      // WHERE invoice_id IS NULL — dois skus diferentes com o mesmo EAN na
-      // mesma integração batem nesse índice, então o dedup precisa checar
-      // por ean também, não só por sku (mas sempre escopado à integração,
-      // já que o mesmo EAN pode legitimamente existir em integrações
-      // diferentes).
+    if (!magentoProduct) {
       await unmappedInvoiceProductService.upsertByFind(
-        {
-          invoice_id: null,
-          integrations_id: magentoIntegration.id,
-          ...(normalizedEan
-            ? { [Op.or]: [{ sku }, { ean: normalizedEan }] }
-            : { sku }),
-        },
+        unmappedWhere,
         { sku, ean: normalizedEan, product_name: productName, type: "ERROR_INTEGRATION" },
         {
           invoice_id: null,
@@ -309,6 +309,18 @@ export class MagentoSyncQueue extends BaseQueueService<MagentoSyncJobPayload> {
       },
       transaction,
     );
+
+    // Produto resolvido no Magento (mapping novo ou já existente) — qualquer
+    // unmapped antigo de "não encontrado" pro mesmo sku/ean fica obsoleto.
+    const deletedUnmapped = await unmappedInvoiceProductService.bulkDelete({
+      where: { ...unmappedWhere, status: "UNMAPPED" },
+      transaction,
+    });
+    if (deletedUnmapped > 0) {
+      console.log(
+        `${logPrefix} ${deletedUnmapped} unmapped obsoleto(s) removido(s) | sku=${sku}`,
+      );
+    }
 
     console.log(
       `${logPrefix} Produto mapeado no Magento | sku=${sku} | magento_id=${magentoProduct.id} | magento_sku=${magentoProduct.sku ?? sku}`,
