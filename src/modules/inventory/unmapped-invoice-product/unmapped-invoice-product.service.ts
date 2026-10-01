@@ -31,7 +31,7 @@ import {
 } from "../../handlers/temp-file/temp-file.constants";
 import { cleanDocument } from "../../../shared/utils/normalizers/document";
 import integrationsService from "../../integrations/integrations/integrations.service";
-import { BlingApiFetchQueue } from "../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
+import { BlingApiFetchQueue, BLING_FETCH_CREATE_PRODUCT_PRIORITY } from "../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import {
   TCarUpsertQueue,
   TCAR_CREATE_PRODUCT_PRIORITY,
@@ -379,7 +379,7 @@ export class UnmappedInvoiceProductService extends BaseService<
         // achar o job depois de concluído (default da fila é apagar na
         // hora — ver BaseQueueService.add) pra reportar "completed" em vez
         // de "not_found".
-        { priority: 1, removeOnComplete: { age: CREATE_PRODUCT_JOB_RETENTION_SECONDS } },
+        { priority: BLING_FETCH_CREATE_PRODUCT_PRIORITY, removeOnComplete: { age: CREATE_PRODUCT_JOB_RETENTION_SECONDS } },
       );
     } else if (integration.name === "Tecinco") {
       if (!params.branchId) {

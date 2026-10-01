@@ -34,7 +34,11 @@ jest.mock("../../../../shared/utils/tecinco/resolve-branch-id", () => ({
 // não arrastar o grafo de dependências pesado dos dois arquivos reais.
 jest.mock(
   "../../../handlers/bling/services/bling/queues/bling-api-fetch.queue",
-  () => ({ __esModule: true, BlingApiFetchQueue: class {} }),
+  () => ({
+    __esModule: true,
+    BlingApiFetchQueue: class {},
+    BLING_FETCH_CREATE_PRODUCT_PRIORITY: 1,
+  }),
 );
 jest.mock("../../../handlers/tecinco/queues/tecinco-api-fetch.queue", () => ({
   __esModule: true,
