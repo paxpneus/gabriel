@@ -5,6 +5,11 @@ import BaseController from "../../../shared/utils/base-models/base-controller";
 import UnitBusiness from "./unit-business.model";
 import UnitBusinessService from "./unit-business.service";
 import { Request, Response } from "express";
+import {
+  authenticateOrPdvLink,
+  PdvAccessRequest,
+} from "../../sales/pdv-management/pdv-access/pdv-access.middleware";
+import { PdvAccessScreen } from "../../sales/pdv-management/pdv-access/pdv-access.types";
 
 export class UnitBusinessController extends BaseController<
   UnitBusiness,
@@ -55,7 +60,10 @@ export class UnitBusinessController extends BaseController<
       getHeadOffice: [authenticate],
       viewAllUnitBusiness: [authenticate, userPermissions],
       shutdownQueues: [authenticate, userPermissions],
-      getOrUpdateLastOutgoingBatchNumber: [authenticate],
+      getOrUpdateLastOutgoingBatchNumber: authenticateOrPdvLink(
+        [PdvAccessScreen.CD21],
+        [authenticate],
+      ),
       getUnitBusinessPublic: [],
       getComercialUnitBusinessOnlyForUser: [authenticate],
     };
@@ -152,7 +160,10 @@ export class UnitBusinessController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { unitBusinessId } = await getUserContext(req)
+      // Link PDV: loja nunca vem do front, sempre CD21.
+      const unitBusinessId = (req as PdvAccessRequest).pdvAccess
+        ? (await this.service.getCd21UnitBusiness())?.id
+        : (await getUserContext(req)).unitBusinessId;
 
       if (!unitBusinessId) {
         return res

@@ -151,6 +151,15 @@ Auth: tela `CD21` (login ou headers `x-pdv-unit-business-number` +
 | Gerar lote | `POST /generate-from-pdv-sales-request/:salesRequestId` (sem body) | `201` lote completo (`ExpeditionBatch` + `batchInvoices` + items) |
 | Adicionar a lote pendente | `POST /add-pdv-sales-request-to-pending/:salesRequestId` (sem body) | `200` lote completo; cria lote novo se não houver pendente |
 | Gerar romaneio | `GET /delivery-note/pdv-sales-request/:salesRequestId?userId=<uuid>` | `200` lote completo com `delivery_note_generated_at`/`operator_id` |
+| Último lote pendente de saída | `GET /api/unit-business/last-outgoing-batch-number/get-or-update` | `200 string \| null` (número do lote `OUTGOING` do CD21 não `FINISHED`, mais recente) |
+| Buscar lotes pendentes de saída | `GET /api/batch/outgoing-pending/search?search=&page=` | `200` `PaginatedData<ExpeditionBatch>` filtrado pelo CD21 |
+| Adicionar a um lote específico | `POST /api/batch/add-pdv-sales-request-to-batch/:salesRequestId` body `{ batch_id: string }` | `200` lote completo; `400 { error }` se `batch_id` ausente, lote inexistente/finalizado ou que não seja `OUTGOING` do CD21 |
+
+As 3 últimas linhas aceitam o link CD21 (`x-pdv-unit-business-number` +
+`x-pdv-token`, tela CD21) sem id de loja: o back resolve CD21 + `OUTGOING`.
+As duas primeiras são as rotas de sempre (com login nada muda; link só vale
+com token da tela CD21, qualquer outro token → `401`). A terceira é nova e
+usa a nota de venda do pedido — o front não precisa do `xml_key`.
 
 `userId` só vale via link (via login o back usa o usuário logado). Gerar
 romaneio dispara o auto-finish da solicitação (`SHIPPING` → `FINISHED`),

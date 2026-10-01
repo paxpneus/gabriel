@@ -695,6 +695,44 @@ async addInvoiceToLastOutgoingBatch(
     );
   }
 
+  // Rotas do link CD21 não recebem loja do front — sempre CD21.
+  async searchCd21PendingOutgoing(
+    params: QueryParams,
+  ): Promise<PaginatedResult<ExpeditionBatch>> {
+    const cd21 = await this.getCd21();
+    return this.searchPendingOutgoing(params, cd21.id);
+  }
+
+  // addInvoiceToBatch não valida a loja do lote — sem este check, o link CD21
+  // conseguiria anexar nota em lote de outra loja.
+  async addPdvSalesRequestToBatch(
+    salesRequestId: string,
+    batchId: string,
+  ): Promise<ExpeditionBatch> {
+    const cd21 = await this.getCd21();
+
+    const batch = await this.findOne({
+      where: { id: batchId, unit_business_id: cd21.id, type: "OUTGOING" },
+      attributes: ["id"],
+    });
+    if (!batch) throw new Error("Lote de saída do CD21 não encontrado");
+
+    const invoiceId =
+      await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
+
+    const invoice = await invoiceService.findById(invoiceId, {
+      attributes: ["id", "xml_key"],
+    });
+    if (!invoice?.xml_key) throw new Error("Nota de venda sem chave de acesso");
+
+    return this.addInvoiceToBatch(
+      [invoice.xml_key],
+      cd21.id,
+      "OUTGOING",
+      batchId,
+    );
+  }
+
   private async getCd21(): Promise<UnitBusiness> {
     const cd21 = await unitBusinessService.getCd21UnitBusiness();
     if (!cd21) throw new Error("Unidade CD21 não cadastrada");
