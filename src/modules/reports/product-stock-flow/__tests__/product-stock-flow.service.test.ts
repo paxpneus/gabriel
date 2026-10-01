@@ -22,6 +22,7 @@ describe("ProductStockFlowService", () => {
   const repository = {
     aggregateInputs: jest.fn(),
     aggregateOutputs: jest.fn(),
+    aggregateReturns: jest.fn(),
   };
   const service = new ProductStockFlowService(repository as any);
 
@@ -54,6 +55,7 @@ describe("ProductStockFlowService", () => {
         outputs_without_price: "1",
       },
     ]);
+    repository.aggregateReturns.mockResolvedValue([]);
   });
 
   it("filtra pela Loja 21 e limita o período ao dia inteiro no fuso de São Paulo", async () => {
@@ -89,9 +91,37 @@ describe("ProductStockFlowService", () => {
     expect(report.warnings.outputs_without_price).toBe(1);
   });
 
+  it("devolução não entra nas entradas, tem colunas próprias e abate a saída", async () => {
+    repository.aggregateReturns.mockResolvedValue([
+      {
+        month: "2026-05",
+        product_id: "p1",
+        total_return_quantity: "1.0000",
+        total_return_value: "390.8300",
+        returns_without_price: "0",
+      },
+    ]);
+
+    const report = await service.getReport({
+      startDate: "2026-05-01",
+      endDate: "2026-05-31",
+    });
+
+    expect(repository.aggregateReturns.mock.calls[0][0]).toBe("ub-21");
+    expect(report.summary).toEqual({
+      total_input_quantity: 10,
+      total_output_quantity: 3,
+      total_return_quantity: 1,
+      total_input_value: 940,
+      total_output_value: 6409.17,
+      total_return_value: 390.83,
+    });
+  });
+
   it("não consulta produtos quando não há movimentação", async () => {
     repository.aggregateInputs.mockResolvedValue([]);
     repository.aggregateOutputs.mockResolvedValue([]);
+    repository.aggregateReturns.mockResolvedValue([]);
 
     const report = await service.getReport({
       startDate: "2026-05-01",

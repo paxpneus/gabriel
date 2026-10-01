@@ -19,6 +19,14 @@ export interface ProductStockFlowOutputRow {
   outputs_without_price: string | number;
 }
 
+export interface ProductStockFlowReturnRow {
+  month: string;
+  product_id: string;
+  total_return_quantity: string | null;
+  total_return_value: string | null;
+  returns_without_price: string | number;
+}
+
 export interface ProductStockFlowProduct {
   product_id: string;
   product_name: string | null;
@@ -27,13 +35,17 @@ export interface ProductStockFlowProduct {
   total_input_value: number;
   total_output_quantity: number;
   total_output_value: number;
+  total_return_quantity: number;
+  total_return_value: number;
 }
 
 export interface ProductStockFlowSummary {
   total_input_quantity: number;
   total_output_quantity: number;
+  total_return_quantity: number;
   total_input_value: number;
   total_output_value: number;
+  total_return_value: number;
 }
 
 export interface ProductStockFlowReport {
@@ -49,5 +61,6 @@ export interface ProductStockFlowReport {
   warnings: {
     outputs_without_price: number;
     inputs_without_net_amount: number;
+    returns_without_price: number;
   };
 }

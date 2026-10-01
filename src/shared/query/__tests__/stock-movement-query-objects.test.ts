@@ -1,6 +1,7 @@
 import { Op } from "sequelize";
 import { monthBucketLiteral } from "../sequelize-helpers/month-bucket";
 import {
+  customerReturnMovementsWhere,
   inputMovementsWhere,
   outputMovementsWhere,
   unitBusinessPeriodWhere,
@@ -31,6 +32,10 @@ describe("monthBucketLiteral", () => {
 describe("stock movement filters", () => {
   it("entradas = só PURCHASE_ENTRY", () => {
     expect(inputMovementsWhere()).toEqual({ movement_type: "PURCHASE_ENTRY" });
+  });
+
+  it("devoluções = só CUSTOMER_RETURN", () => {
+    expect(customerReturnMovementsWhere()).toEqual({ movement_type: "CUSTOMER_RETURN" });
   });
 
   it("saídas = SALE_OUT + ajuste OUT com invoice_number", () => {

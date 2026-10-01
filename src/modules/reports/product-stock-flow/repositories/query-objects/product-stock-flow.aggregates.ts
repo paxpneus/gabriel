@@ -34,4 +34,15 @@ export function outputAggregateAttributes(): FindAttributeOptions {
   ];
 }
 
+/** Devoluções por (mês, produto): quantidade e valor da NF de devolução. */
+export function returnAggregateAttributes(): FindAttributeOptions {
+  return [
+    MONTH_ATTRIBUTE,
+    "product_id",
+    [fn("SUM", col("movement_quantity")), "total_return_quantity"],
+    [outputValueSum("StockMovement"), "total_return_value"],
+    [missingUnitPriceCount("StockMovement"), "returns_without_price"],
+  ];
+}
+
 export const PRODUCT_STOCK_FLOW_GROUP = ["month", "product_id"];

@@ -9,6 +9,8 @@ import {
   ProductStockFlowInputRow,
   ProductStockFlowOutputRow,
   ProductStockFlowProduct,
+  ProductStockFlowReturnRow,
+  ProductStockFlowReport,
   ProductStockFlowSummary,
 } from "../../../models/product-stock-flow.types";
 
@@ -22,12 +24,21 @@ interface Accumulator {
   inputValue: bigint;
   outputQuantity: bigint;
   outputValue: bigint;
+  returnQuantity: bigint;
+  returnValue: bigint;
 }
 
 const MONEY_SCALE = 2;
 
 function emptyAccumulator(): Accumulator {
-  return { inputQuantity: 0n, inputValue: 0n, outputQuantity: 0n, outputValue: 0n };
+  return {
+    inputQuantity: 0n,
+    inputValue: 0n,
+    outputQuantity: 0n,
+    outputValue: 0n,
+    returnQuantity: 0n,
+    returnValue: 0n,
+  };
 }
 
 function add(target: Accumulator, source: Accumulator): void {
@@ -35,6 +46,8 @@ function add(target: Accumulator, source: Accumulator): void {
   target.inputValue += source.inputValue;
   target.outputQuantity += source.outputQuantity;
   target.outputValue += source.outputValue;
+  target.returnQuantity += source.returnQuantity;
+  target.returnValue += source.returnValue;
 }
 
 function quantityToNumber(value: bigint): number {
@@ -51,7 +64,9 @@ function isEmpty(acc: Accumulator): boolean {
     acc.inputQuantity === 0n &&
     acc.inputValue === 0n &&
     acc.outputQuantity === 0n &&
-    acc.outputValue === 0n
+    acc.outputValue === 0n &&
+    acc.returnQuantity === 0n &&
+    acc.returnValue === 0n
   );
 }
 
@@ -68,6 +83,8 @@ function toProduct(
     total_input_value: moneyToNumber(acc.inputValue),
     total_output_quantity: quantityToNumber(acc.outputQuantity),
     total_output_value: moneyToNumber(acc.outputValue),
+    total_return_quantity: quantityToNumber(acc.returnQuantity),
+    total_return_value: moneyToNumber(acc.returnValue),
   };
 }
 
@@ -98,16 +115,18 @@ export interface AggregatedFlow {
   months: { month: string; products: ProductStockFlowProduct[] }[];
   consolidated: ProductStockFlowProduct[];
   summary: ProductStockFlowSummary;
-  warnings: { outputs_without_price: number; inputs_without_net_amount: number };
+  warnings: ProductStockFlowReport["warnings"];
 }
 
 /**
- * Junta as agregações de entrada/saída (mês × produto) em meses,
- * consolidado e summary — tudo em memória, sem nova consulta.
+ * Junta as agregações de entrada/saída/devolução (mês × produto) em meses,
+ * consolidado e summary — tudo em memória, sem nova consulta. Devolução tem
+ * colunas próprias e abate a saída (qty e valor da NF); não entra nas entradas.
  */
 export function aggregateProductStockFlow(
   inputs: ProductStockFlowInputRow[],
   outputs: ProductStockFlowOutputRow[],
+  returns: ProductStockFlowReturnRow[],
   productInfo: Map<string, ProductInfo>,
   months: string[],
 ): AggregatedFlow {
@@ -125,6 +144,7 @@ export function aggregateProductStockFlow(
 
   let outputsWithoutPrice = 0;
   let inputsWithoutNetAmount = 0;
+  let returnsWithoutPrice = 0;
 
   for (const row of inputs) {
     const acc = accumulatorFor(row.month, row.product_id);
@@ -138,6 +158,17 @@ export function aggregateProductStockFlow(
     acc.outputQuantity += toScaled(row.total_output_quantity) ?? 0n;
     acc.outputValue += toScaled(row.total_output_value) ?? 0n;
     outputsWithoutPrice += Number(row.outputs_without_price ?? 0);
+  }
+
+  for (const row of returns) {
+    const acc = accumulatorFor(row.month, row.product_id);
+    const quantity = toScaled(row.total_return_quantity) ?? 0n;
+    const value = toScaled(row.total_return_value) ?? 0n;
+    acc.returnQuantity += quantity;
+    acc.returnValue += value;
+    acc.outputQuantity -= quantity;
+    acc.outputValue -= value;
+    returnsWithoutPrice += Number(row.returns_without_price ?? 0);
   }
 
   const consolidated = new Map<string, Accumulator>();
@@ -174,12 +205,15 @@ export function aggregateProductStockFlow(
     summary: {
       total_input_quantity: quantityToNumber(summary.inputQuantity),
       total_output_quantity: quantityToNumber(summary.outputQuantity),
+      total_return_quantity: quantityToNumber(summary.returnQuantity),
       total_input_value: moneyToNumber(summary.inputValue),
       total_output_value: moneyToNumber(summary.outputValue),
+      total_return_value: moneyToNumber(summary.returnValue),
     },
     warnings: {
       outputs_without_price: outputsWithoutPrice,
       inputs_without_net_amount: inputsWithoutNetAmount,
+      returns_without_price: returnsWithoutPrice,
     },
   };
 }

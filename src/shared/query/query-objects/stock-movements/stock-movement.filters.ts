@@ -5,6 +5,11 @@ export function inputMovementsWhere(): WhereOptions {
   return { movement_type: "PURCHASE_ENTRY" };
 }
 
+/** Devoluções de cliente (entram como entrada ao custo e abatem a saída). */
+export function customerReturnMovementsWhere(): WhereOptions {
+  return { movement_type: "CUSTOMER_RETURN" };
+}
+
 /**
  * Saídas de venda: SALE_OUT (NF) + ajuste OUT com invoice_number (pedido de
  * venda importado do CSV Bling). Balanço/ajuste sem origem fica de fora.

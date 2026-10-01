@@ -38,19 +38,21 @@ export class ProductStockFlowService {
     const start = startOfDayTz(params.startDate).toDate();
     const end = endOfDayTz(params.endDate).toDate();
 
-    const [inputs, outputs] = await Promise.all([
+    const [inputs, outputs, returns] = await Promise.all([
       this.repository.aggregateInputs(store.id, start, end),
       this.repository.aggregateOutputs(store.id, start, end),
+      this.repository.aggregateReturns(store.id, start, end),
     ]);
 
     const productInfo = await this.loadProductInfo(
-      [...inputs, ...outputs].map((row) => row.product_id),
+      [...inputs, ...outputs, ...returns].map((row) => row.product_id),
       store.id,
     );
 
     const aggregated = aggregateProductStockFlow(
       inputs,
       outputs,
+      returns,
       productInfo,
       listMonthsDescending(params.startDate, params.endDate),
     );
