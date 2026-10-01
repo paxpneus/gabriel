@@ -134,3 +134,66 @@ Antes, mandar `search` nessa listagem zerava o resultado (a entidade não tem
 campo próprio buscável pelo `search` genérico) — agora tem tratamento
 dedicado. Combina normalmente com
 `filters[...]` (ex.: `status`, `customer_name`) na mesma chamada.
+
+## Novo: lote / romaneio / status do lote a partir da solicitação (CD21)
+
+Rotas em `/api/batch` (mesmo prefixo de `generate-from-invoices`),
+sempre pra unit business CD21, `OUTGOING`. A nota usada é sempre a de venda
+(`order.invoice_id`) — o back re-sincroniza `sale_invoice_id` antes. Pedido
+sem nota → `400 { error: "Pedido ainda não possui nota de venda" }`.
+Auth: tela `CD21` (login ou headers `x-pdv-unit-business-number` +
+`x-pdv-token`), igual às rotas de `/sales-request`. Erro sempre
+`400 { error }`.
+
+| Ação | Rota | Resposta |
+|---|---|---|
+| Status do lote | `GET /in-batch/pdv-sales-request/:salesRequestId` | `200 { in_batch, batch_finished, delivery_note_generated }` (booleans; tudo `false` se a nota não está em lote) |
+| Gerar lote | `POST /generate-from-pdv-sales-request/:salesRequestId` (sem body) | `201` lote completo (`ExpeditionBatch` + `batchInvoices` + items) |
+| Adicionar a lote pendente | `POST /add-pdv-sales-request-to-pending/:salesRequestId` (sem body) | `200` lote completo; cria lote novo se não houver pendente |
+| Gerar romaneio | `GET /delivery-note/pdv-sales-request/:salesRequestId?userId=<uuid>` | `200` lote completo com `delivery_note_generated_at`/`operator_id` |
+
+`userId` só vale via link (via login o back usa o usuário logado). Gerar
+romaneio dispara o auto-finish da solicitação (`SHIPPING` → `FINISHED`),
+com o mesmo sync de loja de qualquer transição de status. Gerar lote falha com `"Nota(s) com produtos não
+mapeados: <números>"` se a nota tem produto pendente de mapeamento.
+
+## Novo: `shipping_label` na listagem e no `GET /sales-request/:id`
+
+Campo calculado na resposta (não persistido). `shipping_type = TRANSPORTADORA`
+→ `"Embarque hoje"`. `shipping_type = ADT` → `"ADT CD 12"` / `"ADT CD 17"`
+conforme a transportadora da nota de venda (`LOGISTICA PAX PNEUS SP - CD 12` /
+`... PR - CD 17`). ADT com
+outra transportadora (ou nota ainda inexistente) → só `"ADT"`. `null` apenas
+se `shipping_type` não foi definido.
+`saleInvoice` também passou a trazer `transporter_name`.
+
+## Novo: `expedition_progress` no `GET /sales-request/:id`
+
+Só quando `status === "SHIPPING"`; nos outros status vem `null`. Não existe
+na listagem. Substitui a chamada extra a `GET /batch/in-batch/pdv-sales-request/:id`
+(que continua existindo). Os 3 booleanos seguem no objeto pros botões da etapa.
+
+```json
+"expedition_progress": {
+  "in_batch": true,
+  "batch_finished": true,
+  "delivery_note_generated": false,
+  "progress": "BATCH_FINISHED",
+  "progress_message": "Lote finalizado, mas precisa gerar romaneio"
+}
+```
+
+| in_batch | batch_finished | delivery_note_generated | progress | progress_message |
+|---|---|---|---|---|
+| false | false | false | `NOT_IN_BATCH` | Lote ainda não gerado! |
+| true | false | false | `IN_BATCH` | Lote gerado |
+| true | true | false | `BATCH_FINISHED` | Lote finalizado, mas precisa gerar romaneio |
+| true | true | true | `DELIVERY_NOTE_GENERATED` | Romaneio gerado mas não atualizado no hub, finalize manualmente! |
+
+## Novo: `order.status` na listagem e no `GET /sales-request/:id`
+
+`order.status` = situação atual do pedido (`actual_situation` da Bling)
+traduzida pro nome mapeado no sistema (`display_name`, ex.: `"Em Aberto"`,
+`"Atendido"`, `"Aguardando Verificação Humana"`); se não houver mapeamento,
+vem o código bruto, e `null` se o pedido não tem situação. Só nesses dois
+endpoints — `/orders/eligible` e `/orders/:orderId` não mudaram.

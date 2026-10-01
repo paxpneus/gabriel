@@ -25,6 +25,8 @@ import PdvSalesRequestReceipt from "../sales-request-receipt/pdv-sales-request-r
 import { extractDanfeIdentification } from "./helpers/danfe-interpreter";
 import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import orderService from "../../orders/order/orders.service";
+import expeditionBatchService from "../../../warehouse/expedition/batch/batch.service";
+import { buildExpeditionProgress } from "./helpers/expedition-progress";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
@@ -62,6 +64,7 @@ import {
 } from "./helpers/pdv-sales-request-room";
 import { notifyPdvStoreSync } from "./helpers/notify-pdv-store-sync";
 import { notifySalesRequestUpdated } from "./helpers/notify-sales-request-updated";
+import { buildShippingLabel } from "./helpers/shipping-label";
 import { invoiceProductsMatch } from "./helpers/invoice-product-quantity-match";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 import { isWithinPhysicalStoreRange } from "../../../company/unit-business/helpers/physical-numbered-unit-business";
@@ -229,7 +232,34 @@ export class PdvSalesRequestService extends BaseService<
     if (!record) return null;
 
     const plain = record.get({ plain: true }) as any;
-    return { ...plain, order: this.toOrderDetail(plain.order) };
+    const resolveStatus = await orderService.buildStatusResolver(
+      plain.order ? [plain.order.integrations_id] : [],
+    );
+    return {
+      ...plain,
+      order: plain.order
+        ? {
+            ...this.toOrderDetail(plain.order),
+            status: resolveStatus(
+              plain.order.integrations_id,
+              plain.order.actual_situation,
+            ),
+          }
+        : null,
+      shipping_label: buildShippingLabel(plain.shipping_type, plain.saleInvoice?.transporter_name),
+      expedition_progress: await this.resolveExpeditionProgress(plain),
+    };
+  }
+
+  // Só em SHIPPING; nota é order.invoice_id (fonte de verdade), sem nota = fora de lote.
+  private async resolveExpeditionProgress(plain: any) {
+    if (plain.status !== PdvSalesRequestStatus.SHIPPING) return null;
+
+    const invoiceId = plain.order?.invoice_id ?? plain.sale_invoice_id;
+    const batchStatus = invoiceId
+      ? await expeditionBatchService.getBatchStatusByInvoiceId(invoiceId)
+      : { in_batch: false, batch_finished: false, delivery_note_generated: false };
+    return buildExpeditionProgress(batchStatus);
   }
 
   // Acesso global sem loja selecionada (CD21/Financeiro sempre, Televendas
@@ -289,11 +319,34 @@ export class PdvSalesRequestService extends BaseService<
       forcedWhere,
     );
 
+    const plainRecords = result.data.map(
+      (record) => (record as any).get({ plain: true }) as any,
+    );
+    const resolveStatus = await orderService.buildStatusResolver(
+      plainRecords.flatMap((plain) =>
+        plain.order ? [plain.order.integrations_id] : [],
+      ),
+    );
+
     return {
       ...result,
-      data: result.data.map((record) => {
-        const plain = (record as any).get({ plain: true }) as any;
-        return { ...plain, order: this.toOrderSummary(plain.order) };
+      data: plainRecords.map((plain) => {
+        return {
+          ...plain,
+          order: plain.order
+            ? {
+                ...this.toOrderSummary(plain.order),
+                status: resolveStatus(
+                  plain.order.integrations_id,
+                  plain.order.actual_situation,
+                ),
+              }
+            : null,
+          shipping_label: buildShippingLabel(
+            plain.shipping_type,
+            plain.saleInvoice?.transporter_name,
+          ),
+        };
       }),
     };
   }
@@ -768,6 +821,7 @@ export class PdvSalesRequestService extends BaseService<
   private async assertReceiptEditable(
     id: string,
     screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
+    { anyCorrectionOrigin = false }: { anyCorrectionOrigin?: boolean } = {},
   ): Promise<PdvSalesRequest> {
     const request = await this.assertStatus(
       id,
@@ -775,6 +829,7 @@ export class PdvSalesRequestService extends BaseService<
     );
 
     if (
+      !anyCorrectionOrigin &&
       screen === PdvAccessScreen.STORE_REQUEST &&
       request.status === PdvSalesRequestStatus.PENDING_CORRECTION &&
       request.correction_origin_status !== PdvSalesRequestStatus.PENDING_FINANCE
@@ -796,7 +851,10 @@ export class PdvSalesRequestService extends BaseService<
     screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
-    const request = await this.assertReceiptEditable(id, screen);
+    // Editar info (não anexar/remover comprovante) vale em qualquer PENDING_CORRECTION, ex.: CD21 devolveu por SHIPPING_TYPE
+    const request = await this.assertReceiptEditable(id, screen, {
+      anyCorrectionOrigin: true,
+    });
 
     const updated = await this.repository.update(id, {
       shipping_type: shippingType,
@@ -1039,7 +1097,9 @@ export class PdvSalesRequestService extends BaseService<
     screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
-    const request = await this.assertReceiptEditable(id, screen);
+    const request = await this.assertReceiptEditable(id, screen, {
+      anyCorrectionOrigin: true,
+    });
     const receipt = await pdvSalesRequestReceiptService.findById(receiptId);
     if (!receipt || receipt.pdv_sales_request_id !== id) {
       throw new Error("Comprovante não encontrado nesta solicitação");
@@ -1089,7 +1149,9 @@ export class PdvSalesRequestService extends BaseService<
     screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
-    const request = await this.assertReceiptEditable(id, screen);
+    const request = await this.assertReceiptEditable(id, screen, {
+      anyCorrectionOrigin: true,
+    });
 
     const parsedUpdates =
       PaymentReceiptReconciledAnalysisSchema.partial().parse(updates);
@@ -1412,6 +1474,28 @@ export class PdvSalesRequestService extends BaseService<
         description: "NF de venda gerada",
       },
     );
+  }
+
+  // Fonte de verdade da nota de venda é order.invoice_id — re-sincroniza
+  // sale_invoice_id antes de devolver, pra lote/romaneio nunca usarem uma
+  // cópia defasada.
+  async resolveSaleInvoiceId(id: string): Promise<string> {
+    const request = await this.findById(id, {
+      attributes: ["id", "order_id", "sale_invoice_id"],
+    });
+    if (!request) throw new Error("Solicitação não encontrada");
+
+    const order = await orderService.findById(request.order_id, {
+      attributes: ["id", "invoice_id"],
+    });
+    if (!order?.invoice_id) {
+      throw new Error("Pedido ainda não possui nota de venda");
+    }
+
+    if (order.invoice_id !== request.sale_invoice_id) {
+      await this.repository.update(id, { sale_invoice_id: order.invoice_id });
+    }
+    return order.invoice_id;
   }
 
   // Compartilhado entre markSaleInvoiceReady (avanço normal a partir de

@@ -595,6 +595,112 @@ async addInvoiceToLastOutgoingBatch(
   });
 }
 
+  // Lote de saída do CD21 a partir da nota de venda da solicitação PDV.
+  async generateBatchFromPdvSalesRequest(
+    salesRequestId: string,
+  ): Promise<ExpeditionBatch> {
+    const cd21 = await this.getCd21();
+    const invoiceId =
+      await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
+
+    return this.generateBatchFromInvoices(
+      [invoiceId],
+      cd21.id,
+      "OUTGOING",
+      "REGULAR",
+    );
+  }
+
+  // Romaneio do lote (CD21) que contém a nota de venda da solicitação.
+  async generateDeliveryNoteFromPdvSalesRequest(
+    salesRequestId: string,
+    userId?: string,
+  ) {
+    const cd21 = await this.getCd21();
+    const invoiceId =
+      await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
+
+    const batchId = await batchInvoicesService.findBatchIdByInvoiceId(
+      invoiceId,
+      cd21.id,
+    );
+    if (!batchId) throw new Error("Nota de venda ainda não está em um lote");
+
+    return this.generateDeliveryNote(batchId, userId as string);
+  }
+
+  async getPdvSalesRequestBatchStatus(
+    salesRequestId: string,
+  ): Promise<{
+    in_batch: boolean;
+    batch_finished: boolean;
+    delivery_note_generated: boolean;
+  }> {
+    const invoiceId =
+      await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
+
+    return this.getBatchStatusByInvoiceId(invoiceId);
+  }
+
+  // Lote de saída do CD21 que contém a nota.
+  async getBatchStatusByInvoiceId(invoiceId: string): Promise<{
+    in_batch: boolean;
+    batch_finished: boolean;
+    delivery_note_generated: boolean;
+  }> {
+    const cd21 = await this.getCd21();
+
+    const batchId = await batchInvoicesService.findBatchIdByInvoiceId(
+      invoiceId,
+      cd21.id,
+    );
+    if (!batchId) {
+      return {
+        in_batch: false,
+        batch_finished: false,
+        delivery_note_generated: false,
+      };
+    }
+
+    const batch = await this.findById(batchId, {
+      attributes: ["id", "status", "delivery_note_generated_at"],
+    });
+    return {
+      in_batch: true,
+      batch_finished: batch?.status === "FINISHED",
+      delivery_note_generated: !!batch?.delivery_note_generated_at,
+    };
+  }
+
+  // Ponteiro é reconciliado antes porque addInvoiceToLastOutgoingBatch
+  // confia nele cegamente e falha se apontar pra lote FINISHED.
+  async addPdvSalesRequestToPendingBatch(
+    salesRequestId: string,
+  ): Promise<ExpeditionBatch> {
+    const cd21 = await this.getCd21();
+    const invoiceId =
+      await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
+
+    const invoice = await invoiceService.findById(invoiceId, {
+      attributes: ["id", "xml_key"],
+    });
+    if (!invoice?.xml_key) throw new Error("Nota de venda sem chave de acesso");
+
+    await unitBusinessService.getOrUpdateLastOutgoingBatchNumber(cd21.id);
+
+    return this.addInvoiceToLastOutgoingBatch(
+      [invoice.xml_key],
+      cd21.id,
+      "OUTGOING",
+    );
+  }
+
+  private async getCd21(): Promise<UnitBusiness> {
+    const cd21 = await unitBusinessService.getCd21UnitBusiness();
+    if (!cd21) throw new Error("Unidade CD21 não cadastrada");
+    return cd21;
+  }
+
   async getBatchesByInvoiceIds(
     invoiceIds: string[],
     unitBusinessId: string,
