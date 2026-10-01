@@ -283,6 +283,31 @@ describe("InvoiceService.ensureUnitBusinessAttributes", () => {
     );
   });
 
+  it("sender e receiver na MESMA unit business (mesmo CNPJ): cria um attribute só, sem violar unique (invoice_id, unit_business_id)", async () => {
+    (repo.findUnitBusinessesByCnpj as jest.Mock).mockResolvedValue([
+      { id: "ub-same", cnpj: "same-cnpj" },
+    ]);
+    (repo.findInvoiceAttribute as jest.Mock).mockResolvedValue(null);
+
+    await invoiceService.ensureUnitBusinessAttributes("invoice-1", {
+      senderCnpj: "same-cnpj",
+      receiverCnpj: "same-cnpj",
+    });
+
+    expect(repo.createInvoiceAttributes).toHaveBeenCalledWith(
+      [
+        {
+          invoice_id: "invoice-1",
+          unit_business_id: "ub-same",
+          type: "OUTGOING",
+          status: "OPEN",
+          batch_generated: false,
+        },
+      ],
+      undefined,
+    );
+  });
+
   it("attribute já existe pro lado resolvido: não duplica (idempotente)", async () => {
     (repo.findUnitBusinessesByCnpj as jest.Mock).mockResolvedValue([
       { id: "ub-sender", cnpj: "sender-cnpj" },

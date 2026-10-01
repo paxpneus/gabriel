@@ -29,6 +29,7 @@ import integrationMappingService from "../../../../integrations/integration-mapp
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 import paymentMethodService from "../../../../sales/orders/payment_method/payment_method.service";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
+import { isPdvCancelledSituation } from "../../../../sales/orders/order/helpers/eligible-for-pdv-filters";
 import { notifyPdvStoreSync } from "../../../../sales/pdv-management/sales-request/helpers/notify-pdv-store-sync";
 import {
   SEM_LOJA_ID_SYSTEM,
@@ -857,6 +858,12 @@ export class BlingOrderService {
           ...reasonCancelledFields(orderData.situacao.id),
         });
         notifyPdvStoreSync(unitBusinessId, "ORDER_STATUS_CHANGED");
+
+        if (isPdvCancelledSituation(orderData.situacao.id)) {
+          await pdvSalesRequestService.cancelIfActiveByOrderId(
+            existingOrder.id,
+          );
+        }
 
         // Reavalia elegibilidade PDV em TODO update, não só quando a loja
         // resolve de nula pra preenchida — um pedido pode voltar a ficar

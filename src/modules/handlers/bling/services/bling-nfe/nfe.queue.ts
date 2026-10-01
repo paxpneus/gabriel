@@ -20,6 +20,11 @@ import {
   OrderReasonCancelled,
 } from "../../../../sales/orders/order/orders.types";
 import { escalateToHumanVerificationIfStillPending } from "../../../../sales/orders/order/helpers/order-status";
+import {
+  formatDate,
+  formatToBRDate,
+  toTz,
+} from "../../../../../shared/utils/normalizers/date";
 
 const ALLOWED_STORE_NAME = "MercadoLivre";
 
@@ -86,6 +91,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
     message: string,
     reasonCancelled: OrderReasonCancelled,
     allowedPendingStatuses: OrderInternalStatus[],
+    observation?: string,
   ): Promise<void> {
     const result = await escalateToHumanVerificationIfStillPending({
       idOrderSystem: orderId,
@@ -96,7 +102,7 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         await new Promise((r) => setTimeout(r, 1000));
         await blingPut(`/pedidos/vendas/${orderId}`, {
           ...liveOrderData,
-          observacoesInternas: `${liveOrderData.observacoesInternas} \n Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`,
+          observacoesInternas: `${liveOrderData.observacoesInternas} \n ${observation ?? `Pedido marcado como Aguardando verificação humana na geração de nota fiscal: ${message}`}`,
         }, this.blingApi);
         await new Promise((r) => setTimeout(r, 3000));
       },
@@ -215,21 +221,51 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
         return;
       }
 
-      // 400 é um erro de negócio da Bling (não transitório) — mesmo com um
-      // código não mapeado, não faz sentido esgotar os retries do BullMQ
-      // pra só então cair no onFailed com a mesma mensagem.
-      if (error.response?.status === 400) {
-        await this.markOrderCancelled(
-          order_id,
-          NFE_ERRORS.EMISSION_FAILED.message,
-          OrderReasonCancelled.NFE_EMISSION_FAILED,
-          [OrderInternalStatus.WAITING_FOR_NFE_EMISSION],
-        );
-        return;
-      }
-
       throw error;
     }
+  }
+
+  // onFailed roda a cada tentativa falha, não só na última — escalar antes
+  // do último retry marcaria o pedido mesmo que a próxima tentativa passasse.
+  private isLastAttempt(job: Job<NFeJobData>): boolean {
+    return job.attemptsMade >= (job.opts.attempts ?? 1);
+  }
+
+  private async buildEmissionFailedObservation(orderId: number): Promise<string> {
+    const internalOrder = await ordersService.findOne({
+      where: { id_order_system: String(orderId) },
+      attributes: ["collection_date"],
+    });
+    const collectionDate = internalOrder?.collection_date
+      ? formatDate(toTz(internalOrder.collection_date), "DD/MM/YYYY")
+      : "não definida";
+
+    return `Pedido falhou ao emitir nota fiscal, data de coleta do pedido: ${collectionDate}. Falha em: ${formatToBRDate(new Date())}`;
+  }
+
+  private async escalateAfterExhaustedRetries(
+    job: Job<NFeJobData>,
+    error: any,
+  ): Promise<void> {
+    const { order_id } = job.data;
+    // onFailed roda fora do processo (job já saiu do try/catch de process()),
+    // então o lock por pedido de lá já foi liberado — precisa pegar de novo.
+    await this.withOrderLock(order_id, async () => {
+      // Bling 400 é erro de negócio na emissão: nota explícita com data de
+      // coleta e hora da falha; qualquer outra falha mantém a nota genérica.
+      const observation =
+        error.response?.status === 400
+          ? await this.buildEmissionFailedObservation(order_id)
+          : undefined;
+
+      await this.markOrderCancelled(
+        order_id,
+        NFE_ERRORS.EMISSION_FAILED.message,
+        OrderReasonCancelled.NFE_EMISSION_FAILED,
+        [OrderInternalStatus.WAITING_FOR_NFE_EMISSION],
+        observation,
+      );
+    });
   }
 
   protected onFailed(job: Job<NFeJobData>, error: Error): void {
@@ -242,16 +278,14 @@ export class NFeQueue extends BaseQueueService<NFeJobData> {
       return;
     }
 
-    // onFailed roda fora do processo (job já saiu do try/catch de process()),
-    // então o lock por pedido de lá já foi liberado — precisa pegar de novo.
-    this.withOrderLock(order_id, () =>
-      this.markOrderCancelled(
-        order_id,
-        NFE_ERRORS.EMISSION_FAILED.message,
-        OrderReasonCancelled.NFE_EMISSION_FAILED,
-        [OrderInternalStatus.WAITING_FOR_NFE_EMISSION],
-      ),
-    ).catch((lockError: any) => {
+    if (!this.isLastAttempt(job)) {
+      console.warn(
+        `[NFeQueue] Job ${job.id} (pedido ${order_id}) falhou na tentativa ${job.attemptsMade}/${job.opts.attempts ?? 1}. Aguardando retry.`,
+      );
+      return;
+    }
+
+    this.escalateAfterExhaustedRetries(job, error).catch((lockError: any) => {
       console.error(
         `[NFeQueue] Falha ao marcar pedido ${order_id} como verificação humana (onFailed):`,
         lockError.message,

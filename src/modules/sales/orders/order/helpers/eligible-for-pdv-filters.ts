@@ -6,6 +6,11 @@ import { Sequelize } from "sequelize";
 // mapeia aquele código.
 export const BLING_CANCELLED_SITUACAO_ID = "12";
 
+// Único critério de "cancelado" do PDV — 21/748772 também mapeiam pra
+// internal_status CANCELLED, mas não derrubam a solicitação.
+export const isPdvCancelledSituation = (situacaoId: string | number): boolean =>
+  String(situacaoId) === BLING_CANCELLED_SITUACAO_ID;
+
 // Pedido cujo invoice_id já tem romaneio gerado (ExpeditionBatch com
 // delivery_note_generated_at preenchido) NA LOJA DO PRÓPRIO PEDIDO — mesma
 // cadeia Invoice → batchInvoice → batch de
