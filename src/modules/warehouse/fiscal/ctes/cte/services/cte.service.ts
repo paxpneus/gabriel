@@ -3,6 +3,8 @@ import BaseService from "../../../../../../shared/utils/base-models/base-service
 import Cte from "../cte.model";
 import cteRepository, { CteRepository } from "../cte.repository";
 
+const CLOUD_ARCHIVE_UPDATE_CHUNK = 1000;
+
 export class CteService extends BaseService<Cte, CteRepository> {
   constructor() {
     super(cteRepository);
@@ -76,6 +78,26 @@ export class CteService extends BaseService<Cte, CteRepository> {
 
   async markAsSynched(id: string): Promise<void> {
     await this.update(id, { synched: true });
+  }
+
+  // Só CT-es com XML guardado: sem xml_path não há o que arquivar.
+  async findPendingCloudArchive(): Promise<{ id: string; number: number }[]> {
+    const rows = await this.findAll({
+      where: { cloud_path: null, xml_path: { [Op.ne]: null } },
+      attributes: ["id", "number"],
+      order: [["createdAt", "DESC"]],
+    });
+
+    return rows.map((row) => ({ id: row.id, number: row.number }));
+  }
+
+  async markCloudArchived(ids: string[], normalizedDirectory: string): Promise<void> {
+    for (let i = 0; i < ids.length; i += CLOUD_ARCHIVE_UPDATE_CHUNK) {
+      await this.repository.markCloudArchived(
+        ids.slice(i, i + CLOUD_ARCHIVE_UPDATE_CHUNK),
+        normalizedDirectory,
+      );
+    }
   }
 
   async findExistingXmlKeys(xmlKeys: string[]): Promise<Set<string>> {

@@ -480,6 +480,8 @@ export function startWorkers() {
     },
   );
 
+  uploaderQueue.startCteArchiveSweep();
+
   setTimeout(
     () => {
       dailySalesReportQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
@@ -498,7 +500,7 @@ export function startWorkers() {
   console.log("  → DAILY_SALES_REPORT (1h, offset 30min)");
   console.log("  → AUTO_BACKUP (19h BRT)");
   console.log("  → CTE_INGESTION (30min)");
-  console.log("  → UPLOADER (throttle 3/5s, reconcile 22h BRT)");
+  console.log("  → UPLOADER (throttle 3/5s, reconcile 22h BRT, sweep CT-e XML 10min)");
 }
 
 export function startTecincoWorkers() {
