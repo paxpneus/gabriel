@@ -46,6 +46,9 @@ export interface CteAttributes {
 
   xml_path?: string | null;
 
+  // Caminho do XML arquivado na nuvem; null = ainda não confirmado (sweep reenfileira)
+  cloud_path?: string | null;
+
   // true = já importado na Datafrete, não precisa reenviar
   synched: boolean;
 

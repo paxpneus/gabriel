@@ -36,6 +36,7 @@ class Order
   public source_payload?: Record<string, unknown>;
   public total_products?: number;
   public total_order?: number;
+  public net_total_order?: number;
   public discount_value?: number;
   public discount_type?: string;
   public other_expenses?: number;
@@ -188,6 +189,10 @@ Order.init(
       type: DataTypes.DECIMAL(14, 2),
       allowNull: true,
       defaultValue: 0,
+    },
+    net_total_order: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
     },
     discount_value: {
       type: DataTypes.DECIMAL(14, 2),

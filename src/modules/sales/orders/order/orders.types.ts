@@ -73,6 +73,7 @@ export interface orderAttributes {
   source_payload?: Record<string, unknown>;
   total_products?: number;
   total_order?: number;
+  net_total_order?: number;
   discount_value?: number;
   discount_type?: string;
   other_expenses?: number;

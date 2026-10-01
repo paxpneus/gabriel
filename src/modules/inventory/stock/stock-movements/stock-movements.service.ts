@@ -21,6 +21,8 @@ import {
 } from "../../../../shared/query/query.types";
 import product_configService from "../../product-config/product_config.service";
 import stockMovementSourceDataService from "../stock-movement-source-data/stock-movement-source-data.service";
+import { computePurchaseEntryDiscounts } from "./helpers/purchase-entry-discount";
+import { InvoiceValueFill } from "./helpers/invoice-value-updates";
 
 // Estado de saldo/custo usado para encadear um movimento a partir do anterior.
 type BalanceState = {
@@ -381,6 +383,53 @@ export class StockMovementService extends BaseService<
   }
 
   /**
+   * Recalcula os campos de desconto das PURCHASE_ENTRY de vários produtos de
+   * uma vez (1 query de histórico + UPDATE em lote). Idempotente.
+   */
+  async recalculatePurchaseEntryDiscounts(
+    productIds: string[],
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<{
+    entries: number;
+    changed: number;
+    withAdjustment: number;
+    withoutAdjustment: number;
+    anomalies: { id: string; invoice_number: string | null; kind: string }[];
+  }> {
+    const historyByProduct = await this.repository.findDiscountHistoryByProducts(
+      productIds,
+      unitBusinessId,
+      transaction,
+    );
+
+    const updates = [];
+    const anomalies = [];
+    let withAdjustment = 0;
+    let withoutAdjustment = 0;
+
+    for (const history of historyByProduct.values()) {
+      const result = computePurchaseEntryDiscounts(history);
+      updates.push(...result.updates);
+      anomalies.push(...result.anomalies);
+      withAdjustment += result.withAdjustment;
+      withoutAdjustment += result.withoutAdjustment;
+    }
+
+    const changed = updates.length
+      ? await this.repository.bulkUpdateDiscountFields(updates, transaction)
+      : 0;
+
+    return {
+      entries: updates.length,
+      changed,
+      withAdjustment,
+      withoutAdjustment,
+      anomalies,
+    };
+  }
+
+  /**
    * Consolida a janela temporal de um CSV. O CSV é a fonte de verdade apenas
    * entre o corte da extração anterior e a extração atual; movimentos do
    * fluxo normal fora dessa janela permanecem PENDING.
@@ -422,7 +471,7 @@ export class StockMovementService extends BaseService<
       cutoffDate != null &&
       new Date(m.movement_date).getTime() <= cutoffDate.getTime();
 
-    const existingSynchedFingerprints = new Set(
+    const existingSynchedByFingerprint = new Map<string, StockMovement>(
       remaining
         .filter((m) => {
           if (m.status !== "SYNCHED") return false;
@@ -430,7 +479,7 @@ export class StockMovementService extends BaseService<
           const afterCutoff = !cutoffDate || date > cutoffDate.getTime();
           return afterCutoff && date <= extractionDate.getTime();
         })
-        .map((m) =>
+        .map((m) => [
           buildCsvEntryFingerprint({
             invoice_number: m.invoice_number,
             movement_type: m.movement_type,
@@ -438,8 +487,12 @@ export class StockMovementService extends BaseService<
             movement_date: m.movement_date,
             direction: m.direction as "IN" | "OUT" | null,
           }),
-        ),
+          m,
+        ]),
     );
+    // Lançamento já SYNCHED não é recriado, mas pode receber preco/ids Bling
+    // que só passaram a ser extraídos depois (fill-only).
+    const fillCandidates: InvoiceValueFill[] = [];
 
     // O estado anterior ao início da janela já foi consolidado e não deve ser
     // recalculado por esta execução.
@@ -488,7 +541,20 @@ export class StockMovementService extends BaseService<
         direction: (m as any).direction ?? null,
       });
 
-      if (existingSynchedFingerprints.has(fingerprint)) {
+      const existingSynched = existingSynchedByFingerprint.get(fingerprint);
+      if (existingSynched) {
+        if (
+          m.unit_price_invoice != null ||
+          m.bling_entry_ids != null ||
+          m.bling_origin_id != null
+        ) {
+          fillCandidates.push({
+            id: existingSynched.id,
+            unit_price_invoice: m.unit_price_invoice ?? null,
+            bling_entry_ids: m.bling_entry_ids ?? null,
+            bling_origin_id: m.bling_origin_id ?? null,
+          });
+        }
         console.log(
           `  ⏭️  [syncCsvBaseline] product=${productId} — lançamento já SYNCHED ` +
             `(invoice_number=${m.invoice_number ?? "-"}, tipo=${m.movement_type}, ` +
@@ -584,6 +650,9 @@ export class StockMovementService extends BaseService<
           unit_cost_invoice: movement.unit_cost_invoice,
           direction: (movement as any).direction ?? null,
           manual_average_cost_value: movement.manual_average_cost_value ?? null,
+          unit_price_invoice: movement.unit_price_invoice ?? null,
+          bling_entry_ids: movement.bling_entry_ids ?? null,
+          bling_origin_id: movement.bling_origin_id ?? null,
           status: "SYNCHED",
           is_active: true,
           ...nextState,
@@ -646,6 +715,19 @@ export class StockMovementService extends BaseService<
         );
       }
     }
+
+    if (fillCandidates.length) {
+      await this.repository.fillMissingInvoiceValues(
+        fillCandidates,
+        transaction,
+      );
+    }
+
+    await this.recalculatePurchaseEntryDiscounts(
+      [productId],
+      unitBusinessId,
+      transaction,
+    );
 
     await this.syncProductAverageCostConfig(
       productId,
@@ -833,6 +915,28 @@ export class StockMovementService extends BaseService<
       : null;
     const toCreate: StockMovementCreationAttributes[] = [];
 
+    // reindex apaga e recria: preserva preco/ids Bling da linha apagada
+    // equivalente pra não perder o que o CSV já tinha preenchido.
+    const invoiceValuesByFingerprint = new Map<
+      string,
+      Pick<
+        StockMovement,
+        "unit_price_invoice" | "bling_entry_ids" | "bling_origin_id"
+      >
+    >();
+    for (const deleted of deletableMovements) {
+      invoiceValuesByFingerprint.set(
+        buildCsvEntryFingerprint({
+          invoice_number: deleted.invoice_number,
+          movement_type: deleted.movement_type,
+          movement_quantity: Number(deleted.movement_quantity),
+          movement_date: deleted.movement_date,
+          direction: deleted.direction as "IN" | "OUT" | null,
+        }),
+        deleted,
+      );
+    }
+
     for (const entry of timeline) {
       if (entry.kind === "protected") {
         // Linha intocada: só empresta o estado já gravado nela pro próximo
@@ -849,6 +953,15 @@ export class StockMovementService extends BaseService<
         ...movement,
         manual_average_cost_value: movement.manual_average_cost_value ?? null,
       });
+      const previousValues = invoiceValuesByFingerprint.get(
+        buildCsvEntryFingerprint({
+          invoice_number: movement.invoice_number,
+          movement_type: movement.movement_type,
+          movement_quantity: movement.movement_quantity,
+          movement_date: movement.movement_date,
+          direction: (movement as any).direction ?? null,
+        }),
+      );
 
       toCreate.push({
         unit_business_id: unitBusinessId,
@@ -861,6 +974,12 @@ export class StockMovementService extends BaseService<
         unit_cost_invoice: movement.unit_cost_invoice,
         direction: (movement as any).direction ?? null,
         manual_average_cost_value: movement.manual_average_cost_value ?? null,
+        unit_price_invoice:
+          movement.unit_price_invoice ?? previousValues?.unit_price_invoice ?? null,
+        bling_entry_ids:
+          movement.bling_entry_ids ?? previousValues?.bling_entry_ids ?? null,
+        bling_origin_id:
+          movement.bling_origin_id ?? previousValues?.bling_origin_id ?? null,
         status: "PENDING",
         is_active: true,
         ...nextState,
@@ -882,6 +1001,12 @@ export class StockMovementService extends BaseService<
     const created = toCreate.length
       ? await this.repository.bulkCreate(toCreate as any, { transaction })
       : [];
+
+    await this.recalculatePurchaseEntryDiscounts(
+      [productId],
+      unitBusinessId,
+      transaction,
+    );
 
     await this.syncProductAverageCostConfig(
       productId,
@@ -1143,6 +1268,12 @@ export class StockMovementService extends BaseService<
         resulting_average_cost: nextState.resulting_average_cost,
       };
     }
+
+    await this.recalculatePurchaseEntryDiscounts(
+      [productId],
+      unitBusinessId,
+      transaction,
+    );
 
     await this.syncProductAverageCostConfig(
       productId,

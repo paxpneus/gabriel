@@ -28,6 +28,14 @@ class StockMovement
   public total_stock_value!: number;
   public manual_average_cost_value?: number | null;
   public refers_to?: string | null;
+  public gross_total_amount?: string | null;
+  public net_total_amount?: string | null;
+  public unit_discount_amount?: string | null;
+  public discount_amount?: string | null;
+  public discount_percentage?: string | null;
+  public unit_price_invoice?: string | null;
+  public bling_entry_ids?: string | null;
+  public bling_origin_id?: string | null;
   public is_active!: boolean;
   public status!: StockMovementStatus;
   public readonly createdAt!: Date;
@@ -121,6 +129,38 @@ StockMovement.init(
       type: DataTypes.STRING(100),
       allowNull: true,
       defaultValue: null,
+    },
+    gross_total_amount: {
+      type: DataTypes.DECIMAL(15, 4),
+      allowNull: true,
+    },
+    net_total_amount: {
+      type: DataTypes.DECIMAL(15, 4),
+      allowNull: true,
+    },
+    unit_discount_amount: {
+      type: DataTypes.DECIMAL(15, 4),
+      allowNull: true,
+    },
+    discount_amount: {
+      type: DataTypes.DECIMAL(15, 4),
+      allowNull: true,
+    },
+    discount_percentage: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: true,
+    },
+    unit_price_invoice: {
+      type: DataTypes.DECIMAL(15, 4),
+      allowNull: true,
+    },
+    bling_entry_ids: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    bling_origin_id: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
     },
     is_active: {
       type: DataTypes.BOOLEAN,

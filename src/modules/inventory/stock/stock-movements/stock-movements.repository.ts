@@ -1,4 +1,5 @@
-import { Op, Transaction, WhereOptions } from "sequelize";
+import { Op, QueryTypes, Transaction, WhereOptions } from "sequelize";
+import sequelize from "../../../../config/sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import StockMovement from "./stock-movements.model";
 import {
@@ -7,6 +8,39 @@ import {
   QueryParams,
 } from "../../../../shared/query/query.types";
 import { QueryParser } from "../../../../shared/query/query.parser";
+import {
+  buildDiscountBulkUpdate,
+  buildFillMissingInvoiceValuesUpdate,
+  InvoiceValueFill,
+} from "./helpers/invoice-value-updates";
+import {
+  DiscountHistoryRow,
+  PurchaseEntryDiscountFields,
+} from "./helpers/purchase-entry-discount";
+
+const DISCOUNT_HISTORY_ATTRIBUTES = [
+  "id",
+  "product_id",
+  "movement_type",
+  "direction",
+  "invoice_number",
+  "refers_to",
+  "movement_quantity",
+  "unit_cost_invoice",
+  "balance_quantity",
+  "resulting_average_cost",
+  "total_stock_value",
+];
+
+const BULK_UPDATE_CHUNK_SIZE = 1000;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
 
 export class StockMovementRepository extends BaseRepository<StockMovement> {
   constructor() {
@@ -464,6 +498,104 @@ export class StockMovementRepository extends BaseRepository<StockMovement> {
     }
 
     return result;
+  }
+  /** Produtos com ao menos uma PURCHASE_ENTRY ativa na unidade. */
+  async findProductIdsWithPurchaseEntries(
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<string[]> {
+    const rows = await this.model.findAll({
+      where: {
+        unit_business_id: unitBusinessId,
+        movement_type: "PURCHASE_ENTRY",
+        is_active: true,
+      },
+      attributes: ["product_id"],
+      group: ["product_id"],
+      order: [["product_id", "ASC"]],
+      raw: true,
+      transaction,
+    });
+
+    return rows.map((row) => row.product_id);
+  }
+
+  /**
+   * Kardex ativo dos produtos na ordem canônica (movement_date, created_at,
+   * id) — só as colunas que o cálculo de desconto usa.
+   */
+  async findDiscountHistoryByProducts(
+    productIds: string[],
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<Map<string, DiscountHistoryRow[]>> {
+    const byProduct = new Map<string, DiscountHistoryRow[]>();
+    if (!productIds.length) return byProduct;
+
+    const rows = (await this.model.findAll({
+      where: {
+        product_id: { [Op.in]: productIds },
+        unit_business_id: unitBusinessId,
+        is_active: true,
+      },
+      attributes: DISCOUNT_HISTORY_ATTRIBUTES,
+      order: [
+        ["product_id", "ASC"],
+        ["movement_date", "ASC"],
+        ["created_at", "ASC"],
+        ["id", "ASC"],
+      ],
+      raw: true,
+      transaction,
+    })) as unknown as (DiscountHistoryRow & { product_id: string })[];
+
+    for (const row of rows) {
+      const list = byProduct.get(row.product_id) ?? [];
+      list.push(row);
+      byProduct.set(row.product_id, list);
+    }
+
+    return byProduct;
+  }
+
+  /** UPDATE em lote dos campos de desconto; retorna linhas realmente alteradas. */
+  async bulkUpdateDiscountFields(
+    rows: PurchaseEntryDiscountFields[],
+    transaction?: Transaction,
+  ): Promise<number> {
+    let changed = 0;
+
+    for (const part of chunk(rows, BULK_UPDATE_CHUNK_SIZE)) {
+      const { sql, replacements } = buildDiscountBulkUpdate(part);
+      const [, affected] = (await sequelize.query(sql, {
+        replacements,
+        type: QueryTypes.UPDATE,
+        transaction,
+      })) as unknown as [unknown, number];
+      changed += Number(affected ?? 0);
+    }
+
+    return changed;
+  }
+
+  /** Preenche unit_price_invoice/bling_* só onde estão NULL. */
+  async fillMissingInvoiceValues(
+    rows: InvoiceValueFill[],
+    transaction?: Transaction,
+  ): Promise<number> {
+    let changed = 0;
+
+    for (const part of chunk(rows, BULK_UPDATE_CHUNK_SIZE)) {
+      const { sql, replacements } = buildFillMissingInvoiceValuesUpdate(part);
+      const [, affected] = (await sequelize.query(sql, {
+        replacements,
+        type: QueryTypes.UPDATE,
+        transaction,
+      })) as unknown as [unknown, number];
+      changed += Number(affected ?? 0);
+    }
+
+    return changed;
   }
 }
 

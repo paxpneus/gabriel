@@ -35,6 +35,7 @@ class Cte
   public taker_name!: string | null;
 
   public xml_path!: string | null;
+  public cloud_path!: string | null;
 
   public synched!: boolean;
 
@@ -148,6 +149,11 @@ Cte.init(
     },
 
     xml_path: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+
+    cloud_path: {
       type: DataTypes.TEXT,
       allowNull: true,
     },

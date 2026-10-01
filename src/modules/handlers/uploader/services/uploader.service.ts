@@ -24,6 +24,11 @@ export type UploadStreamInput = {
   timeoutMs?: number;
 };
 
+const PROPFIND_TIMEOUT_MS = 120_000;
+const PROPFIND_NAMES_BODY =
+  '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>';
+const HREF_PATTERN = /<(?:[A-Za-z0-9]+:)?href>([^<]+)<\/(?:[A-Za-z0-9]+:)?href>/g;
+
 export class UploaderService {
   // Diretórios já confirmados via MKCOL nesta vida do processo — evita
   // reemitir o MKCOL a cada upload pra um diretório que não muda, reduzindo
@@ -33,15 +38,9 @@ export class UploaderService {
   constructor(private api: AxiosInstance) {}
 
   async upload(file: UploadInput) {
-    const extension = file.mimeType.split('/')[1] || 'bin';
-    const filename = file.preserveFilename
-      ? this.sanitizeFilename(file.filename)
-      : `${randomUUID()}.${extension}`;
-    const directory = this.normalizeDirectory(file.directory ?? "/uploads");
+    const { directory, path } = this.resolveTarget(file);
 
     await this.ensureDirectoryExists(directory);
-
-    const path = `${directory}/${filename}`;
 
     await this.api.put(path, file.buffer, {
       timeout: file.timeoutMs,
@@ -59,20 +58,27 @@ export class UploaderService {
     return path;
   }
 
+  // Idempotente: só sobe se o destino ainda não existe. Exige preserveFilename
+  // (nome aleatório nunca colide, então a checagem não faria sentido).
+  async uploadIfMissing(file: UploadInput): Promise<string> {
+    if (!file.preserveFilename) {
+      throw new Error("uploadIfMissing exige preserveFilename: true");
+    }
+
+    const { path } = this.resolveTarget(file);
+    if (await this.exists(path)) return path;
+
+    return this.upload(file);
+  }
+
   // Como upload(), mas recebe um stream em vez de Buffer — nunca materializa
   // o arquivo inteiro em memória (usado pelo dump de backup, que pode ter
   // vários GB). Por isso não passa pela UploaderQueue: um job BullMQ precisa
   // serializar seus dados no Redis, e um stream de processo filho não serializa.
   async uploadStream(file: UploadStreamInput): Promise<string> {
-    const extension = file.mimeType.split('/')[1] || 'bin';
-    const filename = file.preserveFilename
-      ? this.sanitizeFilename(file.filename)
-      : `${randomUUID()}.${extension}`;
-    const directory = this.normalizeDirectory(file.directory ?? "/uploads");
+    const { directory, path } = this.resolveTarget(file);
 
     await this.ensureDirectoryExists(directory);
-
-    const path = `${directory}/${filename}`;
 
     await this.api.put(path, file.stream, {
       timeout: file.timeoutMs,
@@ -82,6 +88,46 @@ export class UploaderService {
     });
 
     return path;
+  }
+
+  // PROPFIND Depth 1: UMA request lista o diretório inteiro (evita um HEAD por arquivo).
+  async listFileNames(directory: string): Promise<Set<string>> {
+    try {
+      const response = await this.api.request({
+        method: 'PROPFIND',
+        url: this.normalizeDirectory(directory),
+        headers: { Depth: '1', 'Content-Type': 'application/xml' },
+        data: PROPFIND_NAMES_BODY,
+        responseType: 'text',
+        timeout: PROPFIND_TIMEOUT_MS,
+      });
+
+      const names = new Set<string>();
+      for (const match of String(response.data).matchAll(HREF_PATTERN)) {
+        const name = decodeURIComponent(match[1].replace(/\/+$/, '')).split('/').pop();
+        if (name) names.add(name);
+      }
+      return names;
+    } catch (error: any) {
+      if (error.response?.status === 404) return new Set();
+
+      throw new Error(`Erro ao listar diretório "${directory}" no storage: ${error.message}`);
+    }
+  }
+
+  private resolveTarget(file: {
+    filename: string;
+    mimeType: string;
+    directory?: string;
+    preserveFilename?: boolean;
+  }): { directory: string; path: string } {
+    const extension = file.mimeType.split('/')[1] || 'bin';
+    const filename = file.preserveFilename
+      ? this.sanitizeFilename(file.filename)
+      : `${randomUUID()}.${extension}`;
+    const directory = this.normalizeDirectory(file.directory ?? "/uploads");
+
+    return { directory, path: `${directory}/${filename}` };
   }
 
   // WebDAV exige que cada nível da pasta exista antes do PUT do arquivo.
@@ -115,7 +161,7 @@ export class UploaderService {
     }
   }
 
-  private normalizeDirectory(directory: string): string {
+  normalizeDirectory(directory: string): string {
     const normalized = directory.trim().replace(/\/+$/, "");
 
     if (!normalized) return "/uploads";

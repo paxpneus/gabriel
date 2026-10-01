@@ -205,7 +205,7 @@ export interface PdvSalesRequestAttributes {
   // order.paymentMethod não faz mais sentido; financeiro revisa manualmente.
   payment_method_matches_receipt: boolean | null;
   // Informativo, nunca bloqueia nenhuma transição — payment_receipt_analysis
-  // (conciliado).valor_total x order.total_order. null quando não dá pra
+  // (conciliado).valor_total x order.net_total_order. null quando não dá pra
   // comparar (nenhum comprovante com valor ainda, ou pedido sem total).
   receipt_total_matches_order: boolean | null;
   // Informativo, nunca bloqueia nenhuma transição — compara os product_id e
@@ -287,7 +287,7 @@ export interface PdvSalesRequestOrderSummary {
   number_order_channel: string;
   number_order_system: string | null;
   date: string | null;
-  total_order: number | null;
+  net_total_order: number | null;
   customer: PdvSalesRequestOrderCustomer | null;
   unitBusiness: PdvSalesRequestOrderUnitBusiness | null;
 }

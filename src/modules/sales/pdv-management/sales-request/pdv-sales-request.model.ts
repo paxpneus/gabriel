@@ -131,7 +131,7 @@ PdvSalesRequest.init(
       allowNull: true,
     },
     // Comparação payment_receipt_analysis.valor_total (soma conciliada) x
-    // order.total_order — só informativo pro front mostrar aviso, nunca
+    // order.net_total_order — só informativo pro front mostrar aviso, nunca
     // bloqueia nenhuma transição (ver reconcileReceipts/
     // updatePaymentReceiptAnalysis). null quando não dá pra comparar (sem
     // comprovante com valor ainda, ou sem total do pedido).

@@ -941,6 +941,8 @@ export class BlingOrderService {
         source_payload: orderData,
         total_products: Number(orderData.totalProdutos ?? 0),
         total_order: Number(orderData.totalProdutos ?? 0),
+        // `total` do Bling já vem com desconto aplicado; usado só pelo PDV.
+        net_total_order: Number(orderData.total ?? 0),
         discount_value: Number(orderData.desconto?.valor ?? 0),
         discount_type: orderData.desconto?.unidade
           ? String(orderData.desconto.unidade)
