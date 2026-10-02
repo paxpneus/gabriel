@@ -50,7 +50,7 @@ import {
   PaymentReceiptExtractionSchema,
   PaymentReceiptReconciledAnalysisSchema,
 } from "./helpers/payment-receipt-extraction.schema";
-import { paymentMethodMatchesReceipt } from "./helpers/payment-method-match";
+import { paymentMethodsMatchReceipts } from "./helpers/payment-method-match";
 import {
   reconcileReceiptAnalyses,
   reconcileReceiptValidation,
@@ -190,9 +190,21 @@ export class PdvSalesRequestService extends BaseService<
             name: order.unitBusiness.name,
           }
         : null,
-      paymentMethod: order.paymentMethod
-        ? { id: order.paymentMethod.id, description: order.paymentMethod.description }
-        : null,
+      payments: [...(order.payments ?? [])]
+        .sort((a: any, b: any) =>
+          String(a.due_date ?? "").localeCompare(String(b.due_date ?? "")),
+        )
+        .map((payment: any) => ({
+          id: payment.id,
+          amount: payment.amount,
+          due_date: payment.due_date ?? null,
+          paymentMethod: payment.paymentMethod
+            ? {
+                id: payment.paymentMethod.id,
+                description: payment.paymentMethod.description,
+              }
+            : null,
+        })),
       installments: Array.isArray(parcelas) ? parcelas.length : null,
       items: (order.items ?? []).map((item: any) => ({
         id: item.id,
@@ -758,9 +770,7 @@ export class PdvSalesRequestService extends BaseService<
   // payment_method_matches_receipt a partir de TODOS os comprovantes
   // atualmente anexados — chamado depois de qualquer mutação numa linha de
   // comprovante (criar, editar análise, apagar). payment_method_matches_receipt
-  // só é calculado com exatamente 1 comprovante: com 2+, os tipos podem
-  // divergir entre si (ex.: PIX + cartão) e a comparação 1:1 contra
-  // order.paymentMethod não faz mais sentido — financeiro revisa manualmente.
+  // compara o conjunto de formas de pagamento da Bling com o de comprovantes.
   private async reconcileReceipts(
     requestId: string,
     orderId: string,
@@ -776,20 +786,17 @@ export class PdvSalesRequestService extends BaseService<
       receipts.map((r) => r.validated),
     );
 
-    // Busca a order uma vez só — usada tanto pro match de forma de
-    // pagamento (só com 1 comprovante) quanto pro match de valor total
-    // (sempre, qualquer quantidade de comprovantes).
-    const order = await orderService.findByIdWithPaymentMethod(orderId);
+    // Busca a order uma vez só — usada pro match de formas de pagamento e
+    // pro match de valor total.
+    const order = await orderService.findByIdWithPayments(orderId);
 
-    let matchesReceipt: boolean | null = null;
-    if (receipts.length === 1 && receipts[0].analysis) {
-      const paymentMethodDescription =
-        (order as any)?.paymentMethod?.description ?? null;
-      matchesReceipt = paymentMethodMatchesReceipt(
-        paymentMethodDescription,
-        receipts[0].analysis.tipo_comprovante,
-      );
-    }
+    const paymentMethodDescriptions = ((order as any)?.payments ?? []).map(
+      (payment: any) => payment.paymentMethod?.description ?? null,
+    );
+    const matchesReceipt = paymentMethodsMatchReceipts(
+      paymentMethodDescriptions,
+      receipts.map((r) => r.analysis?.tipo_comprovante ?? null),
+    );
 
     const totalMatchesOrder = receiptTotalMatchesOrder(
       analysis?.valor_total ?? null,

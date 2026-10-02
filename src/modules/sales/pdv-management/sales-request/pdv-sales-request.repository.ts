@@ -10,7 +10,7 @@ import {
 } from "./pdv-sales-request.types";
 import Order from "../../orders/order/orders.model";
 import Customer from "../../customers/customers.model";
-import PaymentMethod from "../../orders/payment_method/payment_method.model";
+import { PAYMENTS_INCLUDE } from "../../orders/order_payment/helpers/payments-include";
 import OrderItems from "../../orders/order_items/order_items.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import Invoice from "../../../warehouse/fiscal/invoices/invoice/invoice.model";
@@ -61,7 +61,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
           as: "order",
           include: [
             { model: Customer, as: "customer" },
-            { model: PaymentMethod, as: "paymentMethod" },
+            PAYMENTS_INCLUDE,
             { model: UnitBusiness, as: "unitBusiness" },
             { model: OrderItems, as: "items" },
           ],

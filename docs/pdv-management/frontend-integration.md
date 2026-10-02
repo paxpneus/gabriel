@@ -5,6 +5,19 @@ só o que for NOVO ou o que MUDOU no fluxo — de forma curta, só o essencial
 pro front saber integrar. Nada de contrato completo/histórico redundante
 aqui.
 
+## Mudou: `order.paymentMethod` virou `order.payments[]` (`GET /sales-request/:id`)
+
+Pedido pode ter 1+ formas de pagamento (parcelas da Bling). O campo único `order.paymentMethod` **foi removido** do detalhe; no lugar:
+
+```json
+"payments": [
+  { "id": "uuid", "amount": 372.31, "due_date": "2026-10-01",
+    "paymentMethod": { "id": "uuid", "description": "Pix" } }
+]
+```
+
+Ordenado por `due_date`, 1 item por parcela (a mesma forma pode repetir). `order.installments` segue igual. `payment_method_matches_receipt` agora compara o conjunto de formas do pedido com o de comprovantes: `true` só se toda forma tem comprovante do mesmo tipo e todo comprovante corresponde a uma forma; `false` se algum lado sobra; `null` sem formas/comprovantes ou com comprovante sem análise. Deixa de ser `null` quando há 2+ comprovantes. A listagem (`GET /sales-request`) não traz pagamentos, como antes.
+
 ## Mudou: coluna de expedição dividida em `SHIPPING` (ADT) e `SHIP_TODAY` (TRANSPORTADORA)
 
 Novo valor de `status`: **`SHIP_TODAY`** ("Embarque hoje"). Ele faz **exatamente

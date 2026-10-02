@@ -376,8 +376,8 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     }, {});
   }
 
-  async findByIdWithPaymentMethod(orderId: string): Promise<Order | null> {
-    return this.repository.findByIdWithPaymentMethod(orderId);
+  async findByIdWithPayments(orderId: string): Promise<Order | null> {
+    return this.repository.findByIdWithPayments(orderId);
   }
 
   async findEligibleForPdvByUnitBusiness(

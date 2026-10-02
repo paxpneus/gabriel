@@ -27,6 +27,8 @@ import { blingGet } from "../bling/helpers/get-with-sleep";
 import productService from "../../../../inventory/products/services/product.service";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
+import { OrderPaymentCreationAttributes } from "../../../../sales/orders/order_payment/order_payment.types";
+import orderPaymentService from "../../../../sales/orders/order_payment/order_payment.service";
 import paymentMethodService from "../../../../sales/orders/payment_method/payment_method.service";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { isPdvCancelledSituation } from "../../../../sales/orders/order/helpers/eligible-for-pdv-filters";
@@ -35,6 +37,14 @@ import {
   SEM_LOJA_ID_SYSTEM,
   findOrCreateSemLojaUnitBusiness,
 } from "./helpers/sem-loja-unit-business";
+
+interface BlingInstallmentApi {
+  id?: number;
+  dataVencimento?: string;
+  valor?: number;
+  observacoes?: string;
+  formaPagamento?: { id?: number };
+}
 
 interface BlingPaymentMethodApi {
   id: number;
@@ -245,10 +255,8 @@ export class BlingOrderService {
   // bater em /formas-pagamentos/{id} toda vez que um pedido é sincronizado,
   // já que o rate-limit da Bling é compartilhado entre todas as filas.
   private async resolvePaymentMethod(
-    formaPagamentoId: number | string | undefined,
-  ): Promise<string | null> {
-    if (!formaPagamentoId) return null;
-
+    formaPagamentoId: number | string,
+  ): Promise<string> {
     const idSystem = String(formaPagamentoId);
     const existing = await paymentMethodService.findOne({
       where: { id_system: idSystem },
@@ -271,6 +279,43 @@ export class BlingOrderService {
     });
 
     return created.id;
+  }
+
+  // Uma linha por parcela da Bling (parcelas[]) — um pedido pode ter várias
+  // formas de pagamento, e a mesma forma pode repetir em várias parcelas.
+  // Resolve as formas (pode bater na Bling) antes de gravar o pedido, pra uma
+  // falha de API não deixar pedido criado sem pagamentos.
+  private async resolveOrderPayments(
+    parcelas: BlingInstallmentApi[] | undefined,
+  ): Promise<Omit<OrderPaymentCreationAttributes, "order_id">[]> {
+    const installments = (parcelas ?? []).filter(
+      (parcela) => parcela.formaPagamento?.id,
+    );
+
+    const uniqueMethodIds = [
+      ...new Set(
+        installments.map((parcela) => String(parcela.formaPagamento!.id)),
+      ),
+    ];
+    const resolved = await Promise.all(
+      uniqueMethodIds.map(
+        async (id) => [id, await this.resolvePaymentMethod(id)] as const,
+      ),
+    );
+    const methodIdBySystemId = new Map(resolved);
+
+    return installments.map((parcela) => ({
+        payment_method_id: methodIdBySystemId.get(
+          String(parcela.formaPagamento!.id),
+        )!,
+        id_system: parcela.id != null ? String(parcela.id) : null,
+        amount: Number(parcela.valor ?? 0),
+        due_date:
+          parcela.dataVencimento && parcela.dataVencimento !== "0000-00-00"
+            ? parcela.dataVencimento
+            : null,
+        notes: parcela.observacoes || null,
+      }));
   }
 
   private async upsertSellerContact(
@@ -897,9 +942,7 @@ export class BlingOrderService {
       const store = await this.resolveStore(orderData.loja?.id);
 
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
-      const paymentMethodId = await this.resolvePaymentMethod(
-        orderData.formaPagamento?.id,
-      );
+      const orderPayments = await this.resolveOrderPayments(orderData.parcelas);
 
       // ─── Processa itens primeiro para obter custo_total_produtos ──────────
       const hasSellerCommission =
@@ -928,7 +971,6 @@ export class BlingOrderService {
       const orderUpdateFields = {
         unit_business_id: unitBusinessId,
         invoice_id: invoiceId,
-        payment_method_id: paymentMethodId,
         number_order_channel: String(orderData.numeroLoja),
         actual_situation: String(orderData.situacao.id),
         // Sempre grava meia-noite no timezone da aplicação (America/Sao_Paulo),
@@ -972,6 +1014,13 @@ export class BlingOrderService {
       };
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
+      await orderPaymentService.replaceForOrder(
+        existingOrder.id,
+        orderPayments.map((payment) => ({
+          ...payment,
+          order_id: existingOrder.id,
+        })),
+      );
 
       // Avança automaticamente uma solicitação PDV em PENDING_NF_SALE assim
       // que a nota de venda é confirmada — cobre tanto NFe gerada pelo
@@ -1160,9 +1209,7 @@ export class BlingOrderService {
       const destination = await this.resolveDestination(orderData.contato?.id);
       const fiscalFields = this.extractFiscalFields(orderData, destination);
       const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
-      const paymentMethodId = await this.resolvePaymentMethod(
-        orderData.formaPagamento?.id,
-      );
+      const orderPayments = await this.resolveOrderPayments(orderData.parcelas);
       const sellerId = await this.upsertSellerContact(
         orderData.vendedor,
         integration.id,
@@ -1194,7 +1241,6 @@ export class BlingOrderService {
         integrations_id: integration.id,
         customer_id: customer.id,
         invoice_id: invoiceId,
-        payment_method_id: paymentMethodId,
         actual_situation: String(orderData.situacao.id),
         internal_status: internalStatus,
         ...reasonCancelledFields(orderData.situacao.id),
@@ -1233,6 +1279,13 @@ export class BlingOrderService {
       };
 
       const createdOrder = await ordersService.create(ordersPayload);
+      await orderPaymentService.replaceForOrder(
+        createdOrder.id,
+        orderPayments.map((payment) => ({
+          ...payment,
+          order_id: createdOrder.id,
+        })),
+      );
       notifyPdvStoreSync(createdOrder.unit_business_id, "NEW_ORDER");
 
       // Só na criação (nunca no update) — pedido já nasce com uma

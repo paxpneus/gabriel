@@ -33,3 +33,27 @@ export function paymentMethodMatchesReceipt(
       );
   }
 }
+
+// Pedido pode ter várias formas de pagamento (parcelas Bling) e a solicitação
+// vários comprovantes: bate só se TODA forma tem um comprovante do mesmo tipo
+// e TODO comprovante corresponde a uma forma. null se faltar dado dos dois lados.
+export function paymentMethodsMatchReceipts(
+  paymentMethodDescriptions: (string | null)[],
+  receiptTypes: (PaymentReceiptType | null)[],
+): boolean | null {
+  if (!paymentMethodDescriptions.length || !receiptTypes.length) return null;
+  if (receiptTypes.some((type) => !type)) return null;
+
+  const everyPaymentCovered = paymentMethodDescriptions.every((description) =>
+    receiptTypes.some(
+      (type) => paymentMethodMatchesReceipt(description, type) === true,
+    ),
+  );
+  const everyReceiptCovered = receiptTypes.every((type) =>
+    paymentMethodDescriptions.some(
+      (description) => paymentMethodMatchesReceipt(description, type) === true,
+    ),
+  );
+
+  return everyPaymentCovered && everyReceiptCovered;
+}

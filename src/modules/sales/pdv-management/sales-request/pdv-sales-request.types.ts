@@ -280,6 +280,13 @@ export interface PdvSalesRequestOrderPaymentMethod {
   description: string;
 }
 
+export interface PdvSalesRequestOrderPayment {
+  id: string;
+  amount: number;
+  due_date: string | null;
+  paymentMethod: PdvSalesRequestOrderPaymentMethod | null;
+}
+
 export interface PdvSalesRequestOrderItem {
   id: string;
   name: string;
@@ -303,7 +310,7 @@ export interface PdvSalesRequestOrderSummary {
 // Versão completa, usada no detalhe (show). `installments` deriva de
 // `order.source_payload.parcelas.length` — não é coluna própria.
 export interface PdvSalesRequestOrderDetail extends PdvSalesRequestOrderSummary {
-  paymentMethod: PdvSalesRequestOrderPaymentMethod | null;
+  payments: PdvSalesRequestOrderPayment[];
   installments: number | null;
   items: PdvSalesRequestOrderItem[];
 }

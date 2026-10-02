@@ -42,7 +42,7 @@ jest.mock("../../../orders/order/orders.service", () => ({
   __esModule: true,
   default: {
     findById: jest.fn(),
-    findByIdWithPaymentMethod: jest.fn(),
+    findByIdWithPayments: jest.fn(),
     isEligibleForPdv: jest.fn(),
   },
 }));
@@ -945,9 +945,9 @@ describe("PdvSalesRequestService", () => {
         { id: "receipt-1", analysis: pixExtraction, validated: null },
       ]);
       (
-        orderService.findByIdWithPaymentMethod as jest.Mock
+        orderService.findByIdWithPayments as jest.Mock
       ).mockResolvedValue({
-        paymentMethod: { description: "Pix" },
+        payments: [{ paymentMethod: { description: "Pix" } }],
         net_total_order: 100,
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
@@ -992,7 +992,7 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
-    it("com 2 comprovantes anexados, payment_method_matches_receipt fica null (financeiro revisa manualmente)", async () => {
+    it("com 2 comprovantes anexados, payment_method_matches_receipt compara o conjunto de comprovantes com as formas da Bling", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
         order_id: "order-1",
@@ -1030,8 +1030,14 @@ describe("PdvSalesRequestService", () => {
         { id: "receipt-2", analysis: cardExtraction, validated: true },
       ]);
       (
-        orderService.findByIdWithPaymentMethod as jest.Mock
-      ).mockResolvedValue({ paymentMethod: null, net_total_order: 100 });
+        orderService.findByIdWithPayments as jest.Mock
+      ).mockResolvedValue({
+        payments: [
+          { paymentMethod: { description: "Pix" } },
+          { paymentMethod: { description: "Cartão de Crédito" } },
+        ],
+        net_total_order: 100,
+      });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
       });
@@ -1045,7 +1051,7 @@ describe("PdvSalesRequestService", () => {
 
       // Sempre busca a order agora (usada pro match de valor total, não só
       // de forma de pagamento) — total 100 bate com a soma dos 2 comprovantes.
-      expect(orderService.findByIdWithPaymentMethod).toHaveBeenCalled();
+      expect(orderService.findByIdWithPayments).toHaveBeenCalled();
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
         expect.objectContaining({
@@ -1054,7 +1060,7 @@ describe("PdvSalesRequestService", () => {
             valor_total: 100,
           }),
           payment_receipt_validated: true,
-          payment_method_matches_receipt: null,
+          payment_method_matches_receipt: true,
           receipt_total_matches_order: true,
         }),
       );
@@ -1459,8 +1465,8 @@ describe("PdvSalesRequestService", () => {
         { id: "receipt-1", analysis: mergedAnalysis, validated: true },
       ]);
       (
-        orderService.findByIdWithPaymentMethod as jest.Mock
-      ).mockResolvedValue({ paymentMethod: { description: "Cartão de Crédito" } });
+        orderService.findByIdWithPayments as jest.Mock
+      ).mockResolvedValue({ payments: [{ paymentMethod: { description: "Cartão de Crédito" } }] });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
       });
