@@ -9,7 +9,7 @@ import integrationOrderStatusMappingService from "../../../../sales/orders/integ
 // GET /pedidos/vendas/{id} na Bling (notaFiscal.id ainda vazio) — delay dá
 // tempo da Bling propagar o vínculo antes do fetch, em vez de gravar
 // invoice_id nulo e nunca mais tentar de novo.
-export const ORDER_WEBHOOK_INGESTION_DELAY_MS = 30_000;
+export const ORDER_WEBHOOK_INGESTION_DELAY_MS = 2_000;
 
 // BullMQ: menor número = maior prioridade. 1 é o topo já usado por outras
 // filas (ver bling-webhook.orchestrator.ts) — pedido de atualização manual

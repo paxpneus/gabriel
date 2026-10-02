@@ -109,7 +109,7 @@ router.post("/webhook", async (req: Request, res: Response) => {
  *
  * Uso do front-end: força a reingestão imediata de um pedido específico
  * (busca direta em GET /pedidos/vendas/{id} na Bling), furando tanto o
- * delay de 30s quanto qualquer backlog de webhook já enfileirado — usa a
+ * delay de 2s quanto qualquer backlog de webhook já enfileirado — usa a
  * maior prioridade possível na fila BLING_ORDER_INGESTION.
  */
 router.post(
