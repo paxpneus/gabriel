@@ -10,6 +10,7 @@ jest.mock("../pdv-sales-request.repository", () => ({
   default: {
     findById: jest.fn(),
     update: jest.fn(),
+    bulkUpdate: jest.fn(),
     create: jest.fn(),
     findActiveByOrderId: jest.fn(),
     findByOrderId: jest.fn(),
@@ -176,6 +177,7 @@ import {
   PdvCorrectionOrigin,
   PdvCorrectionReason,
   PdvSalesRequestStatus,
+  PdvSalesRequestOrigin,
   PdvShippingType,
 } from "../pdv-sales-request.types";
 import { PdvAccessScreen } from "../../pdv-access/pdv-access.types";
@@ -505,6 +507,8 @@ describe("PdvSalesRequestService", () => {
         id: "r1",
         status: PdvSalesRequestStatus.PENDING_CORRECTION,
         correction_origin_status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+        shipping_address: "Rua A, 1",
+        transporter_name: "Transp X",
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -790,6 +794,51 @@ describe("PdvSalesRequestService", () => {
           description: "Tipo de envio definido",
         }),
       );
+    });
+
+    it("grava a origem só se ainda não definida (condicional origin IS NULL)", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+        shipping_type: PdvShippingType.ADT,
+      });
+
+      await service.setShippingType(
+        "r1",
+        PdvShippingType.ADT,
+        PdvAccessScreen.STORE_REQUEST,
+        undefined,
+        PdvSalesRequestOrigin.TELESALES,
+      );
+
+      expect(pdvSalesRequestRepository.bulkUpdate).toHaveBeenCalledWith(
+        { origin: PdvSalesRequestOrigin.TELESALES },
+        { where: { id: "r1", origin: null } },
+      );
+    });
+
+    it("não grava origem quando o acesso não origina (FINANCE/CD21)", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_FINANCE,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+        shipping_type: PdvShippingType.ADT,
+      });
+
+      await service.setShippingType(
+        "r1",
+        PdvShippingType.ADT,
+        PdvAccessScreen.FINANCE,
+        undefined,
+        null,
+      );
+
+      expect(pdvSalesRequestRepository.bulkUpdate).not.toHaveBeenCalled();
     });
 
     it("FINANCE consegue editar em PENDING_FINANCE, mas não em PENDING_CD21_ANALYSIS", async () => {
@@ -1131,6 +1180,8 @@ describe("PdvSalesRequestService", () => {
       unit_business_id: "ub1",
       sale_invoice_id: null,
       status: PdvSalesRequestStatus.OPEN,
+      shipping_address: "Rua A, 1",
+      transporter_name: "Transp X",
     };
 
     beforeEach(() => {
@@ -1256,6 +1307,34 @@ describe("PdvSalesRequestService", () => {
           step: PdvSalesRequestStatus.OPEN,
           description: "Comprovante adicionado",
         }),
+      );
+    });
+
+    it("grava a origem da loja no 1º comprovante só se ainda não definida", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      (pdvSalesRequestReceiptService.create as jest.Mock).mockResolvedValue({
+        id: "receipt-1",
+        pdv_sales_request_id: "r1",
+        path: "temp://temp-1",
+      });
+      (pdvSalesRequestReceiptService.findById as jest.Mock).mockResolvedValue(
+        null,
+      );
+
+      await service.attachReceipt("r1", {
+        buffer: Buffer.from(""),
+        filename: "comprovante.png",
+        mimeType: "image/png",
+        origin: PdvSalesRequestOrigin.STORE,
+      });
+
+      expect(pdvSalesRequestRepository.bulkUpdate).toHaveBeenCalledWith(
+        { origin: PdvSalesRequestOrigin.STORE },
+        { where: { id: "r1", origin: null } },
       );
     });
 
@@ -1730,6 +1809,8 @@ describe("PdvSalesRequestService", () => {
         id: "r1",
         status: PdvSalesRequestStatus.OPEN,
         shipping_type: PdvShippingType.TRANSPORTADORA,
+        shipping_address: "Rua A, 1",
+        transporter_name: "Transp X",
       });
       (
         pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock
@@ -1752,6 +1833,8 @@ describe("PdvSalesRequestService", () => {
         id: "r1",
         status: PdvSalesRequestStatus.OPEN,
         shipping_type: PdvShippingType.TRANSPORTADORA,
+        shipping_address: "Rua A, 1",
+        transporter_name: "Transp X",
       });
       (
         pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock
@@ -1785,6 +1868,8 @@ describe("PdvSalesRequestService", () => {
         status: PdvSalesRequestStatus.PENDING_CORRECTION,
         correction_origin_status: PdvSalesRequestStatus.PENDING_FINANCE,
         shipping_type: PdvShippingType.TRANSPORTADORA,
+        shipping_address: "Rua A, 1",
+        transporter_name: "Transp X",
       });
       (
         pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock
@@ -1800,6 +1885,162 @@ describe("PdvSalesRequestService", () => {
         { status: PdvSalesRequestStatus.PENDING_FINANCE },
         { transaction: mockTransaction },
       );
+    });
+  });
+
+  describe("endereço de envio/transportadora obrigatórios sem transportadora na nota", () => {
+    const openRequest = {
+      id: "r1",
+      order_id: "o1",
+      status: PdvSalesRequestStatus.OPEN,
+      shipping_type: PdvShippingType.TRANSPORTADORA,
+      shipping_address: null,
+      transporter_name: null,
+    };
+
+    beforeEach(() => {
+      (
+        pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock
+      ).mockResolvedValue([{ id: "receipt-1" }]);
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+    });
+
+    it("OPEN: recusa confirmar quando o pedido ainda não tem nota de venda", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue(openRequest);
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        id: "o1",
+        invoice_id: null,
+      });
+
+      await expect(service.confirmReceiptSubmission("r1")).rejects.toThrow(
+        /endereço de envio e a transportadora/,
+      );
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it.each([[null], [""], ["Sem transporte"]])(
+      "OPEN: recusa quando a nota de venda tem transportadora %p",
+      async (transporterName) => {
+        (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue(
+          openRequest,
+        );
+        (orderService.findById as jest.Mock).mockResolvedValue({
+          id: "o1",
+          invoice_id: "inv-1",
+        });
+        (invoiceService.findById as jest.Mock).mockResolvedValue({
+          id: "inv-1",
+          transporter_name: transporterName,
+        });
+
+        await expect(service.confirmReceiptSubmission("r1")).rejects.toThrow(
+          /endereço de envio e a transportadora/,
+        );
+      },
+    );
+
+    it("OPEN: recusa com só um dos dois campos preenchido", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        ...openRequest,
+        shipping_address: "Rua A, 1",
+      });
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        id: "o1",
+        invoice_id: null,
+      });
+
+      await expect(service.confirmReceiptSubmission("r1")).rejects.toThrow(
+        /endereço de envio e a transportadora/,
+      );
+    });
+
+    it("OPEN: não cobra quando a nota de venda já tem transportadora real", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue(openRequest);
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        id: "o1",
+        invoice_id: "inv-1",
+      });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "inv-1",
+        transporter_name: "LOGISTICA PAX PNEUS SP - CD 12",
+      });
+
+      await service.confirmReceiptSubmission("r1");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.PENDING_FINANCE },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("PENDING_CORRECTION (origem CD21): recusa voltar pro status anterior sem os campos", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        ...openRequest,
+        status: PdvSalesRequestStatus.PENDING_CORRECTION,
+        correction_origin_status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+      });
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        id: "o1",
+        invoice_id: null,
+      });
+
+      await expect(service.resolveCorrection("r1", {})).rejects.toThrow(
+        /endereço de envio e a transportadora/,
+      );
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("PENDING_CORRECTION origem expedição com CANCEL não cobra os campos", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        ...openRequest,
+        status: PdvSalesRequestStatus.PENDING_CORRECTION,
+        correction_origin_status: PdvSalesRequestStatus.SHIPPING,
+      });
+
+      await service.resolveCorrection("r1", { decision: "CANCEL" });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.CANCELLED },
+        { transaction: mockTransaction },
+      );
+    });
+  });
+
+  describe("setShippingInfo", () => {
+    it("grava só os campos enviados, com trim e \"\" virando null", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.setShippingInfo("r1", {
+        shippingAddress: "  Rua A, 1  ",
+        transporterName: "",
+      });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        shipping_address: "Rua A, 1",
+        transporter_name: null,
+      });
+    });
+
+    it("recusa fora da janela de edição da tela", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_FINANCE,
+      });
+
+      await expect(
+        service.setShippingInfo("r1", { shippingAddress: "Rua A, 1" }),
+      ).rejects.toThrow(/Ação inválida/);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
     });
   });
 

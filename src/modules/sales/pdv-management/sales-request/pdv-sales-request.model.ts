@@ -7,6 +7,7 @@ import {
   PdvSalesRequestErrors,
   PdvShippingType,
   PdvSalesRequestStatus,
+  PdvSalesRequestOrigin,
   PaymentReceiptReconciledAnalysis,
 } from "./pdv-sales-request.types";
 
@@ -22,6 +23,9 @@ class PdvSalesRequest
   public status!: PdvSalesRequestStatus;
   public correction_origin_status!: PdvSalesRequestStatus | null;
   public shipping_type!: PdvShippingType | null;
+  public shipping_address!: string | null;
+  public transporter_name!: string | null;
+  public origin!: PdvSalesRequestOrigin | null;
   public name!: string;
   public payment_receipt_analysis!: PaymentReceiptReconciledAnalysis | null;
   public payment_receipt_validated!: boolean | null;
@@ -103,6 +107,20 @@ PdvSalesRequest.init(
     },
     shipping_type: {
       type: DataTypes.ENUM(...Object.values(PdvShippingType)),
+      allowNull: true,
+    },
+    // Texto livre da loja — obrigatório pra sair de OPEN/PENDING_CORRECTION quando a nota de venda não informa transportadora (assertShippingInfoFilledIfRequired).
+    shipping_address: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    transporter_name: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    // Gravado uma vez só (WHERE origin IS NULL), nunca via API — ver recordOriginIfUnset.
+    origin: {
+      type: DataTypes.ENUM(...Object.values(PdvSalesRequestOrigin)),
       allowNull: true,
     },
     name: {

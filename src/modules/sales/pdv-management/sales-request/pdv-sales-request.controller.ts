@@ -8,6 +8,7 @@ import pdvSalesRequestService, {
 import { PdvShippingType } from "./pdv-sales-request.types";
 import { TCarInvoiceQueue } from "../../../handlers/tecinco/queues/tecinco-invoice.queue";
 import { pdvAccess, PdvAccessRequest } from "../pdv-access/pdv-access.middleware";
+import { resolveSalesRequestOrigin } from "./helpers/sales-request-origin";
 import { PdvAccessContext, PdvAccessScreen } from "../pdv-access/pdv-access.types";
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -38,6 +39,15 @@ export class PdvSalesRequestController extends BaseController<
         PdvAccessScreen.CD21,
       ]),
       this.setShippingType,
+    );
+    this.router.patch(
+      "/:id/shipping-info",
+      pdvAccess([
+        PdvAccessScreen.STORE_REQUEST,
+        PdvAccessScreen.FINANCE,
+        PdvAccessScreen.CD21,
+      ]),
+      this.setShippingInfo,
     );
     // Troca já em faturamento/expedição — realinha o status ao tipo novo.
     this.router.post(
@@ -382,6 +392,23 @@ export class PdvSalesRequestController extends BaseController<
         shippingType as PdvShippingType,
         access.screen,
         this.actorUserId(req),
+        resolveSalesRequestOrigin(access),
+      );
+      return res.json(updated);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  setShippingInfo = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      if (!(await this.assertOwnedByAccess(req, res))) return res;
+      const { shippingAddress, transporterName } = req.body;
+      const updated = await this.service.setShippingInfo(
+        req.params.id as string,
+        { shippingAddress, transporterName },
+        this.access(req).screen,
+        this.actorUserId(req),
       );
       return res.json(updated);
     } catch (error: any) {
@@ -422,6 +449,7 @@ export class PdvSalesRequestController extends BaseController<
           mimeType: req.file.mimetype,
           screen: this.access(req).screen,
           userId: this.actorUserId(req),
+          origin: resolveSalesRequestOrigin(this.access(req)),
         },
       );
       // Análise por IA roda em background — front deve entrar na room do

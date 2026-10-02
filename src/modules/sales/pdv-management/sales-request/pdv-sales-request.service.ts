@@ -16,6 +16,7 @@ import {
   PdvSalesRequestErrors,
   PdvSalesRequestStatus,
   PdvShippingType,
+  PdvSalesRequestOrigin,
   PaymentReceiptExtraction,
   PaymentReceiptPaymentMethod,
   PaymentReceiptReconciledAnalysis,
@@ -132,6 +133,7 @@ export class PdvSalesRequestService extends BaseService<
         "unit_business_id",
         "shipping_type",
         "correction_origin_status",
+        "origin",
       ],
       sortableFields: ["createdAt", "status"],
       customFields: {
@@ -614,6 +616,15 @@ export class PdvSalesRequestService extends BaseService<
     notifySalesRequestChanged(request);
   }
 
+  // Condicional no banco (origin IS NULL) — só a 1ª ação grava, mesmo com chamadas concorrentes.
+  private async recordOriginIfUnset(
+    id: string,
+    origin: PdvSalesRequestOrigin | null | undefined,
+  ): Promise<void> {
+    if (!origin) return;
+    await this.repository.bulkUpdate({ origin }, { where: { id, origin: null } });
+  }
+
   // ─── Criação ────────────────────────────────────────────────────────────────
 
   async createRequest(params: {
@@ -668,6 +679,9 @@ export class PdvSalesRequestService extends BaseService<
           status: PdvSalesRequestStatus.OPEN,
           correction_origin_status: null,
           shipping_type: null,
+          shipping_address: null,
+          transporter_name: null,
+          origin: null,
           transfer_invoice_products_match_sale: null,
           name: params.name ?? `Pedido ${order.number_order_channel}`,
           errors: null,
@@ -884,6 +898,7 @@ export class PdvSalesRequestService extends BaseService<
     shippingType: PdvShippingType,
     screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
+    origin?: PdvSalesRequestOrigin | null,
   ): Promise<PdvSalesRequest> {
     this.assertValidShippingType(shippingType);
     // Editar info (não anexar/remover comprovante) vale em qualquer PENDING_CORRECTION, ex.: CD21 devolveu por SHIPPING_TYPE
@@ -895,6 +910,7 @@ export class PdvSalesRequestService extends BaseService<
       shippingType,
     );
 
+    await this.recordOriginIfUnset(id, origin);
     const updated = await this.repository.update(id, {
       shipping_type: shippingType,
     });
@@ -912,6 +928,67 @@ export class PdvSalesRequestService extends BaseService<
     if (!Object.values(PdvShippingType).includes(shippingType)) {
       throw new Error("Tipo de envio inválido");
     }
+  }
+
+  // Parcial: só os campos enviados mudam; "" limpa (vira null). Mesma janela de edição do tipo de envio.
+  async setShippingInfo(
+    id: string,
+    info: { shippingAddress?: string | null; transporterName?: string | null },
+    screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
+    userId?: string,
+  ): Promise<PdvSalesRequest> {
+    const request = await this.assertReceiptEditable(id, screen, {
+      anyCorrectionOrigin: true,
+    });
+
+    const normalize = (value: string | null) =>
+      value == null ? null : String(value).trim() || null;
+    const changes = {
+      ...(info.shippingAddress !== undefined && {
+        shipping_address: normalize(info.shippingAddress),
+      }),
+      ...(info.transporterName !== undefined && {
+        transporter_name: normalize(info.transporterName),
+      }),
+    };
+    if (!Object.keys(changes).length) {
+      throw new Error("Informe o endereço de envio e/ou a transportadora");
+    }
+
+    const updated = await this.repository.update(id, changes);
+    if (!updated) throw new Error("Solicitação não encontrada");
+
+    await this.logAction(request, {
+      userId,
+      description: "Endereço de envio/transportadora atualizados",
+    });
+
+    return updated;
+  }
+
+  // Só cobra quando a nota de venda do pedido (order.invoice_id, fonte de verdade) não informa transportadora.
+  private async assertShippingInfoFilledIfRequired(
+    request: PdvSalesRequest,
+  ): Promise<void> {
+    if (request.shipping_address?.trim() && request.transporter_name?.trim()) {
+      return;
+    }
+
+    const order = await orderService.findById(request.order_id, {
+      attributes: ["id", "invoice_id"],
+    });
+    if (order?.invoice_id) {
+      const saleInvoice = await invoiceService.findById(order.invoice_id, {
+        attributes: ["id", "transporter_name"],
+      });
+      if (!transporterService.isNoTransporterName(saleInvoice?.transporter_name)) {
+        return;
+      }
+    }
+
+    throw new Error(
+      "Preencha o endereço de envio e a transportadora antes de enviar a solicitação",
+    );
   }
 
   // ADT ⇔ transportadora CD 12/17. Sem nota de venda ou sem transportadora na nota não dá pra checar — libera.
@@ -1020,6 +1097,7 @@ export class PdvSalesRequestService extends BaseService<
       mimeType: string;
       screen?: PdvAccessScreen;
       userId?: string;
+      origin?: PdvSalesRequestOrigin | null;
     },
   ): Promise<PdvSalesRequestReceipt> {
     const request = await this.assertReceiptEditable(id, params.screen);
@@ -1060,6 +1138,7 @@ export class PdvSalesRequestService extends BaseService<
     });
 
     await uploaderQueue.enqueueUpload(tempFileId, "PDV_SALES_REQUEST_RECEIPT");
+    await this.recordOriginIfUnset(id, params.origin);
 
     await this.logAction(request, {
       userId: params.userId,
@@ -1266,6 +1345,7 @@ export class PdvSalesRequestService extends BaseService<
         "Anexe ao menos um comprovante e o tipo de envio antes de confirmar",
       );
     }
+    await this.assertShippingInfoFilledIfRequired(request);
 
     return this.transitionTo(id, PdvSalesRequestStatus.PENDING_FINANCE, {
       userId,
@@ -1651,6 +1731,7 @@ export class PdvSalesRequestService extends BaseService<
     // dados do pedido) é feito direto na Bling e reflete sozinho no pedido
     // via sync; este endpoint só confirma que foi corrigido e manda de volta
     // pra reanálise.
+    await this.assertShippingInfoFilledIfRequired(request);
     return this.transitionTo(id, request.correction_origin_status, {
       userId: params.userId,
       description: "Correção confirmada pela loja — reanálise do CD21",
@@ -2353,6 +2434,8 @@ export class PdvSalesRequestService extends BaseService<
           transfer_invoice_id: null,
           correction_origin_status: null,
           shipping_type: null,
+          shipping_address: null,
+          transporter_name: null,
           payment_receipt_analysis: null,
           payment_receipt_validated: null,
           payment_method_matches_receipt: null,

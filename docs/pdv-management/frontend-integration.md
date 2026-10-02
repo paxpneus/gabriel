@@ -7,6 +7,37 @@ aqui.
 
 **Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
 
+## Novo: origem da solicitação (`origin`)
+
+Campo novo `origin` (migration `m307`): `"TELEVENDAS"` | `"LOJA"` | `null`. Vem na listagem e no `GET /sales-request/:id`. Só leitura — o backend grava sozinho, uma vez só, na primeira ação entre definir o tipo de envio (`POST /:id/shipping-type`) e anexar comprovante (`POST /:id/receipt`):
+- link de Televendas → `TELEVENDAS`
+- link da loja ou usuário logado numa loja → `LOJA`
+
+Financeiro/CD21 nunca definem origem. Fica `null` até a primeira dessas ações (e em solicitações antigas).
+
+Filtro: `GET /sales-request?filters[origin]=TELEVENDAS` (ou `LOJA`).
+
+## Novo: endereço de envio e transportadora na solicitação
+
+Dois campos novos de texto livre na solicitação (migration `m306`), já vêm na listagem e no `GET /sales-request/:id`:
+- `shipping_address` — endereço de envio
+- `transporter_name` — transportadora
+
+Pra gravar: `PATCH /sales-request/:id/shipping-info` body `{ shippingAddress?, transporterName? }`. Parcial: só o campo enviado muda; `""`/`null` limpa. Mesma janela de edição do `shipping-type` (loja em `OPEN`/`PENDING_CORRECTION` de qualquer origem, financeiro em `PENDING_FINANCE`, CD21 em `PENDING_CD21_ANALYSIS`/`PENDING_NF_SALE`). Responde a solicitação atualizada. Body sem nenhum dos dois → `400`.
+
+**Regra de obrigatoriedade:** só pode ir de **Em aberto** (`OPEN`) para **Análise financeiro** (`PENDING_FINANCE`) se esses campos estiverem preenchidos, ou ir de uma **correção** (`PENDING_CORRECTION`) para o status que tava antes (`correction_origin_status`) se esses campos estiverem preenchidos. Essa regra de obrigar o campo preenchido é só se:
+- o pedido (order) ainda não tem nota de venda (sale invoice id), **ou**
+- a nota de venda não tem transportadora, **ou**
+- a nota de venda tem transportadora, mas é a transportadora `"Sem transporte"`.
+
+Só nesses status que cobra — `PENDING_CORRECTION` e `OPEN` — e só nessa condição acima. Com nota de venda com transportadora de verdade, os campos são opcionais.
+
+Na prática, as chamadas que passam a validar:
+- `POST /sales-request/:id/receipt/confirm` (`OPEN` → `PENDING_FINANCE` e `PENDING_CORRECTION` de origem financeiro → `PENDING_FINANCE`)
+- `POST /sales-request/:id/correction/resolve` quando volta pro status de origem (origem `PENDING_CD21_ANALYSIS`). As decisões que vão pra outro status (`CANCEL`, `EXCHANGE_PRODUCT`, `RETRY_ANALYSIS`) não cobram.
+
+Faltando (os dois precisam estar preenchidos) → `400 { error: "Preencha o endereço de envio e a transportadora antes de enviar a solicitação" }` (mensagem pronta pra exibir).
+
 ## Mudou: comprovante liga a uma forma de pagamento do catálogo
 
 - `PATCH /sales-request/:id/receipt/:receiptId/analysis` aceita `payment_method_id` (uuid de `GET /api/payment_method`; `null` limpa). O backend deriva `tipo_comprovante` da descrição da forma (`null` se a forma não tem tipo no enum: Dinheiro, Cheque, Boleto, Outros) — dá pra parar de mandar `tipo_comprovante` nesse PATCH.
