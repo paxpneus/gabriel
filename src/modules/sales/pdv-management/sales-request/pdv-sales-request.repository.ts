@@ -22,12 +22,13 @@ import type {
 
 // Só id/number_system — o front usa pra exibir o número da nota + montar a
 // rota de DANFE (GET /:id/invoice/:invoiceId/danfe), nunca a nota inteira.
-// transporter_name na nota de venda alimenta o shipping_label (service).
+// transporter_name na nota de venda alimenta o shipping_label (service);
+// tracking_url (só nota Bling) vira invoice_tracking_url na resposta.
 const INVOICE_SUMMARY_INCLUDE = [
   {
     model: Invoice,
     as: "saleInvoice",
-    attributes: ["id", "number_system", "transporter_name"],
+    attributes: ["id", "number_system", "transporter_name", "tracking_url"],
   },
   { model: Invoice, as: "transferInvoice", attributes: ["id", "number_system"] },
 ];
@@ -137,6 +138,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   // status ativo, só pela nota de VENDA (romaneio da transferência não finaliza).
   async findActiveBySaleInvoiceIds(
     invoiceIds: string[],
+    attributes?: string[],
   ): Promise<PdvSalesRequest[]> {
     if (!invoiceIds.length) return [];
 
@@ -145,6 +147,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         sale_invoice_id: { [Op.in]: invoiceIds },
         status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
       },
+      ...(attributes && { attributes }),
     });
   }
 

@@ -16,6 +16,7 @@ import {
   PdvSalesRequestErrors,
   PdvSalesRequestStatus,
   PdvShippingType,
+  PdvSalesRequestOrigin,
   PaymentReceiptExtraction,
   PaymentReceiptPaymentMethod,
   PaymentReceiptReconciledAnalysis,
@@ -37,6 +38,7 @@ import { buildExpeditionProgress } from "./helpers/expedition-progress";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
+import transporterService from "../../../warehouse/transporter/transporter.service";
 import uploaderService from "../../../handlers/uploader/services/uploader.service";
 import uploaderQueue from "../../../handlers/uploader/uploader.queue";
 import { buildEntityCacheKey } from "../../../handlers/uploader/uploader-image-cache";
@@ -73,9 +75,16 @@ import {
   pdvSalesRequestRoom,
   PAYMENT_RECEIPT_ANALYSIS_DONE_EVENT,
 } from "./helpers/pdv-sales-request-room";
-import { notifyPdvStoreSync } from "./helpers/notify-pdv-store-sync";
-import { notifySalesRequestUpdated } from "./helpers/notify-sales-request-updated";
+import {
+  notifySalesRequestChanged,
+  notifySalesRequestUpdated,
+} from "./helpers/notify-sales-request-updated";
+import { notifyPdvStoresSync } from "./helpers/notify-pdv-store-sync";
 import { buildShippingLabel } from "./helpers/shipping-label";
+import {
+  ADT_TRANSPORTER_CDS,
+  extractTransporterCd,
+} from "./helpers/transporter-cd";
 import { invoiceProductsMatch } from "./helpers/invoice-product-quantity-match";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 import { isWithinPhysicalStoreRange } from "../../../company/unit-business/helpers/physical-numbered-unit-business";
@@ -124,6 +133,7 @@ export class PdvSalesRequestService extends BaseService<
         "unit_business_id",
         "shipping_type",
         "correction_origin_status",
+        "origin",
       ],
       sortableFields: ["createdAt", "status"],
       customFields: {
@@ -254,6 +264,7 @@ export class PdvSalesRequestService extends BaseService<
           }
         : null,
       shipping_label: buildShippingLabel(plain.shipping_type, plain.saleInvoice?.transporter_name),
+      invoice_tracking_url: plain.saleInvoice?.tracking_url ?? null,
       expedition_progress: await this.resolveExpeditionProgress(plain),
     };
   }
@@ -353,6 +364,7 @@ export class PdvSalesRequestService extends BaseService<
             plain.shipping_type,
             plain.saleInvoice?.transporter_name,
           ),
+          invoice_tracking_url: plain.saleInvoice?.tracking_url ?? null,
         };
       }),
     };
@@ -542,7 +554,7 @@ export class PdvSalesRequestService extends BaseService<
       return updated;
     });
 
-    notifyPdvStoreSync(updated.unit_business_id, "SALES_REQUEST_STATUS_CHANGED");
+    notifySalesRequestChanged(updated);
 
     return updated;
   }
@@ -590,17 +602,27 @@ export class PdvSalesRequestService extends BaseService<
   // inclui edições que ainda não avançaram etapa. `step` repete o status
   // atual, já que ele não mudou.
   private async logAction(
-    id: string,
-    step: PdvSalesRequestStatus,
+    request: PdvSalesRequest,
     params: { userId?: string; description: string },
   ): Promise<void> {
     await pdvSalesRequestHistoryService.create({
-      pdv_sales_request_id: id,
-      step,
+      pdv_sales_request_id: request.id,
+      step: request.status,
       description: params.description,
       date: new Date(),
       user_id: params.userId ?? null,
     });
+
+    notifySalesRequestChanged(request);
+  }
+
+  // Condicional no banco (origin IS NULL) — só a 1ª ação grava, mesmo com chamadas concorrentes.
+  private async recordOriginIfUnset(
+    id: string,
+    origin: PdvSalesRequestOrigin | null | undefined,
+  ): Promise<void> {
+    if (!origin) return;
+    await this.repository.bulkUpdate({ origin }, { where: { id, origin: null } });
   }
 
   // ─── Criação ────────────────────────────────────────────────────────────────
@@ -657,6 +679,9 @@ export class PdvSalesRequestService extends BaseService<
           status: PdvSalesRequestStatus.OPEN,
           correction_origin_status: null,
           shipping_type: null,
+          shipping_address: null,
+          transporter_name: null,
+          origin: null,
           transfer_invoice_products_match_sale: null,
           name: params.name ?? `Pedido ${order.number_order_channel}`,
           errors: null,
@@ -679,7 +704,7 @@ export class PdvSalesRequestService extends BaseService<
       return created;
     });
 
-    notifyPdvStoreSync(created.unit_business_id, "SALES_REQUEST_STATUS_CHANGED");
+    notifySalesRequestChanged(created);
 
     return created;
   }
@@ -811,8 +836,6 @@ export class PdvSalesRequestService extends BaseService<
     });
     if (!updated) throw new Error("Solicitação não encontrada");
 
-    notifySalesRequestUpdated(requestId);
-
     return updated;
   }
 
@@ -875,23 +898,190 @@ export class PdvSalesRequestService extends BaseService<
     shippingType: PdvShippingType,
     screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
+    origin?: PdvSalesRequestOrigin | null,
   ): Promise<PdvSalesRequest> {
+    this.assertValidShippingType(shippingType);
     // Editar info (não anexar/remover comprovante) vale em qualquer PENDING_CORRECTION, ex.: CD21 devolveu por SHIPPING_TYPE
     const request = await this.assertReceiptEditable(id, screen, {
       anyCorrectionOrigin: true,
     });
+    await this.assertShippingTypeAllowedForTransporter(
+      request.sale_invoice_id,
+      shippingType,
+    );
 
+    await this.recordOriginIfUnset(id, origin);
     const updated = await this.repository.update(id, {
       shipping_type: shippingType,
     });
     if (!updated) throw new Error("Solicitação não encontrada");
 
-    await this.logAction(id, request.status, {
+    await this.logAction(request, {
       userId,
       description: "Tipo de envio definido",
     });
 
     return updated;
+  }
+
+  private assertValidShippingType(shippingType: PdvShippingType): void {
+    if (!Object.values(PdvShippingType).includes(shippingType)) {
+      throw new Error("Tipo de envio inválido");
+    }
+  }
+
+  // Parcial: só os campos enviados mudam; "" limpa (vira null). Mesma janela de edição do tipo de envio.
+  async setShippingInfo(
+    id: string,
+    info: { shippingAddress?: string | null; transporterName?: string | null },
+    screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
+    userId?: string,
+  ): Promise<PdvSalesRequest> {
+    const request = await this.assertReceiptEditable(id, screen, {
+      anyCorrectionOrigin: true,
+    });
+
+    const normalize = (value: string | null) =>
+      value == null ? null : String(value).trim() || null;
+    const changes = {
+      ...(info.shippingAddress !== undefined && {
+        shipping_address: normalize(info.shippingAddress),
+      }),
+      ...(info.transporterName !== undefined && {
+        transporter_name: normalize(info.transporterName),
+      }),
+    };
+    if (!Object.keys(changes).length) {
+      throw new Error("Informe o endereço de envio e/ou a transportadora");
+    }
+
+    const updated = await this.repository.update(id, changes);
+    if (!updated) throw new Error("Solicitação não encontrada");
+
+    await this.logAction(request, {
+      userId,
+      description: "Endereço de envio/transportadora atualizados",
+    });
+
+    return updated;
+  }
+
+  // Só cobra quando a nota de venda do pedido (order.invoice_id, fonte de verdade) não informa transportadora.
+  private async assertShippingInfoFilledIfRequired(
+    request: PdvSalesRequest,
+  ): Promise<void> {
+    if (request.shipping_address?.trim() && request.transporter_name?.trim()) {
+      return;
+    }
+
+    const order = await orderService.findById(request.order_id, {
+      attributes: ["id", "invoice_id"],
+    });
+    if (order?.invoice_id) {
+      const saleInvoice = await invoiceService.findById(order.invoice_id, {
+        attributes: ["id", "transporter_name"],
+      });
+      if (!transporterService.isNoTransporterName(saleInvoice?.transporter_name)) {
+        return;
+      }
+    }
+
+    throw new Error(
+      "Preencha o endereço de envio e a transportadora antes de enviar a solicitação",
+    );
+  }
+
+  // ADT ⇔ transportadora CD 12/17. Sem nota de venda ou sem transportadora na nota não dá pra checar — libera.
+  private async assertShippingTypeAllowedForTransporter(
+    saleInvoiceId: string | null,
+    shippingType: PdvShippingType,
+  ): Promise<void> {
+    if (!saleInvoiceId) return;
+
+    const saleInvoice = await invoiceService.findById(saleInvoiceId, {
+      attributes: ["id", "transporter_name"],
+    });
+    const transporterName = saleInvoice?.transporter_name;
+    if (transporterService.isNoTransporterName(transporterName)) return;
+
+    const cd = extractTransporterCd(transporterName);
+    const isAdtTransporter = !!cd && ADT_TRANSPORTER_CDS.includes(cd);
+
+    if (shippingType === PdvShippingType.TRANSPORTADORA && isAdtTransporter) {
+      throw new Error(
+        `A transportadora deste pedido é o CD ${cd}, então o tipo de envio só pode ser ADT.`,
+      );
+    }
+    if (shippingType === PdvShippingType.ADT && !isAdtTransporter) {
+      throw new Error(
+        `ADT só é permitido para pedidos com transportadora ${ADT_TRANSPORTER_CDS.map((adtCd) => `CD ${adtCd}`).join(" ou ")}. A transportadora deste pedido é ${transporterName}, então o tipo de envio só pode ser TRANSPORTADORA.`,
+      );
+    }
+  }
+
+  private static readonly SHIPPING_TYPE_CHANGEABLE_STATUSES: PdvSalesRequestStatus[] =
+    [
+      PdvSalesRequestStatus.PENDING_NF_SALE,
+      PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      ...EXPEDITION_PDV_SALES_REQUEST_STATUSES,
+    ];
+
+  // Troca de tipo de envio já em faturamento/expedição (CD21) — diferente de
+  // setShippingType, realinha o status ao tipo novo.
+  async changeShippingType(
+    id: string,
+    shippingType: PdvShippingType,
+    userId?: string,
+  ): Promise<PdvSalesRequest> {
+    this.assertValidShippingType(shippingType);
+    const request = await this.assertStatus(
+      id,
+      PdvSalesRequestService.SHIPPING_TYPE_CHANGEABLE_STATUSES,
+    );
+    await this.assertShippingTypeAllowedForTransporter(
+      request.sale_invoice_id,
+      shippingType,
+    );
+
+    if (request.shipping_type === shippingType) return request;
+
+    // Nota de transferência só existe em ADT — saindo dele, desvincula.
+    const updated = await this.repository.update(id, {
+      shipping_type: shippingType,
+      ...(shippingType === PdvShippingType.TRANSPORTADORA && {
+        transfer_invoice_id: null,
+      }),
+    });
+    if (!updated) throw new Error("Solicitação não encontrada");
+
+    const description = `Tipo de envio alterado de ${request.shipping_type ?? "não definido"} para ${shippingType}`;
+    const target = await this.resolveStatusAfterShippingTypeChange(
+      request,
+      shippingType,
+    );
+
+    if (target === request.status) {
+      await this.logAction(request, { userId, description });
+      return updated;
+    }
+
+    return this.transitionTo(id, target, { userId, description });
+  }
+
+  private async resolveStatusAfterShippingTypeChange(
+    request: PdvSalesRequest,
+    shippingType: PdvShippingType,
+  ): Promise<PdvSalesRequestStatus> {
+    // Sem nota de venda ainda: markSaleInvoiceReady já roteia pelo tipo novo.
+    if (request.status === PdvSalesRequestStatus.PENDING_NF_SALE) {
+      return request.status;
+    }
+    if (shippingType === PdvShippingType.ADT) {
+      return PdvSalesRequestStatus.SHIPPING;
+    }
+    return (await this.isSaleInvoiceDeliveryNoteGenerated(request.sale_invoice_id))
+      ? PdvSalesRequestStatus.FINISHED
+      : PdvSalesRequestStatus.SHIP_TODAY;
   }
 
   // Adiciona UM comprovante — nunca substitui os já anexados (pode haver mais
@@ -907,6 +1097,7 @@ export class PdvSalesRequestService extends BaseService<
       mimeType: string;
       screen?: PdvAccessScreen;
       userId?: string;
+      origin?: PdvSalesRequestOrigin | null;
     },
   ): Promise<PdvSalesRequestReceipt> {
     const request = await this.assertReceiptEditable(id, params.screen);
@@ -947,8 +1138,9 @@ export class PdvSalesRequestService extends BaseService<
     });
 
     await uploaderQueue.enqueueUpload(tempFileId, "PDV_SALES_REQUEST_RECEIPT");
+    await this.recordOriginIfUnset(id, params.origin);
 
-    await this.logAction(id, request.status, {
+    await this.logAction(request, {
       userId: params.userId,
       description: "Comprovante adicionado",
     });
@@ -1000,7 +1192,7 @@ export class PdvSalesRequestService extends BaseService<
 
     const updated = await this.reconcileReceipts(id, request.order_id);
 
-    await this.logAction(id, request.status, {
+    await this.logAction(request, {
       userId,
       description: "Comprovante removido",
     });
@@ -1091,6 +1283,7 @@ export class PdvSalesRequestService extends BaseService<
       });
 
       const reconciled = await this.reconcileReceipts(requestId, orderId);
+      notifySalesRequestChanged(reconciled);
 
       socketService.emitToNamespaceRoom(
         PDV_SOCKET_NAMESPACE,
@@ -1152,6 +1345,7 @@ export class PdvSalesRequestService extends BaseService<
         "Anexe ao menos um comprovante e o tipo de envio antes de confirmar",
       );
     }
+    await this.assertShippingInfoFilledIfRequired(request);
 
     return this.transitionTo(id, PdvSalesRequestStatus.PENDING_FINANCE, {
       userId,
@@ -1231,7 +1425,7 @@ export class PdvSalesRequestService extends BaseService<
 
     const updated = await this.reconcileReceipts(id, request.order_id);
 
-    await this.logAction(id, request.status, {
+    await this.logAction(request, {
       userId,
       description: "Análise do comprovante editada manualmente",
     });
@@ -1294,12 +1488,10 @@ export class PdvSalesRequestService extends BaseService<
     });
     if (!updated) throw new Error("Solicitação não encontrada");
 
-    await this.logAction(id, request.status, {
+    await this.logAction(request, {
       userId,
       description: "Resumo do pagamento editado manualmente",
     });
-
-    notifySalesRequestUpdated(id);
 
     return updated;
   }
@@ -1539,6 +1731,7 @@ export class PdvSalesRequestService extends BaseService<
     // dados do pedido) é feito direto na Bling e reflete sozinho no pedido
     // via sync; este endpoint só confirma que foi corrigido e manda de volta
     // pra reanálise.
+    await this.assertShippingInfoFilledIfRequired(request);
     return this.transitionTo(id, request.correction_origin_status, {
       userId: params.userId,
       description: "Correção confirmada pela loja — reanálise do CD21",
@@ -1592,7 +1785,7 @@ export class PdvSalesRequestService extends BaseService<
   // cópia defasada.
   async resolveSaleInvoiceId(id: string): Promise<string> {
     const request = await this.findById(id, {
-      attributes: ["id", "order_id", "sale_invoice_id"],
+      attributes: ["id", "order_id", "sale_invoice_id", "unit_business_id"],
     });
     if (!request) throw new Error("Solicitação não encontrada");
 
@@ -1605,6 +1798,7 @@ export class PdvSalesRequestService extends BaseService<
 
     if (order.invoice_id !== request.sale_invoice_id) {
       await this.repository.update(id, { sale_invoice_id: order.invoice_id });
+      notifySalesRequestChanged(request);
     }
     return order.invoice_id;
   }
@@ -1650,7 +1844,7 @@ export class PdvSalesRequestService extends BaseService<
     if (request.sale_invoice_id === invoiceId) return;
 
     await this.repository.update(request.id, { sale_invoice_id: invoiceId });
-    notifyPdvStoreSync(request.unit_business_id, "SALES_REQUEST_STATUS_CHANGED");
+    notifySalesRequestChanged(request);
   }
 
   // Autocomplete do front pra buscar uma nota de transferência já existente
@@ -1849,7 +2043,6 @@ export class PdvSalesRequestService extends BaseService<
         }
 
         invoiceId = found.id;
-        notifySalesRequestUpdated(id);
 
       } else {
         throw new Error(
@@ -1886,7 +2079,7 @@ export class PdvSalesRequestService extends BaseService<
     });
     if (!salesRequest) throw new Error("Solicitação não encontrada");
 
-    await this.logAction(id, request.status, {
+    await this.logAction(request, {
       userId: params.userId,
       description: wasAlreadyLinked
         ? "Nota de transferência substituída"
@@ -2241,6 +2434,8 @@ export class PdvSalesRequestService extends BaseService<
           transfer_invoice_id: null,
           correction_origin_status: null,
           shipping_type: null,
+          shipping_address: null,
+          transporter_name: null,
           payment_receipt_analysis: null,
           payment_receipt_validated: null,
           payment_method_matches_receipt: null,
@@ -2251,6 +2446,37 @@ export class PdvSalesRequestService extends BaseService<
         { transaction: t },
       );
     });
+
+    notifySalesRequestChanged(request);
+  }
+
+  // Pra quem muda dado exibido na solicitação fora deste service (lote/romaneio do CD21, import da Tecinco).
+  async notifyChanged(id: string): Promise<void> {
+    try {
+      const request = await this.findById(id, {
+        attributes: ["id", "unit_business_id"],
+      });
+      if (request) notifySalesRequestChanged(request);
+    } catch (err) {
+      console.warn("[PDV] Falha ao notificar atualização da solicitação", err);
+    }
+  }
+
+  // Lote finalizado muda o expedition_progress das solicitações das notas dele — Kanban recebe 1 sync por loja, não 1 por solicitação.
+  async notifyChangedBySaleInvoiceIds(invoiceIds: string[]): Promise<void> {
+    try {
+      const requests = await this.repository.findActiveBySaleInvoiceIds(
+        invoiceIds,
+        ["id", "unit_business_id"],
+      );
+      requests.forEach((request) => notifySalesRequestUpdated(request.id));
+      notifyPdvStoresSync(
+        requests.map((request) => request.unit_business_id),
+        "SALES_REQUEST_STATUS_CHANGED",
+      );
+    } catch (err) {
+      console.warn("[PDV] Falha ao notificar solicitações do lote", err);
+    }
   }
 
   async getHistory(id: string) {

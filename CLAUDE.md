@@ -85,7 +85,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `index.md` — regras `type`/dedup, schema
   - `create-flow.md` — fluxo create-product-from-unmapped
 - `invoice/` — Invoice/InvoiceItems/InvoiceFiscalItem, import XML NF-e
-  - `index.md` — visão geral, FK-on-delete, filtros/fixes menores, auth
+  - `index.md` — visão geral, FK-on-delete, filtros/fixes menores, auth, `tracking_url` (link de rastreio, só Bling)
   - `item-resolution.md` — ordem de resolução de produto, cascata de mapeamento manual, fixes de duplicate-key
   - `ml-shipping-filters.md` — filtros da fila de shipping Mercado Livre
   - `supplier-discount/filter.md` — filtros `rim`/`supplier_discount`

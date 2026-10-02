@@ -53,8 +53,11 @@ interface BlingPaymentMethodApi {
   tipoPagamento?: number;
 }
 
-// formaPagamento.id (Bling) -> tipoPagamento; o tipo de uma forma não muda.
-const paymentTypeByBlingFormId = new Map<string, number | null>();
+// formaPagamento.id (Bling) -> tipo e nome da forma; o tipo de uma forma não muda.
+const blingFormById = new Map<
+  string,
+  { type: number | null; description: string | null }
+>();
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
@@ -256,30 +259,35 @@ export class BlingOrderService {
   }
 
   // Forma da Bling -> linha agrupada por tipoPagamento em payment_methods
-  // (ver payment-method-groups.ts). O tipo de cada forma é cacheado em memória
-  // — evita bater em /formas-pagamentos/{id} a cada pedido, já que o rate-limit
-  // da Bling é compartilhado entre todas as filas.
+  // (ver payment-method-groups.ts). Tipo/nome de cada forma ficam em cache de
+  // memória — evita bater em /formas-pagamentos/{id} a cada pedido, já que o
+  // rate-limit da Bling é compartilhado entre todas as filas.
   private async resolvePaymentMethod(
     formaPagamentoId: number | string,
-  ): Promise<string> {
+  ): Promise<{ paymentMethodId: string; formDescription: string | null }> {
     const formId = String(formaPagamentoId);
 
-    let blingType = paymentTypeByBlingFormId.get(formId);
-    if (blingType === undefined) {
+    let form = blingFormById.get(formId);
+    if (!form) {
       const { data } = await blingGet<{ data: BlingPaymentMethodApi }>(
         `/formas-pagamentos/${formId}`,
         this.blingApi,
       );
-      blingType = data.data.tipoPagamento ?? null;
-      paymentTypeByBlingFormId.set(formId, blingType);
+      form = {
+        type: data.data.tipoPagamento ?? null,
+        description: data.data.descricao || null,
+      };
+      blingFormById.set(formId, form);
     }
 
-    const group = paymentMethodGroupForBlingType(blingType);
+    const group = paymentMethodGroupForBlingType(form.type);
     const existing = await paymentMethodService.findOne({
       where: { id_system: group.key },
       attributes: ["id"],
     });
-    if (existing) return existing.id;
+    if (existing) {
+      return { paymentMethodId: existing.id, formDescription: form.description };
+    }
 
     const integration = await getBlingIntegration();
     const created = await paymentMethodService.create({
@@ -290,7 +298,7 @@ export class BlingOrderService {
       raw_payload: { blingTypes: group.blingTypes },
     });
 
-    return created.id;
+    return { paymentMethodId: created.id, formDescription: form.description };
   }
 
   // Uma linha por parcela da Bling (parcelas[]) — um pedido pode ter várias
@@ -314,12 +322,13 @@ export class BlingOrderService {
         async (id) => [id, await this.resolvePaymentMethod(id)] as const,
       ),
     );
-    const methodIdBySystemId = new Map(resolved);
+    const resolvedByFormId = new Map(resolved);
 
-    return installments.map((parcela) => ({
-        payment_method_id: methodIdBySystemId.get(
-          String(parcela.formaPagamento!.id),
-        )!,
+    return installments.map((parcela) => {
+      const form = resolvedByFormId.get(String(parcela.formaPagamento!.id))!;
+      return {
+        payment_method_id: form.paymentMethodId,
+        form_description: form.formDescription,
         id_system: parcela.id != null ? String(parcela.id) : null,
         amount: Number(parcela.valor ?? 0),
         due_date:
@@ -327,7 +336,8 @@ export class BlingOrderService {
             ? parcela.dataVencimento
             : null,
         notes: parcela.observacoes || null,
-      }));
+      };
+    });
   }
 
   private async upsertSellerContact(

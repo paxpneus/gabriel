@@ -4,6 +4,7 @@ import {
   pdvSalesRequestRoom,
   PDV_SALES_REQUEST_UPDATED_EVENT,
 } from "./pdv-sales-request-room";
+import { notifyPdvStoreSync } from "./notify-pdv-store-sync";
 
 // Sempre via redis-emitter (nunca SocketService direto, ver
 // notify-pdv-store-sync.ts) — quem chama pode ser tanto o processo da API
@@ -21,4 +22,13 @@ export function notifySalesRequestUpdated(requestId: string): void {
     PDV_SALES_REQUEST_UPDATED_EVENT,
     { requestId },
   );
+}
+
+// Toda mudança numa PdvSalesRequest avisa o Kanban (loja + CD21) e o detalhe dela.
+export function notifySalesRequestChanged(request: {
+  id: string;
+  unit_business_id: string | null;
+}): void {
+  notifySalesRequestUpdated(request.id);
+  notifyPdvStoreSync(request.unit_business_id, "SALES_REQUEST_STATUS_CHANGED");
 }

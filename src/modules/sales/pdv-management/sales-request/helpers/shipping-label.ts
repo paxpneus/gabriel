@@ -1,9 +1,8 @@
 import { PdvShippingType } from "../pdv-sales-request.types";
+import { extractTransporterCd } from "./transporter-cd";
 
 // Transportadora da nota de venda no formato "LOGISTICA PAX PNEUS SP - CD 12"
 // vira "ADT CD 12" — extrai o "CD <n>" em vez de mapear nome a nome.
-const CD_PATTERN = /\bCD\s*(\d+)\b/i;
-
 const TRANSPORTADORA_SHIPPING_LABEL = "Embarque hoje";
 
 export function buildShippingLabel(
@@ -15,6 +14,6 @@ export function buildShippingLabel(
   }
   if (shippingType !== PdvShippingType.ADT) return null;
 
-  const match = transporterName ? CD_PATTERN.exec(transporterName) : null;
-  return match ? `ADT CD ${match[1]}` : "ADT";
+  const cd = extractTransporterCd(transporterName);
+  return cd ? `ADT CD ${cd}` : "ADT";
 }

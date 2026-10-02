@@ -603,12 +603,14 @@ async addInvoiceToLastOutgoingBatch(
     const invoiceId =
       await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
 
-    return this.generateBatchFromInvoices(
+    const batch = await this.generateBatchFromInvoices(
       [invoiceId],
       cd21.id,
       "OUTGOING",
       "REGULAR",
     );
+    await pdvSalesRequestService.notifyChanged(salesRequestId);
+    return batch;
   }
 
   // Romaneio do lote (CD21) que contém a nota de venda da solicitação.
@@ -626,7 +628,9 @@ async addInvoiceToLastOutgoingBatch(
     );
     if (!batchId) throw new Error("Nota de venda ainda não está em um lote");
 
-    return this.generateDeliveryNote(batchId, userId as string);
+    const result = await this.generateDeliveryNote(batchId, userId as string);
+    await pdvSalesRequestService.notifyChanged(salesRequestId);
+    return result;
   }
 
   async getPdvSalesRequestBatchStatus(
@@ -688,11 +692,13 @@ async addInvoiceToLastOutgoingBatch(
 
     await unitBusinessService.getOrUpdateLastOutgoingBatchNumber(cd21.id);
 
-    return this.addInvoiceToLastOutgoingBatch(
+    const batch = await this.addInvoiceToLastOutgoingBatch(
       [invoice.xml_key],
       cd21.id,
       "OUTGOING",
     );
+    await pdvSalesRequestService.notifyChanged(salesRequestId);
+    return batch;
   }
 
   // Rotas do link CD21 não recebem loja do front — sempre CD21.
@@ -725,12 +731,14 @@ async addInvoiceToLastOutgoingBatch(
     });
     if (!invoice?.xml_key) throw new Error("Nota de venda sem chave de acesso");
 
-    return this.addInvoiceToBatch(
+    const updatedBatch = await this.addInvoiceToBatch(
       [invoice.xml_key],
       cd21.id,
       "OUTGOING",
       batchId,
     );
+    await pdvSalesRequestService.notifyChanged(salesRequestId);
+    return updatedBatch;
   }
 
   private async getCd21(): Promise<UnitBusiness> {
@@ -899,6 +907,10 @@ async addInvoiceToLastOutgoingBatch(
 
       return batch;
     });
+
+    await pdvSalesRequestService.notifyChangedBySaleInvoiceIds(
+      (fullBatch.batchInvoices ?? []).map((bi) => bi.invoice_id),
+    );
 
     return this.findByIdFullBatch(batchId);
   }

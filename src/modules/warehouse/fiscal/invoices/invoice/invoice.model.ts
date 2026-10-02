@@ -59,6 +59,7 @@ class Invoice
   public destination_uf?: string | null;
   public destination_city?: string | null;
   public xml_url?: string | null;
+  public tracking_url?: string | null;
   public source_payload?: Record<string, unknown> | null;
   public sefaz_manifestation_status?: SefazManifestationStatus | null;
   public sefaz_n_seq_evento!: number;
@@ -286,6 +287,10 @@ Invoice.init(
       allowNull: true,
     },
     xml_url: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    tracking_url: {
       type: DataTypes.TEXT,
       allowNull: true,
     },

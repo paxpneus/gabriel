@@ -5,17 +5,51 @@ só o que for NOVO ou o que MUDOU no fluxo — de forma curta, só o essencial
 pro front saber integrar. Nada de contrato completo/histórico redundante
 aqui.
 
+**Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
+
+## Novo: origem da solicitação (`origin`)
+
+Campo novo `origin` (migration `m307`): `"TELEVENDAS"` | `"LOJA"` | `null`. Vem na listagem e no `GET /sales-request/:id`. Só leitura — o backend grava sozinho, uma vez só, na primeira ação entre definir o tipo de envio (`POST /:id/shipping-type`) e anexar comprovante (`POST /:id/receipt`):
+- link de Televendas → `TELEVENDAS`
+- link da loja ou usuário logado numa loja → `LOJA`
+
+Financeiro/CD21 nunca definem origem. Fica `null` até a primeira dessas ações (e em solicitações antigas).
+
+Filtro: `GET /sales-request?filters[origin]=TELEVENDAS` (ou `LOJA`).
+
+## Novo: endereço de envio e transportadora na solicitação
+
+Dois campos novos de texto livre na solicitação (migration `m306`), já vêm na listagem e no `GET /sales-request/:id`:
+- `shipping_address` — endereço de envio
+- `transporter_name` — transportadora
+
+Pra gravar: `PATCH /sales-request/:id/shipping-info` body `{ shippingAddress?, transporterName? }`. Parcial: só o campo enviado muda; `""`/`null` limpa. Mesma janela de edição do `shipping-type` (loja em `OPEN`/`PENDING_CORRECTION` de qualquer origem, financeiro em `PENDING_FINANCE`, CD21 em `PENDING_CD21_ANALYSIS`/`PENDING_NF_SALE`). Responde a solicitação atualizada. Body sem nenhum dos dois → `400`.
+
+**Regra de obrigatoriedade:** só pode ir de **Em aberto** (`OPEN`) para **Análise financeiro** (`PENDING_FINANCE`) se esses campos estiverem preenchidos, ou ir de uma **correção** (`PENDING_CORRECTION`) para o status que tava antes (`correction_origin_status`) se esses campos estiverem preenchidos. Essa regra de obrigar o campo preenchido é só se:
+- o pedido (order) ainda não tem nota de venda (sale invoice id), **ou**
+- a nota de venda não tem transportadora, **ou**
+- a nota de venda tem transportadora, mas é a transportadora `"Sem transporte"`.
+
+Só nesses status que cobra — `PENDING_CORRECTION` e `OPEN` — e só nessa condição acima. Com nota de venda com transportadora de verdade, os campos são opcionais.
+
+Na prática, as chamadas que passam a validar:
+- `POST /sales-request/:id/receipt/confirm` (`OPEN` → `PENDING_FINANCE` e `PENDING_CORRECTION` de origem financeiro → `PENDING_FINANCE`)
+- `POST /sales-request/:id/correction/resolve` quando volta pro status de origem (origem `PENDING_CD21_ANALYSIS`). As decisões que vão pra outro status (`CANCEL`, `EXCHANGE_PRODUCT`, `RETRY_ANALYSIS`) não cobram.
+
+Faltando (os dois precisam estar preenchidos) → `400 { error: "Preencha o endereço de envio e a transportadora antes de enviar a solicitação" }` (mensagem pronta pra exibir).
+
 ## Mudou: comprovante liga a uma forma de pagamento do catálogo
 
 - `PATCH /sales-request/:id/receipt/:receiptId/analysis` aceita `payment_method_id` (uuid de `GET /api/payment_method`; `null` limpa). O backend deriva `tipo_comprovante` da descrição da forma (`null` se a forma não tem tipo no enum: Dinheiro, Cheque, Boleto, Outros) — dá pra parar de mandar `tipo_comprovante` nesse PATCH.
 - `PATCH /sales-request/:id/payment-receipt-analysis` aceita `payment_method_ids` (uuid[]); `tipo_comprovante` vira os tipos derivados juntos com `" + "`.
 - Respostas/leituras trazem `analysis.payment_method: { id, description } | null` por comprovante e `payment_receipt_analysis.payment_methods: [{ id, description }]` no resumo (`tipo_comprovante` continua como antes). A análise automática (OCR/PDF) já vem com `payment_method` preenchido quando acha exatamente uma forma correspondente (preferindo as do pedido); senão `null`.
 - `payment_method_id` inexistente → 400 `Forma de pagamento não encontrada`.
+- Nos dois PATCH, campo enviado como `""` (campo limpo no formulário) é tratado como `null`, não dá mais 400 de tipo.
 - `payment_method_matches_receipt` passa a comparar por id quando o comprovante tem forma escolhida.
 
 ## Novo: `GET /api/payment_method` (formas de pagamento)
 
-Lista paginada simples (`page`, `perPage`, `sortBy`, `sortDir`; padrão `description ASC`). `search` filtra só por `description`. Resposta: `{ data: [{ id, id_system, description, payment_type }], meta }`. Mesma auth das rotas do PDV (login ou link `x-pdv-*`).
+Lista paginada simples (`page`, `perPage`, `sortBy`, `sortDir`; padrão `description ASC`). `search` filtra só por `description`. Resposta: `{ data: [{ id, id_system, description, payment_type }], meta }`. Mesma auth das rotas do PDV (login ou link `x-pdv-*`). O catálogo é AGRUPADO por tipo (poucas linhas: Dinheiro, Cheque, Cartão de Crédito, Cartão de Débito, Boleto Bancário, Pix, Transferência Bancária, Outros), não uma linha por forma cadastrada na Bling.
 
 ## Mudou: `order.paymentMethod` virou `order.payments[]` (`GET /sales-request/:id`)
 
@@ -23,12 +57,13 @@ Pedido pode ter 1+ formas de pagamento (parcelas da Bling). O campo único `orde
 
 ```json
 "payments": [
-  { "id": "uuid", "amount": 372.31, "due_date": "2026-10-01",
-    "paymentMethod": { "id": "uuid", "description": "Pix" } }
+  { "paymentMethod": { "id": "uuid", "description": "Cartão de Crédito" },
+    "detail": null, "amount": 1820.22, "installments": 12,
+    "first_due_date": "2026-11-03", "last_due_date": "2027-09-27" }
 ]
 ```
 
-Ordenado por `due_date`, 1 item por parcela (a mesma forma pode repetir). `order.installments` segue igual. `payment_method_matches_receipt` agora compara o conjunto de formas do pedido com o de comprovantes: `true` só se toda forma tem comprovante do mesmo tipo e todo comprovante corresponde a uma forma; `false` se algum lado sobra; `null` sem formas/comprovantes ou com comprovante sem análise. Deixa de ser `null` quando há 2+ comprovantes. A listagem (`GET /sales-request`) não traz pagamentos, como antes.
+Parcelas da mesma forma vêm AGRUPADAS num item só (12x crédito = 1 item: `amount` é a soma, `installments` a quantidade), ordenado pelo primeiro vencimento. `detail` só vem preenchido no grupo "Outros": o nome original da forma na Bling (ex.: `"Mercado Pago"`; se houver mais de uma, separadas por vírgula) — nos demais grupos é `null`. Pedidos antigos só ganham `detail` depois de ressincronizados. Só a resposta é agrupada — a comparação com comprovantes não muda. `order.installments` (total de parcelas do pedido) segue igual. O mesmo formato vale pro `payments` do detalhe de pedido em `/order` (sales-report detail). `payment_method_matches_receipt` agora compara o conjunto de formas do pedido com o de comprovantes: `true` só se toda forma tem comprovante do mesmo tipo e todo comprovante corresponde a uma forma; `false` se algum lado sobra; `null` sem formas/comprovantes ou com comprovante sem análise. Deixa de ser `null` quando há 2+ comprovantes. Pedido antigo, ainda não ressincronizado pela Bling, vem com `payments: []` e `payment_method_matches_receipt: null` (sem erro). A listagem (`GET /sales-request`) não traz pagamentos, como antes.
 
 ## Mudou: coluna de expedição dividida em `SHIPPING` (ADT) e `SHIP_TODAY` (TRANSPORTADORA)
 
@@ -282,3 +317,68 @@ traduzida pro nome mapeado no sistema (`display_name`, ex.: `"Em Aberto"`,
 `"Atendido"`, `"Aguardando Verificação Humana"`); se não houver mapeamento,
 vem o código bruto, e `null` se o pedido não tem situação. Só nesses dois
 endpoints — `/orders/eligible` e `/orders/:orderId` não mudaram.
+
+## Novo: `invoice_tracking_url` na listagem e no `GET /sales-request/:id`
+
+Link de rastreio da entrega da nota de venda
+(`https://paxpneus.acompanharentrega.com.br/?tpDoc=4&doc=002%2F<número sem zeros à esquerda>`).
+Também vem em `saleInvoice.tracking_url`. `null` sem nota de venda ou se a
+nota ainda não foi importada pela Bling.
+
+## Novo: ADT só com transportadora CD 12 / CD 17
+
+O tipo de envio tem que bater com a transportadora da nota de venda:
+- `... - CD 12` / `... - CD 17` → só `ADT`. `TRANSPORTADORA` → `400 { error:
+  "A transportadora deste pedido é o CD 12, então o tipo de envio só pode ser ADT." }`
+- qualquer outra → só `TRANSPORTADORA`. `ADT` → `400 { error: "ADT só é permitido
+  para pedidos com transportadora CD 12 ou CD 17. A transportadora deste pedido
+  é <nome>, então o tipo de envio só pode ser TRANSPORTADORA." }`
+
+Mensagens prontas pra exibir. Vale pra `POST /:id/shipping-type` e pra rota
+nova abaixo. Sem checagem (aceita os dois) se ainda não há nota de venda ou se
+a nota não tem transportadora ("Sem transporte").
+
+## Novo: `POST /sales-request/:id/shipping-type/change` (CD21)
+
+Troca o tipo de envio de uma solicitação já em faturamento/expedição. Body
+`{ shippingType: "ADT" | "TRANSPORTADORA" }`, só tela CD21. Responde a
+solicitação atualizada; o status pode mudar (sync de loja dispara como em
+qualquer transição).
+
+| Status atual | Troca | Novo status |
+|---|---|---|
+| `PENDING_NF_SALE` | qualquer | continua `PENDING_NF_SALE` (quando a nota sair, segue o tipo novo) |
+| `PENDING_NF_TRANSFER` | ADT → TRANSPORTADORA | `SHIP_TODAY` (ou `FINISHED` se a nota de venda já tem romaneio) |
+| `SHIPPING` | ADT → TRANSPORTADORA | `SHIP_TODAY` (ou `FINISHED` se a nota de venda já tem romaneio) |
+| `SHIP_TODAY` | TRANSPORTADORA → ADT | `SHIPPING` |
+
+ADT → TRANSPORTADORA zera `transfer_invoice_id` (`transferInvoice` vem `null`).
+TRANSPORTADORA → ADT vai pra `SHIPPING` sem nota de transferência — o CD21
+vincula depois por `POST /:id/transfer-invoice` (aceito em `SHIPPING`).
+Mandar o mesmo tipo atual não faz nada (`200`). Qualquer outro status → `400`
+`"Ação inválida: ..."`.
+
+## Mudou: toda ação na solicitação dispara websocket
+
+Toda mudança numa solicitação (transição de status, tipo de envio, anexar/
+remover/editar comprovante, nota de transferência, re-sync da nota de venda,
+gerar lote/romaneio/adicionar a lote pela solicitação, exclusão) agora emite
+os DOIS eventos, sempre juntos:
+- `pdv-store:sync` com `event: "SALES_REQUEST_STATUS_CHANGED"` (rooms da loja +
+  CD21) → refazer a listagem/Kanban. Antes só vinha em mudança de status; agora
+  vem também em mudança sem troca de status.
+- `salerequest-updated` `{ requestId }` (room `pdv-sales-request:<id>`) →
+  refazer o `GET /:id` se o detalhe estiver aberto.
+
+Finalizar lote (`PUT /batch/finish/:batchId`, de qualquer tela) também avisa
+as solicitações ativas cujas notas de venda estão no lote (`expedition_progress`
+vira `BATCH_FINISHED`), sem inundar o Kanban: `pdv-store:sync` sai UMA vez por
+loja afetada e UMA vez só pra room do CD21 (nessa, `unitBusinessId: null`) —
+um refetch atualiza todas. `salerequest-updated` sai um por solicitação, cada
+um só na room dela. Payload continua sendo só sinal de refetch.
+
+`salerequest-updated` só chega pra quem deu `pdv-sales-request:watch`
+`{ requestId }` naquela solicitação (card aberto) — sem watch, nada chega.
+Não existe unwatch: o socket fica na room até desconectar, então quem abriu o
+card A, fechou e abriu o B continua recebendo os eventos do A. Antes de
+refazer o `GET /:id`, conferir se `payload.requestId` é o card aberto.

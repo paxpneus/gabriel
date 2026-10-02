@@ -17,6 +17,7 @@ class OrderPayment
   public amount!: number;
   public due_date!: string | null;
   public notes!: string | null;
+  public form_description!: string | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -61,6 +62,10 @@ OrderPayment.init(
     },
     notes: {
       type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    form_description: {
+      type: DataTypes.STRING(255),
       allowNull: true,
     },
   },

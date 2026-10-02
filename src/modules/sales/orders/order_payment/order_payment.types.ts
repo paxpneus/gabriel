@@ -6,6 +6,7 @@ export interface OrderPaymentAttributes {
   amount: number;
   due_date: string | null;
   notes: string | null;
+  form_description: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }

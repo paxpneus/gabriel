@@ -66,6 +66,7 @@ export interface InvoiceAttributes {
   destination_uf?: string | null;
   destination_city?: string | null;
   xml_url?: string | null;
+  tracking_url?: string | null;
   source_payload?: Record<string, unknown> | null;
   sefaz_manifestation_status?: SefazManifestationStatus | null;
   sefaz_n_seq_evento?: number;
@@ -125,6 +126,7 @@ export interface FullInvoiceAttributes {
   destination_uf?: string | null;
   destination_city?: string | null;
   xml_url?: string | null;
+  tracking_url?: string | null;
   source_payload?: Record<string, unknown> | null;
   sefaz_manifestation_status?: SefazManifestationStatus | null;
   sefaz_n_seq_evento?: number;
@@ -183,6 +185,7 @@ export interface FullInvoiceAttributesForAllUnits {
   destination_uf?: string | null;
   destination_city?: string | null;
   xml_url?: string | null;
+  tracking_url?: string | null;
   source_payload?: Record<string, unknown> | null;
   sefaz_manifestation_status?: SefazManifestationStatus | null;
   sefaz_n_seq_evento?: number;

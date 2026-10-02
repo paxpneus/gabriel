@@ -42,6 +42,12 @@ export enum PdvShippingType {
   ADT = "ADT",
 }
 
+// Quem operou a solicitação — gravado uma vez só, no 1º tipo de envio ou 1º comprovante (ver helpers/sales-request-origin.ts).
+export enum PdvSalesRequestOrigin {
+  TELESALES = "TELEVENDAS",
+  STORE = "LOJA",
+}
+
 export enum PdvCorrectionOrigin {
   FINANCE = "FINANCE",
   CD21_ANALYSIS = "CD21_ANALYSIS",
@@ -205,6 +211,9 @@ export interface PdvSalesRequestAttributes {
   status: PdvSalesRequestStatus;
   correction_origin_status: PdvSalesRequestStatus | null;
   shipping_type: PdvShippingType | null;
+  shipping_address: string | null;
+  transporter_name: string | null;
+  origin: PdvSalesRequestOrigin | null;
   name: string;
   // Conciliação de todos os PdvSalesRequestReceipt anexados no momento — ver
   // PaymentReceiptReconciledAnalysis. null enquanto não há nenhum comprovante
@@ -282,11 +291,14 @@ export interface PdvSalesRequestOrderPaymentMethod {
   description: string;
 }
 
+// Parcelas da mesma forma agrupadas (ver toPaymentsView).
 export interface PdvSalesRequestOrderPayment {
-  id: string;
-  amount: number;
-  due_date: string | null;
   paymentMethod: PdvSalesRequestOrderPaymentMethod | null;
+  detail: string | null;
+  amount: number;
+  installments: number;
+  first_due_date: string | null;
+  last_due_date: string | null;
 }
 
 export interface PdvSalesRequestOrderItem {
