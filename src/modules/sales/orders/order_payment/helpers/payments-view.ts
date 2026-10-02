@@ -1,5 +1,9 @@
+import { OTHER_PAYMENT_METHOD_GROUP } from "../../payment_method/helpers/payment-method-groups";
+
 export interface OrderPaymentView {
   paymentMethod: { id: string; description: string } | null;
+  // Só no grupo "Outros": o que é de fato (ex.: "Mercado Pago"); null nos demais.
+  detail: string | null;
   amount: number;
   installments: number;
   first_due_date: string | null;
@@ -13,6 +17,7 @@ export const toPaymentsView = (
   payments: any[] | null | undefined,
 ): OrderPaymentView[] => {
   const groups = new Map<string, OrderPaymentView>();
+  const detailsByGroup = new Map<string, Set<string>>();
 
   for (const payment of payments ?? []) {
     const method = payment.paymentMethod;
@@ -20,11 +25,21 @@ export const toPaymentsView = (
     const dueDate: string | null = payment.due_date ?? null;
     const group = groups.get(key);
 
+    if (
+      method?.id_system === OTHER_PAYMENT_METHOD_GROUP.key &&
+      payment.form_description
+    ) {
+      const details = detailsByGroup.get(key) ?? new Set<string>();
+      details.add(payment.form_description);
+      detailsByGroup.set(key, details);
+    }
+
     if (!group) {
       groups.set(key, {
         paymentMethod: method
           ? { id: method.id, description: method.description }
           : null,
+        detail: null,
         amount: Number(payment.amount),
         installments: 1,
         first_due_date: dueDate,
@@ -43,9 +58,12 @@ export const toPaymentsView = (
     }
   }
 
-  return [...groups.values()]
-    .map((group) => ({
+  return [...groups.entries()]
+    .map(([key, group]) => ({
       ...group,
+      detail: detailsByGroup.has(key)
+        ? [...detailsByGroup.get(key)!].join(", ")
+        : null,
       amount: Math.round(group.amount * 100) / 100,
     }))
     .sort((a, b) =>

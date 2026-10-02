@@ -5,17 +5,20 @@ só o que for NOVO ou o que MUDOU no fluxo — de forma curta, só o essencial
 pro front saber integrar. Nada de contrato completo/histórico redundante
 aqui.
 
+**Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
+
 ## Mudou: comprovante liga a uma forma de pagamento do catálogo
 
 - `PATCH /sales-request/:id/receipt/:receiptId/analysis` aceita `payment_method_id` (uuid de `GET /api/payment_method`; `null` limpa). O backend deriva `tipo_comprovante` da descrição da forma (`null` se a forma não tem tipo no enum: Dinheiro, Cheque, Boleto, Outros) — dá pra parar de mandar `tipo_comprovante` nesse PATCH.
 - `PATCH /sales-request/:id/payment-receipt-analysis` aceita `payment_method_ids` (uuid[]); `tipo_comprovante` vira os tipos derivados juntos com `" + "`.
 - Respostas/leituras trazem `analysis.payment_method: { id, description } | null` por comprovante e `payment_receipt_analysis.payment_methods: [{ id, description }]` no resumo (`tipo_comprovante` continua como antes). A análise automática (OCR/PDF) já vem com `payment_method` preenchido quando acha exatamente uma forma correspondente (preferindo as do pedido); senão `null`.
 - `payment_method_id` inexistente → 400 `Forma de pagamento não encontrada`.
+- Nos dois PATCH, campo enviado como `""` (campo limpo no formulário) é tratado como `null`, não dá mais 400 de tipo.
 - `payment_method_matches_receipt` passa a comparar por id quando o comprovante tem forma escolhida.
 
 ## Novo: `GET /api/payment_method` (formas de pagamento)
 
-Lista paginada simples (`page`, `perPage`, `sortBy`, `sortDir`; padrão `description ASC`). `search` filtra só por `description`. Resposta: `{ data: [{ id, id_system, description, payment_type }], meta }`. Mesma auth das rotas do PDV (login ou link `x-pdv-*`).
+Lista paginada simples (`page`, `perPage`, `sortBy`, `sortDir`; padrão `description ASC`). `search` filtra só por `description`. Resposta: `{ data: [{ id, id_system, description, payment_type }], meta }`. Mesma auth das rotas do PDV (login ou link `x-pdv-*`). O catálogo é AGRUPADO por tipo (poucas linhas: Dinheiro, Cheque, Cartão de Crédito, Cartão de Débito, Boleto Bancário, Pix, Transferência Bancária, Outros), não uma linha por forma cadastrada na Bling.
 
 ## Mudou: `order.paymentMethod` virou `order.payments[]` (`GET /sales-request/:id`)
 
@@ -24,12 +27,12 @@ Pedido pode ter 1+ formas de pagamento (parcelas da Bling). O campo único `orde
 ```json
 "payments": [
   { "paymentMethod": { "id": "uuid", "description": "Cartão de Crédito" },
-    "amount": 1820.22, "installments": 12,
+    "detail": null, "amount": 1820.22, "installments": 12,
     "first_due_date": "2026-11-03", "last_due_date": "2027-09-27" }
 ]
 ```
 
-Parcelas da mesma forma vêm AGRUPADAS num item só (12x crédito = 1 item: `amount` é a soma, `installments` a quantidade), ordenado pelo primeiro vencimento. Só a resposta é agrupada — a comparação com comprovantes não muda. `order.installments` (total de parcelas do pedido) segue igual. O mesmo formato vale pro `payments` do detalhe de pedido em `/order` (sales-report detail). `payment_method_matches_receipt` agora compara o conjunto de formas do pedido com o de comprovantes: `true` só se toda forma tem comprovante do mesmo tipo e todo comprovante corresponde a uma forma; `false` se algum lado sobra; `null` sem formas/comprovantes ou com comprovante sem análise. Deixa de ser `null` quando há 2+ comprovantes. A listagem (`GET /sales-request`) não traz pagamentos, como antes.
+Parcelas da mesma forma vêm AGRUPADAS num item só (12x crédito = 1 item: `amount` é a soma, `installments` a quantidade), ordenado pelo primeiro vencimento. `detail` só vem preenchido no grupo "Outros": o nome original da forma na Bling (ex.: `"Mercado Pago"`; se houver mais de uma, separadas por vírgula) — nos demais grupos é `null`. Pedidos antigos só ganham `detail` depois de ressincronizados. Só a resposta é agrupada — a comparação com comprovantes não muda. `order.installments` (total de parcelas do pedido) segue igual. O mesmo formato vale pro `payments` do detalhe de pedido em `/order` (sales-report detail). `payment_method_matches_receipt` agora compara o conjunto de formas do pedido com o de comprovantes: `true` só se toda forma tem comprovante do mesmo tipo e todo comprovante corresponde a uma forma; `false` se algum lado sobra; `null` sem formas/comprovantes ou com comprovante sem análise. Deixa de ser `null` quando há 2+ comprovantes. Pedido antigo, ainda não ressincronizado pela Bling, vem com `payments: []` e `payment_method_matches_receipt: null` (sem erro). A listagem (`GET /sales-request`) não traz pagamentos, como antes.
 
 ## Mudou: coluna de expedição dividida em `SHIPPING` (ADT) e `SHIP_TODAY` (TRANSPORTADORA)
 

@@ -285,6 +285,7 @@ export interface PdvSalesRequestOrderPaymentMethod {
 // Parcelas da mesma forma agrupadas (ver toPaymentsView).
 export interface PdvSalesRequestOrderPayment {
   paymentMethod: PdvSalesRequestOrderPaymentMethod | null;
+  detail: string | null;
   amount: number;
   installments: number;
   first_due_date: string | null;
