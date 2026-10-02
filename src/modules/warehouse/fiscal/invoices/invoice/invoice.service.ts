@@ -795,13 +795,16 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     const receiverUbId = receiverCnpj ? cnpjMap.get(receiverCnpj) : undefined;
 
     const toCreate: InvoiceUnitBusinessAttributesCreationAttributes[] = [];
+    // Sender e receiver podem ser a mesma unit business (mesmo CNPJ); a unique é (invoice_id, unit_business_id).
+    const queued = new Set<string>();
 
     const maybeAdd = async (
       unitBusinessId: string | undefined,
       type: "INCOMING" | "OUTGOING",
       status: InvoiceUnitBusinessAttributesStatus,
     ) => {
-      if (!unitBusinessId) return;
+      if (!unitBusinessId || queued.has(unitBusinessId)) return;
+      queued.add(unitBusinessId);
       const existing = await this.repository.findInvoiceAttribute(
         invoiceId,
         unitBusinessId,

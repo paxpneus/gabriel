@@ -424,6 +424,18 @@ interface BlingApiInvoiceItem {
 
 // ─── Queue ────────────────────────────────────────────────────────────────────
 
+// Job sem `priority` cai na lista "wait" do BullMQ, sempre esvaziada antes do
+// sorted-set de prioridade — todo job precisa de priority pra a comparação valer.
+export const BLING_FETCH_CREATE_PRODUCT_PRIORITY = 1;
+const BLING_FETCH_LOWEST_PRIORITY = 4;
+const BLING_FETCH_PRIORITY_BY_RESOURCE: Record<string, number> = {
+  invoice: 2,
+  consumer_invoice: 2,
+  product: 3,
+  stock: 4,
+  product_supplier: 4,
+};
+
 export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   private api: AxiosInstance;
   // Client workless: só produz jobs na fila MAGENTO_SYNC (Redis), nunca
@@ -488,6 +500,24 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     this.api = blingApi;
     this.magentoSyncQueue = new MagentoSyncQueue({ workless: true });
+  }
+
+  override async add(
+    data: ApiFetchJobPayload,
+    jobId?: string,
+    jobOptions?: {
+      priority?: number;
+      name?: string;
+      removeOnComplete?: boolean | { age: number; count?: number };
+    },
+  ) {
+    return super.add(data, jobId, {
+      ...jobOptions,
+      priority:
+        jobOptions?.priority ??
+        BLING_FETCH_PRIORITY_BY_RESOURCE[data.apiFetch?.resource] ??
+        BLING_FETCH_LOWEST_PRIORITY,
+    });
   }
 
   private async fetchPhysicalStock(

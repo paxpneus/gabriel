@@ -26,7 +26,10 @@ import {
   blingPatch,
 } from "../../../../../handlers/bling/services/bling/helpers/get-with-sleep";
 import pdvSalesRequestService from "../../../../pdv-management/sales-request/pdv-sales-request.service";
-import { escalateToHumanVerificationIfStillPending } from "../order-status";
+import {
+  escalateToHumanVerificationIfStillPending,
+  syncOrderInternalStatus,
+} from "../order-status";
 import {
   OrderInternalStatus,
   OrderReasonCancelled,
@@ -213,4 +216,41 @@ describe("escalateToHumanVerificationIfStillPending", () => {
 
     expect(blingGet).toHaveBeenCalledWith("/pedidos/vendas/1001", blingApi);
   });
+});
+
+
+describe("syncOrderInternalStatus — cancelamento da PdvSalesRequest", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (ordersService.findOne as jest.Mock).mockResolvedValue({ id: "o1" });
+    (ordersService.update as jest.Mock).mockResolvedValue([1]);
+  });
+
+  it("situação 12 grava CANCELLED e cancela a solicitação ativa", async () => {
+    await syncOrderInternalStatus(12, 1001);
+
+    expect(pdvSalesRequestService.cancelIfActiveByOrderId).toHaveBeenCalledWith(
+      "o1",
+    );
+  });
+
+  it.each([21, 748772])(
+    "situação %i grava CANCELLED mas NÃO cancela a solicitação",
+    async (situacaoId) => {
+      const result = await syncOrderInternalStatus(situacaoId, 1001);
+
+      expect(result).toMatchObject({
+        handled: true,
+        outcome: "cancelled",
+        internalStatus: OrderInternalStatus.CANCELLED,
+      });
+      expect(ordersService.update).toHaveBeenCalledWith(
+        "o1",
+        expect.objectContaining({ internal_status: OrderInternalStatus.CANCELLED }),
+      );
+      expect(
+        pdvSalesRequestService.cancelIfActiveByOrderId,
+      ).not.toHaveBeenCalled();
+    },
+  );
 });

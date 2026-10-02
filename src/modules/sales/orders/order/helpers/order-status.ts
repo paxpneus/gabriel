@@ -13,6 +13,7 @@ import {
   blingPatch,
 } from "../../../../../modules/handlers/bling/services/bling/helpers/get-with-sleep";
 import pdvSalesRequestService from "../../../pdv-management/sales-request/pdv-sales-request.service";
+import { isPdvCancelledSituation } from "./eligible-for-pdv-filters";
 import { notifyPdvStoreSync } from "../../../pdv-management/sales-request/helpers/notify-pdv-store-sync";
 
 export type OrderStatusSyncResult =
@@ -76,7 +77,11 @@ export const syncOrderInternalStatus = async (
     // Cancela sozinho uma PdvSalesRequest ativa pro pedido — diferente de
     // handleInvoiceCancelled (nota cancelada bloqueia pra decisão humana),
     // aqui o pedido em si já foi cancelado na origem, não há o que decidir.
-    await pdvSalesRequestService.cancelIfActiveByOrderId(internalOrder.id);
+    // Só situação 12: 21/748772 também mapeiam pra CANCELLED, mas não valem
+    // como cancelamento pro PDV.
+    if (isPdvCancelledSituation(blingSituationId)) {
+      await pdvSalesRequestService.cancelIfActiveByOrderId(internalOrder.id);
+    }
 
     return { handled: true, outcome: "cancelled", internalStatus: mappedStatus };
   }

@@ -14,7 +14,7 @@ jest.mock("../pdv-sales-request.repository", () => ({
     findActiveByOrderId: jest.fn(),
     findByOrderId: jest.fn(),
     findActiveBySaleOrTransferInvoiceId: jest.fn(),
-    findShippingBySaleOrTransferInvoiceIds: jest.fn(),
+    findInExpeditionBySaleOrTransferInvoiceIds: jest.fn(),
   },
 }));
 
@@ -539,6 +539,70 @@ describe("PdvSalesRequestService", () => {
   // markSaleInvoiceReady em si é privado — o único caminho de chamada real é
   // o hook automático do sync de pedidos (bling-order.service.ts), via
   // markSaleInvoiceReadyIfPending(orderId).
+  describe("expedição SHIP_TODAY (TRANSPORTADORA)", () => {
+    it("expeditionReject: devolve pra correção gravando SHIP_TODAY como origem", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIP_TODAY,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.expeditionReject("r1", {
+        reasons: [PdvCorrectionReason.DAMAGED_PRODUCT],
+        note: "avaria",
+      });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        expect.objectContaining({
+          correction_origin_status: PdvSalesRequestStatus.SHIP_TODAY,
+        }),
+      );
+    });
+
+    it("finish: aceita SHIP_TODAY e vai pra FINISHED", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIP_TODAY,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.finish("r1");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.FINISHED },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("resolveCorrection com origem SHIP_TODAY exige decision e CANCEL vai pra CANCELLED", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CORRECTION,
+        correction_origin_status: PdvSalesRequestStatus.SHIP_TODAY,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await expect(service.resolveCorrection("r1", {})).rejects.toThrow(
+        "decision",
+      );
+
+      await service.resolveCorrection("r1", { decision: "CANCEL" });
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.CANCELLED },
+        { transaction: mockTransaction },
+      );
+    });
+  });
+
   describe("markSaleInvoiceReadyIfPending", () => {
     it("envio ADT: vai pra PENDING_NF_TRANSFER", async () => {
       const request = {
@@ -570,7 +634,7 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
-    it("envio TRANSPORTADORA: vai direto pra SHIPPING", async () => {
+    it("envio TRANSPORTADORA: vai direto pra SHIP_TODAY", async () => {
       const request = {
         id: "r1",
         order_id: "order-1",
@@ -595,7 +659,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.SHIPPING },
+        { status: PdvSalesRequestStatus.SHIP_TODAY },
         { transaction: mockTransaction },
       );
     });
@@ -2265,7 +2329,7 @@ describe("PdvSalesRequestService", () => {
 
     it("TRANSPORTADORA: finaliza assim que a nota de venda entra num romaneio DO CD21", async () => {
       (
-        pdvSalesRequestRepository.findShippingBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
       ).mockResolvedValue([
         {
           id: "r1",
@@ -2279,7 +2343,7 @@ describe("PdvSalesRequestService", () => {
       ).mockResolvedValue(["invoice-sale"]);
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
-        status: PdvSalesRequestStatus.SHIPPING,
+        status: PdvSalesRequestStatus.SHIP_TODAY,
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -2299,7 +2363,7 @@ describe("PdvSalesRequestService", () => {
 
     it("ADT: finaliza só com a nota de venda com romaneio, mesmo com a de transferência pendente", async () => {
       (
-        pdvSalesRequestRepository.findShippingBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
       ).mockResolvedValue([
         {
           id: "r1",
@@ -2334,7 +2398,7 @@ describe("PdvSalesRequestService", () => {
 
     it("ADT: NÃO finaliza enquanto a nota de venda ainda não tem romaneio gerado", async () => {
       (
-        pdvSalesRequestRepository.findShippingBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
       ).mockResolvedValue([
         {
           id: "r1",
@@ -2354,7 +2418,7 @@ describe("PdvSalesRequestService", () => {
 
     it("sem solicitação SHIPPING candidata: não consulta CD21 nem romaneio", async () => {
       (
-        pdvSalesRequestRepository.findShippingBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
       ).mockResolvedValue([]);
 
       await service.finishIfDeliveryNoteGenerated(["invoice-x"]);
@@ -2368,7 +2432,7 @@ describe("PdvSalesRequestService", () => {
 
     it("CD21 não cadastrado: recusa em vez de checar romaneio sem escopo", async () => {
       (
-        pdvSalesRequestRepository.findShippingBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
       ).mockResolvedValue([
         {
           id: "r1",

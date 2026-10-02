@@ -142,8 +142,11 @@ function makeFakeBlingApi(order: any) {
   return { get, post, put, patch } as unknown as AxiosInstance;
 }
 
-function makeJob(data: NFeJobData): Job<NFeJobData> {
-  return { data } as Job<NFeJobData>;
+function makeJob(
+  data: NFeJobData,
+  { attemptsMade = 5, attempts = 5 } = {},
+): Job<NFeJobData> {
+  return { data, attemptsMade, opts: { attempts } } as Job<NFeJobData>;
 }
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
@@ -259,6 +262,23 @@ describe("NFeQueue", () => {
     });
   });
 
+  describe("process — emissão com 400 da Bling", () => {
+    it("propaga o erro (retries do BullMQ) sem escalar na hora", async () => {
+      (fakeBlingApi.post as jest.Mock).mockRejectedValue({
+        response: { status: 400, data: { error: { fields: [] } } },
+      });
+
+      await expect(
+        queue.process(
+          makeJob({ order_id: order.id, collection_date: "2026-08-11" }),
+        ),
+      ).rejects.toBeDefined();
+
+      expect(fakeBlingApi.patch).not.toHaveBeenCalled();
+      expect(fakeBlingApi.put).not.toHaveBeenCalled();
+    });
+  });
+
   describe("process — situação diferente de NFE_AGENDADA", () => {
     it("situacao mudou para um status completo (834029) antes da emissão: sincroniza sem cancelar", async () => {
       order.situacao = { id: 834029 };
@@ -330,6 +350,44 @@ describe("NFeQueue", () => {
 
       expect(fakeBlingApi.put).not.toHaveBeenCalled();
       expect(alertService.sendAlert).not.toHaveBeenCalled();
+    });
+
+    it("falha antes da última tentativa NÃO escala nem alerta (ainda vai ter retry)", async () => {
+      const job = makeJob(
+        { order_id: order.id, collection_date: "2026-08-11" },
+        { attemptsMade: 2, attempts: 5 },
+      );
+
+      (queue as any).onFailed(job, new Error("Erro genérico de emissão"));
+      await Promise.resolve();
+
+      expect(fakeBlingApi.get).not.toHaveBeenCalled();
+      expect(fakeBlingApi.put).not.toHaveBeenCalled();
+      expect(alertService.sendAlert).not.toHaveBeenCalled();
+    });
+
+    it("400 da Bling após todos os retries escala com a observação de data de coleta e data da falha", async () => {
+      jest.useFakeTimers();
+      (ordersService.findOne as jest.Mock).mockResolvedValue({
+        id: "order-uuid-1",
+        collection_date: new Date("2026-08-11T12:00:00-03:00"),
+      });
+      const job = makeJob({ order_id: order.id, collection_date: "2026-08-11" });
+
+      (queue as any).onFailed(job, { response: { status: 400 } });
+
+      await jest.advanceTimersByTimeAsync(5000);
+      jest.useRealTimers();
+
+      expect(fakeBlingApi.put).toHaveBeenCalledWith(
+        `/pedidos/vendas/${order.id}`,
+        expect.objectContaining({
+          observacoesInternas: expect.stringMatching(
+            /Pedido falhou ao emitir nota fiscal, data de coleta do pedido: 11\/08\/2026\. Falha em: \d{2}\/\d{2}\/\d{4}/,
+          ),
+        }),
+        { timeout: 20000 },
+      );
     });
 
     it("outras falhas cancelam o pedido e enviam a mensagem legível de EMISSION_FAILED à Bling — achado N1", async () => {

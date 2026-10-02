@@ -58,6 +58,7 @@ jest.mock(
     default: {
       createEmptyRequestForNewOrderIfEligible: jest.fn(),
       markSaleInvoiceReadyIfPending: jest.fn(),
+      cancelIfActiveByOrderId: jest.fn(),
     },
   }),
 );
@@ -108,6 +109,7 @@ jest.mock(
   }),
 );
 
+import pdvSalesRequestService from "../../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import ordersService from "../../../../../sales/orders/order/orders.service";
 import orderItemsService from "../../../../../sales/orders/order_items/order_items.service";
 import { getBlingIntegration } from "../../../api/bling_api.service";
@@ -283,6 +285,27 @@ describe("BlingOrderService", () => {
             nfe_emitted: false,
           }),
         );
+      },
+    );
+
+    it("situacao.id=12 cancela a PdvSalesRequest ativa do pedido", async () => {
+      orderData.situacao = { id: 12, valor: 0 };
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(pdvSalesRequestService.cancelIfActiveByOrderId).toHaveBeenCalledWith(
+        "order-uuid-1",
+      );
+    });
+
+    it.each([21, 748772, 9, 6])(
+      "situacao.id=%i não cancela a PdvSalesRequest",
+      async (situacaoId) => {
+        orderData.situacao = { id: situacaoId, valor: 0 };
+
+        await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+        expect(pdvSalesRequestService.cancelIfActiveByOrderId).not.toHaveBeenCalled();
       },
     );
 

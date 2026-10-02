@@ -7,6 +7,12 @@ import { userPermissions } from "../../../../middlewares/user-permissions";
 import User from "../../../company/users/users/user.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { getUserContext } from "../../../../shared/query/get-logged-user";
+import {
+  authenticateOrPdvLink,
+  pdvAccess,
+  PdvAccessRequest,
+} from "../../../sales/pdv-management/pdv-access/pdv-access.middleware";
+import { PdvAccessScreen } from "../../../sales/pdv-management/pdv-access/pdv-access.types";
 
 export class ExpeditionBatchController extends BaseController<
   ExpeditionBatch,
@@ -20,7 +26,10 @@ export class ExpeditionBatchController extends BaseController<
   protected middlewaresFor() {
     return {
       index: [authenticate, userPermissions],
-      searchPendingOutgoing: [authenticate, userPermissions],
+      searchPendingOutgoing: authenticateOrPdvLink(
+        [PdvAccessScreen.CD21],
+        [authenticate, userPermissions],
+      ),
       create: [authenticate, userPermissions],
       update: [authenticate, userPermissions],
       show: [authenticate, userPermissions],
@@ -37,6 +46,13 @@ export class ExpeditionBatchController extends BaseController<
       isComplete: [authenticate, userPermissions],
       batchReport: [authenticate, userPermissions],
       addInvoiceToLastOutgoingBatch: [authenticate],
+      generateBatchFromPdvSalesRequest: [pdvAccess([PdvAccessScreen.CD21])],
+      generateDeliveryNoteFromPdvSalesRequest: [
+        pdvAccess([PdvAccessScreen.CD21]),
+      ],
+      addPdvSalesRequestToPendingBatch: [pdvAccess([PdvAccessScreen.CD21])],
+      getPdvSalesRequestBatchStatus: [pdvAccess([PdvAccessScreen.CD21])],
+      addPdvSalesRequestToBatch: [pdvAccess([PdvAccessScreen.CD21])],
     };
   }
 
@@ -46,6 +62,36 @@ export class ExpeditionBatchController extends BaseController<
       "/generate-from-invoices",
       ...this.mw("generateBatchesFromInvoices"),
       (req, res) => this.generateBatchesFromInvoices(req, res),
+    );
+
+    // Acesso pela tela CD21 do PDV (link ou login), mesmo auth das rotas de
+    // /pdv-sales-requests — a solicitação resolve a nota de venda.
+    this.router.post(
+      "/generate-from-pdv-sales-request/:salesRequestId",
+      ...this.mw("generateBatchFromPdvSalesRequest"),
+      this.generateBatchFromPdvSalesRequest,
+    );
+    this.router.get(
+      "/delivery-note/pdv-sales-request/:salesRequestId",
+      ...this.mw("generateDeliveryNoteFromPdvSalesRequest"),
+      this.generateDeliveryNoteFromPdvSalesRequest,
+    );
+    this.router.post(
+      "/add-pdv-sales-request-to-pending/:salesRequestId",
+      ...this.mw("addPdvSalesRequestToPendingBatch"),
+      this.addPdvSalesRequestToPendingBatch,
+    );
+
+    this.router.get(
+      "/in-batch/pdv-sales-request/:salesRequestId",
+      ...this.mw("getPdvSalesRequestBatchStatus"),
+      this.getPdvSalesRequestBatchStatus,
+    );
+
+    this.router.post(
+      "/add-pdv-sales-request-to-batch/:salesRequestId",
+      ...this.mw("addPdvSalesRequestToBatch"),
+      this.addPdvSalesRequestToBatch,
     );
 
     this.router.get("/outgoing-pending/search", ...this.mw("searchPendingOutgoing"), this.searchPendingOutgoing)
@@ -105,9 +151,14 @@ export class ExpeditionBatchController extends BaseController<
   
    searchPendingOutgoing = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { unitBusinessId } = await getUserContext(req)
       const params = this.extractQueryParams(req);
-      const result = await this.service.searchPendingOutgoing(params, unitBusinessId);
+      // Link PDV: loja nunca vem do front, sempre CD21.
+      const result = (req as PdvAccessRequest).pdvAccess
+        ? await this.service.searchCd21PendingOutgoing(params)
+        : await this.service.searchPendingOutgoing(
+            params,
+            (await getUserContext(req)).unitBusinessId,
+          );
       return res.json(result);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
@@ -214,6 +265,88 @@ export class ExpeditionBatchController extends BaseController<
     return res.status(400).json({ error: error.message });
   }
 };
+
+  generateBatchFromPdvSalesRequest = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const batch = await this.service.generateBatchFromPdvSalesRequest(
+        req.params.salesRequestId as string,
+      );
+      return res.status(201).json(batch);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  generateDeliveryNoteFromPdvSalesRequest = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const access = (req as PdvAccessRequest).pdvAccess!;
+      // Via LOGIN o operador é sempre o usuário logado; por link, só o body/query.
+      const userId =
+        access.via === "LOGIN" ? access.userId : (req.query.userId as string);
+
+      const batch = await this.service.generateDeliveryNoteFromPdvSalesRequest(
+        req.params.salesRequestId as string,
+        userId,
+      );
+      return res.json(batch);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  addPdvSalesRequestToPendingBatch = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const batch = await this.service.addPdvSalesRequestToPendingBatch(
+        req.params.salesRequestId as string,
+      );
+      return res.json(batch);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  addPdvSalesRequestToBatch = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const batchId = req.body?.batch_id;
+      if (!batchId || typeof batchId !== "string") {
+        return res.status(400).json({ error: "batch_id é obrigatório" });
+      }
+
+      const batch = await this.service.addPdvSalesRequestToBatch(
+        req.params.salesRequestId as string,
+        batchId,
+      );
+      return res.json(batch);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  getPdvSalesRequestBatchStatus = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const status = await this.service.getPdvSalesRequestBatchStatus(
+        req.params.salesRequestId as string,
+      );
+      return res.json(status);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
 
   getBatchesByInvoice = async (
     req: Request,

@@ -91,7 +91,6 @@ export async function orchestrateBlingWebhook(
 
   const { resource, action } = parsed;
   const jobId = `bling-${resource}-${action}-${envelope.eventId}`;
-  const isInvoiceResource = resource === 'invoice' || resource === 'consumer_invoice';
 
   if (
     (resource === 'invoice' || resource === 'consumer_invoice') &&
@@ -161,13 +160,10 @@ export async function orchestrateBlingWebhook(
 
   if (mapped.requiresApiFetch) {
     // TODO FILA — enfileirar para worker que faz req na API Bling
-    // Nota fiscal fura a fila (mesma convenção de priority:1 usada em
-    // unmapped-invoice-product.service.ts): não fica atrás de product/stock/
-    // supplier já esperando na mesma fila.
+    // Prioridade por resource é aplicada em BlingApiFetchQueue.add.
     await deps.blingApiFetchQueue.add(
       { ...queuePayload, apiFetch: mapped.requiresApiFetch },
       `${jobId}-fetch`,
-      isInvoiceResource ? { priority: 1 } : undefined,
     );
   }
 

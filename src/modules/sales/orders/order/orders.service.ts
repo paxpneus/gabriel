@@ -68,6 +68,33 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     };
   }
 
+  // actual_situation (código bruto da integração) -> display_name mapeado, com
+  // fallback pro próprio código. Uma query só pra todas as integrações.
+  async buildStatusResolver(
+    integrationIds: string[],
+  ): Promise<
+    (
+      integrationId: string,
+      actualSituation: string | null | undefined,
+    ) => string | null
+  > {
+    const statusMappings =
+      await integrationOrderStatusMappingService.findByIntegrations([
+        ...new Set(integrationIds),
+      ]);
+    const displayNameByKey = new Map<string, string>(
+      statusMappings.map((mapping) => [
+        `${mapping.integration_id}:${mapping.external_status_id}`,
+        mapping.display_name,
+      ]),
+    );
+
+    return (integrationId, actualSituation) =>
+      displayNameByKey.get(`${integrationId}:${actualSituation}`) ??
+      actualSituation ??
+      null;
+  }
+
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
@@ -83,27 +110,16 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       ],
     });
 
-    const integrationIds = [
-      ...new Set(result.data.map((order) => order.integrations_id)),
-    ];
-    const statusMappings =
-      await integrationOrderStatusMappingService.findByIntegrations(
-        integrationIds,
-      );
-    const displayNameByKey = new Map<string, string>(
-      statusMappings.map((mapping) => [
-        `${mapping.integration_id}:${mapping.external_status_id}`,
-        mapping.display_name,
-      ]),
+    const resolveStatus = await this.buildStatusResolver(
+      result.data.map((order) => order.integrations_id),
     );
 
     const data = result.data.map((order) => {
       const plain = order.get({ plain: true }) as any;
-      const key = `${plain.integrations_id}:${plain.actual_situation}`;
 
       return {
         ...plain,
-        status: displayNameByKey.get(key) ?? plain.actual_situation ?? null,
+        status: resolveStatus(plain.integrations_id, plain.actual_situation),
       };
     });
 

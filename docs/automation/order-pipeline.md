@@ -115,7 +115,7 @@ mesmo — não antes, como no design anterior de alguns call sites.
 | `NFE_WRONG_STATUS` | `NFE_EMISSION` (`markOrderCancelled`) | Situação divergiu de NFE_AGENDADA (748748) ao tentar emitir |
 | `NFE_MISSING_FIELDS` | `NFE_EMISSION` (`markOrderCancelled`) | Campos obrigatórios ausentes pra emissão |
 | `NFE_NO_STOCK` | `NFE_EMISSION` (`markOrderCancelled`) | Bling recusou emissão por falta de estoque (field code 74) |
-| `NFE_EMISSION_FAILED` | `NFE_EMISSION` (`onFailed`, após esgotar retries) | Falha genérica ao gerar NFe na Bling |
+| `NFE_EMISSION_FAILED` | `NFE_EMISSION` (`onFailed`, só na última tentativa; 400 da Bling também passa pelos retries) | Falha ao gerar NFe na Bling — em 400, observação interna com data de coleta e data da falha |
 | `ML_SCRAPING_NO_MATCH` | `NFE_RECONCILER` (`reconcileStuckOrders`) | Pedido preso >30min sem `collection_date` resolvida na tela do Mercado Livre |
 | `CUSTOMER_CANCELLED` | `BLING_ORDER_INGESTION` (webhook, situação 12/21) | Cancelamento real, feito pelo cliente ou direto na Bling |
 

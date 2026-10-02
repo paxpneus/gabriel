@@ -5,7 +5,10 @@ export enum PdvSalesRequestStatus {
   PENDING_CORRECTION = "PENDING_CORRECTION",
   PENDING_NF_SALE = "PENDING_NF_SALE",
   PENDING_NF_TRANSFER = "PENDING_NF_TRANSFER",
+  // Expedição de ADT (aparece como "Pendente expedição" no front).
   SHIPPING = "SHIPPING",
+  // Expedição de TRANSPORTADORA — mesmo comportamento de SHIPPING, só outra coluna.
+  SHIP_TODAY = "SHIP_TODAY",
   FINISHED = "FINISHED",
   CANCELLED = "CANCELLED",
   // Nota de venda ou de transferência vinculada foi cancelada pela Bling/
@@ -28,6 +31,11 @@ export const TERMINAL_PDV_SALES_REQUEST_STATUSES: readonly PdvSalesRequestStatus
     PdvSalesRequestStatus.INVOICE_CANCELLED,
     PdvSalesRequestStatus.EXCLUDED,
   ];
+
+// Status de expedição (aguardando romaneio) — SHIPPING (ADT) e SHIP_TODAY
+// (TRANSPORTADORA) têm exatamente as mesmas regras, nunca tratar só um.
+export const EXPEDITION_PDV_SALES_REQUEST_STATUSES: readonly PdvSalesRequestStatus[] =
+  [PdvSalesRequestStatus.SHIPPING, PdvSalesRequestStatus.SHIP_TODAY];
 
 export enum PdvShippingType {
   TRANSPORTADORA = "TRANSPORTADORA",

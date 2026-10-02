@@ -6,6 +6,7 @@ Split by subject:
 - This file — repository/scan-logs facts, auth, unmapped-products block
 - `add-invoice-to-batch.md` — bulk `addInvoiceToBatch` rewrite + batch-numbering fix
 - `last-outgoing-batch.md` — `last_outgoing_batch_pending` pointer mechanism
+- `pdv-sales-request.md` — lote/romaneio/inclusão em lote a partir da solicitação PDV (CD21)
 
 - `batch/batch.repository.ts` — `getFullBatch`/`getFullBatches` build a nested include (invoice, batchInvoices, items → product → productConfigs/stocks), all scoped by the batch's own `unit_business_id` via `buildFullIncludes(unitBusinessId)`. A `ProductConfig` include cross-store leak here was found and fixed — any future change to this include must keep `where: { unit_business_id }` on both the `ProductConfig` and `Stock` sub-includes.
 - `scan-logs/scan-logs.service.ts` — matches a scanned physical label against `ProductConfig.gtin` (stripped of leading zeros too) OR the already-resolved `matchedCode` (SKU/mapping code). `gtin_package` matching removed in `m265` (see `../product/index.md`).
