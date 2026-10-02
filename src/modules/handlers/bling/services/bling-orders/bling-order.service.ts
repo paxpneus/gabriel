@@ -907,6 +907,8 @@ export class BlingOrderService {
       // completo mais abaixo regrava os campos de novo — redundante, mas
       // garante que o essencial nunca fica pra trás por causa de algo
       // secundário.
+      let invoiceId: string | null | undefined;
+      let invoiceSynced = false;
       try {
         await ordersService.update(existingOrder.id, {
           actual_situation: String(orderData.situacao.id),
@@ -933,9 +935,24 @@ export class BlingOrderService {
         await pdvSalesRequestService.createEmptyRequestForNewOrderIfEligible(
           existingOrder.id,
         );
+
+        // Nota também fica no bloco defensivo: PDV precisa dela rápido e
+        // sempre, mesmo se o enriquecimento abaixo falhar. invoice_id vai
+        // pro pedido antes porque markSaleInvoiceReady relê order.invoice_id.
+        invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
+        if (invoiceId) {
+          await ordersService.update(existingOrder.id, {
+            invoice_id: invoiceId,
+          });
+          await pdvSalesRequestService.syncSaleInvoiceFromOrder(
+            existingOrder.id,
+            invoiceId,
+          );
+          invoiceSynced = true;
+        }
       } catch (statusError: any) {
         console.error(
-          `[BlingOrderService] Falha ao gravar actual_situation/internal_status/unit_business_id do pedido ${orderData.numero} (seguindo mesmo assim):`,
+          `[BlingOrderService] Falha ao gravar actual_situation/internal_status/unit_business_id/nota do pedido ${orderData.numero} (seguindo mesmo assim):`,
           statusError.message,
         );
       }
@@ -953,7 +970,9 @@ export class BlingOrderService {
 
       const store = await this.resolveStore(orderData.loja?.id);
 
-      const invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
+      if (invoiceId === undefined) {
+        invoiceId = await this.resolveInvoiceId(orderData.notaFiscal?.id);
+      }
       const orderPayments = await this.resolveOrderPayments(orderData.parcelas);
 
       // ─── Processa itens primeiro para obter custo_total_produtos ──────────
@@ -1034,9 +1053,8 @@ export class BlingOrderService {
         })),
       );
 
-      // Espelha a nota na solicitação PDV ativa (qualquer status) e avança
-      // PENDING_NF_SALE — cobre NFe gerada pelo sistema ou manualmente na Bling.
-      if (invoiceId) {
+      // Fallback: o sync da nota no bloco defensivo acima não completou.
+      if (invoiceId && !invoiceSynced) {
         await pdvSalesRequestService.syncSaleInvoiceFromOrder(
           existingOrder.id,
           invoiceId,
