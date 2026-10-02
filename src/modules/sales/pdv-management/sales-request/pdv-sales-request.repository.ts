@@ -138,6 +138,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   // status ativo, só pela nota de VENDA (romaneio da transferência não finaliza).
   async findActiveBySaleInvoiceIds(
     invoiceIds: string[],
+    attributes?: string[],
   ): Promise<PdvSalesRequest[]> {
     if (!invoiceIds.length) return [];
 
@@ -146,6 +147,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         sale_invoice_id: { [Op.in]: invoiceIds },
         status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
       },
+      ...(attributes && { attributes }),
     });
   }
 

@@ -19,7 +19,6 @@ import {
   TCarAction,
   TCarNotaFiscalItem,
 } from "../service/tecinco/tecinco.types";
-import { notifySalesRequestUpdated } from "../../../sales/pdv-management/sales-request/helpers/notify-sales-request-updated";
 import { getTCarIntegration } from "../api/tecinco_api";
 import {
   TCarConferenciaEstoqueService,
@@ -367,7 +366,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         data.transferInvoiceId,
       );
     } finally {
-      notifySalesRequestUpdated(data.pdvSalesRequestId);
+      await pdvSalesRequestService.notifyChanged(data.pdvSalesRequestId);
     }
   }
 

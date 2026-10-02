@@ -293,3 +293,61 @@ Link de rastreio da entrega da nota de venda
 (`https://paxpneus.acompanharentrega.com.br/?tpDoc=4&doc=002%2F<número sem zeros à esquerda>`).
 Também vem em `saleInvoice.tracking_url`. `null` sem nota de venda ou se a
 nota ainda não foi importada pela Bling.
+
+## Novo: ADT só com transportadora CD 12 / CD 17
+
+O tipo de envio tem que bater com a transportadora da nota de venda:
+- `... - CD 12` / `... - CD 17` → só `ADT`. `TRANSPORTADORA` → `400 { error:
+  "A transportadora deste pedido é o CD 12, então o tipo de envio só pode ser ADT." }`
+- qualquer outra → só `TRANSPORTADORA`. `ADT` → `400 { error: "ADT só é permitido
+  para pedidos com transportadora CD 12 ou CD 17. A transportadora deste pedido
+  é <nome>, então o tipo de envio só pode ser TRANSPORTADORA." }`
+
+Mensagens prontas pra exibir. Vale pra `POST /:id/shipping-type` e pra rota
+nova abaixo. Sem checagem (aceita os dois) se ainda não há nota de venda ou se
+a nota não tem transportadora ("Sem transporte").
+
+## Novo: `POST /sales-request/:id/shipping-type/change` (CD21)
+
+Troca o tipo de envio de uma solicitação já em faturamento/expedição. Body
+`{ shippingType: "ADT" | "TRANSPORTADORA" }`, só tela CD21. Responde a
+solicitação atualizada; o status pode mudar (sync de loja dispara como em
+qualquer transição).
+
+| Status atual | Troca | Novo status |
+|---|---|---|
+| `PENDING_NF_SALE` | qualquer | continua `PENDING_NF_SALE` (quando a nota sair, segue o tipo novo) |
+| `PENDING_NF_TRANSFER` | ADT → TRANSPORTADORA | `SHIP_TODAY` (ou `FINISHED` se a nota de venda já tem romaneio) |
+| `SHIPPING` | ADT → TRANSPORTADORA | `SHIP_TODAY` (ou `FINISHED` se a nota de venda já tem romaneio) |
+| `SHIP_TODAY` | TRANSPORTADORA → ADT | `SHIPPING` |
+
+ADT → TRANSPORTADORA zera `transfer_invoice_id` (`transferInvoice` vem `null`).
+TRANSPORTADORA → ADT vai pra `SHIPPING` sem nota de transferência — o CD21
+vincula depois por `POST /:id/transfer-invoice` (aceito em `SHIPPING`).
+Mandar o mesmo tipo atual não faz nada (`200`). Qualquer outro status → `400`
+`"Ação inválida: ..."`.
+
+## Mudou: toda ação na solicitação dispara websocket
+
+Toda mudança numa solicitação (transição de status, tipo de envio, anexar/
+remover/editar comprovante, nota de transferência, re-sync da nota de venda,
+gerar lote/romaneio/adicionar a lote pela solicitação, exclusão) agora emite
+os DOIS eventos, sempre juntos:
+- `pdv-store:sync` com `event: "SALES_REQUEST_STATUS_CHANGED"` (rooms da loja +
+  CD21) → refazer a listagem/Kanban. Antes só vinha em mudança de status; agora
+  vem também em mudança sem troca de status.
+- `salerequest-updated` `{ requestId }` (room `pdv-sales-request:<id>`) →
+  refazer o `GET /:id` se o detalhe estiver aberto.
+
+Finalizar lote (`PUT /batch/finish/:batchId`, de qualquer tela) também avisa
+as solicitações ativas cujas notas de venda estão no lote (`expedition_progress`
+vira `BATCH_FINISHED`), sem inundar o Kanban: `pdv-store:sync` sai UMA vez por
+loja afetada e UMA vez só pra room do CD21 (nessa, `unitBusinessId: null`) —
+um refetch atualiza todas. `salerequest-updated` sai um por solicitação, cada
+um só na room dela. Payload continua sendo só sinal de refetch.
+
+`salerequest-updated` só chega pra quem deu `pdv-sales-request:watch`
+`{ requestId }` naquela solicitação (card aberto) — sem watch, nada chega.
+Não existe unwatch: o socket fica na room até desconectar, então quem abriu o
+card A, fechou e abriu o B continua recebendo os eventos do A. Antes de
+refazer o `GET /:id`, conferir se `payload.requestId` é o card aberto.

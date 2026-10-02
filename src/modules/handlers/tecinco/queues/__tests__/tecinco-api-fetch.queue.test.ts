@@ -101,6 +101,7 @@ jest.mock(
   () => ({
     __esModule: true,
     notifySalesRequestUpdated: jest.fn(),
+    notifySalesRequestChanged: jest.fn(),
   }),
 );
 
@@ -186,7 +187,7 @@ import {
   TCarNotaFiscalItem,
 } from "../../service/tecinco/tecinco.types";
 import { findTecincoCollidingFields } from "../../../../../scripts/tecinco/tecinco-duplicate-detection";
-import { notifySalesRequestUpdated } from "../../../../sales/pdv-management/sales-request/helpers/notify-sales-request-updated";
+import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { clearTCarLookupCache } from "../helpers/lookup-cache";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1085,6 +1086,7 @@ describe("TCarUpsertQueue.processInvoiceTransfer (enriquecimento em background d
     clearTCarLookupCache();
     jest.clearAllMocks();
     queue = new TCarUpsertQueue({ workless: true });
+    jest.spyOn(pdvSalesRequestService, "notifyChanged").mockResolvedValue();
   });
 
   it("job invoice_transfer: chama upsertInvoiceFromTecinco com os dados do payload e notifica a solicitação ao terminar", async () => {
@@ -1108,7 +1110,7 @@ describe("TCarUpsertQueue.processInvoiceTransfer (enriquecimento em background d
     } as any);
 
     expect(upsertSpy).toHaveBeenCalledWith("020309", "chave-44", 12);
-    expect(notifySalesRequestUpdated).toHaveBeenCalledWith("r1");
+    expect(pdvSalesRequestService.notifyChanged).toHaveBeenCalledWith("r1");
   });
 
   it("upsertInvoiceFromTecinco falha: ainda notifica a solicitação (front refaz o fetch) mas propaga o erro (BullMQ tenta de novo)", async () => {
@@ -1132,7 +1134,7 @@ describe("TCarUpsertQueue.processInvoiceTransfer (enriquecimento em background d
       } as any),
     ).rejects.toThrow("Nota fiscal não encontrada na Tecinco");
 
-    expect(notifySalesRequestUpdated).toHaveBeenCalledWith("r1");
+    expect(pdvSalesRequestService.notifyChanged).toHaveBeenCalledWith("r1");
   });
 
   it("sem branchId: ignora sem chamar upsertInvoiceFromTecinco nem notificar", async () => {
@@ -1155,6 +1157,6 @@ describe("TCarUpsertQueue.processInvoiceTransfer (enriquecimento em background d
     } as any);
 
     expect(upsertSpy).not.toHaveBeenCalled();
-    expect(notifySalesRequestUpdated).not.toHaveBeenCalled();
+    expect(pdvSalesRequestService.notifyChanged).not.toHaveBeenCalled();
   });
 });

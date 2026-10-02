@@ -39,6 +39,12 @@ export class PdvSalesRequestController extends BaseController<
       ]),
       this.setShippingType,
     );
+    // Troca já em faturamento/expedição — realinha o status ao tipo novo.
+    this.router.post(
+      "/:id/shipping-type/change",
+      pdvAccess([PdvAccessScreen.CD21]),
+      this.changeShippingType,
+    );
     // Upload/delete de comprovante fica só com quem recebe o comprovante da
     // loja (STORE_REQUEST) ou revisa (FINANCE) — CD21 nunca anexa/remove,
     // só edita a análise de um comprovante já existente (rotas abaixo).
@@ -375,6 +381,22 @@ export class PdvSalesRequestController extends BaseController<
         record.id,
         shippingType as PdvShippingType,
         access.screen,
+        this.actorUserId(req),
+      );
+      return res.json(updated);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  changeShippingType = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const updated = await this.service.changeShippingType(
+        req.params.id as string,
+        req.body.shippingType as PdvShippingType,
         this.actorUserId(req),
       );
       return res.json(updated);

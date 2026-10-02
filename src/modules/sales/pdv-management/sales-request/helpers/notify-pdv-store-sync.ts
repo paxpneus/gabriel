@@ -32,3 +32,27 @@ export function notifyPdvStoreSync(
     payload,
   );
 }
+
+// Mudança em massa (ex.: lote finalizado) — 1 emissão por loja e 1 só pro CD21, nunca 1 por solicitação.
+export function notifyPdvStoresSync(
+  unitBusinessIds: Array<string | number | null | undefined>,
+  event: PdvStoreSyncEventName,
+): void {
+  const uniqueIds = [...new Set(unitBusinessIds.filter((id) => !!id))];
+  if (!uniqueIds.length) return;
+
+  uniqueIds.forEach((unitBusinessId) =>
+    socketEmitterService.emitToNamespaceRoom(
+      PDV_SOCKET_NAMESPACE,
+      pdvStoreRoom(unitBusinessId!),
+      PDV_STORE_SYNC_EVENT,
+      { unitBusinessId, event },
+    ),
+  );
+  socketEmitterService.emitToNamespaceRoom(
+    PDV_SOCKET_NAMESPACE,
+    PDV_CD21_ROOM,
+    PDV_STORE_SYNC_EVENT,
+    { unitBusinessId: null, event },
+  );
+}

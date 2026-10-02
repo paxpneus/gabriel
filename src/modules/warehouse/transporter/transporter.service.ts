@@ -100,6 +100,12 @@ export class TransporterService extends BaseService<
     return created;
   }
 
+  // Nome vazio ou o placeholder "Sem transporte" — nota sem transportador nenhum.
+  isNoTransporterName(name: string | null | undefined): boolean {
+    const cleanName = (name ?? "").trim().toLowerCase();
+    return !cleanName || cleanName === NO_TRANSPORTER_NAME.toLowerCase();
+  }
+
   // Ponto único de resolução de transportador usado pelos fetch da Bling e da
   // Tecinco: sem documento utilizável (nota genuinamente sem transportador),
   // usa/cria o placeholder "Sem transporte"; com documento, delega pra

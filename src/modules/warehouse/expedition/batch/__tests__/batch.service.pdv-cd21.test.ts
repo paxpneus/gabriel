@@ -51,7 +51,7 @@ jest.mock(
   "../../../../sales/pdv-management/sales-request/pdv-sales-request.service",
   () => ({
     __esModule: true,
-    default: { resolveSaleInvoiceId: jest.fn() },
+    default: { resolveSaleInvoiceId: jest.fn(), notifyChanged: jest.fn() },
   }),
 );
 
