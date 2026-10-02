@@ -1,5 +1,6 @@
 import {
   PaymentReceiptExtraction,
+  PaymentReceiptPaymentMethod,
   PaymentReceiptReconciledAnalysis,
 } from "../pdv-sales-request.types";
 
@@ -45,6 +46,7 @@ export function reconcileReceiptAnalyses(
       analyses.map((a) => a.codigo_autorizacao),
     ),
     nsu_cv: joinDistinct(analyses.map((a) => a.nsu_cv)),
+    payment_methods: distinctPaymentMethods(analyses),
   };
 }
 
@@ -57,6 +59,18 @@ export function reconcileReceiptValidation(
   const known = validations.filter((v): v is boolean => v !== null);
   if (!known.length) return null;
   return known.every(Boolean);
+}
+
+function distinctPaymentMethods(
+  analyses: PaymentReceiptExtraction[],
+): PaymentReceiptPaymentMethod[] {
+  const byId = new Map<string, PaymentReceiptPaymentMethod>();
+  for (const analysis of analyses) {
+    if (analysis.payment_method) {
+      byId.set(analysis.payment_method.id, analysis.payment_method);
+    }
+  }
+  return [...byId.values()];
 }
 
 function joinDistinct(values: (string | null)[]): string | null {

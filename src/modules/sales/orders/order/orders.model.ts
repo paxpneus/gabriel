@@ -31,7 +31,6 @@ class Order
   public store_id?: string;
   public unit_business_id?: string;
   public invoice_id?: string;
-  public payment_method_id?: string;
   public waiting_acceptance?: boolean;
   public source_payload?: Record<string, unknown>;
   public total_products?: number;
@@ -107,11 +106,6 @@ Order.init(
       type: DataTypes.UUID,
       allowNull: true,
       references: { model: "invoices", key: "id" },
-    },
-    payment_method_id: {
-      type: DataTypes.UUID,
-      allowNull: true,
-      references: { model: "payment_methods", key: "id" },
     },
     id_order_system: {
       type: DataTypes.STRING(100),

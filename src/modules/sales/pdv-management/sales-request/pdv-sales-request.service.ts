@@ -1,3 +1,7 @@
+import {
+  countInstallments,
+  toPaymentsView,
+} from "../../orders/order_payment/helpers/payments-view";
 import { Op, WhereOptions } from "sequelize";
 import { randomUUID } from "node:crypto";
 import sequelize from "../../../../config/sequelize";
@@ -13,6 +17,7 @@ import {
   PdvSalesRequestStatus,
   PdvShippingType,
   PaymentReceiptExtraction,
+  PaymentReceiptPaymentMethod,
   PaymentReceiptReconciledAnalysis,
   EMPTY_PAYMENT_RECEIPT_EXTRACTION,
   PdvSalesRequestOrderDetail,
@@ -26,6 +31,7 @@ import PdvSalesRequestReceipt from "../sales-request-receipt/pdv-sales-request-r
 import { extractDanfeIdentification } from "./helpers/danfe-interpreter";
 import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import orderService from "../../orders/order/orders.service";
+import paymentMethodService from "../../orders/payment_method/payment_method.service";
 import expeditionBatchService from "../../../warehouse/expedition/batch/batch.service";
 import { buildExpeditionProgress } from "./helpers/expedition-progress";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
@@ -47,10 +53,14 @@ import { extractAccessKeyFromXmlContent } from "../../../../shared/utils/xml/acc
 import nfeEmissionService from "../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "./payment-receipt-extraction.service";
 import {
-  PaymentReceiptExtractionSchema,
-  PaymentReceiptReconciledAnalysisSchema,
+  PaymentReceiptEditSchema,
+  PaymentReceiptReconciledEditSchema,
 } from "./helpers/payment-receipt-extraction.schema";
-import { paymentMethodMatchesReceipt } from "./helpers/payment-method-match";
+import {
+  paymentMethodsMatchReceipts,
+  receiptTypeFromPaymentMethod,
+  resolvePaymentMethodForReceipt,
+} from "./helpers/payment-method-match";
 import {
   reconcileReceiptAnalyses,
   reconcileReceiptValidation,
@@ -168,8 +178,6 @@ export class PdvSalesRequestService extends BaseService<
   private toOrderDetail(order: any): PdvSalesRequestOrderDetail | null {
     if (!order) return null;
 
-    const parcelas = order.source_payload?.parcelas;
-
     return {
       id: order.id,
       number_order_channel: order.number_order_channel,
@@ -190,10 +198,8 @@ export class PdvSalesRequestService extends BaseService<
             name: order.unitBusiness.name,
           }
         : null,
-      paymentMethod: order.paymentMethod
-        ? { id: order.paymentMethod.id, description: order.paymentMethod.description }
-        : null,
-      installments: Array.isArray(parcelas) ? parcelas.length : null,
+      payments: toPaymentsView(order.payments),
+      installments: countInstallments(order.source_payload),
       items: (order.items ?? []).map((item: any) => ({
         id: item.id,
         name: item.name,
@@ -758,9 +764,7 @@ export class PdvSalesRequestService extends BaseService<
   // payment_method_matches_receipt a partir de TODOS os comprovantes
   // atualmente anexados — chamado depois de qualquer mutação numa linha de
   // comprovante (criar, editar análise, apagar). payment_method_matches_receipt
-  // só é calculado com exatamente 1 comprovante: com 2+, os tipos podem
-  // divergir entre si (ex.: PIX + cartão) e a comparação 1:1 contra
-  // order.paymentMethod não faz mais sentido — financeiro revisa manualmente.
+  // compara o conjunto de formas de pagamento da Bling com o de comprovantes.
   private async reconcileReceipts(
     requestId: string,
     orderId: string,
@@ -776,20 +780,23 @@ export class PdvSalesRequestService extends BaseService<
       receipts.map((r) => r.validated),
     );
 
-    // Busca a order uma vez só — usada tanto pro match de forma de
-    // pagamento (só com 1 comprovante) quanto pro match de valor total
-    // (sempre, qualquer quantidade de comprovantes).
-    const order = await orderService.findByIdWithPaymentMethod(orderId);
+    // Busca a order uma vez só — usada pro match de formas de pagamento e
+    // pro match de valor total.
+    const order = await orderService.findByIdWithPayments(orderId);
 
-    let matchesReceipt: boolean | null = null;
-    if (receipts.length === 1 && receipts[0].analysis) {
-      const paymentMethodDescription =
-        (order as any)?.paymentMethod?.description ?? null;
-      matchesReceipt = paymentMethodMatchesReceipt(
-        paymentMethodDescription,
-        receipts[0].analysis.tipo_comprovante,
-      );
-    }
+    const orderPaymentMethods = ((order as any)?.payments ?? []).map(
+      (payment: any) => ({
+        id: payment.paymentMethod?.id ?? null,
+        description: payment.paymentMethod?.description ?? null,
+      }),
+    );
+    const matchesReceipt = paymentMethodsMatchReceipts(
+      orderPaymentMethods,
+      receipts.map((r) => ({
+        type: r.analysis?.tipo_comprovante ?? null,
+        paymentMethodId: r.analysis?.payment_method?.id ?? null,
+      })),
+    );
 
     const totalMatchesOrder = receiptTotalMatchesOrder(
       analysis?.valor_total ?? null,
@@ -1001,6 +1008,51 @@ export class PdvSalesRequestService extends BaseService<
     return updated;
   }
 
+  // Liga o tipo extraído da imagem a uma forma já cadastrada em
+  // payment_methods (preferindo as do próprio pedido) — null se ambíguo ou
+  // inexistente, aí o match segue por palavra-chave.
+  private async resolveReceiptPaymentMethod(
+    orderId: string,
+    receiptType: PaymentReceiptExtraction["tipo_comprovante"],
+  ): Promise<PaymentReceiptPaymentMethod | null> {
+    if (!receiptType) return null;
+
+    const [order, catalog] = await Promise.all([
+      orderService.findByIdWithPayments(orderId),
+      paymentMethodService.findLightCatalog(),
+    ]);
+
+    const orderMethods = new Map<string, PaymentReceiptPaymentMethod>();
+    for (const payment of (order as any)?.payments ?? []) {
+      const method = payment.paymentMethod;
+      if (method) {
+        orderMethods.set(method.id, {
+          id: method.id,
+          description: method.description,
+        });
+      }
+    }
+
+    return resolvePaymentMethodForReceipt(
+      receiptType,
+      [...orderMethods.values()],
+      catalog.map((m) => ({ id: m.id, description: m.description })),
+    );
+  }
+
+  private async loadPaymentMethodsOrFail(
+    ids: string[],
+  ): Promise<PaymentReceiptPaymentMethod[]> {
+    const unique = [...new Set(ids)];
+    if (!unique.length) return [];
+
+    const found = await paymentMethodService.findLightByIds(unique);
+    if (found.length !== unique.length) {
+      throw new Error("Forma de pagamento não encontrada");
+    }
+    return found.map((m) => ({ id: m.id, description: m.description }));
+  }
+
   // Roda em background, depois do attach já ter respondido. Reconfere que a
   // linha do comprovante ainda existe antes de gravar — se a loja apagou
   // esse comprovante enquanto a análise rodava, descarta.
@@ -1022,8 +1074,18 @@ export class PdvSalesRequestService extends BaseService<
       // (comprovante segue anexado, usuário troca), mesmo espírito de antes.
       await this.assertReceiptNotDuplicate(result.fingerprint, receiptId);
 
+      const analysis = result.analysis
+        ? {
+            ...result.analysis,
+            payment_method: await this.resolveReceiptPaymentMethod(
+              orderId,
+              result.analysis.tipo_comprovante,
+            ),
+          }
+        : null;
+
       await pdvSalesRequestReceiptService.update(receiptId, {
-        analysis: result.analysis,
+        analysis,
         validated: result.validated,
         fingerprint: result.fingerprint,
       });
@@ -1038,7 +1100,7 @@ export class PdvSalesRequestService extends BaseService<
           requestId,
           receiptId,
           success: true,
-          analysis: result.analysis,
+          analysis,
           validated: result.validated,
           reconciled: {
             analysis: reconciled.payment_receipt_analysis,
@@ -1111,7 +1173,7 @@ export class PdvSalesRequestService extends BaseService<
   async updateReceiptAnalysis(
     id: string,
     receiptId: string,
-    updates: Partial<PaymentReceiptExtraction>,
+    updates: unknown,
     screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
@@ -1123,11 +1185,39 @@ export class PdvSalesRequestService extends BaseService<
       throw new Error("Comprovante não encontrado nesta solicitação");
     }
 
-    const parsedUpdates = PaymentReceiptExtractionSchema.partial().parse(updates);
+    const { payment_method_id, ...parsedUpdates } =
+      PaymentReceiptEditSchema.parse(updates);
     const merged: PaymentReceiptExtraction = {
       ...(receipt.analysis ?? EMPTY_PAYMENT_RECEIPT_EXTRACTION),
       ...parsedUpdates,
     };
+
+    // Forma escolhida no catálogo manda: tipo_comprovante é derivado dela em
+    // vez do enviado no mesmo body — null se a forma não tem tipo no enum
+    // (Dinheiro, Cheque, Boleto, Outros), pra nunca contradizer a forma.
+    if (payment_method_id !== undefined) {
+      if (payment_method_id === null) {
+        merged.payment_method = null;
+      } else {
+        const [method] = await this.loadPaymentMethodsOrFail([
+          payment_method_id,
+        ]);
+        merged.payment_method = method;
+        merged.tipo_comprovante = receiptTypeFromPaymentMethod(
+          method.description,
+        );
+      }
+    } else if (
+      parsedUpdates.tipo_comprovante !== undefined &&
+      parsedUpdates.tipo_comprovante !== receipt.analysis?.tipo_comprovante
+    ) {
+      // Só o tipo mudou: a forma antiga ficaria salva e, como o match prioriza
+      // o id, ignoraria o tipo editado — re-resolve como no upload.
+      merged.payment_method = await this.resolveReceiptPaymentMethod(
+        request.order_id,
+        merged.tipo_comprovante,
+      );
+    }
 
     const { validated, fingerprint } =
       paymentReceiptExtractionService.computeDerived(merged);
@@ -1163,7 +1253,7 @@ export class PdvSalesRequestService extends BaseService<
   // se não recalculasse.
   async updatePaymentReceiptAnalysis(
     id: string,
-    updates: Partial<PaymentReceiptReconciledAnalysis>,
+    updates: unknown,
     screen: PdvAccessScreen = PdvAccessScreen.STORE_REQUEST,
     userId?: string,
   ): Promise<PdvSalesRequest> {
@@ -1171,12 +1261,26 @@ export class PdvSalesRequestService extends BaseService<
       anyCorrectionOrigin: true,
     });
 
-    const parsedUpdates =
-      PaymentReceiptReconciledAnalysisSchema.partial().parse(updates);
+    const { payment_method_ids, ...parsedUpdates } =
+      PaymentReceiptReconciledEditSchema.parse(updates);
     const merged: PaymentReceiptReconciledAnalysis = {
       ...(request.payment_receipt_analysis ?? EMPTY_PAYMENT_RECEIPT_EXTRACTION),
       ...parsedUpdates,
     };
+
+    if (payment_method_ids !== undefined) {
+      const methods = await this.loadPaymentMethodsOrFail(payment_method_ids);
+      merged.payment_methods = methods;
+
+      const types = [
+        ...new Set(
+          methods
+            .map((m) => receiptTypeFromPaymentMethod(m.description))
+            .filter((type): type is NonNullable<typeof type> => type !== null),
+        ),
+      ];
+      merged.tipo_comprovante = types.length ? types.join(" + ") : null;
+    }
 
     const order = await orderService.findById(request.order_id);
     const totalMatchesOrder = receiptTotalMatchesOrder(
@@ -1337,18 +1441,14 @@ export class PdvSalesRequestService extends BaseService<
     });
   }
 
-  // Zera as notas vinculadas e manda de volta pro início da análise — usado
-  // tanto quando o CD21 decide reenviar direto (cd21ResolveInvoiceCancelled)
-  // quanto quando a loja resolve uma correção de nota cancelada corrigindo o
-  // necessário (resolveCorrection).
+  // Zera só a nota de transferência (sale_invoice_id nunca é zerado) e manda
+  // de volta pro início da análise — usado por cd21ResolveInvoiceCancelled e
+  // resolveCorrection.
   private async resetForCd21AnalysisRetry(
     id: string,
     params: { userId?: string; description: string },
   ): Promise<PdvSalesRequest> {
-    await this.repository.update(id, {
-      sale_invoice_id: null,
-      transfer_invoice_id: null,
-    });
+    await this.repository.update(id, { transfer_invoice_id: null });
     return this.transitionTo(id, PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, params);
   }
 
@@ -1435,18 +1535,6 @@ export class PdvSalesRequestService extends BaseService<
       });
     }
 
-    // Origem FINISHED: CD21 reabriu uma solicitação já finalizada e pediu
-    // pra loja corrigir algo pontual sem refazer as notas (ver
-    // correctFinishedRequest) — a loja resolve fisicamente/direto na Bling e
-    // este endpoint só confirma, voltando direto pra FINISHED (não passa por
-    // SHIPPING de novo).
-    if (request.correction_origin_status === PdvSalesRequestStatus.FINISHED) {
-      return this.transitionTo(id, PdvSalesRequestStatus.FINISHED, {
-        userId: params.userId,
-        description: "Correção confirmada pela loja — solicitação finalizada novamente",
-      });
-    }
-
     // Única origem restante aqui é CD21_ANALYSIS — o ajuste em si (produto,
     // dados do pedido) é feito direto na Bling e reflete sozinho no pedido
     // via sync; este endpoint só confirma que foi corrigido e manda de volta
@@ -1460,7 +1548,7 @@ export class PdvSalesRequestService extends BaseService<
   // ─── Faturamento ────────────────────────────────────────────────────────────
 
   // Dispara a emissão da NFe de venda na Bling pra este pedido — não avança
-  // status sozinho: a transição real (markSaleInvoiceReadyIfPending) só
+  // status sozinho: a transição real (syncSaleInvoiceFromOrder) só
   // acontece depois, quando o pipeline de sync de pedidos da Bling (webhook
   // ou fetch queue) confirmar order.invoice_id preenchido, o que cobre tanto
   // essa geração pelo sistema quanto uma geração feita manualmente na Bling.
@@ -1532,16 +1620,37 @@ export class PdvSalesRequestService extends BaseService<
       : PdvSalesRequestStatus.SHIP_TODAY;
   }
 
-  // Chamado pelo sync de pedidos da Bling (bling-order.service.ts) sempre
-  // que order.invoice_id é (re)resolvido — no-op se não houver solicitação
-  // ativa em PENDING_NF_SALE pro pedido, já que a maioria dos pedidos
-  // sincronizados não é do fluxo PDV.
-  async markSaleInvoiceReadyIfPending(orderId: string): Promise<void> {
+  // Chamado pelo sync de pedidos da Bling quando order.invoice_id resolve:
+  // espelha em sale_invoice_id de qualquer status ativo (não só PENDING_NF_SALE)
+  // e avisa o PDV, senão a cópia fica nula até alguém reabrir a solicitação.
+  async syncSaleInvoiceFromOrder(
+    orderId: string,
+    invoiceId: string,
+  ): Promise<void> {
     const request = await this.repository.findActiveByOrderId(orderId);
-    if (!request || request.status !== PdvSalesRequestStatus.PENDING_NF_SALE) {
+    if (!request) return;
+
+    // Romaneio da nota de venda já gerado no CD21: finaliza direto, sem
+    // passar pelo fluxo de status.
+    if (await this.isSaleInvoiceDeliveryNoteGenerated(invoiceId)) {
+      if (request.sale_invoice_id !== invoiceId) {
+        await this.repository.update(request.id, {
+          sale_invoice_id: invoiceId,
+        });
+      }
+      await this.finishByDeliveryNote(request.id);
       return;
     }
-    await this.markSaleInvoiceReady(request.id);
+
+    if (request.status === PdvSalesRequestStatus.PENDING_NF_SALE) {
+      await this.markSaleInvoiceReady(request.id);
+      return;
+    }
+
+    if (request.sale_invoice_id === invoiceId) return;
+
+    await this.repository.update(request.id, { sale_invoice_id: invoiceId });
+    notifyPdvStoreSync(request.unit_business_id, "SALES_REQUEST_STATUS_CHANGED");
   }
 
   // Autocomplete do front pra buscar uma nota de transferência já existente
@@ -1896,17 +2005,22 @@ export class PdvSalesRequestService extends BaseService<
     });
   }
 
+  // Sem assertStatus de propósito: romaneio da nota de venda gerado finaliza
+  // de qualquer status ativo (terminais já ficam fora da busca).
+  private async finishByDeliveryNote(id: string): Promise<PdvSalesRequest> {
+    return this.transitionTo(id, PdvSalesRequestStatus.FINISHED, {
+      description: "Romaneio gerado — solicitação finalizada",
+    });
+  }
+
   // Chamado por batch.service.ts::generateDeliveryNote sempre que um
-  // romaneio é gerado — finaliza sozinho quem estava só esperando isso.
-  // Finaliza só com o romaneio da nota de VENDA gerado — mesmo em ADT, o
-  // romaneio da nota de transferência não é mais exigido pra finalizar.
+  // romaneio é gerado — finaliza qualquer solicitação ativa cuja nota de
+  // VENDA tenha romaneio (o da nota de transferência não é exigido).
   async finishIfDeliveryNoteGenerated(invoiceIds: string[]): Promise<void> {
     if (!invoiceIds.length) return;
 
     const candidates =
-      await this.repository.findInExpeditionBySaleOrTransferInvoiceIds(
-        invoiceIds,
-      );
+      await this.repository.findActiveBySaleInvoiceIds(invoiceIds);
     if (!candidates.length) return;
 
     // Romaneio de PDV é sempre gerado pelo CD21 (única tela que aciona
@@ -1934,7 +2048,7 @@ export class PdvSalesRequestService extends BaseService<
       const saleReady =
         !!request.sale_invoice_id && readyInvoiceIds.has(request.sale_invoice_id);
 
-      if (saleReady) await this.finish(request.id);
+      if (saleReady) await this.finishByDeliveryNote(request.id);
     }
   }
 
@@ -2072,62 +2186,6 @@ export class PdvSalesRequestService extends BaseService<
 
     await this.transitionTo(request.id, PdvSalesRequestStatus.CANCELLED, {
       description: "Pedido cancelado na Bling",
-    });
-  }
-
-  // ─── Correção pós-finalização (CD21) ────────────────────────────────────────
-  // finish() é terminal — depois de FINISHED, só este endpoint reabre a
-  // solicitação. Duas decisões, sempre a critério do CD21 (mesma tela que já
-  // aciona finish sozinha):
-  // - REQUEST_CORRECTION (padrão): não mexe nas notas, só devolve pra loja
-  //   com o motivo anexado — mesmo formato de errors dos outros origins.
-  // - RESET_INVOICES: zera as duas notas e manda direto pra PENDING_NF_SALE,
-  //   refazendo o faturamento do zero (nunca deixa pra reanálise do CD21 —
-  //   os dados do pedido não são o problema, só as notas emitidas).
-  async correctFinishedRequest(
-    id: string,
-    params: {
-      decision: "REQUEST_CORRECTION" | "RESET_INVOICES";
-      reasons?: PdvCorrectionReason[];
-      note?: string;
-      userId?: string;
-    },
-  ): Promise<PdvSalesRequest> {
-    await this.assertStatus(id, PdvSalesRequestStatus.FINISHED);
-
-    if (params.decision === "RESET_INVOICES") {
-      await this.repository.update(id, {
-        sale_invoice_id: null,
-        transfer_invoice_id: null,
-      });
-
-      return this.transitionTo(id, PdvSalesRequestStatus.PENDING_NF_SALE, {
-        userId: params.userId,
-        description:
-          "CD21 removeu as notas de uma solicitação finalizada — reenviado para faturamento",
-      });
-    }
-
-    if (!params.note) {
-      throw new Error("Informe o motivo da correção");
-    }
-
-    const errors: PdvSalesRequestErrors = {
-      origin: PdvCorrectionOrigin.FINISHED,
-      reasons: params.reasons?.length
-        ? params.reasons
-        : [PdvCorrectionReason.OTHER_INFO],
-      note: params.note,
-    };
-
-    await this.repository.update(id, {
-      correction_origin_status: PdvSalesRequestStatus.FINISHED,
-      errors,
-    });
-
-    return this.transitionTo(id, PdvSalesRequestStatus.PENDING_CORRECTION, {
-      userId: params.userId,
-      description: `CD21 reabriu solicitação finalizada para correção: ${params.note}`,
     });
   }
 

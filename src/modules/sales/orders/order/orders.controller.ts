@@ -22,6 +22,12 @@ class OrderController extends BaseController<Order, OrderService> {
       this.getOrderSalesReportDetail,
     );
 
+    this.router.post(
+      `/:id/sales-report/refresh`,
+      ...this.mw("refreshOrderSalesReport"),
+      this.refreshOrderSalesReport,
+    );
+
     this.router.get(
       "/summary/status-counts",
       ...this.mw("getOrdersStatusSummary"),
@@ -63,6 +69,7 @@ class OrderController extends BaseController<Order, OrderService> {
 
           releaseWaitingAcceptanceForToday: [authenticate, userPermissions],
           getOrderSalesReportDetail: [authenticate, userPermissions],
+          refreshOrderSalesReport: [authenticate, userPermissions],
           getOrdersStatusSummary: [authenticate, userPermissions],
           getShipTodayPendingDetail: [authenticate, userPermissions],
           getShipToDefineDetail: [authenticate, userPermissions],
@@ -124,6 +131,22 @@ class OrderController extends BaseController<Order, OrderService> {
       return res.json(detail);
     } catch (error: any) {
       return res.status(404).json({
+        error: error.message,
+      });
+    }
+  };
+
+  refreshOrderSalesReport = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const detail = await this.service.refreshOrderSalesReport(
+        req.params.id as string,
+      );
+      return res.json(detail);
+    } catch (error: any) {
+      return res.status(error.message === "Pedido não encontrado." ? 404 : 500).json({
         error: error.message,
       });
     }

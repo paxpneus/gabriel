@@ -57,7 +57,7 @@ jest.mock(
     __esModule: true,
     default: {
       createEmptyRequestForNewOrderIfEligible: jest.fn(),
-      markSaleInvoiceReadyIfPending: jest.fn(),
+      syncSaleInvoiceFromOrder: jest.fn(),
       cancelIfActiveByOrderId: jest.fn(),
     },
   }),

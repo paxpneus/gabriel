@@ -2,6 +2,11 @@ import { FindOptions, Op } from "sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import Customer from "../../customers/customers.model";
 import Order from "./orders.model";
+import {
+  countInstallments,
+  toPaymentsView,
+} from "../order_payment/helpers/payments-view";
+import salesReportService from "../../../reports/daily-sales/sales-report/sales-report.service";
 import orderRepository, { OrderRepository } from "./orders.repository";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import integrationService from "../../../integrations/integrations/integrations.service";
@@ -20,6 +25,10 @@ import {
 
 const toNumber = (value: number | string | null | undefined): number =>
   value == null ? 0 : Number(value);
+
+const toNullableNumber = (
+  value: number | string | null | undefined,
+): number | null => (value == null ? null : Number(value));
 
 export class OrderService extends BaseService<Order, OrderRepository> {
   constructor() {
@@ -196,17 +205,49 @@ export class OrderService extends BaseService<Order, OrderRepository> {
 
     const snapshot = orderData.salesSnapshot;
     if (!snapshot) {
-      throw new Error(
-        "Pedido ainda não possui snapshot no relatório de vendas.",
-      );
+      const { customer, salesSnapshot, items = [], payments, ...order } = orderData;
+      return {
+        order,
+        customer: customer ?? null,
+        payments: toPaymentsView(payments),
+        installments: countInstallments(order.source_payload),
+        totalPrice: toNullableNumber(order.total_price),
+        freightCharged: toNullableNumber(order.freight_charged),
+        freightByAccount: toNullableNumber(order.freight_by_account),
+        grossPrice: null,
+        profit: null,
+        profitMargin: null,
+        markupPct: null,
+        discount: null,
+        icms: null,
+        commission: null,
+        totalCost: toNullableNumber(order.total_cost),
+        totalTaxes: null,
+        totalFees: null,
+        freightCost: toNullableNumber(order.freight_cost),
+        taxCommission: null,
+        marketplaceFee: null,
+        paymentFee: null,
+        snapshot: null,
+        items,
+        warnings: [
+          "Os valores financeiros deste pedido (lucro, margem, custos e taxas) ainda não foram calculados. Eles aparecem aqui assim que o relatório de vendas processar o pedido.",
+        ],
+      };
     }
 
-    const { customer, salesSnapshot, ...order } = orderData;
+    const { customer, salesSnapshot, items: _orderItems, payments, ...order } =
+      orderData;
     const { items = [], ...snapshotFields } = snapshot;
 
     return {
       order,
       customer: customer ?? null,
+      payments: toPaymentsView(payments),
+      installments: countInstallments(order.source_payload),
+      totalPrice: toNullableNumber(order.total_price),
+      freightCharged: toNullableNumber(order.freight_charged),
+      freightByAccount: toNullableNumber(order.freight_by_account),
       grossPrice: toNumber(snapshotFields.total_products),
       profit: toNumber(snapshotFields.contribution_value),
       profitMargin: toNumber(snapshotFields.contribution_pct),
@@ -223,7 +264,23 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       paymentFee: toNumber(snapshotFields.payment_fee),
       snapshot: snapshotFields,
       items,
+      warnings: [],
     };
+  }
+
+  // Reprocessa o pedido no relatório sem depender do checkpoint do job.
+  async refreshOrderSalesReport(
+    orderId: string,
+  ): Promise<OrderSalesReportDetail> {
+    const order = await this.findOne({
+      where: { id: orderId },
+      attributes: ["id"],
+    });
+    if (!order) throw new Error("Pedido não encontrado.");
+
+    await salesReportService.refreshOrders([orderId]);
+
+    return this.getOrderSalesReportDetail(orderId);
   }
 
   async getFullOrdersByQuery(options: FindOptions): Promise<FullOrder[]> {
@@ -376,8 +433,8 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     }, {});
   }
 
-  async findByIdWithPaymentMethod(orderId: string): Promise<Order | null> {
-    return this.repository.findByIdWithPaymentMethod(orderId);
+  async findByIdWithPayments(orderId: string): Promise<Order | null> {
+    return this.repository.findByIdWithPayments(orderId);
   }
 
   async findEligibleForPdvByUnitBusiness(

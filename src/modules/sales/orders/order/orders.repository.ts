@@ -28,7 +28,7 @@ import {
   BLING_CANCELLED_SITUACAO_ID,
 } from "./helpers/eligible-for-pdv-filters";
 import Store from "../../stores/stores.model";
-import PaymentMethod from "../payment_method/payment_method.model";
+import { PAYMENTS_INCLUDE } from "../order_payment/helpers/payments-include";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import OrderItems from "../order_items/order_items.model";
 
@@ -130,12 +130,13 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
   };
 }
 
-  // Usado pra comparar a forma de pagamento do pedido (Bling) com o
+  // Usado pra comparar as formas de pagamento do pedido (Bling) com o
   // comprovante extraído por IA (pdv-sales-request — payment-method-match.ts).
-  async findByIdWithPaymentMethod(orderId: string): Promise<Order | null> {
+  async findByIdWithPayments(orderId: string): Promise<Order | null> {
     return this.model.findOne({
       where: { id: orderId },
-      include: [{ model: PaymentMethod, as: "paymentMethod" }],
+      attributes: ["id", "net_total_order"],
+      include: [PAYMENTS_INCLUDE],
     });
   }
 
@@ -199,7 +200,7 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
       where: { id: orderId },
       include: [
         { model: Customer, as: "customer" },
-        { model: PaymentMethod, as: "paymentMethod" },
+        PAYMENTS_INCLUDE,
         { model: UnitBusiness, as: "unitBusiness" },
         { model: OrderItems, as: "items" },
       ],
@@ -213,6 +214,8 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
       where: { id: orderId },
       include: [
         { model: Customer, as: "customer" },
+        { model: OrderItems, as: "items" },
+        PAYMENTS_INCLUDE,
         {
           model: SalesOrderSnapshot,
           as: "salesSnapshot",

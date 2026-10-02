@@ -5,6 +5,31 @@ só o que for NOVO ou o que MUDOU no fluxo — de forma curta, só o essencial
 pro front saber integrar. Nada de contrato completo/histórico redundante
 aqui.
 
+## Mudou: comprovante liga a uma forma de pagamento do catálogo
+
+- `PATCH /sales-request/:id/receipt/:receiptId/analysis` aceita `payment_method_id` (uuid de `GET /api/payment_method`; `null` limpa). O backend deriva `tipo_comprovante` da descrição da forma (`null` se a forma não tem tipo no enum: Dinheiro, Cheque, Boleto, Outros) — dá pra parar de mandar `tipo_comprovante` nesse PATCH.
+- `PATCH /sales-request/:id/payment-receipt-analysis` aceita `payment_method_ids` (uuid[]); `tipo_comprovante` vira os tipos derivados juntos com `" + "`.
+- Respostas/leituras trazem `analysis.payment_method: { id, description } | null` por comprovante e `payment_receipt_analysis.payment_methods: [{ id, description }]` no resumo (`tipo_comprovante` continua como antes). A análise automática (OCR/PDF) já vem com `payment_method` preenchido quando acha exatamente uma forma correspondente (preferindo as do pedido); senão `null`.
+- `payment_method_id` inexistente → 400 `Forma de pagamento não encontrada`.
+- `payment_method_matches_receipt` passa a comparar por id quando o comprovante tem forma escolhida.
+
+## Novo: `GET /api/payment_method` (formas de pagamento)
+
+Lista paginada simples (`page`, `perPage`, `sortBy`, `sortDir`; padrão `description ASC`). `search` filtra só por `description`. Resposta: `{ data: [{ id, id_system, description, payment_type }], meta }`. Mesma auth das rotas do PDV (login ou link `x-pdv-*`).
+
+## Mudou: `order.paymentMethod` virou `order.payments[]` (`GET /sales-request/:id`)
+
+Pedido pode ter 1+ formas de pagamento (parcelas da Bling). O campo único `order.paymentMethod` **foi removido** do detalhe; no lugar:
+
+```json
+"payments": [
+  { "id": "uuid", "amount": 372.31, "due_date": "2026-10-01",
+    "paymentMethod": { "id": "uuid", "description": "Pix" } }
+]
+```
+
+Ordenado por `due_date`, 1 item por parcela (a mesma forma pode repetir). `order.installments` segue igual. `payment_method_matches_receipt` agora compara o conjunto de formas do pedido com o de comprovantes: `true` só se toda forma tem comprovante do mesmo tipo e todo comprovante corresponde a uma forma; `false` se algum lado sobra; `null` sem formas/comprovantes ou com comprovante sem análise. Deixa de ser `null` quando há 2+ comprovantes. A listagem (`GET /sales-request`) não traz pagamentos, como antes.
+
 ## Mudou: coluna de expedição dividida em `SHIPPING` (ADT) e `SHIP_TODAY` (TRANSPORTADORA)
 
 Novo valor de `status`: **`SHIP_TODAY`** ("Embarque hoje"). Ele faz **exatamente

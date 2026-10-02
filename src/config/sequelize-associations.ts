@@ -29,6 +29,7 @@ import Integration from "../modules/integrations/integrations/integrations.model
 import ConfigToken from "../modules/integrations/config_tokens/config_tokens.model";
 import Order from "../modules/sales/orders/order/orders.model";
 import PaymentMethod from "../modules/sales/orders/payment_method/payment_method.model";
+import OrderPayment from "../modules/sales/orders/order_payment/order_payment.model";
 import PdvSalesRequest from "../modules/sales/pdv-management/sales-request/pdv-sales-request.model";
 import PdvSalesRequestHistory from "../modules/sales/pdv-management/sales-request-history/pdv-sales-request-history.model";
 import PdvSalesRequestReceipt from "../modules/sales/pdv-management/sales-request-receipt/pdv-sales-request-receipt.model";
@@ -156,7 +157,9 @@ export function setupAssociations() {
 
   // Order -> Invoice (1:1)
   Order.belongsTo(Invoice, { foreignKey: "invoice_id", as: "invoice" });
-  Order.belongsTo(PaymentMethod, {
+  Order.hasMany(OrderPayment, { foreignKey: "order_id", as: "payments" });
+  OrderPayment.belongsTo(Order, { foreignKey: "order_id", as: "order" });
+  OrderPayment.belongsTo(PaymentMethod, {
     foreignKey: "payment_method_id",
     as: "paymentMethod",
   });

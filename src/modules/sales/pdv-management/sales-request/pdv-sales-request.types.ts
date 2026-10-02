@@ -49,9 +49,6 @@ export enum PdvCorrectionOrigin {
   // CD21 decidiu devolver pra loja em vez de reenviar direto pra reanálise,
   // depois de handleInvoiceCancelled — ver cd21ResolveInvoiceCancelled.
   INVOICE_CANCELLED = "INVOICE_CANCELLED",
-  // CD21 reabriu uma solicitação já FINISHED pra correção — ver
-  // correctFinishedRequest.
-  FINISHED = "FINISHED",
 }
 
 export enum PdvCorrectionReason {
@@ -101,12 +98,6 @@ export const CORRECTION_REASONS_BY_ORIGIN: Record<
   [PdvCorrectionOrigin.INVOICE_CANCELLED]: [
     PdvCorrectionReason.INVOICE_CANCELLED,
   ],
-  [PdvCorrectionOrigin.FINISHED]: [
-    PdvCorrectionReason.PRODUCT_UNAVAILABLE,
-    PdvCorrectionReason.ITEM_DIVERGENCE,
-    PdvCorrectionReason.DAMAGED_PRODUCT,
-    PdvCorrectionReason.OTHER_INFO,
-  ],
 };
 
 export interface PdvSalesRequestErrors {
@@ -120,6 +111,13 @@ export type PaymentReceiptType =
   | "cartao_debito"
   | "pix"
   | "transferencia";
+
+// Forma de pagamento do catálogo (payment_methods) escolhida/resolvida pro
+// comprovante — snapshot id+description pro front exibir sem outro fetch.
+export interface PaymentReceiptPaymentMethod {
+  id: string;
+  description: string;
+}
 
 // Schema fixo do que o Gemini deve extrair do comprovante — nunca um JSON
 // solto/genérico. Todo campo é nullable: o prompt instrui a IA a devolver
@@ -142,6 +140,9 @@ export interface PaymentReceiptExtraction {
   cartao_final: string | null;
   codigo_autorizacao: string | null;
   nsu_cv: string | null;
+  // Não vem da IA direto: resolvido depois da extração (payment-method-match.ts)
+  // ou escolhido na edição manual. Opcional pra análises antigas.
+  payment_method?: PaymentReceiptPaymentMethod | null;
 }
 
 // Base pra merge de edição manual (updateReceiptAnalysis) quando a análise
@@ -188,6 +189,8 @@ export interface PaymentReceiptReconciledAnalysis {
   cartao_final: string | null;
   codigo_autorizacao: string | null;
   nsu_cv: string | null;
+  // União (distinta por id) das formas de pagamento de cada comprovante.
+  payment_methods?: PaymentReceiptPaymentMethod[];
 }
 
 export interface PdvSalesRequestAttributes {
@@ -208,9 +211,8 @@ export interface PdvSalesRequestAttributes {
   // com análise ainda.
   payment_receipt_analysis: PaymentReceiptReconciledAnalysis | null;
   payment_receipt_validated: boolean | null;
-  // Só calculado com exatamente 1 comprovante anexado — com 2+, os tipos
-  // podem divergir entre si (ex.: PIX + cartão) e a comparação 1:1 contra
-  // order.paymentMethod não faz mais sentido; financeiro revisa manualmente.
+  // Conjunto de formas de pagamento da Bling (order.payments) x conjunto de
+  // comprovantes — ver helpers/payment-method-match.ts.
   payment_method_matches_receipt: boolean | null;
   // Informativo, nunca bloqueia nenhuma transição — payment_receipt_analysis
   // (conciliado).valor_total x order.net_total_order. null quando não dá pra
@@ -280,6 +282,13 @@ export interface PdvSalesRequestOrderPaymentMethod {
   description: string;
 }
 
+export interface PdvSalesRequestOrderPayment {
+  id: string;
+  amount: number;
+  due_date: string | null;
+  paymentMethod: PdvSalesRequestOrderPaymentMethod | null;
+}
+
 export interface PdvSalesRequestOrderItem {
   id: string;
   name: string;
@@ -303,7 +312,7 @@ export interface PdvSalesRequestOrderSummary {
 // Versão completa, usada no detalhe (show). `installments` deriva de
 // `order.source_payload.parcelas.length` — não é coluna própria.
 export interface PdvSalesRequestOrderDetail extends PdvSalesRequestOrderSummary {
-  paymentMethod: PdvSalesRequestOrderPaymentMethod | null;
+  payments: PdvSalesRequestOrderPayment[];
   installments: number | null;
   items: PdvSalesRequestOrderItem[];
 }
