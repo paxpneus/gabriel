@@ -23,12 +23,13 @@ Pedido pode ter 1+ formas de pagamento (parcelas da Bling). O campo único `orde
 
 ```json
 "payments": [
-  { "id": "uuid", "amount": 372.31, "due_date": "2026-10-01",
-    "paymentMethod": { "id": "uuid", "description": "Pix" } }
+  { "paymentMethod": { "id": "uuid", "description": "Cartão de Crédito" },
+    "amount": 1820.22, "installments": 12,
+    "first_due_date": "2026-11-03", "last_due_date": "2027-09-27" }
 ]
 ```
 
-Ordenado por `due_date`, 1 item por parcela (a mesma forma pode repetir). `order.installments` segue igual. `payment_method_matches_receipt` agora compara o conjunto de formas do pedido com o de comprovantes: `true` só se toda forma tem comprovante do mesmo tipo e todo comprovante corresponde a uma forma; `false` se algum lado sobra; `null` sem formas/comprovantes ou com comprovante sem análise. Deixa de ser `null` quando há 2+ comprovantes. A listagem (`GET /sales-request`) não traz pagamentos, como antes.
+Parcelas da mesma forma vêm AGRUPADAS num item só (12x crédito = 1 item: `amount` é a soma, `installments` a quantidade), ordenado pelo primeiro vencimento. Só a resposta é agrupada — a comparação com comprovantes não muda. `order.installments` (total de parcelas do pedido) segue igual. O mesmo formato vale pro `payments` do detalhe de pedido em `/order` (sales-report detail). `payment_method_matches_receipt` agora compara o conjunto de formas do pedido com o de comprovantes: `true` só se toda forma tem comprovante do mesmo tipo e todo comprovante corresponde a uma forma; `false` se algum lado sobra; `null` sem formas/comprovantes ou com comprovante sem análise. Deixa de ser `null` quando há 2+ comprovantes. A listagem (`GET /sales-request`) não traz pagamentos, como antes.
 
 ## Mudou: coluna de expedição dividida em `SHIPPING` (ADT) e `SHIP_TODAY` (TRANSPORTADORA)
 
