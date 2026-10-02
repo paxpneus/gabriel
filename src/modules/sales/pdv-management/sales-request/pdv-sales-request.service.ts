@@ -1207,6 +1207,16 @@ export class PdvSalesRequestService extends BaseService<
           method.description,
         );
       }
+    } else if (
+      parsedUpdates.tipo_comprovante !== undefined &&
+      parsedUpdates.tipo_comprovante !== receipt.analysis?.tipo_comprovante
+    ) {
+      // Só o tipo mudou: a forma antiga ficaria salva e, como o match prioriza
+      // o id, ignoraria o tipo editado — re-resolve como no upload.
+      merged.payment_method = await this.resolveReceiptPaymentMethod(
+        request.order_id,
+        merged.tipo_comprovante,
+      );
     }
 
     const { validated, fingerprint } =
@@ -1431,18 +1441,14 @@ export class PdvSalesRequestService extends BaseService<
     });
   }
 
-  // Zera as notas vinculadas e manda de volta pro início da análise — usado
-  // tanto quando o CD21 decide reenviar direto (cd21ResolveInvoiceCancelled)
-  // quanto quando a loja resolve uma correção de nota cancelada corrigindo o
-  // necessário (resolveCorrection).
+  // Zera só a nota de transferência (sale_invoice_id nunca é zerado) e manda
+  // de volta pro início da análise — usado por cd21ResolveInvoiceCancelled e
+  // resolveCorrection.
   private async resetForCd21AnalysisRetry(
     id: string,
     params: { userId?: string; description: string },
   ): Promise<PdvSalesRequest> {
-    await this.repository.update(id, {
-      sale_invoice_id: null,
-      transfer_invoice_id: null,
-    });
+    await this.repository.update(id, { transfer_invoice_id: null });
     return this.transitionTo(id, PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, params);
   }
 
@@ -1529,18 +1535,6 @@ export class PdvSalesRequestService extends BaseService<
       });
     }
 
-    // Origem FINISHED: CD21 reabriu uma solicitação já finalizada e pediu
-    // pra loja corrigir algo pontual sem refazer as notas (ver
-    // correctFinishedRequest) — a loja resolve fisicamente/direto na Bling e
-    // este endpoint só confirma, voltando direto pra FINISHED (não passa por
-    // SHIPPING de novo).
-    if (request.correction_origin_status === PdvSalesRequestStatus.FINISHED) {
-      return this.transitionTo(id, PdvSalesRequestStatus.FINISHED, {
-        userId: params.userId,
-        description: "Correção confirmada pela loja — solicitação finalizada novamente",
-      });
-    }
-
     // Única origem restante aqui é CD21_ANALYSIS — o ajuste em si (produto,
     // dados do pedido) é feito direto na Bling e reflete sozinho no pedido
     // via sync; este endpoint só confirma que foi corrigido e manda de volta
@@ -1554,7 +1548,7 @@ export class PdvSalesRequestService extends BaseService<
   // ─── Faturamento ────────────────────────────────────────────────────────────
 
   // Dispara a emissão da NFe de venda na Bling pra este pedido — não avança
-  // status sozinho: a transição real (markSaleInvoiceReadyIfPending) só
+  // status sozinho: a transição real (syncSaleInvoiceFromOrder) só
   // acontece depois, quando o pipeline de sync de pedidos da Bling (webhook
   // ou fetch queue) confirmar order.invoice_id preenchido, o que cobre tanto
   // essa geração pelo sistema quanto uma geração feita manualmente na Bling.
@@ -1624,18 +1618,6 @@ export class PdvSalesRequestService extends BaseService<
     return shippingType === PdvShippingType.ADT
       ? PdvSalesRequestStatus.PENDING_NF_TRANSFER
       : PdvSalesRequestStatus.SHIP_TODAY;
-  }
-
-  // Chamado pelo sync de pedidos da Bling (bling-order.service.ts) sempre
-  // que order.invoice_id é (re)resolvido — no-op se não houver solicitação
-  // ativa em PENDING_NF_SALE pro pedido, já que a maioria dos pedidos
-  // sincronizados não é do fluxo PDV.
-  async markSaleInvoiceReadyIfPending(orderId: string): Promise<void> {
-    const request = await this.repository.findActiveByOrderId(orderId);
-    if (!request || request.status !== PdvSalesRequestStatus.PENDING_NF_SALE) {
-      return;
-    }
-    await this.markSaleInvoiceReady(request.id);
   }
 
   // Chamado pelo sync de pedidos da Bling quando order.invoice_id resolve:
@@ -2204,62 +2186,6 @@ export class PdvSalesRequestService extends BaseService<
 
     await this.transitionTo(request.id, PdvSalesRequestStatus.CANCELLED, {
       description: "Pedido cancelado na Bling",
-    });
-  }
-
-  // ─── Correção pós-finalização (CD21) ────────────────────────────────────────
-  // finish() é terminal — depois de FINISHED, só este endpoint reabre a
-  // solicitação. Duas decisões, sempre a critério do CD21 (mesma tela que já
-  // aciona finish sozinha):
-  // - REQUEST_CORRECTION (padrão): não mexe nas notas, só devolve pra loja
-  //   com o motivo anexado — mesmo formato de errors dos outros origins.
-  // - RESET_INVOICES: zera as duas notas e manda direto pra PENDING_NF_SALE,
-  //   refazendo o faturamento do zero (nunca deixa pra reanálise do CD21 —
-  //   os dados do pedido não são o problema, só as notas emitidas).
-  async correctFinishedRequest(
-    id: string,
-    params: {
-      decision: "REQUEST_CORRECTION" | "RESET_INVOICES";
-      reasons?: PdvCorrectionReason[];
-      note?: string;
-      userId?: string;
-    },
-  ): Promise<PdvSalesRequest> {
-    await this.assertStatus(id, PdvSalesRequestStatus.FINISHED);
-
-    if (params.decision === "RESET_INVOICES") {
-      await this.repository.update(id, {
-        sale_invoice_id: null,
-        transfer_invoice_id: null,
-      });
-
-      return this.transitionTo(id, PdvSalesRequestStatus.PENDING_NF_SALE, {
-        userId: params.userId,
-        description:
-          "CD21 removeu as notas de uma solicitação finalizada — reenviado para faturamento",
-      });
-    }
-
-    if (!params.note) {
-      throw new Error("Informe o motivo da correção");
-    }
-
-    const errors: PdvSalesRequestErrors = {
-      origin: PdvCorrectionOrigin.FINISHED,
-      reasons: params.reasons?.length
-        ? params.reasons
-        : [PdvCorrectionReason.OTHER_INFO],
-      note: params.note,
-    };
-
-    await this.repository.update(id, {
-      correction_origin_status: PdvSalesRequestStatus.FINISHED,
-      errors,
-    });
-
-    return this.transitionTo(id, PdvSalesRequestStatus.PENDING_CORRECTION, {
-      userId: params.userId,
-      description: `CD21 reabriu solicitação finalizada para correção: ${params.note}`,
     });
   }
 

@@ -9,6 +9,8 @@ import {
 // "Cartão de Crédito Itaú"...), não um enum fechado 1:1 com tipo_comprovante.
 // Resultado é informativo (mostra divergência pro financeiro), nunca bloqueia
 // a transição de status sozinho.
+const GENERIC_CARD_KEYWORD = "CARTAO";
+
 const RECEIPT_TYPE_KEYWORDS: Record<PaymentReceiptType, string[]> = {
   pix: ["PIX"],
   cartao_credito: ["CREDITO", "CARTAO"],
@@ -32,9 +34,26 @@ export function paymentMethodMatchesReceipt(
   const normalized = normalizeDescription(paymentMethodDescription);
   if (!normalized || !receiptType) return null;
 
-  return RECEIPT_TYPE_KEYWORDS[receiptType].some((keyword) =>
-    normalized.includes(keyword),
-  );
+  const keywords = RECEIPT_TYPE_KEYWORDS[receiptType];
+  if (
+    keywords
+      .filter((keyword) => keyword !== GENERIC_CARD_KEYWORD)
+      .some((keyword) => normalized.includes(keyword))
+  ) {
+    return true;
+  }
+
+  // "Cartão" genérico não vale quando a descrição já nomeia o outro tipo
+  // ("Cartão de Débito" nunca casa com comprovante de crédito).
+  if (
+    !keywords.includes(GENERIC_CARD_KEYWORD) ||
+    !normalized.includes(GENERIC_CARD_KEYWORD)
+  ) {
+    return false;
+  }
+  const otherCardKeyword =
+    receiptType === "cartao_credito" ? "DEBITO" : "CREDITO";
+  return !normalized.includes(otherCardKeyword);
 }
 
 // Inversa de paymentMethodMatchesReceipt: tipo de comprovante derivado da
@@ -55,7 +74,7 @@ export function receiptTypeFromPaymentMethod(
   ];
   const matches = specificTypes.filter((type) =>
     RECEIPT_TYPE_KEYWORDS[type]
-      .filter((keyword) => keyword !== "CARTAO")
+      .filter((keyword) => keyword !== GENERIC_CARD_KEYWORD)
       .some((keyword) => normalized.includes(keyword)),
   );
 

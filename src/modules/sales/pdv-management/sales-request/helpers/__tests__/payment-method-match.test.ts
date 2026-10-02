@@ -26,6 +26,20 @@ describe("paymentMethodMatchesReceipt", () => {
     expect(paymentMethodMatchesReceipt("Cartão de Débito", "pix")).toBe(false);
   });
 
+  it("crédito nunca casa com forma de débito e vice-versa, mesmo com 'Cartão' na descrição", () => {
+    expect(
+      paymentMethodMatchesReceipt("Cartão de Débito", "cartao_credito"),
+    ).toBe(false);
+    expect(
+      paymentMethodMatchesReceipt("Cartão de Crédito", "cartao_debito"),
+    ).toBe(false);
+  });
+
+  it("'Cartão' genérico, sem crédito/débito na descrição, casa com os dois tipos", () => {
+    expect(paymentMethodMatchesReceipt("Cartão", "cartao_credito")).toBe(true);
+    expect(paymentMethodMatchesReceipt("Cartão", "cartao_debito")).toBe(true);
+  });
+
   it("reconhece transferência/depósito", () => {
     expect(
       paymentMethodMatchesReceipt("Transferência Bancária", "transferencia"),

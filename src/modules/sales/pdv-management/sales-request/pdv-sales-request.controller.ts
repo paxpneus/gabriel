@@ -161,11 +161,6 @@ export class PdvSalesRequestController extends BaseController<
       pdvAccess([PdvAccessScreen.CD21]),
       this.finish,
     );
-    this.router.post(
-      "/:id/correction/finished",
-      pdvAccess([PdvAccessScreen.CD21]),
-      this.correctFinishedRequest,
-    );
     this.router.get(
       "/:id/history",
       pdvAccess(READ_SCREENS),
@@ -731,22 +726,6 @@ export class PdvSalesRequestController extends BaseController<
       const updated = await this.service.finish(
         req.params.id as string,
         this.actorUserId(req),
-      );
-      return res.json(updated);
-    } catch (error: any) {
-      return res.status(400).json({ error: error.message });
-    }
-  };
-
-  correctFinishedRequest = async (
-    req: Request,
-    res: Response,
-  ): Promise<Response> => {
-    try {
-      const { decision, reasons, note } = req.body;
-      const updated = await this.service.correctFinishedRequest(
-        req.params.id as string,
-        { decision, reasons, note, userId: this.actorUserId(req) },
       );
       return res.json(updated);
     } catch (error: any) {
