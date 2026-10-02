@@ -121,6 +121,13 @@ export type PaymentReceiptType =
   | "pix"
   | "transferencia";
 
+// Forma de pagamento do catálogo (payment_methods) escolhida/resolvida pro
+// comprovante — snapshot id+description pro front exibir sem outro fetch.
+export interface PaymentReceiptPaymentMethod {
+  id: string;
+  description: string;
+}
+
 // Schema fixo do que o Gemini deve extrair do comprovante — nunca um JSON
 // solto/genérico. Todo campo é nullable: o prompt instrui a IA a devolver
 // null pra qualquer campo ilegível/coberto/rasurado em vez de inventar.
@@ -142,6 +149,9 @@ export interface PaymentReceiptExtraction {
   cartao_final: string | null;
   codigo_autorizacao: string | null;
   nsu_cv: string | null;
+  // Não vem da IA direto: resolvido depois da extração (resolve-receipt-payment-method.ts)
+  // ou escolhido na edição manual. Opcional pra análises antigas.
+  payment_method?: PaymentReceiptPaymentMethod | null;
 }
 
 // Base pra merge de edição manual (updateReceiptAnalysis) quando a análise
@@ -188,6 +198,8 @@ export interface PaymentReceiptReconciledAnalysis {
   cartao_final: string | null;
   codigo_autorizacao: string | null;
   nsu_cv: string | null;
+  // União (distinta por id) das formas de pagamento de cada comprovante.
+  payment_methods?: PaymentReceiptPaymentMethod[];
 }
 
 export interface PdvSalesRequestAttributes {
@@ -208,9 +220,8 @@ export interface PdvSalesRequestAttributes {
   // com análise ainda.
   payment_receipt_analysis: PaymentReceiptReconciledAnalysis | null;
   payment_receipt_validated: boolean | null;
-  // Só calculado com exatamente 1 comprovante anexado — com 2+, os tipos
-  // podem divergir entre si (ex.: PIX + cartão) e a comparação 1:1 contra
-  // order.paymentMethod não faz mais sentido; financeiro revisa manualmente.
+  // Conjunto de formas de pagamento da Bling (order.payments) x conjunto de
+  // comprovantes — ver helpers/payment-method-match.ts.
   payment_method_matches_receipt: boolean | null;
   // Informativo, nunca bloqueia nenhuma transição — payment_receipt_analysis
   // (conciliado).valor_total x order.net_total_order. null quando não dá pra

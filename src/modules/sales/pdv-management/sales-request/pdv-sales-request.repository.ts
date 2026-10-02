@@ -5,7 +5,6 @@ import PdvSalesRequest from "./pdv-sales-request.model";
 import {
   PdvSalesRequestStatus,
   PdvShippingType,
-  EXPEDITION_PDV_SALES_REQUEST_STATUSES,
   TERMINAL_PDV_SALES_REQUEST_STATUSES,
 } from "./pdv-sales-request.types";
 import Order from "../../orders/order/orders.model";
@@ -134,22 +133,17 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
     });
   }
 
-  // Candidatas ao auto-finish (finishIfDeliveryNoteGenerated) — status
-  // restrito à expedição (SHIPPING/SHIP_TODAY) de propósito, diferente do
-  // "ativo" genérico acima: só faz sentido finalizar sozinho quem já está
-  // aguardando expedição.
-  async findInExpeditionBySaleOrTransferInvoiceIds(
+  // Candidatas ao auto-finish (finishIfDeliveryNoteGenerated) — qualquer
+  // status ativo, só pela nota de VENDA (romaneio da transferência não finaliza).
+  async findActiveBySaleInvoiceIds(
     invoiceIds: string[],
   ): Promise<PdvSalesRequest[]> {
     if (!invoiceIds.length) return [];
 
     return this.findAll({
       where: {
-        [Op.or]: [
-          { sale_invoice_id: { [Op.in]: invoiceIds } },
-          { transfer_invoice_id: { [Op.in]: invoiceIds } },
-        ],
-        status: { [Op.in]: EXPEDITION_PDV_SALES_REQUEST_STATUSES },
+        sale_invoice_id: { [Op.in]: invoiceIds },
+        status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
       },
     });
   }

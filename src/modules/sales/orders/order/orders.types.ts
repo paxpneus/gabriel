@@ -1,4 +1,5 @@
 import { customerAttributes } from "../../customers/customers.types";
+import { OrderPaymentView } from "../order_payment/helpers/payments-view";
 import { orderItemsAttributes } from "../order_items/order_items.types";
 import { SalesOrderSnapshotAttributes } from "../../../reports/daily-sales/sales-order-snapshot/sales-order-snapshot.types";
 import { SalesOrderItemSnapshotAttributes } from "../../../reports/daily-sales/sales-order-item-snapshot/sales-order-item-snapshot.types";
@@ -136,6 +137,8 @@ export interface ShipToDefineDetailRow {
 // relatório foi processado.
 export interface OrderWithSalesSnapshotRaw extends orderAttributes {
   customer?: customerAttributes | null;
+  items?: orderItemsAttributes[];
+  payments?: any[];
   salesSnapshot?:
     | (SalesOrderSnapshotAttributes & {
         items?: SalesOrderItemSnapshotAttributes[];
@@ -143,30 +146,41 @@ export interface OrderWithSalesSnapshotRaw extends orderAttributes {
     | null;
 }
 
+// Campos financeiros e `snapshot` são null quando o pedido ainda não tem
+// snapshot do relatório de vendas — nesse caso `warnings` explica e `items`
+// vêm do próprio pedido (order_items) em vez do snapshot. Exceção: totalCost
+// e freightCost caem pros valores de orders (total_cost/freight_cost).
 export interface OrderSalesReportDetail {
   order: orderAttributes;
   customer: customerAttributes | null;
+  payments: OrderPaymentView[];
+  installments: number | null;
+  // Vêm direto de orders (não dependem do snapshot).
+  totalPrice: number | null;
+  freightCharged: number | null;
+  freightByAccount: number | null;
   // Preço bruto da venda (total_products do snapshot).
-  grossPrice: number;
+  grossPrice: number | null;
   // Lucro real da venda (contribution_value do snapshot).
-  profit: number;
+  profit: number | null;
   // Margem de lucro da venda, em % (contribution_pct do snapshot).
-  profitMargin: number;
-  markupPct: number;
-  discount: number;
-  icms: number;
-  commission: number;
-  totalCost: number;
-  totalTaxes: number;
-  totalFees: number;
-  freightCost: number;
-  taxCommission: number;
-  marketplaceFee: number;
-  paymentFee: number;
+  profitMargin: number | null;
+  markupPct: number | null;
+  discount: number | null;
+  icms: number | null;
+  commission: number | null;
+  totalCost: number | null;
+  totalTaxes: number | null;
+  totalFees: number | null;
+  freightCost: number | null;
+  taxCommission: number | null;
+  marketplaceFee: number | null;
+  paymentFee: number | null;
   // Snapshot completo (todos os campos gerados pelo relatório de vendas)
   // e seus itens, para não perder nenhum dado já calculado no job.
-  snapshot: SalesOrderSnapshotAttributes;
-  items: SalesOrderItemSnapshotAttributes[];
+  snapshot: SalesOrderSnapshotAttributes | null;
+  items: SalesOrderItemSnapshotAttributes[] | orderItemsAttributes[];
+  warnings: string[];
 }
 
 export type orderCreationAttributes = Omit<

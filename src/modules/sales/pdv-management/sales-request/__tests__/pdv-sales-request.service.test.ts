@@ -14,7 +14,7 @@ jest.mock("../pdv-sales-request.repository", () => ({
     findActiveByOrderId: jest.fn(),
     findByOrderId: jest.fn(),
     findActiveBySaleOrTransferInvoiceId: jest.fn(),
-    findInExpeditionBySaleOrTransferInvoiceIds: jest.fn(),
+    findActiveBySaleInvoiceIds: jest.fn(),
   },
 }));
 
@@ -35,6 +35,14 @@ jest.mock("../../sales-request-history/pdv-sales-request-history.service", () =>
   default: {
     create: jest.fn(),
     findAll: jest.fn(),
+  },
+}));
+
+jest.mock("../../../orders/payment_method/payment_method.service", () => ({
+  __esModule: true,
+  default: {
+    findLightCatalog: jest.fn().mockResolvedValue([]),
+    findLightByIds: jest.fn(),
   },
 }));
 
@@ -127,6 +135,7 @@ import pdvSalesRequestRepository from "../pdv-sales-request.repository";
 import pdvSalesRequestReceiptService from "../../sales-request-receipt/pdv-sales-request-receipt.service";
 import pdvSalesRequestHistoryService from "../../sales-request-history/pdv-sales-request-history.service";
 import orderService from "../../../orders/order/orders.service";
+import paymentMethodService from "../../../orders/payment_method/payment_method.service";
 import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
@@ -716,6 +725,88 @@ describe("PdvSalesRequestService", () => {
     });
   });
 
+  describe("syncSaleInvoiceFromOrder", () => {
+    beforeEach(() => {
+      (
+        unitBusinessService.getCd21UnitBusiness as jest.Mock
+      ).mockResolvedValue({ id: "cd21-id" });
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue([]);
+    });
+
+    it("romaneio da nota de venda já gerado: vincula a nota e finaliza de qualquer status ativo", async () => {
+      (
+        pdvSalesRequestRepository.findActiveByOrderId as jest.Mock
+      ).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.OPEN,
+        sale_invoice_id: null,
+      });
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue(["invoice-1"]);
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.syncSaleInvoiceFromOrder("order-1", "invoice-1");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        sale_invoice_id: "invoice-1",
+      });
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.FINISHED },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("status ativo fora de PENDING_NF_SALE sem nota: grava sale_invoice_id e notifica", async () => {
+      (
+        pdvSalesRequestRepository.findActiveByOrderId as jest.Mock
+      ).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+        sale_invoice_id: null,
+        unit_business_id: "ub-1",
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.syncSaleInvoiceFromOrder("order-1", "invoice-1");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        sale_invoice_id: "invoice-1",
+      });
+    });
+
+    it("sale_invoice_id já igual: não atualiza", async () => {
+      (
+        pdvSalesRequestRepository.findActiveByOrderId as jest.Mock
+      ).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIPPING,
+        sale_invoice_id: "invoice-1",
+      });
+
+      await service.syncSaleInvoiceFromOrder("order-1", "invoice-1");
+
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("sem solicitação ativa: não faz nada", async () => {
+      (
+        pdvSalesRequestRepository.findActiveByOrderId as jest.Mock
+      ).mockResolvedValue(null);
+
+      await service.syncSaleInvoiceFromOrder("order-1", "invoice-1");
+
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe("generateSaleInvoice", () => {
     it("dispara a emissão na Bling sem mudar status quando em PENDING_NF_SALE", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
@@ -947,7 +1038,7 @@ describe("PdvSalesRequestService", () => {
       (
         orderService.findByIdWithPayments as jest.Mock
       ).mockResolvedValue({
-        payments: [{ paymentMethod: { description: "Pix" } }],
+        payments: [{ paymentMethod: { id: "pm-pix", description: "Pix" } }],
         net_total_order: 100,
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
@@ -970,12 +1061,19 @@ describe("PdvSalesRequestService", () => {
       );
       expect(pdvSalesRequestReceiptService.update).toHaveBeenCalledWith(
         "receipt-1",
-        { analysis: pixExtraction, validated: null, fingerprint: "fingerprint-1" },
+        {
+          analysis: {
+            ...pixExtraction,
+            payment_method: { id: "pm-pix", description: "Pix" },
+          },
+          validated: null,
+          fingerprint: "fingerprint-1",
+        },
       );
       // Exatamente 1 comprovante -> payment_method_matches_receipt calculado.
       // valor_total do comprovante bate com order.net_total_order (100 == 100).
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
-        payment_receipt_analysis: pixExtraction,
+        payment_receipt_analysis: { ...pixExtraction, payment_methods: [] },
         payment_receipt_validated: null,
         payment_method_matches_receipt: true,
         receipt_total_matches_order: true,
@@ -1033,8 +1131,8 @@ describe("PdvSalesRequestService", () => {
         orderService.findByIdWithPayments as jest.Mock
       ).mockResolvedValue({
         payments: [
-          { paymentMethod: { description: "Pix" } },
-          { paymentMethod: { description: "Cartão de Crédito" } },
+          { paymentMethod: { id: "pm-pix", description: "Pix" } },
+          { paymentMethod: { id: "pm-cc", description: "Cartão de Crédito" } },
         ],
         net_total_order: 100,
       });
@@ -1433,6 +1531,151 @@ describe("PdvSalesRequestService", () => {
   });
 
   describe("updateReceiptAnalysis", () => {
+    it("payment_method_id resolve a forma no catálogo e deriva tipo_comprovante dela", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      (pdvSalesRequestReceiptService.findById as jest.Mock).mockResolvedValue({
+        id: "receipt-1",
+        pdv_sales_request_id: "r1",
+        analysis: { ...emptyReceiptExtraction, tipo_comprovante: "pix" },
+      });
+      (paymentMethodService.findLightByIds as jest.Mock).mockResolvedValue([
+        { id: "11111111-1111-4111-8111-111111111111", description: "Cartão de Crédito" },
+      ]);
+      (
+        paymentReceiptExtractionService.computeDerived as jest.Mock
+      ).mockReturnValue({ validated: null, fingerprint: null });
+      (
+        pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock
+      ).mockResolvedValue([]);
+      (orderService.findByIdWithPayments as jest.Mock).mockResolvedValue({
+        payments: [],
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.updateReceiptAnalysis("r1", "receipt-1", {
+        payment_method_id: "11111111-1111-4111-8111-111111111111",
+      });
+
+      expect(pdvSalesRequestReceiptService.update).toHaveBeenCalledWith(
+        "receipt-1",
+        expect.objectContaining({
+          analysis: expect.objectContaining({
+            tipo_comprovante: "cartao_credito",
+            payment_method: { id: "11111111-1111-4111-8111-111111111111", description: "Cartão de Crédito" },
+          }),
+        }),
+      );
+    });
+
+    it("payment_method_id sem tipo no enum (ex.: Dinheiro) limpa tipo_comprovante em vez de manter o antigo", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      (pdvSalesRequestReceiptService.findById as jest.Mock).mockResolvedValue({
+        id: "receipt-1",
+        pdv_sales_request_id: "r1",
+        analysis: { ...emptyReceiptExtraction, tipo_comprovante: "pix" },
+      });
+      (paymentMethodService.findLightByIds as jest.Mock).mockResolvedValue([
+        { id: "11111111-1111-4111-8111-111111111111", description: "Dinheiro" },
+      ]);
+      (
+        paymentReceiptExtractionService.computeDerived as jest.Mock
+      ).mockReturnValue({ validated: null, fingerprint: null });
+      (
+        pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock
+      ).mockResolvedValue([]);
+      (orderService.findByIdWithPayments as jest.Mock).mockResolvedValue({
+        payments: [],
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.updateReceiptAnalysis("r1", "receipt-1", {
+        payment_method_id: "11111111-1111-4111-8111-111111111111",
+      });
+
+      expect(pdvSalesRequestReceiptService.update).toHaveBeenCalledWith(
+        "receipt-1",
+        expect.objectContaining({
+          analysis: expect.objectContaining({
+            tipo_comprovante: null,
+            payment_method: { id: "11111111-1111-4111-8111-111111111111", description: "Dinheiro" },
+          }),
+        }),
+      );
+    });
+
+    it("campo numérico limpo no front (\"\") é tratado como null, não como erro de tipo", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      (pdvSalesRequestReceiptService.findById as jest.Mock).mockResolvedValue({
+        id: "receipt-1",
+        pdv_sales_request_id: "r1",
+        analysis: { ...emptyReceiptExtraction, qtd_parcelas: 3 },
+      });
+      (
+        paymentReceiptExtractionService.computeDerived as jest.Mock
+      ).mockReturnValue({ validated: null, fingerprint: null });
+      (
+        pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock
+      ).mockResolvedValue([]);
+      (orderService.findByIdWithPayments as jest.Mock).mockResolvedValue({
+        payments: [],
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.updateReceiptAnalysis("r1", "receipt-1", {
+        qtd_parcelas: "",
+        valor_total: 2200,
+      });
+
+      expect(pdvSalesRequestReceiptService.update).toHaveBeenCalledWith(
+        "receipt-1",
+        expect.objectContaining({
+          analysis: expect.objectContaining({
+            qtd_parcelas: null,
+            valor_total: 2200,
+          }),
+        }),
+      );
+    });
+
+    it("payment_method_id inexistente é rejeitado", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+      (pdvSalesRequestReceiptService.findById as jest.Mock).mockResolvedValue({
+        id: "receipt-1",
+        pdv_sales_request_id: "r1",
+        analysis: null,
+      });
+      (paymentMethodService.findLightByIds as jest.Mock).mockResolvedValue([]);
+
+      await expect(
+        service.updateReceiptAnalysis("r1", "receipt-1", {
+          payment_method_id: "11111111-1111-4111-8111-111111111111",
+        }),
+      ).rejects.toThrow("Forma de pagamento não encontrada");
+      expect(pdvSalesRequestReceiptService.update).not.toHaveBeenCalled();
+    });
+
     it("mescla os campos enviados sobre a análise da linha, preserva o resto e reconcilia a solicitação", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -1582,6 +1825,42 @@ describe("PdvSalesRequestService", () => {
   });
 
   describe("updatePaymentReceiptAnalysis", () => {
+    it("payment_method_ids grava as formas no resumo e junta os tipos derivados", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_analysis: null,
+      });
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        net_total_order: null,
+      });
+      (paymentMethodService.findLightByIds as jest.Mock).mockResolvedValue([
+        { id: "11111111-1111-4111-8111-111111111111", description: "Pix" },
+        { id: "22222222-2222-4222-8222-222222222222", description: "Cartão de Crédito" },
+      ]);
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.updatePaymentReceiptAnalysis("r1", {
+        payment_method_ids: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
+      });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        expect.objectContaining({
+          payment_receipt_analysis: expect.objectContaining({
+            tipo_comprovante: "pix + cartao_credito",
+            payment_methods: [
+              { id: "11111111-1111-4111-8111-111111111111", description: "Pix" },
+              { id: "22222222-2222-4222-8222-222222222222", description: "Cartão de Crédito" },
+            ],
+          }),
+        }),
+      );
+    });
+
     it("mescla os campos enviados sobre o resumo conciliado atual e recalcula receipt_total_matches_order", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -2335,7 +2614,7 @@ describe("PdvSalesRequestService", () => {
 
     it("TRANSPORTADORA: finaliza assim que a nota de venda entra num romaneio DO CD21", async () => {
       (
-        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock
       ).mockResolvedValue([
         {
           id: "r1",
@@ -2369,7 +2648,7 @@ describe("PdvSalesRequestService", () => {
 
     it("ADT: finaliza só com a nota de venda com romaneio, mesmo com a de transferência pendente", async () => {
       (
-        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock
       ).mockResolvedValue([
         {
           id: "r1",
@@ -2404,7 +2683,7 @@ describe("PdvSalesRequestService", () => {
 
     it("ADT: NÃO finaliza enquanto a nota de venda ainda não tem romaneio gerado", async () => {
       (
-        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock
       ).mockResolvedValue([
         {
           id: "r1",
@@ -2417,14 +2696,36 @@ describe("PdvSalesRequestService", () => {
         invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
       ).mockResolvedValue([]);
 
-      await service.finishIfDeliveryNoteGenerated(["invoice-transfer"]);
+      await service.finishIfDeliveryNoteGenerated(["invoice-sale"]);
 
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
     });
 
-    it("sem solicitação SHIPPING candidata: não consulta CD21 nem romaneio", async () => {
+    it("finaliza de qualquer status ativo (ex.: OPEN), sem exigir status de expedição", async () => {
       (
-        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock
+      ).mockResolvedValue([
+        { id: "r1", sale_invoice_id: "invoice-sale", status: PdvSalesRequestStatus.OPEN },
+      ]);
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue(["invoice-sale"]);
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.finishIfDeliveryNoteGenerated(["invoice-sale"]);
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.FINISHED },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("sem solicitação ativa candidata: não consulta CD21 nem romaneio", async () => {
+      (
+        pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock
       ).mockResolvedValue([]);
 
       await service.finishIfDeliveryNoteGenerated(["invoice-x"]);
@@ -2438,7 +2739,7 @@ describe("PdvSalesRequestService", () => {
 
     it("CD21 não cadastrado: recusa em vez de checar romaneio sem escopo", async () => {
       (
-        pdvSalesRequestRepository.findInExpeditionBySaleOrTransferInvoiceIds as jest.Mock
+        pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock
       ).mockResolvedValue([
         {
           id: "r1",

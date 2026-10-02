@@ -28,6 +28,7 @@ import productService from "../../../../inventory/products/services/product.serv
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 import { OrderPaymentCreationAttributes } from "../../../../sales/orders/order_payment/order_payment.types";
+import { paymentMethodGroupForBlingType } from "../../../../sales/orders/payment_method/helpers/payment-method-groups";
 import orderPaymentService from "../../../../sales/orders/order_payment/order_payment.service";
 import paymentMethodService from "../../../../sales/orders/payment_method/payment_method.service";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
@@ -51,6 +52,9 @@ interface BlingPaymentMethodApi {
   descricao: string;
   tipoPagamento?: number;
 }
+
+// formaPagamento.id (Bling) -> tipoPagamento; o tipo de uma forma não muda.
+const paymentTypeByBlingFormId = new Map<string, number | null>();
 
 const LOJA_SEM_LOJA = { id: "sem-loja", tipo: "Sem Loja" };
 const BLING_ORDER_REQUEST_DELAY_MS = Number(
@@ -251,31 +255,39 @@ export class BlingOrderService {
     }
   }
 
-  // Cacheia a forma de pagamento da Bling localmente (id_system) — evita
-  // bater em /formas-pagamentos/{id} toda vez que um pedido é sincronizado,
-  // já que o rate-limit da Bling é compartilhado entre todas as filas.
+  // Forma da Bling -> linha agrupada por tipoPagamento em payment_methods
+  // (ver payment-method-groups.ts). O tipo de cada forma é cacheado em memória
+  // — evita bater em /formas-pagamentos/{id} a cada pedido, já que o rate-limit
+  // da Bling é compartilhado entre todas as filas.
   private async resolvePaymentMethod(
     formaPagamentoId: number | string,
   ): Promise<string> {
-    const idSystem = String(formaPagamentoId);
+    const formId = String(formaPagamentoId);
+
+    let blingType = paymentTypeByBlingFormId.get(formId);
+    if (blingType === undefined) {
+      const { data } = await blingGet<{ data: BlingPaymentMethodApi }>(
+        `/formas-pagamentos/${formId}`,
+        this.blingApi,
+      );
+      blingType = data.data.tipoPagamento ?? null;
+      paymentTypeByBlingFormId.set(formId, blingType);
+    }
+
+    const group = paymentMethodGroupForBlingType(blingType);
     const existing = await paymentMethodService.findOne({
-      where: { id_system: idSystem },
+      where: { id_system: group.key },
+      attributes: ["id"],
     });
     if (existing) return existing.id;
 
-    const { data } = await blingGet<{ data: BlingPaymentMethodApi }>(
-      `/formas-pagamentos/${formaPagamentoId}`,
-      this.blingApi,
-    );
-
     const integration = await getBlingIntegration();
-
     const created = await paymentMethodService.create({
       integrations_id: integration.id,
-      id_system: idSystem,
-      description: data.data.descricao,
-      payment_type: data.data.tipoPagamento ?? null,
-      raw_payload: data.data as unknown as Record<string, unknown>,
+      id_system: group.key,
+      description: group.description,
+      payment_type: Number(group.key),
+      raw_payload: { blingTypes: group.blingTypes },
     });
 
     return created.id;
@@ -1022,13 +1034,12 @@ export class BlingOrderService {
         })),
       );
 
-      // Avança automaticamente uma solicitação PDV em PENDING_NF_SALE assim
-      // que a nota de venda é confirmada — cobre tanto NFe gerada pelo
-      // sistema (nfe-emission.service.ts) quanto manualmente na Bling, já
-      // que as duas acabam ressincronizando o pedido por aqui.
+      // Espelha a nota na solicitação PDV ativa (qualquer status) e avança
+      // PENDING_NF_SALE — cobre NFe gerada pelo sistema ou manualmente na Bling.
       if (invoiceId) {
-        await pdvSalesRequestService.markSaleInvoiceReadyIfPending(
+        await pdvSalesRequestService.syncSaleInvoiceFromOrder(
           existingOrder.id,
+          invoiceId,
         );
       }
 
@@ -1296,8 +1307,9 @@ export class BlingOrderService {
       );
 
       if (invoiceId) {
-        await pdvSalesRequestService.markSaleInvoiceReadyIfPending(
+        await pdvSalesRequestService.syncSaleInvoiceFromOrder(
           createdOrder.id,
+          invoiceId,
         );
       }
 

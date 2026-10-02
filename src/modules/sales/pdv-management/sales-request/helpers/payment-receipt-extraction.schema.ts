@@ -4,6 +4,18 @@ import { z } from "zod";
 // persistir — qualquer desvio (campo faltando, tipo errado, valor fora do
 // enum) é rejeitado em vez de salvo como está. Também usado pra validar
 // edição manual do front (PATCH /:id/receipt/analysis).
+// Campo limpo no formulário do front chega como "" — nas edições manuais isso
+// significa "sem valor" (null), não um erro de tipo.
+function emptyStringsToNull(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  return Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [
+      key,
+      value === "" ? null : value,
+    ]),
+  );
+}
+
 export const PaymentReceiptExtractionSchema = z.object({
   tipo_comprovante: z
     .enum(["cartao_credito", "cartao_debito", "pix", "transferencia"])
@@ -23,6 +35,17 @@ export const PaymentReceiptExtractionSchema = z.object({
   nsu_cv: z.string().nullable(),
 });
 
+// Entrada de edição manual (PATCH /:id/receipt/:receiptId/analysis): além dos
+// campos da extração, aceita payment_method_id — o backend resolve a forma
+// no catálogo e deriva tipo_comprovante dela. `payment_method` (snapshot
+// salvo) nunca é aceito do cliente.
+export const PaymentReceiptEditSchema = z.preprocess(
+  emptyStringsToNull,
+  PaymentReceiptExtractionSchema.extend({
+    payment_method_id: z.string().uuid().nullable(),
+  }).partial(),
+);
+
 export type PaymentReceiptExtractionInput = z.infer<
   typeof PaymentReceiptExtractionSchema
 >;
@@ -36,3 +59,12 @@ export const PaymentReceiptReconciledAnalysisSchema =
   PaymentReceiptExtractionSchema.extend({
     tipo_comprovante: z.string().nullable(),
   });
+
+// Edição manual do resumo conciliado: lista de formas de pagamento do catálogo
+// (o resumo pode combinar mais de um tipo).
+export const PaymentReceiptReconciledEditSchema = z.preprocess(
+  emptyStringsToNull,
+  PaymentReceiptReconciledAnalysisSchema.extend({
+    payment_method_ids: z.array(z.string().uuid()),
+  }).partial(),
+);

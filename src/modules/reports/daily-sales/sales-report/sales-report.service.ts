@@ -27,58 +27,7 @@ export class SalesReportService {
       const orderIds =
         await salesReportRepository.findAffectedOrderIds(lastProcessedAt);
 
-      const previousFactKeys =
-        await salesReportRepository.findAffectedFactKeys(orderIds);
-      const previousStateFactKeys =
-        await salesReportRepository.findAffectedStateFactKeys(orderIds);
-      const previousStoreFactKeys =
-        await salesReportRepository.findAffectedStoreFactKeys(orderIds);
-      const previousProductFactKeys =
-        await salesReportRepository.findAffectedProductFactKeys(orderIds);
-      const previousStatusFactKeys =
-        await salesReportRepository.findAffectedStatusFactKeys(orderIds);
-
-      await salesReportRepository.upsertSnapshots(orderIds);
-      await salesReportRepository.updateSnapshotTotals(orderIds);
-
-      const currentFactKeys =
-        await salesReportRepository.findAffectedFactKeys(orderIds);
-      const currentStateFactKeys =
-        await salesReportRepository.findAffectedStateFactKeys(orderIds);
-      const currentStoreFactKeys =
-        await salesReportRepository.findAffectedStoreFactKeys(orderIds);
-      const currentProductFactKeys =
-        await salesReportRepository.findAffectedProductFactKeys(orderIds);
-      const currentStatusFactKeys =
-        await salesReportRepository.findAffectedStatusFactKeys(orderIds);
-
-      await salesReportRepository.upsertDailySalesFacts(
-        this.uniqueFactKeys([...previousFactKeys, ...currentFactKeys]),
-      );
-      await salesReportRepository.upsertDailySalesStateFacts(
-        this.uniqueStateFactKeys([
-          ...previousStateFactKeys,
-          ...currentStateFactKeys,
-        ]),
-      );
-      await salesReportRepository.upsertDailySalesStoreFacts(
-        this.uniqueStoreFactKeys([
-          ...previousStoreFactKeys,
-          ...currentStoreFactKeys,
-        ]),
-      );
-      await salesReportRepository.upsertDailySalesProductFacts(
-        this.uniqueProductFactKeys([
-          ...previousProductFactKeys,
-          ...currentProductFactKeys,
-        ]),
-      );
-      await salesReportRepository.upsertDailySalesStatusFacts(
-        this.uniqueStatusFactKeys([
-          ...previousStatusFactKeys,
-          ...currentStatusFactKeys,
-        ]),
-      );
+      await this.processOrders(orderIds);
 
       await salesReportRepository.markSuccess(jobStartTime, orderIds.length);
 
@@ -97,6 +46,68 @@ export class SalesReportService {
       await salesReportRepository.markFailed(err);
       throw err;
     }
+  }
+
+  // Snapshots + daily facts dos pedidos, sem tocar em checkpoint/status do job.
+  private async processOrders(orderIds: string[]): Promise<void> {
+    const previousFactKeys =
+      await salesReportRepository.findAffectedFactKeys(orderIds);
+    const previousStateFactKeys =
+      await salesReportRepository.findAffectedStateFactKeys(orderIds);
+    const previousStoreFactKeys =
+      await salesReportRepository.findAffectedStoreFactKeys(orderIds);
+    const previousProductFactKeys =
+      await salesReportRepository.findAffectedProductFactKeys(orderIds);
+    const previousStatusFactKeys =
+      await salesReportRepository.findAffectedStatusFactKeys(orderIds);
+
+    await salesReportRepository.upsertSnapshots(orderIds);
+    await salesReportRepository.updateSnapshotTotals(orderIds);
+
+    const currentFactKeys =
+      await salesReportRepository.findAffectedFactKeys(orderIds);
+    const currentStateFactKeys =
+      await salesReportRepository.findAffectedStateFactKeys(orderIds);
+    const currentStoreFactKeys =
+      await salesReportRepository.findAffectedStoreFactKeys(orderIds);
+    const currentProductFactKeys =
+      await salesReportRepository.findAffectedProductFactKeys(orderIds);
+    const currentStatusFactKeys =
+      await salesReportRepository.findAffectedStatusFactKeys(orderIds);
+
+    await salesReportRepository.upsertDailySalesFacts(
+      this.uniqueFactKeys([...previousFactKeys, ...currentFactKeys]),
+    );
+    await salesReportRepository.upsertDailySalesStateFacts(
+      this.uniqueStateFactKeys([
+        ...previousStateFactKeys,
+        ...currentStateFactKeys,
+      ]),
+    );
+    await salesReportRepository.upsertDailySalesStoreFacts(
+      this.uniqueStoreFactKeys([
+        ...previousStoreFactKeys,
+        ...currentStoreFactKeys,
+      ]),
+    );
+    await salesReportRepository.upsertDailySalesProductFacts(
+      this.uniqueProductFactKeys([
+        ...previousProductFactKeys,
+        ...currentProductFactKeys,
+      ]),
+    );
+    await salesReportRepository.upsertDailySalesStatusFacts(
+      this.uniqueStatusFactKeys([
+        ...previousStatusFactKeys,
+        ...currentStatusFactKeys,
+      ]),
+    );
+  }
+
+  // Reprocessa só estes pedidos, independente do checkpoint do job incremental
+  // (que pode já ter avançado além do updated_at deles).
+  async refreshOrders(orderIds: string[]): Promise<void> {
+    await this.processOrders(orderIds);
   }
 
   // ------------------------------------------------------------------

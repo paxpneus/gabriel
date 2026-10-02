@@ -214,6 +214,8 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
       where: { id: orderId },
       include: [
         { model: Customer, as: "customer" },
+        { model: OrderItems, as: "items" },
+        PAYMENTS_INCLUDE,
         {
           model: SalesOrderSnapshot,
           as: "salesSnapshot",
