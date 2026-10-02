@@ -42,6 +42,7 @@ import {
 } from "../../../../../../shared/utils/logging/db-errors-logs";
 import { MagentoSyncQueue } from "../../../../magentoV2/queues/magento-sync.queue";
 import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { buildInvoiceTrackingUrl } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/tracking-url";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import invoiceItemsService from "../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import {
@@ -1666,6 +1667,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       source_payload: nf as unknown as Record<string, unknown>,
       emitted_at: emittedAt,
       number_system: String(nf.numero),
+      tracking_url: buildInvoiceTrackingUrl(String(nf.numero)),
       integrations_id: integration.id,
       store_id: store_id!.id ?? null,
       seller_id: sellerId,

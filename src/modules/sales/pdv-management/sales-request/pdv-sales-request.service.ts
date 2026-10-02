@@ -254,6 +254,7 @@ export class PdvSalesRequestService extends BaseService<
           }
         : null,
       shipping_label: buildShippingLabel(plain.shipping_type, plain.saleInvoice?.transporter_name),
+      invoice_tracking_url: plain.saleInvoice?.tracking_url ?? null,
       expedition_progress: await this.resolveExpeditionProgress(plain),
     };
   }
@@ -353,6 +354,7 @@ export class PdvSalesRequestService extends BaseService<
             plain.shipping_type,
             plain.saleInvoice?.transporter_name,
           ),
+          invoice_tracking_url: plain.saleInvoice?.tracking_url ?? null,
         };
       }),
     };

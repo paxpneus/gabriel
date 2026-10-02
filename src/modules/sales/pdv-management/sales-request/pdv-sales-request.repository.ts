@@ -22,12 +22,13 @@ import type {
 
 // Só id/number_system — o front usa pra exibir o número da nota + montar a
 // rota de DANFE (GET /:id/invoice/:invoiceId/danfe), nunca a nota inteira.
-// transporter_name na nota de venda alimenta o shipping_label (service).
+// transporter_name na nota de venda alimenta o shipping_label (service);
+// tracking_url (só nota Bling) vira invoice_tracking_url na resposta.
 const INVOICE_SUMMARY_INCLUDE = [
   {
     model: Invoice,
     as: "saleInvoice",
-    attributes: ["id", "number_system", "transporter_name"],
+    attributes: ["id", "number_system", "transporter_name", "tracking_url"],
   },
   { model: Invoice, as: "transferInvoice", attributes: ["id", "number_system"] },
 ];

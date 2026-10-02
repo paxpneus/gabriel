@@ -286,3 +286,10 @@ traduzida pro nome mapeado no sistema (`display_name`, ex.: `"Em Aberto"`,
 `"Atendido"`, `"Aguardando Verificação Humana"`); se não houver mapeamento,
 vem o código bruto, e `null` se o pedido não tem situação. Só nesses dois
 endpoints — `/orders/eligible` e `/orders/:orderId` não mudaram.
+
+## Novo: `invoice_tracking_url` na listagem e no `GET /sales-request/:id`
+
+Link de rastreio da entrega da nota de venda
+(`https://paxpneus.acompanharentrega.com.br/?tpDoc=4&doc=002%2F<número sem zeros à esquerda>`).
+Também vem em `saleInvoice.tracking_url`. `null` sem nota de venda ou se a
+nota ainda não foi importada pela Bling.
