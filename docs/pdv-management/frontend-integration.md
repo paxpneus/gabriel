@@ -246,7 +246,7 @@ na listagem. Substitui a chamada extra a `GET /batch/in-batch/pdv-sales-request/
 | in_batch | batch_finished | delivery_note_generated | progress | progress_message |
 |---|---|---|---|---|
 | false | false | false | `NOT_IN_BATCH` | Lote ainda não gerado! |
-| true | false | false | `IN_BATCH` | Lote gerado |
+| true | false | false | `IN_BATCH` | Lote gerado, conferência de produtos em andamento |
 | true | true | false | `BATCH_FINISHED` | Lote finalizado, mas precisa gerar romaneio |
 | true | true | true | `DELIVERY_NOTE_GENERATED` | Romaneio gerado mas não atualizado no hub, finalize manualmente! |
 

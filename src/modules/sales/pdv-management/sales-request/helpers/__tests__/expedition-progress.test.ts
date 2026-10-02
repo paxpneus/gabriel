@@ -27,7 +27,9 @@ describe("buildExpeditionProgress", () => {
       delivery_note_generated: false,
     });
     expect(result.progress).toBe(PdvExpeditionProgress.IN_BATCH);
-    expect(result.progress_message).toBe("Lote gerado");
+    expect(result.progress_message).toBe(
+      "Lote gerado, conferência de produtos em andamento",
+    );
   });
 
   it("maps batch finished without delivery note", () => {
