@@ -5,6 +5,57 @@ só o que for NOVO ou o que MUDOU no fluxo — de forma curta, só o essencial
 pro front saber integrar. Nada de contrato completo/histórico redundante
 aqui.
 
+## Mudou: coluna de expedição dividida em `SHIPPING` (ADT) e `SHIP_TODAY` (TRANSPORTADORA)
+
+Novo valor de `status`: **`SHIP_TODAY`** ("Embarque hoje"). Ele faz **exatamente
+o mesmo** que `SHIPPING` fazia (aguardando lote/romaneio, `expedition_progress`,
+`expedition/reject`, `finish`, auto-finish ao gerar romaneio, `PENDING_CORRECTION`
+com `correction_origin_status`); só muda a coluna, pra dividir melhor.
+
+| `shipping_type` | Destino ao sair de `PENDING_NF_SALE` (ou aprovação CD21 com nota já emitida) | Coluna |
+|---|---|---|
+| `ADT` | `PENDING_NF_TRANSFER` → (`transfer-invoice/confirm`) → **`SHIPPING`** | "Pendente expedição" (igual a antes) |
+| `TRANSPORTADORA` | direto **`SHIP_TODAY`** (antes ia pra `SHIPPING`) | "Embarque hoje" |
+
+- `SHIPPING` agora só recebe ADT; transferência de ADT continua indo pra
+  `SHIPPING`. Transição `TRANSPORTADORA` → `SHIP_TODAY` não passa mais por `SHIPPING`.
+- Tudo que o front checava com `status === "SHIPPING"` (botões de lote/romaneio,
+  `expedition_progress`, rejeitar expedição, finalizar) precisa aceitar também
+  `SHIP_TODAY`. `expedition_progress` vem preenchido nos dois.
+- `correction_origin_status` pode ser `SHIP_TODAY` (rejeição de expedição vinda de
+  `SHIP_TODAY`); `resolveCorrection` com essa origem exige `decision` igual ao
+  de `SHIPPING` (`CANCEL`|`EXCHANGE_PRODUCT`). Em `sub_stats` do
+  `pending_correction` (Loja/Televendas) entra a chave `SHIP_TODAY`.
+- `transfer-invoice*` continua só pra ADT (`PENDING_NF_TRANSFER`/`SHIPPING`/`FINISHED`);
+  `SHIP_TODAY` nunca tem nota de transferência.
+- Solicitações `TRANSPORTADORA` que já estavam em `SHIPPING` são movidas pra `SHIP_TODAY` pela migration `m299` (status e `correction_origin_status`).
+- Migrations `m298`/`m299`: `m298` adiciona `SHIP_TODAY` aos enums (status, origem da correção,
+  `step` do histórico), `m299` move os dados antigos — rodar antes do deploy.
+
+## Mudou: indicativos de expedição no `summary/status-counts` e filtro `indicator`
+
+Tela **CD21** agora devolve (nesta ordem, junto dos demais): `adt_12`, `adt_17`,
+`pending_expedition`, `ship_today`:
+
+| key | label | critério |
+|---|---|---|
+| `adt_12` | `ADT CD 12` | `SHIPPING` + `shipping_type = ADT` + transportadora da nota de venda com `CD 12` |
+| `adt_17` | `ADT CD 17` | `SHIPPING` + `shipping_type = ADT` + transportadora da nota de venda com `CD 17` |
+| `pending_expedition` | `Pendente expedição` | `SHIPPING` + `shipping_type = ADT`, **qualquer transportadora** (não olha CD) |
+| `ship_today` | `Embarque hoje` | `SHIP_TODAY` |
+
+Atenção: `pending_expedition` é o total de ADT em `SHIPPING`, então **inclui** os
+de `adt_12` e `adt_17` (não some os três). Entrar em `SHIPPING` depende só do
+`shipping_type` (ADT); a transportadora só entra nos filtros/contadores de CD.
+Resposta no formato de sempre, ex.: `"adt_12": { "label": "ADT CD 12", "quantity": 4 }`.
+
+`cd21_billing` (Loja/Televendas) passou a somar também `SHIP_TODAY`.
+
+Filtros na listagem: `GET /sales-request?filters[indicator]=adt_12`, `adt_17`,
+`ship_today` e `pending_expedition` — mesmo critério
+do número do indicativo. `filters[status]=SHIP_TODAY` também funciona.
+`shipping_label` não mudou.
+
 ## Novo: busca por número do pedido na listagem
 
 `GET /sales-request?filters[number_order_system]=<valor>` — busca parcial
@@ -57,11 +108,11 @@ front).
 Indicativos por tela:
 - **Loja/Televendas** (`STORE_REQUEST`): `open`, `pending_finance`,
   `pending_correction` (com `sub_stats`), `pending_cd21_analysis`,
-  `cd21_billing` (soma NF de venda + NF de transferência + expedição).
+  `cd21_billing` (soma NF de venda + NF de transferência + expedição `SHIPPING`/`SHIP_TODAY`).
 - **Financeiro** (`FINANCE`): `pending_finance`,
   `pending_correction_finance_origin` (só correção originada do financeiro).
 - **CD21**: `pending_nf_transfer`, `pending_nf_sale`,
-  `pending_cd21_analysis`, `pending_expedition`.
+  `pending_cd21_analysis`, `adt_12`, `adt_17`, `pending_expedition`, `ship_today`.
 
 Exemplo (Loja/Televendas):
 
@@ -90,11 +141,11 @@ Exemplo (Loja/Televendas):
 `GET /sales-request?filters[indicator]=<key>` — filtra pelo MESMO critério
 que popula o indicativo correspondente do `summary/status-counts` acima (ex.:
 `filters[indicator]=cd21_billing` traz as solicitações em `PENDING_NF_SALE`
-OU `PENDING_NF_TRANSFER` OU `SHIPPING`). `<key>` é uma das chaves da resposta
+OU `PENDING_NF_TRANSFER` OU `SHIPPING` OU `SHIP_TODAY`). `<key>` é uma das chaves da resposta
 de `summary/status-counts` (`open`, `pending_finance`, `pending_correction`,
 `pending_correction_finance_origin`, `pending_cd21_analysis`,
-`pending_nf_sale`, `pending_nf_transfer`, `pending_expedition`,
-`cd21_billing`) — clicar num indicativo do resumo e aplicar esse filtro deve
+`pending_nf_sale`, `pending_nf_transfer`, `pending_expedition`, `adt_12`,
+`adt_17`, `ship_today`, `cd21_billing`) — clicar num indicativo do resumo e aplicar esse filtro deve
 sempre bater com o número mostrado nele.
 
 ## Mudou: `DELETE /sales-request/:id` não apaga mais o registro

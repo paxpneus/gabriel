@@ -18,6 +18,7 @@ import {
   PdvSalesRequestOrderDetail,
   PdvSalesRequestOrderSummary,
   TERMINAL_PDV_SALES_REQUEST_STATUSES,
+  EXPEDITION_PDV_SALES_REQUEST_STATUSES,
 } from "./pdv-sales-request.types";
 import pdvSalesRequestHistoryService from "../sales-request-history/pdv-sales-request-history.service";
 import pdvSalesRequestReceiptService from "../sales-request-receipt/pdv-sales-request-receipt.service";
@@ -251,9 +252,9 @@ export class PdvSalesRequestService extends BaseService<
     };
   }
 
-  // Só em SHIPPING; nota é order.invoice_id (fonte de verdade), sem nota = fora de lote.
+  // Só em SHIPPING/SHIP_TODAY; nota é order.invoice_id (fonte de verdade), sem nota = fora de lote.
   private async resolveExpeditionProgress(plain: any) {
-    if (plain.status !== PdvSalesRequestStatus.SHIPPING) return null;
+    if (!EXPEDITION_PDV_SALES_REQUEST_STATUSES.includes(plain.status)) return null;
 
     const invoiceId = plain.order?.invoice_id ?? plain.sale_invoice_id;
     const batchStatus = invoiceId
@@ -411,12 +412,20 @@ export class PdvSalesRequestService extends BaseService<
       unit_business_id: Array.isArray(scope) ? { [Op.in]: scope } : scope,
     };
 
-    const [statusCounts, correctionOriginCounts] = await Promise.all([
-      this.repository.countGroupedByStatus(where),
-      this.repository.countGroupedByCorrectionOrigin(where),
-    ]);
-
     const keys = PDV_STATUS_INDICATORS_BY_SCREEN[access.screen];
+    const needsTransporterCounts = keys.some(
+      (key) => PDV_STATUS_INDICATORS[key].shippingType,
+    );
+
+    const [statusCounts, correctionOriginCounts, transporterCdCounts] =
+      await Promise.all([
+        this.repository.countGroupedByStatus(where),
+        this.repository.countGroupedByCorrectionOrigin(where),
+        needsTransporterCounts
+          ? this.repository.countAdtShippingGroupedByTransporterCd(where)
+          : Promise.resolve<Record<string, number>>({}),
+      ]);
+
     const correctionOrigins = PDV_CORRECTION_ORIGINS_BY_SCREEN[access.screen];
 
     const summary: Record<
@@ -426,12 +435,21 @@ export class PdvSalesRequestService extends BaseService<
 
     for (const key of keys) {
       const definition = PDV_STATUS_INDICATORS[key];
-      const quantity = definition.correctionOrigin
-        ? (correctionOriginCounts[definition.correctionOrigin] ?? 0)
-        : definition.statuses.reduce(
-            (sum, status) => sum + (statusCounts[status] ?? 0),
-            0,
-          );
+      const sumCds = (cds: readonly string[]) =>
+        cds.reduce((sum, cd) => sum + (transporterCdCounts[cd] ?? 0), 0);
+      const statusTotal = definition.statuses.reduce(
+        (sum, status) => sum + (statusCounts[status] ?? 0),
+        0,
+      );
+
+      let quantity = statusTotal;
+      if (definition.correctionOrigin) {
+        quantity = correctionOriginCounts[definition.correctionOrigin] ?? 0;
+      } else if (definition.shippingType) {
+        quantity = definition.transporterCds
+          ? sumCds(definition.transporterCds)
+          : sumCds(Object.keys(transporterCdCounts));
+      }
 
       summary[key] = { label: definition.label, quantity };
 
@@ -1363,7 +1381,12 @@ export class PdvSalesRequestService extends BaseService<
       );
     }
 
-    if (request.correction_origin_status === PdvSalesRequestStatus.SHIPPING) {
+    if (
+      request.correction_origin_status &&
+      EXPEDITION_PDV_SALES_REQUEST_STATUSES.includes(
+        request.correction_origin_status,
+      )
+    ) {
       if (!params.decision) {
         throw new Error(
           'Correção vinda da expedição exige "decision": CANCEL ou EXCHANGE_PRODUCT',
@@ -1506,7 +1529,7 @@ export class PdvSalesRequestService extends BaseService<
   ): PdvSalesRequestStatus {
     return shippingType === PdvShippingType.ADT
       ? PdvSalesRequestStatus.PENDING_NF_TRANSFER
-      : PdvSalesRequestStatus.SHIPPING;
+      : PdvSalesRequestStatus.SHIP_TODAY;
   }
 
   // Chamado pelo sync de pedidos da Bling (bling-order.service.ts) sempre
@@ -1844,7 +1867,9 @@ export class PdvSalesRequestService extends BaseService<
     id: string,
     params: { reasons: PdvCorrectionReason[]; note: string; userId?: string },
   ): Promise<PdvSalesRequest> {
-    await this.assertStatus(id, PdvSalesRequestStatus.SHIPPING);
+    const request = await this.assertStatus(id, [
+      ...EXPEDITION_PDV_SALES_REQUEST_STATUSES,
+    ]);
 
     const errors: PdvSalesRequestErrors = {
       origin: PdvCorrectionOrigin.EXPEDITION,
@@ -1853,7 +1878,7 @@ export class PdvSalesRequestService extends BaseService<
     };
 
     await this.repository.update(id, {
-      correction_origin_status: PdvSalesRequestStatus.SHIPPING,
+      correction_origin_status: request.status,
       errors,
     });
 
@@ -1864,7 +1889,7 @@ export class PdvSalesRequestService extends BaseService<
   }
 
   async finish(id: string, userId?: string): Promise<PdvSalesRequest> {
-    await this.assertStatus(id, PdvSalesRequestStatus.SHIPPING);
+    await this.assertStatus(id, [...EXPEDITION_PDV_SALES_REQUEST_STATUSES]);
     return this.transitionTo(id, PdvSalesRequestStatus.FINISHED, {
       userId,
       description: "Romaneio gerado — solicitação finalizada",
@@ -1879,7 +1904,7 @@ export class PdvSalesRequestService extends BaseService<
     if (!invoiceIds.length) return;
 
     const candidates =
-      await this.repository.findShippingBySaleOrTransferInvoiceIds(
+      await this.repository.findInExpeditionBySaleOrTransferInvoiceIds(
         invoiceIds,
       );
     if (!candidates.length) return;

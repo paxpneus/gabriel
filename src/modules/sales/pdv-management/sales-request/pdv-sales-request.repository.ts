@@ -1,8 +1,11 @@
 import { Op, WhereOptions, fn, col } from "sequelize";
+import { saleInvoiceTransporterCdExpression } from "./helpers/transporter-cd";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import PdvSalesRequest from "./pdv-sales-request.model";
 import {
   PdvSalesRequestStatus,
+  PdvShippingType,
+  EXPEDITION_PDV_SALES_REQUEST_STATUSES,
   TERMINAL_PDV_SALES_REQUEST_STATUSES,
 } from "./pdv-sales-request.types";
 import Order from "../../orders/order/orders.model";
@@ -132,9 +135,10 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   }
 
   // Candidatas ao auto-finish (finishIfDeliveryNoteGenerated) — status
-  // restrito a SHIPPING de propósito, diferente do "ativo" genérico acima:
-  // só faz sentido finalizar sozinho quem já está aguardando expedição.
-  async findShippingBySaleOrTransferInvoiceIds(
+  // restrito à expedição (SHIPPING/SHIP_TODAY) de propósito, diferente do
+  // "ativo" genérico acima: só faz sentido finalizar sozinho quem já está
+  // aguardando expedição.
+  async findInExpeditionBySaleOrTransferInvoiceIds(
     invoiceIds: string[],
   ): Promise<PdvSalesRequest[]> {
     if (!invoiceIds.length) return [];
@@ -145,7 +149,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
           { sale_invoice_id: { [Op.in]: invoiceIds } },
           { transfer_invoice_id: { [Op.in]: invoiceIds } },
         ],
-        status: PdvSalesRequestStatus.SHIPPING,
+        status: { [Op.in]: EXPEDITION_PDV_SALES_REQUEST_STATUSES },
       },
     });
   }
@@ -186,6 +190,30 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
       },
       {},
     );
+  }
+
+  // SHIPPING + shipping_type ADT agrupado pelo CD da transportadora da nota de
+  // venda ("12"/"17"/outro; chave "" sem nota ou sem CD no nome) — indicativos
+  // adt_12/adt_17/pending_expedition de getStatusSummary.
+  async countAdtShippingGroupedByTransporterCd(
+    where: WhereOptions,
+  ): Promise<Record<string, number>> {
+    const cd = saleInvoiceTransporterCdExpression();
+    const rows = (await this.model.findAll({
+      where: {
+        ...where,
+        status: PdvSalesRequestStatus.SHIPPING,
+        shipping_type: PdvShippingType.ADT,
+      },
+      attributes: [[cd, "cd"], [fn("COUNT", col("id")), "quantity"]],
+      group: [cd as any],
+      raw: true,
+    })) as unknown as { cd: string | null; quantity: string }[];
+
+    return rows.reduce<Record<string, number>>((acc, row) => {
+      acc[row.cd ?? ""] = Number(row.quantity);
+      return acc;
+    }, {});
   }
 
   // Contagem por correction_origin_status, restrita a PENDING_CORRECTION

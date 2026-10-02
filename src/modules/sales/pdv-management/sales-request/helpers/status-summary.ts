@@ -1,6 +1,10 @@
 import { Op, WhereOptions } from "sequelize";
-import { PdvSalesRequestStatus } from "../pdv-sales-request.types";
+import {
+  PdvSalesRequestStatus,
+  PdvShippingType,
+} from "../pdv-sales-request.types";
 import { PdvAccessScreen } from "../../pdv-access/pdv-access.types";
+import { transporterCdInWhere } from "./transporter-cd";
 
 // Cada indicativo do resumo de status (getStatusSummary) é definido aqui uma
 // única vez e reusado tanto pra contar quanto pro filtro filters[indicator]
@@ -15,6 +19,9 @@ export type PdvStatusIndicatorKey =
   | "pending_nf_sale"
   | "pending_nf_transfer"
   | "pending_expedition"
+  | "adt_12"
+  | "adt_17"
+  | "ship_today"
   | "cd21_billing";
 
 interface PdvStatusIndicatorDefinition {
@@ -25,6 +32,11 @@ interface PdvStatusIndicatorDefinition {
   // quantidade vem do agrupamento por correction_origin_status, não da soma
   // de `statuses`.
   correctionOrigin?: PdvSalesRequestStatus;
+  // Restringe por shipping_type — contado via countAdtShippingGroupedByTransporterCd
+  // (não dá pra usar o group by status), ver getStatusSummary.
+  shippingType?: PdvShippingType;
+  // Restringe também pela transportadora (CD <n>) da nota de venda.
+  transporterCds?: readonly string[];
 }
 
 export const PDV_STATUS_INDICATORS: Record<
@@ -57,9 +69,27 @@ export const PDV_STATUS_INDICATORS: Record<
     label: "Aguardando NF de transferência",
     statuses: [PdvSalesRequestStatus.PENDING_NF_TRANSFER],
   },
+  // Todo ADT em SHIPPING, qualquer transportadora (inclui os de adt_12/adt_17).
   pending_expedition: {
     label: "Pendente expedição",
     statuses: [PdvSalesRequestStatus.SHIPPING],
+    shippingType: PdvShippingType.ADT,
+  },
+  adt_12: {
+    label: "ADT CD 12",
+    statuses: [PdvSalesRequestStatus.SHIPPING],
+    shippingType: PdvShippingType.ADT,
+    transporterCds: ["12"],
+  },
+  adt_17: {
+    label: "ADT CD 17",
+    statuses: [PdvSalesRequestStatus.SHIPPING],
+    shippingType: PdvShippingType.ADT,
+    transporterCds: ["17"],
+  },
+  ship_today: {
+    label: "Embarque hoje",
+    statuses: [PdvSalesRequestStatus.SHIP_TODAY],
   },
   cd21_billing: {
     label: "CD21 faturamento",
@@ -67,6 +97,7 @@ export const PDV_STATUS_INDICATORS: Record<
       PdvSalesRequestStatus.PENDING_NF_SALE,
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
       PdvSalesRequestStatus.SHIPPING,
+      PdvSalesRequestStatus.SHIP_TODAY,
     ],
   },
 };
@@ -92,7 +123,10 @@ export const PDV_STATUS_INDICATORS_BY_SCREEN: Record<
     "pending_nf_transfer",
     "pending_nf_sale",
     "pending_cd21_analysis",
+    "adt_12",
+    "adt_17",
     "pending_expedition",
+    "ship_today",
   ],
 };
 
@@ -107,6 +141,7 @@ export const PDV_CORRECTION_ORIGINS_BY_SCREEN: Partial<
     PdvSalesRequestStatus.PENDING_FINANCE,
     PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
     PdvSalesRequestStatus.SHIPPING,
+    PdvSalesRequestStatus.SHIP_TODAY,
     PdvSalesRequestStatus.INVOICE_CANCELLED,
     PdvSalesRequestStatus.FINISHED,
   ],
@@ -123,6 +158,12 @@ export function indicatorWhere(key: PdvStatusIndicatorKey): WhereOptions {
   const where: WhereOptions = { status: { [Op.in]: definition.statuses } };
   if (definition.correctionOrigin) {
     (where as any).correction_origin_status = definition.correctionOrigin;
+  }
+  if (definition.shippingType) {
+    (where as any).shipping_type = definition.shippingType;
+  }
+  if (definition.transporterCds) {
+    (where as any)[Op.and] = [transporterCdInWhere(definition.transporterCds)];
   }
 
   return where;
