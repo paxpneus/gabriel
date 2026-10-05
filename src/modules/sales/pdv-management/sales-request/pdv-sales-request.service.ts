@@ -67,6 +67,7 @@ import {
   reconcileReceiptAnalyses,
   reconcileReceiptValidation,
   receiptTotalMatchesOrder,
+  receiptTotalDifference,
 } from "./helpers/receipt-reconciliation";
 import { QueryParams } from "../../../../shared/query/query.types";
 import socketService from "../../../handlers/socket/services/socket.service";
@@ -823,16 +824,18 @@ export class PdvSalesRequestService extends BaseService<
       })),
     );
 
-    const totalMatchesOrder = receiptTotalMatchesOrder(
-      analysis?.valor_total ?? null,
-      (order as any)?.net_total_order ?? null,
-    );
+    const receiptTotal = analysis?.valor_total ?? null;
+    const orderTotal = (order as any)?.net_total_order ?? null;
 
     const updated = await this.repository.update(requestId, {
       payment_receipt_analysis: analysis,
       payment_receipt_validated: validated,
       payment_method_matches_receipt: matchesReceipt,
-      receipt_total_matches_order: totalMatchesOrder,
+      receipt_total_matches_order: receiptTotalMatchesOrder(
+        receiptTotal,
+        orderTotal,
+      ),
+      receipt_total_difference: receiptTotalDifference(receiptTotal, orderTotal),
     });
     if (!updated) throw new Error("Solicitação não encontrada");
 
@@ -1301,6 +1304,7 @@ export class PdvSalesRequestService extends BaseService<
             paymentMethodMatchesReceipt:
               reconciled.payment_method_matches_receipt,
             totalMatchesOrder: reconciled.receipt_total_matches_order,
+            totalDifference: reconciled.receipt_total_difference,
           },
         },
       );
@@ -1441,7 +1445,7 @@ export class PdvSalesRequestService extends BaseService<
   // fonte, isso aqui é só um ajuste pontual). Mesma janela de edição que
   // updateReceiptAnalysis; não toca payment_receipt_validated/
   // payment_method_matches_receipt (esses dois são sobre CADA comprovante,
-  // não sobre o resumo). receipt_total_matches_order É recalculado — é
+  // não sobre o resumo). receipt_total_matches_order/difference SÃO recalculados — é
   // literalmente a comparação do campo que este endpoint acabou de mudar
   // (valor_total) contra order.net_total_order, deixaria o aviso desatualizado
   // se não recalculasse.
@@ -1477,14 +1481,18 @@ export class PdvSalesRequestService extends BaseService<
     }
 
     const order = await orderService.findById(request.order_id);
-    const totalMatchesOrder = receiptTotalMatchesOrder(
-      merged.valor_total,
-      (order as any)?.net_total_order ?? null,
-    );
+    const orderTotal = (order as any)?.net_total_order ?? null;
 
     const updated = await this.repository.update(id, {
       payment_receipt_analysis: merged,
-      receipt_total_matches_order: totalMatchesOrder,
+      receipt_total_matches_order: receiptTotalMatchesOrder(
+        merged.valor_total,
+        orderTotal,
+      ),
+      receipt_total_difference: receiptTotalDifference(
+        merged.valor_total,
+        orderTotal,
+      ),
     });
     if (!updated) throw new Error("Solicitação não encontrada");
 
@@ -2440,6 +2448,7 @@ export class PdvSalesRequestService extends BaseService<
           payment_receipt_validated: null,
           payment_method_matches_receipt: null,
           receipt_total_matches_order: null,
+          receipt_total_difference: null,
           transfer_invoice_products_match_sale: null,
           errors: null,
         },

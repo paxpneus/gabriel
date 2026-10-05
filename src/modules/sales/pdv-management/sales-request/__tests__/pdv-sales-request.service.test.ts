@@ -1429,6 +1429,7 @@ describe("PdvSalesRequestService", () => {
         payment_receipt_validated: null,
         payment_method_matches_receipt: true,
         receipt_total_matches_order: true,
+        receipt_total_difference: 0,
       });
       expect(socketService.emitToNamespaceRoom).toHaveBeenCalledWith(
         "/pdv",
@@ -1512,6 +1513,7 @@ describe("PdvSalesRequestService", () => {
           payment_receipt_validated: true,
           payment_method_matches_receipt: true,
           receipt_total_matches_order: true,
+          receipt_total_difference: 0,
         }),
       );
     });
@@ -1780,6 +1782,7 @@ describe("PdvSalesRequestService", () => {
         payment_receipt_validated: null,
         payment_method_matches_receipt: null,
         receipt_total_matches_order: null,
+        receipt_total_difference: null,
       });
       expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
         expect.objectContaining({ description: "Comprovante removido" }),
@@ -2449,6 +2452,7 @@ describe("PdvSalesRequestService", () => {
           valor_total: 120,
         }),
         receipt_total_matches_order: true,
+        receipt_total_difference: 0,
       });
       expect(pdvSalesRequestReceiptService.update).not.toHaveBeenCalled();
       expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
@@ -2484,7 +2488,42 @@ describe("PdvSalesRequestService", () => {
           estabelecimento_nome: null,
         }),
         receipt_total_matches_order: null,
+        receipt_total_difference: null,
       });
+    });
+
+    it("grava a diferença comprovantes − pedido: negativa quando pagou a menos, positiva quando pagou a mais", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.OPEN,
+        payment_receipt_analysis: null,
+      });
+      // DECIMAL do Postgres chega como string.
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        net_total_order: "120.50",
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.updatePaymentReceiptAnalysis("r1", { valor_total: 100.2 });
+      expect(pdvSalesRequestRepository.update).toHaveBeenLastCalledWith(
+        "r1",
+        expect.objectContaining({
+          receipt_total_matches_order: false,
+          receipt_total_difference: -20.3,
+        }),
+      );
+
+      await service.updatePaymentReceiptAnalysis("r1", { valor_total: 130 });
+      expect(pdvSalesRequestRepository.update).toHaveBeenLastCalledWith(
+        "r1",
+        expect.objectContaining({
+          receipt_total_matches_order: false,
+          receipt_total_difference: 9.5,
+        }),
+      );
     });
 
     it("aceita tipo_comprovante como texto livre (mais de um tipo combinado)", async () => {

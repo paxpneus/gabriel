@@ -31,6 +31,7 @@ class PdvSalesRequest
   public payment_receipt_validated!: boolean | null;
   public payment_method_matches_receipt!: boolean | null;
   public receipt_total_matches_order!: boolean | null;
+  public receipt_total_difference!: number | null;
   public transfer_invoice_products_match_sale!: boolean | null;
   public errors!: PdvSalesRequestErrors | null;
   public created_by_user_id!: string | null;
@@ -156,6 +157,15 @@ PdvSalesRequest.init(
     receipt_total_matches_order: {
       type: DataTypes.BOOLEAN,
       allowNull: true,
+    },
+    // valor_total conciliado − order.net_total_order (negativo = pago a menos).
+    receipt_total_difference: {
+      type: DataTypes.DECIMAL(14, 2),
+      allowNull: true,
+      get() {
+        const value = this.getDataValue("receipt_total_difference");
+        return value === null ? null : Number(value);
+      },
     },
     // Comparação informativa entre os itens da nota de venda e os da nota de
     // transferência. null enquanto uma das notas ainda não tem itens salvos.

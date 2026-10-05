@@ -109,3 +109,13 @@ export function receiptTotalMatchesOrder(
   if (receiptTotal === null || orderTotal === null) return null;
   return Math.abs(receiptTotal - orderTotal) <= TOTAL_MATCH_TOLERANCE;
 }
+
+// Comprovantes − pedido: negativo = pagou a menos, positivo = pagou a mais.
+// orderTotal chega como string do DECIMAL do Postgres, por isso o Number().
+export function receiptTotalDifference(
+  receiptTotal: number | null,
+  orderTotal: number | string | null,
+): number | null {
+  if (receiptTotal === null || orderTotal === null) return null;
+  return Math.round((receiptTotal - Number(orderTotal)) * 100) / 100;
+}

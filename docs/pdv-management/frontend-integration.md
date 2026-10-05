@@ -7,6 +7,16 @@ aqui.
 
 **Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
 
+## Novo: diferença comprovantes x pedido (`receipt_total_difference`)
+
+Campo novo na solicitação (migration `m308`; `m309` preenche as solicitações já existentes), vem na listagem e no `GET /sales-request/:id`: `receipt_total_difference: number | null` = `payment_receipt_analysis.valor_total` (soma dos comprovantes) − total do pedido (`order.net_total_order`).
+- negativo → pagou a menos (ex.: `-20.3`)
+- positivo → pagou a mais
+- `0` → bate (mesmo caso de `receipt_total_matches_order: true`)
+- `null` → sem comprovante com valor ou pedido sem total
+
+Recalculado junto com `receipt_total_matches_order` (anexar/editar/remover comprovante e `PATCH /:id/payment-receipt-analysis`). O evento `payment-receipt-analysis:done` também traz `reconciled.totalDifference`.
+
 ## Novo: origem da solicitação (`origin`)
 
 Campo novo `origin` (migration `m307`): `"TELEVENDAS"` | `"LOJA"` | `null`. Vem na listagem e no `GET /sales-request/:id`. Só leitura — o backend grava sozinho, uma vez só, na primeira ação entre definir o tipo de envio (`POST /:id/shipping-type`) e anexar comprovante (`POST /:id/receipt`):

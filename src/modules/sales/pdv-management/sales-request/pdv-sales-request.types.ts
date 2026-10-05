@@ -227,6 +227,9 @@ export interface PdvSalesRequestAttributes {
   // (conciliado).valor_total x order.net_total_order. null quando não dá pra
   // comparar (nenhum comprovante com valor ainda, ou pedido sem total).
   receipt_total_matches_order: boolean | null;
+  // valor_total conciliado − order.net_total_order: negativo = pago a menos,
+  // positivo = pago a mais. Mesmo null de receipt_total_matches_order.
+  receipt_total_difference: number | null;
   // Informativo, nunca bloqueia nenhuma transição — compara os product_id e
   // as quantidades totais dos itens da NF de venda e da transferência.
   transfer_invoice_products_match_sale: boolean | null;
