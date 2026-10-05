@@ -244,7 +244,7 @@ export type PdvSalesRequestCreationAttributes = Omit<
   "id" | "createdAt" | "updatedAt"
 >;
 
-// ─── Pedido (Bling) embutido na resposta ────────────────────────────────────
+// ─── Pedido (Bling) sem solicitação (/orders/eligible, /orders/:orderId) ─────
 // Nunca persistido nesta tabela — resolvido on-the-fly, ver "Card do Kanban"
 // em .claude/entities/pdv-sales-request/index.md.
 
@@ -258,35 +258,6 @@ export interface PdvSalesRequestOrderUnitBusiness {
   id: string;
   number: string;
   name: string;
-}
-
-// Loja da PRÓPRIA PdvSalesRequest (association own unit_business_id),
-// distinta de PdvSalesRequestOrderUnitBusiness (loja do order aninhado) —
-// versão enxuta, id+number apenas, embutida no topo da resposta.
-export interface PdvSalesRequestUnitBusiness {
-  id: string;
-  number: string;
-}
-
-// saleInvoice/transferInvoice (associações own sale_invoice_id/
-// transfer_invoice_id), embutidas no topo da resposta — front usa
-// number_system pra exibir e id pra montar GET /:id/invoice/:invoiceId/danfe.
-export interface PdvSalesRequestInvoiceSummary {
-  id: string;
-  number_system: string;
-}
-
-// `receipts` (sibling de order/unitBusiness/saleInvoice/transferInvoice),
-// embutido no topo da resposta — um item por PdvSalesRequestReceipt
-// anexado. `analysis` aqui é a extração CRUA desse comprovante específico
-// (PaymentReceiptExtraction), nunca a conciliada (essa fica em
-// payment_receipt_analysis, no topo da própria PdvSalesRequest).
-export interface PdvSalesRequestReceiptSummary {
-  id: string;
-  path: string;
-  analysis: PaymentReceiptExtraction | null;
-  validated: boolean | null;
-  createdAt: Date;
 }
 
 export interface PdvSalesRequestOrderPaymentMethod {
@@ -312,8 +283,7 @@ export interface PdvSalesRequestOrderItem {
   price: number;
 }
 
-// Versão leve, usada na listagem (index) — sem forma de pagamento/parcelas/
-// itens, que só a tela de detalhe (show) precisa.
+// Versão leve (/orders/eligible) — sem forma de pagamento/parcelas/itens.
 export interface PdvSalesRequestOrderSummary {
   id: string;
   number_order_channel: string;
@@ -324,10 +294,109 @@ export interface PdvSalesRequestOrderSummary {
   unitBusiness: PdvSalesRequestOrderUnitBusiness | null;
 }
 
-// Versão completa, usada no detalhe (show). `installments` deriva de
+// Versão completa (/orders/:orderId). `installments` deriva de
 // `order.source_payload.parcelas.length` — não é coluna própria.
 export interface PdvSalesRequestOrderDetail extends PdvSalesRequestOrderSummary {
   payments: PdvSalesRequestOrderPayment[];
   installments: number | null;
   items: PdvSalesRequestOrderItem[];
+}
+
+// ─── Quadro (GET /sales-request) e detalhe (GET /:id) ───────────────────────
+// Montados em helpers/card-serializers.ts — só os campos que o front usa.
+
+// next_action é calculado na resposta (helpers/next-action.rules.ts), nunca persistido.
+export interface PdvBoardCard {
+  id: string;
+  status: PdvSalesRequestStatus;
+  shipping_label: string | null;
+  next_action: string | null;
+  order: {
+    id: string;
+    number_order_system: string | null;
+    number_order_channel: string;
+    date: string | null;
+    customer: { name: string } | null;
+    // Só nas telas que veem todas as lojas (finance/cd21/telesales).
+    unitBusiness?: { number: string } | null;
+  } | null;
+  saleInvoice: { tracking_url: string | null } | null;
+}
+
+export interface PdvBoardColumnResult {
+  key: string;
+  label: string;
+  description: string | null;
+  statuses: readonly PdvSalesRequestStatus[];
+  extra: boolean;
+  highlighted: boolean;
+  items: PdvBoardCard[];
+  totalCount: number;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export type PdvReceiptAnalysisField =
+  | "tipo_comprovante"
+  | "valor_total"
+  | "qtd_parcelas"
+  | "valor_parcela"
+  | "data_transacao"
+  | "hora_transacao"
+  | "instituicao_pagamento"
+  | "titular_cartao"
+  | "bandeira_cartao"
+  | "codigo_autorizacao"
+  | "nsu_cv";
+
+// Análise enxuta pro front — payment_methods no conciliado, payment_method no comprovante.
+export type PdvReceiptAnalysisView = Pick<
+  PaymentReceiptReconciledAnalysis,
+  PdvReceiptAnalysisField
+> & {
+  payment_methods?: PaymentReceiptPaymentMethod[];
+  payment_method?: PaymentReceiptPaymentMethod | null;
+};
+
+export interface PdvSalesRequestDetail {
+  id: string;
+  status: PdvSalesRequestStatus;
+  next_action: string | null;
+  shipping_info_required: boolean;
+  correction_origin_status: PdvSalesRequestStatus | null;
+  errors: { reasons: PdvCorrectionReason[]; note: string | null } | null;
+  origin: PdvSalesRequestOrigin | null;
+  shipping_type: PdvShippingType | null;
+  shipping_label: string | null;
+  shipping_address: string | null;
+  transporter_name: string | null;
+  sale_invoice_id: string | null;
+  transfer_invoice_id: string | null;
+  payment_receipt_analysis: PdvReceiptAnalysisView | null;
+  payment_receipt_validated: boolean | null;
+  payment_method_matches_receipt: boolean | null;
+  receipt_total_matches_order: boolean | null;
+  receipt_total_difference: number | null;
+  transfer_invoice_products_match_sale: boolean | null;
+  expedition_progress: unknown;
+  saleInvoice: {
+    id: string;
+    number_system: string;
+    transporter_name: string | null;
+    tracking_url: string | null;
+  } | null;
+  transferInvoice: { id: string; number_system: string } | null;
+  receipts: { id: string; analysis: PdvReceiptAnalysisView | null }[];
+  order: {
+    number_order_system: string | null;
+    number_order_channel: string;
+    date: string | null;
+    net_total_order: number | null;
+    status: string | null;
+    installments: number | null;
+    customer: { name: string; document: string } | null;
+    unitBusiness: { number: string; name: string } | null;
+    payments: PdvSalesRequestOrderPayment[];
+    items: PdvSalesRequestOrderItem[];
+  } | null;
 }

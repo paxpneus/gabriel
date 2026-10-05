@@ -135,6 +135,16 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
   };
 }
 
+  // Model.update só com updatedAt é no-op no Sequelize; força o bump pros jobs de relatório (checkpoint por updated_at).
+  async touch(orderId: string): Promise<void> {
+    const order = await this.model.findByPk(orderId, {
+      attributes: ["id", "updatedAt"],
+    });
+    if (!order) return;
+    order.changed("updatedAt", true);
+    await order.save({ fields: ["updatedAt"] });
+  }
+
   // Usado pra comparar as formas de pagamento do pedido (Bling) com o
   // comprovante extraído por IA (pdv-sales-request — payment-method-match.ts).
   async findByIdWithPayments(orderId: string): Promise<Order | null> {

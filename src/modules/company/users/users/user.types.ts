@@ -2,7 +2,7 @@ import { USER_TYPE_CONFIG } from "../../../../shared/constants/user-types";
 import UnitBusiness from "../../unit-business/unit-business.model";
 import Role from "../roles/role.model";
 import UserConfig from "../user_config/user_config.model";
-import { UserConfigAttributes } from "../user_config/user_config.types";
+import { UserConfigAttributes, UserType } from "../user_config/user_config.types";
 
 export interface UserAttributes {
   id: string;
@@ -16,6 +16,8 @@ export interface UserAttributes {
   password: string;
   active?: boolean;
   config?: UserConfigAttributes;
+  // Espelho de config.type no topo — campo que front e PDV leem (ver user.repository.ts::getFullUser).
+  type?: UserType | null;
   businessToView?: string | string[]
   allowedModules?: USER_TYPE_CONFIG
   availableUnitBusinesses?: UnitBusiness[]

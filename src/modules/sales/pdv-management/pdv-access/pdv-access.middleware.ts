@@ -1,6 +1,10 @@
 import { NextFunction, Request, RequestHandler, Response } from "express";
 import { PdvAccessContext, PdvAccessScreen } from "./pdv-access.types";
-import { resolveLoginAccess, resolveLinkAccess } from "./helpers/resolve-pdv-access";
+import {
+  assertLinkParamsMatch,
+  resolveLinkAccess,
+  resolveLoginAccess,
+} from "./helpers/resolve-pdv-access";
 
 export interface PdvAccessRequest extends Request {
   pdvAccess?: PdvAccessContext;
@@ -16,24 +20,41 @@ export function pdvAccess(requiredScreens: PdvAccessScreen[]) {
     next: NextFunction,
   ): Promise<Response | void> => {
     try {
-      const loginContext = await resolveLoginAccess(
+      const linkToken = req.header("x-pdv-token");
+      const loginResult = await resolveLoginAccess(
         req.cookies?.token,
         requiredScreens,
       );
-      if (loginContext) {
-        req.pdvAccess = loginContext;
+      if (loginResult && "context" in loginResult) {
+        req.pdvAccess = loginResult.context;
         return next();
       }
+      // Login sem acesso (loja 12/17, tela fora da rota) só cai pro link se houver token.
+      if (loginResult && !linkToken) {
+        return res
+          .status(loginResult.error.status)
+          .json({ error: loginResult.error.message });
+      }
 
+      const headerNumber = req.header("x-pdv-unit-business-number");
       const linkResult = await resolveLinkAccess(
-        req.header("x-pdv-unit-business-number"),
-        req.header("x-pdv-token"),
+        headerNumber,
+        linkToken,
         requiredScreens,
       );
       if ("error" in linkResult) {
         return res
           .status(linkResult.error.status)
           .json({ error: linkResult.error.message });
+      }
+
+      const mismatch = assertLinkParamsMatch(
+        linkResult.context,
+        { screen: req.query.screen, number: req.query.number },
+        headerNumber,
+      );
+      if (mismatch) {
+        return res.status(mismatch.status).json({ error: mismatch.message });
       }
 
       req.pdvAccess = linkResult.context;

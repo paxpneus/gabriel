@@ -8,10 +8,9 @@ import {
 } from "./helpers/pdv-access-token.helper";
 import redisService from "../../../../shared/utils/base-models/base-redis";
 import { PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS } from "../helpers/pdv-excluded-unit-business";
-
 // Front tem uma única rota /pdv-management (query string carrega screen,
 // não path por tela) — confirmado testando contra o router real.
-const TELESALES_SCREEN_PARAM = "telesales";
+import { TELESALES_SCREEN_PARAM } from "../helpers/pdv-screens.config";
 
 // Token/URL não mudam sozinhos (só se a loja for renomeada ou o secret
 // rotacionar, ambos raros) — 1h de cache é aceitável mesmo sem invalidação

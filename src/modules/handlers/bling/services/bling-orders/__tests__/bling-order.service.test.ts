@@ -31,6 +31,7 @@ jest.mock("bullmq", () => ({
 }));
 
 import { AxiosInstance } from "axios";
+import { Op } from "sequelize";
 import { OrderInternalStatus } from "../../../../../sales/orders/order/orders.types";
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
@@ -44,6 +45,7 @@ jest.mock("../../../../../sales/orders/order/orders.service", () => ({
     create: jest.fn(),
     delete: jest.fn(),
     isEligibleForPdv: jest.fn(),
+    touch: jest.fn(),
   },
 }));
 
@@ -67,9 +69,11 @@ jest.mock("../../../../../sales/orders/order_items/order_items.service", () => (
   __esModule: true,
   default: {
     findOne: jest.fn(),
+    findAll: jest.fn(),
     update: jest.fn(),
     create: jest.fn(),
     bulkCreate: jest.fn(),
+    bulkDelete: jest.fn(),
   },
 }));
 
@@ -450,6 +454,73 @@ describe("BlingOrderService", () => {
 
       expect(ordersService.create).not.toHaveBeenCalled();
       expect(ordersService.update).toHaveBeenCalled();
+    });
+  });
+
+  describe("updateOrderFromBling — sincronização de itens", () => {
+    function makeBlingItem(codigo: string, valor = 100) {
+      return { codigo, quantidade: 1, valor, desconto: 0, descricao: codigo };
+    }
+
+    beforeEach(() => {
+      jest
+        .spyOn(service as any, "resolveProductWithConfig")
+        .mockImplementation(async (_extId: any, sku: any) => ({
+          product: null,
+          averageCost: null,
+          resolvedSku: sku,
+          kitMultiplier: 1,
+        }));
+      (orderItemsService.update as jest.Mock).mockResolvedValue({});
+      (orderItemsService.create as jest.Mock).mockImplementation(async (data: any) => ({
+        id: `created-${data.sku}`,
+        ...data,
+      }));
+      (orderItemsService.bulkDelete as jest.Mock).mockResolvedValue(0);
+    });
+
+    function deletedWhere(): any {
+      return (orderItemsService.bulkDelete as jest.Mock).mock.calls[0][0].where;
+    }
+
+    it("item removido no Bling é apagado localmente e o pedido é tocado pros relatórios reprocessarem", async () => {
+      orderData.itens = [makeBlingItem("SKU-A")] as any;
+      (orderItemsService.findAll as jest.Mock).mockResolvedValue([
+        { id: "item-a", sku: "SKU-A" },
+        { id: "item-orfao", sku: "SKU-B" },
+      ]);
+      (orderItemsService.bulkDelete as jest.Mock).mockResolvedValue(1);
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(orderItemsService.update).toHaveBeenCalledWith("item-a", expect.any(Object));
+      expect(orderItemsService.create).not.toHaveBeenCalled();
+      expect(deletedWhere().order_id).toBe("order-uuid-1");
+      expect(deletedWhere().id[Op.notIn]).toEqual(["item-a"]);
+      expect(ordersService.touch).toHaveBeenCalledWith("order-uuid-1");
+    });
+
+    it("mesmo SKU em duas linhas: cada linha consome um registro, a nova é criada e nenhuma é apagada", async () => {
+      orderData.itens = [makeBlingItem("SKU-A"), makeBlingItem("SKU-A", 200)] as any;
+      (orderItemsService.findAll as jest.Mock).mockResolvedValue([
+        { id: "item-a1", sku: "SKU-A" },
+      ]);
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(orderItemsService.update).toHaveBeenCalledTimes(1);
+      expect(orderItemsService.create).toHaveBeenCalledTimes(1);
+      expect(deletedWhere().id[Op.notIn]).toEqual(["item-a1", "created-SKU-A"]);
+      expect(ordersService.touch).not.toHaveBeenCalled();
+    });
+
+    it("payload sem itens não apaga nada", async () => {
+      orderData.itens = [];
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(orderItemsService.findAll).not.toHaveBeenCalled();
+      expect(orderItemsService.bulkDelete).not.toHaveBeenCalled();
     });
   });
 

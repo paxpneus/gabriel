@@ -1,5 +1,6 @@
-import { Op, WhereOptions, fn, col } from "sequelize";
+import { Op, WhereOptions, fn, col, literal } from "sequelize";
 import { saleInvoiceTransporterCdExpression } from "./helpers/transporter-cd";
+import { hasReceiptLiteral } from "./helpers/custom-filters";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import PdvSalesRequest from "./pdv-sales-request.model";
 import {
@@ -14,92 +15,119 @@ import OrderItems from "../../orders/order_items/order_items.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import Invoice from "../../../warehouse/fiscal/invoices/invoice/invoice.model";
 import PdvSalesRequestReceipt from "../sales-request-receipt/pdv-sales-request-receipt.model";
-import type {
-  QueryParams,
-  QueryConfig,
-  PaginatedResult,
-} from "../../../../shared/query/query.types";
 
-// Só id/number_system — o front usa pra exibir o número da nota + montar a
-// rota de DANFE (GET /:id/invoice/:invoiceId/danfe), nunca a nota inteira.
-// transporter_name na nota de venda alimenta o shipping_label (service);
-// tracking_url (só nota Bling) vira invoice_tracking_url na resposta.
-const INVOICE_SUMMARY_INCLUDE = [
-  {
-    model: Invoice,
-    as: "saleInvoice",
-    attributes: ["id", "number_system", "transporter_name", "tracking_url"],
-  },
-  { model: Invoice, as: "transferInvoice", attributes: ["id", "number_system"] },
+// Detalhe (GET /:id) — só o que helpers/card-serializers.ts::toSalesRequestDetail
+// usa. order.id/integrations_id/actual_situation/invoice_id/source_payload são
+// internos (agrupar payments/items, status Bling, expedição, parcelas) e não saem.
+const DETAIL_ATTRIBUTES = [
+  "id",
+  "unit_business_id",
+  "order_id",
+  "status",
+  "shipping_type",
+  "shipping_address",
+  "transporter_name",
+  "correction_origin_status",
+  "errors",
+  "origin",
+  "sale_invoice_id",
+  "transfer_invoice_id",
+  "payment_receipt_analysis",
+  "payment_receipt_validated",
+  "payment_method_matches_receipt",
+  "receipt_total_matches_order",
+  "receipt_total_difference",
+  "transfer_invoice_products_match_sale",
 ];
-
-// Um item por comprovante anexado — nunca fingerprint (token interno de
-// dedup, não é dado pro front). `analysis` aqui é a extração CRUA de CADA
-// comprovante, distinta da conciliação em payment_receipt_analysis (coluna
-// própria de PdvSalesRequest).
-const RECEIPTS_INCLUDE = {
-  model: PdvSalesRequestReceipt,
-  as: "receipts",
-  attributes: ["id", "path", "analysis", "validated", "createdAt"],
-};
 
 export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   constructor() {
     super(PdvSalesRequest);
   }
 
-  // Pedido (Bling) embutido, com cliente/pagamento/itens — card expandido
-  // do Kanban. `order` é associação própria (belongsTo), o resto é join
-  // dela — ver .claude/entities/pdv-sales-request/index.md ("Card do Kanban").
-  // `unitBusiness` no topo é a loja da PRÓPRIA solicitação (own
-  // unit_business_id, distinta de order.unitBusiness) — só id/number.
   async findByIdWithOrder(id: string): Promise<PdvSalesRequest | null> {
     return this.findById(id, {
+      attributes: DETAIL_ATTRIBUTES,
       include: [
         {
           model: Order,
           as: "order",
+          attributes: [
+            "id",
+            "number_order_system",
+            "number_order_channel",
+            "date",
+            "net_total_order",
+            "integrations_id",
+            "actual_situation",
+            "invoice_id",
+            "source_payload",
+          ],
           include: [
-            { model: Customer, as: "customer" },
+            { model: Customer, as: "customer", attributes: ["name", "document"] },
             PAYMENTS_INCLUDE,
-            { model: UnitBusiness, as: "unitBusiness" },
-            { model: OrderItems, as: "items" },
+            { model: UnitBusiness, as: "unitBusiness", attributes: ["number", "name"] },
+            {
+              model: OrderItems,
+              as: "items",
+              attributes: ["id", "name", "sku", "quantity", "price"],
+            },
           ],
         },
-        { model: UnitBusiness, as: "unitBusiness", attributes: ["id", "number"] },
-        ...INVOICE_SUMMARY_INCLUDE,
-        RECEIPTS_INCLUDE,
+        {
+          model: Invoice,
+          as: "saleInvoice",
+          attributes: ["id", "number_system", "transporter_name", "tracking_url"],
+        },
+        { model: Invoice, as: "transferInvoice", attributes: ["id", "number_system"] },
+        {
+          model: PdvSalesRequestReceipt,
+          as: "receipts",
+          attributes: ["id", "analysis"],
+        },
       ],
     });
   }
 
-  // Mesmo embed, versão resumida (sem pagamento/itens) pra listagem.
-  async findPaginatedWithOrder(
-    params: QueryParams,
-    config: QueryConfig,
-    forcedWhere?: WhereOptions,
-  ): Promise<PaginatedResult<PdvSalesRequest>> {
-    return this.findPaginated(
-      params,
-      config,
-      {
-        include: [
-          {
-            model: Order,
-            as: "order",
-            attributes: { exclude: ["source_payload"] },
-            include: [
-              { model: Customer, as: "customer" },
-              { model: UnitBusiness, as: "unitBusiness" },
-            ],
-          },
-          { model: UnitBusiness, as: "unitBusiness", attributes: ["id", "number"] },
-          ...INVOICE_SUMMARY_INCLUDE,
-          RECEIPTS_INCLUDE,
-        ],
-      },
-      forcedWhere,
-    );
+  // Uma página de uma coluna do quadro — `where` já vem montado pela service
+  // (escopo + filtros + status da coluna + cursor). Só belongsTo no include:
+  // sem hasMany o LIMIT não cai no modo subQuery. Busca limit + 1 pra hasMore.
+  async findBoardColumnPage(
+    where: WhereOptions,
+    limit: number,
+  ): Promise<PdvSalesRequest[]> {
+    return this.findAll({
+      where,
+      limit: limit + 1,
+      order: [
+        ["createdAt", "ASC"],
+        ["id", "ASC"],
+      ],
+      attributes: [
+        "id",
+        "status",
+        "shipping_type",
+        "correction_origin_status",
+        [literal('"PdvSalesRequest"."created_at"::text'), "cursor_created_at"],
+        [hasReceiptLiteral(), "has_receipt"],
+      ],
+      include: [
+        {
+          model: Order,
+          as: "order",
+          attributes: ["id", "number_order_system", "number_order_channel", "date"],
+          include: [
+            { model: Customer, as: "customer", attributes: ["name"] },
+            { model: UnitBusiness, as: "unitBusiness", attributes: ["number"] },
+          ],
+        },
+        {
+          model: Invoice,
+          as: "saleInvoice",
+          attributes: ["transporter_name", "tracking_url"],
+        },
+      ],
+    });
   }
 
   async findActiveByOrderId(orderId: string): Promise<PdvSalesRequest | null> {

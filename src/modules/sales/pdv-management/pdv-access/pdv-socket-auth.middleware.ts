@@ -1,7 +1,11 @@
 import { Socket } from "socket.io";
 import { parseCookie } from "cookie";
 import { PdvAccessContext, PdvAccessScreen } from "./pdv-access.types";
-import { resolveLoginAccess, resolveLinkAccess } from "./helpers/resolve-pdv-access";
+import {
+  assertLinkParamsMatch,
+  resolveLinkAccess,
+  resolveLoginAccess,
+} from "./helpers/resolve-pdv-access";
 
 export interface PdvSocketData {
   pdvAccess: PdvAccessContext;
@@ -25,13 +29,16 @@ export async function pdvSocketAuthMiddleware(
     const rawCookie = socket.handshake.headers.cookie;
     const cookieToken = rawCookie ? parseCookie(rawCookie).token : undefined;
 
-    const loginContext = await resolveLoginAccess(cookieToken, ALL_SCREENS);
-    if (loginContext) {
-      (socket.data as PdvSocketData).pdvAccess = loginContext;
+    const { unitBusinessNumber, token, screen } = socket.handshake.auth ?? {};
+    const loginResult = await resolveLoginAccess(cookieToken, ALL_SCREENS);
+    if (loginResult && "context" in loginResult) {
+      (socket.data as PdvSocketData).pdvAccess = loginResult.context;
       return next();
     }
+    if (loginResult && !token) {
+      return next(new Error(loginResult.error.message));
+    }
 
-    const { unitBusinessNumber, token } = socket.handshake.auth ?? {};
     const linkResult = await resolveLinkAccess(
       unitBusinessNumber,
       token,
@@ -40,6 +47,14 @@ export async function pdvSocketAuthMiddleware(
     if ("error" in linkResult) {
       return next(new Error(linkResult.error.message));
     }
+
+    // Número já é o do handshake (mesmo que validou o token) — só `screen` é conferido.
+    const mismatch = assertLinkParamsMatch(
+      linkResult.context,
+      { screen },
+      unitBusinessNumber,
+    );
+    if (mismatch) return next(new Error(mismatch.message));
 
     (socket.data as PdvSocketData).pdvAccess = linkResult.context;
     next();

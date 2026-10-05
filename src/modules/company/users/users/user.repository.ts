@@ -83,6 +83,7 @@ export class UserRepository extends BaseRepository<User> {
 
     return {
       ...plainUser,
+      type: plainUser.config?.type ?? null,
       businessToView,
       allowedModules,
       config: plainUser.config

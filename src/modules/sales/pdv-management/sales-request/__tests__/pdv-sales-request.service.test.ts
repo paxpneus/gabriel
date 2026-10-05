@@ -16,6 +16,9 @@ jest.mock("../pdv-sales-request.repository", () => ({
     findByOrderId: jest.fn(),
     findActiveBySaleOrTransferInvoiceId: jest.fn(),
     findActiveBySaleInvoiceIds: jest.fn(),
+    countGroupedByStatus: jest.fn(),
+    findBoardColumnPage: jest.fn(),
+    findByIdWithOrder: jest.fn(),
   },
 }));
 
@@ -53,6 +56,7 @@ jest.mock("../../../orders/order/orders.service", () => ({
     findById: jest.fn(),
     findByIdWithPayments: jest.fn(),
     isEligibleForPdv: jest.fn(),
+    buildStatusResolver: jest.fn(),
   },
 }));
 
@@ -81,6 +85,7 @@ jest.mock("../../../../company/unit-business/unit-business.service", () => ({
     findById: jest.fn(),
     findOne: jest.fn(),
     getCd21UnitBusiness: jest.fn(),
+    getPhysicalNumberedUnitBusinessIds: jest.fn(),
   },
 }));
 
@@ -180,7 +185,11 @@ import {
   PdvSalesRequestOrigin,
   PdvShippingType,
 } from "../pdv-sales-request.types";
-import { PdvAccessScreen } from "../../pdv-access/pdv-access.types";
+import { PdvAccessContext, PdvAccessScreen } from "../../pdv-access/pdv-access.types";
+import { Op } from "sequelize";
+import { PdvForbiddenError } from "../../helpers/pdv-errors";
+import { decodeBoardCursor } from "../helpers/board-cursor";
+import { parseBoardQuery } from "../helpers/board-query";
 
 const mockTransaction = {} as any;
 
@@ -1082,7 +1091,7 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
-    it("SHIP_TODAY (TRANSPORTADORA) → ADT vai pra SHIPPING sem mexer na nota de transferência", async () => {
+    it("SHIP_TODAY (TRANSPORTADORA) → ADT sem nota de transferência volta pra PENDING_NF_TRANSFER", async () => {
       mockRequest({
         status: PdvSalesRequestStatus.SHIP_TODAY,
         shipping_type: PdvShippingType.TRANSPORTADORA,
@@ -1097,6 +1106,26 @@ describe("PdvSalesRequestService", () => {
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
         shipping_type: PdvShippingType.ADT,
       });
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.PENDING_NF_TRANSFER },
+        expect.anything(),
+      );
+    });
+
+    it("→ ADT com nota de transferência já vinculada vai pra SHIPPING", async () => {
+      mockRequest({
+        status: PdvSalesRequestStatus.SHIP_TODAY,
+        shipping_type: PdvShippingType.TRANSPORTADORA,
+        transfer_invoice_id: "inv-transfer",
+      });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "inv-sale",
+        transporter_name: "LOGISTICA PAX PNEUS SP - CD 12",
+      });
+
+      await service.changeShippingType("r1", PdvShippingType.ADT);
+
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
         { status: PdvSalesRequestStatus.SHIPPING },
@@ -1216,9 +1245,9 @@ describe("PdvSalesRequestService", () => {
     it("lote finalizado: Kanban recebe 1 sync só (lojas sem repetir), detalhe 1 por solicitação", async () => {
       (pdvSalesRequestRepository.findActiveBySaleInvoiceIds as jest.Mock).mockResolvedValue(
         [
-          { id: "r1", unit_business_id: "ub1" },
-          { id: "r2", unit_business_id: "ub1" },
-          { id: "r3", unit_business_id: "ub2" },
+          { id: "r1", unit_business_id: "ub1", status: PdvSalesRequestStatus.SHIPPING },
+          { id: "r2", unit_business_id: "ub1", status: PdvSalesRequestStatus.SHIPPING },
+          { id: "r3", unit_business_id: "ub2", status: PdvSalesRequestStatus.SHIP_TODAY },
         ],
       );
 
@@ -1226,18 +1255,22 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.findActiveBySaleInvoiceIds).toHaveBeenCalledWith(
         ["inv-1", "inv-2", "inv-3"],
-        ["id", "unit_business_id"],
+        ["id", "unit_business_id", "status"],
       );
       expect(notifyPdvStoresSync).toHaveBeenCalledTimes(1);
       expect(notifyPdvStoresSync).toHaveBeenCalledWith(
-        ["ub1", "ub1", "ub2"],
+        [
+          expect.objectContaining({ id: "r1", status: PdvSalesRequestStatus.SHIPPING }),
+          expect.objectContaining({ id: "r2", status: PdvSalesRequestStatus.SHIPPING }),
+          expect.objectContaining({ id: "r3", status: PdvSalesRequestStatus.SHIP_TODAY }),
+        ],
         "SALES_REQUEST_STATUS_CHANGED",
       );
       expect(notifySalesRequestChanged).not.toHaveBeenCalled();
       expect(notifySalesRequestUpdated).toHaveBeenCalledTimes(3);
     });
 
-    it("deleteRequest notifica", async () => {
+    it("deleteRequest notifica com o status final EXCLUDED, não o anterior", async () => {
       (pdvSalesRequestReceiptService.findAllByRequestId as jest.Mock).mockResolvedValue(
         [],
       );
@@ -1247,7 +1280,7 @@ describe("PdvSalesRequestService", () => {
       await service.deleteRequest("r1");
 
       expect(notifySalesRequestChanged).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "r1" }),
+        expect.objectContaining({ id: "r1", status: PdvSalesRequestStatus.EXCLUDED }),
       );
     });
   });
@@ -3389,6 +3422,338 @@ describe("PdvSalesRequestService", () => {
       await service.cancelIfActiveByOrderId("order-1");
 
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── Quadro do Kanban (getBoard) ────────────────────────────────────────────
+
+  describe("getBoard", () => {
+    // Achata os [Op.and] aninhados em uma lista de condições (objetos/literais).
+    const flattenAnd = (where: any): any[] => {
+      if (!where || typeof where !== "object" || !(Op.and in where)) return [where];
+      const { [Op.and]: parts, ...rest } = where;
+      return [
+        ...(Reflect.ownKeys(rest).length ? [rest] : []),
+        ...(parts as any[]).flatMap(flattenAnd),
+      ];
+    };
+    const hasIdNull = (where: any): boolean =>
+      flattenAnd(where).some((part) => part && "id" in part && part.id === null);
+    const literalVals = (where: any): string[] =>
+      flattenAnd(where)
+        .filter((part) => typeof part?.val === "string")
+        .map((part) => part.val);
+
+    const storeAccess: PdvAccessContext = {
+      screen: PdvAccessScreen.STORE_REQUEST,
+      via: "STORE_LINK",
+      unitBusinessId: "ub-1",
+    };
+    const cd21Access: PdvAccessContext = {
+      screen: PdvAccessScreen.CD21,
+      via: "STORE_LINK",
+      unitBusinessId: null,
+    };
+    const asRow = (plain: any) => ({ get: () => plain });
+
+    beforeEach(() => {
+      (pdvSalesRequestRepository.countGroupedByStatus as jest.Mock).mockResolvedValue({});
+      (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock).mockResolvedValue([]);
+      (unitBusinessService.getPhysicalNumberedUnitBusinessIds as jest.Mock).mockResolvedValue(
+        ["ub-1", "ub-2"],
+      );
+    });
+
+    it("loja: escopo pelo próprio unit_business_id, colunas padrão da loja", async () => {
+      const result: any = await service.getBoard(storeAccess, {}, parseBoardQuery({}));
+
+      const [countWhere] = (pdvSalesRequestRepository.countGroupedByStatus as jest.Mock)
+        .mock.calls[0];
+      expect(flattenAnd(countWhere)).toContainEqual({ unit_business_id: "ub-1" });
+      expect(result.columns.map((c: any) => c.key)).toEqual([
+        "open",
+        "finance_analysis",
+        "correction",
+        "cd21_analysis",
+        "cd21_billing",
+      ]);
+      expect(pdvSalesRequestRepository.findBoardColumnPage).toHaveBeenCalledTimes(5);
+      expect(unitBusinessService.getPhysicalNumberedUnitBusinessIds).not.toHaveBeenCalled();
+    });
+
+    it("totalCount soma os status da coluna a partir da contagem agrupada", async () => {
+      (pdvSalesRequestRepository.countGroupedByStatus as jest.Mock).mockResolvedValue({
+        [PdvSalesRequestStatus.OPEN]: 5,
+        [PdvSalesRequestStatus.PENDING_NF_SALE]: 1,
+        [PdvSalesRequestStatus.PENDING_NF_TRANSFER]: 2,
+        [PdvSalesRequestStatus.SHIPPING]: 3,
+        [PdvSalesRequestStatus.SHIP_TODAY]: 4,
+      });
+
+      const result: any = await service.getBoard(storeAccess, {}, parseBoardQuery({}));
+
+      const byKey = Object.fromEntries(result.columns.map((c: any) => [c.key, c]));
+      expect(byKey.cd21_billing.totalCount).toBe(10);
+      expect(byKey.open).toEqual(
+        expect.objectContaining({
+          description: "Sem solicitação ou faltando anexos",
+          highlighted: true,
+        }),
+      );
+      expect(byKey.cd21_billing.highlighted).toBe(false);
+      expect(byKey.open.totalCount).toBe(5);
+      expect(byKey.correction.totalCount).toBe(0);
+    });
+
+    it("coluna não visível pra tela + flags → PdvForbiddenError", async () => {
+      await expect(
+        service.getBoard(storeAccess, {}, parseBoardQuery({ column: "finished" })),
+      ).rejects.toThrow(PdvForbiddenError);
+      await expect(
+        service.getBoard(storeAccess, {}, parseBoardQuery({ column: "nf_sale" })),
+      ).rejects.toThrow(PdvForbiddenError);
+      expect(pdvSalesRequestRepository.findBoardColumnPage).not.toHaveBeenCalled();
+    });
+
+    it("coluna extra nunca vem destacada, mesmo herdando a coluna destacada da loja", async () => {
+      const result: any = await service.getBoard(
+        cd21Access,
+        {},
+        parseBoardQuery({ include_other_screens: "true" }),
+      );
+
+      const open = result.columns.find((c: any) => c.key === "open");
+      expect(open).toEqual(expect.objectContaining({ extra: true, highlighted: false }));
+    });
+
+    it("televendas: escopo em todas as lojas físicas, colunas da loja", async () => {
+      const result: any = await service.getBoard(
+        {
+          screen: PdvAccessScreen.STORE_REQUEST,
+          via: "TELESALES_LINK",
+          unitBusinessId: null,
+        },
+        {},
+        parseBoardQuery({}),
+      );
+
+      const [countWhere] = (pdvSalesRequestRepository.countGroupedByStatus as jest.Mock)
+        .mock.calls[0];
+      expect(flattenAnd(countWhere)).toContainEqual({
+        unit_business_id: { [Op.in]: ["ub-1", "ub-2"] },
+      });
+      expect(result.columns.map((c: any) => c.key)).toEqual([
+        "open",
+        "finance_analysis",
+        "correction",
+        "cd21_analysis",
+        "cd21_billing",
+      ]);
+    });
+
+    it("filters[status] é ignorado — status vêm só das colunas", async () => {
+      await service.getBoard(
+        storeAccess,
+        { filters: { status: PdvSalesRequestStatus.FINISHED } },
+        parseBoardQuery({}),
+      );
+
+      const [countWhere] = (pdvSalesRequestRepository.countGroupedByStatus as jest.Mock)
+        .mock.calls[0];
+      expect(flattenAnd(countWhere).some((part) => part && "status" in part)).toBe(false);
+    });
+
+    it("search: vira literal de busca, nunca where.id = null", async () => {
+      await service.getBoard(storeAccess, { search: "  4321 " }, parseBoardQuery({}));
+
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      expect(hasIdNull(pageWhere)).toBe(false);
+      expect(literalVals(pageWhere).some((val) => val.includes("'%4321%'"))).toBe(true);
+    });
+
+    it("filters[indicator]=adt_12 + column: indicador e status da coluna convivem sob [Op.and]", async () => {
+      await service.getBoard(
+        cd21Access,
+        { filters: { indicator: "adt_12", customer_name: "Maria" } },
+        parseBoardQuery({ column: "shipping" }),
+      );
+
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      const parts = flattenAnd(pageWhere);
+      expect(parts).toContainEqual({
+        status: { [Op.in]: [PdvSalesRequestStatus.SHIPPING] },
+        shipping_type: PdvShippingType.ADT,
+      });
+      expect(parts).toContainEqual({
+        status: { [Op.in]: [PdvSalesRequestStatus.SHIPPING] },
+      });
+      const literals = literalVals(pageWhere);
+      expect(literals.some((val) => val.includes("CD\\s*(12)"))).toBe(true);
+      expect(literals.some((val) => val.includes("Maria"))).toBe(true);
+    });
+
+    it("column: devolve só o objeto da coluna, com hasMore/nextCursor da página", async () => {
+      const rows = [1, 2, 3].map((n) =>
+        asRow({
+          id: `0b6c8f9e-3f1a-4c1e-9d2b-7a5e4c3b2a1${n}`,
+          status: PdvSalesRequestStatus.FINISHED,
+          shipping_type: null,
+          correction_origin_status: null,
+          cursor_created_at: `2026-10-0${n} 10:00:00.123456+00`,
+          has_receipt: false,
+          order: null,
+          saleInvoice: null,
+        }),
+      );
+      (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock).mockResolvedValue(rows);
+
+      const result: any = await service.getBoard(
+        storeAccess,
+        {},
+        parseBoardQuery({ column: "finished", include_closed: "true", limit: "2" }),
+      );
+
+      expect(result.key).toBe("finished");
+      expect(result).not.toHaveProperty("columns");
+      expect(pdvSalesRequestRepository.findBoardColumnPage).toHaveBeenCalledWith(
+        expect.anything(),
+        2,
+      );
+      expect(result.items).toHaveLength(2);
+      expect(result.hasMore).toBe(true);
+      expect(decodeBoardCursor(result.nextCursor)).toEqual({
+        c: "2026-10-02 10:00:00.123456+00",
+        i: "0b6c8f9e-3f1a-4c1e-9d2b-7a5e4c3b2a12",
+      });
+    });
+
+    it("cursor entra só na página, nunca na contagem", async () => {
+      const cursor = Buffer.from(
+        JSON.stringify({
+          c: "2026-10-02 10:00:00+00",
+          i: "0b6c8f9e-3f1a-4c1e-9d2b-7a5e4c3b2a10",
+        }),
+      ).toString("base64url");
+
+      await service.getBoard(
+        storeAccess,
+        {},
+        parseBoardQuery({ column: "open", cursor }),
+      );
+
+      const [countWhere] = (pdvSalesRequestRepository.countGroupedByStatus as jest.Mock)
+        .mock.calls[0];
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      const isCursor = (val: string) => val.includes("::timestamptz");
+      expect(literalVals(countWhere).some(isCursor)).toBe(false);
+      expect(literalVals(pageWhere).some(isCursor)).toBe(true);
+    });
+  });
+
+  // ─── Detalhe (findByIdWithOrder) ────────────────────────────────────────────
+
+  describe("findByIdWithOrder", () => {
+    const plain = {
+      id: "r1",
+      unit_business_id: "ub-2",
+      status: PdvSalesRequestStatus.PENDING_FINANCE,
+      shipping_type: null,
+      correction_origin_status: null,
+      errors: null,
+      receipts: [],
+      order: {
+        id: "o1",
+        number_order_channel: "C-1",
+        integrations_id: "int-1",
+        actual_situation: "9",
+        invoice_id: null,
+        customer: { name: "Cliente", document: "123" },
+        payments: [],
+        items: [],
+      },
+    };
+
+    beforeEach(() => {
+      (pdvSalesRequestRepository.findByIdWithOrder as jest.Mock).mockResolvedValue({
+        unit_business_id: "ub-2",
+        get: () => plain,
+      });
+      (orderService.buildStatusResolver as jest.Mock).mockResolvedValue(
+        () => "Em aberto",
+      );
+    });
+
+    it("loja abrindo card de outra loja → null", async () => {
+      const result = await service.findByIdWithOrder("r1", {
+        screen: PdvAccessScreen.STORE_REQUEST,
+        via: "LOGIN",
+        unitBusinessId: "ub-1",
+      });
+
+      expect(result).toBeNull();
+      expect(orderService.buildStatusResolver).not.toHaveBeenCalled();
+    });
+
+    it("acesso global → detalhe serializado pra tela de quem pede", async () => {
+      const result = await service.findByIdWithOrder("r1", {
+        screen: PdvAccessScreen.FINANCE,
+        via: "STORE_LINK",
+        unitBusinessId: null,
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: "r1",
+          next_action: "Aprovar ou rejeitar comprovante",
+          shipping_info_required: true,
+        }),
+      );
+      expect(result).not.toHaveProperty("unit_business_id");
+      expect(result!.order).toEqual(
+        expect.objectContaining({ status: "Em aberto", customer: { name: "Cliente", document: "123" } }),
+      );
+      expect(result!.order).not.toHaveProperty("id");
+      // Sem nota de venda: nenhuma query de invoice.
+      expect(invoiceService.findById).not.toHaveBeenCalled();
+    });
+
+    it("shipping_info_required = false com nota de venda que informa transportadora", async () => {
+      (pdvSalesRequestRepository.findByIdWithOrder as jest.Mock).mockResolvedValue({
+        unit_business_id: "ub-2",
+        get: () => ({ ...plain, order: { ...plain.order, invoice_id: "inv-1" } }),
+      });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "inv-1",
+        transporter_name: "LOGISTICA PAX PNEUS SP - CD 12",
+      });
+
+      const result = await service.findByIdWithOrder("r1", {
+        screen: PdvAccessScreen.STORE_REQUEST,
+        via: "LOGIN",
+        unitBusinessId: "ub-2",
+      });
+
+      expect(result!.shipping_info_required).toBe(false);
+      expect(invoiceService.findById).toHaveBeenCalledWith("inv-1", {
+        attributes: ["id", "transporter_name"],
+      });
+    });
+  });
+
+  describe("getHistory", () => {
+    it("só id/step/description/date/user_id, mais recente primeiro", async () => {
+      (pdvSalesRequestHistoryService.findAll as jest.Mock).mockResolvedValue([]);
+
+      await service.getHistory("r1");
+
+      expect(pdvSalesRequestHistoryService.findAll).toHaveBeenCalledWith({
+        where: { pdv_sales_request_id: "r1" },
+        attributes: ["id", "step", "description", "date", "user_id"],
+        order: [["date", "DESC"]],
+      });
     });
   });
 });

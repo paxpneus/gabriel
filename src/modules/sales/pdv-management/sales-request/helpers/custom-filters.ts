@@ -1,14 +1,9 @@
 import { Sequelize } from "sequelize";
 
 // Filtro por order.number_order_system na listagem de PdvSalesRequest —
-// EXISTS correlacionado (nunca "$order.field$") porque
-// findPaginatedWithOrder já inclui uma association hasMany (receipts), o
-// que liga o Sequelize no modo subQuery de paginação; nesse modo, um WHERE
-// de nível raiz por alias de association ($order.field$) quebra com
-// "missing FROM-clause entry for table order" — o JOIN daquele include só
-// existe na query externa, não na subquery de paginação que o Sequelize
-// monta por baixo. EXISTS contra orders direto não depende de include
-// nenhum, então funciona nos dois modos.
+// EXISTS correlacionado (nunca "$order.field$"): não depende de nenhum
+// include estar presente, então vale igual pro quadro e pras contagens
+// agrupadas (countGroupedByStatus, sem join).
 export function orderNumberSystemMatchesLiteral(term: string) {
   const escaped = term.replace(/'/g, "''");
   return Sequelize.literal(`EXISTS (
@@ -19,8 +14,7 @@ export function orderNumberSystemMatchesLiteral(term: string) {
 }
 
 // Filtro por nome do cliente do pedido vinculado — mesmo EXISTS
-// correlacionado de orderNumberSystemMatchesLiteral (mesmo motivo: modo
-// subQuery da paginação por causa do include hasMany de receipts).
+// correlacionado de orderNumberSystemMatchesLiteral (mesmo motivo).
 export function orderCustomerNameMatchesLiteral(term: string) {
   const escaped = term.replace(/'/g, "''");
   return Sequelize.literal(`EXISTS (
@@ -35,7 +29,7 @@ export function orderCustomerNameMatchesLiteral(term: string) {
 // nome/documento do cliente do pedido vinculado, e number_system da nota
 // de venda OU de transferência (as duas são FK própria de PdvSalesRequest,
 // sem precisar passar por order) num único OR. Usada só por `search`,
-// nunca por `filters[...]` — ver PdvSalesRequestService.paginateWithOrder:
+// nunca por `filters[...]` — ver PdvSalesRequestService.buildBoardBaseWhere:
 // o `search` genérico do QueryParser não serve aqui, já que `searchFields`
 // fica vazio pra essa entidade e zeraria o resultado (`where.id = null`).
 export function pdvSalesRequestSearchLiteral(term: string) {
@@ -98,4 +92,13 @@ export function errorsReasonsOverlapLiteral(reasons: string[]) {
   return Sequelize.literal(
     `("PdvSalesRequest"."errors" -> 'reasons') ?| array[${values}]`,
   );
+}
+
+// Card do quadro só precisa saber se há comprovante (next_action) — EXISTS
+// em vez de include hasMany (servido por idx_pdv_sales_request_receipts_request_id).
+export function hasReceiptLiteral() {
+  return Sequelize.literal(`EXISTS (
+    SELECT 1 FROM pdv_sales_request_receipts r
+    WHERE r.pdv_sales_request_id = "PdvSalesRequest"."id"
+  )`);
 }

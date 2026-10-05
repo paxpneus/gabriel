@@ -61,7 +61,9 @@ export const syncOrderInternalStatus = async (
       nfe_emitted: true,
       internal_status: mappedStatus,
     });
-    notifyPdvStoreSync(internalOrder.unit_business_id, "ORDER_STATUS_CHANGED");
+    notifyPdvStoreSync(internalOrder.unit_business_id, "ORDER_STATUS_CHANGED", {
+      orderId: internalOrder.id,
+    });
 
     return { handled: true, outcome: "completed", internalStatus: mappedStatus };
   }
@@ -72,7 +74,9 @@ export const syncOrderInternalStatus = async (
       internal_status: mappedStatus,
       ...(reasonCancelled ? { reason_cancelled: reasonCancelled } : {}),
     });
-    notifyPdvStoreSync(internalOrder.unit_business_id, "ORDER_STATUS_CHANGED");
+    notifyPdvStoreSync(internalOrder.unit_business_id, "ORDER_STATUS_CHANGED", {
+      orderId: internalOrder.id,
+    });
 
     // Cancela sozinho uma PdvSalesRequest ativa pro pedido — diferente de
     // handleInvoiceCancelled (nota cancelada bloqueia pra decisão humana),
@@ -161,7 +165,9 @@ export async function escalateToHumanVerificationIfStillPending({
     });
     if (order) {
       await ordersService.update(order.id, { internal_status: mappedStatus });
-      notifyPdvStoreSync(order.unit_business_id, "ORDER_STATUS_CHANGED");
+      notifyPdvStoreSync(order.unit_business_id, "ORDER_STATUS_CHANGED", {
+        orderId: order.id,
+      });
     }
     return {
       escalated: false,
@@ -196,7 +202,9 @@ export async function escalateToHumanVerificationIfStillPending({
     nfe_emitted: false,
     reason_cancelled: reasonCancelled,
   });
-  notifyPdvStoreSync(order.unit_business_id, "ORDER_STATUS_CHANGED");
+  notifyPdvStoreSync(order.unit_business_id, "ORDER_STATUS_CHANGED", {
+    orderId: order.id,
+  });
 
   // NÃO cancela a PdvSalesRequest aqui — verificação humana (situação
   // 748772) não é "pedido cancelado" pra Bling, é só um estado interno

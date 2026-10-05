@@ -98,10 +98,10 @@ const STOCK_MOVEMENTS_UNIT_BUSINESS_ID = "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
  *    de cada item, não um flag prévio).
  *
  * 7. Comissão de vendedor (commission_value) e de gerente
- *    (manager_commission_value): não fazem parte da lógica de sales_report
- *    (são específicas deste relatório) e permanecem como antes — comissão
- *    de vendedor vem por item de order_items; comissão de gerente é
- *    net_total_allocated * manager_commission_rate / 100.
+ *    (manager_commission_value): mesma base líquida para as duas —
+ *    net_total_allocated * (commission_rate | manager_commission_rate) / 100,
+ *    só a taxa vem de order_items (commission_value de lá não é usado).
+ *    A de vendedor é idêntica à de sales_report; a de gerente só existe aqui.
  *
  * ATENÇÃO / MIGRAÇÃO NECESSÁRIA (mantida de revisão anterior):
  * Esta versão grava tax_commission_allocated e freight_cost_allocated por
@@ -462,9 +462,7 @@ WHERE o.seller_id IS NOT NULL
           COALESCE(scm.resulting_average_cost, 0)::numeric
             * COALESCE(kc.quantity, 1) AS average_cost_snapshot,
 
-          COALESCE(oi.commission_base, 0)::numeric  AS commission_base,
           COALESCE(oi.commission_rate, 0)::numeric  AS commission_rate,
-          COALESCE(oi.commission_value, 0)::numeric AS commission_value,
           COALESCE(oi.comission_manager_rate, 0)::numeric AS manager_commission_rate,
           os.total_products     AS order_total_products,
           os.tax_commission     AS order_tax_commission,
@@ -536,7 +534,10 @@ WHERE o.seller_id IS NOT NULL
           ROUND(item_weight * order_total_products, 2)      AS net_total_allocated,
           ROUND(item_weight * order_computed_icms_value, 2) AS icms_value_allocated,
           ROUND(item_weight * order_tax_commission, 2)      AS tax_commission_allocated,
-          ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated
+          ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated,
+          -- Comissão de vendedor na mesma base líquida da de gerente (não o bruto de order_items).
+          ROUND(item_weight * order_total_products, 2)      AS commission_base,
+          ROUND(ROUND(item_weight * order_total_products, 2) * commission_rate / 100, 2) AS commission_value
         FROM item_weighted
       ),
 

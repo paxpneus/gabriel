@@ -268,6 +268,10 @@ export class OrderService extends BaseService<Order, OrderRepository> {
     };
   }
 
+  touch(orderId: string): Promise<void> {
+    return this.repository.touch(orderId);
+  }
+
   // Reprocessa o pedido no relatório sem depender do checkpoint do job.
   async refreshOrderSalesReport(
     orderId: string,

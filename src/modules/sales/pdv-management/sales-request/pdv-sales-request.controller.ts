@@ -10,6 +10,8 @@ import { TCarInvoiceQueue } from "../../../handlers/tecinco/queues/tecinco-invoi
 import { pdvAccess, PdvAccessRequest } from "../pdv-access/pdv-access.middleware";
 import { resolveSalesRequestOrigin } from "./helpers/sales-request-origin";
 import { PdvAccessContext, PdvAccessScreen } from "../pdv-access/pdv-access.types";
+import { parseBoardQuery } from "./helpers/board-query";
+import { PdvForbiddenError } from "../helpers/pdv-errors";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -225,37 +227,32 @@ export class PdvSalesRequestController extends BaseController<
     return access.via === "LOGIN" ? access.userId : req.body?.userId;
   }
 
+  // Quadro do Kanban: colunas/status decididos pela tela do acesso — ver
+  // helpers/pdv-screens.config.ts. Sem `column` devolve { columns }; com, a coluna.
   index = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const access = this.access(req);
-      const params = this.extractQueryParams(req);
-
-      const result = await this.service.paginateWithOrder(
-        params,
-        access.unitBusinessId,
+      const query = parseBoardQuery(req.query as Record<string, unknown>);
+      const result = await this.service.getBoard(
+        this.access(req),
+        this.extractQueryParams(req),
+        query,
       );
-
       return res.json(result);
     } catch (error: any) {
+      if (error instanceof PdvForbiddenError) {
+        return res.status(403).json({ error: error.message });
+      }
       return res.status(400).json({ error: error.message });
     }
   };
 
   show = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const access = this.access(req);
       const record = await this.service.findByIdWithOrder(
         req.params.id as string,
+        this.access(req),
       );
-
-      if (
-        !record ||
-        (access.unitBusinessId !== null &&
-          record.unit_business_id !== access.unitBusinessId)
-      ) {
-        return res.status(404).json({ error: "Não encontrado" });
-      }
-
+      if (!record) return res.status(404).json({ error: "Não encontrado" });
       return res.json(record);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });

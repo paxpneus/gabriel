@@ -7,6 +7,27 @@ aqui.
 
 **Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
 
+## Mudou: coluna com `description`/`highlighted`, loja no card de Televendas, `user.type`
+
+- Coluna do quadro ganhou `description` (subtítulo, `string | null`) e `highlighted` (fila de trabalho da tela; coluna `extra` sempre `false`).
+- `order.unitBusiness { number }` no card agora também em Televendas.
+- `GET /api/users/me/get` (e o login) devolve `type` no topo do usuário (= `config.type`, ex. `"finance"`). Tela Financeiro = `user.type === "finance"` — comparar com a chave `type` de `/user_config/user-types/get`, não com o `label` "Financeiro".
+
+## Mudou: `pdv-store:sync` diz qual solicitação/pedido mudou
+
+Payload ganhou campos (os antigos continuam): `requests: [{ requestId, status }]` em `SALES_REQUEST_STATUS_CHANGED` (status atual, pós-mudança; no lote finalizado vem a lista da loja), `orderId` em `ORDER_STATUS_CHANGED`/`NEW_ORDER`. Serve pra recarregar só a coluna afetada (`GET /sales-request?column=`) em vez do quadro inteiro. `NEW_ORDER` só sai quando o pedido novo já tem a solicitação criada (card já existe no `GET`); pedido não elegível ao PDV não emite.
+
+## Mudou (breaking): quadro do Kanban, `next_action` e detalhe enxuto
+
+Back e front sobem juntos — sem modo legado. Contrato completo: bloco "Contrato da API — PDV" entregue com esta mudança. Migration `m310` (só índices, `CONCURRENTLY`).
+
+- `GET /sales-request` passa a devolver `{ columns: [{ key, label, statuses, extra, items, totalCount, nextCursor, hasMore }] }`; com `column=<key>` (+ `cursor`), só o objeto daquela coluna. Params: `column`, `cursor`, `limit` (1–100, padrão 15), `include_closed`, `include_other_screens`. `filters[status]`, `page`, `perPage`, `sortBy` são ignorados; `search` e os outros `filters[...]` (inclusive `indicator`) seguem valendo. Coluna fora da tela → 403; parâmetro inválido → 400.
+- Card: `id, status, shipping_label, next_action, order{id, number_order_system, number_order_channel, date, customer{name}, unitBusiness{number}* }, saleInvoice{tracking_url}` (*só financeiro/CD21). Saíram `order.status`, `customer.document`, `net_total_order`, `receipts`, `errors`, `createdAt`, `invoice_tracking_url` e o resto.
+- `next_action` (string ou null, já da tela de quem pede) no card e no `GET /:id`. Ações não devolvem — refazer `GET /:id`.
+- `GET /:id`: novo `shipping_info_required`; saíram `unit_business_id`, `order_id`, `order.id`, `errors.origin` (usar `correction_origin_status`), `invoice_tracking_url` (usar `saleInvoice.tracking_url`), `receipts[].path/validated/createdAt`, e `estabelecimento_*`/`cartao_final` das análises (também no socket `payment-receipt-analysis:done`). Card de outra loja → 404.
+- Histórico: `id, step, description, date, user_id`.
+- Link: `?screen=` (e `?number=` em loja/CD21) é conferido contra o token → 400/403. Login de loja 12/17 ou tela sem acesso à rota → 403.
+
 ## Novo: diferença comprovantes x pedido (`receipt_total_difference`)
 
 Campo novo na solicitação (migration `m308`; `m309` preenche as solicitações já existentes), vem na listagem e no `GET /sales-request/:id`: `receipt_total_difference: number | null` = `payment_receipt_analysis.valor_total` (soma dos comprovantes) − total do pedido (`order.net_total_order`).

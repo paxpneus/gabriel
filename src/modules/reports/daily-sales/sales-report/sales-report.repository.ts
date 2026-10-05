@@ -868,10 +868,8 @@ item_source_raw AS (
       ELSE 'UNKNOWN'
     END                                                     AS cost_source,
 
-    COALESCE(oi.commission_base, 0)                       AS commission_base,
     COALESCE(oi.commission_rate, 0)                       AS commission_rate,
-    COALESCE(oi.commission_value, 0)                      AS commission_value,
-    pc.ncm                                                AS ncm,
+    pc.ncm                                               AS ncm,
     pc.cest                                               AS cest,
     NULL::varchar                                         AS cfop,
     pc.gtin                                               AS gtin,
@@ -958,8 +956,8 @@ item_weighted AS (
 --     estes são só pra exibição, não entram em custo/contribution) é
 --     distribuído entre os itens proporcionalmente ao item_weight.
 --     A receita rateada (net_total_allocated) agora usa total_products
---     (bruto), não mais o valor líquido do pedido. Comissão NÃO é rateada —
---     já vem por item.
+--     (bruto), não mais o valor líquido do pedido. Comissão de vendedor é
+--     commission_rate (de order_items) sobre net_total_allocated.
 -- ------------------------------------------------------------------
 item_calc AS (
   SELECT
@@ -975,7 +973,10 @@ item_calc AS (
     ROUND(item_weight * order_approx_tax_value, 2)     AS approx_tax_value_allocated,
     ROUND(item_weight * order_tax_commission, 2)      AS tax_commission_allocated,
     ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated,
-    ROUND(item_weight * order_computed_icms_value, 2) AS computed_icms_value_allocated
+    ROUND(item_weight * order_computed_icms_value, 2) AS computed_icms_value_allocated,
+    -- Mesma base líquida da comissão de gerente do seller_sales_report (não o bruto de order_items).
+    ROUND(item_weight * order_total_products, 2)      AS commission_base,
+    ROUND(ROUND(item_weight * order_total_products, 2) * commission_rate / 100, 2) AS commission_value
   FROM item_weighted
 ),
 

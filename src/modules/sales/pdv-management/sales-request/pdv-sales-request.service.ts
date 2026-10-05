@@ -23,6 +23,8 @@ import {
   EMPTY_PAYMENT_RECEIPT_EXTRACTION,
   PdvSalesRequestOrderDetail,
   PdvSalesRequestOrderSummary,
+  PdvBoardColumnResult,
+  PdvSalesRequestDetail,
   TERMINAL_PDV_SALES_REQUEST_STATUSES,
   EXPEDITION_PDV_SALES_REQUEST_STATUSES,
 } from "./pdv-sales-request.types";
@@ -70,6 +72,7 @@ import {
   receiptTotalDifference,
 } from "./helpers/receipt-reconciliation";
 import { QueryParams } from "../../../../shared/query/query.types";
+import { QueryParser } from "../../../../shared/query/query.parser";
 import socketService from "../../../handlers/socket/services/socket.service";
 import {
   PDV_SOCKET_NAMESPACE,
@@ -81,7 +84,20 @@ import {
   notifySalesRequestUpdated,
 } from "./helpers/notify-sales-request-updated";
 import { notifyPdvStoresSync } from "./helpers/notify-pdv-store-sync";
-import { buildShippingLabel } from "./helpers/shipping-label";
+import {
+  pickReceiptAnalysisFields,
+  toBoardCard,
+  toSalesRequestDetail,
+} from "./helpers/card-serializers";
+import { boardCursorAfterLiteral, encodeBoardCursor } from "./helpers/board-cursor";
+import { PdvBoardQuery } from "./helpers/board-query";
+import {
+  PdvBoardColumn,
+  findVisibleColumn,
+  resolveBoardScreen,
+  resolveColumns,
+} from "../helpers/pdv-screens.config";
+import { PdvForbiddenError } from "../helpers/pdv-errors";
 import {
   ADT_TRANSPORTER_CDS,
   extractTransporterCd,
@@ -138,9 +154,8 @@ export class PdvSalesRequestService extends BaseService<
       ],
       sortableFields: ["createdAt", "status"],
       customFields: {
-        // WHERE fragment sobre a association "order" já embutida em
-        // findPaginatedWithOrder — só um filtro isolado, não precisa de
-        // método novo na repository (ver "list-filters" no CLAUDE.md).
+        // EXISTS correlacionado contra orders — só um filtro isolado, não
+        // precisa de método novo na repository (ver "list-filters" no CLAUDE.md).
         number_order_system: (value) => {
           const term = Array.isArray(value) ? value[0] : value;
           return { [Op.and]: [orderNumberSystemMatchesLiteral(String(term))] };
@@ -243,31 +258,38 @@ export class PdvSalesRequestService extends BaseService<
     };
   }
 
-  // Detalhe (tela expandida do card) — pedido com cliente, forma de
-  // pagamento, parcelas e itens.
-  async findByIdWithOrder(id: string): Promise<any | null> {
+  // Detalhe (card expandido). Loja só abre card da própria loja — null
+  // (404) pra card de outra; acesso global (unitBusinessId null) abre qualquer um.
+  async findByIdWithOrder(
+    id: string,
+    access: PdvAccessContext,
+  ): Promise<PdvSalesRequestDetail | null> {
     const record = await this.repository.findByIdWithOrder(id);
     if (!record) return null;
+    if (
+      access.unitBusinessId !== null &&
+      record.unit_business_id !== access.unitBusinessId
+    ) {
+      return null;
+    }
 
     const plain = record.get({ plain: true }) as any;
-    const resolveStatus = await orderService.buildStatusResolver(
-      plain.order ? [plain.order.integrations_id] : [],
-    );
-    return {
-      ...plain,
-      order: plain.order
-        ? {
-            ...this.toOrderDetail(plain.order),
-            status: resolveStatus(
-              plain.order.integrations_id,
-              plain.order.actual_situation,
-            ),
-          }
+    const [resolveStatus, expeditionProgress, shippingInfoRequired] =
+      await Promise.all([
+        orderService.buildStatusResolver(
+          plain.order ? [plain.order.integrations_id] : [],
+        ),
+        this.resolveExpeditionProgress(plain),
+        this.isShippingInfoRequired(plain.order?.invoice_id ?? null),
+      ]);
+
+    return toSalesRequestDetail(plain, resolveBoardScreen(access), {
+      orderStatus: plain.order
+        ? resolveStatus(plain.order.integrations_id, plain.order.actual_situation)
         : null,
-      shipping_label: buildShippingLabel(plain.shipping_type, plain.saleInvoice?.transporter_name),
-      invoice_tracking_url: plain.saleInvoice?.tracking_url ?? null,
-      expedition_progress: await this.resolveExpeditionProgress(plain),
-    };
+      expeditionProgress,
+      shippingInfoRequired,
+    });
   }
 
   // Só em SHIPPING/SHIP_TODAY; nota é order.invoice_id (fonte de verdade), sem nota = fora de lote.
@@ -294,6 +316,15 @@ export class PdvSalesRequestService extends BaseService<
     );
   }
 
+  private async unitBusinessScopeWhere(
+    unitBusinessId: string | null,
+  ): Promise<WhereOptions> {
+    const scope = await this.resolveUnitBusinessScope(unitBusinessId);
+    return {
+      unit_business_id: Array.isArray(scope) ? { [Op.in]: scope } : scope,
+    };
+  }
+
   // Loja explicitamente fora do fluxo PDV — diferente do caso "sem loja
   // selecionada" acima, aqui a loja É uma específica, só que uma que nunca
   // participa do PDV. Mesmo critério de unitBusinessService.
@@ -314,61 +345,131 @@ export class PdvSalesRequestService extends BaseService<
     return PDV_EXCLUDED_STORE_NUMBERS.includes(unitBusiness.number ?? "");
   }
 
-  // Listagem (cards reduzidos do Kanban) — só cliente + loja, sem forma de
-  // pagamento/parcelas/itens. unitBusinessId null (CD21/Financeiro/
-  // Televendas sem loja) enxerga todas as lojas físicas normais.
-  async paginateWithOrder(params: QueryParams, unitBusinessId: string | null) {
-    const scope = await this.resolveUnitBusinessScope(unitBusinessId);
-    const { search, ...restParams } = params;
-    const term = search?.trim();
-
-    // `search` sai de restParams antes do QueryParser genérico: esta
-    // entidade não tem `searchFields` (os campos buscáveis são todos de
-    // outra tabela — cliente do pedido, nota de venda/transferência), e o
-    // caminho genérico zera o resultado (`where.id = null`) quando
-    // `searchFields` está vazio. Ver pdvSalesRequestSearchLiteral.
-    const forcedWhere: WhereOptions = {
-      unit_business_id: Array.isArray(scope) ? { [Op.in]: scope } : scope,
-      ...(term ? { [Op.and]: [pdvSalesRequestSearchLiteral(term)] } : {}),
+  // ─── Quadro do Kanban (GET /sales-request) ───────────────────────────────
+  // Colunas/status por tela vêm de helpers/pdv-screens.config.ts. Sem
+  // `column`: quadro inteiro; com `column`: só a próxima página dela.
+  async getBoard(
+    access: PdvAccessContext,
+    params: QueryParams,
+    query: PdvBoardQuery,
+  ): Promise<{ columns: PdvBoardColumnResult[] } | PdvBoardColumnResult> {
+    const screen = resolveBoardScreen(access);
+    const flags = {
+      includeClosed: query.includeClosed,
+      includeOtherScreens: query.includeOtherScreens,
     };
 
-    const result = await this.repository.findPaginatedWithOrder(
-      restParams,
-      this.queryConfig,
-      forcedWhere,
-    );
-
-    const plainRecords = result.data.map(
-      (record) => (record as any).get({ plain: true }) as any,
-    );
-    const resolveStatus = await orderService.buildStatusResolver(
-      plainRecords.flatMap((plain) =>
-        plain.order ? [plain.order.integrations_id] : [],
-      ),
-    );
+    if (query.column) {
+      const column = findVisibleColumn(screen, query.column, flags);
+      if (!column) {
+        throw new PdvForbiddenError(
+          `Coluna "${query.column}" não disponível para esta tela.`,
+        );
+      }
+      const [result] = await this.getBoardColumns(access, params, query, [column]);
+      return result;
+    }
 
     return {
-      ...result,
-      data: plainRecords.map((plain) => {
-        return {
-          ...plain,
-          order: plain.order
-            ? {
-                ...this.toOrderSummary(plain.order),
-                status: resolveStatus(
-                  plain.order.integrations_id,
-                  plain.order.actual_situation,
-                ),
-              }
-            : null,
-          shipping_label: buildShippingLabel(
-            plain.shipping_type,
-            plain.saleInvoice?.transporter_name,
-          ),
-          invoice_tracking_url: plain.saleInvoice?.tracking_url ?? null,
-        };
-      }),
+      columns: await this.getBoardColumns(
+        access,
+        params,
+        query,
+        resolveColumns(screen, flags),
+      ),
     };
+  }
+
+  // 1 contagem agrupada + 1 página por coluna, tudo em paralelo (sem N+1).
+  private async getBoardColumns(
+    access: PdvAccessContext,
+    params: QueryParams,
+    query: PdvBoardQuery,
+    columns: PdvBoardColumn[],
+  ): Promise<PdvBoardColumnResult[]> {
+    const screen = resolveBoardScreen(access);
+    const baseWhere = await this.buildBoardBaseWhere(access, params);
+    const cursorWhere = query.cursor ? boardCursorAfterLiteral(query.cursor) : null;
+
+    const [statusCounts, ...pages] = await Promise.all([
+      this.repository.countGroupedByStatus(baseWhere),
+      ...columns.map((column) =>
+        this.repository.findBoardColumnPage(
+          {
+            [Op.and]: [
+              baseWhere,
+              { status: { [Op.in]: column.statuses } },
+              ...(cursorWhere ? [cursorWhere] : []),
+            ],
+          },
+          query.limit,
+        ),
+      ),
+    ]);
+
+    return columns.map((column, index) => {
+      const rows = pages[index].map(
+        (record) => (record as any).get({ plain: true }) as any,
+      );
+      const hasMore = rows.length > query.limit;
+      const pageRows = rows.slice(0, query.limit);
+      const lastRow = pageRows[pageRows.length - 1];
+
+      return {
+        key: column.key,
+        label: column.label,
+        description: column.description,
+        statuses: column.statuses,
+        extra: !!column.extra,
+        highlighted: !column.extra && !!column.highlighted,
+        items: pageRows.map((row) => toBoardCard(row, screen)),
+        totalCount: column.statuses.reduce(
+          (sum, status) => sum + (statusCounts[status] ?? 0),
+          0,
+        ),
+        nextCursor:
+          hasMore && lastRow
+            ? encodeBoardCursor(lastRow.cursor_created_at, lastRow.id)
+            : null,
+        hasMore,
+      };
+    });
+  }
+
+  // Sempre [Op.and], nunca spread: indicator e search também usam [Op.and] e
+  // se sobrescreveriam. Cada filtro é parseado sozinho pelo mesmo motivo —
+  // QueryParser junta customFields com Object.assign.
+  private async buildBoardBaseWhere(
+    access: PdvAccessContext,
+    params: QueryParams,
+  ): Promise<WhereOptions> {
+    // search fora do QueryParser: sem searchFields ele zeraria tudo (where.id = null).
+    // filters[status] é ignorado — quem decide os status é a coluna.
+    const { status: _ignoredStatus, ...filters } =
+      typeof params.filters === "object" && params.filters ? params.filters : {};
+    const term = params.search?.trim();
+
+    const filterWheres = Object.entries(filters).map(
+      ([field, value]) =>
+        QueryParser.parse({ filters: { [field]: value } }, this.queryConfig).where,
+    );
+    const dateRangeWhere = QueryParser.parse(
+      {
+        dateFrom: params.dateFrom,
+        dateTo: params.dateTo,
+        dateField: params.dateField,
+      },
+      this.queryConfig,
+    ).where;
+
+    const parts = [
+      await this.unitBusinessScopeWhere(access.unitBusinessId),
+      ...filterWheres,
+      dateRangeWhere,
+      ...(term ? [pdvSalesRequestSearchLiteral(term)] : []),
+    ].filter((part) => Reflect.ownKeys(part).length > 0);
+
+    return { [Op.and]: parts };
   }
 
   // Pedidos da loja sem solicitação PDV ativa — coluna "Em Aberto" do Kanban
@@ -426,10 +527,7 @@ export class PdvSalesRequestService extends BaseService<
   async getStatusSummary(access: PdvAccessContext): Promise<
     Record<string, { label: string; quantity: number; sub_stats?: Record<string, number> }>
   > {
-    const scope = await this.resolveUnitBusinessScope(access.unitBusinessId);
-    const where: WhereOptions = {
-      unit_business_id: Array.isArray(scope) ? { [Op.in]: scope } : scope,
-    };
+    const where = await this.unitBusinessScopeWhere(access.unitBusinessId);
 
     const keys = PDV_STATUS_INDICATORS_BY_SCREEN[access.screen];
     const needsTransporterCounts = keys.some(
@@ -506,20 +604,23 @@ export class PdvSalesRequestService extends BaseService<
   // que só bloqueia duplicidade de solicitação ainda ATIVA). Só assim pode
   // ser chamado em toda atualização, não só na criação do pedido, sem
   // re-lançar uma nova solicitação toda vez que o pedido volta a ficar
-  // elegível depois de ter sido cancelado. Mesmos 3 critérios de
+  // elegível depois de ter sido cancelado. Retorna a solicitação criada (null
+  // se no-op). Mesmos 3 critérios de
   // findEligibleOrders/isEligibleForPdv: loja física normal (fora de
   // CD21/PDV_EXCLUDED_STORE_NUMBERS, nunca marketplace sem
   // unit_business_id), pedido não CANCELLED, sem romaneio já gerado pro
   // invoice/loja do pedido. No-op silencioso pra qualquer pedido não
   // elegível ou que já tenha solicitação (de qualquer status).
-  async createEmptyRequestForNewOrderIfEligible(orderId: string): Promise<void> {
+  async createEmptyRequestForNewOrderIfEligible(
+    orderId: string,
+  ): Promise<PdvSalesRequest | null> {
     const order = await orderService.findById(orderId);
-    if (!order?.unit_business_id) return;
-    if (await this.isExcludedFromPdvFlow(order.unit_business_id)) return;
-    if (!(await orderService.isEligibleForPdv(orderId))) return;
-    if (await this.repository.findByOrderId(orderId)) return;
+    if (!order?.unit_business_id) return null;
+    if (await this.isExcludedFromPdvFlow(order.unit_business_id)) return null;
+    if (!(await orderService.isEligibleForPdv(orderId))) return null;
+    if (await this.repository.findByOrderId(orderId)) return null;
 
-    await this.createRequest({ orderId });
+    return this.createRequest({ orderId });
   }
 
   // ─── Máquina de estados ─────────────────────────────────────────────────────
@@ -980,18 +1081,25 @@ export class PdvSalesRequestService extends BaseService<
     const order = await orderService.findById(request.order_id, {
       attributes: ["id", "invoice_id"],
     });
-    if (order?.invoice_id) {
-      const saleInvoice = await invoiceService.findById(order.invoice_id, {
-        attributes: ["id", "transporter_name"],
-      });
-      if (!transporterService.isNoTransporterName(saleInvoice?.transporter_name)) {
-        return;
-      }
+    if (!(await this.isShippingInfoRequired(order?.invoice_id ?? null))) {
+      return;
     }
 
     throw new Error(
       "Preencha o endereço de envio e a transportadora antes de enviar a solicitação",
     );
+  }
+
+  // Endereço/transportadora só são opcionais com nota de venda cuja
+  // transportadora não é "Sem transporte" — também vira shipping_info_required no detalhe.
+  private async isShippingInfoRequired(
+    saleInvoiceId: string | null,
+  ): Promise<boolean> {
+    if (!saleInvoiceId) return true;
+    const saleInvoice = await invoiceService.findById(saleInvoiceId, {
+      attributes: ["id", "transporter_name"],
+    });
+    return transporterService.isNoTransporterName(saleInvoice?.transporter_name);
   }
 
   // ADT ⇔ transportadora CD 12/17. Sem nota de venda ou sem transportadora na nota não dá pra checar — libera.
@@ -1079,8 +1187,11 @@ export class PdvSalesRequestService extends BaseService<
     if (request.status === PdvSalesRequestStatus.PENDING_NF_SALE) {
       return request.status;
     }
+    // ADT sem nota de transferência volta pra fila de vínculo dela.
     if (shippingType === PdvShippingType.ADT) {
-      return PdvSalesRequestStatus.SHIPPING;
+      return request.transfer_invoice_id
+        ? PdvSalesRequestStatus.SHIPPING
+        : PdvSalesRequestStatus.PENDING_NF_TRANSFER;
     }
     return (await this.isSaleInvoiceDeliveryNoteGenerated(request.sale_invoice_id))
       ? PdvSalesRequestStatus.FINISHED
@@ -1296,10 +1407,12 @@ export class PdvSalesRequestService extends BaseService<
           requestId,
           receiptId,
           success: true,
-          analysis,
+          analysis: pickReceiptAnalysisFields(analysis),
           validated: result.validated,
           reconciled: {
-            analysis: reconciled.payment_receipt_analysis,
+            analysis: pickReceiptAnalysisFields(
+              reconciled.payment_receipt_analysis,
+            ),
             validated: reconciled.payment_receipt_validated,
             paymentMethodMatchesReceipt:
               reconciled.payment_method_matches_receipt,
@@ -1793,7 +1906,7 @@ export class PdvSalesRequestService extends BaseService<
   // cópia defasada.
   async resolveSaleInvoiceId(id: string): Promise<string> {
     const request = await this.findById(id, {
-      attributes: ["id", "order_id", "sale_invoice_id", "unit_business_id"],
+      attributes: ["id", "order_id", "sale_invoice_id", "unit_business_id", "status"],
     });
     if (!request) throw new Error("Solicitação não encontrada");
 
@@ -2456,14 +2569,18 @@ export class PdvSalesRequestService extends BaseService<
       );
     });
 
-    notifySalesRequestChanged(request);
+    notifySalesRequestChanged({
+      id: request.id,
+      unit_business_id: request.unit_business_id,
+      status: PdvSalesRequestStatus.EXCLUDED,
+    });
   }
 
   // Pra quem muda dado exibido na solicitação fora deste service (lote/romaneio do CD21, import da Tecinco).
   async notifyChanged(id: string): Promise<void> {
     try {
       const request = await this.findById(id, {
-        attributes: ["id", "unit_business_id"],
+        attributes: ["id", "unit_business_id", "status"],
       });
       if (request) notifySalesRequestChanged(request);
     } catch (err) {
@@ -2476,13 +2593,10 @@ export class PdvSalesRequestService extends BaseService<
     try {
       const requests = await this.repository.findActiveBySaleInvoiceIds(
         invoiceIds,
-        ["id", "unit_business_id"],
+        ["id", "unit_business_id", "status"],
       );
       requests.forEach((request) => notifySalesRequestUpdated(request.id));
-      notifyPdvStoresSync(
-        requests.map((request) => request.unit_business_id),
-        "SALES_REQUEST_STATUS_CHANGED",
-      );
+      notifyPdvStoresSync(requests, "SALES_REQUEST_STATUS_CHANGED");
     } catch (err) {
       console.warn("[PDV] Falha ao notificar solicitações do lote", err);
     }
@@ -2491,6 +2605,7 @@ export class PdvSalesRequestService extends BaseService<
   async getHistory(id: string) {
     return pdvSalesRequestHistoryService.findAll({
       where: { pdv_sales_request_id: id },
+      attributes: ["id", "step", "description", "date", "user_id"],
       order: [["date", "DESC"]],
     });
   }

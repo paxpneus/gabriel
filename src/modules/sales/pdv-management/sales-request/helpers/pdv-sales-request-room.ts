@@ -1,3 +1,5 @@
+import { PdvSalesRequestStatus } from "../pdv-sales-request.types";
+
 // Fonte única pros dois lados (quem entra na room e quem emite pra ela) não
 // divergirem — ver pdv-sales-request.socket.ts e attachReceipt.
 export const PDV_SOCKET_NAMESPACE = "/pdv";
@@ -26,9 +28,16 @@ export const PDV_CD21_ROOM = "pdv-cd21";
 
 export const PDV_STORE_SYNC_EVENT = "pdv-store:sync";
 
-// Front só usa isso pra decidir refetch, nunca lê o payload além disso —
-// qualquer novo gatilho de sync deve entrar aqui.
+// Front só usa isso pra decidir qual coluna recarregar, nunca como dado de
+// negócio — qualquer novo gatilho de sync deve entrar aqui.
 export type PdvStoreSyncEventName =
   | "SALES_REQUEST_STATUS_CHANGED"
   | "ORDER_STATUS_CHANGED"
   | "NEW_ORDER";
+
+// `requests` em mudança de solicitação (status = o atual, pós-mudança);
+// `orderId` em mudança de pedido — casa com card.order.id no quadro.
+export interface PdvStoreSyncDetail {
+  requests?: { requestId: string; status: PdvSalesRequestStatus }[];
+  orderId?: string;
+}

@@ -32,6 +32,9 @@ export interface USER_TYPE_CONFIG {
 // das notificações de erro de integração (ver integration-error.service.ts).
 export const DEVELOPER_USER_TYPE: UserType = "developer";
 
+// Tela FINANCE do PDV Management (resolve-pdv-access.ts) e menu do front comparam user.type com isto.
+export const FINANCE_USER_TYPE: UserType = "finance";
+
 export const USER_TYPES: USER_TYPE_CONFIG[] = [
   {
     type: "admin",
@@ -241,7 +244,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
   },
 
   {
-    type: "finance",
+    type: FINANCE_USER_TYPE,
     label: "Financeiro",
     description: "Acesso à análise financeira do PDV Management.",
     initialPage: "/pdv-management/financeiro",

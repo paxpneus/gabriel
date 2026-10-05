@@ -12,17 +12,17 @@ jest.mock("../../../../../company/users/users/user.service", () => ({
 }));
 
 import userService from "../../../../../company/users/users/user.service";
-import { resolveLoginAccess } from "../resolve-pdv-access";
-import { PdvAccessScreen } from "../../pdv-access.types";
+import { assertLinkParamsMatch, resolveLoginAccess } from "../resolve-pdv-access";
+import { PdvAccessContext, PdvAccessScreen } from "../../pdv-access.types";
 
 // Regra determinística (ver resolve-pdv-access.ts): NUNCA via
-// ROLE_PERMISSIONS/userHasPermission — só user_config.type + unit_business.
+// ROLE_PERMISSIONS/userHasPermission — só user.type + unit_business.
 function makeUser(overrides: Partial<any> = {}) {
   return {
     id: "user-1",
     unit_business_id: "ub-1",
     unitBusiness: { id: "ub-1", number: "09" },
-    config: { type: "operator" },
+    type: "operator",
     ...overrides,
   };
 }
@@ -61,25 +61,41 @@ describe("resolveLoginAccess", () => {
     const result = await resolveLoginAccess("token", ALL_SCREENS);
 
     expect(result).toEqual({
-      screen: PdvAccessScreen.STORE_REQUEST,
-      via: "LOGIN",
-      unitBusinessId: "ub-loja-15",
-      userId: "user-1",
+      context: {
+        screen: PdvAccessScreen.STORE_REQUEST,
+        via: "LOGIN",
+        unitBusinessId: "ub-loja-15",
+        userId: "user-1",
+      },
     });
   });
 
-  it("config.type === 'finance' resolve FINANCE (global) mesmo a loja sendo uma loja física comum", async () => {
+  it("user.type === 'finance' resolve FINANCE (global) mesmo a loja sendo uma loja física comum", async () => {
     (userService.getMe as jest.Mock).mockResolvedValue(
-      makeUser({ config: { type: "finance" } }),
+      makeUser({ type: "finance" }),
     );
 
     const result = await resolveLoginAccess("token", ALL_SCREENS);
 
     expect(result).toEqual({
-      screen: PdvAccessScreen.FINANCE,
-      via: "LOGIN",
-      unitBusinessId: null,
-      userId: "user-1",
+      context: {
+        screen: PdvAccessScreen.FINANCE,
+        via: "LOGIN",
+        unitBusinessId: null,
+        userId: "user-1",
+      },
+    });
+  });
+
+  it("lê user.type (mesmo campo do front), não config.type", async () => {
+    (userService.getMe as jest.Mock).mockResolvedValue(
+      makeUser({ type: null, config: { type: "finance" } }),
+    );
+
+    const result = await resolveLoginAccess("token", ALL_SCREENS);
+
+    expect(result).toEqual({
+      context: expect.objectContaining({ screen: PdvAccessScreen.STORE_REQUEST }),
     });
   });
 
@@ -91,28 +107,32 @@ describe("resolveLoginAccess", () => {
     const result = await resolveLoginAccess("token", ALL_SCREENS);
 
     expect(result).toEqual({
-      screen: PdvAccessScreen.CD21,
-      via: "LOGIN",
-      unitBusinessId: null,
-      userId: "user-1",
+      context: {
+        screen: PdvAccessScreen.CD21,
+        via: "LOGIN",
+        unitBusinessId: null,
+        userId: "user-1",
+      },
     });
   });
 
-  it("config.type === 'finance' tem prioridade sobre a loja ser a CD21", async () => {
+  it("user.type === 'finance' tem prioridade sobre a loja ser a CD21", async () => {
     (userService.getMe as jest.Mock).mockResolvedValue(
       makeUser({
         unitBusiness: { id: "ub-cd21", number: "21" },
-        config: { type: "finance" },
+        type: "finance",
       }),
     );
 
     const result = await resolveLoginAccess("token", ALL_SCREENS);
 
-    expect(result?.screen).toBe(PdvAccessScreen.FINANCE);
+    expect(result).toEqual({
+      context: expect.objectContaining({ screen: PdvAccessScreen.FINANCE }),
+    });
   });
 
   it.each(["12", "17"])(
-    "loja %s (excluída do PDV) — sem tela nenhuma, retorna null",
+    "loja %s (excluída do PDV) — 403 explícito, não cai pro link como 400",
     async (number) => {
       (userService.getMe as jest.Mock).mockResolvedValue(
         makeUser({ unitBusiness: { id: "ub-x", number } }),
@@ -120,9 +140,24 @@ describe("resolveLoginAccess", () => {
 
       const result = await resolveLoginAccess("token", ALL_SCREENS);
 
-      expect(result).toBeNull();
+      expect(result).toEqual({ error: expect.objectContaining({ status: 403 }) });
     },
   );
+
+  it("financeiro lotado na loja 12 continua resolvendo FINANCE", async () => {
+    (userService.getMe as jest.Mock).mockResolvedValue(
+      makeUser({
+        unitBusiness: { id: "ub-12", number: "12" },
+        type: "finance",
+      }),
+    );
+
+    const result = await resolveLoginAccess("token", ALL_SCREENS);
+
+    expect(result).toEqual({
+      context: expect.objectContaining({ screen: PdvAccessScreen.FINANCE }),
+    });
+  });
 
   it("usuário sem unit business e sem config.type finance — sem tela nenhuma, retorna null", async () => {
     (userService.getMe as jest.Mock).mockResolvedValue(
@@ -134,12 +169,12 @@ describe("resolveLoginAccess", () => {
     expect(result).toBeNull();
   });
 
-  it("tela resolvida não está entre as exigidas pela rota — retorna null (cai pro link)", async () => {
+  it("tela resolvida não está entre as exigidas pela rota — 403 explícito", async () => {
     (userService.getMe as jest.Mock).mockResolvedValue(makeUser());
 
     const result = await resolveLoginAccess("token", [PdvAccessScreen.FINANCE]);
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ error: expect.objectContaining({ status: 403 }) });
   });
 
   // Regressão do bug real: loja legítima (STORE_REQUEST) batendo numa rota
@@ -156,7 +191,79 @@ describe("resolveLoginAccess", () => {
       PdvAccessScreen.FINANCE,
     ]);
 
-    expect(result?.screen).toBe(PdvAccessScreen.STORE_REQUEST);
-    expect(result?.unitBusinessId).toBe("ub-loja-15");
+    expect(result).toEqual({
+      context: expect.objectContaining({
+        screen: PdvAccessScreen.STORE_REQUEST,
+        unitBusinessId: "ub-loja-15",
+      }),
+    });
   });
+});
+
+describe("assertLinkParamsMatch", () => {
+  const storeLink: PdvAccessContext = {
+    screen: PdvAccessScreen.STORE_REQUEST,
+    via: "STORE_LINK",
+    unitBusinessId: "ub-24",
+  };
+  const cd21Link: PdvAccessContext = {
+    screen: PdvAccessScreen.CD21,
+    via: "STORE_LINK",
+    unitBusinessId: null,
+  };
+  const financeLink: PdvAccessContext = {
+    screen: PdvAccessScreen.FINANCE,
+    via: "STORE_LINK",
+    unitBusinessId: null,
+  };
+  const telesalesLink: PdvAccessContext = {
+    screen: PdvAccessScreen.STORE_REQUEST,
+    via: "TELESALES_LINK",
+    unitBusinessId: null,
+  };
+
+  it("sem screen/number na URL — ok (opcionais por enquanto)", () => {
+    expect(assertLinkParamsMatch(storeLink, {}, "24")).toBeNull();
+  });
+
+  it.each([
+    [storeLink, "store_request", "24"],
+    [cd21Link, "cd21", "21"],
+    [financeLink, "finance", undefined],
+    [telesalesLink, "telesales", undefined],
+  ])("screen/number batendo com o token — ok (%#)", (context, screen, number) => {
+    expect(
+      assertLinkParamsMatch(context, { screen, number }, number ?? undefined),
+    ).toBeNull();
+  });
+
+  it("screen desconhecido → 400", () => {
+    expect(assertLinkParamsMatch(storeLink, { screen: "admin" }, "24")).toEqual(
+      expect.objectContaining({ status: 400 }),
+    );
+  });
+
+  it("screen de outra tela → 403", () => {
+    expect(assertLinkParamsMatch(storeLink, { screen: "cd21" }, "24")).toEqual(
+      expect.objectContaining({ status: 403 }),
+    );
+    expect(
+      assertLinkParamsMatch(telesalesLink, { screen: "store_request" }, undefined),
+    ).toEqual(expect.objectContaining({ status: 403 }));
+  });
+
+  it("number diferente do que validou o token → 403", () => {
+    expect(assertLinkParamsMatch(storeLink, { number: "09" }, "24")).toEqual(
+      expect.objectContaining({ status: 403 }),
+    );
+  });
+
+  it.each([financeLink, telesalesLink])(
+    "number em link global (financeiro/televendas) → 403",
+    (context) => {
+      expect(assertLinkParamsMatch(context, { number: "24" }, undefined)).toEqual(
+        expect.objectContaining({ status: 403 }),
+      );
+    },
+  );
 });

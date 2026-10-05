@@ -360,10 +360,10 @@ export class UserService extends BaseService<User, UserRepository> {
     };
     let user;
 
-    const cachedUser = await redisService.get(`user:${decoded.id}`);
+    const cachedUser = await redisService.get<UserAttributes>(`user:${decoded.id}`);
     if (cachedUser) {
-      user = cachedUser;
-      return user;
+      // Cache gravado antes de getFullUser expor `type` no topo.
+      return { ...cachedUser, type: cachedUser.type ?? cachedUser.config?.type ?? null };
     }
 
     user = await this.repository.getFullUser({where: { id: decoded.id}})

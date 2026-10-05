@@ -13,6 +13,7 @@ import {
 } from "./helpers/pdv-sales-request-room";
 
 const WATCH_EVENT = "pdv-sales-request:watch";
+const UNWATCH_EVENT = "pdv-sales-request:unwatch";
 
 type WatchAck = (result: { ok: boolean; error?: string }) => void;
 
@@ -67,5 +68,11 @@ export function registerPdvSocketNamespace(): void {
         }
       },
     );
+
+    // Sem checagem de escopo: sair da room não expõe dado (escopo já checado no watch).
+    socket.on(UNWATCH_EVENT, (payload: { requestId?: string }) => {
+      const requestId = payload?.requestId;
+      if (requestId) socket.leave(pdvSalesRequestRoom(requestId));
+    });
   });
 }

@@ -1,5 +1,6 @@
 import orderItemsService from "./../../../../sales/orders/order_items/order_items.service";
 import { AxiosInstance } from "axios";
+import { Op } from "sequelize";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import { blingOrderWebHookData } from "./bling-order.types";
 import ordersService from "../../../../sales/orders/order/orders.service";
@@ -528,7 +529,8 @@ export class BlingOrderService {
   //   average_cost_snapshot = product_config.average_cost (valor unitário puro)
   //   unidades_reais        = (n do KIT, se houver) × quantidade do item
   //   custo_medio_total     = average_cost_snapshot × unidades_reais
-  //   commission_base       = itens.valor (valor bruto do item no pedido)
+  //   commission_base       = itens.valor × quantidade − itens.desconto (líquido;
+  //                           os relatórios recalculam sobre a receita rateada)
   //   commission_rate       = brand.seller_comission_tax_rate
   //   commission_value      = commission_base × (commission_rate / 100)
   //   total_cost_snapshot   = custo_medio_total + commission_value
@@ -783,7 +785,7 @@ export class BlingOrderService {
           averageCost,
           kitMultiplier,
           quantity,
-          grossTotalLine,
+          netTotal,
           hasSellerCommission,
         );
 
@@ -926,7 +928,9 @@ export class BlingOrderService {
           unit_business_id: unitBusinessId,
           ...reasonCancelledFields(orderData.situacao.id),
         });
-        notifyPdvStoreSync(unitBusinessId, "ORDER_STATUS_CHANGED");
+        notifyPdvStoreSync(unitBusinessId, "ORDER_STATUS_CHANGED", {
+          orderId: existingOrder.id,
+        });
 
         if (isPdvCancelledSituation(orderData.situacao.id)) {
           await pdvSalesRequestService.cancelIfActiveByOrderId(
@@ -1075,49 +1079,87 @@ export class BlingOrderService {
       const syncedItems: any[] = [];
 
       if (orderData.itens?.length) {
-        for (let idx = 0; idx < orderData.itens.length; idx++) {
-          const i = orderData.itens[idx];
+        const existingItems = await orderItemsService.findAll({
+          where: { order_id: existingOrder.id },
+          attributes: [
+            "id",
+            "sku",
+            "commission_base",
+            "commission_rate",
+            "comission_manager_rate",
+            "commission_value",
+            "average_cost_snapshot",
+            "total_cost_snapshot",
+            "cost_source",
+          ],
+          order: [["createdAt", "ASC"]],
+        });
+
+        // Mesmo SKU pode vir em mais de uma linha: cada linha do Bling consome um registro existente.
+        const existingBySku = new Map<string, typeof existingItems>();
+        for (const item of existingItems) {
+          if (!item.sku) continue;
+          existingBySku.set(item.sku, [
+            ...(existingBySku.get(item.sku) ?? []),
+            item,
+          ]);
+        }
+
+        const matchedItems = (orderData.itens as any[]).map((i, idx) => {
           const computedItem = itemsPayload[idx];
-          const sku = computedItem.sku || undefined;
+          const existingItem = computedItem.sku
+            ? existingBySku.get(computedItem.sku)?.shift()
+            : undefined;
+          return { i, computedItem, existingItem };
+        });
 
-          const existingItem = sku
-            ? await orderItemsService.findOne({
-                where: { order_id: existingOrder.id, sku },
-              })
-            : null;
+        syncedItems.push(
+          ...(await Promise.all(
+            matchedItems.map(async ({ i, computedItem, existingItem }) => {
+              if (!existingItem) {
+                return orderItemsService.create({
+                  ...computedItem,
+                  order_id: existingOrder.id,
+                });
+              }
 
-          if (existingItem) {
-            const financialFieldsUpdate = this.appendMissingFinancialFields(
-              existingItem,
-              computedItem,
-            );
+              const financialFieldsUpdate = this.appendMissingFinancialFields(
+                existingItem,
+                computedItem,
+              );
 
-            await orderItemsService.update(existingItem.id, {
-              quantity: computedItem.quantity,
-              price: computedItem.price,
-              unit_price: computedItem.unit_price,
-              gross_total: computedItem.gross_total,
-              discount_value: computedItem.discount_value,
-              net_total: computedItem.net_total,
-              product_id: computedItem.product_id,
-              source_payload: i,
-              ...financialFieldsUpdate,
-            });
+              await orderItemsService.update(existingItem.id, {
+                quantity: computedItem.quantity,
+                price: computedItem.price,
+                unit_price: computedItem.unit_price,
+                gross_total: computedItem.gross_total,
+                discount_value: computedItem.discount_value,
+                net_total: computedItem.net_total,
+                product_id: computedItem.product_id,
+                source_payload: i,
+                ...financialFieldsUpdate,
+              });
 
-            syncedItems.push({
-              id: existingItem.id,
-              order_id: existingOrder.id,
-              ...computedItem,
-              ...financialFieldsUpdate,
-              source_payload: i,
-            });
-          } else {
-            const createdItem = await orderItemsService.create({
-              ...computedItem,
-              order_id: existingOrder.id,
-            });
-            syncedItems.push(createdItem);
-          }
+              return {
+                id: existingItem.id,
+                order_id: existingOrder.id,
+                ...computedItem,
+                ...financialFieldsUpdate,
+                source_payload: i,
+              };
+            }),
+          )),
+        );
+
+        // Linha removida/trocada no Bling: sem isso o item antigo fica órfão e distorce rateio/comissão nos relatórios.
+        const removedCount = await orderItemsService.bulkDelete({
+          where: {
+            order_id: existingOrder.id,
+            id: { [Op.notIn]: syncedItems.map((item) => item.id) },
+          },
+        });
+        if (removedCount > 0) {
+          await ordersService.touch(existingOrder.id);
         }
       }
 
@@ -1325,20 +1367,27 @@ export class BlingOrderService {
           order_id: createdOrder.id,
         })),
       );
-      notifyPdvStoreSync(createdOrder.unit_business_id, "NEW_ORDER");
-
       // Só na criação (nunca no update) — pedido já nasce com uma
       // PdvSalesRequest vazia se for elegível pro fluxo PDV (ver
       // createEmptyRequestForNewOrderIfEligible).
-      await pdvSalesRequestService.createEmptyRequestForNewOrderIfEligible(
-        createdOrder.id,
-      );
+      const createdRequest =
+        await pdvSalesRequestService.createEmptyRequestForNewOrderIfEligible(
+          createdOrder.id,
+        );
 
       if (invoiceId) {
         await pdvSalesRequestService.syncSaleInvoiceFromOrder(
           createdOrder.id,
           invoiceId,
         );
+      }
+
+      // Só depois da solicitação pronta (criada + nota sincronizada) — senão o
+      // front recarrega o quadro antes do card existir.
+      if (createdRequest) {
+        notifyPdvStoreSync(createdOrder.unit_business_id, "NEW_ORDER", {
+          orderId: createdOrder.id,
+        });
       }
 
       const itemsPayload: orderItemsCreationAttributes[] =
