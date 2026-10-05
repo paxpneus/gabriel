@@ -275,7 +275,9 @@ export const tcarApi: AxiosInstance = createAxiosInstance({
     // texto puro, não JSON — só tenta corrigir/parsear quando a resposta
     // realmente parece um objeto/array JSON.
     const looksLikeJson =
-      typeof response.data === "string" && /^\s*[\{\[]/.test(response.data);
+      response.config.responseType !== "text" &&
+      typeof response.data === "string" &&
+      /^\s*[\{\[]/.test(response.data);
 
     if (looksLikeJson) {
       try {

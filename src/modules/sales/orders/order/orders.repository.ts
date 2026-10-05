@@ -16,6 +16,7 @@ import InvoiceUnitBusinessAttributes from "../../../warehouse/fiscal/invoices/in
 import {
   collectionDateDayRangeCompat,
   collectionDateFutureStartCompat,
+  lateShippingEmissionRange,
   nowTz,
   SHIPPING_WINDOW_END_HOUR_OPERATION,
   SHIPPING_WINDOW_START_HOUR_OPERATION,
@@ -82,6 +83,7 @@ export class OrderRepository extends BaseRepository<Order> {
 // não a recebedora (ela pode ter attributes INCOMING pra outra ponta).
 private orphanInvoicePendingWhere(unitBusinessId: string): WhereOptions | null {
   const { start: windowStart, end: windowEnd } = this.shippingWindowRange();
+  const { start: lateStart, end: lateEnd } = lateShippingEmissionRange();
   if (nowTz().isAfter(windowEnd)) return null;
 
   return {
@@ -93,7 +95,10 @@ private orphanInvoicePendingWhere(unitBusinessId: string): WhereOptions | null {
     "$unitBusinessAttributes.status$": {
       [Op.in]: PENDING_INVOICE_ATTRIBUTE_STATUSES,
     },
-    emitted_at: { [Op.between]: [windowStart, windowEnd] },
+    [Op.or]: [
+      { emitted_at: { [Op.between]: [windowStart, windowEnd] } },
+      { emitted_at: { [Op.gte]: lateStart, [Op.lt]: lateEnd } },
+    ],
   };
 }
 
@@ -281,6 +286,7 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
 
     const { start, end } = collectionDateDayRangeCompat();
     const { start: windowStart, end: windowEnd } = this.shippingWindowRange();
+    const { start: lateStart, end: lateEnd } = lateShippingEmissionRange();
 
     // Depois das 14h a janela de hoje já fechou — nada pode mais ser
     // "pendente de embarque hoje" (A e B, os dois casos). Quem ainda não
@@ -300,6 +306,14 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
         { collection_date: { [Op.between]: [start, end] } },
         // (B) nota emitida hoje na janela
         { "$invoice.emitted_at$": { [Op.between]: [windowStart, windowEnd] } },
+        // (C) nota atrasada (emitida até D-1), sem coleta futura
+        {
+          "$invoice.emitted_at$": { [Op.gte]: lateStart, [Op.lt]: lateEnd },
+          [Op.or]: [
+            { collection_date: { [Op.is]: null } as any },
+            { collection_date: { [Op.lt]: collectionDateFutureStartCompat() } },
+          ],
+        },
       ],
     };
   }

@@ -2,6 +2,8 @@ import { WhereOptions, Op, Sequelize } from "sequelize";
 import {
   startOfDayTz,
   collectionDateDayRangeCompat,
+  collectionDateFutureStartCompat,
+  lateShippingEmissionRange,
   SHIPPING_WINDOW_END_HOUR_OPERATION,
   SHIPPING_WINDOW_START_HOUR_OPERATION,
   nowTz,
@@ -53,12 +55,16 @@ function orderNotCancelledCondition(): WhereOptions {
  *     exista pedido vinculado). Exige `batch_generated = false` e status
  *     da nota em OPEN/PENDING.
  *
- * Pedido cancelado exclui os dois casos (`orderNotCancelledCondition`).
- * Nota sem nenhum pedido vinculado só pode entrar pelo caso (B).
+ * (C) A nota foi emitida ontem (ou antes da janela de hoje) e segue em
+ *     aberto — atrasada. Não entra se o pedido tem `collection_date` futura.
+ *
+ * Pedido cancelado exclui todos os casos (`orderNotCancelledCondition`).
+ * Nota sem nenhum pedido vinculado só pode entrar pelos casos (B)/(C).
  */
 export function pendingMercadoLivreWhere(storeName: string): WhereOptions {
   const { start, end } = collectionDateDayRangeCompat();
   const { start: windowStart, end: windowEnd } = shippingWindowRange();
+  const { start: lateStart, end: lateEnd } = lateShippingEmissionRange();
 
   // Depois das 14h a janela de hoje já fechou — nada mais pode ser
   // "pendente de embarque hoje" (A e B). Espelha
@@ -84,6 +90,19 @@ export function pendingMercadoLivreWhere(storeName: string): WhereOptions {
           },
           // (B) nota emitida hoje na janela
           { emitted_at: { [Op.between]: [windowStart, windowEnd] } },
+          // (C) nota atrasada, sem coleta futura
+          {
+            emitted_at: { [Op.gte]: lateStart, [Op.lt]: lateEnd },
+            [Op.or]: [
+              { "$order.id$": { [Op.is]: null } as any },
+              { "$order.collection_date$": { [Op.is]: null } as any },
+              {
+                "$order.collection_date$": {
+                  [Op.lt]: collectionDateFutureStartCompat(),
+                },
+              },
+            ],
+          },
         ],
       },
     ],

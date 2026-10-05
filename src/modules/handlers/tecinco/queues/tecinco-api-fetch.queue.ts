@@ -310,7 +310,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       `[TCAR_UPSERT] upsertInvoiceFromTecinco — buscando XML na Tecinco: numero=${numero} branchId=${branchId} identificacao=${JSON.stringify(identificacao)}`,
     );
 
-    let xmlContent: string;
+    let xmlContent: string | null;
     try {
       xmlContent = await conferenciaService.buscarXmlNotaFiscal(
         branchId,
@@ -327,7 +327,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
 
     if (!xmlContent) {
-      throw new Error("Nota fiscal não encontrada na Tecinco");
+      throw new Error("XML da nota fiscal indisponível na Tecinco");
     }
 
     await this.upsertInvoiceFromXml(xmlContent, branchId);
@@ -1396,7 +1396,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
 
     if (!xml?.trim()) {
-      console.warn(`${logPrefix} — XML vazio, ignorando`);
+      console.warn(`${logPrefix} — XML vazio ou indisponível na Tecinco, ignorando`);
       return;
     }
 

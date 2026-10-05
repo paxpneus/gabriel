@@ -128,8 +128,8 @@ export class TCarConferenciaEstoqueService {
     branchId: number,
     nota: number | string,
     identificacao: TCarNotaFiscalXmlParams,
-  ): Promise<string> {
-    return tcarRequest(branchId, (api) =>
+  ): Promise<string | null> {
+    const body: string = await tcarRequest(branchId, (api) =>
       api
         .get(`/notas-fiscais/${encodeURIComponent(nota)}/xml`, {
           params: identificacao,
@@ -137,6 +137,16 @@ export class TCarConferenciaEstoqueService {
         })
         .then((r) => r.data),
     );
+
+    // Notas antigas (arquivadas na Tecinco) vêm como referência "{GUID}=id" em vez do XML — indisponível via API.
+    if (body && !body.trimStart().startsWith("<")) {
+      console.warn(
+        `[TCarConferenciaEstoqueService] XML indisponível na Tecinco (nota arquivada) | nota=${nota} | branchId=${branchId} | resposta=${body.slice(0, 100)}`,
+      );
+      return null;
+    }
+
+    return body;
   }
 
   async listarNotasFiscais(

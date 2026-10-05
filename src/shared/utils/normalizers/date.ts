@@ -214,6 +214,16 @@ export const SHIPPING_WINDOW_START_HOUR_OPERATION = 6;
 export const SHIPPING_WINDOW_END_HOUR_OPERATION = 14;
 // Para o filtro de todas mercado livre hoje, finalizados hoje e romaneio gerado hoje, para dar folga para aquelas notas e lotes que são finalizados após data de corte mas podem embarcar hoje
 export const SHIPPING_WINDOW_END_HOUR_OPERATION_AFTER_ESTIMATE_CUTOFF = 16;
+// Quantos dias pra trás uma nota emitida e ainda não embarcada continua contando como pendente (atrasada).
+export const SHIPPING_LATE_TOLERANCE_DAYS = 1;
+
+/** Emissão "atrasada": do início de D-N até o início da janela de hoje. */
+export function lateShippingEmissionRange(): { start: Date; end: Date } {
+  return {
+    start: startOfDayTz().subtract(SHIPPING_LATE_TOLERANCE_DAYS, "day").toDate(),
+    end: startOfDayTz().hour(SHIPPING_WINDOW_START_HOUR_OPERATION).toDate(),
+  };
+}
 
 /**
  * `true` se "agora" (BRT) ainda está antes do horário-limite de embarque do
