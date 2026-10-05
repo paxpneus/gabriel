@@ -190,12 +190,10 @@ export class UnitBusinessService extends BaseService<
   }
 
   /**
-   * IDs das lojas físicas "normais" (número 1-24), excluindo a CD21 (número
-   * 21) de propósito — usado quando um acesso global sem loja selecionada
-   * (Televendas sem escolher loja, ver .claude/entities/pdv-sales-request/
-   * index.md) precisa enxergar "todas as lojas" sem incluir a CD21 nem
-   * canais online/marketplace (nunca tiveram essa regra de exclusão antes
-   * porque Televendas sempre operava sobre uma loja por vez).
+   * IDs das lojas físicas "normais" (número 1-24, CD21 inclusa) — usado
+   * quando um acesso global sem loja selecionada (Televendas sem escolher
+   * loja, ver .claude/entities/pdv-sales-request/index.md) precisa enxergar
+   * "todas as lojas" sem incluir canais online/marketplace.
    *
    * `excludeNumbers` é pra exclusão adicional específica de quem chama (ex.:
    * PDV_EXCLUDED_STORE_NUMBERS em pdv-management/helpers — lojas fora do
@@ -214,7 +212,6 @@ export class UnitBusinessService extends BaseService<
       .filter(
         (store) =>
           isWithinPhysicalStoreRange(store.number) &&
-          store.number !== CD21_UNIT_BUSINESS_NUMBER &&
           !excludeNumbers.includes(store.number ?? ""),
       )
       .map((store) => store.id);

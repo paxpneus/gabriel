@@ -7,6 +7,13 @@ aqui.
 
 **Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
 
+## Mudou: pedidos da loja 21 (CD21) entram no fluxo
+
+Pedido da unit business 21 agora ganha sale request automática e aparece
+nos quadros globais (Televendas sem loja, Financeiro, CD21), como qualquer
+loja física. Sem mudança de contrato: a CD21 continua sem `storeRequestUrl`
+e ainda vem em `unsupportedUnitBusinessNumbers` (que só controla esse link).
+
 ## Mudou: coluna com `description`/`highlighted`, loja no card de Televendas, `user.type`
 
 - Coluna do quadro ganhou `description` (subtítulo, `string | null`) e `highlighted` (fila de trabalho da tela; coluna `extra` sempre `false`).
@@ -257,7 +264,7 @@ Bling) agora também exclui unit business com `type: ONLINE`, além de CD21 e
 `PDV_EXCLUDED_STORE_NUMBERS` — antes só CD21/`PDV_EXCLUDED_STORE_NUMBERS`
 eram excluídos, então pedido de loja online podia ganhar uma `PdvSalesRequest`
 por engano. Regra final: toda order de loja física ganha sale request
-automática, exceto CD21 e `PDV_EXCLUDED_STORE_NUMBERS`.
+automática, exceto `PDV_EXCLUDED_STORE_NUMBERS` (CD21 agora entra, ver acima).
 
 ## Mudou: `/orders/eligible`
 

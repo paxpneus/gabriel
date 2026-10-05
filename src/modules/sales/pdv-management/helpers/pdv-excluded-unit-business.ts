@@ -8,18 +8,13 @@
 import { CD21_UNIT_BUSINESS_NUMBER } from "../../../company/unit-business/helpers/cd21-unit-business-number";
 
 // Lojas que não participam do fluxo do PDV Management por decisão de
-// produto, não por critério de dado (tipo/loja física) — a CD21 já é
-// excluída em outro nível (unitBusinessService.getPhysicalNumberedUnitBusinessIds
-// nunca a inclui, ela não é "loja normal" em lugar nenhum do sistema, não só
-// no PDV). Essas duas são só do PDV: sem eligible orders, sem link de
-// STORE_REQUEST — compartilhado entre sales-request/ e pdv-access/, por
-// isso vive aqui em vez de dentro de um dos dois submódulos.
+// produto, não por critério de dado (tipo/loja física): sem eligible orders,
+// sem link de STORE_REQUEST. Pedidos da CD21 entram no fluxo normalmente — ela
+// só fica fora do link de STORE_REQUEST (PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS).
 export const PDV_EXCLUDED_STORE_NUMBERS = ["12", "17"];
 
-// União de PDV_EXCLUDED_STORE_NUMBERS + CD21 — a lista completa de números
-// que o FRONT deve tratar como "não mostrar ação de PDV" (ex.: numa tela que
-// lista todas as unit businesses do sistema, não só as que já vêm filtradas
-// pelo backend em /api/pdv-access/links). Ver pdv-access-link.service.ts.
+// União de PDV_EXCLUDED_STORE_NUMBERS + CD21 — números sem storeRequestUrl
+// (CD21 usa o próprio cd21Url, tela global). Ver pdv-access-link.service.ts.
 export const PDV_UNSUPPORTED_UNIT_BUSINESS_NUMBERS = [
   CD21_UNIT_BUSINESS_NUMBER,
   ...PDV_EXCLUDED_STORE_NUMBERS,

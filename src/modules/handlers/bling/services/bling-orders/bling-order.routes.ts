@@ -181,7 +181,7 @@ router.get(
  *
  * Body:
  * {
- *   "onlyMineUnitBusiness": true | false,        // opcional (default false) — true escopa pro unit_business_id do próprio usuário logado; false/omitido escopa pra todas as lojas físicas normais (mesmo universo do link de Televendas — nunca CD21/online/marketplace/loja fora do fluxo PDV)
+ *   "onlyMineUnitBusiness": true | false,        // opcional (default false) — true escopa pro unit_business_id do próprio usuário logado; false/omitido escopa pra todas as lojas físicas normais (mesmo universo do link de Televendas — CD21 inclusa, nunca online/marketplace/loja fora do fluxo PDV)
  *   "orderStatus": "CANCELADO" | [...],          // opcional — normalized_status (mesmo vocabulário de filters[status] do GET /order)
  *   "hasPdvSalesRequest": true | false,          // opcional — tri-state: omitido = não filtra
  *   "pdvStatus": "OPEN" | [...]                  // opcional — status da PdvSalesRequest (implica hasPdvSalesRequest=true)
@@ -213,7 +213,7 @@ router.post(
       } else {
         // Mesmo universo de lojas que o link de Televendas enxerga (ver
         // resolveUnitBusinessScope em pdv-sales-request.service.ts) — nunca
-        // "todo pedido do banco": exclui CD21, online/marketplace (sem
+        // "todo pedido do banco": exclui online/marketplace (sem
         // unit_business_id) e loja fora do fluxo PDV por decisão de produto.
         orderFilters.unit_business_id =
           await unitBusinessService.getPhysicalNumberedUnitBusinessIds(

@@ -305,8 +305,8 @@ export class PdvSalesRequestService extends BaseService<
 
   // Acesso global sem loja selecionada (CD21/Financeiro sempre, Televendas
   // quando não escolhe loja) — resolve pra "todas as lojas físicas normais"
-  // (número 1-24, exceto CD21 e PDV_EXCLUDED_STORE_NUMBERS), nunca online/
-  // marketplace. Ver unitBusinessService.getPhysicalNumberedUnitBusinessIds.
+  // (número 1-24, incluindo a própria CD21, exceto PDV_EXCLUDED_STORE_NUMBERS),
+  // nunca online/marketplace. Ver unitBusinessService.getPhysicalNumberedUnitBusinessIds.
   private async resolveUnitBusinessScope(
     unitBusinessId: string | null,
   ): Promise<string | string[]> {
@@ -328,18 +328,14 @@ export class PdvSalesRequestService extends BaseService<
   // Loja explicitamente fora do fluxo PDV — diferente do caso "sem loja
   // selecionada" acima, aqui a loja É uma específica, só que uma que nunca
   // participa do PDV. Mesmo critério de unitBusinessService.
-  // getPhysicalNumberedUnitBusinessIds (type PHYSICAL + número 1-24),
-  // checado por instância em vez de na query — pega tanto ONLINE quanto a
-  // loja placeholder "SEM_LOJA" (bling-order.service.ts, pedido cuja loja
-  // não resolveu no Bling: number "0", fora do range, sem type PHYSICAL),
+  // getPhysicalNumberedUnitBusinessIds (type PHYSICAL + número 1-24, CD21
+  // incluída), checado por instância em vez de na query — pega tanto ONLINE
+  // quanto a loja placeholder "SEM_LOJA" (bling-order.service.ts, pedido cuja
+  // loja não resolveu no Bling: number "0", fora do range, sem type PHYSICAL),
   // que senão ganhava PdvSalesRequest órfã e invisível em qualquer tela.
   private async isExcludedFromPdvFlow(unitBusinessId: string): Promise<boolean> {
-    const [unitBusiness, cd21] = await Promise.all([
-      unitBusinessService.findById(unitBusinessId),
-      unitBusinessService.getCd21UnitBusiness(),
-    ]);
+    const unitBusiness = await unitBusinessService.findById(unitBusinessId);
     if (!unitBusiness) return false;
-    if (cd21 && unitBusiness.id === cd21.id) return true;
     if (unitBusiness.type !== "PHYSICAL") return true;
     if (!isWithinPhysicalStoreRange(unitBusiness.number)) return true;
     return PDV_EXCLUDED_STORE_NUMBERS.includes(unitBusiness.number ?? "");
@@ -475,8 +471,8 @@ export class PdvSalesRequestService extends BaseService<
   // Pedidos da loja sem solicitação PDV ativa — coluna "Em Aberto" do Kanban
   // (ver "Card do Kanban" em .claude/entities/pdv-sales-request/index.md).
   // unitBusinessId null (Televendas sem loja) traz de todas as lojas
-  // físicas normais. Loja explicitamente fora do fluxo PDV (CD21 ou
-  // PDV_EXCLUDED_STORE_NUMBERS) nunca tem pedido elegível — vazio, não erro
+  // físicas normais. Loja explicitamente fora do fluxo PDV
+  // (PDV_EXCLUDED_STORE_NUMBERS) nunca tem pedido elegível — vazio, não erro
   // (mesmo espírito de "sem pedido elegível", não "acesso inválido").
   async findEligibleOrders(
     unitBusinessId: string | null,
@@ -606,8 +602,8 @@ export class PdvSalesRequestService extends BaseService<
   // re-lançar uma nova solicitação toda vez que o pedido volta a ficar
   // elegível depois de ter sido cancelado. Retorna a solicitação criada (null
   // se no-op). Mesmos 3 critérios de
-  // findEligibleOrders/isEligibleForPdv: loja física normal (fora de
-  // CD21/PDV_EXCLUDED_STORE_NUMBERS, nunca marketplace sem
+  // findEligibleOrders/isEligibleForPdv: loja física normal (CD21 inclusa,
+  // fora de PDV_EXCLUDED_STORE_NUMBERS, nunca marketplace sem
   // unit_business_id), pedido não CANCELLED, sem romaneio já gerado pro
   // invoice/loja do pedido. No-op silencioso pra qualquer pedido não
   // elegível ou que já tenha solicitação (de qualquer status).

@@ -426,6 +426,41 @@ describe("PdvSalesRequestService", () => {
         { transaction: mockTransaction },
       );
     });
+
+    it("pedido da loja 21 (CD21) também ganha a solicitação vazia", async () => {
+      (orderService.findById as jest.Mock).mockResolvedValue({
+        id: "order-cd21",
+        invoice_id: null,
+        unit_business_id: "cd21",
+      });
+      (unitBusinessService.findById as jest.Mock).mockResolvedValue({
+        id: "cd21",
+        type: "PHYSICAL",
+        number: "21",
+      });
+      (orderService.isEligibleForPdv as jest.Mock).mockResolvedValue(true);
+      (pdvSalesRequestRepository.findByOrderId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (pdvSalesRequestRepository.findActiveByOrderId as jest.Mock).mockResolvedValue(
+        null,
+      );
+      (pdvSalesRequestRepository.create as jest.Mock).mockResolvedValue({
+        id: "request-cd21",
+        status: PdvSalesRequestStatus.OPEN,
+      });
+
+      await service.createEmptyRequestForNewOrderIfEligible("order-cd21");
+
+      expect(pdvSalesRequestRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          order_id: "order-cd21",
+          unit_business_id: "cd21",
+          status: PdvSalesRequestStatus.OPEN,
+        }),
+        { transaction: mockTransaction },
+      );
+    });
   });
 
   // ─── Máquina de estados — transições válidas/inválidas ─────────────────────

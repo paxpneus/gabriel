@@ -126,8 +126,8 @@ export async function resolveLinkAccess(
   }
 
   // Televendas também é global, igual Financeiro — token fixo, sem loja
-  // selecionada, enxerga pedido de qualquer loja física normal (nunca CD21
-  // nem online/marketplace: exclusão feita na resolução do escopo, ver
+  // selecionada, enxerga pedido de qualquer loja física normal, CD21 inclusa
+  // (nunca online/marketplace: exclusão feita na resolução do escopo, ver
   // unitBusinessService.getPhysicalNumberedUnitBusinessIds, não aqui).
   if (requiredScreens.includes(PdvAccessScreen.STORE_REQUEST)) {
     const expectedTelesales = computeTelesalesToken();
