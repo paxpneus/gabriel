@@ -1,6 +1,10 @@
 //seller report
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
+import {
+  orderDiscountAmountSql,
+  orderNetProductsSql,
+} from "../../../sales/orders/order/helpers/discount";
 import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
 import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
@@ -59,7 +63,7 @@ const STOCK_MOVEMENTS_UNIT_BUSINESS_ID = "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
  *
  * 3. ICMS: não usamos mais orders.icms_value (nota fiscal) para ratear.
  *    Usamos o MESMO cálculo de sales_report — computed_icms_value =
- *    (total_products - discount_value) * (states.icms_rate / 100), com
+ *    (total_products - desconto do pedido em R$) * (states.icms_rate / 100), com
  *    a alíquota resolvida via states.acronym = orders.destination_uf.
  *    Esse valor é calculado no nível do pedido e rateado por item pelo
  *    mesmo item_weight usado para ratear a receita.
@@ -98,8 +102,9 @@ const STOCK_MOVEMENTS_UNIT_BUSINESS_ID = "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
  *    de cada item, não um flag prévio).
  *
  * 7. Comissão de vendedor (commission_value) e de gerente
- *    (manager_commission_value): mesma base líquida para as duas —
- *    net_total_allocated * (commission_rate | manager_commission_rate) / 100,
+ *    (manager_commission_value): mesma base para as duas — fatia do item no
+ *    preço de venda após o desconto do pedido (orderNetProductsSql), igual ao
+ *    comissao.valor do Bling: commission_base * (commission_rate | manager_commission_rate) / 100,
  *    só a taxa vem de order_items (commission_value de lá não é usado).
  *    A de vendedor é idêntica à de sales_report; a de gerente só existe aqui.
  *
@@ -371,7 +376,7 @@ export class SellerSalesReportRepository {
       -- ------------------------------------------------------------------
       -- 1. Fonte de dados do pedido — mesma base de sales_report:
       --    join com states para resolver a alíquota de ICMS do destino e
-      --    calcular computed_icms_value = (total_products - discount_value)
+      --    calcular computed_icms_value = (total_products - desconto do pedido em R$)
       --    * icms_rate. Filtro de vendedor (única diferença deste
       --    relatório): só entram pedidos cujo contacts.name é diferente de
       --    'Vendedor 0'.
@@ -391,7 +396,6 @@ export class SellerSalesReportRepository {
           DATE(COALESCE(o.date, o.created_at)) AS order_date,
           o.destination_uf,
           COALESCE(o.total_products, 0)  AS total_products,
-          COALESCE(o.discount_value, 0)  AS discount_value,
           COALESCE(o.tax_commission, 0)  AS tax_commission,
           CASE
             WHEN ub.name = 'Shopee' THEN 0
@@ -402,7 +406,7 @@ export class SellerSalesReportRepository {
             ELSE 'cancelled'
           END AS snapshot_status,
           ROUND(
-            (COALESCE(o.total_products, 0) - COALESCE(o.discount_value, 0))
+            (COALESCE(o.total_products, 0) - ${orderDiscountAmountSql("o")})
             * (COALESCE(st.icms_rate, 0) / 100),
             2
           ) AS computed_icms_value
@@ -444,10 +448,8 @@ WHERE o.seller_id IS NOT NULL
           p.measure AS product_measure,
           COALESCE(oi.quantity, 0)::numeric      AS quantity,
           COALESCE(oi.unit_price, oi.price, 0)::numeric AS unit_price,
-          COALESCE(
-            oi.net_total,
-            COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))
-          )::numeric AS net_total_raw,
+          -- Peso por valor × qtd: oi.net_total abate itens[].desconto do Bling, que é só informativo.
+          COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))::numeric AS net_total_raw,
 
           -- KIT: composição real via kit_components (Etapa 1.5 — mesma
           -- fonte usada em sales_report, substitui a regra por regex).
@@ -465,6 +467,7 @@ WHERE o.seller_id IS NOT NULL
           COALESCE(oi.commission_rate, 0)::numeric  AS commission_rate,
           COALESCE(oi.comission_manager_rate, 0)::numeric AS manager_commission_rate,
           os.total_products     AS order_total_products,
+          ${orderNetProductsSql("ord")} AS order_net_products,
           os.tax_commission     AS order_tax_commission,
           os.freight_cost       AS order_freight_cost,
           os.computed_icms_value AS order_computed_icms_value,
@@ -535,9 +538,9 @@ WHERE o.seller_id IS NOT NULL
           ROUND(item_weight * order_computed_icms_value, 2) AS icms_value_allocated,
           ROUND(item_weight * order_tax_commission, 2)      AS tax_commission_allocated,
           ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated,
-          -- Comissão de vendedor na mesma base líquida da de gerente (não o bruto de order_items).
-          ROUND(item_weight * order_total_products, 2)      AS commission_base,
-          ROUND(ROUND(item_weight * order_total_products, 2) * commission_rate / 100, 2) AS commission_value
+          -- Comissão (vendedor e gerente) sobre o preço de venda após o desconto do pedido, igual ao comissao.valor do Bling.
+          ROUND(item_weight * order_net_products, 2)        AS commission_base,
+          ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2) AS commission_value
         FROM item_weighted
       ),
 
@@ -564,7 +567,7 @@ WHERE o.seller_id IS NOT NULL
             snapshot_status = 'completed'
             AND BOOL_AND(average_cost_snapshot > 0) OVER (PARTITION BY order_id)
           ) AS is_valid_sale,
-          ROUND(net_total_allocated * manager_commission_rate / 100, 2) AS manager_commission_value
+          ROUND(commission_base * manager_commission_rate / 100, 2) AS manager_commission_value
         FROM item_calc
       )
 

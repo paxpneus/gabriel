@@ -1,6 +1,7 @@
 import orderItemsService from "./../../../../sales/orders/order_items/order_items.service";
 import { AxiosInstance } from "axios";
 import { Op } from "sequelize";
+import { ORDER_DISCOUNT_TYPE_PERCENT } from "../../../../sales/orders/order/helpers/discount";
 import { getBlingIntegration } from "../../api/bling_api.service";
 import { blingOrderWebHookData } from "./bling-order.types";
 import ordersService from "../../../../sales/orders/order/orders.service";
@@ -524,13 +525,25 @@ export class BlingOrderService {
     };
   }
 
+  // Comissão é sobre o preço após o desconto do pedido (desconto.valor em R$ ou % de totalProdutos).
+  private orderNetProductsFactor(orderData: any): number {
+    const totalProducts = Number(orderData.totalProdutos ?? 0);
+    if (totalProducts <= 0) return 1;
+    const discount = Number(orderData.desconto?.valor ?? 0);
+    const discountAmount =
+      orderData.desconto?.unidade === ORDER_DISCOUNT_TYPE_PERCENT
+        ? (totalProducts * discount) / 100
+        : discount;
+    return (totalProducts - discountAmount) / totalProducts;
+  }
+
   // ─── Calcula os campos financeiros de um item de pedido ────────────────────
   // Regra:
   //   average_cost_snapshot = product_config.average_cost (valor unitário puro)
   //   unidades_reais        = (n do KIT, se houver) × quantidade do item
   //   custo_medio_total     = average_cost_snapshot × unidades_reais
-  //   commission_base       = itens.valor × quantidade − itens.desconto (líquido;
-  //                           os relatórios recalculam sobre a receita rateada)
+  //   commission_base       = itens.valor × quantidade × fator do desconto do pedido
+  //                           (itens.desconto é informativo, já embutido em itens.valor)
   //   commission_rate       = brand.seller_comission_tax_rate
   //   commission_value      = commission_base × (commission_rate / 100)
   //   total_cost_snapshot   = custo_medio_total + commission_value
@@ -738,6 +751,7 @@ export class BlingOrderService {
     integrationId: string,
     blingItems: any[],
     hasSellerCommission: boolean,
+    orderNetFactor: number,
   ): Promise<{
     items: Omit<orderItemsCreationAttributes, "order_id">[];
     custoTotalProdutos: number;
@@ -778,14 +792,15 @@ export class BlingOrderService {
         }
 
         const grossTotalLine = itemValue * quantity;
-        const netTotal = grossTotalLine - discountValue;
+        // itens[].desconto é informativo (já embutido em `valor`; NF e parcelas = valor × qtd).
+        const netTotal = grossTotalLine;
 
         const financialFields = this.buildItemFinancialFields(
           product,
           averageCost,
           kitMultiplier,
           quantity,
-          netTotal,
+          grossTotalLine * orderNetFactor,
           hasSellerCommission,
         );
 
@@ -998,6 +1013,7 @@ export class BlingOrderService {
           integration.id,
           orderData.itens ?? [],
           hasSellerCommission,
+          this.orderNetProductsFactor(orderData),
         );
 
       const orderFinancials = await this.computeOrderFinancials(
@@ -1306,6 +1322,7 @@ export class BlingOrderService {
           integration.id,
           orderData.itens ?? [],
           hasSellerCommission,
+          this.orderNetProductsFactor(orderData),
         );
 
       const orderFinancials = await this.computeOrderFinancials(

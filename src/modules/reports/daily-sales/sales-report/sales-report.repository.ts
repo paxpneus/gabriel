@@ -1,6 +1,10 @@
 // sales report
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../config/sequelize";
+import {
+  orderDiscountAmountSql,
+  orderNetProductsSql,
+} from "../../../sales/orders/order/helpers/discount";
 import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
 import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
@@ -205,7 +209,7 @@ const calculateMarkupSql = (
  * tax_commission, freight_cost e o ICMS calculado via alíquota do estado de
  * destino entram na conta. Fórmula (por pedido):
  *
- *   temp_icms    = (total_products - discount_value) * state.icms_rate
+ *   temp_icms    = (total_products - desconto do pedido em R$) * state.icms_rate
  *   contribution = total_products - tax_commission - freight_cost
  *                  - temp_icms - SUM(order_item.total_cost_snapshot)
  *
@@ -568,7 +572,7 @@ export class SalesReportRepository {
    * tax_commission, freight_cost e um ICMS calculado (não o de nota fiscal)
    * entram na conta, por pedido:
    *
-   *   temp_icms    = (total_products - discount_value) * state.icms_rate
+   *   temp_icms    = (total_products - desconto do pedido em R$) * state.icms_rate
    *   contribution = total_products - tax_commission - freight_cost
    *                  - temp_icms - SUM(order_items.total_cost_snapshot)
    *
@@ -632,7 +636,7 @@ export class SalesReportRepository {
       -- ------------------------------------------------------------------
       -- 1. Fonte de dados do pedido
       --    Join com states pra resolver a alíquota de ICMS do destino e
-      --    calcular computed_icms_value = (total_products - discount_value)
+      --    calcular computed_icms_value = (total_products - desconto do pedido em R$)
       --    * icms_rate. Esse valor é o único usado em contribution — o
       --    icms_value de nota fiscal (o.icms_value) continua sendo lido
       --    e guardado à parte, sem entrar nessa conta.
@@ -665,7 +669,8 @@ export class SalesReportRepository {
           END AS snapshot_status,
           COALESCE(o.total_products, 0)                         AS total_products,
           COALESCE(o.total_price, 0)                            AS total_order,
-          COALESCE(o.discount_value, 0)                         AS discount_value,
+          -- Em reais mesmo quando o Bling manda o desconto do pedido em %; só exibido no detalhe do pedido.
+          ${orderDiscountAmountSql("o")}                       AS discount_value,
           COALESCE(o.other_expenses, 0)                         AS other_expenses,
           COALESCE(o.freight_charged, 0)                        AS freight_charged,
                     CASE
@@ -690,7 +695,7 @@ export class SalesReportRepository {
 ) AS approx_tax_value,
           -- ICMS calculado (NÃO o de nota fiscal): base pra contribution.
                     ROUND(
-            (COALESCE(o.total_products, 0) - COALESCE(o.discount_value, 0))
+            (COALESCE(o.total_products, 0) - ${orderDiscountAmountSql("o")})
             * (COALESCE(st.icms_rate, 0) / 100),
             2
           )                                                     AS computed_icms_value,
@@ -845,10 +850,8 @@ item_source_raw AS (
         * COALESCE(oi.quantity, 0)::numeric
     )                                                     AS gross_total,
     COALESCE(oi.discount_value, 0)                        AS discount_value,
-    COALESCE(
-      oi.net_total,
-      COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric))
-    )                                                     AS net_total_raw,
+    -- Peso por valor × qtd: oi.net_total abate itens[].desconto do Bling, que é só informativo.
+    COALESCE(oi.gross_total, (COALESCE(oi.unit_price, oi.price, 0)::numeric * COALESCE(oi.quantity, 0)::numeric)) AS net_total_raw,
 
     -- ------------------------------------------------------------------
     -- KIT: composição real via kit_components (Etapa 1.5 — substitui a
@@ -874,6 +877,7 @@ item_source_raw AS (
     NULL::varchar                                         AS cfop,
     pc.gtin                                               AS gtin,
     io.total_products                                     AS order_total_products,
+    ${orderNetProductsSql("ord")}                         AS order_net_products,
     io.icms_value                                         AS order_icms_value,
     io.ipi_value                                          AS order_ipi_value,
     io.pis_value                                          AS order_pis_value,
@@ -957,7 +961,8 @@ item_weighted AS (
 --     distribuído entre os itens proporcionalmente ao item_weight.
 --     A receita rateada (net_total_allocated) agora usa total_products
 --     (bruto), não mais o valor líquido do pedido. Comissão de vendedor é
---     commission_rate (de order_items) sobre net_total_allocated.
+--     commission_rate (de order_items) sobre a fatia do item em
+--     orderNetProductsSql (após o desconto do pedido).
 -- ------------------------------------------------------------------
 item_calc AS (
   SELECT
@@ -974,9 +979,9 @@ item_calc AS (
     ROUND(item_weight * order_tax_commission, 2)      AS tax_commission_allocated,
     ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated,
     ROUND(item_weight * order_computed_icms_value, 2) AS computed_icms_value_allocated,
-    -- Mesma base líquida da comissão de gerente do seller_sales_report (não o bruto de order_items).
-    ROUND(item_weight * order_total_products, 2)      AS commission_base,
-    ROUND(ROUND(item_weight * order_total_products, 2) * commission_rate / 100, 2) AS commission_value
+    -- Comissão sobre o preço de venda após o desconto do pedido, igual ao comissao.valor do Bling.
+    ROUND(item_weight * order_net_products, 2)        AS commission_base,
+    ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2) AS commission_value
   FROM item_weighted
 ),
 

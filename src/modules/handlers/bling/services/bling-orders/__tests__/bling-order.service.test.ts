@@ -524,6 +524,41 @@ describe("BlingOrderService", () => {
     });
   });
 
+  describe("buildItemsPayload — comissão sobre o preço após o desconto do pedido", () => {
+    const blingItem = { codigo: "03151600000", quantidade: 4, valor: 449.9, desconto: 14.74, descricao: "Pneu" };
+
+    beforeEach(() => {
+      jest.spyOn(service as any, "resolveProductWithConfig").mockResolvedValue({
+        product: { id: "p1", brandRegister: { seller_comission_tax_rate: 0.6, manager_comission_tax_rate: 0.6 } },
+        averageCost: 300,
+        resolvedSku: "03151600000",
+        kitMultiplier: 1,
+      });
+    });
+
+    async function commissionFor(desconto: any, totalProdutos = 1799.6) {
+      const factor = (service as any).orderNetProductsFactor({ totalProdutos, desconto });
+      const { items } = await (service as any).buildItemsPayload(INTEGRATION_ID, [blingItem], true, factor);
+      return items[0];
+    }
+
+    it("desconto PERCENTUAL no pedido (pedido 18117: 10% de 1799,60) bate com comissao.valor do Bling", async () => {
+      const item = await commissionFor({ valor: 10, unidade: "PERCENTUAL" });
+      expect(item.commission_base).toBeCloseTo(1619.64, 2);
+      expect(Number(item.commission_value.toFixed(2))).toBe(9.72);
+    });
+
+    it("desconto REAL no pedido abate o valor em reais da base", async () => {
+      const item = await commissionFor({ valor: 179.96, unidade: "REAL" });
+      expect(item.commission_base).toBeCloseTo(1619.64, 2);
+    });
+
+    it("sem desconto no pedido a base é valor × quantidade (desconto do item é informativo)", async () => {
+      const item = await commissionFor({ valor: 0, unidade: "PERCENTUAL" });
+      expect(item.commission_base).toBeCloseTo(1799.6, 2);
+    });
+  });
+
   describe("updateOrderFromBling — collection_date (dataPrevista)", () => {
     it("dataPrevista preenchida: grava collection_date em meia-noite BRT", async () => {
       orderData.dataPrevista = "2026-08-20";
