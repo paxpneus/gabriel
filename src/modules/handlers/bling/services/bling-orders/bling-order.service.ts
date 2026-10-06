@@ -951,6 +951,12 @@ export class BlingOrderService {
           await pdvSalesRequestService.cancelIfActiveByOrderId(
             existingOrder.id,
           );
+        } else {
+          // Por estado, não por transição 12→outra: reprocessar o pedido
+          // também reativa solicitação que ficou cancelada.
+          await pdvSalesRequestService.reactivateIfCancelledByOrder(
+            existingOrder.id,
+          );
         }
 
         // Reavalia elegibilidade PDV em TODO update, não só quando a loja

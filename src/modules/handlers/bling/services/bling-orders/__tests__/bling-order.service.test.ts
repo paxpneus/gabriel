@@ -61,6 +61,7 @@ jest.mock(
       createEmptyRequestForNewOrderIfEligible: jest.fn(),
       syncSaleInvoiceFromOrder: jest.fn(),
       cancelIfActiveByOrderId: jest.fn(),
+      reactivateIfCancelledByOrder: jest.fn(),
     },
   }),
 );
@@ -310,6 +311,29 @@ describe("BlingOrderService", () => {
         await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
 
         expect(pdvSalesRequestService.cancelIfActiveByOrderId).not.toHaveBeenCalled();
+      },
+    );
+
+    it("situacao.id=12 não tenta reativar a PdvSalesRequest", async () => {
+      orderData.situacao = { id: 12, valor: 0 };
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(
+        pdvSalesRequestService.reactivateIfCancelledByOrder,
+      ).not.toHaveBeenCalled();
+    });
+
+    it.each([9, 21, 6])(
+      "situacao.id=%i tenta reativar a PdvSalesRequest cancelada pela Bling",
+      async (situacaoId) => {
+        orderData.situacao = { id: situacaoId, valor: 0 };
+
+        await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+        expect(
+          pdvSalesRequestService.reactivateIfCancelledByOrder,
+        ).toHaveBeenCalledWith("order-uuid-1");
       },
     );
 

@@ -148,6 +148,16 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
     return this.findOne({ where: { order_id: orderId } });
   }
 
+  // Mais recente pro pedido, qualquer status — usado por
+  // reactivateIfCancelledByOrder pra só mexer na última solicitação.
+  async findLatestByOrderId(orderId: string): Promise<PdvSalesRequest | null> {
+    return this.findOne({
+      where: { order_id: orderId },
+      attributes: ["id", "status"],
+      order: [["createdAt", "DESC"]],
+    });
+  }
+
   async findActiveBySaleOrTransferInvoiceId(
     invoiceId: string,
   ): Promise<PdvSalesRequest[]> {

@@ -135,6 +135,10 @@ const ELIGIBLE_ORDERS_LIMIT = null;
 // mais esperado por quem chamou.
 const RECEIPT_ANALYSIS_TIMEOUT_MS = 5000;
 
+// Marca no histórico o cancelamento vindo da Bling — reactivateIfCancelledByOrder
+// só desfaz cancelamento com essa descrição.
+const BLING_ORDER_CANCELLED_DESCRIPTION = "Pedido cancelado na Bling";
+
 export class PdvSalesRequestService extends BaseService<
   PdvSalesRequest,
   PdvSalesRequestRepository
@@ -2495,7 +2499,45 @@ export class PdvSalesRequestService extends BaseService<
     if (!request) return;
 
     await this.transitionTo(request.id, PdvSalesRequestStatus.CANCELLED, {
-      description: "Pedido cancelado na Bling",
+      description: BLING_ORDER_CANCELLED_DESCRIPTION,
+    });
+  }
+
+  // Desfaz cancelIfActiveByOrderId quando o pedido sai da situação 12 —
+  // volta pro status anterior ao cancelamento. Só se a última solicitação do
+  // pedido foi cancelada por esse caminho (cancelamento manual da loja fica).
+  async reactivateIfCancelledByOrder(
+    orderId: string,
+  ): Promise<PdvSalesRequest | null> {
+    const request = await this.repository.findLatestByOrderId(orderId);
+    if (request?.status !== PdvSalesRequestStatus.CANCELLED) return null;
+
+    const history = await pdvSalesRequestHistoryService.findAll({
+      where: { pdv_sales_request_id: request.id },
+      attributes: ["step", "description"],
+      order: [
+        ["date", "DESC"],
+        ["createdAt", "DESC"],
+      ],
+    });
+    const cancelIndex = history.findIndex(
+      (entry) => entry.step === PdvSalesRequestStatus.CANCELLED,
+    );
+    if (
+      cancelIndex === -1 ||
+      history[cancelIndex].description !== BLING_ORDER_CANCELLED_DESCRIPTION
+    ) {
+      return null;
+    }
+
+    const previousStep =
+      history
+        .slice(cancelIndex + 1)
+        .find((entry) => entry.step !== PdvSalesRequestStatus.CANCELLED)
+        ?.step ?? PdvSalesRequestStatus.OPEN;
+
+    return this.transitionTo(request.id, previousStep, {
+      description: "Pedido reativado na Bling",
     });
   }
 

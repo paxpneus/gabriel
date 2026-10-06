@@ -14,6 +14,7 @@ jest.mock("../pdv-sales-request.repository", () => ({
     create: jest.fn(),
     findActiveByOrderId: jest.fn(),
     findByOrderId: jest.fn(),
+    findLatestByOrderId: jest.fn(),
     findActiveBySaleOrTransferInvoiceId: jest.fn(),
     findActiveBySaleInvoiceIds: jest.fn(),
     countGroupedByStatus: jest.fn(),
@@ -3456,6 +3457,110 @@ describe("PdvSalesRequestService", () => {
 
       await service.cancelIfActiveByOrderId("order-1");
 
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("reactivateIfCancelledByOrder", () => {
+    const blingCancelEntry = {
+      step: PdvSalesRequestStatus.CANCELLED,
+      description: "Pedido cancelado na Bling",
+    };
+
+    it("cancelada pela Bling: volta pro status anterior ao cancelamento", async () => {
+      (pdvSalesRequestRepository.findLatestByOrderId as jest.Mock).mockResolvedValue(
+        { id: "r1", status: PdvSalesRequestStatus.CANCELLED },
+      );
+      (pdvSalesRequestHistoryService.findAll as jest.Mock).mockResolvedValue([
+        blingCancelEntry,
+        { step: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, description: "x" },
+        { step: PdvSalesRequestStatus.PENDING_FINANCE, description: "y" },
+      ]);
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.reactivateIfCancelledByOrder("order-1");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
+        { transaction: mockTransaction },
+      );
+      expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pdv_sales_request_id: "r1",
+          step: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+          description: "Pedido reativado na Bling",
+        }),
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("sem entrada anterior ao cancelamento no histórico: volta pra OPEN", async () => {
+      (pdvSalesRequestRepository.findLatestByOrderId as jest.Mock).mockResolvedValue(
+        { id: "r1", status: PdvSalesRequestStatus.CANCELLED },
+      );
+      (pdvSalesRequestHistoryService.findAll as jest.Mock).mockResolvedValue([
+        blingCancelEntry,
+      ]);
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.reactivateIfCancelledByOrder("order-1");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.OPEN },
+        { transaction: mockTransaction },
+      );
+    });
+
+    it("cancelada manualmente pela loja: não reativa", async () => {
+      (pdvSalesRequestRepository.findLatestByOrderId as jest.Mock).mockResolvedValue(
+        { id: "r1", status: PdvSalesRequestStatus.CANCELLED },
+      );
+      (pdvSalesRequestHistoryService.findAll as jest.Mock).mockResolvedValue([
+        {
+          step: PdvSalesRequestStatus.CANCELLED,
+          description:
+            "Loja optou por cancelar o pedido após problema na expedição",
+        },
+        { step: PdvSalesRequestStatus.PENDING_CORRECTION, description: "x" },
+      ]);
+
+      const result = await service.reactivateIfCancelledByOrder("order-1");
+
+      expect(result).toBeNull();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      PdvSalesRequestStatus.FINISHED,
+      PdvSalesRequestStatus.EXCLUDED,
+      PdvSalesRequestStatus.INVOICE_CANCELLED,
+      PdvSalesRequestStatus.OPEN,
+    ])("última solicitação em %s: não mexe", async (status) => {
+      (pdvSalesRequestRepository.findLatestByOrderId as jest.Mock).mockResolvedValue(
+        { id: "r1", status },
+      );
+
+      const result = await service.reactivateIfCancelledByOrder("order-1");
+
+      expect(result).toBeNull();
+      expect(pdvSalesRequestHistoryService.findAll).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("pedido sem solicitação: não faz nada", async () => {
+      (pdvSalesRequestRepository.findLatestByOrderId as jest.Mock).mockResolvedValue(
+        null,
+      );
+
+      const result = await service.reactivateIfCancelledByOrder("order-1");
+
+      expect(result).toBeNull();
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
     });
   });
