@@ -21,6 +21,7 @@ import {
   TCarInvoiceQueue,
   TCAR_INVOICE_NEW_JOB_NAME,
   TCAR_INVOICE_UPDATE_JOB_NAME,
+  TCAR_INVOICE_XML_UNAVAILABLE_FAILURE,
 } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
 import { getTCarIntegration } from "../../modules/handlers/tecinco/api/tecinco_api";
@@ -64,9 +65,37 @@ const QUEUE_POLL_MS = 5_000;
 // item de pneu, XML 404/vazio) — sem retenção, o job some do Redis na hora e
 // migrateNovasNotasFiscais reenfileira a mesma nota todo tick pra sempre.
 const INVOICE_NEW_JOB_RETENTION_SECONDS = 2 * 3600;
+// 3 páginas por tipo × situação: com só 1 página, rajada de emissão empurrava nota pra fora antes de entrar.
+const INVOICE_LOOKBACK = 150;
 
 
 // ─── Helpers internos ─────────────────────────────────────────────────────────
+
+// Notas mais recentes (ordenação padrão EPENF_DTAINS DESC) de um tipo × situação, até INVOICE_LOOKBACK.
+async function listarNotasRecentes(
+  service: TCarConferenciaEstoqueService,
+  branchId: number,
+  entrada_saida: "E" | "S",
+  situacao: "A" | "N" | "C",
+): Promise<any[]> {
+  const notas: any[] = [];
+  for await (const pagina of paginateTCar<any>(
+    (offset, limit) =>
+      service.listarNotasFiscais(branchId, {
+        modelo_documento: 55,
+        situacao,
+        entrada_saida,
+        limit,
+        offset,
+      }),
+    INVOICE_LOOKBACK,
+  )) {
+    notas.push(...pagina);
+  }
+  return notas.filter(
+    (nota) => nota.entrada_saida === entrada_saida && nota.chave_nfe,
+  );
+}
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -334,27 +363,16 @@ export async function migrateNotasFiscais(
     const combos = TIPOS.flatMap((tipo) =>
       SITUACOES.map((situacao) => ({ tipo, situacao })),
     );
+    // Sem filtro de data — dedup por jobId evita reprocessamento das já enfileiradas.
     const resultados = await Promise.all(
       combos.map(({ tipo, situacao }) =>
-        // Sempre busca as 50 notas mais recentes (ordenação padrão EPENF_DTAINS DESC),
-        // sem filtro de data — dedup por jobId evita reprocessamento das já enfileiradas.
-        service.listarNotasFiscais(branchId, {
-          modelo_documento: 55,
-          situacao,
-          entrada_saida: tipo,
-          limit: 50,
-          offset: 0,
-        }),
+        listarNotasRecentes(service, branchId, tipo, situacao),
       ),
     );
 
     for (let i = 0; i < combos.length; i++) {
       const { tipo, situacao } = combos[i];
-      const resultado = resultados[i];
-
-      const notasEncontradas: any[] = (resultado?.data ?? []).filter(
-        (n: any) => n.entrada_saida === tipo && n.chave_nfe,
-      );
+      const notasEncontradas = resultados[i];
       const chaves = [...new Set(notasEncontradas.map((nota) => String(nota.chave_nfe)))];
       const chavesExistentes = new Set(
         (await Invoice.findAll({
@@ -431,21 +449,10 @@ export async function migrateNovasNotasFiscais(
     );
     const resultados = await Promise.all(
       combos.map(({ entrada_saida, situacao }) =>
-        service.listarNotasFiscais(branchId, {
-          modelo_documento: 55,
-          situacao,
-          entrada_saida,
-          limit: 50,
-          offset: 0,
-        }),
+        listarNotasRecentes(service, branchId, entrada_saida, situacao),
       ),
     );
-    const notas = resultados.flatMap((resultado, index) => {
-      const { entrada_saida } = combos[index];
-      return (resultado?.data ?? []).filter(
-        (nota: any) => nota.entrada_saida === entrada_saida && nota.chave_nfe,
-      );
-    });
+    const notas = resultados.flat();
     const chaves = [...new Set(notas.map((nota: any) => String(nota.chave_nfe)))];
     const existentes = new Set(
       (await Invoice.findAll({
@@ -458,7 +465,13 @@ export async function migrateNovasNotasFiscais(
     // Além do que já está no banco, pula quem já tem job pendente OU já
     // completou recentemente (mesmo sem criar Invoice — ver
     // INVOICE_NEW_JOB_RETENTION_SECONDS acima) na fila.
-    const jobIdsPendentes = await targetInvoiceQueue.getPendingJobIds(true);
+    // Também pula nota que esgotou as tentativas sem XML — fica failed no Redis.
+    const [jobIdsPendentes, jobIdsSemXml] = await Promise.all([
+      targetInvoiceQueue.getPendingJobIds(true),
+      targetInvoiceQueue.getFailedJobIdsByReason(
+        TCAR_INVOICE_XML_UNAVAILABLE_FAILURE,
+      ),
+    ]);
 
     let enfileiradas = 0;
     for (const nota of notas) {
@@ -466,7 +479,7 @@ export async function migrateNovasNotasFiscais(
       const { chave } = nota;
       if (!chave?.nota) continue;
       const jobId = `invoice-new-${branchId}-${nota.entrada_saida}-${chave.nota}`;
-      if (jobIdsPendentes.has(jobId)) continue;
+      if (jobIdsPendentes.has(jobId) || jobIdsSemXml.has(jobId)) continue;
       await enqueue(
         targetInvoiceQueue,
         {

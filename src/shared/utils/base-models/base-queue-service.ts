@@ -431,6 +431,18 @@ export abstract class BaseQueueService<T, R = void> {
     return new Set(jobs.map((job) => job.id).filter((id): id is string => !!id));
   }
 
+  // jobIds em "failed" cujo failedReason começa com o prefixo — pra quem quer manter
+  // só um tipo de falha como definitiva (add() apaga job failed e reenfileira).
+  async getFailedJobIdsByReason(reasonPrefix: string): Promise<Set<string>> {
+    const jobs = await this.queue.getJobs(["failed"]);
+    return new Set(
+      jobs
+        .filter((job) => job.failedReason?.startsWith(reasonPrefix))
+        .map((job) => job.id)
+        .filter((id): id is string => !!id),
+    );
+  }
+
   // Existe job pendente com um desses `name` (o nome passado em
   // jobOptions.name no add())? Usado por quem precisa dar prioridade a um
   // tipo de job sobre outro dentro da MESMA fila sem lock/rank.

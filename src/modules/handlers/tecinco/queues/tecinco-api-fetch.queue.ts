@@ -153,6 +153,8 @@ export interface TCarUpsertJobPayload {
   skuDuplicated?: boolean;
   /** Calculado no migrateProdutos: EAN duplicado no catálogo Tecinco completo */
   eanDuplicated?: boolean;
+  /** Tentativas de invoice-new que acharam a nota sem XML — ver TCarInvoiceQueue.process */
+  xmlUnavailableAttempts?: number;
 }
 
 // BullMQ nunca olha pro sorted-set de prioridade enquanto o "wait" list
@@ -168,6 +170,9 @@ export interface TCarUpsertJobPayload {
 // valor de verdade.
 export const TCAR_CREATE_PRODUCT_PRIORITY = 1;
 export const TCAR_NORMAL_PRIORITY = 2;
+
+// Retorno de processInvoiceXml quando a Tecinco ainda não tem o XML (404/vazio).
+export const TCAR_INVOICE_XML_UNAVAILABLE = "xml_unavailable";
 
 export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   constructor(
@@ -1279,7 +1284,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   protected async processInvoiceXml(
     data: TCarInvoiceXmlPayload,
     branchId?: number,
-  ): Promise<void> {
+  ): Promise<typeof TCAR_INVOICE_XML_UNAVAILABLE | void> {
     if (!branchId) {
       console.warn("[TCAR_UPSERT] processInvoiceXml sem branchId — ignorado");
       return;
@@ -1376,8 +1381,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       );
     } catch (err: any) {
       if (err?.response?.status === 404) {
-        console.warn(`${logPrefix} — XML não disponível (404), ignorando`);
-        return;
+        console.warn(`${logPrefix} — XML não disponível (404)`);
+        return TCAR_INVOICE_XML_UNAVAILABLE;
       }
       // axios err.message só traz o status; logar o corpo pra saber a causa real da Tecinco.
       console.error(
@@ -1395,9 +1400,14 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       throw err;
     }
 
-    if (!xml?.trim()) {
-      console.warn(`${logPrefix} — XML vazio ou indisponível na Tecinco, ignorando`);
+    // null = nota arquivada na Tecinco (permanente, ver buscarXmlNotaFiscal) — não adianta tentar de novo.
+    if (xml === null) {
+      console.warn(`${logPrefix} — XML arquivado na Tecinco, ignorando`);
       return;
+    }
+    if (!xml.trim()) {
+      console.warn(`${logPrefix} — XML vazio na Tecinco`);
+      return TCAR_INVOICE_XML_UNAVAILABLE;
     }
 
     await upsertInvoiceFromXml(xml, {

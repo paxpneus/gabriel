@@ -19,12 +19,14 @@ import { setupAssociations } from "../../config/sequelize-associations";
 import sequelize from "../../config/sequelize";
 import { UnitBusiness } from "../../modules/warehouse";
 import { TCarUpsertQueue } from "../../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
+import { TCarInvoiceQueue } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import {
   RunMigrationOptions,
   ResolvedMigrationOptions,
   migrateProdutos,
   migrateClientes,
   migrateNotasFiscais,
+  migrateNovasNotasFiscais,
 } from "./tecinco-migration.runner";
 import { tecincoUnitBusinessForPopulate } from "../../shared/constants/tecinco-units";
 import { tecincoTireGrupoIds } from "../../shared/constants/tecinco-groups";
@@ -53,8 +55,12 @@ const STEPS = [
   },
   {
     key: "invoices",
-    label: "🧾  Notas Fiscais",
-    fn: (opts: ResolvedMigrationOptions) => migrateNotasFiscais(opts),
+    label: "🧾  Notas Fiscais (novas + existentes)",
+    // Novas primeiro sem esperar; migrateNotasFiscais (só existentes) espera a fila drenar no fim.
+    fn: async (opts: ResolvedMigrationOptions) => {
+      await migrateNovasNotasFiscais(opts);
+      await migrateNotasFiscais(opts);
+    },
   },
   {
     key: "customers",
@@ -65,87 +71,93 @@ const STEPS = [
 
 type StepKey = (typeof STEPS)[number]["key"];
 
+type MenuOption<K extends string> = { key: K; label: string };
+
 // ─── UI interativa estilo Vite ────────────────────────────────────────────────
 
-function renderMenu(selected: Set<StepKey>, cursor: number) {
-  // Limpa as linhas já impressas (STEPS.length + 3 linhas de instrução)
-  const totalLines = STEPS.length + 4;
-  process.stdout.write(`\x1B[${totalLines}A\x1B[0J`);
+const MENU_HINT =
+  "\n  \x1B[90mESPAÇO para marcar/desmarcar · ENTER para confirmar · A para tudo\x1B[0m";
 
-  console.log("  Selecione as etapas para migrar:\n");
+function renderMenu<K extends string>(
+  title: string,
+  options: readonly MenuOption<K>[],
+  selected: Set<K>,
+  cursor: number,
+  redraw: boolean,
+) {
+  // Título + linha em branco + opções + linha em branco + dica
+  if (redraw) process.stdout.write(`\x1B[${options.length + 4}A\x1B[0J`);
 
-  STEPS.forEach((step, i) => {
-    const isSelected = selected.has(step.key);
+  console.log(`  ${title}\n`);
+
+  options.forEach((option, i) => {
+    const checkbox = selected.has(option.key) ? "◉" : "◯";
     const isCursor = i === cursor;
-
-    const checkbox = isSelected ? "◉" : "◯";
     const pointer = isCursor ? "❯ " : "  ";
     const color = isCursor ? "\x1B[36m" : "\x1B[0m"; // ciano no cursor
 
-    console.log(`${color}${pointer}${checkbox} ${step.label}\x1B[0m`);
+    console.log(`${color}${pointer}${checkbox} ${option.label}\x1B[0m`);
   });
 
-  console.log(
-    "\n  \x1B[90mESPAÇO para marcar/desmarcar · ENTER para confirmar · A para tudo\x1B[0m",
-  );
+  console.log(MENU_HINT);
 }
 
-function printInitialMenu() {
-  console.log("  Selecione as etapas para migrar:\n");
-  STEPS.forEach((step) => console.log(`  ◯ ${step.label}`));
-  console.log(
-    "\n  \x1B[90mESPAÇO para marcar/desmarcar · ENTER para confirmar · A para tudo\x1B[0m",
-  );
-}
-
-async function selectSteps(): Promise<StepKey[]> {
+async function selectFromMenu<K extends string>(
+  title: string,
+  options: readonly MenuOption<K>[],
+): Promise<K[]> {
   return new Promise((resolve) => {
-    const selected = new Set<StepKey>();
+    const selected = new Set<K>();
     let cursor = 0;
+    const render = () => renderMenu(title, options, selected, cursor, true);
 
     readline.emitKeypressEvents(process.stdin);
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    process.stdin.resume();
 
-    printInitialMenu();
+    renderMenu(title, options, selected, cursor, false);
 
-    process.stdin.on("keypress", (_, key) => {
+    const onKeypress = (_: string, key: readline.Key) => {
       if (!key) return;
 
       if (key.name === "up") {
-        cursor = (cursor - 1 + STEPS.length) % STEPS.length;
-        renderMenu(selected, cursor);
+        cursor = (cursor - 1 + options.length) % options.length;
+        render();
         return;
       }
 
       if (key.name === "down") {
-        cursor = (cursor + 1) % STEPS.length;
-        renderMenu(selected, cursor);
+        cursor = (cursor + 1) % options.length;
+        render();
         return;
       }
 
       if (key.name === "space") {
-        const k = STEPS[cursor].key;
+        const k = options[cursor].key;
         if (selected.has(k)) selected.delete(k);
         else selected.add(k);
-        renderMenu(selected, cursor);
+        render();
         return;
       }
 
       // Tecla A: seleciona/deseleciona tudo
       if (key.name === "a") {
-        if (selected.size === STEPS.length) {
+        if (selected.size === options.length) {
           selected.clear();
         } else {
-          STEPS.forEach((s) => selected.add(s.key));
+          options.forEach((o) => selected.add(o.key));
         }
-        renderMenu(selected, cursor);
+        render();
         return;
       }
 
       if (key.name === "return") {
+        // Remove o listener pra não somar com o do próximo menu.
+        process.stdin.off("keypress", onKeypress);
         if (process.stdin.isTTY) process.stdin.setRawMode(false);
         process.stdin.pause();
-        resolve(Array.from(selected));
+        // Mantém a ordem original das opções, não a ordem de marcação.
+        resolve(options.filter((o) => selected.has(o.key)).map((o) => o.key));
         return;
       }
 
@@ -154,7 +166,9 @@ async function selectSteps(): Promise<StepKey[]> {
         console.log("\n\n  Cancelado.\n");
         process.exit(0);
       }
-    });
+    };
+
+    process.stdin.on("keypress", onKeypress);
   });
 }
 
@@ -171,11 +185,38 @@ async function main() {
   if (DRY_RUN) console.log("  ⚠️  DRY_RUN ativo — nenhum job será enfileirado");
   console.log("═".repeat(55) + "\n");
 
-  // Seleção interativa
-  const chosen = await selectSteps();
+  await bootstrap();
+
+  const chosen = await selectFromMenu("Selecione as etapas para migrar:", STEPS);
 
   if (!chosen.length) {
     console.log("\n  Nenhuma etapa selecionada. Saindo.\n");
+    process.exit(0);
+  }
+
+  const units = await UnitBusiness.findAll({
+    attributes: ["number", "name"],
+    where: {
+      number: {
+        [Op.in]: tecincoUnitBusinessForPopulate,
+      },
+    },
+    order: [["number", "ASC"]],
+  });
+
+  if (!units.length) {
+    console.log("\n  Nenhuma filial Tecinco cadastrada. Saindo.\n");
+    process.exit(0);
+  }
+
+  console.log("");
+  const chosenBranches = await selectFromMenu(
+    "Selecione as lojas para popular:",
+    units.map((u) => ({ key: u.number, label: `${u.number} — ${u.name}` })),
+  );
+
+  if (!chosenBranches.length) {
+    console.log("\n  Nenhuma loja selecionada. Saindo.\n");
     process.exit(0);
   }
 
@@ -186,6 +227,10 @@ async function main() {
     const step = STEPS.find((s) => s.key === k)!;
     console.log(`    ✓ ${step.label}`);
   });
+  console.log("  Lojas selecionadas:");
+  units
+    .filter((u) => chosenBranches.includes(u.number))
+    .forEach((u) => console.log(`    ✓ ${u.number} — ${u.name}`));
   console.log("─".repeat(55) + "\n");
 
   // Confirma antes de rodar
@@ -206,34 +251,26 @@ async function main() {
 
   console.log("");
 
-  await bootstrap();
-
-  const units = await UnitBusiness.findAll({
-    attributes: ["id", "id_system", "number"],
-    where: {
-      number: {
-        [Op.in]: tecincoUnitBusinessForPopulate,
-      },
-    },
-  });
-  const branchIds: number[] = units.map((u) => Number(u.number));
+  const branchIds: number[] = chosenBranches.map(Number);
 
   console.log(`  🏢 Filiais: ${branchIds.join(", ")}\n`);
 
   const upsertQueue = new TCarUpsertQueue({ workless: true });
+  const invoiceQueue = new TCarInvoiceQueue({ workless: true });
 
   const resolved: ResolvedMigrationOptions = {
     branchIds,
     companyId: COMPANY_ID,
     alteradoDesde: ALTERADO_DESDE ?? "",
     upsertQueue,
+    invoiceQueue,
     dryRun: DRY_RUN,
     grupos: GRUPOS,
   };
 
   const start = Date.now();
 
-  // Executa apenas as etapas escolhidas, na ordem original do array STEPS
+  // selectFromMenu já devolve na ordem original do array STEPS
   const orderedChosen = STEPS.filter((s) => chosen.includes(s.key));
 
   try {
