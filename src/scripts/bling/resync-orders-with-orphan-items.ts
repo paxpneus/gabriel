@@ -1,8 +1,8 @@
 /**
- * Re-enqueues for Bling ingestion every order that still has an order_item whose
- * SKU no longer exists in the order's current Bling payload (item swapped/removed
- * before updateOrderFromBling started deleting orphans). The ingestion worker
- * re-fetches the order and removes the orphan item.
+ * Re-enqueues for Bling ingestion every order that has more order_items than lines
+ * in its current Bling payload (item swapped/removed before updateOrderFromBling
+ * started deleting orphans). The ingestion worker re-fetches the order and removes
+ * the leftover item.
  *
  * Uso:
  *   npx ts-node src/scripts/bling/resync-orders-with-orphan-items.ts
@@ -30,7 +30,7 @@ interface OrphanOrderRow {
   orphan_skus: string[];
 }
 
-// Mesmo critério de órfão do updateOrderFromBling: SKU local sem linha correspondente em itens[].codigo.
+// updateOrderFromBling casa item por SKU do produto local (não itens[].codigo, que pode ter sido renomeado); órfão = sobra de item local além das linhas do Bling.
 async function findOrdersWithOrphanItems(
   integrationId: string,
 ): Promise<OrphanOrderRow[]> {
@@ -44,13 +44,10 @@ async function findOrdersWithOrphanItems(
     WHERE o.integrations_id = :integrationId
       AND o.id_order_system IS NOT NULL
       AND o.source_payload ? 'itens'
-      AND oi.sku IS NOT NULL
-      AND NOT EXISTS (
-        SELECT 1
-        FROM jsonb_array_elements(o.source_payload->'itens') item
-        WHERE item->>'codigo' = oi.sku
-      )
-    GROUP BY o.id_order_system, o.number_order_system
+      -- itens vazio: update não apaga nada (proteção contra payload incompleto), reenfileirar não resolve
+      AND jsonb_array_length(o.source_payload->'itens') > 0
+    GROUP BY o.id_order_system, o.number_order_system, o.source_payload
+    HAVING COUNT(oi.id) > jsonb_array_length(o.source_payload->'itens')
     ORDER BY o.number_order_system
     `,
     { type: QueryTypes.SELECT, replacements: { integrationId } },
