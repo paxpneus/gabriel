@@ -1131,7 +1131,8 @@ async getReport(filters: SellerSalesReportFilters) {
         COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
         ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS average_contribution_pct,
         COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission,
-        COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount
+        COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount,
+        COALESCE(SUM(s.icms_value_allocated), 0) AS total_icms
       FROM report_rows s
       `,
       {
