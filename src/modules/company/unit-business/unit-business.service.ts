@@ -18,9 +18,11 @@ import { UserAttributes } from "../users/users/user.types";
 import Role from "../users/roles/role.model";
 import expeditionBatchService from "../../warehouse/expedition/batch/batch.service";
 import { comercialUnitBusinessWhere } from "./helpers/comercial-unit-business";
+import { onlineFirstThenNumberOrder } from "./helpers/list-order";
 import { isWithinPhysicalStoreRange } from "./helpers/physical-numbered-unit-business";
 import { CD21_UNIT_BUSINESS_NUMBER } from "./helpers/cd21-unit-business-number";
 import roleService from "../users/roles/role.service";
+import unitBusinessGroupService from "../unit-business-groups/unit-business-group/unit-business-group.service";
 
 export { CD21_UNIT_BUSINESS_NUMBER };
 
@@ -158,7 +160,9 @@ export class UnitBusinessService extends BaseService<
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
-  ): Promise<PaginatedResult<UnitBusiness>> {
+  ): Promise<
+    PaginatedResult<UnitBusiness> & { groups: { id: string; name: string }[] }
+  > {
     const allowedIds = await this.resolveEffectiveAllowedUnitBusinessIds(
       params.userId,
       params.filters?.unit_business_id,
@@ -170,11 +174,20 @@ export class UnitBusinessService extends BaseService<
       ? { ...safeParams, filters: { ...safeParams.filters, id: allowedIds } }
       : safeParams;
 
-    return this.repository.findPaginated(
-      finalParams,
-      this.queryConfig,
-      extraOptions,
-    );
+    const [unitBusinesses, existingGroups] = await Promise.all([
+      this.repository.findPaginatedWithGroups(
+        finalParams,
+        this.queryConfig,
+        extraOptions,
+        params.sortBy ? undefined : onlineFirstThenNumberOrder(),
+      ),
+      unitBusinessGroupService.findAll({
+        attributes: ["id", "name"],
+        order: [["name", "ASC"]],
+      }),
+    ]);
+
+    return { ...unitBusinesses, groups: existingGroups };
   }
 
   async getUnitBusinessPublic(

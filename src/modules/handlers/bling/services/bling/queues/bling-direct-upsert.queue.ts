@@ -181,6 +181,18 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       });
     }
 
+    // Contato SELLER legado (sem unidade e sem mapping) é adotado em vez de duplicar.
+    if (!existing && data.type === "SELLER" && unitBusinessId) {
+      existing = await Contact.findOne({
+        where: {
+          id_system: data.id_system,
+          type: data.type,
+          integrations_id: integrationsId,
+          unit_business_id: null,
+        },
+      });
+    }
+
     let contact: Contact;
 
     if (existing) {

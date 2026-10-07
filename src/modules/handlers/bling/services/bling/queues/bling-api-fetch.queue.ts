@@ -75,6 +75,8 @@ import productService from "../../../../../inventory/products/services/product.s
 import supplierMappingService from "../../../../../inventory/supplier-mapping/supplier-mapping.service";
 import productConfigService from "../../../../../inventory/product-config/product_config.service";
 import transporterService from "../../../../../warehouse/transporter/transporter.service";
+import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
+import { BlingDirectUpsertQueue } from "./bling-direct-upsert.queue";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -354,6 +356,12 @@ interface BlingApiSupplier {
   nome: string;
 }
 
+interface BlingApiSeller {
+  id: number;
+  loja?: { id?: number };
+  contato?: { id?: number; nome?: string };
+}
+
 interface BlingApiProductSupplier {
   id: number;
   codigo?: string;
@@ -444,6 +452,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   // queues/index.ts). Seguro instanciar em todo lugar que cria esta classe
   // (scripts, sefaz-procnfe-retry, etc.) sem precisar injetar a instância.
   private magentoSyncQueue: MagentoSyncQueue;
+  private directUpsertQueue: BlingDirectUpsertQueue;
 
   constructor(options: { workless?: boolean } = {}) {
     super("BLING_API_FETCH", {
@@ -501,6 +510,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     this.api = blingApi;
     this.magentoSyncQueue = new MagentoSyncQueue({ workless: true });
+    this.directUpsertQueue = new BlingDirectUpsertQueue({ workless: true });
   }
 
   override async add(
@@ -799,6 +809,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
         case "consumer_invoice":
           await this.fetchAndUpsertInvoice(apiFetch, "NFC-e");
+          break;
+
+        case "seller":
+          await this.fetchAndUpsertSeller(apiFetch);
           break;
 
         default:
@@ -1432,6 +1446,55 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     console.log(
       `${logPrefix} — produto "${product.name}" desativado (situacao=E na Bling): integration_mappings/supplier_mappings/product_configs removidos, is_active=false | product_id=${product.id}`,
+    );
+  }
+
+  // Upsert do contato + integration mapping fica no BLING_DIRECT_UPSERT (mesmo payload dos scripts populate-from-bling).
+  private async fetchAndUpsertSeller(apiFetch: ApiFetchRequest): Promise<void> {
+    const { data } = await blingGet<{ data: BlingApiSeller }>(
+      `/vendedores/${apiFetch.blingId}`,
+      blingApi,
+    );
+
+    const seller = data.data;
+    const name = seller?.contato?.nome?.trim();
+    if (!name) {
+      console.warn(
+        `[BLING_API_FETCH] Vendedor Bling ${apiFetch.blingId} sem contato.nome — nome mantido.`,
+      );
+      return;
+    }
+
+    const unitBusiness = seller.loja?.id
+      ? await unitBusinessService.findOne({
+          where: { id_system: String(seller.loja.id) },
+          attributes: ["id"],
+        })
+      : null;
+
+    const integration = await getBlingIntegration("Bling");
+    const idSystem = String(apiFetch.blingId);
+
+    await this.directUpsertQueue.add(
+      {
+        eventId: `seller-upsert-${idSystem}`,
+        resource: "seller",
+        action: "updated",
+        companyId: "",
+        date: new Date().toISOString(),
+        rawData: null,
+        directUpsert: {
+          table: "contacts",
+          data: {
+            id_system: idSystem,
+            name,
+            type: "SELLER",
+            integrations_id: integration.id,
+            unit_business_id: unitBusiness?.id ?? null,
+          },
+        },
+      },
+      `bling-seller-upsert-${idSystem}`,
     );
   }
 

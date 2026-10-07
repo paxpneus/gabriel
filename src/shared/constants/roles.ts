@@ -173,6 +173,10 @@ export const ROLE_PERMISSIONS: Roles[] = [
     route: 'unit-business',
     type: 'REGULAR',
     permissions: all,
+    children: [
+      { entity: 'unit_business_groups',        label: 'Grupos' },
+      { entity: 'unit_business_group_members', label: 'Membros de Grupo' },
+    ],
   },
   {
     scope: 'Transportadoras',

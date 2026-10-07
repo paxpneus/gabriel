@@ -19,7 +19,10 @@ import { mapOrderInternalStatus } from "../../../../../shared/utils/normalizers/
 import { Product, ProductConfig } from "../../../../inventory";
 import { UnitBusiness } from "../../../../warehouse";
 import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
-import type { BlingApiInvoice } from "../bling/queues/bling-api-fetch.queue";
+import {
+  BlingApiFetchQueue,
+  type BlingApiInvoice,
+} from "../bling/queues/bling-api-fetch.queue";
 import Contact from "../../../../sales/contacts/contacts.model";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import { ProductAttributes } from "../../../../inventory/products/product.types";
@@ -136,6 +139,8 @@ export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService;
   private storeService: StoreService;
+  // Lazy: evita abrir conexão Redis em quem instancia o service sem nunca criar vendedor.
+  private blingApiFetchQueue: BlingApiFetchQueue | null = null;
 
   constructor(blingApi: AxiosInstance) {
     this.blingApi = blingApi;
@@ -353,45 +358,80 @@ export class BlingOrderService {
 
     if (!sellerSystemId) return null;
 
-    const existing = await Contact.findOne({
-      where: {
-        id_system: sellerSystemId,
-        type: "SELLER",
-        integrations_id: integrationId,
-      },
-    });
+    const sellerName = seller?.nome ? String(seller.nome).trim() : null;
 
-    const isUnassignedSeller = sellerSystemId === "0";
+    const mapped = (await integrationMappingService.findEntityByMapping(
+      "CONTACT",
+      integrationId,
+      sellerSystemId,
+    )) as Contact | null;
 
-    const sellerName = isUnassignedSeller
-      ? "Vendedor 0"
-      : seller?.nome
-        ? String(seller.nome).trim()
-        : null;
-
-    if (existing) {
-      const needsUpdate =
-        (sellerName && existing.name !== sellerName) ||
-        existing.integrations_id !== integrationId;
-
-      if (needsUpdate) {
-        await existing.update({
-          name: sellerName ?? existing.name,
-          integrations_id: integrationId,
-        });
+    if (mapped) {
+      if (sellerName && mapped.name !== sellerName) {
+        await mapped.update({ name: sellerName });
       }
-      return existing.id;
+      return mapped.id;
     }
 
-    const created = await Contact.create({
-      id_system: sellerSystemId,
-      name: sellerName ?? `Vendedor ${sellerSystemId}`,
-      type: "SELLER",
+    // Contato legado (criado antes do mapping) é reaproveitado em vez de duplicar.
+    const contact =
+      (await Contact.findOne({
+        where: {
+          id_system: sellerSystemId,
+          type: "SELLER",
+          integrations_id: integrationId,
+        },
+        attributes: ["id"],
+        order: [["createdAt", "ASC"]],
+      })) ??
+      (await Contact.create({
+        id_system: sellerSystemId,
+        name: sellerName ?? `Vendedor ${sellerSystemId}`,
+        type: "SELLER",
+        integrations_id: integrationId,
+        unit_business_id: null,
+      }));
+
+    await integrationMappingService.createOrUpdateIntegrationMapping({
+      entity_type: "CONTACT",
+      internal_id: contact.id,
+      external_id: sellerSystemId,
       integrations_id: integrationId,
-      unit_business_id: null,
     });
 
-    return created.id;
+    // "0" = pedido sem vendedor no Bling, não existe em /vendedores.
+    if (sellerSystemId !== "0") await this.enqueueSellerFetch(sellerSystemId);
+
+    return contact.id;
+  }
+
+  // Payload do pedido só traz vendedor.id; o nome vem de /vendedores/{id} via BLING_API_FETCH.
+  private async enqueueSellerFetch(sellerSystemId: string): Promise<void> {
+    this.blingApiFetchQueue ??= new BlingApiFetchQueue({ workless: true });
+    try {
+      await this.blingApiFetchQueue.add(
+        {
+          eventId: `seller-fetch-${sellerSystemId}`,
+          resource: "seller",
+          action: "updated",
+          companyId: "",
+          date: new Date().toISOString(),
+          rawData: null,
+          apiFetch: {
+            resource: "seller",
+            blingId: Number(sellerSystemId),
+            action: "updated",
+            companyId: "",
+          },
+        },
+        `bling-seller-fetch-${sellerSystemId}`,
+      );
+    } catch (error) {
+      console.error(
+        `[BlingOrderService] Falha ao enfileirar fetch do vendedor ${sellerSystemId}:`,
+        error,
+      );
+    }
   }
 
   private costUnitBusinessId: string | null = null;

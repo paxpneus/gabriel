@@ -107,7 +107,6 @@ export class OrderItemsService extends BaseService<
               "date",
               "number_order_system",
               "total_price",
-              "total_cost",
               "total_products",
               "icms_value",
               "tax_commission",
@@ -154,6 +153,8 @@ export class OrderItemsService extends BaseService<
             model: SellerSalesOrderItemSnapshot,
             as: "sellerSnapshot",
             required: true,
+            // Same validity rule as the seller report: completed order with cost resolved for every item.
+            where: { is_valid_sale: true },
             attributes: [
               "average_cost",
               "total_cost",
@@ -165,11 +166,6 @@ export class OrderItemsService extends BaseService<
             ],
           },
         ],
-      },
-      {
-        average_cost_snapshot: {
-          [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: 0 }],
-        },
       },
     );
 
@@ -190,6 +186,7 @@ export class OrderItemsService extends BaseService<
         [fn("SUM", col("contribution_value")), "contribution_sum"],
         [fn("SUM", col("freight_cost_allocated")), "freight_sum"],
         [fn("SUM", col("icms_value_allocated")), "icms_sum"],
+        [fn("SUM", col("total_cost")), "cost_sum"],
       ],
       where: { order_id: orderIds },
       group: ["order_id"],
@@ -198,7 +195,7 @@ export class OrderItemsService extends BaseService<
 
     const orderAggregatesMap = new Map<
       string,
-      { contribution: number; freight: number; icms: number }
+      { contribution: number; freight: number; icms: number; cost: number }
     >(
       orderAggregatesRaw.map((row: any) => [
         row.order_id,
@@ -206,6 +203,7 @@ export class OrderItemsService extends BaseService<
           contribution: Number(row.contribution_sum ?? 0),
           freight: Number(row.freight_sum ?? 0),
           icms: Number(row.icms_sum ?? 0),
+          cost: Number(row.cost_sum ?? 0),
         },
       ]),
     );
@@ -283,6 +281,7 @@ export class OrderItemsService extends BaseService<
         contribution: 0,
         freight: 0,
         icms: 0,
+        cost: 0,
       };
 
       const sellerName = order?.seller?.name ?? null;
@@ -318,7 +317,10 @@ export class OrderItemsService extends BaseService<
           data_pedido: order?.date,
           numero_pedido: order?.number_order_system ?? null,
           valor_total_pedido: Number(order?.total_products ?? 0),
-          custo_total_pedido: Number(order.total_cost),
+          // Includes ICMS to keep the field's original meaning for API consumers (reports use cost without ICMS).
+          custo_total_pedido: Number(
+            (orderAggregates.cost + orderAggregates.icms).toFixed(2),
+          ),
           numero_nota_fiscal: order?.invoice?.number_system ?? null,
           lucro_pedido: Number(orderAggregates.contribution.toFixed(2)),
           total_frete_pedido: Number(orderAggregates.freight.toFixed(2)),

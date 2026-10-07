@@ -7,6 +7,8 @@
 
 import UnitBusiness from "../modules/company/unit-business/unit-business.model";
 import UnitBusinessConfig from "../modules/company/unit-business/unit-business-config/unit-business-config.model";
+import UnitBusinessGroup from "../modules/company/unit-business-groups/unit-business-group/unit-business-group.model";
+import UnitBusinessGroupMember from "../modules/company/unit-business-groups/unit-business-group-member/unit-business-group-member.model";
 import User from "../modules/company/users/users/user.model";
 import UserConfig from "../modules/company/users/user_config/user_config.model";
 import UserUnitBusiness from "../modules/company/users/user_unit_business/user_unit_business.model";
@@ -274,6 +276,36 @@ UnitBusiness.belongsTo(ExpeditionBatch, {
   Integration.hasMany(UnitBusiness, {
     foreignKey: "integrations_id",
     as: "unitBusiness",
+  });
+
+  // Unit Business <-> Unit Business Groups (N:N)
+  UnitBusinessGroup.hasMany(UnitBusinessGroupMember, {
+    foreignKey: "unit_business_group_id",
+    as: "members",
+  });
+  UnitBusinessGroupMember.belongsTo(UnitBusinessGroup, {
+    foreignKey: "unit_business_group_id",
+    as: "group",
+  });
+  UnitBusiness.hasMany(UnitBusinessGroupMember, {
+    foreignKey: "unit_business_id",
+    as: "groupMemberships",
+  });
+  UnitBusinessGroupMember.belongsTo(UnitBusiness, {
+    foreignKey: "unit_business_id",
+    as: "unitBusiness",
+  });
+  UnitBusinessGroup.belongsToMany(UnitBusiness, {
+    through: UnitBusinessGroupMember,
+    foreignKey: "unit_business_group_id",
+    otherKey: "unit_business_id",
+    as: "unitBusinesses",
+  });
+  UnitBusiness.belongsToMany(UnitBusinessGroup, {
+    through: UnitBusinessGroupMember,
+    foreignKey: "unit_business_id",
+    otherKey: "unit_business_group_id",
+    as: "groups",
   });
 
   // Unit Business -> Configuração de etiquetas
