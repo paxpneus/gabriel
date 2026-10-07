@@ -21,6 +21,7 @@ import { comercialUnitBusinessWhere } from "./helpers/comercial-unit-business";
 import { onlineFirstThenNumberOrder } from "./helpers/list-order";
 import { isWithinPhysicalStoreRange } from "./helpers/physical-numbered-unit-business";
 import { CD21_UNIT_BUSINESS_NUMBER } from "./helpers/cd21-unit-business-number";
+import { WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM } from "./helpers/website-pax-unit-business";
 import roleService from "../users/roles/role.service";
 import unitBusinessGroupService from "../unit-business-groups/unit-business-group/unit-business-group.service";
 
@@ -67,6 +68,15 @@ export class UnitBusinessService extends BaseService<
     return this.repository.findOne({
       where: { number: CD21_UNIT_BUSINESS_NUMBER },
     });
+  }
+
+  async getWebsitePaxUnitBusinessId(): Promise<string | null> {
+    const websitePax = await this.repository.findOne({
+      where: { id_system: WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM },
+      attributes: ["id"],
+    });
+
+    return websitePax?.id ?? null;
   }
 
   async update(

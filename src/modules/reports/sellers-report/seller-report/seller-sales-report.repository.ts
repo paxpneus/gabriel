@@ -569,8 +569,9 @@ WHERE o.seller_id IS NOT NULL
           ) AS is_valid_sale,
           ROUND(commission_base * manager_commission_rate / 100, 2) AS manager_commission_value
         FROM item_calc
-      )
+      ),
 
+      upserted AS (
       INSERT INTO seller_sales_order_item_snapshots (
         order_item_id, order_id, seller_id, customer_id, product_id, unit_business_id,
         order_date, product_name, product_brand, product_measure,
@@ -640,6 +641,15 @@ WHERE o.seller_id IS NOT NULL
         is_valid_sale               = EXCLUDED.is_valid_sale,
         last_updated_at            = NOW(),
         updated_at                 = NOW()
+      RETURNING order_item_id
+      )
+
+      -- Order reprocessed but now rejected by order_source (e.g. seller became "Vendedor 0"): drop its stale rows.
+      DELETE FROM seller_sales_order_item_snapshots stale
+      WHERE stale.order_id IN (SELECT order_id FROM affected)
+        AND NOT EXISTS (
+          SELECT 1 FROM upserted u WHERE u.order_item_id = stale.order_item_id
+        )
       `,
       {
         replacements: {

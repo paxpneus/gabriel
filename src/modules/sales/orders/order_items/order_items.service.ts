@@ -1,4 +1,4 @@
-import { FindOptions, Op, WhereOptions, fn, col, OrderItem } from "sequelize";
+import { FindOptions, Op, fn, col, OrderItem } from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -19,6 +19,11 @@ import { formatToBRISOString } from "../../../../shared/utils/normalizers/date";
 import SellerSalesOrderItemSnapshot from "../../../reports/sellers-report/models/seller-sales-order-item-snapshot/seller-sales-order-item-snapshot.model";
 import integrationsService from "../../../integrations/integrations/integrations.service";
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
+import unitBusinessService from "../../../company/unit-business/unit-business.service";
+import {
+  invoicedSalesDetailOrderWhere,
+  salesDetailUnitBusinessWhere,
+} from "./helpers/sales-detail-filters";
 
 const VENDEDOR_NAO_ATRIBUIDO = "Vendedor 0";
 
@@ -69,9 +74,8 @@ export class OrderItemsService extends BaseService<
     filters: SalesDetailFilters,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
   ): Promise<PaginatedResult<OrderSalesDetailRow>> {
-    const orderWhere: WhereOptions = {
-      // ─── Regra fixa: pedido sem NFe vinculada não entra no relatório.
-      invoice_id: { [Op.ne]: null },
+    const orderWhere: Record<string | symbol, unknown> = {
+      [Op.and]: [invoicedSalesDetailOrderWhere()],
     };
     if (filters.startDate && filters.endDate) {
       orderWhere.date = { [Op.between]: [filters.startDate, filters.endDate] };
@@ -91,6 +95,8 @@ export class OrderItemsService extends BaseService<
         ...(filters.productId ? { product_id: filters.productId } : {}),
       },
     };
+
+    const websitePaxUnitBusinessId = await unitBusinessService.getWebsitePaxUnitBusinessId();
 
     const result = await super.paginate(
       mergedParams,
@@ -120,7 +126,7 @@ export class OrderItemsService extends BaseService<
             include: [
               {
                 model: UnitBusiness,
-                where: { number: { [Op.ne]: null } },
+                where: salesDetailUnitBusinessWhere(websitePaxUnitBusinessId),
                 as: "unitBusiness",
                 attributes: ["id", "name", "number", "cnpj"],
               },
