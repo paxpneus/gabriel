@@ -20,6 +20,7 @@ class SalesOrderSnapshot
   public customer_id?: string | null;
   public store_id?: string | null;
   public unit_business_id?: string | null;
+  public seller_id?: string | null;
 
   public order_number_system?: string | null;
   public order_number_channel?: string | null;
@@ -67,6 +68,7 @@ class SalesOrderSnapshot
   public computed_icms_value?: number | string;
 
   public contribution_value?: number | string;
+  public net_value?: number | string;
   public contribution_pct?: number | string;
   public markup_pct?: number | string;
   public total_supplier_discount?: number | string;
@@ -88,6 +90,7 @@ SalesOrderSnapshot.init(
     customer_id: { type: DataTypes.UUID, allowNull: true },
     store_id: { type: DataTypes.UUID, allowNull: true },
     unit_business_id: { type: DataTypes.UUID, allowNull: true },
+    seller_id: { type: DataTypes.UUID, allowNull: true },
 
     order_number_system: { type: DataTypes.STRING(100), allowNull: true },
     order_number_channel: { type: DataTypes.STRING(100), allowNull: true },
@@ -135,6 +138,7 @@ SalesOrderSnapshot.init(
     approx_tax_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
     contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    net_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     contribution_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
     markup_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
     total_supplier_discount: {

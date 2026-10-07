@@ -32,6 +32,7 @@ class SalesOrderItemSnapshot
   public product_measure?: string | null;
 
   public quantity?: number | string;
+  public kit_multiplier?: number | string;
   public unit_price?: number | string;
   public gross_total?: number | string;
   public discount_value?: number | string;
@@ -48,6 +49,7 @@ class SalesOrderItemSnapshot
   public computed_icms_value_allocated?: number | string;
 
   public contribution_value?: number | string;
+  public net_value?: number | string;
   public contribution_pct?: number | string;
 
   public markup_pct?: number | string;
@@ -98,6 +100,7 @@ SalesOrderItemSnapshot.init(
     product_measure: { type: DataTypes.STRING(50), allowNull: true },
 
     quantity: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
+    kit_multiplier: { type: DataTypes.DECIMAL(14, 4), defaultValue: 1 },
     unit_price: { type: DataTypes.DECIMAL(14, 4), defaultValue: 0 },
     gross_total: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     discount_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
@@ -159,6 +162,7 @@ SalesOrderItemSnapshot.init(
     cbs_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
     contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    net_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     contribution_pct: { type: DataTypes.DECIMAL(8, 2), defaultValue: 0 },
 
     source_payload: { type: DataTypes.JSONB, allowNull: true },

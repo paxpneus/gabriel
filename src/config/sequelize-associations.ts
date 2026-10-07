@@ -1162,6 +1162,11 @@ SalesOrderSnapshot.belongsTo(UnitBusiness, {
   as: "unitBusiness",
 });
 
+SalesOrderSnapshot.belongsTo(Contact, {
+  foreignKey: "seller_id",
+  as: "seller",
+});
+
 Invoice.hasMany(InvoiceFiscalItem, {
   foreignKey: "invoice_id",
   as: "fiscalItems",

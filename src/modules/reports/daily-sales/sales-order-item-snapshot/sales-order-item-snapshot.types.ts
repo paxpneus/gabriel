@@ -19,6 +19,7 @@ export interface SalesOrderItemSnapshotAttributes {
   product_measure?: string | null;
 
   quantity?: number | string;
+  kit_multiplier?: number | string;
   unit_price?: number | string;
   gross_total?: number | string;
   discount_value?: number | string;
@@ -35,6 +36,7 @@ export interface SalesOrderItemSnapshotAttributes {
   computed_icms_value_allocated?: number | string;
 
   contribution_value?: number | string;
+  net_value?: number | string;
   contribution_pct?: number | string;
 
   markup_pct?: number | string;

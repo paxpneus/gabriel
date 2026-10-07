@@ -8,26 +8,53 @@ import {
   SalesStoreFactKey,
 } from "./sales-report.types";
 import { salesReportRepository } from "./sales-report.repository";
+import { chunkArray, uniqueBy } from "./helpers/fact-keys";
 
 const JOB_NAME = "sales_report";
+// Lote de pedidos por rodada de snapshots; entre lotes o job renova o heartbeat do lock.
+const ORDERS_PER_BATCH = 500;
+
+interface AffectedFactKeys {
+  facts: SalesFactKey[];
+  state: SalesStateFactKey[];
+  store: SalesStoreFactKey[];
+  product: SalesProductFactKey[];
+  status: SalesStatusFactKey[];
+}
+
+const emptyFactKeys = (): AffectedFactKeys => ({
+  facts: [],
+  state: [],
+  store: [],
+  product: [],
+  status: [],
+});
 
 export class SalesReportService {
   async runIncrementalJob(): Promise<SalesReportJobResult> {
-    const status = await salesReportRepository.getJobStatus();
-    if (status?.status === "running") {
-      throw new Error("Job já está em execução, aguarde.");
-    }
-
     const jobStartTime = new Date();
     const lastProcessedAt = await salesReportRepository.getCheckpoint();
 
-    try {
-      await salesReportRepository.markRunning();
+    const acquired = await salesReportRepository.markRunning();
+    if (!acquired) {
+      throw new Error("Job já está em execução, aguarde.");
+    }
 
+    try {
       const orderIds =
         await salesReportRepository.findAffectedOrderIds(lastProcessedAt);
 
-      await this.processOrders(orderIds);
+      const affectedKeys = emptyFactKeys();
+      for (const batch of chunkArray(orderIds, ORDERS_PER_BATCH)) {
+        this.mergeFactKeys(affectedKeys, await this.refreshSnapshots(batch));
+        await salesReportRepository.heartbeat();
+      }
+
+      await this.refreshFacts(affectedKeys, () =>
+        salesReportRepository.heartbeat(),
+      );
+      const orphanFactsDeleted =
+        await salesReportRepository.deleteOrphanFacts();
 
       await salesReportRepository.markSuccess(jobStartTime, orderIds.length);
 
@@ -39,6 +66,7 @@ export class SalesReportService {
         startedAt: jobStartTime,
         lastProcessedAt,
         ordersProcessed: orderIds.length,
+        orphanFactsDeleted,
         supplierDiscountRetro,
       };
     } catch (error) {
@@ -50,58 +78,78 @@ export class SalesReportService {
 
   // Snapshots + daily facts dos pedidos, sem tocar em checkpoint/status do job.
   private async processOrders(orderIds: string[]): Promise<void> {
-    const previousFactKeys =
-      await salesReportRepository.findAffectedFactKeys(orderIds);
-    const previousStateFactKeys =
-      await salesReportRepository.findAffectedStateFactKeys(orderIds);
-    const previousStoreFactKeys =
-      await salesReportRepository.findAffectedStoreFactKeys(orderIds);
-    const previousProductFactKeys =
-      await salesReportRepository.findAffectedProductFactKeys(orderIds);
-    const previousStatusFactKeys =
-      await salesReportRepository.findAffectedStatusFactKeys(orderIds);
+    await this.refreshFacts(await this.refreshSnapshots(orderIds));
+  }
+
+  // Chaves de antes e depois do upsert: fact de chave que o pedido deixou (data/loja mudou) também é recalculada.
+  private async refreshSnapshots(
+    orderIds: string[],
+  ): Promise<AffectedFactKeys> {
+    const previous = await this.findAffectedFactKeys(orderIds);
 
     await salesReportRepository.upsertSnapshots(orderIds);
     await salesReportRepository.updateSnapshotTotals(orderIds);
 
-    const currentFactKeys =
-      await salesReportRepository.findAffectedFactKeys(orderIds);
-    const currentStateFactKeys =
-      await salesReportRepository.findAffectedStateFactKeys(orderIds);
-    const currentStoreFactKeys =
-      await salesReportRepository.findAffectedStoreFactKeys(orderIds);
-    const currentProductFactKeys =
-      await salesReportRepository.findAffectedProductFactKeys(orderIds);
-    const currentStatusFactKeys =
-      await salesReportRepository.findAffectedStatusFactKeys(orderIds);
+    const keys = await this.findAffectedFactKeys(orderIds);
+    this.mergeFactKeys(keys, previous);
+    return keys;
+  }
 
+  private async findAffectedFactKeys(
+    orderIds: string[],
+  ): Promise<AffectedFactKeys> {
+    const [facts, state, store, product, status] = await Promise.all([
+      salesReportRepository.findAffectedFactKeys(orderIds),
+      salesReportRepository.findAffectedStateFactKeys(orderIds),
+      salesReportRepository.findAffectedStoreFactKeys(orderIds),
+      salesReportRepository.findAffectedProductFactKeys(orderIds),
+      salesReportRepository.findAffectedStatusFactKeys(orderIds),
+    ]);
+    return { facts, state, store, product, status };
+  }
+
+  private mergeFactKeys(
+    target: AffectedFactKeys,
+    source: AffectedFactKeys,
+  ): void {
+    target.facts.push(...source.facts);
+    target.state.push(...source.state);
+    target.store.push(...source.store);
+    target.product.push(...source.product);
+    target.status.push(...source.status);
+  }
+
+  private async refreshFacts(
+    keys: AffectedFactKeys,
+    afterEachTable: () => Promise<void> = async () => {},
+  ): Promise<void> {
     await salesReportRepository.upsertDailySalesFacts(
-      this.uniqueFactKeys([...previousFactKeys, ...currentFactKeys]),
+      uniqueBy(keys.facts, (k) => `${k.fact_date}:${k.unit_business_id}`),
     );
+    await afterEachTable();
     await salesReportRepository.upsertDailySalesStateFacts(
-      this.uniqueStateFactKeys([
-        ...previousStateFactKeys,
-        ...currentStateFactKeys,
-      ]),
+      uniqueBy(
+        keys.state,
+        (k) => `${k.fact_date}:${k.unit_business_id}:${k.destination_uf}`,
+      ),
     );
+    await afterEachTable();
     await salesReportRepository.upsertDailySalesStoreFacts(
-      this.uniqueStoreFactKeys([
-        ...previousStoreFactKeys,
-        ...currentStoreFactKeys,
-      ]),
+      uniqueBy(
+        keys.store,
+        (k) => `${k.fact_date}:${k.unit_business_id}:${k.store_id}`,
+      ),
     );
+    await afterEachTable();
     await salesReportRepository.upsertDailySalesProductFacts(
-      this.uniqueProductFactKeys([
-        ...previousProductFactKeys,
-        ...currentProductFactKeys,
-      ]),
+      uniqueBy(
+        keys.product,
+        (k) => `${k.fact_date}:${k.unit_business_id}:${k.sku}`,
+      ),
     );
-    await salesReportRepository.upsertDailySalesStatusFacts(
-      this.uniqueStatusFactKeys([
-        ...previousStatusFactKeys,
-        ...currentStatusFactKeys,
-      ]),
-    );
+    await afterEachTable();
+    await salesReportRepository.upsertDailySalesStatusFacts(keys.status);
+    await afterEachTable();
   }
 
   // Reprocessa só estes pedidos, independente do checkpoint do job incremental
@@ -142,35 +190,7 @@ export class SalesReportService {
         : [];
 
       if (changedOrderIds.length) {
-        const [
-          factKeys,
-          stateFactKeys,
-          storeFactKeys,
-          productFactKeys,
-          statusFactKeys,
-        ] = await Promise.all([
-          salesReportRepository.findAffectedFactKeys(changedOrderIds),
-          salesReportRepository.findAffectedStateFactKeys(changedOrderIds),
-          salesReportRepository.findAffectedStoreFactKeys(changedOrderIds),
-          salesReportRepository.findAffectedProductFactKeys(changedOrderIds),
-          salesReportRepository.findAffectedStatusFactKeys(changedOrderIds),
-        ]);
-
-        await salesReportRepository.upsertDailySalesFacts(
-          this.uniqueFactKeys(factKeys),
-        );
-        await salesReportRepository.upsertDailySalesStateFacts(
-          this.uniqueStateFactKeys(stateFactKeys),
-        );
-        await salesReportRepository.upsertDailySalesStoreFacts(
-          this.uniqueStoreFactKeys(storeFactKeys),
-        );
-        await salesReportRepository.upsertDailySalesProductFacts(
-          this.uniqueProductFactKeys(productFactKeys),
-        );
-        await salesReportRepository.upsertDailySalesStatusFacts(
-          this.uniqueStatusFactKeys(statusFactKeys),
-        );
+        await this.refreshFacts(await this.findAffectedFactKeys(changedOrderIds));
       }
 
       await salesReportRepository.markSupplierDiscountRetroCheckpointSuccess(
@@ -201,62 +221,6 @@ export class SalesReportService {
     }
 
     return salesReportRepository.getReport(filters);
-  }
-
-  private uniqueFactKeys(keys: SalesFactKey[]): SalesFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [`${key.fact_date}:${key.unit_business_id}`, key]),
-      ).values(),
-    );
-  }
-
-  private uniqueStateFactKeys(keys: SalesStateFactKey[]): SalesStateFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [
-          `${key.fact_date}:${key.unit_business_id}:${key.destination_uf}`,
-          key,
-        ]),
-      ).values(),
-    );
-  }
-
-  private uniqueStoreFactKeys(keys: SalesStoreFactKey[]): SalesStoreFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [
-          `${key.fact_date}:${key.unit_business_id}:${key.store_id}`,
-          key,
-        ]),
-      ).values(),
-    );
-  }
-
-  private uniqueProductFactKeys(
-    keys: SalesProductFactKey[],
-  ): SalesProductFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [
-          `${key.fact_date}:${key.unit_business_id}:${key.sku}`,
-          key,
-        ]),
-      ).values(),
-    );
-  }
-
-  private uniqueStatusFactKeys(
-    keys: SalesStatusFactKey[],
-  ): SalesStatusFactKey[] {
-    return Array.from(
-      new Map(
-        keys.map((key) => [
-          `${key.fact_date}:${key.unit_business_id}:${key.status_id}`,
-          key,
-        ]),
-      ).values(),
-    );
   }
 }
 

@@ -2,7 +2,7 @@
 
 `src/modules/warehouse/fiscal/invoices/`
 
-- `invoice/` — `Invoice` model/service/repository/controller + `invoice-label.service.ts` (EAN for printed labels, `GET /labels/data` paginated by volume — see "Labels pagination" below) + `helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`).
+- `invoice/` — `Invoice` model/service/repository/controller + `invoice-label.service.ts` (EAN for printed labels, `GET /labels/data` paginated by volume — see "Labels pagination" below) + `helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral` — `total_expected`/`total_read` são `VIRTUAL` no model, não existem no banco: pedir como atributo comum some do SELECT sem erro e vem vazio; sempre usar o literal, com o alias certo do include, ex. `"orderSnapshot->invoice"`) + `helpers/invoice-direction.ts` (`resolveInvoiceDirection(cnpj, {sender_cnpj, receiver_cnpj})` → `OUTGOING`/`INCOMING`/`null`, CNPJ normalizado, sender tem prioridade; `null` = CNPJ fora da nota, reservado pra transbordo — ainda sem consumidor).
 - `invoice-items/` — `InvoiceItems`; resolves product/config per line — see `item-resolution.md`.
 - `InvoiceFiscalItem` — sibling model, own `invoice-fiscal-item/` folder, **no repository/service/controller of its own** (just `.model.ts`/`.types.ts`) — queried/written directly wherever needed (`invoice.repository.ts`, `invoice.service.ts`, `invoice-items.service.ts`). Same accepted no-layer exception applies to `SalesOrderItemSnapshot`/`KitComponent` reads in this module (see `supplier-discount/report-value.md`).
 

@@ -5,6 +5,17 @@ import {
   orderDiscountAmountSql,
   orderNetProductsSql,
 } from "../../../sales/orders/order/helpers/discount";
+import { itemNetValueSql, orderNetValueSql } from "./helpers/net-value";
+import {
+  chunkArray,
+  FACT_KEYS_PER_STATEMENT,
+  factKeysTableSql,
+  uniqueBy,
+} from "./helpers/fact-keys";
+import {
+  DAILY_SALES_FACT_TABLES,
+  deleteOrphanFactsSql,
+} from "./helpers/orphan-facts";
 import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
 import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
@@ -17,6 +28,8 @@ import {
 } from "./sales-report.types";
 
 const JOB_NAME = "sales_report";
+// Job "running" sem heartbeat há mais que isso é tratado como morto (processo reiniciado no meio).
+export const RUNNING_LOCK_STALE_MINUTES = 15;
 // Checkpoint próprio (mesma tabela report_job_checkpoints, job_name distinto)
 // pro scan retroativo de supplier_discount_rules — independente do checkpoint
 // principal, que segue olhando só orders/order_items alterados.
@@ -252,6 +265,14 @@ NOT EXISTS (
     AND ${coalesceNumberSql("cost_check.average_cost_snapshot")} <= 0
 )`;
 
+// Efetivo só no updateSnapshotTotals: no upsert o UPDATE final é ignorado pelo Postgres (linha já alterada pela CTE no mesmo statement).
+const snapshotCostStatusSql = (snapshotAlias: string): SqlExpression => `
+CASE
+  WHEN ${snapshotAlias}.snapshot_status = 'cancelled' THEN 'cancelled'
+  WHEN ${hasCompleteCostSql(snapshotAlias)} THEN 'completed'
+  ELSE 'ignored_missing_cost'
+END`;
+
 const isCompletedSaleSql = (snapshotAlias: string): SqlExpression =>
   `${snapshotAlias}.snapshot_status IN ${COMPLETED_SALES_STATUSES}
             AND ${hasCompleteCostSql(snapshotAlias)}`;
@@ -486,12 +507,34 @@ export class SalesReportRepository {
     );
   }
 
-  async markRunning(): Promise<void> {
-    const result = await sequelize.query(
+  // Atômico: só um job adquire; assume lock "running" cujo heartbeat (updated_at) parou.
+  async markRunning(): Promise<boolean> {
+    const [, metadata] = await sequelize.query(
       `
     UPDATE report_job_checkpoints
     SET status = 'running', last_run_at = NOW(), updated_at = NOW()
-    WHERE job_name = :jobName AND status != 'running'
+    WHERE job_name = :jobName
+      AND (
+        status != 'running'
+        OR updated_at < NOW() - make_interval(mins => :staleMinutes)
+      )
+    `,
+      {
+        replacements: {
+          jobName: JOB_NAME,
+          staleMinutes: RUNNING_LOCK_STALE_MINUTES,
+        },
+      },
+    );
+    return ((metadata as { rowCount?: number })?.rowCount ?? 0) > 0;
+  }
+
+  async heartbeat(): Promise<void> {
+    await sequelize.query(
+      `
+    UPDATE report_job_checkpoints
+    SET updated_at = NOW()
+    WHERE job_name = :jobName AND status = 'running'
     `,
       { replacements: { jobName: JOB_NAME } },
     );
@@ -657,6 +700,9 @@ export class SalesReportRepository {
           o.customer_id,
           o.store_id,
           o.unit_business_id,
+          o.seller_id,
+          o.invoice_id,
+          inv.number_system                                     AS invoice_number,
           o.number_order_system                                 AS order_number_system,
           o.number_order_channel                                AS order_number_channel,
           DATE(COALESCE(o.date, o.created_at))                  AS order_date,
@@ -699,7 +745,7 @@ export class SalesReportRepository {
             * (COALESCE(st.icms_rate, 0) / 100),
             2
           )                                                     AS computed_icms_value,
-          FALSE                                                 AS has_invoice_data,
+          o.invoice_id IS NOT NULL                              AS has_invoice_data,
           o.source_payload
           
 
@@ -714,6 +760,7 @@ export class SalesReportRepository {
           LEFT JOIN states st
   ON st.acronym = o.destination_uf
   LEFT JOIN unit_businesses ub ON ub.id = o.unit_business_id
+  LEFT JOIN invoices inv ON inv.id = o.invoice_id
       ),
 
       -- ------------------------------------------------------------------
@@ -725,6 +772,7 @@ export class SalesReportRepository {
       inserted_orders AS (
         INSERT INTO sales_order_snapshots (
           order_id, integration_id, customer_id, store_id, unit_business_id,
+          seller_id, invoice_id, invoice_number,
           order_number_system, order_number_channel, order_date,
           destination_uf, destination_city, status_snapshot, snapshot_status,
           total_products, total_order, discount_value, other_expenses,
@@ -737,6 +785,7 @@ export class SalesReportRepository {
         )
         SELECT
           order_id, integration_id, customer_id, store_id, unit_business_id,
+          seller_id, invoice_id, invoice_number,
           order_number_system, order_number_channel, order_date,
           destination_uf, destination_city, status_snapshot, snapshot_status,
           total_products, total_order, discount_value, other_expenses,
@@ -754,6 +803,9 @@ export class SalesReportRepository {
           customer_id             = EXCLUDED.customer_id,
           store_id                = EXCLUDED.store_id,
           unit_business_id        = EXCLUDED.unit_business_id,
+          seller_id               = EXCLUDED.seller_id,
+          invoice_id              = EXCLUDED.invoice_id,
+          invoice_number          = EXCLUDED.invoice_number,
           order_number_system     = EXCLUDED.order_number_system,
           order_number_channel    = EXCLUDED.order_number_channel,
           order_date              = EXCLUDED.order_date,
@@ -1005,6 +1057,7 @@ item_calc AS (
   cofins_value, difal_value, ibs_value, cbs_value,
   tax_commission_allocated, freight_cost_allocated, computed_icms_value_allocated,
   contribution_value, contribution_pct,
+  kit_multiplier, net_value,
   source_payload, last_updated_at, created_at, updated_at
 )
 SELECT
@@ -1040,6 +1093,8 @@ SELECT
     `net_total_allocated - tax_commission_allocated - freight_cost_allocated - computed_icms_value_allocated - (ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value)`,
     "net_total_allocated",
   )} AS contribution_pct,
+  kit_multiplier,
+  ${itemNetValueSql()} AS net_value,
   source_payload, NOW(), NOW(), NOW()
 FROM item_calc
         ON CONFLICT (order_item_id) DO UPDATE SET
@@ -1059,6 +1114,8 @@ FROM item_calc
           supplier_discount_rule_id      = NULL,
           contribution_value             = EXCLUDED.contribution_value,
           contribution_pct               = EXCLUDED.contribution_pct,
+          kit_multiplier                 = EXCLUDED.kit_multiplier,
+          net_value                      = EXCLUDED.net_value,
           order_snapshot_id     = EXCLUDED.order_snapshot_id,
           product_id            = EXCLUDED.product_id,
           store_id              = EXCLUDED.store_id,
@@ -1142,6 +1199,7 @@ FROM item_calc
 
         contribution_value = ${calculateOrderContributionValueSql("sos", snapshotCostSql)},
         contribution_pct  = ${calculateOrderContributionPctSql("sos", snapshotCostSql)},
+        net_value         = ${orderNetValueSql("sos", "it.total_commission")},
         markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
 
         -- Neste ponto (upsert principal, ainda ANTES de applySupplierDiscounts)
@@ -1153,11 +1211,7 @@ FROM item_calc
 
         -- snapshot_status recalculado com o custo JÁ resolvido (KIT incluído),
         -- não mais com o EXISTS ingênuo de order_source.
-        snapshot_status = CASE
-          WHEN sos.snapshot_status = 'cancelled' THEN 'cancelled'
-          WHEN ${hasCompleteCostSql("sos")} THEN 'completed'
-          ELSE 'ignored_missing_cost'
-        END,
+        snapshot_status = ${snapshotCostStatusSql("sos")},
 
         has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
         last_updated_at   = NOW(),
@@ -1439,29 +1493,49 @@ FROM item_calc
   // FUTURO repositories/calculators: materialização das tabelas de facts.
   // ---------------------------------------------------------------------------
 
+  private async runInKeyChunks<K>(
+    keys: K[],
+    buildSql: () => string,
+  ): Promise<void> {
+    const sql = buildSql();
+    for (const chunk of chunkArray(keys, FACT_KEYS_PER_STATEMENT)) {
+      await sequelize.query(sql, {
+        replacements: { keys: JSON.stringify(chunk) },
+      });
+    }
+  }
+
   async upsertDailySalesFacts(keys: SalesFactKey[]): Promise<void> {
-    for (const key of keys) {
-      await sequelize.query(
-        `
-        WITH metrics AS (
+    await this.runInKeyChunks(
+      keys,
+      () => `
+        WITH keys AS (
+          ${factKeysTableSql([
+            { name: "fact_date", type: "date" },
+            { name: "unit_business_id", type: "uuid" },
+          ])}
+        ),
+        metrics AS (
           SELECT
-            CAST(:factDate AS date)        AS fact_date,
-            CAST(:unitBusinessId AS uuid)  AS unit_business_id,
-            COUNT(*)::integer              AS orders_count,
-            COALESCE(SUM(items_quantity),    0) AS items_quantity,
+            k.fact_date,
+            k.unit_business_id,
+            COUNT(s.id)::integer                    AS orders_count,
+            COALESCE(SUM(s.items_quantity),     0) AS items_quantity,
             -- total_value = receita bruta (total_products), não mais total_order.
-            COALESCE(SUM(total_products),    0) AS total_value,
-            COALESCE(SUM(freight_cost),   0) AS total_freight,
-            COALESCE(SUM(total_cost),        0) AS total_cost,
-            COALESCE(SUM(total_taxes),       0) AS total_taxes,
-            COALESCE(SUM(total_fees),        0) AS total_fees,
-            COALESCE(SUM(total_commission),  0) AS total_commission,
-            COALESCE(SUM(contribution_value),0) AS contribution_value,
-            COALESCE(SUM(total_supplier_discount),0) AS total_supplier_discount
-          FROM sales_order_snapshots
-          WHERE order_date       = CAST(:factDate AS date)
-            AND unit_business_id = :unitBusinessId
-            AND ${isCompletedSaleSql("sales_order_snapshots")}
+            COALESCE(SUM(s.total_products),     0) AS total_value,
+            COALESCE(SUM(s.freight_cost),       0) AS total_freight,
+            COALESCE(SUM(s.total_cost),         0) AS total_cost,
+            COALESCE(SUM(s.total_taxes),        0) AS total_taxes,
+            COALESCE(SUM(s.total_fees),         0) AS total_fees,
+            COALESCE(SUM(s.total_commission),   0) AS total_commission,
+            COALESCE(SUM(s.contribution_value), 0) AS contribution_value,
+            COALESCE(SUM(s.total_supplier_discount), 0) AS total_supplier_discount
+          FROM keys k
+          LEFT JOIN sales_order_snapshots s
+            ON s.order_date       = k.fact_date
+           AND s.unit_business_id = k.unit_business_id
+           AND ${isCompletedSaleSql("s")}
+          GROUP BY k.fact_date, k.unit_business_id
         )
         INSERT INTO daily_sales_facts (
           fact_date, unit_business_id,
@@ -1501,37 +1575,38 @@ FROM item_calc
           total_supplier_discount = EXCLUDED.total_supplier_discount,
           last_updated_at    = NOW(),
           updated_at         = NOW()
-        `,
-        {
-          replacements: {
-            factDate: key.fact_date,
-            unitBusinessId: key.unit_business_id,
-          },
-        },
-      );
-    }
+      `,
+    );
   }
 
   async upsertDailySalesStateFacts(keys: SalesStateFactKey[]): Promise<void> {
-    for (const key of keys) {
-      await sequelize.query(
-        `
-        WITH metrics AS (
+    await this.runInKeyChunks(
+      keys,
+      () => `
+        WITH keys AS (
+          ${factKeysTableSql([
+            { name: "fact_date", type: "date" },
+            { name: "unit_business_id", type: "uuid" },
+            { name: "destination_uf", type: "varchar" },
+          ])}
+        ),
+        metrics AS (
           SELECT
-            CAST(:factDate AS date)          AS fact_date,
-            CAST(:unitBusinessId AS uuid)    AS unit_business_id,
-            CAST(:destinationUf AS varchar)  AS destination_uf,
-            COUNT(*)::integer                AS orders_count,
-            COALESCE(SUM(items_quantity), 0) AS items_quantity,
+            k.fact_date,
+            k.unit_business_id,
+            k.destination_uf,
+            COUNT(s.id)::integer                AS orders_count,
+            COALESCE(SUM(s.items_quantity), 0) AS items_quantity,
             -- total_value = receita bruta (total_products), não mais total_order.
-            COALESCE(SUM(total_products), 0) AS total_value,
-            COALESCE(SUM(freight_cost),0) AS total_freight
-          FROM sales_order_snapshots
-          WHERE order_date       = CAST(:factDate AS date)
-            AND unit_business_id = :unitBusinessId
-            AND destination_uf   = :destinationUf
-            AND ${isCompletedSaleSql("sales_order_snapshots")}
-
+            COALESCE(SUM(s.total_products), 0) AS total_value,
+            COALESCE(SUM(s.freight_cost),   0) AS total_freight
+          FROM keys k
+          LEFT JOIN sales_order_snapshots s
+            ON s.order_date       = k.fact_date
+           AND s.unit_business_id = k.unit_business_id
+           AND s.destination_uf   = k.destination_uf
+           AND ${isCompletedSaleSql("s")}
+          GROUP BY k.fact_date, k.unit_business_id, k.destination_uf
         )
         INSERT INTO daily_sales_state_facts (
           fact_date, unit_business_id, destination_uf,
@@ -1556,43 +1631,44 @@ FROM item_calc
           average_ticket  = EXCLUDED.average_ticket,
           last_updated_at = NOW(),
           updated_at      = NOW()
-        `,
-        {
-          replacements: {
-            factDate: key.fact_date,
-            unitBusinessId: key.unit_business_id,
-            destinationUf: key.destination_uf,
-          },
-        },
-      );
-    }
+      `,
+    );
   }
 
   async upsertDailySalesStoreFacts(keys: SalesStoreFactKey[]): Promise<void> {
-    for (const key of keys) {
-      await sequelize.query(
-        `
-        WITH metrics AS (
+    await this.runInKeyChunks(
+      keys,
+      () => `
+        WITH keys AS (
+          ${factKeysTableSql([
+            { name: "fact_date", type: "date" },
+            { name: "unit_business_id", type: "uuid" },
+            { name: "store_id", type: "uuid" },
+          ])}
+        ),
+        metrics AS (
           SELECT
-            CAST(:factDate AS date)           AS fact_date,
-            CAST(:unitBusinessId AS uuid)     AS unit_business_id,
-            CAST(:storeId AS uuid)            AS store_id,
-            COUNT(*)::integer                 AS orders_count,
-            COALESCE(SUM(items_quantity),  0) AS items_quantity,
+            k.fact_date,
+            k.unit_business_id,
+            k.store_id,
+            COUNT(s.id)::integer                    AS orders_count,
+            COALESCE(SUM(s.items_quantity),     0) AS items_quantity,
             -- total_value = receita bruta (total_products), não mais total_order.
-            COALESCE(SUM(total_products),  0) AS total_value,
-            COALESCE(SUM(freight_cost), 0) AS total_freight,
-            COALESCE(SUM(total_cost),      0) AS total_cost,
-            COALESCE(SUM(total_taxes),     0) AS total_taxes,
-            COALESCE(SUM(total_fees),      0) AS total_fees,
-            COALESCE(SUM(total_commission),0) AS total_commission,
-            COALESCE(SUM(contribution_value),0) AS contribution_value,
-            COALESCE(SUM(total_supplier_discount),0) AS total_supplier_discount
-          FROM sales_order_snapshots
-          WHERE order_date       = CAST(:factDate AS date)
-            AND unit_business_id = :unitBusinessId
-            AND store_id         = :storeId
-            AND ${isCompletedSaleSql("sales_order_snapshots")}
+            COALESCE(SUM(s.total_products),     0) AS total_value,
+            COALESCE(SUM(s.freight_cost),       0) AS total_freight,
+            COALESCE(SUM(s.total_cost),         0) AS total_cost,
+            COALESCE(SUM(s.total_taxes),        0) AS total_taxes,
+            COALESCE(SUM(s.total_fees),         0) AS total_fees,
+            COALESCE(SUM(s.total_commission),   0) AS total_commission,
+            COALESCE(SUM(s.contribution_value), 0) AS contribution_value,
+            COALESCE(SUM(s.total_supplier_discount), 0) AS total_supplier_discount
+          FROM keys k
+          LEFT JOIN sales_order_snapshots s
+            ON s.order_date       = k.fact_date
+           AND s.unit_business_id = k.unit_business_id
+           AND s.store_id         = k.store_id
+           AND ${isCompletedSaleSql("s")}
+          GROUP BY k.fact_date, k.unit_business_id, k.store_id
         )
         INSERT INTO daily_sales_store_facts (
           fact_date, unit_business_id, store_id,
@@ -1631,46 +1707,50 @@ FROM item_calc
           total_supplier_discount = EXCLUDED.total_supplier_discount,
           last_updated_at     = NOW(),
           updated_at          = NOW()
-        `,
-        {
-          replacements: {
-            factDate: key.fact_date,
-            unitBusinessId: key.unit_business_id,
-            storeId: key.store_id,
-          },
-        },
-      );
-    }
+      `,
+    );
   }
 
   async upsertDailySalesProductFacts(
     keys: SalesProductFactKey[],
   ): Promise<void> {
-    for (const key of keys) {
-      await sequelize.query(
-        `
-        WITH metrics AS (
+    await this.runInKeyChunks(
+      keys,
+      () => `
+        WITH keys AS (
+          ${factKeysTableSql([
+            { name: "fact_date", type: "date" },
+            { name: "unit_business_id", type: "uuid" },
+            { name: "sku", type: "varchar" },
+          ])}
+        ),
+        metrics AS (
           SELECT
-            CAST(:factDate AS date)           AS fact_date,
-            CAST(:unitBusinessId AS uuid)     AS unit_business_id,
-            (ARRAY_AGG(product_id) FILTER (WHERE product_id IS NOT NULL))[1] AS product_id,
-            CAST(:sku AS varchar)             AS sku,
-            MAX(description)                  AS description,
-            COALESCE(SUM(quantity),           0) AS quantity,
-            COALESCE(SUM(total_cost_snapshot),0) AS total_cost,
-            COALESCE(SUM(commission_value),   0) AS total_commission,
+            k.fact_date,
+            k.unit_business_id,
+            (ARRAY_AGG(sois.product_id) FILTER (WHERE sois.product_id IS NOT NULL))[1] AS product_id,
+            k.sku,
+            MAX(sois.description)                       AS description,
+            COALESCE(SUM(sois.quantity),             0) AS quantity,
+            COALESCE(SUM(sois.total_cost_snapshot),  0) AS total_cost,
+            COALESCE(SUM(sois.commission_value),     0) AS total_commission,
             -- gross_total = quantidade * oi.unit_price, já bruto, sem rateio
             -- do pedido e sem desconto — consistente com a regra de receita
             -- bruta.
-            COALESCE(SUM(gross_total),        0) AS total_value,
-            COALESCE(SUM(supplier_discount_value), 0) AS total_supplier_discount
-          FROM sales_order_item_snapshots sois
-          JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
-  WHERE sois.order_date       = CAST(:factDate AS date)
-    AND sois.unit_business_id = :unitBusinessId
-    AND sois.sku              = :sku
-    AND ${isCompletedSaleSql("sos")}
-)
+            COALESCE(SUM(sois.gross_total),          0) AS total_value,
+            COALESCE(SUM(sois.supplier_discount_value), 0) AS total_supplier_discount
+          FROM keys k
+          LEFT JOIN (
+            sales_order_item_snapshots sois
+            JOIN sales_order_snapshots sos
+              ON sos.id = sois.order_snapshot_id
+             AND ${isCompletedSaleSql("sos")}
+          )
+            ON sois.order_date       = k.fact_date
+           AND sois.unit_business_id = k.unit_business_id
+           AND sois.sku              = k.sku
+          GROUP BY k.fact_date, k.unit_business_id, k.sku
+        )
         INSERT INTO daily_sales_product_facts (
           fact_date, unit_business_id, product_id, sku, description,
           quantity, total_cost, total_commission, total_value, markup_pct,
@@ -1695,91 +1775,87 @@ FROM item_calc
           total_supplier_discount = EXCLUDED.total_supplier_discount,
           last_updated_at  = NOW(),
           updated_at       = NOW()
-        `,
-        {
-          replacements: {
-            factDate: key.fact_date,
-            unitBusinessId: key.unit_business_id,
-            sku: key.sku,
-          },
-        },
-      );
-    }
+      `,
+    );
   }
 
   async upsertDailySalesStatusFacts(keys: SalesStatusFactKey[]): Promise<void> {
-    if (!keys.length) return;
+    // Recalcula o dia inteiro por integração (todos os status), então a chave do lote é só dia+loja+integração.
+    const dayKeys = uniqueBy(
+      keys.map(({ fact_date, unit_business_id, integration_id }) => ({
+        fact_date,
+        unit_business_id,
+        integration_id,
+      })),
+      (k) => `${k.fact_date}|${k.unit_business_id}|${k.integration_id}`,
+    );
+    const keysTable = factKeysTableSql([
+      { name: "fact_date", type: "date" },
+      { name: "unit_business_id", type: "uuid" },
+      { name: "integration_id", type: "uuid" },
+    ]);
 
-    const dayKeys = [
-      ...new Map(
-        keys.map((k) => [
-          `${k.fact_date}|${k.unit_business_id}|${k.integration_id}`,
-          {
-            fact_date: k.fact_date,
-            unit_business_id: k.unit_business_id,
-            integration_id: k.integration_id,
-          },
-        ]),
-      ).values(),
-    ];
+    for (const chunk of chunkArray(dayKeys, FACT_KEYS_PER_STATEMENT)) {
+      const replacements = { keys: JSON.stringify(chunk) };
 
-    for (const key of dayKeys) {
-      // 1. Deleta TODAS as linhas do dia para essa combinação
-      await sequelize.query(
-        `
-      DELETE FROM daily_sales_status_facts
-      WHERE fact_date        = CAST(:factDate AS date)
-        AND unit_business_id = CAST(:unitBusinessId AS uuid)
-        AND integration_id   = CAST(:integrationId AS uuid)
-      `,
-        {
-          replacements: {
-            factDate: key.fact_date,
-            unitBusinessId: key.unit_business_id,
-            integrationId: key.integration_id,
-          },
-        },
-      );
+      await sequelize.transaction(async (transaction) => {
+        await sequelize.query(
+          `
+          WITH keys AS (${keysTable})
+          DELETE FROM daily_sales_status_facts f
+          USING keys k
+          WHERE f.fact_date        = k.fact_date
+            AND f.unit_business_id = k.unit_business_id
+            AND f.integration_id   = k.integration_id
+          `,
+          { replacements, transaction },
+        );
 
-      // 2. Reinsere a partir dos snapshots atuais
-      await sequelize.query(
-        `
-      INSERT INTO daily_sales_status_facts (
-        fact_date, unit_business_id, integration_id,
-        status_normalized, status_display_name,
-        orders_count, total_value,
-        last_updated_at, created_at, updated_at
-      )
-      SELECT
-        CAST(:factDate AS date),
-        CAST(:unitBusinessId AS uuid),
-        CAST(:integrationId AS uuid),
-        sos.status_snapshot,
-        COALESCE(MAX(iosm.display_name), sos.status_snapshot),
-        COUNT(*)::integer,
-        -- total_value = receita bruta (total_products), não mais total_order.
-        COALESCE(SUM(sos.total_products), 0),
-        NOW(), NOW(), NOW()
-      FROM sales_order_snapshots sos
-      LEFT JOIN integration_order_status_mappings iosm ON (
-        iosm.integration_id    = sos.integration_id
-        AND iosm.normalized_status = sos.status_snapshot
-      )
-      WHERE sos.order_date       = CAST(:factDate AS date)
-        AND sos.unit_business_id = CAST(:unitBusinessId AS uuid)
-        AND sos.integration_id   = CAST(:integrationId AS uuid)
-        AND ${hasCompleteCostSql("sos")}
-      GROUP BY sos.status_snapshot
-      `,
-        {
-          replacements: {
-            factDate: key.fact_date,
-            unitBusinessId: key.unit_business_id,
-            integrationId: key.integration_id,
-          },
-        },
-      );
+        await sequelize.query(
+          `
+          WITH keys AS (${keysTable})
+          INSERT INTO daily_sales_status_facts (
+            fact_date, unit_business_id, integration_id,
+            status_normalized, status_display_name,
+            orders_count, total_value,
+            last_updated_at, created_at, updated_at
+          )
+          SELECT
+            k.fact_date,
+            k.unit_business_id,
+            k.integration_id,
+            sos.status_snapshot,
+            COALESCE(MAX(iosm.display_name), sos.status_snapshot),
+            COUNT(*)::integer,
+            -- total_value = receita bruta (total_products), não mais total_order.
+            COALESCE(SUM(sos.total_products), 0),
+            NOW(), NOW(), NOW()
+          FROM keys k
+          JOIN sales_order_snapshots sos
+            ON sos.order_date       = k.fact_date
+           AND sos.unit_business_id = k.unit_business_id
+           AND sos.integration_id   = k.integration_id
+          LEFT JOIN integration_order_status_mappings iosm ON (
+            iosm.integration_id    = sos.integration_id
+            AND iosm.normalized_status = sos.status_snapshot
+          )
+          WHERE ${hasCompleteCostSql("sos")}
+          GROUP BY k.fact_date, k.unit_business_id, k.integration_id, sos.status_snapshot
+          `,
+          { replacements, transaction },
+        );
+      });
     }
+  }
+
+  async deleteOrphanFacts(): Promise<number> {
+    const deletedPerTable = await Promise.all(
+      DAILY_SALES_FACT_TABLES.map(async (spec) => {
+        const [, metadata] = await sequelize.query(deleteOrphanFactsSql(spec));
+        return (metadata as { rowCount?: number })?.rowCount ?? 0;
+      }),
+    );
+    return deletedPerTable.reduce((total, count) => total + count, 0);
   }
 
   // ---------------------------------------------------------------------------
@@ -1877,7 +1953,11 @@ FROM item_calc
 
       contribution_pct  = ${calculateOrderContributionPctSql("sos", contributionCostSql)},
 
+      net_value         = ${orderNetValueSql("sos", "it.total_commission")},
+
       markup_pct = ${calculateMarkupSql("sos.total_products", snapshotCostSql).percent},
+
+      snapshot_status   = ${snapshotCostStatusSql("sos")},
 
       has_cost_fallback = COALESCE(it.has_cost_fallback, FALSE),
       last_updated_at   = NOW(),

@@ -6,6 +6,7 @@ export interface SalesOrderSnapshotAttributes {
   customer_id?: string | null;
   store_id?: string | null;
   unit_business_id?: string | null;
+  seller_id?: string | null;
 
   order_number_system?: string | null;
   order_number_channel?: string | null;
@@ -53,6 +54,7 @@ export interface SalesOrderSnapshotAttributes {
   computed_icms_value?: number | string;
 
   contribution_value?: number | string;
+  net_value?: number | string;
   contribution_pct?: number | string;
   markup_pct?: number | string;
   total_supplier_discount?: number | string;

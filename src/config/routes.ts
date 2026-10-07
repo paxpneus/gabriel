@@ -76,6 +76,7 @@ const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "sales-report": "financial-pdt",
   "sales-report/run" : "financial-pdt",
   "product-stock-flow": "financial-pdt",
+  "sales-invoiced-report": "financial-pdt",
   "multiplier-scan-inventory": "multiply-stk-inventory",
   "multiplier-scan-entrance": "multiply-stk-entrance",
    "all-unit-business": "visualize-all-unit-business",

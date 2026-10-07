@@ -466,48 +466,87 @@ export async function migrateNovasNotasFiscais(
     // completou recentemente (mesmo sem criar Invoice — ver
     // INVOICE_NEW_JOB_RETENTION_SECONDS acima) na fila.
     // Também pula nota que esgotou as tentativas sem XML — fica failed no Redis.
-    const [jobIdsPendentes, jobIdsSemXml] = await Promise.all([
-      targetInvoiceQueue.getPendingJobIds(true),
-      targetInvoiceQueue.getFailedJobIdsByReason(
-        TCAR_INVOICE_XML_UNAVAILABLE_FAILURE,
-      ),
-    ]);
+    const [jobIdsPendentes, jobIdsPendentesOuRecentes, jobIdsSemXml] =
+      await Promise.all([
+        targetInvoiceQueue.getPendingJobIds(),
+        targetInvoiceQueue.getPendingJobIds(true),
+        targetInvoiceQueue.getFailedJobIdsByReason(
+          TCAR_INVOICE_XML_UNAVAILABLE_FAILURE,
+        ),
+      ]);
 
     let enfileiradas = 0;
-    for (const nota of notas) {
-      if (existentes.has(String(nota.chave_nfe))) continue;
-      const { chave } = nota;
-      if (!chave?.nota) continue;
-      const jobId = `invoice-new-${branchId}-${nota.entrada_saida}-${chave.nota}`;
-      if (jobIdsPendentes.has(jobId) || jobIdsSemXml.has(jobId)) continue;
-      await enqueue(
-        targetInvoiceQueue,
-        {
-          eventId: `invoice-xml-${branchId}-${nota.entrada_saida}-${chave.nota}-${uuidv4()}`,
-          resource: "invoice_xml",
-          action: "sync",
-          companyId,
-          branchId,
-          data: {
-            numero: chave.nota,
-            entrada_saida: nota.entrada_saida,
-            cln_codigo: chave.cln_codigo,
-            tpneg_codigo: chave.tpneg_codigo,
-            ntz_codigo: chave.ntz_codigo,
-            opr_codigo: chave.opr_codigo,
-            serie: chave.serie,
-            seq_cancelamento: chave.seq_cancelamento ?? "0",
+    for (let i = 0; i < combos.length; i++) {
+      const { entrada_saida, situacao } = combos[i];
+      const resumo = {
+        enfileiradas: [] as string[],
+        naFila: [] as string[],
+        processadasRecentes: [] as string[],
+        semXml: [] as string[],
+      };
+
+      for (const nota of resultados[i]) {
+        if (existentes.has(String(nota.chave_nfe))) continue;
+        const { chave } = nota;
+        if (!chave?.nota) continue;
+        const numero = String(chave.nota);
+        const jobId = `invoice-new-${branchId}-${entrada_saida}-${numero}`;
+        if (jobIdsSemXml.has(jobId)) {
+          resumo.semXml.push(numero);
+          continue;
+        }
+        if (jobIdsPendentes.has(jobId)) {
+          resumo.naFila.push(numero);
+          continue;
+        }
+        if (jobIdsPendentesOuRecentes.has(jobId)) {
+          resumo.processadasRecentes.push(numero);
+          continue;
+        }
+        await enqueue(
+          targetInvoiceQueue,
+          {
+            eventId: `invoice-xml-${branchId}-${entrada_saida}-${numero}-${uuidv4()}`,
+            resource: "invoice_xml",
+            action: "sync",
+            companyId,
+            branchId,
+            data: {
+              numero: chave.nota,
+              entrada_saida: nota.entrada_saida,
+              cln_codigo: chave.cln_codigo,
+              tpneg_codigo: chave.tpneg_codigo,
+              ntz_codigo: chave.ntz_codigo,
+              opr_codigo: chave.opr_codigo,
+              serie: chave.serie,
+              seq_cancelamento: chave.seq_cancelamento ?? "0",
+            },
           },
-        },
-        jobId,
-        dryRun ?? false,
-        {
-          priority: 1,
-          name: TCAR_INVOICE_NEW_JOB_NAME,
-          removeOnComplete: { age: INVOICE_NEW_JOB_RETENTION_SECONDS },
-        },
-      );
-      enfileiradas++;
+          jobId,
+          dryRun ?? false,
+          {
+            priority: 1,
+            name: TCAR_INVOICE_NEW_JOB_NAME,
+            removeOnComplete: { age: INVOICE_NEW_JOB_RETENTION_SECONDS },
+          },
+        );
+        resumo.enfileiradas.push(numero);
+        enfileiradas++;
+      }
+
+      const partes = [
+        ["enfileiradas", resumo.enfileiradas],
+        ["já na fila", resumo.naFila],
+        ["processadas há <2h sem gerar invoice", resumo.processadasRecentes],
+        ["failed sem XML", resumo.semXml],
+      ] as const;
+      const detalhe = partes
+        .filter(([, numeros]) => numeros.length)
+        .map(([label, numeros]) => `${label}: ${numeros.join(", ")}`)
+        .join(" | ");
+      if (detalhe) {
+        console.log(`  → Filial ${branchId} [${entrada_saida}/${situacao}] notas sem invoice — ${detalhe}`);
+      }
     }
     console.log(`[TCAR_INVOICE] Filial ${branchId}: ${enfileiradas} nota(s) nova(s) enfileirada(s)`);
   }

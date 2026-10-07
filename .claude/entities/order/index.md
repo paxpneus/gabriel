@@ -46,3 +46,6 @@ Não depende do snapshot do relatório: pedido sem `sales_order_snapshots` devol
 
 Reprocessa só aquele pedido no relatório (`SalesReportService.refreshOrders` → `processOrders`: snapshots + daily facts) sem ler nem avançar o checkpoint/status do job `sales_report` — serve pra pedido cujo `updated_at` já ficou pra trás do checkpoint. Não bloqueia se o job incremental estiver rodando (upserts idempotentes). Devolve o mesmo corpo do `GET /:id/sales-report`; 404 se o pedido não existe.
 
+
+## Itens órfãos históricos (`order_items` sem linha no Bling)
+`updateOrderFromBling` só passou a apagar item cujo SKU não veio mais no `itens[]` do Bling em `88f5fe44` (2026-10-05). Pedidos atualizados antes disso podem ter item a mais (produto trocado no Bling → item novo criado, antigo mantido), o que divide o rateio e soma custo em dobro nos relatórios. Outros só têm o SKU local desatualizado (código do produto mudou no Bling, mesmo item/valor). `src/scripts/bling/resync-orders-with-orphan-items.ts` (`DRY_RUN=true` lista) reenfileira esses pedidos na `BLING_ORDER_INGESTION` com o mesmo job do force-update em massa (`BULK_FORCE_UPDATE_*`); o reimport recria/apaga os itens. Snapshots de item caem junto (FK `ON DELETE CASCADE`), então reprocessar o sales report depois da fila esvaziar.
