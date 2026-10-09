@@ -10,8 +10,8 @@ import { TCarInvoiceQueue } from "../../../handlers/tecinco/queues/tecinco-invoi
 import { pdvAccess, PdvAccessRequest } from "../pdv-access/pdv-access.middleware";
 import { resolveSalesRequestOrigin } from "./helpers/sales-request-origin";
 import { PdvAccessContext, PdvAccessScreen } from "../pdv-access/pdv-access.types";
-import { parseBoardQuery } from "./helpers/board-query";
-import { PdvForbiddenError } from "../helpers/pdv-errors";
+import { parseBoardQuery, parseSelectAllStatus } from "./helpers/board-query";
+import { PdvBoardParamError, PdvForbiddenError } from "../helpers/pdv-errors";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -197,6 +197,13 @@ export class PdvSalesRequestController extends BaseController<
       pdvAccess(READ_SCREENS),
       this.getShipTodayTransporters,
     );
+    // Ids pro "selecionar todos" do quadro — mesmos filtros do GET /, só status muda.
+    // 2 segmentos pelo mesmo motivo de /orders/eligible.
+    this.router.get(
+      "/select-all/ids",
+      pdvAccess(READ_SCREENS),
+      this.selectAllIds,
+    );
     // Legenda de batch_color do card — 2 segmentos pelo mesmo motivo de /orders/eligible.
     this.router.get(
       "/legend/batch-colors",
@@ -255,6 +262,31 @@ export class PdvSalesRequestController extends BaseController<
         return res.status(403).json({ error: error.message });
       }
       return res.status(400).json({ error: error.message });
+    }
+  };
+
+  selectAllIds = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const status = parseSelectAllStatus(req.query.status);
+      const { includeClosed, includeOtherScreens } = parseBoardQuery({
+        include_closed: req.query.include_closed,
+        include_other_screens: req.query.include_other_screens,
+      });
+      const ids = await this.service.getBoardSelectAllIds(
+        this.access(req),
+        this.extractQueryParams(req),
+        { includeClosed, includeOtherScreens },
+        status,
+      );
+      return res.json(ids);
+    } catch (error: any) {
+      if (error instanceof PdvForbiddenError) {
+        return res.status(403).json({ error: error.message });
+      }
+      if (error instanceof PdvBoardParamError) {
+        return res.status(400).json({ error: error.message });
+      }
+      return res.status(500).json({ error: error.message });
     }
   };
 

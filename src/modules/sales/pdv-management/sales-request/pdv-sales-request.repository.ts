@@ -197,6 +197,21 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
     });
   }
 
+  // Select-all do quadro: mesma ordem de findBoardColumnPage, sem limite.
+  async findBoardIds(where: WhereOptions): Promise<string[]> {
+    const rows = await this.model.findAll({
+      where,
+      attributes: ["id"],
+      order: [
+        ["createdAt", "ASC"],
+        ["id", "ASC"],
+      ],
+      raw: true,
+    });
+
+    return rows.map((row: any) => row.id);
+  }
+
   // order_id de toda PdvSalesRequest existente, opcionalmente restrita a um
   // conjunto de status — usado pra cruzar contra order.id em filtros de
   // outra entidade (ex.: force-update em massa por "tem/não tem PDV

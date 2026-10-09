@@ -554,3 +554,14 @@ do lote da nota de venda no CD21 — mesmo critério dos filtros de lote:
 
 Legenda: `GET /sales-request/legend/batch-colors` → `200 [{ label, color }]`
 (mesmas cores do card; não fixar no front).
+
+## Novo: "selecionar todos" do quadro
+
+`GET /sales-request/select-all/ids?status=SHIP_TODAY&<mesmos params do GET /sales-request>`
+→ `200 ["uuid", ...]` (só os ids, ordem do quadro, sem paginação).
+
+- Manda os mesmos `filters[...]`, `search`, `dateFrom`/`dateTo`/`dateField`
+  e `include_closed`/`include_other_screens` do fetch do quadro; `column`/
+  `cursor`/`limit` não se aplicam.
+- `status` obrigatório, **um só** por chamada (mais de um → 400).
+  Status inválido → 400; status fora das colunas visíveis pra tela → 403.

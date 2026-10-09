@@ -1,5 +1,6 @@
 import { PdvBoardParamError } from "../../helpers/pdv-errors";
 import { decodeBoardCursor, PdvBoardCursor } from "./board-cursor";
+import { PdvSalesRequestStatus } from "../pdv-sales-request.types";
 
 export const PDV_BOARD_DEFAULT_LIMIT = 15;
 const PDV_BOARD_MAX_LIMIT = 100;
@@ -58,4 +59,16 @@ export function parseBoardQuery(query: Record<string, unknown>): PdvBoardQuery {
       "include_other_screens",
     ),
   };
+}
+
+// `status` do select-all: obrigatório, um só (array/"A,B" → 400).
+export function parseSelectAllStatus(value: unknown): PdvSalesRequestStatus {
+  const status = parseSingle(value, "status");
+  if (status === undefined) {
+    throw new PdvBoardParamError('Parâmetro "status" é obrigatório.');
+  }
+  if (!(Object.values(PdvSalesRequestStatus) as string[]).includes(status)) {
+    throw new PdvBoardParamError(`Status "${status}" inválido.`);
+  }
+  return status as PdvSalesRequestStatus;
 }

@@ -19,6 +19,7 @@ jest.mock("../pdv-sales-request.repository", () => ({
     findActiveBySaleInvoiceIds: jest.fn(),
     countGroupedByStatus: jest.fn(),
     findBoardColumnPage: jest.fn(),
+    findBoardIds: jest.fn(),
     findByIdWithOrder: jest.fn(),
     findAll: jest.fn(),
     findBatchTargets: jest.fn(),
@@ -3911,6 +3912,60 @@ describe("PdvSalesRequestService", () => {
       const isCursor = (val: string) => val.includes("::timestamptz");
       expect(literalVals(countWhere).some(isCursor)).toBe(false);
       expect(literalVals(pageWhere).some(isCursor)).toBe(true);
+    });
+
+    describe("getBoardSelectAllIds", () => {
+      const noFlags = { includeClosed: false, includeOtherScreens: false };
+
+      beforeEach(() => {
+        (pdvSalesRequestRepository.findBoardIds as jest.Mock).mockResolvedValue([
+          "sr-1",
+          "sr-2",
+        ]);
+      });
+
+      it("mesmos filtros do quadro + status pedido, devolve só os ids", async () => {
+        const ids = await service.getBoardSelectAllIds(
+          cd21Access,
+          { search: "123", filters: { transporter_id: "t-1", status: "OPEN" } as any },
+          noFlags,
+          PdvSalesRequestStatus.SHIP_TODAY,
+        );
+
+        expect(ids).toEqual(["sr-1", "sr-2"]);
+        const [where] = (pdvSalesRequestRepository.findBoardIds as jest.Mock).mock.calls[0];
+        const parts = flattenAnd(where);
+        expect(parts).toContainEqual({
+          status: PdvSalesRequestStatus.SHIP_TODAY,
+        });
+        expect(parts).not.toContainEqual({ status: "OPEN" });
+        expect(literalVals(where).length).toBeGreaterThanOrEqual(2);
+      });
+
+      it("loja: escopo pelo próprio unit_business_id", async () => {
+        await service.getBoardSelectAllIds(storeAccess, {}, noFlags, PdvSalesRequestStatus.OPEN);
+
+        const [where] = (pdvSalesRequestRepository.findBoardIds as jest.Mock).mock.calls[0];
+        expect(flattenAnd(where)).toContainEqual({ unit_business_id: "ub-1" });
+      });
+
+      it("status fora das colunas visíveis pra tela + flags → PdvForbiddenError", async () => {
+        await expect(
+          service.getBoardSelectAllIds(cd21Access, {}, noFlags, PdvSalesRequestStatus.PENDING_FINANCE),
+        ).rejects.toThrow(PdvForbiddenError);
+        await expect(
+          service.getBoardSelectAllIds(cd21Access, {}, noFlags, PdvSalesRequestStatus.FINISHED),
+        ).rejects.toThrow(PdvForbiddenError);
+        expect(pdvSalesRequestRepository.findBoardIds).not.toHaveBeenCalled();
+
+        await service.getBoardSelectAllIds(
+          cd21Access,
+          {},
+          { includeClosed: true, includeOtherScreens: false },
+          PdvSalesRequestStatus.FINISHED,
+        );
+        expect(pdvSalesRequestRepository.findBoardIds).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

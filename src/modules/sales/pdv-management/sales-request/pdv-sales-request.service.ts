@@ -423,6 +423,29 @@ export class PdvSalesRequestService extends BaseService<
     };
   }
 
+  // Ids de tudo que o quadro mostraria pros mesmos filtros, restrito a
+  // `status` — que precisa estar em coluna visível pra tela + flags.
+  async getBoardSelectAllIds(
+    access: PdvAccessContext,
+    params: QueryParams,
+    query: Pick<PdvBoardQuery, "includeClosed" | "includeOtherScreens">,
+    status: PdvSalesRequestStatus,
+  ): Promise<string[]> {
+    const visible = resolveColumns(resolveBoardScreen(access), query).some(
+      (column) => column.statuses.includes(status),
+    );
+    if (!visible) {
+      throw new PdvForbiddenError(
+        `Status "${status}" não disponível para esta tela.`,
+      );
+    }
+
+    const baseWhere = await this.buildBoardBaseWhere(access, params);
+    return this.repository.findBoardIds({
+      [Op.and]: [baseWhere, { status }],
+    });
+  }
+
   // 1 contagem agrupada + 1 página por coluna, tudo em paralelo (sem N+1).
   private async getBoardColumns(
     access: PdvAccessContext,
