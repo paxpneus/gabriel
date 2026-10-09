@@ -1,6 +1,7 @@
 import {
   PDV_BOARD_SCREENS,
   PdvBoardScreen,
+  boardColumnActions,
   findVisibleColumn,
   resolveBoardScreen,
   resolveColumns,
@@ -146,6 +147,71 @@ describe("pdv-screens.config", () => {
       [PdvAccessScreen.STORE_REQUEST, "LOGIN", "store"],
     ] as const)("%s via %s → %s", (screen, via, expected) => {
       expect(resolveBoardScreen({ screen, via })).toBe(expected);
+    });
+  });
+
+  describe("ações dinâmicas das colunas de expedição (cd21)", () => {
+    const column = (key: string) =>
+      PDV_BOARD_SCREENS.cd21.find((c) => c.key === key)!;
+
+    it("shipping (ADT): ações com status SHIPPING e entrada de CD 12/17", () => {
+      const shipping = column("shipping");
+      expect(shipping.selectable).toBe(true);
+      expect(shipping.actions!.map((a) => a.endpoint)).toEqual([
+        "/api/batch/pdv-sales-requests/generate",
+        "/api/batch/pdv-sales-requests/add",
+        "/api/batch/pdv-sales-requests/delivery-note",
+      ]);
+      expect(shipping.actions!.every((a) => a.fixed_body.status === S.SHIPPING)).toBe(true);
+      expect(shipping.actions!.every((a) => a.selection === "optional")).toBe(true);
+      expect(shipping.actions![0].input).toMatchObject({
+        param: "cd",
+        value_type: "cd",
+        options: [
+          { value: "12", label: "CD 12" },
+          { value: "17", label: "CD 17" },
+        ],
+      });
+      expect(shipping.actions!.find((a) => a.key === "add_to_batch")!.modal).toBe("add_to_batch");
+    });
+
+    it("ship_today: ações com seleção opcional e entrada de transportadora (endpoint)", () => {
+      const shipToday = column("ship_today");
+      expect(shipToday.selectable).toBe(true);
+      expect(shipToday.actions!.every((a) => a.selection === "optional")).toBe(true);
+      expect(shipToday.actions![0].input).toMatchObject({
+        param: "transporter_id",
+        value_type: "transporter",
+        options_endpoint: "/api/sales-request/transporters/ship-today",
+      });
+      expect(shipToday.actions!.every((a) => a.fixed_body.status === S.SHIP_TODAY)).toBe(true);
+    });
+
+    it("nenhuma coluna declara filtros; demais colunas não declaram ações", () => {
+      const others = PDV_BOARD_SCREENS.cd21.filter(
+        (c) => c.key !== "shipping" && c.key !== "ship_today",
+      );
+      expect(PDV_BOARD_SCREENS.cd21.every((c) => !("filters" in c))).toBe(true);
+      expect(others.every((c) => !c.selectable && !c.actions)).toBe(true);
+    });
+
+    it("copy_link (só front, menu do card) vai em toda coluna de toda tela, depois das ações declaradas", () => {
+      const columns = Object.values(PDV_BOARD_SCREENS).flat();
+      for (const c of columns) {
+        const actions = boardColumnActions(c);
+        expect(actions[actions.length - 1]).toEqual({
+          key: "copy_link",
+          label: "Copiar link",
+          method: null,
+          endpoint: null,
+          fixed_body: {},
+          selection: "none",
+          modal: null,
+          scope: ["card"],
+          input: null,
+        });
+        expect(actions.length).toBe((c.actions?.length ?? 0) + 1);
+      }
     });
   });
 });

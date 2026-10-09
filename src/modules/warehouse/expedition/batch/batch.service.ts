@@ -11,7 +11,13 @@ import Invoice from "../../fiscal/invoices/invoice/invoice.model";
 import sequelize from "../../../../config/sequelize";
 import { Product, Stock } from "../../../inventory";
 import ExpeditionScanLog from "../scan-logs/scan-logs.model";
-import { ExpeditionBatchFull } from "./batch.types";
+import {
+  ExpeditionBatchFull,
+  PdvBatchActionParams,
+  PdvBatchActionResult,
+  PdvBatchSkipped,
+  PdvBatchSkipReason,
+} from "./batch.types";
 import { InvoiceItemsAttributes } from "../../fiscal/invoices/invoice-items/invoice-items.types";
 import { extractChaveFromXml } from "../../../../shared/utils/xml/xml-parser";
 import {
@@ -41,6 +47,77 @@ import { FullInvoice } from "../../fiscal/invoices/invoice/invoice.types";
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import scanLogsService from "../scan-logs/scan-logs.service";
 import pdvSalesRequestService from "../../../sales/pdv-management/sales-request/pdv-sales-request.service";
+import {
+  assertAdtTransporterCd,
+  describeTransporterSelector,
+} from "../../../sales/pdv-management/sales-request/helpers/transporter-cd";
+import {
+  PdvBatchStage,
+  PdvBatchTarget,
+  PdvSalesRequestStatus,
+  PdvTransporterSelector,
+} from "../../../sales/pdv-management/sales-request/pdv-sales-request.types";
+import { CD21_STATUS_LABELS } from "../../../sales/pdv-management/sales-request/helpers/next-action.rules";
+
+// Complemento das mensagens de "nenhuma candidata" das ações de lote do PDV.
+const PDV_BATCH_STAGE_LABELS: Record<PdvBatchStage, string> = {
+  [PdvBatchStage.WITHOUT_BATCH]: "sem lote",
+  [PdvBatchStage.IN_BATCH]: "em lote",
+  [PdvBatchStage.OPEN_BATCH]: "em lote pendente",
+  [PdvBatchStage.FINISHED_WITHOUT_DELIVERY_NOTE]: "com lote finalizado aguardando romaneio",
+};
+
+const PDV_BATCH_COLUMNS: readonly PdvSalesRequestStatus[] = [
+  PdvSalesRequestStatus.SHIPPING,
+  PdvSalesRequestStatus.SHIP_TODAY,
+];
+
+// defaultStage: o que a ação pega sem ids; selectedStage: o que as escolhidas precisam estar.
+interface PdvBatchActionRule {
+  defaultStage: PdvBatchStage;
+  selectedStage: PdvBatchStage;
+  groupByTransporter: boolean;
+  selectedNotInStage: (orders: string, single: boolean) => string;
+}
+
+const PDV_SELECTED_ALREADY_IN_BATCH = (orders: string, single: boolean) =>
+  single
+    ? `A solicitação do pedido ${orders} já está em um lote.`
+    : `Nem todas as solicitações estão sem lote. Já em lote: pedidos ${orders}.`;
+
+const PDV_BATCH_ACTION_RULES = {
+  generate: {
+    defaultStage: PdvBatchStage.WITHOUT_BATCH,
+    selectedStage: PdvBatchStage.WITHOUT_BATCH,
+    groupByTransporter: true,
+    selectedNotInStage: PDV_SELECTED_ALREADY_IN_BATCH,
+  },
+  add: {
+    defaultStage: PdvBatchStage.WITHOUT_BATCH,
+    selectedStage: PdvBatchStage.WITHOUT_BATCH,
+    groupByTransporter: true,
+    selectedNotInStage: PDV_SELECTED_ALREADY_IN_BATCH,
+  },
+  deliveryNote: {
+    defaultStage: PdvBatchStage.FINISHED_WITHOUT_DELIVERY_NOTE,
+    selectedStage: PdvBatchStage.IN_BATCH,
+    groupByTransporter: false,
+    selectedNotInStage: (orders: string, single: boolean) =>
+      single
+        ? `A solicitação do pedido ${orders} ainda não está em um lote.`
+        : `Nem todas as solicitações estão em um lote. Sem lote: pedidos ${orders}.`,
+  },
+} satisfies Record<string, PdvBatchActionRule>;
+
+// Solicitações de uma mesma transportadora (ou as escolhidas, sem transportadora) processadas juntas.
+interface PdvBatchGroup {
+  transporter: PdvTransporterSelector | null;
+  transporterId: string | null;
+  transporterName: string | null;
+  salesRequestIds: string[];
+  orderNumbers: string[];
+  invoiceIds: string[];
+}
 
 export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
@@ -595,42 +672,380 @@ async addInvoiceToLastOutgoingBatch(
   });
 }
 
-  // Lote de saída do CD21 a partir da nota de venda da solicitação PDV.
-  async generateBatchFromPdvSalesRequest(
-    salesRequestId: string,
-  ): Promise<ExpeditionBatch> {
-    const cd21 = await this.getCd21();
-    const invoiceId =
-      await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
+  // ─── Lote/romaneio do PDV (CD21) ─────────────────────────────────────────
+  // 3 ações por coluna (status) — ver .claude/entities/expedition-batch/pdv-sales-request.md.
 
-    const batch = await this.generateBatchFromInvoices(
-      [invoiceId],
-      cd21.id,
-      "OUTGOING",
-      "REGULAR",
+  async generateBatchFromPdv(
+    params: PdvBatchActionParams,
+  ): Promise<PdvBatchActionResult<ExpeditionBatch>> {
+    const cd21 = await this.getCd21();
+    const { groups, skipped } = await this.resolvePdvBatchGroups(
+      params,
+      PDV_BATCH_ACTION_RULES.generate,
     );
-    await pdvSalesRequestService.notifyChanged(salesRequestId);
-    return batch;
+
+    const batches: ExpeditionBatch[] = [];
+    // Sequencial: setBatchNumber numera pelo último lote do CD21 — em paralelo, dois lotes pegariam o mesmo número.
+    for (const group of groups) {
+      try {
+        batches.push(
+          await this.generateBatchFromInvoices(
+            group.invoiceIds,
+            cd21.id,
+            "OUTGOING",
+            "REGULAR",
+          ),
+        );
+        await pdvSalesRequestService.notifyChangedBySaleInvoiceIds(group.invoiceIds);
+      } catch (error: any) {
+        skipped.push(this.pdvSkipped(PdvBatchSkipReason.FAILED, group, error.message));
+      }
+    }
+    return this.pdvBatchActionResult(batches, skipped);
   }
 
-  // Romaneio do lote (CD21) que contém a nota de venda da solicitação.
-  async generateDeliveryNoteFromPdvSalesRequest(
-    salesRequestId: string,
-    userId?: string,
-  ) {
+  // Sem batchId: lote pendente mais recente de cada transportadora (nunca cria); só ids → último lote pendente do CD21 (cria se não houver).
+  async addPdvToBatch(
+    params: PdvBatchActionParams & { batchId?: string },
+  ): Promise<PdvBatchActionResult<ExpeditionBatch>> {
+    if (
+      params.batchId &&
+      !params.salesRequestIds?.length &&
+      !this.hasPdvTransporter(params)
+    ) {
+      throw new Error(
+        "Para escolher o lote, selecione as solicitações ou informe a transportadora.",
+      );
+    }
+
     const cd21 = await this.getCd21();
-    const invoiceId =
-      await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
-
-    const batchId = await batchInvoicesService.findBatchIdByInvoiceId(
-      invoiceId,
-      cd21.id,
+    const { groups, skipped } = await this.resolvePdvBatchGroups(
+      params,
+      PDV_BATCH_ACTION_RULES.add,
     );
-    if (!batchId) throw new Error("Nota de venda ainda não está em um lote");
 
-    const result = await this.generateDeliveryNote(batchId, userId as string);
-    await pdvSalesRequestService.notifyChanged(salesRequestId);
-    return result;
+    const [onlySelected] = groups;
+    if (groups.length === 1 && !onlySelected.transporter && !params.batchId) {
+      const accessKeys = await this.saleInvoiceAccessKeys(onlySelected.invoiceIds);
+      // Ponteiro reconciliado antes: addInvoiceToLastOutgoingBatch confia nele e falha se apontar pra lote FINISHED.
+      await unitBusinessService.getOrUpdateLastOutgoingBatchNumber(cd21.id);
+      const batch = await this.addInvoiceToLastOutgoingBatch(
+        accessKeys,
+        cd21.id,
+        "OUTGOING",
+      );
+      await pdvSalesRequestService.notifyChangedBySaleInvoiceIds(onlySelected.invoiceIds);
+      return { batches: [batch], skipped: [], warnings: [] };
+    }
+
+    const results = await Promise.all(
+      groups.map(async (group) => {
+        try {
+          const [pendingBatch] =
+            await this.repository.findPendingOutgoingByTransporter(
+              cd21.id,
+              group.transporter,
+              params.batchId,
+            );
+          if (!pendingBatch) {
+            const reason = params.batchId
+              ? "O lote escolhido não está mais pendente ou não é desta transportadora."
+              : `Nenhum lote pendente ${group.transporterName ? `da transportadora ${group.transporterName} ` : ""}no CD21. Gere um lote primeiro.`;
+            return this.pdvSkipped(PdvBatchSkipReason.NO_PENDING_BATCH, group, reason);
+          }
+
+          const accessKeys = await this.saleInvoiceAccessKeys(group.invoiceIds);
+          const batch = await this.addInvoiceToBatch(
+            accessKeys,
+            cd21.id,
+            "OUTGOING",
+            pendingBatch.id,
+          );
+          await pdvSalesRequestService.notifyChangedBySaleInvoiceIds(group.invoiceIds);
+          return batch;
+        } catch (error: any) {
+          return this.pdvSkipped(PdvBatchSkipReason.FAILED, group, error.message);
+        }
+      }),
+    );
+
+    const batches = results.filter(
+      (result): result is ExpeditionBatch => !("reason_code" in result),
+    );
+    skipped.push(
+      ...results.filter(
+        (result): result is PdvBatchSkipped => "reason_code" in result,
+      ),
+    );
+    return this.pdvBatchActionResult(batches, skipped);
+  }
+
+  // Um romaneio por lote distinto das notas; escolhidas só precisam estar em lote.
+  async generateDeliveryNoteFromPdv(params: PdvBatchActionParams, userId: string) {
+    const cd21 = await this.getCd21();
+    const { groups } = await this.resolvePdvBatchGroups(
+      params,
+      PDV_BATCH_ACTION_RULES.deliveryNote,
+    );
+    const invoiceIds = groups.flatMap((group) => group.invoiceIds);
+    const batchIds = await this.batchIdsOfSaleInvoices(invoiceIds, cd21.id);
+
+    const batches = await Promise.all(
+      batchIds.map((batchId) => this.generateDeliveryNote(batchId, userId)),
+    );
+    await pdvSalesRequestService.notifyChangedBySaleInvoiceIds(invoiceIds);
+    return { batches, skipped: [], warnings: [] };
+  }
+
+  // Opções de batch_id pro addPdvToBatch — sem cd/transporter_id, todos os pendentes de saída do CD21.
+  async findPdvPendingBatches(
+    params: Omit<PdvBatchActionParams, "salesRequestIds">,
+  ): Promise<ExpeditionBatch[]> {
+    const transporter = this.hasPdvTransporter(params)
+      ? this.resolvePdvTransporter(params, this.resolvePdvColumn(params.status))
+      : null;
+    const cd21 = await this.getCd21();
+    return this.repository.findPendingOutgoingByTransporter(
+      cd21.id,
+      transporter,
+    );
+  }
+
+  private hasPdvTransporter(
+    params: Omit<PdvBatchActionParams, "salesRequestIds">,
+  ): boolean {
+    return !!params.cd || !!params.transporterId;
+  }
+
+  private resolvePdvColumn(status: string): PdvSalesRequestStatus {
+    const column = PDV_BATCH_COLUMNS.find((allowed) => allowed === status);
+    if (!column) {
+      throw new Error(
+        `Ações de lote só existem nas colunas ${PDV_BATCH_COLUMNS.map((allowed) => `"${CD21_STATUS_LABELS[allowed]}"`).join(" e ")}.`,
+      );
+    }
+    return column;
+  }
+
+  // SHIPPING (ADT) usa CD 12/17; SHIP_TODAY usa transportadora cadastrada.
+  private resolvePdvTransporter(
+    params: Omit<PdvBatchActionParams, "salesRequestIds">,
+    status: PdvSalesRequestStatus,
+  ): PdvTransporterSelector {
+    if (status === PdvSalesRequestStatus.SHIPPING) {
+      if (!params.cd) {
+        throw new Error(
+          `Na coluna "${CD21_STATUS_LABELS[status]}", informe o CD (12 ou 17).`,
+        );
+      }
+      assertAdtTransporterCd(params.cd);
+      return { cd: params.cd };
+    }
+    if (!params.transporterId) {
+      throw new Error(
+        `Na coluna "${CD21_STATUS_LABELS[status]}", informe a transportadora.`,
+      );
+    }
+    return { transporterId: params.transporterId };
+  }
+
+  // Só ids (card): escolhidas sem checar coluna/transportadora. Com transportadora: escolhidas validadas contra ela, ou todas no estágio da ação. Só a coluna: todas no estágio, um grupo por transportadora.
+  private async resolvePdvBatchGroups(
+    params: PdvBatchActionParams,
+    rule: PdvBatchActionRule,
+  ): Promise<{ groups: PdvBatchGroup[]; skipped: PdvBatchSkipped[] }> {
+    const selectedIds = [...new Set(params.salesRequestIds ?? [])];
+    const hasTransporter = this.hasPdvTransporter(params);
+
+    if (selectedIds.length && !hasTransporter) {
+      return { groups: [await this.selectedPdvBatchGroup(selectedIds, null, rule)], skipped: [] };
+    }
+
+    const status = this.resolvePdvColumn(params.status);
+    const transporter = hasTransporter
+      ? this.resolvePdvTransporter(params, status)
+      : null;
+    const scope = `"${CD21_STATUS_LABELS[status]}"${transporter ? ` da ${describeTransporterSelector(transporter)}` : ""}`;
+
+    if (selectedIds.length) {
+      const [selected, inColumn] = await Promise.all([
+        pdvSalesRequestService.findBatchTargets({ ids: selectedIds }),
+        pdvSalesRequestService.findBatchTargets({
+          ids: selectedIds,
+          status,
+          transporter: transporter!,
+        }),
+      ]);
+      const inColumnIds = new Set(inColumn.map((target) => target.id));
+      const outside = selected.filter((target) => !inColumnIds.has(target.id));
+      if (outside.length) {
+        const orders = this.pdvOrderNumbers(outside).join(", ");
+        throw new Error(
+          selected.length === 1
+            ? `A solicitação do pedido ${orders} não está em ${scope}.`
+            : `Nem todas as solicitações selecionadas estão em ${scope}. Fora: pedidos ${orders}.`,
+        );
+      }
+      return {
+        groups: [await this.selectedPdvBatchGroup(selectedIds, transporter, rule)],
+        skipped: [],
+      };
+    }
+
+    const targets = await pdvSalesRequestService.findBatchTargets({
+      status,
+      transporter: transporter ?? undefined,
+      batchStage: rule.defaultStage,
+    });
+    if (!targets.length) {
+      throw new Error(
+        `Nenhuma solicitação ${PDV_BATCH_STAGE_LABELS[rule.defaultStage]} em ${scope}.`,
+      );
+    }
+    if (transporter || !rule.groupByTransporter) {
+      return { groups: [this.pdvBatchGroup(transporter, targets)], skipped: [] };
+    }
+
+    const byTransporter = new Map<string, PdvBatchTarget[]>();
+    const withoutTransporter: PdvBatchTarget[] = [];
+    for (const target of targets) {
+      if (!target.transporter_id) {
+        withoutTransporter.push(target);
+        continue;
+      }
+      byTransporter.set(target.transporter_id, [
+        ...(byTransporter.get(target.transporter_id) ?? []),
+        target,
+      ]);
+    }
+
+    return {
+      groups: [...byTransporter].map(([transporterId, group]) =>
+        this.pdvBatchGroup({ transporterId }, group),
+      ),
+      skipped: withoutTransporter.length
+        ? [
+            this.pdvSkipped(
+              PdvBatchSkipReason.NO_TRANSPORTER,
+              this.pdvBatchGroup(null, withoutTransporter),
+              `Pedidos ${this.pdvOrderNumbers(withoutTransporter).join(", ")} sem transportadora na nota de venda — não foram processados.`,
+            ),
+          ]
+        : [],
+    };
+  }
+
+  // resolveSaleInvoiceIds antes do estágio: re-sincroniza sale_invoice_id, que o literal de estágio lê.
+  private async selectedPdvBatchGroup(
+    selectedIds: string[],
+    transporter: PdvTransporterSelector | null,
+    rule: PdvBatchActionRule,
+  ): Promise<PdvBatchGroup> {
+    const invoiceIds = await pdvSalesRequestService.resolveSaleInvoiceIds(selectedIds);
+    const [selected, inStage] = await Promise.all([
+      pdvSalesRequestService.findBatchTargets({ ids: selectedIds }),
+      pdvSalesRequestService.findBatchTargets({
+        ids: selectedIds,
+        batchStage: rule.selectedStage,
+      }),
+    ]);
+    const inStageIds = new Set(inStage.map((target) => target.id));
+    const outside = selected.filter((target) => !inStageIds.has(target.id));
+    if (outside.length) {
+      throw new Error(
+        rule.selectedNotInStage(
+          this.pdvOrderNumbers(outside).join(", "),
+          selected.length === 1,
+        ),
+      );
+    }
+    return { ...this.pdvBatchGroup(transporter, selected), invoiceIds };
+  }
+
+  private pdvBatchGroup(
+    transporter: PdvTransporterSelector | null,
+    targets: PdvBatchTarget[],
+  ): PdvBatchGroup {
+    return {
+      transporter,
+      transporterId: targets[0]?.transporter_id ?? null,
+      transporterName: targets[0]?.transporter_name ?? null,
+      salesRequestIds: targets.map((target) => target.id),
+      orderNumbers: this.pdvOrderNumbers(targets),
+      invoiceIds: [
+        ...new Set(
+          targets
+            .map((target) => target.sale_invoice_id)
+            .filter((id): id is string => !!id),
+        ),
+      ],
+    };
+  }
+
+  private pdvOrderNumbers(targets: PdvBatchTarget[]): string[] {
+    return targets.map((target) => target.order_number ?? target.id);
+  }
+
+  private pdvSkipped(
+    reasonCode: PdvBatchSkipReason,
+    group: PdvBatchGroup,
+    reason: string,
+  ): PdvBatchSkipped {
+    return {
+      reason_code: reasonCode,
+      reason,
+      transporter_id: group.transporterId,
+      transporter_name: group.transporterName,
+      sales_request_ids: group.salesRequestIds,
+      order_numbers: group.orderNumbers,
+    };
+  }
+
+  // Sucesso parcial devolve avisos; nada processado vira erro (1 grupo → a mensagem dele).
+  private pdvBatchActionResult<T>(
+    batches: T[],
+    skipped: PdvBatchSkipped[],
+  ): PdvBatchActionResult<T> {
+    const warnings = this.pdvBatchWarnings(skipped);
+    if (!batches.length) {
+      throw new Error(skipped.length === 1 ? skipped[0].reason : warnings.join(" "));
+    }
+    return { batches, skipped, warnings };
+  }
+
+  private pdvBatchWarnings(skipped: PdvBatchSkipped[]): string[] {
+    const ofReason = (code: PdvBatchSkipReason) =>
+      skipped.filter((entry) => entry.reason_code === code);
+    const noPendingBatch = ofReason(PdvBatchSkipReason.NO_PENDING_BATCH);
+    const noTransporter = ofReason(PdvBatchSkipReason.NO_TRANSPORTER);
+
+    return [
+      ...(noPendingBatch.length
+        ? [
+            `Sem lote pendente no CD21 para as transportadoras: ${noPendingBatch.map((entry) => entry.transporter_name ?? `pedidos ${entry.order_numbers.join(", ")}`).join(", ")}. Essas solicitações não foram adicionadas.`,
+          ]
+        : []),
+      ...noTransporter.map((entry) => entry.reason),
+      ...ofReason(PdvBatchSkipReason.FAILED).map(
+        (entry) =>
+          `${entry.transporter_name ?? `Pedidos ${entry.order_numbers.join(", ")}`}: ${entry.reason}`,
+      ),
+    ];
+  }
+
+  // Lotes distintos (CD21) das notas — toda nota precisa estar em lote.
+  private async batchIdsOfSaleInvoices(
+    invoiceIds: string[],
+    cd21Id: string,
+  ): Promise<string[]> {
+    const batchIdByInvoiceId =
+      await batchInvoicesService.findBatchIdsByInvoiceIds(invoiceIds, cd21Id);
+    const notInBatch = invoiceIds.filter((id) => !batchIdByInvoiceId.has(id));
+    if (notInBatch.length) {
+      const numbers = await this.invoiceNumbers(notInBatch);
+      throw new Error(`Nota de venda ainda não está em um lote: ${numbers}`);
+    }
+    return [...new Set(batchIdByInvoiceId.values())];
   }
 
   async getPdvSalesRequestBatchStatus(
@@ -676,29 +1091,27 @@ async addInvoiceToLastOutgoingBatch(
     };
   }
 
-  // Ponteiro é reconciliado antes porque addInvoiceToLastOutgoingBatch
-  // confia nele cegamente e falha se apontar pra lote FINISHED.
-  async addPdvSalesRequestToPendingBatch(
-    salesRequestId: string,
-  ): Promise<ExpeditionBatch> {
-    const cd21 = await this.getCd21();
-    const invoiceId =
-      await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
-
-    const invoice = await invoiceService.findById(invoiceId, {
-      attributes: ["id", "xml_key"],
+  // addInvoiceToBatch/addInvoiceToLastOutgoingBatch recebem chave de acesso, não id.
+  private async saleInvoiceAccessKeys(invoiceIds: string[]): Promise<string[]> {
+    const invoices = await invoiceService.findAll({
+      where: { id: { [Op.in]: invoiceIds } },
+      attributes: ["id", "xml_key", "number_system"],
     });
-    if (!invoice?.xml_key) throw new Error("Nota de venda sem chave de acesso");
+    const withoutKey = invoices.filter((invoice) => !invoice.xml_key);
+    if (withoutKey.length || invoices.length !== invoiceIds.length) {
+      throw new Error(
+        `Nota de venda sem chave de acesso: ${withoutKey.map((invoice) => invoice.number_system).join(", ")}`,
+      );
+    }
+    return invoices.map((invoice) => invoice.xml_key!);
+  }
 
-    await unitBusinessService.getOrUpdateLastOutgoingBatchNumber(cd21.id);
-
-    const batch = await this.addInvoiceToLastOutgoingBatch(
-      [invoice.xml_key],
-      cd21.id,
-      "OUTGOING",
-    );
-    await pdvSalesRequestService.notifyChanged(salesRequestId);
-    return batch;
+  private async invoiceNumbers(invoiceIds: string[]): Promise<string> {
+    const invoices = await invoiceService.findAll({
+      where: { id: { [Op.in]: invoiceIds } },
+      attributes: ["number_system"],
+    });
+    return invoices.map((invoice) => invoice.number_system).join(", ");
   }
 
   // Rotas do link CD21 não recebem loja do front — sempre CD21.
@@ -707,38 +1120,6 @@ async addInvoiceToLastOutgoingBatch(
   ): Promise<PaginatedResult<ExpeditionBatch>> {
     const cd21 = await this.getCd21();
     return this.searchPendingOutgoing(params, cd21.id);
-  }
-
-  // addInvoiceToBatch não valida a loja do lote — sem este check, o link CD21
-  // conseguiria anexar nota em lote de outra loja.
-  async addPdvSalesRequestToBatch(
-    salesRequestId: string,
-    batchId: string,
-  ): Promise<ExpeditionBatch> {
-    const cd21 = await this.getCd21();
-
-    const batch = await this.findOne({
-      where: { id: batchId, unit_business_id: cd21.id, type: "OUTGOING" },
-      attributes: ["id"],
-    });
-    if (!batch) throw new Error("Lote de saída do CD21 não encontrado");
-
-    const invoiceId =
-      await pdvSalesRequestService.resolveSaleInvoiceId(salesRequestId);
-
-    const invoice = await invoiceService.findById(invoiceId, {
-      attributes: ["id", "xml_key"],
-    });
-    if (!invoice?.xml_key) throw new Error("Nota de venda sem chave de acesso");
-
-    const updatedBatch = await this.addInvoiceToBatch(
-      [invoice.xml_key],
-      cd21.id,
-      "OUTGOING",
-      batchId,
-    );
-    await pdvSalesRequestService.notifyChanged(salesRequestId);
-    return updatedBatch;
   }
 
   private async getCd21(): Promise<UnitBusiness> {

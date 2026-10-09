@@ -368,12 +368,12 @@ export class BlingManifestacaoService {
     await this.selecionarPeriodoEsteMes(page);
 
     // 11. Selecionar todas as notas da lista
-    await page.waitForSelector("#selectAlldatatable", { timeout: 15_000 });
-
-    // O <input> real fica coberto pelo <label> customizado que faz o visual
-    // do checkbox — por isso clicamos no label, não no input diretamente.
+    // O <input> real é oculto (o <label> customizado faz o visual do checkbox) —
+    // esperar "visible" nele nunca resolve; espera o input no DOM e o label visível.
     const selectAllInput = page.locator("#selectAlldatatable");
     const selectAllLabel = page.locator('label[for="selectAlldatatable"]');
+    await selectAllInput.waitFor({ state: "attached", timeout: 15_000 });
+    await selectAllLabel.waitFor({ state: "visible", timeout: 15_000 });
 
     const isChecked = await selectAllInput.isChecked().catch(() => false);
     if (!isChecked) {

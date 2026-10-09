@@ -10,6 +10,7 @@ import {
   PdvSalesRequestDetail,
 } from "../pdv-sales-request.types";
 import { getNextAction } from "./next-action.rules";
+import { batchColorForStage } from "./batch-colors";
 import { buildShippingLabel } from "./shipping-label";
 
 const RECEIPT_ANALYSIS_FIELDS: readonly PdvReceiptAnalysisField[] = [
@@ -71,6 +72,7 @@ export function toBoardCard(row: any, screen: PdvBoardScreen): PdvBoardCard {
       },
       screen,
     ),
+    batch_color: batchColorForStage(row.batch_stage),
     order: order
       ? {
           id: order.id,

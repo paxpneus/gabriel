@@ -32,6 +32,13 @@ export class ExpeditionBatchInvoiceService extends BaseService<
     return this.repository.findBatchIdByInvoiceId(invoiceId, unitBusinessId);
   }
 
+  async findBatchIdsByInvoiceIds(
+    invoiceIds: string[],
+    unitBusinessId: string,
+  ): Promise<Map<string, string>> {
+    return this.repository.findBatchIdsByInvoiceIds(invoiceIds, unitBusinessId);
+  }
+
   async removeBatchInvoice(
     id: string,
     externalTransaction?: Transaction,

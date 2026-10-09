@@ -20,7 +20,7 @@ import {
   resolveLinkAccess,
   resolveLoginAccess,
 } from "../helpers/resolve-pdv-access";
-import { pdvAccess } from "../pdv-access.middleware";
+import { pdvAccess, pdvLoginAccess } from "../pdv-access.middleware";
 import { PdvAccessScreen } from "../pdv-access.types";
 
 function makeReq(
@@ -109,5 +109,54 @@ describe("pdvAccess", () => {
     );
 
     expect(res.status).toHaveBeenCalledWith(403);
+  });
+});
+
+describe("pdvLoginAccess", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("sem login (só link x-pdv-token) → 401, link nunca é consultado", async () => {
+    (resolveLoginAccess as jest.Mock).mockResolvedValue(null);
+    const res = makeRes();
+    const next = jest.fn();
+
+    await pdvLoginAccess([PdvAccessScreen.CD21])(
+      makeReq({ "x-pdv-token": "t", "x-pdv-unit-business-number": "21" }),
+      res,
+      next,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+    expect(resolveLinkAccess).not.toHaveBeenCalled();
+  });
+
+  it("login de outra tela → status/mensagem do login", async () => {
+    (resolveLoginAccess as jest.Mock).mockResolvedValue(forbidden);
+    const res = makeRes();
+    const next = jest.fn();
+
+    await pdvLoginAccess([PdvAccessScreen.CD21])(makeReq(), res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({ error: "sem acesso" });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("login CD21 → segue com o contexto do usuário", async () => {
+    const context = {
+      screen: PdvAccessScreen.CD21,
+      via: "LOGIN",
+      unitBusinessId: null,
+      userId: "user-1",
+    };
+    (resolveLoginAccess as jest.Mock).mockResolvedValue({ context });
+    const req = makeReq();
+    const next = jest.fn();
+
+    await pdvLoginAccess([PdvAccessScreen.CD21])(req, makeRes(), next);
+
+    expect(next).toHaveBeenCalled();
+    expect(req.pdvAccess).toEqual(context);
   });
 });

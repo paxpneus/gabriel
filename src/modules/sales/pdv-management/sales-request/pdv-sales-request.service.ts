@@ -27,6 +27,10 @@ import {
   PdvSalesRequestDetail,
   TERMINAL_PDV_SALES_REQUEST_STATUSES,
   EXPEDITION_PDV_SALES_REQUEST_STATUSES,
+  PdvBatchColor,
+  PdvBatchStage,
+  PdvBatchTarget,
+  PdvBatchTargetFilter,
 } from "./pdv-sales-request.types";
 import pdvSalesRequestHistoryService from "../sales-request-history/pdv-sales-request-history.service";
 import pdvSalesRequestReceiptService from "../sales-request-receipt/pdv-sales-request-receipt.service";
@@ -90,11 +94,13 @@ import {
   toSalesRequestDetail,
 } from "./helpers/card-serializers";
 import { boardCursorAfterLiteral, encodeBoardCursor } from "./helpers/board-cursor";
+import { PDV_BATCH_COLORS } from "./helpers/batch-colors";
 import { PdvBoardQuery } from "./helpers/board-query";
 import {
   PdvBoardColumn,
   findVisibleColumn,
   resolveBoardScreen,
+  boardColumnActions,
   resolveColumns,
 } from "../helpers/pdv-screens.config";
 import { PdvForbiddenError } from "../helpers/pdv-errors";
@@ -103,6 +109,10 @@ import {
   extractTransporterCd,
 } from "./helpers/transporter-cd";
 import { invoiceProductsMatch } from "./helpers/invoice-product-quantity-match";
+import {
+  buildInvoiceReferenceDescription,
+  normalizeInvoiceNumber,
+} from "../../../warehouse/fiscal/invoices/invoice/helpers/reference-description";
 import { PDV_EXCLUDED_STORE_NUMBERS } from "../helpers/pdv-excluded-unit-business";
 import { isWithinPhysicalStoreRange } from "../../../company/unit-business/helpers/physical-numbered-unit-business";
 import {
@@ -111,6 +121,10 @@ import {
   orderDateWithinLiteral,
   errorsReasonsOverlapLiteral,
   pdvSalesRequestSearchLiteral,
+  saleInvoiceTransporterInLiteral,
+  saleInvoiceCd21BatchStageLiteral,
+  batchStageFlagWhere,
+  adtBatchStageWhere,
 } from "./helpers/custom-filters";
 import {
   PDV_STATUS_INDICATORS,
@@ -197,6 +211,35 @@ export class PdvSalesRequestService extends BaseService<
           const key = (Array.isArray(value) ? value[0] : value) as PdvStatusIndicatorKey;
           return indicatorWhere(key);
         },
+        // Transportadora da nota de venda (não o transporter_name livre da loja) — mesma fonte de findShipTodayTransporters.
+        transporter_id: (value) => {
+          const ids = Array.isArray(value) ? value : String(value).split(",");
+          return { [Op.and]: [saleInvoiceTransporterInLiteral(ids.map(String))] };
+        },
+        // false = tem nota de venda e ela ainda não está em lote do CD21 (combina com transporter_id).
+        in_batch: (value) => {
+          const raw = String(Array.isArray(value) ? value[0] : value).toLowerCase();
+          if (raw !== "true" && raw !== "false" && raw !== "1" && raw !== "0") return {};
+          const stage =
+            raw === "true" || raw === "1"
+              ? PdvBatchStage.IN_BATCH
+              : PdvBatchStage.WITHOUT_BATCH;
+          return { [Op.and]: [saleInvoiceCd21BatchStageLiteral(stage)] };
+        },
+        // Estágio de lote (true), transportadora opcional via transporter_id — mesmos critérios das ações de lote do PDV (batch.service.ts).
+        without_batch: (value) =>
+          batchStageFlagWhere(value, PdvBatchStage.WITHOUT_BATCH),
+        open_batch: (value) =>
+          batchStageFlagWhere(value, PdvBatchStage.OPEN_BATCH),
+        pending_delivery_note: (value) =>
+          batchStageFlagWhere(value, PdvBatchStage.FINISHED_WITHOUT_DELIVERY_NOTE),
+        // Mesmos três pela transportadora própria (valor = CD 12/17).
+        adt_without_batch: (value) =>
+          adtBatchStageWhere(value, PdvBatchStage.WITHOUT_BATCH),
+        adt_open_batch: (value) =>
+          adtBatchStageWhere(value, PdvBatchStage.OPEN_BATCH),
+        adt_pending_delivery_note: (value) =>
+          adtBatchStageWhere(value, PdvBatchStage.FINISHED_WITHOUT_DELIVERY_NOTE),
       },
     };
   }
@@ -422,6 +465,8 @@ export class PdvSalesRequestService extends BaseService<
         statuses: column.statuses,
         extra: !!column.extra,
         highlighted: !column.extra && !!column.highlighted,
+        selectable: !!column.selectable,
+        actions: boardColumnActions(column),
         items: pageRows.map((row) => toBoardCard(row, screen)),
         totalCount: column.statuses.reduce(
           (sum, status) => sum + (statusCounts[status] ?? 0),
@@ -509,6 +554,23 @@ export class PdvSalesRequestService extends BaseService<
       .filter((order): order is PdvSalesRequestOrderSummary => order !== null);
   }
 
+  // Transportadoras (da nota de venda) usadas por alguma solicitação em SHIP_TODAY — opções do filtro transporter_id.
+  async findShipTodayTransporters(access: PdvAccessContext) {
+    const scope = await this.unitBusinessScopeWhere(access.unitBusinessId);
+    const transporterIds =
+      await this.repository.findSaleInvoiceTransporterIds({
+        ...scope,
+        status: PdvSalesRequestStatus.SHIP_TODAY,
+      });
+    if (!transporterIds.length) return [];
+
+    return transporterService.findAll({
+      where: { id: { [Op.in]: transporterIds } },
+      attributes: ["id", "name", "cnpj"],
+      order: [["name", "ASC"]],
+    });
+  }
+
   // order_id de toda solicitação existente, opcionalmente filtrada por
   // status — usado por rotas de outra entidade pra cruzar "tem/não tem PDV
   // request" (ex.: force-update em massa de orders), sem expor a repository.
@@ -524,6 +586,11 @@ export class PdvSalesRequestService extends BaseService<
   // indicativos que fazem sentido pro fluxo dela — ver
   // helpers/status-summary.ts). Cada indicativo tem um filtro correspondente
   // na listagem (filters[indicator]=<key>), com o mesmo critério.
+  // Legenda das cores de lote do card — mesma tabela de toBoardCard.
+  getBatchColorLegend(): { label: string; color: PdvBatchColor }[] {
+    return PDV_BATCH_COLORS.map(({ label, color }) => ({ label, color }));
+  }
+
   async getStatusSummary(access: PdvAccessContext): Promise<
     Record<string, { label: string; quantity: number; sub_stats?: Record<string, number> }>
   > {
@@ -1164,6 +1231,13 @@ export class PdvSalesRequestService extends BaseService<
       }),
     });
     if (!updated) throw new Error("Solicitação não encontrada");
+    if (shippingType === PdvShippingType.TRANSPORTADORA) {
+      await this.syncSaleInvoiceTransferReference(
+        request.sale_invoice_id,
+        request.transfer_invoice_id,
+        null,
+      );
+    }
 
     const description = `Tipo de envio alterado de ${request.shipping_type ?? "não definido"} para ${shippingType}`;
     const target = await this.resolveStatusAfterShippingTypeChange(
@@ -1758,11 +1832,20 @@ export class PdvSalesRequestService extends BaseService<
   // de volta pro início da análise — usado por cd21ResolveInvoiceCancelled e
   // resolveCorrection.
   private async resetForCd21AnalysisRetry(
-    id: string,
+    request: PdvSalesRequest,
     params: { userId?: string; description: string },
   ): Promise<PdvSalesRequest> {
-    await this.repository.update(id, { transfer_invoice_id: null });
-    return this.transitionTo(id, PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, params);
+    await this.repository.update(request.id, { transfer_invoice_id: null });
+    await this.syncSaleInvoiceTransferReference(
+      request.sale_invoice_id,
+      request.transfer_invoice_id,
+      null,
+    );
+    return this.transitionTo(
+      request.id,
+      PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
+      params,
+    );
   }
 
   // ─── Correção (loja resolve) ────────────────────────────────────────────────
@@ -1842,7 +1925,7 @@ export class PdvSalesRequestService extends BaseService<
         });
       }
 
-      return this.resetForCd21AnalysisRetry(id, {
+      return this.resetForCd21AnalysisRetry(request, {
         userId: params.userId,
         description: "Loja corrigiu o necessário — reanálise do CD21",
       });
@@ -1905,23 +1988,69 @@ export class PdvSalesRequestService extends BaseService<
   // sale_invoice_id antes de devolver, pra lote/romaneio nunca usarem uma
   // cópia defasada.
   async resolveSaleInvoiceId(id: string): Promise<string> {
-    const request = await this.findById(id, {
+    const [invoiceId] = await this.resolveSaleInvoiceIds([id]);
+    return invoiceId;
+  }
+
+  // Versão em lote de resolveSaleInvoiceId — notas distintas, na ordem dos ids.
+  async resolveSaleInvoiceIds(ids: string[]): Promise<string[]> {
+    const uniqueIds = [...new Set(ids)];
+    if (!uniqueIds.length) throw new Error("Nenhuma solicitação informada");
+
+    const requests = await this.findAll({
+      where: { id: { [Op.in]: uniqueIds } },
       attributes: ["id", "order_id", "sale_invoice_id", "unit_business_id", "status"],
     });
-    if (!request) throw new Error("Solicitação não encontrada");
+    if (requests.length !== uniqueIds.length) {
+      throw new Error("Solicitação não encontrada");
+    }
 
-    const order = await orderService.findById(request.order_id, {
-      attributes: ["id", "invoice_id"],
+    const orderIds = [...new Set(requests.map((request) => request.order_id))];
+    const orders = await orderService.findAll({
+      where: { id: { [Op.in]: orderIds } },
+      attributes: ["id", "invoice_id", "number_order_system"],
     });
-    if (!order?.invoice_id) {
-      throw new Error("Pedido ainda não possui nota de venda");
+    const invoiceIdByOrderId = new Map(
+      orders.map((order) => [order.id, order.invoice_id ?? null]),
+    );
+
+    const withoutInvoice = orders.filter((order) => !order.invoice_id);
+    if (withoutInvoice.length || orders.length !== orderIds.length) {
+      throw new Error(
+        uniqueIds.length > 1
+          ? `Pedido(s) sem nota de venda: ${withoutInvoice.map((order) => order.number_order_system ?? order.id).join(", ")}`
+          : "Pedido ainda não possui nota de venda",
+      );
     }
 
-    if (order.invoice_id !== request.sale_invoice_id) {
-      await this.repository.update(id, { sale_invoice_id: order.invoice_id });
-      notifySalesRequestChanged(request);
-    }
-    return order.invoice_id;
+    const stale = requests.filter(
+      (request) =>
+        invoiceIdByOrderId.get(request.order_id) !== request.sale_invoice_id,
+    );
+    await Promise.all(
+      stale.map(async (request) => {
+        await this.repository.update(request.id, {
+          sale_invoice_id: invoiceIdByOrderId.get(request.order_id)!,
+        });
+        notifySalesRequestChanged(request);
+      }),
+    );
+
+    const orderIdByRequestId = new Map(
+      requests.map((request) => [request.id, request.order_id]),
+    );
+    return [
+      ...new Set(
+        uniqueIds.map(
+          (id) => invoiceIdByOrderId.get(orderIdByRequestId.get(id)!)!,
+        ),
+      ),
+    ];
+  }
+
+  // Candidatas das ações de lote do PDV: status de expedição + transportadora da nota de venda (+ estágio de lote, opcional).
+  async findBatchTargets(filter: PdvBatchTargetFilter): Promise<PdvBatchTarget[]> {
+    return this.repository.findBatchTargets(filter);
   }
 
   // Compartilhado entre markSaleInvoiceReady (avanço normal a partir de
@@ -2188,6 +2317,11 @@ export class PdvSalesRequestService extends BaseService<
       transfer_invoice_id: invoiceId,
     });
     if (!updated) throw new Error("Solicitação não encontrada");
+    await this.syncSaleInvoiceTransferReference(
+      request.sale_invoice_id,
+      request.transfer_invoice_id,
+      invoiceId,
+    );
 
     const productsMatch = pendingTransferInvoiceImport
       ? null
@@ -2258,6 +2392,59 @@ export class PdvSalesRequestService extends BaseService<
     ]);
 
     return invoiceProductsMatch(saleItems, transferItems);
+  }
+
+  // Nota de venda aponta pra transferência vinculada (bonded_invoice + "REF: <número>").
+  // Ao desvincular, só limpa o que bate com a transferência anterior — nunca apaga descrição de outra origem.
+  private async syncSaleInvoiceTransferReference(
+    saleInvoiceId: string | null,
+    previousTransferInvoiceId: string | null,
+    nextTransferInvoiceId: string | null,
+  ): Promise<void> {
+    if (!saleInvoiceId) return;
+    const transferIds = [previousTransferInvoiceId, nextTransferInvoiceId].filter(
+      (transferId): transferId is string => !!transferId,
+    );
+    if (!transferIds.length) return;
+
+    const [saleInvoice, transferInvoices] = await Promise.all([
+      invoiceService.findById(saleInvoiceId, {
+        attributes: ["id", "description", "bonded_invoice"],
+      }),
+      invoiceService.findAll({
+        where: { id: { [Op.in]: transferIds } },
+        attributes: ["id", "number_system"],
+      }),
+    ]);
+    if (!saleInvoice) return;
+    const numberOf = (transferId: string | null) =>
+      transferInvoices.find((invoice) => invoice.id === transferId)
+        ?.number_system ?? null;
+
+    const nextNumber = numberOf(nextTransferInvoiceId);
+    if (nextNumber) {
+      await invoiceService.update(saleInvoiceId, {
+        bonded_invoice: nextNumber,
+        description: buildInvoiceReferenceDescription(nextNumber),
+      });
+      return;
+    }
+
+    const previousNumber = numberOf(previousTransferInvoiceId);
+    if (!previousNumber) return;
+    const isPreviousBond =
+      !!saleInvoice.bonded_invoice &&
+      normalizeInvoiceNumber(saleInvoice.bonded_invoice) ===
+        normalizeInvoiceNumber(previousNumber);
+    const isPreviousDescription =
+      saleInvoice.description ===
+      buildInvoiceReferenceDescription(previousNumber);
+    if (!isPreviousBond && !isPreviousDescription) return;
+
+    await invoiceService.update(saleInvoiceId, {
+      ...(isPreviousBond && { bonded_invoice: null }),
+      ...(isPreviousDescription && { description: null }),
+    });
   }
 
   // Confirmação explícita do front — só agora a solicitação avança pra
@@ -2460,10 +2647,13 @@ export class PdvSalesRequestService extends BaseService<
       note?: string;
     },
   ): Promise<PdvSalesRequest> {
-    await this.assertStatus(id, PdvSalesRequestStatus.INVOICE_CANCELLED);
+    const request = await this.assertStatus(
+      id,
+      PdvSalesRequestStatus.INVOICE_CANCELLED,
+    );
 
     if (params.decision === "RETRY_ANALYSIS") {
-      return this.resetForCd21AnalysisRetry(id, {
+      return this.resetForCd21AnalysisRetry(request, {
         userId: params.userId,
         description: "CD21 optou por reenviar para análise após nota cancelada",
       });
@@ -2606,6 +2796,11 @@ export class PdvSalesRequestService extends BaseService<
         { transaction: t },
       );
     });
+    await this.syncSaleInvoiceTransferReference(
+      request.sale_invoice_id,
+      request.transfer_invoice_id,
+      null,
+    );
 
     notifySalesRequestChanged({
       id: request.id,

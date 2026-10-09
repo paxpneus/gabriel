@@ -37,6 +37,7 @@ import { generateDanfePdfBuffer } from "./danfe-generator";
 import uploaderQueue from "../../../modules/handlers/uploader/uploader.queue";
 import tempFileService from "../../../modules/handlers/temp-file/temp-file.service";
 import pdvSalesRequestService from "../../../modules/sales/pdv-management/sales-request/pdv-sales-request.service";
+import { buildInvoiceReferenceDescription } from "../../../modules/warehouse/fiscal/invoices/invoice/helpers/reference-description";
 
 /**
  * Extrai só o número (ide.nNF) e a chave de acesso de 44 dígitos de um XML
@@ -859,7 +860,12 @@ export async function upsertInvoiceFromXml(
     transporter_id: transporter?.id ?? null,
     transporter_document: transporterDocument,
     transporter_name: transporterName,
-    description: nfeRef ? `REF: ${nfeRef}` : null,
+    // Resync nunca apaga descrição existente (manual ou REF do PDV) — mesmo guard do bling-api-fetch.
+    description: existingInvoice?.description
+      ? existingInvoice.description
+      : nfeRef
+        ? buildInvoiceReferenceDescription(nfeRef)
+        : null,
     destination_uf: destinationUf,
     destination_city: destinationCity,
     invoice_value: fiscalTotals.invoiceValue,

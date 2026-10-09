@@ -99,6 +99,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `index.md` — repository/scan-logs, auth, bloqueio por produto não mapeado
   - `add-invoice-to-batch.md` — rewrite bulk + fix de numeração
   - `last-outgoing-batch.md` — ponteiro `last_outgoing_batch_pending`
+  - `pdv-sales-request.md` — lote/romaneio do PDV no CD21: 3 ações por coluna (SHIPPING/SHIP_TODAY), só login CD21, grupo por transportadora com sucesso parcial
 - `order/` — Orders
   - `index.md` — base, auth, divergência `internal_status`/`status_snapshot`, catálogo `payment_methods`/`payment_method_id`
   - `status-sync.md` — `reason_cancelled`, `syncOrderInternalStatus`/`escalateToHumanVerificationIfStillPending`

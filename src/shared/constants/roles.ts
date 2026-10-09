@@ -26,7 +26,9 @@ type Scopes =
   | 'Demandas'
   | 'Setores'
   | 'Descontos de Fornecedor'
-  | 'PDV Management'
+  | 'PDV Loja'
+  | 'PDV Financeiro'
+  | 'PDV CD21'
 
 interface ChildEntity {
   entity: string
@@ -256,21 +258,21 @@ export const ROLE_PERMISSIONS: Roles[] = [
   // role enxerga essa tela ou não", mesmo espírito de financial-pdt /
   // visualize-all-unit-business acima.
   {
-    scope: 'PDV Management',
+    scope: 'PDV Loja',
     entity: 'pdv_sales_request_store',
     route: '',
     type: 'CUSTOM',
     permissions: ['write'],
   },
   {
-    scope: 'PDV Management',
+    scope: 'PDV Financeiro',
     entity: 'pdv_sales_request_finance',
     route: '',
     type: 'CUSTOM',
     permissions: ['write'],
   },
   {
-    scope: 'PDV Management',
+    scope: 'PDV CD21',
     entity: 'pdv_sales_request_cd21',
     route: '',
     type: 'CUSTOM',

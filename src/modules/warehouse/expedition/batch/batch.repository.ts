@@ -1,4 +1,4 @@
-import { FindOptions, where } from "sequelize";
+import { FindOptions, Op, literal, where } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import { Product, ProductConfig, Stock } from "../../../inventory";
 import InvoiceItems from "../../fiscal/invoices/invoice-items/invoice-items.model";
@@ -18,6 +18,8 @@ import {
 } from "../../fiscal/invoices/invoice/helpers/totals";
 import { Literal } from "sequelize/lib/utils";
 import Integration from "../../../integrations/integrations/integrations.model";
+import { transporterSelectorSql } from "../../../sales/pdv-management/sales-request/helpers/transporter-cd";
+import type { PdvTransporterSelector } from "../../../sales/pdv-management/sales-request/pdv-sales-request.types";
 
 export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
   constructor() {
@@ -191,6 +193,46 @@ export class ExpeditionBatchRepository extends BaseRepository<ExpeditionBatch> {
         })),
       })),
     } as ExpeditionBatchFull;
+  }
+
+  // Lotes de saída abertos da loja — da transportadora do seletor (do lote ou das notas dele), se houver — mais recentes primeiro.
+  async findPendingOutgoingByTransporter(
+    unitBusinessId: string,
+    transporter: PdvTransporterSelector | null,
+    batchId?: string,
+  ): Promise<ExpeditionBatch[]> {
+    return this.findAll({
+      where: {
+        ...(batchId && { id: batchId }),
+        unit_business_id: unitBusinessId,
+        type: "OUTGOING",
+        status: { [Op.in]: ["OPEN", "PENDING"] },
+        [Op.and]: !transporter ? [] : [
+          literal(`(
+            EXISTS (
+              SELECT 1 FROM transporters t
+              WHERE t.id = "ExpeditionBatch"."transporters_id"
+                AND ${transporterSelectorSql(transporter, { name: "t.name", id: "t.id" })}
+            )
+            OR EXISTS (
+              SELECT 1 FROM expedition_batch_invoices bi
+              JOIN invoices i ON i.id = bi.invoice_id
+              WHERE bi.expedition_batch_id = "ExpeditionBatch"."id"
+                AND ${transporterSelectorSql(transporter, { name: "i.transporter_name", id: "i.transporter_id" })}
+            )
+          )`),
+        ],
+      },
+      attributes: [
+        "id",
+        "number",
+        "status",
+        "total_volumes",
+        "delivery_note_generated_at",
+        "createdAt",
+      ],
+      order: [["createdAt", "DESC"]],
+    });
   }
 }
 

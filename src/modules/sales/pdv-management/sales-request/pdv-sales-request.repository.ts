@@ -1,9 +1,16 @@
 import { Op, WhereOptions, fn, col, literal } from "sequelize";
 import { saleInvoiceTransporterCdExpression } from "./helpers/transporter-cd";
-import { hasReceiptLiteral } from "./helpers/custom-filters";
+import {
+  hasReceiptLiteral,
+  saleInvoiceCd21BatchStageCaseLiteral,
+  saleInvoiceCd21BatchStageLiteral,
+  saleInvoiceTransporterSelectorLiteral,
+} from "./helpers/custom-filters";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import PdvSalesRequest from "./pdv-sales-request.model";
 import {
+  PdvBatchTarget,
+  PdvBatchTargetFilter,
   PdvSalesRequestStatus,
   PdvShippingType,
   TERMINAL_PDV_SALES_REQUEST_STATUSES,
@@ -110,6 +117,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         "correction_origin_status",
         [literal('"PdvSalesRequest"."created_at"::text'), "cursor_created_at"],
         [hasReceiptLiteral(), "has_receipt"],
+        [saleInvoiceCd21BatchStageCaseLiteral(), "batch_stage"],
       ],
       include: [
         {
@@ -249,6 +257,59 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
       acc[row.cd ?? ""] = Number(row.quantity);
       return acc;
     }, {});
+  }
+
+  // Ids num status com nota de venda da transportadora (e no estágio de lote, se informado), mais antigas primeiro.
+  async findBatchTargets(filter: PdvBatchTargetFilter): Promise<PdvBatchTarget[]> {
+    const rows = await this.model.findAll({
+      where: {
+        ...(filter.ids && { id: { [Op.in]: filter.ids } }),
+        ...(filter.status && { status: filter.status }),
+        [Op.and]: [
+          ...(filter.transporter
+            ? [saleInvoiceTransporterSelectorLiteral(filter.transporter)]
+            : []),
+          ...(filter.batchStage
+            ? [saleInvoiceCd21BatchStageLiteral(filter.batchStage)]
+            : []),
+        ],
+      },
+      attributes: [
+        "id",
+        "sale_invoice_id",
+        [col("order.number_order_system"), "order_number"],
+        [col("saleInvoice.transporter_id"), "transporter_id"],
+        [col("saleInvoice.transporter_name"), "transporter_name"],
+      ],
+      include: [
+        { model: Order, as: "order", attributes: [], required: false },
+        { model: Invoice, as: "saleInvoice", attributes: [], required: false },
+      ],
+      order: [["createdAt", "ASC"]],
+      raw: true,
+    });
+    return rows as unknown as PdvBatchTarget[];
+  }
+
+  // transporter_id distintos das notas de venda das solicitações do `where` (sem nota/transportadora fica fora).
+  async findSaleInvoiceTransporterIds(where: WhereOptions): Promise<string[]> {
+    const rows = (await this.model.findAll({
+      where,
+      attributes: [[col("saleInvoice.transporter_id"), "transporter_id"]],
+      include: [
+        {
+          model: Invoice,
+          as: "saleInvoice",
+          attributes: [],
+          required: true,
+          where: { transporter_id: { [Op.ne]: null } },
+        },
+      ],
+      group: [col("saleInvoice.transporter_id")],
+      raw: true,
+    })) as unknown as { transporter_id: string }[];
+
+    return rows.map((row) => row.transporter_id);
   }
 
   // Contagem por correction_origin_status, restrita a PENDING_CORRECTION

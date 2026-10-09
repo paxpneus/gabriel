@@ -20,6 +20,9 @@ jest.mock("../pdv-sales-request.repository", () => ({
     countGroupedByStatus: jest.fn(),
     findBoardColumnPage: jest.fn(),
     findByIdWithOrder: jest.fn(),
+    findAll: jest.fn(),
+    findBatchTargets: jest.fn(),
+    findSaleInvoiceTransporterIds: jest.fn(),
   },
 }));
 
@@ -55,6 +58,7 @@ jest.mock("../../../orders/order/orders.service", () => ({
   __esModule: true,
   default: {
     findById: jest.fn(),
+    findAll: jest.fn(),
     findByIdWithPayments: jest.fn(),
     isEligibleForPdv: jest.fn(),
     buildStatusResolver: jest.fn(),
@@ -69,6 +73,7 @@ jest.mock("../../../../warehouse/fiscal/invoices/invoice/invoice.service", () =>
     findAll: jest.fn(),
     findDeliveryNoteGeneratedInvoiceIds: jest.fn(),
     createStub: jest.fn(),
+    update: jest.fn(),
   },
 }));
 
@@ -95,6 +100,7 @@ jest.mock("../../../../warehouse/transporter/transporter.service", () => ({
   default: {
     isNoTransporterName: (name: string | null | undefined) =>
       !name?.trim() || name.trim().toLowerCase() === "sem transporte",
+    findAll: jest.fn(),
   },
 }));
 
@@ -167,6 +173,7 @@ import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoic
 import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import tempFileService from "../../../../handlers/temp-file/temp-file.service";
+import transporterService from "../../../../warehouse/transporter/transporter.service";
 import uploaderQueue from "../../../../handlers/uploader/uploader.queue";
 import { getTCarIntegration } from "../../../../handlers/tecinco/api/tecinco_api";
 import { extractDanfeIdentification } from "../helpers/danfe-interpreter";
@@ -185,6 +192,7 @@ import {
   PdvSalesRequestStatus,
   PdvSalesRequestOrigin,
   PdvShippingType,
+  PdvBatchStage,
 } from "../pdv-sales-request.types";
 import { PdvAccessContext, PdvAccessScreen } from "../../pdv-access/pdv-access.types";
 import { Op } from "sequelize";
@@ -244,6 +252,7 @@ describe("PdvSalesRequestService", () => {
     // enqueueDelete é sempre encadeado com .catch — precisa resolver algo.
     (uploaderQueue.enqueueUpload as jest.Mock).mockResolvedValue(undefined);
     (uploaderQueue.enqueueDelete as jest.Mock).mockResolvedValue(undefined);
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([]);
   });
 
   // ─── createRequest ──────────────────────────────────────────────────────────
@@ -3734,6 +3743,118 @@ describe("PdvSalesRequestService", () => {
       expect(literals.some((val) => val.includes("Maria"))).toBe(true);
     });
 
+    it("filters[transporter_id] + in_batch=false: transportadora e nota sem lote do CD21 convivem sob [Op.and]", async () => {
+      const transporterId = "0b6c8f9e-3f1a-4c1e-9d2b-7a5e4c3b2a10";
+      await service.getBoard(
+        cd21Access,
+        { filters: { transporter_id: transporterId, in_batch: "false" } },
+        parseBoardQuery({ column: "shipping" }),
+      );
+
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      const literals = literalVals(pageWhere);
+      expect(literals.some((val) => val.includes(`i.transporter_id IN ('${transporterId}')`))).toBe(true);
+      expect(
+        literals.some(
+          (val) =>
+            val.includes('"sale_invoice_id" IS NOT NULL AND NOT EXISTS') &&
+            val.includes("ub.number = '21'"),
+        ),
+      ).toBe(true);
+    });
+
+    const stageFilters = [
+      ["without_batch", '"sale_invoice_id" IS NOT NULL AND NOT EXISTS'],
+      ["open_batch", "b.status IN ('OPEN', 'PENDING')"],
+      ["pending_delivery_note", "b.delivery_note_generated_at IS NULL"],
+    ];
+
+    it.each(stageFilters)("filters[%s]=true sem transportadora: só o estágio de lote", async (filter, stageSql) => {
+      await service.getBoard(
+        cd21Access,
+        { filters: { [filter]: "true" } },
+        parseBoardQuery({ column: "ship_today" }),
+      );
+
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      const literals = literalVals(pageWhere);
+      expect(literals.some((val) => val.includes(stageSql))).toBe(true);
+      expect(literals.some((val) => val.includes("i.transporter_id IN"))).toBe(false);
+    });
+
+    it.each(stageFilters)("filters[%s]=true + transporter_id: estágio e transportadora sob [Op.and]", async (filter, stageSql) => {
+      const transporterId = "0b6c8f9e-3f1a-4c1e-9d2b-7a5e4c3b2a10";
+      await service.getBoard(
+        cd21Access,
+        { filters: { [filter]: "true", transporter_id: transporterId } },
+        parseBoardQuery({ column: "ship_today" }),
+      );
+
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      const literals = literalVals(pageWhere);
+      expect(literals.some((val) => val.includes(`i.transporter_id IN ('${transporterId}')`))).toBe(true);
+      expect(literals.some((val) => val.includes(stageSql))).toBe(true);
+    });
+
+    it("filters[open_batch]=false é ignorado", async () => {
+      await service.getBoard(
+        cd21Access,
+        { filters: { open_batch: "false" } },
+        parseBoardQuery({ column: "ship_today" }),
+      );
+
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      expect(literalVals(pageWhere).some((val) => val.includes("expedition_batches"))).toBe(false);
+    });
+
+    it.each([
+      ["adt_without_batch", '"sale_invoice_id" IS NOT NULL AND NOT EXISTS'],
+      ["adt_open_batch", "b.status IN ('OPEN', 'PENDING')"],
+      ["adt_pending_delivery_note", "b.delivery_note_generated_at IS NULL"],
+    ])("filters[%s]=12: CD pelo nome da transportadora + estágio de lote", async (filter, stageSql) => {
+      await service.getBoard(
+        cd21Access,
+        { filters: { [filter]: "12" } },
+        parseBoardQuery({ column: "shipping" }),
+      );
+
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      const literals = literalVals(pageWhere);
+      expect(literals.some((val) => val.includes("CD\\s*(12)"))).toBe(true);
+      expect(literals.some((val) => val.includes(stageSql))).toBe(true);
+    });
+
+    it("filters[adt_without_batch] com CD fora de 12/17 não traz nada", async () => {
+      await service.getBoard(
+        cd21Access,
+        { filters: { adt_without_batch: "21" } },
+        parseBoardQuery({ column: "shipping" }),
+      );
+
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      expect(literalVals(pageWhere).some((val) => /AND\s+FALSE/.test(val))).toBe(true);
+    });
+
+    it("filters[in_batch] com valor inválido é ignorado", async () => {
+      await service.getBoard(
+        cd21Access,
+        { filters: { in_batch: "talvez" } },
+        parseBoardQuery({ column: "shipping" }),
+      );
+
+      const [pageWhere] = (pdvSalesRequestRepository.findBoardColumnPage as jest.Mock)
+        .mock.calls[0];
+      expect(literalVals(pageWhere).some((val) => val.includes("expedition_batch_invoices"))).toBe(
+        false,
+      );
+    });
+
     it("column: devolve só o objeto da coluna, com hasMore/nextCursor da página", async () => {
       const rows = [1, 2, 3].map((n) =>
         asRow({
@@ -3894,6 +4015,187 @@ describe("PdvSalesRequestService", () => {
         attributes: ["id", "step", "description", "date", "user_id"],
         order: [["date", "DESC"]],
       });
+    });
+  });
+
+  describe("nota de venda ⇄ nota de transferência (bonded_invoice + descrição)", () => {
+    const mockAttach = (request: Record<string, unknown>) => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        sale_invoice_id: "inv-sale",
+        ...request,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({ id: "cd21" });
+      (invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock).mockResolvedValue([]);
+      (invoiceService.findById as jest.Mock).mockImplementation(async (id: string) =>
+        id === "inv-sale"
+          ? { id, description: "REF: 900", bonded_invoice: "900" }
+          : { id, integrations_id: "tecinco-1" },
+      );
+      (invoiceItemsService.findAll as jest.Mock).mockResolvedValue([]);
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({ id: "r1" });
+    };
+
+    it("vincular transferência grava REF + bonded_invoice na nota de venda", async () => {
+      mockAttach({ status: PdvSalesRequestStatus.PENDING_NF_TRANSFER, transfer_invoice_id: null });
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { id: "inv-transfer", number_system: "020309" },
+      ]);
+
+      await service.attachTransferInvoice("r1", {
+        invoiceId: "inv-transfer",
+        tcarUpsertQueue: {} as any,
+      });
+
+      expect(invoiceService.update).toHaveBeenCalledWith("inv-sale", {
+        bonded_invoice: "020309",
+        description: "REF: 20309",
+      });
+    });
+
+    it("trocar a transferência sobrescreve com a nova", async () => {
+      mockAttach({ status: PdvSalesRequestStatus.SHIPPING, transfer_invoice_id: "inv-old" });
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { id: "inv-old", number_system: "900" },
+        { id: "inv-new", number_system: "901" },
+      ]);
+
+      await service.attachTransferInvoice("r1", {
+        invoiceId: "inv-new",
+        tcarUpsertQueue: {} as any,
+      });
+
+      expect(invoiceService.update).toHaveBeenCalledWith("inv-sale", {
+        bonded_invoice: "901",
+        description: "REF: 901",
+      });
+    });
+
+    it("desvincular (ADT → TRANSPORTADORA) limpa só o que veio da transferência anterior", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIPPING,
+        shipping_type: PdvShippingType.ADT,
+        sale_invoice_id: "inv-sale",
+        transfer_invoice_id: "inv-old",
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockImplementation(
+        async (id: string, values: Record<string, unknown>) => ({ id, ...values }),
+      );
+      (invoiceService.findById as jest.Mock).mockImplementation(async (id: string) => ({
+        id,
+        transporter_name: "JADLOG LOGISTICA S.A",
+        description: "Observação manual",
+        bonded_invoice: "0900",
+      }));
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { id: "inv-old", number_system: "900" },
+      ]);
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({ id: "cd21" });
+      (invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock).mockResolvedValue([]);
+
+      await service.changeShippingType("r1", PdvShippingType.TRANSPORTADORA);
+
+      expect(invoiceService.update).toHaveBeenCalledWith("inv-sale", {
+        bonded_invoice: null,
+      });
+    });
+  });
+
+  describe("resolveSaleInvoiceIds", () => {
+    it("resolve várias de uma vez, re-sincronizando só a cópia defasada", async () => {
+      (pdvSalesRequestRepository.findAll as jest.Mock).mockResolvedValue([
+        { id: "r1", order_id: "o1", sale_invoice_id: "inv-1" },
+        { id: "r2", order_id: "o2", sale_invoice_id: null },
+      ]);
+      (orderService.findAll as jest.Mock).mockResolvedValue([
+        { id: "o1", invoice_id: "inv-1" },
+        { id: "o2", invoice_id: "inv-2" },
+      ]);
+
+      await expect(service.resolveSaleInvoiceIds(["r1", "r2", "r1"])).resolves.toEqual([
+        "inv-1",
+        "inv-2",
+      ]);
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledTimes(1);
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r2", {
+        sale_invoice_id: "inv-2",
+      });
+    });
+
+    it("pedido sem nota bloqueia o lote inteiro, listando o pedido", async () => {
+      (pdvSalesRequestRepository.findAll as jest.Mock).mockResolvedValue([
+        { id: "r1", order_id: "o1" },
+        { id: "r2", order_id: "o2" },
+      ]);
+      (orderService.findAll as jest.Mock).mockResolvedValue([
+        { id: "o1", invoice_id: "inv-1" },
+        { id: "o2", invoice_id: null, number_order_system: "555" },
+      ]);
+
+      await expect(service.resolveSaleInvoiceIds(["r1", "r2"])).rejects.toThrow(
+        "Pedido(s) sem nota de venda: 555",
+      );
+    });
+  });
+
+  describe("findBatchTargets", () => {
+    it("delega o filtro (ids/status/transportadora/estágio) pra repository", async () => {
+      const target = {
+        id: "r1",
+        sale_invoice_id: "inv-1",
+        order_number: "555",
+        transporter_id: "t1",
+        transporter_name: "ADT - CD 12",
+      };
+      (pdvSalesRequestRepository.findBatchTargets as jest.Mock).mockResolvedValue([target]);
+      const filter = {
+        status: PdvSalesRequestStatus.SHIPPING,
+        transporter: { cd: "12" },
+        batchStage: PdvBatchStage.WITHOUT_BATCH,
+      };
+
+      await expect(service.findBatchTargets(filter)).resolves.toEqual([target]);
+      expect(pdvSalesRequestRepository.findBatchTargets).toHaveBeenCalledWith(filter);
+    });
+  });
+
+  describe("findShipTodayTransporters", () => {
+    it("transportadoras das notas de venda em SHIP_TODAY, escopadas pela loja do acesso", async () => {
+      (pdvSalesRequestRepository.findSaleInvoiceTransporterIds as jest.Mock).mockResolvedValue([
+        "t1",
+      ]);
+      (transporterService.findAll as jest.Mock).mockResolvedValue([{ id: "t1", name: "JADLOG" }]);
+
+      const result = await service.findShipTodayTransporters({
+        screen: PdvAccessScreen.STORE_REQUEST,
+        via: "LOGIN",
+        unitBusinessId: "ub-1",
+      });
+
+      expect(pdvSalesRequestRepository.findSaleInvoiceTransporterIds).toHaveBeenCalledWith({
+        unit_business_id: "ub-1",
+        status: PdvSalesRequestStatus.SHIP_TODAY,
+      });
+      expect(transporterService.findAll).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { [Op.in]: ["t1"] } } }),
+      );
+      expect(result).toEqual([{ id: "t1", name: "JADLOG" }]);
+    });
+
+    it("sem nenhuma: não consulta transportadoras", async () => {
+      (pdvSalesRequestRepository.findSaleInvoiceTransporterIds as jest.Mock).mockResolvedValue([]);
+
+      await expect(
+        service.findShipTodayTransporters({
+          screen: PdvAccessScreen.CD21,
+          via: "LOGIN",
+          unitBusinessId: "ub-1",
+        }),
+      ).resolves.toEqual([]);
+      expect(transporterService.findAll).not.toHaveBeenCalled();
     });
   });
 });

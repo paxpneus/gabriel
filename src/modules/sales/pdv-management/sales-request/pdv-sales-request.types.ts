@@ -1,3 +1,5 @@
+import type { PdvColumnAction } from "../helpers/pdv-screens.config";
+
 export enum PdvSalesRequestStatus {
   OPEN = "OPEN",
   PENDING_FINANCE = "PENDING_FINANCE",
@@ -36,6 +38,37 @@ export const TERMINAL_PDV_SALES_REQUEST_STATUSES: readonly PdvSalesRequestStatus
 // (TRANSPORTADORA) têm exatamente as mesmas regras, nunca tratar só um.
 export const EXPEDITION_PDV_SALES_REQUEST_STATUSES: readonly PdvSalesRequestStatus[] =
   [PdvSalesRequestStatus.SHIPPING, PdvSalesRequestStatus.SHIP_TODAY];
+
+// Transportadora alvo das ações/filtros de lote do PDV: CD próprio (ADT, pelo nome "... - CD <n>") ou transportadora cadastrada (id).
+export type PdvTransporterSelector = { cd: string } | { transporterId: string };
+
+// Estágio da nota de venda no lote de saída do CD21 — base dos filtros e das ações de lote do PDV.
+export enum PdvBatchStage {
+  WITHOUT_BATCH = "WITHOUT_BATCH",
+  IN_BATCH = "IN_BATCH",
+  OPEN_BATCH = "OPEN_BATCH",
+  FINISHED_WITHOUT_DELIVERY_NOTE = "FINISHED_WITHOUT_DELIVERY_NOTE",
+}
+
+// Cor hex do card no quadro pela situação do lote da nota de venda (null = sem nota ou fora desses 3 estágios).
+export type PdvBatchColor = `#${string}`;
+
+// Solicitação candidata a uma ação de lote do PDV: nota de venda, pedido e transportadora da nota.
+export interface PdvBatchTarget {
+  id: string;
+  sale_invoice_id: string | null;
+  order_number: string | null;
+  transporter_id: string | null;
+  transporter_name: string | null;
+}
+
+// Todos opcionais e combinados com AND.
+export interface PdvBatchTargetFilter {
+  ids?: string[];
+  status?: PdvSalesRequestStatus;
+  transporter?: PdvTransporterSelector;
+  batchStage?: PdvBatchStage;
+}
 
 export enum PdvShippingType {
   TRANSPORTADORA = "TRANSPORTADORA",
@@ -311,6 +344,7 @@ export interface PdvBoardCard {
   status: PdvSalesRequestStatus;
   shipping_label: string | null;
   next_action: string | null;
+  batch_color: PdvBatchColor | null;
   order: {
     id: string;
     number_order_system: string | null;
@@ -330,6 +364,8 @@ export interface PdvBoardColumnResult {
   statuses: readonly PdvSalesRequestStatus[];
   extra: boolean;
   highlighted: boolean;
+  selectable: boolean;
+  actions: readonly PdvColumnAction[];
   items: PdvBoardCard[];
   totalCount: number;
   nextCursor: string | null;

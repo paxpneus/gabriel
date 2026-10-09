@@ -420,3 +420,137 @@ um só na room dela. Payload continua sendo só sinal de refetch.
 Não existe unwatch: o socket fica na room até desconectar, então quem abriu o
 card A, fechou e abriu o B continua recebendo os eventos do A. Antes de
 refazer o `GET /:id`, conferir se `payload.requestId` é o card aberto.
+
+## Mudou: lote / romaneio do PDV unificados em 3 rotas (CD21)
+
+**Removidas** as rotas de lote por solicitação: `generate-from-pdv-sales-request/:id`,
+`add-pdv-sales-request-to-pending/:id`, `add-pdv-sales-request-to-batch/:id`,
+`delivery-note/pdv-sales-request/:id`. `GET /in-batch/pdv-sales-request/:id`
+continua igual.
+
+**Só usuário logado no CD21** nas 3 ações (`generate`, `add`, `delivery-note`):
+link `x-pdv-token` não vale (sem login → `401`, login de outra tela → `403`).
+`pending-batches` continua aceitando link.
+
+Body: `{ status, cd?, transporter_id?, sales_request_ids? }` (+ `batch_id?` no add).
+`status` é a coluna: `SHIPPING` (ADT, transportadora = `cd` `12`/`17`) ou
+`SHIP_TODAY` (transportadora = `transporter_id`). Mandar a transportadora do
+tipo errado pra coluna → `400`.
+
+| O front manda | O back pega |
+|---|---|
+| só `status` | todas da coluna na etapa da ação, **agrupadas pela transportadora da nota de venda** |
+| `status` + `cd`/`transporter_id` | todas da coluna + transportadora na etapa da ação |
+| `status` + transportadora + `sales_request_ids` | só as escolhidas (precisam estar na coluna + transportadora) |
+| `sales_request_ids` sem transportadora (card) | só as escolhidas, sem checar coluna |
+
+Etapa de cada ação:
+- **Gerar lote / Adicionar a lote**: solicitações **sem lote**. As escolhidas
+  também precisam estar sem lote.
+- **Gerar romaneio**: sem ids, **lote finalizado sem romaneio**; escolhidas só
+  precisam estar em lote (finalizado ou não).
+
+Com só `status`:
+- **Gerar lote**: um lote por transportadora.
+- **Adicionar a lote**: cada transportadora vai pro lote pendente mais recente
+  dela; transportadora sem lote pendente fica de fora com aviso (não falha as outras).
+- **Gerar romaneio**: um romaneio por lote.
+- `batch_id` só com só `status` → `400` (escolha de lote exige seleção ou transportadora).
+
+Adicionar a lote: sem `batch_id` usa o lote pendente mais recente da
+transportadora; com, precisa ser um dos de `pending-batches`. Nunca cria lote —
+exceto no card sem `batch_id` (último lote pendente do CD21, cria se não houver).
+
+| Ação | Rota | Resposta |
+|---|---|---|
+| Gerar lote | `POST /api/batch/pdv-sales-requests/generate` | `201 { batches, skipped, warnings }` |
+| Adicionar a lote | `POST /api/batch/pdv-sales-requests/add` | `200 { batches, skipped, warnings }` |
+| Gerar romaneio | `POST /api/batch/pdv-sales-requests/delivery-note` | `200 { batches, skipped, warnings }` |
+| Lotes pendentes (opções de `batch_id`) | `GET /api/batch/pdv-sales-requests/pending-batches?status=&cd=&transporter_id=` | `200 [{ id, number, status, total_volumes, delivery_note_generated_at, createdAt }]` |
+
+- `batches`: lotes criados / que receberam notas / com romaneio gerado.
+- Sucesso parcial (só com `status`, mais de uma transportadora): `2xx` com
+  `warnings` (frases prontas pra toast) e `skipped`
+  `[{ reason_code, reason, transporter_id, transporter_name, sales_request_ids, order_numbers }]`.
+  `reason_code`: `NO_PENDING_BATCH` (sem lote pendente), `NO_TRANSPORTER`
+  (nota de venda sem transportadora), `FAILED` (erro naquela transportadora).
+  Ex.: `"Sem lote pendente no CD21 para as transportadoras: ADT - CD 17. Essas solicitações não foram adicionadas."`
+- Nada processado → `400 { error }` com a mensagem amigável. Exemplos:
+  - `Nenhuma solicitação sem lote em "Pendente expedição ADT" da transportadora CD 12.`
+  - `Nenhuma solicitação com lote finalizado aguardando romaneio em "Embarca hoje".`
+  - `A solicitação do pedido 123 já está em um lote.` / `Nem todas as solicitações estão sem lote. Já em lote: pedidos 123, 456.`
+  - `A solicitação do pedido 123 ainda não está em um lote.` / `Nem todas as solicitações estão em um lote. Sem lote: pedidos 123.`
+  - `Nem todas as solicitações selecionadas estão em "Pendente expedição ADT" da transportadora CD 12. Fora: pedidos 123.`
+  - `Nenhum lote pendente da transportadora JADLOG no CD21. Gere um lote primeiro.`
+  - Erros de nota (sem chave, produto não mapeado, nota em outro lote) continuam
+    listando os números.
+
+## Novo: nota de venda ganha referência da nota de transferência
+
+Ao vincular/trocar a nota de transferência, a nota de venda da mesma
+solicitação passa a ter `bonded_invoice = <número da transferência>` e
+`description = "REF: <número>"`. Ao desvincular (troca pra TRANSPORTADORA,
+reenvio pra análise, exclusão), os dois são limpos. Nada muda nas rotas.
+
+## Novo: filtro por transportadora + transportadoras em uso no "Embarque hoje"
+
+- `GET /sales-request/transporters/ship-today` → `200 [{ id, name, cnpj }]`:
+  transportadoras das notas de venda das solicitações em `SHIP_TODAY` (escopo
+  da tela do acesso, ordenado por nome).
+- Listagem/quadro: `filters[transporter_id]=<uuid>` (ou array / separado por
+  vírgula) — filtra pela transportadora da nota de venda.
+- `filters[in_batch]=false|true` — nota de venda ainda sem lote / já em lote do CD21.
+- Situação do lote, valor `true` (transportadora opcional, via `filters[transporter_id]`):
+  `filters[without_batch]=true` (sem lote), `filters[open_batch]=true` (em lote
+  pendente), `filters[pending_delivery_note]=true` (lote finalizado sem romaneio).
+  Ex.: `filters[open_batch]=true` sozinho, ou com `&filters[transporter_id]=<uuid>`.
+- Mesmos três pra ADT (valor = `12` ou `17`): `adt_without_batch`,
+  `adt_open_batch`, `adt_pending_delivery_note`.
+- São os mesmos critérios das rotas de lote acima: o que o filtro mostra é o que
+  a rota pega sem `sales_request_ids`.
+
+## Novo: `selectable` e `actions` em cada coluna do quadro
+
+Toda coluna de `GET /sales-request` ganha os dois campos (`key`/`label`/
+`description` continuam iguais). Hoje só `shipping` e `ship_today` (CD21)
+declaram `selectable: true` + ações de lote; as demais vêm `selectable: false`.
+Toda coluna (de toda tela) traz, por último, `copy_link`. Coluna não declara
+filtros — os filtros de cima são os da listagem, montados pelo front.
+
+- `actions[]`: `{ key, label, method, endpoint, fixed_body, selection, modal, scope, input }`.
+  - `copy_link` (`label: "Copiar link"`): só front, `method`/`endpoint` `null`,
+    `scope: ["card"]` (menu de 3 pontinhos), `selection: "none"` — copia o link
+    da solicitação do card. `method: null` = ação sem chamada ao back.
+  - `fixed_body` sempre vai no body; o front acrescenta `sales_request_ids` e,
+    no add, `batch_id`.
+  - `input` (só no header): `{ param, label, value_type, options?, options_endpoint? }`,
+    valor que vai no body além do `fixed_body` — em `shipping`, o CD
+    (`param: "cd"`, `options` 12/17, perguntado antes de confirmar); em
+    `ship_today`, `transporter_id` (`options_endpoint`
+    `/api/sales-request/transporters/ship-today`).
+  - `scope: ["header", "card"]`. **No card manda só `sales_request_ids: [id]`**
+    (+ `fixed_body`) — sem CD/transportadora, o back age só sobre aquela
+    solicitação.
+  - `modal: "add_to_batch"`: escolher o lote em
+    `GET /api/batch/pdv-sales-requests/pending-batches` (com `status` + `cd`/
+    `transporter_id` quando houver; sem eles, todos os pendentes de saída do
+    CD21). Sem `batch_id` no add: com CD/transportadora usa o pendente mais
+    recente dela; só com ids usa o último lote pendente do CD21 (cria se não houver).
+  - `selection`: `optional` nas duas colunas — sem seleção pega todas da coluna
+    (+ CD/transportadora, se mandar) na etapa da ação. `input` também é opcional:
+    sem ele, o back agrupa pela transportadora da nota de venda.
+
+## Novo: `batch_color` no card do quadro + legenda
+
+Card de `GET /sales-request` ganha `batch_color` (hex, toda tela), pela situação
+do lote da nota de venda no CD21 — mesmo critério dos filtros de lote:
+
+| `batch_color` | label | Equivale a |
+|---|---|---|
+| `"#FACC15"` | Sem lote | `filters[without_batch]` |
+| `"#22C55E"` | Lote em aberto | `filters[open_batch]` |
+| `"#3B82F6"` | Lote finalizado sem romaneio | `filters[pending_delivery_note]` |
+| `null` | — | sem nota de venda, ou romaneio já gerado |
+
+Legenda: `GET /sales-request/legend/batch-colors` → `200 [{ label, color }]`
+(mesmas cores do card; não fixar no front).

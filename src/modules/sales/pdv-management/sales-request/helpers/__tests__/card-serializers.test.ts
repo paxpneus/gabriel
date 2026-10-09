@@ -69,7 +69,7 @@ describe("toBoardCard", () => {
     const card = toBoardCard(boardRow, "store");
 
     expect(sortedKeys(card)).toEqual(
-      ["id", "next_action", "order", "saleInvoice", "shipping_label", "status"].sort(),
+      ["batch_color", "id", "next_action", "order", "saleInvoice", "shipping_label", "status"].sort(),
     );
     expect(sortedKeys(card.order!)).toEqual(
       ["customer", "date", "id", "number_order_channel", "number_order_system"].sort(),
@@ -86,6 +86,15 @@ describe("toBoardCard", () => {
 
   it("store: sem order.unitBusiness", () => {
     expect(toBoardCard(boardRow, "store").order).not.toHaveProperty("unitBusiness");
+  });
+
+  it.each([
+    ["WITHOUT_BATCH", "#FACC15"],
+    ["OPEN_BATCH", "#22C55E"],
+    ["FINISHED_WITHOUT_DELIVERY_NOTE", "#3B82F6"],
+    [null, null],
+  ])("batch_stage %s → batch_color %s", (stage, color) => {
+    expect(toBoardCard({ ...boardRow, batch_stage: stage }, "cd21").batch_color).toBe(color);
   });
 
   it("next_action respeita has_receipt da linha", () => {

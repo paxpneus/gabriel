@@ -43,6 +43,7 @@ import {
 import { MagentoSyncQueue } from "../../../../magentoV2/queues/magento-sync.queue";
 import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import { buildInvoiceTrackingUrl } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/tracking-url";
+import { buildInvoiceReferenceDescription } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/reference-description";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import invoiceItemsService from "../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import {
@@ -1740,7 +1741,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       description: invoiceFound?.description
         ? invoiceFound.description
         : nfeRef
-          ? `REF: ${nfeRef}`
+          ? buildInvoiceReferenceDescription(nfeRef)
           : null,
       destination_uf: destinationUf,
       destination_city: destinationCity,

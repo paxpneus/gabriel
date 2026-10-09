@@ -1,4 +1,5 @@
 import { PdvSalesRequestStatus } from "../sales-request/pdv-sales-request.types";
+import { ADT_TRANSPORTER_CDS } from "../sales-request/helpers/transporter-cd";
 import {
   PdvAccessContext,
   PdvAccessScreen,
@@ -7,6 +8,32 @@ import {
 // Tela do Kanban — diferente de PdvAccessScreen (auth): Televendas é
 // STORE_REQUEST no acesso, mas tem quadro próprio aqui.
 export type PdvBoardScreen = "store" | "finance" | "cd21" | "telesales";
+
+// Origem dos valores da entrada: lista fixa (CD) ou endpoint (transportadoras).
+export interface PdvColumnValueSource {
+  value_type: "cd" | "transporter";
+  options?: { value: string; label: string }[];
+  options_endpoint?: string;
+}
+
+// O que o front pergunta antes de confirmar a ação do header — card manda só sales_request_ids.
+export interface PdvColumnActionInput extends PdvColumnValueSource {
+  param: "cd" | "transporter_id";
+  label: string;
+}
+
+// method/endpoint null = ação só do front (ex.: copy_link), sem chamada ao back.
+export interface PdvColumnAction {
+  key: string;
+  label: string;
+  method: "POST" | null;
+  endpoint: string | null;
+  fixed_body: Record<string, string>;
+  selection: "none" | "optional" | "required";
+  modal: string | null;
+  scope: ("header" | "card")[];
+  input: PdvColumnActionInput | null;
+}
 
 export interface PdvBoardColumn {
   key: string;
@@ -20,6 +47,9 @@ export interface PdvBoardColumn {
   extra?: boolean;
   // Só com include_closed (FINISHED/EXCLUDED nunca vêm por padrão).
   closed?: boolean;
+  // Cards selecionáveis (ações em lote) + ações montadas dinamicamente pelo front.
+  selectable?: boolean;
+  actions?: readonly PdvColumnAction[];
 }
 
 export interface PdvBoardVisibilityFlags {
@@ -28,6 +58,54 @@ export interface PdvBoardVisibilityFlags {
 }
 
 const S = PdvSalesRequestStatus;
+
+const ADT_CD_SOURCE: PdvColumnValueSource = {
+  value_type: "cd",
+  options: ADT_TRANSPORTER_CDS.map((cd) => ({ value: cd, label: `CD ${cd}` })),
+};
+
+const SHIP_TODAY_TRANSPORTER_SOURCE: PdvColumnValueSource = {
+  value_type: "transporter",
+  options_endpoint: "/api/sales-request/transporters/ship-today",
+};
+
+// As 3 ações de lote do PDV (batch.controller.ts, /pdv-sales-requests/*).
+function pdvBatchActions(
+  status: PdvSalesRequestStatus,
+  selection: PdvColumnAction["selection"],
+  input: PdvColumnActionInput | null,
+): PdvColumnAction[] {
+  return [
+    { key: "generate_batch", label: "Gerar lote", path: "generate", modal: null },
+    { key: "add_to_batch", label: "Adicionar a lote", path: "add", modal: "add_to_batch" },
+    { key: "generate_delivery_note", label: "Gerar romaneio", path: "delivery-note", modal: null },
+  ].map(({ path, ...action }) => ({
+    ...action,
+    method: "POST",
+    endpoint: `/api/batch/pdv-sales-requests/${path}`,
+    fixed_body: { status },
+    selection,
+    scope: ["header", "card"],
+    input,
+  }));
+}
+
+// Menu de 3 pontinhos do card, em toda coluna — o front copia o link da solicitação.
+const COPY_LINK_ACTION: PdvColumnAction = {
+  key: "copy_link",
+  label: "Copiar link",
+  method: null,
+  endpoint: null,
+  fixed_body: {},
+  selection: "none",
+  modal: null,
+  scope: ["card"],
+  input: null,
+};
+
+export function boardColumnActions(column: PdvBoardColumn): PdvColumnAction[] {
+  return [...(column.actions ?? []), COPY_LINK_ACTION];
+}
 
 const STORE_OPEN_COLUMN: PdvBoardColumn = {
   key: "open",
@@ -169,6 +247,12 @@ export const PDV_BOARD_SCREENS: Record<
       description: "Conferência física e romaneio",
       statuses: [S.SHIPPING],
       highlighted: true,
+      selectable: true,
+      actions: pdvBatchActions(S.SHIPPING, "optional", {
+        param: "cd",
+        label: "Transportadora",
+        ...ADT_CD_SOURCE,
+      }),
     },
     {
       key: "ship_today",
@@ -176,6 +260,12 @@ export const PDV_BOARD_SCREENS: Record<
       description: "Transportadora — conferência física e romaneio",
       statuses: [S.SHIP_TODAY],
       highlighted: true,
+      selectable: true,
+      actions: pdvBatchActions(S.SHIP_TODAY, "optional", {
+        param: "transporter_id",
+        label: "Transportadora",
+        ...SHIP_TODAY_TRANSPORTER_SOURCE,
+      }),
     },
     {
       key: "finished",

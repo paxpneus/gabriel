@@ -191,6 +191,18 @@ export class PdvSalesRequestController extends BaseController<
       pdvAccess(READ_SCREENS),
       this.getStatusSummary,
     );
+    // Opções do filtro filters[transporter_id] — 2 segmentos pelo mesmo motivo de /orders/eligible.
+    this.router.get(
+      "/transporters/ship-today",
+      pdvAccess(READ_SCREENS),
+      this.getShipTodayTransporters,
+    );
+    // Legenda de batch_color do card — 2 segmentos pelo mesmo motivo de /orders/eligible.
+    this.router.get(
+      "/legend/batch-colors",
+      pdvAccess(READ_SCREENS),
+      this.getBatchColorLegend,
+    );
     // 2 segmentos de propósito — 1 segmento cairia em show() (GET /:id do
     // BaseController).
     this.router.get(
@@ -831,6 +843,25 @@ export class PdvSalesRequestController extends BaseController<
   getStatusSummary = async (req: Request, res: Response): Promise<Response> => {
     try {
       const data = await this.service.getStatusSummary(this.access(req));
+      return res.json(data);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  getBatchColorLegend = async (
+    _req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    return res.json(this.service.getBatchColorLegend());
+  };
+
+  getShipTodayTransporters = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const data = await this.service.findShipTodayTransporters(this.access(req));
       return res.json(data);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });

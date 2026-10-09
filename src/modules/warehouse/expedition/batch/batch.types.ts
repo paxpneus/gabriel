@@ -61,3 +61,33 @@ export interface ExpeditionBatchCreationAttributes extends Omit<
   ExpeditionBatchAttributes,
   "id" | "createdAt" | "updatedAt"
 > {}
+
+// Ações de lote do PDV: coluna (SHIPPING usa cd 12/17, SHIP_TODAY usa transporterId); sem salesRequestIds pega todas da coluna (+ transportadora).
+export interface PdvBatchActionParams {
+  status: string;
+  cd?: string;
+  transporterId?: string;
+  salesRequestIds?: string[];
+}
+
+export enum PdvBatchSkipReason {
+  NO_PENDING_BATCH = "NO_PENDING_BATCH",
+  NO_TRANSPORTER = "NO_TRANSPORTER",
+  FAILED = "FAILED",
+}
+
+// Grupo (transportadora) que ficou de fora numa ação com sucesso parcial.
+export interface PdvBatchSkipped {
+  reason_code: PdvBatchSkipReason;
+  reason: string;
+  transporter_id: string | null;
+  transporter_name: string | null;
+  sales_request_ids: string[];
+  order_numbers: string[];
+}
+
+export interface PdvBatchActionResult<T> {
+  batches: T[];
+  skipped: PdvBatchSkipped[];
+  warnings: string[];
+}

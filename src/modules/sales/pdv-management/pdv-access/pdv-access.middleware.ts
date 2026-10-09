@@ -65,6 +65,37 @@ export function pdvAccess(requiredScreens: PdvAccessScreen[]) {
   };
 }
 
+// Só usuário logado na tela exigida — link (x-pdv-token) não vale.
+export function pdvLoginAccess(requiredScreens: PdvAccessScreen[]) {
+  return async (
+    req: PdvAccessRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<Response | void> => {
+    try {
+      const loginResult = await resolveLoginAccess(
+        req.cookies?.token,
+        requiredScreens,
+      );
+      if (!loginResult) {
+        return res
+          .status(401)
+          .json({ error: "Faça login com um usuário do CD21 para usar esta ação." });
+      }
+      if ("error" in loginResult) {
+        return res
+          .status(loginResult.error.status)
+          .json({ error: loginResult.error.message });
+      }
+
+      req.pdvAccess = loginResult.context;
+      return next();
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+}
+
 // Rota de login existente que também aceita o link PDV: com x-pdv-token usa só o
 // link (sempre CD21, valida a tela); sem ele, cada middleware de login roda como
 // antes. Um handler por middleware, retornando a promise dele, pro Express 5
