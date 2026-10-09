@@ -80,8 +80,6 @@ services:
       - "3000"
     volumes:
       - /data/compose/5/data/imports:/app/data/imports:ro
-      # Mesmo volume persistente usado pelo worker para gerar os CSVs da Bling.
-      # A API só precisa lê-lo em execuções manuais do populate.
       - stock_movement_csv:/app/data/stock-movements:ro
     environment:
       NODE_ENV: production
@@ -141,7 +139,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PDV_ACCESS_TOKEN_SECRET: ${PDV_ACCESS_TOKEN_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
-
     depends_on:
       postgres:
         condition: service_healthy
@@ -152,7 +149,7 @@ services:
     networks:
       - backend
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+      test: ["CMD-SHELL", "node -e 'require(\"http\").get(\"http://localhost:3000/health\", (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))'"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -215,7 +212,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PDV_ACCESS_TOKEN_SECRET: ${PDV_ACCESS_TOKEN_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
-      
     depends_on:
       postgres:
         condition: service_healthy
@@ -223,6 +219,12 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'require(\"http\").get(\"http://localhost:3001/health\", (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - backend
 
@@ -255,9 +257,6 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       BLING_ORDER_REQUEST_DELAY_MS: ${BLING_ORDER_REQUEST_DELAY_MS}
       BLING_RATE_LIMIT_INTERVAL_MS: ${BLING_RATE_LIMIT_INTERVAL_MS}
-      # Extração diária do CSV de lançamentos de estoque da Bling.
-      # MAX_PRODUCTS/MAX_PAGES precisam permanecer 0 em produção para que o
-      # CSV completo seja registrado como fonte válida.
       BLING_INTEGRATION_ID: ${BLING_INTEGRATION_ID}
       BLING_DEPOSITO_IDS: ${BLING_DEPOSITO_IDS}
       STOCK_MOVEMENTS_CSV_DIR: ${STOCK_MOVEMENTS_CSV_DIR}
@@ -281,7 +280,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PDV_ACCESS_TOKEN_SECRET: ${PDV_ACCESS_TOKEN_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
-      
     volumes:
       - ml_session:/app/ml_session
       - ml_downloads:/app/ml_downloads
@@ -295,10 +293,16 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'require(\"http\").get(\"http://localhost:3002/health\", (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - backend
 
-    # ── 7. Worker Automation ──────────────────────────────────────────────────
+  # ── 7. Worker Automation ──────────────────────────────────────────────────
   worker-automation:
     build:
       context: .
@@ -356,7 +360,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PDV_ACCESS_TOKEN_SECRET: ${PDV_ACCESS_TOKEN_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
-
     depends_on:
       postgres:
         condition: service_healthy
@@ -364,11 +367,16 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'require(\"http\").get(\"http://localhost:3003/health\", (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - backend
 
-# ── 8. Worker Bling ───────────────────────────────────────────────────────
-
+  # ── 8. Worker Bling ───────────────────────────────────────────────────────
   worker-bling:
     build:
       context: .
@@ -418,7 +426,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PDV_ACCESS_TOKEN_SECRET: ${PDV_ACCESS_TOKEN_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
-      
     depends_on:
       postgres:
         condition: service_healthy
@@ -426,6 +433,12 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'require(\"http\").get(\"http://localhost:3004/health\", (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - backend
 
@@ -479,7 +492,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PDV_ACCESS_TOKEN_SECRET: ${PDV_ACCESS_TOKEN_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
-      
     depends_on:
       postgres:
         condition: service_healthy
@@ -487,6 +499,24 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'require(\"http\").get(\"http://localhost:3005/health\", (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - backend
+
+  # ── 10. Autoheal (Monitor de Healthchecks) ───────────────────────────────
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: autoheal
+    restart: unless-stopped
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - backend
 
