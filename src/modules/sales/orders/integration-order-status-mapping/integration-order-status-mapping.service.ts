@@ -46,11 +46,15 @@ export class IntegrationOrderStatusMappingService {
   // actual_situation sem depender de sales_order_snapshots.
   async findExternalStatusIdsByNormalizedStatus(
     normalizedStatuses: string[],
+    integrationId?: string,
   ): Promise<string[]> {
     if (!normalizedStatuses.length) return [];
 
     const rows = await IntegrationOrderStatusMapping.findAll({
-      where: { normalized_status: { [Op.in]: normalizedStatuses } },
+      where: {
+        normalized_status: { [Op.in]: normalizedStatuses },
+        ...(integrationId ? { integration_id: integrationId } : {}),
+      },
       attributes: ["external_status_id"],
     });
 

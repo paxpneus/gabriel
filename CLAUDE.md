@@ -117,6 +117,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `locks.md` — `BLING_SHARED_QUEUE_LOCK`, aging, lock por pedido
   - `rate-limit.md` — rate limit Bling compartilhado, race no dispatch, env docker-compose
 - `bling-nfe-scraping.md` — automação Playwright do Bling pra manifestação de NFe
+- `bling-sync-routes.md` — rotas `/api/bling-sync` (populate em background de produto/nota com limite, populate por id), auth usuário ou application, lock/status em Redis
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login
 - `reports.md` — módulo de snapshot de sales-report
 - `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
