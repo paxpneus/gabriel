@@ -7,6 +7,7 @@ import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
 import { ApiFetchRequest, WebhookQueuePayload } from "../bling-webhook.types";
 import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
+import { BLING_MANUAL_LANE } from "../../../api/bling-rate-limit-lanes";
 import {
   Product,
   ProductConfig,
@@ -780,6 +781,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     return product;
+  }
+
+  protected override rateLimitLane(job: Job<ApiFetchJobPayload>): string {
+    return job.opts.priority === BLING_FETCH_CREATE_PRODUCT_PRIORITY
+      ? BLING_MANUAL_LANE
+      : this.queueName;
   }
 
   async process(job: Job<ApiFetchJobPayload>): Promise<void> {

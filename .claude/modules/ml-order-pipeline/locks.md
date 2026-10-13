@@ -19,7 +19,7 @@ Só `BLING_API_FETCH` ainda usa `BLING_SHARED_QUEUE_LOCK` (sync de catálogo de 
 - **A chave do lock é o id do pedido na Bling** (`id_order_system` uma vez persistido; o `data.id` bruto do webhook em `BlingOrderQueue` antes de existir uma linha local) — único identificador presente em todo estágio do pipeline.
 - **Não reentrante** — um lock Redis NX não pode ser adquirido duas vezes pelo mesmo fluxo lógico. Cada fila migrada trava em exatamente um ponto de entrada por cadeia de chamada.
 - **Os dois grandes loops de reconciler ficaram mais simples, não só rechaveados**: já que fairness-entre-filas deixou de ser preocupação, `reconcileStuckOrders`/`syncInvoicedOrCollectedOrders` foram de 3 aquisições `withSharedLock` separadas por pedido pra **uma** só `withOrderLock` por pedido cobrindo toda a sequência daquele pedido.
-- **Concorrência elevada nas 4 filas de item único**: `NFE_EMISSION`/`CNPJ_VERIFY_CNAE`/`BLING_ORDER_INGESTION` concurrency 1→5, `ML_ORDER_SYNC` 1→10; `limiter`s antigos removidos/afrouxados — o cap real do lado Bling é só `waitForBlingRateLimit()`.
+- **Concorrência das filas de item único**: `NFE_EMISSION`/`CNPJ_VERIFY_CNAE` 5, `ML_ORDER_SYNC` 10, `BLING_ORDER_INGESTION` **2** (a faixa do rate limit atende o job mais antigo primeiro — job ativo a mais só ficava parado esperando vaga, gastando o `maxProcessingMs`); `limiter`s antigos removidos/afrouxados — o cap real do lado Bling é só `waitForBlingRateLimit()` (`rate-limit.md`).
 
 ## Lock por pedido fecha corrupção de escrita simultânea, mas não uma fila chegando cedo demais numa transição
 

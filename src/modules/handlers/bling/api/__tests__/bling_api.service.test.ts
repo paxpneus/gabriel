@@ -41,13 +41,13 @@ jest.mock("../../../../../config/axios", () => ({
 import { redisClient } from "../../../../../config/redis";
 import { waitForBlingRateLimit } from "../bling_api.service";
 
-// TRY_DISPATCH_SCRIPT é a única das duas Lua scripts usadas aqui que
-// referencia "nextAllowed" — usado pra distinguir, no mock genérico de
+// FAIR_DISPATCH_SCRIPT é a única das duas Lua scripts usadas aqui que
+// referencia "claimTimeoutMs" — usado pra distinguir, no mock genérico de
 // `eval`, a chamada que decide liberar/negar o disparo da chamada (separada)
 // que só incrementa o contador diagnóstico — senão as duas competiriam pela
 // mesma fila de retornos programados e o teste contaria errado.
 function isDispatchScript(script: unknown): boolean {
-  return typeof script === "string" && script.includes("nextAllowed");
+  return typeof script === "string" && script.includes("claimTimeoutMs");
 }
 
 function queueDispatchDecisions(...waitMsSequence: number[]): void {

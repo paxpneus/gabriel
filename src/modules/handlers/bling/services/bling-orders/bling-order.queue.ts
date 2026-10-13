@@ -3,6 +3,7 @@ import { BaseQueueService } from "../../../../../shared/utils/base-models/base-q
 import BlingOrderService from "./bling-order.service";
 import { nextStepOnQueue } from "../../../../../shared/types/queue/base-queue";
 import { getBlingIntegration } from "../../api/bling_api.service";
+import { BLING_MANUAL_LANE } from "../../api/bling-rate-limit-lanes";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 
 // Webhook de pedido pode chegar antes de a nota fiscal ficar visível em
@@ -41,7 +42,8 @@ export class BlingOrderQueue extends BaseQueueService<any> {
     super("BLING_ORDER_INGESTION", {
       // Pedidos diferentes só serializam via lock por pedido (withOrderLock)
       // agora, não mais por mutex global entre filas.
-      concurrency: 5,
+      // 2: a faixa do rate limit atende o job mais antigo primeiro — job ativo a mais só fica parado esperando vaga.
+      concurrency: 2,
       limiter: {
         max: 5,
         duration: 1000,
@@ -72,6 +74,12 @@ export class BlingOrderQueue extends BaseQueueService<any> {
     return super.addDelayed(data, jobId, delayMs, {
       priority: NORMAL_ORDER_PRIORITY,
     });
+  }
+
+  protected override rateLimitLane(job: Job<any>): string {
+    return job.opts.priority === FORCE_UPDATE_PRIORITY
+      ? BLING_MANUAL_LANE
+      : this.queueName;
   }
 
   async process(job: Job<any, any, string>): Promise<void> {

@@ -3,6 +3,17 @@ import { Queue, Worker, QueueEvents, Job, DelayedError } from "bullmq";
 import { redisConnection } from "./base-redis";
 import { randomUUID } from "crypto";
 import { alertService } from "../../providers/mail-provider/nodemailer.alert";
+import {
+  createJobContext,
+  jobContext,
+  rateLimitWaitMs,
+  sleepUnlessJobAborted,
+  throwIfJobAborted,
+} from "./job-context";
+
+const STALLED_LIMIT_REASON = "job stalled more than allowable limit";
+const MAX_STALLED_RESCHEDULES = 5;
+const STALLED_RESCHEDULE_DELAY_MS = 30_000;
 
 export type baseQueueOptions = {
   concurrency?: number;
@@ -81,7 +92,7 @@ export abstract class BaseQueueService<T, R = void> {
     this.sharedLockPriority = options.sharedLock?.priority;
 
     if (!options.workless) {
-      const processor =
+      const runJob =
         options.sharedLock && !options.sharedLock.manual
           ? (job: Job<T>) => {
               const token = `${this.queueName}:${job.id ?? "no-id"}:${randomUUID()}`;
@@ -89,6 +100,11 @@ export abstract class BaseQueueService<T, R = void> {
             }
           : (job: Job<T>) =>
               this.runProcessWithTimeout(job, this.maxProcessingMs);
+      const processor = (job: Job<T>) =>
+        jobContext.run(
+          createJobContext(this.rateLimitLane(job), job.timestamp ?? Date.now()),
+          () => runJob(job),
+        );
 
       this.worker = new Worker(this.queueName, processor, {
         connection: redisConnection,
@@ -115,6 +131,15 @@ export abstract class BaseQueueService<T, R = void> {
           constraint ? `| constraint=${constraint}` : "",
           detail ? `| detail=${detail}` : "",
         );
+        if (job && err.message === STALLED_LIMIT_REASON) {
+          this.rescheduleStalledJob(job, err).catch((rescheduleError) =>
+            console.error(
+              `[QUEUE] Falha ao reagendar job stalled ${job.id} da fila "${this.queueName}":`,
+              rescheduleError.message,
+            ),
+          );
+          return;
+        }
         if (job) {
           try {
             this.onFailed(job, err);
@@ -131,6 +156,40 @@ export abstract class BaseQueueService<T, R = void> {
 
   abstract process(job: Job<T>): Promise<R>;
 
+  // Faixa do job nos limiters globais por faixa (ex.: waitForBlingRateLimit). Override pra dividir uma fila em várias faixas.
+  protected rateLimitLane(_job: Job<T>): string {
+    return this.queueName;
+  }
+
+  // Stall = processo morreu/reiniciou com o job ativo, não erro do job — reenfileira em vez de deixar em failed.
+  private async rescheduleStalledJob(job: Job<T>, err: Error): Promise<void> {
+    const countKey = `queue:stalled-reschedules:${this.queueName}:${job.id}`;
+    const count = await redisConnection.incr(countKey);
+    await redisConnection.pexpire(countKey, 24 * 60 * 60 * 1000);
+
+    if (count > MAX_STALLED_RESCHEDULES) {
+      alertService.sendAlert({
+        severity: "HIGH",
+        title: `[${this.queueName}] job ${job.id} travou (stalled) ${count} vezes`,
+        message: `Reagendado ${MAX_STALLED_RESCHEDULES}x após stall e travou de novo — deixado em failed.`,
+      });
+      this.onFailed(job, err);
+      return;
+    }
+
+    // timestamp antigo + delay já venceria na hora; repeat nunca chega aqui (BullMQ não falha repeatable por stall).
+    const { repeat, timestamp, delay, jobId, ...opts } = job.opts;
+    await job.remove();
+    await this.queue.add(job.name, job.data, {
+      ...opts,
+      jobId: job.id,
+      delay: STALLED_RESCHEDULE_DELAY_MS,
+    });
+    console.warn(
+      `[QUEUE] Job ${job.id} da fila "${this.queueName}" travou (stalled) — reagendado em ${STALLED_RESCHEDULE_DELAY_MS / 1000}s (${count}/${MAX_STALLED_RESCHEDULES}).`,
+    );
+  }
+
   private async runProcessWithTimeout(
     job: Job<T>,
     maxProcessingMs?: number,
@@ -140,15 +199,26 @@ export abstract class BaseQueueService<T, R = void> {
     }
 
     let timeoutHandle: NodeJS.Timeout;
+    const startedAt = Date.now();
+    const context = jobContext.getStore();
 
+    // Espera por vaga de rate limit não conta: o timeout é pra job travado, não pra fila da API externa.
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(() => {
-        reject(
-          new Error(
-            `[QUEUE] Job "${job.id}" da fila "${this.queueName}" excedeu ${maxProcessingMs}ms ativo — abortado pela fila.`,
-          ),
+      const check = () => {
+        const waitedMs = context ? rateLimitWaitMs(context) : 0;
+        const remainingMs = maxProcessingMs - (Date.now() - startedAt - waitedMs);
+        if (remainingMs > 0) {
+          timeoutHandle = setTimeout(check, remainingMs);
+          return;
+        }
+        const timeoutError = new Error(
+          `[QUEUE] Job "${job.id}" da fila "${this.queueName}" excedeu ${maxProcessingMs}ms ativo (fora espera de rate limit, ${Math.round(waitedMs / 1000)}s) — abortado pela fila.`,
         );
-      }, maxProcessingMs);
+        // Para o process(job) original no próximo ponto de parada (vaga Bling, lock de pedido) — senão roda junto do retry.
+        context?.abortController.abort(timeoutError);
+        reject(timeoutError);
+      };
+      timeoutHandle = setTimeout(check, maxProcessingMs);
     });
 
     try {
@@ -379,6 +449,7 @@ export abstract class BaseQueueService<T, R = void> {
     const startedAt = Date.now();
 
     while (true) {
+      throwIfJobAborted();
       const acquired = await redisConnection.set(key, token, "PX", ttlMs, "NX");
       if (acquired === "OK") break;
 
@@ -388,18 +459,23 @@ export abstract class BaseQueueService<T, R = void> {
         );
       }
 
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      await sleepUnlessJobAborted(retryDelayMs);
     }
 
     const refreshMs = Math.max(1000, Math.floor(ttlMs / 3));
     const refreshInterval = setInterval(() => {
       this.refreshSharedLock(key, token, ttlMs).catch(() => {});
     }, refreshMs);
+    // Job abortado travado dentro de fn() não segura o pedido pra sempre: para de renovar e o lock expira no TTL.
+    const signal = jobContext.getStore()?.abortController.signal;
+    const stopRefresh = () => clearInterval(refreshInterval);
+    signal?.addEventListener("abort", stopRefresh, { once: true });
 
     try {
       return await fn();
     } finally {
       clearInterval(refreshInterval);
+      signal?.removeEventListener("abort", stopRefresh);
       await this.releaseSharedLock(key, token).catch(() => {});
     }
   }

@@ -10,3 +10,6 @@ const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 // (ver .claude/modules/ai-vision-extraction.md) — nunca buscado de CDN em
 // runtime.
 export const TESSDATA_DIR = path.join(PROJECT_ROOT, "resources", "tessdata");
+
+// Scripts Lua do Redis (EVAL) — fora de src/ porque tsc não copia .lua pro dist.
+export const REDIS_SCRIPTS_DIR = path.join(PROJECT_ROOT, "resources", "redis");

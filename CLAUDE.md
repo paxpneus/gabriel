@@ -108,6 +108,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `index.md` — schema, máquina de estados, vínculo de nota de transferência, análise de comprovante por IA, pendência (Etapa 2)
 
 **Modules** (`.claude/modules/`):
+- `base-queue.md` — `BaseQueueService`: contexto do job (AsyncLocalStorage/faixa de rate limit), reagendamento de job stalled
 - `auth.md` — modelo de tenant/auth scoping cross-cutting, controllers corrigidos vs. ainda vazando entre tenants. Ler primeiro antes de mexer em auth.
 - `ml-order-pipeline/` — pipeline de 6 filas ML→Bling NFe. Ver também `docs/automation/order-pipeline.md` (referência viva da state machine — é ele que se atualiza pra mudança de tabela de estado/lock, não os arquivos daqui)
   - `index.md` — visão geral, link pros filhos
@@ -115,7 +116,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `collection-date.md` — origem do `collection_date`, redesign do `ML-SCRAPING`, bug de timezone
   - `summary-endpoints.md` — endpoints Orders summary/detail, janela 06h–14h, escopo store-only
   - `locks.md` — `BLING_SHARED_QUEUE_LOCK`, aging, lock por pedido
-  - `rate-limit.md` — rate limit Bling compartilhado, race no dispatch, env docker-compose
+  - `rate-limit.md` — rate limit Bling compartilhado, dispatch check-and-claim com faixas por fila (peso/strict), env docker-compose
 - `bling-nfe-scraping.md` — automação Playwright do Bling pra manifestação de NFe
 - `bling-sync-routes.md` — rotas `/api/bling-sync` (populate em background de produto/nota com limite, populate por id), auth usuário ou application, lock/status em Redis
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login
