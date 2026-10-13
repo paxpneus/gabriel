@@ -12,6 +12,7 @@ import {
 import { getNextAction } from "./next-action.rules";
 import { batchColorForStage } from "./batch-colors";
 import { buildShippingLabel } from "./shipping-label";
+import { extractExpeditionBatchSequence } from "../../../../../shared/utils/normalizers/expedition-batch-number";
 
 const RECEIPT_ANALYSIS_FIELDS: readonly PdvReceiptAnalysisField[] = [
   "tipo_comprovante",
@@ -53,6 +54,15 @@ export function pickReceiptAnalysisFields(
 }
 
 // `row` = linha plana de PdvSalesRequestRepository.findBoardColumnPage.
+// Lote do CD21 (include CD21_BATCH_INCLUDE da repository): nome completo + só a sequência.
+function cd21BatchNames(saleInvoice: any) {
+  const batchName: string | null = saleInvoice.batchInvoice?.batch?.number ?? null;
+  return {
+    batch_name: batchName,
+    batch_short_name: extractExpeditionBatchSequence(batchName),
+  };
+}
+
 export function toBoardCard(row: any, screen: PdvBoardScreen): PdvBoardCard {
   const order = row.order;
 
@@ -88,7 +98,10 @@ export function toBoardCard(row: any, screen: PdvBoardScreen): PdvBoardCard {
         }
       : null,
     saleInvoice: row.saleInvoice
-      ? { tracking_url: row.saleInvoice.tracking_url ?? null }
+      ? {
+          tracking_url: row.saleInvoice.tracking_url ?? null,
+          ...cd21BatchNames(row.saleInvoice),
+        }
       : null,
   };
 }
@@ -155,6 +168,7 @@ export function toSalesRequestDetail(
           number_system: plain.saleInvoice.number_system,
           transporter_name: plain.saleInvoice.transporter_name ?? null,
           tracking_url: plain.saleInvoice.tracking_url ?? null,
+          ...cd21BatchNames(plain.saleInvoice),
         }
       : null,
     transferInvoice: plain.transferInvoice

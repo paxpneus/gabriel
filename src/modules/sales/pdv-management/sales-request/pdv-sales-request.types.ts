@@ -354,7 +354,13 @@ export interface PdvBoardCard {
     // Só nas telas que veem todas as lojas (finance/cd21/telesales).
     unitBusiness?: { number: string } | null;
   } | null;
-  saleInvoice: { tracking_url: string | null } | null;
+  saleInvoice: {
+    tracking_url: string | null;
+    // Número do lote da nota no CD21 (null fora de lote do CD21).
+    batch_name: string | null;
+    // Só a sequência do batch_name ("..._LOJA21_0842" → "0842").
+    batch_short_name: string | null;
+  } | null;
 }
 
 export interface PdvBoardColumnResult {
@@ -420,6 +426,10 @@ export interface PdvSalesRequestDetail {
     number_system: string;
     transporter_name: string | null;
     tracking_url: string | null;
+    // Número do lote da nota no CD21 (null fora de lote do CD21).
+    batch_name: string | null;
+    // Só a sequência do batch_name ("..._LOJA21_0842" → "0842").
+    batch_short_name: string | null;
   } | null;
   transferInvoice: { id: string; number_system: string } | null;
   receipts: { id: string; analysis: PdvReceiptAnalysisView | null }[];

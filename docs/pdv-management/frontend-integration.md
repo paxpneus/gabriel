@@ -565,3 +565,18 @@ Legenda: `GET /sales-request/legend/batch-colors` → `200 [{ label, color }]`
   `cursor`/`limit` não se aplicam.
 - `status` obrigatório, **um só** por chamada (mais de um → 400).
   Status inválido → 400; status fora das colunas visíveis pra tela → 403.
+
+## Novo: número do lote no card do quadro e no detalhe
+
+`GET /sales-request` (card) e `GET /sales-request/:id` ganham
+`saleInvoice.batch_name` — nome do lote da nota de venda **no CD21** (toda
+tela, independe de quem acessa) — e `saleInvoice.batch_short_name`, só a
+sequência do lote. Os dois `null` se a nota não está em lote do CD21.
+
+```json
+"saleInvoice": {
+  "tracking_url": "...",
+  "batch_name": "RODONAVES TRANSPS E ENCOMENDAS LTDA_LOJA21_0842",
+  "batch_short_name": "0842"
+}
+```

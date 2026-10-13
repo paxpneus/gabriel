@@ -3,12 +3,9 @@ import sequelize from "../../../config/sequelize"
 import InventoryBatch from "../../../modules/inventory/stock-inventory/inventory-batch/inventory-batch.model"
 import { ExpeditionBatch } from "../../../modules/warehouse"
 import { getBrazilDate } from "./date"
+import { buildExpeditionBatchNumber, formatBatchSequence } from "./expedition-batch-number"
 
 type batchType = 'INVENTORY' | 'ENTRANCE' | 'EXPEDITION' | 'DIVERGENCY'
-
-const formatSequence = (num: number, digits: number = 4): string => {
-  return String(num).padStart(digits, '0')
-}
 
 // Serializa concorrência na geração de número: sem isso, count() + insert não são atômicos
 // e duas transações concorrentes podem calcular a mesma sequência (mesmo com transportadores/números finais diferentes).
@@ -69,7 +66,7 @@ export const setBatchNumber = async (
         transaction
       })
       return getNextAvailableExpeditionNumber(
-        (seq) => `${transporter_name}_LOJA${unitBusinessNumber}_${formatSequence(seq)}`,
+        (seq) => buildExpeditionBatchNumber(transporter_name, unitBusinessNumber, seq),
         count + 1,
         transaction
       )
@@ -81,7 +78,7 @@ export const setBatchNumber = async (
         transaction
       })
       return getNextAvailableExpeditionNumber(
-        (seq) => `${transporter_name}_LOJA${unitBusinessNumber}_${formatSequence(seq)}`,
+        (seq) => buildExpeditionBatchNumber(transporter_name, unitBusinessNumber, seq),
         count + 1,
         transaction
       )
@@ -93,7 +90,7 @@ export const setBatchNumber = async (
         transaction
       })
       return getNextAvailableInventoryNumber(
-        (seq) => `INV_LOJA${unitBusinessNumber}_${formatSequence(seq)}_${getBrazilDate()}`,
+        (seq) => `INV_LOJA${unitBusinessNumber}_${formatBatchSequence(seq)}_${getBrazilDate()}`,
         count + 1,
         transaction
       )
@@ -105,7 +102,7 @@ export const setBatchNumber = async (
         transaction
       })
       return getNextAvailableInventoryNumber(
-        (seq) => `DIV_LOJA${unitBusinessNumber}_${formatSequence(seq)}_${getBrazilDate()}`,
+        (seq) => `DIV_LOJA${unitBusinessNumber}_${formatBatchSequence(seq)}_${getBrazilDate()}`,
         count + 1,
         transaction
       )

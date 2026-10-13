@@ -65,6 +65,25 @@ const boardRow = {
 const sortedKeys = (value: object) => Object.keys(value).sort();
 
 describe("toBoardCard", () => {
+  it("saleInvoice.batch_name = number do lote do CD21, batch_short_name = só a sequência", () => {
+    const card = toBoardCard(
+      {
+        ...boardRow,
+        saleInvoice: {
+          ...boardRow.saleInvoice,
+          batchInvoice: { id: "bi1", batch: { number: "RODONAVES TRANSPS E ENCOMENDAS LTDA_LOJA21_0842" } },
+        },
+      },
+      "cd21",
+    );
+
+    expect(card.saleInvoice).toEqual({
+      tracking_url: "https://track",
+      batch_name: "RODONAVES TRANSPS E ENCOMENDAS LTDA_LOJA21_0842",
+      batch_short_name: "0842",
+    });
+  });
+
   it("só os campos do card (sem order.status, customer.document, receipts, errors, createdAt)", () => {
     const card = toBoardCard(boardRow, "store");
 
@@ -75,7 +94,11 @@ describe("toBoardCard", () => {
       ["customer", "date", "id", "number_order_channel", "number_order_system"].sort(),
     );
     expect(card.order!.customer).toEqual({ name: "Cliente" });
-    expect(card.saleInvoice).toEqual({ tracking_url: "https://track" });
+    expect(card.saleInvoice).toEqual({
+      tracking_url: "https://track",
+      batch_name: null,
+      batch_short_name: null,
+    });
     expect(card.shipping_label).toBe("ADT CD 12");
     expect(card.next_action).toBe("Enviar solicitação para análise");
   });
@@ -148,6 +171,7 @@ describe("toSalesRequestDetail", () => {
       number_system: "900",
       transporter_name: "Transp",
       tracking_url: null,
+      batchInvoice: { id: "bi1", batch: { number: "TRANSP_X_LOJA21_0007" } },
     },
     transferInvoice: null,
     receipts: [
@@ -216,6 +240,14 @@ describe("toSalesRequestDetail", () => {
     expect(detail.receipt_total_difference).toBe(-10);
     expect(detail.next_action).toBe("Confirmar correção");
     expect(detail.shipping_label).toBe("Embarque hoje");
+    expect(detail.saleInvoice).toEqual({
+      id: "inv-1",
+      number_system: "900",
+      transporter_name: "Transp",
+      tracking_url: null,
+      batch_name: "TRANSP_X_LOJA21_0007",
+      batch_short_name: "0007",
+    });
   });
 
   it("análises sem estabelecimento_*/cartao_final, com payment_methods/payment_method", () => {

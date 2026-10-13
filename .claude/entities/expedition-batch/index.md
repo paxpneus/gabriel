@@ -8,6 +8,7 @@ Split by subject:
 - `last-outgoing-batch.md` — `last_outgoing_batch_pending` pointer mechanism
 - `pdv-sales-request.md` — lote/romaneio/inclusão em lote a partir da solicitação PDV (CD21)
 
+- **Formato do `number`** (ENTRANCE/EXPEDITION): `<transportadora>_LOJA<n>_<seq 4 dígitos>` — builder `buildExpeditionBatchNumber` e parser `extractExpeditionBatchSequence` juntos em `src/shared/utils/normalizers/expedition-batch-number.ts` (puro, sem model); `setBatchNumber` (`batch-nomenclature.ts`) usa o builder. Mudou o formato → muda os dois ali.
 - `batch/batch.repository.ts` — `getFullBatch`/`getFullBatches` build a nested include (invoice, batchInvoices, items → product → productConfigs/stocks), all scoped by the batch's own `unit_business_id` via `buildFullIncludes(unitBusinessId)`. A `ProductConfig` include cross-store leak here was found and fixed — any future change to this include must keep `where: { unit_business_id }` on both the `ProductConfig` and `Stock` sub-includes.
 - `scan-logs/scan-logs.service.ts` — matches a scanned physical label against `ProductConfig.gtin` (stripped of leading zeros too) OR the already-resolved `matchedCode` (SKU/mapping code). `gtin_package` matching removed in `m265` (see `../product/index.md`).
 - `scan-logs.service.ts`'s `getPendingVolumesByBatchItem(batchItemId)` (route `GET /pending-volumes/:batchItemId`) returns, per invoice, the exact `vol_number`s still missing for one `ExpeditionBatchItems` (product in the batch): one row `{ productName, invoiceNumberSystem, vol }` per missing volume.

@@ -1,4 +1,4 @@
-import { Op, WhereOptions, fn, col, literal } from "sequelize";
+import { IncludeOptions, Op, WhereOptions, fn, col, literal } from "sequelize";
 import { saleInvoiceTransporterCdExpression } from "./helpers/transporter-cd";
 import {
   hasReceiptLiteral,
@@ -22,6 +22,9 @@ import OrderItems from "../../orders/order_items/order_items.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import Invoice from "../../../warehouse/fiscal/invoices/invoice/invoice.model";
 import PdvSalesRequestReceipt from "../sales-request-receipt/pdv-sales-request-receipt.model";
+import ExpeditionBatch from "../../../warehouse/expedition/batch/batch.model";
+import ExpeditionBatchInvoice from "../../../warehouse/expedition/batch-invoices/batch-invoices.model";
+import { CD21_UNIT_BUSINESS_NUMBER } from "../../../company/unit-business/helpers/cd21-unit-business-number";
 
 // Detalhe (GET /:id) — só o que helpers/card-serializers.ts::toSalesRequestDetail
 // usa. order.id/integrations_id/actual_situation/invoice_id/source_payload são
@@ -46,6 +49,31 @@ const DETAIL_ATTRIBUTES = [
   "receipt_total_difference",
   "transfer_invoice_products_match_sale",
 ];
+
+// Lote do CD21 da nota de venda (no máx. 1 por nota por loja, então o hasOne não duplica linha).
+const CD21_BATCH_INCLUDE: IncludeOptions = {
+  model: ExpeditionBatchInvoice,
+  as: "batchInvoice",
+  attributes: ["id"],
+  required: false,
+  include: [
+    {
+      model: ExpeditionBatch,
+      as: "batch",
+      attributes: ["number"],
+      required: true,
+      include: [
+        {
+          model: UnitBusiness,
+          as: "unitBusiness",
+          attributes: [],
+          where: { number: CD21_UNIT_BUSINESS_NUMBER },
+          required: true,
+        },
+      ],
+    },
+  ],
+};
 
 export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   constructor() {
@@ -85,6 +113,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
           model: Invoice,
           as: "saleInvoice",
           attributes: ["id", "number_system", "transporter_name", "tracking_url"],
+          include: [CD21_BATCH_INCLUDE],
         },
         { model: Invoice, as: "transferInvoice", attributes: ["id", "number_system"] },
         {
@@ -133,6 +162,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
           model: Invoice,
           as: "saleInvoice",
           attributes: ["transporter_name", "tracking_url"],
+          include: [CD21_BATCH_INCLUDE],
         },
       ],
     });
