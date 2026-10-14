@@ -100,3 +100,8 @@ Bling (`nf.situacao === 2`, `bling-api-fetch.queue.ts`) e Tecinco/import manual/
 - **Lote (`bondReturnInvoice` e `cancelInvoice`, via `applyCancellation`)**: `removeBatchInvoice` reseta o status pra `OPEN`, então roda **antes** do `CANCELLED`; lote fechado (`CLOSED_EXPEDITION_BATCH_STATUSES` = `FINISHED`/`CANCELLED`, `batch.types.ts`) mantém a nota no lote (nota já expedida e devolvida).
 - Kardex: `stock-movements.service.ts` ignora notas `CANCELLED` ao montar/backfill de movimentos — a saída devolvida some do rebuild enquanto a devolução (entrada) conta; mesmo efeito do bond manual.
 
+
+## Rotas temporárias de manutenção (`invoice-maintenance/`) — remover quando a migração terminar
+Só disparam os scripts em processo filho (dev: `npx tsx src/scripts/...ts`; build: `node dist/scripts/...js`), saída no log do servidor; respondem 202 com o `pid`. `authenticate` apenas (sem model → sem permissão por entidade). `dryRun` via body `{ "dryRun": true }` ou `?dryRun=true` → `DRY_RUN=true` no script.
+- `POST /api/invoice-maintenance/reprocess-return-invoices` → `src/scripts/bling/reprocess-return-invoices.ts`
+- `POST /api/invoice-maintenance/open-return-invoices` → `src/scripts/invoices/open-return-invoices.ts`
