@@ -6,8 +6,7 @@ export type InvoiceUnitBusinessAttributesStatus =
   | "FREE_TO_SCHEDULE"
   | "WAITING_SCHEDULE_SALES"
   | "SCHEDULED"
-  | "LATE"
-  | "PENDING_CANCELLED_SYSTEM";
+  | "LATE";
 
 export interface InvoiceUnitBusinessAttributesAttributes {
   id: string;

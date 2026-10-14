@@ -112,7 +112,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         {
           model: Invoice,
           as: "saleInvoice",
-          attributes: ["id", "number_system", "transporter_name", "tracking_url"],
+          attributes: ["id", "number_system", "transporter_name", "tracking_url", "printed_label"],
           include: [CD21_BATCH_INCLUDE],
         },
         { model: Invoice, as: "transferInvoice", attributes: ["id", "number_system"] },
@@ -161,7 +161,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         {
           model: Invoice,
           as: "saleInvoice",
-          attributes: ["transporter_name", "tracking_url"],
+          attributes: ["transporter_name", "tracking_url", "printed_label"],
           include: [CD21_BATCH_INCLUDE],
         },
       ],
@@ -207,6 +207,24 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         ],
         status: { [Op.notIn]: TERMINAL_PDV_SALES_REQUEST_STATUSES },
       },
+    });
+  }
+
+  // Cancelamento por devolução da nota de venda — qualquer status, inclusive FINISHED/INVOICE_CANCELLED.
+  async findNotCancelledBySaleInvoiceId(
+    saleInvoiceId: string,
+  ): Promise<PdvSalesRequest[]> {
+    return this.findAll({
+      where: {
+        sale_invoice_id: saleInvoiceId,
+        status: {
+          [Op.notIn]: [
+            PdvSalesRequestStatus.CANCELLED,
+            PdvSalesRequestStatus.EXCLUDED,
+          ],
+        },
+      },
+      attributes: ["id"],
     });
   }
 

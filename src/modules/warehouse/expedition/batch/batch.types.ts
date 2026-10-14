@@ -3,6 +3,12 @@ import { InvoiceItemsAttributes } from "../../fiscal/invoices/invoice-items/invo
 import { InvoiceAttributes } from "../../fiscal/invoices/invoice/invoice.types";
 import { BatchInvoiceItemsAttributes } from "../batch-invoice-items/batch-invoice-items.types";
 import { ExpeditionBatchInvoiceAttributes } from "./../batch-invoices/batch-invoices.types";
+// Lote fechado: não aceita mais remover nota (removeBatchInvoice).
+export const CLOSED_EXPEDITION_BATCH_STATUSES: readonly string[] = [
+  "FINISHED",
+  "CANCELLED",
+];
+
 export interface ExpeditionBatchAttributes {
   id: string;
   number: string;

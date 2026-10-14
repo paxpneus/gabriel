@@ -30,8 +30,8 @@
   `"C"`) it dropped out of that list entirely and was never re-enqueued —
   `isCancelledInvoice`/`isInvoiceCancellationStatus` in
   `src/shared/utils/xml/invoice-xml.ts` (which does correctly read
-  `cabecalho.situacao`/`fiscal.situacao_nfe === "C"` and set the invoice to
-  `PENDING_CANCELLED_SYSTEM`) simply never received fresh data for that
+  `cabecalho.situacao`/`fiscal.situacao_nfe === "C"` and cancel the invoice
+  directly — `CANCELLED` + out of open batch, see `.claude/entities/invoice/index.md`) simply never received fresh data for that
   invoice again. **Fixed** by also querying `situacao: "C"` per
   branch/tipo in `migrateNotasFiscais`, so cancelled notas get re-enqueued
   through the same `invoice_xml`/`sync` job (same jobId format — safe to

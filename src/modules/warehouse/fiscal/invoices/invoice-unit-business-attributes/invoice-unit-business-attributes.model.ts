@@ -67,7 +67,6 @@ InvoiceUnitBusinessAttributes.init(
         "SCHEDULED",
         "LATE",
         "CANCELLED",
-        "PENDING_CANCELLED_SYSTEM",
       ),
       allowNull: false,
       defaultValue: "PENDING",

@@ -15,8 +15,7 @@ export type InvoiceStatus =
   | "FREE_TO_SCHEDULE"
   | "WAITING_SCHEDULE_SALES"
   | "SCHEDULED"
-  | "LATE"
-  | "PENDING_CANCELLED_SYSTEM";
+  | "LATE";
 export interface InvoiceAttributes {
   id: string;
   customer_name: string;
@@ -96,7 +95,7 @@ export interface FullInvoiceAttributes {
   createdAt?: Date;
   updatedAt?: Date;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes;
-  batchInvoice?: ExpeditionBatchInvoiceAttributes;
+  batchInvoice?: ExpeditionBatchInvoiceAttributes & { batch?: { status: string } };
   printed_label?: boolean;
   emitted_at?: Date;
   number_system?: string;
@@ -245,3 +244,13 @@ export type SefazManifestationStatus =
   | "AGUARDANDO_PROCNFE"
   | "PROCNFE_DESISTIDO";
 
+
+// Nota alvo de cancelamento direto (cancelInvoice/bondReturnInvoice): status por unit business + lote.
+export interface InvoiceCancellationTarget {
+  id: string;
+  number_system: string;
+  bonded_invoice: string | null;
+  statuses: InvoiceStatus[];
+  batchInvoiceId: string | null;
+  batchStatus: string | null;
+}

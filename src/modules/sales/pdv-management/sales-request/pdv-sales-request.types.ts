@@ -13,9 +13,7 @@ export enum PdvSalesRequestStatus {
   SHIP_TODAY = "SHIP_TODAY",
   FINISHED = "FINISHED",
   CANCELLED = "CANCELLED",
-  // Nota de venda ou de transferência vinculada foi cancelada pela Bling/
-  // Tecinco (ver PdvSalesRequestService.handleInvoiceCancelled) — bloqueia
-  // o fluxo até uma ação humana decidir reabrir ou criar nova solicitação.
+  // Legado: nota cancelada agora vai direto pra CANCELLED (handleInvoiceCancelled); só solicitações antigas ficam aqui.
   INVOICE_CANCELLED = "INVOICE_CANCELLED",
   // Destino de deleteRequest — a solicitação nunca é apagada de fato, só
   // zerada (ver PdvSalesRequestService.deleteRequest): mantém sale_invoice_id,

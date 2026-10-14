@@ -78,9 +78,8 @@ export const syncOrderInternalStatus = async (
       orderId: internalOrder.id,
     });
 
-    // Cancela sozinho uma PdvSalesRequest ativa pro pedido — diferente de
-    // handleInvoiceCancelled (nota cancelada bloqueia pra decisão humana),
-    // aqui o pedido em si já foi cancelado na origem, não há o que decidir.
+    // Cancela sozinho uma PdvSalesRequest ativa pro pedido — o pedido em si
+    // já foi cancelado na origem, não há o que decidir.
     // Só situação 12: 21/748772 também mapeiam pra CANCELLED, mas não valem
     // como cancelamento pro PDV.
     if (isPdvCancelledSituation(blingSituationId)) {

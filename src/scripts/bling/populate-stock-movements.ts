@@ -936,7 +936,7 @@ async function buildIncomingInvoiceMovementTypeMap(
         attributes: ["type", "unit_business_id"],
         where: {
           unit_business_id: UNIT_BUSINESS_ID,
-          status: { [Op.notIn]: ["CANCELLED", "PENDING_CANCELLED_SYSTEM"] },
+          status: { [Op.ne]: "CANCELLED" },
         },
       },
     ],

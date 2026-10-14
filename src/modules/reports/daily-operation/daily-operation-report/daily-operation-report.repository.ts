@@ -358,7 +358,6 @@ export class DailyOperationReportRepository {
     END AS hours_batch_to_fully_scanned,
     CASE
       WHEN ia.status = 'CANCELLED'                THEN 'cancelled'
-      WHEN ia.status = 'PENDING_CANCELLED_SYSTEM' THEN 'pending_cancelled'
       WHEN ia.status = 'FINISHED'                 THEN 'completed'
       ELSE 'open'
     END AS snapshot_status,
@@ -542,7 +541,7 @@ export class DailyOperationReportRepository {
                 AND snapshot_status = 'cancelled'
             )::integer AS invoices_outgoing_cancelled,
 
-            -- Cancelamento pendente no sistema (status PENDING_CANCELLED_SYSTEM → snapshot_status 'pending_cancelled').
+            -- 'pending_cancelled' só existe em snapshot antigo (status PENDING_CANCELLED_SYSTEM foi removido).
             -- Mesma lógica: fora dos KPIs operacionais, dentro do indicador de cancelamento.
             COUNT(*) FILTER (
               WHERE type = 'OUTGOING'

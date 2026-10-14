@@ -6,6 +6,7 @@ import {
   InvoiceAttributes,
   InvoiceCreationData,
   ItemWithFiscal,
+  InvoiceCancellationTarget,
   PendingBatchByTransporterRow,
 } from "./invoice.types";
 import BaseRepository from "../../../../../shared/utils/base-models/base-repository";
@@ -975,6 +976,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       InvoiceAttributes & { status: string; batch_generated: boolean }
     >,
     attrWhere?: WhereOptions,
+    transaction?: Transaction,
   ): Promise<void> {
     const { status, batch_generated, ...invoiceData } = data;
 
@@ -982,6 +984,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       Object.keys(invoiceData).length > 0
         ? Invoice.update(invoiceData, {
             where: { id: { [Op.in]: invoiceIds } },
+            transaction,
           })
         : Promise.resolve(),
 
@@ -996,10 +999,64 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
                 invoice_id: { [Op.in]: invoiceIds },
                 ...attrWhere,
               },
+              transaction,
             },
           )
         : Promise.resolve(),
     ]);
+  }
+
+  // Nota de saída referenciada pelo refNFe de uma devolução.
+  async findOutgoingByXmlKey(
+    xmlKey: string,
+  ): Promise<InvoiceCancellationTarget | null> {
+    return this.findCancellationTarget({ xml_key: xmlKey }, { type: "OUTGOING" });
+  }
+
+  async findCancellationTargetById(
+    invoiceId: string,
+  ): Promise<InvoiceCancellationTarget | null> {
+    return this.findCancellationTarget({ id: invoiceId });
+  }
+
+  // Status de cada unit business + status do lote, pra saber se ainda dá pra tirar a nota dele.
+  private async findCancellationTarget(
+    where: WhereOptions,
+    attrWhere?: WhereOptions,
+  ): Promise<InvoiceCancellationTarget | null> {
+    const data = await this.findOne({
+      where,
+      attributes: ["id", "number_system", "bonded_invoice"],
+      include: [
+        {
+          model: InvoiceUnitBusinessAttributes,
+          as: "unitBusinessAttributes",
+          required: true,
+          ...(attrWhere && { where: attrWhere }),
+          attributes: ["status"],
+        },
+        {
+          model: ExpeditionBatchInvoice,
+          as: "batchInvoice",
+          required: false,
+          attributes: ["id"],
+          include: [
+            { model: ExpeditionBatch, as: "batch", attributes: ["status"] },
+          ],
+        },
+      ],
+    });
+    if (!data) return null;
+
+    const plain = data.get({ plain: true }) as any;
+    return {
+      id: plain.id,
+      number_system: plain.number_system,
+      bonded_invoice: plain.bonded_invoice ?? null,
+      statuses: plain.unitBusinessAttributes.map((attr: any) => attr.status),
+      batchInvoiceId: plain.batchInvoice?.id ?? null,
+      batchStatus: plain.batchInvoice?.batch?.status ?? null,
+    };
   }
 
   async createInvoice(

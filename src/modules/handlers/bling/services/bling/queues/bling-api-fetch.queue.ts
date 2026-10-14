@@ -43,7 +43,7 @@ import {
 import { MagentoSyncQueue } from "../../../../magentoV2/queues/magento-sync.queue";
 import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import { buildInvoiceTrackingUrl } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/tracking-url";
-import { buildInvoiceReferenceDescription } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/reference-description";
+import { isReturnInvoicePurpose } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/return-invoice";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import invoiceItemsService from "../../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import {
@@ -94,6 +94,8 @@ function parseBlingDate(date: string) {
 // Ex: "94Y XL FR CONTINENTALSPORT CONTACT 5P MO" -> "XL FR CONTINENTALSPORT CONTACT 5P MO"
 // Padrão: 2 ou 3 dígitos seguidos de 1 ou 2 letras (load index + speed rating).
 const LOAD_INDEX_REGEX = /^\d{2,3}[A-Za-z]{1,2}$/;
+// situacao Bling de NF-e autorizada: 5 autorizada, 6 emitida DANFE, 7 registrada (4 = rejeitada também tem chave).
+const BLING_AUTHORIZED_INVOICE_SITUATIONS = [5, 6, 7];
 
 // ─── Extrai measure e line do nome do produto ─────────────────────────────────
 // measure: token com padrão numérico + barra + letra  ex: "165/70R14", "192/20R"
@@ -220,6 +222,7 @@ export function extractPartiesFromXml(xml: string) {
   const refNFeMatch = xml.match(/<refNFe>(\d{44})<\/refNFe>/);
   const refNfeResult = refNFeMatch ? refNFeMatch[1] : null;
   const refNFe = refNfeResult ? Number(refNfeResult.slice(25, 34)) : null;
+  const isReturnInvoice = isReturnInvoicePurpose(nfe?.ide?.finNFe);
 
   const emit = nfe?.emit ?? {};
   const dest = nfe?.dest ?? {};
@@ -255,6 +258,8 @@ export function extractPartiesFromXml(xml: string) {
     transporterCity,
     transporterUf,
     refNFe: refNFe !== null ? String(refNFe) : null,
+    refNFeKey: refNfeResult,
+    isReturnInvoice,
   };
 }
 
@@ -1561,7 +1566,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     let transporter_document: string | null = null;
     let transporter_city: string | null = null;
     let transporter_uf: string | null = null;
-    let nfeRef: string | null = null;
+    let nfeRefKey: string | null = null;
+    let isReturnInvoice = false;
     let destinationUfFromXml: string | null = null;
     let destinationCityFromXml: string | null = null;
     let fiscalTotals: ReturnType<
@@ -1582,7 +1588,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           transporter_document = extracted.transporterDocument;
           transporter_city = extracted.transporterCity;
           transporter_uf = extracted.transporterUf;
-          nfeRef = extracted.refNFe;
+          nfeRefKey = extracted.refNFeKey;
+          isReturnInvoice = extracted.isReturnInvoice;
           destinationUfFromXml = extracted.destinationUf || null;
           destinationCityFromXml = extracted.destinationCity || null;
           fiscalTotals = extractInvoiceFiscalTotalsFromXml(xmlContent);
@@ -1714,8 +1721,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       String(nf.id),
     );
 
-    const invoiceFound = existingInvoice;
-
     const invoiceBaseData = {
       id_system: String(nf.id),
       customer_name: customerName,
@@ -1738,11 +1743,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       transporter_id: transporter?.id ?? null,
       transporter_document: transporter?.cnpj ?? transporter_document ?? null,
       transporter_name: transporter?.name ?? transporter_name ?? null,
-      description: invoiceFound?.description
-        ? invoiceFound.description
-        : nfeRef
-          ? buildInvoiceReferenceDescription(nfeRef)
-          : null,
       destination_uf: destinationUf,
       destination_city: destinationCity,
       invoice_value: invoiceValue,
@@ -1762,10 +1762,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // ─── Resolve initialStatus para novas invoices ────────────────────────────
 
     const resolveInitialStatus = (): InvoiceUnitBusinessAttributesStatus => {
-      if (invoiceType === "OUTGOING") {
-        if (nf.situacao === 2) return "PENDING_CANCELLED_SYSTEM";
-        return "OPEN";
-      }
+      if (nf.situacao === 2) return "CANCELLED";
+      if (invoiceType === "OUTGOING") return "OPEN";
+      // Devolução não passa por agendamento de recebimento.
+      if (isReturnInvoice) return "OPEN";
       return "WAITING_SCHEDULE_SALES";
     };
 
@@ -1902,10 +1902,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     } else {
       await invoiceService.updateInvoicesForAllUnitBusiness(
         [existingInvoice.id],
-        {
-          ...invoiceBaseData,
-          ...(nf.situacao === 2 ? { status: "PENDING_CANCELLED_SYSTEM" } : {}),
-        },
+        invoiceBaseData,
       );
 
       // Backfill — só tem efeito quando a linha nunca passou por
@@ -1959,7 +1956,28 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     if (nf.situacao === 2) {
+      // Já existente: tira de lote aberto e grava CANCELLED (create já nasce CANCELLED).
+      await invoiceService.cancelInvoice(invoice.id);
       await pdvSalesRequestService.handleInvoiceCancelled(invoice.id);
+    }
+
+    if (
+      invoiceType === "INCOMING" &&
+      isReturnInvoice &&
+      nfeRefKey &&
+      BLING_AUTHORIZED_INVOICE_SITUATIONS.includes(nf.situacao ?? 0)
+    ) {
+      // Crítico: falha derruba o job pra retry (bond e cancelamento no PDV são idempotentes).
+      const returnedInvoiceId = await invoiceService.bondReturnInvoice(
+        { id: invoice.id, number_system: String(nf.numero) },
+        nfeRefKey,
+      );
+      if (returnedInvoiceId) {
+        await pdvSalesRequestService.cancelBySaleInvoiceReturned(
+          returnedInvoiceId,
+          String(nf.numero),
+        );
+      }
     }
 
     // ─── Limpa UnmappedInvoiceProduct dos itens que resolveram nessa passagem ──

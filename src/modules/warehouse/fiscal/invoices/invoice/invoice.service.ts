@@ -18,6 +18,7 @@ import ExpeditionBatchInvoice from "../../../expedition/batch-invoices/batch-inv
 import {
   FullInvoiceAttributes,
   InvoiceAttributes,
+  InvoiceCancellationTarget,
   InvoiceCreationData,
   ItemWithFiscal,
   PendingBatchByTransporterRow,
@@ -38,6 +39,8 @@ import supplierDiscountRuleService from "../../../../inventory/supplier-discount
 import { SupplierDiscountBypassItemInput } from "../../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import sequelize from "../../../../../config/sequelize";
 import batchInvoicesService from "../../../expedition/batch-invoices/batch-invoices.service";
+import { CLOSED_EXPEDITION_BATCH_STATUSES } from "../../../expedition/batch/batch.types";
+import { normalizeInvoiceNumber } from "./helpers/reference-description";
 import { Product, ProductConfig, Supplier } from "../../../../inventory";
 import Contact from "../../../../sales/contacts/contacts.model";
 import Order from "../../../../sales/orders/order/orders.model";
@@ -892,54 +895,80 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     });
   }
 
-  async bondInvoice(
-    id: string,
-    bondedInvoiceId: string,
-    unitBusinessId: string,
-  ) {
-    return sequelize.transaction(async (t) => {
-      const invoice = await this.repository.getFullInvoiceWithBatch(
-        id,
-        unitBusinessId,
+  // Devolução (finNFe 4) com refNFe: cancela e vincula a nota de saída sem o bond manual.
+  // Retorna o id da saída também se já vinculada a esta devolução — retry do job ainda precisa cancelar o PDV.
+  async bondReturnInvoice(
+    returnInvoice: { id: string; number_system: string },
+    referencedXmlKey: string,
+  ): Promise<string | null> {
+    const outgoing =
+      await this.repository.findOutgoingByXmlKey(referencedXmlKey);
+    if (!outgoing) return null;
+
+    const alreadyBonded =
+      outgoing.statuses.every((status) => status === "CANCELLED") &&
+      !!outgoing.bonded_invoice &&
+      normalizeInvoiceNumber(outgoing.bonded_invoice) ===
+        normalizeInvoiceNumber(returnInvoice.number_system);
+    if (alreadyBonded) return outgoing.id;
+
+    await sequelize.transaction(async (t) => {
+      await this.applyCancellation(
+        outgoing,
+        { bonded_invoice: returnInvoice.number_system },
+        { type: "OUTGOING" },
+        t,
       );
 
-      if (!invoice) {
-        throw new Error("Nota fiscal não encontrada!");
-      }
-
-      const invoiceToBond = await this.repository.getFullInvoiceWithBatch(
-        bondedInvoiceId,
-        unitBusinessId,
+      await this.update(
+        returnInvoice.id,
+        { bonded_invoice: outgoing.number_system },
+        { transaction: t },
       );
-
-      if (!invoiceToBond) {
-        throw new Error("Nota fiscal vinculada não encontrada!");
-      }
-
-      if (
-        invoice.unitBusinessAttributes?.status != "PENDING_CANCELLED_SYSTEM"
-      ) {
-        throw new Error(
-          "Status não permitido para vincular nota, apenas status CANCELAMENTO PENDENTE NA PLATAFORMA permitido!",
-        );
-      }
-
-      await this.repository.updateWithAttributes([id], unitBusinessId, {
-        bonded_invoice: invoiceToBond.number_system,
-        status: "CANCELLED",
-      });
-
-      await this.update(bondedInvoiceId, {
-        bonded_invoice: invoice.number_system,
-      });
-
-      if (invoice.batchInvoice) {
-        await batchInvoicesService.removeBatchInvoice(
-          invoice.batchInvoice.id,
-          t,
-        );
-      }
     });
+
+    return outgoing.id;
+  }
+
+  // Nota cancelada na própria integração (Bling situacao 2 / Tecinco): CANCELLED direto, sem devolução atrelada.
+  async cancelInvoice(invoiceId: string): Promise<void> {
+    const target = await this.repository.findCancellationTargetById(invoiceId);
+    if (!target) return;
+
+    const alreadyCancelled =
+      target.statuses.every((status) => status === "CANCELLED") &&
+      !this.isInOpenBatch(target);
+    if (alreadyCancelled) return;
+
+    await sequelize.transaction((t) =>
+      this.applyCancellation(target, {}, undefined, t),
+    );
+  }
+
+  private isInOpenBatch(target: InvoiceCancellationTarget): boolean {
+    return (
+      !!target.batchInvoiceId &&
+      !CLOSED_EXPEDITION_BATCH_STATUSES.includes(target.batchStatus ?? "")
+    );
+  }
+
+  // Lote fechado (já expedido) mantém a nota; aberto tira, antes do CANCELLED (removeBatchInvoice volta pra OPEN).
+  private async applyCancellation(
+    target: InvoiceCancellationTarget,
+    data: Partial<InvoiceAttributes>,
+    attrWhere: WhereOptions | undefined,
+    t: Transaction,
+  ): Promise<void> {
+    if (this.isInOpenBatch(target)) {
+      await batchInvoicesService.removeBatchInvoice(target.batchInvoiceId!, t);
+    }
+
+    await this.repository.updateWithAttributesForAllUnits(
+      [target.id],
+      { ...data, status: "CANCELLED" },
+      attrWhere,
+      t,
+    );
   }
 
   async getInvoiceProductReport(params: QueryParams, unitBusinessId: string) {

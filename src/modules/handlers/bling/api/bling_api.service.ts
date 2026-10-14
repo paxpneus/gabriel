@@ -197,6 +197,17 @@ export const getBlingIntegration = async (
   return integration;
 };
 
+// Escrita na API Bling (POST/PUT/PATCH/DELETE) só em produção; fora dela, só GET. Token (refresh/OAuth) não entra: dev usa outro app Bling.
+export const BLING_WRITES_ENABLED = process.env.NODE_ENV === "production";
+
+const assertBlingWritesEnabled = (action: string): void => {
+  if (!BLING_WRITES_ENABLED) {
+    throw new Error(
+      `[BlingApi] ${action} bloqueado: NODE_ENV="${process.env.NODE_ENV}" (apenas em "production" a Bling aceita requests de escrita).`,
+    );
+  }
+};
+
 // Pega o config Token da integração bling
 const getBlingToken = async (): Promise<ConfigToken> => {
   const integration = await getBlingIntegration("Bling");
@@ -254,8 +265,7 @@ export const doRefreshToken = async (): Promise<string> => {
 
 // Instancia do axios para bling
 export const blingApi: AxiosInstance = createAxiosInstance({
-  baseURL: process.env.NODE_ENV == 'development' ? 'nothing' : "https://api.bling.com.br/Api/v3",
-  // baseURL: 'http',
+  baseURL: "https://api.bling.com.br/Api/v3",
   // Bling desativa tokens opacos em 15/10; sem este header a API para de aceitar as requisições
   headers: {
     "enable-jwt": "1",
@@ -267,13 +277,7 @@ export const blingApi: AxiosInstance = createAxiosInstance({
     const isMutatingMethod =
       !!method && ["POST", "PUT", "PATCH", "DELETE"].includes(method);
 
-    // Bloqueia requests de escrita para a Bling fora de produção, evitando
-    // alterar dados reais na API durante desenvolvimento/testes.
-    if (isMutatingMethod && process.env.NODE_ENV !== "production") {
-      throw new Error(
-        `[BlingApi] Requisição ${method} bloqueada: NODE_ENV="${process.env.NODE_ENV}" (apenas em "production" a Bling aceita requests de escrita).`,
-      );
-    }
+    if (isMutatingMethod) assertBlingWritesEnabled(`Requisição ${method}`);
 
     await waitForBlingRateLimit();
     const configToken = await getBlingToken();

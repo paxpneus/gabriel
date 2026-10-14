@@ -66,12 +66,6 @@ export class InvoiceController extends BaseController<
       this.scheduleInvoice,
     );
 
-    this.router.put(
-      "/bond/invoice/:id",
-      ...this.mw("bondPendingCancelledInvoice"),
-      this.bondPendingCancelledInvoice,
-    );
-
     this.router.post(
       "/import/xml",
       upload.single("xml"),
@@ -161,7 +155,6 @@ export class InvoiceController extends BaseController<
       scheduleInvoice: [authenticate, userPermissions],
 
       importXML: [authenticate, userPermissions],
-      bondPendingCancelledInvoice: [authenticate, userPermissions],
       downloadXmlBatch: [authenticate, userPermissions],
       getInvoiceProductReport: [authenticate, userPermissions],
       getInvoiceSupplierReport: [authenticate, userPermissions],
@@ -440,29 +433,6 @@ export class InvoiceController extends BaseController<
         context.unitBusinessId,
       );
       await this.service.markAsInternalUse(ids, unitBusinessId);
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  };
-
-  bondPendingCancelledInvoice = async (
-    req: Request,
-    res: Response,
-  ): Promise<void> => {
-    try {
-      const { id } = req.params;
-      const { bondedInvoiceId } = req.body;
-      const context = await getUserContext(req);
-      const unitBusinessId = this.resolveUnitBusinessId(
-        req,
-        context.unitBusinessId,
-      );
-      await this.service.bondInvoice(
-        id as string,
-        bondedInvoiceId,
-        unitBusinessId,
-      );
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

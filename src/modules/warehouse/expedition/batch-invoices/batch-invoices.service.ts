@@ -16,6 +16,7 @@ import batchItemsService from "../batch-items/batch-items.service";
 import batchInvoiceItemsService from "../batch-invoice-items/batch-invoice-items.service";
 import { BatchInvoiceItemsCreationAttributes } from "../batch-invoice-items/batch-invoice-items.types";
 import batchService from "../batch/batch.service";
+import { CLOSED_EXPEDITION_BATCH_STATUSES } from "../batch/batch.types";
 
 export class ExpeditionBatchInvoiceService extends BaseService<
   ExpeditionBatchInvoice,
@@ -61,7 +62,7 @@ export class ExpeditionBatchInvoiceService extends BaseService<
         throw new Error(`Lote não encontrado!`);
       }
 
-      if (["FINISHED", "CANCELLED"].includes(expeditionBatch.status)) {
+      if (CLOSED_EXPEDITION_BATCH_STATUSES.includes(expeditionBatch.status)) {
         throw new Error(
           `Não é possível remover notas fiscais de lotes finalizados ou cancelados.`,
         );

@@ -37,7 +37,7 @@ import { generateDanfePdfBuffer } from "./danfe-generator";
 import uploaderQueue from "../../../modules/handlers/uploader/uploader.queue";
 import tempFileService from "../../../modules/handlers/temp-file/temp-file.service";
 import pdvSalesRequestService from "../../../modules/sales/pdv-management/sales-request/pdv-sales-request.service";
-import { buildInvoiceReferenceDescription } from "../../../modules/warehouse/fiscal/invoices/invoice/helpers/reference-description";
+import { isReturnInvoicePurpose } from "../../../modules/warehouse/fiscal/invoices/invoice/helpers/return-invoice";
 
 /**
  * Extrai só o número (ide.nNF) e a chave de acesso de 44 dígitos de um XML
@@ -751,15 +751,16 @@ export async function upsertInvoiceFromXml(
     explicitCancelled: options?.isCancelled,
   });
  
+  // Cancelada não vai no update — cancelInvoice (depois do upsert) tira do lote antes de gravar CANCELLED.
   const resolvedUpdateStatus: InvoiceUnitBusinessAttributesStatus | undefined =
-    cancelledInvoice ? "PENDING_CANCELLED_SYSTEM" : options?.updateStatus;
+    cancelledInvoice ? undefined : options?.updateStatus;
 
 
   const resolveInitialStatus = (): InvoiceUnitBusinessAttributesStatus => {
-    if (invoiceType === 'OUTGOING') {
-      if (cancelledInvoice) return "PENDING_CANCELLED_SYSTEM"
-      return "OPEN";
-    }
+    if (cancelledInvoice) return "CANCELLED";
+    if (invoiceType === 'OUTGOING') return "OPEN";
+    // Devolução não passa por agendamento de recebimento.
+    if (isReturnInvoicePurpose(ide.finNFe)) return "OPEN";
     return "WAITING_SCHEDULE_SALES"
   }
 
@@ -801,7 +802,6 @@ export async function upsertInvoiceFromXml(
   const senderName = extracted.senderName;
   const receiverCnpj = cleanDocument(extracted.receiverCnpj);
   const receiverName = extracted.receiverName;
-  const nfeRef = extracted.refNFe || null;
   const destinationUf = extracted.destinationUf || null;
   const destinationCity = extracted.destinationCity || null;
 
@@ -860,12 +860,6 @@ export async function upsertInvoiceFromXml(
     transporter_id: transporter?.id ?? null,
     transporter_document: transporterDocument,
     transporter_name: transporterName,
-    // Resync nunca apaga descrição existente (manual ou REF do PDV) — mesmo guard do bling-api-fetch.
-    description: existingInvoice?.description
-      ? existingInvoice.description
-      : nfeRef
-        ? buildInvoiceReferenceDescription(nfeRef)
-        : null,
     destination_uf: destinationUf,
     destination_city: destinationCity,
     invoice_value: fiscalTotals.invoiceValue,
@@ -1040,13 +1034,6 @@ export async function upsertInvoiceFromXml(
       });
       await uploaderQueue.enqueueUpload(tempFile.id, "INVOICE_DANFE");
     }
-
-    if (cancelledInvoice) {
-      await invoiceService.updateInvoicesForAllUnitBusiness([invoice.id], {
-        status: "PENDING_CANCELLED_SYSTEM",
-      });
-      invoice = await invoiceService.findByIdFullForAllUnits(invoice.id);
-    }
   } else {
     if (
       !allowUpdateFromAnyIntegration &&
@@ -1096,6 +1083,7 @@ export async function upsertInvoiceFromXml(
   console.log(`[IMPORT_XML] Invoice upsertada: id_system=${idSystem}`);
 
   if (cancelledInvoice) {
+    await invoiceService.cancelInvoice(invoice.id);
     await pdvSalesRequestService.handleInvoiceCancelled(invoice.id);
   }
 

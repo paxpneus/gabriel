@@ -2417,8 +2417,8 @@ export class PdvSalesRequestService extends BaseService<
     return invoiceProductsMatch(saleItems, transferItems);
   }
 
-  // Nota de venda aponta pra transferência vinculada (bonded_invoice + "REF: <número>").
-  // Ao desvincular, só limpa o que bate com a transferência anterior — nunca apaga descrição de outra origem.
+  // Nota de venda aponta pra transferência vinculada só via description "REF: <número>" (bonded_invoice é da devolução).
+  // Ao desvincular, só limpa se bate com a transferência anterior — nunca apaga descrição de outra origem.
   private async syncSaleInvoiceTransferReference(
     saleInvoiceId: string | null,
     previousTransferInvoiceId: string | null,
@@ -2432,7 +2432,7 @@ export class PdvSalesRequestService extends BaseService<
 
     const [saleInvoice, transferInvoices] = await Promise.all([
       invoiceService.findById(saleInvoiceId, {
-        attributes: ["id", "description", "bonded_invoice"],
+        attributes: ["id", "description"],
       }),
       invoiceService.findAll({
         where: { id: { [Op.in]: transferIds } },
@@ -2447,7 +2447,6 @@ export class PdvSalesRequestService extends BaseService<
     const nextNumber = numberOf(nextTransferInvoiceId);
     if (nextNumber) {
       await invoiceService.update(saleInvoiceId, {
-        bonded_invoice: nextNumber,
         description: buildInvoiceReferenceDescription(nextNumber),
       });
       return;
@@ -2455,19 +2454,14 @@ export class PdvSalesRequestService extends BaseService<
 
     const previousNumber = numberOf(previousTransferInvoiceId);
     if (!previousNumber) return;
-    const isPreviousBond =
-      !!saleInvoice.bonded_invoice &&
-      normalizeInvoiceNumber(saleInvoice.bonded_invoice) ===
-        normalizeInvoiceNumber(previousNumber);
-    const isPreviousDescription =
-      saleInvoice.description ===
-      buildInvoiceReferenceDescription(previousNumber);
-    if (!isPreviousBond && !isPreviousDescription) return;
+    if (
+      saleInvoice.description !==
+      buildInvoiceReferenceDescription(previousNumber)
+    ) {
+      return;
+    }
 
-    await invoiceService.update(saleInvoiceId, {
-      ...(isPreviousBond && { bonded_invoice: null }),
-      ...(isPreviousDescription && { description: null }),
-    });
+    await invoiceService.update(saleInvoiceId, { description: null });
   }
 
   // Confirmação explícita do front — só agora a solicitação avança pra
@@ -2633,29 +2627,22 @@ export class PdvSalesRequestService extends BaseService<
   }
 
   // ─── Cancelamento de nota fiscal (Bling/Tecinco) ────────────────────────────
-  // Chamado a partir de invoice-xml.ts e bling-api-fetch.queue.ts quando uma
-  // invoice é detectada como cancelada — não decide sozinho pra onde volta,
-  // fica bloqueado em INVOICE_CANCELLED até o CD21 decidir via
-  // cd21ResolveInvoiceCancelled (ou a loja, via resolveCorrection, se o CD21
-  // preferir devolver pra ela).
-
+  // Chamado por invoice-xml.ts e bling-api-fetch.queue.ts quando a nota (venda ou transferência) é cancelada
+  // na integração — vai direto pra CANCELLED, sem decisão do CD21. Só solicitações ativas (FINISHED fica).
   async handleInvoiceCancelled(invoiceId: string): Promise<void> {
     const affected =
       await this.repository.findActiveBySaleOrTransferInvoiceId(invoiceId);
 
-    for (const request of affected) {
-      const isTransfer = request.transfer_invoice_id === invoiceId;
-
-      await this.transitionTo(
-        request.id,
-        PdvSalesRequestStatus.INVOICE_CANCELLED,
-        {
-          description: isTransfer
-            ? "Nota de transferência vinculada foi cancelada"
-            : "Nota de venda vinculada foi cancelada",
-        },
-      );
-    }
+    await Promise.all(
+      affected.map((request) =>
+        this.transitionTo(request.id, PdvSalesRequestStatus.CANCELLED, {
+          description:
+            request.transfer_invoice_id === invoiceId
+              ? "Nota de transferência vinculada foi cancelada"
+              : "Nota de venda vinculada foi cancelada",
+        }),
+      ),
+    );
   }
 
   // Decisão do CD21 diante de INVOICE_CANCELLED: reenviar direto pra
@@ -2702,9 +2689,8 @@ export class PdvSalesRequestService extends BaseService<
 
   // ─── Cancelamento de pedido (Bling) ─────────────────────────────────────────
   // Chamado a partir de order-status.ts sempre que um pedido é marcado
-  // CANCELLED na Bling — diferente de handleInvoiceCancelled (bloqueia em
-  // INVOICE_CANCELLED pra decisão humana): aqui o pedido em si já foi
-  // cancelado na origem, não há o que decidir, vai direto pra CANCELLED.
+  // CANCELLED na Bling — o pedido em si já foi cancelado na origem, vai
+  // direto pra CANCELLED (reversível por reactivateIfCancelledByOrder).
   // No-op se não houver solicitação ativa pro pedido (findActiveByOrderId já
   // exclui os status terminais).
   async cancelIfActiveByOrderId(orderId: string): Promise<void> {
@@ -2714,6 +2700,24 @@ export class PdvSalesRequestService extends BaseService<
     await this.transitionTo(request.id, PdvSalesRequestStatus.CANCELLED, {
       description: BLING_ORDER_CANCELLED_DESCRIPTION,
     });
+  }
+
+  // Nota de venda devolvida (devolução Bling com refNFe, ver invoiceService.bondReturnInvoice) —
+  // cancela em qualquer status, sem decisão do CD21; não é desfeito por reactivateIfCancelledByOrder.
+  async cancelBySaleInvoiceReturned(
+    saleInvoiceId: string,
+    returnInvoiceNumber: string,
+  ): Promise<void> {
+    const requests =
+      await this.repository.findNotCancelledBySaleInvoiceId(saleInvoiceId);
+
+    await Promise.all(
+      requests.map((request) =>
+        this.transitionTo(request.id, PdvSalesRequestStatus.CANCELLED, {
+          description: `Nota de venda devolvida (NF de devolução ${normalizeInvoiceNumber(returnInvoiceNumber)})`,
+        }),
+      ),
+    );
   }
 
   // Desfaz cancelIfActiveByOrderId quando o pedido sai da situação 12 —

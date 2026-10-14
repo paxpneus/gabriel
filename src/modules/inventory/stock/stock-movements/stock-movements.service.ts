@@ -1754,7 +1754,7 @@ export class StockMovementService extends BaseService<
           required: true,
           where: {
             unit_business_id: unitBusinessId,
-            status: { [Op.notIn]: ["CANCELLED", "PENDING_CANCELLED_SYSTEM"] },
+            status: { [Op.ne]: "CANCELLED" },
           },
         },
       ],
@@ -2101,7 +2101,7 @@ export class StockMovementService extends BaseService<
     const invoiceAttrs = await InvoiceUnitBusinessAttributes.findAll({
       where: {
         unit_business_id: unitBusinessId,
-        status: { [Op.notIn]: ["CANCELLED", "PENDING_CANCELLED_SYSTEM"] },
+        status: { [Op.ne]: "CANCELLED" },
       },
       transaction,
     });
@@ -2292,7 +2292,7 @@ export class StockMovementService extends BaseService<
     const invoiceAttrs = await InvoiceUnitBusinessAttributes.findAll({
       where: {
         unit_business_id: unitBusinessId,
-        status: { [Op.notIn]: ["CANCELLED", "PENDING_CANCELLED_SYSTEM"] },
+        status: { [Op.ne]: "CANCELLED" },
       },
       transaction,
     });
