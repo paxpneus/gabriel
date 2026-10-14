@@ -32,6 +32,7 @@ export interface SalesInvoicedItemRow {
       total_expected: DecimalValue;
     } | null;
     seller: { name: string | null } | null;
+    customer: { name: string | null } | null;
   };
   product: {
     name: string | null;
@@ -63,6 +64,7 @@ export interface SalesInvoicedReportRow {
   order_date: string;
   order_number: string | null;
   seller_name: string | null;
+  customer_name: string | null;
   invoice_number: string | null;
   brand: string | null;
   product: string | null;

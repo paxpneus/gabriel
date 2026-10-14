@@ -42,6 +42,7 @@ export function invoiceRowAttributes(
   ];
 }
 export const SELLER_ROW_ATTRIBUTES = ["name"];
+export const CUSTOMER_ROW_ATTRIBUTES = ["name"];
 export const PRODUCT_ROW_ATTRIBUTES = ["name"];
 export const BRAND_ROW_ATTRIBUTES = ["name"];
 

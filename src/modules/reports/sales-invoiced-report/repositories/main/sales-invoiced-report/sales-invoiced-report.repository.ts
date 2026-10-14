@@ -3,6 +3,7 @@ import SalesOrderSnapshot from "../../../../daily-sales/sales-order-snapshot/sal
 import UnitBusiness from "../../../../../company/unit-business/unit-business.model";
 import Invoice from "../../../../../warehouse/fiscal/invoices/invoice/invoice.model";
 import Contact from "../../../../../sales/contacts/contacts.model";
+import Customer from "../../../../../sales/customers/customers.model";
 import Product from "../../../../../inventory/products/product.model";
 import Brand from "../../../../../inventory/brands/brands.model";
 import {
@@ -11,6 +12,7 @@ import {
 } from "../../../models/sales-invoiced-report.types";
 import {
   BRAND_ROW_ATTRIBUTES,
+  CUSTOMER_ROW_ATTRIBUTES,
   invoiceRowAttributes,
   ITEM_ROW_ATTRIBUTES,
   ORDER_ROW_ATTRIBUTES,
@@ -51,6 +53,7 @@ export class SalesInvoicedReportRepository {
             { model: UnitBusiness, as: "unitBusiness", attributes: UNIT_BUSINESS_ROW_ATTRIBUTES },
             { model: Invoice, as: "invoice", attributes: invoiceRowAttributes() },
             { model: Contact, as: "seller", attributes: SELLER_ROW_ATTRIBUTES },
+            { model: Customer, as: "customer", attributes: CUSTOMER_ROW_ATTRIBUTES },
           ],
         },
         {

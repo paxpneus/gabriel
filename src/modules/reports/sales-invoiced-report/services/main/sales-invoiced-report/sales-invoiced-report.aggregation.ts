@@ -54,6 +54,7 @@ export function buildReportRows(
       order_date: order.order_date,
       order_number: order.order_number_system,
       seller_name: order.seller?.name ?? null,
+      customer_name: order.customer?.name ?? null,
       invoice_number: order.invoice?.number_system ?? null,
       brand: row.product?.brandRegister?.name ?? null,
       product: row.product?.name ?? row.description,
