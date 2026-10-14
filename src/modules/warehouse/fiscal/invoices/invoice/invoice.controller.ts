@@ -12,6 +12,11 @@ import multer from "multer";
 import { BlingApiFetchQueue } from "../../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { TCarUpsertQueue } from "../../../../handlers/tecinco/queues/tecinco-api-fetch.queue";
 import { getUserContext } from "../../../../../shared/query/get-logged-user";
+import {
+  authenticateOrPdvLink,
+  PdvAccessRequest,
+} from "../../../../sales/pdv-management/pdv-access/pdv-access.middleware";
+import { PdvAccessScreen } from "../../../../sales/pdv-management/pdv-access/pdv-access.types";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -143,7 +148,10 @@ export class InvoiceController extends BaseController<
       login: [authenticate, userPermissions],
 
       getLabelData: [authenticate, userPermissions],
-      getDanfeBatch: [authenticate, userPermissions],
+      getDanfeBatch: authenticateOrPdvLink(
+        [PdvAccessScreen.CD21],
+        [authenticate, userPermissions],
+      ),
 
       updateInvoicesOpen: [authenticate, userPermissions],
       scheduleInvoice: [authenticate, userPermissions],
@@ -317,11 +325,13 @@ export class InvoiceController extends BaseController<
         return;
       }
 
-      const context = await getUserContext(req);
-      const unitBusinessId = this.resolveUnitBusinessId(
-        req,
-        context.unitBusinessId,
-      );
+      // Link PDV: só gera o PDF, danfe_printed fica só pra usuário logado.
+      const unitBusinessId = (req as PdvAccessRequest).pdvAccess
+        ? undefined
+        : this.resolveUnitBusinessId(
+            req,
+            (await getUserContext(req)).unitBusinessId,
+          );
 
       const pdf = await this.service.getDanfeBatch(ids, unitBusinessId);
 

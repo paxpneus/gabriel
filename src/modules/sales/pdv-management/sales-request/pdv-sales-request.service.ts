@@ -2848,7 +2848,7 @@ export class PdvSalesRequestService extends BaseService<
     }
   }
 
-  // Lote finalizado muda o expedition_progress das solicitações das notas dele — Kanban recebe 1 sync por loja, não 1 por solicitação.
+  // Mudança na nota de venda (lote finalizado, DANFE impresso) muda o card das solicitações dela — Kanban recebe 1 sync por loja, não 1 por solicitação.
   async notifyChangedBySaleInvoiceIds(invoiceIds: string[]): Promise<void> {
     try {
       const requests = await this.repository.findActiveBySaleInvoiceIds(

@@ -594,3 +594,48 @@ sequência do lote. Os dois `null` se a nota não está em lote do CD21.
   "batch_short_name": "..."
 }
 ```
+
+## Novo: número das notas no card do quadro
+
+`GET /sales-request` (card) ganha `saleInvoice.number_system` e
+`transferInvoice` só com `number_system` (`null` sem nota de transferência).
+O detalhe (`GET /:id`) já trazia os dois.
+
+```json
+"saleInvoice": {
+  "number_system": "5001",
+  "tracking_url": "...",
+  "printed_label": true,
+  "batch_name": "...",
+  "batch_short_name": "..."
+},
+"transferInvoice": { "number_system": "7001" }
+```
+
+## Novo: `danfe_printed` no card do quadro e no detalhe
+
+`GET /sales-request` (card) e `GET /sales-request/:id` ganham
+`saleInvoice.danfe_printed` (boolean): DANFE da nota de venda já impressa
+**no CD21**. `false` se a nota ainda não tem registro no CD21.
+
+```json
+"saleInvoice": {
+  "number_system": "5001",
+  "tracking_url": "...",
+  "printed_label": true,
+  "danfe_printed": true,
+  "batch_name": "...",
+  "batch_short_name": "..."
+}
+```
+
+## Novo: DANFE em lote via link CD21
+
+`GET /invoice/danfe/data?invoiceIds=...` passa a aceitar o link PDV do CD21
+(headers `x-pdv-unit-business-number` + `x-pdv-token`), além do login. Via
+link só devolve o PDF — **não** marca `danfe_printed`; só usuário logado marca.
+
+Quando marca (login), emite os eventos de sempre pras solicitações ativas
+dessas notas de venda: `salerequest-updated` (detalhe) e `pdv-store:sync` com
+`event: "SALES_REQUEST_STATUS_CHANGED"` (status inalterado) — front refaz o
+fetch e vê `saleInvoice.danfe_printed: true`.

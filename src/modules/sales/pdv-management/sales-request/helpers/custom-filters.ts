@@ -106,6 +106,17 @@ export function hasReceiptLiteral() {
   )`);
 }
 
+// danfe_printed da nota de venda no CD21 (invoice_unit_business_attributes, mesma linha do batch_generated).
+export function saleInvoiceCd21DanfePrintedLiteral() {
+  return Sequelize.literal(`EXISTS (
+    SELECT 1 FROM invoice_unit_business_attributes iuba
+    JOIN unit_businesses ub ON ub.id = iuba.unit_business_id
+    WHERE iuba.invoice_id = "PdvSalesRequest"."sale_invoice_id"
+      AND ub.number = '${CD21_UNIT_BUSINESS_NUMBER}'
+      AND iuba.danfe_printed = TRUE
+  )`);
+}
+
 // Filtro por transportadora da nota de venda — ids validados como uuid antes de entrar no literal.
 export function saleInvoiceTransporterInLiteral(transporterIds: string[]) {
   const ids = transporterIds.map((id) => id.trim()).filter(isUuid);

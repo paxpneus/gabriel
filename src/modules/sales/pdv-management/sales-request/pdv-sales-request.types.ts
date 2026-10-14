@@ -353,13 +353,17 @@ export interface PdvBoardCard {
     unitBusiness?: { number: string } | null;
   } | null;
   saleInvoice: {
+    number_system: string | null;
     tracking_url: string | null;
     printed_label: boolean;
+    // DANFE já impressa no CD21 (invoice_unit_business_attributes).
+    danfe_printed: boolean;
     // Número do lote da nota no CD21 (null fora de lote do CD21).
     batch_name: string | null;
     // Só a sequência do batch_name ("..._LOJA21_0842" → "0842").
     batch_short_name: string | null;
   } | null;
+  transferInvoice: { number_system: string | null } | null;
 }
 
 export interface PdvBoardColumnResult {
@@ -426,6 +430,8 @@ export interface PdvSalesRequestDetail {
     transporter_name: string | null;
     tracking_url: string | null;
     printed_label: boolean;
+    // DANFE já impressa no CD21 (invoice_unit_business_attributes).
+    danfe_printed: boolean;
     // Número do lote da nota no CD21 (null fora de lote do CD21).
     batch_name: string | null;
     // Só a sequência do batch_name ("..._LOJA21_0842" → "0842").

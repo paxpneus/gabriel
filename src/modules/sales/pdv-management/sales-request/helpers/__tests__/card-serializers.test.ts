@@ -48,6 +48,7 @@ const boardRow = {
   correction_origin_status: null,
   cursor_created_at: "2026-10-02 10:00:00.123456+00",
   has_receipt: true,
+  sale_invoice_danfe_printed: true,
   order: {
     id: "o1",
     number_order_system: "123",
@@ -57,10 +58,12 @@ const boardRow = {
     unitBusiness: { number: "07" },
   },
   saleInvoice: {
+    number_system: "5001",
     transporter_name: "LOGISTICA PAX PNEUS SP - CD 12",
     tracking_url: "https://track",
     printed_label: true,
   },
+  transferInvoice: { number_system: "7001" },
 };
 
 const sortedKeys = (value: object) => Object.keys(value).sort();
@@ -79,8 +82,10 @@ describe("toBoardCard", () => {
     );
 
     expect(card.saleInvoice).toEqual({
+      number_system: "5001",
       tracking_url: "https://track",
       printed_label: true,
+      danfe_printed: true,
       batch_name: "RODONAVES TRANSPS E ENCOMENDAS LTDA_LOJA21_0842",
       batch_short_name: "0842",
     });
@@ -90,24 +95,36 @@ describe("toBoardCard", () => {
     const card = toBoardCard(boardRow, "store");
 
     expect(sortedKeys(card)).toEqual(
-      ["batch_color", "id", "next_action", "order", "saleInvoice", "shipping_label", "status"].sort(),
+      ["batch_color", "id", "next_action", "order", "saleInvoice", "shipping_label", "status", "transferInvoice"].sort(),
     );
     expect(sortedKeys(card.order!)).toEqual(
       ["customer", "date", "id", "number_order_channel", "number_order_system"].sort(),
     );
     expect(card.order!.customer).toEqual({ name: "Cliente" });
     expect(card.saleInvoice).toEqual({
+      number_system: "5001",
       tracking_url: "https://track",
       printed_label: true,
+      danfe_printed: true,
       batch_name: null,
       batch_short_name: null,
     });
+    expect(card.transferInvoice).toEqual({ number_system: "7001" });
     expect(card.shipping_label).toBe("ADT CD 12");
     expect(card.next_action).toBe("Enviar solicitação para análise");
   });
 
   it.each(["finance", "cd21", "telesales"] as const)("%s: inclui order.unitBusiness.number", (screen) => {
     expect(toBoardCard(boardRow, screen).order!.unitBusiness).toEqual({ number: "07" });
+  });
+
+  it("sem sale_invoice_danfe_printed na linha → saleInvoice.danfe_printed false", () => {
+    const { sale_invoice_danfe_printed: _, ...row } = boardRow;
+    expect(toBoardCard(row, "cd21").saleInvoice!.danfe_printed).toBe(false);
+  });
+
+  it("sem nota de transferência → transferInvoice null", () => {
+    expect(toBoardCard({ ...boardRow, transferInvoice: null }, "cd21").transferInvoice).toBeNull();
   });
 
   it("store: sem order.unitBusiness", () => {
@@ -249,6 +266,7 @@ describe("toSalesRequestDetail", () => {
       transporter_name: "Transp",
       tracking_url: null,
       printed_label: false,
+      danfe_printed: false,
       batch_name: "TRANSP_X_LOJA21_0007",
       batch_short_name: "0007",
     });

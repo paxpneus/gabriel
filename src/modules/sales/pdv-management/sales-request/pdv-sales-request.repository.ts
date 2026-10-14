@@ -4,6 +4,7 @@ import {
   hasReceiptLiteral,
   saleInvoiceCd21BatchStageCaseLiteral,
   saleInvoiceCd21BatchStageLiteral,
+  saleInvoiceCd21DanfePrintedLiteral,
   saleInvoiceTransporterSelectorLiteral,
 } from "./helpers/custom-filters";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
@@ -82,7 +83,10 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
 
   async findByIdWithOrder(id: string): Promise<PdvSalesRequest | null> {
     return this.findById(id, {
-      attributes: DETAIL_ATTRIBUTES,
+      attributes: [
+        ...DETAIL_ATTRIBUTES,
+        [saleInvoiceCd21DanfePrintedLiteral(), "sale_invoice_danfe_printed"],
+      ],
       include: [
         {
           model: Order,
@@ -147,6 +151,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         [literal('"PdvSalesRequest"."created_at"::text'), "cursor_created_at"],
         [hasReceiptLiteral(), "has_receipt"],
         [saleInvoiceCd21BatchStageCaseLiteral(), "batch_stage"],
+        [saleInvoiceCd21DanfePrintedLiteral(), "sale_invoice_danfe_printed"],
       ],
       include: [
         {
@@ -161,9 +166,10 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         {
           model: Invoice,
           as: "saleInvoice",
-          attributes: ["transporter_name", "tracking_url", "printed_label"],
+          attributes: ["number_system", "transporter_name", "tracking_url", "printed_label"],
           include: [CD21_BATCH_INCLUDE],
         },
+        { model: Invoice, as: "transferInvoice", attributes: ["number_system"] },
       ],
     });
   }

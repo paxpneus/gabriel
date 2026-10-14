@@ -99,10 +99,15 @@ export function toBoardCard(row: any, screen: PdvBoardScreen): PdvBoardCard {
       : null,
     saleInvoice: row.saleInvoice
       ? {
+          number_system: row.saleInvoice.number_system ?? null,
           tracking_url: row.saleInvoice.tracking_url ?? null,
           printed_label: row.saleInvoice.printed_label ?? false,
+          danfe_printed: !!row.sale_invoice_danfe_printed,
           ...cd21BatchNames(row.saleInvoice),
         }
+      : null,
+    transferInvoice: row.transferInvoice
+      ? { number_system: row.transferInvoice.number_system ?? null }
       : null,
   };
 }
@@ -170,6 +175,7 @@ export function toSalesRequestDetail(
           transporter_name: plain.saleInvoice.transporter_name ?? null,
           tracking_url: plain.saleInvoice.tracking_url ?? null,
           printed_label: plain.saleInvoice.printed_label ?? false,
+          danfe_printed: !!plain.sale_invoice_danfe_printed,
           ...cd21BatchNames(plain.saleInvoice),
         }
       : null,

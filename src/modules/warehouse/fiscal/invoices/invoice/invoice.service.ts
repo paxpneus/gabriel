@@ -69,6 +69,7 @@ import { PDFDocument } from "pdf-lib";
 import uploaderService from "../../../../handlers/uploader/services/uploader.service";
 import storeService from "../../../../sales/stores/stores.service";
 import tempFileService from "../../../../handlers/temp-file/temp-file.service";
+import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import {
   isTempFileSentinelPath,
   extractTempFileId,
@@ -184,6 +185,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
         batch_generated: (value) => ({
           "$unitBusinessAttributes.batch_generated$": value === "true",
+        }),
+
+        // Marcado por `getDanfeBatch` na unit business resolvida.
+        danfe_printed: (value) => ({
+          "$unitBusinessAttributes.danfe_printed$":
+            (Array.isArray(value) ? value[0] : value) === "true",
         }),
 
         unit_business_id: (value) => ({
@@ -715,12 +722,12 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     return generateDanfePdfBuffer(isEncrypted(xml) ? decryptXml(xml) : xml);
   }
 
-  // Marca danfe_printed na mesma transação da geração: qualquer erro reverte a marcação.
+  // Marca danfe_printed (só com unitBusinessId) na mesma transação da geração: qualquer erro reverte a marcação.
   async getDanfeBatch(
     invoiceIds: string[],
-    unitBusinessId: string,
+    unitBusinessId?: string,
   ): Promise<Buffer | null> {
-    return sequelize.transaction(async (transaction) => {
+    const pdf = await sequelize.transaction(async (transaction) => {
       const invoices = await this.repository.findAll({
         where: { id: { [Op.in]: invoiceIds } },
         attributes: ["id", "danfe_path", "xml_path"],
@@ -728,13 +735,15 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       });
       if (!invoices.length) return null;
 
-      await this.repository.updateWithAttributes(
-        invoiceIds,
-        unitBusinessId,
-        { danfe_printed: true },
-        undefined,
-        transaction,
-      );
+      if (unitBusinessId) {
+        await this.repository.updateWithAttributes(
+          invoiceIds,
+          unitBusinessId,
+          { danfe_printed: true },
+          undefined,
+          transaction,
+        );
+      }
 
       const buffers = await Promise.all(
         invoices.map((invoice) =>
@@ -767,6 +776,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
       return Buffer.from(await mergedPdf.save());
     });
+
+    // Fora da transação: front do PDV refaz o fetch e precisa ver danfe_printed já commitado.
+    if (pdf && unitBusinessId) {
+      await pdvSalesRequestService.notifyChangedBySaleInvoiceIds(invoiceIds);
+    }
+
+    return pdf;
   }
 
   // Nota "provisória" — vínculo rápido (pedido/solicitação PDV não pode
