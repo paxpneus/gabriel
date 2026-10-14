@@ -100,6 +100,7 @@ export function toBoardCard(row: any, screen: PdvBoardScreen): PdvBoardCard {
     saleInvoice: row.saleInvoice
       ? {
           tracking_url: row.saleInvoice.tracking_url ?? null,
+          printed_label: row.saleInvoice.printed_label ?? false,
           ...cd21BatchNames(row.saleInvoice),
         }
       : null,
@@ -168,6 +169,7 @@ export function toSalesRequestDetail(
           number_system: plain.saleInvoice.number_system,
           transporter_name: plain.saleInvoice.transporter_name ?? null,
           tracking_url: plain.saleInvoice.tracking_url ?? null,
+          printed_label: plain.saleInvoice.printed_label ?? false,
           ...cd21BatchNames(plain.saleInvoice),
         }
       : null,

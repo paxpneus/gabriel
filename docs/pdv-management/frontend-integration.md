@@ -28,7 +28,7 @@ Payload ganhou campos (os antigos continuam): `requests: [{ requestId, status }]
 
 Back e front sobem juntos — sem modo legado. Contrato completo: bloco "Contrato da API — PDV" entregue com esta mudança. Migration `m310` (só índices, `CONCURRENTLY`).
 
-- `GET /sales-request` passa a devolver `{ columns: [{ key, label, statuses, extra, items, totalCount, nextCursor, hasMore }] }`; com `column=<key>` (+ `cursor`), só o objeto daquela coluna. Params: `column`, `cursor`, `limit` (1–100, padrão 15), `include_closed`, `include_other_screens`. `filters[status]`, `page`, `perPage`, `sortBy` são ignorados; `search` e os outros `filters[...]` (inclusive `indicator`) seguem valendo. Coluna fora da tela → 403; parâmetro inválido → 400.
+- `GET /sales-request` passa a devolver `{ columns: [{ key, label, statuses, extra, items, totalCount, nextCursor, hasMore }] }`; com `column=<key>` (+ `cursor`), só o objeto daquela coluna. Params: `column`, `cursor`, `limit` (1–100, padrão 5), `include_closed`, `include_other_screens`. `filters[status]`, `page`, `perPage`, `sortBy` são ignorados; `search` e os outros `filters[...]` (inclusive `indicator`) seguem valendo. Coluna fora da tela → 403; parâmetro inválido → 400.
 - Card: `id, status, shipping_label, next_action, order{id, number_order_system, number_order_channel, date, customer{name}, unitBusiness{number}* }, saleInvoice{tracking_url}` (*só financeiro/CD21). Saíram `order.status`, `customer.document`, `net_total_order`, `receipts`, `errors`, `createdAt`, `invoice_tracking_url` e o resto.
 - `next_action` (string ou null, já da tela de quem pede) no card e no `GET /:id`. Ações não devolvem — refazer `GET /:id`.
 - `GET /:id`: novo `shipping_info_required`; saíram `unit_business_id`, `order_id`, `order.id`, `errors.origin` (usar `correction_origin_status`), `invoice_tracking_url` (usar `saleInvoice.tracking_url`), `receipts[].path/validated/createdAt`, e `estabelecimento_*`/`cartao_final` das análises (também no socket `payment-receipt-analysis:done`). Card de outra loja → 404.
@@ -578,5 +578,19 @@ sequência do lote. Os dois `null` se a nota não está em lote do CD21.
   "tracking_url": "...",
   "batch_name": "RODONAVES TRANSPS E ENCOMENDAS LTDA_LOJA21_0842",
   "batch_short_name": "0842"
+}
+```
+
+## Novo: `printed_label` no card do quadro e no detalhe
+
+`GET /sales-request` (card) e `GET /sales-request/:id` ganham
+`saleInvoice.printed_label` (boolean): etiqueta da nota de venda já impressa.
+
+```json
+"saleInvoice": {
+  "tracking_url": "...",
+  "printed_label": true,
+  "batch_name": "...",
+  "batch_short_name": "..."
 }
 ```

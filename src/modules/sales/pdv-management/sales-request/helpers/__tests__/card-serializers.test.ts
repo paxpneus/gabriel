@@ -59,6 +59,7 @@ const boardRow = {
   saleInvoice: {
     transporter_name: "LOGISTICA PAX PNEUS SP - CD 12",
     tracking_url: "https://track",
+    printed_label: true,
   },
 };
 
@@ -79,6 +80,7 @@ describe("toBoardCard", () => {
 
     expect(card.saleInvoice).toEqual({
       tracking_url: "https://track",
+      printed_label: true,
       batch_name: "RODONAVES TRANSPS E ENCOMENDAS LTDA_LOJA21_0842",
       batch_short_name: "0842",
     });
@@ -96,6 +98,7 @@ describe("toBoardCard", () => {
     expect(card.order!.customer).toEqual({ name: "Cliente" });
     expect(card.saleInvoice).toEqual({
       tracking_url: "https://track",
+      printed_label: true,
       batch_name: null,
       batch_short_name: null,
     });
@@ -245,6 +248,7 @@ describe("toSalesRequestDetail", () => {
       number_system: "900",
       transporter_name: "Transp",
       tracking_url: null,
+      printed_label: false,
       batch_name: "TRANSP_X_LOJA21_0007",
       batch_short_name: "0007",
     });

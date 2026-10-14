@@ -2,7 +2,7 @@ import { PdvBoardParamError } from "../../helpers/pdv-errors";
 import { decodeBoardCursor, PdvBoardCursor } from "./board-cursor";
 import { PdvSalesRequestStatus } from "../pdv-sales-request.types";
 
-export const PDV_BOARD_DEFAULT_LIMIT = 15;
+export const PDV_BOARD_DEFAULT_LIMIT = 5;
 const PDV_BOARD_MAX_LIMIT = 100;
 
 export interface PdvBoardQuery {

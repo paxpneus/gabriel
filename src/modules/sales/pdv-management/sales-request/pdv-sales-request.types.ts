@@ -354,6 +354,7 @@ export interface PdvBoardCard {
   } | null;
   saleInvoice: {
     tracking_url: string | null;
+    printed_label: boolean;
     // Número do lote da nota no CD21 (null fora de lote do CD21).
     batch_name: string | null;
     // Só a sequência do batch_name ("..._LOJA21_0842" → "0842").
@@ -424,6 +425,7 @@ export interface PdvSalesRequestDetail {
     number_system: string;
     transporter_name: string | null;
     tracking_url: string | null;
+    printed_label: boolean;
     // Número do lote da nota no CD21 (null fora de lote do CD21).
     batch_name: string | null;
     // Só a sequência do batch_name ("..._LOJA21_0842" → "0842").
