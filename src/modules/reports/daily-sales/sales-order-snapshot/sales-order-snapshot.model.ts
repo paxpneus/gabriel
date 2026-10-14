@@ -21,6 +21,8 @@ class SalesOrderSnapshot
   public store_id?: string | null;
   public unit_business_id?: string | null;
   public seller_id?: string | null;
+  public affiliated_id?: string | null;
+  public total_affiliated_commission?: number | string;
 
   public order_number_system?: string | null;
   public order_number_channel?: string | null;
@@ -91,6 +93,8 @@ SalesOrderSnapshot.init(
     store_id: { type: DataTypes.UUID, allowNull: true },
     unit_business_id: { type: DataTypes.UUID, allowNull: true },
     seller_id: { type: DataTypes.UUID, allowNull: true },
+    affiliated_id: { type: DataTypes.UUID, allowNull: true },
+    total_affiliated_commission: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
     order_number_system: { type: DataTypes.STRING(100), allowNull: true },
     order_number_channel: { type: DataTypes.STRING(100), allowNull: true },

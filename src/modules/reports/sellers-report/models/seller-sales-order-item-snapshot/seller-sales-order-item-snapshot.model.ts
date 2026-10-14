@@ -37,6 +37,8 @@ class SellerSalesOrderItemSnapshot
   public commission_value?: number | string;
   public commission_base?: number | string;
   public manager_commission_value?: number | string;
+  public affiliated_id?: string | null;
+  public affiliated_commission_value?: number | string;
   public manager_commission_rate?: number | string;
   public markup_value?: number | string;
   public markup_pct?: number | string;
@@ -54,6 +56,8 @@ SellerSalesOrderItemSnapshot.init(
     order_item_id: { type: DataTypes.UUID, allowNull: false, unique: true },
     order_id: { type: DataTypes.UUID, allowNull: false },
     seller_id: { type: DataTypes.UUID, allowNull: true },
+    affiliated_id: { type: DataTypes.UUID, allowNull: true },
+    affiliated_commission_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     customer_id: { type: DataTypes.UUID, allowNull: true },
     product_id: { type: DataTypes.UUID, allowNull: true },
     unit_business_id: { type: DataTypes.UUID, allowNull: true },

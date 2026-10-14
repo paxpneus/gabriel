@@ -44,6 +44,7 @@ export interface SalesOrderItemSnapshotAttributes {
   commission_base?: number | string;
   commission_rate?: number | string;
   commission_value?: number | string;
+  affiliated_commission_value?: number | string;
 
   ncm?: string | null;
   cest?: string | null;

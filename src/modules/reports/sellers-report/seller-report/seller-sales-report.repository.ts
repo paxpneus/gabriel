@@ -5,6 +5,7 @@ import {
   orderDiscountAmountSql,
   orderNetProductsSql,
 } from "../../../sales/orders/order/helpers/discount";
+import { orderAffiliateJoinSql } from "../../../sales/coupons/order-coupons/helpers/affiliated-commission-sql";
 import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
 import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
@@ -365,7 +366,7 @@ export class SellerSalesReportRepository {
     // pré-gravado em order_items — idêntico a sales_report revisão 3.
     // NUNCA soma ICMS aqui.
     const itemCostSql =
-      "ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value";
+      "ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value + affiliated_commission_value";
 
     await sequelize.query(
       `
@@ -390,7 +391,10 @@ export class SellerSalesReportRepository {
         order_source AS (
         SELECT
           o.id                        AS order_id,
-          o.seller_id,
+          -- "Vendedor 0" só entra quando o pedido é de afiliado; aí fica sem vendedor.
+          CASE WHEN COALESCE(sc.name, '') = 'Vendedor 0' THEN NULL ELSE o.seller_id END AS seller_id,
+          oa.contact_id               AS affiliated_id,
+          COALESCE(oa.commission_amount, 0) AS order_affiliated_commission,
           o.customer_id,
           o.unit_business_id,
           DATE(COALESCE(o.date, o.created_at)) AS order_date,
@@ -415,9 +419,12 @@ JOIN affected a ON a.order_id = o.id
 LEFT JOIN states st ON st.acronym = o.destination_uf
 LEFT JOIN contacts sc ON sc.id = o.seller_id
 LEFT JOIN unit_businesses ub ON ub.id = o.unit_business_id
-WHERE o.seller_id IS NOT NULL
-  AND COALESCE(sc.name, '') <> 'Vendedor 0'
-  AND COALESCE(ub.number::varchar, '') <> '0'
+${orderAffiliateJoinSql("o", "oa")}
+WHERE COALESCE(ub.number::varchar, '') <> '0'
+  AND (
+    (o.seller_id IS NOT NULL AND COALESCE(sc.name, '') <> 'Vendedor 0')
+    OR oa.contact_id IS NOT NULL
+  )
 
       ),
 
@@ -438,6 +445,8 @@ WHERE o.seller_id IS NOT NULL
           oi.id                              AS order_item_id,
           oi.order_id,
           os.seller_id,
+          os.affiliated_id,
+          os.order_affiliated_commission,
           os.customer_id,
           COALESCE(oi.product_id, p.id)      AS product_id,
           os.unit_business_id,
@@ -540,7 +549,9 @@ WHERE o.seller_id IS NOT NULL
           ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated,
           -- Comissão (vendedor e gerente) sobre o preço de venda após o desconto do pedido, igual ao comissao.valor do Bling.
           ROUND(item_weight * order_net_products, 2)        AS commission_base,
-          ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2) AS commission_value
+          ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2) AS commission_value,
+          -- Afiliado: comissão congelada do pedido (order_coupons) rateada pelo peso do item.
+          ROUND(item_weight * order_affiliated_commission, 2) AS affiliated_commission_value
         FROM item_weighted
       ),
 
@@ -579,6 +590,7 @@ WHERE o.seller_id IS NOT NULL
         icms_value_allocated, tax_commission_allocated, freight_cost_allocated,
         commission_base, commission_rate, commission_value,
         manager_commission_rate, manager_commission_value,
+        affiliated_id, affiliated_commission_value,
         markup_value, markup_pct,
         contribution_value, contribution_pct, is_valid_sale,
         last_updated_at, created_at, updated_at
@@ -594,6 +606,7 @@ WHERE o.seller_id IS NOT NULL
         icms_value_allocated, tax_commission_allocated, freight_cost_allocated,
         commission_base, commission_rate, commission_value,
         manager_commission_rate, manager_commission_value,
+        affiliated_id, affiliated_commission_value,
         (net_total_allocated - total_cost) AS markup_value,
         ${calculateMarkupSql("net_total_allocated", "total_cost").percent} AS markup_pct,
         (net_total_allocated - tax_commission_allocated - freight_cost_allocated - icms_value_allocated - total_cost) AS contribution_value,
@@ -627,6 +640,8 @@ WHERE o.seller_id IS NOT NULL
         commission_value           = EXCLUDED.commission_value,
         manager_commission_rate    = EXCLUDED.manager_commission_rate,
         manager_commission_value   = EXCLUDED.manager_commission_value,
+        affiliated_id              = EXCLUDED.affiliated_id,
+        affiliated_commission_value = EXCLUDED.affiliated_commission_value,
         markup_value               = EXCLUDED.markup_value,
         markup_pct                 = EXCLUDED.markup_pct,
         -- contribution_value volta pra base SEM desconto aqui (EXCLUDED não
@@ -1093,6 +1108,7 @@ async getReport(filters: SellerSalesReportFilters) {
     tireMeasure: filters.tireMeasure ?? null,
     customerIds: toArray(filters.customerIds),
     unitBusinessIds,
+    affiliatedIds: toArray(filters.affiliatedIds),
   };
 
   // -------------------------------------------------------------
@@ -1122,6 +1138,8 @@ async getReport(filters: SellerSalesReportFilters) {
              OR s.customer_id = ANY(ARRAY[:customerIds]::uuid[]))
         AND (cardinality(ARRAY[:unitBusinessIds]::uuid[]) = 0
              OR s.unit_business_id = ANY(ARRAY[:unitBusinessIds]::uuid[]))
+        AND (cardinality(ARRAY[:affiliatedIds]::uuid[]) = 0
+             OR s.affiliated_id = ANY(ARRAY[:affiliatedIds]::uuid[]))
     )
   `;
 
@@ -1141,6 +1159,7 @@ async getReport(filters: SellerSalesReportFilters) {
         COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
         ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS average_contribution_pct,
         COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission,
+        COALESCE(SUM(s.affiliated_commission_value), 0) AS affiliated_comission,
         COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount,
         COALESCE(SUM(s.icms_value_allocated), 0) AS total_icms
       FROM report_rows s
@@ -1166,6 +1185,7 @@ async getReport(filters: SellerSalesReportFilters) {
         ${calculateSafeDivisionSql("SUM(s.net_total)", "SUM(s.quantity)", 4)} AS unit_value,
         SUM(s.net_total) AS sale_value,
         SUM(s.commission_value) AS commission_value,
+        COALESCE(SUM(s.affiliated_commission_value), 0) AS affiliated_comission,
         ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS markup_pct,
         ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS contribution_pct,
         COALESCE(SUM(s.supplier_discount_value), 0) AS supplier_discount_value
@@ -1224,6 +1244,7 @@ async getReport(filters: SellerSalesReportFilters) {
         ${calculateAverageTicketSql("SUM(s.net_total)", "COUNT(DISTINCT s.order_id)")} AS average_ticket,
         COALESCE(SUM(s.total_cost), 0) AS total_cost,
         COALESCE(SUM(s.commission_value), 0) AS total_commission,
+        COALESCE(SUM(s.affiliated_commission_value), 0) AS affiliated_comission,
         COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
         ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS markup_pct,
         COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
@@ -1255,6 +1276,7 @@ async getReport(filters: SellerSalesReportFilters) {
         ${calculateAverageTicketSql("SUM(s.net_total)", "COUNT(DISTINCT s.order_id)")} AS average_ticket,
         COALESCE(SUM(s.total_cost), 0) AS total_cost,
         COALESCE(SUM(s.commission_value), 0) AS total_commission,
+        COALESCE(SUM(s.affiliated_commission_value), 0) AS affiliated_comission,
         COALESCE(SUM(s.markup_value), 0) AS total_markup_value,
         ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS markup_pct,
         COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
@@ -1262,8 +1284,38 @@ async getReport(filters: SellerSalesReportFilters) {
         COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount
       FROM report_rows s
       LEFT JOIN contacts ct ON ct.id = s.seller_id
+      WHERE s.seller_id IS NOT NULL
       GROUP BY s.seller_id
       ORDER BY total_sold DESC
+      `,
+      {
+        type: QueryTypes.SELECT,
+        replacements: baseFilterReplacements,
+      },
+    );
+
+    // -------------------------------------------------------------
+    // Vendas por Afiliado (quem recebe a comissão do cupom)
+    // -------------------------------------------------------------
+    const byAffiliated = await sequelize.query(
+      `
+      WITH ${reportRowsCte}
+      SELECT
+        s.affiliated_id,
+        MAX(af.name) AS affiliated_name,
+        STRING_AGG(DISTINCT cp.code, ', ') AS coupon_codes,
+        COUNT(DISTINCT s.order_id) AS sales_count,
+        COALESCE(SUM(s.net_total), 0) AS total_sold,
+        COALESCE(SUM(s.commission_base), 0) AS commission_base,
+        COALESCE(SUM(s.affiliated_commission_value), 0) AS affiliated_comission
+      FROM report_rows s
+      LEFT JOIN contacts af ON af.id = s.affiliated_id
+      -- No máximo 1 cupom com afiliado por pedido (índice parcial): o join não duplica itens.
+      LEFT JOIN order_coupons oc ON oc.order_id = s.order_id AND oc.contact_coupon_id IS NOT NULL
+      LEFT JOIN coupons cp ON cp.id = oc.coupon_id
+      WHERE s.affiliated_id IS NOT NULL
+      GROUP BY s.affiliated_id
+      ORDER BY affiliated_comission DESC
       `,
       {
         type: QueryTypes.SELECT,
@@ -1422,6 +1474,7 @@ async getReport(filters: SellerSalesReportFilters) {
       byManager,
       managerCommissionByBrand,
       bySeller,
+      byAffiliated,
       customers,
       evolution: {
         daily: evolutionDaily,

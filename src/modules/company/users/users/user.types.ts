@@ -14,6 +14,7 @@ export interface UserAttributes {
   role_id: string;
   email: string;
   password: string;
+  phone?: string | null;
   active?: boolean;
   config?: UserConfigAttributes;
   // Espelho de config.type no topo — campo que front e PDV leem (ver user.repository.ts::getFullUser).

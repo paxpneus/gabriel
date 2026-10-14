@@ -52,6 +52,9 @@ class SellerSalesReportController {
         unitBusinessIds: toQueryArray(
           req.query.unitBusinessIds ?? req.query.unit_business_ids,
         ),
+        affiliatedIds: toQueryArray(
+          req.query.affiliatedIds ?? req.query.affiliated_ids,
+        ),
         drillDown: req.query.drillDown === "true",
       });
 

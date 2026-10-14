@@ -34,6 +34,10 @@ Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e r
 
 **Sugestão de índices, só sob demanda.** Não sugerir índice proativamente. Se o usuário pedir (ou perguntar sobre performance de uma task que mexe numa entidade), olhar a tabela dessa entidade e onde ela é usada (filtros, joins, ordenação nas queries existentes) e sugerir os índices que ajudariam — sem criar a migration sozinho (ver regra de migração no fim deste arquivo: usuário roda `db:migrate` manualmente).
 
+## Schemas de validação (Zod)
+
+Schema fica dentro da entidade dona, numa pasta `schemas/` (ex.: `company/users/users/schemas/user.schema.ts`, `sales/coupons/contact-coupons/schemas/contact-coupon.schema.ts`) — nunca solto em `src/shared/`, sem index central. Schema que reaproveita campos de outra entidade importa direto do `schemas/` dela (ex.: `contact.schema.ts` usa `RequiredUserFields` de `user.schema.ts`).
+
 ## Evitar valores hardcoded
 
 Valor que identifica uma entidade específica (nome de integração, status, etc.) e é comparado/usado em mais de um lugar: nunca literal solto no código (`=== "Bling"`). Buscar/centralizar numa função ou variável já existente que resolve aquele valor (ex: `getBlingIntegration()` em `bling_api.service.ts`) e comparar contra o resultado dela — não recriar o literal. Assim, se o valor mudar, muda em um lugar só. Referência: `orders.service.ts`'s `getOrdersStatusSummary` compara `integration.name` com `(await getBlingIntegration()).name`, não com `"Bling"`.
@@ -92,6 +96,8 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `supplier-discount/report-value.md` — valor de desconto por linha nos relatórios
   - `supplier-discount/unit-business-bypass.md` — bypass de loja só no relatório de produto
 - `unit-business-group.md` — UnitBusinessGroup + pivot `unit_business_group_members` (N:N de unit businesses), rotas, permissão
+- `contact.md` — Contact (SELLER/CUSTOMER/AFFILIATED), `custom_data` genérico (merge no update), `id_system` opcional, rota user+contact por tipo, login/me do afiliado
+- `coupon.md` — coupons/contact_coupons/order_coupons: cupom genérico, vínculo afiliado (histórico, nunca deleta), snapshot congelado de comissão por pedido vindo da Magento
 - `store.md` — Store (tipo canal de venda, não filial), fix de dedup
 - `stock-movement.md` — módulo stock/stock_movements
 - `inventory-batch.md` — InventoryBatch/Items/Logs (contagem de inventário), modos FIXED/CYCLIC, gate de integration mapping

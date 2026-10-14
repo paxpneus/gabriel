@@ -18,6 +18,7 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   public role_id!: string;
   public email!: string;
   public password!: string;
+  public phone?: string | null;
   public active!: boolean;
   public id_system?: number | null;
   public config?: UserConfigAttributes;
@@ -82,6 +83,10 @@ User.init(
     password: {
         type: DataTypes.STRING(255),
         allowNull: false,
+    },
+    phone: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
     },
     active: {
       type: DataTypes.BOOLEAN,

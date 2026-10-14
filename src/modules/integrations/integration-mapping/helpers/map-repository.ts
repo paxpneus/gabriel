@@ -1,6 +1,7 @@
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import productRepository from "../../../inventory/products/repository/product.repository";
 import contactsRepository from "../../../sales/contacts/contacts.repository";
+import orderRepository from "../../../sales/orders/order/orders.repository";
 import invoiceRepository from "../../../warehouse/fiscal/invoices/invoice/invoice.repository";
 import { EntityType } from "../integration-mapping.types";
 
@@ -8,4 +9,5 @@ export const entityRepositoryMap: Record<EntityType, BaseRepository<any>> = {
   PRODUCT: productRepository,   
   INVOICE: invoiceRepository, 
   CONTACT: contactsRepository,   
+  ORDER: orderRepository,
 };

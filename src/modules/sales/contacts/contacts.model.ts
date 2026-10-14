@@ -1,8 +1,10 @@
 import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../config/sequelize";
 import {
+  CONTACT_TYPES,
   ContactAttributes,
   ContactCreationAttributes,
+  ContactCustomData,
   ContactType,
 } from "./contacts.types";
 import { v4 as uuidv4 } from "uuid";
@@ -14,11 +16,12 @@ class Contact
   public id!: string;
   public name!: string;
   public type!: ContactType;
-  public id_system!: string;
+  public id_system?: string | null;
   public document?: string | null;
   public integrations_id?: string | null;
   public unit_business_id?: string | null;
   public user_id?: string | null;
+  public custom_data?: ContactCustomData | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -37,12 +40,12 @@ Contact.init(
       allowNull: false,
     },
     type: {
-      type: DataTypes.ENUM("SELLER", "CUSTOMER"),
+      type: DataTypes.ENUM(...CONTACT_TYPES),
       allowNull: false,
     },
     id_system: {
       type: DataTypes.STRING(100),
-      allowNull: false,
+      allowNull: true,
     },
     document: {
       type: DataTypes.STRING(20),
@@ -78,6 +81,11 @@ Contact.init(
       },
       onUpdate: "CASCADE",
       onDelete: "SET NULL",
+    },
+    custom_data: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: {},
     },
   },
   {

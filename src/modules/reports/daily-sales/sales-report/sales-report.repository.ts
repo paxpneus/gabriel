@@ -6,6 +6,7 @@ import {
   orderNetProductsSql,
 } from "../../../sales/orders/order/helpers/discount";
 import { itemNetValueSql, orderNetValueSql } from "./helpers/net-value";
+import { orderAffiliateJoinSql } from "../../../sales/coupons/order-coupons/helpers/affiliated-commission-sql";
 import {
   chunkArray,
   FACT_KEYS_PER_STATEMENT,
@@ -665,7 +666,7 @@ export class SalesReportRepository {
     // stock_movements em item_source_raw) * quantity + commission_value.
     // NUNCA soma ICMS aqui — ICMS não é custo, só entra em contribution.
     const itemTotalCostSql =
-      "average_cost_snapshot * quantity + commission_value";
+      "average_cost_snapshot * quantity + commission_value + affiliated_commission_value";
     // Receita usada em markup/facts: SEMPRE total_products (bruto).
     const snapshotRevenueSql = "sos.total_products";
     const snapshotCostSql = "it.total_cost";
@@ -746,6 +747,7 @@ export class SalesReportRepository {
             2
           )                                                     AS computed_icms_value,
           o.invoice_id IS NOT NULL                              AS has_invoice_data,
+          oa.contact_id                                         AS affiliated_id,
           o.source_payload
           
 
@@ -761,6 +763,7 @@ export class SalesReportRepository {
   ON st.acronym = o.destination_uf
   LEFT JOIN unit_businesses ub ON ub.id = o.unit_business_id
   LEFT JOIN invoices inv ON inv.id = o.invoice_id
+  ${orderAffiliateJoinSql("o", "oa")}
       ),
 
       -- ------------------------------------------------------------------
@@ -780,7 +783,8 @@ export class SalesReportRepository {
           tax_commission, marketplace_fee, payment_fee,
           icms_value, ipi_value, pis_value, cofins_value, difal_value,
           ibs_value, cbs_value, approx_tax_value, computed_icms_value,
-          has_invoice_data, source_payload,
+          has_invoice_data, affiliated_id,
+          source_payload,
           last_updated_at, created_at, updated_at
         )
         SELECT
@@ -795,7 +799,8 @@ export class SalesReportRepository {
           tax_commission, marketplace_fee, payment_fee,
           icms_value, ipi_value, pis_value, cofins_value, difal_value,
           ibs_value, cbs_value, approx_tax_value, computed_icms_value,
-          has_invoice_data, source_payload,
+          has_invoice_data, affiliated_id,
+          source_payload,
           NOW(), NOW(), NOW()
         FROM order_source
         ON CONFLICT (order_id) DO UPDATE SET
@@ -834,6 +839,7 @@ export class SalesReportRepository {
           approx_tax_value        = EXCLUDED.approx_tax_value,
           computed_icms_value     = EXCLUDED.computed_icms_value,
           has_invoice_data        = EXCLUDED.has_invoice_data,
+          affiliated_id           = EXCLUDED.affiliated_id,
           source_payload          = EXCLUDED.source_payload,
           last_updated_at         = NOW(),
           updated_at              = NOW()
@@ -924,6 +930,7 @@ item_source_raw AS (
     END                                                     AS cost_source,
 
     COALESCE(oi.commission_rate, 0)                       AS commission_rate,
+    COALESCE(oa.commission_amount, 0)                     AS order_affiliated_commission,
     pc.ncm                                               AS ncm,
     pc.cest                                               AS cest,
     NULL::varchar                                         AS cfop,
@@ -942,6 +949,7 @@ item_source_raw AS (
   FROM order_items oi
   JOIN inserted_orders io ON io.order_id = oi.order_id
   JOIN orders ord ON ord.id = oi.order_id
+  ${orderAffiliateJoinSql("ord", "oa")}
 
   LEFT JOIN product_configs pc_by_sku ON (
     oi.product_id IS NULL
@@ -1033,7 +1041,9 @@ item_calc AS (
     ROUND(item_weight * order_computed_icms_value, 2) AS computed_icms_value_allocated,
     -- Comissão sobre o preço de venda após o desconto do pedido, igual ao comissao.valor do Bling.
     ROUND(item_weight * order_net_products, 2)        AS commission_base,
-    ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2) AS commission_value
+    ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2) AS commission_value,
+    -- Afiliado: comissão congelada do pedido (order_coupons) rateada pelo peso do item.
+    ROUND(item_weight * order_affiliated_commission, 2) AS affiliated_commission_value
   FROM item_weighted
 ),
 
@@ -1051,7 +1061,7 @@ item_calc AS (
   sku, description, unit, product_brand, product_measure,
   quantity, unit_price, gross_total, discount_value,
   net_total, average_cost_snapshot, total_cost_snapshot, cost_source, markup_pct,
-  commission_base, commission_rate, commission_value,
+  commission_base, commission_rate, commission_value, affiliated_commission_value,
   ncm, cest, cfop, gtin,
   approx_tax_value, icms_rate, icms_value, ipi_value, pis_value,
   cofins_value, difal_value, ibs_value, cbs_value,
@@ -1067,10 +1077,10 @@ SELECT
   quantity, unit_price, gross_total, discount_value,
   net_total_allocated,
   average_cost_snapshot,
-  ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value,
+  ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value + affiliated_commission_value,
   cost_source,
   ${calculateMarkupSql("net_total_allocated", itemTotalCostSql).percent},
-  commission_base, commission_rate, commission_value,
+  commission_base, commission_rate, commission_value, affiliated_commission_value,
   ncm, cest, cfop, gtin,
   approx_tax_value_allocated,
   0::numeric AS icms_rate,
@@ -1087,10 +1097,10 @@ SELECT
     - tax_commission_allocated
     - freight_cost_allocated
     - computed_icms_value_allocated
-    - (ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value)
+    - (ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value + affiliated_commission_value)
   ) AS contribution_value,
   ${calculatePercentageSql(
-    `net_total_allocated - tax_commission_allocated - freight_cost_allocated - computed_icms_value_allocated - (ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value)`,
+    `net_total_allocated - tax_commission_allocated - freight_cost_allocated - computed_icms_value_allocated - (ROUND((average_cost_snapshot * quantity)::numeric, 2) + commission_value + affiliated_commission_value)`,
     "net_total_allocated",
   )} AS contribution_pct,
   kit_multiplier,
@@ -1138,6 +1148,7 @@ FROM item_calc
           commission_base       = EXCLUDED.commission_base,
           commission_rate       = EXCLUDED.commission_rate,
           commission_value      = EXCLUDED.commission_value,
+          affiliated_commission_value = EXCLUDED.affiliated_commission_value,
           ncm                   = EXCLUDED.ncm,
           cest                  = EXCLUDED.cest,
           cfop                  = EXCLUDED.cfop,
@@ -1159,7 +1170,8 @@ FROM item_calc
           quantity,
           total_cost_snapshot,
           cost_source,
-          commission_value
+          commission_value,
+          affiliated_commission_value
       ),
 
       -- ------------------------------------------------------------------
@@ -1174,6 +1186,7 @@ FROM item_calc
           SUM(ii.quantity)                                          AS items_quantity,
           SUM(ii.total_cost_snapshot)                               AS total_cost,
           SUM(ii.commission_value)                                  AS total_commission,
+          SUM(ii.affiliated_commission_value)                       AS total_affiliated_commission,
           BOOL_OR(ii.cost_source IS DISTINCT FROM 'STOCK_AVERAGE') AS has_cost_fallback
         FROM inserted_items ii
         GROUP BY ii.order_snapshot_id
@@ -1193,13 +1206,14 @@ FROM item_calc
         items_quantity    = COALESCE(it.items_quantity, 0),
         total_cost        = COALESCE(it.total_cost, 0),
         total_commission  = COALESCE(it.total_commission, 0),
+        total_affiliated_commission = COALESCE(it.total_affiliated_commission, 0),
 
         total_taxes       = ${calculateTotalTaxesSql("sos")},
         total_fees        = ${calculateTotalFeesSql("sos")},
 
         contribution_value = ${calculateOrderContributionValueSql("sos", snapshotCostSql)},
         contribution_pct  = ${calculateOrderContributionPctSql("sos", snapshotCostSql)},
-        net_value         = ${orderNetValueSql("sos", "it.total_commission")},
+        net_value         = ${orderNetValueSql("sos", "it.total_commission", "it.total_affiliated_commission")},
         markup_pct = ${calculateMarkupSql(snapshotRevenueSql, snapshotCostSql).percent},
 
         -- Neste ponto (upsert principal, ainda ANTES de applySupplierDiscounts)
@@ -1528,6 +1542,7 @@ FROM item_calc
             COALESCE(SUM(s.total_taxes),        0) AS total_taxes,
             COALESCE(SUM(s.total_fees),         0) AS total_fees,
             COALESCE(SUM(s.total_commission),   0) AS total_commission,
+            COALESCE(SUM(s.total_affiliated_commission), 0) AS total_affiliated_commission,
             COALESCE(SUM(s.contribution_value), 0) AS contribution_value,
             COALESCE(SUM(s.total_supplier_discount), 0) AS total_supplier_discount
           FROM keys k
@@ -1541,7 +1556,7 @@ FROM item_calc
           fact_date, unit_business_id,
           orders_count, items_quantity,
           total_value, total_freight, average_freight, average_ticket,
-          total_cost, total_taxes, total_fees, total_commission,
+          total_cost, total_taxes, total_fees, total_commission, total_affiliated_commission,
           contribution_value, contribution_pct, markup_pct, total_supplier_discount,
           last_updated_at, created_at, updated_at
         )
@@ -1551,7 +1566,7 @@ FROM item_calc
           total_value, total_freight,
           ${calculateAverageTicketSql("total_freight", "orders_count")},
           ${calculateAverageTicketSql("total_value", "orders_count")},
-          total_cost, total_taxes, total_fees, total_commission,
+          total_cost, total_taxes, total_fees, total_commission, total_affiliated_commission,
           contribution_value,
           ${calculatePercentageSql("contribution_value", "total_value")},
           ${calculateMarkupSql("total_value", "total_cost").percent},
@@ -1569,6 +1584,7 @@ FROM item_calc
           total_taxes        = EXCLUDED.total_taxes,
           total_fees         = EXCLUDED.total_fees,
           total_commission   = EXCLUDED.total_commission,
+          total_affiliated_commission = EXCLUDED.total_affiliated_commission,
           contribution_value = EXCLUDED.contribution_value,
           contribution_pct   = EXCLUDED.contribution_pct,
           markup_pct         = EXCLUDED.markup_pct,
@@ -1660,6 +1676,7 @@ FROM item_calc
             COALESCE(SUM(s.total_taxes),        0) AS total_taxes,
             COALESCE(SUM(s.total_fees),         0) AS total_fees,
             COALESCE(SUM(s.total_commission),   0) AS total_commission,
+            COALESCE(SUM(s.total_affiliated_commission), 0) AS total_affiliated_commission,
             COALESCE(SUM(s.contribution_value), 0) AS contribution_value,
             COALESCE(SUM(s.total_supplier_discount), 0) AS total_supplier_discount
           FROM keys k
@@ -1674,7 +1691,7 @@ FROM item_calc
           fact_date, unit_business_id, store_id,
           orders_count, items_quantity, total_value, total_freight,
           average_ticket, total_cost, piece_average_value, markup_pct,
-          total_taxes, total_fees, total_commission, contribution_value, contribution_pct,
+          total_taxes, total_fees, total_commission, total_affiliated_commission, contribution_value, contribution_pct,
           total_supplier_discount,
           last_updated_at, created_at, updated_at
         )
@@ -1685,7 +1702,7 @@ FROM item_calc
           total_cost,
           ${calculateAverageValueSql("total_value", "items_quantity")},
           ${calculateMarkupSql("total_value", "total_cost").percent},
-          total_taxes, total_fees, total_commission, contribution_value,
+          total_taxes, total_fees, total_commission, total_affiliated_commission, contribution_value,
           ${calculatePercentageSql("contribution_value", "total_value")},
           total_supplier_discount,
           NOW(), NOW(), NOW()
@@ -1702,6 +1719,7 @@ FROM item_calc
           total_taxes         = EXCLUDED.total_taxes,
           total_fees          = EXCLUDED.total_fees,
           total_commission    = EXCLUDED.total_commission,
+          total_affiliated_commission = EXCLUDED.total_affiliated_commission,
           contribution_value  = EXCLUDED.contribution_value,
           contribution_pct    = EXCLUDED.contribution_pct,
           total_supplier_discount = EXCLUDED.total_supplier_discount,
@@ -1734,6 +1752,7 @@ FROM item_calc
             COALESCE(SUM(sois.quantity),             0) AS quantity,
             COALESCE(SUM(sois.total_cost_snapshot),  0) AS total_cost,
             COALESCE(SUM(sois.commission_value),     0) AS total_commission,
+            COALESCE(SUM(sois.affiliated_commission_value), 0) AS total_affiliated_commission,
             -- gross_total = quantidade * oi.unit_price, já bruto, sem rateio
             -- do pedido e sem desconto — consistente com a regra de receita
             -- bruta.
@@ -1753,13 +1772,13 @@ FROM item_calc
         )
         INSERT INTO daily_sales_product_facts (
           fact_date, unit_business_id, product_id, sku, description,
-          quantity, total_cost, total_commission, total_value, markup_pct,
+          quantity, total_cost, total_commission, total_affiliated_commission, total_value, markup_pct,
           total_supplier_discount,
           last_updated_at, created_at, updated_at
         )
         SELECT
           fact_date, unit_business_id, product_id, sku, description,
-          quantity, total_cost, total_commission, total_value,
+          quantity, total_cost, total_commission, total_affiliated_commission, total_value,
           ${calculateMarkupSql("total_value", "total_cost").percent},
           total_supplier_discount,
           NOW(), NOW(), NOW()
@@ -1770,6 +1789,7 @@ FROM item_calc
           quantity         = EXCLUDED.quantity,
           total_cost       = EXCLUDED.total_cost,
           total_commission = EXCLUDED.total_commission,
+          total_affiliated_commission = EXCLUDED.total_affiliated_commission,
           total_value      = EXCLUDED.total_value,
           markup_pct       = EXCLUDED.markup_pct,
           total_supplier_discount = EXCLUDED.total_supplier_discount,
@@ -1867,6 +1887,7 @@ FROM item_calc
     const brandIds = filters.brandIds ?? []; // agora são UUIDs de brand_id
     const tireMeasure = filters.tireMeasure ?? null;
     const orderIds = filters.orderIds ?? [];
+    const affiliatedIds = filters.affiliatedIds ?? [];
     // As tabelas de facts (daily_sales_*) são agregadas por dia/loja/produto/etc
     // e não têm order_id — qualquer filtro que precise de granularidade de
     // pedido (produto, marca, medida ou orderIds) precisa ir pela via de
@@ -1875,7 +1896,8 @@ FROM item_calc
       productIds.length > 0 ||
       brandIds.length > 0 ||
       !!tireMeasure ||
-      orderIds.length > 0;
+      orderIds.length > 0 ||
+      affiliatedIds.length > 0;
 
     const replacements = {
       dateFrom: filters.dateFrom,
@@ -1890,6 +1912,7 @@ FROM item_calc
       brandIds,
       tireMeasure,
       orderIds,
+      affiliatedIds,
     };
 
     if (hasProductFilter) {
@@ -1932,6 +1955,7 @@ FROM item_calc
         SUM(sois.quantity)                                           AS items_quantity,
         SUM(sois.total_cost_snapshot)                                AS total_cost,
         SUM(sois.commission_value)                                   AS total_commission,
+        SUM(sois.affiliated_commission_value)                        AS total_affiliated_commission,
         SUM(sois.supplier_discount_value)                            AS total_supplier_discount,
         BOOL_OR(sois.cost_source IS DISTINCT FROM 'STOCK_AVERAGE')  AS has_cost_fallback
       FROM sales_order_item_snapshots sois
@@ -1943,6 +1967,7 @@ FROM item_calc
       items_quantity    = COALESCE(it.items_quantity, 0),
       total_cost        = COALESCE(it.total_cost, 0),
       total_commission  = COALESCE(it.total_commission, 0),
+      total_affiliated_commission = COALESCE(it.total_affiliated_commission, 0),
       total_supplier_discount = COALESCE(it.total_supplier_discount, 0),
 
       total_taxes       = ${calculateTotalTaxesSql("sos")},
@@ -1953,7 +1978,7 @@ FROM item_calc
 
       contribution_pct  = ${calculateOrderContributionPctSql("sos", contributionCostSql)},
 
-      net_value         = ${orderNetValueSql("sos", "it.total_commission")},
+      net_value         = ${orderNetValueSql("sos", "it.total_commission", "it.total_affiliated_commission")},
 
       markup_pct = ${calculateMarkupSql("sos.total_products", snapshotCostSql).percent},
 
@@ -2010,6 +2035,7 @@ FROM item_calc
       sois.net_total,
       sois.total_cost_snapshot,
       sois.commission_value,
+      sois.affiliated_commission_value,
       sois.tax_commission_allocated,
       sois.freight_cost_allocated,
       sois.computed_icms_value_allocated,
@@ -2034,6 +2060,8 @@ FROM item_calc
            OR UPPER(TRIM(sois.product_measure)) = UPPER(TRIM(CAST(:tireMeasure AS varchar))))
       AND (cardinality(ARRAY[:orderIds]::uuid[]) = 0
            OR sois.order_id = ANY(ARRAY[:orderIds]::uuid[]))
+      AND (cardinality(ARRAY[:affiliatedIds]::uuid[]) = 0
+           OR sos.affiliated_id = ANY(ARRAY[:affiliatedIds]::uuid[]))
   )
 `;
 
@@ -2049,13 +2077,15 @@ FROM item_calc
         + COALESCE(SUM(freight_cost_allocated), 0)
         + COALESCE(SUM(computed_icms_value_allocated), 0)
         + COALESCE(SUM(tax_commission_allocated), 0)
-        + COALESCE(SUM(commission_value), 0) AS gross_total,
+        + COALESCE(SUM(commission_value), 0)
+        + COALESCE(SUM(affiliated_commission_value), 0) AS gross_total,
       ${calculateAverageTicketSql("SUM(net_total)", "COUNT(DISTINCT order_id)")} AS average_ticket,
       ${calculateAverageTicketSql("SUM(freight_cost_allocated)", "COUNT(DISTINCT order_id)")} AS average_freight,
       COALESCE(SUM(total_cost_snapshot), 0) AS total_cost,
       COALESCE(SUM(computed_icms_value_allocated), 0) AS total_taxes,
       COALESCE(SUM(tax_commission_allocated), 0) AS total_fees,
       COALESCE(SUM(commission_value), 0) AS total_commission,
+      COALESCE(SUM(affiliated_commission_value), 0) AS affiliated_comission,
       COALESCE(SUM(contribution_value), 0) AS contribution_value,
       ${calculatePercentageSql("SUM(contribution_value)", "SUM(net_total)")} AS contribution_pct,
       ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").decimal} AS markup_decimal,
@@ -2096,6 +2126,7 @@ FROM item_calc
       COALESCE(SUM(quantity), 0) AS quantity,
       COALESCE(SUM(total_cost_snapshot), 0) AS total_cost,
       COALESCE(SUM(commission_value), 0) AS total_commission,
+      COALESCE(SUM(affiliated_commission_value), 0) AS affiliated_comission,
       COALESCE(SUM(net_total), 0) AS total_value,
       ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").decimal} AS markup_decimal,
       ${calculateMarkupSql("SUM(net_total)", "SUM(total_cost_snapshot)").percent} AS markup_pct,
@@ -2125,6 +2156,7 @@ FROM item_calc
       COALESCE(SUM(pfr.computed_icms_value_allocated), 0) AS total_taxes,
       COALESCE(SUM(pfr.tax_commission_allocated), 0) AS total_fees,
       COALESCE(SUM(pfr.commission_value), 0) AS total_commission,
+      COALESCE(SUM(pfr.affiliated_commission_value), 0) AS affiliated_comission,
       COALESCE(SUM(pfr.contribution_value), 0) AS contribution_value,
       ${calculatePercentageSql("SUM(pfr.contribution_value)", "SUM(pfr.net_total)")} AS contribution_pct,
       COALESCE(SUM(pfr.supplier_discount_value), 0) AS total_supplier_discount
@@ -2184,13 +2216,14 @@ FROM item_calc
         COALESCE(SUM(items_quantity),  0) AS items_quantity,
         COALESCE(SUM(total_value),     0) AS total_value,
         COALESCE(SUM(total_freight),   0) AS total_freight,
-        COALESCE(SUM(total_value), 0) + COALESCE(SUM(total_freight), 0) + COALESCE(SUM(total_taxes), 0) + COALESCE(SUM(total_commission), 0) AS gross_total,
+        COALESCE(SUM(total_value), 0) + COALESCE(SUM(total_freight), 0) + COALESCE(SUM(total_taxes), 0) + COALESCE(SUM(total_commission), 0) + COALESCE(SUM(total_affiliated_commission), 0) AS gross_total,
         ${calculateAverageTicketSql("SUM(total_value)", "SUM(orders_count)")} AS average_ticket,
         ${calculateAverageTicketSql("SUM(total_freight)", "SUM(orders_count)")} AS average_freight,
         COALESCE(SUM(total_cost),        0) AS total_cost,
         COALESCE(SUM(total_taxes),       0) AS total_taxes,
         COALESCE(SUM(total_fees),        0) AS total_fees,
         COALESCE(SUM(total_commission),  0) AS total_commission,
+        COALESCE(SUM(total_affiliated_commission), 0) AS affiliated_comission,
         COALESCE(SUM(contribution_value),0) AS contribution_value,
         ${calculatePercentageSql("SUM(contribution_value)", "SUM(total_value)")} AS contribution_pct,
         ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
@@ -2232,6 +2265,7 @@ FROM item_calc
         COALESCE(SUM(quantity),   0) AS quantity,
         COALESCE(SUM(total_cost), 0) AS total_cost,
         COALESCE(SUM(total_commission), 0) AS total_commission,
+        COALESCE(SUM(total_affiliated_commission), 0) AS affiliated_comission,
         COALESCE(SUM(total_value),0) AS total_value,
         ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").decimal} AS markup_decimal,
         ${calculateMarkupSql("SUM(total_value)", "SUM(total_cost)").percent} AS markup_pct,
@@ -2264,6 +2298,7 @@ FROM item_calc
         COALESCE(SUM(dsf.total_taxes),        0) AS total_taxes,
         COALESCE(SUM(dsf.total_fees),         0) AS total_fees,
         COALESCE(SUM(dsf.total_commission),   0) AS total_commission,
+        COALESCE(SUM(dsf.total_affiliated_commission), 0) AS affiliated_comission,
         COALESCE(SUM(dsf.contribution_value), 0) AS contribution_value,
         ${calculatePercentageSql("SUM(dsf.contribution_value)", "SUM(dsf.total_value)")} AS contribution_pct,
         COALESCE(SUM(dsf.total_supplier_discount), 0) AS total_supplier_discount

@@ -20,6 +20,8 @@ export interface SellerSalesOrderItemSnapshotAttributes {
   commission_base?: number | string;
   manager_commission_rate?: number | string;
   manager_commission_value?: number | string;
+  affiliated_id?: string | null;
+  affiliated_commission_value?: number | string;
   markup_value?: number | string;
   markup_pct?: number | string;
   contribution_value?: number | string;

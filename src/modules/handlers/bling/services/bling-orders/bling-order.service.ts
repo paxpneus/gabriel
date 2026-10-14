@@ -31,6 +31,12 @@ import stateService from "../../../../warehouse/address/state/state.service";
 import { blingGet } from "../bling/helpers/get-with-sleep";
 import productService from "../../../../inventory/products/services/product.service";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
+import { getMagentoIntegration } from "../../../magentoV2/api/magentoV2_api";
+import { parseMagentoOrderId } from "../../../magentoV2/helpers/magento-order-id";
+import {
+  MagentoSyncQueue,
+  magentoFetchOrderJobId,
+} from "../../../magentoV2/queues/magento-sync.queue";
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
 import { OrderPaymentCreationAttributes } from "../../../../sales/orders/order_payment/order_payment.types";
 import { paymentMethodGroupForBlingType } from "../../../../sales/orders/payment_method/helpers/payment-method-groups";
@@ -141,6 +147,7 @@ export class BlingOrderService {
   private storeService: StoreService;
   // Lazy: evita abrir conexão Redis em quem instancia o service sem nunca criar vendedor.
   private blingApiFetchQueue: BlingApiFetchQueue | null = null;
+  private magentoSyncQueue: MagentoSyncQueue | null = null;
 
   constructor(blingApi: AxiosInstance) {
     this.blingApi = blingApi;
@@ -429,6 +436,54 @@ export class BlingOrderService {
     } catch (error) {
       console.error(
         `[BlingOrderService] Falha ao enfileirar fetch do vendedor ${sellerSystemId}:`,
+        error,
+      );
+    }
+  }
+
+  // Mapping ORDER Bling (id do pedido) + Magento (entity_id do numeroLoja); falha aqui não derruba a ingestão.
+  private async syncOrderIntegrationMappings(
+    orderId: string,
+    orderData: { id: number | string; numeroLoja?: string | null },
+    blingIntegrationId: string,
+  ): Promise<void> {
+    try {
+      await integrationMappingService.createOrUpdateIntegrationMapping({
+        entity_type: "ORDER",
+        internal_id: orderId,
+        external_id: String(orderData.id),
+        integrations_id: blingIntegrationId,
+      });
+
+      const magentoOrderId = parseMagentoOrderId(orderData.numeroLoja);
+      if (!magentoOrderId) return;
+
+      const magentoIntegration = await getMagentoIntegration("Magento");
+      const existingMapping = await integrationMappingService.findOne({
+        where: {
+          entity_type: "ORDER",
+          integrations_id: magentoIntegration.id,
+          external_id: magentoOrderId,
+        },
+        attributes: ["id"],
+      });
+      if (existingMapping) return;
+
+      await integrationMappingService.createOrUpdateIntegrationMapping({
+        entity_type: "ORDER",
+        internal_id: orderId,
+        external_id: magentoOrderId,
+        integrations_id: magentoIntegration.id,
+      });
+
+      this.magentoSyncQueue ??= new MagentoSyncQueue({ workless: true });
+      await this.magentoSyncQueue.add(
+        { kind: "fetch-order", orderId, magentoOrderId },
+        magentoFetchOrderJobId(magentoOrderId),
+      );
+    } catch (error) {
+      console.error(
+        `[BlingOrderService] Falha ao mapear pedido ${orderId} (Bling ${orderData.id}) nas integrações:`,
         error,
       );
     }
@@ -1121,6 +1176,7 @@ export class BlingOrderService {
       };
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
+      await this.syncOrderIntegrationMappings(existingOrder.id, orderData, integration.id);
       await orderPaymentService.replaceForOrder(
         existingOrder.id,
         orderPayments.map((payment) => ({
@@ -1423,6 +1479,7 @@ export class BlingOrderService {
       };
 
       const createdOrder = await ordersService.create(ordersPayload);
+      await this.syncOrderIntegrationMappings(createdOrder.id, orderData, integration.id);
       await orderPaymentService.replaceForOrder(
         createdOrder.id,
         orderPayments.map((payment) => ({

@@ -80,6 +80,9 @@ class SalesReportController {
         orderIds: parseArrayQueryParam(
           req.query.orderIds ?? req.query.order_ids,
         ),
+        affiliatedIds: parseArrayQueryParam(
+          req.query.affiliatedIds ?? req.query.affiliated_ids,
+        ),
       });
 
       return res.json(report);

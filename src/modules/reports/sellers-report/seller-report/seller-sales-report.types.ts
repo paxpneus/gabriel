@@ -8,6 +8,7 @@ export interface SellerSalesReportFilters {
   tireMeasure?: string;
   customerIds?: string[];
   unitBusinessIds?: string[];
+  affiliatedIds?: string[];
   drillDown?: boolean;
 }
 

@@ -1,4 +1,4 @@
-export const ENTITY_TYPES = ["PRODUCT", "INVOICE", "CONTACT"] as const;
+export const ENTITY_TYPES = ["PRODUCT", "INVOICE", "CONTACT", "ORDER"] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export interface IntegrationMappingAttributes {

@@ -238,3 +238,136 @@ describe("ContactService.createUserFromSellerName", () => {
     expect(result).toEqual({ url: mockUrl, user: mockUser });
   });
 });
+
+describe("ContactService.createWithUser", () => {
+  let service: ContactService;
+  const createdUser = {
+    id: "user-uuid",
+    name: "Afiliado Teste",
+    email: "afiliado@email.com",
+    cpf: "52998224725",
+    phone: null,
+    unit_business_id: "cd21-uuid",
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new ContactService();
+    (service as any).repository = {
+      create: jest.fn().mockImplementation(async (data) => ({ id: "contact-uuid", ...data })),
+    };
+    (roleService.findOne as jest.Mock).mockResolvedValue({ id: "role-affiliated" });
+    (unitBusinessService.findOne as jest.Mock).mockResolvedValue({ id: "cd21-uuid" });
+    (userService.createUserWithValidation as jest.Mock).mockResolvedValue(createdUser);
+  });
+
+  const baseDto = {
+    name: "Afiliado Teste",
+    cpf: "52998224725",
+    email: "afiliado@email.com",
+    password: "senha1234",
+  };
+
+  it("afiliado: loja 21 fixa, role Afiliado, user type affiliated, mesma transação", async () => {
+    const result = await service.createWithUser({
+      ...baseDto,
+      type: "AFFILIATED",
+      unit_business_id: "ignored-uuid",
+      custom_data: { origem: "indicacao" },
+    } as any);
+
+    expect(roleService.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { name: "Afiliado" } }),
+    );
+    expect(unitBusinessService.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { number: "21" } }),
+    );
+    expect(userService.createUserWithValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        unit_business_id: "cd21-uuid",
+        user_unit_business: ["cd21-uuid"],
+        role_id: "role-affiliated",
+        type: "affiliated",
+        phone: null,
+      }),
+      mockTransaction,
+    );
+    expect((service as any).repository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "AFFILIATED",
+        user_id: "user-uuid",
+        unit_business_id: "cd21-uuid",
+        document: "52998224725",
+        custom_data: { origem: "indicacao" },
+      }),
+      { transaction: mockTransaction },
+    );
+    // id_system é do sistema externo (Bling); contact criado aqui não tem.
+    expect((service as any).repository.create.mock.calls[0][0]).not.toHaveProperty("id_system");
+    expect(result.user).toEqual(expect.objectContaining({ id: "user-uuid", type: "affiliated" }));
+    expect(result.user).not.toHaveProperty("password");
+  });
+
+  it("seller: loja vem do body", async () => {
+    await service.createWithUser({ ...baseDto, type: "SELLER", unit_business_id: "loja-uuid" } as any);
+
+    expect(unitBusinessService.findOne).not.toHaveBeenCalled();
+    expect(userService.createUserWithValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ unit_business_id: "loja-uuid", type: "seller" }),
+      mockTransaction,
+    );
+  });
+
+  it("seller sem loja no body lança erro", async () => {
+    await expect(
+      service.createWithUser({ ...baseDto, type: "SELLER" } as any),
+    ).rejects.toThrow("unit_business_id");
+  });
+
+  it("tipo sem config de usuário lança erro", async () => {
+    await expect(
+      service.createWithUser({ ...baseDto, type: "CUSTOMER" } as any),
+    ).rejects.toThrow("não permite criar usuário");
+  });
+});
+
+describe("ContactService.update (custom_data)", () => {
+  let service: ContactService;
+  let repository: Record<string, jest.Mock>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new ContactService();
+    repository = {
+      findOne: jest.fn().mockResolvedValue({
+        id: "contact-uuid",
+        type: "AFFILIATED",
+        custom_data: { origem: "indicacao", canal: "instagram" },
+      }),
+      update: jest.fn().mockImplementation(async (_id, data) => data),
+    };
+    (service as any).repository = repository;
+  });
+
+  it("faz merge com o JSON atual em vez de substituir", async () => {
+    await service.update("contact-uuid", { custom_data: { canal: "tiktok" } });
+
+    expect(repository.update).toHaveBeenCalledWith(
+      "contact-uuid",
+      { custom_data: { origem: "indicacao", canal: "tiktok" } },
+      undefined,
+    );
+  });
+
+  it("sem custom_data → update normal, sem buscar o contato", async () => {
+    await service.update("contact-uuid", { name: "Novo nome" });
+    expect(repository.findOne).not.toHaveBeenCalled();
+    expect(repository.update).toHaveBeenCalledWith("contact-uuid", { name: "Novo nome" }, undefined);
+  });
+
+  it("contato inexistente → null", async () => {
+    repository.findOne.mockResolvedValue(null);
+    await expect(service.update("x", { custom_data: { a: 1 } })).resolves.toBeNull();
+    expect(repository.update).not.toHaveBeenCalled();
+  });
+});

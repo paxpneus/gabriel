@@ -1,4 +1,5 @@
-import { Job } from "bullmq";
+import { Job, UnrecoverableError } from "bullmq";
+import { isAxiosError } from "axios";
 import { Op, Transaction } from "sequelize";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
 import sequelize from "../../../../config/sequelize";
@@ -8,12 +9,18 @@ import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-p
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
 import { getMagentoIntegration } from "../api/magentoV2_api";
 import magentoCatalogService from "../service/catalog/products/products.service";
+import magentoSalesOrderService from "../service/sales/orders/orders.service";
+import orderCouponService from "../../../sales/coupons/order-coupons/order-coupons.service";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 
 export type MagentoSyncJobPayload =
   | { kind: "sync-product"; productId: string }
-  | { kind: "sync-all" };
+  | { kind: "sync-all" }
+  | { kind: "fetch-order"; orderId: string; magentoOrderId: string };
+
+export const magentoFetchOrderJobId = (magentoOrderId: string) =>
+  `magento-fetch-order-${magentoOrderId}`;
 
 // Fila única de sincronização com o Magento (preço/mapping/unmapped/
 // custo_medio). Antes esse trabalho rodava embutido no job da
@@ -34,11 +41,33 @@ export class MagentoSyncQueue extends BaseQueueService<MagentoSyncJobPayload> {
   }
 
   async process(job: Job<MagentoSyncJobPayload>): Promise<void> {
-    if (job.data.kind === "sync-all") {
-      await this.enqueueAllProducts();
-      return;
+    switch (job.data.kind) {
+      case "sync-all":
+        return this.enqueueAllProducts();
+      case "fetch-order":
+        return this.fetchOrder(job.data.orderId, job.data.magentoOrderId);
+      case "sync-product":
+        return this.syncProduct(job.data.productId);
     }
-    await this.syncProduct(job.data.productId);
+  }
+
+  // Cupom do pedido do site: identifica o afiliado e congela a comissão em order_coupons.
+  private async fetchOrder(orderId: string, magentoOrderId: string): Promise<void> {
+    try {
+      const magentoOrder = await magentoSalesOrderService.getOrderCoupon(magentoOrderId);
+      if (!magentoOrder.coupon_code?.trim()) return;
+
+      await orderCouponService.registerFromMagento({
+        orderId,
+        couponCode: magentoOrder.coupon_code,
+        discountAmount: Math.abs(Number(magentoOrder.discount_amount ?? 0)),
+      });
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        throw new UnrecoverableError(`Magento order ${magentoOrderId} not found`);
+      }
+      throw error;
+    }
   }
 
   // ─── job diário (23h BRT) — enfileira 1 "sync-product" por produto UNIT ───

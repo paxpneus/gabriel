@@ -30,6 +30,9 @@ A checagem é do lado da **Bling**, não da `MAGENTO_SYNC`: dentro da transactio
 
 Isso faz da Bling a dona do preço só até o produto ser mapeado pela primeira vez; a partir daí, quem mantém `price` atualizado é o job `sync-product` da `MAGENTO_SYNC` (que sempre escreve o preço achado no Magento, incondicionalmente — ver `syncProduct` em `magento-sync.queue.ts`).
 
+## Job `fetch-order` (cupom do pedido do site)
+Mesma fila `MAGENTO_SYNC` (payload por `kind`: `sync-product` | `sync-all` | `fetch-order`). `fetch-order` `{ orderId, magentoOrderId }` é enfileirado pela ingestão de pedido Bling (ver `entities/order/index.md` § Cupom). Client: `MagentoSalesOrderService.getOrderCoupon` (`service/sales/orders/`), `GET /orders/{entity_id}?fields=entity_id,increment_id,coupon_code,discount_amount`. Sem cupom → nada; com cupom → `orderCouponService.registerFromMagento` (desconto em valor absoluto, Magento manda negativo). 404 = `UnrecoverableError`.
+
 ## Histórico: mappings antigos guardavam sku, não id
 
 Mappings criados antes desta mudança guardavam o **sku** em `external_id` (semântica antiga). Buscar esses por `entity_id` não acha nada e o produto era erroneamente tratado como excluído no Magento, rebaixando pra `unmapped_invoice_products`. Correção: apagar todos os `integration_mappings` da integração Magento (`DELETE FROM integration_mappings WHERE integrations_id = (SELECT id FROM integrations WHERE name = 'Magento' AND type = 'SYSTEM')`) e deixar a fila remapear do zero pelo fluxo sku→nome — não existe fallback de compat pra sku legado no código, produto mapeado que não resolve por id vai direto pro unmapped.

@@ -29,6 +29,8 @@ type Scopes =
   | 'PDV Loja'
   | 'PDV Financeiro'
   | 'PDV CD21'
+  | 'Contatos'
+  | 'Cupons'
 
 interface ChildEntity {
   entity: string
@@ -65,6 +67,23 @@ export const ROLE_PERMISSIONS: Roles[] = [
       { entity: 'category_options', label: 'Opções de Categoria' },
       { entity: 'priorities',     label: 'Prioridades' },
       { entity: 'ticket_statuses',         label: 'Status de Demanda' },
+    ],
+  },
+  {
+    scope: 'Contatos',
+    entity: 'contacts',
+    route: 'contacts',
+    permissions: all,
+    type: 'REGULAR',
+  },
+  {
+    scope: 'Cupons',
+    entity: 'coupons',
+    route: 'coupons',
+    permissions: all,
+    type: 'REGULAR',
+    children: [
+      { entity: 'contact_coupons', label: 'Cupons de Afiliado' },
     ],
   },
   {

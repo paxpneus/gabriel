@@ -1252,7 +1252,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             ? {
                 id: invoiceWithRelations.seller.id,
                 name: invoiceWithRelations.seller.name,
-                id_system: invoiceWithRelations.seller.id_system,
+                id_system: invoiceWithRelations.seller.id_system ?? "",
               }
             : default_seller_body,
           customer: {

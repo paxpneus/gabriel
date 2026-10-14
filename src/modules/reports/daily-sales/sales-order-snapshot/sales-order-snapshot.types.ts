@@ -7,6 +7,8 @@ export interface SalesOrderSnapshotAttributes {
   store_id?: string | null;
   unit_business_id?: string | null;
   seller_id?: string | null;
+  affiliated_id?: string | null;
+  total_affiliated_commission?: number | string;
 
   order_number_system?: string | null;
   order_number_channel?: string | null;

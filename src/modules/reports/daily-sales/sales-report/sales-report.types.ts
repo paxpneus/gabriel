@@ -13,6 +13,7 @@ export interface SalesReportFilters {
   brandIds?: string[];
   tireMeasure?: string;
   orderIds?: string[];
+  affiliatedIds?: string[];
 }
 
 export interface SalesReportJobResult {

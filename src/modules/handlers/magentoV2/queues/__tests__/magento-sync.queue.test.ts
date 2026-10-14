@@ -91,7 +91,19 @@ jest.mock("../../service/catalog/products/products.service", () => ({
   },
 }));
 
+jest.mock("../../service/sales/orders/orders.service", () => ({
+  __esModule: true,
+  default: { getOrderCoupon: jest.fn() },
+}));
+
+jest.mock("../../../../sales/coupons/order-coupons/order-coupons.service", () => ({
+  __esModule: true,
+  default: { registerFromMagento: jest.fn() },
+}));
+
 import productService from "../../../../inventory/products/services/product.service";
+import magentoSalesOrderService from "../../service/sales/orders/orders.service";
+import orderCouponService from "../../../../sales/coupons/order-coupons/order-coupons.service";
 import productConfigService from "../../../../inventory/product-config/product_config.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
@@ -449,6 +461,52 @@ describe("MagentoSyncQueue", () => {
 
       expect(productService.findAll).not.toHaveBeenCalled();
       expect(addSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("fetch-order", () => {
+    const runFetchOrder = () =>
+      queue.process({
+        data: { kind: "fetch-order", orderId: "order-1", magentoOrderId: "631" },
+      } as unknown as Job<any>);
+
+    it("com cupom: registra o cupom do pedido com o desconto em valor absoluto", async () => {
+      (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockResolvedValue({
+        entity_id: 631,
+        coupon_code: "PRIMEIRACOMPRAPAX",
+        discount_amount: -42.5,
+      });
+
+      await runFetchOrder();
+
+      expect(magentoSalesOrderService.getOrderCoupon).toHaveBeenCalledWith("631");
+      expect(orderCouponService.registerFromMagento).toHaveBeenCalledWith({
+        orderId: "order-1",
+        couponCode: "PRIMEIRACOMPRAPAX",
+        discountAmount: 42.5,
+      });
+    });
+
+    it("sem cupom: não registra nada", async () => {
+      (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockResolvedValue({
+        entity_id: 631,
+        coupon_code: null,
+      });
+
+      await runFetchOrder();
+
+      expect(orderCouponService.registerFromMagento).not.toHaveBeenCalled();
+    });
+
+    it("pedido não existe na Magento (404): falha definitiva, sem retry", async () => {
+      const notFound = Object.assign(new Error("Not Found"), {
+        isAxiosError: true,
+        response: { status: 404 },
+      });
+      (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockRejectedValue(notFound);
+
+      await expect(runFetchOrder()).rejects.toThrow("Magento order 631 not found");
+      expect(orderCouponService.registerFromMagento).not.toHaveBeenCalled();
     });
   });
 });

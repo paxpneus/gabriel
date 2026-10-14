@@ -14,6 +14,11 @@ Catálogo `PaymentMethod` (`src/modules/sales/orders/payment_method/`) é AGRUPA
 
 Rota só de leitura `GET /api/payment_method` (`payment_method.controller.ts`, `RouterController` — sem CRUD do `BaseController`, catálogo vem do seed `m301` + sync Bling): paginada, `search` só em `description`, sort padrão `description ASC`, auth `pdvAccess` (3 telas PDV: login ou link). Consumido pelo PDV via `OrderRepository.findByIdWithPayments`/`findByIdWithFullDetail` (`PAYMENTS_INCLUDE` em `order_payment/helpers/payments-include.ts`) pra comparar formas × `tipo_comprovante` extraído do comprovante (OCR/PDF) — ver `.claude/entities/pdv-sales-request/index.md` e `.claude/modules/ai-vision-extraction.md`.
 
+## Cupom / afiliado (`order_coupons`)
+- `BlingOrderService.syncOrderIntegrationMappings` (após `ordersService.create`/`update`): mapping `ORDER` Bling + (se `numeroLoja` casa `^\d+_(\d+)$`) mapping `ORDER` Magento. Só quando o mapping Magento é novo enfileira `fetch-order` na `MAGENTO_SYNC` (jobId `magento-fetch-order-<entity_id>`). Falha de mapping/integração só loga, não derruba a ingestão.
+- O job grava o cupom em `order_coupons` (snapshot congelado de desconto/afiliado/comissão) — ver `entities/coupon.md`. Pedido não tem coluna de cupom.
+- Sem backfill: pedido antigo ganha mapping/cupom no próximo update vindo do Bling.
+
 ## Vendedor (`orders.seller_id` → `contacts` type `SELLER`)
 `BlingOrderService.upsertSellerContact` (o pedido do Bling só traz `vendedor.id`, sem `nome`):
 - Integration mapping `CONTACT` (`external_id` = `vendedor.id`) existe → usa o contato mapeado, sem chamar o Bling.

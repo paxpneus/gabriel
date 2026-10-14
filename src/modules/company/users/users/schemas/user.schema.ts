@@ -1,10 +1,44 @@
 import { z } from "zod";
-import { isValidCPF } from "../utils/validators/document";
+import { isValidCPF } from "../../../../../shared/utils/validators/document";
 
 /**
  * Validações customizadas
  */
 const cpfRegex = /^\d{3}\.?\d{3}\.?\d{3}-?\d{2}$|^\d{11}$/;
+
+export const phoneField = z
+  .string()
+  .trim()
+  .max(20, "Telefone não pode ter mais de 20 caracteres")
+  .nullable()
+  .optional();
+
+/** Campos obrigatórios mínimos de um usuário — reaproveitados por schemas que criam user junto de outra entidade. */
+export const RequiredUserFields = {
+  name: z
+    .string({ error: "Nome é obrigatório" })
+    .min(3, "Nome deve ter pelo menos 3 caracteres")
+    .max(255, "Nome não pode ter mais de 255 caracteres")
+    .trim(),
+
+  cpf: z
+    .string({ error: "CPF é obrigatório" })
+    .regex(cpfRegex, "CPF deve conter exatamente 11 dígitos")
+    .trim()
+    .refine((v) => isValidCPF(v), "CPF inválido"),
+
+  email: z
+    .string({ error: "Email é obrigatório" })
+    .email("Email inválido")
+    .max(255, "Email não pode ter mais de 255 caracteres")
+    .toLowerCase()
+    .trim(),
+
+  password: z
+    .string({ error: "Senha é obrigatória" })
+    .min(8, "Senha deve ter no mínimo 8 caracteres")
+    .max(255, "Senha não pode ter mais de 255 caracteres"),
+};
 
 const UserConfigUpdateFields = {
   theme: z.enum(["dark", "light"]).optional(),
@@ -37,29 +71,9 @@ const UserConfigUpdateSchema = z.object(UserConfigUpdateFields).strict();
  * Todos os campos são obrigatórios (exceto os explicitamente marcados como opcionais)
  */
 export const CreateUserSchema = z.object({
-  name: z
-    .string({ error: "Nome é obrigatório" })
-    .min(3, "Nome deve ter pelo menos 3 caracteres")
-    .max(255, "Nome não pode ter mais de 255 caracteres")
-    .trim(),
+  ...RequiredUserFields,
 
-  cpf: z
-    .string({ error: "CPF é obrigatório" })
-    .regex(cpfRegex, "CPF deve conter exatamente 11 dígitos")
-    .trim()
-    .refine((v) => isValidCPF(v), "CPF inválido"),
-
-  email: z
-    .string({ error: "Email é obrigatório" })
-    .email("Email inválido")
-    .max(255, "Email não pode ter mais de 255 caracteres")
-    .toLowerCase()
-    .trim(),
-
-  password: z
-    .string({ error: "Senha é obrigatória" })
-    .min(8, "Senha deve ter no mínimo 8 caracteres")
-    .max(255, "Senha não pode ter mais de 255 caracteres"),
+  phone: phoneField,
 
   type: z.string().optional(), // <-- Adicionado aqui como string opcional
   id_system: z
@@ -121,6 +135,8 @@ export const UpdateUserSchema = z
       .min(8, "Senha deve ter no mínimo 8 caracteres")
       .max(255, "Senha não pode ter mais de 255 caracteres")
       .optional(),
+
+    phone: phoneField,
 
     type: z.string().optional(), // <-- Adicionado aqui também para o fluxo de update
     id_system: z
