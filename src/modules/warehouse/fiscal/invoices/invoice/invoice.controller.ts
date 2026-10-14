@@ -6,12 +6,6 @@ import { Request, Response } from "express";
 import { authenticate } from "../../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../../middlewares/user-permissions";
 import archiver from "archiver";
-import {
-  decryptXml,
-  isEncrypted,
-} from "../../../../../shared/utils/xml/xml-cipher";
-import { generateDanfePdfBuffer } from "../../../../../shared/utils/xml/danfe-generator";
-import { PDFDocument, radians } from "pdf-lib";
 import { Op } from "sequelize";
 import { InvoiceAttributes } from "./invoice.types";
 import multer from "multer";
@@ -323,51 +317,25 @@ export class InvoiceController extends BaseController<
         return;
       }
 
-      const invoices = await Invoice.findAll({ where: { id: ids } });
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
 
-      if (!invoices.length) {
+      const pdf = await this.service.getDanfeBatch(ids, unitBusinessId);
+
+      if (!pdf) {
         res.status(404).json({ error: "Nenhuma nota encontrada" });
         return;
       }
-
-      const mergedPdf = await PDFDocument.create();
-
-      for (const invoice of invoices) {
-        let xml = (invoice as any).xml_path;
-
-        if (!xml || xml.startsWith("http")) {
-          console.warn(`Invoice ${invoice.id}: XML não disponível, pulando.`);
-          continue;
-        }
-
-        if (isEncrypted(xml)) xml = decryptXml(xml);
-
-        try {
-          const pdfBuffer = await generateDanfePdfBuffer(xml);
-
-          const invoicePdf = await PDFDocument.load(pdfBuffer);
-          const pages = await mergedPdf.copyPages(
-            invoicePdf,
-            invoicePdf.getPageIndices(),
-          );
-          pages.forEach((p) => mergedPdf.addPage(p));
-
-          console.log(
-            `[DANFE] invoice=${invoice.id} adicionada ao PDF mesclado`,
-          );
-        } catch (err: any) {
-          console.error(`[DANFE] Erro invoice ${invoice.id}:`, err.message);
-        }
-      }
-
-      const mergedBytes = await mergedPdf.save();
 
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(
         "Content-Disposition",
         `inline; filename="danfes-${Date.now()}.pdf"`,
       );
-      res.send(Buffer.from(mergedBytes));
+      res.send(pdf);
     } catch (err: any) {
       if (!res.headersSent) {
         res.status(500).json({ error: err.message });

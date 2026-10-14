@@ -19,6 +19,7 @@ import {
   fn,
   FindOptions,
   Op,
+  ProjectionAlias,
   Sequelize,
   Transaction,
   WhereOptions,
@@ -59,6 +60,27 @@ import KitComponent from "../../../../inventory/kit-components/kit-component.mod
 // não extraído pra um lugar compartilhado (mesma situação já assumida pra
 // shippingWindowRange nos dois arquivos).
 const MERCADO_LIVRE_STORE_NAME = "MercadoLivre";
+
+// Colunas que as telas de listagem (`GET /invoice`) leem.
+type ListedInvoiceQueryOptions = {
+  extraOptions: Omit<FindOptions, "where" | "limit" | "offset" | "order">;
+  forcedWhere: WhereOptions | undefined;
+};
+
+const SUMMARY_INVOICE_ATTRIBUTES = [
+  "id",
+  "number_system",
+  "emitted_at",
+  "received_at",
+  "expected_receiving",
+  "customer_name",
+  "sender_name",
+  "receiver_name",
+  "description",
+  "transporter_name",
+  "printed_label",
+  "xml_key",
+];
 
 export class InvoiceRepository extends BaseRepository<Invoice> {
   constructor() {
@@ -373,22 +395,12 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
 
   // ─── Listagem paginada ───────────────────────────────────────────────────────
 
-  // Monta os includes/attributes compartilhados por `listInvoices` e
-  // `listTransferInvoices` — a única diferença de verdade entre as duas é o
-  // `forcedWhere` que cada uma passa pro `findPaginated` (escopo por
-  // unit_business_id vs. escopo por CNPJ de transferência). `unitBusinessId`
-  // opcional: quando ausente (listagem de transferência sem loja escolhida
-  // pelo front), o join de `unitBusinessAttributes`/`batch` deixa de ser
-  // `required`/escopado — só bate como filtro quando algum outro filtro
-  // (status/type/batch_generated/processStatus/transporterStatus) foi
-  // realmente informado.
-  private buildListedInvoiceQueryOptions(
+  // Filtros que viram `where`/`required` nos includes — iguais em `GET /invoice` e na transferência.
+  // Sem `unitBusinessId`, attrs/batch só filtram quando algum filtro de attr/batch veio.
+  private resolveListedInvoiceFilters(
     params: QueryParams,
     unitBusinessId?: string,
-  ): {
-    extraOptions: Omit<FindOptions, "where" | "limit" | "offset" | "order">;
-    forcedWhere: WhereOptions | undefined;
-  } {
+  ) {
     const transporterStatusFilter = this.extractTransporterStatusFilter(
       params.filters,
     );
@@ -398,91 +410,173 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     };
     const hasAttrFilter = Object.keys(attrWhere).length > 0;
     const batchStatusWhere = this.extractBatchStatusFilter(params.filters);
-    const hasBatchFilter = !!batchStatusWhere;
 
-    const extraOptions: Omit<
-      FindOptions,
-      "where" | "limit" | "offset" | "order"
-    > = {
-      subQuery: false,
-      include: [
-        {
-          model: InvoiceUnitBusinessAttributes,
-          as: "unitBusinessAttributes",
-          where: hasAttrFilter ? attrWhere : undefined,
-          required: hasAttrFilter,
-          attributes: ["status", "type", "batch_generated", "unit_business_id"],
-          include: [
-            {
-              model: UnitBusiness,
-              as: "unitBusiness",
-            },
-          ],
-        },
-        {
-          model: ExpeditionBatchInvoice,
-          as: "batchInvoice",
-          required: hasBatchFilter,
-          attributes: ["id"],
-          include: [
-            {
-              model: ExpeditionBatch,
-              as: "batch",
-              required: hasBatchFilter,
-              attributes: ["number", "status", "mode", "id"],
-              where: {
-                ...(unitBusinessId ? { unit_business_id: unitBusinessId } : {}),
-                ...(batchStatusWhere ?? {}),
-              },
-            },
-          ],
-        },
-        {
-          model: Store,
-          as: "store",
-          attributes: ["name"],
-          required: !!transporterStatusFilter,
-          where: transporterStatusFilter
-            ? { name: { [Op.ne]: MERCADO_LIVRE_STORE_NAME } }
-            : undefined,
-        },
-        // Só pra permitir os customFields de Mercado Livre (invoice.service.ts)
-        // filtrarem por `$order.collection_date$` — sem filtro nenhum ativo,
-        // é um LEFT JOIN inofensivo, igual ao de `store`/`batchInvoice`. `date`
-        // e `unit_business_id` são usados pelo customField `supplier_discount`
-        // (invoice.service.ts) — período/loja do pedido, não da nota.
-        {
-          model: Order,
-          as: "order",
-          attributes: ["id", "collection_date", "date", "unit_business_id"],
-        },
-        {
-          model: Transporter,
-          as: "transporter",
-          attributes: ["name", "uf", "cnpj"],
-        },
-        {
-          model: Supplier,
-          as: "supplier",
-          attributes: ["name"],
-        },
-      ],
-      attributes: {
-        exclude: ["source_payload", "xml_path"],
+    return {
+      attrWhere: hasAttrFilter ? attrWhere : undefined,
+      hasAttrFilter,
+      batchWhere: {
+        ...(unitBusinessId ? { unit_business_id: unitBusinessId } : {}),
+        ...(batchStatusWhere ?? {}),
+      },
+      hasBatchFilter: !!batchStatusWhere,
+      storeRequired: !!transporterStatusFilter,
+      storeWhere: transporterStatusFilter
+        ? { name: { [Op.ne]: MERCADO_LIVRE_STORE_NAME } }
+        : undefined,
+      forcedWhere: transporterStatusFilter
+        ? ({ transporter_id: transporterStatusFilter.transporterId } as WhereOptions)
+        : undefined,
+    };
+  }
+
+  private listedInvoiceCalculatedAttributes(
+    unitBusinessId?: string,
+  ): ProjectionAlias[] {
+    return [
+      [this.productBrandsLiteral(), "product_brands"],
+      [totalExpectedLiteral(), "total_expected"],
+      [totalReadLiteral(unitBusinessId), "total_read"],
+    ];
+  }
+
+  // `GET /invoice`: só o que as telas de listagem leem. `order`/`supplier` com `attributes: []` ficam só pelos filtros.
+  private buildListedInvoiceQueryOptions(
+    params: QueryParams,
+    unitBusinessId: string,
+  ): ListedInvoiceQueryOptions {
+    const filters = this.resolveListedInvoiceFilters(params, unitBusinessId);
+
+    return {
+      forcedWhere: filters.forcedWhere,
+      extraOptions: {
+        subQuery: false,
         include: [
-          [this.productBrandsLiteral(), "product_brands"],
-          [totalExpectedLiteral(), "total_expected"],
-          [totalReadLiteral(unitBusinessId), "total_read"],
-          [deliveryNoteGeneratedLiteral(), "delivery_note_generated"],
+          {
+            model: InvoiceUnitBusinessAttributes,
+            as: "unitBusinessAttributes",
+            where: filters.attrWhere,
+            required: filters.hasAttrFilter,
+            attributes: ["status", "batch_generated", "danfe_printed"],
+            include: [
+              { model: UnitBusiness, as: "unitBusiness", attributes: ["number"] },
+            ],
+          },
+          {
+            model: ExpeditionBatchInvoice,
+            as: "batchInvoice",
+            required: filters.hasBatchFilter,
+            attributes: ["id"],
+            include: [
+              {
+                model: ExpeditionBatch,
+                as: "batch",
+                required: filters.hasBatchFilter,
+                attributes: ["id", "number"],
+                where: filters.batchWhere,
+              },
+            ],
+          },
+          {
+            model: Store,
+            as: "store",
+            attributes: ["name"],
+            required: filters.storeRequired,
+            where: filters.storeWhere,
+          },
+          { model: Order, as: "order", attributes: [] },
+          {
+            model: Transporter,
+            as: "transporter",
+            attributes: ["name", "uf", "cnpj"],
+          },
+          { model: Supplier, as: "supplier", attributes: [] },
+          {
+            model: UnitBusiness,
+            as: "originUnitBusiness",
+            attributes: ["id", "name", "number", "cnpj"],
+          },
+        ],
+        attributes: [
+          ...SUMMARY_INVOICE_ATTRIBUTES,
+          ...this.listedInvoiceCalculatedAttributes(unitBusinessId),
         ],
       },
     };
+  }
+
+  // Transferência (`listTransferInvoices`/`findAllTransferInvoices`): projeção completa da nota.
+  private buildTransferInvoiceQueryOptions(
+    params: QueryParams,
+    unitBusinessId?: string,
+  ): ListedInvoiceQueryOptions {
+    const filters = this.resolveListedInvoiceFilters(params, unitBusinessId);
 
     return {
-      extraOptions,
-      forcedWhere: transporterStatusFilter
-        ? { transporter_id: transporterStatusFilter.transporterId }
-        : undefined,
+      forcedWhere: filters.forcedWhere,
+      extraOptions: {
+        subQuery: false,
+        include: [
+          {
+            model: InvoiceUnitBusinessAttributes,
+            as: "unitBusinessAttributes",
+            where: filters.attrWhere,
+            required: filters.hasAttrFilter,
+            attributes: [
+              "status",
+              "type",
+              "batch_generated",
+              "danfe_printed",
+              "unit_business_id",
+            ],
+            include: [{ model: UnitBusiness, as: "unitBusiness" }],
+          },
+          {
+            model: ExpeditionBatchInvoice,
+            as: "batchInvoice",
+            required: filters.hasBatchFilter,
+            attributes: ["id"],
+            include: [
+              {
+                model: ExpeditionBatch,
+                as: "batch",
+                required: filters.hasBatchFilter,
+                attributes: ["number", "status", "mode", "id"],
+                where: filters.batchWhere,
+              },
+            ],
+          },
+          {
+            model: Store,
+            as: "store",
+            attributes: ["name"],
+            required: filters.storeRequired,
+            where: filters.storeWhere,
+          },
+          {
+            model: Order,
+            as: "order",
+            attributes: ["id", "collection_date", "date", "unit_business_id"],
+          },
+          {
+            model: Transporter,
+            as: "transporter",
+            attributes: ["name", "uf", "cnpj"],
+          },
+          { model: Supplier, as: "supplier", attributes: ["name"] },
+          {
+            model: UnitBusiness,
+            as: "originUnitBusiness",
+            attributes: ["id", "name", "number", "cnpj"],
+          },
+        ],
+        attributes: {
+          exclude: ["source_payload", "xml_path"],
+          include: [
+            ...this.listedInvoiceCalculatedAttributes(unitBusinessId),
+            [deliveryNoteGeneratedLiteral(), "delivery_note_generated"],
+          ],
+        },
+      },
     };
   }
 
@@ -552,7 +646,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   ): Promise<PaginatedResult<FullInvoiceAttributes>> {
     const unitBusinessCnpjs = await this.findAllUnitBusinessCnpjs();
 
-    const { extraOptions, forcedWhere } = this.buildListedInvoiceQueryOptions(
+    const { extraOptions, forcedWhere } = this.buildTransferInvoiceQueryOptions(
       params,
       unitBusinessId,
     );
@@ -584,7 +678,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   ): Promise<FullInvoiceAttributes[]> {
     const unitBusinessCnpjs = await this.findAllUnitBusinessCnpjs();
 
-    const { extraOptions, forcedWhere } = this.buildListedInvoiceQueryOptions(
+    const { extraOptions, forcedWhere } = this.buildTransferInvoiceQueryOptions(
       params,
       unitBusinessId,
     );
@@ -876,6 +970,11 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           ],
         },
         { model: UnmappedInvoiceProduct, as: "unmappedProducts" },
+        {
+          model: UnitBusiness,
+          as: "originUnitBusiness",
+          attributes: ["id", "name", "number", "cnpj"],
+        },
       ],
     });
 
@@ -936,12 +1035,13 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       InvoiceAttributes & {
         status: InvoiceUnitBusinessAttributesStatus;
         batch_generated: boolean;
+        danfe_printed: boolean;
       }
     >,
     attrWhere?: WhereOptions,
     transaction?: Transaction,
   ): Promise<void> {
-    const { status, batch_generated, ...invoiceData } = data;
+    const { status, batch_generated, danfe_printed, ...invoiceData } = data;
 
     await Promise.all([
       Object.keys(invoiceData).length > 0
@@ -951,11 +1051,14 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           })
         : Promise.resolve(),
 
-      status !== undefined || batch_generated !== undefined
+      status !== undefined ||
+      batch_generated !== undefined ||
+      danfe_printed !== undefined
         ? InvoiceUnitBusinessAttributes.update(
             {
               ...(status !== undefined ? { status } : {}),
               ...(batch_generated !== undefined ? { batch_generated } : {}),
+              ...(danfe_printed !== undefined ? { danfe_printed } : {}),
             },
             {
               where: {

@@ -1,4 +1,4 @@
-import { FindOptions, FindAndCountOptions, QueryTypes, Transaction } from "sequelize";
+import { FindOptions, FindAndCountOptions, QueryTypes, Transaction, WhereOptions } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import sequelize from "../../../../config/sequelize";
 import {
@@ -66,6 +66,7 @@ export class ProductRepository extends BaseRepository<Product> {
       FindAndCountOptions,
       "where" | "limit" | "offset" | "order"
     >,
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<Product>> {
     const { stockFilter, stockWhere, paramsWithoutStockFilter } =
       extractStockFilter(params);
@@ -107,7 +108,7 @@ export class ProductRepository extends BaseRepository<Product> {
           required: false,
         },
       ],
-    });
+    }, forcedWhere);
   }
 
   async upsertByConflictFields(

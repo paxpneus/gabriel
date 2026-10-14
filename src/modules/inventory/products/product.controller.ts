@@ -65,6 +65,12 @@ export class ProductController extends BaseController<
       this.productSalesReport,
     );
 
+    this.router.get(
+      "/mapped/get",
+      ...this.mw("indexMappedToIntegration"),
+      this.indexMappedToIntegration,
+    );
+
     this.router.get("/:id/full", ...this.mw("findByIdFull"), this.findByIdFull);
 
     this.router.get(
@@ -77,6 +83,7 @@ export class ProductController extends BaseController<
   protected middlewaresFor() {
     return {
       index: [authenticate],
+      indexMappedToIntegration: [authenticate],
       indexDetailed: [authenticate],
       findByIdFull: [authenticate],
       findByCode: [authenticate],
@@ -161,6 +168,39 @@ export class ProductController extends BaseController<
       return res.status(500).json({ error: error.message });
     }
   };
+
+  // Mesmo paginate do `index` (filtros/stockUnit), restrito a produtos mapeados na integração da loja do usuário.
+  indexMappedToIntegration = async (
+    req: Request,
+    res: Response,
+  ): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req) as ProductQueryParams;
+      const { unitBusinessId } = await getUserContext(req);
+
+      params.filters = params.filters ?? {};
+      const stockUnit = Array.isArray(params.filters.stockUnit)
+        ? params.filters.stockUnit[0]
+        : params.filters.stockUnit;
+
+      params.filters.stockUnit = {
+        unitBusinessId,
+        stockUnit:
+          stockUnit === "positive" || stockUnit === "zero"
+            ? stockUnit
+            : undefined,
+      };
+
+      const result = await this.service.paginateMappedToUnitBusinessIntegration(
+        params as unknown as QueryParams,
+        unitBusinessId,
+      );
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
   indexDetailed = async (req: Request, res: Response): Promise<Response> => {
     try {
       const params = this.extractQueryParams(req) as ProductQueryParams;

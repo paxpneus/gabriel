@@ -6,6 +6,7 @@ import InvoiceItems from "../invoice-items/invoice-items.model";
 import { InvoiceItemsAttributes, InvoiceItemsWithBatchAttributes } from "../invoice-items/invoice-items.types";
 import { InvoiceUnitBusinessAttributesAttributes } from "../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import Invoice from "./invoice.model";
+import { UnitBusinessAttributes } from "../../../../company/unit-business/unit-business.types";
 
 export type InvoiceStatus =
   | "OPEN"
@@ -33,6 +34,7 @@ export interface InvoiceAttributes {
   transporter_id?: string | null;
   seller_id?: string | null;
   supplier_id?: string | null;
+  origin_unit_business_id?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes[]
@@ -92,6 +94,8 @@ export interface FullInvoiceAttributes {
   transporter_id?: string | null;
   seller_id?: string | null;
   supplier_id?: string | null;
+  origin_unit_business_id?: string | null;
+  originUnitBusiness?: Pick<UnitBusinessAttributes, "id" | "name" | "number" | "cnpj"> | null;
   createdAt?: Date;
   updatedAt?: Date;
   unitBusinessAttributes?: InvoiceUnitBusinessAttributesAttributes;

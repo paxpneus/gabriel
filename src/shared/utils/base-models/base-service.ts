@@ -35,6 +35,11 @@ class BaseService<
     this.repository = repository;
   }
 
+  /** Filtros/ordenação da entidade, pra relatório que monta a própria query reaproveitar os mesmos `filters[...]`. */
+  getQueryConfig(): QueryConfig {
+    return this.queryConfig;
+  }
+
   protected normalizeFilters(params: QueryParams): QueryParams {
     if (!params.filters) return params;
 

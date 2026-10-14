@@ -227,3 +227,31 @@ export function supplierDiscountMatchWhere(ruleIds: string[]): WhereOptions {
     ],
   };
 }
+
+/** Notas com algum item de um dos produtos informados (OR); nenhum id válido → nada bate. */
+export function invoiceProductWhere(
+  productIds: string[],
+  invoiceAlias: string = "Invoice",
+): WhereOptions {
+  const validIds = productIds.filter((id) => UUID_RE.test(id));
+  if (!validIds.length) return { [Op.and]: [Sequelize.literal("FALSE")] };
+  return {
+    [Op.and]: [
+      Sequelize.literal(`EXISTS (
+        SELECT 1
+        FROM invoice_items ii
+        WHERE ii.invoice_id = "${invoiceAlias}"."id"
+          AND ii.product_id = ANY(${sqlUuidArrayLiteral(validIds)})
+      )`),
+    ],
+  };
+}
+
+/** Notas emitidas por uma das lojas de origem informadas; nenhum id válido → nada bate. */
+export function invoiceOriginUnitBusinessWhere(
+  unitBusinessIds: string[],
+): WhereOptions {
+  const validIds = unitBusinessIds.filter((id) => UUID_RE.test(id));
+  if (!validIds.length) return { [Op.and]: [Sequelize.literal("FALSE")] };
+  return { origin_unit_business_id: { [Op.in]: validIds } };
+}

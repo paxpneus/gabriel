@@ -65,6 +65,7 @@ import Rim from "../../../../inventory/rims/rim.model";
 import TireMeasure from "../../../../inventory/tire-measures/tire-measure.model";
 import { resolveTecincoBranchId } from "../../../../../shared/utils/tecinco/resolve-branch-id";
 import { generateDanfePdfBuffer } from "../../../../../shared/utils/xml/danfe-generator";
+import { PDFDocument } from "pdf-lib";
 import uploaderService from "../../../../handlers/uploader/services/uploader.service";
 import storeService from "../../../../sales/stores/stores.service";
 import tempFileService from "../../../../handlers/temp-file/temp-file.service";
@@ -648,17 +649,20 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     );
   }
 
-  // DANFE de uma única nota — já salvo (Bling entrega pronto, Tecinco gera na
-  // criação, ver bling-api-fetch.queue.ts/invoice-xml.ts) serve o arquivo
-  // direto; sem danfe_path, gera na hora a partir do XML, mesma rotina de
-  // getDanfeBatch (invoice.controller.ts). Leitura pura, nunca grava
-  // danfe_path aqui.
   async getDanfeBuffer(id: string): Promise<Buffer> {
     const invoice = await this.repository.findById(id, {
       attributes: ["id", "danfe_path", "xml_path"],
     });
     if (!invoice) throw new Error("Nota fiscal não encontrada");
 
+    return this.resolveDanfeBuffer(invoice);
+  }
+
+  // DANFE já salvo (Bling entrega pronto, Tecinco gera na criação) serve o arquivo
+  // direto; sem danfe_path, gera na hora a partir do XML. Leitura pura, nunca grava danfe_path.
+  private async resolveDanfeBuffer(
+    invoice: Pick<Invoice, "id" | "danfe_path" | "xml_path">,
+  ): Promise<Buffer> {
     if (invoice.danfe_path) {
       // Link hospedado externamente (ex.: linkPDF da nota de venda Bling,
       // salvo direto no vínculo rápido do pedido — ver
@@ -688,7 +692,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
         // corrida: o job de upload terminou entre a leitura acima e agora —
         // recarrega o path já atualizado.
-        const refreshed = await this.repository.findById(id, {
+        const refreshed = await this.repository.findById(invoice.id, {
           attributes: ["id", "danfe_path"],
         });
         if (
@@ -709,6 +713,60 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     }
 
     return generateDanfePdfBuffer(isEncrypted(xml) ? decryptXml(xml) : xml);
+  }
+
+  // Marca danfe_printed na mesma transação da geração: qualquer erro reverte a marcação.
+  async getDanfeBatch(
+    invoiceIds: string[],
+    unitBusinessId: string,
+  ): Promise<Buffer | null> {
+    return sequelize.transaction(async (transaction) => {
+      const invoices = await this.repository.findAll({
+        where: { id: { [Op.in]: invoiceIds } },
+        attributes: ["id", "danfe_path", "xml_path"],
+        transaction,
+      });
+      if (!invoices.length) return null;
+
+      await this.repository.updateWithAttributes(
+        invoiceIds,
+        unitBusinessId,
+        { danfe_printed: true },
+        undefined,
+        transaction,
+      );
+
+      const buffers = await Promise.all(
+        invoices.map((invoice) =>
+          this.resolveDanfeBuffer(invoice).catch((err: any) => {
+            console.error(`[DANFE] Erro invoice ${invoice.id}:`, err.message);
+            return null;
+          }),
+        ),
+      );
+
+      const mergedPdf = await PDFDocument.create();
+
+      for (const [index, buffer] of buffers.entries()) {
+        if (!buffer) continue;
+
+        try {
+          const invoicePdf = await PDFDocument.load(buffer);
+          const pages = await mergedPdf.copyPages(
+            invoicePdf,
+            invoicePdf.getPageIndices(),
+          );
+          pages.forEach((p) => mergedPdf.addPage(p));
+        } catch (err: any) {
+          console.error(
+            `[DANFE] PDF inválido invoice ${invoices[index].id}:`,
+            err.message,
+          );
+        }
+      }
+
+      return Buffer.from(await mergedPdf.save());
+    });
   }
 
   // Nota "provisória" — vínculo rápido (pedido/solicitação PDV não pode

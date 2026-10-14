@@ -1639,6 +1639,14 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       store_id = await Store.findOne({ where: { name: "Outros" } });
     }
 
+    // Invoice fica sempre na unit business do CD21; a loja que emitiu vem do loja.id da Bling.
+    const originUnitBusiness = nf.loja?.id
+      ? await unitBusinessService.findOne({
+          where: { id_system: String(nf.loja.id) },
+          attributes: ["id"],
+        })
+      : null;
+
     const integration = await getBlingIntegration("Bling");
 
     // ─── Seller ───────────────────────────────────────────────────────────────
@@ -1740,6 +1748,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       integrations_id: integration.id,
       store_id: store_id!.id ?? null,
       seller_id: sellerId,
+      origin_unit_business_id: originUnitBusiness?.id ?? null,
       transporter_id: transporter?.id ?? null,
       transporter_document: transporter?.cnpj ?? transporter_document ?? null,
       transporter_name: transporter?.name ?? transporter_name ?? null,

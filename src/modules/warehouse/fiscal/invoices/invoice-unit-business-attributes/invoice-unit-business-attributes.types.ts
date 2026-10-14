@@ -15,6 +15,7 @@ export interface InvoiceUnitBusinessAttributesAttributes {
   type: "INCOMING" | "OUTGOING";
   status: InvoiceUnitBusinessAttributesStatus;
   batch_generated?: boolean;
+  danfe_printed?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }

@@ -36,6 +36,8 @@ import KitComponent from "../../kit-components/kit-component.model";
 import kitComponentService from "../../kit-components/kit-component.service";
 import rimService from "../../rims/rim.service";
 import tireMeasureService from "../../tire-measures/tire-measure.service";
+import unitBusinessService from "../../../company/unit-business/unit-business.service";
+import { productMappedToIntegrationWhere } from "../helpers/integration-mapping-filters";
 
 export class ProductService extends BaseService<Product, ProductRepository> {
   constructor() {
@@ -99,6 +101,22 @@ export class ProductService extends BaseService<Product, ProductRepository> {
       params,
       this.queryConfig,
       extraOptions,
+    );
+  }
+
+  /** Igual ao `paginate`, mas só produtos com integration mapping na integração da loja informada. */
+  async paginateMappedToUnitBusinessIntegration(
+    params: QueryParams,
+    unitBusinessId: string,
+  ): Promise<PaginatedResult<Product>> {
+    const unitBusiness = await unitBusinessService.findById(unitBusinessId, {
+      attributes: ["integrations_id"],
+    });
+    return this.repository.paginateWithStock(
+      params,
+      this.queryConfig,
+      undefined,
+      productMappedToIntegrationWhere(unitBusiness?.integrations_id),
     );
   }
 

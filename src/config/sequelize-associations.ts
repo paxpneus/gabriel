@@ -731,6 +731,16 @@ UnitBusiness.belongsTo(ExpeditionBatch, {
     as: "invoice",
   });
 
+  // Invoice -> UnitBusiness de origem (loja.id da Bling)
+  Invoice.belongsTo(UnitBusiness, {
+    foreignKey: "origin_unit_business_id",
+    as: "originUnitBusiness",
+  });
+  UnitBusiness.hasMany(Invoice, {
+    foreignKey: "origin_unit_business_id",
+    as: "originInvoices",
+  });
+
   // Invoice -> Integration
   Invoice.belongsTo(Integration, {
     foreignKey: "integrations_id",

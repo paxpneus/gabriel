@@ -1,7 +1,7 @@
 import { gerarPDF } from "@alexssmusica/node-pdf-nfe";
 import { PassThrough } from "stream";
 
-// Extraído de invoice.controller.ts::getDanfeBatch — único lugar que gerava
+// Extraído de getDanfeBatch — único lugar que gerava
 // DANFE a partir de XML antes deste helper existir. Usado pela Tecinco (que
 // só manda XML, nunca um PDF pronto); a Bling manda o DANFE pronto
 // (linkPDF), não passa por aqui.

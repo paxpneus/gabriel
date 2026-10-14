@@ -30,6 +30,7 @@ class Invoice
   public transporter_id?: string;
   public seller_id?: string | null;
   public supplier_id?: string | null;
+  public origin_unit_business_id?: string | null;
   public printed_label!: boolean;
   public emitted_at?: Date;
   public received_at?: string;
@@ -168,6 +169,16 @@ Invoice.init(
       allowNull: true,
       references: {
         model: "suppliers",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
+    },
+    origin_unit_business_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "unit_businesses",
         key: "id",
       },
       onUpdate: "CASCADE",

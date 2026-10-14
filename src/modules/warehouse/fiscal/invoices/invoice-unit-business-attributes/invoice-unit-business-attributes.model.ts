@@ -20,6 +20,7 @@ class InvoiceUnitBusinessAttributes
   public type!: "INCOMING" | "OUTGOING";
   public status!: InvoiceUnitBusinessAttributesStatus;
   public batch_generated!: boolean;
+  public danfe_printed!: boolean;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -72,6 +73,11 @@ InvoiceUnitBusinessAttributes.init(
       defaultValue: "PENDING",
     },
     batch_generated: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    danfe_printed: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false,
