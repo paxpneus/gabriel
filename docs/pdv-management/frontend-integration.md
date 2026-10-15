@@ -629,10 +629,11 @@ O detalhe (`GET /:id`) já trazia os dois.
 }
 ```
 
-## Novo: DANFE em lote via link CD21
+## Novo: DANFE em lote via link PDV
 
-`GET /invoice/danfe/data?invoiceIds=...` passa a aceitar o link PDV do CD21
-(headers `x-pdv-unit-business-number` + `x-pdv-token`), além do login. Via
+`GET /invoice/danfe/data?invoiceIds=...` passa a aceitar qualquer link PDV
+(CD21, Financeiro, loja e televendas — headers `x-pdv-token` +
+`x-pdv-unit-business-number` quando o link é de loja), além do login. Via
 link só devolve o PDF — **não** marca `danfe_printed`; só usuário logado marca.
 
 Quando marca (login), emite os eventos de sempre pras solicitações ativas

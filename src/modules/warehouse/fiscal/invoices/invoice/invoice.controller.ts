@@ -149,7 +149,7 @@ export class InvoiceController extends BaseController<
 
       getLabelData: [authenticate, userPermissions],
       getDanfeBatch: authenticateOrPdvLink(
-        [PdvAccessScreen.CD21],
+        [PdvAccessScreen.CD21, PdvAccessScreen.FINANCE, PdvAccessScreen.STORE_REQUEST],
         [authenticate, userPermissions],
       ),
 
