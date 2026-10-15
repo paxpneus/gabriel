@@ -1,6 +1,10 @@
 import { Job, UnrecoverableError } from "bullmq";
 import { Op } from "sequelize";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
+import {
+  IMPORT_JOB_RESULT,
+  ImportJobResult,
+} from "../../../../shared/utils/queues/job-status";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import {
   ProductConfig,
@@ -174,7 +178,11 @@ export const TCAR_NORMAL_PRIORITY = 2;
 // Retorno de processInvoiceXml quando a Tecinco ainda não tem o XML (404/vazio).
 export const TCAR_INVOICE_XML_UNAVAILABLE = "xml_unavailable";
 
-export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
+// R = ImportJobResult: o resultado do import de nota vira o returnvalue do job (lido pelo manual-import).
+export class TCarUpsertQueue extends BaseQueueService<
+  TCarUpsertJobPayload,
+  ImportJobResult | void
+> {
   constructor(
     options: { workless?: boolean } = {},
     queueName = "TCAR_API_FETCH",
@@ -214,7 +222,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   async upsertInvoiceFromXml(
     xmlContent: string,
     branchId: number,
-  ): Promise<void> {
+  ): Promise<ImportJobResult> {
     const { numero, chaveAcesso } =
       extractInvoiceIdentificationFromXml(xmlContent);
 
@@ -281,7 +289,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       console.warn(
         `${logPrefix} — nenhum item de pneu na nota, invoice não processada`,
       );
-      return;
+      // Completa sem importar — o retorno avisa quem enfileirou (antes passava como sucesso).
+      return IMPORT_JOB_RESULT.IGNORED_NO_TIRE_ITEMS;
     }
 
     await upsertInvoiceFromXml(xmlContent, {
@@ -292,6 +301,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     });
 
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
+    return IMPORT_JOB_RESULT.IMPORTED;
   }
 
   /**
@@ -305,7 +315,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     numero: string,
     chaveAcesso: string,
     branchId: number,
-  ): Promise<void> {
+  ): Promise<ImportJobResult> {
     const conferenciaService = new TCarConferenciaEstoqueService();
     const identificacao: TCarNotaFiscalXmlByChaveNfe = {
       chave_nfe: chaveAcesso,
@@ -335,7 +345,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       throw new Error("XML da nota fiscal indisponível na Tecinco");
     }
 
-    await this.upsertInvoiceFromXml(xmlContent, branchId);
+    return this.upsertInvoiceFromXml(xmlContent, branchId);
   }
 
   /**
@@ -375,7 +385,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
   }
 
-  async process(job: Job<TCarUpsertJobPayload>): Promise<void> {
+  async process(
+    job: Job<TCarUpsertJobPayload>,
+  ): Promise<ImportJobResult | void> {
     const { resource, action, data, branchId } = job.data;
 
     console.log(

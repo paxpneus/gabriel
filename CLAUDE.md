@@ -40,7 +40,9 @@ Valor que identifica uma entidade específica (nome de integração, status, etc
 
 ## Comentários de código
 
-**Regra dura, sem exceção mesmo pra lógica nova/complexa (rate limiter, lock, migration): 1-2 linhas, sempre.** Só a razão não-óbvia (constraint escondida, workaround, por que não o óbvio) — nunca parágrafo, nunca bloco de 5+ linhas explicando o que o código já mostra, mesmo que pareça "merecer" mais contexto. Se a explicação não cabe em 1-2 linhas, ela pertence em `.claude/` (ver seção seguinte), não no comentário.
+**Todo código criado ou alterado leva comentário.** Função/método/classe exportados, constantes de config e blocos não-triviais (lock, retry, fallback, regra de negócio) ganham um comentário dizendo o que fazem e, quando houver, por quê. Código sem comentário nenhum não é aceito.
+
+**Regra dura, sem exceção mesmo pra lógica nova/complexa (rate limiter, lock, migration): 1-2 linhas, sempre.** Direto e curto — prioriza a razão não-óbvia (constraint escondida, workaround, por que não o óbvio); nunca parágrafo, nunca bloco de 5+ linhas, mesmo que pareça "merecer" mais contexto. Se a explicação não cabe em 1-2 linhas, ela pertence em `.claude/` (ver seção seguinte), não no comentário.
 
 ## Idioma do código
 
@@ -119,7 +121,8 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `rate-limit.md` — rate limit Bling compartilhado, race no dispatch, env docker-compose
 - `bling-nfe-scraping.md` — automação Playwright do Bling pra manifestação de NFe
 - `bling-api-client.md` — trava de escrita por `NODE_ENV` no client Bling (só GET fora de produção), token liberado (app Bling próprio em dev), o que não é coberto
-- `bling-sync-routes.md` — rotas `/api/bling-sync` (populate em background de produto/nota com limite, populate por id), auth usuário ou application, lock/status em Redis
+- `bling-sync-routes.md` — rotas `/api/bling-sync` (populate em massa em background de produto/nota/pedido com limite), auth usuário ou application, lock/status em Redis
+- `manual-import.md` — import manual por integração (`/api/manual-import`, Bling: produto/nota/pedido; Tecinco: produto/nota): busca → escolha → fila com prioridade 1, lock por usuário + claim por item no Redis, andamento por polling
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login
 - `reports.md` — módulo de snapshot de sales-report
 - `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete

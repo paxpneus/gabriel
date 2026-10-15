@@ -14,25 +14,12 @@ export type InvoiceStep = (typeof INVOICE_STEPS)[number];
 
 export type PopulateStep = "products" | InvoiceStep | "orders";
 
-export const POPULATE_BY_ID_ENTITIES = [
-  "product",
-  "nfe",
-  "nfce",
-  "order",
-] as const;
-export type PopulateByIdEntity = (typeof POPULATE_BY_ID_ENTITIES)[number];
-
 export interface PopulateRequest {
   entities: PopulateEntity[];
   invoiceTypes?: InvoiceStep[];
   // normalized_status (mesmo vocabulário de filters[status] do GET /order).
   orderStatus?: string[];
   limit?: number;
-}
-
-export interface PopulateByIdRequest {
-  entity: PopulateByIdEntity;
-  ids: number[];
 }
 
 export interface BlingSyncQueues {
@@ -61,10 +48,4 @@ export interface PopulateRun {
   startedAt: string;
   finishedAt?: string;
   error?: string;
-}
-
-export interface PopulateByIdItemResult {
-  id: number;
-  status: "ENQUEUED" | "SKIPPED" | "FAILED";
-  reason?: string;
 }

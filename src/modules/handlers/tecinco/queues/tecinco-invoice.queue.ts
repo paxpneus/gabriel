@@ -5,9 +5,11 @@ import {
   TCarUpsertQueue,
 } from "./tecinco-api-fetch.queue";
 import {
+  TCarInvoiceByKeyPayload,
   TCarInvoiceTransferPayload,
   TCarInvoiceXmlPayload,
 } from "../service/tecinco/tecinco.types";
+import { ImportJobResult } from "../../../../shared/utils/queues/job-status";
 
 // Nomes de job usados tanto ao enfileirar (tecinco-migration.runner.ts)
 // quanto ao checar prioridade aqui — nunca hardcoded nos dois lugares.
@@ -25,7 +27,9 @@ export class TCarInvoiceQueue extends TCarUpsertQueue {
     super(options, "TCAR_INVOICE", 2);
   }
 
-  override async process(job: Job<TCarUpsertJobPayload>): Promise<void> {
+  override async process(
+    job: Job<TCarUpsertJobPayload>,
+  ): Promise<ImportJobResult | void> {
     const { resource, data, branchId } = job.data;
 
     console.log(`[TCAR_INVOICE] ${resource} | eventId=${job.data.eventId}`);
@@ -63,6 +67,14 @@ export class TCarInvoiceQueue extends TCarUpsertQueue {
           branchId,
         );
         return;
+      // Import manual por chave de acesso (módulo manual-import) — o retorno vira o returnvalue do job.
+      case "invoice_by_key": {
+        if (!branchId) {
+          throw new UnrecoverableError("invoice_by_key sem branchId");
+        }
+        const { numero, chaveAcesso } = data as TCarInvoiceByKeyPayload;
+        return this.upsertInvoiceFromTecinco(numero, chaveAcesso, branchId);
+      }
       default:
         console.warn(`[TCAR_INVOICE] Resource não suportado: ${resource}`);
     }

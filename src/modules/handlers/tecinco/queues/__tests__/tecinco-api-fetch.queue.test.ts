@@ -189,6 +189,7 @@ import {
 import { findTecincoCollidingFields } from "../../../../../scripts/tecinco/tecinco-duplicate-detection";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { clearTCarLookupCache } from "../helpers/lookup-cache";
+import { IMPORT_JOB_RESULT } from "../../../../../shared/utils/queues/job-status";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1092,7 +1093,7 @@ describe("TCarUpsertQueue.processInvoiceTransfer (enriquecimento em background d
   it("job invoice_transfer: chama upsertInvoiceFromTecinco com os dados do payload e notifica a solicitação ao terminar", async () => {
     const upsertSpy = jest
       .spyOn(queue, "upsertInvoiceFromTecinco")
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(IMPORT_JOB_RESULT.IMPORTED);
 
     await queue.process({
       data: {
@@ -1140,7 +1141,7 @@ describe("TCarUpsertQueue.processInvoiceTransfer (enriquecimento em background d
   it("sem branchId: ignora sem chamar upsertInvoiceFromTecinco nem notificar", async () => {
     const upsertSpy = jest
       .spyOn(queue, "upsertInvoiceFromTecinco")
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(IMPORT_JOB_RESULT.IMPORTED);
 
     await queue.process({
       data: {

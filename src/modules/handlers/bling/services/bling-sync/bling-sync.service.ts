@@ -1,15 +1,11 @@
 import { v4 as uuidv4 } from "uuid";
-import { blingApi, getBlingIntegration } from "../../api/bling_api.service";
-import { blingGet } from "../bling/helpers/get-with-sleep";
+import { getBlingIntegration } from "../../api/bling_api.service";
 import {
   BULK_FORCE_UPDATE_PRIORITY,
   BlingOrderQueue,
 } from "../bling-orders/bling-order.queue";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
-import {
-  ApiFetchJobPayload,
-  BlingApiFetchQueue,
-} from "../bling/queues/bling-api-fetch.queue";
+import { BlingApiFetchQueue } from "../bling/queues/bling-api-fetch.queue";
 import {
   BLING_INVOICE_CUTOFF_DATE_PARAM,
   getBlingInvoiceReferenceDate,
@@ -20,24 +16,26 @@ import {
   BlingSyncQueues,
   INVOICE_STEPS,
   InvoiceStep,
-  PopulateByIdEntity,
-  PopulateByIdItemResult,
-  PopulateByIdRequest,
   PopulateRequest,
   PopulateRun,
   PopulateStep,
   PopulateStepResult,
 } from "./bling-sync.types";
+import {
+  BLING_LIST_PAGE_SIZE,
+  BlingInvoiceResource,
+  BlingQuery,
+  buildBlingApiFetchPayload,
+  fetchBlingListPage,
+  mapBlingInvoiceStatus,
+} from "./helpers/bling-list";
 
 const POPULATE_LOCK_KEY = "bling-sync:populate:lock";
 const POPULATE_RUN_KEY = "bling-sync:populate:run";
 // Lock curto + refresh periódico: se o processo cair no meio, libera sozinho.
 const POPULATE_LOCK_TTL_MS = 30 * 60 * 1000;
 const POPULATE_RUN_TTL_S = 7 * 24 * 3600;
-const PAGE_SIZE = 100;
 const QUEUE_POLL_MS = 5_000;
-
-type BlingInvoiceResource = "invoice" | "consumer_invoice";
 
 interface BlingInvoiceSummary {
   id: number;
@@ -75,45 +73,10 @@ const INVOICE_STEP_CONFIG: Record<
   },
 };
 
-const BY_ID_INVOICE_CONFIG: Partial<
-  Record<PopulateByIdEntity, { resource: BlingInvoiceResource; endpoint: string }>
-> = {
-  nfe: { resource: "invoice", endpoint: "/nfe" },
-  nfce: { resource: "consumer_invoice", endpoint: "/nfce" },
-};
-
-type BlingQuery = Record<string, string | number | number[]>;
-
 export class BlingSyncInputError extends Error {}
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-function mapInvoiceStatus(situacao?: number): "OPEN" | "CANCELLED" {
-  return situacao === 2 ? "CANCELLED" : "OPEN";
-}
-
-function buildApiFetchPayload(
-  resource: ApiFetchJobPayload["resource"],
-  blingId: number,
-  partialData?: ApiFetchJobPayload["apiFetch"]["partialData"],
-): ApiFetchJobPayload {
-  return {
-    eventId: `migration-${resource}-${blingId}-${uuidv4()}`,
-    resource,
-    action: "created",
-    companyId: "",
-    date: new Date().toISOString(),
-    rawData: {},
-    apiFetch: {
-      resource,
-      blingId,
-      action: "created",
-      companyId: "",
-      ...(partialData ? { partialData } : {}),
-    },
-  };
-}
 
 function productJobId(blingId: number) {
   return `migration-product-fetch-${blingId}`;
@@ -131,38 +94,16 @@ function orderJobId(blingId: number) {
   return `bling-order-force-update-${blingId}`;
 }
 
-// Bling espera filtro de lista como `chave[]=a&chave[]=b`.
-function toBlingParams(query: BlingQuery): URLSearchParams {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (Array.isArray(value)) {
-      value.forEach((item) => params.append(`${key}[]`, String(item)));
-    } else {
-      params.append(key, String(value));
-    }
-  }
-  return params;
-}
-
 async function* paginateBling<T>(
   endpoint: string,
   query: BlingQuery = {},
 ): AsyncGenerator<T[]> {
   for (let page = 1; ; page++) {
-    const { data } = await blingGet<{ data: T[] }>(endpoint, blingApi, {
-      params: toBlingParams({ ...query, pagina: page, limite: PAGE_SIZE }),
-    });
-    const items = data?.data ?? [];
+    const items = await fetchBlingListPage<T>(endpoint, query, page);
     if (!items.length) return;
     yield items;
-    if (items.length < PAGE_SIZE) return;
+    if (items.length < BLING_LIST_PAGE_SIZE) return;
   }
-}
-
-async function fetchBlingById<T>(endpoint: string, id: number): Promise<T> {
-  const { data } = await blingGet<{ data: T }>(`${endpoint}/${id}`, blingApi);
-  if (!data?.data) throw new Error("Registro não encontrado na Bling");
-  return data.data;
 }
 
 function describeBlingError(err: any): string {
@@ -212,15 +153,6 @@ export class BlingSyncService {
 
   async getLastRun(): Promise<PopulateRun | null> {
     return redisService.get<PopulateRun>(POPULATE_RUN_KEY);
-  }
-
-  async populateByIds(
-    { entity, ids }: PopulateByIdRequest,
-    queues: BlingSyncQueues,
-  ): Promise<PopulateByIdItemResult[]> {
-    if (entity === "order") return this.enqueueOrders(ids, queues);
-    if (entity === "product") return this.enqueueProductsByIds(ids, queues);
-    return this.enqueueInvoicesByIds(entity, ids, queues);
   }
 
   // Produtos sempre antes das notas: item de nota resolve produto já persistido.
@@ -304,7 +236,7 @@ export class BlingSyncService {
       await Promise.all(
         batch.map((product) =>
           queue.add(
-            buildApiFetchPayload("product", product.id),
+            buildBlingApiFetchPayload("product", product.id),
             productJobId(product.id),
           ),
         ),
@@ -344,13 +276,13 @@ export class BlingSyncService {
         await Promise.all(
           batch.map((invoice) =>
             queue.add(
-              buildApiFetchPayload(config.resource, invoice.id, {
+              buildBlingApiFetchPayload(config.resource, invoice.id, {
                 blingId: invoice.id,
                 number: invoice.numero,
                 id_system: String(invoice.id),
                 status: config.cancelled
                   ? "CANCELLED"
-                  : mapInvoiceStatus(invoice.situacao),
+                  : mapBlingInvoiceStatus(invoice.situacao),
               }),
               invoiceJobId(config.resource, invoice.id, config.cancelled),
             ),
@@ -415,83 +347,6 @@ export class BlingSyncService {
       console.log(`[BlingSync] ${label}: ${pending} job(s) pendente(s)`);
       await sleep(QUEUE_POLL_MS);
     }
-  }
-
-  private async enqueueProductsByIds(
-    ids: number[],
-    queues: BlingSyncQueues,
-  ): Promise<PopulateByIdItemResult[]> {
-    return Promise.all(
-      ids.map(async (id): Promise<PopulateByIdItemResult> => {
-        try {
-          await fetchBlingById<{ id: number }>("/produtos", id);
-          await queues.apiFetchQueue.add(
-            buildApiFetchPayload("product", id),
-            productJobId(id),
-          );
-          return { id, status: "ENQUEUED" };
-        } catch (err) {
-          return { id, status: "FAILED", reason: describeBlingError(err) };
-        }
-      }),
-    );
-  }
-
-  private async enqueueInvoicesByIds(
-    entity: PopulateByIdEntity,
-    ids: number[],
-    queues: BlingSyncQueues,
-  ): Promise<PopulateByIdItemResult[]> {
-    const { resource, endpoint } = BY_ID_INVOICE_CONFIG[entity]!;
-
-    return Promise.all(
-      ids.map(async (id): Promise<PopulateByIdItemResult> => {
-        try {
-          const invoice = await fetchBlingById<BlingInvoiceSummary>(endpoint, id);
-          const referenceDate = getBlingInvoiceReferenceDate(invoice);
-          if (referenceDate && isKnownBlingInvoiceBeforeCutoff(referenceDate)) {
-            return {
-              id,
-              status: "SKIPPED",
-              reason: `Nota anterior ao corte (${BLING_INVOICE_CUTOFF_DATE_PARAM})`,
-            };
-          }
-
-          await queues.apiFetchQueue.add(
-            buildApiFetchPayload(resource, id, {
-              blingId: id,
-              number: invoice.numero,
-              id_system: String(id),
-              status: mapInvoiceStatus(invoice.situacao),
-            }),
-            invoiceJobId(resource, id),
-          );
-          return { id, status: "ENQUEUED" };
-        } catch (err) {
-          return { id, status: "FAILED", reason: describeBlingError(err) };
-        }
-      }),
-    );
-  }
-
-  // Mesmo payload do force-update: "order.updated" cria o pedido se ainda não existir.
-  private async enqueueOrders(
-    ids: number[],
-    queues: BlingSyncQueues,
-  ): Promise<PopulateByIdItemResult[]> {
-    return Promise.all(
-      ids.map(async (id): Promise<PopulateByIdItemResult> => {
-        try {
-          await queues.orderQueue.add(
-            { event: "order.updated", action: "updated", data: { id } },
-            orderJobId(id),
-          );
-          return { id, status: "ENQUEUED" };
-        } catch (err: any) {
-          return { id, status: "FAILED", reason: err?.message };
-        }
-      }),
-    );
   }
 
   private async saveRun(run: PopulateRun) {
