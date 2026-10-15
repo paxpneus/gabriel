@@ -12,3 +12,21 @@ export function extractAccessKeyFromXmlContent(xmlContent: string): string | nul
 
   return null;
 }
+
+export interface AccessKeyParts {
+  emitterCnpj: string;
+  model: string;
+  series: string;
+  number: string;
+}
+
+// Layout da chave: cUF(2) AAMM(4) CNPJ(14) mod(2) série(3) nNF(9) tpEmis(1) cNF(8) cDV(1).
+export function parseAccessKey(accessKey: string): AccessKeyParts | null {
+  if (!/^\d{44}$/.test(accessKey)) return null;
+  return {
+    emitterCnpj: accessKey.slice(6, 20),
+    model: accessKey.slice(20, 22),
+    series: String(Number(accessKey.slice(22, 25))),
+    number: String(Number(accessKey.slice(25, 34))),
+  };
+}

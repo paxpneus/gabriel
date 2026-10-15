@@ -5,14 +5,20 @@ import {
   TCarUpsertQueue,
 } from "./tecinco-api-fetch.queue";
 import {
+  TCarInvoiceByKeyPayload,
   TCarInvoiceTransferPayload,
   TCarInvoiceXmlPayload,
 } from "../service/tecinco/tecinco.types";
+import { ImportJobResult } from "../../../../shared/utils/queues/job-status";
 
 // Nomes de job usados tanto ao enfileirar (tecinco-migration.runner.ts)
 // quanto ao checar prioridade aqui — nunca hardcoded nos dois lugares.
 export const TCAR_INVOICE_NEW_JOB_NAME = "invoice-new";
 export const TCAR_INVOICE_UPDATE_JOB_NAME = "invoice-update";
+
+// Prioridades da TCAR_INVOICE: 1 fica livre pro import manual (MANUAL_IMPORT_PRIORITY), que passa à frente do sync.
+export const TCAR_INVOICE_NEW_PRIORITY = 2;
+export const TCAR_INVOICE_UPDATE_PRIORITY = 3;
 
 export const TCAR_INVOICE_XML_RETRY_DELAY_MS = 5 * 60 * 1000;
 export const TCAR_INVOICE_XML_MAX_ATTEMPTS = 5;
@@ -25,7 +31,25 @@ export class TCarInvoiceQueue extends TCarUpsertQueue {
     super(options, "TCAR_INVOICE", 2);
   }
 
-  override async process(job: Job<TCarUpsertJobPayload>): Promise<void> {
+  // Sem priority explícita (ex.: invoice_transfer do PDV) entra junto do invoice-update, abaixo do invoice-new.
+  override async add(
+    data: TCarUpsertJobPayload,
+    jobId?: string,
+    jobOptions?: {
+      priority?: number;
+      name?: string;
+      removeOnComplete?: boolean | { age: number; count?: number };
+    },
+  ) {
+    return super.add(data, jobId, {
+      ...jobOptions,
+      priority: jobOptions?.priority ?? TCAR_INVOICE_UPDATE_PRIORITY,
+    });
+  }
+
+  override async process(
+    job: Job<TCarUpsertJobPayload>,
+  ): Promise<ImportJobResult | void> {
     const { resource, data, branchId } = job.data;
 
     console.log(`[TCAR_INVOICE] ${resource} | eventId=${job.data.eventId}`);
@@ -63,6 +87,14 @@ export class TCarInvoiceQueue extends TCarUpsertQueue {
           branchId,
         );
         return;
+      // Import manual por chave de acesso (módulo manual-import) — o retorno vira o returnvalue do job.
+      case "invoice_by_key": {
+        if (!branchId) {
+          throw new UnrecoverableError("invoice_by_key sem branchId");
+        }
+        const { numero, chaveAcesso } = data as TCarInvoiceByKeyPayload;
+        return this.upsertInvoiceFromTecinco(numero, chaveAcesso, branchId);
+      }
       default:
         console.warn(`[TCAR_INVOICE] Resource não suportado: ${resource}`);
     }

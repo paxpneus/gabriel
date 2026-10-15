@@ -110,7 +110,7 @@ PdvSalesRequest.init(
       type: DataTypes.ENUM(...Object.values(PdvShippingType)),
       allowNull: true,
     },
-    // Texto livre da loja — obrigatório pra sair de OPEN/PENDING_CORRECTION quando a nota de venda não informa transportadora (assertShippingInfoFilledIfRequired).
+    // Texto livre da loja — obrigatório pra sair de OPEN/PENDING_CORRECTION quando não é ADT e a nota de venda não informa transportadora (assertShippingInfoFilledIfRequired).
     shipping_address: {
       type: DataTypes.TEXT,
       allowNull: true,

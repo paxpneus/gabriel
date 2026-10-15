@@ -4,7 +4,8 @@ export type TCarResource =
   | 'product'
   | 'invoice_xml'
   | 'customer'
-  | 'invoice_transfer';
+  | 'invoice_transfer'
+  | 'invoice_by_key';
 
 export type TCarAction = 'created' | 'updated' | 'deleted' | 'sync';
 
@@ -17,6 +18,12 @@ export interface TCarInvoiceTransferPayload {
   chaveAcesso: string;
   pdvSalesRequestId: string;
   transferInvoiceId?: string;
+}
+
+// Import manual de nota por chave de acesso (módulo manual-import).
+export interface TCarInvoiceByKeyPayload {
+  numero: string;
+  chaveAcesso: string;
 }
 
 export interface TCarWebhookEnvelope {

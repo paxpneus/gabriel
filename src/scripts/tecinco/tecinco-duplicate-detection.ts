@@ -2,10 +2,10 @@
  * tecinco-duplicate-detection.ts
  *
  * Índice de códigos (codigoFabrica/EAN) duplicados no catálogo Tecinco —
- * usado pelo preflight do catalog sync (tecinco-migration.runner.ts) e por
- * ensureProductsFromInvoiceItems (tecinco-api-fetch.queue.ts), que precisa
- * do mesmo índice mas não pode pagar o custo de buscar o catálogo inteiro a
- * cada nota fiscal processada — daí o cache com TTL abaixo.
+ * usado pelo preflight do catalog sync (tecinco-migration.runner.ts) e pelo
+ * job de produto do import manual (detectCatalogDuplicateFlags em tecinco-api-fetch.queue.ts), que precisa
+ * do mesmo índice mas não pode pagar o custo de buscar o catálogo inteiro
+ * a cada produto importado — daí o cache com TTL abaixo.
  */
 
 import { TecincoCatalogItem, fetchTecincoCatalog } from "./dump-tecinco-catalog";

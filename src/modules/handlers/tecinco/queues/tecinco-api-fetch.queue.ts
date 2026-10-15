@@ -1,6 +1,15 @@
 import { Job, UnrecoverableError } from "bullmq";
 import { Op } from "sequelize";
 import { BaseQueueService } from "../../../../shared/utils/base-models/base-queue-service";
+import {
+  IMPORT_JOB_RESULT,
+  ImportJobResult,
+} from "../../../../shared/utils/queues/job-status";
+import {
+  findTecincoCollidingFields,
+  getCachedTecincoDuplicateValueSets,
+} from "../../../../scripts/tecinco/tecinco-duplicate-detection";
+import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import {
   ProductConfig,
@@ -153,6 +162,8 @@ export interface TCarUpsertJobPayload {
   skuDuplicated?: boolean;
   /** Calculado no migrateProdutos: EAN duplicado no catálogo Tecinco completo */
   eanDuplicated?: boolean;
+  /** Import manual: calcula skuDuplicated/eanDuplicated no worker (ver detectCatalogDuplicateFlags) */
+  detectCatalogDuplicates?: boolean;
   /** Tentativas de invoice-new que acharam a nota sem XML — ver TCarInvoiceQueue.process */
   xmlUnavailableAttempts?: number;
 }
@@ -174,7 +185,11 @@ export const TCAR_NORMAL_PRIORITY = 2;
 // Retorno de processInvoiceXml quando a Tecinco ainda não tem o XML (404/vazio).
 export const TCAR_INVOICE_XML_UNAVAILABLE = "xml_unavailable";
 
-export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
+// R = ImportJobResult: o resultado do import de nota vira o returnvalue do job (lido pelo manual-import).
+export class TCarUpsertQueue extends BaseQueueService<
+  TCarUpsertJobPayload,
+  ImportJobResult | void
+> {
   constructor(
     options: { workless?: boolean } = {},
     queueName = "TCAR_API_FETCH",
@@ -214,7 +229,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   async upsertInvoiceFromXml(
     xmlContent: string,
     branchId: number,
-  ): Promise<void> {
+  ): Promise<ImportJobResult> {
     const { numero, chaveAcesso } =
       extractInvoiceIdentificationFromXml(xmlContent);
 
@@ -281,7 +296,8 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       console.warn(
         `${logPrefix} — nenhum item de pneu na nota, invoice não processada`,
       );
-      return;
+      // Completa sem importar — o retorno avisa quem enfileirou (antes passava como sucesso).
+      return IMPORT_JOB_RESULT.IGNORED_NO_TIRE_ITEMS;
     }
 
     await upsertInvoiceFromXml(xmlContent, {
@@ -292,6 +308,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     });
 
     console.log(`${logPrefix} — invoice upsertada com sucesso`);
+    return IMPORT_JOB_RESULT.IMPORTED;
   }
 
   /**
@@ -305,7 +322,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     numero: string,
     chaveAcesso: string,
     branchId: number,
-  ): Promise<void> {
+  ): Promise<ImportJobResult> {
     const conferenciaService = new TCarConferenciaEstoqueService();
     const identificacao: TCarNotaFiscalXmlByChaveNfe = {
       chave_nfe: chaveAcesso,
@@ -335,7 +352,7 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
       throw new Error("XML da nota fiscal indisponível na Tecinco");
     }
 
-    await this.upsertInvoiceFromXml(xmlContent, branchId);
+    return this.upsertInvoiceFromXml(xmlContent, branchId);
   }
 
   /**
@@ -375,7 +392,9 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
     }
   }
 
-  async process(job: Job<TCarUpsertJobPayload>): Promise<void> {
+  async process(
+    job: Job<TCarUpsertJobPayload>,
+  ): Promise<ImportJobResult | void> {
     const { resource, action, data, branchId } = job.data;
 
     console.log(
@@ -387,14 +406,21 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
         await this.processInvoiceXml(data as TCarInvoiceXmlPayload, branchId);
         break;
 
-      case "product":
+      case "product": {
+        // Import manual não traz as flags: calcular na API baixaria o catálogo inteiro a cada busca (cache frio lá).
+        const duplicateFlags = job.data.detectCatalogDuplicates
+          ? await this.detectCatalogDuplicateFlags(data as TCarProdutoPayload)
+          : {
+              skuDuplicated: !!job.data.skuDuplicated,
+              eanDuplicated: !!job.data.eanDuplicated,
+            };
         await this.processProduct(action, data as TCarProdutoPayload, branchId, {
           create: !!job.data.create,
-          skuDuplicated: !!job.data.skuDuplicated,
-          eanDuplicated: !!job.data.eanDuplicated,
+          ...duplicateFlags,
           cascadeMapUnmappedId: job.data.cascadeMapUnmappedId,
         });
         break;
+      }
 
       case "customer":
         await this.processCustomer(action, data as TCarClientePayload);
@@ -413,6 +439,28 @@ export class TCarUpsertQueue extends BaseQueueService<TCarUpsertJobPayload> {
   }
 
   // ─── Produto ───────────────────────────────────────────────────────────────
+
+  // Mesmo cálculo do migrateProdutos, com o índice que o sync de catálogo mantém em cache neste processo (worker).
+  private async detectCatalogDuplicateFlags(
+    product: TCarProdutoPayload,
+  ): Promise<{ skuDuplicated: boolean; eanDuplicated: boolean }> {
+    const duplicateSets = await getCachedTecincoDuplicateValueSets(
+      tecincoUnitBusinessForPopulate.map(Number),
+      `[TCAR_UPSERT][processProduct] id_system=${product.epctb_codigo}`,
+    );
+    const collidingFields = findTecincoCollidingFields(
+      {
+        coded: product.epctb_coded,
+        sku: product.epctb_codigofabrica,
+        ean: product.epctb_ean,
+      },
+      duplicateSets,
+    );
+    return {
+      skuDuplicated: collidingFields.some((field) => field.startsWith("sku=")),
+      eanDuplicated: collidingFields.some((field) => field.startsWith("ean=")),
+    };
+  }
 
   private async processProduct(
     action: TCarAction,

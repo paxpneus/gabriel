@@ -2060,6 +2060,23 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
+    it("OPEN: ADT não cobra os campos mesmo sem nota de venda", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        ...openRequest,
+        shipping_type: PdvShippingType.ADT,
+      });
+
+      await service.confirmReceiptSubmission("r1");
+
+      // Curto-circuita antes de buscar order/nota.
+      expect(orderService.findById).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.PENDING_FINANCE },
+        { transaction: mockTransaction },
+      );
+    });
+
     it("PENDING_CORRECTION (origem CD21): recusa voltar pro status anterior sem os campos", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         ...openRequest,
@@ -4077,6 +4094,22 @@ describe("PdvSalesRequestService", () => {
       );
       expect(result!.order).not.toHaveProperty("id");
       // Sem nota de venda: nenhuma query de invoice.
+      expect(invoiceService.findById).not.toHaveBeenCalled();
+    });
+
+    it("shipping_info_required = false com tipo de envio ADT, sem consultar a nota", async () => {
+      (pdvSalesRequestRepository.findByIdWithOrder as jest.Mock).mockResolvedValue({
+        unit_business_id: "ub-2",
+        get: () => ({ ...plain, shipping_type: PdvShippingType.ADT }),
+      });
+
+      const result = await service.findByIdWithOrder("r1", {
+        screen: PdvAccessScreen.STORE_REQUEST,
+        via: "LOGIN",
+        unitBusinessId: "ub-2",
+      });
+
+      expect(result!.shipping_info_required).toBe(false);
       expect(invoiceService.findById).not.toHaveBeenCalled();
     });
 

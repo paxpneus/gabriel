@@ -3,6 +3,7 @@ import { alertService } from '../../../../../shared/providers/mail-provider/node
 import { TCarProdutoService } from '../produtos/produtos.service';
 import TCarClienteService from '../clientes/clientes.service';
 import { TCarUpsertJobPayload } from '../../queues/tecinco-api-fetch.queue';
+import { authenticate } from '../../../../../middlewares/auth-token';
 
 const router = Router();
 
@@ -18,7 +19,8 @@ function extractItems(response: unknown): unknown[] {
 
 // ─── Sync produtos ────────────────────────────────────────────────────────────
 
-router.post('/sync/products', async (req: Request, res: Response) => {
+// Sync manual de produtos; exige usuário/application autenticado.
+router.post('/sync/products', authenticate, async (req: Request, res: Response) => {
   try {
     const {
       companyId = req.app.locals.defaultCompanyId ?? 'default',
@@ -50,7 +52,8 @@ router.post('/sync/products', async (req: Request, res: Response) => {
 
 // ─── Sync clientes ────────────────────────────────────────────────────────────
 
-router.post('/sync/customers', async (req: Request, res: Response) => {
+// Sync manual de clientes; exige usuário/application autenticado.
+router.post('/sync/customers', authenticate, async (req: Request, res: Response) => {
   try {
     const {
       companyId = req.app.locals.defaultCompanyId ?? 'default',

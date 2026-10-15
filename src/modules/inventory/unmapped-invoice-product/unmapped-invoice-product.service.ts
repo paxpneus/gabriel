@@ -39,6 +39,7 @@ import {
 import { resolveTecincoBranchId } from "../../../shared/utils/tecinco/resolve-branch-id";
 import { TCarProdutoPayload } from "../../handlers/tecinco/service/tecinco/tecinco.types";
 import invoiceService from "../../warehouse/fiscal/invoices/invoice/invoice.service";
+import { JobStatus, toJobStatus } from "../../../shared/utils/queues/job-status";
 
 // Quanto tempo o job de criação de produto fica visível no Redis depois de
 // concluir (ver createProduct/getCreateProductJobStatus) — a fila por
@@ -604,17 +605,7 @@ export class UnmappedInvoiceProductService extends BaseService<
       blingApiFetchQueue: BlingApiFetchQueue;
       tcarUpsertQueue: TCarUpsertQueue;
     },
-  ): Promise<{
-    status:
-      | "not_found"
-      | "waiting"
-      | "active"
-      | "delayed"
-      | "completed"
-      | "failed"
-      | "unknown";
-    error?: string;
-  }> {
+  ): Promise<{ status: JobStatus; error?: string }> {
     const job =
       (await params.blingApiFetchQueue.queue.getJob(
         `bling-product-create-${id}`,
@@ -623,33 +614,7 @@ export class UnmappedInvoiceProductService extends BaseService<
         `tecinco-product-create-${id}`,
       ));
 
-    if (!job) {
-      return { status: "not_found" };
-    }
-
-    const state = await job.getState();
-
-    if (state === "failed") {
-      return { status: "failed", error: job.failedReason };
-    }
-
-    // "prioritized": estado próprio do BullMQ pra job com priority explícita
-    // (ver createProduct, priority:1) enquanto ele ainda não foi pego por um
-    // worker — equivalente a "waiting" pro que o front precisa saber.
-    if (state === "prioritized") {
-      return { status: "waiting" };
-    }
-
-    if (
-      state === "waiting" ||
-      state === "active" ||
-      state === "delayed" ||
-      state === "completed"
-    ) {
-      return { status: state };
-    }
-
-    return { status: "unknown" };
+    return toJobStatus(job);
   }
 
   async getFullById(id: string): Promise<UnmappedInvoiceProduct> {

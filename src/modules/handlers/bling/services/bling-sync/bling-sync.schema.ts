@@ -1,11 +1,5 @@
 import { z } from "zod";
-import {
-  INVOICE_STEPS,
-  POPULATE_BY_ID_ENTITIES,
-  POPULATE_ENTITIES,
-} from "./bling-sync.types";
-
-export const MAX_IDS_PER_REQUEST = 50;
+import { INVOICE_STEPS, POPULATE_ENTITIES } from "./bling-sync.types";
 
 export const PopulateSchema = z.object({
   entities: z
@@ -36,18 +30,4 @@ export const PopulateSchema = z.object({
     .int("O limite deve ser um número inteiro")
     .positive("O limite deve ser maior que zero")
     .optional(),
-});
-
-export const PopulateByIdSchema = z.object({
-  entity: z.enum(POPULATE_BY_ID_ENTITIES, {
-    error: `Entidade inválida. Opções: ${POPULATE_BY_ID_ENTITIES.join(", ")}`,
-  }),
-
-  ids: z
-    .array(z.coerce.number().int().positive("ID da Bling inválido"), {
-      error: "Informe a lista de IDs da Bling",
-    })
-    .min(1, "Informe ao menos um ID")
-    .max(MAX_IDS_PER_REQUEST, `Máximo de ${MAX_IDS_PER_REQUEST} IDs por chamada`)
-    .transform((ids) => [...new Set(ids)]),
 });

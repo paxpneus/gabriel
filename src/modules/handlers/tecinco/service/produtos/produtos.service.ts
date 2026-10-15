@@ -12,6 +12,8 @@ export class TCarProdutoService {
     params: {
       nome?: string;
       codigo?: string;
+      /** epctb_codigo — o external_id gravado em integration_mappings */
+      codigo_integracao?: string;
       grupo?: string;
       alterado_desde?: string;
       offset?: number;

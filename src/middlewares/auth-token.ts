@@ -18,6 +18,19 @@ export interface AuthRequest extends Request {
   application?: ApplicationRequestAttributes;
 }
 
+// Identidade de quem chamou a rota, usada em locks/registros por usuário.
+export interface Requester {
+  id: string;
+  type: "user" | "application";
+}
+
+// Quem fez a requisição autenticada — usuário ou application.
+export function getRequester(req: AuthRequest): Requester {
+  return req.application
+    ? { id: req.application.id, type: "application" }
+    : { id: req.user!.id, type: "user" };
+}
+
 
 function getRoutesFromRole(rolePermissions: string[]): string[] {
   const routes: string[] = [];
