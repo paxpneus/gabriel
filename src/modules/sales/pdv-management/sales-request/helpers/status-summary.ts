@@ -2,9 +2,11 @@ import { Op, WhereOptions } from "sequelize";
 import {
   PdvSalesRequestStatus,
   PdvShippingType,
+  TERMINAL_PDV_SALES_REQUEST_STATUSES,
 } from "../pdv-sales-request.types";
 import { PdvAccessScreen } from "../../pdv-access/pdv-access.types";
 import { transporterCdInWhere } from "./transporter-cd";
+import { criticalWarningLiteral } from "./transfer-invoice-divergence";
 
 // Cada indicativo do resumo de status (getStatusSummary) é definido aqui uma
 // única vez e reusado tanto pra contar quanto pro filtro filters[indicator]
@@ -22,7 +24,8 @@ export type PdvStatusIndicatorKey =
   | "adt_12"
   | "adt_17"
   | "ship_today"
-  | "cd21_billing";
+  | "cd21_billing"
+  | "critical_warnings";
 
 interface PdvStatusIndicatorDefinition {
   label: string;
@@ -37,7 +40,13 @@ interface PdvStatusIndicatorDefinition {
   shippingType?: PdvShippingType;
   // Restringe também pela transportadora (CD <n>) da nota de venda.
   transporterCds?: readonly string[];
+  // Só solicitações com aviso crítico — contado via countWhere, ver getStatusSummary.
+  criticalWarnings?: boolean;
 }
+
+const ACTIVE_STATUSES = Object.values(PdvSalesRequestStatus).filter(
+  (status) => !TERMINAL_PDV_SALES_REQUEST_STATUSES.includes(status),
+);
 
 export const PDV_STATUS_INDICATORS: Record<
   PdvStatusIndicatorKey,
@@ -100,6 +109,12 @@ export const PDV_STATUS_INDICATORS: Record<
       PdvSalesRequestStatus.SHIP_TODAY,
     ],
   },
+  // Mesmo critério de buildCriticalWarnings (card do quadro).
+  critical_warnings: {
+    label: "Avisos críticos",
+    statuses: ACTIVE_STATUSES,
+    criticalWarnings: true,
+  },
 };
 
 // Quais indicativos cada tela vê — mesmo escopo de READ_SCREENS do
@@ -127,6 +142,7 @@ export const PDV_STATUS_INDICATORS_BY_SCREEN: Record<
     "adt_17",
     "pending_expedition",
     "ship_today",
+    "critical_warnings",
   ],
 };
 
@@ -164,6 +180,9 @@ export function indicatorWhere(key: PdvStatusIndicatorKey): WhereOptions {
   }
   if (definition.transporterCds) {
     (where as any)[Op.and] = [transporterCdInWhere(definition.transporterCds)];
+  }
+  if (definition.criticalWarnings) {
+    (where as any)[Op.and] = [criticalWarningLiteral()];
   }
 
   return where;

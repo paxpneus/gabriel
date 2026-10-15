@@ -51,6 +51,25 @@ export enum PdvBatchStage {
 // Cor hex do card no quadro pela situação do lote da nota de venda (null = sem nota ou fora desses 3 estágios).
 export type PdvBatchColor = `#${string}`;
 
+export enum PdvWarningCode {
+  RECEIPT_INSTALLMENTS_MISMATCH = "RECEIPT_INSTALLMENTS_MISMATCH",
+  RECEIPT_TOTAL_DIFFERENCE = "RECEIPT_TOTAL_DIFFERENCE",
+  RECEIPT_TOTAL_MISMATCH = "RECEIPT_TOTAL_MISMATCH",
+  PAYMENT_METHOD_MISMATCH = "PAYMENT_METHOD_MISMATCH",
+  TRANSFER_QUANTITY_MISMATCH = "TRANSFER_QUANTITY_MISMATCH",
+  TRANSFER_PRODUCTS_MISMATCH = "TRANSFER_PRODUCTS_MISMATCH",
+  TRANSFER_PRODUCTS_UNCHECKED = "TRANSFER_PRODUCTS_UNCHECKED",
+}
+
+// yellow = atenção, red = crítico, blue = só informação.
+export type PdvWarningColor = "yellow" | "red" | "blue";
+
+export interface PdvWarning {
+  code: PdvWarningCode;
+  label: string;
+  color: PdvWarningColor;
+}
+
 // Solicitação candidata a uma ação de lote do PDV: nota de venda, pedido e transportadora da nota.
 export interface PdvBatchTarget {
   id: string;
@@ -343,6 +362,8 @@ export interface PdvBoardCard {
   shipping_label: string | null;
   next_action: string | null;
   batch_color: PdvBatchColor | null;
+  // Só críticos: quantidade ou produto divergente entre NF de venda e transferência.
+  warnings: PdvWarning[];
   order: {
     id: string;
     number_order_system: string | null;
@@ -423,6 +444,7 @@ export interface PdvSalesRequestDetail {
   receipt_total_matches_order: boolean | null;
   receipt_total_difference: number | null;
   transfer_invoice_products_match_sale: boolean | null;
+  warnings: PdvWarning[];
   expedition_progress: unknown;
   saleInvoice: {
     id: string;

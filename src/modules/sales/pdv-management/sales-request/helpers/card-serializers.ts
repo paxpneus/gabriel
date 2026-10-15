@@ -10,8 +10,12 @@ import {
   PdvSalesRequestDetail,
 } from "../pdv-sales-request.types";
 import { getNextAction } from "./next-action.rules";
-import { batchColorForStage } from "./batch-colors";
+import { cardBatchColor } from "./batch-colors";
 import { buildShippingLabel } from "./shipping-label";
+import {
+  buildCriticalWarnings,
+  buildSalesRequestWarnings,
+} from "./sales-request-warnings";
 import { extractExpeditionBatchSequence } from "../../../../../shared/utils/normalizers/expedition-batch-number";
 
 const RECEIPT_ANALYSIS_FIELDS: readonly PdvReceiptAnalysisField[] = [
@@ -65,6 +69,7 @@ function cd21BatchNames(saleInvoice: any) {
 
 export function toBoardCard(row: any, screen: PdvBoardScreen): PdvBoardCard {
   const order = row.order;
+  const warnings = buildCriticalWarnings(row);
 
   return {
     id: row.id,
@@ -82,7 +87,8 @@ export function toBoardCard(row: any, screen: PdvBoardScreen): PdvBoardCard {
       },
       screen,
     ),
-    batch_color: batchColorForStage(row.batch_stage),
+    batch_color: cardBatchColor(row.batch_stage, warnings.length > 0),
+    warnings,
     order: order
       ? {
           id: order.id,
@@ -167,6 +173,7 @@ export function toSalesRequestDetail(
     receipt_total_difference: plain.receipt_total_difference ?? null,
     transfer_invoice_products_match_sale:
       plain.transfer_invoice_products_match_sale ?? null,
+    warnings: buildSalesRequestWarnings(plain),
     expedition_progress: extras.expeditionProgress,
     saleInvoice: plain.saleInvoice
       ? {

@@ -15,8 +15,23 @@ export const PDV_BATCH_COLORS: readonly {
   },
 ];
 
+// Aviso crítico (mesmo critério de critical_warnings) vence qualquer estágio de lote.
+export const PDV_CRITICAL_WARNING_COLOR: { label: string; color: PdvBatchColor } = {
+  label: "Aviso crítico",
+  color: "#EF4444",
+};
+
 export function batchColorForStage(
   stage: PdvBatchStage | null | undefined,
 ): PdvBatchColor | null {
   return PDV_BATCH_COLORS.find((entry) => entry.stage === stage)?.color ?? null;
+}
+
+export function cardBatchColor(
+  stage: PdvBatchStage | null | undefined,
+  hasCriticalWarning: boolean,
+): PdvBatchColor | null {
+  return hasCriticalWarning
+    ? PDV_CRITICAL_WARNING_COLOR.color
+    : batchColorForStage(stage);
 }

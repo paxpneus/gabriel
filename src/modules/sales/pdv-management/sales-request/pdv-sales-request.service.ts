@@ -88,13 +88,17 @@ import {
   notifySalesRequestUpdated,
 } from "./helpers/notify-sales-request-updated";
 import { notifyPdvStoresSync } from "./helpers/notify-pdv-store-sync";
+import { buildSalesRequestWarnings } from "./helpers/sales-request-warnings";
 import {
   pickReceiptAnalysisFields,
   toBoardCard,
   toSalesRequestDetail,
 } from "./helpers/card-serializers";
 import { boardCursorAfterLiteral, encodeBoardCursor } from "./helpers/board-cursor";
-import { PDV_BATCH_COLORS } from "./helpers/batch-colors";
+import {
+  PDV_BATCH_COLORS,
+  PDV_CRITICAL_WARNING_COLOR,
+} from "./helpers/batch-colors";
 import { PdvBoardQuery } from "./helpers/board-query";
 import {
   PdvBoardColumn,
@@ -611,7 +615,10 @@ export class PdvSalesRequestService extends BaseService<
   // na listagem (filters[indicator]=<key>), com o mesmo critério.
   // Legenda das cores de lote do card — mesma tabela de toBoardCard.
   getBatchColorLegend(): { label: string; color: PdvBatchColor }[] {
-    return PDV_BATCH_COLORS.map(({ label, color }) => ({ label, color }));
+    return [
+      PDV_CRITICAL_WARNING_COLOR,
+      ...PDV_BATCH_COLORS.map(({ label, color }) => ({ label, color })),
+    ];
   }
 
   async getStatusSummary(access: PdvAccessContext): Promise<
@@ -623,15 +630,27 @@ export class PdvSalesRequestService extends BaseService<
     const needsTransporterCounts = keys.some(
       (key) => PDV_STATUS_INDICATORS[key].shippingType,
     );
+    const criticalWarningKeys = keys.filter(
+      (key) => PDV_STATUS_INDICATORS[key].criticalWarnings,
+    );
 
-    const [statusCounts, correctionOriginCounts, transporterCdCounts] =
-      await Promise.all([
-        this.repository.countGroupedByStatus(where),
-        this.repository.countGroupedByCorrectionOrigin(where),
-        needsTransporterCounts
-          ? this.repository.countAdtShippingGroupedByTransporterCd(where)
-          : Promise.resolve<Record<string, number>>({}),
-      ]);
+    const [
+      statusCounts,
+      correctionOriginCounts,
+      transporterCdCounts,
+      criticalWarningCounts,
+    ] = await Promise.all([
+      this.repository.countGroupedByStatus(where),
+      this.repository.countGroupedByCorrectionOrigin(where),
+      needsTransporterCounts
+        ? this.repository.countAdtShippingGroupedByTransporterCd(where)
+        : Promise.resolve<Record<string, number>>({}),
+      Promise.all(
+        criticalWarningKeys.map((key) =>
+          this.repository.countWhere({ [Op.and]: [where, indicatorWhere(key)] }),
+        ),
+      ),
+    ]);
 
     const correctionOrigins = PDV_CORRECTION_ORIGINS_BY_SCREEN[access.screen];
 
@@ -650,7 +669,9 @@ export class PdvSalesRequestService extends BaseService<
       );
 
       let quantity = statusTotal;
-      if (definition.correctionOrigin) {
+      if (definition.criticalWarnings) {
+        quantity = criticalWarningCounts[criticalWarningKeys.indexOf(key)];
+      } else if (definition.correctionOrigin) {
         quantity = correctionOriginCounts[definition.correctionOrigin] ?? 0;
       } else if (definition.shippingType) {
         quantity = definition.transporterCds
@@ -1495,6 +1516,8 @@ export class PdvSalesRequestService extends BaseService<
 
       const reconciled = await this.reconcileReceipts(requestId, orderId);
       notifySalesRequestChanged(reconciled);
+      const warningSource =
+        await this.repository.findWarningSourceById(requestId);
 
       socketService.emitToNamespaceRoom(
         PDV_SOCKET_NAMESPACE,
@@ -1515,6 +1538,9 @@ export class PdvSalesRequestService extends BaseService<
               reconciled.payment_method_matches_receipt,
             totalMatchesOrder: reconciled.receipt_total_matches_order,
             totalDifference: reconciled.receipt_total_difference,
+            warnings: warningSource
+              ? buildSalesRequestWarnings(warningSource.get({ plain: true }))
+              : [],
           },
         },
       );

@@ -22,6 +22,7 @@ jest.mock("../pdv-sales-request.repository", () => ({
     findBoardColumnPage: jest.fn(),
     findBoardIds: jest.fn(),
     findByIdWithOrder: jest.fn(),
+    findWarningSourceById: jest.fn(),
     findAll: jest.fn(),
     findBatchTargets: jest.fn(),
     findSaleInvoiceTransporterIds: jest.fn(),

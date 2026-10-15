@@ -7,6 +7,11 @@ import {
   saleInvoiceCd21DanfePrintedLiteral,
   saleInvoiceTransporterSelectorLiteral,
 } from "./helpers/custom-filters";
+import {
+  transferProductsMismatchLiteral,
+  transferProductsUncheckedLiteral,
+  transferQuantityMismatchLiteral,
+} from "./helpers/transfer-invoice-divergence";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import PdvSalesRequest from "./pdv-sales-request.model";
 import {
@@ -51,6 +56,13 @@ const DETAIL_ATTRIBUTES = [
   "transfer_invoice_products_match_sale",
 ];
 
+// Fonte de helpers/sales-request-warnings.ts::buildSalesRequestWarnings (detalhe e socket).
+const WARNING_SOURCE_ATTRIBUTES: [ReturnType<typeof literal>, string][] = [
+  [transferQuantityMismatchLiteral(), "transfer_quantity_mismatch"],
+  [transferProductsMismatchLiteral(), "transfer_products_mismatch"],
+  [transferProductsUncheckedLiteral(), "transfer_products_unchecked"],
+];
+
 // Lote do CD21 da nota de venda (no máx. 1 por nota por loja, então o hasOne não duplica linha).
 const CD21_BATCH_INCLUDE: IncludeOptions = {
   model: ExpeditionBatchInvoice,
@@ -85,6 +97,7 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
     return this.findById(id, {
       attributes: [
         ...DETAIL_ATTRIBUTES,
+        ...WARNING_SOURCE_ATTRIBUTES,
         [saleInvoiceCd21DanfePrintedLiteral(), "sale_invoice_danfe_printed"],
       ],
       include: [
@@ -152,6 +165,8 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         [hasReceiptLiteral(), "has_receipt"],
         [saleInvoiceCd21BatchStageCaseLiteral(), "batch_stage"],
         [saleInvoiceCd21DanfePrintedLiteral(), "sale_invoice_danfe_printed"],
+        [transferQuantityMismatchLiteral(), "transfer_quantity_mismatch"],
+        [transferProductsMismatchLiteral(), "transfer_products_mismatch"],
       ],
       include: [
         {
@@ -170,6 +185,20 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
           include: [CD21_BATCH_INCLUDE],
         },
         { model: Invoice, as: "transferInvoice", attributes: ["number_system"] },
+      ],
+    });
+  }
+
+  // Só o necessário pra recalcular os avisos (payload do socket de comprovante).
+  async findWarningSourceById(id: string): Promise<PdvSalesRequest | null> {
+    return this.findById(id, {
+      attributes: [
+        "id",
+        "payment_receipt_validated",
+        "payment_method_matches_receipt",
+        "receipt_total_matches_order",
+        "receipt_total_difference",
+        ...WARNING_SOURCE_ATTRIBUTES,
       ],
     });
   }
@@ -302,6 +331,11 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
       },
       {},
     );
+  }
+
+  // Indicativos que não saem do group by status (ex.: critical_warnings).
+  async countWhere(where: WhereOptions): Promise<number> {
+    return this.model.count({ where });
   }
 
   // SHIPPING + shipping_type ADT agrupado pelo CD da transportadora da nota de

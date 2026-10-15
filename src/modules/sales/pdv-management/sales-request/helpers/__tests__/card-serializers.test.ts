@@ -95,7 +95,7 @@ describe("toBoardCard", () => {
     const card = toBoardCard(boardRow, "store");
 
     expect(sortedKeys(card)).toEqual(
-      ["batch_color", "id", "next_action", "order", "saleInvoice", "shipping_label", "status", "transferInvoice"].sort(),
+      ["batch_color", "id", "next_action", "order", "saleInvoice", "shipping_label", "status", "transferInvoice", "warnings"].sort(),
     );
     expect(sortedKeys(card.order!)).toEqual(
       ["customer", "date", "id", "number_order_channel", "number_order_system"].sort(),
@@ -138,6 +138,15 @@ describe("toBoardCard", () => {
     [null, null],
   ])("batch_stage %s → batch_color %s", (stage, color) => {
     expect(toBoardCard({ ...boardRow, batch_stage: stage }, "cd21").batch_color).toBe(color);
+  });
+
+  it.each([
+    [{ transfer_quantity_mismatch: true }],
+    [{ transfer_products_mismatch: true }],
+  ])("aviso crítico %o → batch_color vermelho em qualquer estágio", (flags) => {
+    const card = toBoardCard({ ...boardRow, batch_stage: "OPEN_BATCH", ...flags }, "cd21");
+    expect(card.batch_color).toBe("#EF4444");
+    expect(card.warnings).toHaveLength(1);
   });
 
   it("next_action respeita has_receipt da linha", () => {
@@ -229,6 +238,7 @@ describe("toSalesRequestDetail", () => {
         "transfer_invoice_id",
         "transfer_invoice_products_match_sale",
         "transporter_name",
+        "warnings",
       ].sort(),
     );
     expect(detail.errors).toEqual({

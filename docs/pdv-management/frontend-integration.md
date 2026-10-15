@@ -640,3 +640,41 @@ Quando marca (login), emite os eventos de sempre pras solicitações ativas
 dessas notas de venda: `salerequest-updated` (detalhe) e `pdv-store:sync` com
 `event: "SALES_REQUEST_STATUS_CHANGED"` (status inalterado) — front refaz o
 fetch e vê `saleInvoice.danfe_printed: true`.
+
+## Novo: avisos de divergência (`warnings`) vindos do back
+
+Cada aviso: `{ code, label, color }`. `color`: `"red"` (crítico), `"yellow"`
+(atenção), `"blue"` (informação). Usar `code` como chave de lista. Vem
+ordenado (críticos primeiro). Sem aviso → `[]`.
+
+- `GET /sales-request/:id`: todos os avisos.
+- `GET /sales-request` (card): só críticos de NF venda × transferência —
+  `TRANSFER_QUANTITY_MISMATCH` e `TRANSFER_PRODUCTS_MISMATCH`.
+- Socket de análise de comprovante concluída: `reconciled.warnings` (mesmo
+  formato do detalhe) — dá pra substituir sem refazer o GET.
+
+```json
+"warnings": [
+  { "code": "TRANSFER_QUANTITY_MISMATCH", "label": "Quantidade da NF de transferência diverge da NF de venda", "color": "red" },
+  { "code": "RECEIPT_TOTAL_DIFFERENCE", "label": "Comprovantes R$ 12,50 abaixo do valor do pedido", "color": "red" }
+]
+```
+
+`code` possíveis: `TRANSFER_QUANTITY_MISMATCH` (red), `TRANSFER_PRODUCTS_MISMATCH`
+(red), `RECEIPT_TOTAL_DIFFERENCE`
+(red), `RECEIPT_TOTAL_MISMATCH` (yellow, nunca junto do anterior),
+`TRANSFER_PRODUCTS_UNCHECKED` (yellow — "Nota(s) com produto não mapeado,
+impossível verificar nota de venda x transferência"),
+`RECEIPT_INSTALLMENTS_MISMATCH` (yellow),
+`PAYMENT_METHOD_MISMATCH` (yellow).
+
+Os booleanos antigos (`payment_receipt_validated`, `receipt_total_difference`,
+`transfer_invoice_products_match_sale` etc.) continuam vindo durante a transição.
+
+`GET /sales-request/summary/status-counts` (tela CD21) ganha
+`"critical_warnings": { "label": "Avisos críticos", "quantity": 3 }` — também
+funciona como `filters[indicator]=critical_warnings` no `GET /sales-request`.
+
+Card com aviso crítico (`warnings` não vazio, mesmo critério do indicador):
+`batch_color: "#EF4444"`, ignorando o estágio do lote. A legenda
+(`GET /sales-request/legend/batch-colors`) ganha `{ "label": "Aviso crítico", "color": "#EF4444" }` na 1ª posição.
