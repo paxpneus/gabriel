@@ -92,6 +92,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `supplier-discount/report-value.md` — valor de desconto por linha nos relatórios
   - `supplier-discount/unit-business-bypass.md` — bypass de loja só no relatório de produto
 - `unit-business-group.md` — UnitBusinessGroup + pivot `unit_business_group_members` (N:N de unit businesses), rotas, permissão
+- `customer.md` — Customer: enum `type`, documento nullable, fallback quando Bling manda `tipoPessoa`/`numeroDocumento` vazios
 - `store.md` — Store (tipo canal de venda, não filial), fix de dedup
 - `stock-movement.md` — módulo stock/stock_movements
 - `inventory-batch.md` — InventoryBatch/Items/Logs (contagem de inventário), modos FIXED/CYCLIC, gate de integration mapping
