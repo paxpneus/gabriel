@@ -6,10 +6,6 @@ import {
   TCarInvoiceByKeyPayload,
   TCarProdutoPayload,
 } from "../../../handlers/tecinco/service/tecinco/tecinco.types";
-import {
-  findTecincoCollidingFields,
-  getCachedTecincoDuplicateValueSets,
-} from "../../../../scripts/tecinco/tecinco-duplicate-detection";
 import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
 import { parseAccessKey } from "../../../../shared/utils/xml/access-key";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
@@ -32,7 +28,6 @@ import {
   ManualImportSearchOutput,
 } from "../manual-import.types";
 
-const LOG_PREFIX = "[MANUAL_IMPORT][Tecinco]";
 // Tamanho da 1ª página da listagem de produtos; cheia → truncated.
 const PRODUCT_LIST_LIMIT = 100;
 // Modelo na chave de acesso: 55 NF-e, 65 NFC-e.
@@ -42,11 +37,9 @@ const TECINCO_BRANCH_IDS = tecincoUnitBusinessForPopulate.map(Number);
 // A sessão da listagem usa a primeira filial; branch_ids define quais filiais vêm em `filiais`.
 const PRIMARY_BRANCH_ID = TECINCO_BRANCH_IDS[0];
 
-// Payload completo da busca + flags de duplicidade: o job não consulta a Tecinco de novo.
+// Payload completo da busca: o job não consulta a Tecinco de novo pra pegar o produto.
 interface TecincoProductEnqueueData {
   payload: TCarProdutoPayload;
-  skuDuplicated: boolean;
-  eanDuplicated: boolean;
 }
 
 // Filial onde a nota foi achada na busca.
@@ -62,16 +55,9 @@ function toNullableString(value: unknown): string | null {
 }
 
 // Produto Tecinco → item da busca; sku = código de fábrica, coded como fallback.
-function toProductItem(
-  product: TCarProdutoPayload,
-  collidingFields: string[],
-): ManualImportFoundItem {
+function toProductItem(product: TCarProdutoPayload): ManualImportFoundItem {
   const code = product.epctb_codigofabrica || product.epctb_coded;
-  const enqueueData: TecincoProductEnqueueData = {
-    payload: product,
-    skuDuplicated: collidingFields.some((field) => field.startsWith("sku=")),
-    eanDuplicated: collidingFields.some((field) => field.startsWith("ean=")),
-  };
+  const enqueueData: TecincoProductEnqueueData = { payload: product };
 
   return {
     externalId: String(product.epctb_codigo),
@@ -188,8 +174,7 @@ export class TecincoManualImportHandler implements ManualImportHandler {
       return;
     }
 
-    const { payload, skuDuplicated, eanDuplicated } =
-      item.enqueueData as TecincoProductEnqueueData;
+    const { payload } = item.enqueueData as TecincoProductEnqueueData;
     await queues.tcarApiFetch.add(
       {
         eventId: jobRef.jobId,
@@ -198,15 +183,15 @@ export class TecincoManualImportHandler implements ManualImportHandler {
         companyId: "",
         branchId: PRIMARY_BRANCH_ID,
         data: payload,
-        skuDuplicated,
-        eanDuplicated,
+        // Flags de duplicidade calculadas no worker, onde o sync mantém o índice do catálogo em cache.
+        detectCatalogDuplicates: true,
       },
       jobRef.jobId,
       manualImportJobOptions(),
     );
   }
 
-  // GET /produtos com include=filiais nas filiais Tecinco; flags de duplicidade pelo índice em cache.
+  // GET /produtos com include=filiais nas filiais Tecinco; só a 1ª página, sem nenhuma outra chamada.
   private async searchProducts(
     by: ManualImportExternalSearchBy,
     value: string,
@@ -224,28 +209,9 @@ export class TecincoManualImportHandler implements ManualImportHandler {
     const products: TCarProdutoPayload[] = Array.isArray(response?.data)
       ? response.data
       : [];
-    if (!products.length) return { items: [], truncated: false };
-
-    // Mesmas flags que o sync de catálogo calcula (ver migrateProdutos).
-    const duplicateSets = await getCachedTecincoDuplicateValueSets(
-      TECINCO_BRANCH_IDS,
-      LOG_PREFIX,
-    );
 
     return {
-      items: products.map((product) =>
-        toProductItem(
-          product,
-          findTecincoCollidingFields(
-            {
-              coded: product.epctb_coded,
-              sku: product.epctb_codigofabrica,
-              ean: product.epctb_ean,
-            },
-            duplicateSets,
-          ),
-        ),
-      ),
+      items: products.map(toProductItem),
       truncated: products.length >= PRODUCT_LIST_LIMIT,
     };
   }

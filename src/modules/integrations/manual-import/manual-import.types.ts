@@ -203,6 +203,26 @@ export interface ManualImportRunView {
   }>;
 }
 
+// Tipo de busca aceito por uma entidade, com o texto pro front exibir.
+export interface ManualImportSearchOption {
+  by: ManualImportSearchBy;
+  label: string;
+}
+
+// Resposta do GET /manual-import/options: o que cada integração aceita importar e como buscar.
+export interface ManualImportOptionsResponse {
+  maxItems: number;
+  integrations: Array<{
+    integrationId: string;
+    name: string;
+    entities: Array<{
+      entity: ManualImportEntity;
+      label: string;
+      searchBy: ManualImportSearchOption[];
+    }>;
+  }>;
+}
+
 // Resposta do GET /manual-import/status.
 export interface ManualImportStatusResponse {
   run: ManualImportRunView | null;
@@ -218,7 +238,7 @@ export interface ManualImportResponse {
 
 // Contrato que toda integração implementa (um handler por provider).
 export interface ManualImportHandler {
-  getIntegration(): Promise<{ id: string }>;
+  getIntegration(): Promise<{ id: string; name: string }>;
   supportedSearches: Partial<
     Record<ManualImportEntity, ManualImportExternalSearchBy[]>
   >;

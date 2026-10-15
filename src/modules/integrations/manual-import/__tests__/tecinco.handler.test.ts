@@ -21,11 +21,6 @@ jest.mock(
     })),
   }),
 );
-jest.mock("../../../../scripts/tecinco/tecinco-duplicate-detection", () => ({
-  __esModule: true,
-  getCachedTecincoDuplicateValueSets: jest.fn(),
-  findTecincoCollidingFields: jest.fn(),
-}));
 jest.mock("../../../company/unit-business/unit-business.service", () => ({
   __esModule: true,
   default: { findOne: jest.fn() },
@@ -41,10 +36,6 @@ jest.mock("../helpers/product-mapping", () => ({
 }));
 
 import { getTCarIntegration } from "../../../handlers/tecinco/api/tecinco_api";
-import {
-  findTecincoCollidingFields,
-  getCachedTecincoDuplicateValueSets,
-} from "../../../../scripts/tecinco/tecinco-duplicate-detection";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import { parseAccessKey } from "../../../../shared/utils/xml/access-key";
 import { TecincoManualImportHandler } from "../providers/tecinco.handler";
@@ -144,15 +135,13 @@ describe("TecincoManualImportHandler", () => {
   });
 
   describe("search product", () => {
-    it("por id usa codigo_integracao com filiais e calcula skuDuplicated/eanDuplicated", async () => {
-      mockListarProdutos.mockResolvedValue({
-        data: [{ epctb_codigo: "900", epctb_nome: "PNEU X", epctb_codigofabrica: "ABC", epctb_ean: "789" }],
-      });
-      (getCachedTecincoDuplicateValueSets as jest.Mock).mockResolvedValue({ sku: new Set(), ean: new Set() });
-      (findTecincoCollidingFields as jest.Mock).mockReturnValue(["sku=ABC"]);
+    it("por id usa codigo_integracao com filiais; só uma chamada à Tecinco, sem índice de duplicidade", async () => {
+      const product = { epctb_codigo: "900", epctb_nome: "PNEU X", epctb_codigofabrica: "ABC", epctb_ean: "789" };
+      mockListarProdutos.mockResolvedValue({ data: [product] });
 
       const { items, truncated } = await handler.search("product", "id", "900");
 
+      expect(mockListarProdutos).toHaveBeenCalledTimes(1);
       expect(mockListarProdutos).toHaveBeenCalledWith(12, {
         codigo_integracao: "900",
         include: "filiais",
@@ -164,17 +153,17 @@ describe("TecincoManualImportHandler", () => {
       expect(items[0]).toMatchObject({
         externalId: "900",
         details: { name: "PNEU X", code: "ABC", ean: "789" },
-        enqueueData: { skuDuplicated: true, eanDuplicated: false },
+        enqueueData: { payload: product },
       });
     });
 
-    it("sem resultado: não busca o índice de duplicidade", async () => {
+    it("por nome: filtra por nome e devolve vazio quando não acha", async () => {
       mockListarProdutos.mockResolvedValue({ data: [] });
 
       const { items } = await handler.search("product", "name", "nada");
 
+      expect(mockListarProdutos).toHaveBeenCalledWith(12, expect.objectContaining({ nome: "nada" }));
       expect(items).toEqual([]);
-      expect(getCachedTecincoDuplicateValueSets).not.toHaveBeenCalled();
     });
   });
 
@@ -213,7 +202,7 @@ describe("TecincoManualImportHandler", () => {
       );
     });
 
-    it("produto: payload guardado na busca + flags de duplicidade na TCAR_API_FETCH", async () => {
+    it("produto: payload guardado na busca na TCAR_API_FETCH, com as flags de duplicidade calculadas no worker", async () => {
       const queues = { tcarInvoice: { add: jest.fn() }, tcarApiFetch: { add: jest.fn() } } as any;
       const payload = { epctb_codigo: "900", epctb_nome: "PNEU X" };
 
@@ -225,7 +214,7 @@ describe("TecincoManualImportHandler", () => {
           importable: true,
           existsLocally: false,
           localId: null,
-          enqueueData: { payload, skuDuplicated: true, eanDuplicated: false },
+          enqueueData: { payload },
         },
         { queue: "tcarApiFetch", jobId: "job-2" },
         queues,
@@ -235,8 +224,7 @@ describe("TecincoManualImportHandler", () => {
         expect.objectContaining({
           resource: "product",
           data: payload,
-          skuDuplicated: true,
-          eanDuplicated: false,
+          detectCatalogDuplicates: true,
         }),
         "job-2",
         jobOptions,

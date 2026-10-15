@@ -1,4 +1,8 @@
-import type { ManualImportEntity, ManualImportWarning } from "./manual-import.types";
+import type {
+  ManualImportEntity,
+  ManualImportSearchBy,
+  ManualImportWarning,
+} from "./manual-import.types";
 
 // BullMQ: menor número = maior prioridade; 1 é o topo (empata FIFO com os outros jobs manuais).
 export const MANUAL_IMPORT_PRIORITY = 1;
@@ -51,6 +55,21 @@ export function manualImportJobOptions() {
     removeOnComplete: { age: MANUAL_IMPORT_COMPLETED_RETENTION_S },
   };
 }
+
+// Textos de exibição do GET /options (voltados pro usuário, por isso em português).
+export const MANUAL_IMPORT_ENTITY_LABELS: Record<ManualImportEntity, string> = {
+  product: "Produto",
+  invoice: "Nota fiscal",
+  order: "Pedido",
+};
+
+export const MANUAL_IMPORT_SEARCH_BY_LABELS: Record<ManualImportSearchBy, string> = {
+  id: "ID na integração",
+  name: "Nome",
+  number: "Número",
+  access_key: "Chave de acesso (44 dígitos)",
+  local_id: "ID no sistema",
+};
 
 // Avisos que não bloqueiam o import, só informam o front.
 export const MANUAL_IMPORT_WARNINGS = {

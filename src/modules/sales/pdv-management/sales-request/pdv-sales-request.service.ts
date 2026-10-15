@@ -331,7 +331,10 @@ export class PdvSalesRequestService extends BaseService<
           plain.order ? [plain.order.integrations_id] : [],
         ),
         this.resolveExpeditionProgress(plain),
-        this.isShippingInfoRequired(plain.order?.invoice_id ?? null),
+        this.isShippingInfoRequired(
+          plain.shipping_type ?? null,
+          plain.order?.invoice_id ?? null,
+        ),
       ]);
 
     return toSalesRequestDetail(plain, resolveBoardScreen(access), {
@@ -1181,18 +1184,25 @@ export class PdvSalesRequestService extends BaseService<
     return updated;
   }
 
-  // Só cobra quando a nota de venda do pedido (order.invoice_id, fonte de verdade) não informa transportadora.
+  // Só cobra quando não é ADT e a nota de venda do pedido (order.invoice_id, fonte de verdade) não informa transportadora.
   private async assertShippingInfoFilledIfRequired(
     request: PdvSalesRequest,
   ): Promise<void> {
     if (request.shipping_address?.trim() && request.transporter_name?.trim()) {
       return;
     }
+    // ADT sai pela logística própria (CD 12/17) — curto-circuita antes de buscar order/nota.
+    if (request.shipping_type === PdvShippingType.ADT) return;
 
     const order = await orderService.findById(request.order_id, {
       attributes: ["id", "invoice_id"],
     });
-    if (!(await this.isShippingInfoRequired(order?.invoice_id ?? null))) {
+    if (
+      !(await this.isShippingInfoRequired(
+        request.shipping_type,
+        order?.invoice_id ?? null,
+      ))
+    ) {
       return;
     }
 
@@ -1201,11 +1211,13 @@ export class PdvSalesRequestService extends BaseService<
     );
   }
 
-  // Endereço/transportadora só são opcionais com nota de venda cuja
+  // Endereço/transportadora são opcionais com ADT ou com nota de venda cuja
   // transportadora não é "Sem transporte" — também vira shipping_info_required no detalhe.
   private async isShippingInfoRequired(
+    shippingType: PdvShippingType | null,
     saleInvoiceId: string | null,
   ): Promise<boolean> {
+    if (shippingType === PdvShippingType.ADT) return false;
     if (!saleInvoiceId) return true;
     const saleInvoice = await invoiceService.findById(saleInvoiceId, {
       attributes: ["id", "transporter_name"],

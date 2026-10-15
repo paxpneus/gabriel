@@ -5,6 +5,11 @@ import {
   IMPORT_JOB_RESULT,
   ImportJobResult,
 } from "../../../../shared/utils/queues/job-status";
+import {
+  findTecincoCollidingFields,
+  getCachedTecincoDuplicateValueSets,
+} from "../../../../scripts/tecinco/tecinco-duplicate-detection";
+import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
 import {
   ProductConfig,
@@ -157,6 +162,8 @@ export interface TCarUpsertJobPayload {
   skuDuplicated?: boolean;
   /** Calculado no migrateProdutos: EAN duplicado no catálogo Tecinco completo */
   eanDuplicated?: boolean;
+  /** Import manual: calcula skuDuplicated/eanDuplicated no worker (ver detectCatalogDuplicateFlags) */
+  detectCatalogDuplicates?: boolean;
   /** Tentativas de invoice-new que acharam a nota sem XML — ver TCarInvoiceQueue.process */
   xmlUnavailableAttempts?: number;
 }
@@ -399,14 +406,21 @@ export class TCarUpsertQueue extends BaseQueueService<
         await this.processInvoiceXml(data as TCarInvoiceXmlPayload, branchId);
         break;
 
-      case "product":
+      case "product": {
+        // Import manual não traz as flags: calcular na API baixaria o catálogo inteiro a cada busca (cache frio lá).
+        const duplicateFlags = job.data.detectCatalogDuplicates
+          ? await this.detectCatalogDuplicateFlags(data as TCarProdutoPayload)
+          : {
+              skuDuplicated: !!job.data.skuDuplicated,
+              eanDuplicated: !!job.data.eanDuplicated,
+            };
         await this.processProduct(action, data as TCarProdutoPayload, branchId, {
           create: !!job.data.create,
-          skuDuplicated: !!job.data.skuDuplicated,
-          eanDuplicated: !!job.data.eanDuplicated,
+          ...duplicateFlags,
           cascadeMapUnmappedId: job.data.cascadeMapUnmappedId,
         });
         break;
+      }
 
       case "customer":
         await this.processCustomer(action, data as TCarClientePayload);
@@ -425,6 +439,28 @@ export class TCarUpsertQueue extends BaseQueueService<
   }
 
   // ─── Produto ───────────────────────────────────────────────────────────────
+
+  // Mesmo cálculo do migrateProdutos, com o índice que o sync de catálogo mantém em cache neste processo (worker).
+  private async detectCatalogDuplicateFlags(
+    product: TCarProdutoPayload,
+  ): Promise<{ skuDuplicated: boolean; eanDuplicated: boolean }> {
+    const duplicateSets = await getCachedTecincoDuplicateValueSets(
+      tecincoUnitBusinessForPopulate.map(Number),
+      `[TCAR_UPSERT][processProduct] id_system=${product.epctb_codigo}`,
+    );
+    const collidingFields = findTecincoCollidingFields(
+      {
+        coded: product.epctb_coded,
+        sku: product.epctb_codigofabrica,
+        ean: product.epctb_ean,
+      },
+      duplicateSets,
+    );
+    return {
+      skuDuplicated: collidingFields.some((field) => field.startsWith("sku=")),
+      eanDuplicated: collidingFields.some((field) => field.startsWith("ean=")),
+    };
+  }
 
   private async processProduct(
     action: TCarAction,

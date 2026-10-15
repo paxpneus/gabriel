@@ -186,7 +186,10 @@ import {
   TCarProdutoPayload,
   TCarNotaFiscalItem,
 } from "../../service/tecinco/tecinco.types";
-import { findTecincoCollidingFields } from "../../../../../scripts/tecinco/tecinco-duplicate-detection";
+import {
+  findTecincoCollidingFields,
+  getCachedTecincoDuplicateValueSets,
+} from "../../../../../scripts/tecinco/tecinco-duplicate-detection";
 import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { clearTCarLookupCache } from "../helpers/lookup-cache";
 import { IMPORT_JOB_RESULT } from "../../../../../shared/utils/queues/job-status";
@@ -1159,5 +1162,83 @@ describe("TCarUpsertQueue.processInvoiceTransfer (enriquecimento em background d
 
     expect(upsertSpy).not.toHaveBeenCalled();
     expect(pdvSalesRequestService.notifyChanged).not.toHaveBeenCalled();
+  });
+});
+
+// Import manual manda detectCatalogDuplicates: as flags de duplicidade saem do cache do worker, não do payload.
+describe("TCarUpsertQueue.process — product com detectCatalogDuplicates (import manual)", () => {
+  let queue: TCarUpsertQueue;
+  const product = {
+    fll_codigo: 12,
+    epctb_codigo: "900",
+    epctb_nome: "PNEU X",
+    epctb_codigofabrica: "ABC",
+    epctb_ean: "789",
+  };
+
+  beforeEach(() => {
+    clearTCarLookupCache();
+    jest.clearAllMocks();
+    queue = new TCarUpsertQueue({ workless: true });
+  });
+
+  it("calcula skuDuplicated/eanDuplicated pelo índice em cache das filiais Tecinco", async () => {
+    const processSpy = jest
+      .spyOn(queue as any, "processProduct")
+      .mockResolvedValue(undefined);
+    (findTecincoCollidingFields as jest.Mock).mockReturnValueOnce(["sku=ABC"]);
+
+    await queue.process({
+      data: {
+        eventId: "evt-1",
+        resource: "product",
+        action: "sync",
+        companyId: "",
+        branchId: 12,
+        data: product,
+        detectCatalogDuplicates: true,
+      },
+    } as any);
+
+    expect(getCachedTecincoDuplicateValueSets).toHaveBeenCalledWith(
+      [12, 17],
+      expect.any(String),
+    );
+    expect(findTecincoCollidingFields).toHaveBeenCalledWith(
+      { coded: undefined, sku: "ABC", ean: "789" },
+      expect.anything(),
+    );
+    expect(processSpy).toHaveBeenCalledWith(
+      "sync",
+      product,
+      12,
+      expect.objectContaining({ skuDuplicated: true, eanDuplicated: false }),
+    );
+  });
+
+  it("sem a flag: usa skuDuplicated/eanDuplicated do payload e não consulta o índice", async () => {
+    const processSpy = jest
+      .spyOn(queue as any, "processProduct")
+      .mockResolvedValue(undefined);
+
+    await queue.process({
+      data: {
+        eventId: "evt-2",
+        resource: "product",
+        action: "sync",
+        companyId: "",
+        branchId: 12,
+        data: product,
+        eanDuplicated: true,
+      },
+    } as any);
+
+    expect(getCachedTecincoDuplicateValueSets).not.toHaveBeenCalled();
+    expect(processSpy).toHaveBeenCalledWith(
+      "sync",
+      product,
+      12,
+      expect.objectContaining({ skuDuplicated: false, eanDuplicated: true }),
+    );
   });
 });

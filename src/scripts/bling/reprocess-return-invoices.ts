@@ -17,6 +17,7 @@ import { BlingApiFetchQueue } from "../../modules/handlers/bling/services/bling/
 import { getTCarIntegration } from "../../modules/handlers/tecinco/api/tecinco_api";
 import {
   TCAR_INVOICE_UPDATE_JOB_NAME,
+  TCAR_INVOICE_UPDATE_PRIORITY,
   TCarInvoiceQueue,
 } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import { TCarInvoiceXmlPayload } from "../../modules/handlers/tecinco/service/tecinco/tecinco.types";
@@ -96,7 +97,7 @@ async function enqueueTecinco(invoice: Invoice, label: string): Promise<boolean>
         data,
       },
       jobId,
-      { priority: 2, name: TCAR_INVOICE_UPDATE_JOB_NAME },
+      { priority: TCAR_INVOICE_UPDATE_PRIORITY, name: TCAR_INVOICE_UPDATE_JOB_NAME },
     );
   }
   return true;

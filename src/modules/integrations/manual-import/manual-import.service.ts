@@ -2,7 +2,9 @@ import redisService from "../../../shared/utils/base-models/base-redis";
 import type { Requester } from "../../../middlewares/auth-token";
 import { ManualImportError } from "./manual-import.errors";
 import {
+  MANUAL_IMPORT_ENTITY_LABELS,
   MANUAL_IMPORT_MAX_ITEMS,
+  MANUAL_IMPORT_SEARCH_BY_LABELS,
   MANUAL_IMPORT_SEARCH_TTL_S,
   MANUAL_IMPORT_WARNINGS,
   manualImportKeys,
@@ -15,11 +17,13 @@ import manualImportRunService, {
   ManualImportRunService,
 } from "./manual-import-run.service";
 import {
+  MANUAL_IMPORT_ENTITIES,
   ManualImportConfirmRequest,
   ManualImportEntity,
   ManualImportExternalSearchBy,
   ManualImportHandler,
   ManualImportItemResult,
+  ManualImportOptionsResponse,
   ManualImportQueues,
   ManualImportResponse,
   ManualImportSavedItem,
@@ -34,7 +38,7 @@ import {
 export class ManualImportService {
   constructor(private readonly runService: ManualImportRunService = manualImportRunService) {}
 
-  // 0 resultado → NOT_FOUND; 1 → enfileira direto; N → guarda no cache e devolve a lista (CHOOSE).
+  // 0 resultado → NOT_FOUND; 1+ → guarda no cache e devolve a lista (CHOOSE) pro confirm.
   async search(
     request: ManualImportSearchRequest,
     requester: Requester,
@@ -73,32 +77,7 @@ export class ManualImportService {
       enqueueData: item.enqueueData,
     }));
 
-    // 1 resultado: sem confirmação, passa pelas mesmas validações por item do confirm.
-    if (items.length === 1) {
-      const { run, items: [result] } = await this.runService.start({
-        requester,
-        integrationId,
-        entity,
-        handler,
-        items: savedItems,
-        queues,
-      });
-      const item = { ...result, details: items[0].details };
-
-      if (result.status !== "ENQUEUED") {
-        return { httpStatus: 200, body: { outcome: "NOT_ENQUEUED", item } };
-      }
-      return {
-        httpStatus: 202,
-        body: {
-          outcome: "ENQUEUED",
-          item,
-          run,
-          warnings: [...result.warnings, ...warnings],
-        },
-      };
-    }
-
+    // Sempre devolve a lista, mesmo com 1 resultado: o usuário confere o dado antes de importar.
     await this.saveSearchResults(requester, integrationId, entity, savedItems);
 
     const results: ManualImportSearchResult[] = items.map((item, index) => ({
@@ -177,6 +156,37 @@ export class ManualImportService {
     return run
       ? { httpStatus: 202, body: { run, items, warnings } }
       : { httpStatus: 200, body: { items, warnings } };
+  }
+
+  // Integrações com import manual, entidades aceitas e tipos de busca — montado do supportedSearches de cada handler.
+  async getOptions(): Promise<ManualImportOptionsResponse> {
+    const handlers = await listManualImportHandlers();
+
+    return {
+      maxItems: MANUAL_IMPORT_MAX_ITEMS,
+      integrations: handlers.map(({ handler, integrationId, integrationName }) => ({
+        integrationId,
+        name: integrationName,
+        // Ordem fixa de MANUAL_IMPORT_ENTITIES; local_id entra onde o handler sabe refazer a busca.
+        entities: MANUAL_IMPORT_ENTITIES.flatMap((entity) => {
+          const searchBy = handler.supportedSearches[entity];
+          if (!searchBy) return [];
+          const options: ManualImportSearchBy[] = handler.localIdSearchBy[entity]
+            ? [...searchBy, "local_id"]
+            : [...searchBy];
+          return [
+            {
+              entity,
+              label: MANUAL_IMPORT_ENTITY_LABELS[entity],
+              searchBy: options.map((by) => ({
+                by,
+                label: MANUAL_IMPORT_SEARCH_BY_LABELS[by],
+              })),
+            },
+          ];
+        }),
+      })),
+    };
   }
 
   // Andamento do usuário + flag de outro import manual pendente por integração.

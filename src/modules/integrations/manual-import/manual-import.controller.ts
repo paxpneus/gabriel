@@ -62,9 +62,10 @@ export class ManualImportController {
       this.confirm,
     );
     this.router.get("/status", authenticate, this.status);
+    this.router.get("/options", authenticate, this.options);
   }
 
-  // POST / — busca na integração (NOT_FOUND / ENQUEUED direto / CHOOSE).
+  // POST / — busca na integração (NOT_FOUND / CHOOSE); nada é importado aqui.
   search = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { httpStatus, body } = await manualImportService.search(
@@ -87,6 +88,15 @@ export class ManualImportController {
         getQueues(req),
       );
       return res.status(httpStatus).json(body);
+    } catch (error: any) {
+      return handleError(res, error);
+    }
+  };
+
+  // GET /options — integrações, entidades e tipos de busca aceitos, pra montar a tela.
+  options = async (_req: Request, res: Response): Promise<Response> => {
+    try {
+      return res.status(200).json(await manualImportService.getOptions());
     } catch (error: any) {
       return handleError(res, error);
     }

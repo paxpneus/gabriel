@@ -1,21 +1,98 @@
 # Import manual — contrato com o front
 
-Importa produto, nota fiscal ou pedido de uma integração (Bling ou Tecinco) sob demanda. O fluxo tem 3 passos:
+Importa produto, nota fiscal ou pedido de uma integração (Bling ou Tecinco) sob demanda.
 
-1. **Busca** (`POST /api/manual-import`): o back consulta a API da integração.
+Antes do fluxo, a tela carrega as opções em `GET /api/manual-import/options`: quais integrações existem, que entidades cada uma aceita e por quais campos dá pra buscar.
+
+O fluxo tem 3 passos:
+
+1. **Busca** (`POST /api/manual-import`): o back consulta a API da integração e devolve o que achou. **A busca nunca importa nada.**
    - 0 resultados: avisa que não achou.
-   - 1 resultado: importa direto.
-   - Vários resultados: devolve a lista pro usuário escolher.
-2. **Escolha** (`POST /api/manual-import/confirm`): só quando a busca devolveu a lista. Envia os itens marcados, no máximo 10.
+   - 1 ou mais resultados: devolve a lista pro usuário conferir e escolher. Vale também quando só 1 registro foi encontrado: o usuário vê o dado antes e, se for o errado, não importa.
+2. **Escolha** (`POST /api/manual-import/confirm`): envia os itens marcados da lista, no máximo 10. **É sempre aqui que o import começa.**
 3. **Andamento** (`GET /api/manual-import/status`): consulta periódica até o import terminar (ex.: "5/10").
 
 Todas as rotas exigem autenticação (cookie/bearer do usuário ou credencial de application). Não há permissão específica.
 
 ---
 
+## 0. Opções — `GET /api/manual-import/options`
+
+Monta a tela: seletor de integração → entidade → tipo de busca. Chamar ao abrir a tela. A resposta é a fonte de verdade do que é aceito (a tabela da seção seguinte só ilustra). Entidade ou busca que não aparece aqui volta 400 `UNSUPPORTED_SEARCH`.
+
+### Resposta — `200`
+```json
+{
+  "maxItems": 10,
+  "integrations": [
+    {
+      "integrationId": "3f1c…-uuid",
+      "name": "Bling",
+      "entities": [
+        {
+          "entity": "product",
+          "label": "Produto",
+          "searchBy": [
+            { "by": "id", "label": "ID na integração" },
+            { "by": "name", "label": "Nome" },
+            { "by": "local_id", "label": "ID no sistema" }
+          ]
+        },
+        {
+          "entity": "invoice",
+          "label": "Nota fiscal",
+          "searchBy": [
+            { "by": "id", "label": "ID na integração" },
+            { "by": "number", "label": "Número" },
+            { "by": "local_id", "label": "ID no sistema" }
+          ]
+        },
+        {
+          "entity": "order",
+          "label": "Pedido",
+          "searchBy": [
+            { "by": "id", "label": "ID na integração" },
+            { "by": "number", "label": "Número" },
+            { "by": "local_id", "label": "ID no sistema" }
+          ]
+        }
+      ]
+    },
+    {
+      "integrationId": "8a2b…-uuid",
+      "name": "Tecinco",
+      "entities": [
+        {
+          "entity": "product",
+          "label": "Produto",
+          "searchBy": [
+            { "by": "id", "label": "ID na integração" },
+            { "by": "name", "label": "Nome" },
+            { "by": "local_id", "label": "ID no sistema" }
+          ]
+        },
+        {
+          "entity": "invoice",
+          "label": "Nota fiscal",
+          "searchBy": [
+            { "by": "access_key", "label": "Chave de acesso (44 dígitos)" },
+            { "by": "local_id", "label": "ID no sistema" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+- Usar `integrationId`, `entity` e `by` daqui direto no body da busca; `name`/`label` são só pra exibir.
+- Integração que não está configurada no ambiente não aparece.
+- `maxItems` é o mesmo limite do `/status` (seleção máxima no confirm).
+
+---
+
 ## Integrações e buscas suportadas
 
-`integrationId` é o `id` da integração em `GET /api/integrations`. A tela compara pelo id; o nome serve só pra exibição.
+O mesmo que o `/options` devolve hoje, com o que vai em `value`. `integrationId` é o id de cada integração no `/options`.
 
 | Integração | `entity` | `by` aceitos | O que vai em `value` |
 |---|---|---|---|
@@ -53,46 +130,10 @@ A resposta depende de quantos resultados a integração devolveu (`outcome`).
 { "outcome": "NOT_FOUND" }
 ```
 
-**1 resultado, importado direto — `202`**
+**1 ou mais resultados — `200`, o usuário confere e escolhe**
 
-Não pede confirmação: o import já começou. Daqui em diante, acompanhar pelo `/status`.
-```json
-{
-  "outcome": "ENQUEUED",
-  "item": {
-    "externalId": "16234567",
-    "label": "NF-e 4521",
-    "status": "ENQUEUED",
-    "warnings": [
-      { "code": "ALREADY_EXISTS_UPDATING", "message": "Registro já existente no sistema, atualizando" }
-    ],
-    "details": { "...": "ver Details" }
-  },
-  "run": { "...": "ver Run" },
-  "warnings": [
-    { "code": "ALREADY_EXISTS_UPDATING", "message": "Registro já existente no sistema, atualizando" }
-  ]
-}
-```
-`warnings` traz `ALREADY_EXISTS_UPDATING` quando o registro já existe no sistema: ele vai ser atualizado em vez de criado. Pode trazer também `OTHER_MANUAL_IMPORTS_RUNNING` (ver Avisos).
+Mesmo com um resultado só, a resposta é a lista (com 1 item). Nada foi importado ainda.
 
-**1 resultado que não pôde ser importado — `200`**
-```json
-{
-  "outcome": "NOT_ENQUEUED",
-  "item": {
-    "externalId": "16234567",
-    "label": "NF-e 4521",
-    "status": "ALREADY_PROCESSING",
-    "processingBy": { "id": "uuid", "type": "user", "name": "Maria" },
-    "warnings": [],
-    "details": { "...": "..." }
-  }
-}
-```
-`item.status` vem como `ALREADY_PROCESSING` (com `processingBy`) ou `NOT_IMPORTABLE` (com `reason`). Nada foi importado e o usuário não fica bloqueado.
-
-**Vários resultados — `200`, o usuário escolhe**
 ```json
 {
   "outcome": "CHOOSE",
@@ -143,7 +184,7 @@ Todos os campos podem vir `null`.
 
 ## 2. Escolha — `POST /api/manual-import/confirm`
 
-Só depois de uma busca que devolveu `CHOOSE`. Os `externalIds` têm que ser da lista dessa busca, feita pelo mesmo usuário nos últimos 30 minutos.
+Depois de toda busca que devolveu `CHOOSE` (inclusive com 1 resultado). Os `externalIds` têm que ser da lista dessa busca, feita pelo mesmo usuário nos últimos 30 minutos.
 
 ### Request
 ```json
@@ -271,7 +312,7 @@ Os avisos não bloqueiam nada: só mostrar.
 
 | `code` | Quando | Onde |
 |---|---|---|
-| `ALREADY_EXISTS_UPDATING` | O registro já existe no sistema e vai ser atualizado | `warnings` do item; também no `warnings` geral quando a busca importou direto (1 resultado) |
+| `ALREADY_EXISTS_UPDATING` | O registro já existe no sistema e vai ser atualizado | `warnings` do item no confirm (na lista da busca isso vem como `existsLocally: true`) |
 | `OTHER_MANUAL_IMPORTS_RUNNING` | Há import manual em andamento nessa integração, então pode demorar | `warnings` geral da busca e do confirm |
 
 Todo aviso traz `{ code, message }`. A `message` já vem em português, pronta pra exibir.
@@ -302,15 +343,16 @@ Formato: `{ "code": "...", "message": "...", ...extras }`.
 
 ## Regras pro front, resumidas
 
+0. Ao abrir a tela, chamar `GET /options` pra montar os seletores de integração, entidade e tipo de busca.
 1. Ao abrir a tela, chamar `GET /status`:
    - `run.status === "RUNNING"`: abrir bloqueado, mostrar o progresso e seguir consultando.
    - `othersRunning[id]` verdadeiro: mostrar o aviso.
-2. Buscar: tratar `NOT_FOUND`, `ENQUEUED` (já começou, passar a acompanhar), `NOT_ENQUEUED` (mostrar motivo) e `CHOOSE` (mostrar a lista).
+2. Buscar: tratar `NOT_FOUND` (não achou) e `CHOOSE` (mostrar a lista, mesmo com 1 item). A busca nunca importa.
 3. Na lista:
    - travar a seleção em `maxItems` (10);
    - desabilitar `importable: false`;
    - marcar `existsLocally` como "vai atualizar";
    - mostrar `alreadyProcessing`.
-4. Confirmar: mostrar o resultado por item. Se veio `run` (202), passar a acompanhar pelo `/status`.
+4. Confirmar (sempre necessário pra importar): mostrar o resultado por item. Se veio `run` (202), passar a acompanhar pelo `/status`.
 5. Durante `RUNNING`, consultar `/status` a cada ~3s. Em `FINISHED`, mostrar o resumo por item (`result` / `error`) e liberar novo import.
 6. Um 409 `USER_IMPORT_RUNNING` em qualquer POST significa "já tem import seu rodando": usar o `run` do erro pra mostrar o progresso.

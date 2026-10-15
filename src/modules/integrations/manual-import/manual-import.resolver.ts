@@ -8,10 +8,11 @@ const MANUAL_IMPORT_HANDLERS: ManualImportHandler[] = [
   tecincoManualImportHandler,
 ];
 
-// Handler + id da integração dele já resolvido no banco.
+// Handler + id/nome da integração dele já resolvidos no banco.
 export interface ResolvedManualImportHandler {
   handler: ManualImportHandler;
   integrationId: string;
+  integrationName: string;
 }
 
 // Integração não configurada no banco fica de fora, sem derrubar as outras.
@@ -23,7 +24,13 @@ export async function listManualImportHandlers(): Promise<
   );
   return integrations.flatMap((integration, index) =>
     integration.status === "fulfilled"
-      ? [{ handler: MANUAL_IMPORT_HANDLERS[index], integrationId: integration.value.id }]
+      ? [
+          {
+            handler: MANUAL_IMPORT_HANDLERS[index],
+            integrationId: integration.value.id,
+            integrationName: integration.value.name,
+          },
+        ]
       : [],
   );
 }

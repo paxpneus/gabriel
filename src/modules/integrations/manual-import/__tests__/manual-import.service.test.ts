@@ -69,7 +69,7 @@ function makeQueues() {
 
 function makeHandler() {
   return {
-    getIntegration: jest.fn().mockResolvedValue({ id: INTEGRATION_ID }),
+    getIntegration: jest.fn().mockResolvedValue({ id: INTEGRATION_ID, name: "Bling" }),
     supportedSearches: { product: ["id", "name"], order: ["id", "number"] },
     localIdSearchBy: { product: "id", order: "id" },
     queueKeys: ["blingApiFetch", "blingOrder"],
@@ -165,7 +165,7 @@ describe("ManualImportService", () => {
     queues = makeQueues();
     (resolveManualImportHandler as jest.Mock).mockResolvedValue(handler);
     (listManualImportHandlers as jest.Mock).mockResolvedValue([
-      { handler, integrationId: INTEGRATION_ID },
+      { handler, integrationId: INTEGRATION_ID, integrationName: "Bling" },
     ]);
     (userService.findAll as jest.Mock).mockResolvedValue([{ id: "user-2", name: "Maria" }]);
     (applicationService.findAll as jest.Mock).mockResolvedValue([]);
@@ -188,67 +188,60 @@ describe("ManualImportService", () => {
       expect(queues.blingApiFetch.add).not.toHaveBeenCalled();
     });
 
-    it("1 resultado novo: enfileira direto, sem aviso de atualização", async () => {
-      handler.search.mockResolvedValue({ items: [found("10")], truncated: false });
-
-      const result = await search("id", "10");
-
-      expect(result.httpStatus).toBe(202);
-      expect(result.body).toMatchObject({
-        outcome: "ENQUEUED",
-        item: { externalId: "10", status: "ENQUEUED", details: { name: "Produto 10" } },
-        run: { runId: RUN_ID, status: "RUNNING", total: 1, done: 0 },
-        warnings: [],
-      });
-      expect(queues.blingApiFetch.add).toHaveBeenCalledWith(
-        { id: "10" },
-        `manual-import-product-10-${RUN_ID}`,
-      );
-      expect(fakeRedis.store.get(manualImportKeys.userLock(requester.id))).toBe(RUN_ID);
-    });
-
-    it("1 resultado já existente: enfileira com ALREADY_EXISTS_UPDATING", async () => {
+    it("1 resultado: também volta CHOOSE pra confirmar, nada enfileirado e sem lock", async () => {
       handler.search.mockResolvedValue({ items: [found("10")], truncated: false });
       handler.findLocalIds.mockResolvedValue(new Map([["10", "local-10"]]));
 
       const result = await search("id", "10");
 
-      expect(result.httpStatus).toBe(202);
-      expect(result.body.warnings).toEqual([
-        expect.objectContaining({
-          code: "ALREADY_EXISTS_UPDATING",
-          message: "Registro já existente no sistema, atualizando",
-        }),
-      ]);
-      expect((result.body.run as any).items[0].existsLocally).toBe(true);
-    });
-
-    it("1 resultado já em import de outra pessoa: NOT_ENQUEUED e o lock do usuário é solto", async () => {
-      handler.search.mockResolvedValue({ items: [found("10")], truncated: false });
-      queues.blingApiFetch.jobs.set("job-other", makeJob("active"));
-      seedClaim("product", "10", {
-        runId: "other-run",
-        requestedBy: otherUser,
-        jobRef: { queue: "blingApiFetch", jobId: "job-other" },
-      });
-
-      const result = await search("id", "10");
-
-      expect(result).toEqual({
-        httpStatus: 200,
-        body: {
-          outcome: "NOT_ENQUEUED",
-          item: expect.objectContaining({
-            status: "ALREADY_PROCESSING",
-            processingBy: { id: "user-2", type: "user", name: "Maria" },
-          }),
-        },
+      expect(result.httpStatus).toBe(200);
+      expect(result.body).toMatchObject({
+        outcome: "CHOOSE",
+        truncated: false,
+        results: [
+          {
+            externalId: "10",
+            details: { name: "Produto 10" },
+            existsLocally: true,
+            localId: "local-10",
+            alreadyProcessing: null,
+          },
+        ],
       });
       expect(queues.blingApiFetch.add).not.toHaveBeenCalled();
       expect(fakeRedis.store.has(manualImportKeys.userLock(requester.id))).toBe(false);
+      expect(
+        fakeRedis.store.has(manualImportKeys.search(requester.id, INTEGRATION_ID, "product", "10")),
+      ).toBe(true);
     });
 
-    it("N resultados: CHOOSE com existsLocally por item, nada enfileirado e cache gravado", async () => {
+    it("1 resultado confirmado: enfileira com ALREADY_EXISTS_UPDATING quando já existe", async () => {
+      handler.search.mockResolvedValue({ items: [found("10")], truncated: false });
+      handler.findLocalIds.mockResolvedValue(new Map([["10", "local-10"]]));
+      await search("id", "10");
+
+      const result = await service.confirm(
+        { integrationId: INTEGRATION_ID, entity: "product", externalIds: ["10"] },
+        requester,
+        queues as any,
+      );
+
+      expect(result.httpStatus).toBe(202);
+      expect(result.body.items).toEqual([
+        expect.objectContaining({
+          externalId: "10",
+          status: "ENQUEUED",
+          warnings: [expect.objectContaining({ code: "ALREADY_EXISTS_UPDATING" })],
+        }),
+      ]);
+      expect(queues.blingApiFetch.add).toHaveBeenCalledWith(
+        { id: "10" },
+        `manual-import-product-10-${RUN_ID}`,
+      );
+      expect((result.body.run as any).items[0].existsLocally).toBe(true);
+    });
+
+    it("vários resultados: CHOOSE com existsLocally por item, nada enfileirado e cache gravado", async () => {
       handler.search.mockResolvedValue({
         items: [found("1"), found("2"), found("3")],
         truncated: true,
@@ -285,7 +278,7 @@ describe("ManualImportService", () => {
       });
     });
 
-    it("N resultados: item com claim vivo de outra pessoa vem com alreadyProcessing", async () => {
+    it("vários resultados: item com claim vivo de outra pessoa vem com alreadyProcessing", async () => {
       handler.search.mockResolvedValue({ items: [found("1"), found("2")], truncated: false });
       queues.blingApiFetch.jobs.set("job-other", makeJob("delayed"));
       seedClaim("product", "2", {
@@ -482,6 +475,63 @@ describe("ManualImportService", () => {
       expect(result.body.warnings).toEqual([
         expect.objectContaining({ code: "OTHER_MANUAL_IMPORTS_RUNNING" }),
       ]);
+    });
+  });
+
+  describe("getOptions", () => {
+    it("lista entidades e buscas de cada integração a partir do handler, com local_id onde suportado", async () => {
+      const tecincoHandler = {
+        ...makeHandler(),
+        supportedSearches: { invoice: ["access_key"] },
+        localIdSearchBy: {},
+      };
+      (listManualImportHandlers as jest.Mock).mockResolvedValue([
+        { handler, integrationId: INTEGRATION_ID, integrationName: "Bling" },
+        { handler: tecincoHandler, integrationId: "integration-2", integrationName: "Tecinco" },
+      ]);
+
+      const options = await service.getOptions();
+
+      expect(options).toEqual({
+        maxItems: 10,
+        integrations: [
+          {
+            integrationId: INTEGRATION_ID,
+            name: "Bling",
+            entities: [
+              {
+                entity: "product",
+                label: "Produto",
+                searchBy: [
+                  { by: "id", label: "ID na integração" },
+                  { by: "name", label: "Nome" },
+                  { by: "local_id", label: "ID no sistema" },
+                ],
+              },
+              {
+                entity: "order",
+                label: "Pedido",
+                searchBy: [
+                  { by: "id", label: "ID na integração" },
+                  { by: "number", label: "Número" },
+                  { by: "local_id", label: "ID no sistema" },
+                ],
+              },
+            ],
+          },
+          {
+            integrationId: "integration-2",
+            name: "Tecinco",
+            entities: [
+              {
+                entity: "invoice",
+                label: "Nota fiscal",
+                searchBy: [{ by: "access_key", label: "Chave de acesso (44 dígitos)" }],
+              },
+            ],
+          },
+        ],
+      });
     });
   });
 

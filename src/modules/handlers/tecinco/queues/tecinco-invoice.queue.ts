@@ -16,6 +16,10 @@ import { ImportJobResult } from "../../../../shared/utils/queues/job-status";
 export const TCAR_INVOICE_NEW_JOB_NAME = "invoice-new";
 export const TCAR_INVOICE_UPDATE_JOB_NAME = "invoice-update";
 
+// Prioridades da TCAR_INVOICE: 1 fica livre pro import manual (MANUAL_IMPORT_PRIORITY), que passa à frente do sync.
+export const TCAR_INVOICE_NEW_PRIORITY = 2;
+export const TCAR_INVOICE_UPDATE_PRIORITY = 3;
+
 export const TCAR_INVOICE_XML_RETRY_DELAY_MS = 5 * 60 * 1000;
 export const TCAR_INVOICE_XML_MAX_ATTEMPTS = 5;
 // Prefixo do failedReason — o sync usa pra não reenfileirar essas notas (ver migrateNovasNotasFiscais).
@@ -25,6 +29,22 @@ export const TCAR_INVOICE_XML_UNAVAILABLE_FAILURE = "XML indisponível na Tecinc
 export class TCarInvoiceQueue extends TCarUpsertQueue {
   constructor(options: { workless?: boolean } = {}) {
     super(options, "TCAR_INVOICE", 2);
+  }
+
+  // Sem priority explícita (ex.: invoice_transfer do PDV) entra junto do invoice-update, abaixo do invoice-new.
+  override async add(
+    data: TCarUpsertJobPayload,
+    jobId?: string,
+    jobOptions?: {
+      priority?: number;
+      name?: string;
+      removeOnComplete?: boolean | { age: number; count?: number };
+    },
+  ) {
+    return super.add(data, jobId, {
+      ...jobOptions,
+      priority: jobOptions?.priority ?? TCAR_INVOICE_UPDATE_PRIORITY,
+    });
   }
 
   override async process(

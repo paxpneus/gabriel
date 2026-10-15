@@ -20,7 +20,9 @@ import {
 import {
   TCarInvoiceQueue,
   TCAR_INVOICE_NEW_JOB_NAME,
+  TCAR_INVOICE_NEW_PRIORITY,
   TCAR_INVOICE_UPDATE_JOB_NAME,
+  TCAR_INVOICE_UPDATE_PRIORITY,
   TCAR_INVOICE_XML_UNAVAILABLE_FAILURE,
 } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
@@ -414,7 +416,7 @@ export async function migrateNotasFiscais(
           },
           `invoice-update-${branchId}-${tipo}-${chave.nota}`,
           dryRun,
-          { priority: 2, name: TCAR_INVOICE_UPDATE_JOB_NAME },
+          { priority: TCAR_INVOICE_UPDATE_PRIORITY, name: TCAR_INVOICE_UPDATE_JOB_NAME },
         );
 
         console.log(`  [NF ${tipo} nota=${chave.nota}] enfileirada`);
@@ -525,7 +527,7 @@ export async function migrateNovasNotasFiscais(
           jobId,
           dryRun ?? false,
           {
-            priority: 1,
+            priority: TCAR_INVOICE_NEW_PRIORITY,
             name: TCAR_INVOICE_NEW_JOB_NAME,
             removeOnComplete: { age: INVOICE_NEW_JOB_RETENTION_SECONDS },
           },
