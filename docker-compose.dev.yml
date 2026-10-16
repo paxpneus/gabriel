@@ -61,6 +61,7 @@ services:
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASS: ${DB_PASS}
+      XML_ENCRYPTION_KEY: ${XML_ENCRYPTION_KEY}
     depends_on:
       postgres:
         condition: service_healthy
