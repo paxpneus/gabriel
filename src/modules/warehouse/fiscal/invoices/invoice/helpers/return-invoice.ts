@@ -1,11 +1,9 @@
 import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { decryptXml, isEncrypted } from "../../../../../../shared/utils/xml/xml-cipher";
-
-// finNFe da NF-e (ide.finNFe): 4 = devolução de mercadoria.
-const NFE_RETURN_PURPOSE = "4";
+import { NFE_RETURN_PURPOSE } from "./nfe-ide";
 
 export function isReturnInvoicePurpose(finNFe: unknown): boolean {
-  return String(finNFe ?? "").trim() === NFE_RETURN_PURPOSE;
+  return String(finNFe ?? "").trim() === String(NFE_RETURN_PURPOSE);
 }
 
 // Mesma checagem a partir do xml_path gravado (cifrado ou legado em texto puro).

@@ -2,6 +2,7 @@
 
 - Unique per `(product_id, unit_business_id)`: `sku`, `price`, `gtin`, `gtin_package`, `ncm`, `cest`, `supplier_cost_price`, `supplier_purchase_price`, avg-cost fields.
 - Trigger `trigger_prevent_product_config_gtin_conflict` (`m264`, narrowed `m265`): blocks INSERT/UPDATE if `NEW.gtin` matches another product's `gtin` in the same `unit_business_id`. Doesn't touch `gtin_package`.
+  - **Known false positive (current `m274` body)**: the lookup is `pc.product_id <> NEW.product_id` with no `pc.id <> NEW.id`, so an UPDATE that changes only `product_id` on a row with `gtin` matches the row itself (BEFORE trigger still sees the stored old `product_id`) and raises. Workaround when reassigning configs between products: set `product_id` with `gtin = NULL`, then restore `gtin` in a second UPDATE. Unfixed in the trigger.
 
 ## `gtin_package` removal (`m265`)
 

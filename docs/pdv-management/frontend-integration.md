@@ -10,6 +10,9 @@ aqui.
 ## Mudou: ADT não exige endereço de envio/transportadora
 
 Com `shipping_type = ADT`, `shipping_address`/`transporter_name` deixam de ser obrigatórios pra confirmar o comprovante ou resolver correção, e `GET /:id` devolve `shipping_info_required: false`. Trocou o tipo de envio → refazer `GET /:id`.
+## Mudou: Finalizados/Excluídos sempre no quadro
+
+`include_closed` saiu de `GET /sales-request` e `GET /sales-request/select-all/ids`: colunas `finished` (todas as telas) e `excluded` (loja/Televendas) vêm sempre. Parâmetro, se enviado, é ignorado — tirar o filtro "Finalizados/Excluídos" do front.
 
 ## Mudou: pedidos da loja 21 (CD21) entram no fluxo
 

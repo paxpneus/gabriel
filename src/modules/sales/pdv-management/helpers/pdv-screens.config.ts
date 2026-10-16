@@ -45,15 +45,12 @@ export interface PdvBoardColumn {
   highlighted?: boolean;
   // Só com include_other_screens ("Colunas de outras telas = Sim").
   extra?: boolean;
-  // Só com include_closed (FINISHED/EXCLUDED nunca vêm por padrão).
-  closed?: boolean;
   // Cards selecionáveis (ações em lote) + ações montadas dinamicamente pelo front.
   selectable?: boolean;
   actions?: readonly PdvColumnAction[];
 }
 
 export interface PdvBoardVisibilityFlags {
-  includeClosed: boolean;
   includeOtherScreens: boolean;
 }
 
@@ -153,14 +150,12 @@ const STORE_COLUMNS: readonly PdvBoardColumn[] = [
     label: "Finalizado",
     description: "Romaneio gerado",
     statuses: [S.FINISHED],
-    closed: true,
   },
   {
     key: "excluded",
     label: "Excluídos",
     description: "Solicitação excluída pela loja",
     statuses: [S.EXCLUDED],
-    closed: true,
   },
 ];
 
@@ -202,7 +197,6 @@ export const PDV_BOARD_SCREENS: Record<
       label: "Finalizados",
       description: "Romaneio gerado",
       statuses: [S.FINISHED],
-      closed: true,
     },
     {
       key: "cancelled",
@@ -272,7 +266,6 @@ export const PDV_BOARD_SCREENS: Record<
       label: "Finalizados",
       description: "Romaneio gerado",
       statuses: [S.FINISHED],
-      closed: true,
     },
   ],
   // TODO(telesales): colunas próprias ainda não definidas — usa as da loja.
@@ -285,9 +278,7 @@ export function resolveColumns(
   flags: PdvBoardVisibilityFlags,
 ): PdvBoardColumn[] {
   return PDV_BOARD_SCREENS[screen].filter(
-    (column) =>
-      (!column.closed || flags.includeClosed) &&
-      (!column.extra || flags.includeOtherScreens),
+    (column) => !column.extra || flags.includeOtherScreens,
   );
 }
 

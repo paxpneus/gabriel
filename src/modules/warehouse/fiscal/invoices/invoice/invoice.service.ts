@@ -41,6 +41,15 @@ import sequelize from "../../../../../config/sequelize";
 import batchInvoicesService from "../../../expedition/batch-invoices/batch-invoices.service";
 import { CLOSED_EXPEDITION_BATCH_STATUSES } from "../../../expedition/batch/batch.types";
 import { normalizeInvoiceNumber } from "./helpers/reference-description";
+import {
+  InvoiceViewPoint,
+  InvoiceViewPointContext,
+  InvoiceViewPointParties,
+  resolveInvoiceViewPoint,
+} from "./helpers/view-point";
+import { readNfeIde } from "./helpers/nfe-ide";
+import { cleanDocument } from "../../../../../shared/utils/normalizers/document";
+import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import { Product, ProductConfig, Supplier } from "../../../../inventory";
 import Contact from "../../../../sales/contacts/contacts.model";
 import Order from "../../../../sales/orders/order/orders.model";
@@ -479,7 +488,82 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   }
 
   async findByIdFullWithBatch(id: string, unitBusinessId: string) {
-    return this.repository.getFullInvoiceWithBatch(id, unitBusinessId);
+    const invoice = await this.repository.getFullInvoiceWithBatch(
+      id,
+      unitBusinessId,
+    );
+    const [withViewPoint] = await this.withViewPoints([invoice], unitBusinessId);
+    return withViewPoint!;
+  }
+
+  // GET /:id (show do BaseController) com as flags de view point.
+  async findByIdWithViewPoint(id: string, unitBusinessId: string) {
+    const invoice = await this.findById(id);
+    if (!invoice) return null;
+    const plain = invoice.get({ plain: true }) as InvoiceAttributes;
+    const [withViewPoint] = await this.withViewPoints(
+      [{ ...plain, xml_head: plain.xml_path }],
+      unitBusinessId,
+    );
+    return withViewPoint!;
+  }
+
+  // Uma query só pras lojas: CNPJs de todas (transferência/venda) + o da loja que está vendo (direção).
+  private async buildViewPointContext(
+    unitBusinessId?: string,
+  ): Promise<InvoiceViewPointContext> {
+    const unitBusinesses = await unitBusinessService.findAll({
+      attributes: ["id", "cnpj"],
+    });
+    const cnpjOf = (ub: { cnpj?: string | null }) =>
+      ub.cnpj ? cleanDocument(ub.cnpj) : null;
+    const viewer = unitBusinessId
+      ? unitBusinesses.find((ub) => ub.id === unitBusinessId)
+      : undefined;
+    return {
+      viewerCnpj: viewer ? cnpjOf(viewer) : null,
+      unitBusinessCnpjs: new Set(
+        unitBusinesses.map(cnpjOf).filter((cnpj): cnpj is string => !!cnpj),
+      ),
+    };
+  }
+
+  // Lê o <ide> do início do XML (xml_head); nota rara com <ide> além do trecho busca o XML inteiro, numa query só.
+  // Falha aqui nunca derruba a rota: flags vêm null e a nota sai igual.
+  private async withViewPoints<
+    T extends InvoiceViewPointParties & { id: string; xml_head?: string | null },
+  >(
+    invoices: T[],
+    unitBusinessId?: string,
+  ): Promise<(Omit<T, "xml_head"> & InvoiceViewPoint)[]> {
+    try {
+      const ides = new Map(
+        invoices.map((invoice) => [invoice.id, readNfeIde(invoice.xml_head)]),
+      );
+      const truncatedIds = invoices
+        .filter((invoice) => invoice.xml_head && !ides.get(invoice.id))
+        .map((invoice) => invoice.id);
+
+      const [context, fullXmls] = await Promise.all([
+        this.buildViewPointContext(unitBusinessId),
+        truncatedIds.length
+          ? this.repository.findXmlPathsByIds(truncatedIds)
+          : Promise.resolve([]),
+      ]);
+      fullXmls.forEach((row) => ides.set(row.id, readNfeIde(row.xml_path)));
+
+      return invoices.map(({ xml_head, ...invoice }) => ({
+        ...invoice,
+        ...resolveInvoiceViewPoint(invoice, ides.get(invoice.id) ?? null, context),
+      }));
+    } catch (err) {
+      console.warn("[INVOICE VIEW POINT] Falha ao calcular flags:", err);
+      return invoices.map(({ xml_head, ...invoice }) => ({
+        ...invoice,
+        view_point_type: null,
+        view_point_direction: null,
+      }));
+    }
   }
 
   async findByIdFullForAllUnits(

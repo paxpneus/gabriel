@@ -48,7 +48,6 @@ describe("parseBoardQuery", () => {
       column: null,
       cursor: null,
       limit: PDV_BOARD_DEFAULT_LIMIT,
-      includeClosed: false,
       includeOtherScreens: false,
     });
   });
@@ -60,14 +59,12 @@ describe("parseBoardQuery", () => {
         column: "finished",
         cursor,
         limit: "30",
-        include_closed: "1",
         include_other_screens: "false",
       }),
     ).toEqual({
       column: "finished",
       cursor: { c: CREATED_AT, i: ID },
       limit: 30,
-      includeClosed: true,
       includeOtherScreens: false,
     });
   });
@@ -77,7 +74,7 @@ describe("parseBoardQuery", () => {
     [{ limit: "101" }],
     [{ limit: "1.5" }],
     [{ limit: "abc" }],
-    [{ include_closed: "yes" }],
+    [{ include_other_screens: "yes" }],
     [{ column: ["a", "b"] }],
     [{ cursor: encodeBoardCursor(CREATED_AT, ID) }],
     [{ column: "finished", cursor: "lixo" }],

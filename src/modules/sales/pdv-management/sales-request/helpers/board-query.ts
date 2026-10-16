@@ -9,7 +9,6 @@ export interface PdvBoardQuery {
   column: string | null;
   cursor: PdvBoardCursor | null;
   limit: number;
-  includeClosed: boolean;
   includeOtherScreens: boolean;
 }
 
@@ -53,7 +52,6 @@ export function parseBoardQuery(query: Record<string, unknown>): PdvBoardQuery {
     column,
     cursor: rawCursor !== undefined ? decodeBoardCursor(rawCursor) : null,
     limit: parseLimit(query.limit),
-    includeClosed: parseBoolean(query.include_closed, "include_closed"),
     includeOtherScreens: parseBoolean(
       query.include_other_screens,
       "include_other_screens",

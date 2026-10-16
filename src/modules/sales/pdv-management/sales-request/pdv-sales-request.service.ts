@@ -404,10 +404,7 @@ export class PdvSalesRequestService extends BaseService<
     query: PdvBoardQuery,
   ): Promise<{ columns: PdvBoardColumnResult[] } | PdvBoardColumnResult> {
     const screen = resolveBoardScreen(access);
-    const flags = {
-      includeClosed: query.includeClosed,
-      includeOtherScreens: query.includeOtherScreens,
-    };
+    const flags = { includeOtherScreens: query.includeOtherScreens };
 
     if (query.column) {
       const column = findVisibleColumn(screen, query.column, flags);
@@ -435,7 +432,7 @@ export class PdvSalesRequestService extends BaseService<
   async getBoardSelectAllIds(
     access: PdvAccessContext,
     params: QueryParams,
-    query: Pick<PdvBoardQuery, "includeClosed" | "includeOtherScreens">,
+    query: Pick<PdvBoardQuery, "includeOtherScreens">,
     status: PdvSalesRequestStatus,
   ): Promise<string[]> {
     const visible = resolveColumns(resolveBoardScreen(access), query).some(

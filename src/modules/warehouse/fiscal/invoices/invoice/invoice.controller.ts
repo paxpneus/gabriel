@@ -234,6 +234,24 @@ export class InvoiceController extends BaseController<
     }
   };
 
+  show = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      const record = await this.service.findByIdWithViewPoint(
+        req.params.id as string,
+        unitBusinessId,
+      );
+      if (!record) return res.status(404).json({ error: "Não encontrado" });
+      return res.json(record);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
   update = async (req: Request, res: Response): Promise<Response> => {
     try {
       const context = await getUserContext(req);

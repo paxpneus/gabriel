@@ -26,3 +26,13 @@ export function isEncrypted(value: string): boolean {
   return /^[a-f0-9]{32}:.+/.test(value)
 }
 
+
+// Só o início da nota: CBC decifra bloco a bloco, então dá pra ler o cabeçalho sem a nota inteira.
+export function decryptXmlHead(encrypted: string): string {
+  const [ivHex, content] = encrypted.split(':')
+  const base64 = content!.slice(0, content!.length - (content!.length % 4))
+  const buffer = Buffer.from(base64, 'base64')
+  const decipher = createDecipheriv(ALGORITHM, KEY, Buffer.from(ivHex!, 'hex'))
+  decipher.setAutoPadding(false)
+  return decipher.update(buffer.subarray(0, buffer.length - (buffer.length % 16))).toString('utf8')
+}

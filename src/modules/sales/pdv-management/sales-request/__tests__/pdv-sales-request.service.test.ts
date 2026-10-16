@@ -3687,8 +3687,10 @@ describe("PdvSalesRequestService", () => {
         "correction",
         "cd21_analysis",
         "cd21_billing",
+        "finished",
+        "excluded",
       ]);
-      expect(pdvSalesRequestRepository.findBoardColumnPage).toHaveBeenCalledTimes(5);
+      expect(pdvSalesRequestRepository.findBoardColumnPage).toHaveBeenCalledTimes(7);
       expect(unitBusinessService.getPhysicalNumberedUnitBusinessIds).not.toHaveBeenCalled();
     });
 
@@ -3718,7 +3720,7 @@ describe("PdvSalesRequestService", () => {
 
     it("coluna não visível pra tela + flags → PdvForbiddenError", async () => {
       await expect(
-        service.getBoard(storeAccess, {}, parseBoardQuery({ column: "finished" })),
+        service.getBoard(cd21Access, {}, parseBoardQuery({ column: "open" })),
       ).rejects.toThrow(PdvForbiddenError);
       await expect(
         service.getBoard(storeAccess, {}, parseBoardQuery({ column: "nf_sale" })),
@@ -3759,6 +3761,8 @@ describe("PdvSalesRequestService", () => {
         "correction",
         "cd21_analysis",
         "cd21_billing",
+        "finished",
+        "excluded",
       ]);
     });
 
@@ -3935,7 +3939,7 @@ describe("PdvSalesRequestService", () => {
       const result: any = await service.getBoard(
         storeAccess,
         {},
-        parseBoardQuery({ column: "finished", include_closed: "true", limit: "2" }),
+        parseBoardQuery({ column: "finished", limit: "2" }),
       );
 
       expect(result.key).toBe("finished");
@@ -3976,7 +3980,7 @@ describe("PdvSalesRequestService", () => {
     });
 
     describe("getBoardSelectAllIds", () => {
-      const noFlags = { includeClosed: false, includeOtherScreens: false };
+      const noFlags = { includeOtherScreens: false };
 
       beforeEach(() => {
         (pdvSalesRequestRepository.findBoardIds as jest.Mock).mockResolvedValue([
@@ -4015,16 +4019,11 @@ describe("PdvSalesRequestService", () => {
           service.getBoardSelectAllIds(cd21Access, {}, noFlags, PdvSalesRequestStatus.PENDING_FINANCE),
         ).rejects.toThrow(PdvForbiddenError);
         await expect(
-          service.getBoardSelectAllIds(cd21Access, {}, noFlags, PdvSalesRequestStatus.FINISHED),
+          service.getBoardSelectAllIds(cd21Access, {}, noFlags, PdvSalesRequestStatus.EXCLUDED),
         ).rejects.toThrow(PdvForbiddenError);
         expect(pdvSalesRequestRepository.findBoardIds).not.toHaveBeenCalled();
 
-        await service.getBoardSelectAllIds(
-          cd21Access,
-          {},
-          { includeClosed: true, includeOtherScreens: false },
-          PdvSalesRequestStatus.FINISHED,
-        );
+        await service.getBoardSelectAllIds(cd21Access, {}, noFlags, PdvSalesRequestStatus.FINISHED);
         expect(pdvSalesRequestRepository.findBoardIds).toHaveBeenCalledTimes(1);
       });
     });

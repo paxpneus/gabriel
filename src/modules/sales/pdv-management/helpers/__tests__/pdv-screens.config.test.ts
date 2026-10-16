@@ -9,31 +9,25 @@ import {
 import { PdvSalesRequestStatus as S } from "../../sales-request/pdv-sales-request.types";
 import { PdvAccessScreen } from "../../pdv-access/pdv-access.types";
 
-const keys = (screen: PdvBoardScreen, includeClosed: boolean, includeOtherScreens: boolean) =>
-  resolveColumns(screen, { includeClosed, includeOtherScreens }).map((c) => c.key);
+const keys = (screen: PdvBoardScreen, includeOtherScreens: boolean) =>
+  resolveColumns(screen, { includeOtherScreens }).map((c) => c.key);
 
 const statusesOf = (screen: PdvBoardScreen) =>
-  resolveColumns(screen, { includeClosed: true, includeOtherScreens: true }).flatMap(
+  resolveColumns(screen, { includeOtherScreens: true }).flatMap(
     (c) => c.statuses,
   );
 
 describe("pdv-screens.config", () => {
   describe("resolveColumns — colunas por tela × flags", () => {
-    it.each<[PdvBoardScreen, boolean, boolean, string[]]>([
-      ["store", false, false, ["open", "finance_analysis", "correction", "cd21_analysis", "cd21_billing"]],
-      ["store", true, false, ["open", "finance_analysis", "correction", "cd21_analysis", "cd21_billing", "finished", "excluded"]],
-      ["store", false, true, ["open", "finance_analysis", "correction", "cd21_analysis", "cd21_billing"]],
-      ["store", true, true, ["open", "finance_analysis", "correction", "cd21_analysis", "cd21_billing", "finished", "excluded"]],
-      ["finance", false, false, ["awaiting_analysis", "correction", "approved", "cancelled"]],
-      ["finance", true, false, ["awaiting_analysis", "correction", "approved", "finished", "cancelled"]],
-      ["finance", false, true, ["open", "awaiting_analysis", "correction", "approved", "cancelled"]],
-      ["finance", true, true, ["open", "awaiting_analysis", "correction", "approved", "finished", "cancelled"]],
-      ["cd21", false, false, ["correction", "awaiting_analysis", "nf_sale", "nf_transfer", "shipping", "ship_today"]],
-      ["cd21", true, false, ["correction", "awaiting_analysis", "nf_sale", "nf_transfer", "shipping", "ship_today", "finished"]],
-      ["cd21", false, true, ["open", "finance_analysis", "correction", "awaiting_analysis", "nf_sale", "nf_transfer", "shipping", "ship_today"]],
-      ["cd21", true, true, ["open", "finance_analysis", "correction", "awaiting_analysis", "nf_sale", "nf_transfer", "shipping", "ship_today", "finished"]],
-    ])("%s closed=%s other=%s", (screen, includeClosed, includeOtherScreens, expected) => {
-      expect(keys(screen, includeClosed, includeOtherScreens)).toEqual(expected);
+    it.each<[PdvBoardScreen, boolean, string[]]>([
+      ["store", false, ["open", "finance_analysis", "correction", "cd21_analysis", "cd21_billing", "finished", "excluded"]],
+      ["store", true, ["open", "finance_analysis", "correction", "cd21_analysis", "cd21_billing", "finished", "excluded"]],
+      ["finance", false, ["awaiting_analysis", "correction", "approved", "finished", "cancelled"]],
+      ["finance", true, ["open", "awaiting_analysis", "correction", "approved", "finished", "cancelled"]],
+      ["cd21", false, ["correction", "awaiting_analysis", "nf_sale", "nf_transfer", "shipping", "ship_today", "finished"]],
+      ["cd21", true, ["open", "finance_analysis", "correction", "awaiting_analysis", "nf_sale", "nf_transfer", "shipping", "ship_today", "finished"]],
+    ])("%s other=%s", (screen, includeOtherScreens, expected) => {
+      expect(keys(screen, includeOtherScreens)).toEqual(expected);
     });
 
     it("telesales usa as colunas da loja (TODO)", () => {
@@ -42,7 +36,6 @@ describe("pdv-screens.config", () => {
 
     it("cd21_billing da loja agrupa os 4 status de faturamento/expedição", () => {
       const column = findVisibleColumn("store", "cd21_billing", {
-        includeClosed: false,
         includeOtherScreens: false,
       });
       expect(column?.statuses).toEqual([
@@ -55,7 +48,7 @@ describe("pdv-screens.config", () => {
   });
 
   describe("description/highlighted", () => {
-    const all = { includeClosed: true, includeOtherScreens: true };
+    const all = { includeOtherScreens: true };
     const highlightedKeys = (screen: PdvBoardScreen) =>
       resolveColumns(screen, all)
         .filter((c) => c.highlighted && !c.extra)
@@ -80,14 +73,13 @@ describe("pdv-screens.config", () => {
 
   describe("EXCLUDED", () => {
     it.each<PdvBoardScreen>(["store", "telesales"])(
-      "%s: só com include_closed",
+      "%s: sempre, sem flag",
       (screen) => {
-        const visible = (includeClosed: boolean) =>
-          resolveColumns(screen, { includeClosed, includeOtherScreens: true }).flatMap(
-            (c) => c.statuses,
-          );
-        expect(visible(false)).not.toContain(S.EXCLUDED);
-        expect(visible(true)).toContain(S.EXCLUDED);
+        const statuses = resolveColumns(screen, { includeOtherScreens: false }).flatMap(
+          (c) => c.statuses,
+        );
+        expect(statuses).toContain(S.EXCLUDED);
+        expect(statuses).toContain(S.FINISHED);
       },
     );
 
@@ -104,7 +96,6 @@ describe("pdv-screens.config", () => {
 
     it("finance: na coluna cancelled, por padrão", () => {
       const column = findVisibleColumn("finance", "cancelled", {
-        includeClosed: false,
         includeOtherScreens: false,
       });
       expect(column?.statuses).toEqual([S.CANCELLED, S.INVOICE_CANCELLED]);
@@ -112,10 +103,11 @@ describe("pdv-screens.config", () => {
   });
 
   describe("findVisibleColumn", () => {
-    const noFlags = { includeClosed: false, includeOtherScreens: false };
+    const noFlags = { includeOtherScreens: false };
 
-    it("coluna closed sem include_closed → null", () => {
-      expect(findVisibleColumn("store", "finished", noFlags)).toBeNull();
+    it("finished/excluded visíveis sem flag", () => {
+      expect(findVisibleColumn("store", "finished", noFlags)?.statuses).toEqual([S.FINISHED]);
+      expect(findVisibleColumn("store", "excluded", noFlags)?.statuses).toEqual([S.EXCLUDED]);
     });
 
     it("coluna extra sem include_other_screens → null", () => {
@@ -124,10 +116,10 @@ describe("pdv-screens.config", () => {
 
     it("key de outra tela → null, mesmo com todas as flags", () => {
       expect(
-        findVisibleColumn("store", "nf_sale", { includeClosed: true, includeOtherScreens: true }),
+        findVisibleColumn("store", "nf_sale", { includeOtherScreens: true }),
       ).toBeNull();
       expect(
-        findVisibleColumn("cd21", "cancelled", { includeClosed: true, includeOtherScreens: true }),
+        findVisibleColumn("cd21", "cancelled", { includeOtherScreens: true }),
       ).toBeNull();
     });
 

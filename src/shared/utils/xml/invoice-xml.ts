@@ -160,6 +160,7 @@ function extractPartiesFromXml(xml: string) {
     transporterCity: transporter?.xMun ?? "",
     transporterUf: transporter?.UF ?? "",
     refNFe: refNFe !== null ? String(refNFe) : null,
+    refNFeKey: refNfeResult,
   };
 }
 
@@ -707,6 +708,17 @@ function isCancelledInvoice(params: {
   return statusCandidates.some(isInvoiceCancellationStatus);
 }
 
+// cStat do protocolo: 100 autorizada, 150 autorizada fora de prazo (rejeitada também tem chave, não conta).
+const AUTHORIZED_INVOICE_CSTATS = ["100", "150"];
+
+function isAuthorizedInvoice(parsedXml: any, nfe: any): boolean {
+  const cStat =
+    parsedXml?.nfeProc?.protNFe?.infProt?.cStat ??
+    parsedXml?.procNFe?.protNFe?.infProt?.cStat ??
+    nfe?.protNFe?.infProt?.cStat;
+  return AUTHORIZED_INVOICE_CSTATS.includes(String(cStat ?? "").trim());
+}
+
 // ─── Export público ───────────────────────────────────────────────────────────
 
 export async function upsertInvoiceFromXml(
@@ -1085,6 +1097,27 @@ export async function upsertInvoiceFromXml(
   if (cancelledInvoice) {
     await invoiceService.cancelInvoice(invoice.id);
     await pdvSalesRequestService.handleInvoiceCancelled(invoice.id);
+  }
+
+  // Devolução autorizada com refNFe: mesmo vínculo automático do bling-api-fetch (cancela a saída + PDV).
+  if (
+    !cancelledInvoice &&
+    isReturnInvoicePurpose(ide.finNFe) &&
+    extracted.refNFeKey &&
+    isAuthorizedInvoice(parsed, nfe) &&
+    invoice.unitBusinessAttributes?.some((attr) => attr.type === "INCOMING")
+  ) {
+    // Crítico: falha derruba o job pra retry (bond e cancelamento no PDV são idempotentes).
+    const returnedInvoiceId = await invoiceService.bondReturnInvoice(
+      { id: invoice.id, number_system: numero },
+      extracted.refNFeKey,
+    );
+    if (returnedInvoiceId) {
+      await pdvSalesRequestService.cancelBySaleInvoiceReturned(
+        returnedInvoiceId,
+        numero,
+      );
+    }
   }
 
   // ─── Reconcilia UnmappedInvoiceProduct com o estado atual da passagem ─────

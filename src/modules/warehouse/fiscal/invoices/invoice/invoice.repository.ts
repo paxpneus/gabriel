@@ -51,6 +51,7 @@ import {
 } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 import { BatchInvoiceItemsAttributes } from "../../../expedition/batch-invoice-items/batch-invoice-items.types";
 import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
+import { xmlHeadLiteral } from "./helpers/nfe-ide";
 import { deliveryNoteGeneratedLiteral } from "./helpers/delivery-note";
 import { LOGISTIC_OCCURRENCE_CODES } from "../../../../handlers/logistic/constants/constants";
 import SalesOrderItemSnapshot from "../../../../reports/daily-sales/sales-order-item-snapshot/sales-order-item-snapshot.model";
@@ -77,6 +78,7 @@ const SUMMARY_INVOICE_ATTRIBUTES = [
   "sender_name",
   "receiver_name",
   "description",
+  "bonded_invoice",
   "transporter_name",
   "printed_label",
   "xml_key",
@@ -893,6 +895,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
         include: [
           [totalExpectedLiteral(), "total_expected"],
           [totalReadLiteral(unitBusinessId), "total_read"],
+          [xmlHeadLiteral(), "xml_head"],
         ],
       },
       include: [

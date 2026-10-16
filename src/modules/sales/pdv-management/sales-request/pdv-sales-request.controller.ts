@@ -268,14 +268,13 @@ export class PdvSalesRequestController extends BaseController<
   selectAllIds = async (req: Request, res: Response): Promise<Response> => {
     try {
       const status = parseSelectAllStatus(req.query.status);
-      const { includeClosed, includeOtherScreens } = parseBoardQuery({
-        include_closed: req.query.include_closed,
+      const { includeOtherScreens } = parseBoardQuery({
         include_other_screens: req.query.include_other_screens,
       });
       const ids = await this.service.getBoardSelectAllIds(
         this.access(req),
         this.extractQueryParams(req),
-        { includeClosed, includeOtherScreens },
+        { includeOtherScreens },
         status,
       );
       return res.json(ids);
