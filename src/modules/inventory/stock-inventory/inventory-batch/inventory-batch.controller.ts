@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import BaseController from "../../../../shared/utils/base-models/base-controller";
+import BaseController, { StoreNumberField } from "../../../../shared/utils/base-models/base-controller";
 import InventoryBatch from "./inventory-batch.model";
 import inventoryBatchService, { InventoryBatchService } from "./inventory-batch.service";
 import { authenticate } from "../../../../middlewares/auth-token";
@@ -9,6 +9,11 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
   constructor() {
     super(inventoryBatchService);
     this.registerCustomRoutes();
+  }
+
+  // ?store_number= de application filtra o index por unit_business_id.
+  protected storeNumberField(): StoreNumberField {
+    return "unit_business_id";
   }
 
   protected middlewaresFor() {
@@ -24,7 +29,11 @@ class InventoryBatchController extends BaseController<InventoryBatch, InventoryB
       finishBatch: [authenticate, userPermissions],
       getFullBatch: [authenticate, userPermissions],
       getFinancialInventoryBatch: [authenticate, userPermissions],
-      getMultiplierScan: [authenticate, userPermissions]
+      getMultiplierScan: [authenticate, userPermissions],
+      // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

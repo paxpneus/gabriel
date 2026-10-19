@@ -44,7 +44,11 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
           show: [authenticate],
           destroy: [authenticate],
           login: [authenticate],
-          createInvoiceItem: [authenticate]
+          createInvoiceItem: [authenticate],
+          // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+          bulkCreate: [authenticate],
+          bulkUpdate: [authenticate],
+          bulkDestroy: [authenticate],
         };
       }
 

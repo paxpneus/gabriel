@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import BaseController from "../../../../shared/utils/base-models/base-controller";
+import BaseController, { StoreNumberField } from "../../../../shared/utils/base-models/base-controller";
 import ExpeditionBatch from "./batch.model";
 import ExpeditionBatchService from "./batch.service";
 import { authenticate } from "../../../../middlewares/auth-token";
@@ -23,6 +23,11 @@ export class ExpeditionBatchController extends BaseController<
   constructor() {
     super(ExpeditionBatchService);
     this.registerCustomRoutes();
+  }
+
+  // ?store_number= de application filtra o index por unit_business_id.
+  protected storeNumberField(): StoreNumberField {
+    return "unit_business_id";
   }
 
   protected middlewaresFor() {
@@ -53,6 +58,10 @@ export class ExpeditionBatchController extends BaseController<
       generateDeliveryNoteFromPdv: [pdvLoginAccess([PdvAccessScreen.CD21])],
       findPdvPendingBatches: [pdvAccess([PdvAccessScreen.CD21])],
       getPdvSalesRequestBatchStatus: [pdvAccess([PdvAccessScreen.CD21])],
+      // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

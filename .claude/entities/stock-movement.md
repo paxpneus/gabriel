@@ -16,8 +16,8 @@
   Has trigger `trigger_prevent_delete_manual_adjustment_with_cost`
   (BEFORE DELETE) that can block deleting a manual cost-adjustment
   movement.
-- **`stock.controller.ts` has no auth at all (CRITICAL). `stock-movements.controller.ts`
-  is unscoped by tenant (HIGH). Neither is fixed — see
+- **`stock.controller.ts` agora exige auth (antes sem nenhuma); `stock.controller.ts` e
+  `stock-movements.controller.ts` continuam sem escopo de tenant (HIGH) — ver
   `.claude/modules/auth.md`.**
 - **Fixed — `syncCsvBaseline` (`stock-movements.service.ts`) could leave two
   disconnected balance chains for the same product.** Any non-protected

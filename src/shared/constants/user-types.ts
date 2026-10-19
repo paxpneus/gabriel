@@ -144,6 +144,10 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
               },
             ],
           },
+             {
+            id: "invoices-list-transfer",
+            label: "Notas Fiscais de Transferência",
+          },
           {
             id: "unmapped-products",
             label: "Produtos Não Mapeados",
@@ -156,6 +160,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
             id: "products",
             label: "Produtos",
           },
+          
         ],
       },
 
@@ -256,6 +261,17 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
           {
             id: "pdv_sales_request_finance",
             label: "PDV — Análise Financeira",
+          },
+        ],
+      },
+      // Só libera o menu; a rota /invoice/transfer/* ainda exige read em "invoices" no role.
+      {
+        module: "stock",
+        label: "Estoque",
+        permissions: [
+          {
+            id: "invoices-list-transfer",
+            label: "Notas Fiscais de Transferência",
           },
         ],
       },

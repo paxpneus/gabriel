@@ -36,6 +36,8 @@ export class CarrierLabelRangeController extends BaseController<
         userPermissions,
         upload.single("file"),
       ],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkUpdate: [authenticate, userPermissions],
     };
   }
 

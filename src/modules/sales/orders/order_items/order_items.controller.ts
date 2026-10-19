@@ -5,6 +5,10 @@ import orderItemsService, { OrderItemsService } from "./order_items.service";
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
 import { QueryParams } from "../../../../shared/query/query.types";
+import {
+  resolveApplicationStoreFilter,
+  storeNumberErrorStatus,
+} from "../../../../shared/query/store-number";
 
 class OrderItemsController extends BaseController<
   OrderItems,
@@ -29,6 +33,10 @@ class OrderItemsController extends BaseController<
       destroy: [authenticate, userPermissions],
 
       salesDetail: [authenticate, userPermissions],
+      // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 
@@ -57,10 +65,20 @@ class OrderItemsController extends BaseController<
         search: search ? String(search) : undefined,
       };
 
+      // store_number de application (uma ou várias lojas) tem prioridade; sem ele, ?unitBusinessId= como antes.
+      const storeFilter = await resolveApplicationStoreFilter(req);
+      const storeUnitBusinessIds = storeFilter?.unitBusinessIds;
+
       const result = await this.service.paginateSalesDetail(params, {
         startDate: startDate ? String(startDate) : undefined,
         endDate: endDate ? String(endDate) : undefined,
-        unitBusinessId: unitBusinessId ? String(unitBusinessId) : undefined,
+        unitBusinessId: storeUnitBusinessIds
+          ? storeUnitBusinessIds.length === 1
+            ? storeUnitBusinessIds[0]
+            : storeUnitBusinessIds
+          : unitBusinessId
+            ? String(unitBusinessId)
+            : undefined,
         sellerId: sellerId ? String(sellerId) : undefined,
         productId: productId ? String(productId) : undefined,
         customerId: customerId ? String(customerId) : undefined,
@@ -73,7 +91,7 @@ class OrderItemsController extends BaseController<
         `[OrderItemsController] Erro ao buscar relatório de vendas por item`,
         error,
       );
-      return res.status(500).json({
+      return res.status(storeNumberErrorStatus(error, 500)).json({
         error: error.message,
       });
     }

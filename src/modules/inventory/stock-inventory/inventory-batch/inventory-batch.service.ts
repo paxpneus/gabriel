@@ -12,7 +12,7 @@ import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomen
 import { UnitBusiness } from "../../../warehouse";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
-import { FindOptions } from "sequelize";
+import { FindOptions, WhereOptions } from "sequelize";
 import {
   PaginatedResult,
   QueryParams,
@@ -504,9 +504,11 @@ export class InventoryBatchService extends BaseService<
     return batchJson;
   }
 
+  // forcedWhere repassado ao BaseService (filtro store_number do controller); opcional.
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<InventoryBatch>> {
     return super.paginate(params, {
       ...extraOptions,
@@ -516,7 +518,7 @@ export class InventoryBatchService extends BaseService<
           as: "unitBusiness",
         },
       ],
-    });
+    }, forcedWhere);
   }
 }
 

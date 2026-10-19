@@ -19,6 +19,10 @@ export class InvoiceLogisticOccurrencesController extends BaseController<
       show: [authenticate],
       destroy: [authenticate],
       login: [authenticate],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkCreate: [authenticate],
+      bulkUpdate: [authenticate],
+      bulkDestroy: [authenticate],
     };
   }
 }

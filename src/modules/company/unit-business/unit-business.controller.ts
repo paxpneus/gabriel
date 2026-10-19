@@ -66,6 +66,10 @@ export class UnitBusinessController extends BaseController<
       ),
       getUnitBusinessPublic: [],
       getComercialUnitBusinessOnlyForUser: [authenticate],
+      // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

@@ -23,6 +23,10 @@ export class IntegrationErrorController extends BaseController<
       update: [authenticate, userPermissions],
       destroy: [authenticate, userPermissions],
       resolve: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

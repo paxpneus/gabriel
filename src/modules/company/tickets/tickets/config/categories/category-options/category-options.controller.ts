@@ -21,6 +21,8 @@ export class CategoryOptionController extends BaseController<
       update: [authenticate, userPermissions],
       destroy: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkUpdate: [authenticate, userPermissions],
     };
   }
 }

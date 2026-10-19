@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
-import BaseController from '../../../shared/utils/base-models/base-controller';
+import BaseController, { StoreNumberField } from '../../../shared/utils/base-models/base-controller';
+import { authenticate } from '../../../middlewares/auth-token';
+import { userPermissions } from '../../../middlewares/user-permissions';
 import IntegrationMapping from './integration-mapping.model';
 import IntegrationMappingService from './integration-mapping.service';
 
@@ -13,6 +15,25 @@ const MAPPING_IS_IMMUTABLE_MESSAGE =
 export class IntegrationMappingController extends BaseController<IntegrationMapping, typeof IntegrationMappingService> {
   constructor() {
     super(IntegrationMappingService);
+  }
+
+  // Sem middlewaresFor index/show/create ficavam abertos sem login (rota em EXCLUDED_ROUTES: só authenticate vale).
+  // ?store_number= de application filtra o index por unit_business_id.
+  protected storeNumberField(): StoreNumberField {
+    return 'unit_business_id';
+  }
+
+  protected middlewaresFor() {
+    return {
+      index: [authenticate, userPermissions],
+      show: [authenticate, userPermissions],
+      create: [authenticate, userPermissions],
+      bulkCreate: [authenticate, userPermissions],
+      update: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
+    };
   }
 
   update = async (_req: Request, res: Response): Promise<Response> => {

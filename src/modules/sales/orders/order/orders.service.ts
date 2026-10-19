@@ -1,4 +1,4 @@
-import { FindOptions, Op } from "sequelize";
+import { FindOptions, Op, WhereOptions } from "sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import Customer from "../../customers/customers.model";
 import Order from "./orders.model";
@@ -104,9 +104,11 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       null;
   }
 
+  // forcedWhere repassado ao BaseService (filtro store_number do controller); opcional.
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<Order>> {
     const resolvedParams = await this.resolveStatusFilter(params);
 
@@ -117,7 +119,7 @@ export class OrderService extends BaseService<Order, OrderRepository> {
         ...((extraOptions?.include as any[]) ?? []),
         { model: Customer, as: "customer" },
       ],
-    });
+    }, forcedWhere);
 
     const resolveStatus = await this.buildStatusResolver(
       result.data.map((order) => order.integrations_id),

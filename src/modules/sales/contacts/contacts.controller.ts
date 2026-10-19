@@ -1,6 +1,6 @@
 import { authenticate } from "../../../middlewares/auth-token";
 import { userPermissions } from "../../../middlewares/user-permissions";
-import BaseController from "../../../shared/utils/base-models/base-controller";
+import BaseController, { StoreNumberField } from "../../../shared/utils/base-models/base-controller";
 import Contact from "./contacts.model";
 import contactService, { ContactService } from "./contacts.service";
 import { Request, Response } from "express";
@@ -12,6 +12,11 @@ class ContactController extends BaseController<Contact, ContactService> {
     this.router.post(`/create-from-seller-name`, ...this.mw("createUserFromSellerName"), this.createUserFromSellerName)
   }
 
+   // ?store_number= de application filtra o index por unit_business_id.
+   protected storeNumberField(): StoreNumberField {
+     return "unit_business_id";
+   }
+
    protected middlewaresFor() {
       return {
         index: [authenticate, userPermissions],
@@ -22,6 +27,10 @@ class ContactController extends BaseController<Contact, ContactService> {
         ],
         show: [authenticate, userPermissions],
         destroy: [authenticate, userPermissions],
+        // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+        bulkCreate: [authenticate, userPermissions],
+        bulkUpdate: [authenticate, userPermissions],
+        bulkDestroy: [authenticate, userPermissions],
         
       };
     }

@@ -59,6 +59,8 @@ class ApplicationController extends BaseController<
       allowedRoutes: [authenticate, userPermissions],
       cleanTimeOutByIp: [authenticate, userPermissions],
       getBanTimeRemaining: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkUpdate: [authenticate, userPermissions],
       
     };
   }

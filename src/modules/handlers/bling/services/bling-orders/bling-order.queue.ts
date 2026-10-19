@@ -46,7 +46,8 @@ export class BlingOrderQueue extends BaseQueueService<any> {
         max: 5,
         duration: 1000,
       },
-      maxProcessingMs: 120_000,
+      // Cobre o pior caso de retry 429 (até ~93s de sleep + fila do limiter por chamada); abortar antes deixa o process() órfão rodando (Promise.race não cancela) e o retry do job duplica tráfego Bling.
+      maxProcessingMs: 5 * 60 * 1000,
       workless: options.workless,
     });
     this.orderService = orderService;

@@ -1,6 +1,6 @@
 import { authenticate } from "../../../middlewares/auth-token";
 import { userPermissions } from "../../../middlewares/user-permissions";
-import BaseController from "../../../shared/utils/base-models/base-controller";
+import BaseController, { StoreNumberField } from "../../../shared/utils/base-models/base-controller";
 import UnmappedInvoiceProduct from "./unmapped-invoice-product.model";
 import UnmappedInvoiceProductService from "./unmapped-invoice-product.service";
 import { Request, Response } from "express";
@@ -54,6 +54,11 @@ export class UnmappedInvoiceProductController extends BaseController<
 
   }
 
+  // ?store_number= de application filtra o index por integrations_id.
+  protected storeNumberField(): StoreNumberField {
+    return "integrations_id";
+  }
+
   protected middlewaresFor() {
     return {
       index: [authenticate, userPermissions],
@@ -74,6 +79,10 @@ export class UnmappedInvoiceProductController extends BaseController<
         userPermissions,
         upload.single("image"),
       ],
+      // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

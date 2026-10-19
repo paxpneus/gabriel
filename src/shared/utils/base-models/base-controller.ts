@@ -1,7 +1,14 @@
 import { Request, Response, Router, RequestHandler } from "express";
-import { Model, Op } from "sequelize";
+import { Model, Op, WhereOptions } from "sequelize";
 import BaseService from "./base-service";
 import RouterController from "./base-router-controller";
+import {
+  resolveApplicationStoreFilter,
+  storeNumberErrorStatus,
+} from "../../query/store-number";
+
+// Coluna que o ?store_number= de application filtra no index (opt-in por controller).
+export type StoreNumberField = "unit_business_id" | "integrations_id";
 class BaseController<
   T extends Model,
   Tservice extends BaseService<T> = BaseService<T>,
@@ -13,6 +20,24 @@ class BaseController<
     this.service = service;
     this.registerBaseRoutes();
     
+  }
+
+  // Opt-in do filtro ?store_number= de application no index; null = index original.
+  protected storeNumberField(): StoreNumberField | null {
+    return null;
+  }
+
+  // where do store_number (só application que mandou o parâmetro); undefined = sem filtro.
+  protected async storeNumberWhere(req: Request): Promise<WhereOptions | undefined> {
+    const field = this.storeNumberField();
+    if (!field) return undefined;
+
+    const filter = await resolveApplicationStoreFilter(req);
+    if (!filter) return undefined;
+
+    const ids =
+      field === "unit_business_id" ? filter.unitBusinessIds : filter.integrationsIds;
+    return { [field]: { [Op.in]: ids } };
   }
 
   private registerBaseRoutes(): void {
@@ -46,10 +71,13 @@ class BaseController<
   index = async (req: Request, res: Response): Promise<Response> => {
     try {
       const params = this.extractQueryParams(req);
-      const result = await this.service.paginate(params);
+      const storeWhere = await this.storeNumberWhere(req);
+      const result = storeWhere
+        ? await this.service.paginate(params, undefined, storeWhere)
+        : await this.service.paginate(params);
       return res.json(result);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return res.status(storeNumberErrorStatus(error, 500)).json({ error: error.message });
     }
   };
 

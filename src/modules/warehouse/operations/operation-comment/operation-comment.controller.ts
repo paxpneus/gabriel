@@ -1,6 +1,6 @@
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
-import BaseController from "../../../../shared/utils/base-models/base-controller";
+import BaseController, { StoreNumberField } from "../../../../shared/utils/base-models/base-controller";
 import OperationComment from "./operation-comment.model";
 import OperationCommentService from "./operation-comment.service";
 
@@ -12,6 +12,11 @@ export class OperationCommentController extends BaseController<
     super(OperationCommentService);
   }
 
+  // ?store_number= de application filtra o index por unit_business_id.
+  protected storeNumberField(): StoreNumberField {
+    return "unit_business_id";
+  }
+
   protected middlewaresFor() {
     return {
       index: [authenticate, userPermissions],
@@ -21,6 +26,8 @@ export class OperationCommentController extends BaseController<
       show: [authenticate, userPermissions],
       destroy: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
+      // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+      bulkUpdate: [authenticate, userPermissions],
     };
   }
 }

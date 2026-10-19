@@ -45,7 +45,11 @@ export class ExpeditionScanLogController extends BaseController<ExpeditionScanLo
         scanProductIncomingByInvoice: [authenticate, userPermissions],
         bulkRemoveScanLogsOutgoing: [authenticate, userPermissions],
         bulkRemoveScanLogsIncoming: [authenticate, userPermissions],
-        getPendingVolumesByBatchItem: [authenticate, userPermissions]
+        getPendingVolumesByBatchItem: [authenticate, userPermissions],
+        // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+        bulkCreate: [authenticate, userPermissions],
+        bulkUpdate: [authenticate, userPermissions],
+        bulkDestroy: [authenticate, userPermissions],
       };
     }
 

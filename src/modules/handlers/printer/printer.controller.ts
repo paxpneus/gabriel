@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import BaseController from '../../../shared/utils/base-models/base-controller'
+import { authenticate } from '../../../middlewares/auth-token'
 import PrinterConfig from './printer.models'
 import PrinterConfigService from './printer.service'
 
@@ -8,6 +9,20 @@ export class PrinterConfigController extends BaseController<PrinterConfig, typeo
     super(PrinterConfigService)
     this.registerCustomRoutes()
     
+  }
+
+  // Sem middlewaresFor o CRUD genérico de impressora ficava aberto sem login.
+  protected middlewaresFor() {
+    return {
+      index: [authenticate],
+      show: [authenticate],
+      create: [authenticate],
+      bulkCreate: [authenticate],
+      update: [authenticate],
+      bulkUpdate: [authenticate],
+      destroy: [authenticate],
+      bulkDestroy: [authenticate],
+    }
   }
 
   

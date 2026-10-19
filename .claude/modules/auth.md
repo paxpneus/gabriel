@@ -20,9 +20,18 @@ Cross-cutting tenant/auth scoping model. Read before touching auth/scoping on an
 - `product_config.controller.ts` — previously **no auth at all** on any route; now `authenticate` + `userPermissions` on all actions, same ownership-scoping pattern keyed on `unit_business_id`.
 - `batch.repository.ts` (expedition) — `ProductConfig` include inside `batchInvoicesInclude` was missing `where: { unit_business_id }`, leaking another store's `sku`/`gtin`/`price` on `/api/batch/full/get`. Fixed.
 
-**NOT fixed — CRITICAL (no auth at all):**
-- `src/modules/inventory/stock/stock/stock.controller.ts` — no `middlewaresFor()`; any unauthenticated request can read/write/delete stock of any store.
-- `src/modules/integrations/integration-mapping/integration-mapping.controller.ts` — `index`/`show`/`create`/`bulkCreate` have no `middlewaresFor()` (`update`/`destroy`/`bulkUpdate`/`bulkDestroy` always return 405, so those four are safe by being disabled, not scoped).
+**Fixed — auth only (rota sem middleware), ainda NÃO escopado por tenant:**
+- `stock.controller.ts` e `integration-mapping.controller.ts` — não tinham `middlewaresFor()`; agora todas as 8 ações de CRUD exigem `[authenticate, userPermissions]` (`integration-mapping` está em `EXCLUDED_ROUTES`, então na prática só `authenticate`).
+- Chaves de CRUD que faltavam em `middlewaresFor()` (quase sempre `bulkCreate`/`bulkUpdate`/`bulkDestroy`, que caíam em `mw()` → `[]` = rota aberta) adicionadas com `[authenticate, userPermissions]` em: `config_tokens`, `user`, `user_unit_business`, `unit-business`, `unit-business-config`, `contacts`, `orders`, `order_items`, `inventory-batch`, `unmapped-invoice-product`, `stock-movements`, `batch` (expedition), `invoice`, `operation-comment`, `transporter`. Rotas customizadas sem middleware de propósito (ex.: `contacts` `/create-from-seller-name`, `unit-business` `/head-office/get` e `/public/list`) continuam como estavam.
+- **Todos os controllers que estendem `BaseController`** têm as 8 chaves de CRUD em `middlewaresFor()`. Regra usada pras chaves que faltavam: controller que já usava `[authenticate, userPermissions]` em todo o CRUD → mesmo par; controller com só `[authenticate]`, sem `middlewaresFor()` ou com auth própria (`pdv-sales-request`, `printer`, `products`, `suppliers`, `customers`, `batch-items`, `batch-invoices`, `invoice-items`, `invoice-logistic-occurrences`) → só `[authenticate]` (não cria checagem de permissão nova — várias rotas nem têm entity concedível em `ROLE_PERMISSIONS`). Rotas customizadas sem middleware de propósito seguem públicas (ex.: `unit-business` `/public/list`).
+
+## Filtro `?store_number=` (application)
+
+- `src/shared/query/store-number.ts`: só quando há `req.application` + `store_number` (`"02,03"` ou `store_number[]=02&store_number[]=03`). Lojas resolvidas numa query por `unit_businesses.number` (match exato; algum inexistente → 404, formato inválido → 400). Sem `store_number` ou usuário logado → comportamento original, sem filtro.
+- Opt-in por controller: `BaseController.storeNumberField()` (`null` padrão); `index` genérico aplica `forcedWhere` `{ campo: IN (...) }`. `unit_business_id`: stock, stock-movements, inventory-batch, batch, unit-business-config, operation-comment, user_unit_business, orders, contacts, integration-mapping. `integrations_id` (integrações das lojas): config_tokens, unmapped-invoice-product, transporter.
+- `paginate` sobrescrito em service precisa repassar o 3º arg `forcedWhere` pro `super.paginate`, senão o filtro some — já repassam: inventory-batch, unmapped, batch, orders, operation-comment, transporter, user_unit_business.
+- `order_items` `/sales-detail/get`: `store_number` vira `unitBusinessId` (uma loja = string, várias = array → `IN` em `orders.unit_business_id`); sem ele, `?unitBusinessId=` como antes.
+- Não cobre endpoints customizados nem controllers que sobrescrevem `index` (ex.: `invoice`).
 
 **NOT fixed — HIGH (authenticated, but not scoped by tenant):**
 - `src/modules/integrations/config_tokens/config_tokens.controller.ts` — worst of this group: stores `access_token`/`refresh_token`/`client_secret`/`api_key` per `integrations_id`; any user with generic "config_tokens" role permission can read/overwrite any integration's credentials.

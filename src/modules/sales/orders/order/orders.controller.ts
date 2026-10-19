@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import BaseController from "../../../../shared/utils/base-models/base-controller";
+import BaseController, { StoreNumberField } from "../../../../shared/utils/base-models/base-controller";
 import orderService, { OrderService } from "./orders.service";
 import Order from "./orders.model";
 import { authenticate } from "../../../../middlewares/auth-token";
@@ -59,6 +59,11 @@ class OrderController extends BaseController<Order, OrderService> {
     );
   }
 
+    // ?store_number= de application filtra o index por unit_business_id.
+    protected storeNumberField(): StoreNumberField {
+      return "unit_business_id";
+    }
+
     protected middlewaresFor() {
         return {
           index: [authenticate, userPermissions],
@@ -75,6 +80,10 @@ class OrderController extends BaseController<Order, OrderService> {
           getShipToDefineDetail: [authenticate, userPermissions],
           getHumanVerificationDetail: [authenticate, userPermissions],
           getShipToFutureDetail: [authenticate, userPermissions],
+          // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+          bulkCreate: [authenticate, userPermissions],
+          bulkUpdate: [authenticate, userPermissions],
+          bulkDestroy: [authenticate, userPermissions],
         };
       }
 

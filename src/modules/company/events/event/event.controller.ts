@@ -35,6 +35,10 @@ export class EventController extends BaseController<Event, EventService> {
       destroy:  [authenticate, userPermissions],
       getUnreadEvents:   [authenticate],
       markAsRead: [authenticate],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

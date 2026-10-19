@@ -1,4 +1,4 @@
-import { FindOptions } from "sequelize";
+import { FindOptions, WhereOptions } from "sequelize";
 import { QueryParams, PaginatedResult } from "../../../../shared/query/query.types";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import OperationComment from "./operation-comment.model";
@@ -79,14 +79,16 @@ export class OperationCommentService extends BaseService<
     );
   }
 
+  // forcedWhere repassado ao BaseService (filtro store_number do controller); opcional.
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<OperationComment>> {
     return super.paginate(params, {
       ...extraOptions,
       include: [{ model: User, as: 'user', attributes: ['name', 'id'] }],
-    });
+    }, forcedWhere);
   }
 }
 

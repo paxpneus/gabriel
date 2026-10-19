@@ -114,7 +114,10 @@ const BLING_LAST_DISPATCH_LOG_KEY = "rate-limit:bling:last-dispatch-log";
 // visualmente a taxa/espaçamento real de saída, já que o limiter é um
 // mecanismo global via Redis, não algo fácil de observar direto). Remover
 // depois que o diagnóstico do rate-limit for concluído.
-async function logOutgoingBlingRequestRate(now: number): Promise<void> {
+async function logOutgoingBlingRequestRate(
+  now: number,
+  label?: string,
+): Promise<void> {
   const second = Math.floor(now / 1000);
   const countKey = `${BLING_REQUEST_COUNT_KEY_PREFIX}${second}`;
 
@@ -128,7 +131,8 @@ async function logOutgoingBlingRequestRate(now: number): Promise<void> {
 
   console.log(
     `[BlingApi][ReqCounter] ${new Date(now).toISOString()} — requisição #${count} neste segundo (epoch=${second})` +
-      (gapMs !== null ? `, gap desde a anterior=${gapMs}ms` : ", primeira chamada registrada"),
+      (gapMs !== null ? `, gap desde a anterior=${gapMs}ms` : ", primeira chamada registrada") +
+      (label ? ` — ${label}` : ""),
   );
 }
 
@@ -146,7 +150,8 @@ async function logOutgoingBlingRequestRate(now: number): Promise<void> {
 // por cookie (get-stock-movements.ts, nfe-manifest-web-scraping.service.ts)
 // batem na mesma cota mesmo não usando esta instância axios, então também
 // chamam esta função antes de cada request pra Bling.
-export async function waitForBlingRateLimit(): Promise<void> {
+// `label` (ex.: "GET /pedidos/vendas/123") só entra no log do ReqCounter, pra saber qual chamada tomou 429.
+export async function waitForBlingRateLimit(label?: string): Promise<void> {
   while (true) {
     const now = Date.now();
 
@@ -162,12 +167,17 @@ export async function waitForBlingRateLimit(): Promise<void> {
     );
 
     if (waitMs <= 0) {
-      await logOutgoingBlingRequestRate(now);
+      await logOutgoingBlingRequestRate(now, label);
       return;
     }
 
     await sleep(waitMs);
   }
+}
+
+// "MÉTODO url" da request pros logs de diagnóstico de rate limit.
+function describeBlingRequest(config: AxiosRequestConfig): string {
+  return `${config.method?.toUpperCase() ?? "GET"} ${config.url ?? ""}`;
 }
 
 // Fila em memória para lidar com os requests para a bling. Se caso uma falhar, não tenta enviar vários requests com o token expirado até fazer refresh, guarda todos requests numa fila, executa o refresh, pega o token novo e faz as requisições com o token novo, sem desperdiçar chamadas falhas para a bling
@@ -279,7 +289,7 @@ export const blingApi: AxiosInstance = createAxiosInstance({
 
     if (isMutatingMethod) assertBlingWritesEnabled(`Requisição ${method}`);
 
-    await waitForBlingRateLimit();
+    await waitForBlingRateLimit(describeBlingRequest(config));
     const configToken = await getBlingToken();
     config.headers.Authorization = `Bearer ${configToken.access_token}`;
     return config;
@@ -313,8 +323,13 @@ export const blingApi: AxiosInstance = createAxiosInstance({
         BLING_429_MAX_DELAY_MS,
       );
 
+      // Corpo + headers do 429 dizem qual limite estourou (por segundo, diário, bloqueio de IP) — diagnóstico.
       console.warn(
-        `[BlingApi] 429 rate limit. Tentando novamente em ${Math.ceil(delayMs / 1000)}s (${attempt + 1}/${BLING_429_MAX_RETRIES})`,
+        `[BlingApi] 429 rate limit em ${describeBlingRequest(originalRequest)}. Tentando novamente em ${Math.ceil(delayMs / 1000)}s (${attempt + 1}/${BLING_429_MAX_RETRIES})`,
+        {
+          body: error.response.data,
+          headers: error.response.headers,
+        },
       );
 
       await sleep(delayMs);

@@ -28,7 +28,7 @@ import {
   PaginatedResult,
   QueryParams,
 } from "../../../../shared/query/query.types";
-import { DestroyOptions, FindOptions, Op, Transaction } from "sequelize";
+import { DestroyOptions, FindOptions, Op, Transaction, WhereOptions } from "sequelize";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
@@ -1218,9 +1218,11 @@ async addInvoiceToLastOutgoingBatch(
     return fullBatch;
   }
 
+  // forcedWhere repassado ao BaseService (filtro store_number do controller); opcional.
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<ExpeditionBatch>> {
     return super.paginate(params, {
       ...extraOptions,
@@ -1234,7 +1236,7 @@ async addInvoiceToLastOutgoingBatch(
           as: "transporter",
         },
       ],
-    });
+    }, forcedWhere);
   }
 
     async searchPendingOutgoing(

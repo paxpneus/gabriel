@@ -90,6 +90,14 @@ export class ProductController extends BaseController<
       productReport: [authenticate, userPermissions],
       productByUnit: [authenticate, userPermissions],
       productSalesReport: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      show: [authenticate],
+      create: [authenticate],
+      bulkCreate: [authenticate],
+      update: [authenticate],
+      bulkUpdate: [authenticate],
+      destroy: [authenticate],
+      bulkDestroy: [authenticate],
     };
   }
 

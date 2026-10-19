@@ -1,4 +1,4 @@
-import { FindOptions, Op } from "sequelize";
+import { FindOptions, Op, WhereOptions } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import Transporter from "./transporter.model";
 import transporterRepository, {
@@ -37,11 +37,13 @@ export class TransporterService extends BaseService<
     };
   }
 
+  // forcedWhere repassado ao BaseService (filtro store_number do controller); opcional.
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<Transporter>> {
-    const transporters = await super.paginate(params, extraOptions);
+    const transporters = await super.paginate(params, extraOptions, forcedWhere);
 
     return {
       ...transporters,

@@ -164,6 +164,10 @@ export class InvoiceController extends BaseController<
       markAsInternalUse: [authenticate, userPermissions],
       listTransferInvoices: [authenticate, userPermissions],
       getTransferInvoicesReport: [authenticate, userPermissions],
+      // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

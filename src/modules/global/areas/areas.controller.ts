@@ -3,5 +3,5 @@ import { authenticate } from "../../../middlewares/auth-token";
 import { userPermissions } from "../../../middlewares/user-permissions";
 import Area from "./areas.model";
 import areaService, { AreaService } from "./areas.service";
-export class AreaController extends BaseController<Area, AreaService> { constructor() { super(areaService); } protected middlewaresFor() { return { index: [authenticate, userPermissions], show: [authenticate, userPermissions], create: [authenticate, userPermissions], bulkCreate: [authenticate, userPermissions], update: [authenticate, userPermissions], destroy: [authenticate, userPermissions], bulkDestroy: [authenticate, userPermissions] }; } }
+export class AreaController extends BaseController<Area, AreaService> { constructor() { super(areaService); } protected middlewaresFor() { return { index: [authenticate, userPermissions], show: [authenticate, userPermissions], create: [authenticate, userPermissions], bulkCreate: [authenticate, userPermissions], update: [authenticate, userPermissions], destroy: [authenticate, userPermissions], bulkDestroy: [authenticate, userPermissions], bulkUpdate: [authenticate, userPermissions] /* bulkUpdate faltava: rota ficava sem middleware */ }; } }
 export default new AreaController();

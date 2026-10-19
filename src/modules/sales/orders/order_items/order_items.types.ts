@@ -95,7 +95,8 @@ export interface OrderSalesDetailRow {
 export interface SalesDetailFilters {
   startDate?: string;
   endDate?: string;
-  unitBusinessId?: string;
+  // Uma ou várias lojas (array vira IN no where do pedido — store_number de application).
+  unitBusinessId?: string | string[];
   sellerId?: string;
   productId?: string;
   orderId?: string;

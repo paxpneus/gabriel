@@ -27,6 +27,10 @@ class InventoryBatchItemsController extends BaseController<
 
       removeItem: [authenticate, userPermissions],
       updateItemQuantity: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

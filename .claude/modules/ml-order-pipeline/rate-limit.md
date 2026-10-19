@@ -14,3 +14,10 @@ Teste controlado em produção: pausar toda fila da Bling exceto uma de cada vez
 ## Env: `BLING_RATE_LIMIT_INTERVAL_MS` — fixed, faltava em 6 de 6 serviços do `docker-compose.yml`
 
 Confirmado e corrigido: `docker-compose.yml` propagava `BLING_ORDER_REQUEST_DELAY_MS` pra todo service block relevante mas nunca propagava `BLING_RATE_LIMIT_INTERVAL_MS` pra nenhum — todo container caía no default do código independente do que fosse setado no ambiente/`.env`, ignorando silenciosamente qualquer override do operador. **Fixed** adicionando `BLING_RATE_LIMIT_INTERVAL_MS: ${BLING_RATE_LIMIT_INTERVAL_MS}` junto da linha `BLING_ORDER_REQUEST_DELAY_MS` já existente nos 6 service blocks. Se uma nova env var de pacing Bling for adicionada depois: lembrar que `docker-compose.yml` precisa dela em cada service block individualmente — não há bloco de env compartilhado/herdado neste arquivo.
+
+## 429 com limiter saudável → tráfego de fora + jobs órfãos
+
+Log do `[BlingApi][ReqCounter]` com gap sempre ~`BLING_RATE_LIMIT_INTERVAL_MS` e `#1 neste segundo` (chave Redis global, todos os containers) mas 429 frequente = cota da conta consumida por algo que não passa pelo limiter (outro ambiente com Redis próprio — ex. `docker-compose.dev.yml` — apontando pra mesma conta, outras integrações autorizadas na conta, XHRs internos da página nos scrapers Playwright). Retry de 429 passa de novo pelo `onRequest` → limiter, então não fura o espaçamento.
+
+- Diagnóstico: `waitForBlingRateLimit(label?)` loga `MÉTODO url` no ReqCounter; o 429 loga `body` + `headers` da resposta (identifica qual limite estourou).
+- `maxProcessingMs` da fila precisa cobrir o pior caso do retry 429 (3+6+12+24+48s + espera no limiter por chamada). O watchdog do `BaseQueueService` usa `Promise.race`, não cancela o `process()`: abortar cedo deixa execução órfã ainda batendo na Bling **e** o BullMQ refaz o job (`attempts: 5`) → tráfego duplicado. Filas que chamam a Bling: ≥5 min (`BLING_ORDER_INGESTION`, `CNPJ_VERIFY_CNAE`, `NFE_EMISSION` etc.).

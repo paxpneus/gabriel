@@ -30,6 +30,11 @@ export class CteController extends BaseController<Cte, typeof CteService> {
       update: [authenticate, userPermissions],
       show: [authenticate, userPermissions],
       downloadXmlBatch: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      destroy: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

@@ -24,6 +24,10 @@ export class RoleController extends BaseController<Role, typeof RoleService> {
         getFullById: [authenticate, userPermissions],
         markMapped: [authenticate, userPermissions],
         getBaseRoles: [authenticate, userPermissions],
+        // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+        bulkCreate: [authenticate, userPermissions],
+        bulkUpdate: [authenticate, userPermissions],
+        bulkDestroy: [authenticate, userPermissions],
       };
     }
 

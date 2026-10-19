@@ -13,6 +13,7 @@ import { PdvAccessContext, PdvAccessScreen } from "../pdv-access/pdv-access.type
 import { parseBoardQuery, parseSelectAllStatus } from "./helpers/board-query";
 import { PdvBoardParamError, PdvForbiddenError } from "../helpers/pdv-errors";
 
+import { authenticate } from "../../../../middlewares/auth-token";
 const upload = multer({ storage: multer.memoryStorage() });
 
 const READ_SCREENS = [
@@ -232,6 +233,11 @@ export class PdvSalesRequestController extends BaseController<
       show: [pdvAccess(READ_SCREENS)],
       create: [pdvAccess([PdvAccessScreen.STORE_REQUEST])],
       destroy: [pdvAccess([PdvAccessScreen.STORE_REQUEST])],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkCreate: [authenticate],
+      update: [authenticate],
+      bulkUpdate: [authenticate],
+      bulkDestroy: [authenticate],
     };
   }
 

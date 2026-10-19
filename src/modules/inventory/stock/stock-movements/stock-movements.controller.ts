@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import BaseController from "../../../../shared/utils/base-models/base-controller";
+import BaseController, { StoreNumberField } from "../../../../shared/utils/base-models/base-controller";
 import StockMovement from "./stock-movements.model";
 import StockMovementService from "./stock-movements.service";
 import { authenticate } from "../../../../middlewares/auth-token";
@@ -72,6 +72,11 @@ export class StockMovementController extends BaseController<
     );
   }
 
+  // ?store_number= de application filtra o index por unit_business_id.
+  protected storeNumberField(): StoreNumberField {
+    return "unit_business_id";
+  }
+
   protected middlewaresFor() {
     return {
       index: [authenticate, userPermissions],
@@ -99,6 +104,10 @@ export class StockMovementController extends BaseController<
       deactivate: [authenticate, userPermissions],
       reactivate: [authenticate, userPermissions],
       syncAll: [authenticate, userPermissions],
+      // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

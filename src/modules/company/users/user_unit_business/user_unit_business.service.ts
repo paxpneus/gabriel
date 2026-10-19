@@ -1,4 +1,4 @@
-import { FindOptions } from "sequelize";
+import { FindOptions, WhereOptions } from "sequelize";
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import { PaginatedResult, QueryParams } from "../../../../shared/query/query.types";
 import UnitBusiness from "../../unit-business/unit-business.model";
@@ -26,9 +26,11 @@ export class UserUnitBusinessService extends BaseService<
     };
   }
 
+  // forcedWhere repassado ao BaseService (filtro store_number do controller); opcional.
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<UserUnitBusiness>> {
     return super.paginate(params, {
       ...extraOptions,
@@ -42,7 +44,7 @@ export class UserUnitBusinessService extends BaseService<
           as: "unitBusiness",
         },
       ],
-    });
+    }, forcedWhere);
   }
 }
 

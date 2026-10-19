@@ -33,6 +33,8 @@ export class OperationsController extends BaseController<
       destroy: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
       markAsReceived: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkUpdate: [authenticate, userPermissions],
     };
   }
 

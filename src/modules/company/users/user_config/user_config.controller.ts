@@ -26,7 +26,9 @@ export class UserConfigController extends BaseController<
       destroy: [authenticate, userPermissions],
       bulkCreate: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
-      getUserTypes: [authenticate, userPermissions]
+      getUserTypes: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkUpdate: [authenticate, userPermissions],
     };
   }
 

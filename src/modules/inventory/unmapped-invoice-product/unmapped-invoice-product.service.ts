@@ -1,4 +1,4 @@
-import { DestroyOptions, FindOptions, Op, Transaction } from "sequelize";
+import { DestroyOptions, FindOptions, Op, Transaction, WhereOptions } from "sequelize";
 import { randomUUID } from "node:crypto";
 import {
   PaginatedResult,
@@ -73,9 +73,11 @@ export class UnmappedInvoiceProductService extends BaseService<
     };
   }
 
+  // forcedWhere repassado ao BaseService (filtro store_number do controller); opcional.
   async paginate(
     params: QueryParams,
     extraOptions?: Omit<FindOptions, "where" | "limit" | "offset" | "order">,
+    forcedWhere?: WhereOptions,
   ): Promise<PaginatedResult<UnmappedInvoiceProduct>> {
     return super.paginate(params, {
       ...extraOptions,
@@ -86,7 +88,7 @@ export class UnmappedInvoiceProductService extends BaseService<
           attributes: ["number_system", "id"],
         },
       ],
-    });
+    }, forcedWhere);
   }
 
   async createUnmappedFromReadingEan(

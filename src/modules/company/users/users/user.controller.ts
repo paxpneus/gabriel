@@ -54,6 +54,10 @@ export class UserController extends BaseController<User, typeof UserService> {
         authenticate,
         validateUpdate(SwitchUnitBusinessSchema),
       ],
+      // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
+      bulkCreate: [authenticate, userPermissions],
+      bulkUpdate: [authenticate, userPermissions],
+      bulkDestroy: [authenticate, userPermissions],
     };
   }
 

@@ -35,6 +35,8 @@ export class SubgroupController extends BaseController<
       destroy: [authenticate, userPermissions],
       withGroup: [authenticate, userPermissions],
       findByIdWithGroup: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkUpdate: [authenticate, userPermissions],
     };
   }
 

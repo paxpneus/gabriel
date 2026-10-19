@@ -22,4 +22,4 @@ Second, distinct prod incident (Tecinco): a product had a valid mapping for `ext
 
 ## Auth
 
-Controller has a **critical, unfixed** auth gap — see `../modules/auth.md`.
+Controller exige `authenticate` em todo CRUD (antes `index`/`show`/`create` eram abertos); ainda não escopado por tenant — ver `../modules/auth.md`.

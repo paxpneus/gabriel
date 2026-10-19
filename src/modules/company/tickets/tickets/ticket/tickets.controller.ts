@@ -89,6 +89,8 @@ export class TicketController extends BaseController<Ticket, TicketService> {
       addCategoryOption: [authenticate, userPermissions],
       removeCategoryOption: [authenticate, userPermissions],
       getTaskTrail: [authenticate, userPermissions],
+      // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
+      bulkUpdate: [authenticate, userPermissions],
     };
   }
 
