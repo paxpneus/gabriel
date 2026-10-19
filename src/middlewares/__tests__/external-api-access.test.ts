@@ -127,6 +127,20 @@ describe("externalApiAccess", () => {
     expect(next).toHaveBeenCalled();
   });
 
+  it("rota pública unit-business/public/list sem nenhuma credencial → next", async () => {
+    const res = makeRes();
+    const next = jest.fn();
+
+    await externalApiAccess(
+      makeReq({ url: "/api/unit-business/public/list?page=1&perPage=1000" }),
+      res,
+      next,
+    );
+
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
   it("Origin não permitido e sem credencial → 401", async () => {
     const res = makeRes();
     const next = jest.fn();

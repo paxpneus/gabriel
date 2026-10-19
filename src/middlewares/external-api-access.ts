@@ -6,6 +6,8 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") ?? [];
 const PUBLIC_API_ROUTES = new Set([
   "applications/login",
   "applications/test-webhook/post",
+  // Lista de lojas (só id/name/number) sem auth na rota; GET de mesma origem não manda Origin.
+  "unit-business/public/list",
 ]);
 // Prefixos com auth própria (integração externa OU pdvAccess por link) — dispensam origin/cookie/bearer/api-key deste gate.
 const GATE_EXEMPT_ROUTE_PREFIXES = [
