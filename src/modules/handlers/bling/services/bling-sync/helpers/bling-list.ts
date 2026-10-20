@@ -61,6 +61,25 @@ export function mapBlingInvoiceStatus(situacao?: number): "OPEN" | "CANCELLED" {
   return situacao === 2 ? "CANCELLED" : "OPEN";
 }
 
+// jobId único do fetch de NF-e no BLING_API_FETCH: stub do pedido e poll deduplicam entre si.
+export function blingInvoiceFetchJobId(blingId: number | string): string {
+  return `bling-invoice-fetch-${blingId}`;
+}
+
+// Payload de fetch de NF-e a partir do resumo da Bling (listagem ou detalhe); o worker busca o resto.
+export function buildBlingInvoiceFetchPayload(invoice: {
+  id: number;
+  numero?: string;
+  situacao?: number;
+}): ApiFetchJobPayload {
+  return buildBlingApiFetchPayload("invoice", invoice.id, {
+    blingId: invoice.id,
+    number: invoice.numero,
+    id_system: String(invoice.id),
+    status: mapBlingInvoiceStatus(invoice.situacao),
+  });
+}
+
 // Payload de BLING_API_FETCH no formato que o webhook gera (o worker busca o detalhe na Bling).
 export function buildBlingApiFetchPayload(
   resource: ApiFetchJobPayload["resource"],

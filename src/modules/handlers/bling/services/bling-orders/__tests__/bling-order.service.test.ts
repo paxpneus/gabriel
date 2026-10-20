@@ -718,16 +718,28 @@ describe("BlingOrderService", () => {
   });
 
   describe("resolveInvoiceId — vínculo rápido da nota via notaFiscal.id", () => {
+    // Substitui a fila workless lazy do service pra inspecionar o fetch de nota enfileirado.
+    const stubApiFetchQueue = (target: BlingOrderService) => {
+      const queue = { add: jest.fn().mockResolvedValue(undefined) };
+      (target as any).blingApiFetchQueue = queue;
+      return queue;
+    };
+
     it("nota já existe localmente (id_system) — vincula sem chamar a Bling", async () => {
       (invoiceService.findOne as jest.Mock).mockResolvedValue({
         id: "invoice-local",
+        source_payload: { id: orderData.notaFiscal.id },
       });
+      const apiFetchQueue = stubApiFetchQueue(service);
 
       await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
 
       expect(invoiceService.findOne).toHaveBeenCalledWith({
         where: { id_system: String(orderData.notaFiscal.id) },
+        attributes: ["id", "source_payload"],
       });
+      // Nota completa: nada a enfileirar.
+      expect(apiFetchQueue.add).not.toHaveBeenCalled();
       expect(lastUpdateFields()).toEqual(
         expect.objectContaining({ invoice_id: "invoice-local" }),
       );
@@ -752,8 +764,21 @@ describe("BlingOrderService", () => {
         }) as any,
       );
 
+      const apiFetchQueue = stubApiFetchQueue(service);
+
       await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
 
+      // Stub não depende do webhook da nota: o upsert completo já sai enfileirado.
+      expect(apiFetchQueue.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource: "invoice",
+          apiFetch: expect.objectContaining({
+            blingId: orderData.notaFiscal.id,
+            partialData: expect.objectContaining({ number: "16603" }),
+          }),
+        }),
+        `bling-invoice-fetch-${orderData.notaFiscal.id}`,
+      );
       expect(invoiceService.createStub).toHaveBeenCalledWith(
         expect.objectContaining({
           integrationsId: INTEGRATION_ID,
@@ -765,6 +790,42 @@ describe("BlingOrderService", () => {
       );
       expect(lastUpdateFields()).toEqual(
         expect.objectContaining({ invoice_id: "invoice-provisoria" }),
+      );
+    });
+
+    it("nota local é stub antigo (sem source_payload) — vincula e enfileira o fetch completo", async () => {
+      (invoiceService.findOne as jest.Mock).mockResolvedValue({
+        id: "invoice-stub",
+        source_payload: null,
+      });
+      const apiFetchQueue = stubApiFetchQueue(service);
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(apiFetchQueue.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource: "invoice",
+          apiFetch: expect.objectContaining({ blingId: orderData.notaFiscal.id }),
+        }),
+        `bling-invoice-fetch-${orderData.notaFiscal.id}`,
+      );
+      expect(lastUpdateFields()).toEqual(
+        expect.objectContaining({ invoice_id: "invoice-stub" }),
+      );
+    });
+
+    it("falha ao enfileirar o fetch da nota não derruba o sync do pedido", async () => {
+      (invoiceService.findOne as jest.Mock).mockResolvedValue({
+        id: "invoice-stub",
+        source_payload: null,
+      });
+      const apiFetchQueue = stubApiFetchQueue(service);
+      apiFetchQueue.add.mockRejectedValueOnce(new Error("redis down"));
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(lastUpdateFields()).toEqual(
+        expect.objectContaining({ invoice_id: "invoice-stub" }),
       );
     });
 

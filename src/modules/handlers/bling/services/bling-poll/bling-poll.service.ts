@@ -7,9 +7,9 @@ import {
 } from "../bling/bling-invoice-cutoff";
 import {
   BlingQuery,
-  buildBlingApiFetchPayload,
+  blingInvoiceFetchJobId,
+  buildBlingInvoiceFetchPayload,
   fetchBlingListPage,
-  mapBlingInvoiceStatus,
   paginateBling,
 } from "../bling-sync/helpers/bling-list";
 import { BULK_FORCE_UPDATE_PRIORITY } from "../bling-orders/bling-order.queue";
@@ -125,16 +125,6 @@ function afterInvoiceCutoff(invoices: BlingInvoiceSummary[]): BlingInvoiceSummar
   });
 }
 
-// Payload de BLING_API_FETCH de uma NF-e listada (o worker busca o detalhe na Bling).
-function invoiceFetchPayload(invoice: BlingInvoiceSummary) {
-  return buildBlingApiFetchPayload("invoice", invoice.id, {
-    blingId: invoice.id,
-    number: invoice.numero,
-    id_system: String(invoice.id),
-    status: mapBlingInvoiceStatus(invoice.situacao),
-  });
-}
-
 // Chave Redis da última situação vista de uma NF-e.
 function situationKey(invoiceId: number): string {
   return `${INVOICE_SITUATION_PREFIX}:${invoiceId}`;
@@ -167,7 +157,8 @@ function reportRound(
 export class BlingPollService {
   constructor(private readonly queues: BlingPollQueues) {}
 
-  // 1min: NF-e (saída, cancelada, entrada) e pedidos desde ontem, sem limite, que ainda não existem no banco.
+  // 1min: NF-e (saída, cancelada, entrada) e pedidos desde ontem, sem limite, que ainda não existem no banco
+  // (nota que só existe como stub do pedido conta como faltante).
   // Roda mesmo com atualização na fila: criação tem prioridade e entra na frente.
   async pollNewRecords(): Promise<void> {
     if (!(await this.targetQueuesAreClear({ ignoreUpdateJobs: true }))) return;
@@ -238,17 +229,18 @@ export class BlingPollService {
           INVOICE_ENDPOINT,
           { ...query, dataEmissaoInicial: since },
         )) {
-          const missing = await this.filterMissingInvoices(
+          const missing = await this.filterMissingOrStubInvoices(
             integrationId,
             afterInvoiceCutoff(page),
           );
+          // jobId compartilhado com o fetch que o pedido enfileira ao criar o stub (bling-order.service).
           enqueued += await this.enqueueUnmarked(
             missing.map((invoice) => ({
               markKey: `invoice:${invoice.id}`,
               enqueue: () =>
                 this.queues.apiFetch.add(
-                  invoiceFetchPayload(invoice),
-                  `bling-poll-invoice-fetch-${invoice.id}`,
+                  buildBlingInvoiceFetchPayload(invoice),
+                  blingInvoiceFetchJobId(invoice.id),
                 ),
             })),
           );
@@ -317,7 +309,7 @@ export class BlingPollService {
     await Promise.all(
       changed.map((invoice) =>
         this.queues.apiFetch.add(
-          invoiceFetchPayload(invoice),
+          buildBlingInvoiceFetchPayload(invoice),
           `bling-poll-invoice-refetch-${invoice.id}-${invoice.situacao}`,
           UPDATE_JOB_OPTIONS,
         ),
@@ -363,8 +355,9 @@ export class BlingPollService {
     return orders.length;
   }
 
-  // Uma query por página: notas cujo id da Bling ainda não está em invoices.id_system.
-  private async filterMissingInvoices(
+  // Uma query por página: notas sem linha completa em invoices — ausentes ou só stub
+  // (createStub não grava source_payload; o upsert do BLING_API_FETCH sempre grava).
+  private async filterMissingOrStubInvoices(
     integrationId: string,
     invoices: BlingInvoiceSummary[],
   ): Promise<BlingInvoiceSummary[]> {
@@ -374,6 +367,7 @@ export class BlingPollService {
       where: {
         integrations_id: integrationId,
         id_system: { [Op.in]: invoices.map((invoice) => String(invoice.id)) },
+        source_payload: { [Op.ne]: null },
       },
       attributes: ["id_system"],
     });

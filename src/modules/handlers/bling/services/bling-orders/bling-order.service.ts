@@ -29,6 +29,10 @@ import { ProductAttributes } from "../../../../inventory/products/product.types"
 import Brand from "../../../../inventory/brands/brands.model";
 import stateService from "../../../../warehouse/address/state/state.service";
 import { blingGet } from "../bling/helpers/get-with-sleep";
+import {
+  blingInvoiceFetchJobId,
+  buildBlingInvoiceFetchPayload,
+} from "../bling-sync/helpers/bling-list";
 import productService from "../../../../inventory/products/services/product.service";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { startOfDayTz } from "../../../../../shared/utils/normalizers/date";
@@ -139,7 +143,7 @@ export class BlingOrderService {
   public blingApi: AxiosInstance;
   private blingCustomerService: BlingCustomerService;
   private storeService: StoreService;
-  // Lazy: evita abrir conexão Redis em quem instancia o service sem nunca criar vendedor.
+  // Lazy: evita abrir conexão Redis em quem instancia o service sem nunca enfileirar vendedor/nota.
   private blingApiFetchQueue: BlingApiFetchQueue | null = null;
 
   constructor(blingApi: AxiosInstance) {
@@ -220,8 +224,15 @@ export class BlingOrderService {
     const idSystem = String(notaFiscalId);
     const existing = await invoiceService.findOne({
       where: { id_system: idSystem },
+      attributes: ["id", "source_payload"],
     });
-    if (existing) return existing.id;
+    if (existing) {
+      // Stub de passagem anterior que nunca foi completado (ex.: webhook da nota não chegou).
+      if (!existing.source_payload) {
+        await this.enqueueInvoiceFetch({ id: Number(idSystem) });
+      }
+      return existing.id;
+    }
 
     try {
       const { data } = await blingGet<{ data: BlingApiInvoice }>(
@@ -255,6 +266,12 @@ export class BlingOrderService {
         danfePath: nf.linkPDF ?? null,
         senderCnpj: nf.emitente?.cnpj,
         senderName: nf.emitente?.nome,
+      });
+      // Stub fica sem UB/itens até o upsert completo — não depende do webhook da nota pra isso.
+      await this.enqueueInvoiceFetch({
+        id: Number(idSystem),
+        numero: nf.numero,
+        situacao: nf.situacao,
       });
       return created.id;
     } catch (err: any) {
@@ -403,6 +420,27 @@ export class BlingOrderService {
     if (sellerSystemId !== "0") await this.enqueueSellerFetch(sellerSystemId);
 
     return contact.id;
+  }
+
+  // Upsert completo da NF-e no BLING_API_FETCH (prioridade de nota, à frente de produto/estoque).
+  // Falha só loga: o pedido segue e o stub fica pro poll/webhook completar.
+  private async enqueueInvoiceFetch(invoice: {
+    id: number;
+    numero?: string;
+    situacao?: number;
+  }): Promise<void> {
+    this.blingApiFetchQueue ??= new BlingApiFetchQueue({ workless: true });
+    try {
+      await this.blingApiFetchQueue.add(
+        buildBlingInvoiceFetchPayload(invoice),
+        blingInvoiceFetchJobId(invoice.id),
+      );
+    } catch (error: any) {
+      console.error(
+        `[BLING_ORDER] Falha ao enfileirar fetch da nota ${invoice.id}:`,
+        error?.message ?? error,
+      );
+    }
   }
 
   // Payload do pedido só traz vendedor.id; o nome vem de /vendedores/{id} via BLING_API_FETCH.

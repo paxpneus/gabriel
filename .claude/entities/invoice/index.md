@@ -17,6 +17,13 @@ Split by subject:
 - **RESTRICT**: `stock_movements.invoice_id`, `orders.invoice_id`.
 - **SET NULL**: `operations.invoice_id`, `sales_order_snapshots.invoice_id`.
 - **CASCADE**: `expedition_batch_invoices`, `invoice_fiscal_items`, `invoice_items`, `invoice_logistic_occurrences`, `invoice_operation_snapshots`, `invoice_unit_business_attributes`, `unmapped_invoice_products`.
+- **Invoice sem `invoice_unit_business_attributes`** (some de toda tela/filtro que depende de `unitBusinessAttributes`). Caminhos que deixam assim:
+  - `invoiceService.createStub`: PDV (`pdv-sales-request.service.ts`) e pedido Bling (`bling-order.service.ts`, nota vinculada pelo pedido). Fica sem UB até o upsert real (Bling `fetchAndUpsertInvoice` / XML `invoice-xml.ts`) cair no UPDATE e chamar `ensureUnitBusinessAttributes`.
+    - Pedido Bling: `resolveInvoiceId` enfileira o fetch da NF-e no `BLING_API_FETCH` logo após o `createStub`, e também ao achar stub antigo (`source_payload` nulo). jobId `bling-invoice-fetch-<id>` (`blingInvoiceFetchJobId`, `bling-sync/helpers/bling-list.ts`), o mesmo do poll, então os dois deduplicam. Não depende do webhook `invoice.*`. Falha ao enfileirar só loga.
+    - Marcador de stub: `source_payload` nulo (`createStub` não grava; o upsert do `BLING_API_FETCH` sempre grava).
+  - `createWithRelations` / `ensureUnitBusinessAttributes`: só criam UB se `sender_cnpj` ou `receiver_cnpj` bater **exato** com `unit_businesses.cnpj`. CNPJ vazio (Bling sem `emitente.cnpj` e sem XML disponível) ou de terceiros → nenhuma UB.
+  - `POST /invoice` e `POST /invoice/bulk` genéricos do `BaseController`: `create` puro, sem UB.
+  - Histórico: antes do fix de 2026-10-01 (`05ef6096`), `ensureUnitBusinessAttributes` estourava a unique quando emitente = destinatário (mesma UB) e o stub enriquecido ficava sem UB. Ninguém reprocessa sozinho essas notas: só force-update/import manual.
 
 ## Misc fixes/filters
 - **New `transporterStatus` filter on `listInvoices`** — `?filters[transporterStatus]=pending-<transporterId>` (`InvoiceRepository.extractTransporterStatusFilter`). Filters `unitBusinessAttributes.status IN (PENDING, OPEN)`, `batch_generated = false`, `Invoice.transporter_id = <transporterId>`, and excludes Mercado Livre notes (`store.name != "MercadoLivre"`, `store` include becomes `required: true` with that `where` only when this filter is active). Meant to open the invoice listing pre-filtered from a `pending_batch_by_transporter` card click (`OrderService.getOrdersStatusSummary`, `.claude/entities/order/summary-endpoints.md`) — only `pending-` prefix is parsed today, no other status prefix implemented.

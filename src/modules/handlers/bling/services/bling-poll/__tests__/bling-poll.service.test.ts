@@ -37,6 +37,7 @@ import {
 } from "../../bling-sync/helpers/bling-list";
 import invoiceService from "../../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import ordersService from "../../../../../sales/orders/order/orders.service";
+import { Op } from "sequelize";
 import { BlingPollService } from "../bling-poll.service";
 
 // Chave da listagem simulada: endpoint + tipo + situacao (ex.: "/nfe:1:2").
@@ -103,10 +104,13 @@ describe("BlingPollService", () => {
       await service.pollNewRecords();
 
       expect(apiFetch.add.mock.calls.map(([, jobId]) => jobId).sort()).toEqual([
-        "bling-poll-invoice-fetch-10",
-        "bling-poll-invoice-fetch-12",
-        "bling-poll-invoice-fetch-13",
+        "bling-invoice-fetch-10",
+        "bling-invoice-fetch-12",
+        "bling-invoice-fetch-13",
       ]);
+      // Só nota completa (com source_payload) conta como existente: stub do pedido é refeito.
+      const invoiceWhere = (invoiceService.findAll as jest.Mock).mock.calls[0][0].where;
+      expect(invoiceWhere.source_payload).toEqual({ [Op.ne]: null });
       const cancelled = apiFetch.add.mock.calls.find(([, id]) => id.endsWith("-12"))![0];
       expect(cancelled.apiFetch.partialData.status).toBe("CANCELLED");
       // NFC-e saiu do poll.

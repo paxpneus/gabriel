@@ -27,7 +27,7 @@ Código: `src/modules/handlers/bling/services/bling-poll/bling-poll.service.ts` 
   - `tipo=1&situacao=2`: saídas canceladas;
   - `tipo=0`: entrada.
 - **Filtro de emissão:** `dataEmissaoInicial` = ontem às `00:00:00` (BRT, com hora). NFC-e fica fora.
-- **Nota faltante:** `id_system` ausente em `invoices` (integração Bling) → `BLING_API_FETCH`, jobId `bling-poll-invoice-fetch-<id>`, com o mesmo corte de data do webhook.
+- **Nota faltante:** `id_system` ausente em `invoices` (integração Bling), **ou presente só como stub** (`source_payload` nulo) → `BLING_API_FETCH`, jobId `bling-invoice-fetch-<id>` (`blingInvoiceFetchJobId`, o mesmo que `bling-order.service` usa ao criar o stub), com o mesmo corte de data do webhook.
 - **Pedidos:** `/pedidos/vendas?dataInicial=<ontem>` (só data, aqui funciona). Faltante = `id_order_system` ausente → `BLING_ORDER_INGESTION` com `order.created`, jobId `bling-order-created-<id>` (o mesmo do webhook).
 - **Checagem de existência:** uma query por página.
 - **Anti-reenvio:** marca Redis `bling-poll:enqueued:<invoice|order>:<id>` (SET NX, TTL 30min). Se o `add` falhar, a marca é apagada.
@@ -53,3 +53,4 @@ Código: `src/modules/handlers/bling/services/bling-poll/bling-poll.service.ts` 
 - **Pedidos:** mais de 50 alterados numa janela → só os 50 primeiros da listagem (por número, decrescente).
 - **NF-e:** mudança que não altera `situacao`, ou em nota fora das 50 mais recentes de cada listagem.
 - **Outros recursos:** NFC-e, produto, estoque e contato não entram no poll.
+- **Stub de nota (`createStub` pelo pedido Bling):** o próprio `bling-order.service` já enfileira o fetch. O job de 1min também trata stub como faltante, então conta como existente só a nota com `source_payload` não nulo.
