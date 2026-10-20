@@ -1,4 +1,8 @@
-import { CreateOptions, ForeignKeyConstraintError, UniqueConstraintError } from "sequelize";
+import {
+  CreateOptions,
+  ForeignKeyConstraintError,
+  UniqueConstraintError,
+} from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import SupplierMapping from "./supplier-mapping.model";
 import supplierMappingRepository, {
@@ -13,7 +17,11 @@ import { resolveIntegrationsIdForUnitBusiness } from "../../handlers/tecinco/que
 import sequelize from "../../../config/sequelize";
 import unmappedInvoiceProductService from "../unmapped-invoice-product/unmapped-invoice-product.service";
 import integrationMappingService from "../../integrations/integration-mapping/integration-mapping.service";
-import { QueryParams, PaginatedResult } from "../../../shared/query/query.types";
+import {
+  QueryParams,
+  PaginatedResult,
+} from "../../../shared/query/query.types";
+import Integration from "../../integrations/integrations/integrations.model";
 
 export class SupplierMappingService extends BaseService<
   SupplierMapping,
@@ -31,7 +39,8 @@ export class SupplierMappingService extends BaseService<
       throw Error("EAN Não informado");
     }
 
-    const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
+    const integrationsId =
+      await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
 
     const supplierFound = await this.repository.findSupplierByProductCode(
       ean,
@@ -53,10 +62,23 @@ export class SupplierMappingService extends BaseService<
       throw new Error("product_id não informado");
     }
 
-    return this.repository.findPaginated(params, this.queryConfig, {}, {
-      product_id: productId,
-      integrations_id: integrationsId,
-    });
+    return this.repository.findPaginated(
+      params,
+      this.queryConfig,
+      {
+        include: [
+          {
+            model: Integration,
+            as: "integration",
+            attributes: ["id", "name"],
+          },
+        ],
+      },
+      {
+        product_id: productId,
+        integrations_id: integrationsId,
+      },
+    );
   }
 
   // Cria SupplierMapping pro produto da rota na integração do usuário (validação de código/conflito fica no create).
@@ -94,14 +116,19 @@ export class SupplierMappingService extends BaseService<
     });
     if (!existing) return null;
 
-    if (data.supplier_product_code !== undefined && !data.supplier_product_code) {
+    if (
+      data.supplier_product_code !== undefined &&
+      !data.supplier_product_code
+    ) {
       throw new Error("supplier_product_code não informado");
     }
 
     // Só manda o que veio no body, pra não zerar campo omitido.
     const changes: Partial<ProductSupplierMappingInput> = {};
-    if (data.supplier_product_code !== undefined) changes.supplier_product_code = data.supplier_product_code;
-    if (data.supplier_cnpj !== undefined) changes.supplier_cnpj = data.supplier_cnpj;
+    if (data.supplier_product_code !== undefined)
+      changes.supplier_product_code = data.supplier_product_code;
+    if (data.supplier_cnpj !== undefined)
+      changes.supplier_cnpj = data.supplier_cnpj;
 
     try {
       // repository.update (instância) em vez de bulkUpdate pra rodar o hook beforeUpdate que limpa o CNPJ.

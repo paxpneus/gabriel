@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from "express";
+import { Request, Response } from "express";
 import BaseController, { StoreNumberField } from "../../../../shared/utils/base-models/base-controller";
 import StockMovement from "./stock-movements.model";
 import StockMovementService from "./stock-movements.service";
@@ -114,7 +114,7 @@ export class StockMovementController extends BaseController<
   /**
    * GET /stock-movements/:productId/history?unit_business_id=...
    */
-  getHistory = async (req: Request, res: Response, next: NextFunction) => {
+  getHistory = async (req: Request, res: Response) => {
     try {
       const { productId } = req.params;
       const { unit_business_id } = req.query;
@@ -129,14 +129,15 @@ export class StockMovementController extends BaseController<
 
       return res.status(200).json(history);
     } catch (error) {
-      next(error);
+      // Sem error middleware global no app: next(error) cairia no handler HTML default do Express.
+      return res.status(500).json({ error: (error as Error).message });
     }
   };
 
   /**
    * GET /stock-movements/:productId/balance?unit_business_id=...
    */
-  getBalance = async (req: Request, res: Response, next: NextFunction) => {
+  getBalance = async (req: Request, res: Response) => {
     try {
       const { productId } = req.params;
       const { unit_business_id } = req.query;
@@ -148,7 +149,7 @@ export class StockMovementController extends BaseController<
 
       return res.status(200).json(balance);
     } catch (error) {
-      next(error);
+      return res.status(500).json({ error: (error as Error).message });
     }
   };
 
@@ -156,7 +157,7 @@ export class StockMovementController extends BaseController<
    * GET /stock-movements/:productId/source-data?unit_business_id=...
    * Lista as NFs "cruas" que alimentariam o Kardex (debug/preview antes do sync).
    */
-  getSourceData = async (req: Request, res: Response, next: NextFunction) => {
+  getSourceData = async (req: Request, res: Response) => {
     try {
       const { productId } = req.params;
       const { unit_business_id } = req.query;
@@ -168,7 +169,7 @@ export class StockMovementController extends BaseController<
 
       return res.status(200).json(sourceData);
     } catch (error) {
-      next(error);
+      return res.status(500).json({ error: (error as Error).message });
     }
   };
 
@@ -176,12 +177,12 @@ export class StockMovementController extends BaseController<
    * POST /stock-movements/process
    * Endpoint de processamento em tempo real, chamado quando uma NF é confirmada.
    */
-  process = async (req: Request, res: Response, next: NextFunction) => {
+  process = async (req: Request, res: Response) => {
     try {
       const result = await this.service.processMovement(req.body);
       return res.status(201).json(result);
     } catch (error) {
-      next(error);
+      return res.status(400).json({ error: (error as Error).message });
     }
   };
 
@@ -190,7 +191,7 @@ export class StockMovementController extends BaseController<
    * ⚠️ Rota bruta: apaga e recria o histórico reconstruível. Só via ação
    * explícita de operador.
    */
-  reindex = async (req: Request, res: Response, next: NextFunction) => {
+  reindex = async (req: Request, res: Response) => {
     try {
       const { productId } = req.params;
       const { unit_business_id, movements } = req.body;
@@ -204,7 +205,7 @@ export class StockMovementController extends BaseController<
       );
       return res.status(200).json(result);
     } catch (error) {
-      next(error);
+      return res.status(400).json({ error: (error as Error).message });
     }
   };
 
@@ -212,7 +213,7 @@ export class StockMovementController extends BaseController<
    * POST /stock-movements/:productId/sync
    * Sincroniza o Kardex a partir das NFs pendentes (fluxo normal ou retroativo).
    */
-  sync = async (req: Request, res: Response, next: NextFunction) => {
+  sync = async (req: Request, res: Response) => {
     try {
       const { productId } = req.params;
       const { unit_business_id } = req.body;
@@ -223,7 +224,7 @@ export class StockMovementController extends BaseController<
       );
       return res.status(200).json(result);
     } catch (error) {
-      next(error);
+      return res.status(400).json({ error: (error as Error).message });
     }
   };
 
@@ -232,7 +233,7 @@ export class StockMovementController extends BaseController<
    * Funde movimentos recebidos com os existentes e recalcula a cadeia,
    * sem apagar nada.
    */
-  upsert = async (req: Request, res: Response, next: NextFunction) => {
+  upsert = async (req: Request, res: Response) => {
     try {
       const { productId } = req.params;
       const { unit_business_id, movements } = req.body;
@@ -244,7 +245,7 @@ export class StockMovementController extends BaseController<
       );
       return res.status(200).json(result);
     } catch (error) {
-      next(error);
+      return res.status(400).json({ error: (error as Error).message });
     }
   };
 
@@ -259,7 +260,6 @@ export class StockMovementController extends BaseController<
   createManualAdjustment = async (
     req: Request,
     res: Response,
-    next: NextFunction,
   ) => {
     try {
       const { productId } = req.params;
@@ -272,23 +272,21 @@ export class StockMovementController extends BaseController<
       );
       return res.status(201).json(result);
     } catch (error) {
-      next(error);
+      return res.status(400).json({ error: (error as Error).message });
     }
   };
 
   /**
    * PATCH /stock-movements/:productId/manual-average-cost/:movementId
    * ⚠️ Único ponto que escreve manual_average_cost_value. Body: { unit_business_id, manual_average_cost_value, refers_to }
-   * manual_average_cost_value pode ser `null` pra remover o override (nesse
-   * caso refers_to também é limpo, já que não faz sentido sem o override).
-   * refers_to é o invoice_number da PURCHASE_ENTRY que este ajuste corrige.
-   * Quando refers_to resolve pra uma PURCHASE_ENTRY, movement_date é
-   * recalculado automaticamente (mesmo dia, 5s à frente dela).
+   * manual_average_cost_value pode ser `null` pra remover o override (refers_to
+   * é mantido); ajuste de saída (SALE_OUT) não aceita custo manual.
+   * refers_to é o invoice_number da nota (PURCHASE_ENTRY ou SALE_OUT, conforme
+   * a direção do ajuste); movement_date é recalculado (mesmo dia, 5s à frente dela).
    */
   updateManualAverageCost = async (
     req: Request,
     res: Response,
-    next: NextFunction,
   ) => {
     try {
       const { productId, movementId } = req.params;
@@ -304,7 +302,7 @@ export class StockMovementController extends BaseController<
       );
       return res.status(200).json(result);
     } catch (error) {
-      next(error);
+      return res.status(400).json({ error: (error as Error).message });
     }
   };
 
@@ -312,7 +310,7 @@ export class StockMovementController extends BaseController<
    * PATCH /stock-movements/:productId/deactivate
    * Body: { unit_business_id, movement_ids: string[] }
    */
-  deactivate = async (req: Request, res: Response, next: NextFunction) => {
+  deactivate = async (req: Request, res: Response) => {
     try {
       const { productId } = req.params;
       const { unit_business_id, movement_ids } = req.body;
@@ -324,7 +322,7 @@ export class StockMovementController extends BaseController<
       );
       return res.status(200).json(result);
     } catch (error) {
-      next(error);
+      return res.status(400).json({ error: (error as Error).message });
     }
   };
 
@@ -332,7 +330,7 @@ export class StockMovementController extends BaseController<
    * PATCH /stock-movements/:productId/reactivate
    * Body: { unit_business_id, movement_ids: string[] }
    */
-  reactivate = async (req: Request, res: Response, next: NextFunction) => {
+  reactivate = async (req: Request, res: Response) => {
     try {
       const { productId } = req.params;
       const { unit_business_id, movement_ids } = req.body;
@@ -344,7 +342,7 @@ export class StockMovementController extends BaseController<
       );
       return res.status(200).json(result);
     } catch (error) {
-      next(error);
+      return res.status(400).json({ error: (error as Error).message });
     }
   };
 
@@ -354,7 +352,7 @@ export class StockMovementController extends BaseController<
    * stock_movements que estão faltando (NFs sem movimento correspondente).
    * Não apaga nem sobrescreve nada existente.
    */
-  syncAll = async (req: Request, res: Response, next: NextFunction) => {
+  syncAll = async (req: Request, res: Response) => {
     try {
       const { unitBusinessId } = req.params;
 
@@ -369,7 +367,7 @@ export class StockMovementController extends BaseController<
         original: error?.original?.message,
         sql: error?.sql,
       });
-      next(error);
+      return res.status(400).json({ error: (error as Error).message });
     }
   };
 }

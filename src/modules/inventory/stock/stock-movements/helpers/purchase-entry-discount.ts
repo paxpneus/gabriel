@@ -98,6 +98,8 @@ function findAnchoredAdjustments(
     }
     if (
       row.movement_type === "MANUAL_ADJUSTMENT" &&
+      // Ajuste de saída (SALE_OUT) aponta pra NF de venda — nº pode coincidir com o da entrada.
+      row.direction !== "OUT" &&
       row.refers_to === entry.invoice_number
     ) {
       found.push({ index: i, row });

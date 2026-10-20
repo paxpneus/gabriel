@@ -16,6 +16,16 @@
   Has trigger `trigger_prevent_delete_manual_adjustment_with_cost`
   (BEFORE DELETE) that can block deleting a manual cost-adjustment
   movement.
+- Ajuste manual (`MANUAL_ADJUSTMENT`) — regras de `refers_to`/custo:
+  `refers_to` (sempre exigido no POST pelo schema) independe de
+  `manual_average_cost_value`. Ajuste de entrada (`direction_type`
+  PURCHASE_ENTRY, `direction` IN) aceita quantidade e/ou custo manual e
+  ancora numa `PURCHASE_ENTRY`; ajuste de saída (SALE_OUT, `direction` OUT)
+  nunca aceita custo manual (schema no POST, service no PATCH) e ancora numa
+  `SALE_OUT`. `validateRefersTo`/`realignRefersToMovementDates` escolhem o
+  tipo pela direção. Remover o custo (PATCH com `null`) mantém `refers_to`.
+  `computePurchaseEntryDiscounts` ignora ajuste OUT (nº de NF de venda pode
+  coincidir com o da entrada).
 - **`stock.controller.ts` agora exige auth (antes sem nenhuma); `stock.controller.ts` e
   `stock-movements.controller.ts` continuam sem escopo de tenant (HIGH) — ver
   `.claude/modules/auth.md`.**

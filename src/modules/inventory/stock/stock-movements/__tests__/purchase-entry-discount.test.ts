@@ -202,6 +202,27 @@ describe("computePurchaseEntryDiscounts", () => {
     );
   });
 
+  it("ajuste de saída com refers_to igual ao nº da entrada (NF de venda) não é associado", () => {
+    const history = [
+      row({ id: "entry", invoice_number: "100" }),
+      row({
+        id: "adj",
+        movement_type: "MANUAL_ADJUSTMENT",
+        direction: "OUT",
+        invoice_number: null,
+        refers_to: "100",
+        movement_quantity: 2,
+        balance_quantity: 8,
+        total_stock_value: 800,
+      }),
+    ];
+
+    const result = computePurchaseEntryDiscounts(history);
+
+    expect(result.withAdjustment).toBe(0);
+    expect(result.updates[0].net_total_amount).toBe("1000.0000");
+  });
+
   it("ajuste de outra nota não é associado à entrada", () => {
     const history = [
       row({ id: "entry", invoice_number: "100" }),

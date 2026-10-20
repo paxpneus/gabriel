@@ -8,6 +8,16 @@
 
 # Architecture rules
 
+## Simplicidade
+
+- Escreva o código mais simples que resolve o pedido. Não antecipe necessidades futuras.
+- Não crie helper, função, classe, tipo, middleware ou arquivo novo para algo usado em um único lugar. Deixe inline.
+- Só extraia uma abstração quando a mesma lógica se repetir em 3 ou mais lugares, ou quando eu pedir.
+- Siga os padrões existentes (controller → service → repository, BaseController/CRUD genérico). Não crie novas camadas.
+- Antes de criar um arquivo novo, veja se o código cabe num arquivo existente do módulo.
+- Ao simplificar, não mude comportamento: rotas, status HTTP, formato de resposta, mensagens de erro e validações.
+- Se uma abstração parecer necessária, pergunte antes de criar.
+
 ## Layer separation: repository / service / controller
 
 Segue `BaseRepository`/`BaseService`/`BaseController` (`src/shared/utils/base-models/`). Cada camada só fala com a mesma camada de outras entidades — nunca pula pra camada de baixo.

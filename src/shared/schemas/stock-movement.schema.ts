@@ -97,9 +97,11 @@ export const UpdateStockMovementSchema = z
       .positive("Custo médio manual deve ser maior que zero")
       .nullable(),
 
+    // Opcional na edição: omitido, o service mantém a nota já vinculada ao ajuste.
     refers_to: z
-      .string({ error: "Referência de nota fiscal para ajuste é obrigatória" })
-      .max(100, "Referência de nota fiscal para ajuste deve ter no máximo 100 caracteres"),
+      .string()
+      .max(100, "Referência de nota fiscal para ajuste deve ter no máximo 100 caracteres")
+      .optional(),
   })
   .strict();
 

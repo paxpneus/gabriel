@@ -64,7 +64,15 @@ export class IntegrationMappingService extends BaseService<
       throw new Error("product_id não informado");
     }
 
-    return this.repository.findPaginated(params, this.queryConfig, {}, {
+    return this.repository.findPaginated(params, this.queryConfig, {
+      include: [
+        {
+          model: Integration,
+          as: 'integration',
+          attributes: ['id', 'name']
+        }
+      ]
+    }, {
       entity_type: "PRODUCT",
       internal_id: productId,
     });

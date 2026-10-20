@@ -332,7 +332,7 @@ export class StockMovementService extends BaseService<
       }
 
       default:
-        throw new Error(`Tipo de movimento inválido: ${input.movement_type}`);
+        throw new Error(`Tipo de movimentação inválido: ${input.movement_type}.`);
     }
 
     const isOutwardManualAdjustment =
@@ -763,7 +763,7 @@ export class StockMovementService extends BaseService<
     );
     if (cutoff && new Date(input.movement_date).getTime() <= cutoff.getTime()) {
       throw new Error(
-        `[STOCK_MOVEMENT] Movimento emitido em ${new Date(input.movement_date).toISOString()} já está coberto pelo CSV extraído em ${cutoff.toISOString()}.`,
+        `Esta movimentação (${new Date(input.movement_date).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}) já está contabilizada na planilha de estoque importada em ${cutoff.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })} e não pode ser lançada de novo.`,
       );
     }
 
@@ -1172,7 +1172,7 @@ export class StockMovementService extends BaseService<
         const direction = movement.direction as "IN" | "OUT" | null;
         if (direction == null && movement.movement_quantity > 0) {
           throw new Error(
-            `[STOCK_MOVEMENT] MANUAL_ADJUSTMENT ${movement.id} sem direction definida — dado corrompido, não é seguro recalcular.`,
+            "Não foi possível recalcular o estoque deste produto: existe um ajuste manual sem indicação de entrada ou saída. Entre em contato com o suporte.",
           );
         }
         const nextState = this.calculateNextState(previousState, {
@@ -1288,12 +1288,12 @@ export class StockMovementService extends BaseService<
    * refers_to âncora um MANUAL_ADJUSTMENT numa nota fiscal específica (via
    * invoice_number, não id — ver stock-movements.model.ts) e é o que decide
    * se a linha fica protegida contra delete/recriação em reindexProduct.
-   * Só faz sentido junto de um manual_average_cost_value (é a correção de
-   * custo dessa nota), e só é aceito se já existir uma PURCHASE_ENTRY com
-   * esse invoice_number pro mesmo produto/unit_business — sanity check
-   * contra erro de digitação.
+   * Só é aceito se já existir um movimento `referencedType` (PURCHASE_ENTRY
+   * pra ajuste de entrada, SALE_OUT pra ajuste de saída) com esse
+   * invoice_number pro mesmo produto/unit_business — sanity check contra
+   * erro de digitação.
    *
-   * Retorna a PURCHASE_ENTRY referenciada (ou `null` se `refersTo` não foi
+   * Retorna o movimento referenciado (ou `null` se `refersTo` não foi
    * informado) pra quem chama poder derivar o movement_date do ajuste sem
    * precisar buscar de novo.
    */
@@ -1301,28 +1301,22 @@ export class StockMovementService extends BaseService<
     productId: string,
     unitBusinessId: string,
     refersTo: string | null | undefined,
-    manualAverageCostValue: number | null | undefined,
+    referencedType: "PURCHASE_ENTRY" | "SALE_OUT",
     transaction?: Transaction,
   ): Promise<StockMovement | null> {
     if (refersTo == null) return null;
-
-    if (manualAverageCostValue == null) {
-      throw new Error(
-        "[STOCK_MOVEMENT] refers_to só pode ser setado junto de um manual_average_cost_value.",
-      );
-    }
 
     const referencedEntry = await this.repository.findByInvoiceNumberAndType(
       productId,
       unitBusinessId,
       refersTo,
-      "PURCHASE_ENTRY",
+      referencedType,
       transaction,
     );
 
     if (!referencedEntry) {
       throw new Error(
-        `[STOCK_MOVEMENT] refers_to="${refersTo}" não corresponde a nenhuma PURCHASE_ENTRY do produto=${productId}/unit_business=${unitBusinessId}.`,
+        `A nota fiscal ${refersTo} não foi encontrada como ${referencedType === "SALE_OUT" ? "saída de venda" : "entrada de compra"} deste produto nesta unidade. Confira o número da nota.`,
       );
     }
 
@@ -1369,11 +1363,12 @@ export class StockMovementService extends BaseService<
     const realigned: StockMovement[] = [];
 
     for (const adjustment of anchoredAdjustments) {
+      // Ajuste de saída ancora numa SALE_OUT; o de entrada, numa PURCHASE_ENTRY.
       const referencedEntry = await this.repository.findByInvoiceNumberAndType(
         productId,
         unitBusinessId,
         adjustment.refers_to as string,
-        "PURCHASE_ENTRY",
+        adjustment.direction === "OUT" ? "SALE_OUT" : "PURCHASE_ENTRY",
         transaction,
       );
 
@@ -1429,7 +1424,7 @@ export class StockMovementService extends BaseService<
       productId,
       unitBusinessId,
       payload.refers_to,
-      payload.manual_average_cost_value,
+      payload.direction_type,
       transaction,
     );
 
@@ -1537,26 +1532,31 @@ export class StockMovementService extends BaseService<
 
     if (!movement) {
       throw new Error(
-        `[STOCK_MOVEMENT] Movimento não encontrado (id=${movementId}, product_id=${productId}, unit_business_id=${unitBusinessId}) — não é possível setar manual_average_cost_value.`,
+        "Movimentação não encontrada para este produto nesta unidade.",
       );
     }
 
     if (movement.movement_type !== "MANUAL_ADJUSTMENT") {
       throw new Error(
-        `[STOCK_MOVEMENT] Movimento ${movementId} não é MANUAL_ADJUSTMENT — não é possível setar manual_average_cost_value.`,
+        "O custo médio manual só pode ser alterado em movimentações de ajuste manual.",
       );
     }
 
-    const nextRefersTo =
-      manualAverageCostValue == null
-        ? null
-        : (refersTo ?? movement.refers_to ?? null);
+    // Ajuste de saída (SALE_OUT) nunca carrega custo médio manual — só entrada.
+    if (movement.direction === "OUT" && manualAverageCostValue != null) {
+      throw new Error(
+        "Ajustes de saída não aceitam custo médio manual. Informe o custo apenas em ajustes de entrada.",
+      );
+    }
+
+    // refers_to não depende do custo: remover o override mantém o vínculo com a nota.
+    const nextRefersTo = refersTo ?? movement.refers_to ?? null;
 
     const referencedEntry = await this.validateRefersTo(
       productId,
       unitBusinessId,
       nextRefersTo,
-      manualAverageCostValue,
+      movement.direction === "OUT" ? "SALE_OUT" : "PURCHASE_ENTRY",
       transaction,
     );
 
@@ -1724,7 +1724,7 @@ export class StockMovementService extends BaseService<
     });
 
     if (!unitBusiness) {
-      throw new Error("Unit business não encontrada!");
+      throw new Error("Unidade de negócio não encontrada.");
     }
 
     const unitBusinessCnpj = unitBusiness.cnpj;
@@ -2093,7 +2093,7 @@ export class StockMovementService extends BaseService<
     });
 
     if (!unitBusiness) {
-      throw new Error("Unit business não encontrada!");
+      throw new Error("Unidade de negócio não encontrada.");
     }
 
     const cutoff = await this.getLatestCsvExtractionDate(transaction);
@@ -2285,7 +2285,7 @@ export class StockMovementService extends BaseService<
     });
 
     if (!unitBusiness) {
-      throw new Error("Unit business não encontrada!");
+      throw new Error("Unidade de negócio não encontrada.");
     }
 
     // Sem filtro de cutoff: pega todas as invoices ativas do unit_business.
