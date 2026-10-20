@@ -16,3 +16,9 @@ export interface FullSupplierMapping extends SupplierMappingAttributes {
 }
 
 export interface SupplierMappingCreationAttributes extends Omit<SupplierMappingAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
+
+// Campos aceitos do body no CRUD por produto; product_id/integrations_id vêm da rota e do usuário logado.
+export type ProductSupplierMappingInput = Pick<
+  SupplierMappingAttributes,
+  "supplier_product_code" | "supplier_cnpj"
+>;

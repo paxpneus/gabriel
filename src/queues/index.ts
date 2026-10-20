@@ -21,6 +21,14 @@ import { MLOrderSyncQueue } from "../modules/handlers/mercado-livre/services/mer
 
 import { ReconcilerQueue } from "../modules/handlers/bling/services/bling-nfe/nfe-reconciler.queue";
 import { BlingReconcilerQueue } from "../modules/handlers/bling/services/bling-orders/bling-reconciler.queue";
+import {
+  isBlingPollEnabled,
+  BLING_POLL_NEW_RECORDS_INTERVAL_MS,
+  BLING_POLL_NEW_RECORDS_SCHEDULER_ID,
+  BLING_POLL_RECENT_CHANGES_INTERVAL_MS,
+  BLING_POLL_RECENT_CHANGES_SCHEDULER_ID,
+  BlingPollService,
+} from "../modules/handlers/bling/services/bling-poll/bling-poll.service";
 
 import { BlingDirectUpsertQueue } from "./../modules/handlers/bling/services/bling/queues/bling-direct-upsert.queue";
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
@@ -150,6 +158,13 @@ function buildQueues(activeWorkers: QueueName[]) {
     { workless: w("NFE_RECONCILER") },
   );
 
+  const blingDirectUpsertQueue = new BlingDirectUpsertQueue({
+    workless: w("BLING_DIRECT_UPSERT"),
+  });
+  const blingApiFetchQueue = new BlingApiFetchQueue({
+    workless: w("BLING_API_FETCH"),
+  });
+
   const blingReconcilerQueue = new BlingReconcilerQueue(
     blingApi,
     { add: (data: any, jobId: string) => blingOrderQueue.add(data, jobId) },
@@ -158,15 +173,24 @@ function buildQueues(activeWorkers: QueueName[]) {
       cnpjVerifyCnae: { hasPendingJobs: () => cnpjQueue.hasPendingJobs() },
       mlOrderSync: { hasPendingJobs: () => mlOrderSyncQueue.hasPendingJobs() },
     },
-    { workless: w("BLING_RECONCILER") },
+    {
+      workless: w("BLING_RECONCILER"),
+      // TEMPORÁRIO: polling que substitui os webhooks da Bling (ver bling-poll.service.ts).
+      blingPoll: new BlingPollService({
+        apiFetch: {
+          add: (data, jobId, options) => blingApiFetchQueue.add(data, jobId, options),
+          hasPendingJobs: () => blingApiFetchQueue.hasPendingJobs(),
+          hasPendingJobsExcept: (names) => blingApiFetchQueue.hasPendingJobsExcept(names),
+        },
+        orderIngestion: {
+          add: (data, jobId, options) => blingOrderQueue.add(data, jobId, options),
+          hasPendingJobs: () => blingOrderQueue.hasPendingJobs(),
+          hasPendingJobsExcept: (names) => blingOrderQueue.hasPendingJobsExcept(names),
+        },
+      }),
+    },
   );
 
-  const blingDirectUpsertQueue = new BlingDirectUpsertQueue({
-    workless: w("BLING_DIRECT_UPSERT"),
-  });
-  const blingApiFetchQueue = new BlingApiFetchQueue({
-    workless: w("BLING_API_FETCH"),
-  });
   const blingTokenRefreshQueue = new BlingTokenRefreshQueue({
     workless: w("BLING_TOKEN_REFRESH"),
   });
@@ -426,6 +450,42 @@ export function startAutomationWorkers() {
     data: { task: "sync-invoiced-or-collected" },
   });
 
+  // TEMPORÁRIO (webhooks da Bling fora): polling de novos (1min) e alterações (20min). Flag desligada
+  // remove os schedulers do Redis — só parar de agendar não basta, o repeat persiste.
+  const blingPollSchedules = [
+    {
+      id: BLING_POLL_NEW_RECORDS_SCHEDULER_ID,
+      every: BLING_POLL_NEW_RECORDS_INTERVAL_MS,
+      task: "poll-new-records",
+    },
+    {
+      id: BLING_POLL_RECENT_CHANGES_SCHEDULER_ID,
+      every: BLING_POLL_RECENT_CHANGES_INTERVAL_MS,
+      task: "poll-recent-changes",
+    },
+  ];
+  const blingPollEnabled = isBlingPollEnabled();
+  for (const schedule of blingPollSchedules) {
+    if (blingPollEnabled) {
+      void blingReconcilerQueue.queue.upsertJobScheduler(
+        schedule.id,
+        { every: schedule.every },
+        {
+          name: schedule.task,
+          data: { task: schedule.task },
+          // Sem retry: a próxima rodada já é a nova tentativa.
+          opts: {
+            attempts: 1,
+            removeOnComplete: true,
+            removeOnFail: { age: 24 * 3600, count: 100 },
+          },
+        },
+      );
+    } else {
+      void blingReconcilerQueue.queue.removeJobScheduler(schedule.id);
+    }
+  }
+
   void nfeQueue;
   void mlOrderSyncQueue;
   void mlScrapingQueue;
@@ -442,6 +502,9 @@ export function startAutomationWorkers() {
   console.log("  → NFE_EMISSION");
   console.log("  → NFE_RECONCILER (1h)");
   console.log("  → BLING_RECONCILER (2h)");
+  console.log(
+    `  → BLING_RECONCILER poll Bling (novos 1min, alterações 20min): ${blingPollEnabled ? "LIGADO" : "desligado"}`,
+  );
 }
 
 // ─── container: workers (relatórios e backup) ────────────────────────────────

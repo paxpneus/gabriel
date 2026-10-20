@@ -272,6 +272,8 @@ services:
       SEFAZ_UF: ${SEFAZ_UF}
       SEFAZ_AMBIENTE: ${SEFAZ_AMBIENTE}
       ML_ORDER_DETAIL_URL: ${ML_ORDER_DETAIL_URL}
+      # TEMPORÁRIO: polling Bling de notas/pedidos (webhooks fora). false remove os agendamentos.
+      BLING_POLL_ENABLED: ${BLING_POLL_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy

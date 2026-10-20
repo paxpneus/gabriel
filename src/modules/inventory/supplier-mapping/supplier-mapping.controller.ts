@@ -18,6 +18,27 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       ...this.mw('createFromUnmapped'),
       this.createFromUnmapped,
     );
+
+    this.router.get(
+      '/product/:productId',
+      ...this.mw('findByProductId'),
+      this.findByProductId,
+    );
+    this.router.post(
+      '/product/:productId',
+      ...this.mw('createForProduct'),
+      this.createForProduct,
+    );
+    this.router.put(
+      '/product/:productId/:id',
+      ...this.mw('updateForProduct'),
+      this.updateForProduct,
+    );
+    this.router.delete(
+      '/product/:productId/:id',
+      ...this.mw('deleteForProduct'),
+      this.deleteForProduct,
+    );
   }
 
   protected middlewaresFor() {
@@ -31,6 +52,10 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       bulkUpdate: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
       createFromUnmapped: [authenticate, userPermissions],
+      findByProductId: [authenticate, userPermissions],
+      createForProduct: [authenticate, userPermissions],
+      updateForProduct: [authenticate, userPermissions],
+      deleteForProduct: [authenticate, userPermissions],
     };
   }
 
@@ -49,6 +74,80 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       });
 
       return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // GET /product/:productId — SupplierMappings paginados do produto, só da integração do usuário logado.
+  findByProductId = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const integrationsId = await this.resolveIntegrationsId(req);
+      const params = this.extractQueryParams(req);
+
+      const result = await this.service.findByProductId(
+        params,
+        req.params.productId as string,
+        integrationsId,
+      );
+
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // POST /product/:productId — cria SupplierMapping do produto na integração do usuário logado.
+  createForProduct = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const integrationsId = await this.resolveIntegrationsId(req);
+      const { supplier_product_code, supplier_cnpj } = req.body;
+
+      const record = await this.service.createForProduct(
+        req.params.productId as string,
+        integrationsId,
+        { supplier_product_code, supplier_cnpj },
+      );
+
+      return res.status(201).json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // PUT /product/:productId/:id — atualiza código/CNPJ; 404 se o mapping não for desse produto/integração.
+  updateForProduct = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const integrationsId = await this.resolveIntegrationsId(req);
+      const { supplier_product_code, supplier_cnpj } = req.body;
+
+      const record = await this.service.updateForProduct(
+        req.params.id as string,
+        req.params.productId as string,
+        integrationsId,
+        { supplier_product_code, supplier_cnpj },
+      );
+      if (!record) return res.status(404).json({ error: 'Não encontrado' });
+
+      return res.json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // DELETE /product/:productId/:id — 404 se o mapping não for desse produto/integração.
+  deleteForProduct = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const integrationsId = await this.resolveIntegrationsId(req);
+
+      const deleted = await this.service.deleteForProduct(
+        req.params.id as string,
+        req.params.productId as string,
+        integrationsId,
+      );
+      if (!deleted) return res.status(404).json({ error: 'Não encontrado' });
+
+      return res.status(204).send();
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

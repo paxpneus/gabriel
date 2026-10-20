@@ -1,4 +1,4 @@
-import { Op, Transaction } from "sequelize";
+import { ForeignKeyConstraintError, Op, Transaction, UniqueConstraintError } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import IntegrationMapping from "./integration-mapping.model";
 import integrationMappingRepository, {
@@ -8,10 +8,12 @@ import {
   IntegrationMappingCreationAttributes,
   EntityType,
   GroupedIntegrationMapping,
+  ProductIntegrationMappingInput,
 } from "./integration-mapping.types";
 import { entityRepositoryMap } from "./helpers/map-repository";
 import Integration from "../integrations/integrations.model";
 import productService from "../../inventory/products/services/product.service";
+import { QueryParams, PaginatedResult } from "../../../shared/query/query.types";
 
 export class IntegrationMappingService extends BaseService<
   IntegrationMapping,
@@ -51,6 +53,97 @@ export class IntegrationMappingService extends BaseService<
     }
 
     return this.repository.create(mappingDto, { transaction });
+  }
+
+  // Lista paginada dos mappings de um produto (entity_type PRODUCT, internal_id = productId); productId obrigatório.
+  findByProductId(
+    params: QueryParams,
+    productId: string,
+  ): Promise<PaginatedResult<IntegrationMapping>> {
+    if (!productId) {
+      throw new Error("product_id não informado");
+    }
+
+    return this.repository.findPaginated(params, this.queryConfig, {}, {
+      entity_type: "PRODUCT",
+      internal_id: productId,
+    });
+  }
+
+  // Cria mapping PRODUCT manual pro produto; checa o produto antes porque internal_id não é FK (evita mapping órfão).
+  async createForProduct(
+    productId: string,
+    data: ProductIntegrationMappingInput,
+  ): Promise<IntegrationMapping> {
+    if (!data.integrations_id || !data.external_id) {
+      throw new Error("integrations_id e external_id são obrigatórios");
+    }
+
+    const product = await productService.findById(productId, { attributes: ["id"] });
+    if (!product) {
+      throw new Error("Produto não encontrado");
+    }
+
+    try {
+      return await this.repository.create({
+        entity_type: "PRODUCT",
+        internal_id: productId,
+        integrations_id: data.integrations_id,
+        external_id: data.external_id,
+      });
+    } catch (error: any) {
+      throw this.toProductMappingError(error);
+    }
+  }
+
+  // Troca integração/external_id de um mapping do produto (internal_id fica fixo); null = não pertence/não existe.
+  async updateForProduct(
+    id: string,
+    productId: string,
+    data: Partial<ProductIntegrationMappingInput>,
+  ): Promise<IntegrationMapping | null> {
+    const existing = await this.repository.findOne({
+      where: { id, entity_type: "PRODUCT", internal_id: productId },
+      attributes: ["id"],
+    });
+    if (!existing) return null;
+
+    if (
+      (data.integrations_id !== undefined && !data.integrations_id) ||
+      (data.external_id !== undefined && !data.external_id)
+    ) {
+      throw new Error("integrations_id/external_id não podem ser vazios");
+    }
+
+    // Só manda o que veio no body, pra não zerar campo omitido.
+    const changes: Partial<ProductIntegrationMappingInput> = {};
+    if (data.integrations_id !== undefined) changes.integrations_id = data.integrations_id;
+    if (data.external_id !== undefined) changes.external_id = data.external_id;
+
+    try {
+      return await this.repository.update(id, changes);
+    } catch (error: any) {
+      throw this.toProductMappingError(error);
+    }
+  }
+
+  // Remove um mapping do produto; false = não pertence/não existe.
+  async deleteForProduct(id: string, productId: string): Promise<boolean> {
+    const deleted = await this.repository.bulkDelete({
+      where: { id, entity_type: "PRODUCT", internal_id: productId },
+    });
+    return deleted > 0;
+  }
+
+  // Traduz violação do unique (entity_type, integrations_id, external_id) e FK de integração pra mensagem legível.
+  private toProductMappingError(error: any): Error {
+    if (error instanceof UniqueConstraintError) {
+      return new Error("Esse external_id já está mapeado nessa integração");
+    }
+    if (error instanceof ForeignKeyConstraintError) {
+      return new Error("Integração não encontrada");
+    }
+    return error;
   }
 
   // Acha alguma entidade pelo external_id de alguma integração

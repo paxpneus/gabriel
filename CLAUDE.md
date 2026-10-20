@@ -121,6 +121,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `rate-limit.md` — rate limit Bling compartilhado, race no dispatch, env docker-compose
 - `bling-nfe-scraping.md` — automação Playwright do Bling pra manifestação de NFe
 - `bling-api-client.md` — trava de escrita por `NODE_ENV` no client Bling (só GET fora de produção), token liberado (app Bling próprio em dev), o que não é coberto
+- `bling-poll.md` — TEMPORÁRIO (webhooks Bling fora): tasks no `BLING_RECONCILER` — novos a cada 1min (NF-e saída/cancelada/entrada + pedidos ausentes no banco) e alterações a cada 20min (até 50 pedidos por `dataAlteracaoInicial`, NF-e por mudança de situação); criação com prioridade sobre atualização (job de novos ignora pendentes `bling-poll-update`; atualização só com `BLING_API_FETCH`/`BLING_ORDER_INGESTION` vazias); flag `BLING_POLL_ENABLED`; quirks de filtro de data da API Bling
 - `bling-sync-routes.md` — rotas `/api/bling-sync` (populate em massa em background de produto/nota/pedido com limite), auth usuário ou application, lock/status em Redis
 - `manual-import.md` — import manual por integração (`/api/manual-import`, Bling: produto/nota/pedido; Tecinco: produto/nota): busca → escolha → fila com prioridade 1, lock por usuário + claim por item no Redis, andamento por polling
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login

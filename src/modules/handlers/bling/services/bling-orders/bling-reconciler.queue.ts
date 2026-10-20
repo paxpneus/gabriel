@@ -11,7 +11,17 @@ const BLING_SITUACAO_ATENDIDO = 9;
 
 const BLING_SITUACAO_AGUARDANDO_NF_COM_COLETA = 748748;
 
-type ReconcilerTask = "reconcile-open-orders" | "sync-invoiced-or-collected";
+type ReconcilerTask =
+  | "reconcile-open-orders"
+  | "sync-invoiced-or-collected"
+  | "poll-new-records"
+  | "poll-recent-changes";
+
+// Polling temporário da Bling no lugar dos webhooks (ver bling-poll.service.ts).
+type BlingPoll = {
+  pollNewRecords: () => Promise<void>;
+  pollRecentChanges: () => Promise<void>;
+};
 
 // Interface estreita pra checar se uma fila tem job pendente (waiting/
 // active/delayed/prioritized), sem esperar/bloquear.
@@ -26,6 +36,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
   private blingOrderIngestionCheck: HasPendingJobs;
   private cnpjCheck: HasPendingJobs;
   private mlOrderSyncCheck: HasPendingJobs;
+  private blingPoll?: BlingPoll;
 
   constructor(
     blingApi: AxiosInstance,
@@ -35,7 +46,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
       cnpjVerifyCnae: HasPendingJobs;
       mlOrderSync: HasPendingJobs;
     },
-    options: { workless?: boolean } = {},
+    options: { workless?: boolean; blingPoll?: BlingPoll } = {},
   ) {
     super("BLING_RECONCILER", {
       concurrency: 1,
@@ -48,6 +59,7 @@ export class BlingReconcilerQueue extends BaseQueueService<
     this.blingOrderIngestionCheck = automationQueueChecks.blingOrderIngestion;
     this.cnpjCheck = automationQueueChecks.cnpjVerifyCnae;
     this.mlOrderSyncCheck = automationQueueChecks.mlOrderSync;
+    this.blingPoll = options.blingPoll;
   }
 
   // Mesmo gate usado pelo NFE_RECONCILER (ver nfe-reconciler.queue.ts): só
@@ -82,9 +94,20 @@ export class BlingReconcilerQueue extends BaseQueueService<
   // Job sem "task" (ou task desconhecida) cai no comportamento original,
   // pra não quebrar nenhuma chamada existente (ex: scheduleOpenOrders()).
   async process(job: Job): Promise<void> {
-    if (!(await this.automationQueuesAreClear())) return;
-
     const task: ReconcilerTask = job?.data?.task ?? "reconcile-open-orders";
+
+    // Gate próprio (filas de destino vazias) fica no poller — este gate é de outras filas.
+    if (task === "poll-new-records" || task === "poll-recent-changes") {
+      if (!this.blingPoll) {
+        console.warn(`[BlingReconciler] ${task} sem poller injetado. Pulando.`);
+        return;
+      }
+      return task === "poll-new-records"
+        ? this.blingPoll.pollNewRecords()
+        : this.blingPoll.pollRecentChanges();
+    }
+
+    if (!(await this.automationQueuesAreClear())) return;
 
     if (task === "sync-invoiced-or-collected") {
       return this.syncInvoicedOrCollectedOrders();

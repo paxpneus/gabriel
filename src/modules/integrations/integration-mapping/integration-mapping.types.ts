@@ -17,3 +17,9 @@ export interface GroupedIntegrationMapping {
   integration_name: string;
   integration_id: string;
 }
+
+// Campos aceitos do body no CRUD por produto; entity_type/internal_id vêm da rota (PRODUCT + productId).
+export type ProductIntegrationMappingInput = Pick<
+  IntegrationMappingAttributes,
+  "integrations_id" | "external_id"
+>;

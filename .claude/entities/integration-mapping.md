@@ -20,6 +20,15 @@ Second, distinct prod incident (Tecinco): a product had a valid mapping for `ext
 
 **Fixed**: existence check now scoped to `external_id` only — a mapping is refused only when *that exact* `external_id` already points at a *different* `internal_id` (the real conflict this function guards against). The same `internal_id` having other `external_id` rows in the same integration is now explicitly allowed. Covered by `integration-mapping.service.test.ts` ("mesmo internal_id já tem mapping pra outro external_id: cria um novo mesmo assim").
 
+## Routes
+
+Generic `PUT/DELETE /:id` and bulk variants return 405 — sync never repoints a mapping. Manual correction only via product-scoped routes (all where `entity_type: "PRODUCT"` + `internal_id = productId`, not tenant-scoped, `integrations_id` comes from body):
+
+- `GET /integration-mapping/product/:productId` → `findByProductId`: paginated via `repository.findPaginated` forced where.
+- `POST /integration-mapping/product/:productId` → `createForProduct` (body `integrations_id`, `external_id`): checks `Product` exists first (`internal_id` isn't an FK — avoids creating an orphan). Unique `(entity_type, integrations_id, external_id)` violation → 400, not silent no-op like `createOrUpdateIntegrationMapping`.
+- `PUT /integration-mapping/product/:productId/:id` → `updateForProduct`: changes only `integrations_id`/`external_id` (sent fields); `internal_id` fixed. 404 if not that product.
+- `DELETE /integration-mapping/product/:productId/:id` → `deleteForProduct`: deleting makes the next catalog sync re-register that external product as unmapped.
+
 ## Auth
 
 Controller exige `authenticate` em todo CRUD (antes `index`/`show`/`create` eram abertos); ainda não escopado por tenant — ver `../modules/auth.md`.

@@ -1,4 +1,4 @@
-import { CreateOptions, UniqueConstraintError } from "sequelize";
+import { CreateOptions, ForeignKeyConstraintError, UniqueConstraintError } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import SupplierMapping from "./supplier-mapping.model";
 import supplierMappingRepository, {
@@ -6,12 +6,14 @@ import supplierMappingRepository, {
 } from "./supplier-mapping.repository";
 import {
   FullSupplierMapping,
+  ProductSupplierMappingInput,
   SupplierMappingCreationAttributes,
 } from "./supplier-mapping.types";
 import { resolveIntegrationsIdForUnitBusiness } from "../../handlers/tecinco/queues/helpers/product.helpers";
 import sequelize from "../../../config/sequelize";
 import unmappedInvoiceProductService from "../unmapped-invoice-product/unmapped-invoice-product.service";
 import integrationMappingService from "../../integrations/integration-mapping/integration-mapping.service";
+import { QueryParams, PaginatedResult } from "../../../shared/query/query.types";
 
 export class SupplierMappingService extends BaseService<
   SupplierMapping,
@@ -39,6 +41,91 @@ export class SupplierMappingService extends BaseService<
     if (!supplierFound) return null;
 
     return supplierFound;
+  }
+
+  // Lista paginada dos SupplierMappings de um produto, escopada na integração do usuário; productId obrigatório.
+  findByProductId(
+    params: QueryParams,
+    productId: string,
+    integrationsId: string,
+  ): Promise<PaginatedResult<SupplierMapping>> {
+    if (!productId) {
+      throw new Error("product_id não informado");
+    }
+
+    return this.repository.findPaginated(params, this.queryConfig, {}, {
+      product_id: productId,
+      integrations_id: integrationsId,
+    });
+  }
+
+  // Cria SupplierMapping pro produto da rota na integração do usuário (validação de código/conflito fica no create).
+  async createForProduct(
+    productId: string,
+    integrationsId: string,
+    data: ProductSupplierMappingInput,
+  ): Promise<SupplierMapping> {
+    try {
+      return await this.create({
+        product_id: productId,
+        integrations_id: integrationsId,
+        supplier_product_code: data.supplier_product_code,
+        supplier_cnpj: data.supplier_cnpj,
+      });
+    } catch (error: any) {
+      // FK de product_id = produto inexistente (não dá pra checar via productService: import circular).
+      if (error instanceof ForeignKeyConstraintError) {
+        throw new Error("Produto não encontrado");
+      }
+      throw error;
+    }
+  }
+
+  // Atualiza código/CNPJ de um SupplierMapping do produto na integração do usuário; null = não pertence/não existe.
+  async updateForProduct(
+    id: string,
+    productId: string,
+    integrationsId: string,
+    data: Partial<ProductSupplierMappingInput>,
+  ): Promise<SupplierMapping | null> {
+    const existing = await this.findOne({
+      where: { id, product_id: productId, integrations_id: integrationsId },
+      attributes: ["id"],
+    });
+    if (!existing) return null;
+
+    if (data.supplier_product_code !== undefined && !data.supplier_product_code) {
+      throw new Error("supplier_product_code não informado");
+    }
+
+    // Só manda o que veio no body, pra não zerar campo omitido.
+    const changes: Partial<ProductSupplierMappingInput> = {};
+    if (data.supplier_product_code !== undefined) changes.supplier_product_code = data.supplier_product_code;
+    if (data.supplier_cnpj !== undefined) changes.supplier_cnpj = data.supplier_cnpj;
+
+    try {
+      // repository.update (instância) em vez de bulkUpdate pra rodar o hook beforeUpdate que limpa o CNPJ.
+      return await this.repository.update(id, changes);
+    } catch (error: any) {
+      if (error instanceof UniqueConstraintError) {
+        throw new Error(
+          `Já existe um SupplierMapping com o código ${changes.supplier_product_code} nessa integração`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Remove um SupplierMapping do produto na integração do usuário; false = não pertence/não existe.
+  async deleteForProduct(
+    id: string,
+    productId: string,
+    integrationsId: string,
+  ): Promise<boolean> {
+    const deleted = await this.bulkDelete({
+      where: { id, product_id: productId, integrations_id: integrationsId },
+    });
+    return deleted > 0;
   }
 
   async create(

@@ -457,6 +457,19 @@ export abstract class BaseQueueService<T, R = void> {
     return jobs.some((job) => nameSet.has(job.name));
   }
 
+  // Inverso de hasPendingJobsNamed: existe job pendente cujo `name` NÃO está na lista?
+  // Permite um gate ignorar jobs de baixa prioridade que não devem bloquear o fluxo principal.
+  async hasPendingJobsExcept(names: string[]): Promise<boolean> {
+    const jobs = await this.queue.getJobs([
+      "waiting",
+      "active",
+      "delayed",
+      "prioritized",
+    ]);
+    const nameSet = new Set(names);
+    return jobs.some((job) => !nameSet.has(job.name));
+  }
+
   // Redelay: devolve o job pra fila de delayed e sai do processor sem marcar
   // sucesso/falha — libera o slot de concurrency imediatamente (diferente de
   // um sleep/poll dentro do processor, que segura o slot o tempo todo).

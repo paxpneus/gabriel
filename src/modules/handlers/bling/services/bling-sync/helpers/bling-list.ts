@@ -25,16 +25,35 @@ export function toBlingParams(query: BlingQuery): URLSearchParams {
   return params;
 }
 
-// Uma página de listagem da Bling (usada pelo populate em massa e pelo import manual).
+// Uma página de listagem da Bling (usada pelo populate em massa, import manual e poll).
 export async function fetchBlingListPage<T>(
   endpoint: string,
   query: BlingQuery = {},
   page = 1,
+  pageSize = BLING_LIST_PAGE_SIZE,
 ): Promise<T[]> {
   const { data } = await blingGet<{ data: T[] }>(endpoint, blingApi, {
-    params: toBlingParams({ ...query, pagina: page, limite: BLING_LIST_PAGE_SIZE }),
+    params: toBlingParams({ ...query, pagina: page, limite: pageSize }),
+    // Espaço como %20: a Bling não decodifica "+" e ignora filtro de data com hora ("YYYY-MM-DD HH:mm:ss").
+    paramsSerializer: {
+      serialize: (params) =>
+        (params as URLSearchParams).toString().replace(/\+/g, "%20"),
+    },
   });
   return data?.data ?? [];
+}
+
+// Itera página a página até a Bling devolver página vazia ou incompleta.
+export async function* paginateBling<T>(
+  endpoint: string,
+  query: BlingQuery = {},
+): AsyncGenerator<T[]> {
+  for (let page = 1; ; page++) {
+    const items = await fetchBlingListPage<T>(endpoint, query, page);
+    if (!items.length) return;
+    yield items;
+    if (items.length < BLING_LIST_PAGE_SIZE) return;
+  }
 }
 
 // situacao 2 da Bling = cancelada; o resto entra como aberta.

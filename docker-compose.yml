@@ -361,6 +361,8 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PDV_ACCESS_TOKEN_SECRET: ${PDV_ACCESS_TOKEN_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
+      # TEMPORÁRIO: polling Bling de notas/pedidos (webhooks fora). false remove os agendamentos.
+      BLING_POLL_ENABLED: ${BLING_POLL_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy

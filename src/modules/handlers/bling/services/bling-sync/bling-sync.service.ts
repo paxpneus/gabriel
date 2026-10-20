@@ -22,12 +22,11 @@ import {
   PopulateStepResult,
 } from "./bling-sync.types";
 import {
-  BLING_LIST_PAGE_SIZE,
   BlingInvoiceResource,
   BlingQuery,
   buildBlingApiFetchPayload,
-  fetchBlingListPage,
   mapBlingInvoiceStatus,
+  paginateBling,
 } from "./helpers/bling-list";
 
 const POPULATE_LOCK_KEY = "bling-sync:populate:lock";
@@ -92,18 +91,6 @@ function invoiceJobId(
 
 function orderJobId(blingId: number) {
   return `bling-order-force-update-${blingId}`;
-}
-
-async function* paginateBling<T>(
-  endpoint: string,
-  query: BlingQuery = {},
-): AsyncGenerator<T[]> {
-  for (let page = 1; ; page++) {
-    const items = await fetchBlingListPage<T>(endpoint, query, page);
-    if (!items.length) return;
-    yield items;
-    if (items.length < BLING_LIST_PAGE_SIZE) return;
-  }
 }
 
 function describeBlingError(err: any): string {

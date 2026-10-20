@@ -10,3 +10,8 @@
   - If `unmapped.external_id` is set, also calls `integrationMappingService.createOrUpdateIntegrationMapping(...)` — otherwise the next catalog sync wouldn't find the mapping and would recreate the unmapped row.
   - Deletes the `UnmappedInvoiceProduct` row. All in one transaction.
   - Controller checks `unmapped.integrations_id` against the caller's own resolved integration first (same ownership-check pattern as `show`/`update`/`destroy`).
+- Product-scoped CRUD, always scoped to `product_id` (route) + caller's resolved `integrations_id` (same tenant scope as `index`; body `product_id`/`integrations_id` ignored):
+  - `GET /supplier-mapping/product/:productId` → `findByProductId`: paginated via `repository.findPaginated` forced where.
+  - `POST /supplier-mapping/product/:productId` → `createForProduct` (body `supplier_product_code`, `supplier_cnpj?`): reuses `create` (unique/trigger handling); FK error → "Produto não encontrado" (can't pre-check via `productService`: circular import, product.service imports supplierMappingService).
+  - `PUT /supplier-mapping/product/:productId/:id` → `updateForProduct`: only sent fields; uses `repository.update` (instance) so `beforeUpdate` CNPJ-cleaning hook runs. 404 if not that product/integration.
+  - `DELETE /supplier-mapping/product/:productId/:id` → `deleteForProduct`: single `bulkDelete` with scoped where; 404 if 0 rows.
