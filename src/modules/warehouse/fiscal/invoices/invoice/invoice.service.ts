@@ -814,7 +814,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     const pdf = await sequelize.transaction(async (transaction) => {
       const invoices = await this.repository.findAll({
         where: { id: { [Op.in]: invoiceIds } },
-        attributes: ["id", "danfe_path", "xml_path"],
+        attributes: ["id", "xml_path"],
         transaction,
       });
       if (!invoices.length) return null;
@@ -829,33 +829,34 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         );
       }
 
-      const buffers = await Promise.all(
-        invoices.map((invoice) =>
-          this.resolveDanfeBuffer(invoice).catch((err: any) => {
+      // TEMPORÁRIO: não consulta o danfe_path (nuvem), sempre gera do XML; depois volta a usar resolveDanfeBuffer(invoice).
+      const invoicePdfs = await Promise.all(
+        invoices.map(async (invoice) => {
+          try {
+            return await PDFDocument.load(
+              await this.resolveDanfeBuffer({
+                id: invoice.id,
+                danfe_path: undefined,
+                xml_path: invoice.xml_path,
+              }),
+            );
+          } catch (err: any) {
             console.error(`[DANFE] Erro invoice ${invoice.id}:`, err.message);
             return null;
-          }),
-        ),
+          }
+        }),
       );
 
       const mergedPdf = await PDFDocument.create();
 
-      for (const [index, buffer] of buffers.entries()) {
-        if (!buffer) continue;
+      for (const invoicePdf of invoicePdfs) {
+        if (!invoicePdf) continue;
 
-        try {
-          const invoicePdf = await PDFDocument.load(buffer);
-          const pages = await mergedPdf.copyPages(
-            invoicePdf,
-            invoicePdf.getPageIndices(),
-          );
-          pages.forEach((p) => mergedPdf.addPage(p));
-        } catch (err: any) {
-          console.error(
-            `[DANFE] PDF inválido invoice ${invoices[index].id}:`,
-            err.message,
-          );
-        }
+        const pages = await mergedPdf.copyPages(
+          invoicePdf,
+          invoicePdf.getPageIndices(),
+        );
+        pages.forEach((p) => mergedPdf.addPage(p));
       }
 
       return Buffer.from(await mergedPdf.save());
