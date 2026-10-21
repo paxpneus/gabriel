@@ -1,5 +1,6 @@
 import { IncludeOptions, Op, WhereOptions, fn, col, literal } from "sequelize";
 import { saleInvoiceTransporterCdExpression } from "./helpers/transporter-cd";
+import { orderItemsQuantityLiteral } from "./helpers/status-summary";
 import {
   hasReceiptLiteral,
   saleInvoiceCd21BatchStageCaseLiteral,
@@ -19,6 +20,7 @@ import {
   PdvBatchTargetFilter,
   PdvSalesRequestStatus,
   PdvShippingType,
+  PdvStatusCount,
   TERMINAL_PDV_SALES_REQUEST_STATUSES,
 } from "./pdv-sales-request.types";
 import Order from "../../orders/order/orders.model";
@@ -333,6 +335,35 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
     );
   }
 
+  // Σ volumes (order_items.quantity) por status, só nos `statuses` pedidos —
+  // sub_stats.total_volumes de getStatusSummary (fora de countGroupedByStatus,
+  // que o quadro também usa).
+  async sumVolumesGroupedByStatus(
+    where: WhereOptions,
+    statuses: PdvSalesRequestStatus[],
+  ): Promise<Partial<Record<PdvSalesRequestStatus, number>>> {
+    const rows = (await this.model.findAll({
+      where: { ...where, status: { [Op.in]: statuses } },
+      attributes: [
+        "status",
+        [fn("SUM", orderItemsQuantityLiteral()), "total_volumes"],
+      ],
+      group: ["status"],
+      raw: true,
+    })) as unknown as {
+      status: PdvSalesRequestStatus;
+      total_volumes: string | null;
+    }[];
+
+    return rows.reduce<Partial<Record<PdvSalesRequestStatus, number>>>(
+      (acc, row) => {
+        acc[row.status] = Number(row.total_volumes ?? 0);
+        return acc;
+      },
+      {},
+    );
+  }
+
   // Indicativos que não saem do group by status (ex.: critical_warnings).
   async countWhere(where: WhereOptions): Promise<number> {
     return this.model.count({ where });
@@ -340,10 +371,10 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
 
   // SHIPPING + shipping_type ADT agrupado pelo CD da transportadora da nota de
   // venda ("12"/"17"/outro; chave "" sem nota ou sem CD no nome) — indicativos
-  // adt_12/adt_17/pending_expedition de getStatusSummary.
+  // adt_12/adt_17/pending_expedition de getStatusSummary (contagem + Σ volumes).
   async countAdtShippingGroupedByTransporterCd(
     where: WhereOptions,
-  ): Promise<Record<string, number>> {
+  ): Promise<Record<string, PdvStatusCount>> {
     const cd = saleInvoiceTransporterCdExpression();
     const rows = (await this.model.findAll({
       where: {
@@ -351,13 +382,24 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         status: PdvSalesRequestStatus.SHIPPING,
         shipping_type: PdvShippingType.ADT,
       },
-      attributes: [[cd, "cd"], [fn("COUNT", col("id")), "quantity"]],
+      attributes: [
+        [cd, "cd"],
+        [fn("COUNT", col("id")), "quantity"],
+        [fn("SUM", orderItemsQuantityLiteral()), "total_volumes"],
+      ],
       group: [cd as any],
       raw: true,
-    })) as unknown as { cd: string | null; quantity: string }[];
+    })) as unknown as {
+      cd: string | null;
+      quantity: string;
+      total_volumes: string | null;
+    }[];
 
-    return rows.reduce<Record<string, number>>((acc, row) => {
-      acc[row.cd ?? ""] = Number(row.quantity);
+    return rows.reduce<Record<string, PdvStatusCount>>((acc, row) => {
+      acc[row.cd ?? ""] = {
+        quantity: Number(row.quantity),
+        total_volumes: Number(row.total_volumes ?? 0),
+      };
       return acc;
     }, {});
   }

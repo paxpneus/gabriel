@@ -1,4 +1,4 @@
-import { Op, WhereOptions } from "sequelize";
+import { Op, Sequelize, WhereOptions } from "sequelize";
 import {
   PdvSalesRequestStatus,
   PdvShippingType,
@@ -42,6 +42,8 @@ interface PdvStatusIndicatorDefinition {
   transporterCds?: readonly string[];
   // Só solicitações com aviso crítico — contado via countWhere, ver getStatusSummary.
   criticalWarnings?: boolean;
+  // Expõe sub_stats.total_volumes (Σ quantity dos order_items das solicitações do indicativo).
+  totalVolumes?: boolean;
 }
 
 const ACTIVE_STATUSES = Object.values(PdvSalesRequestStatus).filter(
@@ -80,25 +82,29 @@ export const PDV_STATUS_INDICATORS: Record<
   },
   // Todo ADT em SHIPPING, qualquer transportadora (inclui os de adt_12/adt_17).
   pending_expedition: {
-    label: "Pendente expedição",
+    label: "Pendente expedição ADT",
     statuses: [PdvSalesRequestStatus.SHIPPING],
     shippingType: PdvShippingType.ADT,
+    totalVolumes: true,
   },
   adt_12: {
     label: "ADT CD 12",
     statuses: [PdvSalesRequestStatus.SHIPPING],
     shippingType: PdvShippingType.ADT,
     transporterCds: ["12"],
+    totalVolumes: true,
   },
   adt_17: {
     label: "ADT CD 17",
     statuses: [PdvSalesRequestStatus.SHIPPING],
     shippingType: PdvShippingType.ADT,
     transporterCds: ["17"],
+    totalVolumes: true,
   },
   ship_today: {
     label: "Embarque hoje",
     statuses: [PdvSalesRequestStatus.SHIP_TODAY],
+    totalVolumes: true,
   },
   cd21_billing: {
     label: "CD21 faturamento",
@@ -186,4 +192,13 @@ export function indicatorWhere(key: PdvStatusIndicatorKey): WhereOptions {
   }
 
   return where;
+}
+
+// Σ quantity dos order_items do pedido da solicitação — volumes somados nas contagens agrupadas do resumo.
+export function orderItemsQuantityLiteral(requestAlias = '"PdvSalesRequest"') {
+  return Sequelize.literal(`(
+    SELECT COALESCE(SUM(oi.quantity), 0)
+    FROM order_items oi
+    WHERE oi.order_id = ${requestAlias}."order_id"
+  )`);
 }

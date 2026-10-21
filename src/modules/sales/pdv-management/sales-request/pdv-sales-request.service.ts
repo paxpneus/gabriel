@@ -31,6 +31,7 @@ import {
   PdvBatchStage,
   PdvBatchTarget,
   PdvBatchTargetFilter,
+  PdvStatusCount,
 } from "./pdv-sales-request.types";
 import pdvSalesRequestHistoryService from "../sales-request-history/pdv-sales-request-history.service";
 import pdvSalesRequestReceiptService from "../sales-request-receipt/pdv-sales-request-receipt.service";
@@ -633,23 +634,35 @@ export class PdvSalesRequestService extends BaseService<
     const criticalWarningKeys = keys.filter(
       (key) => PDV_STATUS_INDICATORS[key].criticalWarnings,
     );
+    // Status cujos volumes vêm do group by status (ADT já soma volumes na contagem por CD).
+    const volumeStatuses = keys
+      .filter(
+        (key) =>
+          PDV_STATUS_INDICATORS[key].totalVolumes &&
+          !PDV_STATUS_INDICATORS[key].shippingType,
+      )
+      .flatMap((key) => PDV_STATUS_INDICATORS[key].statuses);
 
     const [
       statusCounts,
       correctionOriginCounts,
       transporterCdCounts,
       criticalWarningCounts,
+      statusVolumes,
     ] = await Promise.all([
       this.repository.countGroupedByStatus(where),
       this.repository.countGroupedByCorrectionOrigin(where),
       needsTransporterCounts
         ? this.repository.countAdtShippingGroupedByTransporterCd(where)
-        : Promise.resolve<Record<string, number>>({}),
+        : Promise.resolve<Record<string, PdvStatusCount>>({}),
       Promise.all(
         criticalWarningKeys.map((key) =>
           this.repository.countWhere({ [Op.and]: [where, indicatorWhere(key)] }),
         ),
       ),
+      volumeStatuses.length
+        ? this.repository.sumVolumesGroupedByStatus(where, volumeStatuses)
+        : Promise.resolve<Partial<Record<PdvSalesRequestStatus, number>>>({}),
     ]);
 
     const correctionOrigins = PDV_CORRECTION_ORIGINS_BY_SCREEN[access.screen];
@@ -661,8 +674,9 @@ export class PdvSalesRequestService extends BaseService<
 
     for (const key of keys) {
       const definition = PDV_STATUS_INDICATORS[key];
-      const sumCds = (cds: readonly string[]) =>
-        cds.reduce((sum, cd) => sum + (transporterCdCounts[cd] ?? 0), 0);
+      const cds = definition.transporterCds ?? Object.keys(transporterCdCounts);
+      const sumCds = (field: keyof PdvStatusCount) =>
+        cds.reduce((sum, cd) => sum + (transporterCdCounts[cd]?.[field] ?? 0), 0);
       const statusTotal = definition.statuses.reduce(
         (sum, status) => sum + (statusCounts[status] ?? 0),
         0,
@@ -674,12 +688,22 @@ export class PdvSalesRequestService extends BaseService<
       } else if (definition.correctionOrigin) {
         quantity = correctionOriginCounts[definition.correctionOrigin] ?? 0;
       } else if (definition.shippingType) {
-        quantity = definition.transporterCds
-          ? sumCds(definition.transporterCds)
-          : sumCds(Object.keys(transporterCdCounts));
+        quantity = sumCds("quantity");
       }
 
       summary[key] = { label: definition.label, quantity };
+
+      // Volumes do ADT saem da contagem por CD; os demais, da soma por status.
+      if (definition.totalVolumes) {
+        summary[key].sub_stats = {
+          total_volumes: definition.shippingType
+            ? sumCds("total_volumes")
+            : definition.statuses.reduce(
+                (sum, status) => sum + (statusVolumes[status] ?? 0),
+                0,
+              ),
+        };
+      }
 
       if (key === "pending_correction" && correctionOrigins?.length) {
         summary[key].sub_stats = correctionOrigins.reduce<
@@ -746,9 +770,17 @@ export class PdvSalesRequestService extends BaseService<
     params: { userId?: string; description: string },
   ): Promise<PdvSalesRequest> {
     const updated = await sequelize.transaction(async (t) => {
+      // Origem da correção só vale em PENDING_CORRECTION — zera ao sair. CANCELLED preserva
+      // porque a reativação pela Bling pode voltar pra PENDING_CORRECTION (reactivate).
+      const keepCorrectionOrigin =
+        target === PdvSalesRequestStatus.PENDING_CORRECTION ||
+        target === PdvSalesRequestStatus.CANCELLED;
       const updated = await this.repository.update(
         id,
-        { status: target },
+        {
+          status: target,
+          ...(!keepCorrectionOrigin && { correction_origin_status: null }),
+        },
         { transaction: t },
       );
       if (!updated) throw new Error("Solicitação não encontrada");

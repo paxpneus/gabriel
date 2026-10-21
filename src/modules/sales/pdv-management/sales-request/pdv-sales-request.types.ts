@@ -70,6 +70,12 @@ export interface PdvWarning {
   color: PdvWarningColor;
 }
 
+// Contagem agrupada do resumo de status: solicitações + Σ volumes (order_items.quantity).
+export interface PdvStatusCount {
+  quantity: number;
+  total_volumes: number;
+}
+
 // Solicitação candidata a uma ação de lote do PDV: nota de venda, pedido e transportadora da nota.
 export interface PdvBatchTarget {
   id: string;
