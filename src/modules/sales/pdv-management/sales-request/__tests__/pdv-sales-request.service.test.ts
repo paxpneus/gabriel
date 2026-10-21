@@ -493,7 +493,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, correction_origin_status: null },
         { transaction: mockTransaction },
       );
       expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
@@ -575,7 +575,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -625,7 +625,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -670,7 +670,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.FINISHED },
+        { status: PdvSalesRequestStatus.FINISHED, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -733,7 +733,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_NF_TRANSFER },
+        { status: PdvSalesRequestStatus.PENDING_NF_TRANSFER, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -763,7 +763,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.SHIP_TODAY },
+        { status: PdvSalesRequestStatus.SHIP_TODAY, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -1101,7 +1101,7 @@ describe("PdvSalesRequestService", () => {
       });
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.SHIP_TODAY },
+        { status: PdvSalesRequestStatus.SHIP_TODAY, correction_origin_status: null },
         expect.anything(),
       );
     });
@@ -1116,7 +1116,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.SHIP_TODAY },
+        { status: PdvSalesRequestStatus.SHIP_TODAY, correction_origin_status: null },
         expect.anything(),
       );
     });
@@ -1134,7 +1134,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.FINISHED },
+        { status: PdvSalesRequestStatus.FINISHED, correction_origin_status: null },
         expect.anything(),
       );
     });
@@ -1156,7 +1156,7 @@ describe("PdvSalesRequestService", () => {
       });
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_NF_TRANSFER },
+        { status: PdvSalesRequestStatus.PENDING_NF_TRANSFER, correction_origin_status: null },
         expect.anything(),
       );
     });
@@ -1176,7 +1176,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.SHIPPING },
+        { status: PdvSalesRequestStatus.SHIPPING, correction_origin_status: null },
         expect.anything(),
       );
     });
@@ -1907,7 +1907,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_FINANCE },
+        { status: PdvSalesRequestStatus.PENDING_FINANCE, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -1966,7 +1966,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_FINANCE },
+        { status: PdvSalesRequestStatus.PENDING_FINANCE, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -2055,7 +2055,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_FINANCE },
+        { status: PdvSalesRequestStatus.PENDING_FINANCE, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -2072,7 +2072,7 @@ describe("PdvSalesRequestService", () => {
       expect(orderService.findById).not.toHaveBeenCalled();
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_FINANCE },
+        { status: PdvSalesRequestStatus.PENDING_FINANCE, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -3024,7 +3024,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.SHIPPING },
+        { status: PdvSalesRequestStatus.SHIPPING, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -3200,7 +3200,7 @@ describe("PdvSalesRequestService", () => {
       });
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -3284,7 +3284,7 @@ describe("PdvSalesRequestService", () => {
       });
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -3338,7 +3338,7 @@ describe("PdvSalesRequestService", () => {
       ).toHaveBeenCalledWith(["invoice-sale"], "cd21-id");
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.FINISHED },
+        { status: PdvSalesRequestStatus.FINISHED, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -3373,7 +3373,7 @@ describe("PdvSalesRequestService", () => {
       ).toHaveBeenCalledWith(["invoice-sale"], "cd21-id");
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.FINISHED },
+        { status: PdvSalesRequestStatus.FINISHED, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -3415,7 +3415,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.FINISHED },
+        { status: PdvSalesRequestStatus.FINISHED, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
@@ -3555,7 +3555,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS },
+        { status: PdvSalesRequestStatus.PENDING_CD21_ANALYSIS, correction_origin_status: null },
         { transaction: mockTransaction },
       );
       expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
@@ -3583,7 +3583,7 @@ describe("PdvSalesRequestService", () => {
 
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
         "r1",
-        { status: PdvSalesRequestStatus.OPEN },
+        { status: PdvSalesRequestStatus.OPEN, correction_origin_status: null },
         { transaction: mockTransaction },
       );
     });
