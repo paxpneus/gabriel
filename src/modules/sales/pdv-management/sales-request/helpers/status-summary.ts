@@ -46,8 +46,11 @@ interface PdvStatusIndicatorDefinition {
   totalVolumes?: boolean;
 }
 
-const ACTIVE_STATUSES = Object.values(PdvSalesRequestStatus).filter(
-  (status) => !TERMINAL_PDV_SALES_REQUEST_STATUSES.includes(status),
+// Não-terminais + FINISHED: aviso crítico continua contando depois de finalizada.
+const CRITICAL_WARNING_STATUSES = Object.values(PdvSalesRequestStatus).filter(
+  (status) =>
+    status === PdvSalesRequestStatus.FINISHED ||
+    !TERMINAL_PDV_SALES_REQUEST_STATUSES.includes(status),
 );
 
 export const PDV_STATUS_INDICATORS: Record<
@@ -118,7 +121,7 @@ export const PDV_STATUS_INDICATORS: Record<
   // Mesmo critério de buildCriticalWarnings (card do quadro).
   critical_warnings: {
     label: "Avisos críticos",
-    statuses: ACTIVE_STATUSES,
+    statuses: CRITICAL_WARNING_STATUSES,
     criticalWarnings: true,
   },
 };

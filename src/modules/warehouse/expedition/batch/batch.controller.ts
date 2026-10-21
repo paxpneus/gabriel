@@ -479,8 +479,6 @@ export class ExpeditionBatchController extends BaseController<
         include: [{ model: UnitBusiness, as: "unitBusiness" }],
       });
 
-      console.log("USER ACHADO", user)
-
       await this.service.finishBatch(batchId as string, justification, user);
 
       return res.json("Lote finalizado com sucesso!");

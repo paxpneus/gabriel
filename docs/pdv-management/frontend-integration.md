@@ -7,6 +7,10 @@ aqui.
 
 **Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
 
+## Mudou: `critical_warnings` conta também `FINISHED`
+
+Indicativo `critical_warnings` (CD21) e `filters[indicator]=critical_warnings` passam a incluir solicitações finalizadas com aviso crítico, além das em aberto.
+
 ## Mudou: `sub_stats.total_volumes` nos indicativos de expedição
 
 `GET summary/status-counts` (tela CD21): `ship_today`, `adt_12`, `adt_17` e `pending_expedition` agora trazem `sub_stats: { total_volumes }` — soma das quantidades dos itens dos pedidos do indicativo. Ex.: `"ship_today": { "label": "Embarque hoje", "quantity": 3, "sub_stats": { "total_volumes": 14 } }`.
