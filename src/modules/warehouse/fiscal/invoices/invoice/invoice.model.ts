@@ -41,8 +41,9 @@ class Invoice
   public transporter_document?: string;
   public total_read!: number;
   public total_expected!: number;
-  public description?: string;
-  public bonded_invoice?: string;
+  public transfer_invoice_reference?: string | null;
+  public return_invoice_reference?: string | null;
+  public observation?: string | null;
   public invoice_series?: string | null;
   public invoice_value?: number;
   public invoice_products_value?: number;
@@ -92,12 +93,17 @@ Invoice.init(
       type: DataTypes.STRING(14),
       allowNull: false,
     },
-    description: {
+    transfer_invoice_reference: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },
-    bonded_invoice: {
+    return_invoice_reference: {
       type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    // Observação livre; obrigatória ao finalizar nota pendente manualmente (finishPendingInvoice).
+    observation: {
+      type: DataTypes.TEXT,
       allowNull: true,
     },
     xml_path: {

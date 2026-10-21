@@ -984,7 +984,7 @@ export class DailyOperationReportRepository {
     const snapshots = filters.drillDown
       ? await sequelize.query(
           `
-          SELECT ios.*, i.number_system, i.description
+          SELECT ios.*, i.number_system, i.transfer_invoice_reference
           FROM invoice_operation_snapshots ios
           JOIN invoices i ON i.id = ios.invoice_id
           -- Adiantamentos aparecem no drill-down (is_advance_payment visível ao consumidor)

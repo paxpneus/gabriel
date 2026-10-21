@@ -209,7 +209,7 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoiceKey, unitBusinessId, type, batchId, description } = req.body;
+      const { invoiceKey, unitBusinessId, type, batchId, transfer_invoice_reference } = req.body;
 
       const chaves: string[] = Array.isArray(invoiceKey)
       ? invoiceKey
@@ -225,7 +225,7 @@ export class ExpeditionBatchController extends BaseController<
         unitBusinessResolved,
         type,
         batchId,
-        description
+        transfer_invoice_reference
       );
       return res.status(201).json(batches);
     } catch (error: any) {
@@ -238,7 +238,7 @@ export class ExpeditionBatchController extends BaseController<
   res: Response,
 ): Promise<Response> => {
   try {
-    const { type, description } = req.body;
+    const { type, transfer_invoice_reference } = req.body;
     const { invoiceKey } = req.body;
 
     const chaves: string[] = Array.isArray(invoiceKey)
@@ -264,7 +264,7 @@ export class ExpeditionBatchController extends BaseController<
       chaves,
       unitBusinessId,
       type,
-      description,
+      transfer_invoice_reference,
     );
 
     return res.json(batch);

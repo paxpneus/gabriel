@@ -78,8 +78,8 @@ const SUMMARY_INVOICE_ATTRIBUTES = [
   "customer_name",
   "sender_name",
   "receiver_name",
-  "description",
-  "bonded_invoice",
+  "transfer_invoice_reference",
+  "return_invoice_reference",
   "transporter_name",
   "printed_label",
   "xml_key",
@@ -573,7 +573,8 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
           },
         ],
         attributes: {
-          exclude: ["source_payload", "xml_path"],
+          // observation só no detalhe por id, nunca em listagem.
+          exclude: ["source_payload", "xml_path", "observation"],
           include: [
             ...this.listedInvoiceCalculatedAttributes(unitBusinessId),
             [deliveryNoteGeneratedLiteral(), "delivery_note_generated"],
@@ -1077,6 +1078,23 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     ]);
   }
 
+  // Acrescenta texto em observation numa linha nova, sem sobrescrever o que já existe (concatena no próprio UPDATE).
+  async appendObservation(
+    invoiceIds: string[],
+    text: string,
+    transaction?: Transaction,
+  ): Promise<void> {
+    const escaped = Invoice.sequelize!.escape(text);
+    await Invoice.update(
+      {
+        observation: Sequelize.literal(
+          `CASE WHEN observation IS NULL OR observation = '' THEN ${escaped} ELSE observation || E'\\n' || ${escaped} END`,
+        ),
+      },
+      { where: { id: { [Op.in]: invoiceIds } }, transaction },
+    );
+  }
+
   async updateWithAttributesForAllUnits(
     invoiceIds: string[],
     data: Partial<
@@ -1133,7 +1151,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
   ): Promise<InvoiceCancellationTarget | null> {
     const data = await this.findOne({
       where,
-      attributes: ["id", "number_system", "bonded_invoice"],
+      attributes: ["id", "number_system", "return_invoice_reference"],
       include: [
         {
           model: InvoiceUnitBusinessAttributes,
@@ -1159,7 +1177,7 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     return {
       id: plain.id,
       number_system: plain.number_system,
-      bonded_invoice: plain.bonded_invoice ?? null,
+      return_invoice_reference: plain.return_invoice_reference ?? null,
       statuses: plain.unitBusinessAttributes.map((attr: any) => attr.status),
       batchInvoiceId: plain.batchInvoice?.id ?? null,
       batchStatus: plain.batchInvoice?.batch?.status ?? null,

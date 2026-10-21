@@ -59,6 +59,12 @@ export class InvoiceController extends BaseController<
       this.markAsInternalUse,
     );
 
+    this.router.post(
+      "/:id/finish",
+      ...this.mw("finishPendingInvoice"),
+      this.finishPendingInvoice,
+    );
+
     this.router.put(
       "/schedule/invoice/:id",
       ...this.mw("scheduleInvoice"),
@@ -162,6 +168,7 @@ export class InvoiceController extends BaseController<
       getInvoiceSupplierReport: [authenticate, userPermissions],
       listInvoicesPendingLogisticOccurrence: [authenticate, userPermissions],
       markAsInternalUse: [authenticate, userPermissions],
+      finishPendingInvoice: [authenticate, userPermissions],
       listTransferInvoices: [authenticate, userPermissions],
       getTransferInvoicesReport: [authenticate, userPermissions],
       // CRUD bulk do BaseController: sem chave aqui a rota ficava sem nenhum middleware.
@@ -433,6 +440,27 @@ export class InvoiceController extends BaseController<
         context.unitBusinessId,
       );
       await this.service.markAsInternalUse(ids, unitBusinessId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+
+  // Finaliza nota OPEN/PENDING da unit business com observação obrigatória (body: { observation }).
+  finishPendingInvoice = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { observation } = req.body;
+      const { id } = req.params;
+      const context = await getUserContext(req);
+      const unitBusinessId = this.resolveUnitBusinessId(
+        req,
+        context.unitBusinessId,
+      );
+      await this.service.finishPendingInvoice(
+        id as string,
+        unitBusinessId,
+        observation,
+      );
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

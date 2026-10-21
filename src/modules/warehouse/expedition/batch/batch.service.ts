@@ -388,7 +388,7 @@ async addInvoiceToBatch(
   unitBusinessId: string,
   type: string,
   batchId?: string,
-  description?: string,
+  transferInvoiceReference?: string,
   externalTransaction?: Transaction,
 ): Promise<ExpeditionBatch> {
   let resultBatchId: string;
@@ -555,11 +555,11 @@ async addInvoiceToBatch(
         transaction: t,
       });
 
-      if (description) {
+      if (transferInvoiceReference) {
         await invoiceService.updateInvoices(
           plainInvoices.map((i) => i.id),
           unitBusinessId,
-          { description },
+          { transfer_invoice_reference: transferInvoiceReference },
           undefined,
           t,
         );
@@ -645,7 +645,7 @@ async addInvoiceToLastOutgoingBatch(
   chavesAcesso: string[],
   unitBusinessId: string,
   type: string,
-  description?: string,
+  transferInvoiceReference?: string,
 ): Promise<ExpeditionBatch> {
   return sequelize.transaction(async (t) => {
     const unitBusiness = await unitBusinessService.findById(unitBusinessId, {
@@ -658,7 +658,7 @@ async addInvoiceToLastOutgoingBatch(
       unitBusinessId,
       type,
       unitBusiness.last_outgoing_batch_pending ?? undefined,
-      description,
+      transferInvoiceReference,
       t,
     );
 

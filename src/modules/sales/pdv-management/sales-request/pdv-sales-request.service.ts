@@ -2452,7 +2452,7 @@ export class PdvSalesRequestService extends BaseService<
     return invoiceProductsMatch(saleItems, transferItems);
   }
 
-  // Nota de venda aponta pra transferência vinculada só via description "REF: <número>" (bonded_invoice é da devolução).
+  // Nota de venda aponta pra transferência vinculada só via transfer_invoice_reference "REF: <número>" (return_invoice_reference é da devolução).
   // Ao desvincular, só limpa se bate com a transferência anterior — nunca apaga descrição de outra origem.
   private async syncSaleInvoiceTransferReference(
     saleInvoiceId: string | null,
@@ -2467,7 +2467,7 @@ export class PdvSalesRequestService extends BaseService<
 
     const [saleInvoice, transferInvoices] = await Promise.all([
       invoiceService.findById(saleInvoiceId, {
-        attributes: ["id", "description"],
+        attributes: ["id", "transfer_invoice_reference"],
       }),
       invoiceService.findAll({
         where: { id: { [Op.in]: transferIds } },
@@ -2482,7 +2482,7 @@ export class PdvSalesRequestService extends BaseService<
     const nextNumber = numberOf(nextTransferInvoiceId);
     if (nextNumber) {
       await invoiceService.update(saleInvoiceId, {
-        description: buildInvoiceReferenceDescription(nextNumber),
+        transfer_invoice_reference: buildInvoiceReferenceDescription(nextNumber),
       });
       return;
     }
@@ -2490,13 +2490,13 @@ export class PdvSalesRequestService extends BaseService<
     const previousNumber = numberOf(previousTransferInvoiceId);
     if (!previousNumber) return;
     if (
-      saleInvoice.description !==
+      saleInvoice.transfer_invoice_reference !==
       buildInvoiceReferenceDescription(previousNumber)
     ) {
       return;
     }
 
-    await invoiceService.update(saleInvoiceId, { description: null });
+    await invoiceService.update(saleInvoiceId, { transfer_invoice_reference: null });
   }
 
   // Confirmação explícita do front — só agora a solicitação avança pra

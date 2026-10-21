@@ -100,7 +100,7 @@ const makeOutgoing = (
 ): InvoiceCancellationTarget => ({
   id: "outgoing-1",
   number_system: "019142",
-  bonded_invoice: null,
+  return_invoice_reference: null,
   statuses: ["FINISHED"],
   batchInvoiceId: null,
   batchStatus: null,
@@ -118,7 +118,7 @@ beforeEach(() => {
 });
 
 describe("InvoiceService.bondReturnInvoice", () => {
-  it("cancela a nota de saída referenciada e grava bonded_invoice nas duas notas", async () => {
+  it("cancela a nota de saída referenciada e grava return_invoice_reference nas duas notas", async () => {
     repo.findOutgoingByXmlKey.mockResolvedValue(makeOutgoing());
 
     const result = await invoiceService.bondReturnInvoice(
@@ -130,13 +130,13 @@ describe("InvoiceService.bondReturnInvoice", () => {
     expect(repo.findOutgoingByXmlKey).toHaveBeenCalledWith(REF_KEY);
     expect(repo.updateWithAttributesForAllUnits).toHaveBeenCalledWith(
       ["outgoing-1"],
-      { bonded_invoice: "020284", status: "CANCELLED" },
+      { return_invoice_reference: "020284", status: "CANCELLED" },
       { type: "OUTGOING" },
       fakeTransaction,
     );
     expect(repo.update).toHaveBeenCalledWith(
       "return-1",
-      { bonded_invoice: "019142" },
+      { return_invoice_reference: "019142" },
       { transaction: fakeTransaction },
     );
     expect(removeBatchInvoice).not.toHaveBeenCalled();
@@ -157,7 +157,7 @@ describe("InvoiceService.bondReturnInvoice", () => {
 
   it("já cancelada e vinculada a esta devolução (reprocesso/retry): não regrava, mas retorna o id pro PDV", async () => {
     repo.findOutgoingByXmlKey.mockResolvedValue(
-      makeOutgoing({ statuses: ["CANCELLED"], bonded_invoice: "20284" }),
+      makeOutgoing({ statuses: ["CANCELLED"], return_invoice_reference: "20284" }),
     );
 
     const result = await invoiceService.bondReturnInvoice(

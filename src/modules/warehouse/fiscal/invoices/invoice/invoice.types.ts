@@ -48,8 +48,9 @@ export interface InvoiceAttributes {
   transporter_document?: string | null;
   total_read?: number;
   total_expected?: number;
-  description?: string | null;
-  bonded_invoice?: string | null;
+  transfer_invoice_reference?: string | null;
+  return_invoice_reference?: string | null;
+  observation?: string | null;
   invoice_series?: string | null;
   invoice_value?: number;
   invoice_products_value?: number;
@@ -110,8 +111,9 @@ export interface FullInvoiceAttributes {
   total_read?: number;
   total_expected?: number;
   delivery_note_generated?: boolean;
-  description?: string | null;
-  bonded_invoice?: string | null;
+  transfer_invoice_reference?: string | null;
+  return_invoice_reference?: string | null;
+  observation?: string | null;
   invoice_series?: string | null;
   invoice_value?: number;
   invoice_products_value?: number;
@@ -169,8 +171,9 @@ export interface FullInvoiceAttributesForAllUnits {
   transporter_document?: string | null;
   total_read?: number;
   total_expected?: number;
-  description?: string | null;
-  bonded_invoice?: string | null;
+  transfer_invoice_reference?: string | null;
+  return_invoice_reference?: string | null;
+  observation?: string | null;
   invoice_series?: string | null;
   invoice_value?: number;
   invoice_products_value?: number;
@@ -253,7 +256,7 @@ export type SefazManifestationStatus =
 export interface InvoiceCancellationTarget {
   id: string;
   number_system: string;
-  bonded_invoice: string | null;
+  return_invoice_reference: string | null;
   statuses: InvoiceStatus[];
   batchInvoiceId: string | null;
   batchStatus: string | null;

@@ -358,7 +358,7 @@ Esta secao substitui a antiga regra unica de "total lido / total esperado" da no
 
 Tabela apenas com dados fiscais/cadastrais da nota (sem status, sem type, sem batch_generated, sem total_read/total_expected). Colunas relevantes atuais:
 
-- Identificacao/fiscal: `customer_name`, `customer_document`, `sender_cnpj`, `sender_name`, `receiver_cnpj`, `receiver_name`, `xml_path`, `xml_url`, `xml_key` (unique), `danfe_path`, `invoice_series`, `bonded_invoice`, `description`
+- Identificacao/fiscal: `customer_name`, `customer_document`, `sender_cnpj`, `sender_name`, `receiver_cnpj`, `receiver_name`, `xml_path`, `xml_url`, `xml_key` (unique), `danfe_path`, `invoice_series`, `transfer_invoice_reference` (referência da transferência: PDV/lote), `return_invoice_reference` (vínculo saída ⇄ devolução), `observation` (texto livre, só acrescenta linha)
 - Valores: `invoice_value`, `invoice_products_value`, `invoice_freight_value`, `invoice_discount_value`, `invoice_other_value`, `invoice_total_tax_value`, `icms_value`, `ipi_value`, `pis_value`, `cofins_value`, `difal_value`, `ibs_value`, `cbs_value`
 - Relacionamentos: `unit_business_id`, `transporter_id` (+ `transporter_name`, `transporter_document`), `integrations_id`, `store_id`, `seller_id` -> `contacts`, `supplier_id` -> `suppliers`
 - Datas/operacionais: `received_at`, `expected_receiving`, `emitted_at`, `printed_label`, `destination_uf`, `destination_city`

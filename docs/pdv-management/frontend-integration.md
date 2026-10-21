@@ -495,9 +495,9 @@ exceto no card sem `batch_id` (último lote pendente do CD21, cria se não houve
 ## Novo: nota de venda ganha referência da nota de transferência
 
 Ao vincular/trocar a nota de transferência, a nota de venda da mesma
-solicitação passa a ter `bonded_invoice = <número da transferência>` e
-`description = "REF: <número>"`. Ao desvincular (troca pra TRANSPORTADORA,
-reenvio pra análise, exclusão), os dois são limpos. Nada muda nas rotas.
+solicitação passa a ter `transfer_invoice_reference = "REF: <número>"`. Ao
+desvincular (troca pra TRANSPORTADORA, reenvio pra análise, exclusão), o campo
+é limpo. Nada muda nas rotas.
 
 ## Novo: filtro por transportadora + transportadoras em uso no "Embarque hoje"
 
@@ -685,3 +685,10 @@ funciona como `filters[indicator]=critical_warnings` no `GET /sales-request`.
 Card com aviso crítico (`warnings` não vazio, mesmo critério do indicador):
 `batch_color: "#EF4444"`, ignorando o estágio do lote. A legenda
 (`GET /sales-request/legend/batch-colors`) ganha `{ "label": "Aviso crítico", "color": "#EF4444" }` na 1ª posição.
+
+## Mudou: campos de referência da nota renomeados
+
+Em toda resposta/body de nota (`invoices`): `description` → `transfer_invoice_reference`
+(o `"REF: <número>"` gravado na nota de venda ao vincular a transferência) e
+`bonded_invoice` → `return_invoice_reference` (vínculo saída ⇄ devolução). Nada
+muda nas rotas do PDV.

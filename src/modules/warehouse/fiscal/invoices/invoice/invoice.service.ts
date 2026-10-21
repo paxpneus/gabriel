@@ -707,10 +707,51 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     );
   }
 
+  // Uso e consumo: finaliza na unit business e acrescenta o motivo em observation (nunca sobrescreve).
   async markAsInternalUse(ids: string[], unitBusinessId: string) {
-    return this.repository.updateWithAttributes(ids, unitBusinessId, {
-      status: "FINISHED",
-      description: "Nota de uso e consumo",
+    await sequelize.transaction(async (t) => {
+      await this.repository.updateWithAttributes(
+        ids,
+        unitBusinessId,
+        { status: "FINISHED" },
+        undefined,
+        t,
+      );
+      await this.repository.appendObservation(ids, "Nota de uso e consumo", t);
+    });
+  }
+
+  // Finaliza manualmente nota OPEN/PENDING na unit business; observação obrigatória justifica o fechamento.
+  async finishPendingInvoice(
+    id: string,
+    unitBusinessId: string,
+    observation: string,
+  ) {
+    const trimmedObservation = observation?.trim();
+    if (!trimmedObservation) {
+      throw new Error("Observação é obrigatória para finalizar a nota");
+    }
+
+    const attribute = await this.repository.findInvoiceAttribute(
+      id,
+      unitBusinessId,
+    );
+    if (!attribute) {
+      throw new Error("Nota fiscal não encontrada");
+    }
+    if (!["OPEN", "PENDING"].includes(attribute.status)) {
+      throw new Error("Só é possível finalizar notas com status pendente");
+    }
+
+    await sequelize.transaction(async (t) => {
+      await this.repository.updateWithAttributes(
+        [id],
+        unitBusinessId,
+        { status: "FINISHED" },
+        { status: { [Op.in]: ["OPEN", "PENDING"] } },
+        t,
+      );
+      await this.repository.appendObservation([id], trimmedObservation, t);
     });
   }
 
@@ -1071,22 +1112,22 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
     const alreadyBonded =
       outgoing.statuses.every((status) => status === "CANCELLED") &&
-      !!outgoing.bonded_invoice &&
-      normalizeInvoiceNumber(outgoing.bonded_invoice) ===
+      !!outgoing.return_invoice_reference &&
+      normalizeInvoiceNumber(outgoing.return_invoice_reference) ===
         normalizeInvoiceNumber(returnInvoice.number_system);
     if (alreadyBonded) return outgoing.id;
 
     await sequelize.transaction(async (t) => {
       await this.applyCancellation(
         outgoing,
-        { bonded_invoice: returnInvoice.number_system },
+        { return_invoice_reference: returnInvoice.number_system },
         { type: "OUTGOING" },
         t,
       );
 
       await this.update(
         returnInvoice.id,
-        { bonded_invoice: outgoing.number_system },
+        { return_invoice_reference: outgoing.number_system },
         { transaction: t },
       );
     });
