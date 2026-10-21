@@ -51,6 +51,7 @@ import {
 } from "../invoice-fiscal-item/invoice-fiscal-item.types";
 import { BatchInvoiceItemsAttributes } from "../../../expedition/batch-invoice-items/batch-invoice-items.types";
 import { totalExpectedLiteral, totalReadLiteral } from "./helpers/totals";
+import { pendingCancellationWhere } from "./helpers/custom-filters";
 import { xmlHeadLiteral } from "./helpers/nfe-ide";
 import { deliveryNoteGeneratedLiteral } from "./helpers/delivery-note";
 import { LOGISTIC_OCCURRENCE_CODES } from "../../../../handlers/logistic/constants/constants";
@@ -1322,6 +1323,26 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       transporter_name: r.transporter_name,
       quantity: Number(r.quantity),
     }));
+  }
+
+  // Notas da unit business com pedido cancelado e nota ainda não CANCELLED —
+  // mesmo critério do filtro `pending_cancellation` da listagem.
+  async countPendingCancellation(unitBusinessId: string): Promise<number> {
+    return this.model.count({
+      distinct: true,
+      col: "id",
+      where: pendingCancellationWhere(),
+      include: [
+        {
+          model: InvoiceUnitBusinessAttributes,
+          as: "unitBusinessAttributes",
+          required: true,
+          attributes: [],
+          where: { unit_business_id: unitBusinessId },
+        },
+        { model: Order, as: "order", required: true, attributes: [] },
+      ],
+    });
   }
 
   async findXmlPathsByIds(

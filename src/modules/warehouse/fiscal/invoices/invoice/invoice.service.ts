@@ -33,6 +33,7 @@ import {
   dispatchedMercadoLivreWhere,
   productRimWhere,
   supplierDiscountMatchWhere,
+  pendingCancellationWhere,
 } from "./helpers/custom-filters";
 import { deliveryNoteGeneratedWhere } from "./helpers/delivery-note";
 import supplierDiscountRuleService from "../../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
@@ -233,6 +234,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
         dispatched_mercado_livre: (value) =>
           value === "true" ? dispatchedMercadoLivreWhere("MercadoLivre") : {},
+
+        // Card "Pendente Cancelamentos" do resumo de pedidos: pedido cancelado, nota não.
+        pending_cancellation: (value) =>
+          value === "true" ? pendingCancellationWhere() : {},
 
         // Notas com algum item cujo produto tem um dos aros informados —
         // aceita um id só ou array (qualquer um dos aros, não todos).
@@ -1561,6 +1566,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     unitBusinessId: string,
   ): Promise<PendingBatchByTransporterRow[]> {
     return this.repository.countPendingBatchByTransporter(unitBusinessId);
+  }
+
+  // Card "Pendente Cancelamentos" de OrderService.getOrdersStatusSummary.
+  async countPendingCancellation(unitBusinessId: string): Promise<number> {
+    return this.repository.countPendingCancellation(unitBusinessId);
   }
 }
 

@@ -9,6 +9,7 @@ import {
   nowTz,
 } from "../../../../../../shared/utils/normalizers/date";
 import { OrderInternalStatus } from "../../../../../sales/orders/order/orders.types";
+import { BLING_CANCELLED_SITUACAO_ID } from "../../../../../sales/orders/order/helpers/eligible-for-pdv-filters";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -151,6 +152,17 @@ export function dispatchedMercadoLivreWhere(storeName: string): WhereOptions {
     "$batchInvoice.batch.delivery_note_generated_at$": {
       [Op.between]: [start, end],
     },
+  };
+}
+
+/**
+ * Nota cujo pedido foi cancelado na Bling (situação "12") mas a nota ainda não está CANCELLED.
+ * Exige os includes `order` e `unitBusinessAttributes` na query.
+ */
+export function pendingCancellationWhere(): WhereOptions {
+  return {
+    "$order.actual_situation$": BLING_CANCELLED_SITUACAO_ID,
+    "$unitBusinessAttributes.status$": { [Op.ne]: "CANCELLED" },
   };
 }
 

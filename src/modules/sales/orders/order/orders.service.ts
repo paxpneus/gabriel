@@ -376,11 +376,13 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       mlShipTodayPending,
       mlShipToDefine,
       mlShipToFuture,
+      pendingCancellation,
     ] = await Promise.all([
       this.repository.countHumanVerification(),
       this.repository.countShipTodayPending(unitBusinessId),
       this.repository.countShipToDefine(),
       this.repository.countShipToFuture(),
+      invoiceService.countPendingCancellation(unitBusinessId),
     ]);
 
     return {
@@ -406,6 +408,12 @@ export class OrderService extends BaseService<Order, OrderRepository> {
       ship_to_future: {
         label: "Embarque Futuro ML",
         quantity: mlShipToFuture,
+      },
+      // Notas com pedido cancelado na Bling (situação "12") que ainda não estão CANCELLED;
+      // abre a listagem com `filters[pending_cancellation]=true`.
+      pending_cancellation: {
+        label: "Pendente Cancelamentos",
+        quantity: pendingCancellation,
       },
       pending_batch_by_transporter: pendingBatchByTransporterSummary,
     };
