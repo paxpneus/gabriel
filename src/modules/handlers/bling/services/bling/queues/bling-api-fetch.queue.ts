@@ -2060,6 +2060,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       `[BLING_API_FETCH] ${nf.itens?.length ?? 0} item(ns) processado(s) para invoice ${nf.id}`,
     );
 
+    // Itens/unmapped já reconciliados: reavalia o erro crítico das solicitações PDV que usam a nota.
+    await pdvSalesRequestService.syncCriticalErrorByInvoiceIds([invoice.id]);
+
     // ─── Sincroniza batch se a invoice já pertencer a um ─────────────────────
 
     const batchInvoice = await ExpeditionBatchInvoice.findOne({

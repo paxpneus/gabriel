@@ -1,6 +1,7 @@
 // Models (*.model.ts) são auto-mockados globalmente via src/__tests__/setup.ts.
 
-const mockTransaction = {} as any;
+// afterCommit roda o callback na hora — o mock não tem commit de verdade.
+const mockTransaction = { afterCommit: jest.fn((cb: () => unknown) => cb()) } as any;
 jest.mock("../../../../../../config/sequelize", () => ({
   __esModule: true,
   default: { transaction: jest.fn((cb: any) => cb(mockTransaction)) },
@@ -15,6 +16,14 @@ jest.mock(
       delete: jest.fn(),
       findCascadeMatches: jest.fn(),
     },
+  }),
+);
+
+jest.mock(
+  "../../../../../sales/pdv-management/sales-request/pdv-sales-request.service",
+  () => ({
+    __esModule: true,
+    default: { syncCriticalErrorByInvoiceIds: jest.fn().mockResolvedValue(undefined) },
   }),
 );
 
@@ -64,6 +73,7 @@ import InvoiceFiscalItem from "../../invoice-fiscal-item/invoice-fiscal-item.mod
 import Product from "../../../../../inventory/products/product.model";
 import unmappedInvoiceProductService from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import invoiceService from "../../invoice/invoice.service";
+import pdvSalesRequestService from "../../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { InvoiceItemsService } from "../invoice-items.service";
 
 function makeInvoice(overrides: Partial<any> = {}) {
@@ -245,5 +255,9 @@ describe("InvoiceItemsService.createInvoiceItemForUnmappedProducts (cascata de a
     // matches são processados com triggerCascade:false, então uma única
     // busca já cobre tudo.
     expect(unmappedInvoiceProductService.findCascadeMatches).toHaveBeenCalledTimes(1);
+    // Cada nota mapeada (alvo + cascata) reavalia o erro crítico do PDV após o commit.
+    expect(pdvSalesRequestService.syncCriticalErrorByInvoiceIds).toHaveBeenCalledWith(["invoice-1"]);
+    expect(pdvSalesRequestService.syncCriticalErrorByInvoiceIds).toHaveBeenCalledWith(["invoice-unmapped-2"]);
+    expect(pdvSalesRequestService.syncCriticalErrorByInvoiceIds).toHaveBeenCalledWith(["invoice-unmapped-3"]);
   });
 });

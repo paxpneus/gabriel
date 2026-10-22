@@ -76,10 +76,22 @@ jest.mock("../../../../../shared/utils/normalizers/batch-nomenclature", () => ({
   setBatchNumber: jest.fn(),
 }));
 
+jest.mock(
+  "../../../../sales/pdv-management/sales-request/pdv-sales-request.service",
+  () => ({
+    __esModule: true,
+    default: {
+      assertNoCriticalErrorForSaleInvoices: jest.fn(),
+      finishIfDeliveryNoteGenerated: jest.fn(),
+    },
+  }),
+);
+
 import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import { assertTransshipment } from "../../utils/helpers/transshipment-resolver";
+import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { ExpeditionBatchService } from "../batch.service";
 
 function makeInvoice(overrides: Partial<any> = {}) {
@@ -187,5 +199,78 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
         unmappedInvoiceProductService.findUnmappedByInvoiceIds,
       ).toHaveBeenCalledWith(["invoice-1"], mockTransaction);
     });
+  });
+});
+
+// Pedido PDV em CRITICAL_ERROR barra lote e romaneio da nota de venda.
+describe("ExpeditionBatchService — bloqueio de nota com pedido PDV em CRITICAL_ERROR", () => {
+  const CRITICAL_ERROR_MESSAGE =
+    "Pedido da(s) nota(s) 1001 tem erros críticos — ajuste no quadro PDV antes de gerar lote/romaneio";
+  let service: ExpeditionBatchService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new ExpeditionBatchService();
+    (unitBusinessService.findOne as jest.Mock).mockResolvedValue({
+      id: "ub-1",
+      number: "01",
+    });
+    (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue(
+      [],
+    );
+    (
+      pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock
+    ).mockRejectedValue(new Error(CRITICAL_ERROR_MESSAGE));
+  });
+
+  it("generateBatchFromInvoices: rejeita antes de assertTransshipment", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([makeInvoice()]);
+
+    await expect(
+      service.generateBatchFromInvoices(["invoice-1"], "ub-1", "OUTGOING"),
+    ).rejects.toThrow(CRITICAL_ERROR_MESSAGE);
+
+    expect(
+      pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices,
+    ).toHaveBeenCalledWith(["invoice-1"]);
+    expect(assertTransshipment).not.toHaveBeenCalled();
+  });
+
+  it("addInvoiceToBatch: rejeita antes de assertTransshipment", async () => {
+    const key = "29260802036483000614550010004404561245674661";
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([
+      makeInvoice({ xml_key: key }),
+    ]);
+
+    await expect(
+      service.addInvoiceToBatch([key], "ub-1", "OUTGOING"),
+    ).rejects.toThrow(CRITICAL_ERROR_MESSAGE);
+
+    expect(
+      pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices,
+    ).toHaveBeenCalledWith(["invoice-1"]);
+    expect(assertTransshipment).not.toHaveBeenCalled();
+  });
+
+  it("generateDeliveryNote: rejeita sem gravar delivery_note_generated_at", async () => {
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue({
+      id: "batch-1",
+      delivery_note_generated_at: null,
+      operator_id: null,
+      batchInvoices: [{ invoice_id: "invoice-1" }],
+    } as any);
+    const update = jest
+      .spyOn((service as any).repository, "update")
+      .mockResolvedValue({} as any);
+
+    await expect(
+      service.generateDeliveryNote("batch-1", "user-1"),
+    ).rejects.toThrow(CRITICAL_ERROR_MESSAGE);
+
+    expect(
+      pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices,
+    ).toHaveBeenCalledWith(["invoice-1"]);
+    expect(update).not.toHaveBeenCalled();
+    expect(pdvSalesRequestService.finishIfDeliveryNoteGenerated).not.toHaveBeenCalled();
   });
 });

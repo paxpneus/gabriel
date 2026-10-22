@@ -104,9 +104,28 @@ export function transferProductsUncheckedLiteral() {
   return Sequelize.literal(transferProductsUncheckedSql());
 }
 
-// Mesmo critério de buildCriticalWarnings — card do quadro e indicativo critical_warnings.
+// Crítico: NF de transferência emitida por loja (sender_cnpj) diferente da loja do pedido.
+// CNPJ já é só dígitos nos dois lados; nota sem sender_cnpj (provisória sem CNPJ) não acusa.
+function transferSenderUnitBusinessMismatchSql(): string {
+  return `(${TRANSFER_INVOICE} IS NOT NULL AND EXISTS (
+    SELECT 1 FROM invoices ti
+    JOIN orders o ON o.id = "PdvSalesRequest"."order_id"
+    WHERE ti.id = ${TRANSFER_INVOICE}
+      AND COALESCE(ti.sender_cnpj, '') <> ''
+      AND NOT EXISTS (
+        SELECT 1 FROM unit_businesses ub
+        WHERE ub.cnpj = ti.sender_cnpj AND ub.id = o.unit_business_id
+      )
+  ))`;
+}
+
+export function transferSenderUnitBusinessMismatchLiteral() {
+  return Sequelize.literal(transferSenderUnitBusinessMismatchSql());
+}
+
+// Mesmo critério de buildCriticalWarnings — card do quadro, indicativo critical_warnings e CRITICAL_ERROR.
 export function criticalWarningLiteral() {
   return Sequelize.literal(
-    `(${transferQuantityMismatchSql()} OR ${transferProductsMismatchSql()})`,
+    `(${transferQuantityMismatchSql()} OR ${transferProductsMismatchSql()} OR ${transferSenderUnitBusinessMismatchSql()})`,
   );
 }

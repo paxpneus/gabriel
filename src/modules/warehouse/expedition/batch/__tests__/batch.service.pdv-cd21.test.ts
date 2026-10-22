@@ -65,6 +65,7 @@ jest.mock(
       resolveSaleInvoiceIds: jest.fn(),
       findBatchTargets: jest.fn(),
       notifyChangedBySaleInvoiceIds: jest.fn(),
+      assertNoCriticalErrorForSaleInvoices: jest.fn(),
     },
   }),
 );

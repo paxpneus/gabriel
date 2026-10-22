@@ -7,6 +7,8 @@ export enum PdvSalesRequestStatus {
   PENDING_CORRECTION = "PENDING_CORRECTION",
   PENDING_NF_SALE = "PENDING_NF_SALE",
   PENDING_NF_TRANSFER = "PENDING_NF_TRANSFER",
+  // NF de transferência confirmada com aviso crítico — CD21 corrige e resolve (resolveCriticalError). Só ADT.
+  CRITICAL_ERROR = "CRITICAL_ERROR",
   // Expedição de ADT (aparece como "Pendente expedição" no front).
   SHIPPING = "SHIPPING",
   // Expedição de TRANSPORTADORA — mesmo comportamento de SHIPPING, só outra coluna.
@@ -59,6 +61,7 @@ export enum PdvWarningCode {
   TRANSFER_QUANTITY_MISMATCH = "TRANSFER_QUANTITY_MISMATCH",
   TRANSFER_PRODUCTS_MISMATCH = "TRANSFER_PRODUCTS_MISMATCH",
   TRANSFER_PRODUCTS_UNCHECKED = "TRANSFER_PRODUCTS_UNCHECKED",
+  TRANSFER_SENDER_UNIT_BUSINESS_MISMATCH = "TRANSFER_SENDER_UNIT_BUSINESS_MISMATCH",
 }
 
 // yellow = atenção, red = crítico, blue = só informação.

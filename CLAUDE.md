@@ -90,6 +90,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `tecinco/catalog-preflight.md` — detecção de código duplicado no catálogo Tecinco antes do enqueue
   - `tecinco/duplicate-protection.md` — skuOmitted/eanOmitted, triggers DB, create/map manual de duplicata
   - `bling/deactivation.md` — Bling situacao=E
+  - `merge-duplicate.md` — runbook SQL manual pra substituir produto duplicado (antigo → novo) em todas as tabelas e apagar o antigo
 - `supplier-discount-rule.md` — matching engine, eixos de escopo, coluna computada `name`
 - `integration-mapping.md` — tabela `integration_mappings`, incidente de mapping órfão, regras cross-external-id
 - `integration-error.md` — tabela genérica `integration_errors`, upsert-by-find/dedup, logger centralizado (`IntegrationLoggerService`, flag `createIntegrationError`)

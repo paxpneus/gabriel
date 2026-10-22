@@ -387,6 +387,10 @@ export class TCarUpsertQueue extends BaseQueueService<
         data.pdvSalesRequestId,
         data.transferInvoiceId,
       );
+      await pdvSalesRequestService.advanceAfterTransferInvoiceImport(
+        data.pdvSalesRequestId,
+        data.transferInvoiceId,
+      );
     } finally {
       await pdvSalesRequestService.notifyChanged(data.pdvSalesRequestId);
     }

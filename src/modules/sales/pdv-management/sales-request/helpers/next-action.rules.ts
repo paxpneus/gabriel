@@ -29,6 +29,7 @@ export const CD21_STATUS_LABELS: Record<PdvSalesRequestStatus, string> = {
   [S.PENDING_CD21_ANALYSIS]: "Aguardando análise CD21",
   [S.PENDING_NF_SALE]: "Aguardando NF de venda",
   [S.PENDING_NF_TRANSFER]: "Aguardando NF de transferência",
+  [S.CRITICAL_ERROR]: "Corrigir aviso crítico",
   [S.SHIPPING]: "Pendente expedição ADT",
   [S.SHIP_TODAY]: "Embarca hoje",
   [S.FINISHED]: "Finalizado",

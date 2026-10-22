@@ -9,9 +9,11 @@ import {
   saleInvoiceTransporterSelectorLiteral,
 } from "./helpers/custom-filters";
 import {
+  criticalWarningLiteral,
   transferProductsMismatchLiteral,
   transferProductsUncheckedLiteral,
   transferQuantityMismatchLiteral,
+  transferSenderUnitBusinessMismatchLiteral,
 } from "./helpers/transfer-invoice-divergence";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import PdvSalesRequest from "./pdv-sales-request.model";
@@ -63,6 +65,7 @@ const WARNING_SOURCE_ATTRIBUTES: [ReturnType<typeof literal>, string][] = [
   [transferQuantityMismatchLiteral(), "transfer_quantity_mismatch"],
   [transferProductsMismatchLiteral(), "transfer_products_mismatch"],
   [transferProductsUncheckedLiteral(), "transfer_products_unchecked"],
+  [transferSenderUnitBusinessMismatchLiteral(), "transfer_sender_unit_business_mismatch"],
 ];
 
 // Lote do CD21 da nota de venda (no máx. 1 por nota por loja, então o hasOne não duplica linha).
@@ -169,6 +172,10 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
         [saleInvoiceCd21DanfePrintedLiteral(), "sale_invoice_danfe_printed"],
         [transferQuantityMismatchLiteral(), "transfer_quantity_mismatch"],
         [transferProductsMismatchLiteral(), "transfer_products_mismatch"],
+        [
+          transferSenderUnitBusinessMismatchLiteral(),
+          "transfer_sender_unit_business_mismatch",
+        ],
       ],
       include: [
         {
@@ -367,6 +374,58 @@ export class PdvSalesRequestRepository extends BaseRepository<PdvSalesRequest> {
   // Indicativos que não saem do group by status (ex.: critical_warnings).
   async countWhere(where: WhereOptions): Promise<number> {
     return this.model.count({ where });
+  }
+
+  // Mesmo critério do card/critical_warnings — decide CRITICAL_ERROR na confirmação da NF de transferência.
+  async hasCriticalWarning(id: string): Promise<boolean> {
+    return (await this.countWhere({ id, [Op.and]: [criticalWarningLiteral()] })) > 0;
+  }
+
+  // SHIPPING/CRITICAL_ERROR que usam a nota (venda ou transferência) + flag de aviso crítico ao vivo — syncCriticalErrorByInvoiceIds.
+  // NF de transferência provisória (sem xml_path, import da Tecinco pendente) fica de fora: sem itens, o aviso não é confiável.
+  async findCriticalErrorSyncCandidatesByInvoiceIds(
+    invoiceIds: string[],
+  ): Promise<PdvSalesRequest[]> {
+    return this.findAll({
+      where: {
+        [Op.or]: [
+          { sale_invoice_id: { [Op.in]: invoiceIds } },
+          { transfer_invoice_id: { [Op.in]: invoiceIds } },
+        ],
+        status: {
+          [Op.in]: [
+            PdvSalesRequestStatus.SHIPPING,
+            PdvSalesRequestStatus.CRITICAL_ERROR,
+          ],
+        },
+        [Op.and]: [
+          literal(`NOT EXISTS (
+            SELECT 1 FROM invoices ti
+            WHERE ti.id = "PdvSalesRequest"."transfer_invoice_id" AND ti.xml_path IS NULL
+          )`),
+        ],
+      },
+      attributes: [
+        "id",
+        "status",
+        "sale_invoice_id",
+        [criticalWarningLiteral(), "has_critical_warning"],
+      ],
+    });
+  }
+
+  // Solicitações em CRITICAL_ERROR das notas de venda — bloqueio de lote/romaneio (batch.service.ts).
+  async findCriticalErrorBySaleInvoiceIds(
+    invoiceIds: string[],
+  ): Promise<PdvSalesRequest[]> {
+    return this.findAll({
+      where: {
+        sale_invoice_id: { [Op.in]: invoiceIds },
+        status: PdvSalesRequestStatus.CRITICAL_ERROR,
+      },
+      attributes: ["id", "sale_invoice_id"],
+      include: [{ model: Invoice, as: "saleInvoice", attributes: ["number_system"] }],
+    });
   }
 
   // SHIPPING + shipping_type ADT agrupado pelo CD da transportadora da nota de

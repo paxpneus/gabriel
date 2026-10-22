@@ -92,4 +92,16 @@ describe("buildCriticalWarnings", () => {
     ]);
     expect(buildCriticalWarnings({ transfer_quantity_mismatch: false })).toEqual([]);
   });
+
+  it("NF de transferência emitida por outra loja que não a do pedido é crítico", () => {
+    expect(
+      buildCriticalWarnings({ transfer_sender_unit_business_mismatch: true }),
+    ).toEqual([
+      {
+        code: PdvWarningCode.TRANSFER_SENDER_UNIT_BUSINESS_MISMATCH,
+        label: "Loja emitente da NF de transferência difere da loja do pedido",
+        color: "red",
+      },
+    ]);
+  });
 });

@@ -9,3 +9,4 @@
 - `tecinco/catalog-preflight.md` — Tecinco catalog-duplicate detection before enqueue
 - `tecinco/duplicate-protection.md` — skuOmitted/eanOmitted write protection, DB triggers, manual create/map on a duplicate
 - `bling/deactivation.md` — Bling situacao=E deactivation flow
+- `merge-duplicate.md` — manual SQL runbook to replace a duplicate product (OLD → NEW) in every table and delete OLD

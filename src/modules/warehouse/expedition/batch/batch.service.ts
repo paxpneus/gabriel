@@ -334,6 +334,11 @@ export class ExpeditionBatchService extends BaseService<
         );
       }
 
+      // Pedido PDV em CRITICAL_ERROR não entra em lote até o CD21 corrigir.
+      await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(
+        notBatched.map((i) => i.id),
+      );
+
       for (const invoice of notBatched) {
         await assertTransshipment(invoice, unitBusiness);
       }
@@ -456,6 +461,9 @@ async addInvoiceToBatch(
         `Nota(s) com produtos não mapeados: ${numbers.join(", ")}`,
       );
     }
+
+    // Pedido PDV em CRITICAL_ERROR não entra em lote até o CD21 corrigir.
+    await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(invoiceIds);
 
     const unitBusiness = await unitBusinessService.findOne({
       where: { id: unitBusinessId },
@@ -1377,6 +1385,11 @@ async addInvoiceToLastOutgoingBatch(
 
   async generateDeliveryNote(batchId: string, userId: string) {
     const batchInfo = await this.findByIdFullBatch(batchId);
+
+    // Antes de gravar o romaneio: pedido PDV em CRITICAL_ERROR barra a geração.
+    await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(
+      (batchInfo.batchInvoices ?? []).map((bi) => bi.invoice_id),
+    );
     let generated_at: Date;
     let operator_id: string;
 

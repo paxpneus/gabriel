@@ -39,6 +39,7 @@ import {
 import { resolveTecincoBranchId } from "../../../shared/utils/tecinco/resolve-branch-id";
 import { TCarProdutoPayload } from "../../handlers/tecinco/service/tecinco/tecinco.types";
 import invoiceService from "../../warehouse/fiscal/invoices/invoice/invoice.service";
+import pdvSalesRequestService from "../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { JobStatus, toJobStatus } from "../../../shared/utils/queues/job-status";
 
 // Quanto tempo o job de criação de produto fica visível no Redis depois de
@@ -226,6 +227,17 @@ export class UnmappedInvoiceProductService extends BaseService<
         },
       );
 
+      // Sem pendente na nota, a comparação de produtos do PDV passa a valer — reavalia o erro crítico após o commit (falha só loga).
+      t.afterCommit(() =>
+        pdvSalesRequestService
+          .syncCriticalErrorByInvoiceIds(
+            unmapped.flatMap((u) => (u.invoice_id ? [u.invoice_id] : [])),
+          )
+          .catch((error) =>
+            console.error("[UNMAPPED] Falha ao sincronizar erro crítico do PDV", error),
+          ),
+      );
+
       const withImage = unmapped.filter(
         (u): u is typeof u & { image_path: string } => !!u.image_path,
       );
@@ -299,6 +311,15 @@ export class UnmappedInvoiceProductService extends BaseService<
         await this.delete(row.id);
       }),
     );
+
+    // Itens criados nas notas: PDV reavalia o erro crítico (falha só loga, o produto já foi resolvido).
+    await pdvSalesRequestService
+      .syncCriticalErrorByInvoiceIds(
+        pendingRows.flatMap((row) => (row.invoice_id ? [row.invoice_id] : [])),
+      )
+      .catch((error) =>
+        console.error("[UNMAPPED] Falha ao sincronizar erro crítico do PDV", error),
+      );
   }
 
   // Busca outros unmapped (em outras notas) com o mesmo código de

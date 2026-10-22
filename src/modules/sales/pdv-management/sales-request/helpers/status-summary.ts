@@ -114,6 +114,7 @@ export const PDV_STATUS_INDICATORS: Record<
     statuses: [
       PdvSalesRequestStatus.PENDING_NF_SALE,
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      PdvSalesRequestStatus.CRITICAL_ERROR,
       PdvSalesRequestStatus.SHIPPING,
       PdvSalesRequestStatus.SHIP_TODAY,
     ],

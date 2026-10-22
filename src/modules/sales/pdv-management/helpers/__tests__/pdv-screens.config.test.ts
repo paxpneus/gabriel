@@ -24,8 +24,8 @@ describe("pdv-screens.config", () => {
       ["store", true, ["open", "finance_analysis", "correction", "cd21_analysis", "cd21_billing", "finished", "excluded"]],
       ["finance", false, ["awaiting_analysis", "correction", "approved", "finished", "cancelled"]],
       ["finance", true, ["open", "awaiting_analysis", "correction", "approved", "finished", "cancelled"]],
-      ["cd21", false, ["correction", "awaiting_analysis", "nf_sale", "nf_transfer", "shipping", "ship_today", "finished"]],
-      ["cd21", true, ["open", "finance_analysis", "correction", "awaiting_analysis", "nf_sale", "nf_transfer", "shipping", "ship_today", "finished"]],
+      ["cd21", false, ["correction", "awaiting_analysis", "nf_sale", "nf_transfer", "critical_error", "shipping", "ship_today", "finished"]],
+      ["cd21", true, ["open", "finance_analysis", "correction", "awaiting_analysis", "nf_sale", "nf_transfer", "critical_error", "shipping", "ship_today", "finished"]],
     ])("%s other=%s", (screen, includeOtherScreens, expected) => {
       expect(keys(screen, includeOtherScreens)).toEqual(expected);
     });
@@ -34,13 +34,14 @@ describe("pdv-screens.config", () => {
       expect(PDV_BOARD_SCREENS.telesales).toBe(PDV_BOARD_SCREENS.store);
     });
 
-    it("cd21_billing da loja agrupa os 4 status de faturamento/expedição", () => {
+    it("cd21_billing da loja agrupa os 5 status de faturamento/expedição", () => {
       const column = findVisibleColumn("store", "cd21_billing", {
         includeOtherScreens: false,
       });
       expect(column?.statuses).toEqual([
         S.PENDING_NF_SALE,
         S.PENDING_NF_TRANSFER,
+        S.CRITICAL_ERROR,
         S.SHIPPING,
         S.SHIP_TODAY,
       ]);
@@ -58,7 +59,7 @@ describe("pdv-screens.config", () => {
       ["store", ["open", "correction"]],
       ["telesales", ["open", "correction"]],
       ["finance", ["awaiting_analysis"]],
-      ["cd21", ["awaiting_analysis", "nf_sale", "nf_transfer", "shipping", "ship_today"]],
+      ["cd21", ["awaiting_analysis", "nf_sale", "nf_transfer", "critical_error", "shipping", "ship_today"]],
     ])("%s: colunas destacadas", (screen, expected) => {
       expect(highlightedKeys(screen)).toEqual(expected);
     });

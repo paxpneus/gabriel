@@ -16,7 +16,7 @@ import { ImportJobResult } from "../../../../shared/utils/queues/job-status";
 export const TCAR_INVOICE_NEW_JOB_NAME = "invoice-new";
 export const TCAR_INVOICE_UPDATE_JOB_NAME = "invoice-update";
 
-// Prioridades da TCAR_INVOICE: 1 fica livre pro import manual (MANUAL_IMPORT_PRIORITY), que passa à frente do sync.
+// Prioridades da TCAR_INVOICE: 1 (MANUAL_IMPORT_PRIORITY) fica pro import manual e pro invoice_transfer do PDV, à frente do sync.
 export const TCAR_INVOICE_NEW_PRIORITY = 2;
 export const TCAR_INVOICE_UPDATE_PRIORITY = 3;
 
@@ -31,7 +31,7 @@ export class TCarInvoiceQueue extends TCarUpsertQueue {
     super(options, "TCAR_INVOICE", 2);
   }
 
-  // Sem priority explícita (ex.: invoice_transfer do PDV) entra junto do invoice-update, abaixo do invoice-new.
+  // Sem priority explícita entra junto do invoice-update, abaixo do invoice-new.
   override async add(
     data: TCarUpsertJobPayload,
     jobId?: string,

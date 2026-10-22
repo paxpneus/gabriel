@@ -10,6 +10,7 @@ export interface PdvWarningSource {
   transfer_quantity_mismatch?: boolean | null;
   transfer_products_mismatch?: boolean | null;
   transfer_products_unchecked?: boolean | null;
+  transfer_sender_unit_business_mismatch?: boolean | null;
 }
 
 const TRANSFER_QUANTITY_MISMATCH_WARNING: PdvWarning = {
@@ -21,6 +22,12 @@ const TRANSFER_QUANTITY_MISMATCH_WARNING: PdvWarning = {
 const TRANSFER_PRODUCTS_MISMATCH_WARNING: PdvWarning = {
   code: PdvWarningCode.TRANSFER_PRODUCTS_MISMATCH,
   label: "Produtos da NF de transferência divergem da NF de venda",
+  color: "red",
+};
+
+const TRANSFER_SENDER_UNIT_BUSINESS_MISMATCH_WARNING: PdvWarning = {
+  code: PdvWarningCode.TRANSFER_SENDER_UNIT_BUSINESS_MISMATCH,
+  label: "Loja emitente da NF de transferência difere da loja do pedido",
   color: "red",
 };
 
@@ -83,11 +90,15 @@ export function buildSalesRequestWarnings(source: PdvWarningSource): PdvWarning[
   return warnings.filter((warning): warning is PdvWarning => warning !== null);
 }
 
-// Card do quadro e critical_warnings: quantidade ou produto divergente entre NF de venda e transferência.
+// Card do quadro e critical_warnings: quantidade/produto divergente entre NF de venda e transferência,
+// ou transferência emitida por outra loja que não a do pedido.
 export function buildCriticalWarnings(source: PdvWarningSource): PdvWarning[] {
   const warnings: (PdvWarning | null)[] = [
     source.transfer_quantity_mismatch ? TRANSFER_QUANTITY_MISMATCH_WARNING : null,
     source.transfer_products_mismatch ? TRANSFER_PRODUCTS_MISMATCH_WARNING : null,
+    source.transfer_sender_unit_business_mismatch
+      ? TRANSFER_SENDER_UNIT_BUSINESS_MISMATCH_WARNING
+      : null,
   ];
   return warnings.filter((warning): warning is PdvWarning => warning !== null);
 }

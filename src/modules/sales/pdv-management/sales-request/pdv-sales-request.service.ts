@@ -59,6 +59,7 @@ import {
 } from "../../../handlers/temp-file/temp-file.constants";
 import { getTCarIntegration } from "../../../handlers/tecinco/api/tecinco_api";
 import { TCarInvoiceQueue } from "../../../handlers/tecinco/queues/tecinco-invoice.queue";
+import { MANUAL_IMPORT_PRIORITY } from "../../../integrations/manual-import/manual-import.constants";
 import { extractAccessKeyFromXmlContent } from "../../../../shared/utils/xml/access-key";
 import nfeEmissionService from "../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "./payment-receipt-extraction.service";
@@ -158,6 +159,10 @@ const RECEIPT_ANALYSIS_TIMEOUT_MS = 5000;
 // Marca no histórico o cancelamento vindo da Bling — reactivateIfCancelledByOrder
 // só desfaz cancelamento com essa descrição.
 const BLING_ORDER_CANCELLED_DESCRIPTION = "Pedido cancelado na Bling";
+
+// confirm da NF de transferência enquanto a nota provisória ainda é importada da Tecinco.
+const TRANSFER_INVOICE_PENDING_IMPORT_ERROR =
+  "Aguarde a nota de transferência terminar de ser importada da Tecinco — a solicitação avança sozinha ao terminar";
 
 export class PdvSalesRequestService extends BaseService<
   PdvSalesRequest,
@@ -1288,6 +1293,8 @@ export class PdvSalesRequestService extends BaseService<
     [
       PdvSalesRequestStatus.PENDING_NF_SALE,
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      // → TRANSPORTADORA desvincula a NF de transferência e tira do erro crítico.
+      PdvSalesRequestStatus.CRITICAL_ERROR,
       ...EXPEDITION_PDV_SALES_REQUEST_STATUSES,
       PdvSalesRequestStatus.FINISHED,
     ];
@@ -2194,6 +2201,8 @@ export class PdvSalesRequestService extends BaseService<
 
     await this.repository.update(request.id, { sale_invoice_id: invoiceId });
     notifySalesRequestChanged(request);
+    // Nota de venda nova muda a comparação com a transferência.
+    await this.syncCriticalErrorByInvoiceIds([invoiceId]);
   }
 
   // Autocomplete do front pra buscar uma nota de transferência já existente
@@ -2264,8 +2273,10 @@ export class PdvSalesRequestService extends BaseService<
       roleId?: string;
     },
   ): Promise<{ salesRequest: PdvSalesRequest; message: string }> {
+    // CRITICAL_ERROR: troca da NF é a correção do aviso crítico (mesma trava de romaneio de SHIPPING).
     const request = await this.assertStatus(id, [
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      PdvSalesRequestStatus.CRITICAL_ERROR,
       PdvSalesRequestStatus.SHIPPING,
       PdvSalesRequestStatus.FINISHED,
     ]);
@@ -2399,6 +2410,8 @@ export class PdvSalesRequestService extends BaseService<
               },
             },
             `tecinco-invoice-transfer-${stubId}`,
+            // Topo da fila (empata com import manual): o confirm da NF espera esse import.
+            { priority: MANUAL_IMPORT_PRIORITY },
           );
         }
 
@@ -2451,8 +2464,11 @@ export class PdvSalesRequestService extends BaseService<
         : "Nota de transferência vinculada",
     });
 
+    // SHIPPING/CRITICAL_ERROR entram ou saem do erro crítico na hora (provisória só ao fim do import).
+    await this.syncCriticalErrorByInvoiceIds([invoiceId]);
+
     return {
-      salesRequest,
+      salesRequest: (await this.repository.findById(id)) ?? salesRequest,
       message: pendingTransferInvoiceImport
         ? "Nota de transferência anexada. Buscando dados na Tecinco."
         : "Nota de transferência anexada com sucesso",
@@ -2482,6 +2498,23 @@ export class PdvSalesRequestService extends BaseService<
     await this.repository.update(request.id, {
       transfer_invoice_products_match_sale: productsMatch,
     });
+  }
+
+  // Worker do invoice_transfer, após importar a nota provisória: PENDING_NF_TRANSFER avança sozinho (o confirm esperava esse import).
+  // Só se a provisória ainda for a vinculada; SHIPPING/CRITICAL_ERROR já foram reavaliados pelo upsert (syncCriticalErrorByInvoiceIds).
+  async advanceAfterTransferInvoiceImport(
+    requestId: string,
+    transferInvoiceId?: string,
+  ): Promise<void> {
+    if (!transferInvoiceId) return;
+    const request = await this.repository.findById(requestId, {
+      attributes: ["id", "status", "transfer_invoice_id"],
+    });
+    if (request?.transfer_invoice_id !== transferInvoiceId) return;
+
+    if (request.status === PdvSalesRequestStatus.PENDING_NF_TRANSFER) {
+      await this.confirmTransferInvoice(requestId);
+    }
   }
 
   private async getTransferInvoiceProductsMatch(
@@ -2569,10 +2602,102 @@ export class PdvSalesRequestService extends BaseService<
       throw new Error("Vincule uma nota de transferência antes de confirmar");
     }
 
+    // Nota provisória (createStub, sem xml_path até o import da Tecinco) não tem itens — aviso crítico não acusaria.
+    const pendingImport = await invoiceService.findOne({
+      where: { id: request.transfer_invoice_id, xml_path: null },
+      attributes: ["id"],
+    });
+    if (pendingImport) throw new Error(TRANSFER_INVOICE_PENDING_IMPORT_ERROR);
+
+    // Aviso crítico (mesmo critério do card) segura em CRITICAL_ERROR até o CD21 corrigir.
+    if (await this.repository.hasCriticalWarning(id)) {
+      return this.transitionTo(id, PdvSalesRequestStatus.CRITICAL_ERROR, {
+        userId,
+        description: "Nota de transferência confirmada com aviso crítico",
+      });
+    }
+
     return this.transitionTo(id, PdvSalesRequestStatus.SHIPPING, {
       userId,
       description: "Nota de transferência confirmada",
     });
+  }
+
+  // Entrada/saída automática de CRITICAL_ERROR após qualquer mudança nas notas (anexo, import, mapeamento).
+  // Só SHIPPING entra (FINISHED nunca volta); sai pra SHIPPING, ou FINISHED se já tem romaneio (defesa).
+  async syncCriticalErrorByInvoiceIds(invoiceIds: string[]): Promise<void> {
+    const ids = [...new Set(invoiceIds.filter(Boolean))];
+    if (!ids.length) return;
+
+    const candidates =
+      await this.repository.findCriticalErrorSyncCandidatesByInvoiceIds(ids);
+    const toEnter = candidates.filter(
+      (request) =>
+        request.status === PdvSalesRequestStatus.SHIPPING &&
+        !!request.get("has_critical_warning"),
+    );
+    const toLeave = candidates.filter(
+      (request) =>
+        request.status === PdvSalesRequestStatus.CRITICAL_ERROR &&
+        !request.get("has_critical_warning"),
+    );
+    if (!toEnter.length && !toLeave.length) return;
+
+    const cd21 = toLeave.length
+      ? await unitBusinessService.getCd21UnitBusiness()
+      : null;
+    if (toLeave.length && !cd21) throw new Error("Unidade CD21 não cadastrada");
+    const deliveryNoteInvoiceIds = new Set(
+      cd21
+        ? await invoiceService.findDeliveryNoteGeneratedInvoiceIds(
+            toLeave
+              .map((request) => request.sale_invoice_id)
+              .filter((invoiceId): invoiceId is string => !!invoiceId),
+            cd21.id,
+          )
+        : [],
+    );
+
+    await Promise.all([
+      ...toEnter.map((request) =>
+        this.transitionTo(request.id, PdvSalesRequestStatus.CRITICAL_ERROR, {
+          description: "Aviso crítico detectado na NF de transferência",
+        }),
+      ),
+      ...toLeave.map((request) =>
+        this.transitionTo(
+          request.id,
+          request.sale_invoice_id &&
+            deliveryNoteInvoiceIds.has(request.sale_invoice_id)
+            ? PdvSalesRequestStatus.FINISHED
+            : PdvSalesRequestStatus.SHIPPING,
+          { description: "Aviso crítico corrigido" },
+        ),
+      ),
+    ]);
+  }
+
+  // Lote/romaneio barrado enquanto o pedido da nota de venda está em CRITICAL_ERROR (batch.service.ts).
+  async assertNoCriticalErrorForSaleInvoices(
+    invoiceIds: string[],
+  ): Promise<void> {
+    if (!invoiceIds.length) return;
+
+    const blocked =
+      await this.repository.findCriticalErrorBySaleInvoiceIds(invoiceIds);
+    if (!blocked.length) return;
+
+    const numbers = [
+      ...new Set(
+        blocked.map(
+          (request: any) =>
+            request.saleInvoice?.number_system ?? request.sale_invoice_id,
+        ),
+      ),
+    ];
+    throw new Error(
+      `Pedido da(s) nota(s) ${numbers.join(", ")} tem erros críticos — ajuste no quadro PDV antes de gerar lote/romaneio`,
+    );
   }
 
   // ─── Expedição ──────────────────────────────────────────────────────────────
@@ -2724,6 +2849,7 @@ export class PdvSalesRequestService extends BaseService<
 
     const editableStatuses = [
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      PdvSalesRequestStatus.CRITICAL_ERROR,
       PdvSalesRequestStatus.SHIPPING,
     ];
     if (!editableStatuses.includes(request.status)) return false;

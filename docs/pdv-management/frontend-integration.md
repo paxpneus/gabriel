@@ -7,6 +7,17 @@ aqui.
 
 **Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
 
+## Novo: status `CRITICAL_ERROR` + aviso de loja emitente da NF de transferência
+
+Migration `m321` (rodar antes do deploy).
+- **Warning novo** (red, crítico — card e detalhe): `TRANSFER_SENDER_UNIT_BUSINESS_MISMATCH`, "Loja emitente da NF de transferência difere da loja do pedido". Entra em `critical_warnings` e no `batch_color` vermelho.
+- **Confirm espera o import da Tecinco**: se a NF de transferência foi anexada por DANFE e ainda não existia no sistema, `POST /:id/transfer-invoice/confirm` responde `400 { error: "Aguarde a nota de transferência terminar de ser importada da Tecinco — a solicitação avança sozinha ao terminar" }`. Ao terminar o import a solicitação **avança sozinha** (`PENDING_NF_TRANSFER` → `SHIPPING` ou `CRITICAL_ERROR`) e chega o evento de websocket de sempre → refazer `GET /:id`. Nota que já existia no sistema confirma direto, sem mudança.
+- **Status novo `CRITICAL_ERROR`** (só ADT): `POST /:id/transfer-invoice/confirm` com aviso crítico cai aqui em vez de `SHIPPING`. Além disso, **`SHIPPING` cai sozinho em `CRITICAL_ERROR`** sempre que surgir aviso crítico (NF anexada/trocada, import de nota, produto mapeado). `FINISHED` nunca volta. `next_action` CD21: "Corrigir aviso crítico".
+- **Coluna CD21** `critical_error` ("Erro Crítico", destacada), logo depois de `nf_transfer`. Loja: dentro de `cd21_billing`; Financeiro: dentro de `approved`.
+- **Indicativos**: sem indicativo novo. `cd21_billing` (loja) passa a somar `CRITICAL_ERROR`; `critical_warnings` (e `filters[indicator]=critical_warnings`) segue igual — já inclui quem está em `CRITICAL_ERROR`.
+- **Corrigir (sem botão de resolver)**: trocar a NF (`POST /:id/transfer-invoice`, liberado em `CRITICAL_ERROR`; `GET /:id/transfer-invoice/editable` reflete) ou mapear o produto pendente. Sem aviso, a solicitação **volta sozinha pra `SHIPPING`** — na hora se a nota já existia, ao fim do import se era nova. Trocar o tipo de envio pra `TRANSPORTADORA` (`shipping-type/change`) também tira do erro. Não existe rota de resolve.
+- **Lote/romaneio bloqueados**: gerar lote, adicionar a lote e gerar romaneio (inclusive as 3 ações do PDV) com nota de venda de pedido em `CRITICAL_ERROR` → `400 { error: "Pedido da(s) nota(s) <números> tem erros críticos — ajuste no quadro PDV antes de gerar lote/romaneio" }`.
+
 ## Novo: admin edita solicitação `FINISHED`
 
 Na coluna Finalizados, só **admin logado** (link não vale) pode:

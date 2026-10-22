@@ -14,6 +14,7 @@ import ExpeditionBatch from "../../../expedition/batch/batch.model";
 import batchService from "../../../expedition/batch/batch.service";
 import InvoiceFiscalItem from "../invoice-fiscal-item/invoice-fiscal-item.model";
 import invoiceService from "../invoice/invoice.service";
+import pdvSalesRequestService from "../../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import InvoiceItems from "./invoice-items.model";
 import invoiceItemsRepository, {
   InvoiceItemsRepository,
@@ -344,6 +345,15 @@ export class InvoiceItemsService extends BaseService<
       await unmappedInvoiceProductService.delete(unMappedProductId, {
         transaction: t,
       });
+
+      // Item mapeado muda a comparação venda x transferência — PDV reavalia o erro crítico após o commit (falha só loga).
+      t.afterCommit(() =>
+        pdvSalesRequestService
+          .syncCriticalErrorByInvoiceIds([invoiceItemDto.invoice_id!])
+          .catch((error) =>
+            console.error("[INVOICE_ITEMS] Falha ao sincronizar erro crítico do PDV", error),
+          ),
+      );
 
       // ─── 6. Cascata: outros unmapped do mesmo fornecedor com o mesmo
       // código de fornecedor podem ser mapeados automaticamente também —

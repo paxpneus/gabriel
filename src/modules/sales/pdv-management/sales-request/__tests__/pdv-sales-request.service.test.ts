@@ -26,6 +26,9 @@ jest.mock("../pdv-sales-request.repository", () => ({
     findAll: jest.fn(),
     findBatchTargets: jest.fn(),
     findSaleInvoiceTransporterIds: jest.fn(),
+    hasCriticalWarning: jest.fn(),
+    findCriticalErrorBySaleInvoiceIds: jest.fn(),
+    findCriticalErrorSyncCandidatesByInvoiceIds: jest.fn(),
   },
 }));
 
@@ -262,6 +265,10 @@ describe("PdvSalesRequestService", () => {
     (uploaderQueue.enqueueUpload as jest.Mock).mockResolvedValue(undefined);
     (uploaderQueue.enqueueDelete as jest.Mock).mockResolvedValue(undefined);
     (invoiceService.findAll as jest.Mock).mockResolvedValue([]);
+    // Default: nenhuma solicitação a reavaliar no erro crítico (anexo de NF, troca de nota de venda).
+    (
+      pdvSalesRequestRepository.findCriticalErrorSyncCandidatesByInvoiceIds as jest.Mock
+    ).mockResolvedValue([]);
   });
 
   // ─── createRequest ──────────────────────────────────────────────────────────
@@ -714,6 +721,23 @@ describe("PdvSalesRequestService", () => {
       ).mockResolvedValue([]);
     });
 
+    it("fora de PENDING_NF_SALE, nota de venda nova espelha e reavalia o erro crítico", async () => {
+      (pdvSalesRequestRepository.findActiveByOrderId as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIPPING,
+        sale_invoice_id: "invoice-old",
+      });
+
+      await service.syncSaleInvoiceFromOrder("order-1", "invoice-new");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        sale_invoice_id: "invoice-new",
+      });
+      expect(
+        pdvSalesRequestRepository.findCriticalErrorSyncCandidatesByInvoiceIds,
+      ).toHaveBeenCalledWith(["invoice-new"]);
+    });
+
     it("envio ADT: vai pra PENDING_NF_TRANSFER", async () => {
       const request = {
         id: "r1",
@@ -1095,6 +1119,26 @@ describe("PdvSalesRequestService", () => {
     it("SHIPPING (ADT) → TRANSPORTADORA vai pra SHIP_TODAY e desvincula a nota de transferência", async () => {
       mockRequest({
         status: PdvSalesRequestStatus.SHIPPING,
+        shipping_type: PdvShippingType.ADT,
+        transfer_invoice_id: "inv-transfer",
+      });
+
+      await service.changeShippingType("r1", PdvShippingType.TRANSPORTADORA);
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        shipping_type: PdvShippingType.TRANSPORTADORA,
+        transfer_invoice_id: null,
+      });
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.SHIP_TODAY, correction_origin_status: null },
+        expect.anything(),
+      );
+    });
+
+    it("CRITICAL_ERROR → TRANSPORTADORA desvincula a nota de transferência e vai pra SHIP_TODAY", async () => {
+      mockRequest({
+        status: PdvSalesRequestStatus.CRITICAL_ERROR,
         shipping_type: PdvShippingType.ADT,
         transfer_invoice_id: "inv-transfer",
       });
@@ -2819,6 +2863,50 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
+    it("CRITICAL_ERROR troca a nota e reavalia o erro crítico pela sincronização", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.CRITICAL_ERROR,
+        shipping_type: PdvShippingType.ADT,
+        sale_invoice_id: "invoice-sale",
+        transfer_invoice_id: "invoice-loja-15",
+      });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21-1",
+      });
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue([]);
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-loja-06",
+        integrations_id: "tecinco-1",
+      });
+      (invoiceItemsService.findAll as jest.Mock).mockResolvedValue([]);
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.attachTransferInvoice("r1", {
+        invoiceId: "invoice-loja-06",
+        tcarUpsertQueue: {} as any,
+      });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        transfer_invoice_id: "invoice-loja-06",
+      });
+      // Saída do erro crítico é pela sincronização, reavaliando a nota nova.
+      expect(
+        pdvSalesRequestRepository.findCriticalErrorSyncCandidatesByInvoiceIds,
+      ).toHaveBeenCalledWith(["invoice-loja-06"]);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalledWith(
+        "r1",
+        expect.objectContaining({ status: expect.anything() }),
+        expect.anything(),
+      );
+    });
+
     it("FINISHED (admin, ADT) troca a nota mesmo com romaneio gerado e continua FINISHED", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -3135,6 +3223,8 @@ describe("PdvSalesRequestService", () => {
           }),
         }),
         expect.any(String),
+        // Topo da fila: o confirm da NF de transferência espera esse import.
+        { priority: 1 },
       );
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
         transfer_invoice_id: "invoice-provisoria",
@@ -3189,6 +3279,59 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
+    it("PENDING_NF_TRANSFER -> CRITICAL_ERROR quando há aviso crítico", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        transfer_invoice_id: "invoice-transfer",
+      });
+      (pdvSalesRequestRepository.hasCriticalWarning as jest.Mock).mockResolvedValueOnce(
+        true,
+      );
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.confirmTransferInvoice("r1");
+
+      expect(pdvSalesRequestRepository.hasCriticalWarning).toHaveBeenCalledWith("r1");
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        {
+          status: PdvSalesRequestStatus.CRITICAL_ERROR,
+          correction_origin_status: null,
+        },
+        { transaction: mockTransaction },
+      );
+      expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Nota de transferência confirmada com aviso crítico",
+        }),
+        expect.anything(),
+      );
+    });
+
+    it("recusa enquanto a nota provisória ainda é importada da Tecinco (sem xml_path)", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        transfer_invoice_id: "invoice-provisoria",
+      });
+      (invoiceService.findOne as jest.Mock).mockResolvedValueOnce({
+        id: "invoice-provisoria",
+      });
+
+      await expect(service.confirmTransferInvoice("r1")).rejects.toThrow(
+        /Aguarde a nota de transferência terminar de ser importada da Tecinco/,
+      );
+      expect(invoiceService.findOne).toHaveBeenCalledWith({
+        where: { id: "invoice-provisoria", xml_path: null },
+        attributes: ["id"],
+      });
+      expect(pdvSalesRequestRepository.hasCriticalWarning).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
     it("recusa confirmar sem nenhuma nota de transferência vinculada ainda", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -3212,6 +3355,238 @@ describe("PdvSalesRequestService", () => {
       await expect(service.confirmTransferInvoice("r1")).rejects.toThrow(
         /Ação inválida/,
       );
+    });
+  });
+
+  describe("syncCriticalErrorByInvoiceIds", () => {
+    const candidate = (
+      id: string,
+      status: PdvSalesRequestStatus,
+      hasCriticalWarning: boolean,
+      saleInvoiceId = `sale-${id}`,
+    ) => ({
+      id,
+      status,
+      sale_invoice_id: saleInvoiceId,
+      get: (key: string) =>
+        key === "has_critical_warning" ? hasCriticalWarning : undefined,
+    });
+    const statusUpdate = (id: string, status: PdvSalesRequestStatus) => [
+      id,
+      { status, correction_origin_status: null },
+      { transaction: mockTransaction },
+    ];
+
+    beforeEach(() => {
+      (pdvSalesRequestRepository.update as jest.Mock).mockImplementation(
+        async (id: string) => ({ id }),
+      );
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21-1",
+      });
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue([]);
+    });
+
+    it("SHIPPING com aviso crítico entra em CRITICAL_ERROR; sem aviso fica", async () => {
+      (
+        pdvSalesRequestRepository.findCriticalErrorSyncCandidatesByInvoiceIds as jest.Mock
+      ).mockResolvedValue([
+        candidate("r1", PdvSalesRequestStatus.SHIPPING, true),
+        candidate("r2", PdvSalesRequestStatus.SHIPPING, false),
+      ]);
+
+      await service.syncCriticalErrorByInvoiceIds(["inv-1", "inv-1", ""]);
+
+      expect(
+        pdvSalesRequestRepository.findCriticalErrorSyncCandidatesByInvoiceIds,
+      ).toHaveBeenCalledWith(["inv-1"]);
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledTimes(1);
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        ...statusUpdate("r1", PdvSalesRequestStatus.CRITICAL_ERROR),
+      );
+      expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Aviso crítico detectado na NF de transferência",
+          user_id: null,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it("CRITICAL_ERROR sem aviso sai pra SHIPPING (ou FINISHED com romaneio); com aviso fica", async () => {
+      (
+        pdvSalesRequestRepository.findCriticalErrorSyncCandidatesByInvoiceIds as jest.Mock
+      ).mockResolvedValue([
+        candidate("r1", PdvSalesRequestStatus.CRITICAL_ERROR, false),
+        candidate("r2", PdvSalesRequestStatus.CRITICAL_ERROR, false),
+        candidate("r3", PdvSalesRequestStatus.CRITICAL_ERROR, true),
+      ]);
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue(["sale-r2"]);
+
+      await service.syncCriticalErrorByInvoiceIds(["inv-1"]);
+
+      expect(
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds,
+      ).toHaveBeenCalledWith(["sale-r1", "sale-r2"], "cd21-1");
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledTimes(2);
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        ...statusUpdate("r1", PdvSalesRequestStatus.SHIPPING),
+      );
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        ...statusUpdate("r2", PdvSalesRequestStatus.FINISHED),
+      );
+      expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "Aviso crítico corrigido" }),
+        expect.anything(),
+      );
+    });
+
+    it("sem ids não consulta nada", async () => {
+      await service.syncCriticalErrorByInvoiceIds([]);
+
+      expect(
+        pdvSalesRequestRepository.findCriticalErrorSyncCandidatesByInvoiceIds,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("sem transição não busca romaneio", async () => {
+      (
+        pdvSalesRequestRepository.findCriticalErrorSyncCandidatesByInvoiceIds as jest.Mock
+      ).mockResolvedValue([
+        candidate("r1", PdvSalesRequestStatus.SHIPPING, false),
+        candidate("r2", PdvSalesRequestStatus.CRITICAL_ERROR, true),
+      ]);
+
+      await service.syncCriticalErrorByInvoiceIds(["inv-1"]);
+
+      expect(
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds,
+      ).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("advanceAfterTransferInvoiceImport", () => {
+    const mockRequest = (overrides: Record<string, unknown>) => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        sale_invoice_id: "invoice-sale",
+        transfer_invoice_id: "invoice-provisoria",
+        ...overrides,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+      (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
+        id: "cd21-1",
+      });
+      (
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds as jest.Mock
+      ).mockResolvedValue([]);
+    };
+    const statusUpdate = (status: PdvSalesRequestStatus) => [
+      "r1",
+      { status, correction_origin_status: null },
+      { transaction: mockTransaction },
+    ];
+
+    it("PENDING_NF_TRANSFER sem aviso crítico → SHIPPING", async () => {
+      mockRequest({ status: PdvSalesRequestStatus.PENDING_NF_TRANSFER });
+      (pdvSalesRequestRepository.hasCriticalWarning as jest.Mock).mockResolvedValueOnce(
+        false,
+      );
+
+      await service.advanceAfterTransferInvoiceImport("r1", "invoice-provisoria");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        ...statusUpdate(PdvSalesRequestStatus.SHIPPING),
+      );
+    });
+
+    it("PENDING_NF_TRANSFER com aviso crítico → CRITICAL_ERROR", async () => {
+      mockRequest({ status: PdvSalesRequestStatus.PENDING_NF_TRANSFER });
+      (pdvSalesRequestRepository.hasCriticalWarning as jest.Mock).mockResolvedValueOnce(
+        true,
+      );
+
+      await service.advanceAfterTransferInvoiceImport("r1", "invoice-provisoria");
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        ...statusUpdate(PdvSalesRequestStatus.CRITICAL_ERROR),
+      );
+    });
+
+    it("CRITICAL_ERROR não mexe aqui (já reavaliado pelo upsert da nota)", async () => {
+      mockRequest({ status: PdvSalesRequestStatus.CRITICAL_ERROR });
+
+      await service.advanceAfterTransferInvoiceImport("r1", "invoice-provisoria");
+
+      expect(pdvSalesRequestRepository.hasCriticalWarning).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("não mexe se a nota vinculada já foi trocada por outra", async () => {
+      mockRequest({
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        transfer_invoice_id: "invoice-outra",
+      });
+
+      await service.advanceAfterTransferInvoiceImport("r1", "invoice-provisoria");
+
+      expect(pdvSalesRequestRepository.hasCriticalWarning).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it.each([PdvSalesRequestStatus.SHIPPING, PdvSalesRequestStatus.FINISHED])(
+      "%s não avança (só PENDING_NF_TRANSFER/CRITICAL_ERROR esperam o import)",
+      async (status) => {
+        mockRequest({ status });
+
+        await service.advanceAfterTransferInvoiceImport("r1", "invoice-provisoria");
+
+        expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  describe("assertNoCriticalErrorForSaleInvoices", () => {
+    it("lança com o número da nota de venda do pedido em CRITICAL_ERROR", async () => {
+      (
+        pdvSalesRequestRepository.findCriticalErrorBySaleInvoiceIds as jest.Mock
+      ).mockResolvedValue([
+        { id: "r1", sale_invoice_id: "invoice-sale", saleInvoice: { number_system: "4521" } },
+      ]);
+
+      await expect(
+        service.assertNoCriticalErrorForSaleInvoices(["invoice-sale", "invoice-other"]),
+      ).rejects.toThrow(
+        "Pedido da(s) nota(s) 4521 tem erros críticos — ajuste no quadro PDV antes de gerar lote/romaneio",
+      );
+      expect(
+        pdvSalesRequestRepository.findCriticalErrorBySaleInvoiceIds,
+      ).toHaveBeenCalledWith(["invoice-sale", "invoice-other"]);
+    });
+
+    it("no-op sem solicitação em CRITICAL_ERROR", async () => {
+      (
+        pdvSalesRequestRepository.findCriticalErrorBySaleInvoiceIds as jest.Mock
+      ).mockResolvedValue([]);
+
+      await expect(
+        service.assertNoCriticalErrorForSaleInvoices(["invoice-sale"]),
+      ).resolves.toBeUndefined();
+    });
+
+    it("no-op sem ids, sem consultar", async () => {
+      await service.assertNoCriticalErrorForSaleInvoices([]);
+
+      expect(
+        pdvSalesRequestRepository.findCriticalErrorBySaleInvoiceIds,
+      ).not.toHaveBeenCalled();
     });
   });
 

@@ -93,9 +93,9 @@ describe("getNextAction", () => {
   });
 
   describe("cd21", () => {
-    it("tem label pros 12 status", () => {
+    it("tem label pros 13 status", () => {
       expect(Object.keys(CD21_STATUS_LABELS).sort()).toEqual(Object.values(S).sort());
-      expect(Object.values(S)).toHaveLength(12);
+      expect(Object.values(S)).toHaveLength(13);
     });
 
     it.each(Object.values(S))("%s repete o label do status", (status) => {

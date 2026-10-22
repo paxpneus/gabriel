@@ -51,10 +51,16 @@ jest.mock("../../../warehouse/fiscal/invoices/invoice/invoice.service", () => ({
   default: { addMissingInvoiceItems: jest.fn() },
 }));
 
+jest.mock("../../../sales/pdv-management/sales-request/pdv-sales-request.service", () => ({
+  __esModule: true,
+  default: { syncCriticalErrorByInvoiceIds: jest.fn().mockResolvedValue(undefined) },
+}));
+
 import { Op } from "sequelize";
 import UnmappedInvoiceProduct from "../unmapped-invoice-product.model";
 import integrationsService from "../../../integrations/integrations/integrations.service";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import pdvSalesRequestService from "../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { resolveTecincoBranchId } from "../../../../shared/utils/tecinco/resolve-branch-id";
 import { UnmappedInvoiceProductService } from "../unmapped-invoice-product.service";
 
@@ -119,6 +125,10 @@ describe("UnmappedInvoiceProductService", () => {
         [{ product_id: "product-2", quantity_expected: 3 }],
       );
       expect(deleteSpy).toHaveBeenCalledWith("unmapped-invoice-id");
+      // Item novo na nota: PDV reavalia o erro crítico.
+      expect(pdvSalesRequestService.syncCriticalErrorByInvoiceIds).toHaveBeenCalledWith([
+        "invoice-1",
+      ]);
     });
 
     it("nenhum unmapped encontrado (já foi resolvido/apagado antes) — não lança erro, não tenta apagar nada", async () => {

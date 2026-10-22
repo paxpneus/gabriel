@@ -141,6 +141,7 @@ const STORE_COLUMNS: readonly PdvBoardColumn[] = [
     statuses: [
       S.PENDING_NF_SALE,
       S.PENDING_NF_TRANSFER,
+      S.CRITICAL_ERROR,
       S.SHIPPING,
       S.SHIP_TODAY,
     ],
@@ -188,6 +189,7 @@ export const PDV_BOARD_SCREENS: Record<
         S.PENDING_CD21_ANALYSIS,
         S.PENDING_NF_SALE,
         S.PENDING_NF_TRANSFER,
+        S.CRITICAL_ERROR,
         S.SHIPPING,
         S.SHIP_TODAY,
       ],
@@ -233,6 +235,14 @@ export const PDV_BOARD_SCREENS: Record<
       label: "Aguardando NF Transferência",
       description: "Vincular nota de transferência (Tecinco) — só ADT",
       statuses: [S.PENDING_NF_TRANSFER],
+      highlighted: true,
+    },
+    // Saída de confirmTransferInvoice com aviso crítico — volta pro fluxo via resolveCriticalError.
+    {
+      key: "critical_error",
+      label: "Erro Crítico",
+      description: "NF de transferência com aviso crítico",
+      statuses: [S.CRITICAL_ERROR],
       highlighted: true,
     },
     {
