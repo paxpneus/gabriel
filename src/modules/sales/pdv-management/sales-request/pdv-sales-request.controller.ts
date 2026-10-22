@@ -52,7 +52,7 @@ export class PdvSalesRequestController extends BaseController<
       ]),
       this.setShippingInfo,
     );
-    // Troca já em faturamento/expedição — realinha o status ao tipo novo.
+    // Troca já em faturamento/expedição — realinha o status ao tipo novo (FINISHED: só admin logado, status fica).
     this.router.post(
       "/:id/shipping-type/change",
       pdvAccess([PdvAccessScreen.CD21]),
@@ -471,10 +471,13 @@ export class PdvSalesRequestController extends BaseController<
         req.params.id as string,
         req.body.shippingType as PdvShippingType,
         this.actorUserId(req),
+        this.access(req).roleId,
       );
       return res.json(updated);
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      // 403 = solicitação FINISHED sem admin logado.
+      const status = error instanceof PdvForbiddenError ? 403 : 400;
+      return res.status(status).json({ error: error.message });
     }
   };
 
@@ -764,6 +767,7 @@ export class PdvSalesRequestController extends BaseController<
           danfeMimeType: danfeFile?.mimetype,
           tcarUpsertQueue: req.app.locals.TCarInvoiceQueue as TCarInvoiceQueue,
           userId: this.actorUserId(req),
+          roleId: this.access(req).roleId,
         },
       );
       return res.json({
@@ -771,7 +775,9 @@ export class PdvSalesRequestController extends BaseController<
         message: result.message,
       });
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      // 403 = solicitação FINISHED sem admin logado.
+      const status = error instanceof PdvForbiddenError ? 403 : 400;
+      return res.status(status).json({ error: error.message });
     }
   };
 
@@ -797,6 +803,7 @@ export class PdvSalesRequestController extends BaseController<
     try {
       const editable = await this.service.canEditTransferInvoice(
         req.params.id as string,
+        this.access(req).roleId,
       );
       return res.json({ editable });
     } catch (error: any) {

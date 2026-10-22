@@ -7,6 +7,14 @@ aqui.
 
 **Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
 
+## Novo: admin edita solicitação `FINISHED`
+
+Na coluna Finalizados, só **admin logado** (link não vale) pode:
+- trocar o tipo de envio (`POST /:id/shipping-type/change`) — mesma regra de ADT/transportadora; → `TRANSPORTADORA` remove a nota de transferência;
+- trocar a nota de transferência (`POST /:id/transfer-invoice`) — só com `shipping_type = ADT`, mesmo com romaneio já gerado.
+
+Status **continua `FINISHED`** (não volta etapa). Comprovantes seguem travados. Sem admin → `403`. `GET /:id/transfer-invoice/editable` já reflete isso (`true` em FINISHED só pra admin + ADT).
+
 ## Mudou: `critical_warnings` conta também `FINISHED`
 
 Indicativo `critical_warnings` (CD21) e `filters[indicator]=critical_warnings` passam a incluir solicitações finalizadas com aviso crítico, além das em aberto.

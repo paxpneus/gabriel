@@ -45,6 +45,7 @@ import { buildExpeditionProgress } from "./helpers/expedition-progress";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
+import roleService from "../../../company/users/roles/role.service";
 import transporterService from "../../../warehouse/transporter/transporter.service";
 import uploaderService from "../../../handlers/uploader/services/uploader.service";
 import uploaderQueue from "../../../handlers/uploader/uploader.queue";
@@ -1282,11 +1283,13 @@ export class PdvSalesRequestService extends BaseService<
     }
   }
 
+  // FINISHED só pra admin logado (ver assertFinishedEditableByAdmin).
   private static readonly SHIPPING_TYPE_CHANGEABLE_STATUSES: PdvSalesRequestStatus[] =
     [
       PdvSalesRequestStatus.PENDING_NF_SALE,
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
       ...EXPEDITION_PDV_SALES_REQUEST_STATUSES,
+      PdvSalesRequestStatus.FINISHED,
     ];
 
   // Troca de tipo de envio já em faturamento/expedição (CD21) — diferente de
@@ -1295,12 +1298,14 @@ export class PdvSalesRequestService extends BaseService<
     id: string,
     shippingType: PdvShippingType,
     userId?: string,
+    roleId?: string,
   ): Promise<PdvSalesRequest> {
     this.assertValidShippingType(shippingType);
     const request = await this.assertStatus(
       id,
       PdvSalesRequestService.SHIPPING_TYPE_CHANGEABLE_STATUSES,
     );
+    await this.assertFinishedEditableByAdmin(request, roleId);
     await this.assertShippingTypeAllowedForTransporter(
       request.sale_invoice_id,
       shippingType,
@@ -1343,7 +1348,11 @@ export class PdvSalesRequestService extends BaseService<
     shippingType: PdvShippingType,
   ): Promise<PdvSalesRequestStatus> {
     // Sem nota de venda ainda: markSaleInvoiceReady já roteia pelo tipo novo.
-    if (request.status === PdvSalesRequestStatus.PENDING_NF_SALE) {
+    // FINISHED (edição de admin) é só correção de dado — não reabre o fluxo.
+    if (
+      request.status === PdvSalesRequestStatus.PENDING_NF_SALE ||
+      request.status === PdvSalesRequestStatus.FINISHED
+    ) {
       return request.status;
     }
     // ADT sem nota de transferência volta pra fila de vínculo dela.
@@ -2236,10 +2245,10 @@ export class PdvSalesRequestService extends BaseService<
   // NÃO avança status sozinho — só vincula/troca a nota de transferência e
   // devolve a solicitação atualizada pro front validar. Permitido em
   // PENDING_NF_TRANSFER (primeira vinculação), SHIPPING e FINISHED (edição
-  // depois de já confirmado — CD21/expedição percebeu a nota errada, ou
-  // reabertura pontual pós-finalização) — sempre como TROCA (nunca deixa
+  // depois de já confirmado — CD21/expedição percebeu a nota errada; FINISHED
+  // só admin logado, status continua FINISHED) — sempre como TROCA (nunca deixa
   // `transfer_invoice_id` nulo: quem chama precisa mandar uma nota válida
-  // pra substituir a atual). Em SHIPPING/FINISHED, só permite a troca se o
+  // pra substituir a atual). Em SHIPPING, só permite a troca se o
   // romaneio da nota de VENDA ainda não foi gerado — depois de gerado, o
   // pedido já saiu fisicamente com a nota de transferência que está
   // vinculada, trocar aqui só bagunçaria o que já foi expedido.
@@ -2252,6 +2261,7 @@ export class PdvSalesRequestService extends BaseService<
       danfeMimeType?: string;
       tcarUpsertQueue: TCarInvoiceQueue;
       userId?: string;
+      roleId?: string;
     },
   ): Promise<{ salesRequest: PdvSalesRequest; message: string }> {
     const request = await this.assertStatus(id, [
@@ -2260,9 +2270,19 @@ export class PdvSalesRequestService extends BaseService<
       PdvSalesRequestStatus.FINISHED,
     ]);
 
-    await this.assertSaleInvoiceDeliveryNoteNotGenerated(
-      request.sale_invoice_id,
-    );
+    // FINISHED: admin troca mesmo com romaneio gerado (correção de dado), mas só em ADT.
+    if (request.status === PdvSalesRequestStatus.FINISHED) {
+      await this.assertFinishedEditableByAdmin(request, params.roleId);
+      if (request.shipping_type !== PdvShippingType.ADT) {
+        throw new Error(
+          "Nota de transferência só existe em ADT — altere o tipo de envio antes",
+        );
+      }
+    } else {
+      await this.assertSaleInvoiceDeliveryNoteNotGenerated(
+        request.sale_invoice_id,
+      );
+    }
 
     const tecinco = await getTCarIntegration();
     let invoiceId = params.invoiceId ?? null;
@@ -2661,7 +2681,21 @@ export class PdvSalesRequestService extends BaseService<
     return !!generatedInvoiceId;
   }
 
-  // Guarda de attachTransferInvoice pra SHIPPING/FINISHED.
+  // Solicitação FINISHED só é editável (tipo de envio/nota de transferência) por
+  // admin logado — roleId só vem via LOGIN, então link nunca passa.
+  private async assertFinishedEditableByAdmin(
+    request: PdvSalesRequest,
+    roleId?: string,
+  ): Promise<void> {
+    if (request.status !== PdvSalesRequestStatus.FINISHED) return;
+    if (!roleId || !(await roleService.isAdminRole(roleId))) {
+      throw new PdvForbiddenError(
+        "Apenas administradores logados podem editar uma solicitação finalizada",
+      );
+    }
+  }
+
+  // Guarda de attachTransferInvoice pra SHIPPING.
   private async assertSaleInvoiceDeliveryNoteNotGenerated(
     saleInvoiceId: string | null,
   ): Promise<void> {
@@ -2674,17 +2708,23 @@ export class PdvSalesRequestService extends BaseService<
 
   // Pro front decidir se mostra o componente de troca de nota de
   // transferência, sem precisar disparar attachTransferInvoice só pra
-  // descobrir se vai tomar 400. Mesmas duas condições de
-  // attachTransferInvoice: status elegível + (em SHIPPING/FINISHED) romaneio
-  // da nota de venda ainda não gerado.
-  async canEditTransferInvoice(id: string): Promise<boolean> {
+  // descobrir se vai tomar 400. Mesmas condições de attachTransferInvoice:
+  // FINISHED = admin logado + ADT; SHIPPING = romaneio da venda não gerado.
+  async canEditTransferInvoice(id: string, roleId?: string): Promise<boolean> {
     const request = await this.repository.findById(id);
     if (!request) throw new Error("Solicitação não encontrada");
+
+    if (request.status === PdvSalesRequestStatus.FINISHED) {
+      return (
+        request.shipping_type === PdvShippingType.ADT &&
+        !!roleId &&
+        (await roleService.isAdminRole(roleId))
+      );
+    }
 
     const editableStatuses = [
       PdvSalesRequestStatus.PENDING_NF_TRANSFER,
       PdvSalesRequestStatus.SHIPPING,
-      PdvSalesRequestStatus.FINISHED,
     ];
     if (!editableStatuses.includes(request.status)) return false;
 

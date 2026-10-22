@@ -95,6 +95,7 @@ export async function resolveLoginAccess(
           ? null
           : (user.unit_business_id ?? null),
       userId: user.id,
+      roleId: user.role_id,
     },
   };
 }

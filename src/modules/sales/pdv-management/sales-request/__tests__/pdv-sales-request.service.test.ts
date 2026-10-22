@@ -88,6 +88,11 @@ jest.mock(
   }),
 );
 
+jest.mock("../../../../company/users/roles/role.service", () => ({
+  __esModule: true,
+  default: { isAdminRole: jest.fn() },
+}));
+
 jest.mock("../../../../company/unit-business/unit-business.service", () => ({
   __esModule: true,
   default: {
@@ -175,6 +180,7 @@ import paymentMethodService from "../../../orders/payment_method/payment_method.
 import invoiceService from "../../../../warehouse/fiscal/invoices/invoice/invoice.service";
 import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
+import roleService from "../../../../company/users/roles/role.service";
 import tempFileService from "../../../../handlers/temp-file/temp-file.service";
 import transporterService from "../../../../warehouse/transporter/transporter.service";
 import uploaderQueue from "../../../../handlers/uploader/uploader.queue";
@@ -1139,6 +1145,85 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
+    it("FINISHED (admin) ADT → TRANSPORTADORA desvincula a nota de transferência e continua FINISHED", async () => {
+      mockRequest({
+        status: PdvSalesRequestStatus.FINISHED,
+        shipping_type: PdvShippingType.ADT,
+        transfer_invoice_id: "inv-transfer",
+      });
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(true);
+
+      await service.changeShippingType(
+        "r1",
+        PdvShippingType.TRANSPORTADORA,
+        "u1",
+        "role-admin",
+      );
+
+      expect(roleService.isAdminRole).toHaveBeenCalledWith("role-admin");
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        shipping_type: PdvShippingType.TRANSPORTADORA,
+        transfer_invoice_id: null,
+      });
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalledWith(
+        "r1",
+        expect.objectContaining({ status: expect.anything() }),
+        expect.anything(),
+      );
+      expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ step: PdvSalesRequestStatus.FINISHED }),
+      );
+    });
+
+    it("FINISHED (admin) TRANSPORTADORA → ADT sem nota de transferência continua FINISHED", async () => {
+      mockRequest({
+        status: PdvSalesRequestStatus.FINISHED,
+        shipping_type: PdvShippingType.TRANSPORTADORA,
+      });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "inv-sale",
+        transporter_name: "ADT - CD 12",
+      });
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(true);
+
+      await service.changeShippingType(
+        "r1",
+        PdvShippingType.ADT,
+        "u1",
+        "role-admin",
+      );
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        shipping_type: PdvShippingType.ADT,
+      });
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalledWith(
+        "r1",
+        expect.objectContaining({ status: expect.anything() }),
+        expect.anything(),
+      );
+    });
+
+    it.each([
+      ["não admin", "role-operator", false],
+      ["link (sem roleId)", undefined, false],
+    ])("FINISHED recusa com 403 quando %s", async (_label, roleId, isAdmin) => {
+      mockRequest({
+        status: PdvSalesRequestStatus.FINISHED,
+        shipping_type: PdvShippingType.ADT,
+      });
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(isAdmin);
+
+      await expect(
+        service.changeShippingType(
+          "r1",
+          PdvShippingType.TRANSPORTADORA,
+          "u1",
+          roleId,
+        ),
+      ).rejects.toBeInstanceOf(PdvForbiddenError);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
     it("SHIP_TODAY (TRANSPORTADORA) → ADT sem nota de transferência volta pra PENDING_NF_TRANSFER", async () => {
       mockRequest({
         status: PdvSalesRequestStatus.SHIP_TODAY,
@@ -1223,7 +1308,6 @@ describe("PdvSalesRequestService", () => {
       PdvSalesRequestStatus.PENDING_FINANCE,
       PdvSalesRequestStatus.PENDING_CD21_ANALYSIS,
       PdvSalesRequestStatus.PENDING_CORRECTION,
-      PdvSalesRequestStatus.FINISHED,
     ])("bloqueia a troca em %s", async (status) => {
       mockRequest({ status, shipping_type: PdvShippingType.ADT });
 
@@ -2735,6 +2819,82 @@ describe("PdvSalesRequestService", () => {
       );
     });
 
+    it("FINISHED (admin, ADT) troca a nota mesmo com romaneio gerado e continua FINISHED", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.FINISHED,
+        shipping_type: PdvShippingType.ADT,
+        sale_invoice_id: "invoice-sale",
+        transfer_invoice_id: "invoice-antiga",
+      });
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(true);
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-nova",
+        integrations_id: "tecinco-1",
+      });
+      (invoiceItemsService.findAll as jest.Mock).mockResolvedValue([]);
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.attachTransferInvoice("r1", {
+        invoiceId: "invoice-nova",
+        tcarUpsertQueue: {} as any,
+        roleId: "role-admin",
+      });
+
+      expect(
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds,
+      ).not.toHaveBeenCalled();
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
+        transfer_invoice_id: "invoice-nova",
+      });
+      expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: PdvSalesRequestStatus.FINISHED,
+          description: "Nota de transferência substituída",
+        }),
+      );
+    });
+
+    it("FINISHED recusa com 403 sem admin logado", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.FINISHED,
+        shipping_type: PdvShippingType.ADT,
+        sale_invoice_id: "invoice-sale",
+      });
+
+      await expect(
+        service.attachTransferInvoice("r1", {
+          invoiceId: "invoice-nova",
+          tcarUpsertQueue: {} as any,
+        }),
+      ).rejects.toBeInstanceOf(PdvForbiddenError);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("FINISHED (admin) recusa vincular nota de transferência em TRANSPORTADORA", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.FINISHED,
+        shipping_type: PdvShippingType.TRANSPORTADORA,
+        sale_invoice_id: "invoice-sale",
+      });
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(true);
+
+      await expect(
+        service.attachTransferInvoice("r1", {
+          invoiceId: "invoice-nova",
+          tcarUpsertQueue: {} as any,
+          roleId: "role-admin",
+        }),
+      ).rejects.toThrow(/só existe em ADT/);
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
     it("recusa quando a nota informada não é da integração Tecinco", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -2768,11 +2928,11 @@ describe("PdvSalesRequestService", () => {
       ).rejects.toThrow(/Informe o id/);
     });
 
-    it("permite trocar em FINISHED quando o romaneio da nota de venda ainda não foi gerado", async () => {
+    it("permite trocar em SHIPPING quando o romaneio da nota de venda ainda não foi gerado", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
         order_id: "order-1",
-        status: PdvSalesRequestStatus.FINISHED,
+        status: PdvSalesRequestStatus.SHIPPING,
         sale_invoice_id: "invoice-sale",
         transfer_invoice_id: "invoice-antiga",
       });
@@ -2815,7 +2975,7 @@ describe("PdvSalesRequestService", () => {
       });
     });
 
-    it("recusa trocar em SHIPPING/FINISHED quando o romaneio da nota de venda já foi gerado", async () => {
+    it("recusa trocar em SHIPPING quando o romaneio da nota de venda já foi gerado", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
         order_id: "order-1",
@@ -3093,10 +3253,47 @@ describe("PdvSalesRequestService", () => {
       await expect(service.canEditTransferInvoice("r1")).resolves.toBe(true);
     });
 
-    it("true em SHIPPING/FINISHED quando o romaneio da nota de venda ainda não foi gerado", async () => {
+    it("FINISHED: true só pra admin logado em ADT, independente do romaneio", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
         status: PdvSalesRequestStatus.FINISHED,
+        shipping_type: PdvShippingType.ADT,
+        sale_invoice_id: "invoice-sale",
+      });
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(true);
+
+      await expect(
+        service.canEditTransferInvoice("r1", "role-admin"),
+      ).resolves.toBe(true);
+      await expect(service.canEditTransferInvoice("r1")).resolves.toBe(false);
+      expect(
+        invoiceService.findDeliveryNoteGeneratedInvoiceIds,
+      ).not.toHaveBeenCalled();
+
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(false);
+      await expect(
+        service.canEditTransferInvoice("r1", "role-operator"),
+      ).resolves.toBe(false);
+    });
+
+    it("FINISHED: false em TRANSPORTADORA mesmo pra admin", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.FINISHED,
+        shipping_type: PdvShippingType.TRANSPORTADORA,
+        sale_invoice_id: "invoice-sale",
+      });
+      (roleService.isAdminRole as jest.Mock).mockResolvedValue(true);
+
+      await expect(
+        service.canEditTransferInvoice("r1", "role-admin"),
+      ).resolves.toBe(false);
+    });
+
+    it("true em SHIPPING quando o romaneio da nota de venda ainda não foi gerado", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        status: PdvSalesRequestStatus.SHIPPING,
         sale_invoice_id: "invoice-sale",
       });
       (unitBusinessService.getCd21UnitBusiness as jest.Mock).mockResolvedValue({
@@ -3109,7 +3306,7 @@ describe("PdvSalesRequestService", () => {
       await expect(service.canEditTransferInvoice("r1")).resolves.toBe(true);
     });
 
-    it("false em SHIPPING/FINISHED quando o romaneio da nota de venda já foi gerado", async () => {
+    it("false em SHIPPING quando o romaneio da nota de venda já foi gerado", async () => {
       (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
         id: "r1",
         status: PdvSalesRequestStatus.SHIPPING,

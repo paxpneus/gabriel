@@ -15,4 +15,6 @@ export interface PdvAccessContext {
   unitBusinessId: string | null;
   // Só preenchido quando via = LOGIN, pra registrar autoria no histórico.
   userId?: string;
+  // Só via LOGIN — checagem de admin (ex.: editar solicitação FINISHED).
+  roleId?: string;
 }
