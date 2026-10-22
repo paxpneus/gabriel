@@ -379,9 +379,10 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     const value = filters.brand;
     delete filters.brand;
 
+    // Marca vem do request — escapada pelo Sequelize, nunca interpolada crua.
     const condition = Array.isArray(value)
-      ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
-      : `= '${String(value).replace(/'/g, "''")}'`;
+      ? `IN (${value.map((v: string) => Invoice.sequelize!.escape(v)).join(", ")})`
+      : `= ${Invoice.sequelize!.escape(String(value))}`;
 
     return {
       [Op.and]: [
