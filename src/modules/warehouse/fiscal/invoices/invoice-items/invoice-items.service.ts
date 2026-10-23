@@ -1,4 +1,4 @@
-import { Transaction } from "sequelize";
+import { Op, Transaction } from "sequelize";
 import sequelize from "../../../../../config/sequelize";
 import BaseService from "../../../../../shared/utils/base-models/base-service";
 import { Product, ProductConfig } from "../../../../inventory";
@@ -411,6 +411,19 @@ export class InvoiceItemsService extends BaseService<
         false,
       );
     }
+  }
+
+  // Ressincroniza todo lote (OUTGOING e/ou ENTRANCE) que já contém essas notas —
+  // chamado após itens entrarem na nota depois do lote (reprocesso de XML/Bling, produto mapeado).
+  async syncBatchesByInvoiceIds(invoiceIds: string[]): Promise<void> {
+    if (!invoiceIds.length) return;
+
+    const batchInvoices = await batchInvoicesService.findAll({
+      where: { invoice_id: { [Op.in]: invoiceIds } },
+      attributes: ["id", "invoice_id", "expedition_batch_id"],
+    });
+
+    await Promise.all(batchInvoices.map((b) => this.syncBatchFromInvoice(b)));
   }
 
   async syncBatchFromInvoice(

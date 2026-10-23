@@ -51,6 +51,11 @@ jest.mock("../../../warehouse/fiscal/invoices/invoice/invoice.service", () => ({
   default: { addMissingInvoiceItems: jest.fn() },
 }));
 
+jest.mock("../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service", () => ({
+  __esModule: true,
+  default: { syncBatchesByInvoiceIds: jest.fn().mockResolvedValue(undefined) },
+}));
+
 jest.mock("../../../sales/pdv-management/sales-request/pdv-sales-request.service", () => ({
   __esModule: true,
   default: { syncCriticalErrorByInvoiceIds: jest.fn().mockResolvedValue(undefined) },
@@ -60,6 +65,7 @@ import { Op } from "sequelize";
 import UnmappedInvoiceProduct from "../unmapped-invoice-product.model";
 import integrationsService from "../../../integrations/integrations/integrations.service";
 import invoiceService from "../../../warehouse/fiscal/invoices/invoice/invoice.service";
+import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import pdvSalesRequestService from "../../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { resolveTecincoBranchId } from "../../../../shared/utils/tecinco/resolve-branch-id";
 import { UnmappedInvoiceProductService } from "../unmapped-invoice-product.service";
@@ -125,6 +131,10 @@ describe("UnmappedInvoiceProductService", () => {
         [{ product_id: "product-2", quantity_expected: 3 }],
       );
       expect(deleteSpy).toHaveBeenCalledWith("unmapped-invoice-id");
+      // Nota já em lote: o item novo também entra no lote.
+      expect(invoiceItemsService.syncBatchesByInvoiceIds).toHaveBeenCalledWith([
+        "invoice-1",
+      ]);
       // Item novo na nota: PDV reavalia o erro crítico.
       expect(pdvSalesRequestService.syncCriticalErrorByInvoiceIds).toHaveBeenCalledWith([
         "invoice-1",

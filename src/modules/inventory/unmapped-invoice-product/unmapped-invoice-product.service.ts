@@ -39,6 +39,7 @@ import {
 import { resolveTecincoBranchId } from "../../../shared/utils/tecinco/resolve-branch-id";
 import { TCarProdutoPayload } from "../../handlers/tecinco/service/tecinco/tecinco.types";
 import invoiceService from "../../warehouse/fiscal/invoices/invoice/invoice.service";
+import invoiceItemsService from "../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import pdvSalesRequestService from "../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { JobStatus, toJobStatus } from "../../../shared/utils/queues/job-status";
 
@@ -312,11 +313,16 @@ export class UnmappedInvoiceProductService extends BaseService<
       }),
     );
 
+    const invoiceIds = [
+      ...new Set(pendingRows.flatMap((row) => (row.invoice_id ? [row.invoice_id] : []))),
+    ];
+
+    // Nota que já estava em lote recebe o item novo também no lote (senão o lote fica sem o produto).
+    await invoiceItemsService.syncBatchesByInvoiceIds(invoiceIds);
+
     // Itens criados nas notas: PDV reavalia o erro crítico (falha só loga, o produto já foi resolvido).
     await pdvSalesRequestService
-      .syncCriticalErrorByInvoiceIds(
-        pendingRows.flatMap((row) => (row.invoice_id ? [row.invoice_id] : [])),
-      )
+      .syncCriticalErrorByInvoiceIds(invoiceIds)
       .catch((error) =>
         console.error("[UNMAPPED] Falha ao sincronizar erro crítico do PDV", error),
       );

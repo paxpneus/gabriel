@@ -21,7 +21,6 @@ import {
   UnitBusiness,
   ExpeditionBatch,
   ExpeditionBatchItems,
-  ExpeditionBatchInvoice,
 } from "../../../../../warehouse";
 import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
@@ -2065,13 +2064,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // ─── Sincroniza batch se a invoice já pertencer a um ─────────────────────
 
-    const batchInvoice = await ExpeditionBatchInvoice.findOne({
-      where: { invoice_id: invoice.id },
-    });
-
-    if (batchInvoice) {
-      await invoiceItemsService.syncBatchFromInvoice(batchInvoice);
-    }
+    await invoiceItemsService.syncBatchesByInvoiceIds([invoice.id]);
 
     // ─── Garante que o Kardex reflete essa NF e reconcilia com o saldo
     // local já conhecido (sem chamar a Bling — o estoque físico já foi

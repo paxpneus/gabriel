@@ -1198,6 +1198,9 @@ export async function upsertInvoiceFromXml(
   // Itens/unmapped já reconciliados: reavalia o erro crítico das solicitações PDV que usam a nota.
   await pdvSalesRequestService.syncCriticalErrorByInvoiceIds([invoice.id]);
 
+  // Nota já em lote: leva pro lote os itens criados no reprocesso (addMissingInvoiceItems).
+  await invoiceItemsService.syncBatchesByInvoiceIds([invoice.id]);
+
   // ─── ProductConfig + SupplierMapping para produtos Tecinco ────────────────
 
   try {
