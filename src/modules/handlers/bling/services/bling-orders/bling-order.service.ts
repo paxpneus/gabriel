@@ -44,7 +44,6 @@ import pdvSalesRequestService from "../../../../sales/pdv-management/sales-reque
 import { isPdvCancelledSituation } from "../../../../sales/orders/order/helpers/eligible-for-pdv-filters";
 import { notifyPdvStoreSync } from "../../../../sales/pdv-management/sales-request/helpers/notify-pdv-store-sync";
 import {
-  SEM_LOJA_ID_SYSTEM,
   findOrCreateSemLojaUnitBusiness,
 } from "./helpers/sem-loja-unit-business";
 
@@ -971,31 +970,13 @@ export class BlingOrderService {
       const isCompleted =
         COMPLETED_ORDER_INTERNAL_STATUSES.includes(internalStatus);
 
-      // Resolve unit_business_id se ainda estiver nulo (ou em "Sem Loja",
-      // ver isUnresolved abaixo) — precisa vir antes do write defensivo
-      // abaixo (não depois, como antes) pra já entrar nele e disparar a
-      // criação da PdvSalesRequest o quanto antes, mesmo que as etapas de
-      // enriquecimento mais abaixo (contato, endereço, item, financeiro)
-      // falhem.
-      let unitBusinessId: string | null =
+      // Re-resolve a loja em todo update (pedido pode trocar de loja na Bling, ou sair de nulo/"Sem Loja");
+      // sem match pro loja.id mantém a atual. Antes do write defensivo pra PdvSalesRequest já usar a loja certa.
+      const previousUnitBusinessId: string | null =
         existingOrder.unit_business_id ?? null;
+      let unitBusinessId = previousUnitBusinessId;
 
-      // Além de nulo, também tenta re-resolver quando a loja atual é o
-      // fallback "Sem Loja" — pedido pode ter caído nele por falta de
-      // mapeamento na Bling (id_system ainda não cadastrado) e a loja
-      // certa ser configurada depois; sem isso, ficaria presa em "Sem
-      // Loja" pra sempre, já que nenhum outro código corrige esse campo.
-      const isUnresolved =
-        !unitBusinessId ||
-        unitBusinessId ===
-          (
-            await UnitBusiness.findOne({
-              where: { id_system: SEM_LOJA_ID_SYSTEM },
-              attributes: ["id"],
-            })
-          )?.id;
-
-      if (isUnresolved && orderData.loja?.id) {
+      if (orderData.loja?.id) {
         const unitBusiness = await UnitBusiness.findOne({
           where: { id_system: String(orderData.loja.id) },
           attributes: ["id"],
@@ -1024,6 +1005,18 @@ export class BlingOrderService {
         notifyPdvStoreSync(unitBusinessId, "ORDER_STATUS_CHANGED", {
           orderId: existingOrder.id,
         });
+
+        // Troca de loja: reespelha nas solicitações PDV do pedido e avisa a loja antiga pra tirar o card/pedido do quadro.
+        if (unitBusinessId !== previousUnitBusinessId) {
+          await pdvSalesRequestService.syncUnitBusinessFromOrder(
+            existingOrder.id,
+            previousUnitBusinessId,
+            unitBusinessId,
+          );
+          notifyPdvStoreSync(previousUnitBusinessId, "ORDER_STATUS_CHANGED", {
+            orderId: existingOrder.id,
+          });
+        }
 
         if (isPdvCancelledSituation(orderData.situacao.id)) {
           await pdvSalesRequestService.cancelIfActiveByOrderId(

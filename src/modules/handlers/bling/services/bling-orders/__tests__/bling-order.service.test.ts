@@ -62,6 +62,7 @@ jest.mock(
       syncSaleInvoiceFromOrder: jest.fn(),
       cancelIfActiveByOrderId: jest.fn(),
       reactivateIfCancelledByOrder: jest.fn(),
+      syncUnitBusinessFromOrder: jest.fn(),
     },
   }),
 );
@@ -440,6 +441,46 @@ describe("BlingOrderService", () => {
 
       expect(result).not.toBeNull();
       expect(result?.orderSystem.internal_status).toBe(OrderInternalStatus.OPEN);
+    });
+  });
+
+  // Loja do pedido é re-resolvida por loja.id em todo update, não só quando nula/"Sem Loja".
+  describe("updateOrderFromBling — troca de loja (unit_business_id)", () => {
+    it("loja trocada na Bling entre duas lojas reais grava a nova e reespelha nas solicitações PDV", async () => {
+      (UnitBusiness.findOne as jest.Mock).mockResolvedValue({ id: "ub-new" });
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(UnitBusiness.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id_system: "205955595" } }),
+      );
+      expect(lastUpdateFields()).toEqual(
+        expect.objectContaining({ unit_business_id: "ub-new" }),
+      );
+      expect(pdvSalesRequestService.syncUnitBusinessFromOrder).toHaveBeenCalledWith(
+        "order-uuid-1",
+        "ub-existing",
+        "ub-new",
+      );
+    });
+
+    it("loja.id sem unit business cadastrada mantém a loja atual e não mexe no PDV", async () => {
+      (UnitBusiness.findOne as jest.Mock).mockResolvedValue(null);
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(lastUpdateFields()).toEqual(
+        expect.objectContaining({ unit_business_id: "ub-existing" }),
+      );
+      expect(pdvSalesRequestService.syncUnitBusinessFromOrder).not.toHaveBeenCalled();
+    });
+
+    it("mesma loja não reespelha no PDV", async () => {
+      (UnitBusiness.findOne as jest.Mock).mockResolvedValue({ id: "ub-existing" });
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(pdvSalesRequestService.syncUnitBusinessFromOrder).not.toHaveBeenCalled();
     });
   });
 

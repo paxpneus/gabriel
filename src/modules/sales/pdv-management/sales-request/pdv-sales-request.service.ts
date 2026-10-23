@@ -3069,6 +3069,37 @@ export class PdvSalesRequestService extends BaseService<
     });
   }
 
+  // Pedido trocou de loja na Bling — reespelha unit_business_id em todas as solicitações dele (qualquer status)
+  // e avisa as duas lojas, senão o card fica preso na loja antiga e invisível na nova.
+  async syncUnitBusinessFromOrder(
+    orderId: string,
+    previousUnitBusinessId: string | null,
+    unitBusinessId: string | null,
+  ): Promise<void> {
+    const requests = await this.findAll({
+      where: { order_id: orderId },
+      attributes: ["id", "status"],
+    });
+    if (!requests.length) return;
+
+    await this.bulkUpdate(
+      { unit_business_id: unitBusinessId },
+      { where: { order_id: orderId } },
+    );
+
+    requests.forEach((request) => notifySalesRequestUpdated(request.id));
+    [previousUnitBusinessId, unitBusinessId].forEach((storeId) =>
+      notifyPdvStoresSync(
+        requests.map((request) => ({
+          id: request.id,
+          unit_business_id: storeId,
+          status: request.status,
+        })),
+        "SALES_REQUEST_STATUS_CHANGED",
+      ),
+    );
+  }
+
   // Pra quem muda dado exibido na solicitação fora deste service (lote/romaneio do CD21, import da Tecinco).
   async notifyChanged(id: string): Promise<void> {
     try {
