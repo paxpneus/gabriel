@@ -1,3 +1,4 @@
+import { Op } from "sequelize";
 import { ProductStockFlowService } from "../services/main/product-stock-flow/product-stock-flow.service";
 
 jest.mock("../../../company/unit-business/unit-business.service", () => ({
@@ -78,6 +79,7 @@ describe("ProductStockFlowService", () => {
       unit_business_id: "ub-21",
       start_date: "2026-05-01",
       end_date: "2026-06-30",
+      brand: null,
     });
     expect(report.months.map((m) => m.month)).toEqual(["2026-06", "2026-05"]);
     expect(report.months[1].products[0]).toMatchObject({
@@ -116,6 +118,31 @@ describe("ProductStockFlowService", () => {
       total_output_value: 6409.17,
       total_return_value: 390.83,
     });
+  });
+
+  it("filtra por marca passando os product_id da marca às agregações", async () => {
+    (productService.findAll as jest.Mock).mockResolvedValueOnce([{ id: "p1" }]);
+
+    const report = await service.getReport({
+      startDate: "2026-05-01",
+      endDate: "2026-05-31",
+      brands: ["MICHELIN"],
+    });
+
+    expect(productService.findAll).toHaveBeenNthCalledWith(1, {
+      where: { brand: { [Op.in]: ["MICHELIN"] } },
+      attributes: ["id"],
+    });
+    expect(repository.aggregateInputs.mock.calls[0][3]).toEqual(["p1"]);
+    expect(repository.aggregateOutputs.mock.calls[0][3]).toEqual(["p1"]);
+    expect(repository.aggregateReturns.mock.calls[0][3]).toEqual(["p1"]);
+    expect(report.filters.brand).toEqual(["MICHELIN"]);
+  });
+
+  it("sem marca não restringe produtos nas agregações", async () => {
+    await service.getReport({ startDate: "2026-05-01", endDate: "2026-05-31" });
+
+    expect(repository.aggregateInputs.mock.calls[0][3]).toBeUndefined();
   });
 
   it("não consulta produtos quando não há movimentação", async () => {

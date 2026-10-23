@@ -1,4 +1,4 @@
-import { Op } from "sequelize";
+import { Op, WhereOptions } from "sequelize";
 import StockMovement from "../../../../../inventory/stock/stock-movements/stock-movements.model";
 import {
   customerReturnMovementsWhere,
@@ -19,18 +19,31 @@ import {
 } from "../../query-objects/product-stock-flow.aggregates";
 
 export class ProductStockFlowRepository {
+  // Unidade + período + tipo de movimento; `productIds` (filtro de marca) só restringe quando vier.
+  private scopeWhere(
+    unitBusinessId: string,
+    start: Date,
+    end: Date,
+    productIds: string[] | undefined,
+    movementWhere: WhereOptions,
+  ): WhereOptions {
+    return {
+      [Op.and]: [
+        unitBusinessPeriodWhere(unitBusinessId, start, end),
+        movementWhere,
+        ...(productIds ? [{ product_id: { [Op.in]: productIds } }] : []),
+      ],
+    };
+  }
+
   async aggregateInputs(
     unitBusinessId: string,
     start: Date,
     end: Date,
+    productIds?: string[],
   ): Promise<ProductStockFlowInputRow[]> {
     return StockMovement.findAll({
-      where: {
-        [Op.and]: [
-          unitBusinessPeriodWhere(unitBusinessId, start, end),
-          inputMovementsWhere(),
-        ],
-      },
+      where: this.scopeWhere(unitBusinessId, start, end, productIds, inputMovementsWhere()),
       attributes: inputAggregateAttributes(),
       group: PRODUCT_STOCK_FLOW_GROUP,
       raw: true,
@@ -41,14 +54,10 @@ export class ProductStockFlowRepository {
     unitBusinessId: string,
     start: Date,
     end: Date,
+    productIds?: string[],
   ): Promise<ProductStockFlowOutputRow[]> {
     return StockMovement.findAll({
-      where: {
-        [Op.and]: [
-          unitBusinessPeriodWhere(unitBusinessId, start, end),
-          outputMovementsWhere(),
-        ],
-      },
+      where: this.scopeWhere(unitBusinessId, start, end, productIds, outputMovementsWhere()),
       attributes: outputAggregateAttributes(),
       group: PRODUCT_STOCK_FLOW_GROUP,
       raw: true,
@@ -59,14 +68,10 @@ export class ProductStockFlowRepository {
     unitBusinessId: string,
     start: Date,
     end: Date,
+    productIds?: string[],
   ): Promise<ProductStockFlowReturnRow[]> {
     return StockMovement.findAll({
-      where: {
-        [Op.and]: [
-          unitBusinessPeriodWhere(unitBusinessId, start, end),
-          customerReturnMovementsWhere(),
-        ],
-      },
+      where: this.scopeWhere(unitBusinessId, start, end, productIds, customerReturnMovementsWhere()),
       attributes: returnAggregateAttributes(),
       group: PRODUCT_STOCK_FLOW_GROUP,
       raw: true,

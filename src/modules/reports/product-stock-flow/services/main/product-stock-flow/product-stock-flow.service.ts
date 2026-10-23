@@ -38,10 +38,20 @@ export class ProductStockFlowService {
     const start = startOfDayTz(params.startDate).toDate();
     const end = endOfDayTz(params.endDate).toDate();
 
+    // Marca vira lista de product_id antes das agregações (filtro aplicado no banco).
+    const productIds = params.brands?.length
+      ? (
+          await productService.findAll({
+            where: { brand: { [Op.in]: params.brands } },
+            attributes: ["id"],
+          })
+        ).map((product) => product.id)
+      : undefined;
+
     const [inputs, outputs, returns] = await Promise.all([
-      this.repository.aggregateInputs(store.id, start, end),
-      this.repository.aggregateOutputs(store.id, start, end),
-      this.repository.aggregateReturns(store.id, start, end),
+      this.repository.aggregateInputs(store.id, start, end, productIds),
+      this.repository.aggregateOutputs(store.id, start, end, productIds),
+      this.repository.aggregateReturns(store.id, start, end, productIds),
     ]);
 
     const productInfo = await this.loadProductInfo(
@@ -63,6 +73,7 @@ export class ProductStockFlowService {
         unit_business_id: store.id,
         start_date: params.startDate,
         end_date: params.endDate,
+        brand: params.brands?.length ? params.brands : null,
       },
       ...aggregated,
     };

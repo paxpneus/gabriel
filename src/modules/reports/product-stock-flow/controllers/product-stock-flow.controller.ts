@@ -20,6 +20,11 @@ export const ProductStockFlowQuerySchema = z
   .object({
     start_date: dateField("Data inicial"),
     end_date: dateField("Data final"),
+    // Mesma semântica do filters[brand] do relatório de nota: uma marca ou várias (`brand[]=`).
+    brand: z
+      .union([z.string().min(1), z.array(z.string().min(1))])
+      .optional()
+      .transform((value) => (value === undefined ? undefined : [value].flat())),
   })
   .refine((query) => query.start_date <= query.end_date, {
     message: "Data inicial não pode ser posterior à data final",
@@ -38,6 +43,7 @@ class ProductStockFlowController {
     const parsed = ProductStockFlowQuerySchema.safeParse({
       start_date: req.query.start_date,
       end_date: req.query.end_date,
+      brand: req.query.brand,
     });
 
     if (!parsed.success) {
@@ -50,6 +56,7 @@ class ProductStockFlowController {
       const report = await productStockFlowService.getReport({
         startDate: parsed.data.start_date,
         endDate: parsed.data.end_date,
+        brands: parsed.data.brand,
       });
       return res.json(report);
     } catch (error: any) {

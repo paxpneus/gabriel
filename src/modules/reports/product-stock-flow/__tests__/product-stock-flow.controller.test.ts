@@ -29,6 +29,14 @@ describe("ProductStockFlowQuerySchema", () => {
     expect(parse({ start_date: "2026-02-30", end_date: "2026-03-01" }).success).toBe(false);
   });
 
+  it("normaliza brand único ou múltiplo para array", () => {
+    const period = { start_date: "2026-05-01", end_date: "2026-05-31" };
+
+    expect(parse({ ...period, brand: "MICHELIN" }).data?.brand).toEqual(["MICHELIN"]);
+    expect(parse({ ...period, brand: ["MICHELIN", "PIRELLI"] }).data?.brand).toEqual(["MICHELIN", "PIRELLI"]);
+    expect(parse(period).data?.brand).toBeUndefined();
+  });
+
   it("rejeita start_date posterior a end_date", () => {
     const result = parse({ start_date: "2026-06-01", end_date: "2026-05-01" });
 

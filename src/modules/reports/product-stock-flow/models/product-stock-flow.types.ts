@@ -1,6 +1,8 @@
 export interface ProductStockFlowParams {
   startDate: string;
   endDate: string;
+  // Filtra por products.brand (texto); ausente = todas as marcas.
+  brands?: string[];
 }
 
 export interface ProductStockFlowInputRow {
@@ -54,6 +56,7 @@ export interface ProductStockFlowReport {
     unit_business_id: string;
     start_date: string;
     end_date: string;
+    brand: string[] | null;
   };
   months: { month: string; products: ProductStockFlowProduct[] }[];
   consolidated: ProductStockFlowProduct[];
