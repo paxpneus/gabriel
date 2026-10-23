@@ -33,6 +33,8 @@ export interface ProductStockFlowProduct {
   product_id: string;
   product_name: string | null;
   sku: string | null;
+  // products.brand (texto), o mesmo campo usado pelo filtro `brand`.
+  brand: string | null;
   total_input_quantity: number;
   total_input_value: number;
   total_output_quantity: number;

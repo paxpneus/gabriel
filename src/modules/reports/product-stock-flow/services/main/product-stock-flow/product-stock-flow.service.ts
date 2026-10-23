@@ -90,7 +90,7 @@ export class ProductStockFlowService {
     const [products, configs] = await Promise.all([
       productService.findAll({
         where: { id: { [Op.in]: ids } },
-        attributes: ["id", "name"],
+        attributes: ["id", "name", "brand"],
       }),
       productConfigService.findAll({
         where: { product_id: { [Op.in]: ids }, unit_business_id: unitBusinessId },
@@ -99,10 +99,18 @@ export class ProductStockFlowService {
     ]);
 
     for (const product of products) {
-      info.set(product.id, { name: product.name, sku: null });
+      info.set(product.id, {
+        name: product.name,
+        sku: null,
+        brand: product.brand ?? null,
+      });
     }
     for (const config of configs) {
-      const current = info.get(config.product_id) ?? { name: null, sku: null };
+      const current = info.get(config.product_id) ?? {
+        name: null,
+        sku: null,
+        brand: null,
+      };
       info.set(config.product_id, { ...current, sku: config.sku ?? null });
     }
 

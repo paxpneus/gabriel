@@ -17,6 +17,7 @@ import {
 export interface ProductInfo {
   name: string | null;
   sku: string | null;
+  brand: string | null;
 }
 
 interface Accumulator {
@@ -79,6 +80,7 @@ function toProduct(
     product_id: productId,
     product_name: info?.name ?? null,
     sku: info?.sku ?? null,
+    brand: info?.brand ?? null,
     total_input_quantity: quantityToNumber(acc.inputQuantity),
     total_input_value: moneyToNumber(acc.inputValue),
     total_output_quantity: quantityToNumber(acc.outputQuantity),

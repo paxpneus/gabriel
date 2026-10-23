@@ -4,8 +4,8 @@ import {
 } from "../services/main/product-stock-flow/product-stock-flow.aggregation";
 
 const info = new Map([
-  ["p1", { name: "Pneu A", sku: "SKU-A" }],
-  ["p2", { name: "Pneu B", sku: "SKU-B" }],
+  ["p1", { name: "Pneu A", sku: "SKU-A", brand: "MICHELIN" }],
+  ["p2", { name: "Pneu B", sku: "SKU-B", brand: null }],
 ]);
 
 describe("listMonthsDescending", () => {
@@ -69,6 +69,7 @@ describe("aggregateProductStockFlow", () => {
         product_id: "p1",
         product_name: "Pneu A",
         sku: "SKU-A",
+        brand: "MICHELIN",
         total_input_quantity: 10,
         total_input_value: 940,
         total_output_quantity: 4,

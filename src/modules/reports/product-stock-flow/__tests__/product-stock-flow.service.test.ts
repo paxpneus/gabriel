@@ -33,7 +33,7 @@ describe("ProductStockFlowService", () => {
       number: "21",
     });
     (productService.findAll as jest.Mock).mockResolvedValue([
-      { id: "p1", name: "Pneu A" },
+      { id: "p1", name: "Pneu A", brand: "MICHELIN" },
     ]);
     (productConfigService.findAll as jest.Mock).mockResolvedValue([
       { product_id: "p1", sku: "SKU-A" },
@@ -85,6 +85,7 @@ describe("ProductStockFlowService", () => {
     expect(report.months[1].products[0]).toMatchObject({
       product_name: "Pneu A",
       sku: "SKU-A",
+      brand: "MICHELIN",
       total_input_value: 940,
       total_output_value: 6800,
     });
