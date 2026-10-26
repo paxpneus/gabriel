@@ -4,7 +4,7 @@ Tabela genérica de falhas de integração, `integration_errors` (`src/modules/i
 
 ## Schema
 
-- `entity`: STRING(50), não é ENUM de banco — validado no lado app pelo enum TS `IntegrationErrorEntity` (`integration-error.types.ts`), pra permitir instrumentar entidade nova sem migration. Valores usados até agora: `CTE`.
+- `entity`: STRING(50), não é ENUM de banco — validado no lado app pelo enum TS `IntegrationErrorEntity` (`integration-error.types.ts`), pra permitir instrumentar entidade nova sem migration. Valores: `CTE`, `PRODUCT`, `CUSTOMER`, `INVOICE`, `ORDER`, `SELLER`.
 - `type`: STRING(100) — código/categoria do erro, definido por quem chama (ex.: string do `codigo_retorno` da Datafrete, `"SIEG_FETCH_FAILED"`, `"CTE_UPSERT_FAILED"`, `"UNKNOWN"`).
 - `integrations_id`: FK obrigatória pra `integrations.id` — sempre resolvida pelo caller via o padrão já existente (`getSiegIntegration()`, `getDatafreteIntegration()`, etc.), nunca hardcoded.
 - `external_id`: id da entidade **na integração externa** (ex.: `produtoId` no Bling), nulo quando a integração não expõe id pra essa entidade — hoje sempre nulo pra CT-e, já que Datafrete/Sieg identificam CT-e por chave/número, não por id (ver `reference`).
@@ -42,4 +42,7 @@ Ponto único de entrada que todo módulo chama pra reportar evento de integraç�
 - `cte-ingestion.queue.ts`, catch interno de `fetchAndProcess` (falha no upsert de um CT-e específico) — `type: "CTE_UPSERT_FAILED"`, `createIntegrationError: true`.
 - Sieg `cte.service.ts`, `fetchXmlPageWithRetry` (retry intermediário, ainda dentro do limite de tentativas) — `type: "SIEG_PAGE_RETRY"`, `createIntegrationError: false` (só vira falha real, com `createIntegrationError: true`, se esgotar as tentativas e propagar até o catch externo de `fetchAndProcess`, acima).
 
-Bling/Tecinco/ML ainda não usam esse logger — aplicar o mesmo padrão incrementalmente quando alguém for instrumentar essas integrações.
+- `tecinco-api-fetch.queue.ts`, conflito de EAN ao atualizar ProductConfig — `entity: PRODUCT`, `type: "EAN_CONFLICT"`, `internalId: product.id`, `externalId: systemId`, `reference: ean`.
+- `bling-api-fetch.queue.ts`, `onFailed` — só erro `Sequelize*` (trigger/constraint, ex.: `prevent_supplier_mapping_gtin_conflict`), que não dispara alerta por e-mail: `type: "BLING_FETCH_DATA_ERROR"`, `entity` pelo `resource` do job (`BLING_RESOURCE_ERROR_ENTITY`), `externalId: blingId`, `internalId: null`, `reference: "<resource>.<action> | job=<id>"`. Erro não-Sequelize continua só no alerta por e-mail.
+
+ML ainda não usa esse logger — aplicar o mesmo padrão incrementalmente.

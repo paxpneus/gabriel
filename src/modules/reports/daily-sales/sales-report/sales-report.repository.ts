@@ -6,6 +6,7 @@ import {
   orderNetProductsSql,
 } from "../../../sales/orders/order/helpers/discount";
 import { itemNetValueSql, orderNetValueSql } from "./helpers/net-value";
+import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
 import {
   chunkArray,
   FACT_KEYS_PER_STATEMENT,
@@ -576,7 +577,7 @@ export class SalesReportRepository {
     );
   }
 
-  // Fontes de alteração: apenas orders e order_items.
+  // Fontes de alteração: orders, order_items e status da nota do pedido (cancelamento tira a venda do relatório).
   // Stocks e products não disparam reprocessamento — o custo é congelado
   // no snapshot do momento da venda; backfill de custo histórico é comando separado.
   async findAffectedOrderIds(lastProcessedAt: Date): Promise<string[]> {
@@ -593,6 +594,13 @@ export class SalesReportRepository {
         SELECT oi.order_id
         FROM order_items oi
         WHERE oi.updated_at >= :lastProcessedAt
+
+        UNION
+
+        SELECT o.id AS order_id
+        FROM invoice_unit_business_attributes iuba
+        JOIN orders o ON o.invoice_id = iuba.invoice_id
+        WHERE iuba.updated_at >= :lastProcessedAt
       ) affected
       WHERE order_id IS NOT NULL
       `,
@@ -710,6 +718,8 @@ export class SalesReportRepository {
           o.destination_city,
           COALESCE(iosm.normalized_status, o.actual_situation)  AS status_snapshot,
           CASE
+            -- Pedido válido com nota CANCELLED (cancelada/devolvida) não conta como venda.
+            WHEN ${invoiceCancelledSql("o.invoice_id")} THEN 'cancelled'
            WHEN o.actual_situation IN ('6', '9', '834029', '834030') THEN 'completed'
             ELSE 'cancelled'
           END AS snapshot_status,

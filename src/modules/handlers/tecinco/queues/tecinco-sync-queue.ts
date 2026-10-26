@@ -7,7 +7,7 @@ import {
   TCAR_INVOICE_UPDATE_JOB_NAME,
 } from "./tecinco-invoice.queue";
 import {
-  enqueueInvoiceUpdates,
+  enqueueInvoiceCancellations,
   migrateNovasNotasFiscais,
   runProductsMigration,
 } from "../../../../scripts/tecinco/tecinco-migration.runner";
@@ -20,6 +20,7 @@ export interface TCarSyncJobPayload {
   branchIds: number[];
   companyId: string;
   alteradoDesde: string;
+  // "invoice-updates" = sync de canceladas; nome mantido porque kind desconhecido cai no fluxo de produtos em process().
   kind: "invoices" | "products" | "invoice-updates";
 }
 
@@ -65,7 +66,7 @@ export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
     }
 
     if (kind === "invoice-updates") {
-      await enqueueInvoiceUpdates(migrationOptions);
+      await enqueueInvoiceCancellations(migrationOptions);
       return;
     }
 
@@ -73,8 +74,8 @@ export class TCarSyncQueue extends BaseQueueService<TCarSyncJobPayload> {
     console.log(`[TCAR_SYNC] Sync de produtos concluído | branchIds=${branchIds.join(",")}`);
   }
 
-  // Products só roda com TCAR_API_FETCH vazia; updates de nota só se não há
-  // update pendente (rodam em prioridade menor que invoice-new).
+  // Products só roda com TCAR_API_FETCH vazia; canceladas só se não há
+  // invoice-update pendente (rodam em prioridade menor que invoice-new).
   async shouldDispatch(kind: TCarSyncJobPayload["kind"]): Promise<boolean> {
     if (kind === "invoices") return true;
     if (kind === "products") return !(await this.apiFetchQueue.hasPendingJobs());
@@ -142,5 +143,6 @@ export async function scheduleTCarSync(syncQueue: TCarSyncQueue) {
 
   void dispatch("invoices", INVOICE_SYNC_INTERVAL_MS);
   void dispatch("products", SLOW_SYNC_INTERVAL_MS);
-  void dispatch("invoice-updates", SLOW_SYNC_INTERVAL_MS);
+  // Canceladas = 1 listagem por filial, leve o bastante pra rodar no mesmo intervalo das novas.
+  void dispatch("invoice-updates", INVOICE_SYNC_INTERVAL_MS);
 }

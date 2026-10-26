@@ -1613,6 +1613,17 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
   async countPendingCancellation(unitBusinessId: string): Promise<number> {
     return this.repository.countPendingCancellation(unitBusinessId);
   }
+
+  // Sync de canceladas da Tecinco: só reenfileira nota que ainda falta cancelar em alguma das unit businesses.
+  async findXmlKeysNotCancelledInUnitBusinesses(
+    xmlKeys: string[],
+    unitBusinessNumbers: string[],
+  ): Promise<string[]> {
+    return this.repository.findXmlKeysNotCancelledInUnitBusinesses(
+      xmlKeys,
+      unitBusinessNumbers,
+    );
+  }
 }
 
 export default new InvoiceService();

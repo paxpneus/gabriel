@@ -5,7 +5,7 @@ import {
 import { Job, UnrecoverableError } from "bullmq";
 import { AxiosInstance } from "axios";
 import { BaseQueueService } from "../../../../../../shared/utils/base-models/base-queue-service";
-import { ApiFetchRequest, WebhookQueuePayload } from "../bling-webhook.types";
+import { ApiFetchRequest, BlingResource, WebhookQueuePayload } from "../bling-webhook.types";
 import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
 import {
   Product,
@@ -77,6 +77,8 @@ import productConfigService from "../../../../../inventory/product-config/produc
 import transporterService from "../../../../../warehouse/transporter/transporter.service";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 import { BlingDirectUpsertQueue } from "./bling-direct-upsert.queue";
+import integrationLoggerService from "../../../../../integrations/integration-errors/integration-logger.service";
+import { IntegrationErrorEntity } from "../../../../../integrations/integration-errors/integration-error.types";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -448,6 +450,18 @@ const BLING_FETCH_PRIORITY_BY_RESOURCE: Record<string, number> = {
   product: 3,
   stock: 4,
   product_supplier: 4,
+};
+
+// Entidade local afetada por resource do Bling, usada ao registrar integration_errors no onFailed.
+const BLING_RESOURCE_ERROR_ENTITY: Record<BlingResource, IntegrationErrorEntity> = {
+  order: IntegrationErrorEntity.ORDER,
+  product: IntegrationErrorEntity.PRODUCT,
+  stock: IntegrationErrorEntity.PRODUCT,
+  virtual_stock: IntegrationErrorEntity.PRODUCT,
+  product_supplier: IntegrationErrorEntity.PRODUCT,
+  invoice: IntegrationErrorEntity.INVOICE,
+  consumer_invoice: IntegrationErrorEntity.INVOICE,
+  seller: IntegrationErrorEntity.SELLER,
 };
 
 export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
@@ -2175,6 +2189,26 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       console.warn(
         `[BLING_API_FETCH] Job ${job.id} falhou por erro de dados (sem alerta): ${error.message}`,
       );
+      // Erro de dados (trigger/constraint) não vai pro alerta por e-mail, mas fica em integration_errors pra revisão.
+      getBlingIntegration()
+        .then((integration) =>
+          integrationLoggerService.log({
+            entity: BLING_RESOURCE_ERROR_ENTITY[job.data.resource],
+            type: "BLING_FETCH_DATA_ERROR",
+            integrationsId: integration.id,
+            externalId: job.data.apiFetch?.blingId
+              ? String(job.data.apiFetch.blingId)
+              : null,
+            reference: `${job.data.resource}.${job.data.action} | job=${job.id}`,
+            message: error.message,
+            createIntegrationError: true,
+          }),
+        )
+        .catch((logError: any) =>
+          console.error(
+            `[BLING_API_FETCH] Falha ao registrar integration error do job ${job.id}: ${logError?.message}`,
+          ),
+        );
       return;
     }
 

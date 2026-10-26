@@ -64,7 +64,7 @@ async function enqueueBling(blingId: number, label: string): Promise<boolean> {
   return true;
 }
 
-// Mesmo job invoice_xml do sync Tecinco (enqueueInvoiceUpdates), com a chave composta guardada no source_payload.
+// Mesmo job invoice_xml do sync Tecinco (enqueueInvoiceCancellations), com a chave composta guardada no source_payload.
 async function enqueueTecinco(invoice: Invoice, label: string): Promise<boolean> {
   const payload = invoice.source_payload as any;
   const chave = payload?.chave;

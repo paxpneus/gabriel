@@ -7,6 +7,7 @@ export enum IntegrationErrorEntity {
   CUSTOMER = "CUSTOMER",
   INVOICE = "INVOICE",
   ORDER = "ORDER",
+  SELLER = "SELLER",
 }
 
 export interface IntegrationErrorAttributes {

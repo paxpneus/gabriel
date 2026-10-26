@@ -10,6 +10,7 @@ import {
 } from "../../../../../../shared/utils/normalizers/date";
 import { OrderInternalStatus } from "../../../../../sales/orders/order/orders.types";
 import { BLING_CANCELLED_SITUACAO_ID } from "../../../../../sales/orders/order/helpers/eligible-for-pdv-filters";
+import { InvoiceUnitBusinessAttributesStatus } from "../../invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -266,4 +267,18 @@ export function invoiceOriginUnitBusinessWhere(
   const validIds = unitBusinessIds.filter((id) => UUID_RE.test(id));
   if (!validIds.length) return { [Op.and]: [Sequelize.literal("FALSE")] };
   return { origin_unit_business_id: { [Op.in]: validIds } };
+}
+
+/**
+ * SQL cru (relatórios de venda): nota `invoiceIdColumn` com atributo CANCELLED em alguma loja.
+ * Cancelamento (integração ou devolução) grava CANCELLED no atributo da emitente; nota nula → FALSE.
+ */
+export function invoiceCancelledSql(invoiceIdColumn: string): string {
+  const cancelled: InvoiceUnitBusinessAttributesStatus = "CANCELLED";
+  return `EXISTS (
+    SELECT 1
+    FROM invoice_unit_business_attributes iuba_cancelled
+    WHERE iuba_cancelled.invoice_id = ${invoiceIdColumn}
+      AND iuba_cancelled.status = '${cancelled}'
+  )`;
 }

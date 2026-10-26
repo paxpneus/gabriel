@@ -25,7 +25,7 @@ import {
   ResolvedMigrationOptions,
   migrateProdutos,
   migrateClientes,
-  migrateNotasFiscais,
+  migrateNotasCanceladas,
   migrateNovasNotasFiscais,
 } from "./tecinco-migration.runner";
 import { tecincoUnitBusinessForPopulate } from "../../shared/constants/tecinco-units";
@@ -55,11 +55,11 @@ const STEPS = [
   },
   {
     key: "invoices",
-    label: "🧾  Notas Fiscais (novas + existentes)",
-    // Novas primeiro sem esperar; migrateNotasFiscais (só existentes) espera a fila drenar no fim.
+    label: "🧾  Notas Fiscais (novas + canceladas)",
+    // Novas primeiro sem esperar; migrateNotasCanceladas espera a fila drenar no fim.
     fn: async (opts: ResolvedMigrationOptions) => {
       await migrateNovasNotasFiscais(opts);
-      await migrateNotasFiscais(opts);
+      await migrateNotasCanceladas(opts);
     },
   },
   {

@@ -26,6 +26,8 @@ import {
   TCAR_INVOICE_XML_UNAVAILABLE_FAILURE,
 } from "../../modules/handlers/tecinco/queues/tecinco-invoice.queue";
 import Invoice from "../../modules/warehouse/fiscal/invoices/invoice/invoice.model";
+import invoiceService from "../../modules/warehouse/fiscal/invoices/invoice/invoice.service";
+import { tecincoUnitBusinessForPopulate } from "../../shared/constants/tecinco-units";
 import { getTCarIntegration } from "../../modules/handlers/tecinco/api/tecinco_api";
 import integrationMappingService from "../../modules/integrations/integration-mapping/integration-mapping.service";
 import { fetchTecincoCatalog, CATALOG_OUTPUT_PATH } from "./dump-tecinco-catalog";
@@ -63,40 +65,60 @@ export type ResolvedMigrationOptions = Omit<Required<RunMigrationOptions>, "invo
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
 const QUEUE_POLL_MS = 5_000;
-// processInvoiceXml pode completar com sucesso sem criar Invoice (nota sem
-// item de pneu, XML 404/vazio) — sem retenção, o job some do Redis na hora e
-// migrateNovasNotasFiscais reenfileira a mesma nota todo tick pra sempre.
-const INVOICE_NEW_JOB_RETENTION_SECONDS = 2 * 3600;
-// 3 páginas por tipo × situação: com só 1 página, rajada de emissão empurrava nota pra fora antes de entrar.
-const INVOICE_LOOKBACK = 150;
+// processInvoiceXml pode completar sem criar/cancelar a Invoice (nota sem item
+// de pneu, XML 404/vazio) — sem retenção o job some e o sync reenfileira a mesma nota todo tick.
+const INVOICE_JOB_RETENTION_SECONDS = 2 * 3600;
+// Uma página só por listagem (API aceita limit até 500): roda todo tick, então sem paginação.
+const INVOICE_LOOKBACK = 300;
 
 
 // ─── Helpers internos ─────────────────────────────────────────────────────────
 
-// Notas mais recentes (ordenação padrão EPENF_DTAINS DESC) de um tipo × situação, até INVOICE_LOOKBACK.
+// Notas mais recentes (ordenação padrão EPENF_DTAINS DESC) de uma situação numa requisição só; sem entrada_saida traz os dois tipos.
 async function listarNotasRecentes(
   service: TCarConferenciaEstoqueService,
   branchId: number,
-  entrada_saida: "E" | "S",
   situacao: "A" | "N" | "C",
+  entrada_saida?: "E" | "S",
 ): Promise<any[]> {
-  const notas: any[] = [];
-  for await (const pagina of paginateTCar<any>(
-    (offset, limit) =>
-      service.listarNotasFiscais(branchId, {
-        modelo_documento: 55,
-        situacao,
-        entrada_saida,
-        limit,
-        offset,
-      }),
-    INVOICE_LOOKBACK,
-  )) {
-    notas.push(...pagina);
-  }
+  const response = await service.listarNotasFiscais(branchId, {
+    modelo_documento: 55,
+    situacao,
+    ...(entrada_saida ? { entrada_saida } : {}),
+    limit: INVOICE_LOOKBACK,
+    offset: 0,
+  });
+  const notas: any[] = Array.isArray(response?.data) ? response.data : [];
   return notas.filter(
-    (nota) => nota.entrada_saida === entrada_saida && nota.chave_nfe,
+    (nota) =>
+      (!entrada_saida || nota.entrada_saida === entrada_saida) && nota.chave_nfe,
   );
+}
+
+// Payload do job invoice_xml (criação ou cancelamento) a partir de um item da listagem /notas-fiscais.
+function buildInvoiceXmlPayload(
+  nota: any,
+  branchId: number,
+  companyId: string,
+): TCarUpsertJobPayload {
+  const { chave } = nota;
+  return {
+    eventId: `invoice-xml-${branchId}-${nota.entrada_saida}-${chave.nota}-${uuidv4()}`,
+    resource: "invoice_xml",
+    action: "sync",
+    companyId,
+    branchId,
+    data: {
+      numero: chave.nota,
+      entrada_saida: nota.entrada_saida,
+      cln_codigo: chave.cln_codigo,
+      tpneg_codigo: chave.tpneg_codigo,
+      ntz_codigo: chave.ntz_codigo,
+      opr_codigo: chave.opr_codigo,
+      serie: chave.serie,
+      seq_cancelamento: chave.seq_cancelamento ?? "0",
+    },
+  };
 }
 
 function sleep(ms: number) {
@@ -337,95 +359,75 @@ export async function migrateClientes(
   if (waitForDrain) await waitForQueueToDrain(upsertQueue, "Clientes", dryRun);
 }
 
-export async function migrateNotasFiscais(
+/** Lista as canceladas recentes: cria as que não existem no sistema e cancela as que ainda não estão CANCELLED em alguma unit business Tecinco. */
+export async function migrateNotasCanceladas(
   opts: ResolvedMigrationOptions,
   { waitForDrain = true }: { waitForDrain?: boolean } = {},
 ): Promise<void> {
   const { branchIds, companyId, invoiceQueue, upsertQueue, dryRun } = opts;
   const targetInvoiceQueue = invoiceQueue ?? (upsertQueue as TCarInvoiceQueue);
-
-  console.log("─".repeat(55));
-  console.log("🧾  Notas Fiscais via XML");
-  console.log("─".repeat(55));
-
   const service = new TCarConferenciaEstoqueService();
 
-  const TIPOS: Array<"E" | "S"> = ["E", "S"];
-  // "A" pega as ativas recentes; "N" é uma nota normal (mesmo tratamento de
-  // "A", confirmado com o usuário); "C" é necessário à parte porque uma nota
-  // cancelada some da listagem "A"/"N" — sem isso o cancelamento na Tecinco
-  // nunca é reenfileirado e a invoice já importada fica presa no status antigo.
-  const SITUACOES: Array<"A" | "N" | "C"> = ["A", "N", "C"];
+  console.log("─".repeat(55));
+  console.log("🧾  Notas Fiscais canceladas");
+  console.log("─".repeat(55));
 
   for (const branchId of branchIds) {
-    console.log(`\n  🏢 Filial ${branchId}`);
-
-    // As 6 combinações (tipo × situação) são independentes — buscadas em
-    // paralelo em vez de uma por vez.
-    const combos = TIPOS.flatMap((tipo) =>
-      SITUACOES.map((situacao) => ({ tipo, situacao })),
-    );
-    // Sem filtro de data — dedup por jobId evita reprocessamento das já enfileiradas.
-    const resultados = await Promise.all(
-      combos.map(({ tipo, situacao }) =>
-        listarNotasRecentes(service, branchId, tipo, situacao),
+    // Nota que sumiu da listagem "A"/"N" ao ser cancelada só aparece aqui — uma requisição por filial, E e S juntos.
+    const [notas, jobIdsPendentesOuRecentes, jobIdsSemXml] = await Promise.all([
+      listarNotasRecentes(service, branchId, "C"),
+      targetInvoiceQueue.getPendingJobIds(true),
+      targetInvoiceQueue.getFailedJobIdsByReason(TCAR_INVOICE_XML_UNAVAILABLE_FAILURE),
+    ]);
+    const chaves = [...new Set(notas.map((nota) => String(nota.chave_nfe)))];
+    const [existentes, chavesACancelar] = await Promise.all([
+      Invoice.findAll({
+        attributes: ["xml_key"],
+        where: { xml_key: { [Op.in]: chaves } },
+      }).then(
+        (invoices) =>
+          new Set(invoices.map((invoice) => invoice.xml_key).filter((key): key is string => !!key)),
       ),
-    );
+      invoiceService
+        .findXmlKeysNotCancelledInUnitBusinesses(chaves, tecincoUnitBusinessForPopulate)
+        .then((keys) => new Set(keys)),
+    ]);
 
-    for (let i = 0; i < combos.length; i++) {
-      const { tipo, situacao } = combos[i];
-      const notasEncontradas = resultados[i];
-      const chaves = [...new Set(notasEncontradas.map((nota) => String(nota.chave_nfe)))];
-      const chavesExistentes = new Set(
-        (await Invoice.findAll({
-          attributes: ["xml_key"],
-          where: { xml_key: { [Op.in]: chaves } },
-        }))
-          .map((invoice) => invoice.xml_key)
-          .filter((key): key is string => !!key),
+    let criadas = 0;
+    let canceladas = 0;
+    for (const nota of notas) {
+      const chaveNfe = String(nota.chave_nfe);
+      if (!nota.chave?.nota) continue;
+      const isNova = !existentes.has(chaveNfe);
+      if (!isNova && !chavesACancelar.has(chaveNfe)) continue;
+
+      // Cancelada que nunca entrou vai pelo invoice-new (mesmo jobId/dedup de migrateNovasNotasFiscais) e já nasce CANCELLED.
+      const jobId = isNova
+        ? `invoice-new-${branchId}-${nota.entrada_saida}-${nota.chave.nota}`
+        : `invoice-update-${branchId}-${nota.entrada_saida}-${nota.chave.nota}`;
+      if (jobIdsPendentesOuRecentes.has(jobId) || jobIdsSemXml.has(jobId)) continue;
+
+      await enqueue(
+        targetInvoiceQueue,
+        buildInvoiceXmlPayload(nota, branchId, companyId),
+        jobId,
+        dryRun,
+        {
+          priority: isNova ? TCAR_INVOICE_NEW_PRIORITY : TCAR_INVOICE_UPDATE_PRIORITY,
+          name: isNova ? TCAR_INVOICE_NEW_JOB_NAME : TCAR_INVOICE_UPDATE_JOB_NAME,
+          removeOnComplete: { age: INVOICE_JOB_RETENTION_SECONDS },
+        },
       );
-      const notas = notasEncontradas.filter((nota) =>
-        chavesExistentes.has(String(nota.chave_nfe)),
-      );
-
-      console.log(
-        `  → [${tipo}/${situacao}] ${notas.length}/${notasEncontradas.length} nota(s) existente(s) para atualizar`,
-      );
-
-      for (const nota of notas) {
-        const { chave } = nota;
-
-        await enqueue(
-          targetInvoiceQueue,
-          {
-            eventId: `invoice-xml-${branchId}-${tipo}-${chave.nota}-${uuidv4()}`,
-            resource: "invoice_xml",
-            action: "sync",
-            companyId,
-            branchId,
-            data: {
-              numero: chave.nota,
-              entrada_saida: nota.entrada_saida,
-              cln_codigo: chave.cln_codigo,
-              tpneg_codigo: chave.tpneg_codigo,
-              ntz_codigo: chave.ntz_codigo,
-              opr_codigo: chave.opr_codigo,
-              serie: chave.serie,
-              seq_cancelamento: chave.seq_cancelamento ?? "0",
-            },
-          },
-          `invoice-update-${branchId}-${tipo}-${chave.nota}`,
-          dryRun,
-          { priority: TCAR_INVOICE_UPDATE_PRIORITY, name: TCAR_INVOICE_UPDATE_JOB_NAME },
-        );
-
-        console.log(`  [NF ${tipo} nota=${chave.nota}] enfileirada`);
-      }
+      if (isNova) criadas++;
+      else canceladas++;
     }
+    console.log(
+      `[TCAR_INVOICE] Filial ${branchId}: ${notas.length} cancelada(s) listada(s) — ${criadas} enfileirada(s) pra criar, ${canceladas} pra cancelar`,
+    );
   }
 
   if (waitForDrain) {
-    await waitForQueueToDrain(targetInvoiceQueue, "Notas Fiscais", dryRun);
+    await waitForQueueToDrain(targetInvoiceQueue, "Notas Fiscais canceladas", dryRun);
   }
 }
 
@@ -439,7 +441,8 @@ export async function migrateNovasNotasFiscais(
   const targetInvoiceQueue = invoiceQueue ?? (upsertQueue as TCarInvoiceQueue);
   const service = new TCarConferenciaEstoqueService();
   const tipos: Array<"E" | "S"> = ["E", "S"];
-  const situacoes: Array<"A" | "N" | "C"> = ["A", "N", "C"];
+  // Canceladas (criação e cancelamento) ficam com migrateNotasCanceladas.
+  const situacoes: Array<"A" | "N"> = ["A", "N"];
 
   console.log("─".repeat(55));
   console.log("🧾  Novas notas fiscais via XML");
@@ -451,7 +454,7 @@ export async function migrateNovasNotasFiscais(
     );
     const resultados = await Promise.all(
       combos.map(({ entrada_saida, situacao }) =>
-        listarNotasRecentes(service, branchId, entrada_saida, situacao),
+        listarNotasRecentes(service, branchId, situacao, entrada_saida),
       ),
     );
     const notas = resultados.flat();
@@ -466,7 +469,7 @@ export async function migrateNovasNotasFiscais(
     );
     // Além do que já está no banco, pula quem já tem job pendente OU já
     // completou recentemente (mesmo sem criar Invoice — ver
-    // INVOICE_NEW_JOB_RETENTION_SECONDS acima) na fila.
+    // INVOICE_JOB_RETENTION_SECONDS acima) na fila.
     // Também pula nota que esgotou as tentativas sem XML — fica failed no Redis.
     const [jobIdsPendentes, jobIdsPendentesOuRecentes, jobIdsSemXml] =
       await Promise.all([
@@ -507,29 +510,13 @@ export async function migrateNovasNotasFiscais(
         }
         await enqueue(
           targetInvoiceQueue,
-          {
-            eventId: `invoice-xml-${branchId}-${entrada_saida}-${numero}-${uuidv4()}`,
-            resource: "invoice_xml",
-            action: "sync",
-            companyId,
-            branchId,
-            data: {
-              numero: chave.nota,
-              entrada_saida: nota.entrada_saida,
-              cln_codigo: chave.cln_codigo,
-              tpneg_codigo: chave.tpneg_codigo,
-              ntz_codigo: chave.ntz_codigo,
-              opr_codigo: chave.opr_codigo,
-              serie: chave.serie,
-              seq_cancelamento: chave.seq_cancelamento ?? "0",
-            },
-          },
+          buildInvoiceXmlPayload(nota, branchId, companyId),
           jobId,
           dryRun ?? false,
           {
             priority: TCAR_INVOICE_NEW_PRIORITY,
             name: TCAR_INVOICE_NEW_JOB_NAME,
-            removeOnComplete: { age: INVOICE_NEW_JOB_RETENTION_SECONDS },
+            removeOnComplete: { age: INVOICE_JOB_RETENTION_SECONDS },
           },
         );
         resumo.enfileiradas.push(numero);
@@ -576,11 +563,11 @@ export async function runProductsMigration(
   await migrateProdutos(resolveMigrationOptions(opts), { waitForDrain: false });
 }
 
-/** Enfileira updates de notas existentes sem esperar a fila esvaziar. */
-export async function enqueueInvoiceUpdates(
+/** Enfileira o cancelamento das notas canceladas na Tecinco, sem esperar a fila esvaziar. */
+export async function enqueueInvoiceCancellations(
   opts: RunMigrationOptions,
 ): Promise<void> {
-  await migrateNotasFiscais(resolveMigrationOptions(opts), {
+  await migrateNotasCanceladas(resolveMigrationOptions(opts), {
     waitForDrain: false,
   });
 }
@@ -602,7 +589,6 @@ export async function runMigration(opts: RunMigrationOptions): Promise<void> {
 
   // Produtos e Notas Fiscais rodam em paralelo (rate limit da Tecinco
   // comporta). Clientes só roda depois que os dois terminarem.
-  await Promise.all([migrateProdutos(resolved), migrateNotasFiscais(resolved)]);
-  // await Promise.all([migrateNotasFiscais(resolved)]);
+  await Promise.all([migrateProdutos(resolved), migrateNotasCanceladas(resolved)]);
   await migrateClientes(resolved);
 }

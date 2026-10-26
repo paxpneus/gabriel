@@ -1363,6 +1363,38 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
     });
   }
 
+  // xml_keys (dentre `xmlKeys`) com nota ainda não CANCELLED em alguma das unit businesses (por número) informadas.
+  async findXmlKeysNotCancelledInUnitBusinesses(
+    xmlKeys: string[],
+    unitBusinessNumbers: string[],
+  ): Promise<string[]> {
+    if (!xmlKeys.length) return [];
+    const rows = (await this.model.findAll({
+      where: { xml_key: { [Op.in]: xmlKeys } },
+      attributes: ["xml_key"],
+      include: [
+        {
+          model: InvoiceUnitBusinessAttributes,
+          as: "unitBusinessAttributes",
+          required: true,
+          attributes: [],
+          where: { status: { [Op.ne]: "CANCELLED" } },
+          include: [
+            {
+              model: UnitBusiness,
+              as: "unitBusiness",
+              required: true,
+              attributes: [],
+              where: { number: { [Op.in]: unitBusinessNumbers } },
+            },
+          ],
+        },
+      ],
+      raw: true,
+    })) as unknown as Pick<InvoiceAttributes, "xml_key">[];
+    return [...new Set(rows.map((row) => row.xml_key).filter((key): key is string => !!key))];
+  }
+
   async findXmlPathsByIds(
     ids: string[],
   ): Promise<Pick<InvoiceAttributes, "id" | "xml_path" | "number_system">[]> {

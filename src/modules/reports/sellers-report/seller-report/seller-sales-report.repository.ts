@@ -6,6 +6,7 @@ import {
   orderNetProductsSql,
 } from "../../../sales/orders/order/helpers/discount";
 import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
+import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
 import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
   AffectedSellerCustomerFactKey,
@@ -327,8 +328,8 @@ export class SellerSalesReportRepository {
   }
 
   /**
-   * Fontes de alteração: idêntico a sales_report — apenas orders e
-   * order_items.
+   * Fontes de alteração: idêntico a sales_report — orders, order_items e
+   * status da nota do pedido.
    */
   async findAffectedOrderIds(lastProcessedAt: Date): Promise<string[]> {
     const rows: OrderIdRow[] = await sequelize.query<OrderIdRow>(
@@ -344,6 +345,13 @@ export class SellerSalesReportRepository {
       SELECT oi.order_id
       FROM order_items oi
       WHERE oi.updated_at >= :lastProcessedAt
+
+      UNION
+
+      SELECT o.id AS order_id
+      FROM invoice_unit_business_attributes iuba
+      JOIN orders o ON o.invoice_id = iuba.invoice_id
+      WHERE iuba.updated_at >= :lastProcessedAt
     ) affected
     WHERE order_id IS NOT NULL
     `,
@@ -402,6 +410,8 @@ export class SellerSalesReportRepository {
             ELSE COALESCE(o.freight_cost, 0)
           END                              AS freight_cost,
           CASE
+            -- Pedido válido com nota CANCELLED (cancelada/devolvida) não conta como venda.
+            WHEN ${invoiceCancelledSql("o.invoice_id")} THEN 'cancelled'
            WHEN o.actual_situation IN ('6', '9', '834029', '834030') THEN 'completed'
             ELSE 'cancelled'
           END AS snapshot_status,
