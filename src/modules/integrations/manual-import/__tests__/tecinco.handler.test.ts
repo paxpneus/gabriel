@@ -83,8 +83,9 @@ describe("TecincoManualImportHandler", () => {
         where: { cnpj: "12345678000190" },
         attributes: ["number"],
       });
-      expect(mockGetNotaFiscal).toHaveBeenCalledTimes(1);
-      expect(mockGetNotaFiscal).toHaveBeenCalledWith("4321", 17, { chave_nfe: ACCESS_KEY });
+      // Emitente primeiro; as outras filiais Tecinco vão junto só de fallback.
+      expect(mockGetNotaFiscal).toHaveBeenNthCalledWith(1, "4321", 17, { chave_nfe: ACCESS_KEY });
+      expect(mockGetNotaFiscal).toHaveBeenNthCalledWith(2, "4321", 12, { chave_nfe: ACCESS_KEY });
       expect(items).toEqual([
         expect.objectContaining({
           externalId: ACCESS_KEY,
@@ -99,6 +100,21 @@ describe("TecincoManualImportHandler", () => {
           enqueueData: { numero: "4321", chaveAcesso: ACCESS_KEY, branchId: 17 },
         }),
       ]);
+    });
+
+    it("transferência de loja fora de TECINCO_BRANCH_IDS: busca na filial emitente e fica com ela, mesmo a destino tendo a entrada", async () => {
+      (unitBusinessService.findOne as jest.Mock).mockResolvedValue({ number: "24" });
+      mockGetNotaFiscal.mockImplementation(async (_numero: string, branchId: number) => ({
+        data: { cabecalho: { entrada_saida: branchId === 24 ? "S" : "E" } },
+      }));
+
+      const { items } = await handler.search("invoice", "access_key", ACCESS_KEY);
+
+      expect(mockGetNotaFiscal).toHaveBeenNthCalledWith(1, "4321", 24, { chave_nfe: ACCESS_KEY });
+      expect(items[0]).toMatchObject({
+        details: { type: "OUT" },
+        enqueueData: { branchId: 24 },
+      });
     });
 
     it("emitente fora das filiais Tecinco (nota de entrada): tenta todas e fica com a que respondeu", async () => {

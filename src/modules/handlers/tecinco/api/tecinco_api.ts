@@ -211,9 +211,19 @@ export async function doTCarLogin(branchId: number): Promise<string> {
       );
     }
 
-    const { session_token, branch_required } = body.data;
+    const { session_token, branch_required, allowed_branches } = body.data;
+    // Filial fora de allowed_branches (ex.: emitente de transferência) dá 403 no session/branch, mas a Tecinco
+    // aceita GET com ?branch_id= numa sessão sem filial ativa — então pula a seleção (sessão é por filial no pool).
+    const isAllowedBranch =
+      !allowed_branches?.length ||
+      allowed_branches.some((branch) => Number(branch.codigo) === branchId);
+    if (branch_required && !isAllowedBranch) {
+      console.warn(
+        `[TCarApi] Filial ${branchId} fora de allowed_branches do usuário ${username} — sessão sem filial ativa`,
+      );
+    }
 
-    if (branch_required) {
+    if (branch_required && isAllowedBranch) {
       await axiosInstance.post(
         `/auth/session/branch`,
         { branch_id: branchId },

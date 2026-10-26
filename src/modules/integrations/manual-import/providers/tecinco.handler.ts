@@ -270,14 +270,17 @@ export class TecincoManualImportHandler implements ManualImportHandler {
     };
   }
 
-  // Filial = a UnitBusiness Tecinco que emitiu; nota de entrada (emitente de fora) tenta todas.
+  // Filial emitente primeiro, mesmo fora de TECINCO_BRANCH_IDS: numa transferência é lá que a saída tem XML (a entrada na loja destino pode não ter).
+  // As filiais Tecinco ficam de fallback pra nota de emitente de fora (fornecedor).
   private async resolveInvoiceBranchIds(emitterCnpj: string): Promise<number[]> {
     const unitBusiness = await unitBusinessService.findOne({
       where: { cnpj: emitterCnpj },
       attributes: ["number"],
     });
-    const branchId = Number(unitBusiness?.number);
-    return TECINCO_BRANCH_IDS.includes(branchId) ? [branchId] : TECINCO_BRANCH_IDS;
+    const emitterBranchId = Number(unitBusiness?.number);
+    return emitterBranchId
+      ? [emitterBranchId, ...TECINCO_BRANCH_IDS.filter((id) => id !== emitterBranchId)]
+      : TECINCO_BRANCH_IDS;
   }
 
   // Consulta as filiais em paralelo; fica com a primeira que achou, só 404 em todas = não existe.

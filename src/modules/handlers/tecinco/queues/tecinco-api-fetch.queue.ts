@@ -19,6 +19,8 @@ import {
 } from "../../../inventory";
 import Customer from "../../../sales/customers/customers.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
+import unitBusinessService from "../../../company/unit-business/unit-business.service";
+import { parseAccessKey } from "../../../../shared/utils/xml/access-key";
 import {
   TCarProdutoPayload,
   TCarClientePayload,
@@ -1434,22 +1436,48 @@ export class TCarUpsertQueue extends BaseQueueService<
     } catch (err: any) {
       if (err?.response?.status === 404) {
         console.warn(`${logPrefix} — XML não disponível (404)`);
-        return TCAR_INVOICE_XML_UNAVAILABLE;
+        // Entrada (ex.: transferência) lançada sem XML: a saída autorizada fica na filial emitente — tenta lá pela chave.
+        const chaveNfe = String(notaFiscal?.data?.fiscal?.chave_nfe ?? "");
+        const emitter = entrada_saida === "E" ? parseAccessKey(chaveNfe) : null;
+        const emitterUnitBusiness = emitter
+          ? await unitBusinessService.findOne({
+              where: { cnpj: emitter.emitterCnpj },
+              attributes: ["number"],
+            })
+          : null;
+        const emitterBranchId = Number(emitterUnitBusiness?.number);
+        if (!emitter || !emitterBranchId || emitterBranchId === branchId) {
+          return TCAR_INVOICE_XML_UNAVAILABLE;
+        }
+        try {
+          xml = await conferenciaService.buscarXmlNotaFiscal(
+            emitterBranchId,
+            emitter.number,
+            { chave_nfe: chaveNfe },
+          );
+          console.log(`${logPrefix} — XML obtido na filial emitente ${emitterBranchId}`);
+        } catch (emitterErr: any) {
+          console.warn(
+            `${logPrefix} — XML também indisponível na filial emitente ${emitterBranchId}: ${emitterErr?.message ?? emitterErr}`,
+          );
+          return TCAR_INVOICE_XML_UNAVAILABLE;
+        }
+      } else {
+        // axios err.message só traz o status; logar o corpo pra saber a causa real da Tecinco.
+        console.error(
+          `${logPrefix} — erro ao buscar XML (status=${err?.response?.status}):`,
+          JSON.stringify(err?.response?.data) ?? err?.message,
+        );
+        // 500 na Tecinco pra essa nota é persistente (visto em produção), não
+        // transitório — 5 tentativas com backoff só atrasam a próxima rodada
+        // de sync sem nunca resolver. UnrecoverableError pula direto pra
+        // "failed", liberando o slot pra próxima nota; o próprio dedup do
+        // sync tenta de novo na rodada seguinte.
+        if (err?.response?.status === 500) {
+          throw new UnrecoverableError(err.message);
+        }
+        throw err;
       }
-      // axios err.message só traz o status; logar o corpo pra saber a causa real da Tecinco.
-      console.error(
-        `${logPrefix} — erro ao buscar XML (status=${err?.response?.status}):`,
-        JSON.stringify(err?.response?.data) ?? err?.message,
-      );
-      // 500 na Tecinco pra essa nota é persistente (visto em produção), não
-      // transitório — 5 tentativas com backoff só atrasam a próxima rodada
-      // de sync sem nunca resolver. UnrecoverableError pula direto pra
-      // "failed", liberando o slot pra próxima nota; o próprio dedup do
-      // sync tenta de novo na rodada seguinte.
-      if (err?.response?.status === 500) {
-        throw new UnrecoverableError(err.message);
-      }
-      throw err;
     }
 
     // null = nota arquivada na Tecinco (permanente, ver buscarXmlNotaFiscal) — não adianta tentar de novo.

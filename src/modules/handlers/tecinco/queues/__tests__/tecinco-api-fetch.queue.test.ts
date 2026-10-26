@@ -181,7 +181,10 @@ import UnmappedInvoiceProduct from "../../../../inventory/unmapped-invoice-produ
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import TCarProdutoService from "../../service/produtos/produtos.service";
-import { TCarUpsertQueue } from "../tecinco-api-fetch.queue";
+import { TCarUpsertQueue, TCAR_INVOICE_XML_UNAVAILABLE } from "../tecinco-api-fetch.queue";
+import { TCarConferenciaEstoqueService } from "../../service/conferencias-estoque/conferencias-estoque.service";
+import unitBusinessService from "../../../../company/unit-business/unit-business.service";
+import * as invoiceXml from "../../../../../shared/utils/xml/invoice-xml";
 import {
   TCarProdutoPayload,
   TCarNotaFiscalItem,
@@ -1240,5 +1243,89 @@ describe("TCarUpsertQueue.process — product com detectCatalogDuplicates (impor
       12,
       expect.objectContaining({ skuDuplicated: false, eanDuplicated: true }),
     );
+  });
+});
+
+// Entrada de transferência lançada sem XML na loja destino: o XML vem da saída na filial emitente.
+describe("TCarUpsertQueue.processInvoiceXml — XML da filial emitente", () => {
+  // Chave real (nota 73, emitente CNPJ 02316749002464 = "filial 24").
+  const CHAVE = "41260902316749002464550010000000731574553866";
+  let queue: TCarUpsertQueue;
+  let buscarXmlSpy: jest.SpyInstance;
+  let upsertXmlSpy: jest.SpyInstance;
+  let findUnitBusinessSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    clearTCarLookupCache();
+    jest.clearAllMocks();
+    queue = new TCarUpsertQueue({ workless: true });
+    jest
+      .spyOn(TCarConferenciaEstoqueService.prototype, "getNotaFiscal")
+      .mockResolvedValue({
+        data: { fiscal: { chave_nfe: CHAVE }, itens: [{ epctb_codigo: "7317" }] },
+      });
+    jest.spyOn(queue as any, "ensureProductsFromInvoiceItems").mockResolvedValue({
+      operationalItems: [{ product_id: "p1", quantity_expected: 2 }],
+      unmappedItems: [],
+    });
+    buscarXmlSpy = jest.spyOn(TCarConferenciaEstoqueService.prototype, "buscarXmlNotaFiscal");
+    upsertXmlSpy = jest.spyOn(invoiceXml, "upsertInvoiceFromXml").mockResolvedValue(undefined as any);
+    findUnitBusinessSpy = jest
+      .spyOn(unitBusinessService, "findOne")
+      .mockResolvedValue({ number: "24" } as any);
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  const run = (entrada_saida: "E" | "S") =>
+    (queue as any).processInvoiceXml({ numero: 73, entrada_saida, cln_codigo: 907671 }, 17);
+
+  it("entrada com 404 na loja destino: busca o XML na filial emitente pela chave e importa", async () => {
+    buscarXmlSpy
+      .mockRejectedValueOnce({ response: { status: 404 } })
+      .mockResolvedValueOnce("<nfeProc/>");
+
+    const result = await run("E");
+
+    expect(findUnitBusinessSpy).toHaveBeenCalledWith({
+      where: { cnpj: "02316749002464" },
+      attributes: ["number"],
+    });
+    expect(buscarXmlSpy).toHaveBeenNthCalledWith(2, 24, "73", { chave_nfe: CHAVE });
+    expect(upsertXmlSpy).toHaveBeenCalledWith("<nfeProc/>", expect.anything());
+    expect(result).toBeUndefined();
+  });
+
+  it("emitente sem unit business (fornecedor): não tenta outra filial, segue XML indisponível", async () => {
+    findUnitBusinessSpy.mockResolvedValue(null);
+    buscarXmlSpy.mockRejectedValueOnce({ response: { status: 404 } });
+
+    const result = await run("E");
+
+    expect(buscarXmlSpy).toHaveBeenCalledTimes(1);
+    expect(upsertXmlSpy).not.toHaveBeenCalled();
+    expect(result).toBe(TCAR_INVOICE_XML_UNAVAILABLE);
+  });
+
+  it("XML também ausente na emitente: segue XML indisponível", async () => {
+    buscarXmlSpy
+      .mockRejectedValueOnce({ response: { status: 404 } })
+      .mockRejectedValueOnce({ response: { status: 404 }, message: "404" });
+
+    const result = await run("E");
+
+    expect(buscarXmlSpy).toHaveBeenCalledTimes(2);
+    expect(upsertXmlSpy).not.toHaveBeenCalled();
+    expect(result).toBe(TCAR_INVOICE_XML_UNAVAILABLE);
+  });
+
+  it("saída com 404: a própria filial já é a emitente, não tenta outra", async () => {
+    buscarXmlSpy.mockRejectedValueOnce({ response: { status: 404 } });
+
+    const result = await run("S");
+
+    expect(findUnitBusinessSpy).not.toHaveBeenCalled();
+    expect(buscarXmlSpy).toHaveBeenCalledTimes(1);
+    expect(result).toBe(TCAR_INVOICE_XML_UNAVAILABLE);
   });
 });

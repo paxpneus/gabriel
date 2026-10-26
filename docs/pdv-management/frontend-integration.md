@@ -7,6 +7,12 @@ aqui.
 
 **Migrations desta entrega** (rodar antes do deploy, em ordem): `m300` (tabela `order_payments`, remove `orders.payment_method_id`), `m301` (seed/consolidação do catálogo agrupado), `m303` (coluna `form_description`, usada no `detail` de "Outros").
 
+## Mudou: vincular NF de transferência já avança (sem confirm manual)
+
+- `POST /:id/transfer-invoice` em `PENDING_NF_TRANSFER` já devolve a solicitação em `SHIPPING` (ou `CRITICAL_ERROR` com aviso crítico) quando a nota já existe no sistema — **remover a chamada a `POST /:id/transfer-invoice/confirm`** depois do anexo (chamá-la agora responde `400`, a solicitação não está mais em `PENDING_NF_TRANSFER`).
+- Nota nova (DANFE, ainda importando da Tecinco): resposta continua em `PENDING_NF_TRANSFER`; avança sozinha ao fim do import (websocket de sempre → refazer `GET /:id`), igual a antes.
+- Rota `transfer-invoice/confirm` continua existindo, sem mudança.
+
 ## Novo: status `CRITICAL_ERROR` + aviso de loja emitente da NF de transferência
 
 Migration `m321` (rodar antes do deploy).

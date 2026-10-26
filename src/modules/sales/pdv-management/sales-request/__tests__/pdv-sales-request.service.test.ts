@@ -2798,18 +2798,28 @@ describe("PdvSalesRequestService", () => {
   });
 
   describe("attachTransferInvoice", () => {
-    it("vincula direto quando o front já manda o invoiceId resolvido pela busca — NÃO avança pra SHIPPING", async () => {
-      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
-        id: "r1",
-        order_id: "order-1",
-        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
-        transfer_invoice_id: null,
-      });
+    it("vincula nota já importada em PENDING_NF_TRANSFER e avança sozinho pra SHIPPING (sem confirm manual)", async () => {
+      // 1ª leitura = antes do vínculo; confirmTransferInvoice relê já com a nota vinculada.
+      (pdvSalesRequestRepository.findById as jest.Mock)
+        .mockResolvedValueOnce({
+          id: "r1",
+          order_id: "order-1",
+          status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+          transfer_invoice_id: null,
+        })
+        .mockResolvedValue({
+          id: "r1",
+          order_id: "order-1",
+          status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+          transfer_invoice_id: "invoice-transfer",
+        });
       (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
       (invoiceService.findById as jest.Mock).mockResolvedValue({
         id: "invoice-transfer",
         integrations_id: "tecinco-1",
+        xml_path: "/xmls/transfer.xml",
       });
+      (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
       });
@@ -2822,13 +2832,42 @@ describe("PdvSalesRequestService", () => {
       expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", {
         transfer_invoice_id: "invoice-transfer",
       });
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith(
+        "r1",
+        { status: PdvSalesRequestStatus.SHIPPING, correction_origin_status: null },
+        { transaction: mockTransaction },
+      );
+      expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ description: "Nota de transferência vinculada" }),
+      );
+    });
+
+    it("nota vinculada ainda sem xml_path (provisória em import) NÃO avança — avança ao fim do import", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        transfer_invoice_id: null,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-stub",
+        integrations_id: "tecinco-1",
+        xml_path: null,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
+        id: "r1",
+      });
+
+      await service.attachTransferInvoice("r1", {
+        invoiceId: "invoice-stub",
+        tcarUpsertQueue: {} as any,
+      });
+
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalledWith(
         "r1",
         expect.objectContaining({ status: expect.anything() }),
         expect.anything(),
-      );
-      expect(pdvSalesRequestHistoryService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ description: "Nota de transferência vinculada" }),
       );
     });
 

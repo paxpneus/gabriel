@@ -60,7 +60,10 @@ import {
 import { getTCarIntegration } from "../../../handlers/tecinco/api/tecinco_api";
 import { TCarInvoiceQueue } from "../../../handlers/tecinco/queues/tecinco-invoice.queue";
 import { MANUAL_IMPORT_PRIORITY } from "../../../integrations/manual-import/manual-import.constants";
-import { extractAccessKeyFromXmlContent } from "../../../../shared/utils/xml/access-key";
+import {
+  extractAccessKeyFromXmlContent,
+  parseAccessKey,
+} from "../../../../shared/utils/xml/access-key";
 import nfeEmissionService from "../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "./payment-receipt-extraction.service";
 import {
@@ -2251,8 +2254,8 @@ export class PdvSalesRequestService extends BaseService<
     return invoiceService.getDanfeBuffer(invoiceId);
   }
 
-  // NÃO avança status sozinho — só vincula/troca a nota de transferência e
-  // devolve a solicitação atualizada pro front validar. Permitido em
+  // Vincula/troca a nota de transferência; em PENDING_NF_TRANSFER já confirma
+  // na sequência (→ SHIPPING/CRITICAL_ERROR). Permitido em
   // PENDING_NF_TRANSFER (primeira vinculação), SHIPPING e FINISHED (edição
   // depois de já confirmado — CD21/expedição percebeu a nota errada; FINISHED
   // só admin logado, status continua FINISHED) — sempre como TROCA (nunca deixa
@@ -2304,9 +2307,13 @@ export class PdvSalesRequestService extends BaseService<
         const xmlContent = params.xmlBuffer.toString("utf-8");
         const accessKey = extractAccessKeyFromXmlContent(xmlContent);
 
-        const branchId = await this.resolveBranchId(
-          request.unit_business_id,
-        );
+        // Filial de quem emitiu a transferência (a saída já existe lá na Tecinco); emitente sem unit business cai na loja da solicitação.
+        const emitterCnpj = accessKey
+          ? parseAccessKey(accessKey)?.emitterCnpj
+          : undefined;
+        const branchId =
+          (emitterCnpj && (await this.resolveBranchIdByCnpj(emitterCnpj))) ||
+          (await this.resolveBranchId(request.unit_business_id));
         if (!branchId) {
           throw new Error(
             "Não foi possível resolver a filial Tecinco do pedido",
@@ -2467,6 +2474,14 @@ export class PdvSalesRequestService extends BaseService<
     // SHIPPING/CRITICAL_ERROR entram ou saem do erro crítico na hora (provisória só ao fim do import).
     await this.syncCriticalErrorByInvoiceIds([invoiceId]);
 
+    // Vinculação inicial avança sozinha (sem confirm manual); nota sem xml_path avança ao fim do import (advanceAfterTransferInvoiceImport).
+    if (
+      request.status === PdvSalesRequestStatus.PENDING_NF_TRANSFER &&
+      invoice.xml_path
+    ) {
+      await this.confirmTransferInvoice(id, params.userId);
+    }
+
     return {
       salesRequest: (await this.repository.findById(id)) ?? salesRequest,
       message: pendingTransferInvoiceImport
@@ -2584,9 +2599,9 @@ export class PdvSalesRequestService extends BaseService<
     await invoiceService.update(saleInvoiceId, { transfer_invoice_reference: null });
   }
 
-  // Confirmação explícita do front — só agora a solicitação avança pra
-  // SHIPPING. Exige que uma nota de transferência já tenha sido vinculada
-  // (attachTransferInvoice). Só a partir de PENDING_NF_TRANSFER — uma
+  // Avança pra SHIPPING — chamado automaticamente por attachTransferInvoice e
+  // pelo fim do import da provisória; rota manual mantida. Exige nota
+  // vinculada e importada. Só a partir de PENDING_NF_TRANSFER — uma
   // solicitação já em SHIPPING não tem mais o que confirmar aqui, editar a
   // nota nesse ponto é só attachTransferInvoice mesmo, sem transição.
   async confirmTransferInvoice(
