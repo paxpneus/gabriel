@@ -269,7 +269,7 @@ describe("toSalesRequestDetail", () => {
     ]);
     expect(detail.receipt_total_difference).toBe(-10);
     expect(detail.next_action).toBe("Confirmar correção");
-    expect(detail.shipping_label).toBe("Embarque hoje");
+    expect(detail.shipping_label).toBe("EMBARQUE HOJE");
     expect(detail.saleInvoice).toEqual({
       id: "inv-1",
       number_system: "900",

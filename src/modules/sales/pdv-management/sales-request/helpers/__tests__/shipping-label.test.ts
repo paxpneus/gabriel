@@ -14,12 +14,12 @@ describe("buildShippingLabel", () => {
     ).toBe("ADT CD 17");
   });
 
-  it("returns 'Embarque hoje' for TRANSPORTADORA regardless of transporter", () => {
+  it("returns 'EMBARQUE HOJE' for TRANSPORTADORA regardless of transporter", () => {
     expect(
       buildShippingLabel(PdvShippingType.TRANSPORTADORA, "LOGISTICA PAX PNEUS SP - CD 12"),
-    ).toBe("Embarque hoje");
+    ).toBe("EMBARQUE HOJE");
     expect(buildShippingLabel(PdvShippingType.TRANSPORTADORA, null)).toBe(
-      "Embarque hoje",
+      "EMBARQUE HOJE",
     );
   });
 

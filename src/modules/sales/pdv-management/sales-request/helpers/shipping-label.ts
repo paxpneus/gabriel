@@ -3,7 +3,7 @@ import { extractTransporterCd } from "./transporter-cd";
 
 // Transportadora da nota de venda no formato "LOGISTICA PAX PNEUS SP - CD 12"
 // vira "ADT CD 12" — extrai o "CD <n>" em vez de mapear nome a nome.
-const TRANSPORTADORA_SHIPPING_LABEL = "Embarque hoje";
+const TRANSPORTADORA_SHIPPING_LABEL = "EMBARQUE HOJE";
 
 export function buildShippingLabel(
   shippingType: PdvShippingType | null | undefined,
