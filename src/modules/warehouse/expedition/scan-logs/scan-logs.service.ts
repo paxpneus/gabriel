@@ -323,8 +323,18 @@ export class ExpeditionScanLogService extends BaseService<
         (labelcode.includes(matchedCode) ||
           labelcode.includes(stripLeadingZeros(matchedCode)));
 
+      // Fallback: o EAN da etiqueta (cEAN da NF-e, posições 22-35) pode ser código de SupplierMapping do produto — resolve e compara o produto.
+      // Busca exata, sem stripar zeros: há produtos distintos que diferem só pelo zero à esquerda.
       if (!eanExistsOnLabel && !matchedCodeExistsOnLabel) {
-        throw Error("Etiqueta não pertencente ao produto lido!");
+        const labelMatch = await productsService.findByCode(
+          labelcode.substring(22, 35),
+          scanUnitBusinessId,
+          { transaction: t },
+        );
+
+        if (labelMatch?.product.id !== product.id) {
+          throw Error("Etiqueta não pertencente ao produto lido!");
+        }
       }
 
       try {

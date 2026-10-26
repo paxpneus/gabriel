@@ -32,6 +32,7 @@ import {
   finishedMercadoLivreWhere,
   dispatchedMercadoLivreWhere,
   productRimWhere,
+  productBrandWhere,
   supplierDiscountMatchWhere,
   pendingCancellationWhere,
 } from "./helpers/custom-filters";
@@ -50,6 +51,10 @@ import {
 } from "./helpers/view-point";
 import { readNfeIde } from "./helpers/nfe-ide";
 import { cleanDocument } from "../../../../../shared/utils/normalizers/document";
+import {
+  formatScaled,
+  toScaled,
+} from "../../../../../shared/utils/normalizers/decimal";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import { Product, ProductConfig, Supplier } from "../../../../inventory";
 import Contact from "../../../../sales/contacts/contacts.model";
@@ -243,6 +248,13 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         // aceita um id só ou array (qualquer um dos aros, não todos).
         rim: (value) =>
           productRimWhere(
+            (Array.isArray(value) ? value : [value]).filter(Boolean),
+          ),
+
+        // Notas com algum item cujo produto tem uma das marcas (`Brand`) informadas —
+        // por id; o `brand` acima compara o texto legado `products.brand`.
+        brand_id: (value) =>
+          productBrandWhere(
             (Array.isArray(value) ? value : [value]).filter(Boolean),
           ),
 
@@ -1427,7 +1439,14 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     const rows = await this.findAll(
       {
         subQuery: false,
-        attributes: ["id", "number_system", "emitted_at", "xml_key"],
+        attributes: [
+          "id",
+          "number_system",
+          "emitted_at",
+          "xml_key",
+          // Só pro `total_products_value` do `summary`.
+          "invoice_products_value",
+        ],
         include: [
           {
             model: InvoiceUnitBusinessAttributes,
@@ -1538,7 +1557,21 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       }
     }
 
-    return result;
+    // Totais somados em memória sobre as notas já buscadas (valor de produtos uma vez
+    // por nota, quantidade por linha); escala fixa pra não perder centavo.
+    const sumScaled = (values: (string | number | null | undefined)[]) =>
+      values.reduce<bigint>((acc, value) => acc + (toScaled(value) ?? 0n), 0n);
+    const toAmount = (scaled: bigint) => Number(formatScaled(scaled));
+
+    const summary = {
+      invoices_count: rows.length,
+      items_quantity: toAmount(sumScaled(result.map((row) => row.quantity))),
+      total_products_value: toAmount(
+        sumScaled(rows.map((invoice) => invoice.invoice_products_value)),
+      ),
+    };
+
+    return { rows: result, summary };
   }
 
   async *streamXmlEntries(

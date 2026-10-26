@@ -553,11 +553,12 @@ export class InvoiceController extends BaseController<
         req,
         context.unitBusinessId,
       );
-      const data = await this.service.getInvoiceSupplierReport(
+      const { rows, summary } = await this.service.getInvoiceSupplierReport(
         params,
         unitBusinessId,
       );
-      return res.json({ data });
+      // `data` mantido no formato antigo; `summary` é adicional.
+      return res.json({ data: rows, summary });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

@@ -202,6 +202,22 @@ export function productRimWhere(rimIds: string[]): WhereOptions {
   };
 }
 
+/** Notas com algum item cujo produto tem uma das marcas informadas (`brand_id`, OR). */
+export function productBrandWhere(brandIds: string[]): WhereOptions {
+  if (!brandIds.length) return {};
+  return {
+    [Op.and]: [
+      Sequelize.literal(`EXISTS (
+        SELECT 1
+        FROM invoice_items ii
+        JOIN products p ON p.id = ii.product_id
+        WHERE ii.invoice_id = "Invoice"."id"
+          AND ${scopeColumnConditionSql("p.brand_id", brandIds)}
+      )`),
+    ],
+  };
+}
+
 /**
  * Notas com algum item que REALMENTE recebeu o desconto de UMA das regras
  * informadas (OR entre regras) — não "se encaixaria no escopo da regra".
