@@ -5,12 +5,12 @@ import {
   AuditEntity,
 } from "../audit-log.types";
 
-// Nomes legíveis (pt-BR, texto pra auditor) de cada entidade/ação auditada.
+// Texto pra usuário leigo (não conhece código nem tabela): nomes de entidade/ação/campo em português comum.
 const ENTITY_LABELS: Record<AuditEntity, string> = {
   [AuditEntity.PRODUCT]: "Produto",
-  [AuditEntity.PRODUCT_CONFIG]: "ProductConfig",
-  [AuditEntity.SUPPLIER_MAPPING]: "SupplierMapping",
-  [AuditEntity.INTEGRATION_MAPPING]: "IntegrationMapping",
+  [AuditEntity.PRODUCT_CONFIG]: "Configurações do produto",
+  [AuditEntity.SUPPLIER_MAPPING]: "Mapeamento DE x PARA",
+  [AuditEntity.INTEGRATION_MAPPING]: "Mapeamento de integração",
 };
 
 const ACTION_LABELS: Record<AuditAction, string> = {
@@ -19,9 +19,24 @@ const ACTION_LABELS: Record<AuditAction, string> = {
   [AuditAction.DELETE]: "removido",
 };
 
-// Valor curto e estável pro texto: null/undefined viram "—", objeto vira JSON.
+// Nome amigável de cada coluna que aparece no changes; coluna sem entrada aqui sai com o nome técnico.
+const FIELD_LABELS: Record<string, string> = {
+  gtin: "EAN",
+  gtin_erp: "EAN no ERP",
+  sku: "SKU",
+  supplier_product_code: "Código",
+  external_id: "Código no ERP",
+  is_primary: "Principal",
+  is_physical_override: "Definido pelo físico",
+  product_id: "Produto",
+  unit_business_id: "Loja",
+  integrations_id: "Integração",
+};
+
+// Valor curto e estável pro texto: null/undefined viram "—", booleano vira sim/não, objeto vira JSON.
 const formatValue = (value: unknown): string => {
   if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "sim" : "não";
   if (typeof value === "object") return JSON.stringify(value);
   return `"${String(value)}"`;
 };
@@ -41,14 +56,15 @@ const describeFieldChanges = (
         JSON.stringify(before?.[key] ?? null) !==
         JSON.stringify(after?.[key] ?? null),
     )
-    .map((key) => `${key}: ${formatValue(before?.[key])} → ${formatValue(after?.[key])}`)
+    .map((key) => `${FIELD_LABELS[key] ?? key}: ${formatValue(before?.[key])} → ${formatValue(after?.[key])}`)
     .join(", ");
 };
 
 const describeAffected = (affected: AuditAffectedEntity): string => {
   const label = affected.label ? ` ${affected.label}` : "";
   const fields = describeFieldChanges(affected.before, affected.after);
-  return `${ENTITY_LABELS[affected.entity]} ${affected.internal_id}${label} ${ACTION_LABELS[affected.action]}${fields ? ` (${fields})` : ""}`;
+  // Id técnico por último, entre colchetes: o leigo lê o rótulo, o suporte acha o registro.
+  return `${ENTITY_LABELS[affected.entity]}${label} ${ACTION_LABELS[affected.action]}${fields ? ` (${fields})` : ""} [id ${affected.internal_id}]`;
 };
 
 // Monta o texto padronizado de auditoria a partir da entidade, ação e changes —
@@ -63,15 +79,15 @@ export const buildAuditDescription = (
   if (changes.summary) parts.push(changes.summary);
 
   const fields = describeFieldChanges(changes.before, changes.after);
-  if (fields) parts.push(`Campos: ${fields}`);
+  if (fields) parts.push(`Alterações: ${fields}`);
 
   if (changes.origin) {
     const label = changes.origin.label ? ` ${changes.origin.label}` : "";
-    parts.push(`Origem: ${ENTITY_LABELS[changes.origin.entity]} ${changes.origin.internal_id}${label}`);
+    parts.push(`Origem: ${ENTITY_LABELS[changes.origin.entity]}${label} [id ${changes.origin.internal_id}]`);
   }
 
   if (changes.affected?.length) {
-    parts.push(`Afetados: ${changes.affected.map(describeAffected).join("; ")}`);
+    parts.push(`Também afetados: ${changes.affected.map(describeAffected).join("; ")}`);
   }
 
   return parts.join(" — ");

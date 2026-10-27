@@ -58,6 +58,8 @@ Valor que identifica uma entidade específica (nome de integração, status, etc
 
 Tudo dentro do código — nome de função, variável, classe, arquivo, chave de objeto, mensagem de log/erro no código-fonte — é em inglês, sem exceção. Português só em documentação (`.claude/`, comentários) e em texto voltado pro usuário final (mensagens de erro exibidas na UI, alertas).
 
+**Texto pro usuário final é pra usuário leigo** (quem não conhece código nem tabela): erro na UI, alerta, aviso, descrição de auditoria. Nunca nome de tabela/coluna/model/classe (`ProductConfig`, `SupplierMapping`, `gtin`, `is_primary`, `external_id`) — usar o termo de negócio: "Configurações do produto", "Mapeamento DE x PARA", "Mapeamento de integração", "EAN", "Código no ERP", "Principal"; booleano como sim/não. Id técnico, quando precisar, vai no fim entre colchetes, nunca no lugar do nome. Referência: `global/audit-logs/helpers/description.ts` (`ENTITY_LABELS`/`FIELD_LABELS`).
+
 ## Contexto (`.claude/`)
 
 - Reflete estado ATUAL do código, nunca histórico. Mudou lógica → sobrescreve; sem changelog.

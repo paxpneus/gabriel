@@ -229,14 +229,14 @@ export class IntegrationMappingService extends BaseService<
                 internalId: id,
                 action: AuditAction.UPDATE,
                 changes: {
-                  summary: `Mapping principal do produto ${productId} nessa integração passou a ser external_id ${changes.external_id ?? existing.external_id}`,
+                  summary: `O código ${changes.external_id ?? existing.external_id} no ERP passou a ser o mapeamento principal do produto nessa integração`,
                   before: { is_primary: existing.is_primary },
                   after: { is_primary: true },
                   affected: previousPrimaries.map((m) => ({
                     entity: AuditEntity.INTEGRATION_MAPPING,
                     internal_id: m.id,
                     action: AuditAction.UPDATE,
-                    label: `external_id ${m.external_id}`,
+                    label: `(código ${m.external_id} no ERP)`,
                     before: { is_primary: true },
                     after: { is_primary: false },
                   })),
