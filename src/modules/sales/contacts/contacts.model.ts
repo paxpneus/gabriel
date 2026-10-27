@@ -1,6 +1,7 @@
 import { Model, DataTypes } from "sequelize";
 import sequelize from "../../../config/sequelize";
 import {
+  CONTACT_TYPES,
   ContactAttributes,
   ContactCreationAttributes,
   ContactCustomData,
@@ -15,7 +16,7 @@ class Contact
   public id!: string;
   public name!: string;
   public type!: ContactType;
-  public id_system!: string;
+  public id_system?: string | null;
   public document?: string | null;
   public integrations_id?: string | null;
   public unit_business_id?: string | null;
@@ -40,12 +41,13 @@ Contact.init(
       allowNull: false,
     },
     type: {
-      type: DataTypes.ENUM("SELLER", "SELLER_MANAGER", "CUSTOMER"),
+      type: DataTypes.ENUM(...CONTACT_TYPES),
       allowNull: false,
     },
+    // Opcional: contato criado via /with-user (ex.: afiliado) não tem id do Bling.
     id_system: {
       type: DataTypes.STRING(100),
-      allowNull: false,
+      allowNull: true,
     },
     document: {
       type: DataTypes.STRING(20),

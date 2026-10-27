@@ -32,7 +32,7 @@ export interface CommissionFilters {
 }
 
 export class SellerCommissionReportRepository {
-  /** Itens do seller report no período (mesma base dele) só de pedidos faturados, com vendedor, gerentes da loja e regionais, cliente e produto. */
+  /** Itens do seller report no período (mesma base dele) só de pedidos faturados, com vendedor, afiliado, gerentes da loja e regionais, cliente e produto. */
   async findCommissionRows(filters: CommissionFilters): Promise<SellerCommissionItemRow[]> {
     const conditions = this.filterConditions(filters);
     if (!conditions) return [];
@@ -67,11 +67,15 @@ export class SellerCommissionReportRepository {
         CASE WHEN regional_managers.names IS NULL THEN 0 ELSE s.manager_commission_rate END
                                                 AS regional_manager_commission_rate,
         CASE WHEN regional_managers.names IS NULL THEN 0 ELSE s.manager_commission_value END
-                                                AS regional_manager_commission_value
+                                                AS regional_manager_commission_value,
+        -- Afiliado (cupom) congelado no snapshot; pedido só de afiliado vem sem vendedor.
+        affiliate.name                          AS affiliated_name,
+        s.affiliated_commission_value
       FROM seller_sales_order_item_snapshots s
       JOIN orders o ON o.id = s.order_id
       LEFT JOIN invoices i ON i.id = o.invoice_id
       LEFT JOIN contacts sc ON sc.id = s.seller_id
+      LEFT JOIN contacts affiliate ON affiliate.id = s.affiliated_id
       LEFT JOIN order_items oi ON oi.id = s.order_item_id
       LEFT JOIN products p ON p.id = s.product_id
       LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id

@@ -17,6 +17,7 @@ class SellerSalesOrderItemSnapshot
   public order_item_id!: string;
   public order_id!: string;
   public seller_id?: string | null;
+  public affiliated_id?: string | null;
   public customer_id?: string | null;
   public product_id?: string | null;
   public unit_business_id?: string | null;
@@ -35,6 +36,7 @@ class SellerSalesOrderItemSnapshot
   public freight_cost_allocated?: number | string;
   public commission_rate?: number | string;
   public commission_value?: number | string;
+  public affiliated_commission_value?: number | string;
   public commission_base?: number | string;
   public manager_commission_value?: number | string;
   public manager_commission_rate?: number | string;
@@ -54,6 +56,8 @@ SellerSalesOrderItemSnapshot.init(
     order_item_id: { type: DataTypes.UUID, allowNull: false, unique: true },
     order_id: { type: DataTypes.UUID, allowNull: false },
     seller_id: { type: DataTypes.UUID, allowNull: true },
+    // Afiliado (contact) congelado em order_coupons.
+    affiliated_id: { type: DataTypes.UUID, allowNull: true },
     customer_id: { type: DataTypes.UUID, allowNull: true },
     product_id: { type: DataTypes.UUID, allowNull: true },
     unit_business_id: { type: DataTypes.UUID, allowNull: true },
@@ -88,6 +92,8 @@ SellerSalesOrderItemSnapshot.init(
     },
     commission_rate: { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
     commission_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    // Fatia do item na comissão congelada do afiliado.
+    affiliated_commission_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     commission_base: {
       type: DataTypes.DECIMAL(14, 2),
       allowNull: true,

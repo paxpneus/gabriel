@@ -52,6 +52,8 @@ class SellerSalesReportController {
         unitBusinessIds: toQueryArray(
           req.query.unitBusinessIds ?? req.query.unit_business_ids,
         ),
+        // Filtra pelo afiliado (contact) congelado em order_coupons.
+        affiliatedIds: toQueryArray(req.query.affiliatedIds ?? req.query.affiliated_ids),
         drillDown: req.query.drillDown === "true",
       });
 

@@ -40,6 +40,12 @@ export const FULL_ACCESS_USER_TYPES: UserType[] = [ADMIN_USER_TYPE, DEVELOPER_US
 // Tela FINANCE do PDV Management (resolve-pdv-access.ts) e menu do front comparam user.type com isto.
 export const FINANCE_USER_TYPE: UserType = "finance";
 
+// Affiliated seller: only logs in via /api/contacts/affiliated/login (default login refuses it).
+export const AFFILIATED_USER_TYPE: UserType = "affiliated";
+
+// Seller user type (seller report view); also created via contacts /with-user.
+export const SELLER_USER_TYPE: UserType = "seller";
+
 export const USER_TYPES: USER_TYPE_CONFIG[] = [
   {
     type: ADMIN_USER_TYPE,
@@ -246,7 +252,7 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
   },
 
   {
-    type: "seller",
+    type: SELLER_USER_TYPE,
     label: "Vendedor",
     description: "Acesso ao relatório de vendedores - visão vendedor.",
     initialPage: "sellers-report",
@@ -303,5 +309,13 @@ export const USER_TYPES: USER_TYPE_CONFIG[] = [
         ],
       },
     ],
+  },
+
+  // Affiliated has no hub modules; it only uses its own login/me.
+  {
+    type: AFFILIATED_USER_TYPE,
+    label: "Afiliado",
+    initialPage: "",
+    modules: [],
   },
 ];

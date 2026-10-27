@@ -1,5 +1,6 @@
 // PAYMENT_METHOD: forma de pagamento da integração (Bling formaPagamento.id) → payment_methods.
-export const ENTITY_TYPES = ["PRODUCT", "INVOICE", "CONTACT", "PAYMENT_METHOD"] as const;
+// ORDER: Bling = id do pedido; Magento = entity_id do pedido do site (busca do cupom).
+export const ENTITY_TYPES = ["PRODUCT", "INVOICE", "CONTACT", "PAYMENT_METHOD", "ORDER"] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export interface IntegrationMappingAttributes {

@@ -9,13 +9,34 @@ import roleService from "../../../../company/users/roles/role.service";
 import { Op, Transaction, UniqueConstraintError } from "sequelize";
 import { UserAttributes } from "../../../../company/users/users/user.types";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
-import { SELLER_MANAGER_CONTACT_TYPE } from "../../contacts.types";
+import {
+  AFFILIATED_CONTACT_TYPE,
+  ContactType,
+  SELLER_CONTACT_TYPE,
+  SELLER_MANAGER_CONTACT_TYPE,
+} from "../../contacts.types";
+import { UserType } from "../../../../company/users/user_config/user_config.types";
+import { AFFILIATED_USER_TYPE, SELLER_USER_TYPE } from "../../../../../shared/constants/user-types";
+import { CD21_UNIT_BUSINESS_NUMBER } from "../../../../company/unit-business/helpers/cd21-unit-business-number";
+import { CreateContactWithUserInput } from "../../schemas/contact.schema";
 import { ManagerPeriod } from "../types/sellers.types";
 import { withManagerPeriodNames } from "../helpers/manager-period-names";
 
 const SELLER_REPORT_PATH = "/reports/sales/seller";
 
-// Regra de vendedor/gerente (contatos SELLER/SELLER_MANAGER): vendedor da integração, usuário do vendedor, vigência do gerente.
+// Tipos aceitos no /with-user: user type + role, e a loja fixa quando o tipo tem uma (afiliado → 21).
+const CONTACT_USER_TYPE_CONFIG: Partial<
+  Record<ContactType, { userType: UserType; roleName: string; fixedUnitBusinessNumber?: string }>
+> = {
+  [AFFILIATED_CONTACT_TYPE]: {
+    userType: AFFILIATED_USER_TYPE,
+    roleName: "Afiliado",
+    fixedUnitBusinessNumber: CD21_UNIT_BUSINESS_NUMBER,
+  },
+  [SELLER_CONTACT_TYPE]: { userType: SELLER_USER_TYPE, roleName: "Vendedor" },
+};
+
+// Regra de vendedor/gerente (contatos SELLER/SELLER_MANAGER): vendedor da integração, usuário do vendedor, vigência do gerente, contato com login (/with-user).
 export class SellerService extends BaseService<Contact, SellerRepository> {
   constructor() {
     super(sellerRepository);
@@ -154,6 +175,88 @@ export class SellerService extends BaseService<Contact, SellerRepository> {
     }
   }
 
+  /** Cria User + Contact numa transação pros tipos de CONTACT_USER_TYPE_CONFIG (contato sem id_system). */
+  async createWithUser(dto: CreateContactWithUserInput) {
+    const config = CONTACT_USER_TYPE_CONFIG[dto.type];
+    if (!config) {
+      throw new Error(`Tipo de contato "${dto.type}" não permite criar usuário`);
+    }
+
+    try {
+      return await sequelize.transaction(async (t) => {
+        const role = await roleService.findOne({
+          where: { name: config.roleName },
+          attributes: ["id"],
+          transaction: t,
+        });
+        if (!role) throw new Error(`Role "${config.roleName}" não encontrada`);
+
+        let unitBusinessId = dto.unit_business_id;
+        if (config.fixedUnitBusinessNumber) {
+          const unitBusiness = await unitBusinessService.findOne({
+            where: { number: config.fixedUnitBusinessNumber },
+            attributes: ["id"],
+            transaction: t,
+          });
+          if (!unitBusiness) {
+            throw new Error(`Loja número "${config.fixedUnitBusinessNumber}" não encontrada`);
+          }
+          unitBusinessId = unitBusiness.id;
+        }
+        if (!unitBusinessId) {
+          throw new Error("Loja (unit_business_id) é obrigatória para este tipo de contato");
+        }
+
+        const user = await userService.createUserWithValidation(
+          {
+            name: dto.name,
+            cpf: dto.cpf,
+            email: dto.email,
+            password: dto.password,
+            phone: dto.phone,
+            unit_business_id: unitBusinessId,
+            user_unit_business: [unitBusinessId],
+            role_id: role.id,
+            type: config.userType,
+          },
+          t,
+        );
+
+        const contact = await this.repository.create(
+          {
+            name: dto.name,
+            type: dto.type,
+            document: user.cpf,
+            unit_business_id: unitBusinessId,
+            user_id: user.id,
+          },
+          { transaction: t },
+        );
+
+        return {
+          contact,
+          user: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            cpf: user.cpf,
+            phone: user.phone ?? null,
+            unit_business_id: user.unit_business_id,
+            type: config.userType,
+          },
+        };
+      });
+    } catch (err) {
+      // contacts.user_id e contacts.document são unique: vira mensagem pro usuário.
+      if (err instanceof UniqueConstraintError) {
+        const field = err.errors?.[0]?.path;
+        if (field === "user_id") throw new Error("Este usuário já está vinculado a outro contato");
+        if (field === "document") throw new Error("Já existe um contato com este CPF");
+      }
+      throw err;
+    }
+  }
+
   private normalizeName(name: string): string {
     return name.trim().toLowerCase().replace(/\s+/g, " ");
   }
@@ -246,6 +349,12 @@ export class SellerService extends BaseService<Contact, SellerRepository> {
         throw new Error(`Vendedor "${name}" não encontrado`);
       }
 
+      // id_system é opcional (contato via /with-user não tem); aqui é o CPF do vendedor.
+      if (!seller.id_system) {
+        throw new Error(`Vendedor "${name}" sem id_system cadastrado`);
+      }
+      const sellerCpf = seller.id_system;
+
       const unitBusiness = await unitBusinessService.findOne({
         where: { number: normalizedNumber },
         transaction: t,
@@ -266,7 +375,7 @@ export class SellerService extends BaseService<Contact, SellerRepository> {
       return this.resolveUser(
         {
           sellerName: seller.name,
-          sellerCpf: seller.id_system,
+          sellerCpf,
           unitBusinessId: unitBusiness.id,
           roleId: role.id,
           email,

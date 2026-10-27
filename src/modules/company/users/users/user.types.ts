@@ -13,6 +13,8 @@ export interface UserAttributes {
   main_unit_business_id?: string | null;
   role_id: string;
   email: string;
+  // Optional contact phone (used by the affiliated sign-up).
+  phone?: string | null;
   password: string;
   active?: boolean;
   config?: UserConfigAttributes;

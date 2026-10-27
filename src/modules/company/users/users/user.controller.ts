@@ -13,7 +13,7 @@ import {
   UserIdSchema,
   LoginSchema,
   SwitchUnitBusinessSchema,
-} from "../../../../shared/schemas";
+} from "./schemas/user.schema";
 import { Request, Response } from "express";
 import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";

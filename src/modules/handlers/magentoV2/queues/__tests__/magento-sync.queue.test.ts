@@ -91,12 +91,24 @@ jest.mock("../../service/catalog/products/products.service", () => ({
   },
 }));
 
+jest.mock("../../service/sales/orders/orders.service", () => ({
+  __esModule: true,
+  default: { getOrderCoupon: jest.fn() },
+}));
+
+jest.mock("../../../../sales/coupons/order-coupons/order-coupons.service", () => ({
+  __esModule: true,
+  default: { registerFromMagento: jest.fn() },
+}));
+
 import productService from "../../../../inventory/products/services/product.service";
 import productConfigService from "../../../../inventory/product-config/product_config.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { getMagentoIntegration } from "../../api/magentoV2_api";
 import magentoCatalogService from "../../service/catalog/products/products.service";
+import magentoSalesOrderService from "../../service/sales/orders/orders.service";
+import orderCouponService from "../../../../sales/coupons/order-coupons/order-coupons.service";
 
 const UNIT_BUSINESS_ID = "ub-bling-1";
 const MAGENTO_INTEGRATION_ID = "magento-integration-1";
@@ -105,11 +117,18 @@ const MAGENTO_INTEGRATION_ID = "magento-integration-1";
 // — precisa estar no env ANTES do import, senão o módulo captura undefined.
 process.env.BLING_UNIT_BUSINESS_ID = UNIT_BUSINESS_ID;
 
+import { UnrecoverableError } from "bullmq";
 import { MagentoSyncQueue } from "../magento-sync.queue";
 
 function runSyncProduct(queue: MagentoSyncQueue, productId: string) {
   return queue.process({
     data: { kind: "sync-product", productId },
+  } as unknown as Job<any>);
+}
+
+function runFetchOrder(queue: MagentoSyncQueue) {
+  return queue.process({
+    data: { kind: "fetch-order", orderId: "order-1", magentoOrderId: "631" },
   } as unknown as Job<any>);
 }
 
@@ -449,6 +468,47 @@ describe("MagentoSyncQueue", () => {
 
       expect(productService.findAll).not.toHaveBeenCalled();
       expect(addSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("fetch-order", () => {
+    it("pedido com cupom: registra cupom com desconto em valor absoluto", async () => {
+      (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockResolvedValue({
+        entity_id: 631,
+        coupon_code: "AFI10",
+        discount_amount: -42.5,
+      });
+
+      await runFetchOrder(queue);
+
+      expect(magentoSalesOrderService.getOrderCoupon).toHaveBeenCalledWith("631");
+      expect(orderCouponService.registerFromMagento).toHaveBeenCalledWith({
+        orderId: "order-1",
+        couponCode: "AFI10",
+        discountAmount: 42.5,
+      });
+    });
+
+    it("pedido sem cupom: não registra nada", async () => {
+      (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockResolvedValue({
+        entity_id: 631,
+        coupon_code: null,
+      });
+
+      await runFetchOrder(queue);
+
+      expect(orderCouponService.registerFromMagento).not.toHaveBeenCalled();
+    });
+
+    it("404 na Magento: UnrecoverableError (retry não resolve)", async () => {
+      (magentoSalesOrderService.getOrderCoupon as jest.Mock).mockRejectedValue({
+        isAxiosError: true,
+        response: { status: 404 },
+        message: "Not Found",
+      });
+
+      await expect(runFetchOrder(queue)).rejects.toBeInstanceOf(UnrecoverableError);
+      expect(orderCouponService.registerFromMagento).not.toHaveBeenCalled();
     });
   });
 });

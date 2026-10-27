@@ -420,3 +420,84 @@ describe("SellerService.findDetail", () => {
     await expect(service.findDetail("c1")).resolves.toBeNull();
   });
 });
+
+// ─── createWithUser ───────────────────────────────────────────────────────────
+
+describe("SellerService.createWithUser", () => {
+  let service: SellerService;
+  const baseDto = {
+    name: "Afiliado Teste",
+    cpf: "12345678909",
+    email: "afiliado@email.com",
+    password: "senha12345",
+    phone: "11999999999",
+  };
+  const createdUser = {
+    id: "user-uuid",
+    name: baseDto.name,
+    email: baseDto.email,
+    cpf: baseDto.cpf,
+    phone: baseDto.phone,
+    unit_business_id: "ub21-uuid",
+    password: "hash",
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new SellerService();
+    (service as any).repository = {
+      create: jest.fn().mockImplementation(async (data) => ({ id: "contact-uuid", ...data })),
+    };
+    (roleService.findOne as jest.Mock).mockImplementation(async ({ where }) => ({ id: `role-${where.name}` }));
+    (unitBusinessService.findOne as jest.Mock).mockResolvedValue({ id: "ub21-uuid" });
+    (userService.createUserWithValidation as jest.Mock).mockResolvedValue(createdUser);
+  });
+
+  it("AFFILIATED: fixa a loja 21, usa a role Afiliado e cria contact sem id_system", async () => {
+    const result = await service.createWithUser({ ...baseDto, type: "AFFILIATED", unit_business_id: "ignored-uuid" });
+
+    expect(roleService.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { name: "Afiliado" }, attributes: ["id"] }),
+    );
+    expect(unitBusinessService.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { number: "21" }, attributes: ["id"] }),
+    );
+    expect(userService.createUserWithValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ unit_business_id: "ub21-uuid", role_id: "role-Afiliado", type: "affiliated", phone: baseDto.phone }),
+      mockTransaction,
+    );
+
+    const contactData = (service as any).repository.create.mock.calls[0][0];
+    expect(contactData).toEqual(
+      expect.objectContaining({ type: "AFFILIATED", document: baseDto.cpf, unit_business_id: "ub21-uuid", user_id: "user-uuid" }),
+    );
+    expect(contactData).not.toHaveProperty("id_system");
+    expect(contactData).not.toHaveProperty("custom_data");
+    expect(result.user).not.toHaveProperty("password");
+    expect(result.user).toEqual(expect.objectContaining({ id: "user-uuid", type: "affiliated" }));
+  });
+
+  it("SELLER: exige unit_business_id", async () => {
+    await expect(service.createWithUser({ ...baseDto, type: "SELLER" })).rejects.toThrow("obrigatória");
+    expect(userService.createUserWithValidation).not.toHaveBeenCalled();
+  });
+
+  it("SELLER: usa a loja informada e a role Vendedor", async () => {
+    await service.createWithUser({ ...baseDto, type: "SELLER", unit_business_id: "ub-x" });
+
+    expect(unitBusinessService.findOne).not.toHaveBeenCalled();
+    expect(userService.createUserWithValidation).toHaveBeenCalledWith(
+      expect.objectContaining({ unit_business_id: "ub-x", role_id: "role-Vendedor", type: "seller" }),
+      mockTransaction,
+    );
+  });
+
+  it("CUSTOMER e SELLER_MANAGER: tipo sem config não permite criar usuário", async () => {
+    await expect(service.createWithUser({ ...baseDto, type: "CUSTOMER" })).rejects.toThrow(
+      'Tipo de contato "CUSTOMER" não permite criar usuário',
+    );
+    await expect(service.createWithUser({ ...baseDto, type: "SELLER_MANAGER" })).rejects.toThrow(
+      'Tipo de contato "SELLER_MANAGER" não permite criar usuário',
+    );
+  });
+});

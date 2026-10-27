@@ -24,6 +24,10 @@
 
 - **Audit log sempre pelo helper.** Montagem do audit (`changes`/`affected`) nunca inline na função de negócio. Genérico: `buildAuditEntries` (`global/audit-logs/helpers/audit-change.ts`) recebe as linhas mexidas (before lido e travado com `lock: t.LOCK.UPDATE` antes de alterar, after como ficou no banco — nunca o que se pretendia gravar) + `fields` + mensagem. Cada módulo tem o seu em `<módulo>/helpers/audit.ts`, só com o específico (mensagem pra leigo, fields, label); a função só chama `auditLogService.record(<helperDoModulo>(...), t)`. Referência: `inventory/products/helpers/audit.ts` (`productRetiredFromIntegrationAudit`). Exceção à regra de "não criar função pra uso único" acima.
 
+## Schemas de validação (Zod)
+
+Schema Zod fica em `<entidade>/schemas/<entidade>.schema.ts` — nunca em `src/shared/`, sem index central. Quem reaproveita campos de outra entidade importa direto do `schemas/` dela (ex.: `contacts/schemas/contact.schema.ts` usa `RequiredUserFields`/`phoneField` de `company/users/users/schemas/user.schema.ts`).
+
 ## Layer separation: repository / service / controller
 
 Segue `BaseRepository`/`BaseService`/`BaseController` (`src/shared/utils/base-models/`). Cada camada só fala com a mesma camada de outras entidades — nunca pula pra camada de baixo.
@@ -237,9 +241,10 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `supplier-discount/report-value.md` — valor de desconto por linha nos relatórios
   - `supplier-discount/unit-business-bypass.md` — bypass de loja só no relatório de produto
 - `unit-business-group.md` — UnitBusinessGroup + pivot `unit_business_group_members` (N:N de unit businesses), rotas, permissão
-- `contact.md` — Contact (vendedores): tipos `SELLER`/`SELLER_MANAGER` (gerente da loja/regional, comissão de gerente por períodos em `custom_data.manager_periods`), `SELLER_CONTACT_TYPES` nas buscas de vendedor do Bling
+- `contact.md` — Contact (vendedores e afiliados): tipos `SELLER`/`SELLER_MANAGER` (gerente da loja/regional, comissão de gerente por períodos em `custom_data.manager_periods`)/`AFFILIATED`, `SELLER_CONTACT_TYPES` nas buscas de vendedor do Bling, `id_system` opcional, rota `/with-user` (User + Contact) e login/me do afiliado
 - `customer.md` — Customer: enum `type`, documento nullable, fallback quando Bling manda `tipoPessoa`/`numeroDocumento` vazios
 - `ticket.md` — Ticket: `requester_user_id` obrigatório no body (não é o logado), `opened_by`/`closed_by` pelo usuário logado, backfill m336
+- `coupon.md` — cupons (`coupons`/`contact_coupons`/`order_coupons`): vínculo afiliado ↔ cupom, índices parciais, nunca deleta, comissão congelada por pedido (`registerFromMagento`)
 - `store.md` — Store (tipo canal de venda, não filial), fix de dedup
 - `stock-movement.md` — módulo stock/stock_movements
 - `inventory-batch.md` — InventoryBatch/Items/Logs (contagem de inventário), modos FIXED/CYCLIC, gate de integration mapping

@@ -7,6 +7,8 @@ export interface SalesOrderSnapshotAttributes {
   store_id?: string | null;
   unit_business_id?: string | null;
   seller_id?: string | null;
+  // Afiliado (contact) congelado em order_coupons.
+  affiliated_id?: string | null;
 
   order_number_system?: string | null;
   order_number_channel?: string | null;
@@ -51,6 +53,8 @@ export interface SalesOrderSnapshotAttributes {
   cbs_value?: number | string;
   approx_tax_value?: number | string;
   total_commission?: number | string;
+  // Comissão do afiliado (order_coupons), rateada/somada igual à do vendedor.
+  total_affiliated_commission?: number | string;
   computed_icms_value?: number | string;
 
   contribution_value?: number | string;

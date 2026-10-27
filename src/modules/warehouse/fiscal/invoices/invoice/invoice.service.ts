@@ -1520,7 +1520,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             ? {
                 id: invoiceWithRelations.seller.id,
                 name: invoiceWithRelations.seller.name,
-                id_system: invoiceWithRelations.seller.id_system,
+                // contacts.id_system is optional (m344); keep the string contract of this response.
+                id_system: invoiceWithRelations.seller.id_system ?? "",
               }
             : default_seller_body,
           customer: {

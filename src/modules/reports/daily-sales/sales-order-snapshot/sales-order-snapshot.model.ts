@@ -21,6 +21,7 @@ class SalesOrderSnapshot
   public store_id?: string | null;
   public unit_business_id?: string | null;
   public seller_id?: string | null;
+  public affiliated_id?: string | null;
 
   public order_number_system?: string | null;
   public order_number_channel?: string | null;
@@ -65,6 +66,7 @@ class SalesOrderSnapshot
   public cbs_value?: number | string;
   public approx_tax_value?: number | string;
   public total_commission?: number | string;
+  public total_affiliated_commission?: number | string;
   public computed_icms_value?: number | string;
 
   public contribution_value?: number | string;
@@ -91,6 +93,8 @@ SalesOrderSnapshot.init(
     store_id: { type: DataTypes.UUID, allowNull: true },
     unit_business_id: { type: DataTypes.UUID, allowNull: true },
     seller_id: { type: DataTypes.UUID, allowNull: true },
+    // Afiliado (contact) congelado em order_coupons.
+    affiliated_id: { type: DataTypes.UUID, allowNull: true },
 
     order_number_system: { type: DataTypes.STRING(100), allowNull: true },
     order_number_channel: { type: DataTypes.STRING(100), allowNull: true },
@@ -154,6 +158,8 @@ SalesOrderSnapshot.init(
       type: DataTypes.DECIMAL(14, 4),
       allowNull: true,
     },
+    // Soma de affiliated_commission_value dos itens.
+    total_affiliated_commission: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     computed_icms_value: {
       type: DataTypes.DECIMAL(14, 2),
       defaultValue: 0,

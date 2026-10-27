@@ -50,6 +50,8 @@ export interface SalesInvoicedTotalsRow {
   total_freight: DecimalValue;
   total_taxes: DecimalValue;
   total_commission: DecimalValue;
+  // Comissão do afiliado somada de sales_order_snapshots.total_affiliated_commission.
+  affiliated_comission: DecimalValue;
   total_cost: DecimalValue;
   total_supplier_discount: DecimalValue;
   contribution_value: DecimalValue;
@@ -93,6 +95,7 @@ export interface SalesInvoicedReportSummary {
   total_freight: number;
   total_taxes: number;
   total_commission: number;
+  affiliated_comission: number;
   total_cost: number;
   total_supplier_discount: number;
   contribution_value: number;

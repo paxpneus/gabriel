@@ -8,6 +8,8 @@ const ENTITY_LABELS: Record<EntityType, string> = {
   INVOICE: "Nota fiscal",
   CONTACT: "Contato",
   PAYMENT_METHOD: "Forma de pagamento",
+  // ORDER não gera pendência (mapping criado direto na ingestão do pedido); só fecha o Record.
+  ORDER: "Pedido",
 };
 
 // Pendência mapeada manualmente: entrada do mapping de integração criado (a pendência só some, não entra no log).

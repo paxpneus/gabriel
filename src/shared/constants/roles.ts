@@ -31,6 +31,8 @@ type Scopes =
   | 'PDV CD21'
   | 'Confirmar EAN físico'
   | 'Criar e mapear produto na nota'
+  | 'Contatos'
+  | 'Cupons'
 
 interface ChildEntity {
   entity: string
@@ -306,6 +308,25 @@ export const ROLE_PERMISSIONS: Roles[] = [
     route: '',
     type: 'CUSTOM',
     permissions: ['write'],
+  },
+  // Contacts CRUD + /with-user (creates User + Contact, e.g. affiliates).
+  {
+    scope: 'Contatos',
+    entity: 'contacts',
+    route: 'contacts',
+    permissions: all,
+    type: 'REGULAR',
+  },
+  // Coupons; affiliate ↔ coupon links (contact_coupons) inherit from this parent.
+  {
+    scope: 'Cupons',
+    entity: 'coupons',
+    route: 'coupons',
+    permissions: all,
+    type: 'REGULAR',
+    children: [
+      { entity: 'contact_coupons', label: 'Cupons de Afiliado' },
+    ],
   },
 ]
 

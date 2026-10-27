@@ -7,6 +7,8 @@ export interface DailySellerCustomerFactAttributes {
   orders_count?: number;
   total_purchased?: number | string;
   total_commission?: number | string;
+  // Comissão do afiliado (order_coupons), rateada/somada igual à do vendedor.
+  total_affiliated_commission?: number | string;
   last_updated_at?: Date;
   createdAt?: Date;
   updatedAt?: Date;

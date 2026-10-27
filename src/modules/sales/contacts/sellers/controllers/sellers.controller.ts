@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { authenticate } from "../../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../../middlewares/user-permissions";
+import { validateCreate } from "../../../../../middlewares/validation";
+import { CreateContactWithUserSchema } from "../../schemas/contact.schema";
 import RouterController from "../../../../../shared/utils/base-models/base-router-controller";
 import sellerService from "../services/sellers.service";
 
@@ -33,6 +35,7 @@ class SellerController extends RouterController {
   constructor() {
     super();
     this.router.post(`/create-from-seller-name`, ...this.mw("createUserFromSellerName"), this.createUserFromSellerName);
+    this.router.post(`/with-user`, ...this.mw("createWithUser"), this.createWithUser);
     // Detalhe do contato (substitui o show do CRUD genérico): nomes de loja/grupo exigem unit-business, que o core não pode importar (ciclo).
     this.router.get(`/:id`, ...this.mw("show"), this.show);
     this.router.put(`/:id/manager-periods`, ...this.mw("updateManagerPeriods"), this.updateManagerPeriods);
@@ -43,6 +46,7 @@ class SellerController extends RouterController {
     return {
       show: [authenticate, userPermissions],
       updateManagerPeriods: [authenticate, userPermissions],
+      createWithUser: [authenticate, validateCreate(CreateContactWithUserSchema), userPermissions],
     };
   }
 
@@ -50,6 +54,16 @@ class SellerController extends RouterController {
     try {
       const { name, unitBusinessNumber, email, password } = req.body;
       const record = await sellerService.createUserFromSellerName(name, unitBusinessNumber, email, password);
+      return res.status(201).json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  /** POST /with-user — cria User + Contact pra tipo com login (afiliado, vendedor). */
+  createWithUser = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const record = await sellerService.createWithUser(req.body);
       return res.status(201).json(record);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });

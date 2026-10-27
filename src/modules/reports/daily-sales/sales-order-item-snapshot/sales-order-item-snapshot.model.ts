@@ -57,6 +57,7 @@ class SalesOrderItemSnapshot
   public commission_base?: number | string;
   public commission_rate?: number | string;
   public commission_value?: number | string;
+  public affiliated_commission_value?: number | string;
 
   public ncm?: string | null;
   public cest?: string | null;
@@ -145,6 +146,8 @@ SalesOrderItemSnapshot.init(
     commission_base: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     commission_rate: { type: DataTypes.DECIMAL(8, 4), defaultValue: 0 },
     commission_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    // Fatia do item na comissão congelada do afiliado.
+    affiliated_commission_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
 
     ncm: { type: DataTypes.STRING(20), allowNull: true },
     cest: { type: DataTypes.STRING(20), allowNull: true },
