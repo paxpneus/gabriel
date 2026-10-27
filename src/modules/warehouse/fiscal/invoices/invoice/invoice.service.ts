@@ -145,6 +145,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         ],
       },
       customFields: {
+        // Marca vem do request — escapada pelo Sequelize, nunca interpolada crua.
         brand: (value) => ({
           [Op.and]: [
             Sequelize.literal(`EXISTS (
@@ -154,8 +155,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       WHERE ii.invoice_id = "Invoice"."id"
         AND p.brand ${
           Array.isArray(value)
-            ? `IN (${value.map((v: string) => `'${v.replace(/'/g, "''")}'`).join(", ")})`
-            : `= '${String(value).replace(/'/g, "''")}'`
+            ? `IN (${value.map((v: string) => sequelize.escape(v)).join(", ")})`
+            : `= ${sequelize.escape(String(value))}`
         }
     )`),
           ],

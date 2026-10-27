@@ -1,4 +1,5 @@
 import { Op, Sequelize, WhereOptions } from "sequelize";
+import sequelize from "../../../../config/sequelize";
 
 /** order_date (DATEONLY) dentro de [dateFrom, dateTo], ambos YYYY-MM-DD. */
 export function snapshotPeriodWhere(
@@ -18,10 +19,11 @@ export function completedSnapshotWhere(): WhereOptions {
  * snapshotAlias = alias SQL de sales_order_snapshots na query (model ou include).
  */
 export function completeCostSnapshotWhere(snapshotAlias: string): WhereOptions {
+  const t = sequelize.getQueryInterface().quoteIdentifier(snapshotAlias);
   return Sequelize.literal(`NOT EXISTS (
     SELECT 1
     FROM sales_order_item_snapshots cost_check
-    WHERE cost_check.order_snapshot_id = "${snapshotAlias}"."id"
+    WHERE cost_check.order_snapshot_id = ${t}."id"
       AND COALESCE(cost_check.average_cost_snapshot, 0) <= 0
   )`) as unknown as WhereOptions;
 }

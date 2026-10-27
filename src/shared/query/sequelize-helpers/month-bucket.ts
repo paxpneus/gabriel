@@ -8,7 +8,8 @@ export function monthBucketLiteral(
   timezone: string,
   alias?: string,
 ): Literal {
-  const col = alias ? `"${alias}"."${column}"` : `"${column}"`;
+  const qi = sequelize.getQueryInterface();
+  const col = alias ? `${qi.quoteIdentifier(alias)}.${qi.quoteIdentifier(column)}` : qi.quoteIdentifier(column);
   const tz = sequelize.escape(timezone);
   return Sequelize.literal(
     `to_char(date_trunc('month', ${col} AT TIME ZONE ${tz}), 'YYYY-MM')`,

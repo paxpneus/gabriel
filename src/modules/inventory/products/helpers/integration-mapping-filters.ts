@@ -7,13 +7,14 @@ export function productMappedToIntegrationLiteral(
   productAlias: string = "Product",
 ) {
   if (!integrationId) return Sequelize.literal("FALSE");
+  const t = sequelize.getQueryInterface().quoteIdentifier(productAlias);
   // internal_id é varchar (sem FK), por isso o cast do id do produto.
   return Sequelize.literal(`EXISTS (
     SELECT 1
     FROM integration_mappings im
     WHERE im.entity_type = 'PRODUCT'
       AND im.integrations_id = ${sequelize.escape(integrationId)}
-      AND im.internal_id = "${productAlias}"."id"::text
+      AND im.internal_id = ${t}."id"::text
   )`);
 }
 

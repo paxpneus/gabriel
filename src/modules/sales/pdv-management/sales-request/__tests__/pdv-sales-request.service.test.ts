@@ -1,9 +1,16 @@
-jest.mock("../../../../../config/sequelize", () => ({
-  __esModule: true,
-  default: {
-    transaction: jest.fn((cb: any) => cb(mockTransaction)),
-  },
-}));
+// escape/quoteIdentifier reais de Postgres (helpers montam literal com eles); sem conexão.
+jest.mock("../../../../../config/sequelize", () => {
+  const { Sequelize } = jest.requireActual("sequelize");
+  const pg = new Sequelize({ dialect: "postgres", logging: false });
+  return {
+    __esModule: true,
+    default: {
+      transaction: jest.fn((cb: any) => cb(mockTransaction)),
+      escape: pg.escape.bind(pg),
+      getQueryInterface: pg.getQueryInterface.bind(pg),
+    },
+  };
+});
 
 jest.mock("../pdv-sales-request.repository", () => ({
   __esModule: true,

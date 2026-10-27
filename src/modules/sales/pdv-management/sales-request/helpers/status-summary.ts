@@ -1,4 +1,5 @@
 import { Op, Sequelize, WhereOptions } from "sequelize";
+import sequelize from "../../../../../config/sequelize";
 import {
   PdvSalesRequestStatus,
   PdvShippingType,
@@ -199,10 +200,11 @@ export function indicatorWhere(key: PdvStatusIndicatorKey): WhereOptions {
 }
 
 // Σ quantity dos order_items do pedido da solicitação — volumes somados nas contagens agrupadas do resumo.
-export function orderItemsQuantityLiteral(requestAlias = '"PdvSalesRequest"') {
+export function orderItemsQuantityLiteral(requestAlias = "PdvSalesRequest") {
+  const t = sequelize.getQueryInterface().quoteIdentifier(requestAlias);
   return Sequelize.literal(`(
     SELECT COALESCE(SUM(oi.quantity), 0)
     FROM order_items oi
-    WHERE oi.order_id = ${requestAlias}."order_id"
+    WHERE oi.order_id = ${t}."order_id"
   )`);
 }

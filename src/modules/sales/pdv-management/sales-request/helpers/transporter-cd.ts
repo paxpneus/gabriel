@@ -1,4 +1,5 @@
 import { Sequelize } from "sequelize";
+import sequelize from "../../../../../config/sequelize";
 import type { PdvTransporterSelector } from "../pdv-sales-request.types";
 
 // Transportadora no formato "LOGISTICA PAX PNEUS SP - CD 12" / "... PR - CD 17".
@@ -27,12 +28,13 @@ export function extractTransporterCd(
 
 // Número do "CD <n>" do transporter_name da nota de venda (null sem nota/sem CD).
 export function saleInvoiceTransporterCdExpression(
-  requestAlias = '"PdvSalesRequest"',
+  requestAlias = "PdvSalesRequest",
 ) {
+  const t = sequelize.getQueryInterface().quoteIdentifier(requestAlias);
   return Sequelize.literal(`(
     SELECT substring(i.transporter_name from '(?i)${CD_REGEX}')
     FROM invoices i
-    WHERE i.id = ${requestAlias}."sale_invoice_id"
+    WHERE i.id = ${t}."sale_invoice_id"
   )`);
 }
 
@@ -47,11 +49,12 @@ export function transporterNameMatchesCdsSql(
 // Nota de venda cuja transportadora é um dos CDs informados.
 export function transporterCdInWhere(
   cds: readonly string[],
-  requestAlias = '"PdvSalesRequest"',
+  requestAlias = "PdvSalesRequest",
 ) {
+  const t = sequelize.getQueryInterface().quoteIdentifier(requestAlias);
   return Sequelize.literal(`EXISTS (
     SELECT 1 FROM invoices i
-    WHERE i.id = ${requestAlias}."sale_invoice_id"
+    WHERE i.id = ${t}."sale_invoice_id"
       AND ${transporterNameMatchesCdsSql("i.transporter_name", cds)}
   )`);
 }
@@ -62,7 +65,7 @@ export function isUuid(value: string): boolean {
   return UUID.test(value);
 }
 
-// Fragmento SQL do seletor contra as colunas de nome/id de transportadora (id inválido → FALSE, nunca interpolado cru).
+// Fragmento SQL do seletor contra as colunas de nome/id de transportadora (id inválido → FALSE; válido entra escapado).
 export function transporterSelectorSql(
   selector: PdvTransporterSelector,
   columns: { name: string; id: string },
@@ -73,7 +76,7 @@ export function transporterSelectorSql(
       : "FALSE";
   }
   return isUuid(selector.transporterId)
-    ? `${columns.id} = '${selector.transporterId}'`
+    ? `${columns.id} = ${sequelize.escape(selector.transporterId)}`
     : "FALSE";
 }
 
