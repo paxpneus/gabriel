@@ -36,6 +36,15 @@ Antes de criar método pra buscar dado de outra entidade: checar `BaseRepository
 
 Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e reutilizável por mais de um filtro/método: função nomeada, exportada, parametrizada em `helpers/` da própria entidade (ex: `invoice/helpers/`) — nunca função solta/closure dentro do service/repository. Parametrizar pelo que varia entre chamadas (nome de loja, unit business id, alias de tabela, data de referência), não hardcoded pro primeiro caso de uso. Referência: `invoice/helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`), `invoice/helpers/custom-filters.ts` (`storeCollectionDateTodayWhere`) — funções puras, importadas por `invoice.service.ts`/`invoice.repository.ts`. É organização de código, não muda layering acima: o helper pertence à mesma entidade e é usado pela camada que precisar.
 
+## SQL cru (`literal`/`query`) — injection
+
+`literal()` não escapa nada. Interpolação `${}` direta só pra **constante do código** ou **número validado com `Number.isInteger(n)`** (não basta `typeof`). Todo o resto entra parametrizado:
+
+- **Valor** (inclusive `Date` — `${date}` vira `Thu Oct 22 2026...`, SQL inválido): `replacements` (`:name`, escapado e interpolado pelo Sequelize) ou `bind` (`$name`, parametrização real no driver). No Sequelize 6.37.8 do projeto os dois funcionam no `findAll`, mas **nunca os dois na mesma query** (lança erro) — o helper documenta qual usa e quem chama passa a mesma opção. Helper que só devolve fragmento (`customFields`, `*Where`, `QueryParser`) e não controla as options da query: `sequelize.escape(valor)` (instância de `config/sequelize`), nunca `replace(/'/g, "''")` à mão. Exige Sequelize ≥ 6.19.1 (CVE-2023-25813: `replacements` + `where` permitia injection via `:token` no texto do usuário) — não fazer downgrade.
+- **Identificador** (coluna, tabela, direção de `ORDER BY`) vindo do request: replacement não serve (vira `'texto'`). Whitelist em mapa → SQL fixo, com fallback: `SORTABLE[req.query.sort] ?? SORTABLE.name`; `dir === "asc" ? "ASC" : "DESC"`.
+- **Alias** de tabela: parâmetro do helper com default (`alias = "Product"`), sempre vindo do código, nunca do request, e citado com `sequelize.getQueryInterface().quoteIdentifier(alias)` — não `"${alias}"` à mão. Nunca `"Product"."id"` literal no meio do helper: se o alias gerado pelo Sequelize mudar (include, `as`), quebra em silêncio.
+- **Teste**: `config/sequelize` em Jest é **sqlite** (`quoteIdentifier` cita com crase). Teste que confere SQL desses helpers mocka `config/sequelize` com `new Sequelize({ dialect: "postgres" })` sem conexão — ref. `src/shared/query/__tests__/stock-movement-query-objects.test.ts`.
+
 ## Performance de queries e chamadas
 
 **Attributes explícitos.** Toda função nova que chama algo do backend (query Sequelize, chamada a API externa/integração) deve pedir só os campos que vai efetivamente usar — `attributes` na query Sequelize, ou equivalente na chamada externa (params/fields da API). Nunca trazer a entidade inteira "pra garantir"; resposta grande sem uso é o padrão a evitar.

@@ -1,3 +1,9 @@
+// SQL desses helpers é só Postgres; o sequelize de teste é sqlite (cita com crase), então usa instância postgres sem conexão.
+jest.mock("../../../../config/sequelize", () => {
+  const { Sequelize } = jest.requireActual("sequelize");
+  return { __esModule: true, default: new Sequelize({ dialect: "postgres", logging: false }) };
+});
+
 import { Op } from "sequelize";
 import {
   saleTransferReportWhere,

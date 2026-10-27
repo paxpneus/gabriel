@@ -7,6 +7,7 @@ export function productMappedToIntegrationWhere(
   productAlias: string = "Product",
 ): WhereOptions {
   if (!integrationId) return { [Op.and]: [Sequelize.literal("FALSE")] };
+  const t = sequelize.getQueryInterface().quoteIdentifier(productAlias);
   return {
     [Op.and]: [
       // internal_id é varchar (sem FK), por isso o cast do id do produto.
@@ -15,7 +16,7 @@ export function productMappedToIntegrationWhere(
         FROM integration_mappings im
         WHERE im.entity_type = 'PRODUCT'
           AND im.integrations_id = ${sequelize.escape(integrationId)}
-          AND im.internal_id = "${productAlias}"."id"::text
+          AND im.internal_id = ${t}."id"::text
       )`),
     ],
   };

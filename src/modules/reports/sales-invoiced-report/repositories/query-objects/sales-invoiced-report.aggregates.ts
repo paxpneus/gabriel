@@ -1,4 +1,5 @@
 import { FindAttributeOptions, Sequelize } from "sequelize";
+import sequelize from "../../../../../config/sequelize";
 import {
   coalesceZero,
   markupPct,
@@ -12,7 +13,8 @@ export const TOTALS_SNAPSHOT_ALIAS = "SalesOrderSnapshot";
 export function totalsAggregateAttributes(
   alias: string = TOTALS_SNAPSHOT_ALIAS,
 ): FindAttributeOptions {
-  const sum = (column: string) => coalesceZero(`SUM("${alias}"."${column}")`);
+  const t = sequelize.getQueryInterface().quoteIdentifier(alias);
+  const sum = (column: string) => coalesceZero(`SUM(${t}."${column}")`);
   const ordersCount = `COUNT(*)`;
 
   return [

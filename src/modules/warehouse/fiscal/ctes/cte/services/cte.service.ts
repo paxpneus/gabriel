@@ -1,4 +1,5 @@
 import { literal, where as sequelizeWhere, Op } from "sequelize";
+import sequelize from "../../../../../../config/sequelize";
 import BaseService from "../../../../../../shared/utils/base-models/base-service";
 import Cte from "../cte.model";
 import cteRepository, { CteRepository } from "../cte.repository";
@@ -43,15 +44,16 @@ export class CteService extends BaseService<Cte, CteRepository> {
 
           const range: Record<symbol, any> = {};
 
+          // start/end vêm crus do request — sempre via escape, nunca interpolados.
           if (start) {
             range[Op.gte] = literal(
-              `('${start}'::date AT TIME ZONE 'America/Sao_Paulo')`,
+              `(${sequelize.escape(start)}::date AT TIME ZONE 'America/Sao_Paulo')`,
             );
           }
 
           if (end) {
             range[Op.lt] = literal(
-              `(('${end}'::date + INTERVAL '1 day') AT TIME ZONE 'America/Sao_Paulo')`,
+              `((${sequelize.escape(end)}::date + INTERVAL '1 day') AT TIME ZONE 'America/Sao_Paulo')`,
             );
           }
 

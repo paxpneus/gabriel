@@ -1,4 +1,5 @@
 import { Sequelize } from "sequelize";
+import sequelize from "../../../../../../config/sequelize";
 import { decryptXmlHead, isEncrypted } from "../../../../../../shared/utils/xml/xml-cipher";
 import { InvoiceDirection } from "./invoice-direction";
 
@@ -28,7 +29,8 @@ export function parseNfeOperationType(tpNF: unknown): InvoiceDirection | null {
 
 // Início do xml_path gravado, pra ler o <ide> sem trazer a nota inteira.
 export function xmlHeadLiteral(alias = "Invoice") {
-  return Sequelize.literal(`LEFT("${alias}"."xml_path", ${XML_HEAD_LENGTH})`);
+  const t = sequelize.getQueryInterface().quoteIdentifier(alias);
+  return Sequelize.literal(`LEFT(${t}."xml_path", ${XML_HEAD_LENGTH})`);
 }
 
 // Aceita o xml_path inteiro ou só o início; null quando o <finNFe> (vem depois do tpNF) não está no trecho.

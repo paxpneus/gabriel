@@ -79,7 +79,11 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
           };
         },
         category_id: (value) => {
-          const ids = (Array.isArray(value) ? value : [value]).map(Number);
+          // Só inteiros entram no IN cru; nenhum id válido → nada bate.
+          const ids = (Array.isArray(value) ? value : [value])
+            .map(Number)
+            .filter(Number.isInteger);
+          if (!ids.length) return { id: null };
           return {
             id: {
               [Op.in]: literal(`(
@@ -92,7 +96,11 @@ export class TicketService extends BaseService<Ticket, TicketRepository> {
           };
         },
         category_option_id: (value) => {
-          const ids = (Array.isArray(value) ? value : [value]).map(Number);
+          // Só inteiros entram no IN cru; nenhum id válido → nada bate.
+          const ids = (Array.isArray(value) ? value : [value])
+            .map(Number)
+            .filter(Number.isInteger);
+          if (!ids.length) return { id: null };
           return {
             id: {
               [Op.in]: literal(`(

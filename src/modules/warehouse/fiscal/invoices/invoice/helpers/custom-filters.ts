@@ -1,4 +1,5 @@
 import { WhereOptions, Op, Sequelize } from "sequelize";
+import sequelize from "../../../../../../config/sequelize";
 import {
   startOfDayTz,
   collectionDateDayRangeCompat,
@@ -168,14 +169,12 @@ export function pendingCancellationWhere(): WhereOptions {
 }
 
 /**
- * Valores de filtro vêm direto do client (`?filters[x][]=...`) — nunca
- * confiar neles pra montar SQL cru. Descarta qualquer valor que não seja
- * um UUID de verdade (em vez de só escapar aspas), então o resultado só
- * tem material seguro pra interpolar num `Sequelize.literal`.
+ * Valores de filtro vêm direto do client (`?filters[x][]=...`): descarta o
+ * que não for UUID e escapa o resto antes de entrar no `Sequelize.literal`.
  */
 function sqlUuidArrayLiteral(ids: string[]): string {
   const validIds = ids.filter((id) => UUID_RE.test(id));
-  return `ARRAY[${validIds.map((id) => `'${id}'`).join(", ")}]::uuid[]`;
+  return `ARRAY[${validIds.map((id) => sequelize.escape(id)).join(", ")}]::uuid[]`;
 }
 
 /** Curinga (`TRUE`) quando `ids` está vazio, senão `column = ANY(ids)`. */
@@ -264,12 +263,13 @@ export function invoiceProductWhere(
 ): WhereOptions {
   const validIds = productIds.filter((id) => UUID_RE.test(id));
   if (!validIds.length) return { [Op.and]: [Sequelize.literal("FALSE")] };
+  const t = sequelize.getQueryInterface().quoteIdentifier(invoiceAlias);
   return {
     [Op.and]: [
       Sequelize.literal(`EXISTS (
         SELECT 1
         FROM invoice_items ii
-        WHERE ii.invoice_id = "${invoiceAlias}"."id"
+        WHERE ii.invoice_id = ${t}."id"
           AND ii.product_id = ANY(${sqlUuidArrayLiteral(validIds)})
       )`),
     ],

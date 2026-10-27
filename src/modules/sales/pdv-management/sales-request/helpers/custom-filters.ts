@@ -1,4 +1,5 @@
 import { Op, Sequelize, WhereOptions } from "sequelize";
+import sequelize from "../../../../../config/sequelize";
 import { isUuid, transporterSelectorSql } from "./transporter-cd";
 import { PdvBatchStage, PdvTransporterSelector } from "../pdv-sales-request.types";
 import { CD21_UNIT_BUSINESS_NUMBER } from "../../../../company/unit-business/helpers/cd21-unit-business-number";
@@ -8,23 +9,23 @@ import { CD21_UNIT_BUSINESS_NUMBER } from "../../../../company/unit-business/hel
 // include estar presente, então vale igual pro quadro e pras contagens
 // agrupadas (countGroupedByStatus, sem join).
 export function orderNumberSystemMatchesLiteral(term: string) {
-  const escaped = term.replace(/'/g, "''");
+  const like = sequelize.escape(`%${term}%`);
   return Sequelize.literal(`EXISTS (
     SELECT 1 FROM orders o
     WHERE o.id = "PdvSalesRequest"."order_id"
-      AND o.number_order_system ILIKE '%${escaped}%'
+      AND o.number_order_system ILIKE ${like}
   )`);
 }
 
 // Filtro por nome do cliente do pedido vinculado — mesmo EXISTS
 // correlacionado de orderNumberSystemMatchesLiteral (mesmo motivo).
 export function orderCustomerNameMatchesLiteral(term: string) {
-  const escaped = term.replace(/'/g, "''");
+  const like = sequelize.escape(`%${term}%`);
   return Sequelize.literal(`EXISTS (
     SELECT 1 FROM orders o
     JOIN customers c ON c.id = o.customer_id
     WHERE o.id = "PdvSalesRequest"."order_id"
-      AND c.name ILIKE '%${escaped}%'
+      AND c.name ILIKE ${like}
   )`);
 }
 
@@ -36,8 +37,7 @@ export function orderCustomerNameMatchesLiteral(term: string) {
 // o `search` genérico do QueryParser não serve aqui, já que `searchFields`
 // fica vazio pra essa entidade e zeraria o resultado (`where.id = null`).
 export function pdvSalesRequestSearchLiteral(term: string) {
-  const escaped = term.replace(/'/g, "''");
-  const like = `'%${escaped}%'`;
+  const like = sequelize.escape(`%${term}%`);
 
   return Sequelize.literal(`(
     EXISTS (
@@ -59,8 +59,7 @@ export function pdvSalesRequestSearchLiteral(term: string) {
 }
 
 // Filtro por período de order.date — mesmo EXISTS correlacionado acima.
-// start/end validados como YYYY-MM-DD antes de entrar no literal (nunca
-// interpolar direto o que vier de fora sem validar formato).
+// start/end validados como YYYY-MM-DD e ainda escapados antes de entrar no literal.
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 export function orderDateWithinLiteral(range: {
@@ -70,10 +69,10 @@ export function orderDateWithinLiteral(range: {
   const conditions: string[] = [];
 
   if (range.start && DATE_ONLY.test(range.start)) {
-    conditions.push(`o.date >= '${range.start}'::date`);
+    conditions.push(`o.date >= ${sequelize.escape(range.start)}::date`);
   }
   if (range.end && DATE_ONLY.test(range.end)) {
-    conditions.push(`o.date < ('${range.end}'::date + INTERVAL '1 day')`);
+    conditions.push(`o.date < (${sequelize.escape(range.end)}::date + INTERVAL '1 day')`);
   }
 
   return Sequelize.literal(`EXISTS (
@@ -88,9 +87,7 @@ export function orderDateWithinLiteral(range: {
 // bate com algum dos reasons pedidos, sem precisar decodificar o JSON em
 // aplicação.
 export function errorsReasonsOverlapLiteral(reasons: string[]) {
-  const values = reasons
-    .map((reason) => `'${reason.replace(/'/g, "''")}'`)
-    .join(",");
+  const values = reasons.map((reason) => sequelize.escape(reason)).join(",");
 
   return Sequelize.literal(
     `("PdvSalesRequest"."errors" -> 'reasons') ?| array[${values}]`,
@@ -117,7 +114,7 @@ export function saleInvoiceCd21DanfePrintedLiteral() {
   )`);
 }
 
-// Filtro por transportadora da nota de venda — ids validados como uuid antes de entrar no literal.
+// Filtro por transportadora da nota de venda — ids validados como uuid e escapados antes de entrar no literal.
 export function saleInvoiceTransporterInLiteral(transporterIds: string[]) {
   const ids = transporterIds.map((id) => id.trim()).filter(isUuid);
   if (!ids.length) return Sequelize.literal("FALSE");
@@ -125,7 +122,7 @@ export function saleInvoiceTransporterInLiteral(transporterIds: string[]) {
   return Sequelize.literal(`EXISTS (
     SELECT 1 FROM invoices i
     WHERE i.id = "PdvSalesRequest"."sale_invoice_id"
-      AND i.transporter_id IN (${ids.map((id) => `'${id}'`).join(",")})
+      AND i.transporter_id IN (${ids.map((id) => sequelize.escape(id)).join(",")})
   )`);
 }
 

@@ -1,4 +1,5 @@
 import { Sequelize } from "sequelize";
+import sequelize from "../../../../../config/sequelize";
 import { PdvBoardParamError } from "../../helpers/pdv-errors";
 
 // Cursor composto da ordem fixa do quadro (created_at ASC, id ASC). `c` é o
@@ -39,11 +40,11 @@ export function decodeBoardCursor(raw: string): PdvBoardCursor {
 }
 
 // Qualificado com "PdvSalesRequest" — a query junta orders/invoices, que
-// também têm id/created_at.
+// também têm id/created_at. Cursor vem do request: valores escapados.
 export function boardCursorAfterLiteral(cursor: PdvBoardCursor) {
-  const createdAt = cursor.c.replace(/'/g, "''");
-  const id = cursor.i.replace(/'/g, "''");
+  const createdAt = sequelize.escape(cursor.c);
+  const id = sequelize.escape(cursor.i);
   return Sequelize.literal(
-    `("PdvSalesRequest"."created_at", "PdvSalesRequest"."id") > ('${createdAt}'::timestamptz, '${id}'::uuid)`,
+    `("PdvSalesRequest"."created_at", "PdvSalesRequest"."id") > (${createdAt}::timestamptz, ${id}::uuid)`,
   );
 }

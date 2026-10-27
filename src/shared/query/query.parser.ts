@@ -10,6 +10,19 @@ import {
   col,
 } from "sequelize";
 import type { QueryParams, ResolvedQuery, QueryConfig } from "./query.types";
+import sequelize from "../../config/sequelize";
+
+// Direções que o próprio Sequelize aceita no ORDER BY (validOrderOptions); fora disso vai pro default.
+const SEQUELIZE_ORDER_DIRECTIONS = [
+  "ASC",
+  "DESC",
+  "ASC NULLS LAST",
+  "DESC NULLS LAST",
+  "ASC NULLS FIRST",
+  "DESC NULLS FIRST",
+  "NULLS FIRST",
+  "NULLS LAST",
+];
 
 const DEFAULTS = {
   page: 1,
@@ -52,10 +65,14 @@ export class QueryParser {
       : (defaults.sortBy ?? DEFAULTS.sortBy);
 
     const order: OrderItem[] = sortByList.map((field, i) => {
+      // Direção só de whitelist (o fallback sortDirList[0] também vem do request); default pode ser array por campo.
+      const defaultDirs = [defaults.sortDir].flat();
       const dir = (
         ["ASC", "DESC"].includes(sortDirList[i] ?? "")
           ? sortDirList[i]
-          : (sortDirList[0] ?? defaults.sortDir)
+          : SEQUELIZE_ORDER_DIRECTIONS.includes(sortDirList[0] ?? "")
+            ? sortDirList[0]
+            : (defaultDirs[i] ?? defaultDirs[0])
       ) as "ASC" | "DESC";
 
       if (config.customSort?.[field]) {
@@ -114,15 +131,16 @@ export class QueryParser {
           if (field === "emitted_at") {
             const emittedAtRange: Record<symbol, any> = {};
 
+            // start/end vêm crus do request — sempre via escape, nunca interpolados.
             if (start) {
               emittedAtRange[Op.gte] = literal(
-                `('${start}'::date AT TIME ZONE 'America/Sao_Paulo')`,
+                `(${sequelize.escape(start)}::date AT TIME ZONE 'America/Sao_Paulo')`,
               );
             }
 
             if (end) {
               emittedAtRange[Op.lt] = literal(
-                `(('${end}'::date + INTERVAL '1 day') AT TIME ZONE 'America/Sao_Paulo')`,
+                `((${sequelize.escape(end)}::date + INTERVAL '1 day') AT TIME ZONE 'America/Sao_Paulo')`,
               );
             }
 
@@ -157,7 +175,7 @@ export class QueryParser {
               ...(where[Op.and] ?? []),
               sequelizeWhere(literal(`"emitted_at"`), {
                 [Op.gte]: literal(
-                  `('${value}'::date AT TIME ZONE 'America/Sao_Paulo')`,
+                  `(${sequelize.escape(value)}::date AT TIME ZONE 'America/Sao_Paulo')`,
                 ),
               }),
             ];
