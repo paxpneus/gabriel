@@ -26,6 +26,7 @@ class InventoryBatchItemsController extends BaseController<
       destroy: [authenticate, userPermissions],
 
       removeItem: [authenticate, userPermissions],
+      addProduct: [authenticate, userPermissions],
       updateItemQuantity: [authenticate, userPermissions],
       // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
       bulkCreate: [authenticate, userPermissions],
@@ -39,6 +40,12 @@ class InventoryBatchItemsController extends BaseController<
       "/remove-item/:id/batch/:batchId",
       ...this.mw("removeItem"),
       (req, res) => this.removeItem(req, res),
+    );
+
+    this.router.post(
+      "/add-product/batch/:batchId",
+      ...this.mw("addProduct"),
+      (req, res) => this.addProduct(req, res),
     );
 
     this.router.put(
@@ -66,6 +73,23 @@ class InventoryBatchItemsController extends BaseController<
       return res.status(201).json(batch);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
+    }
+  };
+
+  // Adiciona manualmente um produto (body.productId) ao lote, com o estoque dele na loja do lote.
+  addProduct = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { batchId } = req.params;
+      const { productId } = req.body;
+
+      if (!productId) {
+        return res.status(400).json({ error: "Informe o productId" });
+      }
+
+      const item = await this.service.addProduct(batchId as string, productId);
+      return res.status(201).json(item);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
     }
   };
 

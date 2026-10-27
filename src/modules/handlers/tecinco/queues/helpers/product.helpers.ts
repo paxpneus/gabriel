@@ -460,6 +460,8 @@ export async function isCodeOwnedByAnotherProduct(params: {
   return !!conflictingMapping;
 }
 
+// Scan de inventário: busca o EAN exato + variações de zeros à esquerda (até GTIN-14, ex.: 4019238588644 ↔
+// 04019238588644) em ProductConfig.gtin (loja) e SupplierMapping (integração). Só resolve se der um único produto.
 export async function resolveProductByEanWithStock(params: {
   ean: string;
   unitBusinessId: string;
@@ -471,68 +473,60 @@ export async function resolveProductByEanWithStock(params: {
   const normalizedEan = normalizeEan(ean);
   if (!normalizedEan) return null;
 
-  const includeWithStock = [
-    {
-      model: Stock,
-      as: "stocks",
-      where: { unit_business_id: unitBusinessId },
-    },
-    {
-      model: ProductConfig,
-      as: "productConfigs",
-      required: false,
-      where: { unit_business_id: unitBusinessId },
-    },
-  ];
-
-  // 1. ProductConfig.gtin na própria unit business.
-  const config = await ProductConfig.findOne({
-    where: {
-      unit_business_id: unitBusinessId,
-      gtin: normalizedEan,
-    },
-    transaction,
-  });
-  if (config) {
-    const product = await Product.findOne({
-      where: { id: config.product_id },
-      include: includeWithStock,
-      transaction,
-    });
-    if (product) {
-      console.log(
-        `${logPrefix} — produto resolvido via ProductConfig.gtin (ean=${normalizedEan})`,
-      );
-      return product;
+  // Variação só pra GTIN de 12–14 dígitos: SupplierMapping também guarda SKU/codigoFabrica (10/11/18 dígitos),
+  // e no catálogo Tecinco há SKUs distintos que diferem só pelo zero (ex.: 03117120000 ≠ 3117120000).
+  const codes = [normalizedEan];
+  const stripped = normalizedEan.replace(/^0+/, "");
+  if (/^\d{12,14}$/.test(normalizedEan) && stripped) {
+    for (let len = Math.max(stripped.length, 12); len <= 14; len++) {
+      const variant = stripped.padStart(len, "0");
+      if (variant !== normalizedEan) codes.push(variant);
     }
   }
 
-  // 2. fallback: SupplierMapping pelo EAN, escopado pela integração da unit
-  // business (e também exigindo estoque na loja). Sem integrations_id
-  // resolvido pra essa unit business não há como escopar a busca — não faz
-  // sentido cair pra uma busca global (reabriria a mistura Bling/Tecinco).
+  // Sem integrations_id resolvido não há como escopar o SupplierMapping — não cai pra busca global
+  // (reabriria a mistura Bling/Tecinco).
   const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId, transaction);
 
-  const mapping = await SupplierMapping.findOne({
-    where: {
-      supplier_product_code: normalizedEan,
-      integrations_id: integrationsId,
-    },
+  const configs = await ProductConfig.findAll({
+    attributes: ["product_id"],
+    where: { unit_business_id: unitBusinessId, gtin: { [Op.in]: codes } },
     transaction,
   });
-  if (mapping) {
-    const product = await Product.findOne({
-      where: { id: mapping.product_id },
-      include: includeWithStock,
-      transaction,
-    });
-    if (product) {
-      console.log(
-        `${logPrefix} — produto resolvido via SupplierMapping EAN=${normalizedEan}: id=${product.id}`,
-      );
-      return product;
-    }
+  const mappings = await SupplierMapping.findAll({
+    attributes: ["product_id"],
+    where: { supplier_product_code: { [Op.in]: codes }, integrations_id: integrationsId },
+    transaction,
+  });
+  const productIds = [
+    ...new Set([...configs, ...mappings].map((row) => row.product_id)),
+  ];
+  if (!productIds.length) return null;
+  if (productIds.length > 1) {
+    throw new Error(
+      `Código ${normalizedEan} corresponde a mais de um produto (considerando zeros à esquerda) — não é possível bipar`,
+    );
   }
 
-  return null;
+  const product = await Product.findOne({
+    where: { id: productIds[0] },
+    include: [
+      {
+        model: Stock,
+        as: "stocks",
+        where: { unit_business_id: unitBusinessId },
+      },
+      {
+        model: ProductConfig,
+        as: "productConfigs",
+        required: false,
+        where: { unit_business_id: unitBusinessId },
+      },
+    ],
+    transaction,
+  });
+  if (product) {
+    console.log(`${logPrefix} — produto resolvido por EAN=${normalizedEan}: id=${product.id}`);
+  }
+  return product;
 }

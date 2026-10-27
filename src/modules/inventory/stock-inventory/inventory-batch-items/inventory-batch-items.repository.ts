@@ -21,6 +21,7 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
       ean,
       sku,
       quantityStock,
+      price,
     }: {
       batchId: string;
       productId: string;
@@ -28,6 +29,8 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
       ean: string;
       sku: string;
       quantityStock: number;
+      // valor total do item (preço unitário × estoque); omitido no scan, cai no default 0 da coluna
+      price?: number;
     },
     t: Transaction,
   ): Promise<InventoryBatchItems> {
@@ -61,6 +64,7 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
               initial_divergency: quantityStock,
               stock_id: stockId,
               status: "PENDING",
+              price,
             },
             { transaction: savepoint },
           ),
