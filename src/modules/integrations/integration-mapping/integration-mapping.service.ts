@@ -1,4 +1,5 @@
 import { ForeignKeyConstraintError, Op, Transaction, UniqueConstraintError } from "sequelize";
+import sequelize from "../../../config/sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import IntegrationMapping from "./integration-mapping.model";
 import integrationMappingRepository, {
@@ -9,11 +10,14 @@ import {
   EntityType,
   GroupedIntegrationMapping,
   ProductIntegrationMappingInput,
+  ProductErpData,
 } from "./integration-mapping.types";
 import { entityRepositoryMap } from "./helpers/map-repository";
 import Integration from "../integrations/integrations.model";
 import productService from "../../inventory/products/services/product.service";
 import { QueryParams, PaginatedResult } from "../../../shared/query/query.types";
+import auditLogService from "../../global/audit-logs/audit-log.service";
+import { AuditAction, AuditEntity } from "../../global/audit-logs/audit-log.types";
 
 export class IntegrationMappingService extends BaseService<
   IntegrationMapping,
@@ -52,7 +56,65 @@ export class IntegrationMappingService extends BaseService<
       return existing;
     }
 
-    return this.repository.create(mappingDto, { transaction });
+    // Primeiro mapping da entidade nessa integração nasce principal; os seguintes, só leitura.
+    const is_primary = !(await this.hasPrimary(entity_type, internal_id, integrations_id, transaction));
+    return this.repository.create({ ...mappingDto, is_primary }, { transaction });
+  }
+
+  // true se a entidade já tem um mapping principal nessa integração.
+  private async hasPrimary(
+    entityType: EntityType,
+    internalId: string,
+    integrationsId: string,
+    transaction?: Transaction,
+  ): Promise<boolean> {
+    const primary = await this.repository.findOne({
+      where: { entity_type: entityType, internal_id: internalId, integrations_id: integrationsId, is_primary: true },
+      attributes: ["id"],
+      transaction,
+    });
+    return !!primary;
+  }
+
+  // Sem principal nessa integração (o principal foi apagado/movido): promove o mapping mais antigo que sobrou.
+  private async promoteOldestIfNoPrimary(
+    internalId: string,
+    integrationsId: string,
+    transaction: Transaction,
+  ): Promise<void> {
+    if (await this.hasPrimary("PRODUCT", internalId, integrationsId, transaction)) return;
+
+    const oldest = await this.repository.findOne({
+      where: { entity_type: "PRODUCT", internal_id: internalId, integrations_id: integrationsId },
+      attributes: ["id"],
+      order: [["createdAt", "ASC"]],
+      transaction,
+    });
+    if (oldest) {
+      await this.repository.bulkUpdate({ is_primary: true }, { where: { id: oldest.id }, transaction });
+    }
+  }
+
+  // Mapping PRODUCT de um external_id (id + produto + is_primary) — usado pelo sync pra decidir se grava dados.
+  findProductMappingByExternalId(
+    integrationsId: string,
+    externalId: string,
+    transaction?: Transaction,
+  ): Promise<IntegrationMapping | null> {
+    return this.repository.findOne({
+      where: { entity_type: "PRODUCT", integrations_id: integrationsId, external_id: externalId },
+      attributes: ["id", "internal_id", "is_primary"],
+      transaction,
+    });
+  }
+
+  // Grava o snapshot só-leitura do ERP no mapping (principal ou não) — não auditado, é escrita de sync.
+  async updateErpData(
+    mappingId: string,
+    erpData: ProductErpData,
+    transaction?: Transaction,
+  ): Promise<void> {
+    await this.repository.bulkUpdate({ erp_data: erpData }, { where: { id: mappingId }, transaction });
   }
 
   // Lista paginada dos mappings de um produto (entity_type PRODUCT, internal_id = productId); productId obrigatório.
@@ -98,6 +160,8 @@ export class IntegrationMappingService extends BaseService<
         internal_id: productId,
         integrations_id: data.integrations_id,
         external_id: data.external_id,
+        // Primeiro mapping do produto nessa integração nasce principal.
+        is_primary: !(await this.hasPrimary("PRODUCT", productId, data.integrations_id)),
       });
     } catch (error: any) {
       throw this.toProductMappingError(error);
@@ -105,14 +169,16 @@ export class IntegrationMappingService extends BaseService<
   }
 
   // Troca integração/external_id de um mapping do produto (internal_id fica fixo); null = não pertence/não existe.
+  // is_primary: true marca este como principal e desmarca os outros do produto na mesma integração (auditado).
   async updateForProduct(
     id: string,
     productId: string,
     data: Partial<ProductIntegrationMappingInput>,
+    userId?: string | null,
   ): Promise<IntegrationMapping | null> {
     const existing = await this.repository.findOne({
       where: { id, entity_type: "PRODUCT", internal_id: productId },
-      attributes: ["id"],
+      attributes: ["id", "integrations_id", "external_id", "is_primary"],
     });
     if (!existing) return null;
 
@@ -122,25 +188,99 @@ export class IntegrationMappingService extends BaseService<
     ) {
       throw new Error("integrations_id/external_id não podem ser vazios");
     }
+    if (data.is_primary === false) {
+      throw new Error("Para trocar o principal, marque outro mapping como principal");
+    }
 
     // Só manda o que veio no body, pra não zerar campo omitido.
     const changes: Partial<ProductIntegrationMappingInput> = {};
     if (data.integrations_id !== undefined) changes.integrations_id = data.integrations_id;
     if (data.external_id !== undefined) changes.external_id = data.external_id;
 
+    const targetIntegrationsId = changes.integrations_id ?? existing.integrations_id;
+    const movedIntegration = targetIntegrationsId !== existing.integrations_id;
+
     try {
-      return await this.repository.update(id, changes);
+      return await sequelize.transaction(async (transaction) => {
+        // Já é o principal na mesma integração: nada a trocar (nem auditar).
+        if (data.is_primary && !(existing.is_primary && !movedIntegration)) {
+          const previousPrimaries = await this.repository.findAll({
+            where: {
+              entity_type: "PRODUCT",
+              internal_id: productId,
+              integrations_id: targetIntegrationsId,
+              is_primary: true,
+              id: { [Op.ne]: id },
+            },
+            attributes: ["id", "external_id"],
+            transaction,
+          });
+          await this.repository.bulkUpdate(
+            { is_primary: false },
+            { where: { id: { [Op.in]: previousPrimaries.map((m) => m.id) } }, transaction },
+          );
+          changes.is_primary = true;
+
+          await auditLogService.record(
+            [
+              {
+                userId,
+                entity: AuditEntity.INTEGRATION_MAPPING,
+                internalId: id,
+                action: AuditAction.UPDATE,
+                changes: {
+                  summary: `Mapping principal do produto ${productId} nessa integração passou a ser external_id ${changes.external_id ?? existing.external_id}`,
+                  before: { is_primary: existing.is_primary },
+                  after: { is_primary: true },
+                  affected: previousPrimaries.map((m) => ({
+                    entity: AuditEntity.INTEGRATION_MAPPING,
+                    internal_id: m.id,
+                    action: AuditAction.UPDATE,
+                    label: `external_id ${m.external_id}`,
+                    before: { is_primary: true },
+                    after: { is_primary: false },
+                  })),
+                },
+              },
+            ],
+            transaction,
+          );
+        } else if (movedIntegration) {
+          // Mudou de integração sem pedir principal: só vira principal lá se a integração destino não tiver um.
+          changes.is_primary = !(await this.hasPrimary("PRODUCT", productId, targetIntegrationsId, transaction));
+        }
+
+        const updated = await this.repository.update(id, changes, { transaction });
+
+        // O principal saiu da integração antiga: promove o mais antigo que sobrou lá.
+        if (movedIntegration && existing.is_primary) {
+          await this.promoteOldestIfNoPrimary(productId, existing.integrations_id, transaction);
+        }
+
+        return updated;
+      });
     } catch (error: any) {
       throw this.toProductMappingError(error);
     }
   }
 
   // Remove um mapping do produto; false = não pertence/não existe.
+  // Se era o principal, promove o mais antigo que sobrou na mesma integração (senão o produto pararia de sincronizar).
   async deleteForProduct(id: string, productId: string): Promise<boolean> {
-    const deleted = await this.repository.bulkDelete({
-      where: { id, entity_type: "PRODUCT", internal_id: productId },
+    return sequelize.transaction(async (transaction) => {
+      const existing = await this.repository.findOne({
+        where: { id, entity_type: "PRODUCT", internal_id: productId },
+        attributes: ["id", "integrations_id", "is_primary"],
+        transaction,
+      });
+      if (!existing) return false;
+
+      await this.repository.bulkDelete({ where: { id }, transaction });
+      if (existing.is_primary) {
+        await this.promoteOldestIfNoPrimary(productId, existing.integrations_id, transaction);
+      }
+      return true;
     });
-    return deleted > 0;
   }
 
   // Traduz violação do unique (entity_type, integrations_id, external_id) e FK de integração pra mensagem legível.
@@ -215,6 +355,9 @@ export class IntegrationMappingService extends BaseService<
         integrations_id,
         internal_id: { [Op.in]: internalIds },
       },
+      attributes: ["internal_id", "external_id", "is_primary"],
+      // Principal por último: com mais de um mapping na integração, o Map fica com o external_id do principal.
+      order: [["is_primary", "ASC"]],
       transaction,
     });
 

@@ -1,6 +1,7 @@
 import {
   CreateOptions,
   ForeignKeyConstraintError,
+  Transaction,
   UniqueConstraintError,
 } from "sequelize";
 import BaseService from "../../../shared/utils/base-models/base-service";
@@ -9,11 +10,17 @@ import supplierMappingRepository, {
   SupplierMappingRepository,
 } from "./supplier-mapping.repository";
 import {
+  EanOwners,
   FullSupplierMapping,
   ProductSupplierMappingInput,
   SupplierMappingCreationAttributes,
 } from "./supplier-mapping.types";
-import { resolveIntegrationsIdForUnitBusiness } from "../../handlers/tecinco/queues/helpers/product.helpers";
+import {
+  buildEanZeroVariants,
+  normalizeEan,
+  resolveIntegrationsIdForUnitBusiness,
+} from "../../handlers/tecinco/queues/helpers/product.helpers";
+import productConfigService from "../product-config/product_config.service";
 import sequelize from "../../../config/sequelize";
 import unmappedInvoiceProductService from "../unmapped-invoice-product/unmapped-invoice-product.service";
 import integrationMappingService from "../../integrations/integration-mapping/integration-mapping.service";
@@ -50,6 +57,25 @@ export class SupplierMappingService extends BaseService<
     if (!supplierFound) return null;
 
     return supplierFound;
+  }
+
+  // Quem (além de excludeProductId) usa o EAN — exato ou com zero à esquerda — na integração:
+  // SupplierMapping da integração e ProductConfig.gtin de qualquer loja dela.
+  async findEanOwners(
+    ean: string,
+    integrationsId: string,
+    excludeProductId: string | null,
+    transaction?: Transaction,
+  ): Promise<EanOwners> {
+    const normalized = normalizeEan(ean);
+    if (!normalized) return { supplierMappings: [], productConfigs: [] };
+
+    const codes = buildEanZeroVariants(normalized);
+    const [supplierMappings, productConfigs] = await Promise.all([
+      this.repository.findCodeOwnersInIntegration(codes, integrationsId, excludeProductId, transaction),
+      productConfigService.findGtinOwnersInIntegration(codes, integrationsId, excludeProductId, transaction),
+    ]);
+    return { supplierMappings, productConfigs };
   }
 
   // Lista paginada dos SupplierMappings de um produto, escopada na integração do usuário; productId obrigatório.

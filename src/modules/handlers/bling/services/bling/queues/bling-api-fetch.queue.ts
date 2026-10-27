@@ -61,6 +61,7 @@ import {
   isProductOwnedByIntegration,
   EanConflictError,
 } from "../../../../tecinco/queues/helpers/product.helpers";
+import { buildBlingProductErpData } from "../helpers/erp-data";
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
 import { getMagentoIntegration } from "../../../../magentoV2/api/magentoV2_api";
 import stockMovementsService from "../../../../../inventory/stock/stock-movements/stock-movements.service";
@@ -890,13 +891,19 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       return;
     }
 
+    // Mapping não principal só resolve o produto e atualiza erp_data — nem o backfill de SupplierMapping roda.
+    let mapping = await integrationMappingService.findProductMappingByExternalId(
+      integration.id,
+      String(blingProduct.id),
+    );
+
     // ─── Resolve o produto SÓ via integration mapping (fonte de verdade) ───────
     // Sem fallback por EAN/ProductConfig.sku/SupplierMapping — se não tem
     // mapping, não é esse produto, ponto final (ver resolveProductWithMapping).
     let existingProduct = await resolveProductWithMapping({
       unitBusinessId: unitBusiness.id,
       systemId: String(blingProduct.id),
-      ean: blingProduct.gtin,
+      ean: mapping?.is_primary === false ? undefined : blingProduct.gtin,
       logPrefix,
     });
 
@@ -990,6 +997,28 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
     }
 
+    const physicalQuantity =
+      (await this.fetchPhysicalStock([blingProduct.id])).get(blingProduct.id) ??
+      0;
+
+    // Auto-map/criação acima acabaram de criar o mapping — busca de novo pra saber se nasceu principal.
+    mapping ??= await integrationMappingService.findProductMappingByExternalId(
+      integration.id,
+      String(blingProduct.id),
+    );
+    if (mapping) {
+      await integrationMappingService.updateErpData(
+        mapping.id,
+        buildBlingProductErpData(blingProduct, physicalQuantity),
+      );
+      if (!mapping.is_primary) {
+        console.log(
+          `${logPrefix} — mapping não principal (produto id=${existingProduct.id}) — só erp_data atualizado, nada mais gravado`,
+        );
+        return;
+      }
+    }
+
     // ─── EAN/ean_tribut não pode "misturar" com outro product ─────────────────
     // Antes de criar/atualizar, garante que gtin/gtinEmbalagem não pertencem a
     // nenhum outro product. Colisão com ProductConfig de outro produto é dado
@@ -1015,6 +1044,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           title: "Conflito de EAN entre produtos (Bling)",
           message: `${error.message} | blingId=${blingProduct.id} | sku=${blingProduct.codigo}`,
         });
+        // gtin_erp é só leitura e precisa refletir o ERP mesmo no conflito.
+        await ProductConfig.update(
+          { gtin_erp: blingProduct.gtin?.trim() || null },
+          { where: { product_id: existingProduct.id, unit_business_id: unitBusiness.id } },
+        );
       }
       throw error;
     }
@@ -1110,10 +1144,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // MAGENTO_SYNC (ver enqueue após a transaction, abaixo).
     const resolvedPrice = Number(blingProduct.preco);
 
-    const physicalQuantity =
-      (await this.fetchPhysicalStock([blingProduct.id])).get(blingProduct.id) ??
-      0;
-
     // ─── A partir daqui, tudo é escrita em banco → uma única transaction ───────
     let product: Product;
     let averageCostResolved: number | undefined;
@@ -1178,6 +1208,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             ...(hasMagentoMapping ? {} : { price: resolvedPrice }),
             gtin: blingProduct.gtin,
             gtin_package: blingProduct.gtinEmbalagem,
+            gtin_erp: blingProduct.gtin?.trim() || null,
             ncm: blingProduct.tributacao?.ncm,
             cest: blingProduct.tributacao?.cest,
             supplier_cost_price: newSupplierCost,
@@ -1429,6 +1460,16 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     unitBusiness: UnitBusiness,
     logPrefix: string,
   ): Promise<void> {
+    // Código não principal é só leitura: não desassocia/desativa o produto (o principal ainda pode estar ativo).
+    const mapping = await integrationMappingService.findProductMappingByExternalId(
+      (await getBlingIntegration("Bling")).id,
+      String(blingProduct.id),
+    );
+    if (mapping && !mapping.is_primary) {
+      console.log(`${logPrefix} — situacao=E na Bling em mapping não principal, ignorado.`);
+      return;
+    }
+
     const product = await resolveProductWithMapping({
       unitBusinessId: unitBusiness.id,
       systemId: String(blingProduct.id),

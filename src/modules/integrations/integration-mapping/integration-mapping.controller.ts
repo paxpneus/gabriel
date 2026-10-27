@@ -64,14 +64,15 @@ export class IntegrationMappingController extends BaseController<IntegrationMapp
     }
   };
 
-  // PUT /product/:productId/:id — troca integrations_id/external_id; 404 se o mapping não for desse produto.
+  // PUT /product/:productId/:id — troca integrations_id/external_id e/ou marca is_primary (desmarca os outros); 404 se o mapping não for desse produto.
   updateForProduct = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { integrations_id, external_id } = req.body;
+      const { integrations_id, external_id, is_primary } = req.body;
       const record = await this.service.updateForProduct(
         req.params.id as string,
         req.params.productId as string,
-        { integrations_id, external_id },
+        { integrations_id, external_id, is_primary },
+        (req as any).user?.id ?? null,
       );
       if (!record) return res.status(404).json({ error: 'Não encontrado' });
       return res.json(record);

@@ -7,6 +7,10 @@ export interface IntegrationMappingAttributes {
   internal_id: string;
   integrations_id: string;
   external_id: string;
+  // Principal da entidade nessa integração: só ele grava dados no sync; o não principal só resolve a entidade.
+  is_primary?: boolean;
+  // Snapshot só-leitura do que o ERP mandou pra esse external_id (helper por integração) — nunca usado em resolução.
+  erp_data?: ProductErpData | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -18,8 +22,19 @@ export interface GroupedIntegrationMapping {
   integration_id: string;
 }
 
+// erp_data de PRODUCT — campos comuns; cada integração preenche o que tem (Bling: ean_package/stock; Tecinco: stocks por filial).
+export interface ProductErpData {
+  name: string | null;
+  ean: string | null;
+  sku: string | null;
+  ean_package?: string | null;
+  stock?: number | null;
+  stocks?: Array<{ branch_id: number; unit_business_id: string | null; quantity: number }>;
+  updated_at: string;
+}
+
 // Campos aceitos do body no CRUD por produto; entity_type/internal_id vêm da rota (PRODUCT + productId).
 export type ProductIntegrationMappingInput = Pick<
   IntegrationMappingAttributes,
-  "integrations_id" | "external_id"
+  "integrations_id" | "external_id" | "is_primary"
 >;

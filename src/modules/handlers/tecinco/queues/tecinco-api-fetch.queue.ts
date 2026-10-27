@@ -60,6 +60,7 @@ import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
+import { buildTecincoProductErpData } from "./helpers/erp-data";
 import {
   getCachedTCarIntegration,
   getCachedUnitBusinessByNumber,
@@ -486,6 +487,15 @@ export class TCarUpsertQueue extends BaseQueueService<
       // Produto nunca mais é deletado pelo sistema — fica de histórico, só
       // desativado (is_active=false) quando encontrado via integration mapping.
       const integrations = await getCachedTCarIntegration();
+      // Código não principal é só leitura: não desativa o produto (o principal ainda pode estar ativo).
+      const deletedMapping = await integrationMappingService.findProductMappingByExternalId(
+        integrations.id,
+        systemId,
+      );
+      if (deletedMapping && !deletedMapping.is_primary) {
+        console.log(`${logPrefix} — mapping não principal, produto não desativado`);
+        return;
+      }
       const mapped = await integrationMappingService.findEntityByMapping(
         "PRODUCT",
         integrations.id,
@@ -562,6 +572,8 @@ export class TCarUpsertQueue extends BaseQueueService<
     // manualmente (opts.create) a partir de um unmapped e o código já
     // pertence a outro produto na mesma integração — ver isCodeOwnedByAnotherProduct.
     let ean = normalizeEan(data.epctb_ean);
+    // EAN cru do ERP pra ProductConfig.gtin_erp — não é zerado pelas omissões abaixo.
+    const erpEan = ean ?? null;
     let codigoFabrica = data.epctb_codigofabrica
       ? String(data.epctb_codigofabrica).trim()
       : undefined;
@@ -665,11 +677,17 @@ export class TCarUpsertQueue extends BaseQueueService<
     let skuOmitted = !!opts.skuDuplicated;
     let eanOmitted = !!opts.eanDuplicated;
 
+    // Mapping não principal só resolve o produto e atualiza erp_data — nem o backfill de SupplierMapping roda.
+    let mapping = await integrationMappingService.findProductMappingByExternalId(
+      integrations.id,
+      systemId,
+    );
+
     // ─── Resolve produto SÓ por integration mapping ────────────────────────────
     let product = await resolveProductWithMapping({
       unitBusinessId: operationUnitBusiness.id,
       systemId,
-      ean: eanOmitted ? undefined : ean,
+      ean: eanOmitted || mapping?.is_primary === false ? undefined : ean,
       logPrefix,
     });
 
@@ -810,6 +828,32 @@ export class TCarUpsertQueue extends BaseQueueService<
       }
     }
 
+    // Auto-map/criação acima acabaram de criar o mapping — busca de novo pra saber se nasceu principal.
+    mapping ??= await integrationMappingService.findProductMappingByExternalId(
+      integrations.id,
+      systemId,
+    );
+    if (mapping) {
+      const erpStocks = await Promise.all(
+        filiaisToProcess.map(async (filial) => ({
+          branch_id: filial.fll_codigo,
+          unit_business_id:
+            (await getCachedUnitBusinessByNumber(String(filial.fll_codigo).padStart(2, "0")))?.id ?? null,
+          quantity: Math.round(filial.estoque),
+        })),
+      );
+      await integrationMappingService.updateErpData(
+        mapping.id,
+        buildTecincoProductErpData(data, erpStocks),
+      );
+      if (!mapping.is_primary) {
+        console.log(
+          `${logPrefix} — mapping não principal (produto id=${product.id}) — só erp_data atualizado, nada mais gravado`,
+        );
+        return;
+      }
+    }
+
     const isOwnProduct = isProductOwnedByIntegration(product, integrations.id);
 
     // ─── Produto de outra integração → apenas vincula, não sobrescreve ────────
@@ -864,6 +908,11 @@ export class TCarUpsertQueue extends BaseQueueService<
               console.warn(
                 `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
               );
+              // gtin_erp é só leitura e precisa refletir o ERP mesmo no conflito.
+              await ProductConfig.update(
+                { gtin_erp: erpEan },
+                { where: { product_id: product.id, unit_business_id: unitBusiness.id } },
+              );
               continue;
             }
             throw error;
@@ -879,6 +928,7 @@ export class TCarUpsertQueue extends BaseQueueService<
               // confiável (omite o campo, não sobrescreve com o systemId).
               ...(skuOmitted ? {} : { sku: codigoFabrica ?? systemId }),
               ...(eanOmitted ? {} : { gtin: ean ?? undefined }),
+              gtin_erp: erpEan,
               price: filial.preco,
               supplier_cost_price: entryUnitCost,
               average_cost: newAverageCost,
@@ -1039,6 +1089,11 @@ export class TCarUpsertQueue extends BaseQueueService<
           console.warn(
             `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
           );
+          // gtin_erp é só leitura e precisa refletir o ERP mesmo no conflito.
+          await ProductConfig.update(
+            { gtin_erp: erpEan },
+            { where: { product_id: product.id, unit_business_id: unitBusiness.id } },
+          );
           eanConflict = true;
         } else {
           throw error;
@@ -1053,6 +1108,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             // Ver comentário equivalente no branch "outra integração" acima.
             ...(skuOmitted ? {} : { sku: codigoFabrica ?? systemId }),
             ...(eanOmitted ? {} : { gtin: ean ?? undefined }),
+            gtin_erp: erpEan,
             price: filial.preco,
             supplier_cost_price: entryUnitCost,
             average_cost: newAverageCost,
@@ -1684,6 +1740,7 @@ export class TCarUpsertQueue extends BaseQueueService<
                 unit_business_id: unitBusiness.id,
                 sku: skuToUse,
                 gtin: ean ?? undefined,
+                gtin_erp: ean ?? null,
                 price: Number(tcarPayload?.epprc_preco ?? 0),
                 supplier_cost_price: Number(
                   tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0,

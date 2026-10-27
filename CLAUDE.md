@@ -68,6 +68,7 @@ Tudo dentro do código — nome de função, variável, classe, arquivo, chave d
 - Não usar para: correção pontual em 1 arquivo, pesquisa simples, tarefa de rotina.
 - Usar só quando: (a) tarefas paralelizáveis independentes entre si, ou (b) pesquisa exigiria ler 5+ arquivos/módulos.
 - Na dúvida: executar direto, sem subagent.
+- Modelo: subagente sempre com modelo de baixo consumo — `haiku`, ou `sonnet` pra tarefa média. Nunca `opus` nem outro modelo alto; passar `model` explicitamente no Agent.
 
 # Domain context — module reference
 

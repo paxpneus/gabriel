@@ -117,6 +117,8 @@ jest.mock(
     default: {
       createOrUpdateIntegrationMapping: jest.fn(),
       findEntityByMapping: jest.fn(),
+      findProductMappingByExternalId: jest.fn(),
+      updateErpData: jest.fn(),
     },
   }),
 );

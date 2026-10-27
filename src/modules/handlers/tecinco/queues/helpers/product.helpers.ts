@@ -460,6 +460,21 @@ export async function isCodeOwnedByAnotherProduct(params: {
   return !!conflictingMapping;
 }
 
+// Código exato + variações de zero à esquerda até GTIN-14 (ex.: 4019238588644 ↔ 04019238588644), exato primeiro.
+// Variação só pra GTIN de 12–14 dígitos: SupplierMapping também guarda SKU/codigoFabrica (10/11/18 dígitos),
+// e no catálogo Tecinco há SKUs distintos que diferem só pelo zero (ex.: 03117120000 ≠ 3117120000).
+export function buildEanZeroVariants(ean: string): string[] {
+  const codes = [ean];
+  const stripped = ean.replace(/^0+/, "");
+  if (/^\d{12,14}$/.test(ean) && stripped) {
+    for (let len = Math.max(stripped.length, 12); len <= 14; len++) {
+      const variant = stripped.padStart(len, "0");
+      if (variant !== ean) codes.push(variant);
+    }
+  }
+  return codes;
+}
+
 // Scan de inventário: busca o EAN exato + variações de zeros à esquerda (até GTIN-14, ex.: 4019238588644 ↔
 // 04019238588644) em ProductConfig.gtin (loja) e SupplierMapping (integração). Só resolve se der um único produto.
 export async function resolveProductByEanWithStock(params: {
@@ -473,16 +488,7 @@ export async function resolveProductByEanWithStock(params: {
   const normalizedEan = normalizeEan(ean);
   if (!normalizedEan) return null;
 
-  // Variação só pra GTIN de 12–14 dígitos: SupplierMapping também guarda SKU/codigoFabrica (10/11/18 dígitos),
-  // e no catálogo Tecinco há SKUs distintos que diferem só pelo zero (ex.: 03117120000 ≠ 3117120000).
-  const codes = [normalizedEan];
-  const stripped = normalizedEan.replace(/^0+/, "");
-  if (/^\d{12,14}$/.test(normalizedEan) && stripped) {
-    for (let len = Math.max(stripped.length, 12); len <= 14; len++) {
-      const variant = stripped.padStart(len, "0");
-      if (variant !== normalizedEan) codes.push(variant);
-    }
-  }
+  const codes = buildEanZeroVariants(normalizedEan);
 
   // Sem integrations_id resolvido não há como escopar o SupplierMapping — não cai pra busca global
   // (reabriria a mistura Bling/Tecinco).

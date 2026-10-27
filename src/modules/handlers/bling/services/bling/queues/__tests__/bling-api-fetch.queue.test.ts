@@ -86,6 +86,8 @@ jest.mock(
       findExternalIdsMap: jest.fn(),
       findEntityByMapping: jest.fn(),
       bulkDelete: jest.fn(),
+      findProductMappingByExternalId: jest.fn(),
+      updateErpData: jest.fn(),
     },
   }),
 );

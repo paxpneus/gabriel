@@ -27,6 +27,7 @@ class ProductConfig
   public cest?: string;
   public gtin?: string;
   public gtin_package?: string;
+  public gtin_erp?: string | null;
 
   public product?: ProductAttributes
 }
@@ -95,6 +96,11 @@ ProductConfig.init(
       allowNull: true,
     },
     gtin_package: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+    },
+    // EAN cru do ERP (mapping principal), gravado mesmo quando gtin é omitido — só leitura, só relatório de divergência.
+    gtin_erp: {
       type: DataTypes.STRING(20),
       allowNull: true,
     },

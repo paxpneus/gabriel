@@ -1,4 +1,6 @@
 import Product from "../products/product.model";
+import type SupplierMapping from "./supplier-mapping.model";
+import type ProductConfig from "../product-config/product_config.model";
 import { ProductAttributes } from "../products/product.types";
 
 export interface SupplierMappingAttributes {
@@ -22,3 +24,10 @@ export type ProductSupplierMappingInput = Pick<
   SupplierMappingAttributes,
   "supplier_product_code" | "supplier_cnpj"
 >;
+
+// Donos (outros produtos) de um EAN na integração — retorno de supplierMappingService.findEanOwners;
+// linhas vêm com `product` (id, name) incluído e, no ProductConfig, `unitBusiness` (id, name, number).
+export interface EanOwners {
+  supplierMappings: SupplierMapping[];
+  productConfigs: ProductConfig[];
+}
