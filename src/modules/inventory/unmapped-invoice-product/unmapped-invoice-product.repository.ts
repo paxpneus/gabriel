@@ -27,6 +27,16 @@ export class UnmappedInvoiceProductRepository extends BaseRepository<UnmappedInv
     return unMapped
   }
 
+  // Pendentes (UNMAPPED) da integração, mais recentes primeiro, com o número da nota — relatório de pendências de integração.
+  findPendingByIntegration(integrationsId: string): Promise<UnmappedInvoiceProduct[]> {
+    return this.findAll({
+      where: { integrations_id: integrationsId, status: 'UNMAPPED' },
+      attributes: ['id', 'type', 'ean', 'sku', 'product_name', 'external_id', 'reason', 'quantity', 'invoice_id', 'image_path', 'createdAt'],
+      include: [{ model: Invoice, as: 'invoice', attributes: ['number_system', 'id'] }],
+      order: [['createdAt', 'DESC']],
+    });
+  }
+
   async findUnmappedByInvoiceIds(
     invoiceIds: string[],
     transaction?: Transaction,

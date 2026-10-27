@@ -1,6 +1,7 @@
 import {
   CreateOptions,
   ForeignKeyConstraintError,
+  Op,
   Transaction,
   UniqueConstraintError,
 } from "sequelize";
@@ -11,16 +12,25 @@ import supplierMappingRepository, {
 } from "./supplier-mapping.repository";
 import {
   EanOwners,
+  EanOwnerSummary,
+  IntegrationPendingSection,
+  ErpEanClaim,
+  ErpEanClaimProduct,
+  ErpEanPrevailing,
   FullSupplierMapping,
   ProductSupplierMappingInput,
+  SupplierMappingError,
+  SupplierMappingErrorCode,
   SupplierMappingCreationAttributes,
 } from "./supplier-mapping.types";
 import {
   buildEanZeroVariants,
+  eanZeroInsensitiveKey,
   normalizeEan,
   resolveIntegrationsIdForUnitBusiness,
 } from "../../handlers/tecinco/queues/helpers/product.helpers";
 import productConfigService from "../product-config/product_config.service";
+import ProductConfig from "../product-config/product_config.model";
 import sequelize from "../../../config/sequelize";
 import unmappedInvoiceProductService from "../unmapped-invoice-product/unmapped-invoice-product.service";
 import integrationMappingService from "../../integrations/integration-mapping/integration-mapping.service";
@@ -29,6 +39,14 @@ import {
   PaginatedResult,
 } from "../../../shared/query/query.types";
 import Integration from "../../integrations/integrations/integrations.model";
+import integrationsService from "../../integrations/integrations/integrations.service";
+import auditLogService from "../../global/audit-logs/audit-log.service";
+import {
+  AuditAction,
+  AuditAffectedEntity,
+  AuditEntity,
+  AuditLogEntry,
+} from "../../global/audit-logs/audit-log.types";
 
 export class SupplierMappingService extends BaseService<
   SupplierMapping,
@@ -78,6 +96,399 @@ export class SupplierMappingService extends BaseService<
     return { supplierMappings, productConfigs };
   }
 
+  // Produto sem integration_mapping na integração → erro com code pro front abrir o registro com foto.
+  private async assertProductMappedInIntegration(
+    productId: string,
+    integrationsId: string,
+    transaction?: Transaction,
+  ): Promise<void> {
+    const mapped = await integrationMappingService.findExternalIdsMap(
+      "PRODUCT",
+      integrationsId,
+      [productId],
+      transaction,
+    );
+    if (!mapped.has(productId)) {
+      throw new SupplierMappingError(
+        SupplierMappingErrorCode.PRODUCT_NOT_MAPPED_IN_INTEGRATION,
+        "Este produto ainda não está vinculado a esta integração. Registre o produto com foto para que ele seja cadastrado ou vinculado.",
+      );
+    }
+  }
+
+  // EAN já confirmado como EAN físico de outro produto: monta o erro com quem fez/quando (último log do mapeamento).
+  private async buildPhysicalOverrideError(
+    override: SupplierMapping,
+    transaction?: Transaction,
+  ): Promise<SupplierMappingError> {
+    const author = (
+      await auditLogService.findLatestAuthors(AuditEntity.SUPPLIER_MAPPING, [override.id], transaction)
+    ).get(override.id);
+    const productName = override.product?.name ?? null;
+    const byWhom = author
+      ? ` por ${author.user_name ?? "usuário não identificado"} em ${new Date(author.date).toLocaleString("pt-BR")}`
+      : "";
+
+    return new SupplierMappingError(
+      SupplierMappingErrorCode.EAN_HAS_PHYSICAL_OVERRIDE,
+      `O EAN ${override.supplier_product_code} já foi confirmado como EAN físico do produto "${productName ?? override.product_id}"${byWhom}. Registre o produto com foto para revisão.`,
+      undefined,
+      {
+        supplier_mapping_id: override.id,
+        product_id: override.product_id,
+        product_name: productName,
+        code: override.supplier_product_code,
+        user_id: author?.user_id ?? null,
+        user_name: author?.user_name ?? null,
+        at: author?.date ?? null,
+      },
+    );
+  }
+
+  // Donos do EAN no formato de resposta (SupplierMapping e Configurações do produto por loja).
+  private summarizeEanOwners(owners: EanOwners): EanOwnerSummary[] {
+    return [
+      ...owners.supplierMappings.map((sm) => ({
+        product_id: sm.product_id,
+        product_name: sm.product?.name ?? null,
+        source: "SUPPLIER_MAPPING" as const,
+        code: sm.supplier_product_code,
+      })),
+      ...owners.productConfigs.map((pc) => ({
+        product_id: pc.product_id,
+        product_name: (pc as any).product?.name ?? null,
+        source: "PRODUCT_CONFIG" as const,
+        code: pc.gtin as string,
+        unit_business_id: pc.unit_business_id,
+        unit_business_name: (pc as any).unitBusiness?.name ?? null,
+      })),
+    ];
+  }
+
+  // "Confirmar EAN físico": EAN exclusivo do produto na integração — zera/apaga o EAN (com zeros à esquerda) dos outros,
+  // marca o DE x PARA do produto como override e audita; override de outro produto nunca é derrubado (erro, nada muda).
+  async assignPhysicalOwner(params: {
+    productId: string;
+    ean: string;
+    integrationsId: string;
+    userId: string | null;
+  }): Promise<{ supplierMapping: SupplierMapping; cleared: EanOwnerSummary[] }> {
+    const { productId, integrationsId, userId } = params;
+    const code = normalizeEan(params.ean);
+    if (!code) throw new Error("Informe o EAN bipado");
+
+    const integration = await integrationsService.findById(integrationsId, { attributes: ["id", "name"] });
+    if (!integration) throw new Error("Integração não encontrada");
+
+    await this.assertProductMappedInIntegration(productId, integrationsId);
+
+    return sequelize.transaction(async (t) => {
+      const owners = await this.findEanOwners(code, integrationsId, productId, t);
+
+      const otherOverride = owners.supplierMappings.find((sm) => sm.is_physical_override);
+      if (otherOverride) throw await this.buildPhysicalOverrideError(otherOverride, t);
+
+      // Zera gtin antes de apagar o DE x PARA: os triggers m263/m272 validam o código contra o gtin de outros produtos.
+      if (owners.productConfigs.length) {
+        await productConfigService.bulkUpdate(
+          { gtin: null as unknown as string },
+          { where: { id: { [Op.in]: owners.productConfigs.map((pc) => pc.id) } }, transaction: t },
+        );
+      }
+      if (owners.supplierMappings.length) {
+        await this.repository.bulkDelete({
+          where: { id: { [Op.in]: owners.supplierMappings.map((sm) => sm.id) } },
+          transaction: t,
+        });
+      }
+
+      // Depois da limpeza, o código exato só pode estar no próprio produto: marca o existente ou cria.
+      const own = await this.repository.findOne({
+        where: { integrations_id: integrationsId, supplier_product_code: code },
+        attributes: ["id", "is_physical_override"],
+        transaction: t,
+      });
+      const ownAction = own ? AuditAction.UPDATE : AuditAction.CREATE;
+      if (own) {
+        await this.repository.bulkUpdate({ is_physical_override: true }, { where: { id: own.id }, transaction: t });
+      }
+      const supplierMappingId =
+        own?.id ??
+        (
+          await this.create(
+            {
+              product_id: productId,
+              supplier_product_code: code,
+              integrations_id: integrationsId,
+              is_physical_override: true,
+            },
+            { transaction: t },
+          )
+        ).id;
+
+      const closedScanRows = await unmappedInvoiceProductService.closeScanRowsByEan(
+        buildEanZeroVariants(code),
+        integrationsId,
+        t,
+      );
+
+      const supplierMapping = (await this.repository.findWithProductName(supplierMappingId, t))!;
+      const productName = supplierMapping.product?.name ?? productId;
+      const cleared = this.summarizeEanOwners(owners);
+
+      await auditLogService.record(
+        this.buildPhysicalOwnerAuditEntries({
+          productId,
+          productName,
+          code,
+          integrationName: integration.name,
+          userId,
+          supplierMappingId,
+          ownAction,
+          ownWasOverride: !!own?.is_physical_override,
+          owners,
+          closedScanRows,
+        }),
+        t,
+      );
+
+      return { supplierMapping, cleared };
+    });
+  }
+
+  // Entradas de auditoria do "Confirmar EAN físico": uma do produto dono com tudo o que foi afetado, e uma por
+  // entidade afetada (DE x PARA do dono, cada Configuração zerada, cada DE x PARA apagado, cada produto que perdeu o EAN).
+  private buildPhysicalOwnerAuditEntries(params: {
+    productId: string;
+    productName: string;
+    code: string;
+    integrationName: string;
+    userId: string | null;
+    supplierMappingId: string;
+    ownAction: AuditAction;
+    ownWasOverride: boolean;
+    owners: EanOwners;
+    closedScanRows: number;
+  }): AuditLogEntry[] {
+    const { productId, productName, code, integrationName, userId, supplierMappingId, ownAction, ownWasOverride, owners, closedScanRows } = params;
+    const origin = { entity: AuditEntity.PRODUCT, internal_id: productId, label: `"${productName}"` };
+
+    const ownMapping: AuditAffectedEntity = {
+      entity: AuditEntity.SUPPLIER_MAPPING,
+      internal_id: supplierMappingId,
+      action: ownAction,
+      label: `com o código "${code}"`,
+      before: null,
+      after: { supplier_product_code: code, is_physical_override: true },
+    };
+    if (ownAction === AuditAction.UPDATE) ownMapping.before = { is_physical_override: ownWasOverride };
+    const zeroedConfigs: AuditAffectedEntity[] = owners.productConfigs.map((pc) => ({
+      entity: AuditEntity.PRODUCT_CONFIG,
+      internal_id: pc.id,
+      action: AuditAction.UPDATE,
+      label: `do produto "${(pc as any).product?.name ?? pc.product_id}" na loja ${(pc as any).unitBusiness?.name ?? pc.unit_business_id}`,
+      before: { gtin: pc.gtin },
+      after: { gtin: null },
+    }));
+    const deletedMappings: AuditAffectedEntity[] = owners.supplierMappings.map((sm) => ({
+      entity: AuditEntity.SUPPLIER_MAPPING,
+      internal_id: sm.id,
+      action: AuditAction.DELETE,
+      label: `do produto "${sm.product?.name ?? sm.product_id}"`,
+      before: { supplier_product_code: sm.supplier_product_code },
+      after: null,
+    }));
+    const affected = [ownMapping, ...zeroedConfigs, ...deletedMappings];
+
+    const scanNote = closedScanRows ? ` ${closedScanRows} registro(s) com foto desse EAN foram fechados.` : "";
+    const entries: AuditLogEntry[] = [
+      {
+        userId,
+        entity: AuditEntity.PRODUCT,
+        internalId: productId,
+        action: AuditAction.UPDATE,
+        changes: {
+          summary: `EAN ${code} confirmado como EAN físico deste produto (exclusivo na integração ${integrationName}).${scanNote}`,
+          affected,
+        },
+      },
+      ...affected.map((item) => ({
+        userId,
+        entity: item.entity,
+        internalId: item.internal_id,
+        action: item.action,
+        changes: { summary: `EAN ${code} confirmado como EAN físico`, before: item.before, after: item.after, origin },
+      })),
+    ];
+
+    // Log de cada produto que perdeu o EAN, com só o que mudou nele.
+    const loserIds = [...new Set([...owners.productConfigs, ...owners.supplierMappings].map((row) => row.product_id))];
+    for (const loserId of loserIds) {
+      entries.push({
+        userId,
+        entity: AuditEntity.PRODUCT,
+        internalId: loserId,
+        action: AuditAction.UPDATE,
+        changes: {
+          summary: `Perdeu o EAN ${code}: ele foi confirmado como EAN físico do produto "${productName}"`,
+          affected: [...zeroedConfigs, ...deletedMappings].filter((item) =>
+            [...owners.productConfigs, ...owners.supplierMappings].some(
+              (row) => row.id === item.internal_id && row.product_id === loserId,
+            ),
+          ),
+          origin,
+        },
+      });
+    }
+
+    return entries;
+  }
+
+  // Relatório de pendências de integração (só leitura, lista completa, sem paginação): EAN físico confirmado que o ERP ainda
+  // manda pra outros ("overrides"), mesmo EAN em 2+ produtos no ERP ("erp_duplicates"), sem EAN no ERP ("missing_ean"), não mapeado ("unmapped").
+  async getIntegrationPendingReport(
+    integrationsId: string,
+    section: IntegrationPendingSection,
+  ): Promise<unknown[]> {
+    if (section === "unmapped") {
+      return unmappedInvoiceProductService.findPendingByIntegration(integrationsId);
+    }
+
+    // Produto com configuração numa loja da integração mas sem EAN vindo do ERP, agrupado por produto.
+    if (section === "missing_ean") {
+      const configs = await productConfigService.findMissingErpEanInIntegration(integrationsId);
+      type MissingEanRow = { product_id: string; product_name: string | null; unit_businesses: string[] };
+      const byProduct = new Map<string, MissingEanRow>();
+      for (const pc of configs) {
+        const entry: MissingEanRow = byProduct.get(pc.product_id) ?? {
+          product_id: pc.product_id,
+          product_name: (pc as any).product?.name ?? null,
+          unit_businesses: [],
+        };
+        const storeName = (pc as any).unitBusiness?.name;
+        if (storeName && !entry.unit_businesses.includes(storeName)) entry.unit_businesses.push(storeName);
+        byProduct.set(pc.product_id, entry);
+      }
+      return [...byProduct.values()];
+    }
+
+    const [erpConfigs, nonPrimaryEans, overrides] = await Promise.all([
+      productConfigService.findErpEansInIntegration(integrationsId),
+      integrationMappingService.findNonPrimaryErpEans(integrationsId),
+      this.repository.findPhysicalOverridesInIntegration(integrationsId),
+    ]);
+
+    // O que o ERP diz, agrupado pelo EAN ignorando zero à esquerda.
+    const claimsByKey = new Map<string, ErpEanClaim[]>();
+    const addClaim = (claim: ErpEanClaim) => {
+      const key = eanZeroInsensitiveKey(claim.ean);
+      claimsByKey.set(key, [...(claimsByKey.get(key) ?? []), claim]);
+    };
+    erpConfigs.forEach((pc) =>
+      addClaim({
+        product_id: pc.product_id,
+        product_name: (pc as any).product?.name ?? null,
+        ean: pc.gtin_erp as string,
+        source: "ERP_PRIMARY",
+        unit_business: (pc as any).unitBusiness?.name ?? null,
+      }),
+    );
+    nonPrimaryEans.forEach((m) =>
+      addClaim({ product_id: m.product_id, product_name: m.product_name, ean: m.ean, source: "ERP_NON_PRIMARY", unit_business: null }),
+    );
+
+    if (section === "overrides") {
+      const authors = await auditLogService.findLatestAuthors(
+        AuditEntity.SUPPLIER_MAPPING,
+        overrides.map((o) => o.id),
+      );
+      return overrides
+        .map((o) => ({
+          ean: o.supplier_product_code,
+          owner: { product_id: o.product_id, product_name: o.product?.name ?? null },
+          defined_by: authors.get(o.id) ?? null,
+          replaced: this.groupClaimsByProduct(
+            (claimsByKey.get(eanZeroInsensitiveKey(o.supplier_product_code)) ?? []).filter(
+              (claim) => claim.product_id !== o.product_id,
+            ),
+          ),
+        }))
+        .filter((row) => row.replaced.length);
+    }
+
+    const groups = [...claimsByKey.entries()]
+      .filter(([, claims]) => new Set(claims.map((c) => c.product_id)).size > 1)
+      .sort(([a], [b]) => a.localeCompare(b));
+
+    // Quem prevalece em cada grupo — duas queries pra todos os grupos.
+    const codes = [...new Set(groups.flatMap(([, claims]) => claims.flatMap((c) => buildEanZeroVariants(c.ean))))];
+    let gtinOwners: ProductConfig[] = [];
+    let mappingOwners: SupplierMapping[] = [];
+    if (codes.length) {
+      [gtinOwners, mappingOwners] = await Promise.all([
+        productConfigService.findGtinOwnersInIntegration(codes, integrationsId, null),
+        this.repository.findCodeOwnersInIntegration(codes, integrationsId, null),
+      ]);
+    }
+
+    const toProducts = (rows: Array<{ product_id: string; product_name: string | null }>) => [
+      ...new Map(rows.map((r) => [r.product_id, r])).values(),
+    ];
+    return groups.map(([key, claims]) => {
+      const override = overrides.find((o) => eanZeroInsensitiveKey(o.supplier_product_code) === key);
+      const localGtin = gtinOwners.filter((pc) => eanZeroInsensitiveKey(pc.gtin as string) === key);
+      const mapping = mappingOwners.filter((sm) => eanZeroInsensitiveKey(sm.supplier_product_code) === key);
+
+      // Ordem de quem prevalece: EAN físico confirmado → EAN gravado no produto → DE x PARA → ninguém.
+      let prevailing: ErpEanPrevailing = { rule: "NONE", products: [] };
+      if (override) {
+        prevailing = {
+          rule: "PHYSICAL_OVERRIDE",
+          products: [{ product_id: override.product_id, product_name: override.product?.name ?? null }],
+        };
+      } else if (localGtin.length) {
+        prevailing = {
+          rule: "LOCAL_GTIN",
+          products: toProducts(
+            localGtin.map((pc) => ({ product_id: pc.product_id, product_name: (pc as any).product?.name ?? null })),
+          ),
+        };
+      } else if (mapping.length) {
+        prevailing = {
+          rule: "SUPPLIER_MAPPING",
+          products: toProducts(
+            mapping.map((sm) => ({ product_id: sm.product_id, product_name: sm.product?.name ?? null })),
+          ),
+        };
+      }
+
+      return { ean: key, products: this.groupClaimsByProduct(claims), prevailing };
+    });
+  }
+
+  // Junta as linhas do ERP por produto (EANs, origens e lojas sem repetição) pra exibição no relatório.
+  private groupClaimsByProduct(
+    claims: ErpEanClaim[],
+  ): ErpEanClaimProduct[] {
+    const byProduct = new Map<string, ErpEanClaimProduct>();
+    for (const claim of claims) {
+      const entry = byProduct.get(claim.product_id) ?? {
+        product_id: claim.product_id,
+        product_name: claim.product_name,
+        eans: [],
+        sources: [],
+        unit_businesses: [],
+      };
+      if (!entry.eans.includes(claim.ean)) entry.eans.push(claim.ean);
+      if (!entry.sources.includes(claim.source)) entry.sources.push(claim.source);
+      if (claim.unit_business && !entry.unit_businesses.includes(claim.unit_business)) {
+        entry.unit_businesses.push(claim.unit_business);
+      }
+      byProduct.set(claim.product_id, entry);
+    }
+    return [...byProduct.values()];
+  }
+
   // Lista paginada dos SupplierMappings de um produto, escopada na integração do usuário; productId obrigatório.
   findByProductId(
     params: QueryParams,
@@ -107,18 +518,73 @@ export class SupplierMappingService extends BaseService<
     );
   }
 
-  // Cria SupplierMapping pro produto da rota na integração do usuário (validação de código/conflito fica no create).
+  // Cria SupplierMapping pro produto da rota na integração do usuário. Antes, checa com code pro front: produto sem
+  // vínculo na integração, EAN físico confirmado pra outro produto, ou EAN (com zero à esquerda) já usado por outro.
   async createForProduct(
     productId: string,
     integrationsId: string,
     data: ProductSupplierMappingInput,
+    userId?: string | null,
   ): Promise<SupplierMapping> {
+    await this.assertProductMappedInIntegration(productId, integrationsId);
+
+    const code = data.supplier_product_code?.trim();
+    if (code) {
+      const owners = await this.findEanOwners(code, integrationsId, productId);
+      const override = owners.supplierMappings.find((sm) => sm.is_physical_override);
+      if (override) throw await this.buildPhysicalOverrideError(override);
+
+      const summary = this.summarizeEanOwners(owners);
+      if (summary.length) {
+        const names = summary
+          .map((owner) =>
+            owner.source === "PRODUCT_CONFIG"
+              ? `"${owner.product_name ?? owner.product_id}" (Configurações do produto, loja ${owner.unit_business_name ?? owner.unit_business_id})`
+              : `"${owner.product_name ?? owner.product_id}" (Mapeamento DE x PARA)`,
+          )
+          .join(", ");
+        throw new SupplierMappingError(
+          SupplierMappingErrorCode.EAN_OWNED_BY_ANOTHER_PRODUCT,
+          `O EAN ${code} já está em uso por: ${names}. Se o produto bipado é este, use "Confirmar EAN físico".`,
+          summary,
+        );
+      }
+    }
+
     try {
-      return await this.create({
-        product_id: productId,
-        integrations_id: integrationsId,
-        supplier_product_code: data.supplier_product_code,
-        supplier_cnpj: data.supplier_cnpj,
+      return await sequelize.transaction(async (t) => {
+        const record = await this.create(
+          {
+            product_id: productId,
+            integrations_id: integrationsId,
+            supplier_product_code: data.supplier_product_code,
+            supplier_cnpj: data.supplier_cnpj,
+          },
+          { transaction: t },
+        );
+
+        const closedScanRows = code
+          ? await unmappedInvoiceProductService.closeScanRowsByEan(buildEanZeroVariants(code), integrationsId, t)
+          : 0;
+
+        await auditLogService.record(
+          [
+            {
+              userId,
+              entity: AuditEntity.SUPPLIER_MAPPING,
+              internalId: record.id,
+              action: AuditAction.CREATE,
+              changes: {
+                summary: `Código ${record.supplier_product_code} vinculado ao produto${closedScanRows ? `; ${closedScanRows} registro(s) com foto desse EAN foram fechados` : ""}`,
+                after: { supplier_product_code: record.supplier_product_code, product_id: productId },
+                origin: { entity: AuditEntity.PRODUCT, internal_id: productId },
+              },
+            },
+          ],
+          t,
+        );
+
+        return record;
       });
     } catch (error: any) {
       // FK de product_id = produto inexistente (não dá pra checar via productService: import circular).
@@ -135,12 +601,14 @@ export class SupplierMappingService extends BaseService<
     productId: string,
     integrationsId: string,
     data: Partial<ProductSupplierMappingInput>,
+    canManageOverride?: boolean,
   ): Promise<SupplierMapping | null> {
     const existing = await this.findOne({
       where: { id, product_id: productId, integrations_id: integrationsId },
-      attributes: ["id"],
+      attributes: ["id", "is_physical_override"],
     });
     if (!existing) return null;
+    if (existing.is_physical_override) this.assertCanManageOverride(canManageOverride);
 
     if (
       data.supplier_product_code !== undefined &&
@@ -170,15 +638,51 @@ export class SupplierMappingService extends BaseService<
   }
 
   // Remove um SupplierMapping do produto na integração do usuário; false = não pertence/não existe.
+  // EAN físico confirmado só sai com admin/developer (canManageOverride) e a remoção é auditada.
   async deleteForProduct(
     id: string,
     productId: string,
     integrationsId: string,
+    opts: { userId?: string | null; canManageOverride?: boolean } = {},
   ): Promise<boolean> {
-    const deleted = await this.bulkDelete({
-      where: { id, product_id: productId, integrations_id: integrationsId },
+    return sequelize.transaction(async (t) => {
+      const existing = await this.repository.findOne({
+        where: { id, product_id: productId, integrations_id: integrationsId },
+        attributes: ["id", "supplier_product_code", "is_physical_override"],
+        transaction: t,
+      });
+      if (!existing) return false;
+
+      if (existing.is_physical_override) {
+        this.assertCanManageOverride(opts.canManageOverride);
+        await auditLogService.record(
+          [AuditEntity.SUPPLIER_MAPPING, AuditEntity.PRODUCT].map((entity) => ({
+            userId: opts.userId ?? null,
+            entity,
+            internalId: entity === AuditEntity.PRODUCT ? productId : id,
+            action: entity === AuditEntity.PRODUCT ? AuditAction.UPDATE : AuditAction.DELETE,
+            changes: {
+              summary: `EAN ${existing.supplier_product_code} deixou de ser o EAN físico confirmado deste produto; a próxima sincronização volta o EAN do ERP para os outros produtos`,
+              before: { supplier_product_code: existing.supplier_product_code, is_physical_override: true },
+              after: null,
+            },
+          })),
+          t,
+        );
+      }
+
+      await this.repository.bulkDelete({ where: { id }, transaction: t });
+      return true;
     });
-    return deleted > 0;
+  }
+
+  // Só admin/developer mexe em EAN físico confirmado (senão o "override não derruba override" vira apagar e recriar).
+  assertCanManageOverride(canManageOverride?: boolean): void {
+    if (!canManageOverride) {
+      throw new Error(
+        "Somente administradores podem alterar ou remover um EAN físico confirmado",
+      );
+    }
   }
 
   async create(

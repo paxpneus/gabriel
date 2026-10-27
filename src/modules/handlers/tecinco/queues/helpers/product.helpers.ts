@@ -1,4 +1,5 @@
-import { Op, Transaction, UniqueConstraintError } from "sequelize";
+import { Op, Transaction, UniqueConstraintError, WhereAttributeHash } from "sequelize";
+import { SupplierMappingAttributes } from "../../../../inventory/supplier-mapping/supplier-mapping.types";
 import {
   ProductConfig,
   Product,
@@ -413,6 +414,17 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
       transaction,
     });
 
+    // EAN físico confirmado nunca é removido por aqui — quem tenta gravar o gtin é que está errado.
+    if (conflictingMapping?.is_physical_override) {
+      const [ownerProduct, currentProduct] = await Promise.all([
+        Product.findByPk(conflictingMapping.product_id, { attributes: ["name"], transaction }),
+        Product.findByPk(productId, { attributes: ["name"], transaction }),
+      ]);
+      throw new EanConflictError(
+        `O EAN ${normalized} foi confirmado como EAN físico do produto "${ownerProduct?.name ?? conflictingMapping.product_id}" e não pode ser usado no produto "${currentProduct?.name ?? productId}". [${logPrefix} — ${field}=${normalized}, produto dono id=${conflictingMapping.product_id}, produto atual id=${productId}]`,
+      );
+    }
+
     if (conflictingMapping) {
       console.warn(
         `${logPrefix} — ${field}=${normalized} estava vinculado via SupplierMapping (id=${conflictingMapping.id}) ao product id=${conflictingMapping.product_id} — desatualizado, removendo pra liberar pro product id=${productId}`,
@@ -458,6 +470,63 @@ export async function isCodeOwnedByAnotherProduct(params: {
     where: { supplier_product_code: code, integrations_id: integrationsId },
   });
   return !!conflictingMapping;
+}
+
+// DE x PARA com EAN físico confirmado (is_physical_override) pra esse EAN — exato ou com zero à esquerda — em
+// OUTRO produto da integração (excludeProductId null = qualquer produto). Sync usa pra omitir o EAN.
+export async function findPhysicalOverrideForEan(
+  ean: string | null | undefined,
+  excludeProductId: string | null,
+  integrationsId: string,
+  transaction?: Transaction,
+): Promise<typeof SupplierMapping.prototype | null> {
+  const normalized = normalizeEan(ean ?? undefined);
+  if (!normalized) return null;
+
+  const where: WhereAttributeHash<SupplierMappingAttributes> = {
+    supplier_product_code: { [Op.in]: buildEanZeroVariants(normalized) },
+    integrations_id: integrationsId,
+    is_physical_override: true,
+  };
+  if (excludeProductId) where.product_id = { [Op.ne]: excludeProductId };
+
+  return SupplierMapping.findOne({
+    where,
+    attributes: ["id", "product_id", "supplier_product_code"],
+    transaction,
+  });
+}
+
+// Versão em lote de findPhysicalOverrideForEan (uma query pra todos os EANs de uma nota):
+// código (exato e variações de zero) → product_id dono do override.
+export async function findPhysicalOverridesForEans(
+  eans: Array<string | null | undefined>,
+  integrationsId: string,
+): Promise<Map<string, string>> {
+  const codes = [
+    ...new Set(
+      eans.flatMap((ean) => {
+        const normalized = normalizeEan(ean ?? undefined);
+        return normalized ? buildEanZeroVariants(normalized) : [];
+      }),
+    ),
+  ];
+  if (!codes.length) return new Map();
+
+  const overrides = await SupplierMapping.findAll({
+    where: {
+      supplier_product_code: { [Op.in]: codes },
+      integrations_id: integrationsId,
+      is_physical_override: true,
+    },
+    attributes: ["product_id", "supplier_product_code"],
+  });
+  return new Map(overrides.map((sm) => [sm.supplier_product_code, sm.product_id]));
+}
+
+// Chave que junta o mesmo GTIN com/sem zero à esquerda (12–14 dígitos); outros códigos ficam como estão.
+export function eanZeroInsensitiveKey(code: string): string {
+  return /^\d{12,14}$/.test(code) ? code.replace(/^0+/, "") || "0" : code;
 }
 
 // Código exato + variações de zero à esquerda até GTIN-14 (ex.: 4019238588644 ↔ 04019238588644), exato primeiro.

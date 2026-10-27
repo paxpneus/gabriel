@@ -29,6 +29,7 @@ type Scopes =
   | 'PDV Loja'
   | 'PDV Financeiro'
   | 'PDV CD21'
+  | 'Confirmar EAN físico'
 
 interface ChildEntity {
   entity: string
@@ -274,6 +275,15 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'PDV CD21',
     entity: 'pdv_sales_request_cd21',
+    route: '',
+    type: 'CUSTOM',
+    permissions: ['write'],
+  },
+  // "Confirmar EAN físico" (POST /supplier-mapping/product/:id/physical-owner): zera o EAN de outros produtos
+  // na integração inteira — permissão própria, concedível só pros papéis certos (não herda de Produtos).
+  {
+    scope: 'Confirmar EAN físico',
+    entity: 'physical_ean_owner',
     route: '',
     type: 'CUSTOM',
     permissions: ['write'],

@@ -99,7 +99,7 @@ ProductConfig.init(
       type: DataTypes.STRING(20),
       allowNull: true,
     },
-    // EAN cru do ERP (mapping principal), gravado mesmo quando gtin é omitido — só leitura, só relatório de divergência.
+    // EAN cru do ERP (mapping principal), gravado mesmo quando gtin é omitido — só leitura, só relatório de pendências de integração.
     gtin_erp: {
       type: DataTypes.STRING(20),
       allowNull: true,

@@ -48,6 +48,10 @@ Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e r
 
 Valor que identifica uma entidade específica (nome de integração, status, etc.) e é comparado/usado em mais de um lugar: nunca literal solto no código (`=== "Bling"`). Buscar/centralizar numa função ou variável já existente que resolve aquele valor (ex: `getBlingIntegration()` em `bling_api.service.ts`) e comparar contra o resultado dela — não recriar o literal. Assim, se o valor mudar, muda em um lugar só. Referência: `orders.service.ts`'s `getOrdersStatusSummary` compara `integration.name` com `(await getBlingIntegration()).name`, não com `"Bling"`.
 
+## Ternário só pra valor simples
+
+Ternário (`cond ? a : b`) só quando o resultado é valor simples (string, number, boolean, null). Resultado objeto ou array — inclusive spread condicional (`...(cond ? {...} : {})`), ternário aninhado e `cond ? await ... : []` — vira `if`/`else if` (monta a variável e preenche no `if`); fica mais legível. Vale pra código novo/alterado, sem reescrever código antigo intocado. Valor padrão com `??` (`x ?? []`) não é ternário e segue permitido.
+
 ## Comentários de código
 
 **Todo código criado ou alterado leva comentário.** Função/método/classe exportados, constantes de config e blocos não-triviais (lock, retry, fallback, regra de negócio) ganham um comentário dizendo o que fazem e, quando houver, por quê. Código sem comentário nenhum não é aceito.

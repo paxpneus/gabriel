@@ -17,6 +17,16 @@ export class ProductConfigService extends BaseService<ProductConfig, ProductConf
   ): Promise<ProductConfig[]> {
     return this.repository.findGtinOwnersInIntegration(codes, integrationsId, excludeProductId, transaction);
   }
+
+  // EAN do ERP (gtin_erp) de cada configuração nas lojas da integração (ver repository).
+  findErpEansInIntegration(integrationsId: string): Promise<ProductConfig[]> {
+    return this.repository.findErpEansInIntegration(integrationsId);
+  }
+
+  // Configurações sem EAN do ERP nas lojas da integração (ver repository).
+  findMissingErpEanInIntegration(integrationsId: string): Promise<ProductConfig[]> {
+    return this.repository.findMissingErpEanInIntegration(integrationsId);
+  }
 }
 
 export default new ProductConfigService();

@@ -32,12 +32,17 @@ export interface USER_TYPE_CONFIG {
 // das notificações de erro de integração (ver integration-error.service.ts).
 export const DEVELOPER_USER_TYPE: UserType = "developer";
 
+export const ADMIN_USER_TYPE: UserType = "admin";
+
+// Tipos com acesso total — únicos que podem apagar/alterar EAN físico confirmado e ver o relatório de pendências de integração.
+export const FULL_ACCESS_USER_TYPES: UserType[] = [ADMIN_USER_TYPE, DEVELOPER_USER_TYPE];
+
 // Tela FINANCE do PDV Management (resolve-pdv-access.ts) e menu do front comparam user.type com isto.
 export const FINANCE_USER_TYPE: UserType = "finance";
 
 export const USER_TYPES: USER_TYPE_CONFIG[] = [
   {
-    type: "admin",
+    type: ADMIN_USER_TYPE,
     label: "Administrador",
     description: "Acesso completo a todos os módulos e telas do sistema.",
     modules: "*",

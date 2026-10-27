@@ -108,6 +108,36 @@ export class IntegrationMappingService extends BaseService<
     });
   }
 
+  // EAN que o ERP manda nos mappings NÃO principais da integração (o principal já está em ProductConfig.gtin_erp),
+  // com o nome do produto — base do relatório de pendências de integração.
+  async findNonPrimaryErpEans(
+    integrationsId: string,
+  ): Promise<Array<{ product_id: string; product_name: string | null; external_id: string; ean: string }>> {
+    const mappings = await this.repository.findAll({
+      where: {
+        entity_type: "PRODUCT",
+        integrations_id: integrationsId,
+        is_primary: false,
+        erp_data: { ean: { [Op.ne]: null } },
+      } as any,
+      attributes: ["internal_id", "external_id", "erp_data"],
+    });
+    if (!mappings.length) return [];
+
+    const products = await productService.findAll({
+      where: { id: { [Op.in]: [...new Set(mappings.map((m) => m.internal_id))] } },
+      attributes: ["id", "name"],
+    });
+    const names = new Map(products.map((p) => [p.id, p.name]));
+
+    return mappings.map((m) => ({
+      product_id: m.internal_id,
+      product_name: names.get(m.internal_id) ?? null,
+      external_id: m.external_id,
+      ean: m.erp_data!.ean as string,
+    }));
+  }
+
   // Grava o snapshot só-leitura do ERP no mapping (principal ou não) — não auditado, é escrita de sync.
   async updateErpData(
     mappingId: string,

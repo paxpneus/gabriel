@@ -11,6 +11,7 @@ class SupplierMapping extends Model<SupplierMappingAttributes, SupplierMappingCr
   public supplier_cnpj!: string;
   public supplier_product_code!: string;
   public integrations_id?: string;
+  public is_physical_override!: boolean;
 
   public product?: Product
 
@@ -49,6 +50,12 @@ SupplierMapping.init(
         model: 'integrations',
         key: 'id',
       },
+    },
+    // EAN físico confirmado: exclusivo desse produto na integração, o sync não grava esse EAN em outros.
+    is_physical_override: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
   },
   {

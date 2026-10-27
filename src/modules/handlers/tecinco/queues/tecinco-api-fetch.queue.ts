@@ -48,6 +48,9 @@ import { extractProductMeasureAndLine } from "../../bling/services/bling/queues/
 import {
   normalizeEan,
   ensureSupplierMappings,
+  findPhysicalOverrideForEan,
+  findPhysicalOverridesForEans,
+  buildEanZeroVariants,
   resolveProductWithMapping,
   resolveProductBySupplierMapping,
   assertEanNotOwnedByAnotherProduct,
@@ -682,6 +685,12 @@ export class TCarUpsertQueue extends BaseQueueService<
       integrations.id,
       systemId,
     );
+    const hadMapping = !!mapping;
+
+    // EAN físico confirmado pra outro produto: omite gtin/DE x PARA (gtin_erp continua) e pula a checagem de conflito.
+    let eanOverridden =
+      !!mapping && !!(await findPhysicalOverrideForEan(ean, mapping.internal_id, integrations.id));
+    if (eanOverridden) eanOmitted = true;
 
     // ─── Resolve produto SÓ por integration mapping ────────────────────────────
     let product = await resolveProductWithMapping({
@@ -833,6 +842,11 @@ export class TCarUpsertQueue extends BaseQueueService<
       integrations.id,
       systemId,
     );
+    // Produto resolvido só agora (auto-map/criação): checa o override contra ele.
+    if (!hadMapping && (await findPhysicalOverrideForEan(ean, product.id, integrations.id))) {
+      eanOverridden = true;
+      eanOmitted = true;
+    }
     if (mapping) {
       const erpStocks = await Promise.all(
         filiaisToProcess.map(async (filial) => ({
@@ -890,7 +904,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             await assertEanNotOwnedByAnotherProduct({
               productId: product.id,
               unitBusinessId: unitBusiness.id,
-              candidates: [{ field: "ean", value: ean }],
+              candidates: [{ field: "ean", value: eanOverridden ? undefined : ean }],
               logPrefix,
             });
           } catch (error: any) {
@@ -1071,7 +1085,7 @@ export class TCarUpsertQueue extends BaseQueueService<
         await assertEanNotOwnedByAnotherProduct({
           productId: product.id,
           unitBusinessId: unitBusiness.id,
-          candidates: [{ field: "ean", value: ean }],
+          candidates: [{ field: "ean", value: eanOverridden ? undefined : ean }],
           logPrefix,
         });
       } catch (error: any) {
@@ -1648,6 +1662,12 @@ export class TCarUpsertQueue extends BaseQueueService<
       return { operationalItems: [], unmappedItems: [] };
     }
 
+    // EANs definidos pelo físico (de qualquer produto) dos itens da nota — uma query só, usada no loop abaixo.
+    const physicalOverrides = await findPhysicalOverridesForEans(
+      [...productLookups.values()].map((payload) => payload?.epctb_ean),
+      integrations.id,
+    );
+
     for (const item of itens) {
       // hasItemWithoutCode já garantiu, acima, que todo item aqui tem
       // epctb_codigo.
@@ -1660,6 +1680,11 @@ export class TCarUpsertQueue extends BaseQueueService<
         ? String(tcarPayload.epctb_codigofabrica).trim()
         : undefined;
       const ean: string | undefined = normalizeEan(tcarPayload?.epctb_ean);
+      // Donos de override físico desse EAN (exato ou com zero à esquerda).
+      let overrideOwnerIds: string[] = [];
+      if (ean) {
+        overrideOwnerIds = buildEanZeroVariants(ean).flatMap((code) => physicalOverrides.get(code) ?? []);
+      }
 
       // ─── Resolve produto SÓ por integration mapping ────────────────────────────
       // Fonte de verdade única: sem fallback por SupplierMapping/código de
@@ -1669,7 +1694,8 @@ export class TCarUpsertQueue extends BaseQueueService<
       const product = await resolveProductWithMapping({
         unitBusinessId: unitBusiness.id,
         systemId,
-        ean,
+        // EAN com override físico não alimenta o backfill de DE x PARA (o dono já tem o dele).
+        ean: overrideOwnerIds.length ? undefined : ean,
         logPrefix,
       });
 
@@ -1703,13 +1729,15 @@ export class TCarUpsertQueue extends BaseQueueService<
 
         if (!existingConfig) {
           const skuToUse = codigoFabrica ?? systemId;
+          // EAN físico confirmado pra outro produto: config nasce sem gtin (gtin_erp guarda o do ERP).
+          const eanOverridden = overrideOwnerIds.some((ownerId) => ownerId !== product.id);
 
           let eanConflict = false;
           try {
             await assertEanNotOwnedByAnotherProduct({
               productId: product.id,
               unitBusinessId: unitBusiness.id,
-              candidates: [{ field: "ean", value: ean }],
+              candidates: [{ field: "ean", value: eanOverridden ? undefined : ean }],
               logPrefix,
             });
           } catch (error: any) {
@@ -1739,7 +1767,7 @@ export class TCarUpsertQueue extends BaseQueueService<
                 product_id: product.id,
                 unit_business_id: unitBusiness.id,
                 sku: skuToUse,
-                gtin: ean ?? undefined,
+                gtin: eanOverridden ? undefined : (ean ?? undefined),
                 gtin_erp: ean ?? null,
                 price: Number(tcarPayload?.epprc_preco ?? 0),
                 supplier_cost_price: Number(

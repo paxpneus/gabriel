@@ -81,6 +81,7 @@ const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "multiplier-scan-inventory": "multiply-stk-inventory",
   "multiplier-scan-entrance": "multiply-stk-entrance",
    "all-unit-business": "visualize-all-unit-business",
+  "physical-owner": "physical_ean_owner",
 };
 
 /**

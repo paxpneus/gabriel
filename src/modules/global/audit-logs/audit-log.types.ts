@@ -57,3 +57,10 @@ export interface AuditLogEntry {
   action: AuditAction;
   changes: AuditChanges;
 }
+
+// Quem/quando da última alteração de uma entidade (ex.: quem definiu o EAN pelo físico).
+export interface AuditLogAuthor {
+  user_id: string | null;
+  user_name: string | null;
+  date: Date;
+}

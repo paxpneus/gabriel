@@ -27,7 +27,7 @@ const FIELD_LABELS: Record<string, string> = {
   supplier_product_code: "Código",
   external_id: "Código no ERP",
   is_primary: "Principal",
-  is_physical_override: "Definido pelo físico",
+  is_physical_override: "EAN físico confirmado",
   product_id: "Produto",
   unit_business_id: "Loja",
   integrations_id: "Integração",
