@@ -25,6 +25,7 @@ class DailySellerProductFact
   public total_sold?: number | string;
   public total_cost?: number | string;
   public total_commission?: number | string;
+  public total_affiliated_commission?: number | string;
   public total_markup_value?: number | string;
   public total_contribution_value?: number | string;
   public last_updated_at?: Date;
@@ -46,6 +47,8 @@ DailySellerProductFact.init(
     total_sold: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     total_cost: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     total_commission: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    // Comissão do afiliado somada dos snapshots.
+    total_affiliated_commission: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     total_markup_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     total_contribution_value: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },

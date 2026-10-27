@@ -18,6 +18,8 @@ export interface DailySalesFactAttributes {
   contribution_pct?: number | string;
   markup_pct?: number | string;
   total_commission?: number | string;
+  // Comissão do afiliado (order_coupons), rateada/somada igual à do vendedor.
+  total_affiliated_commission?: number | string;
   total_supplier_discount?: number | string;
 
   last_updated_at?: Date;

@@ -21,6 +21,7 @@ class DailySellerCustomerFact
   public orders_count?: number;
   public total_purchased?: number | string;
   public total_commission?: number | string;
+  public total_affiliated_commission?: number | string;
   public last_updated_at?: Date;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -36,6 +37,8 @@ DailySellerCustomerFact.init(
     orders_count: { type: DataTypes.INTEGER, defaultValue: 0 },
     total_purchased: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     total_commission: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
+    // Comissão do afiliado somada dos snapshots.
+    total_affiliated_commission: { type: DataTypes.DECIMAL(14, 2), defaultValue: 0 },
     last_updated_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   },
   {

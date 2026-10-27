@@ -18,6 +18,10 @@
 - Ao simplificar, não mude comportamento: rotas, status HTTP, formato de resposta, mensagens de erro e validações.
 - Se uma abstração parecer necessária, pergunte antes de criar.
 
+## Schemas de validação (Zod)
+
+Schema Zod fica em `<entidade>/schemas/<entidade>.schema.ts` — nunca em `src/shared/`, sem index central. Quem reaproveita campos de outra entidade importa direto do `schemas/` dela (ex.: `contacts/schemas/contact.schema.ts` usa `RequiredUserFields`/`phoneField` de `company/users/users/schemas/user.schema.ts`).
+
 ## Layer separation: repository / service / controller
 
 Segue `BaseRepository`/`BaseService`/`BaseController` (`src/shared/utils/base-models/`). Cada camada só fala com a mesma camada de outras entidades — nunca pula pra camada de baixo.
@@ -115,6 +119,8 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `supplier-discount/unit-business-bypass.md` — bypass de loja só no relatório de produto
 - `unit-business-group.md` — UnitBusinessGroup + pivot `unit_business_group_members` (N:N de unit businesses), rotas, permissão
 - `customer.md` — Customer: enum `type`, documento nullable, fallback quando Bling manda `tipoPessoa`/`numeroDocumento` vazios
+- `contact.md` — Contact: tipos (SELLER/CUSTOMER/AFFILIATED), `custom_data` com merge, `id_system` opcional, rota `/with-user` (User + Contact) e login/me do afiliado
+- `coupon.md` — cupons (`coupons`/`contact_coupons`/`order_coupons`): vínculo afiliado ↔ cupom, índices parciais, nunca deleta, comissão congelada por pedido (`registerFromMagento`)
 - `store.md` — Store (tipo canal de venda, não filial), fix de dedup
 - `stock-movement.md` — módulo stock/stock_movements
 - `inventory-batch.md` — InventoryBatch/Items/Logs (contagem de inventário), modos FIXED/CYCLIC, gate de integration mapping

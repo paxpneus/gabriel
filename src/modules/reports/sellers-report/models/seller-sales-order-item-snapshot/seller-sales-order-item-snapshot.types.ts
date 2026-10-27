@@ -3,6 +3,8 @@ export interface SellerSalesOrderItemSnapshotAttributes {
   order_item_id: string;
   order_id: string;
   seller_id?: string | null;
+  // Afiliado (contact) congelado em order_coupons.
+  affiliated_id?: string | null;
   customer_id?: string | null;
   product_id?: string | null;
   unit_business_id?: string | null;
@@ -17,6 +19,8 @@ export interface SellerSalesOrderItemSnapshotAttributes {
   total_cost?: number | string;
   commission_rate?: number | string;
   commission_value?: number | string;
+  // Comissão do afiliado (order_coupons), rateada/somada igual à do vendedor.
+  affiliated_commission_value?: number | string;
   commission_base?: number | string;
   manager_commission_rate?: number | string;
   manager_commission_value?: number | string;

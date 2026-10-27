@@ -11,6 +11,8 @@ export interface DailySellerProductFactAttributes {
   total_sold?: number | string;
   total_cost?: number | string;
   total_commission?: number | string;
+  // Comissão do afiliado (order_coupons), rateada/somada igual à do vendedor.
+  total_affiliated_commission?: number | string;
   total_markup_value?: number | string;
   total_contribution_value?: number | string;
   last_updated_at?: Date;

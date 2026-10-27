@@ -46,6 +46,11 @@ import { notifyPdvStoreSync } from "../../../../sales/pdv-management/sales-reque
 import {
   findOrCreateSemLojaUnitBusiness,
 } from "./helpers/sem-loja-unit-business";
+import { getMagentoIntegration } from "../../../magentoV2/api/magentoV2_api";
+import {
+  MagentoSyncQueue,
+  magentoFetchOrderJobId,
+} from "../../../magentoV2/queues/magento-sync.queue";
 
 interface BlingInstallmentApi {
   id?: number;
@@ -144,6 +149,8 @@ export class BlingOrderService {
   private storeService: StoreService;
   // Lazy: evita abrir conexão Redis em quem instancia o service sem nunca enfileirar vendedor/nota.
   private blingApiFetchQueue: BlingApiFetchQueue | null = null;
+  // Lazy, mesmo motivo: só abre conexão quando um pedido do site precisa buscar cupom.
+  private magentoSyncQueue: MagentoSyncQueue | null = null;
 
   constructor(blingApi: AxiosInstance) {
     this.blingApi = blingApi;
@@ -419,6 +426,57 @@ export class BlingOrderService {
     if (sellerSystemId !== "0") await this.enqueueSellerFetch(sellerSystemId);
 
     return contact.id;
+  }
+
+  // Mappings ORDER (Bling + Magento) e, 1ª vez que o pedido do site aparece, enfileira a busca do cupom.
+  // Best effort: falha só loga, nunca derruba a ingestão do pedido.
+  private async syncOrderIntegrationMappings(
+    orderId: string,
+    orderData: any,
+    blingIntegrationId: string,
+  ): Promise<void> {
+    try {
+      await integrationMappingService.createOrUpdateIntegrationMapping({
+        entity_type: "ORDER",
+        internal_id: orderId,
+        external_id: String(orderData.id),
+        integrations_id: blingIntegrationId,
+      });
+
+      // numeroLoja do pedido do site = "<increment_id>_<entity_id>" (ex.: "000001271_631").
+      const magentoOrderId = String(orderData.numeroLoja ?? "").trim().match(/^\d+_(\d+)$/)?.[1];
+      if (!magentoOrderId) return;
+
+      const magentoIntegration = await getMagentoIntegration("Magento");
+      const existing = await integrationMappingService.findOne({
+        where: {
+          entity_type: "ORDER",
+          integrations_id: magentoIntegration.id,
+          external_id: magentoOrderId,
+        },
+        attributes: ["id"],
+      });
+      // Já mapeado = cupom já buscado; não refaz a chamada na Magento a cada update.
+      if (existing) return;
+
+      await integrationMappingService.createOrUpdateIntegrationMapping({
+        entity_type: "ORDER",
+        internal_id: orderId,
+        external_id: magentoOrderId,
+        integrations_id: magentoIntegration.id,
+      });
+
+      this.magentoSyncQueue ??= new MagentoSyncQueue({ workless: true });
+      await this.magentoSyncQueue.add(
+        { kind: "fetch-order", orderId, magentoOrderId },
+        magentoFetchOrderJobId(orderId),
+      );
+    } catch (error: any) {
+      console.error(
+        `[BLING_ORDER] Falha ao sincronizar mappings ORDER do pedido ${orderId}:`,
+        error?.message ?? error,
+      );
+    }
   }
 
   // Upsert completo da NF-e no BLING_API_FETCH (prioridade de nota, à frente de produto/estoque).
@@ -1152,6 +1210,7 @@ export class BlingOrderService {
       };
 
       await ordersService.update(existingOrder.id, orderUpdateFields);
+      await this.syncOrderIntegrationMappings(existingOrder.id, orderData, integration.id);
       await orderPaymentService.replaceForOrder(
         existingOrder.id,
         orderPayments.map((payment) => ({
@@ -1454,6 +1513,7 @@ export class BlingOrderService {
       };
 
       const createdOrder = await ordersService.create(ordersPayload);
+      await this.syncOrderIntegrationMappings(createdOrder.id, orderData, integration.id);
       await orderPaymentService.replaceForOrder(
         createdOrder.id,
         orderPayments.map((payment) => ({

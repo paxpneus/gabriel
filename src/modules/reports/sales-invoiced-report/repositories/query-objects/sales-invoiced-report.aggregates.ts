@@ -27,6 +27,8 @@ export function totalsAggregateAttributes(
     [Sequelize.literal(sum("freight_cost")), "total_freight"],
     [Sequelize.literal(sum("computed_icms_value")), "total_taxes"],
     [Sequelize.literal(sum("total_commission")), "total_commission"],
+    // Comissão do afiliado (order_coupons); já está dentro de total_cost/contribution/net_value.
+    [Sequelize.literal(sum("total_affiliated_commission")), "affiliated_comission"],
     [Sequelize.literal(sum("total_cost")), "total_cost"],
     [Sequelize.literal(sum("total_supplier_discount")), "total_supplier_discount"],
     [Sequelize.literal(sum("contribution_value")), "contribution_value"],

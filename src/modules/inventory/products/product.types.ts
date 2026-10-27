@@ -124,4 +124,6 @@ export interface ProductSalesReportRow {
   markup_pct: number;
   average_cost: number;
   commission_value: number;
+  // Comissão do afiliado rateada nos itens (já dentro de total_cost/contribution).
+  affiliated_comission: number;
 }

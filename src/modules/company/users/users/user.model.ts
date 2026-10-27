@@ -17,6 +17,7 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   public main_unit_business_id?: string;
   public role_id!: string;
   public email!: string;
+  public phone?: string | null;
   public password!: string;
   public active!: boolean;
   public id_system?: number | null;
@@ -78,6 +79,11 @@ User.init(
       type: DataTypes.STRING(255),
       allowNull: false,
       unique: true,
+    },
+    // Optional contact phone (m324).
+    phone: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
     },
     password: {
         type: DataTypes.STRING(255),

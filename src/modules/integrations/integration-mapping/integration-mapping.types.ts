@@ -1,4 +1,5 @@
-export const ENTITY_TYPES = ["PRODUCT", "INVOICE", "CONTACT"] as const;
+// ORDER: Bling = id do pedido; Magento = entity_id do pedido do site (busca do cupom).
+export const ENTITY_TYPES = ["PRODUCT", "INVOICE", "CONTACT", "ORDER"] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export interface IntegrationMappingAttributes {

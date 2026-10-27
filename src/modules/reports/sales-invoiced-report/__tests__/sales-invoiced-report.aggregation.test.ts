@@ -125,6 +125,7 @@ describe("buildSummary", () => {
         total_freight: "20.00",
         total_taxes: "36.00",
         total_commission: "4.00",
+        affiliated_comission: "2.50",
         total_cost: "150.00",
         total_supplier_discount: "0.00",
         contribution_value: "64.00",
@@ -141,6 +142,7 @@ describe("buildSummary", () => {
     expect(summary.contribution_value).toBe(64);
     expect(summary.contribution_pct).toBe(21.33);
     expect(summary.orders_count).toBe(2);
+    expect(summary.affiliated_comission).toBe(2.5);
   });
 
   it("sem totais devolve zeros", () => {

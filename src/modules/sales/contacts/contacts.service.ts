@@ -5,11 +5,34 @@ import Contact from "./contacts.model";
 import contactRepository, { ContactRepository } from "./contacts.repository";
 import sequelize from "../../../config/sequelize";
 import roleService from "../../company/users/roles/role.service";
-import { Transaction } from "sequelize";
-import User from "../../company/users/users/user.model";
+import { Transaction, UniqueConstraintError, UpdateOptions } from "sequelize";
 import { UserAttributes } from "../../company/users/users/user.types";
+import { UserType } from "../../company/users/user_config/user_config.types";
+import {
+  AFFILIATED_USER_TYPE,
+  SELLER_USER_TYPE,
+} from "../../../shared/constants/user-types";
+import { CD21_UNIT_BUSINESS_NUMBER } from "../../company/unit-business/helpers/cd21-unit-business-number";
+import {
+  AFFILIATED_CONTACT_TYPE,
+  ContactType,
+  SELLER_CONTACT_TYPE,
+} from "./contacts.types";
+import { CreateContactWithUserInput } from "./schemas/contact.schema";
 
 const SELLER_REPORT_PATH = "/reports/sales/seller";
+
+// Contact types allowed on /with-user: user type + role name, and a fixed store when the type has one.
+const CONTACT_USER_TYPE_CONFIG: Partial<
+  Record<ContactType, { userType: UserType; roleName: string; fixedUnitBusinessNumber?: string }>
+> = {
+  [AFFILIATED_CONTACT_TYPE]: {
+    userType: AFFILIATED_USER_TYPE,
+    roleName: "Afiliado",
+    fixedUnitBusinessNumber: CD21_UNIT_BUSINESS_NUMBER,
+  },
+  [SELLER_CONTACT_TYPE]: { userType: SELLER_USER_TYPE, roleName: "Vendedor" },
+};
 
 export class ContactService extends BaseService<Contact, ContactRepository> {
   constructor() {
@@ -22,7 +45,110 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
         sortDir: 'DESC',
       },
       searchFields: ['name'],
+      // filters[type]=AFFILIATED lets the front list affiliates.
+      filterableFields: ['type', 'unit_business_id'],
     };
+  }
+
+  // Merges custom_data with the stored value instead of replacing the whole JSONB.
+  async update(
+    id: string,
+    data: Partial<Contact["_creationAttributes"]>,
+    options?: Partial<UpdateOptions>,
+  ) {
+    if (data.custom_data) {
+      const current = await this.repository.findById(id, {
+        attributes: ["id", "custom_data"],
+        transaction: options?.transaction,
+      });
+      if (current) {
+        data = { ...data, custom_data: { ...(current.custom_data ?? {}), ...data.custom_data } };
+      }
+    }
+
+    return super.update(id, data, options);
+  }
+
+  // Creates User + Contact atomically for types in CONTACT_USER_TYPE_CONFIG (contact has no id_system).
+  async createWithUser(dto: CreateContactWithUserInput) {
+    const config = CONTACT_USER_TYPE_CONFIG[dto.type];
+    if (!config) {
+      throw new Error(`Tipo de contato "${dto.type}" não permite criar usuário`);
+    }
+
+    try {
+      return await sequelize.transaction(async (t) => {
+        const role = await roleService.findOne({
+          where: { name: config.roleName },
+          attributes: ["id"],
+          transaction: t,
+        });
+        if (!role) throw new Error(`Role "${config.roleName}" não encontrada`);
+
+        let unitBusinessId = dto.unit_business_id;
+        if (config.fixedUnitBusinessNumber) {
+          const unitBusiness = await unitBusinessService.findOne({
+            where: { number: config.fixedUnitBusinessNumber },
+            attributes: ["id"],
+            transaction: t,
+          });
+          if (!unitBusiness) {
+            throw new Error(`Loja número "${config.fixedUnitBusinessNumber}" não encontrada`);
+          }
+          unitBusinessId = unitBusiness.id;
+        }
+        if (!unitBusinessId) {
+          throw new Error("Loja (unit_business_id) é obrigatória para este tipo de contato");
+        }
+
+        const user = await userService.createUserWithValidation(
+          {
+            name: dto.name,
+            cpf: dto.cpf,
+            email: dto.email,
+            password: dto.password,
+            phone: dto.phone,
+            unit_business_id: unitBusinessId,
+            user_unit_business: [unitBusinessId],
+            role_id: role.id,
+            type: config.userType,
+          },
+          t,
+        );
+
+        const contact = await this.repository.create(
+          {
+            name: dto.name,
+            type: dto.type,
+            document: user.cpf,
+            unit_business_id: unitBusinessId,
+            user_id: user.id,
+            custom_data: dto.custom_data ?? {},
+          },
+          { transaction: t },
+        );
+
+        return {
+          contact,
+          user: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            cpf: user.cpf,
+            phone: user.phone ?? null,
+            unit_business_id: user.unit_business_id,
+            type: config.userType,
+          },
+        };
+      });
+    } catch (err) {
+      if (err instanceof UniqueConstraintError) {
+        const field = err.errors?.[0]?.path;
+        if (field === "user_id") throw new Error("Este usuário já está vinculado a outro contato");
+        if (field === "document") throw new Error("Já existe um contato com este CPF");
+      }
+      throw err;
+    }
   }
 
   private normalizeName(name: string): string {
@@ -122,6 +248,12 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
         throw new Error(`Vendedor "${name}" não encontrado`);
       }
 
+      // id_system is optional since contacts can be created via /with-user; it is the seller's CPF here.
+      if (!seller.id_system) {
+        throw new Error(`Vendedor "${name}" sem id_system cadastrado`);
+      }
+      const sellerCpf = seller.id_system;
+
       const unitBusiness = await unitBusinessService.findOne({
         where: { number: normalizedNumber },
         transaction: t,
@@ -142,7 +274,7 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
       return this.resolveUser(
         {
           sellerName: seller.name,
-          sellerCpf: seller.id_system,
+          sellerCpf,
           unitBusinessId: unitBusiness.id,
           roleId: role.id,
           email,

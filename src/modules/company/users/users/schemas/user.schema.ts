@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isValidCPF } from "../utils/validators/document";
+import { isValidCPF } from "../../../../../shared/utils/validators/document";
 
 /**
  * Validações customizadas
@@ -32,11 +32,8 @@ const UserConfigUpdateFields = {
 
 const UserConfigUpdateSchema = z.object(UserConfigUpdateFields).strict();
 
-/**
- * Schema para criar um novo usuário
- * Todos os campos são obrigatórios (exceto os explicitamente marcados como opcionais)
- */
-export const CreateUserSchema = z.object({
+// Required identity/credential fields, shared by CreateUserSchema and the contact /with-user schema.
+export const RequiredUserFields = {
   name: z
     .string({ error: "Nome é obrigatório" })
     .min(3, "Nome deve ter pelo menos 3 caracteres")
@@ -60,6 +57,23 @@ export const CreateUserSchema = z.object({
     .string({ error: "Senha é obrigatória" })
     .min(8, "Senha deve ter no mínimo 8 caracteres")
     .max(255, "Senha não pode ter mais de 255 caracteres"),
+};
+
+// Optional phone (users.phone STRING(20)); reused by user and contact /with-user schemas.
+export const phoneField = z
+  .string()
+  .trim()
+  .max(20, "Telefone não pode ter mais de 20 caracteres")
+  .nullable()
+  .optional();
+
+/**
+ * Schema para criar um novo usuário
+ * Todos os campos são obrigatórios (exceto os explicitamente marcados como opcionais)
+ */
+export const CreateUserSchema = z.object({
+  ...RequiredUserFields,
+  phone: phoneField,
 
   type: z.string().optional(), // <-- Adicionado aqui como string opcional
   id_system: z
@@ -121,6 +135,8 @@ export const UpdateUserSchema = z
       .min(8, "Senha deve ter no mínimo 8 caracteres")
       .max(255, "Senha não pode ter mais de 255 caracteres")
       .optional(),
+
+    phone: phoneField,
 
     type: z.string().optional(), // <-- Adicionado aqui também para o fluxo de update
     id_system: z

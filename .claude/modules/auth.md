@@ -41,3 +41,14 @@ Cross-cutting tenant/auth scoping model. Read before touching auth/scoping on an
 
 **LOW / possible false positive:**
 - `unit-business.controller.ts` — `index`/`show` aren't scoped to the user's own store(s); `update`/`destroy` only check role. May be intentional (it's the tenant list itself) — needs a product decision, not an obvious bug fix.
+
+## Login do afiliado
+
+- `contacts.type = AFFILIATED` ↔ `user_config.type = "affiliated"` (`AFFILIATED_USER_TYPE`, `USER_TYPES` com `modules: []`); role "Afiliado" (seed m328) com `permissions: []` — `userPermissions` nega todo o resto do hub.
+- `POST /api/users/login` recusa afiliado ("Afiliados devem acessar pelo login de afiliado"). Afiliado entra por `POST /api/contacts/affiliated/login` (`userService.loginAs(email, password, AFFILIATED_USER_TYPE)`, mesmo cookie `token` 8h) e lê `GET /api/contacts/affiliated/me` (`authenticate`; recusa quem não é afiliado). Ambos devolvem só `{ name, unit_business: { number, name } }`.
+- `login`/`loginAs` compartilham `verifyCredentials` (busca + bloqueio de inativo + bcrypt) e `signToken` em `user.service.ts`.
+- Criação de afiliado: só usuário logado com permissão em `contacts` (`POST /api/contacts/with-user`) — ver `../entities/contact.md`.
+
+## Permissões Contatos/Cupons
+
+- `ROLE_PERMISSIONS` (`src/shared/constants/roles.ts`): scope `Contatos` (entity `contacts`) e `Cupons` (entity `coupons`, child `contact_coupons` "Cupons de Afiliado" — herda a permissão do pai via `resolvePermissionEntity`).

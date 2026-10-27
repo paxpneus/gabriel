@@ -1,7 +1,7 @@
 import BaseService from "../../../../shared/utils/base-models/base-service";
 import User from "./user.model";
 import userRepository, { UserRepository } from "./user.repository";
-import { CreateUserInput, UpdateUserInput } from "../../../../shared/schemas";
+import { CreateUserInput, UpdateUserInput } from "./schemas/user.schema";
 import bcrypt from "bcrypt";
 import "dotenv/config";
 import jwt from "jsonwebtoken";
@@ -15,14 +15,15 @@ import {
 } from "../../../../shared/query/query.types";
 import { cleanDocument } from "../../../../shared/utils/normalizers/document";
 import UnitBusiness from "../../unit-business/unit-business.model";
-import { DestroyOptions, FindOptions, UniqueConstraintError } from "sequelize";
+import { DestroyOptions, FindOptions, Transaction, UniqueConstraintError } from "sequelize";
 import redisService from "../../../../shared/utils/base-models/base-redis";
 import UserConfig from "../user_config/user_config.model";
 import UserUnitBusiness from "../user_unit_business/user_unit_business.model";
 import sequelize from "../../../../config/sequelize";
-import { USER_TYPES } from "../../../../shared/constants/user-types";
+import { AFFILIATED_USER_TYPE, USER_TYPES } from "../../../../shared/constants/user-types";
 import Contact from "../../../sales/contacts/contacts.model";
 import { UserAttributes } from "./user.types";
+import { UserType } from "../user_config/user_config.types";
 
 export class UserService extends BaseService<User, UserRepository> {
   constructor() {
@@ -63,9 +64,13 @@ export class UserService extends BaseService<User, UserRepository> {
     });
   }
 
-  async createUserWithValidation(userDto: CreateUserInput): Promise<User> {
+  // Optional outer transaction lets callers (contacts /with-user) create User + Contact atomically.
+  async createUserWithValidation(
+    userDto: CreateUserInput,
+    transaction?: Transaction,
+  ): Promise<User> {
     try {
-      return await sequelize.transaction(async (t) => {
+      const run = async (t: Transaction) => {
         const { type, ...userData } = userDto;
 
         const existingUser = await this.repository.findOne({
@@ -133,7 +138,9 @@ export class UserService extends BaseService<User, UserRepository> {
         }
 
         return user;
-      });
+      };
+
+      return await (transaction ? run(transaction) : sequelize.transaction(run));
     } catch (err: any) {
       if (err instanceof UniqueConstraintError) {
         const field = err.errors?.[0]?.path;
@@ -320,8 +327,9 @@ export class UserService extends BaseService<User, UserRepository> {
     return updated;
   }
 
-  async login(email: string, password: string, unitBusinessToJoin?: string) {
-    let user = await this.repository.getFullUser({
+  // Shared by login/loginAs: loads the full user, blocks inactive and checks the bcrypt password.
+  private async verifyCredentials(email: string, password: string): Promise<UserAttributes> {
+    const user = await this.repository.getFullUser({
       where: { email },
     });
 
@@ -332,6 +340,24 @@ export class UserService extends BaseService<User, UserRepository> {
     const incorrectPassword = await bcrypt.compare(password, user.password);
     if (!incorrectPassword) throw new Error("Senha Incorreta");
 
+    return user;
+  }
+
+  // 8h JWT carrying id + role, same payload getMe/authenticate decode.
+  private signToken(user: UserAttributes): string {
+    return jwt.sign({ id: user.id, role: user.role_id }, SECRET, {
+      expiresIn: "8h",
+    });
+  }
+
+  async login(email: string, password: string, unitBusinessToJoin?: string) {
+    let user = await this.verifyCredentials(email, password);
+
+    // Affiliates have their own login (/api/contacts/affiliated/login) and no hub modules.
+    if (user.type === AFFILIATED_USER_TYPE) {
+      throw new Error("Afiliados devem acessar pelo login de afiliado");
+    }
+
     if (unitBusinessToJoin && unitBusinessToJoin !== user.unit_business_id) {
       await this.assertUnitBusinessAccess(user, unitBusinessToJoin);
 
@@ -339,16 +365,23 @@ export class UserService extends BaseService<User, UserRepository> {
         unit_business_id: unitBusinessToJoin,
       });
       await redisService.delete(`user:${user.id}`);
-      user = await this.repository.getFullUser({ where: { email } });
-      if (!user) throw new Error("Usuário não encontrado");
+      const refreshed = await this.repository.getFullUser({ where: { email } });
+      if (!refreshed) throw new Error("Usuário não encontrado");
+      user = refreshed;
     }
 
-    const token = jwt.sign({ id: user.id, role: user.role_id }, SECRET, {
-      expiresIn: "8h",
-    });
-
+    const token = this.signToken(user);
 
     return { token, user };
+  }
+
+  // Login restricted to one user type (e.g. the affiliated login route).
+  async loginAs(email: string, password: string, userType: UserType) {
+    const user = await this.verifyCredentials(email, password);
+
+    if (user.type !== userType) throw new Error("Usuário sem acesso a este login");
+
+    return { token: this.signToken(user), user };
   }
 
   async getMe(token: string) {

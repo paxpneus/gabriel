@@ -3,6 +3,7 @@
 `src/modules/integrations/integration-mapping/`
 
 - Table `integration_mappings`: `entity_type` (`"PRODUCT"`, `"CONTACT"`, ...), `internal_id`, `integrations_id`, `external_id` — maps a local entity to its id in an external system (Bling/Tecinco).
+- `entity_type` `ORDER` (`m325`, repository em `helpers/map-repository.ts`): Bling = id do pedido; Magento = `entity_id` do pedido do site (de `numeroLoja`). Criados por `BlingOrderService.syncOrderIntegrationMappings`; o mapping Magento existente é o que evita refazer a busca do cupom — ver `order/index.md`.
 - `integrationMappingService.findGroupedMappingsMap(...)` / `.findExternalIdsMap(...)` — bulk-enrich rows (e.g. `order_items.service.ts`) with external ids.
 - `integrationMappingService.createOrUpdateIntegrationMapping(...)` — despite the name, **never updates/reassigns an existing mapping**. If a row already exists for that `external_id` (see conflict-scope fix below), it `console.warn`s and returns the existing row unchanged — no exception.
 

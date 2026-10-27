@@ -147,7 +147,8 @@ export class ProductRepository extends BaseRepository<Product> {
           sois.contribution_value,
           sois.net_total,
           sois.average_cost_snapshot,
-          sois.commission_value
+          sois.commission_value,
+          sois.affiliated_commission_value
         FROM sales_order_item_snapshots sois
         JOIN sales_order_snapshots sos ON sos.id = sois.order_snapshot_id
         LEFT JOIN products p ON p.id = sois.product_id
@@ -199,7 +200,8 @@ export class ProductRepository extends BaseRepository<Product> {
             2
           )
         END AS average_cost,
-        COALESCE(SUM(fi.commission_value), 0) AS commission_value
+        COALESCE(SUM(fi.commission_value), 0) AS commission_value,
+        COALESCE(SUM(fi.affiliated_commission_value), 0) AS affiliated_comission
       FROM filtered_items fi
       LEFT JOIN products p ON p.id = fi.product_id
       GROUP BY fi.product_id, p.name, fi.sku

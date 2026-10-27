@@ -94,6 +94,7 @@ export function buildSummary(
     total_freight: toNumber(totals?.total_freight),
     total_taxes: toNumber(totals?.total_taxes),
     total_commission: toNumber(totals?.total_commission),
+    affiliated_comission: toNumber(totals?.affiliated_comission),
     total_cost: toNumber(totals?.total_cost),
     total_supplier_discount: toNumber(totals?.total_supplier_discount),
     contribution_value: toNumber(totals?.contribution_value),

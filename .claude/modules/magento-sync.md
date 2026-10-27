@@ -4,12 +4,15 @@ Desacoplada numa fila própria: `magento-sync.queue.ts` (`MagentoSyncQueue`, fil
 
 ## Por que existe uma fila separada
 
-Antes esse trabalho rodava embutido no job da `BLING_API_FETCH`, então só disparava quando a Bling mandava webhook. Isso bastava enquanto `populate-from-bling` varria o catálogo inteiro todo dia — mas esse script passou a buscar só produto com movimento de estoque, então o resto do catálogo parou de receber sync com o Magento. A fila `MAGENTO_SYNC` tem dois tipos de job:
+Antes esse trabalho rodava embutido no job da `BLING_API_FETCH`, então só disparava quando a Bling mandava webhook. Isso bastava enquanto `populate-from-bling` varria o catálogo inteiro todo dia — mas esse script passou a buscar só produto com movimento de estoque, então o resto do catálogo parou de receber sync com o Magento. A fila `MAGENTO_SYNC` tem três tipos de job (`fetch-order` na seção própria abaixo):
 
 - `sync-product` (`productId`): sincroniza 1 produto — disparado pela Bling a cada update/stock, ou pelo job diário abaixo.
 - `sync-all`: sem payload além do `kind`; agendado via cron fixo (`0 23 * * *` BRT, jobId `magento-sync-all-cron`, registrado em `startBlingWorkers`) — varre todo `ProductConfig` da unit business da Bling com `sku` preenchido, filtra só produto `type=UNIT`, e enfileira um `sync-product` por produto. Cobre o catálogo inteiro, substituindo a cobertura diária que `populate-from-bling` dava antes.
 
 `BlingApiFetchQueue` instancia seu próprio client `MagentoSyncQueue({workless:true})` internamente (só produtor, nunca consumidor) — não precisa de injeção de dependência, então todo lugar que já cria `new BlingApiFetchQueue(...)` (scripts, `sefaz-procnfe-retry.queue.ts`, etc.) continua funcionando sem alteração.
+
+## `fetch-order` (cupom do pedido do site)
+`{kind:"fetch-order", orderId, magentoOrderId}` (jobId `magento-fetch-order-<orderId>`, `magentoFetchOrderJobId`), enfileirado por `BlingOrderService.syncOrderIntegrationMappings` só quando o mapping `ORDER` da Magento é criado (1ª vez). `MagentoSalesOrderService.getOrderCoupon` (`service/sales/orders/orders.service.ts`) faz `GET /orders/:entity_id` com `fields=entity_id,increment_id,coupon_code,discount_amount`. Sem `coupon_code` → termina. Com cupom → `orderCouponService.registerFromMagento` (desconto em valor absoluto; Magento manda negativo) — ver `../entities/coupon.md`. 404 → `UnrecoverableError`.
 
 ## `integration_mapping.external_id` = `entity_id` do Magento (não o sku)
 

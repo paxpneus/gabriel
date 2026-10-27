@@ -4,12 +4,20 @@ import BaseController, { StoreNumberField } from "../../../shared/utils/base-mod
 import Contact from "./contacts.model";
 import contactService, { ContactService } from "./contacts.service";
 import { Request, Response } from "express";
+import { validateCreate } from "../../../middlewares/validation";
+import { CreateContactWithUserSchema } from "./schemas/contact.schema";
+import affiliatedController from "./affiliated/affiliated.controller";
 
 class ContactController extends BaseController<Contact, ContactService> {
   constructor() {
     super(contactService);
 
     this.router.post(`/create-from-seller-name`, ...this.mw("createUserFromSellerName"), this.createUserFromSellerName)
+
+    this.router.post(`/with-user`, ...this.mw("createWithUser"), this.createWithUser)
+
+    // Affiliated login/me live under contacts: /api/contacts/affiliated/{login,me} (/:id only matches one segment).
+    this.router.use(`/affiliated`, affiliatedController.router)
   }
 
    // ?store_number= de application filtra o index por unit_business_id.
@@ -31,7 +39,7 @@ class ContactController extends BaseController<Contact, ContactService> {
         bulkCreate: [authenticate, userPermissions],
         bulkUpdate: [authenticate, userPermissions],
         bulkDestroy: [authenticate, userPermissions],
-        
+        createWithUser: [authenticate, validateCreate(CreateContactWithUserSchema), userPermissions],
       };
     }
 
@@ -43,6 +51,16 @@ class ContactController extends BaseController<Contact, ContactService> {
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }
+    }
+
+    // Creates User + Contact for a contact type with login (affiliated, seller).
+    createWithUser = async (req: Request, res: Response): Promise<Response> => {
+      try {
+        const record = await this.service.createWithUser(req.body);
+        return res.status(201).json(record);
+      } catch (error: any) {
+        return res.status(400).json({ error: error.message });
+      }
     }
 }
 

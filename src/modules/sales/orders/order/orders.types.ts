@@ -169,6 +169,8 @@ export interface OrderSalesReportDetail {
   discount: number | null;
   icms: number | null;
   commission: number | null;
+  // Comissão do afiliado do pedido (snapshot do relatório), já inclusa em totalCost/profit.
+  affiliatedCommission: number | null;
   totalCost: number | null;
   totalTaxes: number | null;
   totalFees: number | null;
