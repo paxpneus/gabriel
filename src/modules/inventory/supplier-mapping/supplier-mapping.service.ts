@@ -145,6 +145,35 @@ export class SupplierMappingService extends BaseService<
     );
   }
 
+  // EAN (exato ou com zero à esquerda) já é de outro produto na integração → erro com code: EAN físico confirmado
+  // de outro produto (EAN_HAS_PHYSICAL_OVERRIDE) ou só em uso (EAN_OWNED_BY_ANOTHER_PRODUCT, com os donos).
+  private async assertEanFreeForProduct(
+    code: string,
+    integrationsId: string,
+    productId: string,
+    transaction?: Transaction,
+  ): Promise<void> {
+    const owners = await this.findEanOwners(code, integrationsId, productId, transaction);
+    const override = owners.supplierMappings.find((sm) => sm.is_physical_override);
+    if (override) throw await this.buildPhysicalOverrideError(override, transaction);
+
+    const summary = this.summarizeEanOwners(owners);
+    if (!summary.length) return;
+
+    const names = summary
+      .map((owner) =>
+        owner.source === "PRODUCT_CONFIG"
+          ? `"${owner.product_name ?? owner.product_id}" (Configurações do produto, loja ${owner.unit_business_name ?? owner.unit_business_id})`
+          : `"${owner.product_name ?? owner.product_id}" (Mapeamento DE x PARA)`,
+      )
+      .join(", ");
+    throw new SupplierMappingError(
+      SupplierMappingErrorCode.EAN_OWNED_BY_ANOTHER_PRODUCT,
+      `O EAN ${code} já está em uso por: ${names}. Se o produto bipado é este, use "Confirmar EAN físico".`,
+      summary,
+    );
+  }
+
   // Donos do EAN no formato de resposta (SupplierMapping e Configurações do produto por loja).
   private summarizeEanOwners(owners: EanOwners): EanOwnerSummary[] {
     return [
@@ -529,27 +558,7 @@ export class SupplierMappingService extends BaseService<
     await this.assertProductMappedInIntegration(productId, integrationsId);
 
     const code = data.supplier_product_code?.trim();
-    if (code) {
-      const owners = await this.findEanOwners(code, integrationsId, productId);
-      const override = owners.supplierMappings.find((sm) => sm.is_physical_override);
-      if (override) throw await this.buildPhysicalOverrideError(override);
-
-      const summary = this.summarizeEanOwners(owners);
-      if (summary.length) {
-        const names = summary
-          .map((owner) =>
-            owner.source === "PRODUCT_CONFIG"
-              ? `"${owner.product_name ?? owner.product_id}" (Configurações do produto, loja ${owner.unit_business_name ?? owner.unit_business_id})`
-              : `"${owner.product_name ?? owner.product_id}" (Mapeamento DE x PARA)`,
-          )
-          .join(", ");
-        throw new SupplierMappingError(
-          SupplierMappingErrorCode.EAN_OWNED_BY_ANOTHER_PRODUCT,
-          `O EAN ${code} já está em uso por: ${names}. Se o produto bipado é este, use "Confirmar EAN físico".`,
-          summary,
-        );
-      }
-    }
+    if (code) await this.assertEanFreeForProduct(code, integrationsId, productId);
 
     try {
       return await sequelize.transaction(async (t) => {
@@ -778,6 +787,10 @@ export class SupplierMappingService extends BaseService<
           "Produto não mapeado sem integração associada, não é possível criar o DE X PARA",
         );
       }
+
+      // Mesmo pré-check do createForProduct, com zero à esquerda: protege EAN físico confirmado de outro produto
+      // e devolve erro com code em vez da violação de unique/trigger.
+      await this.assertEanFreeForProduct(supplierProductCode, unmapped.integrations_id, params.productId, t);
 
       // Se já existe um SupplierMapping com esse código nessa integração
       // apontando pro MESMO produto, é idempotente — não é erro, só não

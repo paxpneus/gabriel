@@ -372,7 +372,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(record);
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      return this.errorResponse(res, error);
     }
   };
 
