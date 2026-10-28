@@ -67,6 +67,8 @@ jest.mock("../../../../../../inventory/brands/brands.service", () => ({
 jest.mock("../../../../../tecinco/queues/helpers/product.helpers", () => ({
   __esModule: true,
   findPhysicalOverrideForEan: jest.fn().mockResolvedValue(null),
+  isEanBlockedForProduct: jest.fn().mockResolvedValue(false),
+  isCodeOwnedByAnotherProduct: jest.fn().mockResolvedValue(false),
   resolveProductWithMapping: jest.fn(),
   resolveProductBySku: jest.fn(),
   resolveProductBySupplierMapping: jest.fn(),

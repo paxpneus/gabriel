@@ -1,5 +1,6 @@
 import { Op, Transaction, UniqueConstraintError, WhereAttributeHash } from "sequelize";
 import { SupplierMappingAttributes } from "../../../../inventory/supplier-mapping/supplier-mapping.types";
+import { ProductConfigAttributes } from "../../../../inventory/product-config/product_config.types";
 import {
   ProductConfig,
   Product,
@@ -117,6 +118,15 @@ async function backfillSupplierMappingByEan(params: {
 
   const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId);
 
+  // Outro produto usa o EAN (gtin de outra loja ou com outro zero à esquerda): não cria, senão o bipe acharia dois.
+  const otherOwnerId = await findAnotherProductUsingEan(ean, product.id, integrationsId);
+  if (otherOwnerId) {
+    console.warn(
+      `${logPrefix} — EAN=${ean} já pertence ao produto ${otherOwnerId} nessa integração (considerando zeros à esquerda) — SupplierMapping do produto ${product.id} não criado`,
+    );
+    return;
+  }
+
   try {
     await SupplierMapping.create({
       product_id: product.id,
@@ -201,6 +211,14 @@ export async function ensureSupplierMappings(params: {
       continue; // já mapeado pro mesmo produto — nada a fazer
     }
     if (!code) continue;
+    // EAN com outro zero à esquerda já é de outro produto: pula esse código (o bipe acharia dois), não bloqueia o sync.
+    if (
+      label === "EAN" &&
+      (await findAnotherProductUsingEan(code, productId, integrationsId, { zeroVariantsOnly: true }))
+    ) {
+      console.warn(`${logPrefix} — EAN=${code} com outro zero à esquerda já é de outro produto — SupplierMapping não criado`);
+      continue;
+    }
     try {
       await SupplierMapping.create({
         product_id: productId,
@@ -376,11 +394,13 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
     // da integração dona do produto. Se colide com o de OUTRO produto, os
     // dois lados são igualmente autoritativos e não dá pra saber qual está
     // certo sem revisão humana — trava e alerta (ver callers).
+    // Exato ou com outro zero à esquerda: os dois fariam o bipe da loja achar dois produtos.
+    const codes = buildEanZeroVariants(normalized);
     const conflictingConfig = await ProductConfig.findOne({
       where: {
         unit_business_id: unitBusinessId,
         product_id: { [Op.ne]: productId },
-        gtin: normalized,
+        gtin: { [Op.in]: codes },
       },
       transaction,
     });
@@ -407,21 +427,23 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
     // que nunca se resolve sozinho.
     const conflictingMapping = await SupplierMapping.findOne({
       where: {
-        supplier_product_code: normalized,
+        supplier_product_code: { [Op.in]: codes },
         integrations_id: integrationsId,
         product_id: { [Op.ne]: productId },
       },
       transaction,
     });
 
-    // EAN físico confirmado nunca é removido por aqui — quem tenta gravar o gtin é que está errado.
-    if (conflictingMapping?.is_physical_override) {
+    // EAN físico confirmado (exato ou com zero à esquerda) de outro produto nunca é removido por aqui —
+    // quem tenta gravar o gtin é que está errado.
+    const physicalOverride = await findPhysicalOverrideForEan(normalized, productId, integrationsId, transaction);
+    if (physicalOverride) {
       const [ownerProduct, currentProduct] = await Promise.all([
-        Product.findByPk(conflictingMapping.product_id, { attributes: ["name"], transaction }),
+        Product.findByPk(physicalOverride.product_id, { attributes: ["name"], transaction }),
         Product.findByPk(productId, { attributes: ["name"], transaction }),
       ]);
       throw new EanConflictError(
-        `O EAN ${normalized} foi confirmado como EAN físico do produto "${ownerProduct?.name ?? conflictingMapping.product_id}" e não pode ser usado no produto "${currentProduct?.name ?? productId}". [${logPrefix} — ${field}=${normalized}, produto dono id=${conflictingMapping.product_id}, produto atual id=${productId}]`,
+        `O EAN ${normalized} foi confirmado como EAN físico do produto "${ownerProduct?.name ?? physicalOverride.product_id}" e não pode ser usado no produto "${currentProduct?.name ?? productId}". [${logPrefix} — ${field}=${normalized}, EAN confirmado=${physicalOverride.supplier_product_code}, produto dono id=${physicalOverride.product_id}, produto atual id=${productId}]`,
       );
     }
 
@@ -459,15 +481,19 @@ export async function isCodeOwnedByAnotherProduct(params: {
   });
   const unitBusinessIds = unitBusinesses.map((ub) => ub.id);
 
+  // gtin considera zeros à esquerda (o bipe acharia dois); sku segue exato — SKUs distintos podem diferir só pelo zero.
+  let codeMatch: string | { [Op.in]: string[] } = code;
+  if (field === "gtin") codeMatch = { [Op.in]: buildEanZeroVariants(code) };
+
   const conflictingConfig = unitBusinessIds.length
     ? await ProductConfig.findOne({
-        where: { [field]: code, unit_business_id: { [Op.in]: unitBusinessIds } },
+        where: { [field]: codeMatch, unit_business_id: { [Op.in]: unitBusinessIds } },
       })
     : null;
   if (conflictingConfig) return true;
 
   const conflictingMapping = await SupplierMapping.findOne({
-    where: { supplier_product_code: code, integrations_id: integrationsId },
+    where: { supplier_product_code: codeMatch, integrations_id: integrationsId },
   });
   return !!conflictingMapping;
 }
@@ -495,6 +521,66 @@ export async function findPhysicalOverrideForEan(
     attributes: ["id", "product_id", "supplier_product_code"],
     transaction,
   });
+}
+
+// Outro produto da integração já usa o código (exato ou com zero à esquerda) como DE x PARA ou gtin de alguma loja
+// dela? Devolve o product_id dele, ou null. zeroVariantsOnly ignora o exato (quem chama já trata o conflito exato).
+export async function findAnotherProductUsingEan(
+  code: string | null | undefined,
+  productId: string | null,
+  integrationsId: string,
+  opts: { zeroVariantsOnly?: boolean; transaction?: Transaction } = {},
+): Promise<string | null> {
+  const normalized = normalizeEan(code ?? undefined);
+  if (!normalized) return null;
+
+  let codes = buildEanZeroVariants(normalized);
+  if (opts.zeroVariantsOnly) codes = codes.filter((variant) => variant !== normalized);
+  if (!codes.length) return null;
+
+  const mappingWhere: WhereAttributeHash<SupplierMappingAttributes> = {
+    supplier_product_code: { [Op.in]: codes },
+    integrations_id: integrationsId,
+  };
+  const configWhere: WhereAttributeHash<ProductConfigAttributes> = { gtin: { [Op.in]: codes } };
+  if (productId) {
+    mappingWhere.product_id = { [Op.ne]: productId };
+    configWhere.product_id = { [Op.ne]: productId };
+  }
+
+  const [mapping, config] = await Promise.all([
+    SupplierMapping.findOne({ where: mappingWhere, attributes: ["product_id"], transaction: opts.transaction }),
+    ProductConfig.findOne({
+      where: configWhere,
+      attributes: ["product_id"],
+      include: [
+        {
+          model: UnitBusiness,
+          as: "unitBusiness",
+          attributes: [],
+          where: { integrations_id: integrationsId },
+          required: true,
+        },
+      ],
+      transaction: opts.transaction,
+    }),
+  ]);
+  return mapping?.product_id ?? config?.product_id ?? null;
+}
+
+// O sync não pode gravar esse EAN (gtin/DE x PARA) no produto: é EAN físico confirmado de outro produto, ou outro
+// produto usa a mesma numeração com outro zero à esquerda (o bipe acharia dois). productId null = produto ainda não existe.
+export async function isEanBlockedForProduct(
+  ean: string | null | undefined,
+  productId: string | null,
+  integrationsId: string,
+  transaction?: Transaction,
+): Promise<boolean> {
+  const [override, zeroVariantOwnerId] = await Promise.all([
+    findPhysicalOverrideForEan(ean, productId, integrationsId, transaction),
+    findAnotherProductUsingEan(ean, productId, integrationsId, { zeroVariantsOnly: true, transaction }),
+  ]);
+  return !!override || !!zeroVariantOwnerId;
 }
 
 // Versão em lote de findPhysicalOverrideForEan (uma query pra todos os EANs de uma nota):

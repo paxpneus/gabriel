@@ -30,6 +30,7 @@ import {
   resolveIntegrationsIdForUnitBusiness,
   assertEanNotOwnedByAnotherProduct,
   normalizeEan,
+  buildEanZeroVariants,
 } from "../../../handlers/tecinco/queues/helpers/product.helpers";
 import productWithMovementsRepository from "../repository/product-with-movements";
 import KitComponent from "../../kit-components/kit-component.model";
@@ -128,41 +129,51 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     return this.repository.findByIdWithRelations(id, unitBusinessId, options);
   }
 
+  // Bipe da expedição/entrada: código exato + variações de zero à esquerda no gtin da loja e no DE x PARA da integração.
+  // Só resolve se der um produto só — mais de um (inclusive exato vs. variação) é erro, igual ao scan de inventário.
   async findByCode(
     code: string,
     unitBusinessId: string,
     options?: { transaction?: Transaction },
   ): Promise<{ product: Product; matchedCode: string } | null> {
-    const config = await ProductConfig.findOne({
-      where: {
-        unit_business_id: unitBusinessId,
-        gtin: code,
-      },
-      transaction: options?.transaction,
-    });
+    const normalized = normalizeEan(code);
+    if (!normalized) return null;
 
-    if (config) {
-      const product = await this.findById(config.product_id, {
-        transaction: options?.transaction,
-      });
-      if (product) return { product, matchedCode: code };
-    }
-
+    const codes = buildEanZeroVariants(normalized);
     const integrationsId = await resolveIntegrationsIdForUnitBusiness(
       unitBusinessId,
       options?.transaction,
     );
 
-    const mapping = await supplierMappingService.findOne({
-      where: { supplier_product_code: code, integrations_id: integrationsId },
-      include: [{ model: Product, as: "product" }],
+    const [configs, mappings] = await Promise.all([
+      productConfigService.findAll({
+        where: { unit_business_id: unitBusinessId, gtin: { [Op.in]: codes } },
+        attributes: ["product_id", "gtin"],
+        transaction: options?.transaction,
+      }),
+      supplierMappingService.findAll({
+        where: { supplier_product_code: { [Op.in]: codes }, integrations_id: integrationsId },
+        attributes: ["product_id", "supplier_product_code"],
+        transaction: options?.transaction,
+      }),
+    ]);
+
+    const productIds = [...new Set([...configs, ...mappings].map((row) => row.product_id))];
+    if (!productIds.length) return null;
+    if (productIds.length > 1) {
+      throw new Error(
+        `Código ${normalized} corresponde a mais de um produto (considerando zeros à esquerda) — não é possível bipar`,
+      );
+    }
+
+    const product = await this.findById(productIds[0], {
       transaction: options?.transaction,
     });
-
-    const product = (mapping as any)?.product ?? null;
     if (!product) return null;
 
-    return { product, matchedCode: code };
+    // Código como está salvo (exato ou variação) — o scan confere ele contra a etiqueta.
+    const matchedCode = configs[0]?.gtin ?? mappings[0]?.supplier_product_code ?? normalized;
+    return { product, matchedCode };
   }
 
   /**

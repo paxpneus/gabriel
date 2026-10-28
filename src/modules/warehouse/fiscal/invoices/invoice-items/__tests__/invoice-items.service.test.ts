@@ -37,7 +37,7 @@ jest.mock("../../invoice/invoice.service", () => ({
 
 jest.mock("../../../../../inventory/supplier-mapping/supplier-mapping.service", () => ({
   __esModule: true,
-  default: { findOne: jest.fn(), create: jest.fn() },
+  default: { findOne: jest.fn(), create: jest.fn(), assertEanFreeForProduct: jest.fn() },
 }));
 
 jest.mock(

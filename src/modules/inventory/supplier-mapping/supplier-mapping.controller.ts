@@ -214,7 +214,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.json(record);
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      return this.errorResponse(res, error);
     }
   };
 
@@ -258,6 +258,10 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       // is_physical_override só nasce pela rota physical-owner (permissão própria + limpeza + auditoria).
       const { is_physical_override, ...body } = req.body;
+      // Código (com zero à esquerda) de outro produto ou EAN físico confirmado → erro com code.
+      if (body.supplier_product_code && body.product_id) {
+        await this.service.assertEanFreeForProduct(body.supplier_product_code, integrationsId, body.product_id);
+      }
       const record = await this.service.create({
         ...body,
         integrations_id: integrationsId,
@@ -265,7 +269,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(record);
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      return this.errorResponse(res, error);
     }
   };
 
@@ -282,11 +286,18 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       }
 
       const { integrations_id, is_physical_override, ...data } = req.body;
+      if (data.supplier_product_code) {
+        await this.service.assertEanFreeForProduct(
+          data.supplier_product_code,
+          integrationsId,
+          data.product_id ?? existing.product_id,
+        );
+      }
 
       const record = await this.service.update(req.params.id as string, data);
       return res.json(record);
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      return this.errorResponse(res, error);
     }
   };
 
@@ -315,6 +326,19 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       const integrationsId = await this.resolveIntegrationsId(req);
       const items = req.body as Array<Record<string, unknown>>;
 
+      // Mesmo pré-check do create pra cada item, em paralelo.
+      await Promise.all(
+        items
+          .filter((item) => item.supplier_product_code && item.product_id)
+          .map((item) =>
+            this.service.assertEanFreeForProduct(
+              item.supplier_product_code as string,
+              integrationsId,
+              item.product_id as string,
+            ),
+          ),
+      );
+
       const records = await this.service.bulkCreate(
         // is_physical_override só nasce pela rota physical-owner.
         items.map(({ is_physical_override, ...item }) => ({
@@ -325,7 +349,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(records);
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      return this.errorResponse(res, error);
     }
   };
 
@@ -333,6 +357,23 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
     try {
       const integrationsId = await this.resolveIntegrationsId(req);
       const { ids, integrations_id, is_physical_override, ...data } = req.body;
+
+      // Troca de código em massa: mesmo pré-check pro produto de cada linha (uma query + checagens em paralelo).
+      if (data.supplier_product_code) {
+        const targets = await this.service.findAll({
+          where: { id: ids, integrations_id: integrationsId },
+          attributes: ['product_id'],
+        });
+        await Promise.all(
+          targets.map((target) =>
+            this.service.assertEanFreeForProduct(
+              data.supplier_product_code,
+              integrationsId,
+              data.product_id ?? target.product_id,
+            ),
+          ),
+        );
+      }
 
       const conditions: WhereOptions[] = [{ id: ids }, { integrations_id: integrationsId }];
       // EAN físico confirmado fica fora da edição em massa pra quem não é admin/developer.
@@ -343,7 +384,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(records);
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      return this.errorResponse(res, error);
     }
   };
 

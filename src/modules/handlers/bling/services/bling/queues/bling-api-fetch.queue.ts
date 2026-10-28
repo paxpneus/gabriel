@@ -61,7 +61,8 @@ import {
   assertEanNotOwnedByAnotherProduct,
   isProductOwnedByIntegration,
   EanConflictError,
-  findPhysicalOverrideForEan,
+  isEanBlockedForProduct,
+  isCodeOwnedByAnotherProduct,
 } from "../../../../tecinco/queues/helpers/product.helpers";
 import { buildBlingProductErpData } from "../helpers/erp-data";
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
@@ -900,10 +901,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     );
     const hadMapping = !!mapping;
 
-    // EAN físico confirmado pra outro produto: não grava gtin/DE x PARA nem checa conflito (gtin_erp continua).
-    let eanOverridden =
-      !!mapping &&
-      !!(await findPhysicalOverrideForEan(blingProduct.gtin, mapping.internal_id, integration.id));
+    // EAN bloqueado pro produto (EAN físico confirmado de outro, ou outro zero à esquerda em outro produto):
+    // não grava gtin/DE x PARA nem checa conflito (gtin_erp continua).
+    let eanBlocked =
+      !!mapping && (await isEanBlockedForProduct(blingProduct.gtin, mapping.internal_id, integration.id));
+    // sku omitido só quando o produto é criado aqui com sku que já é de outro produto (ver criação abaixo).
+    let skuOmitted = false;
 
     // ─── Resolve o produto SÓ via integration mapping (fonte de verdade) ───────
     // Sem fallback por EAN/ProductConfig.sku/SupplierMapping — se não tem
@@ -911,7 +914,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     let existingProduct = await resolveProductWithMapping({
       unitBusinessId: unitBusiness.id,
       systemId: String(blingProduct.id),
-      ean: mapping?.is_primary === false || eanOverridden ? undefined : blingProduct.gtin,
+      ean: mapping?.is_primary === false || eanBlocked ? undefined : blingProduct.gtin,
       logPrefix,
     });
 
@@ -945,11 +948,27 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         // IntegrationMapping e cai pro resto da função normalmente — dali em
         // diante ela já trata `existingProduct` genericamente (KIT, Magento,
         // kardex, estoque).
+        // Igual à criação Tecinco: código já de outro produto na integração (gtin: exato, outro zero à esquerda ou
+        // EAN físico confirmado; sku: exato) não bloqueia — o produto nasce sem o campo e o resto do job também omite.
+        const gtin = blingProduct.gtin?.trim();
+        const [gtinTaken, skuTaken] = await Promise.all([
+          gtin ? isCodeOwnedByAnotherProduct({ code: gtin, field: "gtin", integrationsId: integration.id }) : false,
+          // KIT tem sku sintético (nunca colide), por isso fica fora da checagem.
+          !isKit && blingProduct.codigo
+            ? isCodeOwnedByAnotherProduct({ code: blingProduct.codigo, field: "sku", integrationsId: integration.id })
+            : false,
+        ]);
+        if (gtinTaken) console.warn(`${logPrefix} — gtin=${gtin} já pertence a outro produto nessa integração — produto criado sem gtin`);
+        if (skuTaken) console.warn(`${logPrefix} — sku=${blingProduct.codigo} já pertence a outro produto nessa integração — produto criado sem sku`);
+        eanBlocked = eanBlocked || gtinTaken;
+        skuOmitted = skuTaken;
+
         existingProduct = await this.createProductFromBlingData(
           blingProduct,
           unitBusiness,
           integration,
           logPrefix,
+          { gtin: gtinTaken, sku: skuTaken },
           apiFetch.cascadeMapUnmappedId,
         );
       } else {
@@ -1016,7 +1035,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     );
     // Produto resolvido só agora (auto-map/criação): checa o override contra ele.
     if (!hadMapping) {
-      eanOverridden = !!(await findPhysicalOverrideForEan(blingProduct.gtin, existingProduct.id, integration.id));
+      eanBlocked = eanBlocked || (await isEanBlockedForProduct(blingProduct.gtin, existingProduct.id, integration.id));
     }
     if (mapping) {
       await integrationMappingService.updateErpData(
@@ -1044,7 +1063,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         productId: existingProduct.id,
         unitBusinessId: unitBusiness.id,
         candidates: [
-          { field: "ean", value: eanOverridden ? undefined : blingProduct.gtin },
+          { field: "ean", value: eanBlocked ? undefined : blingProduct.gtin },
           { field: "ean_tribut", value: blingProduct.gtinEmbalagem },
         ],
         logPrefix,
@@ -1212,17 +1231,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           hasMagentoMapping = magentoIdMap.has(product.id);
         }
 
-        // EAN físico confirmado pra outro produto: não grava gtin (gtin_erp abaixo continua).
-        const gtinFields: Pick<ProductConfigAttributes, "gtin"> = {};
-        if (!eanOverridden) gtinFields.gtin = blingProduct.gtin;
+        // EAN bloqueado / sku já de outro produto (criação acima): não grava o campo (gtin_erp abaixo continua).
+        const codeFields: Pick<ProductConfigAttributes, "gtin" | "sku"> = {};
+        if (!skuOmitted) codeFields.sku = configSku;
+        if (!eanBlocked) codeFields.gtin = blingProduct.gtin;
 
         await ProductConfig.upsert(
           {
             product_id: product.id,
             unit_business_id: unitBusiness.id,
-            sku: configSku,
             ...(hasMagentoMapping ? {} : { price: resolvedPrice }),
-            ...gtinFields,
+            ...codeFields,
             gtin_package: blingProduct.gtinEmbalagem,
             gtin_erp: blingProduct.gtin?.trim() || null,
             ncm: blingProduct.tributacao?.ncm,
@@ -1366,10 +1385,16 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     unitBusiness: UnitBusiness,
     integration: Awaited<ReturnType<typeof getBlingIntegration>>,
     logPrefix: string,
+    // Campos já de outro produto na integração (checados por quem chama): o produto nasce sem eles.
+    omit: { gtin: boolean; sku: boolean },
     cascadeMapUnmappedId?: string,
   ): Promise<Product> {
-    // EAN físico confirmado pra algum produto: o novo nasce sem gtin (gtin_erp é preenchido no upsert seguinte).
-    const eanOverridden = !!(await findPhysicalOverrideForEan(blingProduct.gtin, null, integration.id));
+    const config: Partial<ProductConfigAttributes> = {
+      unit_business_id: unitBusiness.id,
+      price: Number(blingProduct.preco) || 0,
+    };
+    if (!omit.sku) config.sku = blingProduct.codigo;
+    if (!omit.gtin) config.gtin = blingProduct.gtin;
 
     let newProduct: Product;
     try {
@@ -1378,12 +1403,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         type: blingProduct.formato === "E" ? "KIT" : "UNIT",
         integrations_id: integration.id,
         category: "TIRE",
-        config: {
-          unit_business_id: unitBusiness.id,
-          sku: blingProduct.codigo,
-          gtin: eanOverridden ? undefined : blingProduct.gtin,
-          price: Number(blingProduct.preco) || 0,
-        },
+        config,
       });
     } catch (err: any) {
       // Qualquer erro aqui (conflito de EAN, constraint do banco, etc.) é

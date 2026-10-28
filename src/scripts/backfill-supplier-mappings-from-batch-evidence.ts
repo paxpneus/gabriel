@@ -43,6 +43,7 @@ import sequelize from "../config/sequelize";
 import { setupAssociations } from "../config/sequelize-associations";
 import { SupplierMapping, ProductConfig } from "../modules/inventory";
 import { UnitBusiness } from "../modules/warehouse";
+import { findAnotherProductUsingEan } from "../modules/handlers/tecinco/queues/helpers/product.helpers";
 
 const DRY_RUN = process.env.SUPPLIER_MAPPING_BACKFILL_APPLY !== "true";
 
@@ -97,6 +98,7 @@ type Outcome =
   | "already_correct"
   | "conflict_different_product"
   | "conflict_gtin_trigger"
+  | "conflict_zero_variant"
   | "error";
 
 interface ResultRow extends EvidencedTuple {
@@ -164,6 +166,22 @@ async function main() {
         ...tuple,
         outcome: "conflict_gtin_trigger",
         detail: `código ${tuple.code} já é gtin do produto ${(conflictingConfig as any).product_id} nessa integração`,
+      });
+      continue;
+    }
+
+    // Mesmo código com/sem zero à esquerda já é de outro produto (DE x PARA ou gtin, inclui EAN físico confirmado):
+    // criar aqui faria o bipe achar dois produtos.
+    const zeroVariantOwnerId = await findAnotherProductUsingEan(
+      tuple.code,
+      tuple.product_id,
+      tuple.integrations_id,
+    );
+    if (zeroVariantOwnerId) {
+      results.push({
+        ...tuple,
+        outcome: "conflict_zero_variant",
+        detail: `código ${tuple.code} (considerando zeros à esquerda) já pertence ao produto ${zeroVariantOwnerId} nessa integração`,
       });
       continue;
     }

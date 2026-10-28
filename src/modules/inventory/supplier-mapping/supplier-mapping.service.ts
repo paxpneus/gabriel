@@ -147,7 +147,7 @@ export class SupplierMappingService extends BaseService<
 
   // EAN (exato ou com zero à esquerda) já é de outro produto na integração → erro com code: EAN físico confirmado
   // de outro produto (EAN_HAS_PHYSICAL_OVERRIDE) ou só em uso (EAN_OWNED_BY_ANOTHER_PRODUCT, com os donos).
-  private async assertEanFreeForProduct(
+  async assertEanFreeForProduct(
     code: string,
     integrationsId: string,
     productId: string,
@@ -624,6 +624,9 @@ export class SupplierMappingService extends BaseService<
       !data.supplier_product_code
     ) {
       throw new Error("supplier_product_code não informado");
+    }
+    if (data.supplier_product_code) {
+      await this.assertEanFreeForProduct(data.supplier_product_code, integrationsId, productId);
     }
 
     // Só manda o que veio no body, pra não zerar campo omitido.

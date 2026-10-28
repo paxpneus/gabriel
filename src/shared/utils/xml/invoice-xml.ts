@@ -31,7 +31,10 @@ import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/
 import unitBusinessService from "../../../modules/company/unit-business/unit-business.service";
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";
-import { resolveIntegrationsIdForUnitBusiness } from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
+import {
+  findAnotherProductUsingEan,
+  resolveIntegrationsIdForUnitBusiness,
+} from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
 import transporterService from "../../../modules/warehouse/transporter/transporter.service";
 import { generateDanfePdfBuffer } from "./danfe-generator";
 import uploaderQueue from "../../../modules/handlers/uploader/uploader.queue";
@@ -240,12 +243,21 @@ async function upsertTecincoCrossConfig(
         await existingMapping.update({ supplier_cnpj: senderCnpj });
       }
     } else if (supplierProductCode) {
-      await SupplierMapping.create({
-        product_id: product.id,
-        supplier_cnpj: senderCnpj,
-        supplier_product_code: supplierProductCode,
-        integrations_id: integrationsId,
-      });
+      // Código já de outro produto (exato ou com zero à esquerda, inclui EAN físico confirmado): só pula o
+      // DE x PARA — nem quebra o import da nota (unique) nem cria variação ambígua pro bipe.
+      const otherOwnerId = await findAnotherProductUsingEan(supplierProductCode, product.id, integrationsId);
+      if (otherOwnerId) {
+        console.warn(
+          `${logPrefix} — código ${supplierProductCode} já pertence ao produto ${otherOwnerId} nessa integração — SupplierMapping do produto ${product.id} não criado`,
+        );
+      } else {
+        await SupplierMapping.create({
+          product_id: product.id,
+          supplier_cnpj: senderCnpj,
+          supplier_product_code: supplierProductCode,
+          integrations_id: integrationsId,
+        });
+      }
     }
 
     // ─── ProductConfig ──────────────────────────────────────────────────────

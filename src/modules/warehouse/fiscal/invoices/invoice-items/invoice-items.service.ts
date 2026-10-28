@@ -320,6 +320,13 @@ export class InvoiceItemsService extends BaseService<
             );
           } else {
             if (supplierProductCode) {
+            // Mesmo pré-check do mapeamento pela busca: EAN (com zero à esquerda) de outro produto ou EAN físico confirmado.
+            await supplierMappingService.assertEanFreeForProduct(
+              supplierProductCode,
+              integrationsId,
+              invoiceItemDto.product_id,
+              t,
+            );
             const spMap = await supplierMappingService.create(
               {
                 product_id: invoiceItemDto.product_id,

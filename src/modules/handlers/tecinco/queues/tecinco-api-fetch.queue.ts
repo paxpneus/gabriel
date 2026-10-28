@@ -48,7 +48,8 @@ import { extractProductMeasureAndLine } from "../../bling/services/bling/queues/
 import {
   normalizeEan,
   ensureSupplierMappings,
-  findPhysicalOverrideForEan,
+  isEanBlockedForProduct,
+  findAnotherProductUsingEan,
   findPhysicalOverridesForEans,
   buildEanZeroVariants,
   resolveProductWithMapping,
@@ -687,10 +688,11 @@ export class TCarUpsertQueue extends BaseQueueService<
     );
     const hadMapping = !!mapping;
 
-    // EAN físico confirmado pra outro produto: omite gtin/DE x PARA (gtin_erp continua) e pula a checagem de conflito.
-    let eanOverridden =
-      !!mapping && !!(await findPhysicalOverrideForEan(ean, mapping.internal_id, integrations.id));
-    if (eanOverridden) eanOmitted = true;
+    // EAN bloqueado pro produto (EAN físico confirmado de outro, ou outro zero à esquerda em outro produto):
+    // omite gtin/DE x PARA (gtin_erp continua) e pula a checagem de conflito.
+    let eanBlocked =
+      !!mapping && (await isEanBlockedForProduct(ean, mapping.internal_id, integrations.id));
+    if (eanBlocked) eanOmitted = true;
 
     // ─── Resolve produto SÓ por integration mapping ────────────────────────────
     let product = await resolveProductWithMapping({
@@ -842,9 +844,9 @@ export class TCarUpsertQueue extends BaseQueueService<
       integrations.id,
       systemId,
     );
-    // Produto resolvido só agora (auto-map/criação): checa o override contra ele.
-    if (!hadMapping && (await findPhysicalOverrideForEan(ean, product.id, integrations.id))) {
-      eanOverridden = true;
+    // Produto resolvido só agora (auto-map/criação): checa o bloqueio contra ele.
+    if (!hadMapping && (await isEanBlockedForProduct(ean, product.id, integrations.id))) {
+      eanBlocked = true;
       eanOmitted = true;
     }
     if (mapping) {
@@ -904,7 +906,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             await assertEanNotOwnedByAnotherProduct({
               productId: product.id,
               unitBusinessId: unitBusiness.id,
-              candidates: [{ field: "ean", value: eanOverridden ? undefined : ean }],
+              candidates: [{ field: "ean", value: eanBlocked ? undefined : ean }],
               logPrefix,
             });
           } catch (error: any) {
@@ -1085,7 +1087,7 @@ export class TCarUpsertQueue extends BaseQueueService<
         await assertEanNotOwnedByAnotherProduct({
           productId: product.id,
           unitBusinessId: unitBusiness.id,
-          candidates: [{ field: "ean", value: eanOverridden ? undefined : ean }],
+          candidates: [{ field: "ean", value: eanBlocked ? undefined : ean }],
           logPrefix,
         });
       } catch (error: any) {
@@ -1729,15 +1731,18 @@ export class TCarUpsertQueue extends BaseQueueService<
 
         if (!existingConfig) {
           const skuToUse = codigoFabrica ?? systemId;
-          // EAN físico confirmado pra outro produto: config nasce sem gtin (gtin_erp guarda o do ERP).
-          const eanOverridden = overrideOwnerIds.some((ownerId) => ownerId !== product.id);
+          // EAN físico confirmado de outro produto, ou outro zero à esquerda em outro produto: config nasce sem gtin
+          // (gtin_erp guarda o do ERP). Só roda quando a config ainda não existe (raro), então a query por item é ok.
+          const eanBlocked =
+            overrideOwnerIds.some((ownerId) => ownerId !== product.id) ||
+            !!(await findAnotherProductUsingEan(ean, product.id, integrations.id, { zeroVariantsOnly: true }));
 
           let eanConflict = false;
           try {
             await assertEanNotOwnedByAnotherProduct({
               productId: product.id,
               unitBusinessId: unitBusiness.id,
-              candidates: [{ field: "ean", value: eanOverridden ? undefined : ean }],
+              candidates: [{ field: "ean", value: eanBlocked ? undefined : ean }],
               logPrefix,
             });
           } catch (error: any) {
@@ -1767,7 +1772,7 @@ export class TCarUpsertQueue extends BaseQueueService<
                 product_id: product.id,
                 unit_business_id: unitBusiness.id,
                 sku: skuToUse,
-                gtin: eanOverridden ? undefined : (ean ?? undefined),
+                gtin: eanBlocked ? undefined : (ean ?? undefined),
                 gtin_erp: ean ?? null,
                 price: Number(tcarPayload?.epprc_preco ?? 0),
                 supplier_cost_price: Number(

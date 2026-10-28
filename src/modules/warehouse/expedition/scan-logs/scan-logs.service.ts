@@ -324,7 +324,7 @@ export class ExpeditionScanLogService extends BaseService<
           labelcode.includes(stripLeadingZeros(matchedCode)));
 
       // Fallback: o EAN da etiqueta (cEAN da NF-e, posições 22-35) pode ser código de SupplierMapping do produto — resolve e compara o produto.
-      // Busca exata, sem stripar zeros: há produtos distintos que diferem só pelo zero à esquerda.
+      // findByCode considera zeros à esquerda, mas só aceita se der um produto só (produtos distintos podem diferir só pelo zero).
       if (!eanExistsOnLabel && !matchedCodeExistsOnLabel) {
         const labelMatch = await productsService.findByCode(
           labelcode.substring(22, 35),

@@ -148,6 +148,8 @@ jest.mock("../helpers/product.helpers", () => ({
   __esModule: true,
   normalizeEan: jest.fn((ean?: string) => ean),
   findPhysicalOverrideForEan: jest.fn().mockResolvedValue(null),
+  isEanBlockedForProduct: jest.fn().mockResolvedValue(false),
+  findAnotherProductUsingEan: jest.fn().mockResolvedValue(null),
   findPhysicalOverridesForEans: jest.fn().mockResolvedValue(new Map()),
   buildEanZeroVariants: jest.fn((ean: string) => [ean]),
   resolveProductWithMapping: jest.fn(),

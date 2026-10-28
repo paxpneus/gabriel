@@ -19,6 +19,7 @@ import productController from "../../../../../inventory/products/product.control
 import unitBusinessController from "../../../../../company/unit-business/unit-business.controller";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
+import { findAnotherProductUsingEan } from "../../../../tecinco/queues/helpers/product.helpers";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
@@ -109,8 +110,23 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       return;
     }
 
+    // Código do fornecedor já usado (exato ou com zero à esquerda) por outro produto na integração: não grava,
+    // senão o bipe passa a achar dois produtos (inclui EAN físico confirmado de outro produto).
+    const otherOwnerId = await findAnotherProductUsingEan(
+      data.supplier_product_code,
+      product.id,
+      integration.id,
+    );
+    if (otherOwnerId) {
+      console.warn(
+        `[BLING_DIRECT_UPSERT] Código ${data.supplier_product_code} já pertence ao produto ${otherOwnerId} nessa integração — SupplierMapping do produto ${product.id} não gravado.`,
+      );
+      return;
+    }
+
+    // Nunca reaproveita o DE x PARA de EAN físico confirmado: trocar o código dele apagaria o override sem aviso.
     const existing = await SupplierMapping.findOne({
-      where: { product_id: product.id, integrations_id: integration.id },
+      where: { product_id: product.id, integrations_id: integration.id, is_physical_override: false },
     });
 
     if (existing) {
