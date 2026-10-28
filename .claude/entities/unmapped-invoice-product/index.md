@@ -26,8 +26,10 @@ Categorizes *why* a row is unmapped, independent of `reason` (free text) and `in
 - `ERROR_CATALOG` — no `integration_mapping` found. The only type eligible for create-product. Originally catalog-sync-only (`invoice_id: null`); now also used by Tecinco's `ensureProductsFromInvoiceItems` for invoice-linked rows (`invoice_id` set) when the failure is specifically "no mapping for this item" — see the `invoice_id: <id>` bullet above.
 - `ERROR_INTEGRATION` — cross-check against a system that isn't the product's ERP of origin (e.g. `syncProductWithMagento`) — mapping-only, never creates a Product.
 - `ERROR_INVOICE` — invoice-line item unresolved for a reason that isn't "no catalog mapping" (Bling's SKU/EAN-missing cases, Tecinco's `UnitBusiness`-not-found case). Default `type` in `invoice-xml.ts` when the caller doesn't specify one.
-- `ERROR_SCAN` — manual EAN-photo lookup miss (`createUnmappedFromReadingEan`) — the only case with no `integrations_id` tie to a catalog/invoice flow.
+- `ERROR_SCAN` — manual EAN-photo lookup miss (`createUnmappedFromReadingEan`) — the only case with no `integrations_id` tie to a catalog/invoice flow. Now only for "product doesn't exist / has no mapping in the integration" and override conflicts (the tire auto search, `../product/tire-search.md`, covers the rest). `closeScanRowsByEan(codes, integrationsId, t)` deletes the integration's `ERROR_SCAN` rows for the EAN (zero variants) after a mapping is created (`createForProduct`) or an EAN físico is confirmed (`assignPhysicalOwner`).
 - `ERROR_CATALOG_DUPLICATE` (`m271`, Tecinco-only) — a catalog code colliding with a different product elsewhere in the Tecinco catalog; see `../product/tecinco/catalog-preflight.md`. Deliberately inert — not eligible for create-product like `ERROR_CATALOG` is.
+
+`findPendingByIntegration` (repository-built query) feeds the `unmapped` section of the integration pending report (`../../modules/integration-pending-report.md`).
 
 `filterableFields` also includes `type`, `integrations_id`, `reason`, `product_name`, `external_id`, `ean`, `sku` (exact-match, same mechanism as the pre-existing `status`/`invoice_id` filters) alongside the free-text `search` over `product_name`/`ean`/`sku`.
 

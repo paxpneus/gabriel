@@ -17,7 +17,10 @@ export class ExpeditionBatchItemsService extends BaseService<
     super(expeditionBatchItemsRepository);
   }
 
- 
+  // Produtos do lote que ainda faltam bipar.
+  findPendingProductIds(expeditionBatchId: string): Promise<string[]> {
+    return this.repository.findPendingProductIds(expeditionBatchId);
+  }
 }
 
 export default new ExpeditionBatchItemsService();

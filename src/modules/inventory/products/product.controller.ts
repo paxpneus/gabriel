@@ -8,7 +8,7 @@ import ProductService from "./services/product.service";
 import { userPermissions } from "../../../middlewares/user-permissions";
 import unitBusinessService from "../../company/unit-business/unit-business.service";
 import productWithMovementService from './services/product-with-movements'
-import { StockUnitFilter } from "./product.types";
+import { StockUnitFilter, TireSearchMode } from "./product.types";
 import { getUserContext } from "../../../shared/query/get-logged-user";
 
 type ProductQueryParams = Omit<QueryParams, "filters"> & {
@@ -71,6 +71,12 @@ export class ProductController extends BaseController<
       this.indexMappedToIntegration,
     );
 
+    this.router.get(
+      "/tire-search/get",
+      ...this.mw("searchTireCandidates"),
+      this.searchTireCandidates,
+    );
+
     this.router.get("/:id/full", ...this.mw("findByIdFull"), this.findByIdFull);
 
     this.router.get(
@@ -87,6 +93,7 @@ export class ProductController extends BaseController<
       indexDetailed: [authenticate],
       findByIdFull: [authenticate],
       findByCode: [authenticate],
+      searchTireCandidates: [authenticate],
       productReport: [authenticate, userPermissions],
       productByUnit: [authenticate, userPermissions],
       productSalesReport: [authenticate, userPermissions],
@@ -116,6 +123,44 @@ export class ProductController extends BaseController<
       }
 
       return res.json(product);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // Auto busca de pneu (GET /tire-search/get): valida mode/measure/expedition_batch_id e delega pro service.
+  searchTireCandidates = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const mode = req.query.mode as TireSearchMode | undefined;
+      const measure = String(req.query.measure ?? "").trim();
+      const expeditionBatchId = String(req.query.expedition_batch_id ?? "").trim() || undefined;
+
+      if (!mode || !Object.values(TireSearchMode).includes(mode)) {
+        return res.status(400).json({ error: "Informe o modo da busca: IN_BATCH ou NORMAL" });
+      }
+      if (!measure) {
+        return res.status(400).json({ error: "Informe a medida do pneu" });
+      }
+      if (mode === TireSearchMode.IN_BATCH && !expeditionBatchId) {
+        return res.status(400).json({ error: "Informe o lote para buscar dentro dele" });
+      }
+
+      const { unitBusinessId } = await getUserContext(req);
+      const result = await this.service.searchTireCandidates(
+        {
+          mode,
+          measure,
+          loadIndex: String(req.query.load_index ?? "").trim() || undefined,
+          brand: String(req.query.brand ?? "").trim() || undefined,
+          expeditionBatchId,
+        },
+        unitBusinessId,
+      );
+
+      if (!result) {
+        return res.status(404).json({ error: "Lote não encontrado na sua loja" });
+      }
+      return res.json(result);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

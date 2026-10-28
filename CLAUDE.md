@@ -95,15 +95,18 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `product/` — Product+ProductConfig+SupplierMapping como um sistema só
   - `index.md` — visão geral, link pros filhos
   - `core.md` — Product: tenant-scoping, code lookup, query config, category enum, FK-on-delete, resolução por external id
-  - `config.md` — ProductConfig, remoção do gtin_package
+  - `config.md` — ProductConfig, `gtin_erp` (só leitura), remoção do gtin_package
   - `supplier-mapping.md` — SupplierMapping schema, triggers, createFromUnmapped
   - `tecinco/automap-cascade.md` — fallback SKU/SupplierMapping (Bling + Tecinco)
   - `tecinco/catalog-preflight.md` — detecção de código duplicado no catálogo Tecinco antes do enqueue
   - `tecinco/duplicate-protection.md` — skuOmitted/eanOmitted, triggers DB, create/map manual de duplicata
   - `bling/deactivation.md` — Bling situacao=E
+  - `physical-ean-owner.md` — "Confirmar EAN físico" (`is_physical_override`), validação de EAN por integração com zero à esquerda, códigos de erro
+  - `tire-search.md` — auto busca de pneu: medida estrita no nome, pontuação por índice/marca, IN_BATCH vs NORMAL
   - `merge-duplicate.md` — runbook SQL manual pra substituir produto duplicado (antigo → novo) em todas as tabelas e apagar o antigo
 - `supplier-discount-rule.md` — matching engine, eixos de escopo, coluna computada `name`
-- `integration-mapping.md` — tabela `integration_mappings`, incidente de mapping órfão, regras cross-external-id
+- `integration-mapping.md` — tabela `integration_mappings`, `is_primary` (gate de sync) e `erp_data`, incidente de mapping órfão, regras cross-external-id
+- `audit-log.md` — tabela `audit_logs`: gravação explícita na service, description pra leigo, entrada principal + afetadas
 - `integration-error.md` — tabela genérica `integration_errors`, upsert-by-find/dedup, logger centralizado (`IntegrationLoggerService`, flag `createIntegrationError`)
 - `unmapped-invoice-product/` — fila de revisão manual
   - `index.md` — regras `type`/dedup, schema
@@ -148,6 +151,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `manual-import.md` — import manual por integração (`/api/manual-import`, Bling: produto/nota/pedido; Tecinco: produto/nota): busca → escolha → fila com prioridade 1, lock por usuário + claim por item no Redis, andamento por polling
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login
 - `reports.md` — módulo de snapshot de sales-report
+- `integration-pending-report.md` — relatório de pendências de integração (overrides, EAN duplicado no ERP, sem EAN, não mapeado), só admin/developer, sem paginação
 - `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
 - `sieg-rate-limits.md` — limites documentados por rota da API Sieg (ex.: `/v1/baixar-xmls` = 2 req/min, 50 XMLs/req) vs. limite genérico não-confirmado, onde cada um é aplicado no código
 - `magento-sync.md` — sync Bling→Magento de produtos: `external_id` = `entity_id` do Magento (não sku), resolução por id (mapeado) vs. sku/nome (1ª vez)

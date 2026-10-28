@@ -1,17 +1,21 @@
 # SupplierMapping (`src/modules/inventory/supplier-mapping/`)
 
-- Table `product_supplier_maps`: `product_id`, `supplier_cnpj`, `supplier_product_code`, `integrations_id`.
+- Table `product_supplier_maps`: `product_id`, `supplier_cnpj`, `supplier_product_code`, `integrations_id`, `is_physical_override` (`m326`, default false — "EAN físico confirmado", see `physical-ean-owner.md`; sync never creates it).
 - Unique index `product_supplier_maps_integrations_id_code_unique (integrations_id, supplier_product_code)` since `m263` — replaced an older `(product_id, supplier_product_code)` unique that blocked the same code mapping to different products across different integrations (legitimate case).
 - Trigger `trigger_prevent_supplier_mapping_gtin_conflict` (`m263`, narrowed `m265`): `supplier_product_code` can't equal another product's `ProductConfig.gtin` within the same integration (joins `unit_businesses.integrations_id`). No longer checks `gtin_package`.
 - `supplierMappingService.findByProductCode(code, unitBusinessId)` — resolves `integrations_id` for the unit business then looks up the mapping. Reuse this instead of duplicating the `findOne`.
 - `supplierMappingService.createFromUnmapped({ productId, unmappedInvoiceProductId, supplierCnpj? })` — maps an `UnmappedInvoiceProduct` to an **already-existing** `Product`, without going through `InvoiceItems`. `POST /supplier-mapping/from-unmapped`. Mainly for catalog-scoped unmapped rows (`invoice_id: null`, no invoice to attach an item to).
-  - Code = `unmapped.ean ?? unmapped.sku`; `integrations_id` from the unmapped row.
-  - Idempotent if the mapping already exists and points at the **same** `product_id` — no re-insert attempt. Throws only if it points at a **different** product.
+  - Code = `unmapped.ean ?? unmapped.sku`; `integrations_id` from the unmapped row. `assertEanFreeForProduct` first (override of another product / code in use by another, zero variants included → `SupplierMappingError` with `code`).
+  - **Always `is_physical_override: true`**: new mapping is created with it; an existing mapping of the **same** product with that code is marked (no re-insert). Audited (SUPPLIER_MAPPING + PRODUCT) with the caller's `userId`.
   - If `unmapped.external_id` is set, also calls `integrationMappingService.createOrUpdateIntegrationMapping(...)` — otherwise the next catalog sync wouldn't find the mapping and would recreate the unmapped row.
   - Deletes the `UnmappedInvoiceProduct` row. All in one transaction.
   - Controller checks `unmapped.integrations_id` against the caller's own resolved integration first (same ownership-check pattern as `show`/`update`/`destroy`).
 - Product-scoped CRUD, always scoped to `product_id` (route) + caller's resolved `integrations_id` (same tenant scope as `index`; body `product_id`/`integrations_id` ignored):
   - `GET /supplier-mapping/product/:productId` → `findByProductId`: paginated via `repository.findPaginated` forced where.
-  - `POST /supplier-mapping/product/:productId` → `createForProduct` (body `supplier_product_code`, `supplier_cnpj?`): reuses `create` (unique/trigger handling); FK error → "Produto não encontrado" (can't pre-check via `productService`: circular import, product.service imports supplierMappingService).
-  - `PUT /supplier-mapping/product/:productId/:id` → `updateForProduct`: only sent fields; uses `repository.update` (instance) so `beforeUpdate` CNPJ-cleaning hook runs. 404 if not that product/integration.
-  - `DELETE /supplier-mapping/product/:productId/:id` → `deleteForProduct`: single `bulkDelete` with scoped where; 404 if 0 rows.
+  - `POST /supplier-mapping/product/:productId` → `createForProduct` (body `supplier_product_code`, `supplier_cnpj?`): pre-checks `PRODUCT_NOT_MAPPED_IN_INTEGRATION` / `EAN_HAS_PHYSICAL_OVERRIDE` / `EAN_OWNED_BY_ANOTHER_PRODUCT` (with `owners`), then reuses `create`; closes the EAN's `ERROR_SCAN` rows and audits. FK error → "Produto não encontrado" (can't pre-check via `productService`: circular import, product.service imports supplierMappingService).
+  - `POST /supplier-mapping/product/:productId/physical-owner` → `assignPhysicalOwner` — see `physical-ean-owner.md`.
+  - `PUT /supplier-mapping/product/:productId/:id` → `updateForProduct`: only sent fields; uses `repository.update` (instance) so `beforeUpdate` CNPJ-cleaning hook runs. 404 if not that product/integration. Override row: only admin/developer; code change is pre-checked.
+  - `DELETE /supplier-mapping/product/:productId/:id` → `deleteForProduct`: single `bulkDelete` with scoped where; 404 if 0 rows. Override row: only admin/developer, audited.
+  - Generic routes (`create`/`update`/bulk) drop `is_physical_override` from the body and pre-check the code; bulk filters override rows for non-admins.
+  - `/add/item` (`invoice-items`) runs `assertEanFreeForProduct` before creating the mapping; controller returns `code`.
+- `GET /supplier-mapping/integration-pending/get` — see `../../modules/integration-pending-report.md`.

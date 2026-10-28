@@ -1,0 +1,9 @@
+# AuditLog (`src/modules/global/audit-logs/`)
+
+Tabela `audit_logs` (`m322`): `user_id` (FK users, nullable), `date` (default now), `entity` (`AuditEntity`, STRING — enum só no TS, entidade nova não precisa de migration), `internal_id`, `action` (`CREATE`/`UPDATE`/`DELETE`), `description` (TEXT), `changes` (JSONB). Índice `(entity, internal_id)`.
+
+- **Gravação explícita na service, na transação do chamador** — `auditLogService.record(entries[], t)` (um `bulkCreate`). Sem hook Sequelize: hook não sabe o usuário e `bulkCreate`/`bulkUpdate` não disparam hook.
+- **`description` é gerada** por `buildAuditDescription(entity, action, changes)` (`helpers/description.ts`) — texto pra usuário leigo: `ENTITY_LABELS` (Produto, Configurações do produto, Mapeamento DE x PARA, Mapeamento de integração), `FIELD_LABELS` (gtin → EAN, `is_physical_override` → "EAN físico confirmado"...), booleano sim/não, id técnico no fim entre colchetes. Nunca nome de tabela/coluna.
+- **`changes`** (`AuditChanges`): `summary`, `before`/`after` da própria entidade, `affected[]` (outras entidades tocadas pela mesma operação, com before/after), `origin` (quando o log é reflexo de outra entidade). Operação que mexe em várias entidades grava **uma entrada principal** (com tudo em `affected`) **+ uma por entidade afetada** (com `origin`) — quem audita qualquer uma vê o impacto inteiro.
+- `findLatestAuthors(entity, ids, t)` → `Map<id, { user_id, user_name, date }>` (última entrada de cada id, uma query) — usado pra mostrar quem/quando confirmou um EAN físico.
+- **Escopo atual**: Confirmar EAN físico, criar/alterar/apagar DE x PARA pelos fluxos manuais (`createForProduct`, `createFromUnmapped`, delete de override), troca de mapping principal. Sync automático (`erp_data`, `gtin_erp`) **não** é auditado (ruído).

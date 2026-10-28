@@ -23,6 +23,10 @@ import {
   ProductDetailedWithMovementsSummary,
   ProductSalesReportFilters,
   ProductSalesReportRow,
+  TireMatchProbability,
+  TireSearchCandidate,
+  TireSearchMode,
+  TireSearchParams,
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
 import productConfigService from "../../product-config/product_config.service";
@@ -39,6 +43,10 @@ import rimService from "../../rims/rim.service";
 import tireMeasureService from "../../tire-measures/tire-measure.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import { productMappedToIntegrationWhere } from "../helpers/integration-mapping-filters";
+import { buildMeasureNameRegex, buildTokenRegex } from "../helpers/tire-search";
+import brandsService from "../../brands/brands.service";
+import expeditionBatchService from "../../../warehouse/expedition/batch/batch.service";
+import expeditionBatchItemsService from "../../../warehouse/expedition/batch-items/batch-items.service";
 
 export class ProductService extends BaseService<Product, ProductRepository> {
   constructor() {
@@ -192,6 +200,89 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     if (!resolved) return null;
 
     return this.repository.findByIdWithRelations(resolved.productId, unitBusinessId);
+  }
+
+  /**
+   * Auto busca de pneu: medida obrigatória e estrita no nome; índice de carga e marca só pontuam e ordenam, nunca excluem.
+   * IN_BATCH restringe aos itens do lote (da loja do usuário) que faltam bipar; null = lote não encontrado.
+   */
+  async searchTireCandidates(
+    params: TireSearchParams,
+    unitBusinessId: string,
+  ): Promise<TireSearchCandidate[] | null> {
+    let productIds: string[] | undefined;
+    if (params.mode === TireSearchMode.IN_BATCH) {
+      const batch = await expeditionBatchService.findOne({
+        where: { id: params.expeditionBatchId, unit_business_id: unitBusinessId },
+        attributes: ["id"],
+      });
+      if (!batch) return null;
+      productIds = await expeditionBatchItemsService.findPendingProductIds(batch.id);
+      if (!productIds.length) return [];
+    }
+
+    const [unitBusiness, matchedBrand] = await Promise.all([
+      unitBusinessService.findById(unitBusinessId, { attributes: ["integrations_id"] }),
+      params.brand ? brandsService.findSimilarBrand(params.brand) : null,
+    ]);
+
+    const measureNameRegex = buildMeasureNameRegex(params.measure);
+    const products = await this.repository.findTireCandidates({
+      measureNameRegex,
+      productIds,
+      unitBusinessId,
+      integrationsId: unitBusiness?.integrations_id,
+    });
+
+    const measurePattern = new RegExp(measureNameRegex, "gi");
+    const loadIndexPattern = params.loadIndex ? buildTokenRegex(params.loadIndex) : null;
+    const brandPattern = params.brand ? buildTokenRegex(params.brand) : null;
+    const total = Number(!!loadIndexPattern) + Number(!!brandPattern);
+
+    const candidates = products.map((item): TireSearchCandidate => {
+      const { mapped_in_user_integration, ...product } = item.get({ plain: true }) as unknown as Record<string, unknown>;
+      // Índice/marca procurados no nome sem a medida, pra não casar pedaço dela.
+      const nameWithoutMeasure = String(product.name).replace(measurePattern, " ");
+
+      let loadIndexMatch: boolean | null = null;
+      if (loadIndexPattern) loadIndexMatch = loadIndexPattern.test(nameWithoutMeasure);
+
+      // Marca bate pelo cadastro (brand_id da marca parecida) ou pelo texto no nome — pneu sem brand_id ainda pontua.
+      let brandMatch: boolean | null = null;
+      if (brandPattern) {
+        brandMatch =
+          (!!matchedBrand && product.brand_id === matchedBrand.id) ||
+          brandPattern.test(nameWithoutMeasure);
+      }
+
+      const matched = Number(!!loadIndexMatch) + Number(!!brandMatch);
+      let probability: TireMatchProbability | null = null;
+      if (total > 0 && matched === total) probability = TireMatchProbability.HIGH;
+      else if (total > 0 && matched === 0) probability = TireMatchProbability.UNLIKELY;
+      else if (total > 0) probability = TireMatchProbability.MEDIUM;
+
+      return {
+        product,
+        matches: { load_index: loadIndexMatch, brand: brandMatch },
+        score: { matched, total },
+        probability,
+        mapped_in_user_integration: !!mapped_in_user_integration,
+      };
+    });
+
+    // Ordem: probabilidade; empate em MEDIA → quem bateu o índice antes de quem bateu só a marca; depois nome.
+    const probabilityRank = (probability: TireMatchProbability | null): number => {
+      if (probability === TireMatchProbability.HIGH) return 0;
+      if (probability === TireMatchProbability.MEDIUM) return 1;
+      if (probability === TireMatchProbability.UNLIKELY) return 2;
+      return 0;
+    };
+    return candidates.sort(
+      (a, b) =>
+        probabilityRank(a.probability) - probabilityRank(b.probability) ||
+        Number(!!b.matches.load_index) - Number(!!a.matches.load_index) ||
+        String(a.product.name).localeCompare(String(b.product.name)),
+    );
   }
 
   async create(

@@ -3,7 +3,13 @@
 `src/modules/integrations/integration-mapping/`
 
 - Table `integration_mappings`: `entity_type` (`"PRODUCT"`, `"CONTACT"`, ...), `internal_id`, `integrations_id`, `external_id` — maps a local entity to its id in an external system (Bling/Tecinco).
-- `integrationMappingService.findGroupedMappingsMap(...)` / `.findExternalIdsMap(...)` — bulk-enrich rows (e.g. `order_items.service.ts`) with external ids.
+- `integrationMappingService.findGroupedMappingsMap(...)` / `.findExternalIdsMap(...)` — bulk-enrich rows (e.g. `order_items.service.ts`) with external ids. `findExternalIdsMap` prefers the primary mapping.
+
+## `is_primary` (`m323`) and `erp_data` (`m325`)
+
+- **`is_primary`**: one primary per `(entity_type, internal_id, integrations_id)` (partial unique `uq_integration_mappings_primary`). Backfill: oldest mapping became primary. New mapping is born primary when the product has none in that integration (`createOrUpdateIntegrationMapping`/`createForProduct`); `deleteForProduct` promotes the next oldest (`promoteOldestIfNoPrimary`). Read-only list of products with 2+ mappings: `src/scripts/list-products-with-multiple-mappings.ts`.
+- **Sync gate** (Tecinco `processProduct`, Bling `fetchAndUpsertProduct`): the mapping resolves the product normally (not unmapped), but a **non-primary** mapping writes nothing (ProductConfig price/stock/gtin/sku/`gtin_erp`, Stock, SupplierMapping), only `erp_data`, then returns. `deleted`/deactivation coming through a non-primary mapping is ignored.
+- **`erp_data` JSONB** (PRODUCT only): read-only snapshot of what that external code says, written for primary **and** non-primary (`updateErpData`, one write per job). Bling `buildBlingProductErpData` (`name, ean, ean_package, sku, stock`), Tecinco `buildTecincoProductErpData` (`name, ean` via `normalizeEan`, `sku, stocks[]` per branch), both with `updated_at`. Never used in resolution; consumed by the pending report (`../modules/integration-pending-report.md`).
 - `integrationMappingService.createOrUpdateIntegrationMapping(...)` — despite the name, **never updates/reassigns an existing mapping**. If a row already exists for that `external_id` (see conflict-scope fix below), it `console.warn`s and returns the existing row unchanged — no exception.
 
 ## Orphaned-mapping incident (`m268`)
@@ -26,8 +32,8 @@ Generic `PUT/DELETE /:id` and bulk variants return 405 — sync never repoints a
 
 - `GET /integration-mapping/product/:productId` → `findByProductId`: paginated via `repository.findPaginated` forced where.
 - `POST /integration-mapping/product/:productId` → `createForProduct` (body `integrations_id`, `external_id`): checks `Product` exists first (`internal_id` isn't an FK — avoids creating an orphan). Unique `(entity_type, integrations_id, external_id)` violation → 400, not silent no-op like `createOrUpdateIntegrationMapping`.
-- `PUT /integration-mapping/product/:productId/:id` → `updateForProduct`: changes only `integrations_id`/`external_id` (sent fields); `internal_id` fixed. 404 if not that product.
-- `DELETE /integration-mapping/product/:productId/:id` → `deleteForProduct`: deleting makes the next catalog sync re-register that external product as unmapped.
+- `PUT /integration-mapping/product/:productId/:id` → `updateForProduct`: changes only `integrations_id`/`external_id`/`is_primary` (sent fields); `internal_id` fixed. 404 if not that product. `is_primary: true` unmarks the product's other mappings in that integration in the same transaction (audited); `is_primary: false` → error (choose another as primary instead).
+- `DELETE /integration-mapping/product/:productId/:id` → `deleteForProduct`: deleting makes the next catalog sync re-register that external product as unmapped; promotes the next primary if the deleted one was primary.
 
 ## Auth
 
