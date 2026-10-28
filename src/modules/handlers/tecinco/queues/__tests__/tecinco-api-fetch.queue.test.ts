@@ -834,6 +834,36 @@ describe("TCarUpsertQueue.processProduct", () => {
       );
     });
 
+    it("grava erp_data com o estoque por filial e o nome da loja", async () => {
+      const produto = makeTecincoProduto();
+      (UnitBusiness.findOne as jest.Mock).mockResolvedValue({
+        id: UNIT_BUSINESS_ID,
+        name: "Loja 01",
+        cnpj: "11222333000144",
+      });
+      (integrationMappingService.findProductMappingByExternalId as jest.Mock).mockResolvedValue({
+        id: "mapping-1",
+        internal_id: "existing-tecinco-product-id",
+        is_primary: true,
+      });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-tecinco-product-id",
+        integrations_id: INTEGRATION_ID,
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-tecinco-product-id" }),
+      );
+
+      await runProductJob("updated", produto);
+
+      expect(integrationMappingService.updateErpData).toHaveBeenCalledWith(
+        "mapping-1",
+        expect.objectContaining({
+          stocks: [expect.objectContaining({ branch_id: 1, unit_business_id: UNIT_BUSINESS_ID, unit_business_name: "Loja 01" })],
+        }),
+      );
+    });
+
     it("ensureSupplierMappings lança SupplierMappingConflictError: processProduct propaga como UnrecoverableError (erro amigável, sem retry) e registra no integration-logger, sem mandar email", async () => {
       const produto = makeTecincoProduto();
       (resolveProductWithMapping as jest.Mock).mockResolvedValue({

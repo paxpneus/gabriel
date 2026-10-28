@@ -850,13 +850,17 @@ export class TCarUpsertQueue extends BaseQueueService<
       eanOmitted = true;
     }
     if (mapping) {
+      // Estoque por filial com a loja (id + nome) — o nome evita lookup no front.
       const erpStocks = await Promise.all(
-        filiaisToProcess.map(async (filial) => ({
-          branch_id: filial.fll_codigo,
-          unit_business_id:
-            (await getCachedUnitBusinessByNumber(String(filial.fll_codigo).padStart(2, "0")))?.id ?? null,
-          quantity: Math.round(filial.estoque),
-        })),
+        filiaisToProcess.map(async (filial) => {
+          const unitBusiness = await getCachedUnitBusinessByNumber(String(filial.fll_codigo).padStart(2, "0"));
+          return {
+            branch_id: filial.fll_codigo,
+            unit_business_id: unitBusiness?.id ?? null,
+            unit_business_name: unitBusiness?.name ?? null,
+            quantity: Math.round(filial.estoque),
+          };
+        }),
       );
       await integrationMappingService.updateErpData(
         mapping.id,

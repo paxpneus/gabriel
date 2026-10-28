@@ -414,3 +414,71 @@ describe("SupplierMappingService.createFromUnmapped", () => {
     expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();
   });
 });
+
+describe("SupplierMappingService.updateForProduct — desativar EAN físico confirmado", () => {
+  let service: SupplierMappingService;
+  const recordUpdate = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new SupplierMappingService();
+    (SupplierMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "sm-1",
+      supplier_product_code: "7891234567895",
+      is_physical_override: true,
+    });
+    recordUpdate.mockImplementation(async (data: any) => ({ id: "sm-1", ...data }));
+    (SupplierMapping.findByPk as jest.Mock).mockResolvedValue({ update: recordUpdate });
+  });
+
+  it("admin desativa: grava is_physical_override false e audita no DE x PARA e no produto", async () => {
+    const result = await service.updateForProduct(
+      "sm-1", "product-1", "integration-1", { is_physical_override: false }, true, "user-1",
+    );
+
+    expect(recordUpdate).toHaveBeenCalledWith({ is_physical_override: false }, { transaction: mockTransaction });
+    expect(result).toMatchObject({ is_physical_override: false });
+    const entries = (AuditLog.bulkCreate as jest.Mock).mock.calls[0][0];
+    expect(entries.map((e: any) => [e.entity, e.internal_id, e.user_id])).toEqual([
+      ["SUPPLIER_MAPPING", "sm-1", "user-1"],
+      ["PRODUCT", "product-1", "user-1"],
+    ]);
+    expect(entries[0].changes.after).toEqual({ supplier_product_code: "7891234567895", is_physical_override: false });
+  });
+
+  it("quem não é admin/developer não desativa: erro, nada gravado", async () => {
+    await expect(
+      service.updateForProduct("sm-1", "product-1", "integration-1", { is_physical_override: false }, false),
+    ).rejects.toThrow("Somente administradores");
+    expect(recordUpdate).not.toHaveBeenCalled();
+    expect(AuditLog.bulkCreate).not.toHaveBeenCalled();
+  });
+
+  it("is_physical_override true no update: erro (confirmar só pela rota própria)", async () => {
+    (SupplierMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "sm-1",
+      supplier_product_code: "7891234567895",
+      is_physical_override: false,
+    });
+
+    await expect(
+      service.updateForProduct("sm-1", "product-1", "integration-1", { is_physical_override: true }, true),
+    ).rejects.toThrow("Confirmar EAN físico");
+    expect(recordUpdate).not.toHaveBeenCalled();
+  });
+
+  it("false num DE x PARA comum: não muda a flag nem audita", async () => {
+    (SupplierMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "sm-1",
+      supplier_product_code: "7891234567895",
+      is_physical_override: false,
+    });
+
+    await service.updateForProduct(
+      "sm-1", "product-1", "integration-1", { supplier_cnpj: "123", is_physical_override: false }, false,
+    );
+
+    expect(recordUpdate).toHaveBeenCalledWith({ supplier_cnpj: "123" }, { transaction: mockTransaction });
+    expect(AuditLog.bulkCreate).not.toHaveBeenCalled();
+  });
+});

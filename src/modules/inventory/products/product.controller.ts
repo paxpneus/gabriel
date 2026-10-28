@@ -80,6 +80,12 @@ export class ProductController extends BaseController<
     this.router.get("/:id/full", ...this.mw("findByIdFull"), this.findByIdFull);
 
     this.router.get(
+      "/:id/audit-logs",
+      ...this.mw("findAuditLogs"),
+      this.findAuditLogs,
+    );
+
+    this.router.get(
       "/by-code/:code",
       ...this.mw("findByCode"),
       this.findByCode,
@@ -94,6 +100,7 @@ export class ProductController extends BaseController<
       findByIdFull: [authenticate],
       findByCode: [authenticate],
       searchTireCandidates: [authenticate],
+      findAuditLogs: [authenticate],
       productReport: [authenticate, userPermissions],
       productByUnit: [authenticate, userPermissions],
       productSalesReport: [authenticate, userPermissions],
@@ -160,6 +167,19 @@ export class ProductController extends BaseController<
       if (!result) {
         return res.status(404).json({ error: "Lote não encontrado na sua loja" });
       }
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // GET /:id/audit-logs — histórico de auditoria do produto, paginado (page/perPage/filters[action]).
+  findAuditLogs = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const result = await this.service.findAuditLogs(
+        req.params.id as string,
+        this.extractQueryParams(req),
+      );
       return res.json(result);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });

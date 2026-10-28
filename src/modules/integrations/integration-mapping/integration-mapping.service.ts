@@ -251,6 +251,16 @@ export class IntegrationMappingService extends BaseService<
           );
           changes.is_primary = true;
 
+          const summary = `O código ${changes.external_id ?? existing.external_id} no ERP passou a ser o mapeamento principal do produto nessa integração`;
+          const unmarked = previousPrimaries.map((m) => ({
+            entity: AuditEntity.INTEGRATION_MAPPING,
+            internal_id: m.id,
+            action: AuditAction.UPDATE,
+            label: `(código ${m.external_id} no ERP)`,
+            before: { is_primary: true },
+            after: { is_primary: false },
+          }));
+          // Entrada do mapeamento + entrada do produto (histórico do produto mostra a troca inteira).
           await auditLogService.record(
             [
               {
@@ -259,17 +269,30 @@ export class IntegrationMappingService extends BaseService<
                 internalId: id,
                 action: AuditAction.UPDATE,
                 changes: {
-                  summary: `O código ${changes.external_id ?? existing.external_id} no ERP passou a ser o mapeamento principal do produto nessa integração`,
+                  summary,
                   before: { is_primary: existing.is_primary },
                   after: { is_primary: true },
-                  affected: previousPrimaries.map((m) => ({
-                    entity: AuditEntity.INTEGRATION_MAPPING,
-                    internal_id: m.id,
-                    action: AuditAction.UPDATE,
-                    label: `(código ${m.external_id} no ERP)`,
-                    before: { is_primary: true },
-                    after: { is_primary: false },
-                  })),
+                  affected: unmarked,
+                },
+              },
+              {
+                userId,
+                entity: AuditEntity.PRODUCT,
+                internalId: productId,
+                action: AuditAction.UPDATE,
+                changes: {
+                  summary,
+                  affected: [
+                    {
+                      entity: AuditEntity.INTEGRATION_MAPPING,
+                      internal_id: id,
+                      action: AuditAction.UPDATE,
+                      label: `(código ${changes.external_id ?? existing.external_id} no ERP)`,
+                      before: { is_primary: existing.is_primary },
+                      after: { is_primary: true },
+                    },
+                    ...unmarked,
+                  ],
                 },
               },
             ],

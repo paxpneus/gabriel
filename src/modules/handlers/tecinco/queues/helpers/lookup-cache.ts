@@ -42,7 +42,7 @@ export function getCachedTCarIntegration() {
   );
 }
 
-/** `number` no formato já padronizado da coluna (ex.: "12"). Null (não achou) nunca é cacheado. */
+/** `number` no formato já padronizado da coluna (ex.: "12"). Null (não achou) nunca é cacheado. `name` vai pro erp_data.stocks. */
 export function getCachedUnitBusinessByNumber(number: string) {
   return cached(
     () => unitBusinessCache.get(number),
@@ -50,7 +50,7 @@ export function getCachedUnitBusinessByNumber(number: string) {
       entry ? unitBusinessCache.set(number, entry) : unitBusinessCache.delete(number),
     () =>
       UnitBusiness.findOne({
-        attributes: ["id", "number", "cnpj", "integrations_id"],
+        attributes: ["id", "number", "name", "cnpj", "integrations_id"],
         where: { number },
       }),
     (value) => value !== null,

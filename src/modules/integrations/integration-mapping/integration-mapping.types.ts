@@ -29,7 +29,7 @@ export interface ProductErpData {
   sku: string | null;
   ean_package?: string | null;
   stock?: number | null;
-  stocks?: Array<{ branch_id: number; unit_business_id: string | null; quantity: number }>;
+  stocks?: Array<{ branch_id: number; unit_business_id: string | null; unit_business_name?: string | null; quantity: number }>;
   updated_at: string;
 }
 

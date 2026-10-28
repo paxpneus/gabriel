@@ -22,5 +22,6 @@
 
 - **Proteção no sync** (Bling `fetchAndUpsertProduct`, Tecinco `processProduct`/nota): EAN com override de outro produto → `eanOmitted`; `assertEanNotOwnedByAnotherProduct` nunca apaga override (lança `EanConflictError`); upsert direto de DE x PARA do Bling nunca reaproveita linha com override. Sync **nunca cria** override.
 - **Quem cria override**: só `assignPhysicalOwner` e `createFromUnmapped` (sempre `true`; reaproveitando DE x PARA do mesmo produto, marca o existente).
+- **Desativar override**: `PUT /supplier-mapping/product/:productId/:id` com `is_physical_override: false` (só admin/developer, auditado) — vira DE x PARA comum do mesmo produto: o próximo sync do outro produto cujo ERP manda o EAN pode removê-lo (`assertEanNotOwnedByAnotherProduct`) e gravar o gtin lá. `true` nesse PUT → erro (confirmar só pela rota própria).
 - **Alterar/apagar override**: só admin/developer (`FULL_ACCESS_USER_TYPES` em `user_config.type`); rotas genéricas descartam `is_physical_override` do body. Depois de apagar, o próximo sync devolve o EAN do ERP aos outros produtos.
 - Erros: `SupplierMappingError(code, msg, owners?, override?)` → HTTP 400 `{ error, code, owners?, override? }`. `EAN_OWNED_BY_ANOTHER_PRODUCT` (com `owners`) → front oferece "Confirmar EAN físico"; `EAN_HAS_PHYSICAL_OVERRIDE` → front mostra quem/quando e abre o modal de foto.

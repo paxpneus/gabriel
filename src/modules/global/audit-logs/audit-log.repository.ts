@@ -1,4 +1,5 @@
 import { Op, Transaction } from "sequelize";
+import { PaginatedResult, QueryConfig, QueryParams } from "../../../shared/query/query.types";
 import BaseRepository from "../../../shared/utils/base-models/base-repository";
 import AuditLog from "./audit-log.model";
 import User from "../../company/users/users/user.model";
@@ -22,6 +23,24 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
       order: [["date", "DESC"]],
       transaction,
     });
+  }
+
+  // Histórico paginado de uma entidade (mais recente primeiro pelo queryConfig), com quem fez.
+  paginateByEntity(
+    params: QueryParams,
+    config: QueryConfig,
+    entity: AuditEntity,
+    internalId: string,
+  ): Promise<PaginatedResult<AuditLog>> {
+    return this.findPaginated(
+      params,
+      config,
+      {
+        attributes: ["id", "user_id", "date", "entity", "internal_id", "action", "description", "changes"],
+        include: [{ model: User, as: "user", attributes: ["id", "name"] }],
+      },
+      { entity, internal_id: internalId },
+    );
   }
 }
 

@@ -47,6 +47,9 @@ import { buildMeasureNameRegex, buildTokenRegex } from "../helpers/tire-search";
 import brandsService from "../../brands/brands.service";
 import expeditionBatchService from "../../../warehouse/expedition/batch/batch.service";
 import expeditionBatchItemsService from "../../../warehouse/expedition/batch-items/batch-items.service";
+import auditLogService from "../../../global/audit-logs/audit-log.service";
+import AuditLog from "../../../global/audit-logs/audit-log.model";
+import { AuditEntity } from "../../../global/audit-logs/audit-log.types";
 
 export class ProductService extends BaseService<Product, ProductRepository> {
   constructor() {
@@ -200,6 +203,11 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     if (!resolved) return null;
 
     return this.repository.findByIdWithRelations(resolved.productId, unitBusinessId);
+  }
+
+  // Histórico de auditoria do produto (entradas PRODUCT já trazem em `changes.affected` o que a operação mexeu).
+  findAuditLogs(productId: string, params: QueryParams): Promise<PaginatedResult<AuditLog>> {
+    return auditLogService.paginateByEntity(AuditEntity.PRODUCT, productId, params);
   }
 
   /**

@@ -7,7 +7,7 @@ Fluxos para quando o bipe não acha o produto ou acha o produto errado:
 - **Confirmar EAN físico**: o EAN bipado passa a ser só daquele produto na integração.
 - **Registrar com foto**: continua existindo, mas só para quando os fluxos acima não resolvem.
 
-Também entram aqui a troca do **mapeamento de integração principal** e o **relatório de pendências de integração** (admin).
+Também entram aqui a troca do **mapeamento de integração principal**, o **relatório de pendências de integração** (admin) e o **histórico do produto**.
 
 Todas as rotas exigem autenticação. Base: `/api`.
 
@@ -221,8 +221,10 @@ Respostas:
 ## 6. Listar, editar e remover DE x PARA do produto
 
 - **`GET /api/supplier-mapping/product/:productId`** (paginado): cada linha traz `is_physical_override`. Sugestão: selo "EAN físico confirmado".
-- **`PUT /api/supplier-mapping/product/:productId/:id`**, body `{ supplier_product_code?, supplier_cnpj? }`:
+- **`PUT /api/supplier-mapping/product/:productId/:id`**, body `{ supplier_product_code?, supplier_cnpj?, is_physical_override? }`:
   - linha com `is_physical_override: true`: só admin/developer, senão `400` `"Somente administradores podem alterar ou remover um EAN físico confirmado"`;
+  - **desativar o EAN físico confirmado**: `{ "is_physical_override": false }`. A linha continua como DE x PARA comum do mesmo produto e fica registrado quem fez. A partir daí ela volta a seguir as regras normais: se o ERP de outro produto manda esse EAN, o próximo sync pode tirar o DE x PARA daqui e gravar o EAN lá;
+  - `{ "is_physical_override": true }` → `400` `"Para confirmar o EAN físico use a opção \"Confirmar EAN físico\""` (confirmar só por §3);
   - trocar o código passa pela mesma validação de §2 (`400` com `code`);
   - `404`: não é desse produto.
 - **`DELETE /api/supplier-mapping/product/:productId/:id`** → `204`:
@@ -232,7 +234,7 @@ Respostas:
   - `is_physical_override` no body é ignorado;
   - em massa, as linhas confirmadas ficam de fora para quem não é admin/developer.
 
-Sugestão: esconder editar/remover nas linhas confirmadas para quem não é admin/developer (`user.type` `admin` ou `developer`).
+Sugestão: esconder editar/remover/desativar nas linhas confirmadas para quem não é admin/developer (`user.type` `admin` ou `developer`). Para admin, botão "Desativar EAN físico" na linha confirmada.
 
 ---
 
@@ -251,11 +253,11 @@ Um produto pode ter mais de um código no mesmo ERP. **Só o principal grava dad
       "sku": "string | null",
       "ean_package": "string | null (Bling)",
       "stock": "number | null (Bling)",
-      "stocks": [{ "branch_id": 1, "unit_business_id": "uuid | null", "quantity": 3 }],
+      "stocks": [{ "branch_id": 1, "unit_business_id": "uuid | null", "unit_business_name": "Loja 01 | null", "quantity": 3 }],
       "updated_at": "ISO"
     }
     ```
-    `stocks` só vem da Tecinco, um por filial. `erp_data` fica `null` até o primeiro sync daquele código.
+    `stocks` só vem da Tecinco, um por filial. `unit_business_name` só vem nos códigos sincronizados depois desta versão; antes disso, cair para o `branch_id`. `erp_data` fica `null` até o primeiro sync daquele código.
 - **Trocar o principal**: `PUT /api/integration-mapping/product/:productId/:id` com `{ "is_primary": true }`. Desmarca os outros do mesmo produto na mesma integração.
   - `{ "is_primary": false }` → `400` `"Para trocar o principal, marque outro mapping como principal"`.
   - `404`: não é desse produto.
@@ -346,7 +348,54 @@ A seção `missing_ean`, e o que `overrides` e `erp_duplicates` leem do ERP, só
 
 ---
 
-## 9. Bipe com EAN ambíguo
+## 9. Histórico do produto — `GET /api/products/:id/audit-logs`
+
+Paginado, mais recente primeiro. Query: `page`, `perPage` (padrão 20), `filters[action]=CREATE|UPDATE|DELETE`.
+
+Entra no histórico:
+- Confirmar EAN físico;
+- mapear pela busca (§2);
+- mapear a partir de não mapeado (§5);
+- desativar ou remover EAN físico confirmado;
+- trocar o mapeamento principal (§7).
+
+O sync automático não entra.
+
+```json
+{
+  "data": [{
+    "id": "uuid",
+    "date": "ISO",
+    "action": "UPDATE",
+    "entity": "PRODUCT",
+    "internal_id": "uuid do produto",
+    "description": "Texto pronto para exibir ao usuário",
+    "user": { "id": "uuid", "name": "Fulano" },
+    "user_id": "uuid | null",
+    "changes": {
+      "summary": "Resumo da operação",
+      "before": {},
+      "after": {},
+      "affected": [{
+        "entity": "SUPPLIER_MAPPING | PRODUCT_CONFIG | INTEGRATION_MAPPING | PRODUCT",
+        "internal_id": "uuid",
+        "action": "CREATE | UPDATE | DELETE",
+        "label": "opcional",
+        "before": {},
+        "after": {}
+      }]
+    }
+  }],
+  "meta": { "total": 12, "page": 1, "perPage": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
+}
+```
+
+- Exibir `description`, `user.name` (ou "usuário não identificado" quando `user` é `null`) e `date`.
+- `changes` é o detalhe técnico (o que mudou em cada registro afetado), para uma tela de detalhe. `before`, `after` e `affected` podem não vir.
+
+---
+
+## 10. Bipe com EAN ambíguo
 
 Quando o código bipado (considerando zeros à esquerda) corresponde a **mais de um produto** na integração, o bipe é recusado com `400` e `error`. O front só exibe a mensagem:
 - **Inventário:** `"Código X corresponde a mais de um produto (considerando zeros à esquerda) — não é possível bipar"`.

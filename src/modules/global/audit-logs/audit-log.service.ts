@@ -1,4 +1,5 @@
 import { Transaction } from "sequelize";
+import { PaginatedResult, QueryParams } from "../../../shared/query/query.types";
 import BaseService from "../../../shared/utils/base-models/base-service";
 import AuditLog from "./audit-log.model";
 import auditLogRepository, { AuditLogRepository } from "./audit-log.repository";
@@ -8,6 +9,22 @@ import { buildAuditDescription } from "./helpers/description";
 export class AuditLogService extends BaseService<AuditLog, AuditLogRepository> {
   constructor() {
     super(auditLogRepository);
+
+    // Sem createdAt (tabela só de inserção): ordena por date; filtro por ação (CREATE/UPDATE/DELETE).
+    this.queryConfig = {
+      defaults: { perPage: 20, sortBy: "date", sortDir: "DESC" },
+      sortableFields: ["date"],
+      filterableFields: ["action"],
+    };
+  }
+
+  // Histórico de auditoria de qualquer entidade, paginado — a service da entidade chama e expõe na própria rota.
+  paginateByEntity(
+    entity: AuditEntity,
+    internalId: string,
+    params: QueryParams,
+  ): Promise<PaginatedResult<AuditLog>> {
+    return this.repository.paginateByEntity(params, this.queryConfig, entity, internalId);
   }
 
   // Grava várias entradas num bulkCreate só, na transação do chamador — description gerada pelo helper.

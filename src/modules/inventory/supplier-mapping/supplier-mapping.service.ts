@@ -576,6 +576,9 @@ export class SupplierMappingService extends BaseService<
           ? await unmappedInvoiceProductService.closeScanRowsByEan(buildEanZeroVariants(code), integrationsId, t)
           : 0;
 
+        // Entrada do DE x PARA + entrada do produto (histórico do produto mostra o vínculo).
+        const summary = `Código ${record.supplier_product_code} vinculado ao produto${closedScanRows ? `; ${closedScanRows} registro(s) com foto desse EAN foram fechados` : ""}`;
+        const after = { supplier_product_code: record.supplier_product_code, product_id: productId };
         await auditLogService.record(
           [
             {
@@ -583,10 +586,18 @@ export class SupplierMappingService extends BaseService<
               entity: AuditEntity.SUPPLIER_MAPPING,
               internalId: record.id,
               action: AuditAction.CREATE,
+              changes: { summary, after, origin: { entity: AuditEntity.PRODUCT, internal_id: productId } },
+            },
+            {
+              userId,
+              entity: AuditEntity.PRODUCT,
+              internalId: productId,
+              action: AuditAction.UPDATE,
               changes: {
-                summary: `Código ${record.supplier_product_code} vinculado ao produto${closedScanRows ? `; ${closedScanRows} registro(s) com foto desse EAN foram fechados` : ""}`,
-                after: { supplier_product_code: record.supplier_product_code, product_id: productId },
-                origin: { entity: AuditEntity.PRODUCT, internal_id: productId },
+                summary,
+                affected: [
+                  { entity: AuditEntity.SUPPLIER_MAPPING, internal_id: record.id, action: AuditAction.CREATE, before: null, after },
+                ],
               },
             },
           ],
@@ -605,19 +616,26 @@ export class SupplierMappingService extends BaseService<
   }
 
   // Atualiza código/CNPJ de um SupplierMapping do produto na integração do usuário; null = não pertence/não existe.
+  // `is_physical_override: false` desativa o EAN físico confirmado (só admin/developer, auditado): volta a ser DE x PARA comum.
   async updateForProduct(
     id: string,
     productId: string,
     integrationsId: string,
     data: Partial<ProductSupplierMappingInput>,
     canManageOverride?: boolean,
+    userId: string | null = null,
   ): Promise<SupplierMapping | null> {
     const existing = await this.findOne({
       where: { id, product_id: productId, integrations_id: integrationsId },
-      attributes: ["id", "is_physical_override"],
+      attributes: ["id", "supplier_product_code", "is_physical_override"],
     });
     if (!existing) return null;
     if (existing.is_physical_override) this.assertCanManageOverride(canManageOverride);
+
+    // Confirmar só pela rota própria (permissão + limpeza dos outros produtos); aqui só desativa.
+    if (data.is_physical_override === true) {
+      throw new Error('Para confirmar o EAN físico use a opção "Confirmar EAN físico"');
+    }
 
     if (
       data.supplier_product_code !== undefined &&
@@ -635,10 +653,33 @@ export class SupplierMappingService extends BaseService<
       changes.supplier_product_code = data.supplier_product_code;
     if (data.supplier_cnpj !== undefined)
       changes.supplier_cnpj = data.supplier_cnpj;
+    const deactivatingOverride = data.is_physical_override === false && existing.is_physical_override;
+    if (deactivatingOverride) changes.is_physical_override = false;
 
     try {
-      // repository.update (instância) em vez de bulkUpdate pra rodar o hook beforeUpdate que limpa o CNPJ.
-      return await this.repository.update(id, changes);
+      return await sequelize.transaction(async (t) => {
+        // repository.update (instância) em vez de bulkUpdate pra rodar o hook beforeUpdate que limpa o CNPJ.
+        const updated = await this.repository.update(id, changes, { transaction: t });
+
+        if (deactivatingOverride) {
+          const code = changes.supplier_product_code ?? existing.supplier_product_code;
+          await auditLogService.record(
+            [AuditEntity.SUPPLIER_MAPPING, AuditEntity.PRODUCT].map((entity) => ({
+              userId,
+              entity,
+              internalId: entity === AuditEntity.PRODUCT ? productId : id,
+              action: AuditAction.UPDATE,
+              changes: {
+                summary: `EAN ${code} deixou de ser o EAN físico confirmado deste produto e voltou a ser um mapeamento DE x PARA comum; a próxima sincronização pode voltar o EAN do ERP para os outros produtos`,
+                before: { supplier_product_code: existing.supplier_product_code, is_physical_override: true },
+                after: { supplier_product_code: code, is_physical_override: false },
+              },
+            })),
+            t,
+          );
+        }
+        return updated;
+      });
     } catch (error: any) {
       if (error instanceof UniqueConstraintError) {
         throw new Error(

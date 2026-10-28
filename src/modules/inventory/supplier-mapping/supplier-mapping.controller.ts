@@ -197,18 +197,20 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
     }
   };
 
-  // PUT /product/:productId/:id — atualiza código/CNPJ; 404 se o mapping não for desse produto/integração.
+  // PUT /product/:productId/:id — atualiza código/CNPJ e/ou desativa EAN físico confirmado (is_physical_override: false);
+  // 404 se o mapping não for desse produto/integração.
   updateForProduct = async (req: Request, res: Response): Promise<Response> => {
     try {
       const integrationsId = await this.resolveIntegrationsId(req);
-      const { supplier_product_code, supplier_cnpj } = req.body;
+      const { supplier_product_code, supplier_cnpj, is_physical_override } = req.body;
 
       const record = await this.service.updateForProduct(
         req.params.id as string,
         req.params.productId as string,
         integrationsId,
-        { supplier_product_code, supplier_cnpj },
+        { supplier_product_code, supplier_cnpj, is_physical_override },
         await this.canManageOverride(req),
+        (req as any).user?.id ?? null,
       );
       if (!record) return res.status(404).json({ error: 'Não encontrado' });
 

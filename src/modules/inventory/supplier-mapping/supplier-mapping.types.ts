@@ -21,9 +21,10 @@ export interface FullSupplierMapping extends SupplierMappingAttributes {
 export interface SupplierMappingCreationAttributes extends Omit<SupplierMappingAttributes, 'id' | 'createdAt' | 'updatedAt'> {}
 
 // Campos aceitos do body no CRUD por produto; product_id/integrations_id vêm da rota e do usuário logado.
+// is_physical_override só é aceito como false no update (desativar EAN físico confirmado).
 export type ProductSupplierMappingInput = Pick<
   SupplierMappingAttributes,
-  "supplier_product_code" | "supplier_cnpj"
+  "supplier_product_code" | "supplier_cnpj" | "is_physical_override"
 >;
 
 // Donos (outros produtos) de um EAN na integração — retorno de supplierMappingService.findEanOwners;
