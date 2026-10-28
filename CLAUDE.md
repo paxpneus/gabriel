@@ -2,6 +2,10 @@
 
 **Nunca commitar sozinho.** `git commit` só quando o usuário pedir explicitamente naquele turno — mesmo depois de terminar uma tarefa grande, corrigir bug, ou aplicar fix que o usuário claramente vai querer versionado. Terminar o código não é permissão pra commitar; perguntar/avisar que está pronto pra commit, sim.
 
+**Avisar pra commitar em blocos pequenos.** Terminou um bloco de mudança de uma responsabilidade só e a próxima tarefa vai mexer em outra responsabilidade → avisar o usuário pra commitar antes de seguir (com a sugestão de mensagem abaixo), em vez de acumular várias responsabilidades num commit só. Só avisa — quem commita é o usuário (regra acima).
+
+**Sugestão de mensagem de commit — só quando o usuário pedir** (ex.: "levantamento das alterações do commit"): uma linha no padrão dos commits do repo, `TIPO: Descrição` — tipo em maiúsculo (`FEAT`, `FIX`, `REFACTOR`), descrição em inglês, começando com maiúscula, resumindo o conjunto da mudança. Ex.: `FIX: Close leading-zero EAN ambiguity on all write flows and zero-aware expedition scan`. Entregar num bloco de código pronto pra copiar.
+
 # Testes
 
 **Nunca `npm run test`/`npx jest` sozinho (sem flag).** Rodar a suite inteira em paralelo (workers default do Jest) consome memória demais e derruba o VS Code. Sempre `--runInBand` (ex.: `npx jest --runInBand`, ou escopado num arquivo/pasta com `--runInBand` também) — mesmo rodando só um subconjunto de arquivos.
