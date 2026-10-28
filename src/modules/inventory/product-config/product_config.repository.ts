@@ -46,7 +46,7 @@ export class ProductConfigRepository extends BaseRepository<ProductConfig> {
         {
           model: UnitBusiness,
           as: 'unitBusiness',
-          attributes: ['name'],
+          attributes: [],
           where: { integrations_id: integrationsId },
           required: true,
         },
@@ -64,7 +64,7 @@ export class ProductConfigRepository extends BaseRepository<ProductConfig> {
         {
           model: UnitBusiness,
           as: 'unitBusiness',
-          attributes: ['name'],
+          attributes: [],
           where: { integrations_id: integrationsId },
           required: true,
         },

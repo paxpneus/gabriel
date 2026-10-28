@@ -89,22 +89,27 @@ export class SupplierMappingError extends Error {
 export const INTEGRATION_PENDING_SECTIONS = ["overrides", "erp_duplicates", "missing_ean", "unmapped"] as const;
 export type IntegrationPendingSection = (typeof INTEGRATION_PENDING_SECTIONS)[number];
 
-// Uma linha do que o ERP manda: EAN de um produto, vindo do mapping principal (por loja) ou não principal.
+// Uma linha do que o ERP manda: EAN de um produto, vindo do mapping principal ou não principal.
 export interface ErpEanClaim {
   product_id: string;
   product_name: string | null;
   ean: string;
   source: "ERP_PRIMARY" | "ERP_NON_PRIMARY";
-  unit_business: string | null;
 }
 
-// Produto que o ERP diz ter o EAN (principal: Configurações do produto por loja; não principal: snapshot do mapeamento).
+// Integração do relatório — o EAN do ERP é do cadastro da integração, igual em todas as lojas dela (não lista loja).
+export interface IntegrationPendingIntegration {
+  id: string;
+  name: string;
+}
+
+// Produto que o ERP diz ter o EAN (principal: Configurações do produto; não principal: snapshot do mapeamento).
 export interface ErpEanClaimProduct {
   product_id: string;
   product_name: string | null;
   eans: string[];
   sources: Array<"ERP_PRIMARY" | "ERP_NON_PRIMARY">;
-  unit_businesses: string[];
+  integration: IntegrationPendingIntegration;
 }
 
 // Quem prevalece hoje no sistema pro EAN duplicado no ERP, em ordem: override físico, EAN local, DE x PARA, ninguém.

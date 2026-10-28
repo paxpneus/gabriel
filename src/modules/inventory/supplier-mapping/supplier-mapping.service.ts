@@ -17,6 +17,7 @@ import {
   ErpEanClaim,
   ErpEanClaimProduct,
   ErpEanPrevailing,
+  IntegrationPendingIntegration,
   FullSupplierMapping,
   ProductSupplierMappingInput,
   SupplierMappingError,
@@ -423,20 +424,21 @@ export class SupplierMappingService extends BaseService<
       return unmappedInvoiceProductService.findPendingByIntegration(integrationsId);
     }
 
-    // Produto com configuração numa loja da integração mas sem EAN vindo do ERP, agrupado por produto.
+    // Integração da linha (EAN do ERP é do cadastro da integração, vale pra todas as lojas dela — não lista loja).
+    const found = await integrationsService.findById(integrationsId, { attributes: ["id", "name"] });
+    const integration: IntegrationPendingIntegration = { id: integrationsId, name: found?.name ?? "" };
+
+    // Produto com configuração numa loja da integração mas sem EAN vindo do ERP, uma linha por produto.
     if (section === "missing_ean") {
       const configs = await productConfigService.findMissingErpEanInIntegration(integrationsId);
-      type MissingEanRow = { product_id: string; product_name: string | null; unit_businesses: string[] };
-      const byProduct = new Map<string, MissingEanRow>();
+      const byProduct = new Map<string, { product_id: string; product_name: string | null; integration: IntegrationPendingIntegration }>();
       for (const pc of configs) {
-        const entry: MissingEanRow = byProduct.get(pc.product_id) ?? {
+        if (byProduct.has(pc.product_id)) continue;
+        byProduct.set(pc.product_id, {
           product_id: pc.product_id,
           product_name: (pc as any).product?.name ?? null,
-          unit_businesses: [],
-        };
-        const storeName = (pc as any).unitBusiness?.name;
-        if (storeName && !entry.unit_businesses.includes(storeName)) entry.unit_businesses.push(storeName);
-        byProduct.set(pc.product_id, entry);
+          integration,
+        });
       }
       return [...byProduct.values()];
     }
@@ -459,11 +461,10 @@ export class SupplierMappingService extends BaseService<
         product_name: (pc as any).product?.name ?? null,
         ean: pc.gtin_erp as string,
         source: "ERP_PRIMARY",
-        unit_business: (pc as any).unitBusiness?.name ?? null,
       }),
     );
     nonPrimaryEans.forEach((m) =>
-      addClaim({ product_id: m.product_id, product_name: m.product_name, ean: m.ean, source: "ERP_NON_PRIMARY", unit_business: null }),
+      addClaim({ product_id: m.product_id, product_name: m.product_name, ean: m.ean, source: "ERP_NON_PRIMARY" }),
     );
 
     if (section === "overrides") {
@@ -480,6 +481,7 @@ export class SupplierMappingService extends BaseService<
             (claimsByKey.get(eanZeroInsensitiveKey(o.supplier_product_code)) ?? []).filter(
               (claim) => claim.product_id !== o.product_id,
             ),
+            integration,
           ),
         }))
         .filter((row) => row.replaced.length);
@@ -531,13 +533,14 @@ export class SupplierMappingService extends BaseService<
         };
       }
 
-      return { ean: key, products: this.groupClaimsByProduct(claims), prevailing };
+      return { ean: key, products: this.groupClaimsByProduct(claims, integration), prevailing };
     });
   }
 
-  // Junta as linhas do ERP por produto (EANs, origens e lojas sem repetição) pra exibição no relatório.
+  // Junta as linhas do ERP por produto (EANs e origens sem repetição) com a integração, pra exibição no relatório.
   private groupClaimsByProduct(
     claims: ErpEanClaim[],
+    integration: IntegrationPendingIntegration,
   ): ErpEanClaimProduct[] {
     const byProduct = new Map<string, ErpEanClaimProduct>();
     for (const claim of claims) {
@@ -546,13 +549,10 @@ export class SupplierMappingService extends BaseService<
         product_name: claim.product_name,
         eans: [],
         sources: [],
-        unit_businesses: [],
+        integration,
       };
       if (!entry.eans.includes(claim.ean)) entry.eans.push(claim.ean);
       if (!entry.sources.includes(claim.source)) entry.sources.push(claim.source);
-      if (claim.unit_business && !entry.unit_businesses.includes(claim.unit_business)) {
-        entry.unit_businesses.push(claim.unit_business);
-      }
       byProduct.set(claim.product_id, entry);
     }
     return [...byProduct.values()];

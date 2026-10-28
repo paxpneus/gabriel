@@ -319,12 +319,13 @@ Formato comum de produto que o ERP diz ter o EAN (`ErpProduct`):
   "product_name": "string | null",
   "eans": ["07891234567890"],
   "sources": ["ERP_PRIMARY", "ERP_NON_PRIMARY"],
-  "unit_businesses": ["Loja 02"]
+  "integration": { "id": "uuid", "name": "Tecinco" }
 }
 ```
 
-- `ERP_PRIMARY`: veio do código principal do ERP, por loja.
-- `ERP_NON_PRIMARY`: veio de um código não principal. Não tem loja.
+- `ERP_PRIMARY`: veio do código principal do ERP.
+- `ERP_NON_PRIMARY`: veio de um código não principal.
+- `integration`: integração de onde veio o EAN. O cadastro do ERP é da integração e vale igual para todas as lojas dela, por isso o relatório não lista loja.
 
 ### `overrides`: EAN físico confirmado que o ERP ainda manda para outros produtos
 ```json
@@ -361,8 +362,9 @@ Formato comum de produto que o ERP diz ter o EAN (`ErpProduct`):
 
 ### `missing_ean`: produto sem EAN no ERP
 ```json
-[{ "product_id": "uuid", "product_name": "string | null", "unit_businesses": ["Loja 02", "Loja 05"] }]
+[{ "product_id": "uuid", "product_name": "string | null", "integration": { "id": "uuid", "name": "Tecinco" } }]
 ```
+Uma linha por produto: sem EAN numa loja da integração, está sem EAN em todas as lojas dela.
 
 ### `unmapped`: produtos não mapeados pendentes
 ```json
