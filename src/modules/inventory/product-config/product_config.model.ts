@@ -28,6 +28,7 @@ class ProductConfig
   public gtin?: string;
   public gtin_package?: string;
   public gtin_erp?: string | null;
+  public sku_erp?: string | null;
 
   public product?: ProductAttributes
 }
@@ -102,6 +103,11 @@ ProductConfig.init(
     // EAN cru do ERP (mapping principal), gravado mesmo quando gtin é omitido — só leitura, só relatório de pendências de integração.
     gtin_erp: {
       type: DataTypes.STRING(20),
+      allowNull: true,
+    },
+    // SKU cru do ERP (mapping principal), gravado mesmo quando sku é omitido — só leitura, sem leitor ainda (uso futuro).
+    sku_erp: {
+      type: DataTypes.STRING(100),
       allowNull: true,
     },
   },

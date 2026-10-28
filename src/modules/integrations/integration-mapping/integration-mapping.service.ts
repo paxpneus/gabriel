@@ -12,6 +12,8 @@ import {
   ProductIntegrationMappingInput,
   ProductIntegrationMappingSummary,
   ProductErpData,
+  ErpCodeRow,
+  ProductWithMultipleCodes,
 } from "./integration-mapping.types";
 import { entityRepositoryMap } from "./helpers/map-repository";
 import Integration from "../integrations/integrations.model";
@@ -111,20 +113,26 @@ export class IntegrationMappingService extends BaseService<
     });
   }
 
-  // EAN que o ERP manda nos mappings NÃO principais da integração (o principal já está em ProductConfig.gtin_erp),
-  // com o nome do produto — base do relatório de pendências de integração.
-  async findNonPrimaryErpEans(
+  // EAN ou SKU que o ERP manda (erp_data) em TODOS os mappings PRODUCT da integração, principal e não principal, com o
+  // nome do produto — base do relatório de pendências. `missing`: só os já sincronizados (erp_data presente) SEM o campo.
+  async findErpCodesInIntegration(
     integrationsId: string,
-  ): Promise<Array<{ product_id: string; product_name: string | null; external_id: string; ean: string }>> {
-    const mappings = await this.repository.findAll({
+    field: "ean" | "sku",
+    missing = false,
+  ): Promise<ErpCodeRow[]> {
+    // erp_data nulo = código ainda não sincronizado — não conta como "sem EAN".
+    let erpDataWhere: object = { [field]: { [Op.ne]: null } };
+    if (missing) erpDataWhere = { [Op.and]: [{ [Op.ne]: null }, { [field]: { [Op.is]: null } }] };
+
+    const mappings = (await this.repository.findAll({
       where: {
         entity_type: "PRODUCT",
         integrations_id: integrationsId,
-        is_primary: false,
-        erp_data: { ean: { [Op.ne]: null } },
+        erp_data: erpDataWhere,
       } as any,
-      attributes: ["internal_id", "external_id", "erp_data"],
-    });
+      attributes: ["internal_id", "external_id", "is_primary", [sequelize.literal(`erp_data->>'${field}'`), "code"]],
+      raw: true,
+    })) as unknown as Array<{ internal_id: string; external_id: string; is_primary: boolean; code: string | null }>;
     if (!mappings.length) return [];
 
     const products = await productService.findAll({
@@ -137,8 +145,44 @@ export class IntegrationMappingService extends BaseService<
       product_id: m.internal_id,
       product_name: names.get(m.internal_id) ?? null,
       external_id: m.external_id,
-      ean: m.erp_data!.ean as string,
+      is_primary: !!m.is_primary,
+      code: m.code,
     }));
+  }
+
+  // Produtos com 2+ códigos na integração (mesmo produto físico com cadastros duplicados no ERP), códigos do mais
+  // antigo pro mais novo com nome/EAN/SKU do snapshot do ERP — base do relatório de pendências.
+  async findProductsWithMultipleCodes(integrationsId: string): Promise<ProductWithMultipleCodes[]> {
+    const mappings = (await this.repository.findProductMappingsWithMultipleCodes(integrationsId)) as unknown as Array<{
+      internal_id: string;
+      external_id: string;
+      is_primary: boolean;
+      synced: boolean;
+      erp_name: string | null;
+      erp_ean: string | null;
+      erp_sku: string | null;
+    }>;
+    if (!mappings.length) return [];
+
+    const products = await productService.findAll({
+      where: { id: { [Op.in]: [...new Set(mappings.map((m) => m.internal_id))] } },
+      attributes: ["id", "name"],
+    });
+    const names = new Map(products.map((p) => [p.id, p.name]));
+
+    const byProduct = new Map<string, ProductWithMultipleCodes>();
+    for (const m of mappings) {
+      const entry = byProduct.get(m.internal_id) ?? {
+        product_id: m.internal_id,
+        product_name: names.get(m.internal_id) ?? null,
+        codes: [],
+      };
+      let erpData: ProductWithMultipleCodes["codes"][number]["erp_data"] = null;
+      if (m.synced) erpData = { name: m.erp_name, ean: m.erp_ean, sku: m.erp_sku };
+      entry.codes.push({ external_id: m.external_id, is_primary: !!m.is_primary, erp_data: erpData });
+      byProduct.set(m.internal_id, entry);
+    }
+    return [...byProduct.values()];
   }
 
   // Grava o snapshot só-leitura do ERP no mapping (principal ou não) — não auditado, é escrita de sync.

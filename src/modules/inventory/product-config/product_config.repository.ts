@@ -37,42 +37,6 @@ export class ProductConfigRepository extends BaseRepository<ProductConfig> {
     });
   }
 
-  // Configurações com EAN do ERP (gtin_erp) nas lojas da integração — base do relatório de pendências de integração.
-  findErpEansInIntegration(integrationsId: string): Promise<ProductConfig[]> {
-    return this.findAll({
-      where: { gtin_erp: { [Op.ne]: null } },
-      attributes: ['product_id', 'unit_business_id', 'gtin_erp'],
-      include: [
-        {
-          model: UnitBusiness,
-          as: 'unitBusiness',
-          attributes: [],
-          where: { integrations_id: integrationsId },
-          required: true,
-        },
-        { model: Product, as: 'product', attributes: ['id', 'name'] },
-      ],
-    });
-  }
-
-  // Configurações SEM EAN do ERP (gtin_erp nulo) nas lojas da integração — seção "produto sem EAN" do relatório.
-  findMissingErpEanInIntegration(integrationsId: string): Promise<ProductConfig[]> {
-    return this.findAll({
-      where: { gtin_erp: { [Op.is]: null } },
-      attributes: ['product_id', 'unit_business_id'],
-      include: [
-        {
-          model: UnitBusiness,
-          as: 'unitBusiness',
-          attributes: [],
-          where: { integrations_id: integrationsId },
-          required: true,
-        },
-        { model: Product, as: 'product', attributes: ['id', 'name'] },
-      ],
-      order: [[{ model: Product, as: 'product' }, 'name', 'ASC']],
-    });
-  }
 }
 
 export default new ProductConfigRepository();

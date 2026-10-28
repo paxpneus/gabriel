@@ -151,7 +151,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `manual-import.md` — import manual por integração (`/api/manual-import`, Bling: produto/nota/pedido; Tecinco: produto/nota): busca → escolha → fila com prioridade 1, lock por usuário + claim por item no Redis, andamento por polling
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login
 - `reports.md` — módulo de snapshot de sales-report
-- `integration-pending-report.md` — relatório de pendências de integração (overrides, EAN duplicado no ERP, sem EAN, não mapeado), só admin/developer, sem paginação
+- `integration-pending-report.md` — relatório de pendências de integração (overrides, produto com 2+ códigos no ERP, EAN duplicado no ERP, SKU duplicado no ERP, sem EAN, não mapeado), só admin/developer, sem paginação
 - `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
 - `sieg-rate-limits.md` — limites documentados por rota da API Sieg (ex.: `/v1/baixar-xmls` = 2 req/min, 50 XMLs/req) vs. limite genérico não-confirmado, onde cada um é aplicado no código
 - `magento-sync.md` — sync Bling→Magento de produtos: `external_id` = `entity_id` do Magento (não sku), resolução por id (mapeado) vs. sku/nome (1ª vez)

@@ -85,15 +85,23 @@ export class SupplierMappingError extends Error {
 }
 
 // Seção do relatório de pendências de integração: EAN físico confirmado que o ERP ainda manda pra outros,
-// EAN duplicado no ERP, produto sem EAN no ERP, produto não mapeado.
-export const INTEGRATION_PENDING_SECTIONS = ["overrides", "erp_duplicates", "missing_ean", "unmapped"] as const;
+// produto com 2+ códigos no ERP, EAN duplicado no ERP, SKU duplicado no ERP, produto sem EAN no ERP, produto não mapeado.
+export const INTEGRATION_PENDING_SECTIONS = [
+  "overrides",
+  "erp_duplicates",
+  "erp_ean_duplicates",
+  "erp_sku_duplicates",
+  "missing_ean",
+  "unmapped",
+] as const;
 export type IntegrationPendingSection = (typeof INTEGRATION_PENDING_SECTIONS)[number];
 
-// Uma linha do que o ERP manda: EAN de um produto, vindo do mapping principal ou não principal.
+// Uma linha do que o ERP manda (erp_data de um mapping): EAN ou SKU de um produto, pelo código principal ou não principal.
 export interface ErpEanClaim {
   product_id: string;
   product_name: string | null;
-  ean: string;
+  code: string | null;
+  external_id: string;
   source: "ERP_PRIMARY" | "ERP_NON_PRIMARY";
 }
 
@@ -103,11 +111,12 @@ export interface IntegrationPendingIntegration {
   name: string;
 }
 
-// Produto que o ERP diz ter o EAN (principal: Configurações do produto; não principal: snapshot do mapeamento).
+// Produto que o ERP diz ter o EAN/SKU, com os códigos no ERP (external_id) que mandam — pra corrigir no ERP.
 export interface ErpEanClaimProduct {
   product_id: string;
   product_name: string | null;
   eans: string[];
+  external_ids: string[];
   sources: Array<"ERP_PRIMARY" | "ERP_NON_PRIMARY">;
   integration: IntegrationPendingIntegration;
 }

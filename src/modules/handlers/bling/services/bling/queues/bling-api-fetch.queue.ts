@@ -1066,9 +1066,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           title: "Conflito de EAN entre produtos (Bling)",
           message: `${error.message} | blingId=${blingProduct.id} | sku=${blingProduct.codigo}`,
         });
-        // gtin_erp é só leitura e precisa refletir o ERP mesmo no conflito.
+        // gtin_erp/sku_erp são só leitura e precisam refletir o ERP mesmo no conflito.
         await ProductConfig.update(
-          { gtin_erp: blingProduct.gtin?.trim() || null },
+          { gtin_erp: blingProduct.gtin?.trim() || null, sku_erp: blingProduct.codigo?.trim() || null },
           { where: { product_id: existingProduct.id, unit_business_id: unitBusiness.id } },
         );
       }
@@ -1222,7 +1222,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           hasMagentoMapping = magentoIdMap.has(product.id);
         }
 
-        // EAN bloqueado / sku já de outro produto (criação acima): não grava o campo (gtin_erp abaixo continua).
+        // EAN bloqueado / sku já de outro produto (criação acima): não grava o campo (gtin_erp/sku_erp abaixo continuam).
         const codeFields: Pick<ProductConfigAttributes, "gtin" | "sku"> = {};
         if (!skuOmitted) codeFields.sku = configSku;
         if (!eanBlocked) codeFields.gtin = blingProduct.gtin;
@@ -1235,6 +1235,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             ...codeFields,
             gtin_package: blingProduct.gtinEmbalagem,
             gtin_erp: blingProduct.gtin?.trim() || null,
+            sku_erp: blingProduct.codigo?.trim() || null,
             ncm: blingProduct.tributacao?.ncm,
             cest: blingProduct.tributacao?.cest,
             supplier_cost_price: newSupplierCost,

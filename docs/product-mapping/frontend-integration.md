@@ -310,14 +310,15 @@ Sugestão: selo "Principal" e botão "Tornar principal" nas outras linhas, mostr
 
 Só admin/developer (os outros recebem `403`). Usa a integração do usuário logado. **Sem paginação**: o array vem completo. Só leitura.
 
-`section`: `overrides` | `erp_duplicates` | `missing_ean` | `unmapped`. Ausente ou inválido vale `overrides`.
+`section`: `overrides` | `erp_duplicates` | `erp_ean_duplicates` | `erp_sku_duplicates` | `missing_ean` | `unmapped`. Ausente ou inválido vale `overrides`.
 
-Formato comum de produto que o ERP diz ter o EAN (`ErpProduct`):
+Formato comum de produto que o ERP diz ter o EAN ou o SKU (`ErpProduct`):
 ```json
 {
   "product_id": "uuid",
   "product_name": "string | null",
   "eans": ["07891234567890"],
+  "external_ids": ["27314", "23459"],
   "sources": ["ERP_PRIMARY", "ERP_NON_PRIMARY"],
   "integration": { "id": "uuid", "name": "Tecinco" }
 }
@@ -325,7 +326,9 @@ Formato comum de produto que o ERP diz ter o EAN (`ErpProduct`):
 
 - `ERP_PRIMARY`: veio do código principal do ERP.
 - `ERP_NON_PRIMARY`: veio de um código não principal.
-- `integration`: integração de onde veio o EAN. O cadastro do ERP é da integração e vale igual para todas as lojas dela, por isso o relatório não lista loja.
+- `external_ids`: códigos no ERP que mandam esse EAN/SKU. São eles que precisam ser corrigidos no ERP.
+- O relatório olha todos os códigos do produto no ERP, principal e não principais.
+- `integration`: integração de onde veio o EAN ou SKU. O cadastro do ERP é da integração e vale igual para todas as lojas dela, por isso o relatório não lista loja.
 
 ### `overrides`: EAN físico confirmado que o ERP ainda manda para outros produtos
 ```json
@@ -336,9 +339,29 @@ Formato comum de produto que o ERP diz ter o EAN (`ErpProduct`):
   "replaced": [ /* ErpProduct[] */ ]
 }]
 ```
-`defined_by` pode ser `null` em registros antigos. Ação sugerida: corrigir o EAN no ERP dos produtos em `replaced`.
+- Vem uma linha por EAN confirmado. Produto com 2 EANs confirmados aparece em 2 linhas, cada uma com seu `defined_by` e `replaced`. As linhas não vêm ordenadas: para agrupar por produto, usar `owner.product_id`.
+- A linha some sozinha quando o ERP para de mandar aquele EAN para outros produtos.
+- `defined_by` pode ser `null` em registros antigos. Ação sugerida: corrigir o EAN no ERP dos códigos em `replaced[].external_ids`.
 
-### `erp_duplicates`: mesmo EAN em 2 ou mais produtos no ERP
+### `erp_duplicates`: produto com 2 ou mais códigos no ERP
+O mesmo produto físico está cadastrado mais de uma vez no ERP.
+```json
+[{
+  "product_id": "uuid",
+  "product_name": "string | null",
+  "codes": [{
+    "external_id": "16903",
+    "is_primary": true,
+    "erp_data": { "name": "string | null", "ean": "string | null", "sku": "string | null" }
+  }],
+  "integration": { "id": "uuid", "name": "Tecinco" }
+}]
+```
+- Ordenado pelo nome do produto. `codes` vem do código mais antigo para o mais novo.
+- `erp_data` é o que o ERP manda naquele código. Vem `null` se o código ainda não foi sincronizado.
+- Ação sugerida: inativar ou unificar no ERP os cadastros duplicados. No sistema, o código principal é o que alimenta o produto.
+
+### `erp_ean_duplicates`: mesmo EAN em 2 ou mais produtos no ERP
 ```json
 [{
   "ean": "7891234567890",
@@ -351,6 +374,7 @@ Formato comum de produto que o ERP diz ter o EAN (`ErpProduct`):
 ```
 
 - `ean` é o código **sem zeros à esquerda**, porque agrupa as variações. Os valores originais estão em `products[].eans`.
+- Só entra EAN que está em 2 ou mais produtos **diferentes**. Ordenado por `ean`.
 - `prevailing` diz quem usa o EAN hoje no sistema. Sugestão de rótulos:
 
 | `rule` | Rótulo |
@@ -360,11 +384,28 @@ Formato comum de produto que o ERP diz ter o EAN (`ErpProduct`):
 | `SUPPLIER_MAPPING` | Mapeamento DE x PARA |
 | `NONE` | Nenhum (EAN ignorado em todos) |
 
+### `erp_sku_duplicates`: mesmo SKU em 2 ou mais produtos no ERP
+```json
+[{
+  "sku": "ABC-123",
+  "products": [ /* ErpProduct[] sem "eans" */ ]
+}]
+```
+Ordenado por `sku`. Compara o SKU exatamente como vem do ERP. Não tem `prevailing`.
+
 ### `missing_ean`: produto sem EAN no ERP
 ```json
-[{ "product_id": "uuid", "product_name": "string | null", "integration": { "id": "uuid", "name": "Tecinco" } }]
+[{
+  "product_id": "uuid",
+  "product_name": "string | null",
+  "external_ids": ["14496"],
+  "sources": ["ERP_PRIMARY"],
+  "integration": { "id": "uuid", "name": "Tecinco" }
+}]
 ```
-Uma linha por produto: sem EAN numa loja da integração, está sem EAN em todas as lojas dela.
+- Mesmo formato de `ErpProduct`, sem `eans`. Vem uma linha por produto, ordenada por nome.
+- Olha todos os códigos do produto no ERP. `external_ids` são os códigos que vêm sem EAN e `sources` diz se são o principal ou não.
+- Código que ainda não foi sincronizado não aparece, porque não dá para saber se tem EAN.
 
 ### `unmapped`: produtos não mapeados pendentes
 ```json
@@ -385,7 +426,7 @@ Uma linha por produto: sem EAN numa loja da integração, está sem EAN em todas
 ```
 Mais recentes primeiro.
 
-A seção `missing_ean`, e o que `overrides` e `erp_duplicates` leem do ERP, só ficam completos depois de um sync completo de produtos (Tecinco: run completo; Bling: populate de produtos).
+Todas as seções menos `unmapped` só ficam completas depois de um sync completo de produtos (Tecinco: run completo; Bling: populate de produtos).
 
 ---
 

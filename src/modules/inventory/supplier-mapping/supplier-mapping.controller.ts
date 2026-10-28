@@ -101,7 +101,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
     return res.status(400).json({ error: error.message });
   }
 
-  // GET /integration-pending/get?section=overrides|erp_duplicates|missing_ean|unmapped — relatório de pendências de
+  // GET /integration-pending/get?section=overrides|erp_duplicates|erp_sku_duplicates|missing_ean|unmapped — relatório de pendências de
   // integração (lista completa, sem paginação), só admin/developer, na integração do usuário. Seção ausente/inválida → overrides.
   integrationPending = async (req: Request, res: Response): Promise<Response> => {
     try {

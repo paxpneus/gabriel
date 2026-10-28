@@ -46,6 +46,7 @@ import {
 } from "../../../shared/query/query.types";
 import Integration from "../../integrations/integrations/integrations.model";
 import integrationsService from "../../integrations/integrations/integrations.service";
+import type { ErpCodeRow } from "../../integrations/integration-mapping/integration-mapping.types";
 import auditLogService from "../../global/audit-logs/audit-log.service";
 import {
   AuditAction,
@@ -415,7 +416,8 @@ export class SupplierMappingService extends BaseService<
   }
 
   // Relatório de pendências de integração (só leitura, lista completa, sem paginação): EAN físico confirmado que o ERP ainda
-  // manda pra outros ("overrides"), mesmo EAN em 2+ produtos no ERP ("erp_duplicates"), sem EAN no ERP ("missing_ean"), não mapeado ("unmapped").
+  // manda pra outros ("overrides"), produto com 2+ códigos no ERP ("erp_duplicates"), mesmo EAN/SKU em 2+ produtos no ERP
+  // ("erp_ean_duplicates"/"erp_sku_duplicates"), sem EAN no ERP ("missing_ean"), não mapeado ("unmapped").
   async getIntegrationPendingReport(
     integrationsId: string,
     section: IntegrationPendingSection,
@@ -428,44 +430,57 @@ export class SupplierMappingService extends BaseService<
     const found = await integrationsService.findById(integrationsId, { attributes: ["id", "name"] });
     const integration: IntegrationPendingIntegration = { id: integrationsId, name: found?.name ?? "" };
 
-    // Produto com configuração numa loja da integração mas sem EAN vindo do ERP, uma linha por produto.
-    if (section === "missing_ean") {
-      const configs = await productConfigService.findMissingErpEanInIntegration(integrationsId);
-      const byProduct = new Map<string, { product_id: string; product_name: string | null; integration: IntegrationPendingIntegration }>();
-      for (const pc of configs) {
-        if (byProduct.has(pc.product_id)) continue;
-        byProduct.set(pc.product_id, {
-          product_id: pc.product_id,
-          product_name: (pc as any).product?.name ?? null,
-          integration,
-        });
-      }
-      return [...byProduct.values()];
+    // Mesmo produto com 2+ códigos no ERP (cadastro duplicado no ERP), ordenado por nome.
+    if (section === "erp_duplicates") {
+      const products = await integrationMappingService.findProductsWithMultipleCodes(integrationsId);
+      return products
+        .map((product) => ({ ...product, integration }))
+        .sort((x, y) => (x.product_name ?? "").localeCompare(y.product_name ?? ""));
     }
 
-    const [erpConfigs, nonPrimaryEans, overrides] = await Promise.all([
-      productConfigService.findErpEansInIntegration(integrationsId),
-      integrationMappingService.findNonPrimaryErpEans(integrationsId),
+    // Linha do erp_data de um mapping (principal ou não) como claim do relatório.
+    const toClaim = (row: ErpCodeRow): ErpEanClaim => ({
+      product_id: row.product_id,
+      product_name: row.product_name,
+      code: row.code,
+      external_id: row.external_id,
+      source: row.is_primary ? "ERP_PRIMARY" : "ERP_NON_PRIMARY",
+    });
+
+    // Código no ERP já sincronizado que não manda EAN (principal ou não), uma linha por produto com os códigos sem EAN.
+    if (section === "missing_ean") {
+      const rows = await integrationMappingService.findErpCodesInIntegration(integrationsId, "ean", true);
+      return this.groupClaimsByProduct(rows.map(toClaim), integration)
+        .map(({ eans, ...product }) => product)
+        .sort((x, y) => (x.product_name ?? "").localeCompare(y.product_name ?? ""));
+    }
+
+    // Mesmo SKU (exato) em 2+ produtos, olhando o erp_data de todos os códigos — não só o principal da config.
+    if (section === "erp_sku_duplicates") {
+      const rows = await integrationMappingService.findErpCodesInIntegration(integrationsId, "sku");
+      const bySku = new Map<string, ErpEanClaim[]>();
+      rows.forEach((row) => bySku.set(row.code as string, [...(bySku.get(row.code as string) ?? []), toClaim(row)]));
+      return [...bySku.entries()]
+        .filter(([, claims]) => new Set(claims.map((c) => c.product_id)).size > 1)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([sku, claims]) => ({
+          sku,
+          // SKU é o mesmo em todas as linhas — sem a lista de códigos que o EAN usa.
+          products: this.groupClaimsByProduct(claims, integration).map(({ eans, ...product }) => product),
+        }));
+    }
+
+    const [erpEans, overrides] = await Promise.all([
+      integrationMappingService.findErpCodesInIntegration(integrationsId, "ean"),
       this.repository.findPhysicalOverridesInIntegration(integrationsId),
     ]);
 
-    // O que o ERP diz, agrupado pelo EAN ignorando zero à esquerda.
+    // O que o ERP diz (erp_data de todos os códigos), agrupado pelo EAN ignorando zero à esquerda.
     const claimsByKey = new Map<string, ErpEanClaim[]>();
-    const addClaim = (claim: ErpEanClaim) => {
-      const key = eanZeroInsensitiveKey(claim.ean);
-      claimsByKey.set(key, [...(claimsByKey.get(key) ?? []), claim]);
-    };
-    erpConfigs.forEach((pc) =>
-      addClaim({
-        product_id: pc.product_id,
-        product_name: (pc as any).product?.name ?? null,
-        ean: pc.gtin_erp as string,
-        source: "ERP_PRIMARY",
-      }),
-    );
-    nonPrimaryEans.forEach((m) =>
-      addClaim({ product_id: m.product_id, product_name: m.product_name, ean: m.ean, source: "ERP_NON_PRIMARY" }),
-    );
+    erpEans.forEach((row) => {
+      const key = eanZeroInsensitiveKey(row.code as string);
+      claimsByKey.set(key, [...(claimsByKey.get(key) ?? []), toClaim(row)]);
+    });
 
     if (section === "overrides") {
       const authors = await auditLogService.findLatestAuthors(
@@ -487,12 +502,13 @@ export class SupplierMappingService extends BaseService<
         .filter((row) => row.replaced.length);
     }
 
+    // "erp_ean_duplicates": mesmo EAN (ignorando zero) em 2+ produtos diferentes.
     const groups = [...claimsByKey.entries()]
       .filter(([, claims]) => new Set(claims.map((c) => c.product_id)).size > 1)
       .sort(([a], [b]) => a.localeCompare(b));
 
     // Quem prevalece em cada grupo — duas queries pra todos os grupos.
-    const codes = [...new Set(groups.flatMap(([, claims]) => claims.flatMap((c) => buildEanZeroVariants(c.ean))))];
+    const codes = [...new Set(groups.flatMap(([, claims]) => claims.flatMap((c) => buildEanZeroVariants(c.code as string))))];
     let gtinOwners: ProductConfig[] = [];
     let mappingOwners: SupplierMapping[] = [];
     if (codes.length) {
@@ -537,7 +553,7 @@ export class SupplierMappingService extends BaseService<
     });
   }
 
-  // Junta as linhas do ERP por produto (EANs e origens sem repetição) com a integração, pra exibição no relatório.
+  // Junta as linhas do ERP por produto (EANs, códigos no ERP e origens sem repetição) com a integração, pra exibição no relatório.
   private groupClaimsByProduct(
     claims: ErpEanClaim[],
     integration: IntegrationPendingIntegration,
@@ -548,10 +564,12 @@ export class SupplierMappingService extends BaseService<
         product_id: claim.product_id,
         product_name: claim.product_name,
         eans: [],
+        external_ids: [],
         sources: [],
         integration,
       };
-      if (!entry.eans.includes(claim.ean)) entry.eans.push(claim.ean);
+      if (claim.code && !entry.eans.includes(claim.code)) entry.eans.push(claim.code);
+      if (!entry.external_ids.includes(claim.external_id)) entry.external_ids.push(claim.external_id);
       if (!entry.sources.includes(claim.source)) entry.sources.push(claim.source);
       byProduct.set(claim.product_id, entry);
     }

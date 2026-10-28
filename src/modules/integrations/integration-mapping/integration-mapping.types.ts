@@ -33,6 +33,28 @@ export interface ProductErpData {
   updated_at: string;
 }
 
+// Produto com 2+ códigos (mappings) na integração, cada um com o snapshot do ERP — relatório "Duplicados no ERP".
+export interface ProductWithMultipleCodes {
+  product_id: string;
+  product_name: string | null;
+  codes: Array<{
+    external_id: string;
+    is_primary: boolean;
+    // null = código ainda não sincronizado.
+    erp_data: { name: string | null; ean: string | null; sku: string | null } | null;
+  }>;
+}
+
+// Código (EAN ou SKU) que um mapping PRODUCT diz no erp_data, com o produto — relatório de pendências de integração.
+export interface ErpCodeRow {
+  product_id: string;
+  product_name: string | null;
+  external_id: string;
+  is_primary: boolean;
+  // null quando buscado com `missing` (código sincronizado sem o campo).
+  code: string | null;
+}
+
 // Mapping do produto numa integração com nome/EAN do snapshot do ERP — aviso de vários códigos no vincular não mapeado.
 export interface ProductIntegrationMappingSummary {
   id: string;

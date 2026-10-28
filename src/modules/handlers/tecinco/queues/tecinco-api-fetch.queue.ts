@@ -585,6 +585,8 @@ export class TCarUpsertQueue extends BaseQueueService<
     let codigoFabrica = data.epctb_codigofabrica
       ? String(data.epctb_codigofabrica).trim()
       : undefined;
+    // SKU cru do ERP pra ProductConfig.sku_erp — não é zerado pelas omissões/sanitização abaixo.
+    const erpSku = codigoFabrica ?? null;
 
     // A Tecinco opera por loja — toda resolução de produto por EAN/
     // SupplierMapping precisa saber exatamente qual unit business é a da
@@ -955,9 +957,9 @@ export class TCarUpsertQueue extends BaseQueueService<
               console.warn(
                 `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
               );
-              // gtin_erp é só leitura e precisa refletir o ERP mesmo no conflito.
+              // gtin_erp/sku_erp são só leitura e precisam refletir o ERP mesmo no conflito.
               await ProductConfig.update(
-                { gtin_erp: erpEan },
+                { gtin_erp: erpEan, sku_erp: erpSku },
                 { where: { product_id: product.id, unit_business_id: unitBusiness.id } },
               );
               continue;
@@ -976,6 +978,7 @@ export class TCarUpsertQueue extends BaseQueueService<
               ...(skuOmitted ? {} : { sku: codigoFabrica ?? systemId }),
               ...(eanOmitted ? {} : { gtin: ean ?? undefined }),
               gtin_erp: erpEan,
+              sku_erp: erpSku,
               price: filial.preco,
               supplier_cost_price: entryUnitCost,
               average_cost: newAverageCost,
@@ -1134,9 +1137,9 @@ export class TCarUpsertQueue extends BaseQueueService<
           console.warn(
             `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
           );
-          // gtin_erp é só leitura e precisa refletir o ERP mesmo no conflito.
+          // gtin_erp/sku_erp são só leitura e precisam refletir o ERP mesmo no conflito.
           await ProductConfig.update(
-            { gtin_erp: erpEan },
+            { gtin_erp: erpEan, sku_erp: erpSku },
             { where: { product_id: product.id, unit_business_id: unitBusiness.id } },
           );
           eanConflict = true;
@@ -1154,6 +1157,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             ...(skuOmitted ? {} : { sku: codigoFabrica ?? systemId }),
             ...(eanOmitted ? {} : { gtin: ean ?? undefined }),
             gtin_erp: erpEan,
+            sku_erp: erpSku,
             price: filial.preco,
             supplier_cost_price: entryUnitCost,
             average_cost: newAverageCost,
@@ -1803,6 +1807,7 @@ export class TCarUpsertQueue extends BaseQueueService<
                 sku: skuToUse,
                 gtin: eanBlocked ? undefined : (ean ?? undefined),
                 gtin_erp: ean ?? null,
+                sku_erp: codigoFabrica ?? null,
                 price: Number(tcarPayload?.epprc_preco ?? 0),
                 supplier_cost_price: Number(
                   tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0,

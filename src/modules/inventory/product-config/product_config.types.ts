@@ -19,6 +19,8 @@ export interface ProductConfigAttributes {
   gtin_package?: string;
   // Só leitura: EAN que o ERP manda, nunca usado em resolução/busca/filtro.
   gtin_erp?: string | null;
+  // Só leitura: SKU que o ERP manda, nunca usado em resolução/busca/filtro.
+  sku_erp?: string | null;
 
   readonly createdAt?: Date;
   readonly updatedAt?: Date;
