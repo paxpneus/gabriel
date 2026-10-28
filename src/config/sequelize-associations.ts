@@ -954,6 +954,12 @@ UnitBusiness.belongsTo(ExpeditionBatch, {
     foreignKey: "created_by_user_id",
     as: "createdBy",
   });
+
+  // Quem fez a alteração auditada (user_id opcional — sync/sistema grava sem usuário).
+  AuditLog.belongsTo(User, {
+    foreignKey: "user_id",
+    as: "user",
+  });
 }
 
 // ===== STOCKS =====
@@ -1693,11 +1699,5 @@ export function setupCteAssociations() {
     foreignKey: "taker_tax_id",
     targetKey: "tax_id",
     as: "taker_transporter",
-  });
-
-  // Quem fez a alteração auditada (user_id opcional — sync/sistema grava sem usuário).
-  AuditLog.belongsTo(User, {
-    foreignKey: "user_id",
-    as: "user",
   });
 }
