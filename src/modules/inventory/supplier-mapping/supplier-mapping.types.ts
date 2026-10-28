@@ -2,6 +2,7 @@ import Product from "../products/product.model";
 import type SupplierMapping from "./supplier-mapping.model";
 import type ProductConfig from "../product-config/product_config.model";
 import { ProductAttributes } from "../products/product.types";
+import type { ProductIntegrationMappingSummary } from "../../integrations/integration-mapping/integration-mapping.types";
 
 export interface SupplierMappingAttributes {
   id: string;
@@ -49,6 +50,14 @@ export interface EanOwnerSummary {
   code: string;
   unit_business_id?: string;
   unit_business_name?: string | null;
+}
+
+// Resposta 201 do POST /from-unmapped: o que foi criado (null = não criou) e todos os mappings do produto na integração.
+export interface CreateFromUnmappedResult {
+  supplierMapping: SupplierMapping | null;
+  integrationMapping: { id: string; external_id: string; is_primary: boolean } | null;
+  integration: { id: string; name: string };
+  integrationMappings: ProductIntegrationMappingSummary[];
 }
 
 // Override físico já existente pra outro produto — devolvido no erro EAN_HAS_PHYSICAL_OVERRIDE.

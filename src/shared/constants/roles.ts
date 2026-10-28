@@ -30,6 +30,7 @@ type Scopes =
   | 'PDV Financeiro'
   | 'PDV CD21'
   | 'Confirmar EAN físico'
+  | 'Criar e mapear produto na nota'
 
 interface ChildEntity {
   entity: string
@@ -49,6 +50,9 @@ const all: Actions[] = ['read', 'write', 'delete', 'update']
 
 // Entidade RBAC do "Confirmar EAN físico" — usada no CUSTOM_ROUTE_MAP e na checagem do erro de EAN em uso.
 export const PHYSICAL_EAN_OWNER_ENTITY = 'physical_ean_owner'
+
+// Entidade RBAC de criar/mapear produto na nota (create-product-and-map e /add/item) — usada no CUSTOM_ROUTE_MAP.
+export const INVOICE_PRODUCT_MAPPING_ENTITY = 'invoice_product_mapping'
 
 export const ROLE_PERMISSIONS: Roles[] = [
     {
@@ -287,6 +291,14 @@ export const ROLE_PERMISSIONS: Roles[] = [
   {
     scope: 'Confirmar EAN físico',
     entity: PHYSICAL_EAN_OWNER_ENTITY,
+    route: '',
+    type: 'CUSTOM',
+    permissions: ['write'],
+  },
+  // "Criar Produto" e mapear produto na nota: admin/developer sempre; outros papéis só com essa permissão.
+  {
+    scope: 'Criar e mapear produto na nota',
+    entity: INVOICE_PRODUCT_MAPPING_ENTITY,
     route: '',
     type: 'CUSTOM',
     permissions: ['write'],

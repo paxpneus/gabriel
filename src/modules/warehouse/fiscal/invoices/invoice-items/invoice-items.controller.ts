@@ -1,4 +1,5 @@
 import { authenticate } from '../../../../../middlewares/auth-token';
+import { userPermissions } from '../../../../../middlewares/user-permissions';
 import BaseController from '../../../../../shared/utils/base-models/base-controller';
 import InvoiceItems from './invoice-items.model';
 import InvoiceItemsService from './invoice-items.service';
@@ -10,7 +11,7 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
   constructor() {
     super(InvoiceItemsService);
 
-    this.router.post("/add/item", this.createInvoiceItem)
+    this.router.post("/add/item", ...this.mw("createInvoiceItem"), this.createInvoiceItem)
   }
 
   private getErrorMessage(error: any): string {
@@ -46,7 +47,8 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
           show: [authenticate],
           destroy: [authenticate],
           login: [authenticate],
-          createInvoiceItem: [authenticate],
+          // userPermissions resolve a entidade invoice_product_mapping pela rota (CUSTOM_ROUTE_MAP "invoice-items/add/item").
+          createInvoiceItem: [authenticate, userPermissions],
           // Ações do CRUD genérico sem chave aqui ficavam sem middleware nenhum.
           bulkCreate: [authenticate],
           bulkUpdate: [authenticate],

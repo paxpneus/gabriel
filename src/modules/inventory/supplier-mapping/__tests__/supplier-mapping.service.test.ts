@@ -3,14 +3,15 @@
 const mockTransaction = {} as any;
 jest.mock("../../../../config/sequelize", () => ({
   __esModule: true,
-  default: { transaction: jest.fn((cb: any) => cb(mockTransaction)) },
+  // Aceita (cb) e (options, cb) — o segundo é o savepoint do DE x PARA no createFromUnmapped.
+  default: { transaction: jest.fn((...args: any[]) => args[args.length - 1](mockTransaction)) },
 }));
 
 jest.mock(
   "../../unmapped-invoice-product/unmapped-invoice-product.service",
   () => ({
     __esModule: true,
-    default: { findById: jest.fn(), delete: jest.fn() },
+    default: { findById: jest.fn(), delete: jest.fn(), resolveFromCreatedProduct: jest.fn() },
   }),
 );
 
@@ -18,9 +19,18 @@ jest.mock(
   "../../../integrations/integration-mapping/integration-mapping.service",
   () => ({
     __esModule: true,
-    default: { createOrUpdateIntegrationMapping: jest.fn() },
+    default: {
+      createOrUpdateIntegrationMapping: jest.fn(),
+      findExternalIdsMap: jest.fn(),
+      findProductMappingsInIntegration: jest.fn(),
+    },
   }),
 );
+
+jest.mock("../../../integrations/integrations/integrations.service", () => ({
+  __esModule: true,
+  default: { findById: jest.fn() },
+}));
 
 jest.mock("../../../company/users/users/user.service", () => ({
   __esModule: true,
@@ -35,6 +45,7 @@ import { SupplierMappingError, SupplierMappingErrorCode } from "../supplier-mapp
 import userService from "../../../company/users/users/user.service";
 import unmappedInvoiceProductService from "../../unmapped-invoice-product/unmapped-invoice-product.service";
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
+import integrationsService from "../../../integrations/integrations/integrations.service";
 import { SupplierMappingService } from "../supplier-mapping.service";
 
 describe("SupplierMappingService.createFromUnmapped", () => {
@@ -48,6 +59,16 @@ describe("SupplierMappingService.createFromUnmapped", () => {
     (SupplierMapping.findAll as jest.Mock).mockResolvedValue([]);
     (ProductConfig.findAll as jest.Mock).mockResolvedValue([]);
     (AuditLog.findAll as jest.Mock).mockResolvedValue([]);
+    (integrationsService.findById as jest.Mock).mockResolvedValue({ id: "integration-1", name: "Tecinco" });
+    // Por padrão o produto já está mapeado na integração (fluxo antigo, erro do DE x PARA propaga).
+    (integrationMappingService.findExternalIdsMap as jest.Mock).mockResolvedValue(new Map([["product-1", "80001"]]));
+    (integrationMappingService.findProductMappingsInIntegration as jest.Mock).mockResolvedValue([]);
+    (integrationMappingService.createOrUpdateIntegrationMapping as jest.Mock).mockImplementation(async (dto: any) => ({
+      id: "im-new",
+      internal_id: dto.internal_id,
+      external_id: dto.external_id,
+      is_primary: false,
+    }));
   });
 
   it("EAN físico confirmado de outro produto (mesmo com zero à esquerda): erro EAN_HAS_PHYSICAL_OVERRIDE, não cria nem apaga nada", async () => {
@@ -218,7 +239,12 @@ describe("SupplierMappingService.createFromUnmapped", () => {
       "unmapped-1",
       expect.anything(),
     );
-    expect(result).toEqual({ id: "mapping-1" });
+    expect(result).toEqual({
+      supplierMapping: { id: "mapping-1" },
+      integrationMapping: null,
+      integration: { id: "integration-1", name: "Tecinco" },
+      integrationMappings: [],
+    });
     // Sem external_id no unmapped (unmapped de nota, não de catálogo) —
     // não há id de ERP conhecido pra vincular, então não mexe em mapping.
     expect(
@@ -319,11 +345,12 @@ describe("SupplierMappingService.createFromUnmapped", () => {
       { is_physical_override: true },
       expect.objectContaining({ where: { id: "existing-mapping-1" } }),
     );
-    expect(result).toEqual({
+    expect(result.supplierMapping).toEqual({
       id: "existing-mapping-1",
       product_id: "product-1",
       is_physical_override: true,
     });
+    expect(result.integrationMapping).toEqual({ id: "im-new", external_id: "90001", is_primary: false });
     expect(
       integrationMappingService.createOrUpdateIntegrationMapping,
     ).toHaveBeenCalledWith(
@@ -394,7 +421,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
       "unmapped-1",
       expect.anything(),
     );
-    expect(result).toBeNull();
+    expect(result.supplierMapping).toBeNull();
   });
 
   it("unmapped ERROR_CATALOG_DUPLICATE sem external_id: lança erro claro, não cria nada nem apaga o unmapped", async () => {
@@ -418,6 +445,150 @@ describe("SupplierMappingService.createFromUnmapped", () => {
       integrationMappingService.createOrUpdateIntegrationMapping,
     ).not.toHaveBeenCalled();
     expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();
+  });
+
+  describe("produto escolhido sem mapping na integração do não mapeado", () => {
+    const catalogUnmapped = {
+      id: "unmapped-1",
+      ean: "7891234567895",
+      sku: null,
+      integrations_id: "integration-1",
+      external_id: "90001",
+      type: "ERROR_CATALOG",
+      reason: "Produto novo, precisa de mapeamento manual",
+      invoice_id: null,
+    };
+
+    beforeEach(() => {
+      (integrationMappingService.findExternalIdsMap as jest.Mock).mockResolvedValue(new Map());
+      (integrationMappingService.createOrUpdateIntegrationMapping as jest.Mock).mockImplementation(async (dto: any) => ({
+        id: "im-new",
+        internal_id: dto.internal_id,
+        external_id: dto.external_id,
+        is_primary: true,
+      }));
+    });
+
+    it("ERROR_CATALOG produto novo com external_id: cria o mapping (principal), o DE x PARA e resolve as linhas do external_id", async () => {
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue(catalogUnmapped);
+      (SupplierMapping.create as jest.Mock).mockResolvedValue({ id: "mapping-1" });
+      (integrationMappingService.findProductMappingsInIntegration as jest.Mock).mockResolvedValue([
+        { id: "im-new", external_id: "90001", is_primary: true, erp_data: { name: "Pneu", ean: "7891234567895" } },
+      ]);
+
+      const result = await service.createFromUnmapped({ productId: "product-1", unmappedInvoiceProductId: "unmapped-1" });
+
+      expect(integrationMappingService.createOrUpdateIntegrationMapping).toHaveBeenCalledWith(
+        { entity_type: "PRODUCT", internal_id: "product-1", integrations_id: "integration-1", external_id: "90001" },
+        expect.anything(),
+      );
+      expect(SupplierMapping.create).toHaveBeenCalledWith(
+        expect.objectContaining({ supplier_product_code: "7891234567895", is_physical_override: true }),
+        expect.anything(),
+      );
+      // Resolve depois do commit (linha de nota ganha o item); a linha não é apagada na transação.
+      expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();
+      expect(unmappedInvoiceProductService.resolveFromCreatedProduct).toHaveBeenCalledWith({
+        externalId: "90001",
+        integrationsId: "integration-1",
+        productId: "product-1",
+      });
+      // Vínculo novo auditado (mapeamento de integração + produto).
+      expect(AuditLog.bulkCreate).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ entity: "INTEGRATION_MAPPING", internal_id: "im-new", action: "CREATE" }),
+        ]),
+        expect.anything(),
+      );
+      expect(result).toEqual({
+        supplierMapping: { id: "mapping-1" },
+        integrationMapping: { id: "im-new", external_id: "90001", is_primary: true },
+        integration: { id: "integration-1", name: "Tecinco" },
+        integrationMappings: [
+          { id: "im-new", external_id: "90001", is_primary: true, erp_data: { name: "Pneu", ean: "7891234567895" } },
+        ],
+      });
+    });
+
+    it("produto da nota sem cadastro (Tecinco) com external_id: também vincula", async () => {
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+        ...catalogUnmapped,
+        invoice_id: "invoice-1",
+        reason: "Produto Tecinco presente na nota mas sem produto correspondente no banco",
+      });
+      (SupplierMapping.create as jest.Mock).mockResolvedValue({ id: "mapping-1" });
+
+      const result = await service.createFromUnmapped({ productId: "product-1", unmappedInvoiceProductId: "unmapped-1" });
+
+      expect(result.integrationMapping).toEqual({ id: "im-new", external_id: "90001", is_primary: true });
+      expect(unmappedInvoiceProductService.resolveFromCreatedProduct).toHaveBeenCalled();
+    });
+
+    it("EAN em uso por outro produto: não é erro — só não cria o DE x PARA, vincula e resolve mesmo assim", async () => {
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue(catalogUnmapped);
+      (ProductConfig.findAll as jest.Mock).mockResolvedValue([
+        { id: "config-1", product_id: "other-product-id", unit_business_id: "ub-1", gtin: "7891234567895" },
+      ]);
+
+      const result = await service.createFromUnmapped({ productId: "product-1", unmappedInvoiceProductId: "unmapped-1" });
+
+      expect(SupplierMapping.create).not.toHaveBeenCalled();
+      expect(result.supplierMapping).toBeNull();
+      expect(result.integrationMapping).toEqual({ id: "im-new", external_id: "90001", is_primary: true });
+      expect(unmappedInvoiceProductService.resolveFromCreatedProduct).toHaveBeenCalled();
+    });
+
+    it("já existe principal na integração: o novo mapping vem como não principal (createOrUpdateIntegrationMapping decide)", async () => {
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({ ...catalogUnmapped, ean: null, sku: null });
+      (integrationMappingService.createOrUpdateIntegrationMapping as jest.Mock).mockResolvedValue({
+        id: "im-new",
+        internal_id: "product-1",
+        external_id: "90001",
+        is_primary: false,
+      });
+
+      const result = await service.createFromUnmapped({ productId: "product-1", unmappedInvoiceProductId: "unmapped-1" });
+
+      // Sem EAN/SKU: DE x PARA não sai, mas não é erro nesse fluxo.
+      expect(result.supplierMapping).toBeNull();
+      expect(result.integrationMapping).toEqual({ id: "im-new", external_id: "90001", is_primary: false });
+    });
+
+    it("código do ERP já vinculado a outro produto: erro, nada é resolvido", async () => {
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue(catalogUnmapped);
+      (SupplierMapping.create as jest.Mock).mockResolvedValue({ id: "mapping-1" });
+      (integrationMappingService.createOrUpdateIntegrationMapping as jest.Mock).mockResolvedValue({
+        id: "im-other",
+        internal_id: "other-product-id",
+        external_id: "90001",
+        is_primary: true,
+      });
+
+      await expect(
+        service.createFromUnmapped({ productId: "product-1", unmappedInvoiceProductId: "unmapped-1" }),
+      ).rejects.toThrow(/já está vinculado a outro produto/i);
+      expect(unmappedInvoiceProductService.resolveFromCreatedProduct).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["outro tipo (ERROR_INVOICE)", { type: "ERROR_INVOICE", reason: "SKU ausente na nota" }, /só é feito a partir/i],
+      ["ERROR_CATALOG com outro motivo", { reason: "Outro motivo" }, /só é feito a partir/i],
+      ["external_id vazio", { external_id: null }, /não tem o código do Tecinco/i],
+    ])("%s: 400 PRODUCT_NOT_MAPPED_IN_INTEGRATION com mensagem do motivo, nada é criado", async (_label, overrides, message) => {
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({ ...catalogUnmapped, ...overrides });
+
+      const error = await service
+        .createFromUnmapped({ productId: "product-1", unmappedInvoiceProductId: "unmapped-1" })
+        .catch((e) => e);
+
+      expect(error).toBeInstanceOf(SupplierMappingError);
+      expect(error.code).toBe(SupplierMappingErrorCode.PRODUCT_NOT_MAPPED_IN_INTEGRATION);
+      expect(error.message).toMatch(message);
+      expect(SupplierMapping.create).not.toHaveBeenCalled();
+      expect(integrationMappingService.createOrUpdateIntegrationMapping).not.toHaveBeenCalled();
+      expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();
+      expect(unmappedInvoiceProductService.resolveFromCreatedProduct).not.toHaveBeenCalled();
+    });
   });
 });
 

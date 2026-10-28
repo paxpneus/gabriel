@@ -385,11 +385,8 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
     }
   };
 
-  // Mapeia manualmente um unmapped pra um product_id já existente via
-  // SupplierMapping, apagando o unmapped em seguida (ver
-  // SupplierMappingService.createFromUnmapped). Escopa por integração do
-  // usuário logado — mesmo padrão de posse usado em show/update/destroy —
-  // pra um usuário não conseguir mapear um unmapped de outra integração.
+  // Vincula um unmapped a um produto já existente (ver SupplierMappingService.createFromUnmapped); 201 com o que foi
+  // criado + mappings do produto na integração. Escopa pela integração do usuário (mesmo padrão de show/update/destroy).
   createFromUnmapped = async (req: Request, res: Response): Promise<Response> => {
     try {
       const integrationsId = await this.resolveIntegrationsId(req);
@@ -402,14 +399,14 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
         return res.status(404).json({ error: 'Produto não mapeado não encontrado' });
       }
 
-      const record = await this.service.createFromUnmapped({
+      const result = await this.service.createFromUnmapped({
         productId: product_id,
         unmappedInvoiceProductId: unmapped_invoice_product_id,
         supplierCnpj: supplier_cnpj,
         userId: (req as any).user?.id ?? null,
       });
 
-      return res.status(201).json(record);
+      return res.status(201).json(result);
     } catch (error: any) {
       return this.errorResponse(req, res, error);
     }

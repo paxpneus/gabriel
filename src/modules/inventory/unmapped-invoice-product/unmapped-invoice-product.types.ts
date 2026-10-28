@@ -25,6 +25,12 @@ export type UnmappedInvoiceProductType =
   | "ERROR_SCAN"
   | "ERROR_CATALOG_DUPLICATE";
 
+// Motivos do ERROR_CATALOG (produto do ERP sem cadastro, com external_id) — os únicos que vinculam um produto ainda
+// sem mapeamento na integração em SupplierMappingService.createFromUnmapped.
+export const UNMAPPED_REASON_NEW_CATALOG_PRODUCT = "Produto novo, precisa de mapeamento manual";
+export const UNMAPPED_REASON_INVOICE_PRODUCT_NOT_IN_DB =
+  "Produto Tecinco presente na nota mas sem produto correspondente no banco";
+
 export interface UnmappedInvoiceProductAttributes {
   id: string;
   invoice_id: string | null;

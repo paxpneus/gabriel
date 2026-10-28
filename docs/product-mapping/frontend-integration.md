@@ -137,7 +137,9 @@ Só leitura. Busca pneus cuja medida no nome é **exatamente** a informada. Índ
   - `IMPROVAVEL`: nenhum bateu;
   - `null`: só a medida foi enviada (todos ficam iguais).
 - **Ordem**: `ALTA`, `MEDIA`, `IMPROVAVEL`. Dentro de `MEDIA`, quem bateu o índice vem antes de quem bateu só a marca. Depois, por nome.
-- **`mapped_in_user_integration: false`**: o produto existe, mas não está vinculado à integração do usuário. Mapear vai dar `PRODUCT_NOT_MAPPED_IN_INTEGRATION`. Sugestão: mostrar um aviso no card e, no clique, ir direto para o modal de foto.
+- **`mapped_in_user_integration: false`**: o produto existe, mas não está vinculado à integração do usuário. Mostrar o aviso "não vinculado à integração" no card.
+  - Bipagem (§2/§3): mapear vai dar `PRODUCT_NOT_MAPPED_IN_INTEGRATION`; no clique, ir direto para o modal de foto.
+  - Tela de não mapeados (§5): **não bloquear** a escolha. Quem decide se dá para vincular é o back (§5).
 - O índice é procurado como termo separado: `R4` não casa com `R44` nem com `R-4`.
 
 ---
@@ -211,13 +213,46 @@ Sugestão: pedir confirmação antes de chamar, porque a ação retira o EAN de 
 { "product_id": "uuid", "unmapped_invoice_product_id": "uuid", "supplier_cnpj": "opcional" }
 ```
 
-### Mudanças
-- O DE x PARA criado **sempre** fica como EAN físico confirmado (`is_physical_override: true`). Se o produto já tinha DE x PARA com esse código, ele passa a ser confirmado.
+### Produto já vinculado à integração do não mapeado
+- Cria o DE x PARA com o EAN (ou SKU) do não mapeado, **sempre** como EAN físico confirmado (`is_physical_override: true`). Se o produto já tinha DE x PARA com esse código, ele passa a ser confirmado.
 - Antes de criar, valida o EAN como em §2. Pode voltar `400` com `EAN_OWNED_BY_ANOTHER_PRODUCT` ou `EAN_HAS_PHYSICAL_OVERRIDE` (mesmo formato).
+- Se o não mapeado tem código do ERP, vincula esse código ao produto também (ver "principal" abaixo).
 
-Respostas:
-- `201`: o DE x PARA. Para não mapeado do tipo `ERROR_CATALOG_DUPLICATE`, vem `null`.
+### Produto ainda não vinculado à integração do não mapeado
+Só é permitido quando o não mapeado é um produto do ERP sem cadastro **e** tem o código do ERP:
+- "Produto novo, precisa de mapeamento manual"; ou
+- "Produto Tecinco presente na nota mas sem produto correspondente no banco".
+
+Nesse caso o back vincula o produto ao código do ERP, tenta criar o DE x PARA do EAN (se o EAN já for de outro produto, só não cria, **sem erro**) e resolve o não mapeado. Se for de nota, o item entra na nota.
+
+Qualquer outro caso → `400` `{ "error": "<mensagem pronta>", "code": "PRODUCT_NOT_MAPPED_IN_INTEGRATION" }`. Exibir só o `error`; a mensagem já explica o motivo.
+
+### Principal
+- Primeiro código do produto naquela integração → nasce principal (`is_primary: true`).
+- Já tem principal → o novo nasce `is_primary: false`. O back **nunca troca o principal sozinho**: o usuário troca por `PUT /api/integration-mapping/product/:productId/:id` `{ "is_primary": true }` (§7).
+
+### Respostas
+- `201`:
+  ```json
+  {
+    "supplierMapping": { "...": "DE x PARA" } ,
+    "integrationMapping": { "id": "uuid", "external_id": "90001", "is_primary": true },
+    "integration": { "id": "uuid", "name": "Tecinco" },
+    "integrationMappings": [
+      { "id": "uuid", "external_id": "90001", "is_primary": true, "erp_data": { "name": "string | null", "ean": "string | null" } }
+    ]
+  }
+  ```
+  - `supplierMapping`: `null` se não criou (EAN de outro produto no vínculo novo, ou não mapeado `ERROR_CATALOG_DUPLICATE`).
+  - `integrationMapping`: `null` se não vinculou código do ERP (não mapeado sem código do ERP).
+  - `integrationMappings`: todos os códigos do produto **naquela integração**, depois do vínculo. `erp_data` é `null` enquanto o sync não passou pelo código. **`integrationMappings.length > 1`** → mostrar o aviso de que o produto tem mais de um código no ERP (e qual é o principal).
+- `400`: `PRODUCT_NOT_MAPPED_IN_INTEGRATION` (acima), erros de EAN de §2 (produto já vinculado), ou código do ERP já vinculado a outro produto (mensagem pronta).
 - `404`: não mapeado de outra integração ou inexistente.
+
+### Criar Produto na nota — `POST /api/unmapped-invoice-product/:id/create-product-and-map`
+Segue funcionando. Exige não mapeado de nota com código do ERP; responde `202` e o andamento é pelo `GET /api/unmapped-invoice-product/:id/create-product/job`.
+
+**Permissão** — "Criar Produto" e mapear produto na nota (`POST /api/invoice-items/add/item`) só para admin/developer ou papel com a permissão personalizada **"Criar e mapear produto na nota"** (entidade `invoice_product_mapping`, ação `write`, concedida na edição de papéis). Sem ela: `400` `{ "error": "Acesso negado: sem permissão de \"Criar\" em \"Criar e mapear produto na nota\"." }`. Sugestão: esconder os botões para quem não tem (admin/developer ou `role.permissions` com essa entidade).
 
 ---
 

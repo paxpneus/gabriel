@@ -10,6 +10,7 @@ import {
   EntityType,
   GroupedIntegrationMapping,
   ProductIntegrationMappingInput,
+  ProductIntegrationMappingSummary,
   ProductErpData,
 } from "./integration-mapping.types";
 import { entityRepositoryMap } from "./helpers/map-repository";
@@ -145,6 +146,26 @@ export class IntegrationMappingService extends BaseService<
     transaction?: Transaction,
   ): Promise<void> {
     await this.repository.bulkUpdate({ erp_data: erpData }, { where: { id: mappingId }, transaction });
+  }
+
+  // Todos os mappings PRODUCT do produto numa integração (mais antigo primeiro), com nome/EAN do snapshot do ERP.
+  async findProductMappingsInIntegration(
+    productId: string,
+    integrationsId: string,
+    transaction?: Transaction,
+  ): Promise<ProductIntegrationMappingSummary[]> {
+    const mappings = await this.repository.findAll({
+      where: { entity_type: "PRODUCT", internal_id: productId, integrations_id: integrationsId },
+      attributes: ["id", "external_id", "is_primary", "erp_data"],
+      order: [["createdAt", "ASC"]],
+      transaction,
+    });
+
+    return mappings.map((m) => {
+      let erpData: ProductIntegrationMappingSummary["erp_data"] = null;
+      if (m.erp_data) erpData = { name: m.erp_data.name ?? null, ean: m.erp_data.ean ?? null };
+      return { id: m.id, external_id: m.external_id, is_primary: !!m.is_primary, erp_data: erpData };
+    });
   }
 
   // Lista paginada dos mappings de um produto (entity_type PRODUCT, internal_id = productId); productId obrigatório.

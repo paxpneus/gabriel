@@ -22,6 +22,7 @@ import {
   SupplierMappingError,
   SupplierMappingErrorCode,
   SupplierMappingCreationAttributes,
+  CreateFromUnmappedResult,
 } from "./supplier-mapping.types";
 import {
   buildEanZeroVariants,
@@ -34,6 +35,10 @@ import ProductConfig from "../product-config/product_config.model";
 import sequelize from "../../../config/sequelize";
 import unmappedInvoiceProductService from "../unmapped-invoice-product/unmapped-invoice-product.service";
 import integrationMappingService from "../../integrations/integration-mapping/integration-mapping.service";
+import {
+  UNMAPPED_REASON_INVOICE_PRODUCT_NOT_IN_DB,
+  UNMAPPED_REASON_NEW_CATALOG_PRODUCT,
+} from "../unmapped-invoice-product/unmapped-invoice-product.types";
 import {
   QueryParams,
   PaginatedResult,
@@ -805,159 +810,217 @@ export class SupplierMappingService extends BaseService<
     }
   }
 
-  // Mapeia manualmente um unmapped pra um product_id JÁ EXISTENTE via
-  // SupplierMapping (sem passar por invoice/InvoiceItems) — útil sobretudo
-  // pro unmapped de catálogo (invoice_id: null, sem nota associada), onde
-  // createInvoiceItemForUnmappedProducts não se aplica. Cria o
-  // SupplierMapping com o código de fornecedor do próprio unmapped
-  // (ean, com fallback pra sku) e apaga o unmapped em seguida, na mesma
-  // transação.
+  // Vincula um não mapeado a um produto JÁ EXISTENTE (sem passar por InvoiceItems). Produto já mapeado na integração:
+  // DE x PARA com o código do não mapeado (EAN físico confirmado) + mapping do external_id; erro do DE x PARA propaga.
+  // Produto sem mapping na integração: só ERROR_CATALOG de produto do ERP sem cadastro, com external_id — cria o mapping,
+  // tenta o DE x PARA (falha só não cria) e resolve as linhas desse external_id (inclusive as de nota).
   async createFromUnmapped(params: {
     productId: string;
     unmappedInvoiceProductId: string;
     supplierCnpj?: string;
     userId?: string | null;
-  }): Promise<SupplierMapping | null> {
-    return sequelize.transaction(async (t) => {
-      const unmapped = await unmappedInvoiceProductService.findById(
-        params.unmappedInvoiceProductId,
-        { transaction: t },
+  }): Promise<CreateFromUnmappedResult> {
+    const unmapped = await unmappedInvoiceProductService.findById(params.unmappedInvoiceProductId);
+    if (!unmapped) {
+      throw new Error("Produto não mapeado não encontrado!");
+    }
+    if (!unmapped.integrations_id) {
+      throw new Error(
+        "Produto não mapeado sem integração associada, não é possível criar o DE X PARA",
       );
+    }
+    const integrationsId = unmapped.integrations_id;
 
-      if (!unmapped) {
-        throw new Error("Produto não mapeado não encontrado!");
-      }
+    const [integration, mappedIds] = await Promise.all([
+      integrationsService.findById(integrationsId, { attributes: ["id", "name"] }),
+      integrationMappingService.findExternalIdsMap("PRODUCT", integrationsId, [params.productId]),
+    ]);
+    if (!integration) throw new Error("Integração não encontrada");
 
-      // ERROR_CATALOG_DUPLICATE: o código é ambíguo por definição (colide
-      // com outro produto no catálogo Tecinco) — não faz sentido tentar
-      // criar um SupplierMapping pra ele (a validação de conflito
-      // bloquearia mesmo). Só cria o integration_mapping (produto Tecinco
-      // × produto sistema via external_id, que é sempre único
-      // independente da ambiguidade de sku/ean) e apaga o unmapped.
-      if (unmapped.type === "ERROR_CATALOG_DUPLICATE") {
-        if (!unmapped.integrations_id || !unmapped.external_id) {
-          throw new Error(
-            "Produto não mapeado duplicado sem integrations_id/external_id, não é possível mapear",
-          );
-        }
-        await integrationMappingService.createOrUpdateIntegrationMapping(
-          {
-            entity_type: "PRODUCT",
-            internal_id: params.productId,
-            integrations_id: unmapped.integrations_id,
-            external_id: unmapped.external_id,
-          },
-          t,
-        );
-        await unmappedInvoiceProductService.delete(unmapped.id, {
-          transaction: t,
-        });
-        return null;
-      }
-
-      const supplierProductCode = unmapped.ean ?? unmapped.sku;
-      if (!supplierProductCode) {
-        throw new Error(
-          "Produto não mapeado sem EAN/SKU, não é possível criar o DE X PARA",
-        );
-      }
-
-      if (!unmapped.integrations_id) {
-        throw new Error(
-          "Produto não mapeado sem integração associada, não é possível criar o DE X PARA",
-        );
-      }
-
-      // Mesmo pré-check do createForProduct, com zero à esquerda: protege EAN físico confirmado de outro produto
-      // e devolve erro com code em vez da violação de unique/trigger.
-      await this.assertEanFreeForProduct(supplierProductCode, unmapped.integrations_id, params.productId, t);
-
-      // Se já existe um SupplierMapping com esse código nessa integração
-      // apontando pro MESMO produto, é idempotente — não é erro, só não
-      // recria (senão estouraria a unique constraint à toa). Só é conflito
-      // de verdade quando o código já está mapeado pra um produto
-      // DIFERENTE do que está sendo enviado agora.
-      const existingMapping = await this.findOne({
-        where: {
-          integrations_id: unmapped.integrations_id,
-          supplier_product_code: supplierProductCode,
-        },
-        transaction: t,
-      });
-
-      // Mapeamento feito por uma pessoa a partir do não mapeado: o código sempre vira EAN físico confirmado do
-      // produto (is_physical_override) — o sync deixa de gravar esse EAN em outros produtos. Auditado abaixo.
-      let supplierMapping: SupplierMapping;
-      let auditAction = AuditAction.CREATE;
-      if (existingMapping) {
-        if (existingMapping.product_id !== params.productId) {
-          throw new Error(
-            `Já existe um SupplierMapping com o código ${supplierProductCode} nessa integração, mapeado para outro produto (id=${existingMapping.product_id})`,
-          );
-        }
-        if (!existingMapping.is_physical_override) {
-          await this.repository.bulkUpdate(
-            { is_physical_override: true },
-            { where: { id: existingMapping.id }, transaction: t },
-          );
-          existingMapping.is_physical_override = true;
-        }
-        supplierMapping = existingMapping;
-        auditAction = AuditAction.UPDATE;
-      } else {
-        supplierMapping = await this.create(
-          {
-            product_id: params.productId,
-            supplier_cnpj: params.supplierCnpj,
-            supplier_product_code: supplierProductCode,
-            integrations_id: unmapped.integrations_id,
-            is_physical_override: true,
-          },
-          { transaction: t },
-        );
-      }
-
-      // Quem/quando do EAN físico confirmado (usado no erro EAN_HAS_PHYSICAL_OVERRIDE e no relatório de pendências).
-      await auditLogService.record(
-        [AuditEntity.SUPPLIER_MAPPING, AuditEntity.PRODUCT].map((entity) => ({
-          userId: params.userId ?? null,
-          entity,
-          internalId: entity === AuditEntity.PRODUCT ? params.productId : supplierMapping.id,
-          action: entity === AuditEntity.PRODUCT ? AuditAction.UPDATE : auditAction,
-          changes: {
-            summary: `EAN ${supplierProductCode} confirmado como EAN físico do produto ao mapear um produto não mapeado`,
-            after: { supplier_product_code: supplierProductCode, is_physical_override: true },
-          },
-        })),
-        t,
+    // ERROR_CATALOG_DUPLICATE: código ambíguo no catálogo Tecinco — só cria o integration_mapping, nunca o DE x PARA.
+    const isDuplicate = unmapped.type === "ERROR_CATALOG_DUPLICATE";
+    if (isDuplicate && !unmapped.external_id) {
+      throw new Error(
+        "Produto não mapeado duplicado sem integrations_id/external_id, não é possível mapear",
       );
+    }
 
-      // unmapped de catálogo (invoice_id: null) tem external_id = id real do
-      // produto no ERP — se ele existir, aproveita que já temos o par
-      // externo/interno aqui e garante o IntegrationMapping também. Sem
-      // isso, o próximo sync de catálogo não acharia mapping pra esse
-      // external_id (resolveProductWithMapping é mapping-only) e recriaria
-      // um unmapped pro mesmo produto, desfazendo esse mapeamento manual.
-      // createOrUpdateIntegrationMapping já é idempotente — não sobrescreve
-      // se já existir outro mapping pra esse external_id/internal_id.
+    // Produto sem mapping na integração: o vínculo nasce do external_id, então só pra produto do ERP sem cadastro.
+    const linksProduct = !isDuplicate && !mappedIds.has(params.productId);
+    if (linksProduct) {
+      const linkableReason =
+        unmapped.type === "ERROR_CATALOG" &&
+        [UNMAPPED_REASON_NEW_CATALOG_PRODUCT, UNMAPPED_REASON_INVOICE_PRODUCT_NOT_IN_DB].includes(unmapped.reason);
+      const howToFix = `Vincule o produto ao ${integration.name} em "Mapeamento de integração", na tela do produto, e tente de novo.`;
+      let message = "";
+      if (!linkableReason) {
+        message = `O produto escolhido ainda não está vinculado ao ${integration.name}. O vínculo automático só é feito a partir de um produto novo do ${integration.name} ou de um produto da nota sem cadastro no sistema. ${howToFix}`;
+      } else if (!unmapped.external_id) {
+        message = `O produto escolhido ainda não está vinculado ao ${integration.name}, e este produto pendente não tem o código do ${integration.name} para fazer o vínculo. ${howToFix}`;
+      }
+      if (message) {
+        throw new SupplierMappingError(SupplierMappingErrorCode.PRODUCT_NOT_MAPPED_IN_INTEGRATION, message);
+      }
+    }
+
+    const { supplierMapping, integrationMapping } = await sequelize.transaction(async (t) => {
+      let supplierMapping: SupplierMapping | null = null;
+      if (!isDuplicate) {
+        try {
+          // Savepoint: no vínculo de produto sem mapping, falha do DE x PARA não pode abortar a transação inteira.
+          supplierMapping = await sequelize.transaction({ transaction: t }, async (sp) => {
+            const supplierProductCode = unmapped.ean ?? unmapped.sku;
+            if (!supplierProductCode) {
+              throw new Error(
+                "Produto não mapeado sem EAN/SKU, não é possível criar o DE X PARA",
+              );
+            }
+
+            // Mesmo pré-check do createForProduct, com zero à esquerda: protege EAN físico confirmado de outro produto
+            // e devolve erro com code em vez da violação de unique/trigger.
+            await this.assertEanFreeForProduct(supplierProductCode, integrationsId, params.productId, sp);
+
+            // Código já mapeado pro MESMO produto é idempotente (não recria); pra outro produto é conflito.
+            const existingMapping = await this.findOne({
+              where: { integrations_id: integrationsId, supplier_product_code: supplierProductCode },
+              transaction: sp,
+            });
+
+            // Mapeamento feito por uma pessoa a partir do não mapeado: o código sempre vira EAN físico confirmado do
+            // produto (is_physical_override) — o sync deixa de gravar esse EAN em outros produtos. Auditado abaixo.
+            let record: SupplierMapping;
+            let auditAction = AuditAction.CREATE;
+            if (existingMapping) {
+              if (existingMapping.product_id !== params.productId) {
+                throw new Error(
+                  `Já existe um SupplierMapping com o código ${supplierProductCode} nessa integração, mapeado para outro produto (id=${existingMapping.product_id})`,
+                );
+              }
+              if (!existingMapping.is_physical_override) {
+                await this.repository.bulkUpdate(
+                  { is_physical_override: true },
+                  { where: { id: existingMapping.id }, transaction: sp },
+                );
+                existingMapping.is_physical_override = true;
+              }
+              record = existingMapping;
+              auditAction = AuditAction.UPDATE;
+            } else {
+              record = await this.create(
+                {
+                  product_id: params.productId,
+                  supplier_cnpj: params.supplierCnpj,
+                  supplier_product_code: supplierProductCode,
+                  integrations_id: integrationsId,
+                  is_physical_override: true,
+                },
+                { transaction: sp },
+              );
+            }
+
+            // Quem/quando do EAN físico confirmado (usado no erro EAN_HAS_PHYSICAL_OVERRIDE e no relatório de pendências).
+            await auditLogService.record(
+              [AuditEntity.SUPPLIER_MAPPING, AuditEntity.PRODUCT].map((entity) => ({
+                userId: params.userId ?? null,
+                entity,
+                internalId: entity === AuditEntity.PRODUCT ? params.productId : record.id,
+                action: entity === AuditEntity.PRODUCT ? AuditAction.UPDATE : auditAction,
+                changes: {
+                  summary: `EAN ${supplierProductCode} confirmado como EAN físico do produto ao mapear um produto não mapeado`,
+                  after: { supplier_product_code: supplierProductCode, is_physical_override: true },
+                },
+              })),
+              sp,
+            );
+
+            return record;
+          });
+        } catch (error: any) {
+          if (!linksProduct) throw error;
+          console.warn(
+            `[SUPPLIER_MAPPING] DE x PARA não criado ao vincular o não mapeado ${unmapped.id} ao produto ${params.productId}: ${error.message}`,
+          );
+        }
+      }
+
+      // external_id = id do produto no ERP: sem o mapping, o próximo sync (mapping-only) recriaria o não mapeado.
+      // createOrUpdateIntegrationMapping nunca reaponta e decide o principal (primeiro da integração = principal).
+      let integrationMapping: CreateFromUnmappedResult["integrationMapping"] = null;
       if (unmapped.external_id) {
-        await integrationMappingService.createOrUpdateIntegrationMapping(
+        const mapping = await integrationMappingService.createOrUpdateIntegrationMapping(
           {
             entity_type: "PRODUCT",
             internal_id: params.productId,
-            integrations_id: unmapped.integrations_id,
+            integrations_id: integrationsId,
             external_id: unmapped.external_id,
           },
           t,
         );
+        if (mapping.internal_id === params.productId) {
+          integrationMapping = { id: mapping.id, external_id: mapping.external_id, is_primary: !!mapping.is_primary };
+        } else if (linksProduct) {
+          throw new Error(
+            `O código ${unmapped.external_id} do ${integration.name} já está vinculado a outro produto no sistema. Encaminhe para o time técnico. [integration_mapping ${mapping.id}, produto ${mapping.internal_id}]`,
+          );
+        }
       }
 
-      await unmappedInvoiceProductService.delete(unmapped.id, {
-        transaction: t,
-      });
+      // Vínculo novo com a integração entra no histórico do produto (o produto não tinha mapping nela).
+      if (linksProduct && integrationMapping) {
+        const summary = `Produto vinculado ao código ${integrationMapping.external_id} do ${integration.name} ao mapear um produto não mapeado`;
+        const after = { external_id: integrationMapping.external_id, is_primary: integrationMapping.is_primary };
+        await auditLogService.record(
+          [
+            {
+              userId: params.userId ?? null,
+              entity: AuditEntity.INTEGRATION_MAPPING,
+              internalId: integrationMapping.id,
+              action: AuditAction.CREATE,
+              changes: { summary, after, origin: { entity: AuditEntity.PRODUCT, internal_id: params.productId } },
+            },
+            {
+              userId: params.userId ?? null,
+              entity: AuditEntity.PRODUCT,
+              internalId: params.productId,
+              action: AuditAction.UPDATE,
+              changes: {
+                summary,
+                affected: [
+                  { entity: AuditEntity.INTEGRATION_MAPPING, internal_id: integrationMapping.id, action: AuditAction.CREATE, before: null, after },
+                ],
+              },
+            },
+          ],
+          t,
+        );
+      }
 
-      return supplierMapping;
+      // Vínculo novo resolve depois do commit (todas as linhas do external_id); senão só a linha atual sai.
+      if (!linksProduct) {
+        await unmappedInvoiceProductService.delete(unmapped.id, { transaction: t });
+      }
+
+      return { supplierMapping, integrationMapping };
     });
+
+    // Linha de nota ganha o InvoiceItem (e lote/PDV) antes de sair; de catálogo só é apagada.
+    if (linksProduct) {
+      await unmappedInvoiceProductService.resolveFromCreatedProduct({
+        externalId: unmapped.external_id!,
+        integrationsId,
+        productId: params.productId,
+      });
+    }
+
+    return {
+      supplierMapping,
+      integrationMapping,
+      integration: { id: integration.id, name: integration.name },
+      integrationMappings: await integrationMappingService.findProductMappingsInIntegration(
+        params.productId,
+        integrationsId,
+      ),
+    };
   }
 }
 

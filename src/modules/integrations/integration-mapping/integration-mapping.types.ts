@@ -33,6 +33,14 @@ export interface ProductErpData {
   updated_at: string;
 }
 
+// Mapping do produto numa integração com nome/EAN do snapshot do ERP — aviso de vários códigos no vincular não mapeado.
+export interface ProductIntegrationMappingSummary {
+  id: string;
+  external_id: string;
+  is_primary: boolean;
+  erp_data: { name: string | null; ean: string | null } | null;
+}
+
 // Campos aceitos do body no CRUD por produto; entity_type/internal_id vêm da rota (PRODUCT + productId).
 export type ProductIntegrationMappingInput = Pick<
   IntegrationMappingAttributes,

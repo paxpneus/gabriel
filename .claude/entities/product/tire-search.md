@@ -12,4 +12,4 @@
   - marca: `brand_id` = `brandsService.findSimilarBrand(brand)` **ou** texto da marca no nome.
   - `score { matched, total }` (só opcionais passados); `ALTA` = todos, `IMPROVAVEL` = nenhum, `MEDIA` = meio-termo; só medida → `probability: null`. `matches.*` null quando o opcional não veio.
 - **Ordem**: probabilidade → quem bateu o índice antes de quem bateu só a marca → nome.
-- Item: `{ product, matches: { load_index, brand }, score, probability, mapped_in_user_integration }`. Mapear um candidato de outra integração cai nos `code` do DE x PARA (`physical-ean-owner.md`).
+- Item: `{ product, matches: { load_index, brand }, score, probability, mapped_in_user_integration }`. Mapear um candidato de outra integração cai nos `code` do DE x PARA (`physical-ean-owner.md`); na tela de não mapeados a flag é só aviso — quem decide é `createFromUnmapped` (`supplier-mapping.md`).

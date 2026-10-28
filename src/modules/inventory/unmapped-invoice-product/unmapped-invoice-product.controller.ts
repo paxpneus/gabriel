@@ -71,6 +71,7 @@ export class UnmappedInvoiceProductController extends BaseController<
       markMapped: [authenticate, userPermissions],
       getImage: [authenticate, userPermissions],
       createProduct: [authenticate, userPermissions],
+      // userPermissions resolve a entidade invoice_product_mapping pela rota (CUSTOM_ROUTE_MAP "create-product-and-map").
       createProductAndMapToInvoice: [authenticate, userPermissions],
       createProducts: [authenticate, userPermissions],
       getJob: [authenticate, userPermissions],

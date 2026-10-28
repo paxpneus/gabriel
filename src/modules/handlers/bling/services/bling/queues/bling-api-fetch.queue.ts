@@ -30,6 +30,7 @@ import Contact from "../../../../../sales/contacts/contacts.model";
 import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import { UNMAPPED_REASON_NEW_CATALOG_PRODUCT } from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.types";
 import {
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,
@@ -859,6 +860,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // Magento/kardex/estoque, e não registra unmapped — só tenta excluir
     // localmente o que já existir (ver handleDeactivatedBlingProduct).
     if (blingProduct.situacao === "E") {
+      // Criar Produto manual: falha com motivo (polling do front mostra "failed") em vez de terminar como sucesso.
+      if (opts.create) {
+        throw new UnrecoverableError(
+          `O produto "${blingProduct.nome}" está excluído ou desativado no Bling. Esse produto não pode ser criado. [blingId=${blingProduct.id}]`,
+        );
+      }
       await this.handleDeactivatedBlingProduct(
         blingProduct,
         unitBusiness,
@@ -873,6 +880,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       String(blingProduct.id),
     );
     const hadMapping = !!mapping;
+
+    // Criar Produto manual com o código já vinculado a um produto existente: não há o que criar — falha com o
+    // produto (antes do resolve, que já faria backfill de DE x PARA). Mapping órfão segue pra criação como antes.
+    if (opts.create && mapping) {
+      const linkedProduct = await productService.findById(mapping.internal_id, { attributes: ["id", "name"] });
+      if (linkedProduct) {
+        throw new UnrecoverableError(
+          `Este produto já existe no sistema: o código ${blingProduct.id} do Bling já está vinculado ao produto "${linkedProduct.name}". Em vez de criar, mapeie este item para esse produto. [blingId=${blingProduct.id}, produto ${linkedProduct.id}]`,
+        );
+      }
+    }
 
     // EAN bloqueado pro produto (EAN físico confirmado de outro, ou outro zero à esquerda em outro produto):
     // não grava gtin/DE x PARA nem checa conflito (gtin_erp continua).
@@ -985,7 +1003,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             external_id: String(blingProduct.id),
             product_name: blingProduct.nome,
             quantity: 0,
-            reason: "Produto novo, precisa de mapeamento manual",
+            reason: UNMAPPED_REASON_NEW_CATALOG_PRODUCT,
             type: "ERROR_CATALOG",
             status: "UNMAPPED",
           });

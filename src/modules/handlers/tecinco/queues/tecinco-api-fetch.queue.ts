@@ -62,6 +62,10 @@ import {
 } from "./helpers/product.helpers";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import {
+  UNMAPPED_REASON_INVOICE_PRODUCT_NOT_IN_DB,
+  UNMAPPED_REASON_NEW_CATALOG_PRODUCT,
+} from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.types";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
 import { buildTecincoProductErpData } from "./helpers/erp-data";
@@ -594,6 +598,12 @@ export class TCarUpsertQueue extends BaseQueueService<
       : null;
 
     if (!operationUnitBusiness) {
+      // Criar Produto manual: falha com motivo (polling do front mostra "failed"); no sync só ignora.
+      if (opts.create) {
+        throw new UnrecoverableError(
+          `Não foi possível identificar a loja do Tecinco para criar o produto. Encaminhe este erro para o time técnico. [branchId=${resolvedBranchId || "?"}, id_system=${systemId}]`,
+        );
+      }
       console.warn(
         `${logPrefix} — unit business não resolvida para branchId=${resolvedBranchId || "?"} — produto ignorado (sem loja da operação não há como resolver com segurança)`,
       );
@@ -648,6 +658,12 @@ export class TCarUpsertQueue extends BaseQueueService<
     );
 
     if (!isAllowedGroup) {
+      // Criar Produto manual: falha com motivo (polling do front mostra "failed"); no sync só ignora.
+      if (opts.create) {
+        throw new UnrecoverableError(
+          `O produto "${data.epctb_nome?.trim() ?? systemId}" é do grupo "${resolvedGroupName || "sem grupo"}" no Tecinco, e o sistema só cadastra pneus. Esse produto não pode ser criado. [id_system=${systemId}]`,
+        );
+      }
       console.log(
         `${logPrefix} — grupo "${resolvedGroupName || "(vazio)"}" fora dos grupos de pneus permitidos — produto ignorado`,
       );
@@ -687,6 +703,17 @@ export class TCarUpsertQueue extends BaseQueueService<
       systemId,
     );
     const hadMapping = !!mapping;
+
+    // Criar Produto manual com o código já vinculado a um produto existente: não há o que criar — falha com o
+    // produto (antes do resolve, que já faria backfill de DE x PARA). Mapping órfão segue pra criação como antes.
+    if (opts.create && mapping) {
+      const linkedProduct = await productService.findById(mapping.internal_id, { attributes: ["id", "name"] });
+      if (linkedProduct) {
+        throw new UnrecoverableError(
+          `Este produto já existe no sistema: o código ${systemId} do Tecinco já está vinculado ao produto "${linkedProduct.name}". Em vez de criar, mapeie este item para esse produto. [id_system=${systemId}, produto ${linkedProduct.id}]`,
+        );
+      }
+    }
 
     // EAN bloqueado pro produto (EAN físico confirmado de outro, ou outro zero à esquerda em outro produto):
     // omite gtin/DE x PARA (gtin_erp continua) e pula a checagem de conflito.
@@ -794,7 +821,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             ]
               .filter(Boolean)
               .join(", ")}) — mais de um produto usa o mesmo valor, então não dá pra mapear automaticamente com segurança. Precisa de revisão manual.`
-          : "Produto novo, precisa de mapeamento manual";
+          : UNMAPPED_REASON_NEW_CATALOG_PRODUCT;
         const existingUnmapped = await UnmappedInvoiceProduct.findOne({
           where: {
             invoice_id: null,
@@ -1711,7 +1738,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             ? String(tcarPayload.epctb_coded).trim()
             : undefined) ??
           null;
-        const reason = "Produto Tecinco presente na nota mas sem produto correspondente no banco";
+        const reason = UNMAPPED_REASON_INVOICE_PRODUCT_NOT_IN_DB;
         console.warn(`${logPrefix} — ${reason}`);
         unmappedItems.push({
           sku: skuToStore,
