@@ -69,6 +69,7 @@ jest.mock("../../../../../tecinco/queues/helpers/product.helpers", () => ({
   findPhysicalOverrideForEan: jest.fn().mockResolvedValue(null),
   isEanBlockedForProduct: jest.fn().mockResolvedValue(false),
   isCodeOwnedByAnotherProduct: jest.fn().mockResolvedValue(false),
+  resolveProductIdBySupplierMappingEan: jest.fn().mockResolvedValue(null),
   resolveProductWithMapping: jest.fn(),
   resolveProductBySku: jest.fn(),
   resolveProductBySupplierMapping: jest.fn(),

@@ -195,7 +195,17 @@ describe("SupplierMappingService.createFromUnmapped", () => {
         supplier_cnpj: "11222333000144",
         supplier_product_code: "EAN-1",
         integrations_id: "integration-1",
+        // Mapeamento a partir do não mapeado sempre vira EAN físico confirmado.
+        is_physical_override: true,
       }),
+      expect.anything(),
+    );
+    // Quem/quando do EAN físico confirmado: log do DE x PARA e do produto.
+    expect(AuditLog.bulkCreate).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ entity: "SUPPLIER_MAPPING", internal_id: "mapping-1", action: "CREATE" }),
+        expect.objectContaining({ entity: "PRODUCT", internal_id: "product-1" }),
+      ]),
       expect.anything(),
     );
     expect(unmappedInvoiceProductService.delete).toHaveBeenCalledWith(
@@ -280,7 +290,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
     expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();
   });
 
-  it("mapping já existe pro MESMO produto (idempotente): não é erro — não recria, mas ainda garante o IntegrationMapping e apaga o unmapped", async () => {
+  it("mapping já existe pro MESMO produto (idempotente): não recria, marca como EAN físico confirmado, ainda garante o IntegrationMapping e apaga o unmapped", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
       id: "unmapped-1",
       ean: "EAN-1",
@@ -299,7 +309,15 @@ describe("SupplierMappingService.createFromUnmapped", () => {
     });
 
     expect(SupplierMapping.create).not.toHaveBeenCalled();
-    expect(result).toEqual({ id: "existing-mapping-1", product_id: "product-1" });
+    expect(SupplierMapping.update).toHaveBeenCalledWith(
+      { is_physical_override: true },
+      expect.objectContaining({ where: { id: "existing-mapping-1" } }),
+    );
+    expect(result).toEqual({
+      id: "existing-mapping-1",
+      product_id: "product-1",
+      is_physical_override: true,
+    });
     expect(
       integrationMappingService.createOrUpdateIntegrationMapping,
     ).toHaveBeenCalledWith(

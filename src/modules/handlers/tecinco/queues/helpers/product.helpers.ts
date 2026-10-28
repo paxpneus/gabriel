@@ -365,13 +365,9 @@ export class SupplierMappingConflictError extends Error {
   }
 }
 
-// Garante que nenhum dos EANs candidatos já pertence, NA MESMA UNIT
-// BUSINESS, a um product OU está vinculado via SupplierMapping, NA MESMA
-// INTEGRAÇÃO, a um product diferente do que estamos criando/atualizando.
-// Isso pega o conflito antes de estourar erro genérico do Postgres na
-// constraint de banco, e dá contexto suficiente pra alertar/revisar
-// manualmente. Só considera ProductConfig.gtin — gtin_package não participa
-// de nenhuma checagem, é só um campo guardado para uso futuro.
+// Garante que nenhum dos EANs candidatos (exato ou com outro zero à esquerda) já é gtin de outro produto em
+// QUALQUER loja da integração (erro) nem DE x PARA comum de outro produto nela (removido) — validação sempre por integração.
+// Só considera ProductConfig.gtin — gtin_package não participa de nenhuma checagem.
 export async function assertEanNotOwnedByAnotherProduct(params: {
   productId: string;
   unitBusinessId: string;
@@ -394,27 +390,20 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
     // da integração dona do produto. Se colide com o de OUTRO produto, os
     // dois lados são igualmente autoritativos e não dá pra saber qual está
     // certo sem revisão humana — trava e alerta (ver callers).
-    // Exato ou com outro zero à esquerda: os dois fariam o bipe da loja achar dois produtos.
+    // gtin de outro produto em qualquer loja da integração, exato ou com outro zero à esquerda (o bipe acharia dois).
     const codes = buildEanZeroVariants(normalized);
-    const conflictingConfig = await ProductConfig.findOne({
-      where: {
-        unit_business_id: unitBusinessId,
-        product_id: { [Op.ne]: productId },
-        gtin: { [Op.in]: codes },
-      },
-      transaction,
-    });
+    const conflictingProductId = await findGtinOwnerId(codes, productId, integrationsId, transaction);
 
-    if (conflictingConfig) {
+    if (conflictingProductId) {
       const [conflictingProduct, currentProduct] = await Promise.all([
-        Product.findByPk(conflictingConfig.product_id, {
+        Product.findByPk(conflictingProductId, {
           attributes: ["name"],
           transaction,
         }),
         Product.findByPk(productId, { attributes: ["name"], transaction }),
       ]);
       throw new EanConflictError(
-        `Não foi possível salvar: o código ${normalized} já pertence ao produto "${conflictingProduct?.name ?? conflictingConfig.product_id}", mas está sendo usado agora pro produto "${currentProduct?.name ?? productId}". Encaminhe este erro para o time técnico investigar. [${logPrefix} — ${field}=${normalized}, produto conflitante id=${conflictingConfig.product_id}, produto atual id=${productId}]`,
+        `Não foi possível salvar: o código ${normalized} já pertence ao produto "${conflictingProduct?.name ?? conflictingProductId}", mas está sendo usado agora pro produto "${currentProduct?.name ?? productId}". Encaminhe este erro para o time técnico investigar. [${logPrefix} — ${field}=${normalized}, produto conflitante id=${conflictingProductId}, produto atual id=${productId}]`,
       );
     }
 
@@ -523,6 +512,53 @@ export async function findPhysicalOverrideForEan(
   });
 }
 
+// Dono (outro produto) de algum dos códigos como gtin em QUALQUER loja da integração — validação de EAN é sempre
+// por integração, nunca por loja. productId null = qualquer produto.
+async function findGtinOwnerId(
+  codes: string[],
+  productId: string | null,
+  integrationsId: string,
+  transaction?: Transaction,
+): Promise<string | null> {
+  if (!codes.length) return null;
+  const where: WhereAttributeHash<ProductConfigAttributes> = { gtin: { [Op.in]: codes } };
+  if (productId) where.product_id = { [Op.ne]: productId };
+
+  const config = await ProductConfig.findOne({
+    where,
+    attributes: ["product_id"],
+    include: [
+      {
+        model: UnitBusiness,
+        as: "unitBusiness",
+        attributes: [],
+        where: { integrations_id: integrationsId },
+        required: true,
+      },
+    ],
+    transaction,
+  });
+  return config?.product_id ?? null;
+}
+
+// Dono (outro produto) de algum dos códigos como DE x PARA da integração. productId null = qualquer produto.
+async function findMappingOwnerId(
+  codes: string[],
+  productId: string | null,
+  integrationsId: string,
+  transaction?: Transaction,
+): Promise<string | null> {
+  if (!codes.length) return null;
+  const where: WhereAttributeHash<SupplierMappingAttributes> = {
+    supplier_product_code: { [Op.in]: codes },
+    integrations_id: integrationsId,
+  };
+  if (productId) where.product_id = { [Op.ne]: productId };
+
+  const mapping = await SupplierMapping.findOne({ where, attributes: ["product_id"], transaction });
+  return mapping?.product_id ?? null;
+}
+
 // Outro produto da integração já usa o código (exato ou com zero à esquerda) como DE x PARA ou gtin de alguma loja
 // dela? Devolve o product_id dele, ou null. zeroVariantsOnly ignora o exato (quem chama já trata o conflito exato).
 export async function findAnotherProductUsingEan(
@@ -536,51 +572,60 @@ export async function findAnotherProductUsingEan(
 
   let codes = buildEanZeroVariants(normalized);
   if (opts.zeroVariantsOnly) codes = codes.filter((variant) => variant !== normalized);
-  if (!codes.length) return null;
 
-  const mappingWhere: WhereAttributeHash<SupplierMappingAttributes> = {
-    supplier_product_code: { [Op.in]: codes },
-    integrations_id: integrationsId,
-  };
-  const configWhere: WhereAttributeHash<ProductConfigAttributes> = { gtin: { [Op.in]: codes } };
-  if (productId) {
-    mappingWhere.product_id = { [Op.ne]: productId };
-    configWhere.product_id = { [Op.ne]: productId };
-  }
-
-  const [mapping, config] = await Promise.all([
-    SupplierMapping.findOne({ where: mappingWhere, attributes: ["product_id"], transaction: opts.transaction }),
-    ProductConfig.findOne({
-      where: configWhere,
-      attributes: ["product_id"],
-      include: [
-        {
-          model: UnitBusiness,
-          as: "unitBusiness",
-          attributes: [],
-          where: { integrations_id: integrationsId },
-          required: true,
-        },
-      ],
-      transaction: opts.transaction,
-    }),
+  const [mappingOwnerId, gtinOwnerId] = await Promise.all([
+    findMappingOwnerId(codes, productId, integrationsId, opts.transaction),
+    findGtinOwnerId(codes, productId, integrationsId, opts.transaction),
   ]);
-  return mapping?.product_id ?? config?.product_id ?? null;
+  return mappingOwnerId ?? gtinOwnerId;
 }
 
-// O sync não pode gravar esse EAN (gtin/DE x PARA) no produto: é EAN físico confirmado de outro produto, ou outro
-// produto usa a mesma numeração com outro zero à esquerda (o bipe acharia dois). productId null = produto ainda não existe.
+// O sync não pode gravar esse EAN no produto: EAN físico confirmado de outro produto, gtin de outro produto em qualquer
+// loja da integração (exato ou com zero), ou DE x PARA de outro com outro zero à esquerda. productId null = produto novo.
+// (DE x PARA exato de outro produto fica de fora de propósito: assertEanNotOwnedByAnotherProduct remove ele — gtin do ERP vence.)
 export async function isEanBlockedForProduct(
   ean: string | null | undefined,
   productId: string | null,
   integrationsId: string,
   transaction?: Transaction,
 ): Promise<boolean> {
-  const [override, zeroVariantOwnerId] = await Promise.all([
-    findPhysicalOverrideForEan(ean, productId, integrationsId, transaction),
-    findAnotherProductUsingEan(ean, productId, integrationsId, { zeroVariantsOnly: true, transaction }),
+  const normalized = normalizeEan(ean ?? undefined);
+  if (!normalized) return false;
+
+  const codes = buildEanZeroVariants(normalized);
+  const [override, gtinOwnerId, mappingOwnerId] = await Promise.all([
+    findPhysicalOverrideForEan(normalized, productId, integrationsId, transaction),
+    findGtinOwnerId(codes, productId, integrationsId, transaction),
+    findMappingOwnerId(codes.filter((variant) => variant !== normalized), productId, integrationsId, transaction),
   ]);
-  return !!override || !!zeroVariantOwnerId;
+  return !!override || !!gtinOwnerId || !!mappingOwnerId;
+}
+
+// Resolve o produto de um item de nota pelo DE x PARA (EAN da nota, exato ou com zero à esquerda) na integração.
+// Mais de um produto → null (vira não mapeado) em vez de escolher um no chute.
+export async function resolveProductIdBySupplierMappingEan(
+  ean: string | null | undefined,
+  integrationsId: string,
+  logPrefix: string,
+): Promise<string | null> {
+  const normalized = normalizeEan(ean ?? undefined);
+  if (!normalized) return null;
+
+  const mappings = await SupplierMapping.findAll({
+    where: {
+      supplier_product_code: { [Op.in]: buildEanZeroVariants(normalized) },
+      integrations_id: integrationsId,
+    },
+    attributes: ["product_id"],
+  });
+  const productIds = [...new Set(mappings.map((mapping) => mapping.product_id))];
+  if (productIds.length > 1) {
+    console.warn(
+      `${logPrefix} — EAN=${normalized} corresponde a mais de um produto via SupplierMapping (considerando zeros à esquerda): ${productIds.join(", ")} — item não resolvido`,
+    );
+    return null;
+  }
+  return productIds[0] ?? null;
 }
 
 // Versão em lote de findPhysicalOverrideForEan (uma query pra todos os EANs de uma nota):
@@ -631,7 +676,7 @@ export function buildEanZeroVariants(ean: string): string[] {
 }
 
 // Scan de inventário: busca o EAN exato + variações de zeros à esquerda (até GTIN-14, ex.: 4019238588644 ↔
-// 04019238588644) em ProductConfig.gtin (loja) e SupplierMapping (integração). Só resolve se der um único produto.
+// 04019238588644) em ProductConfig.gtin e SupplierMapping, ambos da integração. Só resolve se der um único produto.
 export async function resolveProductByEanWithStock(params: {
   ean: string;
   unitBusinessId: string;
@@ -649,9 +694,19 @@ export async function resolveProductByEanWithStock(params: {
   // (reabriria a mistura Bling/Tecinco).
   const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId, transaction);
 
+  // gtin de qualquer loja da integração (validação de EAN é por integração, nunca por loja).
   const configs = await ProductConfig.findAll({
     attributes: ["product_id"],
-    where: { unit_business_id: unitBusinessId, gtin: { [Op.in]: codes } },
+    where: { gtin: { [Op.in]: codes } },
+    include: [
+      {
+        model: UnitBusiness,
+        as: "unitBusiness",
+        attributes: [],
+        where: { integrations_id: integrationsId },
+        required: true,
+      },
+    ],
     transaction,
   });
   const mappings = await SupplierMapping.findAll({

@@ -63,6 +63,7 @@ import {
   EanConflictError,
   isEanBlockedForProduct,
   isCodeOwnedByAnotherProduct,
+  resolveProductIdBySupplierMappingEan,
 } from "../../../../tecinco/queues/helpers/product.helpers";
 import { buildBlingProductErpData } from "../helpers/erp-data";
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
@@ -760,40 +761,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     if (product || !ean) return product;
 
-    const supplierProductCode: string = ean;
-    const cleanSupplierCnpj = params.supplierCnpj
-      ? cleanDocument(params.supplierCnpj)
-      : null;
-
+    // DE x PARA pelo EAN da nota, com zero à esquerda; ambíguo → null (item vira não mapeado).
     const integration = await getBlingIntegration("Bling");
+    const productId = await resolveProductIdBySupplierMappingEan(ean, integration.id, params.logPrefix);
+    if (!productId) return null;
 
-    const supplierMapping = cleanSupplierCnpj
-      ? ((await SupplierMapping.findOne({
-          where: {
-            supplier_product_code: supplierProductCode,
-            supplier_cnpj: cleanSupplierCnpj,
-            integrations_id: integration.id,
-          },
-          order: [["updatedAt", "DESC"]],
-        })) ??
-        (await SupplierMapping.findOne({
-          where: {
-            supplier_product_code: supplierProductCode,
-            integrations_id: integration.id,
-          },
-          order: [["updatedAt", "DESC"]],
-        })))
-      : await SupplierMapping.findOne({
-          where: {
-            supplier_product_code: supplierProductCode,
-            integrations_id: integration.id,
-          },
-          order: [["updatedAt", "DESC"]],
-        });
-
-    if (!supplierMapping) return null;
-
-    product = await Product.findByPk(supplierMapping.product_id);
+    product = await Product.findByPk(productId);
 
     if (product) {
       console.log(

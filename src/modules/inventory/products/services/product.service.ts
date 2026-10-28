@@ -129,32 +129,25 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     return this.repository.findByIdWithRelations(id, unitBusinessId, options);
   }
 
-  // Bipe da expedição/entrada: código exato + variações de zero à esquerda no gtin da loja e no DE x PARA da integração.
-  // Só resolve se der um produto só — mais de um (inclusive exato vs. variação) é erro, igual ao scan de inventário.
-  async findByCode(
+  // Resolve o produto de um código lido (exato + variações de zero à esquerda) no gtin de qualquer loja da integração e
+  // no DE x PARA dela — validação sempre por integração. Mais de um produto (inclusive exato vs. variação) é erro.
+  private async resolveProductIdByCode(
     code: string,
     unitBusinessId: string,
-    options?: { transaction?: Transaction },
-  ): Promise<{ product: Product; matchedCode: string } | null> {
+    transaction?: Transaction,
+  ): Promise<{ productId: string; matchedCode: string } | null> {
     const normalized = normalizeEan(code);
     if (!normalized) return null;
 
     const codes = buildEanZeroVariants(normalized);
-    const integrationsId = await resolveIntegrationsIdForUnitBusiness(
-      unitBusinessId,
-      options?.transaction,
-    );
+    const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId, transaction);
 
     const [configs, mappings] = await Promise.all([
-      productConfigService.findAll({
-        where: { unit_business_id: unitBusinessId, gtin: { [Op.in]: codes } },
-        attributes: ["product_id", "gtin"],
-        transaction: options?.transaction,
-      }),
+      productConfigService.findGtinOwnersInIntegration(codes, integrationsId, null, transaction),
       supplierMappingService.findAll({
         where: { supplier_product_code: { [Op.in]: codes }, integrations_id: integrationsId },
         attributes: ["product_id", "supplier_product_code"],
-        transaction: options?.transaction,
+        transaction,
       }),
     ]);
 
@@ -162,57 +155,43 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     if (!productIds.length) return null;
     if (productIds.length > 1) {
       throw new Error(
-        `Código ${normalized} corresponde a mais de um produto (considerando zeros à esquerda) — não é possível bipar`,
+        `Código ${normalized} corresponde a mais de um produto (considerando zeros à esquerda) — não é possível identificar o produto`,
       );
     }
 
-    const product = await this.findById(productIds[0], {
+    // Código como está salvo (exato ou variação) — o scan da expedição confere ele contra a etiqueta.
+    const matchedCode = configs[0]?.gtin ?? mappings[0]?.supplier_product_code ?? normalized;
+    return { productId: productIds[0], matchedCode };
+  }
+
+  // Bipe da expedição/entrada (scan-logs) — ver resolveProductIdByCode.
+  async findByCode(
+    code: string,
+    unitBusinessId: string,
+    options?: { transaction?: Transaction },
+  ): Promise<{ product: Product; matchedCode: string } | null> {
+    const resolved = await this.resolveProductIdByCode(code, unitBusinessId, options?.transaction);
+    if (!resolved) return null;
+
+    const product = await this.findById(resolved.productId, {
       transaction: options?.transaction,
     });
     if (!product) return null;
-
-    // Código como está salvo (exato ou variação) — o scan confere ele contra a etiqueta.
-    const matchedCode = configs[0]?.gtin ?? mappings[0]?.supplier_product_code ?? normalized;
-    return { product, matchedCode };
+    return { product, matchedCode: resolved.matchedCode };
   }
 
   /**
-   * Busca somente leitura por código (gtin), escopada pela unit_business do
-   * usuário logado (quem chama resolve isso, ex.: pelo controller via
-   * getUserContext). Prioriza ProductConfig da própria unit business; se
-   * não achar, cai pro SupplierMapping da integração dessa unit business.
-   * Não cria nem altera nada — apenas lookup.
+   * Busca somente leitura por código (GET /by-code/:code), mesma regra dos bipes (ver resolveProductIdByCode),
+   * devolvendo o produto com as relações da unit_business do usuário logado. Não cria nem altera nada.
    */
   async findProductByCode(
     code: string,
     unitBusinessId: string,
   ): Promise<Product | null> {
-    const normalized = normalizeEan(code);
-    if (!normalized) return null;
+    const resolved = await this.resolveProductIdByCode(code, unitBusinessId);
+    if (!resolved) return null;
 
-    const config = await productConfigService.findOne({
-      where: {
-        unit_business_id: unitBusinessId,
-        gtin: normalized,
-      },
-    });
-    if (config) {
-      return this.repository.findByIdWithRelations(
-        config.product_id,
-        unitBusinessId,
-      );
-    }
-
-    const mapping = await supplierMappingService.findByProductCode(
-      normalized,
-      unitBusinessId,
-    );
-    if (!mapping) return null;
-
-    return this.repository.findByIdWithRelations(
-      mapping.product_id,
-      unitBusinessId,
-    );
+    return this.repository.findByIdWithRelations(resolved.productId, unitBusinessId);
   }
 
   async create(

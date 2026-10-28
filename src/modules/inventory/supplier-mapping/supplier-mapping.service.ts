@@ -740,6 +740,7 @@ export class SupplierMappingService extends BaseService<
     productId: string;
     unmappedInvoiceProductId: string;
     supplierCnpj?: string;
+    userId?: string | null;
   }): Promise<SupplierMapping | null> {
     return sequelize.transaction(async (t) => {
       const unmapped = await unmappedInvoiceProductService.findById(
@@ -808,14 +809,25 @@ export class SupplierMappingService extends BaseService<
         transaction: t,
       });
 
+      // Mapeamento feito por uma pessoa a partir do não mapeado: o código sempre vira EAN físico confirmado do
+      // produto (is_physical_override) — o sync deixa de gravar esse EAN em outros produtos. Auditado abaixo.
       let supplierMapping: SupplierMapping;
+      let auditAction = AuditAction.CREATE;
       if (existingMapping) {
         if (existingMapping.product_id !== params.productId) {
           throw new Error(
             `Já existe um SupplierMapping com o código ${supplierProductCode} nessa integração, mapeado para outro produto (id=${existingMapping.product_id})`,
           );
         }
+        if (!existingMapping.is_physical_override) {
+          await this.repository.bulkUpdate(
+            { is_physical_override: true },
+            { where: { id: existingMapping.id }, transaction: t },
+          );
+          existingMapping.is_physical_override = true;
+        }
         supplierMapping = existingMapping;
+        auditAction = AuditAction.UPDATE;
       } else {
         supplierMapping = await this.create(
           {
@@ -823,10 +835,26 @@ export class SupplierMappingService extends BaseService<
             supplier_cnpj: params.supplierCnpj,
             supplier_product_code: supplierProductCode,
             integrations_id: unmapped.integrations_id,
+            is_physical_override: true,
           },
           { transaction: t },
         );
       }
+
+      // Quem/quando do EAN físico confirmado (usado no erro EAN_HAS_PHYSICAL_OVERRIDE e no relatório de pendências).
+      await auditLogService.record(
+        [AuditEntity.SUPPLIER_MAPPING, AuditEntity.PRODUCT].map((entity) => ({
+          userId: params.userId ?? null,
+          entity,
+          internalId: entity === AuditEntity.PRODUCT ? params.productId : supplierMapping.id,
+          action: entity === AuditEntity.PRODUCT ? AuditAction.UPDATE : auditAction,
+          changes: {
+            summary: `EAN ${supplierProductCode} confirmado como EAN físico do produto ao mapear um produto não mapeado`,
+            after: { supplier_product_code: supplierProductCode, is_physical_override: true },
+          },
+        })),
+        t,
+      );
 
       // unmapped de catálogo (invoice_id: null) tem external_id = id real do
       // produto no ERP — se ele existir, aproveita que já temos o par

@@ -1078,10 +1078,8 @@ export class TCarUpsertQueue extends BaseQueueService<
             : 0;
 
       // ─── EAN não pode "misturar" com outro product ─────────────────────────
-      // Checagem por filial — cada unit_business tem seu próprio ProductConfig,
-      // então uma colisão numa loja não implica colisão nas outras (ver o bug
-      // real que isso corrigiu: checar só a operationUnitBusiness antes do
-      // loop deixava passar colisão nas demais filiais).
+      // A checagem é por integração (gtin de qualquer loja dela); fica dentro do loop porque um conflito
+      // só pula a ProductConfig da filial em questão, sem travar as outras.
       let eanConflict = false;
       try {
         await assertEanNotOwnedByAnotherProduct({

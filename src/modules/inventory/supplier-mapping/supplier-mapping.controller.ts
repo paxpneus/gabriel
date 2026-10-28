@@ -409,6 +409,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
         productId: product_id,
         unmappedInvoiceProductId: unmapped_invoice_product_id,
         supplierCnpj: supplier_cnpj,
+        userId: (req as any).user?.id ?? null,
       });
 
       return res.status(201).json(record);

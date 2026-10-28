@@ -34,6 +34,7 @@ import integrationsService from "../../../modules/integrations/integrations/inte
 import {
   findAnotherProductUsingEan,
   resolveIntegrationsIdForUnitBusiness,
+  resolveProductIdBySupplierMappingEan,
 } from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
 import transporterService from "../../../modules/warehouse/transporter/transporter.service";
 import { generateDanfePdfBuffer } from "./danfe-generator";
@@ -388,31 +389,11 @@ async function findProductForInvoiceItem(params: {
     return null;
   }
 
-  const cleanSupplierCnpj = params.supplierCnpj
-    ? cleanDocument(params.supplierCnpj)
-    : null;
+  // DE x PARA pelo EAN da nota, com zero à esquerda; ambíguo → null (item vira não mapeado).
+  const productId = await resolveProductIdBySupplierMappingEan(ean, integrationsId, params.logPrefix);
+  if (!productId) return null;
 
-  const supplierMapping = cleanSupplierCnpj
-    ? ((await SupplierMapping.findOne({
-        where: {
-          supplier_product_code: ean,
-          supplier_cnpj: cleanSupplierCnpj,
-          integrations_id: integrationsId,
-        },
-        order: [["updatedAt", "DESC"]],
-      })) ??
-      (await SupplierMapping.findOne({
-        where: { supplier_product_code: ean, integrations_id: integrationsId },
-        order: [["updatedAt", "DESC"]],
-      })))
-    : await SupplierMapping.findOne({
-        where: { supplier_product_code: ean, integrations_id: integrationsId },
-        order: [["updatedAt", "DESC"]],
-      });
-
-  if (!supplierMapping) return null;
-
-  product = await Product.findByPk(supplierMapping.product_id);
+  product = await Product.findByPk(productId);
 
   if (product) {
     console.log(
