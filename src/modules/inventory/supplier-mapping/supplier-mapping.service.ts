@@ -47,6 +47,9 @@ import {
   AuditEntity,
   AuditLogEntry,
 } from "../../global/audit-logs/audit-log.types";
+import userService from "../../company/users/users/user.service";
+import { PHYSICAL_EAN_OWNER_ENTITY } from "../../../shared/constants/roles";
+import { FULL_ACCESS_USER_TYPES } from "../../../shared/constants/user-types";
 
 export class SupplierMappingService extends BaseService<
   SupplierMapping,
@@ -169,9 +172,41 @@ export class SupplierMappingService extends BaseService<
       .join(", ");
     throw new SupplierMappingError(
       SupplierMappingErrorCode.EAN_OWNED_BY_ANOTHER_PRODUCT,
-      `O EAN ${code} já está em uso por: ${names}. Se o produto bipado é este, use "Confirmar EAN físico".`,
+      `O EAN ${code} já está em uso por: ${names}.`,
       summary,
     );
+  }
+
+  // Usuário pode "Confirmar EAN físico": admin/developer ou papel com a permissão (mesma regra do userPermissions).
+  async canConfirmPhysicalOwner(token?: string): Promise<boolean> {
+    if (!token) return false;
+    const user: any = await userService.getMe(token);
+    if (FULL_ACCESS_USER_TYPES.includes(user?.type ?? user?.config?.type)) return true;
+    // Não importa userHasPermission: o middleware puxa config/routes (todos os módulos). Entidade de topo, sem children.
+    return (user?.role?.permissions ?? []).some(
+      (perm: any) => perm === "*" || (perm.entity === PHYSICAL_EAN_OWNER_ENTITY && perm.permissions?.includes("write")),
+    );
+  }
+
+  // Corpo do 400 de SupplierMappingError: no EAN em uso, o back decide se oferece "Confirmar EAN físico" ou foto
+  // (can_confirm_physical_owner + mensagem final) — o front só exibe.
+  async buildErrorResponse(error: SupplierMappingError, token?: string) {
+    const canConfirm =
+      error.code === SupplierMappingErrorCode.EAN_OWNED_BY_ANOTHER_PRODUCT && (await this.canConfirmPhysicalOwner(token));
+    let message = error.message;
+    if (error.code === SupplierMappingErrorCode.EAN_OWNED_BY_ANOTHER_PRODUCT) {
+      const hint = canConfirm
+        ? 'Se o produto bipado é este, use "Confirmar EAN físico".'
+        : "Você não tem permissão para confirmar o EAN físico. Tire uma foto para registrar o produto.";
+      message = `${message} ${hint}`;
+    }
+    return {
+      error: message,
+      code: error.code,
+      owners: error.owners,
+      override: error.override,
+      can_confirm_physical_owner: canConfirm,
+    };
   }
 
   // Donos do EAN no formato de resposta (SupplierMapping e Configurações do produto por loja).

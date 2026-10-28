@@ -40,16 +40,19 @@ Erro de regra: **400**.
   "error": "Texto pronto para exibir ao usuário",
   "code": "EAN_OWNED_BY_ANOTHER_PRODUCT",
   "owners": [ /* só em EAN_OWNED_BY_ANOTHER_PRODUCT */ ],
-  "override": { /* só em EAN_HAS_PHYSICAL_OVERRIDE */ }
+  "override": { /* só em EAN_HAS_PHYSICAL_OVERRIDE */ },
+  "can_confirm_physical_owner": false
 }
 ```
+
+`can_confirm_physical_owner`: o back já decidiu se o usuário logado pode "Confirmar EAN físico" (permissão no papel ou admin/developer). Só pode ser `true` em `EAN_OWNED_BY_ANOTHER_PRODUCT`; nos outros códigos é sempre `false`. O `error` já vem com a orientação certa ("use Confirmar EAN físico" ou "Tire uma foto para registrar o produto"). O front não confere permissão: exibe o `error` e segue o flag.
 
 Erro sem `code` (validação simples, permissão etc.): `{ "error": "..." }`. Exibir o `error`.
 
 | `code` | Quando | O que o front faz |
 |---|---|---|
 | `PRODUCT_NOT_MAPPED_IN_INTEGRATION` | O produto escolhido não tem mapeamento na integração | Abrir o modal de foto (§4) |
-| `EAN_OWNED_BY_ANOTHER_PRODUCT` | O EAN (exato ou com outro zero à esquerda) já é de outro produto na integração | Listar `owners` e oferecer "Confirmar EAN físico" (§3) |
+| `EAN_OWNED_BY_ANOTHER_PRODUCT` | O EAN (exato ou com outro zero à esquerda) já é de outro produto na integração | Listar `owners`. `can_confirm_physical_owner: true` → oferecer "Confirmar EAN físico" (§3); `false` → abrir o modal de foto (§4) |
 | `EAN_HAS_PHYSICAL_OVERRIDE` | O EAN já foi confirmado como EAN físico de outro produto | Mostrar `override` (produto, quem, quando) e abrir o modal de foto (§4). Não oferecer "Confirmar EAN físico": ele não substitui outro EAN físico confirmado |
 
 `owners[]`:
@@ -163,7 +166,7 @@ O EAN bipado passa a ser **só** deste produto na integração:
 
 Fica registrado quem fez e quando.
 
-**Permissão própria:** "Confirmar EAN físico", concedida no cadastro de papéis. Sem ela: `400` `{ "error": "Acesso negado: sem permissão de ... em \"Confirmar EAN físico\"." }`. Sugestão: esconder o botão para quem não tem a permissão.
+**Permissão própria:** "Confirmar EAN físico", concedida no cadastro de papéis. Sem ela: `400` `{ "error": "Acesso negado: sem permissão de ... em \"Confirmar EAN físico\"." }`. Admin e developer (`user.type` `admin` ou `developer`) sempre podem, mesmo sem a permissão no papel. Mostrar o botão só quando o erro veio com `can_confirm_physical_owner: true`.
 
 ### Body
 ```json

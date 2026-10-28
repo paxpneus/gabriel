@@ -1,6 +1,7 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
+import { PHYSICAL_EAN_OWNER_ENTITY } from "../shared/constants/roles";
 
 const router = Router();
 const modulesPath = path.resolve(__dirname, "..", "modules");
@@ -81,7 +82,7 @@ const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "multiplier-scan-inventory": "multiply-stk-inventory",
   "multiplier-scan-entrance": "multiply-stk-entrance",
    "all-unit-business": "visualize-all-unit-business",
-  "physical-owner": "physical_ean_owner",
+  "physical-owner": PHYSICAL_EAN_OWNER_ENTITY,
 };
 
 /**

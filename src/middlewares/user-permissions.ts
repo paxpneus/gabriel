@@ -5,6 +5,7 @@ import userService from "../modules/company/users/users/user.service";
 import { AuthRequest } from "./auth-token";
 import { ROLE_PERMISSIONS, RoleType } from "../shared/constants/roles";
 import { resolveEntityFromRoute } from "../config/routes";
+import { FULL_ACCESS_USER_TYPES } from "../shared/constants/user-types";
 
 export type Actions = "read" | "write" | "delete" | "update";
 
@@ -162,6 +163,12 @@ export async function userPermissions(
 
     const entity = resolveEntityFromRoute(req.originalUrl);
     if (!entity) return next();
+
+    // admin/developer (user_config.type) têm acesso total: não dependem das permissões do papel (inclui CUSTOM novas).
+    if (FULL_ACCESS_USER_TYPES.includes(user.type ?? user.config?.type)) {
+      req.user = { id: decoded.id, role: decoded.role };
+      return next();
+    }
 
     const { type } = resolvePermissionEntity(entity);
 

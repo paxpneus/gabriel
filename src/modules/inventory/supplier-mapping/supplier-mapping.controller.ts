@@ -93,15 +93,10 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
     return !!config && FULL_ACCESS_USER_TYPES.includes(config.type);
   }
 
-  // Erro de regra com code (SupplierMappingError) vai com code/owners/override pro front decidir a próxima tela.
-  private errorResponse(res: Response, error: any): Response {
+  // Erro de regra com code (SupplierMappingError) vai com code/owners/override/can_confirm_physical_owner pro front decidir a próxima tela.
+  private async errorResponse(req: Request, res: Response, error: any): Promise<Response> {
     if (error instanceof SupplierMappingError) {
-      return res.status(400).json({
-        error: error.message,
-        code: error.code,
-        owners: error.owners,
-        override: error.override,
-      });
+      return res.status(400).json(await this.service.buildErrorResponse(error, req.cookies?.token));
     }
     return res.status(400).json({ error: error.message });
   }
@@ -141,7 +136,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(result);
     } catch (error: any) {
-      return this.errorResponse(res, error);
+      return this.errorResponse(req, res, error);
     }
   };
 
@@ -193,7 +188,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(record);
     } catch (error: any) {
-      return this.errorResponse(res, error);
+      return this.errorResponse(req, res, error);
     }
   };
 
@@ -216,7 +211,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.json(record);
     } catch (error: any) {
-      return this.errorResponse(res, error);
+      return this.errorResponse(req, res, error);
     }
   };
 
@@ -271,7 +266,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(record);
     } catch (error: any) {
-      return this.errorResponse(res, error);
+      return this.errorResponse(req, res, error);
     }
   };
 
@@ -299,7 +294,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       const record = await this.service.update(req.params.id as string, data);
       return res.json(record);
     } catch (error: any) {
-      return this.errorResponse(res, error);
+      return this.errorResponse(req, res, error);
     }
   };
 
@@ -351,7 +346,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(records);
     } catch (error: any) {
-      return this.errorResponse(res, error);
+      return this.errorResponse(req, res, error);
     }
   };
 
@@ -386,7 +381,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(records);
     } catch (error: any) {
-      return this.errorResponse(res, error);
+      return this.errorResponse(req, res, error);
     }
   };
 
@@ -416,7 +411,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       return res.status(201).json(record);
     } catch (error: any) {
-      return this.errorResponse(res, error);
+      return this.errorResponse(req, res, error);
     }
   };
 

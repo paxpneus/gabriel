@@ -4,6 +4,7 @@ import InvoiceItems from './invoice-items.model';
 import InvoiceItemsService from './invoice-items.service';
 import { Request, Response } from "express";
 import { SupplierMappingError } from '../../../../inventory/supplier-mapping/supplier-mapping.types';
+import supplierMappingService from '../../../../inventory/supplier-mapping/supplier-mapping.service';
 
 export class InvoiceItemsController extends BaseController<InvoiceItems, typeof InvoiceItemsService> {
   constructor() {
@@ -64,7 +65,7 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
     } catch (error: any) {
       // EAN de outro produto / EAN físico confirmado: vai com code pro front decidir (foto ou "Confirmar EAN físico").
       if (error instanceof SupplierMappingError) {
-        return res.status(400).json({ error: error.message, code: error.code, owners: error.owners, override: error.override });
+        return res.status(400).json(await supplierMappingService.buildErrorResponse(error, req.cookies?.token));
       }
       return res.status(400).json({ error: this.getErrorMessage(error) });
     }

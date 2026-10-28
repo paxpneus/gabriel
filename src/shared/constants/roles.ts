@@ -47,6 +47,9 @@ interface Roles {
 
 const all: Actions[] = ['read', 'write', 'delete', 'update']
 
+// Entidade RBAC do "Confirmar EAN físico" — usada no CUSTOM_ROUTE_MAP e na checagem do erro de EAN em uso.
+export const PHYSICAL_EAN_OWNER_ENTITY = 'physical_ean_owner'
+
 export const ROLE_PERMISSIONS: Roles[] = [
     {
     scope: 'Setores',
@@ -283,7 +286,7 @@ export const ROLE_PERMISSIONS: Roles[] = [
   // na integração inteira — permissão própria, concedível só pros papéis certos (não herda de Produtos).
   {
     scope: 'Confirmar EAN físico',
-    entity: 'physical_ean_owner',
+    entity: PHYSICAL_EAN_OWNER_ENTITY,
     route: '',
     type: 'CUSTOM',
     permissions: ['write'],

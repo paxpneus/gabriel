@@ -10,7 +10,7 @@
 
 ## Confirmar EAN físico (`is_physical_override`)
 
-`POST /supplier-mapping/product/:productId/physical-owner`, body `{ supplier_product_code, integrations_id? }` — `integrations_id` do body (desktop) ou da loja do usuário (coletor). Permissão RBAC própria "Confirmar EAN físico" (entity `physical_ean_owner`, rota `physical-owner` no `CUSTOM_ROUTE_MAP`).
+`POST /supplier-mapping/product/:productId/physical-owner`, body `{ supplier_product_code, integrations_id? }` — `integrations_id` do body (desktop) ou da loja do usuário (coletor). Permissão RBAC própria "Confirmar EAN físico" (entity `physical_ean_owner`, rota `physical-owner` no `CUSTOM_ROUTE_MAP`); admin/developer sempre passam (bypass do `userPermissions` por `FULL_ACCESS_USER_TYPES`).
 
 `supplierMappingService.assignPhysicalOwner`, uma transação:
 1. Produto sem integration mapping na integração → `PRODUCT_NOT_MAPPED_IN_INTEGRATION`.
@@ -24,4 +24,4 @@
 - **Quem cria override**: só `assignPhysicalOwner` e `createFromUnmapped` (sempre `true`; reaproveitando DE x PARA do mesmo produto, marca o existente).
 - **Desativar override**: `PUT /supplier-mapping/product/:productId/:id` com `is_physical_override: false` (só admin/developer, auditado) — vira DE x PARA comum do mesmo produto: o próximo sync do outro produto cujo ERP manda o EAN pode removê-lo (`assertEanNotOwnedByAnotherProduct`) e gravar o gtin lá. `true` nesse PUT → erro (confirmar só pela rota própria).
 - **Alterar/apagar override**: só admin/developer (`FULL_ACCESS_USER_TYPES` em `user_config.type`); rotas genéricas descartam `is_physical_override` do body. Depois de apagar, o próximo sync devolve o EAN do ERP aos outros produtos.
-- Erros: `SupplierMappingError(code, msg, owners?, override?)` → HTTP 400 `{ error, code, owners?, override? }`. `EAN_OWNED_BY_ANOTHER_PRODUCT` (com `owners`) → front oferece "Confirmar EAN físico"; `EAN_HAS_PHYSICAL_OVERRIDE` → front mostra quem/quando e abre o modal de foto.
+- Erros: `SupplierMappingError(code, msg, owners?, override?)` → HTTP 400 via `supplierMappingService.buildErrorResponse(error, token)` (supplier-mapping e invoice-items controllers) → `{ error, code, owners?, override?, can_confirm_physical_owner }`. Flag só `true` em `EAN_OWNED_BY_ANOTHER_PRODUCT` com permissão (`canConfirmPhysicalOwner`: admin/developer ou papel com `PHYSICAL_EAN_OWNER_ENTITY`); a mensagem final (Confirmar EAN físico vs. foto) é montada no back. `EAN_OWNED_BY_ANOTHER_PRODUCT` (com `owners`) → front oferece "Confirmar EAN físico"; `EAN_HAS_PHYSICAL_OVERRIDE` → front mostra quem/quando e abre o modal de foto.

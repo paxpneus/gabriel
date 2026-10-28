@@ -22,11 +22,17 @@ jest.mock(
   }),
 );
 
+jest.mock("../../../company/users/users/user.service", () => ({
+  __esModule: true,
+  default: { getMe: jest.fn() },
+}));
+
 import { Op } from "sequelize";
 import SupplierMapping from "../supplier-mapping.model";
 import ProductConfig from "../../product-config/product_config.model";
 import AuditLog from "../../../global/audit-logs/audit-log.model";
-import { SupplierMappingErrorCode } from "../supplier-mapping.types";
+import { SupplierMappingError, SupplierMappingErrorCode } from "../supplier-mapping.types";
+import userService from "../../../company/users/users/user.service";
 import unmappedInvoiceProductService from "../../unmapped-invoice-product/unmapped-invoice-product.service";
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
 import { SupplierMappingService } from "../supplier-mapping.service";
@@ -480,5 +486,52 @@ describe("SupplierMappingService.updateForProduct — desativar EAN físico conf
 
     expect(recordUpdate).toHaveBeenCalledWith({ supplier_cnpj: "123" }, { transaction: mockTransaction });
     expect(AuditLog.bulkCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("SupplierMappingService.buildErrorResponse — EAN em uso decide Confirmar EAN físico vs. foto", () => {
+  let service: SupplierMappingService;
+  const ownedError = () =>
+    new SupplierMappingError(SupplierMappingErrorCode.EAN_OWNED_BY_ANOTHER_PRODUCT, "O EAN 789 já está em uso por: \"A\".", []);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new SupplierMappingService();
+  });
+
+  it("admin sem a permissão no papel: pode confirmar", async () => {
+    (userService.getMe as jest.Mock).mockResolvedValue({ type: "admin", role: { permissions: [] } });
+
+    const body = await service.buildErrorResponse(ownedError(), "token");
+
+    expect(body.can_confirm_physical_owner).toBe(true);
+    expect(body.error).toContain("Confirmar EAN físico");
+  });
+
+  it("papel com a permissão: pode confirmar", async () => {
+    (userService.getMe as jest.Mock).mockResolvedValue({
+      type: "operator",
+      role: { permissions: [{ entity: "physical_ean_owner", permissions: ["write"] }] },
+    });
+
+    expect((await service.buildErrorResponse(ownedError(), "token")).can_confirm_physical_owner).toBe(true);
+  });
+
+  it("sem permissão: mensagem de foto", async () => {
+    (userService.getMe as jest.Mock).mockResolvedValue({ type: "operator", role: { permissions: [] } });
+
+    const body = await service.buildErrorResponse(ownedError(), "token");
+
+    expect(body.can_confirm_physical_owner).toBe(false);
+    expect(body.error).toContain("Tire uma foto para registrar o produto");
+  });
+
+  it("EAN físico de outro produto: nunca oferece confirmar e não consulta o usuário", async () => {
+    const error = new SupplierMappingError(SupplierMappingErrorCode.EAN_HAS_PHYSICAL_OVERRIDE, "msg");
+
+    const body = await service.buildErrorResponse(error, "token");
+
+    expect(body).toMatchObject({ error: "msg", code: SupplierMappingErrorCode.EAN_HAS_PHYSICAL_OVERRIDE, can_confirm_physical_owner: false });
+    expect(userService.getMe).not.toHaveBeenCalled();
   });
 });
