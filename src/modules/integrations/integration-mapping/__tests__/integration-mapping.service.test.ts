@@ -30,12 +30,27 @@ jest.mock("bullmq", () => ({
   UnrecoverableError: class UnrecoverableError extends Error {},
 }));
 
+// Troca de principal: transação roda o callback direto; auditoria e enqueue do sync mockados.
+jest.mock("../../../../config/sequelize", () => ({
+  __esModule: true,
+  default: { transaction: jest.fn((cb: (t: unknown) => unknown) => cb({})) },
+}));
+jest.mock("../../../global/audit-logs/audit-log.service", () => ({
+  __esModule: true,
+  default: { record: jest.fn() },
+}));
+jest.mock("../../manual-import/manual-import.service", () => ({
+  __esModule: true,
+  default: { enqueueProductSync: jest.fn() },
+}));
+
 // IntegrationMapping (*.model.ts) é auto-mocado globalmente via
 // src/__tests__/setup.ts — usa o model direto (via o repository real,
 // que é só um wrapper fino) pra testar a lógica de matching de verdade.
 
 import IntegrationMapping from "../integration-mapping.model";
 import { IntegrationMappingService } from "../integration-mapping.service";
+import manualImportService from "../../manual-import/manual-import.service";
 
 describe("IntegrationMappingService.createOrUpdateIntegrationMapping", () => {
   let service: IntegrationMappingService;
@@ -141,5 +156,54 @@ describe("IntegrationMappingService.createOrUpdateIntegrationMapping", () => {
       expect.anything(),
     );
     expect(result).toEqual({ id: "second-mapping-id" });
+  });
+});
+
+describe("IntegrationMappingService.updateForProduct — sync do novo principal", () => {
+  let service: IntegrationMappingService;
+  const queues = {} as any;
+  const enqueue = manualImportService.enqueueProductSync as jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new IntegrationMappingService();
+    (IntegrationMapping.findAll as jest.Mock).mockResolvedValue([{ id: "old-primary", external_id: "100" }]);
+    (IntegrationMapping.findByPk as jest.Mock).mockResolvedValue({
+      update: jest.fn().mockResolvedValue({ id: "m-2", is_primary: true }),
+    });
+  });
+
+  it("marcou como principal: enfileira o sync do código na integração depois do commit", async () => {
+    (IntegrationMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "m-2", integrations_id: "tecinco", external_id: "27314", is_primary: false,
+    });
+    enqueue.mockResolvedValue({ queue: "tcarApiFetch", jobId: "j" });
+
+    const result = await service.updateForProduct("m-2", "product-1", { is_primary: true }, "user-1", queues);
+
+    expect(result).toEqual({ id: "m-2", is_primary: true });
+    expect(enqueue).toHaveBeenCalledWith("tecinco", "27314", queues);
+  });
+
+  it("já era o principal: não enfileira nada", async () => {
+    (IntegrationMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "m-2", integrations_id: "tecinco", external_id: "27314", is_primary: true,
+    });
+
+    await service.updateForProduct("m-2", "product-1", { is_primary: true }, "user-1", queues);
+
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("falha ao enfileirar não derruba a troca do principal", async () => {
+    (IntegrationMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "m-2", integrations_id: "tecinco", external_id: "27314", is_primary: false,
+    });
+    enqueue.mockRejectedValue(new Error("API fora"));
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      service.updateForProduct("m-2", "product-1", { is_primary: true }, "user-1", queues),
+    ).resolves.toEqual({ id: "m-2", is_primary: true });
   });
 });

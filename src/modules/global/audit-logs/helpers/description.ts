@@ -60,15 +60,34 @@ const describeFieldChanges = (
     .join(", ");
 };
 
-const describeAffected = (affected: AuditAffectedEntity): string => {
-  const label = affected.label ? ` ${affected.label}` : "";
-  const fields = describeFieldChanges(affected.before, affected.after);
-  // Id técnico por último, entre colchetes: o leigo lê o rótulo, o suporte acha o registro.
-  return `${ENTITY_LABELS[affected.entity]}${label} ${ACTION_LABELS[affected.action]}${fields ? ` (${fields})` : ""} [id ${affected.internal_id}]`;
+// Contagem por ação nas entidades afetadas — substantivo feminino pra não precisar concordar com a entidade.
+const AFFECTED_ACTION_LABELS: Record<AuditAction, [string, string]> = {
+  [AuditAction.CREATE]: ["criação", "criações"],
+  [AuditAction.UPDATE]: ["alteração", "alterações"],
+  [AuditAction.DELETE]: ["remoção", "remoções"],
 };
 
-// Monta o texto padronizado de auditoria a partir da entidade, ação e changes —
-// mesma estrutura sempre: cabeçalho, resumo, campos alterados, origem e entidades afetadas.
+// Afetadas só como contagem por entidade/ação ("Mapeamento DE x PARA: 1 criação, 1 remoção") — o texto não
+// cresce com o número de lojas/registros; o detalhe de cada uma fica em changes.affected.
+const summarizeAffected = (affected: AuditAffectedEntity[]): string => {
+  const counts = new Map<AuditEntity, Map<AuditAction, number>>();
+  for (const item of affected) {
+    const byAction = counts.get(item.entity) ?? new Map<AuditAction, number>();
+    byAction.set(item.action, (byAction.get(item.action) ?? 0) + 1);
+    counts.set(item.entity, byAction);
+  }
+
+  return [...counts.entries()]
+    .map(([entity, byAction]) => {
+      const actions = [...byAction.entries()].map(
+        ([action, count]) => `${count} ${AFFECTED_ACTION_LABELS[action][count > 1 ? 1 : 0]}`,
+      );
+      return `${ENTITY_LABELS[entity]}: ${actions.join(", ")}`;
+    })
+    .join("; ");
+};
+
+// Monta o texto de auditoria como resumo: cabeçalho, resumo, campos da própria entidade, origem e contagem das afetadas.
 export const buildAuditDescription = (
   entity: AuditEntity,
   action: AuditAction,
@@ -87,7 +106,7 @@ export const buildAuditDescription = (
   }
 
   if (changes.affected?.length) {
-    parts.push(`Também afetados: ${changes.affected.map(describeAffected).join("; ")}`);
+    parts.push(`Também afetados: ${summarizeAffected(changes.affected)}`);
   }
 
   return parts.join(" — ");

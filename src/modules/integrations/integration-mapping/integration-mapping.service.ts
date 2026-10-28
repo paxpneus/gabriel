@@ -19,6 +19,8 @@ import productService from "../../inventory/products/services/product.service";
 import { QueryParams, PaginatedResult } from "../../../shared/query/query.types";
 import auditLogService from "../../global/audit-logs/audit-log.service";
 import { AuditAction, AuditEntity } from "../../global/audit-logs/audit-log.types";
+import manualImportService from "../manual-import/manual-import.service";
+import type { ManualImportQueues } from "../manual-import/manual-import.types";
 
 export class IntegrationMappingService extends BaseService<
   IntegrationMapping,
@@ -221,11 +223,13 @@ export class IntegrationMappingService extends BaseService<
 
   // Troca integração/external_id de um mapping do produto (internal_id fica fixo); null = não pertence/não existe.
   // is_primary: true marca este como principal e desmarca os outros do produto na mesma integração (auditado).
+  // Virou principal → enfileira o sync do código na integração (com `queues`), pro estoque/preço já virem dele.
   async updateForProduct(
     id: string,
     productId: string,
     data: Partial<ProductIntegrationMappingInput>,
     userId?: string | null,
+    queues?: ManualImportQueues,
   ): Promise<IntegrationMapping | null> {
     const existing = await this.repository.findOne({
       where: { id, entity_type: "PRODUCT", internal_id: productId },
@@ -251,8 +255,9 @@ export class IntegrationMappingService extends BaseService<
     const targetIntegrationsId = changes.integrations_id ?? existing.integrations_id;
     const movedIntegration = targetIntegrationsId !== existing.integrations_id;
 
+    let updated: IntegrationMapping | null;
     try {
-      return await sequelize.transaction(async (transaction) => {
+      updated = await sequelize.transaction(async (transaction) => {
         // Já é o principal na mesma integração: nada a trocar (nem auditar).
         if (data.is_primary && !(existing.is_primary && !movedIntegration)) {
           const previousPrimaries = await this.repository.findAll({
@@ -324,18 +329,33 @@ export class IntegrationMappingService extends BaseService<
           changes.is_primary = !(await this.hasPrimary("PRODUCT", productId, targetIntegrationsId, transaction));
         }
 
-        const updated = await this.repository.update(id, changes, { transaction });
+        const record = await this.repository.update(id, changes, { transaction });
 
         // O principal saiu da integração antiga: promove o mais antigo que sobrou lá.
         if (movedIntegration && existing.is_primary) {
           await this.promoteOldestIfNoPrimary(productId, existing.integrations_id, transaction);
         }
 
-        return updated;
+        return record;
       });
     } catch (error: any) {
       throw this.toProductMappingError(error);
     }
+
+    // Depois do commit e sem derrubar a troca: falha no enqueue só fica no log (o sync agendado corrige depois).
+    if (changes.is_primary && queues) {
+      const externalId = changes.external_id ?? existing.external_id;
+      try {
+        const jobRef = await manualImportService.enqueueProductSync(targetIntegrationsId, externalId, queues);
+        if (!jobRef) {
+          console.warn(`[INTEGRATION_MAPPING] principal trocado, mas o código ${externalId} não foi achado na integração ${targetIntegrationsId} — sync não enfileirado`);
+        }
+      } catch (error: any) {
+        console.warn(`[INTEGRATION_MAPPING] principal trocado, mas falhou ao enfileirar o sync do código ${externalId}: ${error?.message}`);
+      }
+    }
+
+    return updated;
   }
 
   // Remove um mapping do produto; false = não pertence/não existe.

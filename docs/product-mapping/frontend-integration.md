@@ -297,6 +297,7 @@ Um produto pode ter mais de um código no mesmo ERP. **Só o principal grava dad
     ```
     `stocks` só vem da Tecinco, um por filial. `unit_business_name` só vem nos códigos sincronizados depois desta versão; antes disso, cair para o `branch_id`. `erp_data` fica `null` até o primeiro sync daquele código.
 - **Trocar o principal**: `PUT /api/integration-mapping/product/:productId/:id` com `{ "is_primary": true }`. Desmarca os outros do mesmo produto na mesma integração.
+  - Depois da troca, o back enfileira o sync do novo código principal na fila da integração (igual ao import manual, prioridade máxima): estoque, preço, EAN e SKU do produto passam a vir dele em segundos, sem esperar o sync agendado. A resposta não muda e não espera o sync; para mostrar os dados novos, recarregar o produto depois. Se o enfileiramento falhar, a troca vale do mesmo jeito (o sync agendado atualiza depois).
   - `{ "is_primary": false }` → `400` `"Para trocar o principal, marque outro mapping como principal"`.
   - `404`: não é desse produto.
 - **Remover o principal**: o próximo mais antigo vira principal automaticamente.

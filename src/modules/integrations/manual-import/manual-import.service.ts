@@ -23,6 +23,7 @@ import {
   ManualImportExternalSearchBy,
   ManualImportHandler,
   ManualImportItemResult,
+  ManualImportJobRef,
   ManualImportOptionsResponse,
   ManualImportQueues,
   ManualImportResponse,
@@ -210,6 +211,28 @@ export class ManualImportService {
       othersRunning: Object.fromEntries(othersRunning),
       maxItems: MANUAL_IMPORT_MAX_ITEMS,
     };
+  }
+
+  // Re-sincroniza um produto pelo código no ERP como o import manual (busca na API → enqueue do handler, prioridade 1),
+  // sem lock/claim de usuário. Usado na troca do mapping principal; null = integração sem handler ou código não achado.
+  async enqueueProductSync(
+    integrationId: string,
+    externalId: string,
+    queues: ManualImportQueues,
+  ): Promise<ManualImportJobRef | null> {
+    const handler = await resolveManualImportHandler(integrationId);
+    if (!handler?.supportedSearches.product) return null;
+
+    const { items } = await handler.search("product", "id", externalId);
+    const found = items.find((item) => item.externalId === externalId);
+    if (!found) return null;
+
+    const jobRef: ManualImportJobRef = {
+      queue: handler.queueFor("product"),
+      jobId: `primary-mapping-sync-product-${externalId}-${Date.now()}`,
+    };
+    await handler.enqueue("product", { ...found, existsLocally: true, localId: null }, jobRef, queues);
+    return jobRef;
   }
 
   // Integração sem handler → 400.

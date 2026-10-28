@@ -73,6 +73,13 @@ export class IntegrationMappingController extends BaseController<IntegrationMapp
         req.params.productId as string,
         { integrations_id, external_id, is_primary },
         (req as any).user?.id ?? null,
+        // Mesmas filas do import manual (queues/index.ts) — o sync do novo principal vai pra fila da integração.
+        {
+          blingApiFetch: req.app.locals.BlingApiFetchQueue,
+          blingOrder: req.app.locals.BlingOrderQueue,
+          tcarApiFetch: req.app.locals.TCarUpsertQueue,
+          tcarInvoice: req.app.locals.TCarInvoiceQueue,
+        },
       );
       if (!record) return res.status(404).json({ error: 'Não encontrado' });
       return res.json(record);
