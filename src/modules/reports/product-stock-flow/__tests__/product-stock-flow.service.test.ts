@@ -80,6 +80,7 @@ describe("ProductStockFlowService", () => {
       start_date: "2026-05-01",
       end_date: "2026-06-30",
       brand: null,
+      sale_unit_business_id: null,
     });
     expect(report.months.map((m) => m.month)).toEqual(["2026-06", "2026-05"]);
     expect(report.months[1].products[0]).toMatchObject({
@@ -138,6 +139,19 @@ describe("ProductStockFlowService", () => {
     expect(repository.aggregateOutputs.mock.calls[0][3]).toEqual(["p1"]);
     expect(repository.aggregateReturns.mock.calls[0][3]).toEqual(["p1"]);
     expect(report.filters.brand).toEqual(["MICHELIN"]);
+  });
+
+  it("loja da venda filtra só saída e devolução, não a entrada", async () => {
+    const report = await service.getReport({
+      startDate: "2026-05-01",
+      endDate: "2026-05-31",
+      saleUnitBusinessIds: ["ub-15", "ub-01"],
+    });
+
+    expect(repository.aggregateInputs.mock.calls[0][4]).toBeUndefined();
+    expect(repository.aggregateOutputs.mock.calls[0][4]).toEqual(["ub-15", "ub-01"]);
+    expect(repository.aggregateReturns.mock.calls[0][4]).toEqual(["ub-15", "ub-01"]);
+    expect(report.filters.sale_unit_business_id).toEqual(["ub-15", "ub-01"]);
   });
 
   it("sem marca não restringe produtos nas agregações", async () => {

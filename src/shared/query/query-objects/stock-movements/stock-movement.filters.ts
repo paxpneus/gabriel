@@ -1,4 +1,7 @@
-import { Op, WhereOptions } from "sequelize";
+import { Op, Sequelize, WhereOptions } from "sequelize";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Entradas de compra. */
 export function inputMovementsWhere(): WhereOptions {
@@ -23,6 +26,36 @@ export function outputMovementsWhere(): WhereOptions {
         direction: "OUT",
         invoice_number: { [Op.ne]: null },
       },
+    ],
+  };
+}
+
+/**
+ * Movimento cuja venda é de uma das lojas: nota (`invoice_id` ou `bling_origin_id` = id Bling)
+ * pela `origin_unit_business_id`; pedido do CSV (ajuste com nº do pedido) pela `unit_business_id`.
+ */
+export function saleUnitBusinessWhere(
+  unitBusinessIds: string[],
+  alias: string = "StockMovement",
+): WhereOptions {
+  // Ids interpolados no SQL cru: só UUID válido entra; nenhum válido → nada bate.
+  const validIds = unitBusinessIds.filter((id) => UUID_RE.test(id));
+  if (!validIds.length) return { [Op.and]: [Sequelize.literal("FALSE")] };
+  const ids = `ARRAY[${validIds.map((id) => `'${id}'`).join(", ")}]::uuid[]`;
+  return {
+    [Op.and]: [
+      Sequelize.literal(`(
+    ("${alias}"."movement_type" <> 'MANUAL_ADJUSTMENT' AND EXISTS (
+      SELECT 1 FROM invoices i
+      WHERE (i.id = "${alias}"."invoice_id" OR i.id_system = "${alias}"."bling_origin_id")
+        AND i.origin_unit_business_id = ANY(${ids})
+    ))
+    OR ("${alias}"."movement_type" = 'MANUAL_ADJUSTMENT' AND EXISTS (
+      SELECT 1 FROM orders o
+      WHERE o.number_order_system = "${alias}"."invoice_number"
+        AND o.unit_business_id = ANY(${ids})
+    ))
+  )`),
     ],
   };
 }

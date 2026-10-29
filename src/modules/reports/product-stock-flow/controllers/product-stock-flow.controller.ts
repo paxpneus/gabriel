@@ -25,6 +25,14 @@ export const ProductStockFlowQuerySchema = z
       .union([z.string().min(1), z.array(z.string().min(1))])
       .optional()
       .transform((value) => (value === undefined ? undefined : [value].flat())),
+    // Loja da venda: um id ou vários (`sale_unit_business_id[]=`).
+    sale_unit_business_id: z
+      .union([
+        z.uuid("Loja inválida"),
+        z.array(z.uuid("Loja inválida")),
+      ])
+      .optional()
+      .transform((value) => (value === undefined ? undefined : [value].flat())),
   })
   .refine((query) => query.start_date <= query.end_date, {
     message: "Data inicial não pode ser posterior à data final",
@@ -44,6 +52,7 @@ class ProductStockFlowController {
       start_date: req.query.start_date,
       end_date: req.query.end_date,
       brand: req.query.brand,
+      sale_unit_business_id: req.query.sale_unit_business_id,
     });
 
     if (!parsed.success) {
@@ -57,6 +66,7 @@ class ProductStockFlowController {
         startDate: parsed.data.start_date,
         endDate: parsed.data.end_date,
         brands: parsed.data.brand,
+        saleUnitBusinessIds: parsed.data.sale_unit_business_id,
       });
       return res.json(report);
     } catch (error: any) {

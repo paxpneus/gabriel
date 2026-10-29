@@ -48,10 +48,12 @@ export class ProductStockFlowService {
         ).map((product) => product.id)
       : undefined;
 
+    // Loja da venda filtra saída e devolução (que abate a saída); entrada de compra do CD não tem loja de venda.
+    const saleUnitBusinessIds = params.saleUnitBusinessIds;
     const [inputs, outputs, returns] = await Promise.all([
       this.repository.aggregateInputs(store.id, start, end, productIds),
-      this.repository.aggregateOutputs(store.id, start, end, productIds),
-      this.repository.aggregateReturns(store.id, start, end, productIds),
+      this.repository.aggregateOutputs(store.id, start, end, productIds, saleUnitBusinessIds),
+      this.repository.aggregateReturns(store.id, start, end, productIds, saleUnitBusinessIds),
     ]);
 
     const productInfo = await this.loadProductInfo(
@@ -74,6 +76,7 @@ export class ProductStockFlowService {
         start_date: params.startDate,
         end_date: params.endDate,
         brand: params.brands?.length ? params.brands : null,
+        sale_unit_business_id: saleUnitBusinessIds ?? null,
       },
       ...aggregated,
     };

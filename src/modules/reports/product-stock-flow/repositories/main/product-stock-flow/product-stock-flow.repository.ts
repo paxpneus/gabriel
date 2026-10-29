@@ -4,6 +4,7 @@ import {
   customerReturnMovementsWhere,
   inputMovementsWhere,
   outputMovementsWhere,
+  saleUnitBusinessWhere,
   unitBusinessPeriodWhere,
 } from "../../../../../../shared/query/query-objects/stock-movements/stock-movement.filters";
 import {
@@ -19,21 +20,22 @@ import {
 } from "../../query-objects/product-stock-flow.aggregates";
 
 export class ProductStockFlowRepository {
-  // Unidade + período + tipo de movimento; `productIds` (filtro de marca) só restringe quando vier.
+  // Unidade + período + tipo de movimento; `productIds` (marca) e `saleUnitBusinessIds` (loja da venda) só restringem quando vierem.
   private scopeWhere(
     unitBusinessId: string,
     start: Date,
     end: Date,
     productIds: string[] | undefined,
     movementWhere: WhereOptions,
+    saleUnitBusinessIds?: string[],
   ): WhereOptions {
-    return {
-      [Op.and]: [
-        unitBusinessPeriodWhere(unitBusinessId, start, end),
-        movementWhere,
-        ...(productIds ? [{ product_id: { [Op.in]: productIds } }] : []),
-      ],
-    };
+    const conditions: WhereOptions[] = [
+      unitBusinessPeriodWhere(unitBusinessId, start, end),
+      movementWhere,
+    ];
+    if (productIds) conditions.push({ product_id: { [Op.in]: productIds } });
+    if (saleUnitBusinessIds?.length) conditions.push(saleUnitBusinessWhere(saleUnitBusinessIds));
+    return { [Op.and]: conditions };
   }
 
   async aggregateInputs(
@@ -55,9 +57,10 @@ export class ProductStockFlowRepository {
     start: Date,
     end: Date,
     productIds?: string[],
+    saleUnitBusinessIds?: string[],
   ): Promise<ProductStockFlowOutputRow[]> {
     return StockMovement.findAll({
-      where: this.scopeWhere(unitBusinessId, start, end, productIds, outputMovementsWhere()),
+      where: this.scopeWhere(unitBusinessId, start, end, productIds, outputMovementsWhere(), saleUnitBusinessIds),
       attributes: outputAggregateAttributes(),
       group: PRODUCT_STOCK_FLOW_GROUP,
       raw: true,
@@ -69,9 +72,10 @@ export class ProductStockFlowRepository {
     start: Date,
     end: Date,
     productIds?: string[],
+    saleUnitBusinessIds?: string[],
   ): Promise<ProductStockFlowReturnRow[]> {
     return StockMovement.findAll({
-      where: this.scopeWhere(unitBusinessId, start, end, productIds, customerReturnMovementsWhere()),
+      where: this.scopeWhere(unitBusinessId, start, end, productIds, customerReturnMovementsWhere(), saleUnitBusinessIds),
       attributes: returnAggregateAttributes(),
       group: PRODUCT_STOCK_FLOW_GROUP,
       raw: true,
