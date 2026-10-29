@@ -27,9 +27,9 @@ import {
   SupplierMappingCreationAttributes,
   CreateFromUnmappedResult,
   SYNC_SUPPLIER_CNPJ_PREFIX,
-  PHYSICAL_OWNER_BULK_CONCURRENCY,
-  PHYSICAL_OWNER_BULK_MAX_ITEMS,
-  PhysicalOwnerBulkResult,
+  LABEL_PRINT_CONCURRENCY,
+  LABEL_PRINT_MAX_ITEMS,
+  LabelPrintPhysicalOwnerResult,
 } from "./supplier-mapping.types";
 import {
   buildEanZeroVariants,
@@ -290,6 +290,17 @@ export class SupplierMappingService extends BaseService<
     integrationsId: string;
     userId: string | null;
   }): Promise<{ supplierMapping: SupplierMapping; cleared: EanOwnerSummary[] }> {
+    return this.applyPhysicalOwner({ ...params, labelPrint: false });
+  }
+
+  // Regra do "Confirmar EAN físico", compartilhada com a impressão de etiqueta; labelPrint só muda o texto da auditoria.
+  private async applyPhysicalOwner(params: {
+    productId: string;
+    ean: string;
+    integrationsId: string;
+    userId: string | null;
+    labelPrint: boolean;
+  }): Promise<{ supplierMapping: SupplierMapping; cleared: EanOwnerSummary[] }> {
     const { productId, integrationsId, userId } = params;
     // String(): EAN numérico no JSON não pode quebrar com "trim is not a function".
     const code = normalizeEan(params.ean === null || params.ean === undefined ? undefined : String(params.ean));
@@ -380,6 +391,7 @@ export class SupplierMappingService extends BaseService<
           ownPreviousCode: own?.supplier_product_code ?? null,
           owners,
           closedScanRows,
+          labelPrint: params.labelPrint,
         }),
         t,
       );
@@ -388,37 +400,65 @@ export class SupplierMappingService extends BaseService<
     });
   }
 
-  // "Confirmar EAN físico" em massa: cada item na própria transação (mesma regra do unitário) e sucesso parcial — falha
-  // de um não desfaz os outros. Mesmo EAN (ignorando zero à esquerda) repetido na lista é recusado antes de alterar nada.
-  async assignPhysicalOwnerBulk(params: {
+  // Impressão de etiqueta: o EAN impresso vira EAN físico de cada produto (mesma regra do "Confirmar EAN físico", auditado
+  // como impressão). Uma transação por item, sucesso parcial; EAN repetido na lista (ignorando zero à esquerda) é recusado antes.
+  async assignPhysicalOwnerOnLabelPrint(params: {
     items: { productId: string; ean: unknown }[];
     integrationsId: string;
     userId: string | null;
-  }): Promise<PhysicalOwnerBulkResult> {
+  }): Promise<LabelPrintPhysicalOwnerResult> {
     const { integrationsId, userId } = params;
-    if (!params.items.length) throw new Error("Informe ao menos um produto e EAN");
-    if (params.items.length > PHYSICAL_OWNER_BULK_MAX_ITEMS) {
-      throw new Error(`Máximo de ${PHYSICAL_OWNER_BULK_MAX_ITEMS} itens por confirmação`);
+    if (!params.items.length) throw new Error("Informe ao menos um produto para imprimir a etiqueta");
+    if (params.items.length > LABEL_PRINT_MAX_ITEMS) {
+      throw new Error(`Máximo de ${LABEL_PRINT_MAX_ITEMS} etiquetas por impressão`);
     }
 
-    const items = params.items.map((item) => {
-      const code = normalizeEan(item.ean === null || item.ean === undefined ? undefined : String(item.ean));
-      if (!code) throw new Error("Informe o EAN bipado em todos os itens");
-      return { productId: item.productId, code };
-    });
+    // Etiqueta sem EAN: ignorada, sem erro e sem alterar nada.
+    const withEan = params.items
+      .map((item) => ({
+        productId: item.productId,
+        code: normalizeEan(item.ean === null || item.ean === undefined ? undefined : String(item.ean)),
+      }))
+      .filter((item): item is { productId: string; code: string } => !!item.code);
     const seen = new Set<string>();
-    for (const { code } of items) {
+    for (const { code } of withEan) {
       const key = eanZeroInsensitiveKey(code);
       if (seen.has(key)) throw new Error(`O EAN ${code} aparece mais de uma vez na lista`);
       seen.add(key);
     }
 
-    const result: PhysicalOwnerBulkResult = { succeeded: [], failed: [] };
+    const result: LabelPrintPhysicalOwnerResult = { succeeded: [], failed: [] };
+    if (!withEan.length) return result;
+
+    // Reimpressão: produto que já tem esse EAN (qualquer zero à esquerda) como EAN físico não é tocado nem auditado.
+    // EAN novo cria outro EAN físico; o confirmado antes continua.
+    const confirmed = await this.repository.findAll({
+      where: {
+        integrations_id: integrationsId,
+        product_id: { [Op.in]: withEan.map((item) => item.productId) },
+        supplier_product_code: { [Op.in]: withEan.flatMap((item) => buildEanZeroVariants(item.code)) },
+        is_physical_override: true,
+      },
+      attributes: ["id", "product_id", "supplier_product_code", "integrations_id", "is_physical_override"],
+    });
+    const items: { productId: string; code: string }[] = [];
+    for (const item of withEan) {
+      const key = eanZeroInsensitiveKey(item.code);
+      const existing = confirmed.find(
+        (row) => row.product_id === item.productId && eanZeroInsensitiveKey(row.supplier_product_code) === key,
+      );
+      if (existing) {
+        result.succeeded.push({ product_id: item.productId, supplier_product_code: item.code, supplierMapping: existing, cleared: [] });
+      } else {
+        items.push(item);
+      }
+    }
+
     // Lotes pequenos em paralelo: cada item segura uma conexão do pool durante a transação.
-    for (let i = 0; i < items.length; i += PHYSICAL_OWNER_BULK_CONCURRENCY) {
-      const slice = items.slice(i, i + PHYSICAL_OWNER_BULK_CONCURRENCY);
+    for (let i = 0; i < items.length; i += LABEL_PRINT_CONCURRENCY) {
+      const slice = items.slice(i, i + LABEL_PRINT_CONCURRENCY);
       const settled = await Promise.allSettled(
-        slice.map((item) => this.assignPhysicalOwner({ productId: item.productId, ean: item.code, integrationsId, userId })),
+        slice.map((item) => this.applyPhysicalOwner({ productId: item.productId, ean: item.code, integrationsId, userId, labelPrint: true })),
       );
       settled.forEach((outcome, index) => {
         const item = { product_id: slice[index].productId, supplier_product_code: slice[index].code };
@@ -443,8 +483,11 @@ export class SupplierMappingService extends BaseService<
     ownPreviousCode: string | null;
     owners: EanOwners;
     closedScanRows: number;
+    labelPrint: boolean;
   }): AuditLogEntry[] {
-    const { productId, productName, code, integrationName, userId, supplierMappingId, ownAction, ownWasOverride, ownPreviousCode, owners, closedScanRows } = params;
+    const { productId, productName, code, integrationName, userId, supplierMappingId, ownAction, ownWasOverride, ownPreviousCode, owners, closedScanRows, labelPrint } = params;
+    // Pela impressão de etiqueta, toda mensagem diz que foi por ela.
+    const via = labelPrint ? " ao imprimir a etiqueta do produto" : "";
     const origin = { entity: AuditEntity.PRODUCT, internal_id: productId, label: `"${productName}"` };
 
     const ownMapping: AuditAffectedEntity = {
@@ -484,7 +527,7 @@ export class SupplierMappingService extends BaseService<
         internalId: productId,
         action: AuditAction.UPDATE,
         changes: {
-          summary: `EAN ${code} confirmado como EAN físico deste produto (exclusivo na integração ${integrationName}).${scanNote}`,
+          summary: `EAN ${code} confirmado como EAN físico deste produto${via} (exclusivo na integração ${integrationName}).${scanNote}`,
           affected,
         },
       },
@@ -493,7 +536,7 @@ export class SupplierMappingService extends BaseService<
         entity: item.entity,
         internalId: item.internal_id,
         action: item.action,
-        changes: { summary: `EAN ${code} confirmado como EAN físico`, before: item.before, after: item.after, origin },
+        changes: { summary: `EAN ${code} confirmado como EAN físico${via}`, before: item.before, after: item.after, origin },
       })),
     ];
 
@@ -506,7 +549,7 @@ export class SupplierMappingService extends BaseService<
         internalId: loserId,
         action: AuditAction.UPDATE,
         changes: {
-          summary: `Perdeu o EAN ${code}: ele foi confirmado como EAN físico do produto "${productName}"`,
+          summary: `Perdeu o EAN ${code}: ele foi confirmado como EAN físico do produto "${productName}"${via}`,
           affected: [...zeroedConfigs, ...deletedMappings].filter((item) =>
             [...owners.productConfigs, ...owners.supplierMappings].some(
               (row) => row.id === item.internal_id && row.product_id === loserId,
@@ -726,6 +769,15 @@ export class SupplierMappingService extends BaseService<
     try {
       return await sequelize.transaction(async (t) => {
         await this.lockEanInIntegration(code, integrationsId, t);
+
+        // Código já vinculado a este produto na integração: não faz nada, devolve o existente (senão o trigger m272 barra o insert).
+        const existing = await this.repository.findOne({
+          where: { product_id: productId, integrations_id: integrationsId, supplier_product_code: code },
+          attributes: ["id", "product_id", "supplier_cnpj", "supplier_product_code", "integrations_id", "is_physical_override"],
+          transaction: t,
+        });
+        if (existing) return existing;
+
         await this.assertEanFreeForProduct(code, integrationsId, productId, t);
 
         const record = await this.create(

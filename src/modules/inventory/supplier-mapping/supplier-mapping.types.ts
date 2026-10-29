@@ -61,13 +61,13 @@ export interface CreateFromUnmappedResult {
   integrationMappings: ProductIntegrationMappingSummary[];
 }
 
-// "Confirmar EAN físico" em massa: máximo de itens por chamada e quantos rodam em paralelo (cada um ocupa uma
-// conexão do pool, que é de 10 e compartilhado pelo app todo).
-export const PHYSICAL_OWNER_BULK_MAX_ITEMS = 50;
-export const PHYSICAL_OWNER_BULK_CONCURRENCY = 3;
+// Impressão de etiqueta (EAN físico em massa): máximo de itens por chamada e quantos rodam em paralelo (cada um ocupa
+// uma conexão do pool, que é de 10 e compartilhado pelo app todo).
+export const LABEL_PRINT_MAX_ITEMS = 50;
+export const LABEL_PRINT_CONCURRENCY = 3;
 
-// Resultado do "Confirmar EAN físico" em massa: sucesso parcial, cada item com o EAN já normalizado.
-export interface PhysicalOwnerBulkResult {
+// Resultado da impressão de etiqueta: sucesso parcial, cada item com o EAN já normalizado.
+export interface LabelPrintPhysicalOwnerResult {
   succeeded: {
     product_id: string;
     supplier_product_code: string;

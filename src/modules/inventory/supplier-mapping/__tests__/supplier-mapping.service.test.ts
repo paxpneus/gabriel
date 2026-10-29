@@ -807,24 +807,26 @@ describe("SupplierMappingService — validações novas de entrada", () => {
   });
 });
 
-describe("SupplierMappingService.assignPhysicalOwnerBulk — Confirmar EAN físico em massa", () => {
+describe("SupplierMappingService.assignPhysicalOwnerOnLabelPrint — impressão de etiqueta fixa o EAN físico", () => {
   let service: SupplierMappingService;
 
   beforeEach(() => {
     jest.clearAllMocks();
     service = new SupplierMappingService();
+    // Nenhum produto da lista tem EAN físico confirmado; os testes de reimpressão sobrescrevem.
+    (SupplierMapping.findAll as jest.Mock).mockResolvedValue([]);
   });
 
   it("sucesso parcial: item que falha não impede os outros e volta com o erro", async () => {
     const overrideError = new SupplierMappingError(SupplierMappingErrorCode.EAN_HAS_PHYSICAL_OVERRIDE, "já confirmado");
     const spy = jest
-      .spyOn(service, "assignPhysicalOwner")
-      .mockImplementation(async ({ productId }) => {
+      .spyOn(service as any, "applyPhysicalOwner")
+      .mockImplementation(async ({ productId }: any) => {
         if (productId === "product-2") throw overrideError;
         return { supplierMapping: { id: `sm-${productId}` } as any, cleared: [] };
       });
 
-    const result = await service.assignPhysicalOwnerBulk({
+    const result = await service.assignPhysicalOwnerOnLabelPrint({
       items: [
         { productId: "product-1", ean: 7891234567895 },
         { productId: "product-2", ean: "7891234567888" },
@@ -836,6 +838,7 @@ describe("SupplierMappingService.assignPhysicalOwnerBulk — Confirmar EAN físi
     });
 
     expect(spy).toHaveBeenCalledTimes(4);
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ productId: "product-1", labelPrint: true }));
     expect(result.succeeded.map((item) => item.product_id)).toEqual(["product-1", "product-3", "product-4"]);
     expect(result.succeeded[0].supplier_product_code).toBe("7891234567895");
     expect(result.failed).toEqual([
@@ -844,10 +847,10 @@ describe("SupplierMappingService.assignPhysicalOwnerBulk — Confirmar EAN físi
   });
 
   it("mesmo EAN repetido na lista (inclusive com outro zero à esquerda): recusa antes de alterar qualquer item", async () => {
-    const spy = jest.spyOn(service, "assignPhysicalOwner");
+    const spy = jest.spyOn(service as any, "applyPhysicalOwner");
 
     await expect(
-      service.assignPhysicalOwnerBulk({
+      service.assignPhysicalOwnerOnLabelPrint({
         items: [
           { productId: "product-1", ean: "7891234567895" },
           { productId: "product-2", ean: "07891234567895" },
@@ -859,20 +862,128 @@ describe("SupplierMappingService.assignPhysicalOwnerBulk — Confirmar EAN físi
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("lista vazia, acima do limite ou item sem EAN: erro sem alterar nada", async () => {
-    const spy = jest.spyOn(service, "assignPhysicalOwner");
+  it("reimpressão com o mesmo EAN (inclusive com outro zero à esquerda): não altera nem audita, volta em succeeded", async () => {
+    const spy = jest.spyOn(service as any, "applyPhysicalOwner");
+    const existing = { id: "sm-1", product_id: "product-1", supplier_product_code: "07891234567895", is_physical_override: true };
+    (SupplierMapping.findAll as jest.Mock).mockResolvedValue([existing]);
+
+    const result = await service.assignPhysicalOwnerOnLabelPrint({
+      items: [{ productId: "product-1", ean: "7891234567895" }],
+      integrationsId: "integration-1",
+      userId: "user-1",
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      succeeded: [{ product_id: "product-1", supplier_product_code: "7891234567895", supplierMapping: existing, cleared: [] }],
+      failed: [],
+    });
+  });
+
+  it("reimpressão com EAN novo: confirma o novo e não usa o EAN físico confirmado antes", async () => {
+    const spy = jest
+      .spyOn(service as any, "applyPhysicalOwner")
+      .mockResolvedValue({ supplierMapping: { id: "sm-new" }, cleared: [] });
+    (SupplierMapping.findAll as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.assignPhysicalOwnerOnLabelPrint({
+      items: [{ productId: "product-1", ean: "7899999999999" }],
+      integrationsId: "integration-1",
+      userId: "user-1",
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ productId: "product-1", ean: "7899999999999", labelPrint: true }),
+    );
+    expect(result.succeeded).toHaveLength(1);
+  });
+
+  it("item sem EAN: ignorado, sem erro e sem alterar nada", async () => {
+    const spy = jest.spyOn(service as any, "applyPhysicalOwner");
+
+    const result = await service.assignPhysicalOwnerOnLabelPrint({
+      items: [
+        { productId: "product-1", ean: "  " },
+        { productId: "product-2", ean: null },
+        { productId: "product-3", ean: undefined },
+      ],
+      integrationsId: "integration-1",
+      userId: null,
+    });
+
+    expect(result).toEqual({ succeeded: [], failed: [] });
+    expect(spy).not.toHaveBeenCalled();
+    expect(SupplierMapping.findAll).not.toHaveBeenCalled();
+  });
+
+  it("lista vazia ou acima do limite: erro sem alterar nada", async () => {
+    const spy = jest.spyOn(service as any, "applyPhysicalOwner");
     const base = { integrationsId: "integration-1", userId: null };
 
-    await expect(service.assignPhysicalOwnerBulk({ ...base, items: [] })).rejects.toThrow("Informe ao menos um");
+    await expect(service.assignPhysicalOwnerOnLabelPrint({ ...base, items: [] })).rejects.toThrow("Informe ao menos um produto");
     await expect(
-      service.assignPhysicalOwnerBulk({
+      service.assignPhysicalOwnerOnLabelPrint({
         ...base,
         items: Array.from({ length: 51 }, (_, i) => ({ productId: `p-${i}`, ean: String(7891234500000 + i) })),
       }),
-    ).rejects.toThrow("Máximo de 50");
-    await expect(
-      service.assignPhysicalOwnerBulk({ ...base, items: [{ productId: "product-1", ean: "  " }] }),
-    ).rejects.toThrow("Informe o EAN bipado");
+    ).rejects.toThrow("Máximo de 50 etiquetas");
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("SupplierMappingService — auditoria do EAN físico pela impressão de etiqueta", () => {
+  const baseParams = {
+    productId: "product-1",
+    productName: "PNEU X",
+    code: "7891234567895",
+    integrationName: "Bling",
+    userId: "user-1",
+    supplierMappingId: "sm-1",
+    ownAction: "CREATE",
+    ownWasOverride: false,
+    ownPreviousCode: null,
+    owners: {
+      supplierMappings: [{ id: "sm-old", product_id: "product-2", supplier_product_code: "7891234567895", product: { name: "PNEU Y" } }],
+      productConfigs: [],
+    },
+    closedScanRows: 0,
+  };
+
+  it("pela etiqueta: todas as mensagens dizem que foi ao imprimir a etiqueta do produto", () => {
+    const entries = (new SupplierMappingService() as any).buildPhysicalOwnerAuditEntries({ ...baseParams, labelPrint: true });
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) expect(entry.changes.summary).toContain("ao imprimir a etiqueta do produto");
+  });
+
+  it("pelo Confirmar EAN físico: mensagens sem menção à etiqueta", () => {
+    const entries = (new SupplierMappingService() as any).buildPhysicalOwnerAuditEntries({ ...baseParams, labelPrint: false });
+    for (const entry of entries) expect(entry.changes.summary).not.toContain("etiqueta");
+  });
+});
+
+describe("SupplierMappingService.createForProduct — código já vinculado ao mesmo produto", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("devolve o DE x PARA existente sem criar nem auditar (o trigger barraria o insert)", async () => {
+    const existing = { id: "sm-1", product_id: "product-1", supplier_product_code: "4019238791327", is_physical_override: true };
+    (integrationMappingService.findExternalIdsMap as jest.Mock).mockResolvedValue(new Map([["product-1", "ext-1"]]));
+    (SupplierMapping.findOne as jest.Mock).mockResolvedValue(existing);
+
+    const result = await new SupplierMappingService().createForProduct(
+      "product-1",
+      "integration-1",
+      { supplier_product_code: " 4019238791327 " },
+      "user-1",
+    );
+
+    expect(result).toBe(existing);
+    expect(SupplierMapping.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { product_id: "product-1", integrations_id: "integration-1", supplier_product_code: "4019238791327" },
+      }),
+    );
+    expect(SupplierMapping.create).not.toHaveBeenCalled();
+    expect(AuditLog.bulkCreate).not.toHaveBeenCalled();
+    expect(AuditLog.create).not.toHaveBeenCalled();
   });
 });
