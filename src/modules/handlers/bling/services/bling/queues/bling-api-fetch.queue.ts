@@ -83,6 +83,7 @@ import productConfigService from "../../../../../inventory/product-config/produc
 import transporterService from "../../../../../warehouse/transporter/transporter.service";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 import { BlingDirectUpsertQueue } from "./bling-direct-upsert.queue";
+import { BlingStockSyncQueue } from "./bling-stock-sync.queue";
 import integrationLoggerService from "../../../../../integrations/integration-errors/integration-logger.service";
 import { IntegrationErrorEntity } from "../../../../../integrations/integration-errors/integration-error.types";
 
@@ -470,6 +471,9 @@ const BLING_RESOURCE_ERROR_ENTITY: Record<BlingResource, IntegrationErrorEntity>
   seller: IntegrationErrorEntity.SELLER,
 };
 
+// Quanto o job de product/stock espera antes de tentar de novo enquanto o BLING_STOCK_SYNC roda (~30-40s).
+const STOCK_SYNC_RETRY_DELAY_MS = 30_000;
+
 export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   private api: AxiosInstance;
   // Client workless: só produz jobs na fila MAGENTO_SYNC (Redis), nunca
@@ -478,6 +482,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   // (scripts, sefaz-procnfe-retry, etc.) sem precisar injetar a instância.
   private magentoSyncQueue: MagentoSyncQueue;
   private directUpsertQueue: BlingDirectUpsertQueue;
+  // Client workless da BLING_STOCK_SYNC: só pra saber se o job de estoque está rodando (trava de product/stock abaixo).
+  private stockSyncQueue: BlingStockSyncQueue;
 
   constructor(options: { workless?: boolean } = {}) {
     super("BLING_API_FETCH", {
@@ -536,6 +542,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     this.api = blingApi;
     this.magentoSyncQueue = new MagentoSyncQueue({ workless: true });
     this.directUpsertQueue = new BlingDirectUpsertQueue({ workless: true });
+    this.stockSyncQueue = new BlingStockSyncQueue({ workless: true });
   }
 
   override async add(
@@ -784,6 +791,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     console.log(
       `[BLING_API_FETCH] Processando ${resource}.${action} | blingId=${apiFetch.blingId} | eventId=${eventId}`,
     );
+
+    // Trava: product/stock gravam estoque — não rodam junto com o job BLING_STOCK_SYNC; volta pra fila sem gastar tentativa.
+    if (
+      (resource === "product" || resource === "stock") &&
+      (await this.stockSyncQueue.queue.getActiveCount()) > 0
+    ) {
+      console.log(
+        `[BLING_API_FETCH] BLING_STOCK_SYNC rodando — ${resource} blingId=${apiFetch.blingId} adiado ${STOCK_SYNC_RETRY_DELAY_MS / 1000}s`,
+      );
+      await this.retryJobLater(job, STOCK_SYNC_RETRY_DELAY_MS);
+    }
 
     try {
       switch (resource) {
@@ -1295,27 +1313,10 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           );
         }
 
-        // Saldo da última movimentação prevalece sobre o físico da Bling; sem kardex ou com saldo negativo, fica o da Bling.
-        const lastMovement = await stockMovementsService.getCurrentBalance(
-          product.id,
-          unitBusiness.id,
-          transaction,
-        );
-        const kardexBalance = lastMovement
-          ? Number(lastMovement.balance_quantity)
-          : null;
-        let stockQuantity = physicalQuantity;
-        if (kardexBalance != null && kardexBalance >= 0 && kardexBalance !== physicalQuantity) {
-          console.warn(
-            `[BLING_API_FETCH] Estoque Bling divergente do kardex: sku=${configSku} | bling=${physicalQuantity} | kardex=${kardexBalance} — usando kardex`,
-          );
-          stockQuantity = kardexBalance;
-        }
-
         await this.syncStockAndBatches({
           product,
           unitBusiness,
-          newQuantity: stockQuantity,
+          newQuantity: physicalQuantity,
           averageCost: average_cost,
           transaction,
         });

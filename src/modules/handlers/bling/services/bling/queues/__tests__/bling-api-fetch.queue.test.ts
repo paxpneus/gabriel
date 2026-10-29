@@ -23,7 +23,11 @@ jest.mock("../../../../../../../config/redis", () => ({
 
 jest.mock("bullmq", () => ({
   __esModule: true,
-  Queue: jest.fn().mockImplementation(() => ({ add: jest.fn(), getJob: jest.fn() })),
+  Queue: jest.fn().mockImplementation(() => ({
+    add: jest.fn(),
+    getJob: jest.fn(),
+    getActiveCount: jest.fn().mockResolvedValue(0),
+  })),
   QueueEvents: jest.fn().mockImplementation(() => ({})),
   Worker: jest.fn().mockImplementation(() => ({ on: jest.fn() })),
   DelayedError: class DelayedError extends Error {},
@@ -348,6 +352,55 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
     } as unknown as Job<any>);
   }
 
+  // ── trava: product/stock não rodam com o BLING_STOCK_SYNC ativo ───────────
+
+  describe("trava BLING_STOCK_SYNC", () => {
+    const makeJob = (resource: string) =>
+      ({
+        data: { eventId: "evt-1", resource, action: "updated", apiFetch: { blingId: 1 } },
+      }) as unknown as Job<any>;
+
+    it.each(["product", "stock"])(
+      "%s com stock sync ativo: adia o job sem buscar o produto",
+      async (resource) => {
+        ((queue as any).stockSyncQueue.queue.getActiveCount as jest.Mock).mockResolvedValue(1);
+        const retrySpy = jest
+          .spyOn(queue as any, "retryJobLater")
+          .mockRejectedValue(new Error("delayed"));
+        const fetchSpy = jest
+          .spyOn(queue as any, "fetchAndUpsertProduct")
+          .mockResolvedValue(undefined);
+
+        await expect(queue.process(makeJob(resource))).rejects.toThrow("delayed");
+        expect(retrySpy).toHaveBeenCalledWith(expect.anything(), 30_000);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    it("product sem stock sync ativo: segue normal", async () => {
+      const retrySpy = jest.spyOn(queue as any, "retryJobLater");
+      const fetchSpy = jest
+        .spyOn(queue as any, "fetchAndUpsertProduct")
+        .mockResolvedValue(undefined);
+
+      await queue.process(makeJob("product"));
+      expect(retrySpy).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+
+    it("invoice com stock sync ativo: não é travada", async () => {
+      ((queue as any).stockSyncQueue.queue.getActiveCount as jest.Mock).mockResolvedValue(1);
+      const retrySpy = jest.spyOn(queue as any, "retryJobLater");
+      const invoiceSpy = jest
+        .spyOn(queue as any, "fetchAndUpsertInvoice")
+        .mockResolvedValue(undefined);
+
+      await queue.process(makeJob("invoice"));
+      expect(retrySpy).not.toHaveBeenCalled();
+      expect(invoiceSpy).toHaveBeenCalled();
+    });
+  });
+
   // ── produto simples (não KIT) ────────────────────────────────────────────
 
   describe("produto simples (não KIT)", () => {
@@ -415,7 +468,8 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       ).not.toHaveBeenCalled();
     });
 
-    it("estoque: saldo da última movimentação prevalece sobre o saldo físico da Bling; sem kardex fica o da Bling", async () => {
+    // Estoque vem só do saldo físico da Bling; o kardex não sobrescreve, mesmo divergente.
+    it("estoque: grava o saldo físico da Bling, ignorando o saldo do kardex", async () => {
       const blingProduct = makeBlingProduct();
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
       (resolveProductWithMapping as jest.Mock).mockResolvedValue({
@@ -429,18 +483,10 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
         .mockResolvedValue([{} as any, true]);
       jest.spyOn(Stock, "findOne").mockResolvedValue(null);
 
-      // Bling diz 5 (saldoFisicoTotal do fake), kardex diz 8 → grava 8.
+      // Bling diz 5 (saldoFisicoTotal do fake), kardex diria 8 → grava 5.
       (stockMovementsService.getCurrentBalance as jest.Mock).mockResolvedValue({
         balance_quantity: "8.0000",
       });
-      await runProductJob(blingProduct);
-      expect(stockUpsertSpy).toHaveBeenLastCalledWith(
-        expect.objectContaining({ quantity: 8, total_price: 800 }),
-        expect.anything(),
-      );
-
-      // Sem movimentação nenhuma → mantém o saldo da Bling.
-      (stockMovementsService.getCurrentBalance as jest.Mock).mockResolvedValue(null);
       await runProductJob(blingProduct);
       expect(stockUpsertSpy).toHaveBeenLastCalledWith(
         expect.objectContaining({ quantity: 5 }),

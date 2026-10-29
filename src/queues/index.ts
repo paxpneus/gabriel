@@ -34,6 +34,11 @@ import { BlingDirectUpsertQueue } from "./../modules/handlers/bling/services/bli
 import { BlingApiFetchQueue } from "../modules/handlers/bling/services/bling/queues/bling-api-fetch.queue";
 import { BlingTokenRefreshQueue } from "./../modules/handlers/bling/services/bling/queues/bling-refresh-token.queue";
 import { BlingMigrationQueue } from "../modules/handlers/bling/services/bling/queues/bling-daily-recover";
+import {
+  BLING_STOCK_SYNC_INTERVAL_MS,
+  BLING_STOCK_SYNC_SCHEDULER_ID,
+  BlingStockSyncQueue,
+} from "../modules/handlers/bling/services/bling/queues/bling-stock-sync.queue";
 import { BlingStockMovementsScrapingQueue } from "../modules/handlers/bling/services/bling/queues/bling-stock-movements-scraping.queue";
 import { MagentoSyncQueue } from "../modules/handlers/magentoV2/queues/magento-sync.queue";
 import { TCarUpsertQueue } from "../modules/handlers/tecinco/queues/tecinco-api-fetch.queue";
@@ -68,6 +73,7 @@ export type QueueName =
   | "BLING_API_FETCH"
   | "BLING_TOKEN_REFRESH"
   | "BLING_MIGRATION"
+  | "BLING_STOCK_SYNC"
   | "BLING_STOCK_MOVEMENTS_SCRAPING"
   | "BLING_NFE_SCRAPING"
   | "MAGENTO_SYNC"
@@ -197,6 +203,9 @@ function buildQueues(activeWorkers: QueueName[]) {
   const blingDailyReconciler = new BlingMigrationQueue({
     workless: w("BLING_MIGRATION"),
   });
+  const blingStockSyncQueue = new BlingStockSyncQueue({
+    workless: w("BLING_STOCK_SYNC"),
+  });
   const blingStockMovementsScrapingQueue = new BlingStockMovementsScrapingQueue(
     {
       workless: w("BLING_STOCK_MOVEMENTS_SCRAPING"),
@@ -247,6 +256,7 @@ function buildQueues(activeWorkers: QueueName[]) {
     blingApiFetchQueue,
     blingTokenRefreshQueue,
     blingDailyReconciler,
+    blingStockSyncQueue,
     blingStockMovementsScrapingQueue,
     magentoSyncQueue,
     dailyOperationReportQueue,
@@ -275,6 +285,7 @@ export function registerQueues(app: Express) {
     blingApiFetchQueue,
     blingTokenRefreshQueue,
     blingDailyReconciler,
+    blingStockSyncQueue,
     blingStockMovementsScrapingQueue,
     magentoSyncQueue,
     dailyOperationReportQueue,
@@ -303,6 +314,7 @@ export function registerQueues(app: Express) {
   app.locals.BlingApiFetchQueue = blingApiFetchQueue;
   app.locals.BlingTokenRefreshQueue = blingTokenRefreshQueue;
   app.locals.BlingMigrationQueue = blingDailyReconciler;
+  app.locals.BlingStockSyncQueue = blingStockSyncQueue;
   app.locals.BlingStockMovementsScrapingQueue =
     blingStockMovementsScrapingQueue;
   app.locals.MagentoSyncQueue = magentoSyncQueue;
@@ -329,6 +341,7 @@ export function registerQueues(app: Express) {
       new BullMQAdapter(blingApiFetchQueue.queue),
       new BullMQAdapter(blingTokenRefreshQueue.queue),
       new BullMQAdapter(blingDailyReconciler.queue),
+      new BullMQAdapter(blingStockSyncQueue.queue),
       new BullMQAdapter(blingStockMovementsScrapingQueue.queue),
       new BullMQAdapter(magentoSyncQueue.queue),
       new BullMQAdapter(dailyOperationReportQueue.queue),
@@ -356,6 +369,7 @@ export function registerQueues(app: Express) {
     BlingApiFetchQueue: "BLING_API_FETCH",
     BlingTokenRefreshQueue: "BLING_TOKEN_REFRESH",
     BlingMigrationQueue: "BLING_MIGRATION",
+    BlingStockSyncQueue: "BLING_STOCK_SYNC",
     BlingStockMovementsScrapingQueue: "BLING_STOCK_MOVEMENTS_SCRAPING",
     MagentoSyncQueue: "MAGENTO_SYNC",
     TCarUpsertQueue: "TCAR_API_FETCH",
@@ -378,6 +392,7 @@ export function startBlingWorkers() {
     blingDirectUpsertQueue,
     blingTokenRefreshQueue,
     blingDailyReconciler,
+    blingStockSyncQueue,
     blingOrderQueue,
     magentoSyncQueue,
   } = buildQueues([
@@ -385,12 +400,27 @@ export function startBlingWorkers() {
     "BLING_DIRECT_UPSERT",
     "BLING_TOKEN_REFRESH",
     "BLING_MIGRATION",
+    "BLING_STOCK_SYNC",
     "BLING_ORDER_INGESTION",
     "MAGENTO_SYNC",
   ]);
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
   blingDailyReconciler.scheduleRepeat({ every: 24 * 60 * 60 * 1000 });
+
+  // Estoque alinhado com o saldo físico da Bling a cada 5min, sem esperar as outras filas; sem retry, a próxima rodada já é a nova tentativa.
+  void blingStockSyncQueue.queue.upsertJobScheduler(
+    BLING_STOCK_SYNC_SCHEDULER_ID,
+    { every: BLING_STOCK_SYNC_INTERVAL_MS },
+    {
+      name: "sync-stock",
+      opts: {
+        attempts: 1,
+        removeOnComplete: true,
+        removeOnFail: { age: 24 * 3600, count: 100 },
+      },
+    },
+  );
 
   // Bypassa scheduleRepeat() pra poder passar {kind:"sync-all"}; jobId fixo
   // evita duplicar o agendamento a restart (mesmo padrão do reconcile do
@@ -415,6 +445,7 @@ export function startBlingWorkers() {
   console.log("  → BLING_DIRECT_UPSERT");
   console.log("  → BLING_TOKEN_REFRESH (1h)");
   console.log("  → BLING_MIGRATION (24h)");
+  console.log("  → BLING_STOCK_SYNC (5min)");
   console.log("  → MAGENTO_SYNC (sob demanda + sync-all 23h BRT)");
   console.log("  → TCAR_UPSERT");
 }

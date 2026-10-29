@@ -16,6 +16,20 @@
   Has trigger `trigger_prevent_delete_manual_adjustment_with_cost`
   (BEFORE DELETE) that can block deleting a manual cost-adjustment
   movement.
+- **TEMPORARIAMENTE DESLIGADO** (`KARDEX_OVERRIDES_STOCK = false` em
+  `stock-movements.service.ts`): `syncProductFromLastMovement` não sobrescreve
+  `stocks.quantity` — vale o saldo da Bling. Custo médio
+  (`product_configs.average_cost`) continua vindo do kardex.
+  Realinhar tudo com a Bling de uma vez: `src/scripts/bling/sync-stock-from-bling.ts`
+  (`/estoques/saldos` em lote de 200 — 414 a partir de ~300 ids por tamanho de URL —, só mapping principal, `BLING_UNIT_BUSINESS_ID`,
+  grava só divergentes num upsert; sem `--apply` só lista; não mexe em lote CYCLIC).
+  Roda sozinho a cada 5min na fila `BLING_STOCK_SYNC` (`bling-stock-sync.queue.ts`, worker-bling,
+  scheduler `bling-stock-sync`, `attempts: 1`) chamando `syncStockFromBling(false)`; sem `sharedLock`,
+  não espera as outras filas Bling — só divide o rate limit da Bling. Lote falho = job falho.
+  Trava: enquanto tem job ativo nela, jobs `product`/`stock` do `BLING_API_FETCH` voltam pra fila
+  (`retryJobLater` 30s, não gasta tentativa); nota/vendedor seguem. Job de produto já em andamento
+  quando o sync começa não é interrompido.
+  Se religar `KARDEX_OVERRIDES_STOCK`, os dois brigam pelo `stocks` — desligar um dos dois.
 - **Kardex é a fonte do saldo em `stocks`** (`stocks` só vem da Bling por
   webhook, que pode se perder). `syncProductFromLastMovement` roda no fim de
   todo método que escreve na cadeia (`syncProductStockMovements`,
@@ -28,9 +42,8 @@
   (Tecinco não tem kardex, não é afetado). Não atualiza
   `inventory_batch_items` de lote CYCLIC — só o webhook faz isso.
 - Webhook de produto/estoque Bling (`BlingApiFetchQueue.fetchAndUpsertProduct`):
-  depois do kardex sincronizado, `syncStockAndBatches` recebe o saldo da
-  última movimentação em vez do `saldoFisicoTotal` (sem kardex ou negativo:
-  fica o da Bling). `erp_data` continua com o saldo cru da Bling.
+  `syncStockAndBatches` grava sempre o `saldoFisicoTotal` da Bling — o kardex
+  não entra no estoque desse fluxo (só sincroniza movimentações/custo médio).
 - Ajuste manual (`MANUAL_ADJUSTMENT`) — regras de `refers_to`/custo:
   `refers_to` (sempre exigido no POST pelo schema) independe de
   `manual_average_cost_value`. Ajuste de entrada (`direction_type`

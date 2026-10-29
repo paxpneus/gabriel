@@ -1,5 +1,8 @@
 import { Op } from "sequelize";
-import { StockMovementService } from "./../stock-movements.service";
+import {
+  KARDEX_OVERRIDES_STOCK,
+  StockMovementService,
+} from "./../stock-movements.service";
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
 
@@ -2304,6 +2307,9 @@ describe("StockMovementService", () => {
   // ══════════════════════════════════════════════════════════════════════════
 
   describe("syncProductFromLastMovement", () => {
+    // Alinhamento do stock pelo kardex está temporariamente desligado (KARDEX_OVERRIDES_STOCK); volta a rodar quando religar.
+    const itWhenKardexOverrides = KARDEX_OVERRIDES_STOCK ? it : it.skip;
+
     beforeEach(() => {
       jest
         .spyOn(product_configService, "findOneAndUpdate")
@@ -2318,7 +2324,7 @@ describe("StockMovementService", () => {
     const sync = () =>
       (service as any).syncProductFromLastMovement(PRODUCT_ID, UNIT_BUSINESS_ID);
 
-    it("stock divergente: atualiza quantidade e valor pelo saldo da última movimentação", async () => {
+    itWhenKardexOverrides("stock divergente: atualiza quantidade e valor pelo saldo da última movimentação", async () => {
       (service as any).repository.findLastMovement.mockResolvedValue({
         balance_quantity: "7.0000",
         resulting_average_cost: "10.0000",
@@ -2353,7 +2359,7 @@ describe("StockMovementService", () => {
       expect(stockService.create).not.toHaveBeenCalled();
     });
 
-    it("sem linha de stock: cria com o saldo do kardex", async () => {
+    itWhenKardexOverrides("sem linha de stock: cria com o saldo do kardex", async () => {
       (service as any).repository.findLastMovement.mockResolvedValue({
         balance_quantity: "3.0000",
         resulting_average_cost: "20.0000",
@@ -2386,7 +2392,7 @@ describe("StockMovementService", () => {
       expect(stockService.create).not.toHaveBeenCalled();
     });
 
-    it("processMovement alinha o stock depois de criar a movimentação nova", async () => {
+    itWhenKardexOverrides("processMovement alinha o stock depois de criar a movimentação nova", async () => {
       (service as any).repository.findLastMovement.mockResolvedValue({
         balance_quantity: "7.0000",
         resulting_average_cost: "10.0000",

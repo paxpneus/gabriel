@@ -59,6 +59,9 @@ type CreateManualAdjustmentPayload = {
 // dependente de created_at, frágil).
 const REFERS_TO_ORDERING_OFFSET_MS = 5000;
 
+// TEMPORÁRIO: desligado — saldo do kardex não sobrescreve `stocks.quantity` (fica o da Bling). Custo médio continua vindo do kardex.
+export const KARDEX_OVERRIDES_STOCK = false;
+
 /**
  * O CSV da Bling pode trazer o número da NF sem os zeros à esquerda usados
  * pelo sistema. A normalização permite identificar o mesmo documento sem
@@ -225,6 +228,8 @@ export class StockMovementService extends BaseService<
       },
       { transaction },
     );
+
+    if (!KARDEX_OVERRIDES_STOCK) return;
 
     // Saldo do kardex prevalece sobre o stock (webhook Bling perdido o deixa defasado); negativo é anomalia do kardex, não aplica.
     const balance = Number(lastMovement.balance_quantity);
