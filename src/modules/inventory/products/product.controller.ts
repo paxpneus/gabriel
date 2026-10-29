@@ -79,6 +79,12 @@ export class ProductController extends BaseController<
       this.searchTireCandidates,
     );
 
+    this.router.get(
+      "/tire-search/paginated/get",
+      ...this.mw("paginateTireCandidates"),
+      this.paginateTireCandidates,
+    );
+
     this.router.get("/:id/full", ...this.mw("findByIdFull"), this.findByIdFull);
 
     this.router.get(
@@ -103,6 +109,7 @@ export class ProductController extends BaseController<
       // Bipe, auto busca e histórico: leitura de Produtos (o histórico mostra quem alterou o quê).
       findByCode: [authenticate, userPermissions],
       searchTireCandidates: [authenticate, userPermissions],
+      paginateTireCandidates: [authenticate, userPermissions],
       findAuditLogs: [authenticate, userPermissions],
       productReport: [authenticate, userPermissions],
       productByUnit: [authenticate, userPermissions],
@@ -263,6 +270,51 @@ export class ProductController extends BaseController<
       return res.json(result);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
+    }
+  };
+
+  // Busca composta paginada (GET /tire-search/paginated/get): mode/measure obrigatórios; load_index/brand_id/other_description opcionais (IN_BATCH exige o lote).
+  paginateTireCandidates = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const mode = req.query.mode as TireSearchMode | undefined;
+      const measure = String(req.query.measure ?? "").trim();
+      const loadIndex = String(req.query.load_index ?? "").trim() || undefined;
+      const brandId = String(req.query.brand_id ?? "").trim() || undefined;
+      const otherDescription = String(req.query.other_description ?? "").trim() || undefined;
+      const expeditionBatchId = String(req.query.expedition_batch_id ?? "").trim() || undefined;
+
+      if (!mode || !Object.values(TireSearchMode).includes(mode)) {
+        return res.status(400).json({ error: "Informe o modo da busca: IN_BATCH ou NORMAL" });
+      }
+      if (!measure) return res.status(400).json({ error: "Informe a medida do pneu" });
+      if (brandId) assertUuid(brandId, "Identificador da marca");
+      if (mode === TireSearchMode.IN_BATCH && !expeditionBatchId) {
+        return res.status(400).json({ error: "Informe o lote para buscar dentro dele" });
+      }
+
+      const params = this.extractQueryParams(req) as ProductQueryParams;
+      const { unitBusinessId } = await getUserContext(req);
+      params.filters = params.filters ?? {};
+      const stockUnit = Array.isArray(params.filters.stockUnit)
+        ? params.filters.stockUnit[0]
+        : params.filters.stockUnit;
+      params.filters.stockUnit = {
+        unitBusinessId,
+        stockUnit: stockUnit === "positive" || stockUnit === "zero" ? stockUnit : undefined,
+      };
+
+      const result = await this.service.paginateTireCandidates(
+        params as unknown as QueryParams,
+        { mode, measure, loadIndex, brandId, otherDescription, expeditionBatchId },
+        unitBusinessId,
+      );
+
+      if (!result) {
+        return res.status(404).json({ error: "Lote não encontrado na sua loja" });
+      }
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
     }
   };
 

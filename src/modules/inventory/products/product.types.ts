@@ -147,10 +147,22 @@ export interface TireSearchParams {
   expeditionBatchId?: string;
 }
 
+// Busca composta paginada: mesma auto busca, com marca por id e o campo coringa.
+export interface TireCompositeSearchParams {
+  mode: TireSearchMode;
+  measure: string;
+  loadIndex?: string;
+  brandId?: string;
+  // Campo coringa opcional: texto livre procurado no nome; só pontua, como índice e marca.
+  otherDescription?: string;
+  expeditionBatchId?: string;
+}
+
 // Item da resposta da auto busca; `matches` fica null no opcional não informado.
 export interface TireSearchCandidate {
   product: Record<string, unknown>;
-  matches: { load_index: boolean | null; brand: boolean | null };
+  // `other_description` só na busca composta paginada.
+  matches: { load_index: boolean | null; brand: boolean | null; other_description?: boolean | null };
   score: { matched: number; total: number };
   probability: TireMatchProbability | null;
   mapped_in_user_integration: boolean;

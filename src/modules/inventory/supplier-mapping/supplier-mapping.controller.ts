@@ -49,6 +49,11 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       ...this.mw('assignPhysicalOwner'),
       this.assignPhysicalOwner,
     );
+    this.router.post(
+      '/physical-owner/bulk',
+      ...this.mw('assignPhysicalOwnerBulk'),
+      this.assignPhysicalOwnerBulk,
+    );
     this.router.put(
       '/product/:productId/:id',
       ...this.mw('updateForProduct'),
@@ -78,6 +83,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       deleteForProduct: [authenticate, userPermissions],
       // userPermissions resolve a entidade physical_ean_owner pela rota (CUSTOM_ROUTE_MAP "physical-owner").
       assignPhysicalOwner: [authenticate, userPermissions],
+      assignPhysicalOwnerBulk: [authenticate, userPermissions],
       integrationPending: [authenticate, userPermissions],
     };
   }
@@ -143,6 +149,41 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       });
 
       return res.status(201).json(result);
+    } catch (error: any) {
+      return this.errorResponse(req, res, error);
+    }
+  };
+
+  // POST /physical-owner/bulk — "Confirmar EAN físico" em massa: body items [{ product_id, supplier_product_code }] e
+  // integrations_id opcional (mesma regra do unitário). 200 com succeeded/failed; cada failed no formato do erro unitário.
+  assignPhysicalOwnerBulk = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { items, integrations_id } = req.body;
+      if (!Array.isArray(items)) throw new Error('Informe ao menos um produto e EAN');
+      const integrationsId = integrations_id
+        ? assertUuid(integrations_id, 'Integração')
+        : await this.resolveIntegrationsId(req);
+      const userId = getRequestUserId(req);
+      if (integrations_id && userId) await userService.assertIntegrationAccess(userId, integrationsId);
+
+      const result = await this.service.assignPhysicalOwnerBulk({
+        items: items.map((item: any) => ({
+          productId: assertUuid(item?.product_id, 'Produto'),
+          ean: item?.supplier_product_code,
+        })),
+        integrationsId,
+        userId,
+      });
+
+      const failed = await Promise.all(
+        result.failed.map(async ({ error, ...item }) => {
+          if (error instanceof SupplierMappingError) {
+            return { ...item, ...(await this.service.buildErrorResponse(error, req.cookies?.token)) };
+          }
+          return { ...item, error: error.message };
+        }),
+      );
+      return res.status(200).json({ succeeded: result.succeeded, failed });
     } catch (error: any) {
       return this.errorResponse(req, res, error);
     }

@@ -27,6 +27,9 @@ import {
   SupplierMappingCreationAttributes,
   CreateFromUnmappedResult,
   SYNC_SUPPLIER_CNPJ_PREFIX,
+  PHYSICAL_OWNER_BULK_CONCURRENCY,
+  PHYSICAL_OWNER_BULK_MAX_ITEMS,
+  PhysicalOwnerBulkResult,
 } from "./supplier-mapping.types";
 import {
   buildEanZeroVariants,
@@ -373,6 +376,47 @@ export class SupplierMappingService extends BaseService<
 
       return { supplierMapping, cleared };
     });
+  }
+
+  // "Confirmar EAN físico" em massa: cada item na própria transação (mesma regra do unitário) e sucesso parcial — falha
+  // de um não desfaz os outros. Mesmo EAN (ignorando zero à esquerda) repetido na lista é recusado antes de alterar nada.
+  async assignPhysicalOwnerBulk(params: {
+    items: { productId: string; ean: unknown }[];
+    integrationsId: string;
+    userId: string | null;
+  }): Promise<PhysicalOwnerBulkResult> {
+    const { integrationsId, userId } = params;
+    if (!params.items.length) throw new Error("Informe ao menos um produto e EAN");
+    if (params.items.length > PHYSICAL_OWNER_BULK_MAX_ITEMS) {
+      throw new Error(`Máximo de ${PHYSICAL_OWNER_BULK_MAX_ITEMS} itens por confirmação`);
+    }
+
+    const items = params.items.map((item) => {
+      const code = normalizeEan(item.ean === null || item.ean === undefined ? undefined : String(item.ean));
+      if (!code) throw new Error("Informe o EAN bipado em todos os itens");
+      return { productId: item.productId, code };
+    });
+    const seen = new Set<string>();
+    for (const { code } of items) {
+      const key = eanZeroInsensitiveKey(code);
+      if (seen.has(key)) throw new Error(`O EAN ${code} aparece mais de uma vez na lista`);
+      seen.add(key);
+    }
+
+    const result: PhysicalOwnerBulkResult = { succeeded: [], failed: [] };
+    // Lotes pequenos em paralelo: cada item segura uma conexão do pool durante a transação.
+    for (let i = 0; i < items.length; i += PHYSICAL_OWNER_BULK_CONCURRENCY) {
+      const slice = items.slice(i, i + PHYSICAL_OWNER_BULK_CONCURRENCY);
+      const settled = await Promise.allSettled(
+        slice.map((item) => this.assignPhysicalOwner({ productId: item.productId, ean: item.code, integrationsId, userId })),
+      );
+      settled.forEach((outcome, index) => {
+        const item = { product_id: slice[index].productId, supplier_product_code: slice[index].code };
+        if (outcome.status === "fulfilled") result.succeeded.push({ ...item, ...outcome.value });
+        else result.failed.push({ ...item, error: outcome.reason });
+      });
+    }
+    return result;
   }
 
   // Entradas de auditoria do "Confirmar EAN físico": uma do produto dono com tudo o que foi afetado, e uma por

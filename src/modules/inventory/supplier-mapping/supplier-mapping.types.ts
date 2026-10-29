@@ -63,6 +63,22 @@ export interface CreateFromUnmappedResult {
   integrationMappings: ProductIntegrationMappingSummary[];
 }
 
+// "Confirmar EAN físico" em massa: máximo de itens por chamada e quantos rodam em paralelo (cada um ocupa uma
+// conexão do pool, que é de 10 e compartilhado pelo app todo).
+export const PHYSICAL_OWNER_BULK_MAX_ITEMS = 50;
+export const PHYSICAL_OWNER_BULK_CONCURRENCY = 3;
+
+// Resultado do "Confirmar EAN físico" em massa: sucesso parcial, cada item com o EAN já normalizado.
+export interface PhysicalOwnerBulkResult {
+  succeeded: {
+    product_id: string;
+    supplier_product_code: string;
+    supplierMapping: SupplierMapping;
+    cleared: EanOwnerSummary[];
+  }[];
+  failed: { product_id: string; supplier_product_code: string; error: Error }[];
+}
+
 // Override físico já existente pra outro produto — devolvido no erro EAN_HAS_PHYSICAL_OVERRIDE.
 export interface PhysicalOverrideSummary {
   supplier_mapping_id: string;

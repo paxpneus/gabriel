@@ -1,4 +1,14 @@
-import { FindOptions, FindAndCountOptions, Op, QueryTypes, Transaction, WhereOptions } from "sequelize";
+import {
+  FindOptions,
+  FindAndCountOptions,
+  Op,
+  Order,
+  ProjectionAlias,
+  QueryTypes,
+  Sequelize,
+  Transaction,
+  WhereOptions,
+} from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import sequelize from "../../../../config/sequelize";
 import {
@@ -68,6 +78,9 @@ export class ProductRepository extends BaseRepository<Product> {
       "where" | "limit" | "offset" | "order"
     >,
     forcedWhere?: WhereOptions,
+    // Ordem/colunas calculadas da busca composta de pneu; sem eles, segue o sortBy normal.
+    forcedOrder?: FindOptions["order"],
+    extraAttributes?: ProjectionAlias[],
   ): Promise<PaginatedResult<Product>> {
     const { stockFilter, stockWhere, paramsWithoutStockFilter } =
       extractStockFilter(params);
@@ -76,7 +89,7 @@ export class ProductRepository extends BaseRepository<Product> {
       ...extraOptions,
       subQuery: false,
       distinct: true,
-      attributes: { exclude: ["source_payload"] },
+      attributes: { exclude: ["source_payload"], include: extraAttributes ?? [] },
       include: [
         {
           model: Stock,
@@ -109,7 +122,68 @@ export class ProductRepository extends BaseRepository<Product> {
           required: false,
         },
       ],
-    }, forcedWhere);
+    }, forcedWhere, forcedOrder);
+  }
+
+  // Busca composta paginada: mesmo filtro da auto busca (UNIT/TIRE ativo, medida estrita no nome) com os dados do
+  // paginate; índice (no nome sem a medida), marca (brand_id) e coringa (texto no nome) viram colunas que só ordenam.
+  async paginateTireCandidates(
+    params: QueryParams,
+    queryConfig: QueryConfig,
+    search: {
+      measureNameRegex: string;
+      loadIndexRegex?: string;
+      brandId?: string;
+      otherDescription?: string;
+      productIds?: string[];
+      integrationsId: string | null | undefined;
+    },
+  ): Promise<PaginatedResult<Product>> {
+    const where: WhereOptions = {
+      type: "UNIT",
+      category: "TIRE",
+      is_active: true,
+      name: { [Op.iRegexp]: search.measureNameRegex },
+    };
+    if (search.productIds) Object.assign(where, { id: { [Op.in]: search.productIds } });
+
+    // Opcional não enviado → FALSE (não soma na ordem; o service devolve null em `matches`).
+    let loadIndexMatch = "FALSE";
+    if (search.loadIndexRegex) {
+      const nameWithoutMeasure = `regexp_replace("Product"."name", ${sequelize.escape(search.measureNameRegex)}, ' ', 'gi')`;
+      loadIndexMatch = `(${nameWithoutMeasure} ~* ${sequelize.escape(search.loadIndexRegex)})`;
+    }
+    let brandMatch = "FALSE";
+    if (search.brandId) brandMatch = `COALESCE("Product"."brand_id" = ${sequelize.escape(search.brandId)}, FALSE)`;
+    // Campo coringa: texto livre contido no nome; `%`/`_`/`\` digitados valem como texto.
+    let otherDescriptionMatch = "FALSE";
+    if (search.otherDescription) {
+      const likeText = search.otherDescription.replace(/[\\%_]/g, "\\$&");
+      otherDescriptionMatch = `("Product"."name" ILIKE ${sequelize.escape(`%${likeText}%`)})`;
+    }
+
+    // Probabilidade (quantos bateram) → quem bateu o índice antes de quem não bateu → nome. Só entra critério enviado:
+    // o Postgres recusa constante solta (`ORDER BY FALSE`).
+    const order: Order = [];
+    if (search.loadIndexRegex || search.brandId || search.otherDescription) {
+      order.push([Sequelize.literal(`${loadIndexMatch}::int + ${brandMatch}::int + ${otherDescriptionMatch}::int`), "DESC"]);
+    }
+    if (search.loadIndexRegex) order.push([Sequelize.literal(loadIndexMatch), "DESC"]);
+    order.push(["name", "ASC"]);
+
+    return this.paginateWithStock(
+      params,
+      queryConfig,
+      undefined,
+      where,
+      order,
+      [
+        [Sequelize.literal(loadIndexMatch), "load_index_match"],
+        [Sequelize.literal(brandMatch), "brand_match"],
+        [Sequelize.literal(otherDescriptionMatch), "other_description_match"],
+        [productMappedToIntegrationLiteral(search.integrationsId), "mapped_in_user_integration"],
+      ],
+    );
   }
 
   // Candidatos da auto busca de pneu: UNIT/TIRE ativos com a medida no nome, de qualquer integração, com a flag de

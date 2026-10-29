@@ -807,3 +807,73 @@ describe("SupplierMappingService — validações novas de entrada", () => {
     expect(() => service.normalizeSupplierCnpj("123")).toThrow("CNPJ do fornecedor inválido");
   });
 });
+
+describe("SupplierMappingService.assignPhysicalOwnerBulk — Confirmar EAN físico em massa", () => {
+  let service: SupplierMappingService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new SupplierMappingService();
+  });
+
+  it("sucesso parcial: item que falha não impede os outros e volta com o erro", async () => {
+    const overrideError = new SupplierMappingError(SupplierMappingErrorCode.EAN_HAS_PHYSICAL_OVERRIDE, "já confirmado");
+    const spy = jest
+      .spyOn(service, "assignPhysicalOwner")
+      .mockImplementation(async ({ productId }) => {
+        if (productId === "product-2") throw overrideError;
+        return { supplierMapping: { id: `sm-${productId}` } as any, cleared: [] };
+      });
+
+    const result = await service.assignPhysicalOwnerBulk({
+      items: [
+        { productId: "product-1", ean: 7891234567895 },
+        { productId: "product-2", ean: "7891234567888" },
+        { productId: "product-3", ean: " 7891234567871 " },
+        { productId: "product-4", ean: "7891234567864" },
+      ],
+      integrationsId: "integration-1",
+      userId: "user-1",
+    });
+
+    expect(spy).toHaveBeenCalledTimes(4);
+    expect(result.succeeded.map((item) => item.product_id)).toEqual(["product-1", "product-3", "product-4"]);
+    expect(result.succeeded[0].supplier_product_code).toBe("7891234567895");
+    expect(result.failed).toEqual([
+      { product_id: "product-2", supplier_product_code: "7891234567888", error: overrideError },
+    ]);
+  });
+
+  it("mesmo EAN repetido na lista (inclusive com outro zero à esquerda): recusa antes de alterar qualquer item", async () => {
+    const spy = jest.spyOn(service, "assignPhysicalOwner");
+
+    await expect(
+      service.assignPhysicalOwnerBulk({
+        items: [
+          { productId: "product-1", ean: "7891234567895" },
+          { productId: "product-2", ean: "07891234567895" },
+        ],
+        integrationsId: "integration-1",
+        userId: null,
+      }),
+    ).rejects.toThrow("aparece mais de uma vez");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("lista vazia, acima do limite ou item sem EAN: erro sem alterar nada", async () => {
+    const spy = jest.spyOn(service, "assignPhysicalOwner");
+    const base = { integrationsId: "integration-1", userId: null };
+
+    await expect(service.assignPhysicalOwnerBulk({ ...base, items: [] })).rejects.toThrow("Informe ao menos um");
+    await expect(
+      service.assignPhysicalOwnerBulk({
+        ...base,
+        items: Array.from({ length: 51 }, (_, i) => ({ productId: `p-${i}`, ean: String(7891234500000 + i) })),
+      }),
+    ).rejects.toThrow("Máximo de 50");
+    await expect(
+      service.assignPhysicalOwnerBulk({ ...base, items: [{ productId: "product-1", ean: "  " }] }),
+    ).rejects.toThrow("Informe o EAN bipado");
+    expect(spy).not.toHaveBeenCalled();
+  });
+});

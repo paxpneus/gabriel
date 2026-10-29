@@ -40,6 +40,13 @@ jest.mock("../../stock/stock.service", () => ({
   default: { findOne: jest.fn(), bulkUpdate: jest.fn(), create: jest.fn() },
 }));
 
+// O import real puxa (via tecinco/product.helpers) o singleton UploaderQueue, que abre
+// conexão Redis do BullMQ e impede o Jest de sair (trava o `npm test` do build Docker).
+jest.mock("../../../product-config/product_config.service", () => ({
+  __esModule: true,
+  default: { findOneAndUpdate: jest.fn() },
+}));
+
 
 import { Invoice, UnitBusiness } from "../../../../warehouse";
 import InvoiceFiscalItem from "../../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";

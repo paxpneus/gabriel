@@ -144,6 +144,78 @@ Só leitura. Busca pneus cuja medida no nome é **exatamente** a informada. Índ
 
 ---
 
+## 1.1. Busca composta paginada — `GET /api/products/tire-search/paginated/get`
+
+Só leitura. Mesma lógica da auto busca (§1), mas **paginada** e com o produto completo (mesmos dados do `GET /api/products`). Diferenças em relação ao §1:
+
+- Só a medida é obrigatória. Índice de carga, marca e o campo coringa são opcionais.
+- A marca vai pelo **id** (`brand_id`), não pelo nome. Bate só se o produto está cadastrado com essa marca; o nome da marca escrito no nome do produto não conta.
+- Campo coringa opcional `other_description`: qualquer texto (linha, modelo etc.) procurado dentro do nome do produto.
+- Índice, marca e coringa só pontuam e ordenam, nunca excluem. Quem não bate nenhum aparece no fim, como `IMPROVAVEL`.
+
+### Query
+| Parâmetro | Obrigatório | Exemplo | Observação |
+|---|---|---|---|
+| `mode` | sim | `IN_BATCH` / `NORMAL` | Igual ao §1 |
+| `measure` | sim | `12.5/80-18`, `205/55R16` | Codificar na URL (`encodeURIComponent`). Medida estrita, igual ao §1 |
+| `load_index` | não | `R4`, `91` | |
+| `brand_id` | não | uuid da marca | Vem do cadastro de marcas |
+| `other_description` | não | `P7`, `turanza` | Campo coringa: bate se o nome do produto contém o texto (sem diferenciar maiúscula/minúscula). Vazio = não enviado |
+| `expedition_batch_id` | só em `IN_BATCH` | uuid do lote | Ignorado em `NORMAL` |
+| `page` | não | `1` | Padrão `1` |
+| `perPage` | não | `20` | Padrão `20` |
+| `search` | não | `CAMSO` | Opcional: texto livre do `GET /api/products` (nome, SKU, EAN), aplicado junto |
+| `filters[stockUnit]` | não | `positive` / `zero` | Opcional: só com estoque positivo ou zerado na loja do usuário |
+
+- `sortBy`/`sortDir` são ignorados: a ordem é sempre a da probabilidade (ver abaixo).
+- `IN_BATCH` sem nada faltando bipar: `data: []` com `meta.total: 0`.
+
+### Respostas
+- `200`: página já ordenada.
+- `400`: `mode` ausente ou inválido, `measure` ausente, `brand_id` que não é uuid (`"Identificador da marca inválido"`), ou `IN_BATCH` sem `expedition_batch_id`. Formato `{ "error": "..." }`; exibir o `error`.
+- `404`: lote não encontrado na loja do usuário.
+
+```json
+{
+  "data": [
+    {
+      "product": {
+        "id": "uuid",
+        "name": "PNEU 205/55R16 91V PIRELLI P7",
+        "type": "UNIT",
+        "category": "TIRE",
+        "brand_id": "uuid | null",
+        "is_active": true,
+        "...": "demais campos do produto, iguais ao GET /api/products",
+        "stocks": [{ "id": "uuid", "quantity": 4, "unit_business_id": "uuid", "total_price": "1200.00" }],
+        "brandRegister": { "id": "uuid", "name": "PIRELLI", "...": "..." },
+        "rimRegister": { "id": "uuid", "value": "16" },
+        "measureRegister": { "id": "uuid", "value": "205/55R16" },
+        "productConfigs": [{ "id": "uuid", "sku": "123", "gtin": "789...", "unit_business_id": "uuid", "...": "..." }]
+      },
+      "matches": { "load_index": true, "brand": true, "other_description": true },
+      "score": { "matched": 3, "total": 3 },
+      "probability": "ALTA",
+      "mapped_in_user_integration": false
+    }
+  ],
+  "meta": { "total": 27, "page": 1, "perPage": 20, "totalPages": 2, "hasNext": true, "hasPrev": false }
+}
+```
+
+- **`product`**: mesmo objeto de cada item do `GET /api/products`. `stocks` e `productConfigs` vêm só da loja do usuário (vazios se ele não tem nada nela). `brandRegister`, `rimRegister` e `measureRegister` podem vir `null`: muitos pneus não têm medida/aro cadastrados.
+- **`matches.load_index` / `matches.brand` / `matches.other_description`**: `true` ou `false` se o parâmetro foi enviado; `null` se não foi.
+- **`score.total`**: quantos opcionais foram enviados (0 a 3). **`score.matched`**: quantos bateram.
+- **`probability`**:
+  - `ALTA`: todos os opcionais enviados bateram;
+  - `MEDIA`: parte bateu;
+  - `IMPROVAVEL`: nenhum bateu;
+  - `null`: só a medida foi enviada (todos ficam iguais, ordem por nome).
+- **Ordem** (vale entre páginas): quem bateu mais critérios primeiro (`ALTA`, `MEDIA`, `IMPROVAVEL`; dentro de `MEDIA`, 2 de 3 antes de 1 de 3). No empate, quem bateu o índice vem antes. Depois, por nome.
+- **`mapped_in_user_integration`**: mesmo significado e mesmo tratamento do §1 (aviso "não vinculado à integração" no card).
+
+---
+
 ## 2. Mapear o EAN bipado no produto escolhido — `POST /api/supplier-mapping/product/:productId`
 
 Cria o DE x PARA (EAN bipado → produto) na integração do usuário logado.

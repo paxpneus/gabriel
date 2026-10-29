@@ -23,6 +23,7 @@ import {
   ProductDetailedWithMovementsSummary,
   ProductSalesReportFilters,
   ProductSalesReportRow,
+  TireCompositeSearchParams,
   TireMatchProbability,
   TireSearchCandidate,
   TireSearchMode,
@@ -293,6 +294,66 @@ export class ProductService extends BaseService<Product, ProductRepository> {
         Number(!!b.matches.load_index) - Number(!!a.matches.load_index) ||
         String(a.product.name).localeCompare(String(b.product.name)),
     );
+  }
+
+  /**
+   * Busca composta paginada: mesma lógica da auto busca (medida filtra; índice, marca por brand_id e coringa opcionais,
+   * só pontuam/ordenam), paginada e com os dados do paginate. Item no formato da auto busca; null = lote não encontrado.
+   */
+  async paginateTireCandidates(
+    params: QueryParams,
+    search: TireCompositeSearchParams,
+    unitBusinessId: string,
+  ): Promise<PaginatedResult<TireSearchCandidate> | null> {
+    // Lote sem pendência: `Op.in` vazio não casa nada → página vazia com meta certo.
+    let productIds: string[] | undefined;
+    if (search.mode === TireSearchMode.IN_BATCH) {
+      const batch = await expeditionBatchService.findOne({
+        where: { id: search.expeditionBatchId, unit_business_id: unitBusinessId },
+        attributes: ["id"],
+      });
+      if (!batch) return null;
+      productIds = await expeditionBatchItemsService.findPendingProductIds(batch.id);
+    }
+
+    const unitBusiness = await unitBusinessService.findById(unitBusinessId, { attributes: ["integrations_id"] });
+    const result = await this.repository.paginateTireCandidates(params, this.queryConfig, {
+      measureNameRegex: buildMeasureNameRegex(search.measure),
+      loadIndexRegex: search.loadIndex ? buildTokenRegex(search.loadIndex).source : undefined,
+      brandId: search.brandId,
+      otherDescription: search.otherDescription,
+      productIds,
+      integrationsId: unitBusiness?.integrations_id,
+    });
+
+    const data = result.data.map((item): TireSearchCandidate => {
+      const { load_index_match, brand_match, other_description_match, mapped_in_user_integration, ...product } =
+        item.get({ plain: true }) as unknown as Record<string, unknown>;
+
+      // Cada opcional não enviado fica null em `matches` e fora do total; só a medida → probability null.
+      const matches = {
+        load_index: search.loadIndex ? !!load_index_match : null,
+        brand: search.brandId ? !!brand_match : null,
+        other_description: search.otherDescription ? !!other_description_match : null,
+      };
+      const sent = Object.values(matches).filter((match) => match !== null);
+      const total = sent.length;
+      const matched = sent.filter(Boolean).length;
+      let probability: TireMatchProbability | null = null;
+      if (total > 0 && matched === total) probability = TireMatchProbability.HIGH;
+      else if (total > 0 && matched === 0) probability = TireMatchProbability.UNLIKELY;
+      else if (total > 0) probability = TireMatchProbability.MEDIUM;
+
+      return {
+        product,
+        matches,
+        score: { matched, total },
+        probability,
+        mapped_in_user_integration: !!mapped_in_user_integration,
+      };
+    });
+
+    return { data, meta: result.meta };
   }
 
   async create(
