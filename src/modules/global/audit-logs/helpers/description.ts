@@ -41,8 +41,13 @@ const formatValue = (value: unknown): string => {
   return `"${String(value)}"`;
 };
 
-// Lista "campo: antes → depois" só dos campos que mudaram; em CREATE/DELETE lista o estado inteiro.
+// Ids técnicos (uuid) não entram no texto pra leigo — ficam em changes.
+const ID_FIELDS = new Set(["id", "product_id", "unit_business_id", "integrations_id"]);
+
+// Lista "campo: antes → depois" só dos campos que mudaram; em CREATE/DELETE lista o estado inteiro. Em UPDATE só
+// compara campo presente nos dois lados (campo ausente no antes não é "— → valor", é só não registrado).
 const describeFieldChanges = (
+  action: AuditAction,
   before?: Record<string, unknown> | null,
   after?: Record<string, unknown> | null,
 ): string => {
@@ -51,6 +56,8 @@ const describeFieldChanges = (
   );
 
   return keys
+    .filter((key) => !ID_FIELDS.has(key))
+    .filter((key) => action !== AuditAction.UPDATE || (key in (before ?? {}) && key in (after ?? {})))
     .filter(
       (key) =>
         JSON.stringify(before?.[key] ?? null) !==
@@ -97,7 +104,7 @@ export const buildAuditDescription = (
 
   if (changes.summary) parts.push(changes.summary);
 
-  const fields = describeFieldChanges(changes.before, changes.after);
+  const fields = describeFieldChanges(action, changes.before, changes.after);
   if (fields) parts.push(`Alterações: ${fields}`);
 
   if (changes.origin) {

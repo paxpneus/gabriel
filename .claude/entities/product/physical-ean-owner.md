@@ -10,13 +10,14 @@
 
 ## Confirmar EAN físico (`is_physical_override`)
 
-`POST /supplier-mapping/product/:productId/physical-owner`, body `{ supplier_product_code, integrations_id? }` — `integrations_id` do body (desktop) ou da loja do usuário (coletor). Permissão RBAC própria "Confirmar EAN físico" (entity `physical_ean_owner`, rota `physical-owner` no `CUSTOM_ROUTE_MAP`); admin/developer sempre passam (bypass do `userPermissions` por `FULL_ACCESS_USER_TYPES`).
+`POST /supplier-mapping/product/:productId/physical-owner`, body `{ supplier_product_code, integrations_id? }` — `integrations_id` do body (desktop; tem que ser de uma loja do usuário, `userService.assertIntegrationAccess`, admin/developer passam) ou da loja do usuário (coletor). EAN numérico no JSON aceito (`String()`). Permissão RBAC própria "Confirmar EAN físico" (entity `physical_ean_owner`, rota `physical-owner` no `CUSTOM_ROUTE_MAP`); admin/developer sempre passam (bypass do `userPermissions` por `FULL_ACCESS_USER_TYPES`).
 
 `supplierMappingService.assignPhysicalOwner`, uma transação:
 1. Produto sem integration mapping na integração → `PRODUCT_NOT_MAPPED_IN_INTEGRATION`.
 2. Donos do EAN (variações) na integração; algum é override de **outro** produto → `EAN_HAS_PHYSICAL_OVERRIDE` com quem/quando (`audit_logs`), nada alterado. **Override nunca derruba override.**
 3. Zera `gtin` dos ProductConfigs donos e **depois** apaga os DE x PARA donos (ordem por causa dos triggers `m263`/`m272`).
-4. Upsert do DE x PARA `(produto, código exato, integração, is_physical_override: true)`. `ProductConfig.gtin` do dono não é gravado (o sync sobrescreveria) — bipe resolve pelo DE x PARA.
+0. `lockEanInIntegration` (advisory lock por integração + EAN sem zero) no início da transação — duas confirmações simultâneas de variações do mesmo EAN não viram 2 overrides.
+4. Upsert do DE x PARA `(produto, código exato, integração, is_physical_override: true)`: reaproveita o código exato do produto ou, se não houver, o override dele numa variação de zero (o código vira o bipado) — nunca 2 overrides do mesmo EAN no mesmo produto. `ProductConfig.gtin` do dono não é gravado (o sync sobrescreveria) — bipe resolve pelo DE x PARA.
 5. `unmappedInvoiceProductService.closeScanRowsByEan` apaga os `ERROR_SCAN` do EAN (variações) na integração.
 6. Auditoria: entrada principal no PRODUCT + uma por entidade afetada.
 

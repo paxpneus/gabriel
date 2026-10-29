@@ -7,6 +7,19 @@ export class IntegrationMappingRepository extends BaseRepository<IntegrationMapp
     super(IntegrationMapping);
   }
 
+  // EAN ou SKU (só esse campo do erp_data, sem o estoque por filial) de todos os mappings PRODUCT da integração.
+  // missing: só os já sincronizados (erp_data presente) SEM o campo — erp_data nulo = ainda não sincronizado.
+  findProductErpCodes(integrationsId: string, field: 'ean' | 'sku', missing: boolean): Promise<IntegrationMapping[]> {
+    let erpDataWhere: object = { [field]: { [Op.ne]: null } };
+    if (missing) erpDataWhere = { [Op.and]: [{ [Op.ne]: null }, { [field]: { [Op.is]: null } }] };
+
+    return this.findAll({
+      where: { entity_type: 'PRODUCT', integrations_id: integrationsId, erp_data: erpDataWhere } as any,
+      attributes: ['internal_id', 'external_id', 'is_primary', [Sequelize.literal(`erp_data->>'${field}'`), 'code']],
+      raw: true,
+    });
+  }
+
   // Mappings PRODUCT de produtos com 2+ códigos na integração (relatório "Duplicados no ERP"), mais antigo primeiro.
   // GROUP BY no banco pra não trazer todo mapping; do erp_data lê só nome/EAN/SKU (sem o estoque por filial).
   findProductMappingsWithMultipleCodes(integrationsId: string): Promise<IntegrationMapping[]> {

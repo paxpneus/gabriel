@@ -20,7 +20,7 @@ import redisService from "../../../../shared/utils/base-models/base-redis";
 import UserConfig from "../user_config/user_config.model";
 import UserUnitBusiness from "../user_unit_business/user_unit_business.model";
 import sequelize from "../../../../config/sequelize";
-import { USER_TYPES } from "../../../../shared/constants/user-types";
+import { FULL_ACCESS_USER_TYPES, USER_TYPES } from "../../../../shared/constants/user-types";
 import Contact from "../../../sales/contacts/contacts.model";
 import { UserAttributes } from "./user.types";
 
@@ -347,8 +347,22 @@ export class UserService extends BaseService<User, UserRepository> {
       expiresIn: "8h",
     });
 
+    // Hash da senha só serve pro compare acima — nunca vai na resposta.
+    const { password: _password, ...safeUser } = user;
+    return { token, user: safeUser };
+  }
 
-    return { token, user };
+  // Escopo de tenant das rotas que recebem integrations_id: a integração tem que ser de alguma loja do usuário
+  // (atual ou vinculada); admin/developer passam em qualquer uma.
+  async assertIntegrationAccess(userId: string, integrationsId: string): Promise<void> {
+    const user = await this.repository.getFullUser({ where: { id: userId } });
+    if (!user) throw new Error("Usuário não encontrado");
+    if (FULL_ACCESS_USER_TYPES.includes(user.config?.type as any)) return;
+
+    // Fora admin/developer, a loja atual sempre está entre as vinculadas (login/troca de loja exigem isso).
+    if (!(user.availableUnitBusinesses ?? []).some((ub) => ub.integrations_id === integrationsId)) {
+      throw new Error("Você não tem acesso a essa integração");
+    }
   }
 
   async getMe(token: string) {
@@ -362,19 +376,20 @@ export class UserService extends BaseService<User, UserRepository> {
 
     const cachedUser = await redisService.get<UserAttributes>(`user:${decoded.id}`);
     if (cachedUser) {
-      // Cache gravado antes de getFullUser expor `type` no topo.
-      return { ...cachedUser, type: cachedUser.type ?? cachedUser.config?.type ?? null };
+      // Cache gravado antes de getFullUser expor `type` no topo (e antes de tirar o hash da senha).
+      const { password: _cachedPassword, ...safeCached } = cachedUser;
+      return { ...safeCached, type: cachedUser.type ?? cachedUser.config?.type ?? null };
     }
 
     user = await this.repository.getFullUser({where: { id: decoded.id}})
 
     if (!user) throw new Error("Usuário não encontrado");
 
-    
+    // Hash da senha não vai pro cache nem pra resposta.
+    const { password: _password, ...safeUser } = user;
+    await redisService.set(`user:${decoded.id}`, safeUser);
 
-    await redisService.set(`user:${decoded.id}`, user);
-
-    return user;
+    return safeUser;
   }
 }
 

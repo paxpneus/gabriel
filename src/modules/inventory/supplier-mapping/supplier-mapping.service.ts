@@ -1,7 +1,9 @@
 import {
+  ConnectionError,
   CreateOptions,
   ForeignKeyConstraintError,
   Op,
+  TimeoutError,
   Transaction,
   UniqueConstraintError,
 } from "sequelize";
@@ -24,6 +26,7 @@ import {
   SupplierMappingErrorCode,
   SupplierMappingCreationAttributes,
   CreateFromUnmappedResult,
+  SYNC_SUPPLIER_CNPJ_PREFIX,
 } from "./supplier-mapping.types";
 import {
   buildEanZeroVariants,
@@ -34,7 +37,11 @@ import {
 import productConfigService from "../product-config/product_config.service";
 import ProductConfig from "../product-config/product_config.model";
 import sequelize from "../../../config/sequelize";
+import { cleanDocument } from "../../../shared/utils/normalizers/document";
+import { isValidCNPJ } from "../../../shared/utils/validators/document";
 import unmappedInvoiceProductService from "../unmapped-invoice-product/unmapped-invoice-product.service";
+// Ciclo com product.service (que importa este service): seguro porque só é usado dentro dos métodos, nunca no load.
+import productService from "../products/services/product.service";
 import integrationMappingService from "../../integrations/integration-mapping/integration-mapping.service";
 import {
   UNMAPPED_REASON_INVOICE_PRODUCT_NOT_IN_DB,
@@ -107,7 +114,7 @@ export class SupplierMappingService extends BaseService<
   }
 
   // Produto sem integration_mapping na integração → erro com code pro front abrir o registro com foto.
-  private async assertProductMappedInIntegration(
+  async assertProductMappedInIntegration(
     productId: string,
     integrationsId: string,
     transaction?: Transaction,
@@ -236,6 +243,32 @@ export class SupplierMappingService extends BaseService<
     ];
   }
 
+  // Código do DE x PARA como o bipe compara: string sem espaços nas pontas; vazio é erro (nunca grava "" nem "  ").
+  normalizeSupplierCode(value: unknown): string {
+    const code = value === null || value === undefined ? "" : String(value).trim();
+    if (!code) throw new Error("Informe o código do produto (EAN ou código do fornecedor)");
+    return code;
+  }
+
+  // CNPJ do fornecedor opcional: só dígitos e válido quando vier — vazio vira null. `current` = valor gravado: a tela
+  // devolve a marca do sync (`PENDING-<id>`) só com os dígitos, e aí a marca é mantida em vez de virar CNPJ inválido.
+  normalizeSupplierCnpj(value: unknown, current?: string | null): string | null {
+    const digits = value === null || value === undefined ? "" : cleanDocument(String(value));
+    if (!digits) return null;
+    if (current?.startsWith(SYNC_SUPPLIER_CNPJ_PREFIX) && digits === cleanDocument(current)) return current;
+    if (!isValidCNPJ(digits)) throw new Error("CNPJ do fornecedor inválido");
+    return digits;
+  }
+
+  // Serializa, na transação, escritas do mesmo EAN (ignorando zero à esquerda) na integração: sem isso, duas
+  // confirmações simultâneas de variações diferentes passavam pela checagem e viravam 2 overrides.
+  private async lockEanInIntegration(code: string, integrationsId: string, transaction: Transaction): Promise<void> {
+    await sequelize.query("SELECT pg_advisory_xact_lock(hashtext(:key))", {
+      replacements: { key: `supplier-mapping-ean:${integrationsId}:${eanZeroInsensitiveKey(code)}` },
+      transaction,
+    });
+  }
+
   // "Confirmar EAN físico": EAN exclusivo do produto na integração — zera/apaga o EAN (com zeros à esquerda) dos outros,
   // marca o DE x PARA do produto como override e audita; override de outro produto nunca é derrubado (erro, nada muda).
   async assignPhysicalOwner(params: {
@@ -245,7 +278,8 @@ export class SupplierMappingService extends BaseService<
     userId: string | null;
   }): Promise<{ supplierMapping: SupplierMapping; cleared: EanOwnerSummary[] }> {
     const { productId, integrationsId, userId } = params;
-    const code = normalizeEan(params.ean);
+    // String(): EAN numérico no JSON não pode quebrar com "trim is not a function".
+    const code = normalizeEan(params.ean === null || params.ean === undefined ? undefined : String(params.ean));
     if (!code) throw new Error("Informe o EAN bipado");
 
     const integration = await integrationsService.findById(integrationsId, { attributes: ["id", "name"] });
@@ -254,6 +288,7 @@ export class SupplierMappingService extends BaseService<
     await this.assertProductMappedInIntegration(productId, integrationsId);
 
     return sequelize.transaction(async (t) => {
+      await this.lockEanInIntegration(code, integrationsId, t);
       const owners = await this.findEanOwners(code, integrationsId, productId, t);
 
       const otherOverride = owners.supplierMappings.find((sm) => sm.is_physical_override);
@@ -273,15 +308,27 @@ export class SupplierMappingService extends BaseService<
         });
       }
 
-      // Depois da limpeza, o código exato só pode estar no próprio produto: marca o existente ou cria.
-      const own = await this.repository.findOne({
-        where: { integrations_id: integrationsId, supplier_product_code: code },
-        attributes: ["id", "is_physical_override"],
+      // Depois da limpeza, o EAN (e as variações de zero) só pode estar no próprio produto: reaproveita o código exato,
+      // ou o override dele numa variação (vira o código bipado — nunca 2 overrides do mesmo EAN); senão cria.
+      const ownRows = await this.repository.findAll({
+        where: {
+          integrations_id: integrationsId,
+          product_id: productId,
+          supplier_product_code: { [Op.in]: buildEanZeroVariants(code) },
+        },
+        attributes: ["id", "supplier_product_code", "is_physical_override"],
         transaction: t,
       });
+      const own =
+        ownRows.find((row) => row.supplier_product_code === code) ??
+        ownRows.find((row) => row.is_physical_override) ??
+        null;
       const ownAction = own ? AuditAction.UPDATE : AuditAction.CREATE;
       if (own) {
-        await this.repository.bulkUpdate({ is_physical_override: true }, { where: { id: own.id }, transaction: t });
+        await this.repository.bulkUpdate(
+          { is_physical_override: true, supplier_product_code: code },
+          { where: { id: own.id }, transaction: t },
+        );
       }
       const supplierMappingId =
         own?.id ??
@@ -317,6 +364,7 @@ export class SupplierMappingService extends BaseService<
           supplierMappingId,
           ownAction,
           ownWasOverride: !!own?.is_physical_override,
+          ownPreviousCode: own?.supplier_product_code ?? null,
           owners,
           closedScanRows,
         }),
@@ -338,10 +386,11 @@ export class SupplierMappingService extends BaseService<
     supplierMappingId: string;
     ownAction: AuditAction;
     ownWasOverride: boolean;
+    ownPreviousCode: string | null;
     owners: EanOwners;
     closedScanRows: number;
   }): AuditLogEntry[] {
-    const { productId, productName, code, integrationName, userId, supplierMappingId, ownAction, ownWasOverride, owners, closedScanRows } = params;
+    const { productId, productName, code, integrationName, userId, supplierMappingId, ownAction, ownWasOverride, ownPreviousCode, owners, closedScanRows } = params;
     const origin = { entity: AuditEntity.PRODUCT, internal_id: productId, label: `"${productName}"` };
 
     const ownMapping: AuditAffectedEntity = {
@@ -352,7 +401,9 @@ export class SupplierMappingService extends BaseService<
       before: null,
       after: { supplier_product_code: code, is_physical_override: true },
     };
-    if (ownAction === AuditAction.UPDATE) ownMapping.before = { is_physical_override: ownWasOverride };
+    if (ownAction === AuditAction.UPDATE) {
+      ownMapping.before = { supplier_product_code: ownPreviousCode ?? code, is_physical_override: ownWasOverride };
+    }
     const zeroedConfigs: AuditAffectedEntity[] = owners.productConfigs.map((pc) => ({
       entity: AuditEntity.PRODUCT_CONFIG,
       internal_id: pc.id,
@@ -615,24 +666,29 @@ export class SupplierMappingService extends BaseService<
   ): Promise<SupplierMapping> {
     await this.assertProductMappedInIntegration(productId, integrationsId);
 
-    const code = data.supplier_product_code?.trim();
-    if (code) await this.assertEanFreeForProduct(code, integrationsId, productId);
+    const code = this.normalizeSupplierCode(data.supplier_product_code);
+    const supplierCnpj = this.normalizeSupplierCnpj(data.supplier_cnpj);
 
     try {
       return await sequelize.transaction(async (t) => {
+        await this.lockEanInIntegration(code, integrationsId, t);
+        await this.assertEanFreeForProduct(code, integrationsId, productId, t);
+
         const record = await this.create(
           {
             product_id: productId,
             integrations_id: integrationsId,
-            supplier_product_code: data.supplier_product_code,
-            supplier_cnpj: data.supplier_cnpj,
+            supplier_product_code: code,
+            supplier_cnpj: supplierCnpj ?? undefined,
           },
           { transaction: t },
         );
 
-        const closedScanRows = code
-          ? await unmappedInvoiceProductService.closeScanRowsByEan(buildEanZeroVariants(code), integrationsId, t)
-          : 0;
+        const closedScanRows = await unmappedInvoiceProductService.closeScanRowsByEan(
+          buildEanZeroVariants(code),
+          integrationsId,
+          t,
+        );
 
         // Entrada do DE x PARA + entrada do produto (histórico do produto mostra o vínculo).
         const summary = `Código ${record.supplier_product_code} vinculado ao produto${closedScanRows ? `; ${closedScanRows} registro(s) com foto desse EAN foram fechados` : ""}`;
@@ -685,7 +741,7 @@ export class SupplierMappingService extends BaseService<
   ): Promise<SupplierMapping | null> {
     const existing = await this.findOne({
       where: { id, product_id: productId, integrations_id: integrationsId },
-      attributes: ["id", "supplier_product_code", "is_physical_override"],
+      attributes: ["id", "supplier_product_code", "supplier_cnpj", "is_physical_override"],
     });
     if (!existing) return null;
     if (existing.is_physical_override) this.assertCanManageOverride(canManageOverride);
@@ -695,27 +751,24 @@ export class SupplierMappingService extends BaseService<
       throw new Error('Para confirmar o EAN físico use a opção "Confirmar EAN físico"');
     }
 
-    if (
-      data.supplier_product_code !== undefined &&
-      !data.supplier_product_code
-    ) {
-      throw new Error("supplier_product_code não informado");
-    }
-    if (data.supplier_product_code) {
-      await this.assertEanFreeForProduct(data.supplier_product_code, integrationsId, productId);
-    }
-
     // Só manda o que veio no body, pra não zerar campo omitido.
     const changes: Partial<ProductSupplierMappingInput> = {};
-    if (data.supplier_product_code !== undefined)
-      changes.supplier_product_code = data.supplier_product_code;
-    if (data.supplier_cnpj !== undefined)
-      changes.supplier_cnpj = data.supplier_cnpj;
+    if (data.supplier_product_code !== undefined) {
+      changes.supplier_product_code = this.normalizeSupplierCode(data.supplier_product_code);
+    }
+    if (data.supplier_cnpj !== undefined) {
+      changes.supplier_cnpj = this.normalizeSupplierCnpj(data.supplier_cnpj, existing.supplier_cnpj) as string;
+    }
     const deactivatingOverride = data.is_physical_override === false && existing.is_physical_override;
     if (deactivatingOverride) changes.is_physical_override = false;
 
     try {
       return await sequelize.transaction(async (t) => {
+        if (changes.supplier_product_code) {
+          await this.lockEanInIntegration(changes.supplier_product_code, integrationsId, t);
+          await this.assertEanFreeForProduct(changes.supplier_product_code, integrationsId, productId, t);
+        }
+
         // repository.update (instância) em vez de bulkUpdate pra rodar o hook beforeUpdate que limpa o CNPJ.
         const updated = await this.repository.update(id, changes, { transaction: t });
 
@@ -842,12 +895,21 @@ export class SupplierMappingService extends BaseService<
     if (!unmapped) {
       throw new Error("Produto não mapeado não encontrado!");
     }
+    if (unmapped.status !== "UNMAPPED") {
+      throw new Error("Esse produto não mapeado já foi resolvido");
+    }
+    // internal_id do mapping não é FK: sem essa checagem, um produto inexistente viraria mapping órfão prendendo o código.
+    const product = await productService.findById(params.productId, { attributes: ["id"] });
+    if (!product) {
+      throw new Error("Produto não encontrado");
+    }
     if (!unmapped.integrations_id) {
       throw new Error(
         "Produto não mapeado sem integração associada, não é possível criar o DE X PARA",
       );
     }
     const integrationsId = unmapped.integrations_id;
+    const supplierCnpj = this.normalizeSupplierCnpj(params.supplierCnpj) ?? undefined;
 
     const [integration, mappedIds] = await Promise.all([
       integrationsService.findById(integrationsId, { attributes: ["id", "name"] }),
@@ -896,6 +958,7 @@ export class SupplierMappingService extends BaseService<
 
             // Mesmo pré-check do createForProduct, com zero à esquerda: protege EAN físico confirmado de outro produto
             // e devolve erro com code em vez da violação de unique/trigger.
+            await this.lockEanInIntegration(supplierProductCode, integrationsId, sp);
             await this.assertEanFreeForProduct(supplierProductCode, integrationsId, params.productId, sp);
 
             // Código já mapeado pro MESMO produto é idempotente (não recria); pra outro produto é conflito.
@@ -927,7 +990,7 @@ export class SupplierMappingService extends BaseService<
               record = await this.create(
                 {
                   product_id: params.productId,
-                  supplier_cnpj: params.supplierCnpj,
+                  supplier_cnpj: supplierCnpj,
                   supplier_product_code: supplierProductCode,
                   integrations_id: integrationsId,
                   is_physical_override: true,
@@ -954,7 +1017,8 @@ export class SupplierMappingService extends BaseService<
             return record;
           });
         } catch (error: any) {
-          if (!linksProduct) throw error;
+          // Só regra/conflito de dado é engolido no vínculo novo; falha de infraestrutura derruba a operação.
+          if (!linksProduct || error instanceof ConnectionError || error instanceof TimeoutError) throw error;
           console.warn(
             `[SUPPLIER_MAPPING] DE x PARA não criado ao vincular o não mapeado ${unmapped.id} ao produto ${params.productId}: ${error.message}`,
           );
@@ -976,15 +1040,16 @@ export class SupplierMappingService extends BaseService<
         );
         if (mapping.internal_id === params.productId) {
           integrationMapping = { id: mapping.id, external_id: mapping.external_id, is_primary: !!mapping.is_primary };
-        } else if (linksProduct) {
+        } else {
+          // Código do ERP de outro produto: nunca reaponta nem fecha o não mapeado em silêncio (rollback de tudo).
           throw new Error(
             `O código ${unmapped.external_id} do ${integration.name} já está vinculado a outro produto no sistema. Encaminhe para o time técnico. [integration_mapping ${mapping.id}, produto ${mapping.internal_id}]`,
           );
         }
       }
 
-      // Vínculo novo com a integração entra no histórico do produto (o produto não tinha mapping nela).
-      if (linksProduct && integrationMapping) {
+      // Vínculo novo com a integração (produto sem mapping nela, ou código ambíguo do catálogo) entra no histórico.
+      if ((linksProduct || isDuplicate) && integrationMapping) {
         const summary = `Produto vinculado ao código ${integrationMapping.external_id} do ${integration.name} ao mapear um produto não mapeado`;
         const after = { external_id: integrationMapping.external_id, is_primary: integrationMapping.is_primary };
         await auditLogService.record(
@@ -1021,13 +1086,20 @@ export class SupplierMappingService extends BaseService<
       return { supplierMapping, integrationMapping };
     });
 
-    // Linha de nota ganha o InvoiceItem (e lote/PDV) antes de sair; de catálogo só é apagada.
+    // Linha de nota ganha o InvoiceItem (e lote/PDV) antes de sair; de catálogo só é apagada. O vínculo já foi
+    // commitado, então falha aqui só vai pro log (as linhas que sobrarem continuam pendentes pra mapear).
     if (linksProduct) {
-      await unmappedInvoiceProductService.resolveFromCreatedProduct({
-        externalId: unmapped.external_id!,
-        integrationsId,
-        productId: params.productId,
-      });
+      try {
+        await unmappedInvoiceProductService.resolveFromCreatedProduct({
+          externalId: unmapped.external_id!,
+          integrationsId,
+          productId: params.productId,
+        });
+      } catch (error: any) {
+        console.error(
+          `[SUPPLIER_MAPPING] vínculo do não mapeado ${unmapped.id} criado, mas falhou ao resolver as linhas do código ${unmapped.external_id}: ${error.message}`,
+        );
+      }
     }
 
     return {

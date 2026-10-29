@@ -11,9 +11,10 @@
 import { TecincoCatalogItem, fetchTecincoCatalog } from "./dump-tecinco-catalog";
 import { normalizeEan } from "../../modules/handlers/tecinco/queues/helpers/product.helpers";
 
+// Valor duplicado → códigos do catálogo (id_sistema) que o usam; `.has(valor)` segue servindo de "é duplicado".
 export interface TecincoDuplicateValueSets {
-  sku: Set<string>;
-  ean: Set<string>;
+  sku: Map<string, string[]>;
+  ean: Map<string, string[]>;
 }
 
 function normalizeCatalogCode(value: string | null | undefined): string | undefined {
@@ -36,24 +37,40 @@ function effectiveSku(item: { sku?: string | null; coded?: string | null }): str
 export function buildTecincoDuplicateValueSets(
   items: TecincoCatalogItem[],
 ): TecincoDuplicateValueSets {
-  const counts = {
-    sku: new Map<string, number>(),
-    ean: new Map<string, number>(),
+  const codes = {
+    sku: new Map<string, string[]>(),
+    ean: new Map<string, string[]>(),
   };
+  const add = (m: Map<string, string[]>, value: string, code: string) => m.set(value, [...(m.get(value) ?? []), code]);
 
   for (const item of items) {
     const sku = effectiveSku(item);
     const ean = normalizeEan(item.ean ?? undefined);
-    if (sku) counts.sku.set(sku, (counts.sku.get(sku) ?? 0) + 1);
-    if (ean) counts.ean.set(ean, (counts.ean.get(ean) ?? 0) + 1);
+    if (sku) add(codes.sku, sku, item.id_sistema);
+    if (ean) add(codes.ean, ean, item.id_sistema);
   }
 
-  const toDuplicateSet = (m: Map<string, number>) =>
-    new Set([...m.entries()].filter(([, n]) => n > 1).map(([v]) => v));
+  const toDuplicateSet = (m: Map<string, string[]>) => new Map([...m.entries()].filter(([, list]) => list.length > 1));
 
   return {
-    sku: toDuplicateSet(counts.sku),
-    ean: toDuplicateSet(counts.ean),
+    sku: toDuplicateSet(codes.sku),
+    ean: toDuplicateSet(codes.ean),
+  };
+}
+
+// Outros códigos do catálogo (fora `ownCode`) que compartilham o sku/ean do produto — pra quem precisa saber se a
+// colisão é só entre códigos do mesmo produto local (aí não é ambígua).
+export function findTecincoCollidingCodes(
+  item: { coded?: string | null; sku?: string | null; ean?: string | null },
+  sets: TecincoDuplicateValueSets,
+  ownCode: string,
+): { sku: string[]; ean: string[] } {
+  const sku = effectiveSku(item);
+  const ean = normalizeEan(item.ean ?? undefined);
+  const others = (list?: string[]) => (list ?? []).filter((code) => code !== ownCode);
+  return {
+    sku: sku ? others(sets.sku.get(sku)) : [],
+    ean: ean ? others(sets.ean.get(ean)) : [],
   };
 }
 

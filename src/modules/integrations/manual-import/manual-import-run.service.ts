@@ -50,6 +50,8 @@ return false
 
 // Tentativas de reservar um item quando o claim some/muda entre o SET NX e a leitura.
 const CLAIM_ATTEMPTS = 3;
+// O claim é gravado antes do job existir: claim mais novo que isso sem job ainda está sendo enfileirado, não acabou.
+const CLAIM_ENQUEUE_GRACE_MS = 30 * 1000;
 
 // Entrada de start(): itens já validados pela busca (cache ou resultado único).
 export interface StartManualImportParams {
@@ -243,10 +245,11 @@ export class ManualImportRunService {
       ),
     );
     const claims = await Promise.all(
-      raws.map(async (raw) => {
+      raws.map(async (raw, index) => {
         if (!raw) return null;
         const claim = JSON.parse(raw) as ManualImportItemClaim;
-        return (await this.isJobFinished(claim.jobRef, queues)) ? null : claim;
+        const claimKey = manualImportKeys.itemClaim(integrationId, entity, externalIds[index]);
+        return (await this.isClaimReleasable(claimKey, claim.jobRef, queues)) ? null : claim;
       }),
     );
 
@@ -403,7 +406,7 @@ export class ManualImportRunService {
       if (!currentRaw) continue;
 
       const current = JSON.parse(currentRaw) as ManualImportItemClaim;
-      if (!(await this.isJobFinished(current.jobRef, queues))) return current;
+      if (!(await this.isClaimReleasable(claimKey, current.jobRef, queues))) return current;
 
       const replaced = await this.client.eval(
         REPLACE_IF_EQUALS_SCRIPT,
@@ -418,15 +421,21 @@ export class ManualImportRunService {
     throw new Error("Não foi possível reservar o item para importação");
   }
 
-  // completed/failed/not_found; retry do BullMQ (delayed) ainda conta como pendente.
-  private async isJobFinished(
+  // Job completed/failed, ou não encontrado num claim antigo (sobra de import anterior); retry do BullMQ (delayed) e
+  // claim recente sem job (o outro pedido ainda está enfileirando) contam como pendentes.
+  private async isClaimReleasable(
+    claimKey: string,
     jobRef: ManualImportJobRef,
     queues: ManualImportQueues,
   ): Promise<boolean> {
     const { status } = await toJobStatus(
       await queues[jobRef.queue].getJob(jobRef.jobId),
     );
-    return FINAL_JOB_STATUSES.has(status);
+    if (!FINAL_JOB_STATUSES.has(status)) return false;
+    if (status !== "not_found") return true;
+
+    const claimAgeMs = MANUAL_IMPORT_LOCK_TTL_MS - (await this.client.pttl(claimKey));
+    return claimAgeMs >= CLAIM_ENQUEUE_GRACE_MS;
   }
 
   // id → nome de quem pediu, uma consulta por tipo (user/application) e só o atributo name.

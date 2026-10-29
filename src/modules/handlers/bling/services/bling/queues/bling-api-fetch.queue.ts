@@ -1222,7 +1222,24 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           hasMagentoMapping = magentoIdMap.has(product.id);
         }
 
-        // EAN bloqueado / sku já de outro produto (criação acima): não grava o campo (gtin_erp/sku_erp abaixo continuam).
+        // Produto já existente com sku de outro produto na integração: sincroniza sem o sku (como o skuOmitted do
+        // Tecinco) — senão o trigger m273 derrubava o sync inteiro do produto. KIT tem sku sintético e fica fora.
+        if (
+          !skuOmitted &&
+          !isKit &&
+          configSku &&
+          (await isCodeOwnedByAnotherProduct({
+            code: configSku,
+            field: "sku",
+            integrationsId: integration.id,
+            excludeProductId: product.id,
+          }))
+        ) {
+          console.warn(`${logPrefix} — sku=${configSku} já pertence a outro produto nessa integração — sincronizado sem sku`);
+          skuOmitted = true;
+        }
+
+        // EAN bloqueado / sku já de outro produto: não grava o campo (gtin_erp/sku_erp abaixo continuam).
         const codeFields: Pick<ProductConfigAttributes, "gtin" | "sku"> = {};
         if (!skuOmitted) codeFields.sku = configSku;
         if (!eanBlocked) codeFields.gtin = blingProduct.gtin;
@@ -1492,12 +1509,22 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     logPrefix: string,
   ): Promise<void> {
     // Código não principal é só leitura: não desassocia/desativa o produto (o principal ainda pode estar ativo).
+    const blingIntegrationId = (await getBlingIntegration("Bling")).id;
     const mapping = await integrationMappingService.findProductMappingByExternalId(
-      (await getBlingIntegration("Bling")).id,
+      blingIntegrationId,
       String(blingProduct.id),
     );
     if (mapping && !mapping.is_primary) {
       console.log(`${logPrefix} — situacao=E na Bling em mapping não principal, ignorado.`);
+      return;
+    }
+    // Principal com outro código do produto na Bling (cadastro duplicado sendo limpo): só esse código sai e o próximo
+    // vira principal — o produto não é aposentado.
+    if (
+      mapping &&
+      (await integrationMappingService.retirePrimaryCodeIfDuplicated(mapping.id, mapping.internal_id, blingIntegrationId))
+    ) {
+      console.log(`${logPrefix} — situacao=E no código principal, produto segue pelo outro código Bling (promovido a principal).`);
       return;
     }
 

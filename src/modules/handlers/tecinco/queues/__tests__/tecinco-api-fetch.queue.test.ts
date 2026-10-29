@@ -70,8 +70,10 @@ jest.mock("../../../../../scripts/tecinco/tecinco-duplicate-detection", () => ({
   __esModule: true,
   getCachedTecincoDuplicateValueSets: jest
     .fn()
-    .mockResolvedValue({ sku: new Set(), ean: new Set() }),
+    .mockResolvedValue({ sku: new Map(), ean: new Map() }),
   findTecincoCollidingFields: jest.fn().mockReturnValue([]),
+  // Por padrão a colisão é com código de outro produto (sem mapping local) — o campo segue omitido.
+  findTecincoCollidingCodes: jest.fn().mockReturnValue({ sku: ["999999"], ean: ["999999"] }),
 }));
 
 jest.mock("../../service/clientes/clientes.service", () => ({
@@ -118,6 +120,7 @@ jest.mock(
       createOrUpdateIntegrationMapping: jest.fn(),
       findEntityByMapping: jest.fn(),
       findProductMappingByExternalId: jest.fn(),
+      findProductMappingsByExternalIds: jest.fn().mockResolvedValue(new Map()),
       updateErpData: jest.fn(),
     },
   }),
@@ -197,6 +200,7 @@ import {
   TCarNotaFiscalItem,
 } from "../../service/tecinco/tecinco.types";
 import {
+  findTecincoCollidingCodes,
   findTecincoCollidingFields,
   getCachedTecincoDuplicateValueSets,
 } from "../../../../../scripts/tecinco/tecinco-duplicate-detection";
@@ -738,7 +742,7 @@ describe("TCarUpsertQueue.processProduct", () => {
 
       await expect(
         runProductJob("created", minimalPayload, { create: true }),
-      ).rejects.toThrow(/não foi possível buscar detalhe do produto/i);
+      ).rejects.toThrow(/não devolveu os dados do código/i);
 
       expect(productService.create).not.toHaveBeenCalled();
       expect(
@@ -915,6 +919,33 @@ describe("TCarUpsertQueue.processProduct", () => {
       );
       expect(ensureSupplierMappings).toHaveBeenCalledWith(
         expect.objectContaining({ codigoFabrica: undefined, ean: produto.epctb_ean }),
+      );
+    });
+
+    it("skuDuplicated:true só entre códigos do MESMO produto (principal + não principal): o sku não é omitido", async () => {
+      const produto = makeTecincoProduto();
+      (integrationMappingService.findProductMappingByExternalId as jest.Mock).mockResolvedValue({
+        id: "mapping-1",
+        internal_id: "existing-tecinco-product-id",
+        is_primary: true,
+      });
+      (findTecincoCollidingCodes as jest.Mock).mockReturnValueOnce({ sku: ["15000"], ean: [] });
+      (integrationMappingService.findProductMappingsByExternalIds as jest.Mock).mockResolvedValueOnce(
+        new Map([["15000", { internal_id: "existing-tecinco-product-id", is_primary: false }]]),
+      );
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-tecinco-product-id",
+        integrations_id: INTEGRATION_ID,
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-tecinco-product-id" }),
+      );
+
+      await runProductJob("updated", produto, { skuDuplicated: true });
+
+      expect(ProductConfig.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ sku: produto.epctb_codigofabrica }),
+        expect.anything(),
       );
     });
 

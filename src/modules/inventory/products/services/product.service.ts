@@ -206,7 +206,9 @@ export class ProductService extends BaseService<Product, ProductRepository> {
   }
 
   // Histórico de auditoria do produto (entradas PRODUCT já trazem em `changes.affected` o que a operação mexeu).
-  findAuditLogs(productId: string, params: QueryParams): Promise<PaginatedResult<AuditLog>> {
+  async findAuditLogs(productId: string, params: QueryParams): Promise<PaginatedResult<AuditLog>> {
+    const product = await this.findById(productId, { attributes: ["id"] });
+    if (!product) throw new Error("Produto não encontrado");
     return auditLogService.paginateByEntity(AuditEntity.PRODUCT, productId, params);
   }
 
@@ -297,7 +299,8 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     data: Partial<ProductCreationAttributes> & {
       config?: Partial<CreationAttributes<ProductConfig>>;
     },
-    options?: CreateOptions,
+    // userId: quem editou (auditoria da remoção de DE x PARA de outro produto); não vai pro Sequelize.
+    options?: CreateOptions & { userId?: string | null },
   ): Promise<Product> {
     const { config, ...productData } = data;
 
@@ -324,6 +327,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
               candidates: [{ field: "gtin", value: config.gtin }],
               logPrefix: `[ProductService.create] product_id=${product.id}`,
               transaction,
+              audit: { userId: options?.userId ?? null },
             });
           }
 
@@ -359,7 +363,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     data: Partial<ProductCreationAttributes> & {
       config?: Partial<CreationAttributes<ProductConfig>>;
     },
-    options?: Partial<UpdateOptions>,
+    options?: Partial<UpdateOptions> & { userId?: string | null },
   ): Promise<Product> {
     const { config, ...productData } = data;
 
@@ -387,6 +391,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
               candidates: [{ field: "gtin", value: config.gtin }],
               logPrefix: `[ProductService.update] product_id=${id}`,
               transaction,
+              audit: { userId: options?.userId ?? null },
             });
           }
 

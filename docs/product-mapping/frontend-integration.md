@@ -156,6 +156,8 @@ Cria o DE x PARA (EAN bipado → produto) na integração do usuário logado.
 ### Respostas
 - `201`: o DE x PARA criado (`{ id, product_id, supplier_product_code, supplier_cnpj, integrations_id, is_physical_override: false, ... }`). O registro com foto (`ERROR_SCAN`) desse EAN, se existir, é apagado automaticamente.
 - `400` com `code`: ver a tabela de erros. Os três `code` são possíveis aqui.
+- `400` sem `code`: código vazio/só espaços (`"Informe o código do produto (EAN ou código do fornecedor)"`) ou `"CNPJ do fornecedor inválido"`. O código é gravado sem espaços nas pontas.
+- **Permissão**: Produtos (filho "Mapeamento de Fornecedores"), igual às outras rotas de DE x PARA (§6).
 
 ---
 
@@ -176,7 +178,7 @@ Fica registrado quem fez e quando.
 ```
 
 - **Coletor**: não mandar `integrations_id`; vale a integração da loja do usuário.
-- **Desktop**: mandar o `integrations_id` da integração escolhida pelo usuário.
+- **Desktop**: mandar o `integrations_id` da integração escolhida pelo usuário. Tem que ser de uma loja do usuário (admin/developer: qualquer uma); senão `400` `"Você não tem acesso a essa integração"`.
 
 ### Respostas
 - `201`:
@@ -246,13 +248,13 @@ Qualquer outro caso → `400` `{ "error": "<mensagem pronta>", "code": "PRODUCT_
   - `supplierMapping`: `null` se não criou (EAN de outro produto no vínculo novo, ou não mapeado `ERROR_CATALOG_DUPLICATE`).
   - `integrationMapping`: `null` se não vinculou código do ERP (não mapeado sem código do ERP).
   - `integrationMappings`: todos os códigos do produto **naquela integração**, depois do vínculo. `erp_data` é `null` enquanto o sync não passou pelo código. **`integrationMappings.length > 1`** → mostrar o aviso de que o produto tem mais de um código no ERP (e qual é o principal).
-- `400`: `PRODUCT_NOT_MAPPED_IN_INTEGRATION` (acima), erros de EAN de §2 (produto já vinculado), ou código do ERP já vinculado a outro produto (mensagem pronta).
+- `400`: `PRODUCT_NOT_MAPPED_IN_INTEGRATION` (acima), erros de EAN de §2 (produto já vinculado), código do ERP já vinculado a outro produto (mensagem pronta, em qualquer caso, inclusive com o produto já vinculado — nada é gravado nem o não mapeado é fechado), `"Produto não encontrado"` (`product_id` inexistente), `"Esse produto não mapeado já foi resolvido"` ou `"CNPJ do fornecedor inválido"`.
 - `404`: não mapeado de outra integração ou inexistente.
 
 ### Criar Produto na nota — `POST /api/unmapped-invoice-product/:id/create-product-and-map`
 Segue funcionando. Exige não mapeado de nota com código do ERP; responde `202` e o andamento é pelo `GET /api/unmapped-invoice-product/:id/create-product/job`.
 
-**Permissão** — "Criar Produto" e mapear produto na nota (`POST /api/invoice-items/add/item`) só para admin/developer ou papel com a permissão personalizada **"Criar e mapear produto na nota"** (entidade `invoice_product_mapping`, ação `write`, concedida na edição de papéis). Sem ela: `400` `{ "error": "Acesso negado: sem permissão de \"Criar\" em \"Criar e mapear produto na nota\"." }`. Sugestão: esconder os botões para quem não tem (admin/developer ou `role.permissions` com essa entidade).
+**Permissão** — "Criar Produto" (este endpoint, `POST /api/unmapped-invoice-product/:id/create-product` e `/create-product/batch`) e mapear produto na nota (`POST /api/invoice-items/add/item`) só para admin/developer ou papel com a permissão personalizada **"Criar e mapear produto na nota"** (entidade `invoice_product_mapping`, ação `write`, concedida na edição de papéis). Sem ela: `400` `{ "error": "Acesso negado: sem permissão de \"Criar\" em \"Criar e mapear produto na nota\"." }`. Sugestão: esconder os botões para quem não tem (admin/developer ou `role.permissions` com essa entidade).
 
 ---
 
@@ -296,8 +298,10 @@ Um produto pode ter mais de um código no mesmo ERP. **Só o principal grava dad
     }
     ```
     `stocks` só vem da Tecinco, um por filial. `unit_business_name` só vem nos códigos sincronizados depois desta versão; antes disso, cair para o `branch_id`. `erp_data` fica `null` até o primeiro sync daquele código.
-- **Trocar o principal**: `PUT /api/integration-mapping/product/:productId/:id` com `{ "is_primary": true }`. Desmarca os outros do mesmo produto na mesma integração.
-  - Depois da troca, o back enfileira o sync do novo código principal na fila da integração (igual ao import manual, prioridade máxima): estoque, preço, EAN e SKU do produto passam a vir dele em segundos, sem esperar o sync agendado. A resposta não muda e não espera o sync; para mostrar os dados novos, recarregar o produto depois. Se o enfileiramento falhar, a troca vale do mesmo jeito (o sync agendado atualiza depois).
+- **Permissão e escopo**: todas as rotas pedem a permissão de **Produtos** (filho "Mapeamento de Integração"): listar = Visualizar, criar = Criar, trocar principal/editar = Atualizar, remover = Remover. Sem ela: `400` `"Acesso negado: sem permissão de \"Atualizar\" em \"Produtos › Mapeamento de Integração\"."`. Fora admin/developer, a integração do mapping (e a de destino, se mudar) tem que ser de uma loja do usuário: senão `400` `"Você não tem acesso a essa integração"`. `POST /api/integration-mapping` genérico (e `/bulk`) → `405`; criar só por `POST /api/integration-mapping/product/:productId`.
+- **Trocar o principal**: `PUT /api/integration-mapping/product/:productId/:id` com `{ "is_primary": true }` (booleano; `"true"`/`"false"` em texto → `400`). Desmarca os outros do mesmo produto na mesma integração.
+- **Trocar o código/integração** (`external_id`/`integrations_id`): `erp_data` volta a `null` até o próximo sync; se o mapping é o principal, o sync do código novo é enfileirado como na troca de principal. Criar, editar e remover mapping entram no histórico do produto (§9).
+  - Depois da troca, o back enfileira o sync do novo código principal na fila da integração (igual ao import manual, prioridade máxima): estoque, preço, EAN e SKU do produto passam a vir dele em segundos, sem esperar o sync agendado. A resposta não muda e não espera nem a busca no ERP nem o sync; para mostrar os dados novos, recarregar o produto depois. Se o enfileiramento falhar, a troca vale do mesmo jeito (o sync agendado atualiza depois).
   - `{ "is_primary": false }` → `400` `"Para trocar o principal, marque outro mapping como principal"`.
   - `404`: não é desse produto.
 - **Remover o principal**: o próximo mais antigo vira principal automaticamente.
@@ -432,14 +436,15 @@ Todas as seções menos `unmapped` só ficam completas depois de um sync complet
 
 ## 9. Histórico do produto — `GET /api/products/:id/audit-logs`
 
-Paginado, mais recente primeiro. Query: `page`, `perPage` (padrão 20), `filters[action]=CREATE|UPDATE|DELETE`.
+Paginado, mais recente primeiro. Query: `page`, `perPage` (padrão 20, máximo 100), `filters[action]=CREATE|UPDATE|DELETE` (outro valor → `400`). Permissão de leitura de Produtos; produto inexistente → `404`, id inválido → `400`.
 
 Entra no histórico:
 - Confirmar EAN físico;
 - mapear pela busca (§2);
 - mapear a partir de não mapeado (§5);
 - desativar ou remover EAN físico confirmado;
-- trocar o mapeamento principal (§7).
+- criar, editar (principal, código, integração) e remover mapeamento de integração (§7);
+- DE x PARA que saiu deste produto porque alguém gravou o EAN em outro produto.
 
 O sync automático não entra.
 

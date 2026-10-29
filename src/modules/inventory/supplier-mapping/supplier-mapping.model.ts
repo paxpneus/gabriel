@@ -1,6 +1,6 @@
 import { Model, DataTypes } from 'sequelize';
 import sequelize from '../../../config/sequelize';
-import { SupplierMappingAttributes, SupplierMappingCreationAttributes } from './supplier-mapping.types';
+import { SupplierMappingAttributes, SupplierMappingCreationAttributes, SYNC_SUPPLIER_CNPJ_PREFIX } from './supplier-mapping.types';
 import { v4 as uuidv4 } from 'uuid';
 import { cleanDocument } from '../../../shared/utils/normalizers/document';
 import Product from '../products/product.model';
@@ -66,13 +66,13 @@ SupplierMapping.init(
     
     hooks: {
       beforeCreate: (instance: any) => {
-        if (instance.supplier_cnpj) {
+        if (instance.supplier_cnpj && !String(instance.supplier_cnpj).startsWith(SYNC_SUPPLIER_CNPJ_PREFIX)) {
           instance.supplier_cnpj = cleanDocument(instance.supplier_cnpj)
         }
       },
 
       beforeUpdate: (instance: any) => {
-        if (instance.supplier_cnpj) {
+        if (instance.supplier_cnpj && !String(instance.supplier_cnpj).startsWith(SYNC_SUPPLIER_CNPJ_PREFIX)) {
           instance.supplier_cnpj = cleanDocument(instance.supplier_cnpj)
         }
       },

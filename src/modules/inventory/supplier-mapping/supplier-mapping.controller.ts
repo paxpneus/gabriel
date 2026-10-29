@@ -5,7 +5,9 @@ import SupplierMapping from './supplier-mapping.model';
 import SupplierMappingService from './supplier-mapping.service';
 import { authenticate } from '../../../middlewares/auth-token';
 import { userPermissions } from '../../../middlewares/user-permissions';
-import { getUserContext } from '../../../shared/query/get-logged-user';
+import { getRequestUserId, getUserContext } from '../../../shared/query/get-logged-user';
+import { assertUuid } from '../../../shared/utils/validators/uuid';
+import userService from '../../company/users/users/user.service';
 import { resolveIntegrationsIdForUnitBusiness } from '../../handlers/tecinco/queues/helpers/product.helpers';
 import unmappedInvoiceProductService from '../unmapped-invoice-product/unmapped-invoice-product.service';
 import userConfigService from '../../company/users/user_config/user_config.service';
@@ -101,7 +103,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
     return res.status(400).json({ error: error.message });
   }
 
-  // GET /integration-pending/get?section=overrides|erp_duplicates|erp_sku_duplicates|missing_ean|unmapped — relatório de pendências de
+  // GET /integration-pending/get?section=overrides|erp_duplicates|erp_ean_duplicates|erp_sku_duplicates|missing_ean|unmapped — pendências de
   // integração (lista completa, sem paginação), só admin/developer, na integração do usuário. Seção ausente/inválida → overrides.
   integrationPending = async (req: Request, res: Response): Promise<Response> => {
     try {
@@ -125,13 +127,19 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
   assignPhysicalOwner = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { supplier_product_code, integrations_id } = req.body;
-      const integrationsId = integrations_id || (await this.resolveIntegrationsId(req));
+      const productId = assertUuid(req.params.productId, 'Produto');
+      const integrationsId = integrations_id
+        ? assertUuid(integrations_id, 'Integração')
+        : await this.resolveIntegrationsId(req);
+      // Integração escolhida no desktop tem que ser de uma loja do usuário (admin/developer passam em qualquer uma).
+      const userId = getRequestUserId(req);
+      if (integrations_id && userId) await userService.assertIntegrationAccess(userId, integrationsId);
 
       const result = await this.service.assignPhysicalOwner({
-        productId: req.params.productId as string,
+        productId,
         ean: supplier_product_code,
         integrationsId,
-        userId: (req as any).user?.id ?? null,
+        userId: getRequestUserId(req),
       });
 
       return res.status(201).json(result);
@@ -163,7 +171,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
 
       const result = await this.service.findByProductId(
         params,
-        req.params.productId as string,
+        assertUuid(req.params.productId, 'Produto'),
         integrationsId,
       );
 
@@ -180,10 +188,10 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       const { supplier_product_code, supplier_cnpj } = req.body;
 
       const record = await this.service.createForProduct(
-        req.params.productId as string,
+        assertUuid(req.params.productId, 'Produto'),
         integrationsId,
         { supplier_product_code, supplier_cnpj },
-        (req as any).user?.id ?? null,
+        getRequestUserId(req),
       );
 
       return res.status(201).json(record);
@@ -200,12 +208,12 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       const { supplier_product_code, supplier_cnpj, is_physical_override } = req.body;
 
       const record = await this.service.updateForProduct(
-        req.params.id as string,
-        req.params.productId as string,
+        assertUuid(req.params.id, 'Mapeamento'),
+        assertUuid(req.params.productId, 'Produto'),
         integrationsId,
         { supplier_product_code, supplier_cnpj, is_physical_override },
         await this.canManageOverride(req),
-        (req as any).user?.id ?? null,
+        getRequestUserId(req),
       );
       if (!record) return res.status(404).json({ error: 'Não encontrado' });
 
@@ -221,10 +229,10 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       const integrationsId = await this.resolveIntegrationsId(req);
 
       const deleted = await this.service.deleteForProduct(
-        req.params.id as string,
-        req.params.productId as string,
+        assertUuid(req.params.id, 'Mapeamento'),
+        assertUuid(req.params.productId, 'Produto'),
         integrationsId,
-        { userId: (req as any).user?.id ?? null, canManageOverride: await this.canManageOverride(req) },
+        { userId: getRequestUserId(req), canManageOverride: await this.canManageOverride(req) },
       );
       if (!deleted) return res.status(404).json({ error: 'Não encontrado' });
 
@@ -253,16 +261,15 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
     try {
       const integrationsId = await this.resolveIntegrationsId(req);
 
-      // is_physical_override só nasce pela rota physical-owner (permissão própria + limpeza + auditoria).
-      const { is_physical_override, ...body } = req.body;
-      // Código (com zero à esquerda) de outro produto ou EAN físico confirmado → erro com code.
-      if (body.supplier_product_code && body.product_id) {
-        await this.service.assertEanFreeForProduct(body.supplier_product_code, integrationsId, body.product_id);
-      }
-      const record = await this.service.create({
-        ...body,
-        integrations_id: integrationsId,
-      });
+      // Mesmo caminho do POST /product/:productId (vínculo na integração, código normalizado, EAN livre, auditoria);
+      // is_physical_override do body é ignorado — só nasce pela rota physical-owner.
+      const { product_id, supplier_product_code, supplier_cnpj } = req.body;
+      const record = await this.service.createForProduct(
+        assertUuid(product_id, 'Produto'),
+        integrationsId,
+        { supplier_product_code, supplier_cnpj },
+        getRequestUserId(req),
+      );
 
       return res.status(201).json(record);
     } catch (error: any) {
@@ -274,7 +281,7 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
     try {
       const integrationsId = await this.resolveIntegrationsId(req);
 
-      const existing = await this.service.findById(req.params.id as string);
+      const existing = await this.service.findById(assertUuid(req.params.id, 'Mapeamento'));
       if (!existing || existing.integrations_id !== integrationsId) {
         return res.status(404).json({ error: 'Não encontrado' });
       }
@@ -283,15 +290,21 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       }
 
       const { integrations_id, is_physical_override, ...data } = req.body;
-      if (data.supplier_product_code) {
-        await this.service.assertEanFreeForProduct(
-          data.supplier_product_code,
-          integrationsId,
-          data.product_id ?? existing.product_id,
-        );
+      const productId = data.product_id ? assertUuid(data.product_id, 'Produto') : existing.product_id;
+      // Mudou de produto: o novo também precisa estar vinculado à integração.
+      if (productId !== existing.product_id) {
+        await this.service.assertProductMappedInIntegration(productId, integrationsId);
+      }
+      if (data.supplier_product_code !== undefined) {
+        data.supplier_product_code = this.service.normalizeSupplierCode(data.supplier_product_code);
+        await this.service.assertEanFreeForProduct(data.supplier_product_code, integrationsId, productId);
+      }
+      // Passa o valor gravado pra manter a marca do sync da Bling (`PENDING-<id>`) quando a tela devolve só os dígitos.
+      if (data.supplier_cnpj !== undefined) {
+        data.supplier_cnpj = this.service.normalizeSupplierCnpj(data.supplier_cnpj, existing.supplier_cnpj);
       }
 
-      const record = await this.service.update(req.params.id as string, data);
+      const record = await this.service.update(existing.id, data);
       return res.json(record);
     } catch (error: any) {
       return this.errorResponse(req, res, error);
@@ -302,14 +315,14 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
     try {
       const integrationsId = await this.resolveIntegrationsId(req);
 
-      const existing = await this.service.findById(req.params.id as string);
+      const existing = await this.service.findById(assertUuid(req.params.id, 'Mapeamento'));
       if (!existing || existing.integrations_id !== integrationsId) {
         return res.status(404).json({ error: 'Não encontrado' });
       }
 
       // Mesmo caminho do DELETE por produto: guarda + auditoria quando é EAN físico confirmado.
       await this.service.deleteForProduct(existing.id, existing.product_id, integrationsId, {
-        userId: (req as any).user?.id ?? null,
+        userId: getRequestUserId(req),
         canManageOverride: await this.canManageOverride(req),
       });
       return res.status(204).send();
@@ -321,28 +334,23 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
   bulkCreate = async (req: Request, res: Response): Promise<Response> => {
     try {
       const integrationsId = await this.resolveIntegrationsId(req);
-      const items = req.body as Array<Record<string, unknown>>;
-
-      // Mesmo pré-check do create pra cada item, em paralelo.
+      if (!Array.isArray(req.body)) throw new Error('Envie uma lista de mapeamentos');
+      // Mesmas regras do create por item (código/CNPJ normalizados, produto vinculado à integração, EAN livre);
+      // is_physical_override só nasce pela rota physical-owner.
+      const items = (req.body as Array<Record<string, unknown>>).map((item) => ({
+        product_id: assertUuid(item.product_id, 'Produto'),
+        supplier_product_code: this.service.normalizeSupplierCode(item.supplier_product_code),
+        supplier_cnpj: this.service.normalizeSupplierCnpj(item.supplier_cnpj) ?? undefined,
+        integrations_id: integrationsId,
+      }));
       await Promise.all(
-        items
-          .filter((item) => item.supplier_product_code && item.product_id)
-          .map((item) =>
-            this.service.assertEanFreeForProduct(
-              item.supplier_product_code as string,
-              integrationsId,
-              item.product_id as string,
-            ),
-          ),
+        items.flatMap((item) => [
+          this.service.assertProductMappedInIntegration(item.product_id, integrationsId),
+          this.service.assertEanFreeForProduct(item.supplier_product_code, integrationsId, item.product_id),
+        ]),
       );
 
-      const records = await this.service.bulkCreate(
-        // is_physical_override só nasce pela rota physical-owner.
-        items.map(({ is_physical_override, ...item }) => ({
-          ...item,
-          integrations_id: integrationsId,
-        })) as any,
-      );
+      const records = await this.service.bulkCreate(items as any);
 
       return res.status(201).json(records);
     } catch (error: any) {
@@ -393,17 +401,17 @@ export class SupplierMappingController extends BaseController<SupplierMapping, t
       const { product_id, unmapped_invoice_product_id, supplier_cnpj } = req.body;
 
       const unmapped = await unmappedInvoiceProductService.findById(
-        unmapped_invoice_product_id,
+        assertUuid(unmapped_invoice_product_id, 'Produto não mapeado'),
       );
       if (!unmapped || unmapped.integrations_id !== integrationsId) {
         return res.status(404).json({ error: 'Produto não mapeado não encontrado' });
       }
 
       const result = await this.service.createFromUnmapped({
-        productId: product_id,
+        productId: assertUuid(product_id, 'Produto'),
         unmappedInvoiceProductId: unmapped_invoice_product_id,
         supplierCnpj: supplier_cnpj,
-        userId: (req as any).user?.id ?? null,
+        userId: getRequestUserId(req),
       });
 
       return res.status(201).json(result);

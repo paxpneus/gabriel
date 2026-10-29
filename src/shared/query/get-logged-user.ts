@@ -30,3 +30,9 @@ export async function getUserContext(
     unitBusinessId: user.unit_business_id,
   };
 }
+// Id do usuário logado pra auditoria/escopo — null quando quem chama é uma application (req.user.id é o id dela,
+// não de users, e quebraria a FK de audit_logs.user_id).
+export function getRequestUserId(req: Request): string | null {
+  if ((req as any).application) return null;
+  return (req as any).user?.id ?? null;
+}

@@ -108,7 +108,8 @@ export const ROLE_PERMISSIONS: Roles[] = [
     type: 'REGULAR',
     children: [
       { entity: 'brands', label: 'Marcas' },
-      { entity: 'supplier_mappings',    label: 'Mapeamento de Fornecedores' },
+      // Mesmo nome da tabela que a rota /supplier-mapping resolve — senão nenhum papel conseguia conceder o DE x PARA.
+      { entity: 'product_supplier_maps', label: 'Mapeamento de Fornecedores' },
       { entity: 'integration_mappings', label: 'Mapeamento de Integração' },
       { entity: 'unmapped_invoice_products', label: 'Produtos Não Mapeados' },
       { entity: 'kit_components', label: 'Composição de Kits' },
@@ -295,7 +296,8 @@ export const ROLE_PERMISSIONS: Roles[] = [
     type: 'CUSTOM',
     permissions: ['write'],
   },
-  // "Criar Produto" e mapear produto na nota: admin/developer sempre; outros papéis só com essa permissão.
+  // "Criar Produto" (não mapeado, unitário/lote, e na nota) e mapear produto na nota: admin/developer sempre; outros
+  // papéis só com essa permissão.
   {
     scope: 'Criar e mapear produto na nota',
     entity: INVOICE_PRODUCT_MAPPING_ENTITY,

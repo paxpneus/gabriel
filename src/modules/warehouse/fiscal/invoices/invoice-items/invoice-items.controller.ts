@@ -58,8 +58,11 @@ export class InvoiceItemsController extends BaseController<InvoiceItems, typeof 
 
       createInvoiceItem = async (req: Request, res: Response): Promise<Response> => {
     try {
-       const { invoiceItem, newEan, unMappedProductId } = req.body;
-
+       const { invoiceItem, newEan, unMappedProductId } = req.body ?? {};
+      // Sem o item/produto/não mapeado o service quebraria com erro técnico ("reading 'product_id'").
+      if (!invoiceItem?.product_id || !unMappedProductId) {
+        return res.status(400).json({ error: 'Informe o produto escolhido e o produto não mapeado' });
+      }
 
       const response = await this.service.createInvoiceItemForUnmappedProducts(invoiceItem, newEan, unMappedProductId)
 

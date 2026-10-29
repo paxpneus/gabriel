@@ -107,9 +107,7 @@ export class UnmappedInvoiceProductController extends BaseController<
 
       const data = await this.service.getFullById(id as string);
 
-      return res
-        .status(201)
-        .json(data);
+      return res.json(data);
     } catch (error: any) {
       return res.status(400).json({ error: error.message });
     }

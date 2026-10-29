@@ -67,7 +67,7 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
       type: string;
     },
     t: Transaction
-  ): Promise<{ url: string; user: UserAttributes }> {
+  ): Promise<{ url: string; user: Omit<UserAttributes, "password"> }> {
     const existingUser = await userService.findOne({
       where: { email },
       transaction: t,

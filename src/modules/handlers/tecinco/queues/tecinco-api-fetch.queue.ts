@@ -8,6 +8,7 @@ import {
 import {
   findTecincoCollidingFields,
   getCachedTecincoDuplicateValueSets,
+  findTecincoCollidingCodes,
 } from "../../../../scripts/tecinco/tecinco-duplicate-detection";
 import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
@@ -477,6 +478,29 @@ export class TCarUpsertQueue extends BaseQueueService<
     };
   }
 
+  // Por campo duplicado no catálogo: true quando TODOS os outros códigos com o mesmo valor estão mapeados pro mesmo
+  // produto local (índice em cache no worker + uma query de mappings).
+  private async findDuplicatesOnlyAmongOwnCodes(
+    product: TCarProdutoPayload,
+    systemId: string,
+    productId: string,
+    integrationsId: string,
+    logPrefix: string,
+  ): Promise<{ sku: boolean; ean: boolean }> {
+    const duplicateSets = await getCachedTecincoDuplicateValueSets(tecincoUnitBusinessForPopulate.map(Number), logPrefix);
+    const colliding = findTecincoCollidingCodes(
+      { coded: product.epctb_coded, sku: product.epctb_codigofabrica, ean: product.epctb_ean },
+      duplicateSets,
+      systemId,
+    );
+    const owners = await integrationMappingService.findProductMappingsByExternalIds(integrationsId, [
+      ...new Set([...colliding.sku, ...colliding.ean]),
+    ]);
+    const onlyOwn = (codes: string[]) =>
+      codes.length > 0 && codes.every((code) => owners.get(code)?.internal_id === productId);
+    return { sku: onlyOwn(colliding.sku), ean: onlyOwn(colliding.ean) };
+  }
+
   private async processProduct(
     action: TCarAction,
     data: TCarProdutoPayload,
@@ -504,6 +528,14 @@ export class TCarUpsertQueue extends BaseQueueService<
         console.log(`${logPrefix} — mapping não principal, produto não desativado`);
         return;
       }
+      // Principal com outro código do produto na Tecinco: só esse código sai (o próximo vira principal).
+      if (
+        deletedMapping &&
+        (await integrationMappingService.retirePrimaryCodeIfDuplicated(deletedMapping.id, deletedMapping.internal_id, integrations.id))
+      ) {
+        console.log(`${logPrefix} — código principal excluído, produto segue ativo pelo outro código (promovido a principal)`);
+        return;
+      }
       const mapped = await integrationMappingService.findEntityByMapping(
         "PRODUCT",
         integrations.id,
@@ -528,10 +560,19 @@ export class TCarUpsertQueue extends BaseQueueService<
       // são lidos direto de `data`, então sem isso aqui o produto seria
       // criado sem esses dados.
       const produtoService = new TCarProdutoService();
-      const detalhe = await produtoService.obterProduto(
-        branchId ?? Number(data.fll_codigo),
-        systemId,
-      );
+      let detalhe: any;
+      try {
+        detalhe = await produtoService.obterProduto(branchId ?? Number(data.fll_codigo), systemId);
+      } catch (error: any) {
+        // 404 = código não existe na Tecinco: falha na hora com motivo legível (retry não resolve; sem isso o
+        // polling ficava ~15 min em "delayed"). Erro de rede/5xx segue com retry.
+        if (error?.response?.status === 404) {
+          throw new UnrecoverableError(
+            `O código ${systemId} não foi encontrado no Tecinco. Confira o código do produto pendente ou encaminhe para o time técnico. [id_system=${systemId}, HTTP 404]`,
+          );
+        }
+        throw error;
+      }
       const detalheData = (detalhe?.data ?? detalhe) as
         | TCarProdutoPayload
         | undefined;
@@ -542,7 +583,7 @@ export class TCarUpsertQueue extends BaseQueueService<
         // código — sinal de que o produto não existe mais na Tecinco pra
         // esse systemId, não uma falha transitória. Retry não resolve.
         throw new UnrecoverableError(
-          `${logPrefix} — não foi possível buscar detalhe do produto na Tecinco pra criação manual`,
+          `O Tecinco não devolveu os dados do código ${systemId}, então o produto não pode ser criado. Encaminhe para o time técnico. [id_system=${systemId}]`,
         );
       }
 
@@ -705,6 +746,14 @@ export class TCarUpsertQueue extends BaseQueueService<
       systemId,
     );
     const hadMapping = !!mapping;
+
+    // Duplicidade só entre códigos do MESMO produto local (ex.: principal e não principal com o mesmo SKU) não é
+    // ambígua: o produto não perde o SKU/EAN por colidir consigo mesmo.
+    if (mapping && isDuplicatedInCatalog) {
+      const ownOnly = await this.findDuplicatesOnlyAmongOwnCodes(data, systemId, mapping.internal_id, integrations.id, logPrefix);
+      if (ownOnly.sku) skuOmitted = false;
+      if (ownOnly.ean) eanOmitted = false;
+    }
 
     // Criar Produto manual com o código já vinculado a um produto existente: não há o que criar — falha com o
     // produto (antes do resolve, que já faria backfill de DE x PARA). Mapping órfão segue pra criação como antes.
@@ -1697,11 +1746,17 @@ export class TCarUpsertQueue extends BaseQueueService<
       return { operationalItems: [], unmappedItems: [] };
     }
 
-    // EANs definidos pelo físico (de qualquer produto) dos itens da nota — uma query só, usada no loop abaixo.
-    const physicalOverrides = await findPhysicalOverridesForEans(
-      [...productLookups.values()].map((payload) => payload?.epctb_ean),
-      integrations.id,
-    );
+    // EANs definidos pelo físico (de qualquer produto) e mappings dos códigos da nota — uma query cada, usadas no loop.
+    const [physicalOverrides, itemMappings] = await Promise.all([
+      findPhysicalOverridesForEans(
+        [...productLookups.values()].map((payload) => payload?.epctb_ean),
+        integrations.id,
+      ),
+      integrationMappingService.findProductMappingsByExternalIds(
+        integrations.id,
+        itens.map((item) => String(item.epctb_codigo).trim()),
+      ),
+    ]);
 
     for (const item of itens) {
       // hasItemWithoutCode já garantiu, acima, que todo item aqui tem
@@ -1726,11 +1781,13 @@ export class TCarUpsertQueue extends BaseQueueService<
       // fábrica aqui dentro (esse fallback fica exclusivo do catalog sync,
       // ver autoMapExistingProductBySupplierMapping). Não cria/atualiza
       // integration_mapping aqui — só resolve o produto pra este item da nota.
+      // Código não principal só resolve o produto (mesmo gate do processProduct): nada de DE x PARA nem config dele.
+      const isNonPrimary = itemMappings.get(systemId)?.is_primary === false;
       const product = await resolveProductWithMapping({
         unitBusinessId: unitBusiness.id,
         systemId,
         // EAN com override físico não alimenta o backfill de DE x PARA (o dono já tem o dele).
-        ean: overrideOwnerIds.length ? undefined : ean,
+        ean: overrideOwnerIds.length || isNonPrimary ? undefined : ean,
         logPrefix,
       });
 
@@ -1756,8 +1813,8 @@ export class TCarUpsertQueue extends BaseQueueService<
         continue;
       }
 
-      // ─── Garante ProductConfig para a unit_business ───────────────────────────
-      if (unitBusiness) {
+      // ─── Garante ProductConfig para a unit_business (só pelo código principal) ─
+      if (unitBusiness && !isNonPrimary) {
         const existingConfig = await ProductConfig.findOne({
           where: { product_id: product.id, unit_business_id: unitBusiness.id },
         });

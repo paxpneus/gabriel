@@ -499,6 +499,11 @@ export class InvoiceController extends BaseController<
         res.status(400).json({ error: "Nenhuma integração selecionada!" });
         return;
       }
+      // Mesmos valores aceitos pelo service — inválido é erro de quem chamou (400), não do servidor.
+      if (!["bling", "tecinco"].includes(integration)) {
+        res.status(400).json({ error: `Integração inválida: ${integration}` });
+        return;
+      }
 
       const xmlContent = req.file.buffer.toString("utf-8");
 

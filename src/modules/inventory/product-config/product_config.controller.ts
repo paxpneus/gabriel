@@ -7,6 +7,9 @@ import { authenticate } from '../../../middlewares/auth-token';
 import { userPermissions } from '../../../middlewares/user-permissions';
 import { getUserContext } from '../../../shared/query/get-logged-user';
 
+// EAN/SKU cru do ERP são só leitura (só o sync grava) — descartados de qualquer body do CRUD genérico.
+const omitErpFields = <T extends Record<string, unknown>>({ gtin_erp, sku_erp, ...rest }: T) => rest;
+
 export class ProductConfigController extends BaseController<ProductConfig, typeof ProductConfigService> {
   constructor() {
     super(ProductConfigService);
@@ -58,9 +61,11 @@ export class ProductConfigController extends BaseController<ProductConfig, typeo
   create = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { unitBusinessId } = await getUserContext(req);
+      const data = omitErpFields(req.body);
+      await this.service.assertGtinFreeForProduct(data.gtin, data.product_id, unitBusinessId);
 
       const record = await this.service.create({
-        ...req.body,
+        ...data,
         unit_business_id: unitBusinessId,
       });
 
@@ -79,7 +84,10 @@ export class ProductConfigController extends BaseController<ProductConfig, typeo
         return res.status(404).json({ error: 'Não encontrado' });
       }
 
-      const { unit_business_id, ...data } = req.body;
+      const { unit_business_id, ...data } = omitErpFields(req.body);
+      if (data.gtin !== undefined) {
+        await this.service.assertGtinFreeForProduct(data.gtin, data.product_id ?? existing.product_id, unitBusinessId);
+      }
 
       const record = await this.service.update(req.params.id as string, data);
       return res.json(record);
@@ -107,7 +115,10 @@ export class ProductConfigController extends BaseController<ProductConfig, typeo
   bulkCreate = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { unitBusinessId } = await getUserContext(req);
-      const items = req.body as Array<Record<string, unknown>>;
+      const items = (req.body as Array<Record<string, unknown>>).map(omitErpFields);
+      await Promise.all(
+        items.map((item) => this.service.assertGtinFreeForProduct(item.gtin, item.product_id as string, unitBusinessId)),
+      );
 
       const records = await this.service.bulkCreate(
         items.map((item) => ({
@@ -125,7 +136,19 @@ export class ProductConfigController extends BaseController<ProductConfig, typeo
   bulkUpdate = async (req: Request, res: Response): Promise<Response> => {
     try {
       const { unitBusinessId } = await getUserContext(req);
-      const { ids, unit_business_id, ...data } = req.body;
+      const { ids, unit_business_id, ...data } = omitErpFields(req.body);
+      // EAN em massa: o mesmo EAN em várias configurações de produtos diferentes já é conflito; checa por produto.
+      if (data.gtin !== undefined) {
+        const targets = await this.service.findAll({
+          where: { [Op.and]: [{ id: ids }, { unit_business_id: unitBusinessId }] },
+          attributes: ['product_id'],
+        });
+        const productIds = [...new Set(targets.map((target) => target.product_id))];
+        if (productIds.length > 1 && data.gtin) {
+          throw new Error('O mesmo EAN não pode ser gravado em produtos diferentes');
+        }
+        await Promise.all(productIds.map((productId) => this.service.assertGtinFreeForProduct(data.gtin, productId, unitBusinessId)));
+      }
 
       const records = await this.service.bulkUpdate(data, {
         where: {

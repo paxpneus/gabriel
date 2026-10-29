@@ -33,6 +33,7 @@ import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinc
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";
 import {
   findAnotherProductUsingEan,
+  isCodeOwnedByAnotherProduct,
   resolveIntegrationsIdForUnitBusiness,
   resolveProductIdBySupplierMappingEan,
 } from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
@@ -266,11 +267,22 @@ async function upsertTecincoCrossConfig(
       where: { product_id: product.id, unit_business_id: unitBusiness.id },
     });
 
+    // SKU já gravado vem do sync do ERP (pode ter sido omitido de propósito) — a nota nunca sobrescreve. Sem SKU,
+    // o cProd só entra se não for de outro produto na integração.
+    let configSku = existingConfig?.sku || "";
+    if (
+      !configSku &&
+      sku &&
+      !(await isCodeOwnedByAnotherProduct({ code: sku, field: "sku", integrationsId, excludeProductId: product.id }))
+    ) {
+      configSku = sku;
+    }
+
     await ProductConfig.upsert(
       {
         product_id: product.id,
         unit_business_id: unitBusiness.id,
-        sku: sku ?? existingConfig?.sku ?? "",
+        sku: configSku,
         price: existingConfig?.price ?? unitPrice, // não sobrescreve preço se já existe
         supplier_cost_price: unitPrice,
         average_cost: existingConfig?.average_cost // não sobrescreve custo médio já calculado

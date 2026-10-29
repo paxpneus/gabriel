@@ -17,6 +17,8 @@ Current design — never deletes `Product`, `invoice_items`, or `stock_movements
 - `productConfigService.bulkDelete({where: {product_id: product.id}})` — all `ProductConfig` rows (loses `sku`/`gtin`/`price` per store).
 - `productService.update(product.id, {is_active: false})` — reuses `is_active` (`m256`); nothing wrote `false` to it since the old delete-handler was removed (see webhook wiring below).
 
+**Exception — duplicated primary code**: if the deactivated code is the product's primary but the product has another Bling code, `integrationMappingService.retirePrimaryCodeIfDuplicated` deletes only that mapping (promotes the next, audited) and the product is **not** retired — the usual cleanup of a duplicate registration in the ERP. Tecinco `deleted` does the same before its `is_active=false`. Non-primary codes are ignored (only read-only).
+
 Self-terminating: once the mapping is gone, the next `situacao=E` event for that `blingId` can't resolve a local product at all → hits the no-op branch. No re-attempt, no unmapped row, no update.
 
 `BatchInvoiceItemsRepository`/`Service.findBlockingByProductId` (the `quantity_read` guard from the reverted design) deleted as dead code — its only caller was the hard-delete path.

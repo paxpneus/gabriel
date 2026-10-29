@@ -10,6 +10,8 @@ import {
 import UnitBusiness from "../../../../company/unit-business/unit-business.model";
 import { getCachedIntegrationsIdForUnitBusiness } from "./lookup-cache";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
+import auditLogService from "../../../../global/audit-logs/audit-log.service";
+import { AuditAction, AuditEntity } from "../../../../global/audit-logs/audit-log.types";
 
 export function normalizeEan(ean?: string): string | undefined {
   if (!ean) return undefined;
@@ -374,8 +376,10 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
   candidates: Array<{ field: string; value?: string | null }>;
   logPrefix: string;
   transaction?: Transaction;
+  // Edição manual (não sync): a remoção do DE x PARA do outro produto entra na auditoria com quem fez.
+  audit?: { userId: string | null };
 }): Promise<void> {
-  const { productId, unitBusinessId, candidates, logPrefix, transaction } = params;
+  const { productId, unitBusinessId, candidates, logPrefix, transaction, audit } = params;
 
   const integrationsId = await resolveIntegrationsIdForUnitBusiness(
     unitBusinessId,
@@ -441,6 +445,35 @@ export async function assertEanNotOwnedByAnotherProduct(params: {
         `${logPrefix} — ${field}=${normalized} estava vinculado via SupplierMapping (id=${conflictingMapping.id}) ao product id=${conflictingMapping.product_id} — desatualizado, removendo pra liberar pro product id=${productId}`,
       );
       await conflictingMapping.destroy({ transaction });
+
+      if (audit) {
+        const summary = `Código ${conflictingMapping.supplier_product_code} saiu do Mapeamento DE x PARA deste produto porque foi gravado como EAN de outro produto`;
+        const before = { supplier_product_code: conflictingMapping.supplier_product_code };
+        await auditLogService.record(
+          [
+            {
+              userId: audit.userId,
+              entity: AuditEntity.SUPPLIER_MAPPING,
+              internalId: conflictingMapping.id,
+              action: AuditAction.DELETE,
+              changes: { summary, before, after: null, origin: { entity: AuditEntity.PRODUCT, internal_id: productId } },
+            },
+            {
+              userId: audit.userId,
+              entity: AuditEntity.PRODUCT,
+              internalId: conflictingMapping.product_id,
+              action: AuditAction.UPDATE,
+              changes: {
+                summary,
+                affected: [
+                  { entity: AuditEntity.SUPPLIER_MAPPING, internal_id: conflictingMapping.id, action: AuditAction.DELETE, before, after: null },
+                ],
+              },
+            },
+          ],
+          transaction,
+        );
+      }
     }
   }
 }
@@ -461,8 +494,11 @@ export async function isCodeOwnedByAnotherProduct(params: {
   code: string;
   field: "sku" | "gtin";
   integrationsId: string;
+  // Sync de produto já existente: o próprio produto não conta como "outro".
+  excludeProductId?: string;
 }): Promise<boolean> {
-  const { code, field, integrationsId } = params;
+  const { code, field, integrationsId, excludeProductId } = params;
+  const notOwn = excludeProductId ? { product_id: { [Op.ne]: excludeProductId } } : {};
 
   const unitBusinesses = await UnitBusiness.findAll({
     where: { integrations_id: integrationsId },
@@ -476,13 +512,13 @@ export async function isCodeOwnedByAnotherProduct(params: {
 
   const conflictingConfig = unitBusinessIds.length
     ? await ProductConfig.findOne({
-        where: { [field]: codeMatch, unit_business_id: { [Op.in]: unitBusinessIds } },
+        where: { [field]: codeMatch, unit_business_id: { [Op.in]: unitBusinessIds }, ...notOwn },
       })
     : null;
   if (conflictingConfig) return true;
 
   const conflictingMapping = await SupplierMapping.findOne({
-    where: { supplier_product_code: codeMatch, integrations_id: integrationsId },
+    where: { supplier_product_code: codeMatch, integrations_id: integrationsId, ...notOwn },
   });
   return !!conflictingMapping;
 }

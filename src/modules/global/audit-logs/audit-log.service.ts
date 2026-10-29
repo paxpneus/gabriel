@@ -3,7 +3,7 @@ import { PaginatedResult, QueryParams } from "../../../shared/query/query.types"
 import BaseService from "../../../shared/utils/base-models/base-service";
 import AuditLog from "./audit-log.model";
 import auditLogRepository, { AuditLogRepository } from "./audit-log.repository";
-import { AuditEntity, AuditLogEntry, AuditLogAuthor } from "./audit-log.types";
+import { AuditAction, AuditEntity, AuditLogEntry, AuditLogAuthor } from "./audit-log.types";
 import { buildAuditDescription } from "./helpers/description";
 
 export class AuditLogService extends BaseService<AuditLog, AuditLogRepository> {
@@ -19,12 +19,19 @@ export class AuditLogService extends BaseService<AuditLog, AuditLogRepository> {
   }
 
   // Histórico de auditoria de qualquer entidade, paginado — a service da entidade chama e expõe na própria rota.
+  // perPage limitado a 100 (changes é JSONB grande) e filtro de ação só com valores válidos.
   paginateByEntity(
     entity: AuditEntity,
     internalId: string,
     params: QueryParams,
   ): Promise<PaginatedResult<AuditLog>> {
-    return this.repository.paginateByEntity(params, this.queryConfig, entity, internalId);
+    const action = params.filters?.action;
+    const actions = Array.isArray(action) ? action : [action];
+    if (action !== undefined && actions.some((value) => !Object.values(AuditAction).includes(value as AuditAction))) {
+      throw new Error("Filtro de ação inválido: use CREATE, UPDATE ou DELETE");
+    }
+    const perPage = Math.min(Math.max(Number(params.perPage) || 20, 1), 100);
+    return this.repository.paginateByEntity({ ...params, perPage }, this.queryConfig, entity, internalId);
   }
 
   // Grava várias entradas num bulkCreate só, na transação do chamador — description gerada pelo helper.

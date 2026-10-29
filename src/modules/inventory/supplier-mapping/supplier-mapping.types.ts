@@ -4,6 +4,9 @@ import type ProductConfig from "../product-config/product_config.model";
 import { ProductAttributes } from "../products/product.types";
 import type { ProductIntegrationMappingSummary } from "../../integrations/integration-mapping/integration-mapping.types";
 
+// Marca do DE x PARA criado pelo sync de fornecedor da Bling (`PENDING-<id do fornecedor>`): não é CNPJ, não é limpa.
+export const SYNC_SUPPLIER_CNPJ_PREFIX = "PENDING-";
+
 export interface SupplierMappingAttributes {
   id: string;
   product_id: string;

@@ -1,3 +1,5 @@
+import { assertUuid } from '../../../shared/utils/validators/uuid';
+import { getRequestUserId } from '../../../shared/query/get-logged-user';
 import { Request, Response } from "express";
 import { authenticate } from "../../../middlewares/auth-token";
 import { QueryParams } from "../../../shared/query/query.types";
@@ -98,9 +100,10 @@ export class ProductController extends BaseController<
       indexMappedToIntegration: [authenticate],
       indexDetailed: [authenticate],
       findByIdFull: [authenticate],
-      findByCode: [authenticate],
-      searchTireCandidates: [authenticate],
-      findAuditLogs: [authenticate],
+      // Bipe, auto busca e histórico: leitura de Produtos (o histórico mostra quem alterou o quê).
+      findByCode: [authenticate, userPermissions],
+      searchTireCandidates: [authenticate, userPermissions],
+      findAuditLogs: [authenticate, userPermissions],
       productReport: [authenticate, userPermissions],
       productByUnit: [authenticate, userPermissions],
       productSalesReport: [authenticate, userPermissions],
@@ -173,15 +176,36 @@ export class ProductController extends BaseController<
     }
   };
 
-  // GET /:id/audit-logs — histórico de auditoria do produto, paginado (page/perPage/filters[action]).
+  // Mesmo create/update do CRUD genérico, levando quem fez (auditoria quando o EAN tira o DE x PARA de outro produto).
+  create = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const record = await this.service.create(req.body, { userId: getRequestUserId(req) });
+      return res.status(201).json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  update = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const record = await this.service.update(req.params.id as string, req.body, { userId: getRequestUserId(req) });
+      if (!record) return res.status(404).json({ error: "Não encontrado" });
+      return res.json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // GET /:id/audit-logs — histórico de auditoria do produto (404 se não existe), paginado (page/perPage/filters[action]).
   findAuditLogs = async (req: Request, res: Response): Promise<Response> => {
     try {
       const result = await this.service.findAuditLogs(
-        req.params.id as string,
+        assertUuid(req.params.id, 'Produto'),
         this.extractQueryParams(req),
       );
       return res.json(result);
     } catch (error: any) {
+      if (error.message === "Produto não encontrado") return res.status(404).json({ error: error.message });
       return res.status(400).json({ error: error.message });
     }
   };

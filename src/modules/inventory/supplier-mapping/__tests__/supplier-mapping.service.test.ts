@@ -4,7 +4,17 @@ const mockTransaction = {} as any;
 jest.mock("../../../../config/sequelize", () => ({
   __esModule: true,
   // Aceita (cb) e (options, cb) — o segundo é o savepoint do DE x PARA no createFromUnmapped.
-  default: { transaction: jest.fn((...args: any[]) => args[args.length - 1](mockTransaction)) },
+  default: {
+    transaction: jest.fn((...args: any[]) => args[args.length - 1](mockTransaction)),
+    // pg_advisory_xact_lock do EAN.
+    query: jest.fn(),
+  },
+}));
+
+// Existência do produto no from-unmapped: existe por padrão; o teste de produto inexistente sobrescreve.
+jest.mock("../../products/services/product.service", () => ({
+  __esModule: true,
+  default: { findById: jest.fn().mockResolvedValue({ id: "product-1" }) },
 }));
 
 jest.mock(
@@ -47,6 +57,7 @@ import unmappedInvoiceProductService from "../../unmapped-invoice-product/unmapp
 import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
 import integrationsService from "../../../integrations/integrations/integrations.service";
 import { SupplierMappingService } from "../supplier-mapping.service";
+import productService from "../../products/services/product.service";
 
 describe("SupplierMappingService.createFromUnmapped", () => {
   let service: SupplierMappingService;
@@ -73,6 +84,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("EAN físico confirmado de outro produto (mesmo com zero à esquerda): erro EAN_HAS_PHYSICAL_OVERRIDE, não cria nem apaga nada", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "07891234567895",
       sku: null,
@@ -113,6 +125,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("EAN em uso por outro produto (gtin numa loja da integração): erro EAN_OWNED_BY_ANOTHER_PRODUCT com os donos, não cria nem apaga nada", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "7891234567895",
       sku: null,
@@ -165,6 +178,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("unmapped sem ean/sku: lança erro claro, não cria mapping nem apaga nada", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: null,
       sku: null,
@@ -184,6 +198,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("unmapped sem integrations_id: lança erro claro, não cria mapping nem apaga nada", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "EAN-1",
       sku: null,
@@ -203,6 +218,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("caminho feliz: cria o SupplierMapping com o ean (prioridade sobre sku) do unmapped e apaga o unmapped em seguida", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "EAN-1",
       sku: "SKU-1",
@@ -213,13 +229,13 @@ describe("SupplierMappingService.createFromUnmapped", () => {
     const result = await service.createFromUnmapped({
       productId: "product-1",
       unmappedInvoiceProductId: "unmapped-1",
-      supplierCnpj: "11222333000144",
+      supplierCnpj: "11222333000181",
     });
 
     expect(SupplierMapping.create).toHaveBeenCalledWith(
       expect.objectContaining({
         product_id: "product-1",
-        supplier_cnpj: "11222333000144",
+        supplier_cnpj: "11222333000181",
         supplier_product_code: "EAN-1",
         integrations_id: "integration-1",
         // Mapeamento a partir do não mapeado sempre vira EAN físico confirmado.
@@ -254,6 +270,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("unmapped de catálogo com external_id: também garante o IntegrationMapping do produto pro external_id do unmapped", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "EAN-1",
       sku: "SKU-1",
@@ -282,6 +299,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("unmapped sem ean (só sku): usa o sku como supplier_product_code", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: null,
       sku: "SKU-1",
@@ -302,6 +320,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("código já mapeado nessa integração (UniqueConstraintError): propaga mensagem amigável, não apaga o unmapped", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "EAN-1",
       sku: null,
@@ -324,6 +343,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("mapping já existe pro MESMO produto (idempotente): não recria, marca como EAN físico confirmado, ainda garante o IntegrationMapping e apaga o unmapped", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "EAN-1",
       sku: null,
@@ -365,6 +385,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("mapping já existe pra um produto DIFERENTE: é conflito de verdade — lança erro específico, não cria mapping nem apaga o unmapped", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "EAN-1",
       sku: null,
@@ -391,6 +412,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("unmapped ERROR_CATALOG_DUPLICATE: só cria o integration_mapping (código ambíguo, não tenta SupplierMapping), apaga o unmapped e retorna null", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "EAN-1",
       sku: "SKU-1",
@@ -426,6 +448,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
   it("unmapped ERROR_CATALOG_DUPLICATE sem external_id: lança erro claro, não cria nada nem apaga o unmapped", async () => {
     (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
       id: "unmapped-1",
       ean: "EAN-1",
       sku: "SKU-1",
@@ -450,6 +473,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
   describe("produto escolhido sem mapping na integração do não mapeado", () => {
     const catalogUnmapped = {
       id: "unmapped-1",
+      status: "UNMAPPED",
       ean: "7891234567895",
       sku: null,
       integrations_id: "integration-1",
@@ -512,7 +536,7 @@ describe("SupplierMappingService.createFromUnmapped", () => {
 
     it("produto da nota sem cadastro (Tecinco) com external_id: também vincula", async () => {
       (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
-        ...catalogUnmapped,
+      ...catalogUnmapped,
         invoice_id: "invoice-1",
         reason: "Produto Tecinco presente na nota mas sem produto correspondente no banco",
       });
@@ -539,7 +563,8 @@ describe("SupplierMappingService.createFromUnmapped", () => {
     });
 
     it("já existe principal na integração: o novo mapping vem como não principal (createOrUpdateIntegrationMapping decide)", async () => {
-      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({ ...catalogUnmapped, ean: null, sku: null });
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      ...catalogUnmapped, ean: null, sku: null });
       (integrationMappingService.createOrUpdateIntegrationMapping as jest.Mock).mockResolvedValue({
         id: "im-new",
         internal_id: "product-1",
@@ -575,7 +600,8 @@ describe("SupplierMappingService.createFromUnmapped", () => {
       ["ERROR_CATALOG com outro motivo", { reason: "Outro motivo" }, /só é feito a partir/i],
       ["external_id vazio", { external_id: null }, /não tem o código do Tecinco/i],
     ])("%s: 400 PRODUCT_NOT_MAPPED_IN_INTEGRATION com mensagem do motivo, nada é criado", async (_label, overrides, message) => {
-      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({ ...catalogUnmapped, ...overrides });
+      (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      ...catalogUnmapped, ...overrides });
 
       const error = await service
         .createFromUnmapped({ productId: "product-1", unmappedInvoiceProductId: "unmapped-1" })
@@ -652,11 +678,43 @@ describe("SupplierMappingService.updateForProduct — desativar EAN físico conf
     });
 
     await service.updateForProduct(
-      "sm-1", "product-1", "integration-1", { supplier_cnpj: "123", is_physical_override: false }, false,
+      "sm-1", "product-1", "integration-1", { supplier_cnpj: "11.222.333/0001-81", is_physical_override: false }, false,
     );
 
-    expect(recordUpdate).toHaveBeenCalledWith({ supplier_cnpj: "123" }, { transaction: mockTransaction });
+    expect(recordUpdate).toHaveBeenCalledWith({ supplier_cnpj: "11222333000181" }, { transaction: mockTransaction });
     expect(AuditLog.bulkCreate).not.toHaveBeenCalled();
+  });
+
+  it("linha do sync da Bling: tela devolve só os dígitos da marca PENDING-<id> → marca mantida, sem erro de CNPJ", async () => {
+    (SupplierMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "sm-1",
+      supplier_product_code: "7891234567895",
+      supplier_cnpj: "PENDING-16821237786",
+      is_physical_override: false,
+    });
+
+    await service.updateForProduct(
+      "sm-1", "product-1", "integration-1", { supplier_product_code: "7891234567895", supplier_cnpj: "16821237786" }, false,
+    );
+
+    expect(recordUpdate).toHaveBeenCalledWith(
+      { supplier_product_code: "7891234567895", supplier_cnpj: "PENDING-16821237786" },
+      { transaction: mockTransaction },
+    );
+  });
+
+  it("linha do sync da Bling: número diferente da marca continua validado como CNPJ", async () => {
+    (SupplierMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "sm-1",
+      supplier_product_code: "7891234567895",
+      supplier_cnpj: "PENDING-16821237786",
+      is_physical_override: false,
+    });
+
+    await expect(
+      service.updateForProduct("sm-1", "product-1", "integration-1", { supplier_cnpj: "123" }, false),
+    ).rejects.toThrow("CNPJ do fornecedor inválido");
+    expect(recordUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -704,5 +762,48 @@ describe("SupplierMappingService.buildErrorResponse — EAN em uso decide Confir
 
     expect(body).toMatchObject({ error: "msg", code: SupplierMappingErrorCode.EAN_HAS_PHYSICAL_OVERRIDE, can_confirm_physical_owner: false });
     expect(userService.getMe).not.toHaveBeenCalled();
+  });
+});
+
+describe("SupplierMappingService — validações novas de entrada", () => {
+  let service: SupplierMappingService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new SupplierMappingService();
+  });
+
+  it("from-unmapped com produto inexistente: erro antes de criar qualquer mapping (evita mapping órfão)", async () => {
+    (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      id: "u-1", status: "UNMAPPED", integrations_id: "integration-1", type: "ERROR_CATALOG", external_id: "999",
+    });
+    (productService.findById as jest.Mock).mockResolvedValueOnce(null);
+
+    await expect(
+      service.createFromUnmapped({ productId: "missing", unmappedInvoiceProductId: "u-1" }),
+    ).rejects.toThrow("Produto não encontrado");
+    expect(integrationMappingService.createOrUpdateIntegrationMapping).not.toHaveBeenCalled();
+  });
+
+  it("from-unmapped de linha já resolvida (MAPPED): erro", async () => {
+    (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      id: "u-1", status: "MAPPED", integrations_id: "integration-1",
+    });
+
+    await expect(
+      service.createFromUnmapped({ productId: "product-1", unmappedInvoiceProductId: "u-1" }),
+    ).rejects.toThrow("Esse produto não mapeado já foi resolvido");
+  });
+
+  it("código do DE x PARA: espaços nas pontas saem e vazio é recusado", () => {
+    expect(service.normalizeSupplierCode(" 7891234567895 ")).toBe("7891234567895");
+    expect(() => service.normalizeSupplierCode("   ")).toThrow("Informe o código do produto");
+    expect(service.normalizeSupplierCode(7891234567895)).toBe("7891234567895");
+  });
+
+  it("CNPJ do fornecedor: só dígitos, vazio vira null e inválido é recusado", () => {
+    expect(service.normalizeSupplierCnpj("11.222.333/0001-81")).toBe("11222333000181");
+    expect(service.normalizeSupplierCnpj("")).toBeNull();
+    expect(() => service.normalizeSupplierCnpj("123")).toThrow("CNPJ do fornecedor inválido");
   });
 });

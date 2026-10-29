@@ -17,7 +17,8 @@ export async function findProductLocalIds(
   return new Map(mappings.map((m) => [m.external_id, m.internal_id]));
 }
 
-// Um produto pode ter vários external_id na mesma integração (Tecinco) — usa o mais recente.
+// Um produto pode ter vários external_id na mesma integração — usa o principal (é ele que alimenta o produto); o
+// updatedAt muda a cada sync de qualquer código (erp_data), então só desempata.
 export async function findProductExternalId(
   integrationId: string,
   productId: string,
@@ -29,7 +30,7 @@ export async function findProductExternalId(
       internal_id: productId,
     },
     attributes: ["external_id"],
-    order: [["updatedAt", "DESC"]],
+    order: [["is_primary", "DESC"], ["updatedAt", "DESC"]],
   });
   return mapping?.external_id ?? null;
 }
