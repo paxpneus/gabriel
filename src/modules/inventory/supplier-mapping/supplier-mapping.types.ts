@@ -51,8 +51,6 @@ export interface EanOwnerSummary {
   product_name: string | null;
   source: "SUPPLIER_MAPPING" | "PRODUCT_CONFIG";
   code: string;
-  unit_business_id?: string;
-  unit_business_name?: string | null;
 }
 
 // Resposta 201 do POST /from-unmapped: o que foi criado (null = não criou) e todos os mappings do produto na integração.

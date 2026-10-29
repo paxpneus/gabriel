@@ -61,14 +61,12 @@ Erro sem `code` (validação simples, permissão etc.): `{ "error": "..." }`. Ex
   "product_id": "uuid",
   "product_name": "PNEU 12.5/80-18 R4 ...",
   "source": "PRODUCT_CONFIG",
-  "code": "07891234567890",
-  "unit_business_id": "uuid",
-  "unit_business_name": "Loja 02"
+  "code": "07891234567890"
 }
 ```
 
-- `source`: `PRODUCT_CONFIG` (EAN gravado nas configurações do produto em uma loja, que traz `unit_business_*`) ou `SUPPLIER_MAPPING` (EAN no DE x PARA).
-- O mesmo produto pode aparecer mais de uma vez, uma por loja ou origem.
+- `source`: `PRODUCT_CONFIG` (EAN gravado nas configurações do produto da integração — uma entrada por produto, sem detalhar loja) ou `SUPPLIER_MAPPING` (EAN no DE x PARA).
+- O mesmo produto pode aparecer até uma vez por origem.
 
 `override`:
 ```json

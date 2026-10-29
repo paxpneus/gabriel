@@ -180,12 +180,20 @@ export class SupplierMappingService extends BaseService<
     const summary = this.summarizeEanOwners(owners);
     if (!summary.length) return;
 
-    const names = summary
-      .map((owner) =>
-        owner.source === "PRODUCT_CONFIG"
-          ? `"${owner.product_name ?? owner.product_id}" (Configurações do produto, loja ${owner.unit_business_name ?? owner.unit_business_id})`
-          : `"${owner.product_name ?? owner.product_id}" (Mapeamento DE x PARA)`,
-      )
+    // Mensagem resumida: uma entrada por produto, Configurações do produto citadas pela integração (não loja a loja).
+    const integration = await integrationsService.findById(integrationsId, { attributes: ["name"] });
+    const configLabel = `Configurações do produto da integração ${integration?.name ?? integrationsId}`;
+    const labelsByProduct = new Map<string, { name: string; labels: Set<string> }>();
+    for (const owner of summary) {
+      const entry = labelsByProduct.get(owner.product_id) ?? {
+        name: owner.product_name ?? owner.product_id,
+        labels: new Set<string>(),
+      };
+      entry.labels.add(owner.source === "PRODUCT_CONFIG" ? configLabel : "Mapeamento DE x PARA");
+      labelsByProduct.set(owner.product_id, entry);
+    }
+    const names = [...labelsByProduct.values()]
+      .map((entry) => `"${entry.name}" (${[...entry.labels].join(", ")})`)
       .join(", ");
     throw new SupplierMappingError(
       SupplierMappingErrorCode.EAN_OWNED_BY_ANOTHER_PRODUCT,
@@ -226,8 +234,17 @@ export class SupplierMappingService extends BaseService<
     };
   }
 
-  // Donos do EAN no formato de resposta (SupplierMapping e Configurações do produto por loja).
+  // Donos do EAN no formato de resposta: Configurações do produto resumidas (uma por produto/EAN, sem loja a loja).
   private summarizeEanOwners(owners: EanOwners): EanOwnerSummary[] {
+    const configsByProductCode = new Map<string, EanOwnerSummary>();
+    for (const pc of owners.productConfigs) {
+      configsByProductCode.set(`${pc.product_id}:${pc.gtin}`, {
+        product_id: pc.product_id,
+        product_name: (pc as any).product?.name ?? null,
+        source: "PRODUCT_CONFIG",
+        code: pc.gtin as string,
+      });
+    }
     return [
       ...owners.supplierMappings.map((sm) => ({
         product_id: sm.product_id,
@@ -235,14 +252,7 @@ export class SupplierMappingService extends BaseService<
         source: "SUPPLIER_MAPPING" as const,
         code: sm.supplier_product_code,
       })),
-      ...owners.productConfigs.map((pc) => ({
-        product_id: pc.product_id,
-        product_name: (pc as any).product?.name ?? null,
-        source: "PRODUCT_CONFIG" as const,
-        code: pc.gtin as string,
-        unit_business_id: pc.unit_business_id,
-        unit_business_name: (pc as any).unitBusiness?.name ?? null,
-      })),
+      ...configsByProductCode.values(),
     ];
   }
 

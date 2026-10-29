@@ -153,7 +153,6 @@ describe("SupplierMappingService.createFromUnmapped", () => {
         expect.objectContaining({
           product_id: "other-product-id",
           source: "PRODUCT_CONFIG",
-          unit_business_name: "Loja 12",
         }),
       ],
     });
