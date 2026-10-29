@@ -1272,7 +1272,7 @@ describe("TCarUpsertQueue.process — product com detectCatalogDuplicates (impor
     } as any);
 
     expect(getCachedTecincoDuplicateValueSets).toHaveBeenCalledWith(
-      [12, 17],
+      [12, 17, 11],
       expect.any(String),
     );
     expect(findTecincoCollidingFields).toHaveBeenCalledWith(

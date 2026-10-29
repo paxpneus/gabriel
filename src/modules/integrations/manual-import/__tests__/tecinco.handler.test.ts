@@ -126,7 +126,7 @@ describe("TecincoManualImportHandler", () => {
 
       const { items } = await handler.search("invoice", "access_key", ACCESS_KEY);
 
-      expect(mockGetNotaFiscal).toHaveBeenCalledTimes(2);
+      expect(mockGetNotaFiscal).toHaveBeenCalledTimes(3);
       expect(items[0]).toMatchObject({
         details: { type: "IN" },
         enqueueData: { branchId: 17 },
@@ -161,7 +161,7 @@ describe("TecincoManualImportHandler", () => {
       expect(mockListarProdutos).toHaveBeenCalledWith(12, {
         codigo_integracao: "900",
         include: "filiais",
-        branch_ids: "12,17",
+        branch_ids: "12,17,11",
         limit: 100,
         offset: 0,
       });

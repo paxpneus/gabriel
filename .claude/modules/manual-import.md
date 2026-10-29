@@ -15,7 +15,7 @@ Contrato pro front: `docs/manual-import/frontend-integration.md` (atualizar junt
 ## Busca suportada
 | | Bling | Tecinco |
 |---|---|---|
-| product | `id` → `GET /produtos?idsProdutos[]=` · `name` → `?nome=` | `id` (= `epctb_codigo`) → `GET /produtos?codigo_integracao=` · `name` → `?nome=`; ambos `include=filiais&branch_ids=12,17` (`tecincoUnitBusinessForPopulate`), sessão na 1ª filial |
+| product | `id` → `GET /produtos?idsProdutos[]=` · `name` → `?nome=` | `id` (= `epctb_codigo`) → `GET /produtos?codigo_integracao=` · `name` → `?nome=`; ambos `include=filiais&branch_ids=12,17,11` (`tecincoUnitBusinessForPopulate`), sessão na 1ª filial |
 | invoice | só nota de venda (NF-e de saída, nunca NFC-e): `id` → `GET /nfe/{id}` (404 = não achou) · `number` → `GET /nfe?numero=&tipo=1` | `access_key` → nNF/CNPJ da chave (`parseAccessKey`, `shared/utils/xml/access-key.ts`) → `GET /notas-fiscais/{n}?chave_nfe=`; filiais consultadas em paralelo: UnitBusiness com o CNPJ do emitente **primeiro** (mesmo fora de `tecincoUnitBusinessForPopulate` — numa transferência a saída com XML fica na emitente; a entrada na loja destino pode ter sido lançada sem XML e dar 404 no `/xml`), depois as filiais Tecinco de fallback (emitente de fora/fornecedor); fica a primeira **na ordem** que respondeu; só 404 em todas = não achou |
 | order | `id` → `GET /pedidos/vendas/{id}` · `number` → `?numero=` | — |
 
