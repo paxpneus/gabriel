@@ -88,7 +88,7 @@
 
 import * as path from "path";
 import * as fs from "fs";
-import { QueryTypes } from "sequelize";
+import { Op, QueryTypes } from "sequelize";
 import { BrowserContext, Page } from "playwright";
 // @ts-ignore
 import { chromium as chromiumExtra } from "playwright-extra";
@@ -100,6 +100,7 @@ import sequelize from "../../config/sequelize";
 import { setupAssociations } from "../../config/sequelize-associations";
 import stockMovementSourceDataService from "../../modules/inventory/stock/stock-movement-source-data/stock-movement-source-data.service";
 import { waitForBlingRateLimit } from "../../modules/handlers/bling/api/bling_api.service";
+import { nowTz } from "../../shared/utils/normalizers/date";
 
 
 chromiumExtra.use(StealthPlugin());
@@ -132,6 +133,7 @@ const BLING_DEPOSITO_IDS = (process.env.BLING_DEPOSITO_IDS ?? "")
 const CSV_STORAGE_DIR = path.resolve(
   process.env.STOCK_MOVEMENTS_CSV_DIR?.trim() || "./data/stock-movements",
 );
+// Início do histórico na primeira extração (sem nenhuma fonte registrada).
 const INITIAL_CUTOFF_DATE = new Date(2024, 6, 1, 0, 0, 0);
 const MAX_PAGES = Number(process.env.MAX_PAGES ?? 0);
 const PAGE_DELAY_MS = Number(process.env.PAGE_DELAY_MS ?? 400);
@@ -173,6 +175,8 @@ function formatDateForFilename(date: Date): string {
 type ScrapeWindow = {
  cutoffDate: Date;
  extractionDate: Date;
+ // 1º/jan do ano da extração: chave da linha anual em stock_movement_source_data.
+ yearStart: Date;
  csvPath: string;
 };
 
@@ -895,17 +899,23 @@ async function bootstrap() {
  setupAssociations();
 }
 
+// Janela = 30/dez do ano anterior até agora (2 dias de sobra cobrem a virada); sem fonte registrada, histórico todo desde INITIAL_CUTOFF_DATE.
 async function createScrapeWindow(): Promise<ScrapeWindow> {
+ const yearStartTz = nowTz().startOf("year");
+ const yearStart = yearStartTz.toDate();
+ const yearWindowStart = yearStartTz.subtract(2, "day").toDate();
+ const extractionDate = new Date();
  const latestSource = await stockMovementSourceDataService.findOne({
+   attributes: ["extraction_date"],
    order: [["extraction_date", "DESC"]],
  });
- const cutoffDate = latestSource
-   ? new Date(latestSource.extraction_date)
-   : INITIAL_CUTOFF_DATE;
- const extractionDate = new Date();
 
- if (Number.isNaN(cutoffDate.getTime())) {
-   throw new Error("extraction_date inválida no último CSV de estoque.");
+ let cutoffDate = yearWindowStart;
+ if (!latestSource) {
+   cutoffDate = INITIAL_CUTOFF_DATE;
+ } else if (new Date(latestSource.extraction_date) < yearWindowStart) {
+   // Última extração ficou antes de 30/dez (job parado na virada): retoma dela pra não perder o fim do ano anterior.
+   cutoffDate = new Date(latestSource.extraction_date);
  }
 
  const csvPath = path.join(
@@ -913,7 +923,7 @@ async function createScrapeWindow(): Promise<ScrapeWindow> {
    `${formatDateForFilename(cutoffDate)}-${formatDateForFilename(extractionDate)}.csv`,
  );
 
- return { cutoffDate, extractionDate, csvPath };
+ return { cutoffDate, extractionDate, yearStart, csvPath };
 }
 
 
@@ -1063,11 +1073,20 @@ async function main() {
 
  const isCompleteRun = MAX_PRODUCTS === 0 && MAX_PAGES === 0;
  if (errors === 0 && isCompleteRun) {
-   await stockMovementSourceDataService.create({
-     extraction_date: window.extractionDate,
-     cutoff_date: window.cutoffDate,
-     csv_path: window.csvPath,
-   });
+   // Uma fonte por ano (pela extraction_date): execuções seguintes no mesmo ano só atualizam a linha, já com cutoff em 30/dez.
+   await stockMovementSourceDataService.upsertByFind(
+     { extraction_date: { [Op.gte]: window.yearStart } },
+     {
+       extraction_date: window.extractionDate,
+       cutoff_date: window.cutoffDate,
+       csv_path: window.csvPath,
+     },
+     {
+       extraction_date: window.extractionDate,
+       cutoff_date: window.cutoffDate,
+       csv_path: window.csvPath,
+     },
+   );
  }
 
  console.log("═".repeat(60));

@@ -65,9 +65,8 @@
   skipped from re-creation (dedup by `buildCsvEntryFingerprint`) but was
   **not** included in the recalculation timeline at all — so if a CSV row
   older than it, but never synced before, showed up in the same run (e.g.
-  because `get-stock-movements.ts`'s `createScrapeWindow()` fell back to
-  `INITIAL_CUTOFF_DATE` — `2024-07-01` — after `stock_movement_source_data`
-  went empty, turning an incremental sync into a full historical re-scan),
+  a wider window re-scanning history — today every run re-scans the whole
+  current year, so this path is the normal one),
   that older row's contribution to the balance never propagated past the
   stale `SYNCHED` movement. Confirmed in production: a product's balance sat
   at 0 through an existing `SALE_OUT`, then a brand-new `PURCHASE_ENTRY` of
@@ -108,15 +107,23 @@
   anchored cost never changes. Regression tests: `stock-movements.test.ts`
   → `describe("syncCsvBaseline")` → the two tests contrasting a bare
   `MANUAL_ADJUSTMENT` (no `refers_to`) vs an anchored one.
-- `stock_movement_source_data` going empty (e.g. wiped by hand, or never
-  populated because every prior `get-stock-movements.ts` run had
-  `errors > 0` — that create is gated on `errors === 0 && isCompleteRun`,
-  see `bling-nfe-scraping.md`) doesn't just lose the incremental cutoff, it
-  makes the *next* run reprocess Bling's full history since
-  `INITIAL_CUTOFF_DATE`. That's expensive and is what exposes the bug above;
-  if `stock_movement_source_data` is unexpectedly empty in production,
-  treat it as a signal that a prior extraction failed partway, not as
-  routine cleanup.
+- **Janela do CSV = ano corrente + 2 dias.** `get-stock-movements.ts`
+  (`createScrapeWindow`, job `BLING_STOCK_MOVEMENTS_SCRAPING`) extrai de
+  30/dez 00:00 (`APP_TIMEZONE`) do ano anterior até agora — os 2 dias de
+  sobra fecham a virada (lançamento de 31/dez depois da última execução do
+  ano). Exceções: tabela vazia → desde `INITIAL_CUTOFF_DATE` (2024-07-01),
+  então o populate consolida o histórico todo uma vez; última
+  `extraction_date` antes de 30/dez (job parado na virada) → retoma dela.
+  `stock_movement_source_data` tem **uma linha por ano**, identificada pela
+  `extraction_date` ≥ 1º/jan do ano; execução completa sem erro
+  (`errors === 0 && isCompleteRun`) faz `upsertByFind` nela (atualiza
+  `extraction_date`/`cutoff_date`/`csv_path` — grava o cutoff real usado).
+  Linhas diárias antigas (modelo anterior) ficam no banco sem efeito.
+  Consumidores (`populate-stock-movements.ts`, `getAutomaticSyncCutoff`)
+  seguem lendo a linha de maior `extraction_date`, então `syncCsvBaseline`
+  reconsolida o ano todo a cada execução (lançamento retroativo dentro do
+  ano entra no dia seguinte). Produto sem nenhum lançamento Bling na janela
+  não entra no CSV → PENDING dele não é tocado.
 
 ## Valores da nota / desconto (PURCHASE_ENTRY)
 
