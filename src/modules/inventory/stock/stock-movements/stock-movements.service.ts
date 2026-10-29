@@ -477,7 +477,8 @@ export class StockMovementService extends BaseService<
   /**
    * Consolida a janela temporal de um CSV. O CSV é a fonte de verdade apenas
    * entre o corte da extração anterior e a extração atual; movimentos do
-   * fluxo normal fora dessa janela permanecem PENDING.
+   * fluxo normal fora dessa janela permanecem PENDING. `csvEntryIds` (ids de
+   * lançamento Bling do produto no CSV) ativa a remoção de SYNCHED apagados na Bling.
    */
   async syncCsvBaseline(
     productId: string,
@@ -486,6 +487,7 @@ export class StockMovementService extends BaseService<
     cutoffDate: Date | null,
     extractionDate: Date,
     transaction?: Transaction,
+    csvEntryIds?: Set<string>,
   ): Promise<StockMovement[]> {
     if (cutoffDate && cutoffDate.getTime() > extractionDate.getTime()) {
       throw new Error("cutoffDate não pode ser posterior a extractionDate.");
@@ -499,7 +501,7 @@ export class StockMovementService extends BaseService<
       transaction,
     );
 
-    const remaining = await this.repository.findHistoryByProduct(
+    const history = await this.repository.findHistoryByProduct(
       productId,
       unitBusinessId,
       { transaction },
@@ -515,6 +517,33 @@ export class StockMovementService extends BaseService<
     const isBeforeOrAtCutoff = (m: StockMovement) =>
       cutoffDate != null &&
       new Date(m.movement_date).getTime() <= cutoffDate.getTime();
+
+    // Bling apaga/relança lançamento de NF sem gerar estorno: SYNCHED da janela cujo
+    // id Bling sumiu do CSV é apagado (o CSV recria o lançamento atual, se houver).
+    let staleIds = new Set<string>();
+    if (csvEntryIds) {
+      const stale = history.filter(
+        (m) =>
+          m.status === "SYNCHED" &&
+          !isProtected(m) &&
+          !!m.bling_entry_ids &&
+          !isBeforeOrAtCutoff(m) &&
+          new Date(m.movement_date).getTime() <= extractionDate.getTime() &&
+          m.bling_entry_ids.split("+").some((id) => !csvEntryIds.has(id)),
+      );
+      staleIds = new Set(stale.map((m) => m.id));
+    }
+    if (staleIds.size) {
+      await this.repository.bulkDelete({
+        where: { id: { [Op.in]: [...staleIds] } },
+        transaction,
+      });
+      console.log(
+        `  🗑️  [syncCsvBaseline] product=${productId} — ${staleIds.size} lançamento(s) ` +
+          `SYNCHED que não existem mais na Bling apagado(s).`,
+      );
+    }
+    const remaining = history.filter((m) => !staleIds.has(m.id));
 
     const existingSynchedByFingerprint = new Map<string, StockMovement>(
       remaining

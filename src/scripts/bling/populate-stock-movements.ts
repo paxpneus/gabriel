@@ -1113,6 +1113,8 @@ async function processCsvProduct(
       window.cutoffDate,
       window.extractionDate,
       transaction,
+      // Linhas cruas (antes do merge): cada uma é um lançamento que ainda existe na Bling.
+      new Set(rows.map((row) => row.lancamento_id)),
     );
 
     // Garante que todo MANUAL_ADJUSTMENT ancorado (refers_to) continue

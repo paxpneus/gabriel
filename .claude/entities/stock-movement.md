@@ -124,6 +124,14 @@
   reconsolida o ano todo a cada execução (lançamento retroativo dentro do
   ano entra no dia seguinte). Produto sem nenhum lançamento Bling na janela
   não entra no CSV → PENDING dele não é tocado.
+- **Lançamento apagado/relançado na Bling.** Bling às vezes remove o lançamento
+  de uma NF (sem gerar "S") e relança com outro `lancamento_id`/data. O populate
+  passa os ids crus do CSV (`csvEntryIds`) pro `syncCsvBaseline`, que apaga todo
+  SYNCHED da janela, sem `refers_to`, com `bling_entry_ids` preenchido e algum id
+  (split `+`) ausente do CSV; o lançamento atual é recriado pelo CSV. Linha sem
+  `bling_entry_ids` (anterior ao m295) não é tocada. Produto que sumiu inteiro do
+  CSV não é processado → linha órfã dele fica. Origem: janela diária antiga
+  duplicou NF 443107 (2×90) porque a linha antiga ficava antes do cutoff.
 
 ## Valores da nota / desconto (PURCHASE_ENTRY)
 

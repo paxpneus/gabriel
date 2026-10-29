@@ -962,6 +962,192 @@ describe("StockMovementService", () => {
       ).not.toHaveBeenCalled();
     });
 
+    // Produção NF 443107: lançamento 20/10 apagado na Bling e relançado em 22/10 — kardex ficou com 2×90.
+    it("apaga o SYNCHED cujo lançamento Bling sumiu do CSV e não recria o que ainda existe", async () => {
+      const base = makeExistingMovement({
+        id: "base",
+        invoice_number: "442000",
+        movement_date: new Date("2026-10-01T00:00:00Z"),
+        movement_quantity: 4,
+        balance_quantity: 4,
+        resulting_average_cost: 300,
+        total_stock_value: 1200,
+        status: "SYNCHED",
+        bling_entry_ids: "100",
+      });
+      const deleted = makeExistingMovement({
+        id: "deleted-in-bling",
+        invoice_number: "443107",
+        movement_date: new Date("2026-10-20T21:00:25Z"),
+        movement_quantity: 90,
+        unit_cost_invoice: 257.441,
+        balance_quantity: 94,
+        status: "SYNCHED",
+        bling_entry_ids: "23724154993",
+      });
+      const current = makeExistingMovement({
+        id: "current",
+        invoice_number: "443107",
+        movement_date: new Date("2026-10-22T15:55:22Z"),
+        movement_quantity: 90,
+        unit_cost_invoice: 257.441,
+        balance_quantity: 184,
+        status: "SYNCHED",
+        bling_entry_ids: "23733778064",
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        base,
+        deleted,
+        current,
+      ]);
+
+      const created = await service.syncCsvBaseline(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [
+          {
+            product_id: PRODUCT_ID,
+            invoice_id: null,
+            invoice_number: "443107",
+            movement_type: "PURCHASE_ENTRY",
+            movement_date: new Date("2026-10-22T15:55:22Z"),
+            movement_quantity: 90,
+            unit_cost_invoice: 257.441,
+            bling_entry_ids: "23733778064",
+          },
+        ] as any,
+        new Date("2026-09-30T00:00:00Z"),
+        new Date("2026-10-29T00:00:00Z"),
+        undefined,
+        new Set(["100", "23733778064"]),
+      );
+
+      expect((service as any).repository.bulkDelete).toHaveBeenCalledWith({
+        where: { id: { [Op.in]: ["deleted-in-bling"] } },
+        transaction: undefined,
+      });
+      expect((service as any).repository.bulkCreate).not.toHaveBeenCalled();
+      expect(current.balance_quantity).toBe(94);
+      expect(created.map((m: any) => m.id)).not.toContain("deleted-in-bling");
+    });
+
+    // Produção NF 442851: relançada na Bling com outra data/id — a linha antiga dá lugar à atual.
+    it("recria o lançamento relançado na Bling com a data e o id novos", async () => {
+      const relaunched = makeExistingMovement({
+        id: "old-launch",
+        invoice_number: "442851",
+        movement_date: new Date("2026-10-13T18:04:30Z"),
+        movement_quantity: 1,
+        unit_cost_invoice: 305.94,
+        balance_quantity: 1,
+        status: "SYNCHED",
+        bling_entry_ids: "23687968902",
+      });
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        relaunched,
+      ]);
+
+      const created = await service.syncCsvBaseline(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [
+          {
+            product_id: PRODUCT_ID,
+            invoice_id: null,
+            invoice_number: "442851",
+            movement_type: "PURCHASE_ENTRY",
+            movement_date: new Date("2026-10-29T15:02:24Z"),
+            movement_quantity: 1,
+            unit_cost_invoice: 305.94,
+            bling_entry_ids: "23766320362",
+          },
+        ] as any,
+        new Date("2026-09-30T00:00:00Z"),
+        new Date("2026-10-29T20:00:00Z"),
+        undefined,
+        new Set(["23766320362"]),
+      );
+
+      expect((service as any).repository.bulkDelete).toHaveBeenCalledWith({
+        where: { id: { [Op.in]: ["old-launch"] } },
+        transaction: undefined,
+      });
+      expect(created).toEqual([
+        expect.objectContaining({
+          invoice_number: "442851",
+          movement_date: new Date("2026-10-29T15:02:24Z"),
+          bling_entry_ids: "23766320362",
+          balance_quantity: 1,
+        }),
+      ]);
+    });
+
+    it("mantém SYNCHED sem id Bling, protegido ou de NF mesclada ainda inteira na Bling", async () => {
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        makeExistingMovement({
+          id: "legacy",
+          invoice_number: "1",
+          movement_date: new Date("2026-10-05T00:00:00Z"),
+          status: "SYNCHED",
+          bling_entry_ids: null,
+        }),
+        makeExistingMovement({
+          id: "anchored",
+          invoice_number: "2",
+          movement_type: "MANUAL_ADJUSTMENT",
+          direction: "IN",
+          movement_date: new Date("2026-10-06T00:00:00Z"),
+          status: "SYNCHED",
+          refers_to: "1",
+          bling_entry_ids: "999",
+        }),
+        makeExistingMovement({
+          id: "merged",
+          invoice_number: "3",
+          movement_date: new Date("2026-10-07T00:00:00Z"),
+          status: "SYNCHED",
+          bling_entry_ids: "10+11",
+        }),
+      ]);
+
+      await service.syncCsvBaseline(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [],
+        new Date("2026-09-30T00:00:00Z"),
+        new Date("2026-10-29T00:00:00Z"),
+        undefined,
+        new Set(["10", "11"]),
+      );
+
+      expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
+    });
+
+    // Janela anual começa em 30/12 do ano anterior: lançamento de 2025 não vem no CSV de 2026 e não pode ser apagado.
+    it("não apaga SYNCHED anterior ao cutoff mesmo com id Bling fora do CSV", async () => {
+      (service as any).repository.findHistoryByProduct.mockResolvedValue([
+        makeExistingMovement({
+          id: "from-2025",
+          invoice_number: "430000",
+          movement_date: new Date("2025-11-10T15:00:00Z"),
+          status: "SYNCHED",
+          bling_entry_ids: "21000000001",
+        }),
+      ]);
+
+      await service.syncCsvBaseline(
+        PRODUCT_ID,
+        UNIT_BUSINESS_ID,
+        [],
+        new Date("2025-12-30T03:00:00Z"),
+        new Date("2026-10-29T00:00:00Z"),
+        undefined,
+        new Set(["23733778064"]),
+      );
+
+      expect((service as any).repository.bulkDelete).not.toHaveBeenCalled();
+    });
+
     it("recalcula o desconto das PURCHASE_ENTRY do produto ao final", async () => {
       const history = new Map([
         [
