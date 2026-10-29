@@ -107,6 +107,7 @@ jest.mock(
     __esModule: true,
     default: {
       syncProductStockMovements: jest.fn(),
+      getCurrentBalance: jest.fn(),
       bulkDelete: jest.fn(),
       findOne: jest.fn(),
     },
@@ -180,6 +181,7 @@ import supplierMappingService from "../../../../../../inventory/supplier-mapping
 import productConfigService from "../../../../../../inventory/product-config/product_config.service";
 import Product from "../../../../../../inventory/products/product.model";
 import ProductConfig from "../../../../../../inventory/product-config/product_config.model";
+import Stock from "../../../../../../inventory/stock/stock/stock.model";
 import UnitBusiness from "../../../../../../company/unit-business/unit-business.model";
 import Group from "../../../../../../inventory/groups/group/group.model";
 import Subgroup from "../../../../../../inventory/groups/subgroup/subgroup.model";
@@ -411,6 +413,39 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
       expect(
         integrationMappingService.createOrUpdateIntegrationMapping,
       ).not.toHaveBeenCalled();
+    });
+
+    it("estoque: saldo da última movimentação prevalece sobre o saldo físico da Bling; sem kardex fica o da Bling", async () => {
+      const blingProduct = makeBlingProduct();
+      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
+      (resolveProductWithMapping as jest.Mock).mockResolvedValue({
+        id: "existing-product-id",
+      });
+      (productService.upsertWithComponents as jest.Mock).mockResolvedValue(
+        makeUpsertedProduct({ id: "existing-product-id" }),
+      );
+      const stockUpsertSpy = jest
+        .spyOn(Stock, "upsert")
+        .mockResolvedValue([{} as any, true]);
+      jest.spyOn(Stock, "findOne").mockResolvedValue(null);
+
+      // Bling diz 5 (saldoFisicoTotal do fake), kardex diz 8 → grava 8.
+      (stockMovementsService.getCurrentBalance as jest.Mock).mockResolvedValue({
+        balance_quantity: "8.0000",
+      });
+      await runProductJob(blingProduct);
+      expect(stockUpsertSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ quantity: 8, total_price: 800 }),
+        expect.anything(),
+      );
+
+      // Sem movimentação nenhuma → mantém o saldo da Bling.
+      (stockMovementsService.getCurrentBalance as jest.Mock).mockResolvedValue(null);
+      await runProductJob(blingProduct);
+      expect(stockUpsertSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({ quantity: 5 }),
+        expect.anything(),
+      );
     });
   });
 

@@ -1295,10 +1295,27 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           );
         }
 
+        // Saldo da última movimentação prevalece sobre o físico da Bling; sem kardex ou com saldo negativo, fica o da Bling.
+        const lastMovement = await stockMovementsService.getCurrentBalance(
+          product.id,
+          unitBusiness.id,
+          transaction,
+        );
+        const kardexBalance = lastMovement
+          ? Number(lastMovement.balance_quantity)
+          : null;
+        let stockQuantity = physicalQuantity;
+        if (kardexBalance != null && kardexBalance >= 0 && kardexBalance !== physicalQuantity) {
+          console.warn(
+            `[BLING_API_FETCH] Estoque Bling divergente do kardex: sku=${configSku} | bling=${physicalQuantity} | kardex=${kardexBalance} — usando kardex`,
+          );
+          stockQuantity = kardexBalance;
+        }
+
         await this.syncStockAndBatches({
           product,
           unitBusiness,
-          newQuantity: physicalQuantity,
+          newQuantity: stockQuantity,
           averageCost: average_cost,
           transaction,
         });

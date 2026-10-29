@@ -34,12 +34,20 @@ jest.mock(
   }),
 );
 
+// syncProductFromLastMovement alinha stocks pelo kardex — sem banco nos testes.
+jest.mock("../../stock/stock.service", () => ({
+  __esModule: true,
+  default: { findOne: jest.fn(), bulkUpdate: jest.fn(), create: jest.fn() },
+}));
+
 
 import { Invoice, UnitBusiness } from "../../../../warehouse";
 import InvoiceFiscalItem from "../../../../warehouse/fiscal/invoices/invoice-fiscal-item/invoice-fiscal-item.model";
 import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import StockMovement from "../stock-movements.model";
 import stockMovementSourceDataService from "../../stock-movement-source-data/stock-movement-source-data.service";
+import stockService from "../../stock/stock.service";
+import product_configService from "../../../product-config/product_config.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -2281,6 +2289,119 @@ describe("StockMovementService", () => {
       });
 
       warnSpy.mockRestore();
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // syncProductFromLastMovement — stock alinhado pelo saldo do kardex
+  // ══════════════════════════════════════════════════════════════════════════
+
+  describe("syncProductFromLastMovement", () => {
+    beforeEach(() => {
+      jest
+        .spyOn(product_configService, "findOneAndUpdate")
+        .mockResolvedValue({} as any);
+      jest.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    const sync = () =>
+      (service as any).syncProductFromLastMovement(PRODUCT_ID, UNIT_BUSINESS_ID);
+
+    it("stock divergente: atualiza quantidade e valor pelo saldo da última movimentação", async () => {
+      (service as any).repository.findLastMovement.mockResolvedValue({
+        balance_quantity: "7.0000",
+        resulting_average_cost: "10.0000",
+      });
+      (stockService.findOne as jest.Mock).mockResolvedValue({
+        id: "stock-1",
+        quantity: 5,
+      });
+
+      await sync();
+
+      expect(stockService.bulkUpdate).toHaveBeenCalledWith(
+        { quantity: 7, total_price: 70 },
+        { where: { id: "stock-1" }, transaction: undefined },
+      );
+      expect(stockService.create).not.toHaveBeenCalled();
+    });
+
+    it("stock igual ao kardex: não escreve nada", async () => {
+      (service as any).repository.findLastMovement.mockResolvedValue({
+        balance_quantity: "7.0000",
+        resulting_average_cost: "10.0000",
+      });
+      (stockService.findOne as jest.Mock).mockResolvedValue({
+        id: "stock-1",
+        quantity: 7,
+      });
+
+      await sync();
+
+      expect(stockService.bulkUpdate).not.toHaveBeenCalled();
+      expect(stockService.create).not.toHaveBeenCalled();
+    });
+
+    it("sem linha de stock: cria com o saldo do kardex", async () => {
+      (service as any).repository.findLastMovement.mockResolvedValue({
+        balance_quantity: "3.0000",
+        resulting_average_cost: "20.0000",
+      });
+      (stockService.findOne as jest.Mock).mockResolvedValue(null);
+
+      await sync();
+
+      expect(stockService.create).toHaveBeenCalledWith(
+        {
+          product_id: PRODUCT_ID,
+          unit_business_id: UNIT_BUSINESS_ID,
+          quantity: 3,
+          total_price: 60,
+        },
+        { transaction: undefined },
+      );
+    });
+
+    it("saldo negativo no kardex: não toca o stock", async () => {
+      (service as any).repository.findLastMovement.mockResolvedValue({
+        balance_quantity: "-2.0000",
+        resulting_average_cost: "10.0000",
+      });
+
+      await sync();
+
+      expect(stockService.findOne).not.toHaveBeenCalled();
+      expect(stockService.bulkUpdate).not.toHaveBeenCalled();
+      expect(stockService.create).not.toHaveBeenCalled();
+    });
+
+    it("processMovement alinha o stock depois de criar a movimentação nova", async () => {
+      (service as any).repository.findLastMovement.mockResolvedValue({
+        balance_quantity: "7.0000",
+        resulting_average_cost: "10.0000",
+      });
+      (stockService.findOne as jest.Mock).mockResolvedValue({
+        id: "stock-1",
+        quantity: 5,
+      });
+
+      await service.processMovement({
+        product_id: PRODUCT_ID,
+        unit_business_id: UNIT_BUSINESS_ID,
+        movement_type: "SALE_OUT",
+        movement_quantity: 1,
+        movement_date: new Date("2026-02-01"),
+      } as any);
+
+      const createOrder = (service as any).repository.create.mock
+        .invocationCallOrder[0];
+      const stockReadOrder = (stockService.findOne as jest.Mock).mock
+        .invocationCallOrder[0];
+      expect(createOrder).toBeLessThan(stockReadOrder);
     });
   });
 });
