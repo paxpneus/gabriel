@@ -1,3 +1,5 @@
+import { assertUuid } from '../../../shared/utils/validators/uuid';
+import { getRequestUserId } from '../../../shared/query/get-logged-user';
 import { Request, Response } from "express";
 import { authenticate } from "../../../middlewares/auth-token";
 import { QueryParams } from "../../../shared/query/query.types";
@@ -8,7 +10,7 @@ import ProductService from "./services/product.service";
 import { userPermissions } from "../../../middlewares/user-permissions";
 import unitBusinessService from "../../company/unit-business/unit-business.service";
 import productWithMovementService from './services/product-with-movements'
-import { StockUnitFilter } from "./product.types";
+import { StockUnitFilter, TireSearchMode } from "./product.types";
 import { getUserContext } from "../../../shared/query/get-logged-user";
 
 type ProductQueryParams = Omit<QueryParams, "filters"> & {
@@ -71,7 +73,19 @@ export class ProductController extends BaseController<
       this.indexMappedToIntegration,
     );
 
+    this.router.get(
+      "/tire-search/get",
+      ...this.mw("searchTireCandidates"),
+      this.searchTireCandidates,
+    );
+
     this.router.get("/:id/full", ...this.mw("findByIdFull"), this.findByIdFull);
+
+    this.router.get(
+      "/:id/audit-logs",
+      ...this.mw("findAuditLogs"),
+      this.findAuditLogs,
+    );
 
     this.router.get(
       "/by-code/:code",
@@ -86,7 +100,10 @@ export class ProductController extends BaseController<
       indexMappedToIntegration: [authenticate],
       indexDetailed: [authenticate],
       findByIdFull: [authenticate],
-      findByCode: [authenticate],
+      // Bipe, auto busca e histórico: leitura de Produtos (o histórico mostra quem alterou o quê).
+      findByCode: [authenticate, userPermissions],
+      searchTireCandidates: [authenticate, userPermissions],
+      findAuditLogs: [authenticate, userPermissions],
       productReport: [authenticate, userPermissions],
       productByUnit: [authenticate, userPermissions],
       productSalesReport: [authenticate, userPermissions],
@@ -117,6 +134,78 @@ export class ProductController extends BaseController<
 
       return res.json(product);
     } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // Auto busca de pneu (GET /tire-search/get): valida mode/measure/expedition_batch_id e delega pro service.
+  searchTireCandidates = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const mode = req.query.mode as TireSearchMode | undefined;
+      const measure = String(req.query.measure ?? "").trim();
+      const expeditionBatchId = String(req.query.expedition_batch_id ?? "").trim() || undefined;
+
+      if (!mode || !Object.values(TireSearchMode).includes(mode)) {
+        return res.status(400).json({ error: "Informe o modo da busca: IN_BATCH ou NORMAL" });
+      }
+      if (!measure) {
+        return res.status(400).json({ error: "Informe a medida do pneu" });
+      }
+      if (mode === TireSearchMode.IN_BATCH && !expeditionBatchId) {
+        return res.status(400).json({ error: "Informe o lote para buscar dentro dele" });
+      }
+
+      const { unitBusinessId } = await getUserContext(req);
+      const result = await this.service.searchTireCandidates(
+        {
+          mode,
+          measure,
+          loadIndex: String(req.query.load_index ?? "").trim() || undefined,
+          brand: String(req.query.brand ?? "").trim() || undefined,
+          expeditionBatchId,
+        },
+        unitBusinessId,
+      );
+
+      if (!result) {
+        return res.status(404).json({ error: "Lote não encontrado na sua loja" });
+      }
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // Mesmo create/update do CRUD genérico, levando quem fez (auditoria quando o EAN tira o DE x PARA de outro produto).
+  create = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const record = await this.service.create(req.body, { userId: getRequestUserId(req) });
+      return res.status(201).json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  update = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const record = await this.service.update(req.params.id as string, req.body, { userId: getRequestUserId(req) });
+      if (!record) return res.status(404).json({ error: "Não encontrado" });
+      return res.json(record);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // GET /:id/audit-logs — histórico de auditoria do produto (404 se não existe), paginado (page/perPage/filters[action]).
+  findAuditLogs = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const result = await this.service.findAuditLogs(
+        assertUuid(req.params.id, 'Produto'),
+        this.extractQueryParams(req),
+      );
+      return res.json(result);
+    } catch (error: any) {
+      if (error.message === "Produto não encontrado") return res.status(404).json({ error: error.message });
       return res.status(400).json({ error: error.message });
     }
   };

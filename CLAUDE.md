@@ -2,6 +2,10 @@
 
 **Nunca commitar sozinho.** `git commit` só quando o usuário pedir explicitamente naquele turno — mesmo depois de terminar uma tarefa grande, corrigir bug, ou aplicar fix que o usuário claramente vai querer versionado. Terminar o código não é permissão pra commitar; perguntar/avisar que está pronto pra commit, sim.
 
+**Avisar pra commitar em blocos pequenos.** Terminou um bloco de mudança de uma responsabilidade só e a próxima tarefa vai mexer em outra responsabilidade → avisar o usuário pra commitar antes de seguir (com a sugestão de mensagem abaixo), em vez de acumular várias responsabilidades num commit só. Só avisa — quem commita é o usuário (regra acima).
+
+**Sugestão de mensagem de commit — só quando o usuário pedir** (ex.: "levantamento das alterações do commit"): uma linha no padrão dos commits do repo, `TIPO: Descrição` — tipo em maiúsculo (`FEAT`, `FIX`, `REFACTOR`), descrição em inglês, começando com maiúscula, resumindo o conjunto da mudança. Ex.: `FIX: Close leading-zero EAN ambiguity on all write flows and zero-aware expedition scan`. Entregar num bloco de código pronto pra copiar.
+
 # Testes
 
 **Nunca `npm run test`/`npx jest` sozinho (sem flag).** Rodar a suite inteira em paralelo (workers default do Jest) consome memória demais e derruba o VS Code. Sempre `--runInBand` (ex.: `npx jest --runInBand`, ou escopado num arquivo/pasta com `--runInBand` também) — mesmo rodando só um subconjunto de arquivos.
@@ -48,6 +52,10 @@ Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e r
 
 Valor que identifica uma entidade específica (nome de integração, status, etc.) e é comparado/usado em mais de um lugar: nunca literal solto no código (`=== "Bling"`). Buscar/centralizar numa função ou variável já existente que resolve aquele valor (ex: `getBlingIntegration()` em `bling_api.service.ts`) e comparar contra o resultado dela — não recriar o literal. Assim, se o valor mudar, muda em um lugar só. Referência: `orders.service.ts`'s `getOrdersStatusSummary` compara `integration.name` com `(await getBlingIntegration()).name`, não com `"Bling"`.
 
+## Ternário só pra valor simples
+
+Ternário (`cond ? a : b`) só quando o resultado é valor simples (string, number, boolean, null). Resultado objeto ou array — inclusive spread condicional (`...(cond ? {...} : {})`), ternário aninhado e `cond ? await ... : []` — vira `if`/`else if` (monta a variável e preenche no `if`); fica mais legível. Vale pra código novo/alterado, sem reescrever código antigo intocado. Valor padrão com `??` (`x ?? []`) não é ternário e segue permitido.
+
 ## Comentários de código
 
 **Todo código criado ou alterado leva comentário.** Função/método/classe exportados, constantes de config e blocos não-triviais (lock, retry, fallback, regra de negócio) ganham um comentário dizendo o que fazem e, quando houver, por quê. Código sem comentário nenhum não é aceito.
@@ -57,6 +65,8 @@ Valor que identifica uma entidade específica (nome de integração, status, etc
 ## Idioma do código
 
 Tudo dentro do código — nome de função, variável, classe, arquivo, chave de objeto, mensagem de log/erro no código-fonte — é em inglês, sem exceção. Português só em documentação (`.claude/`, comentários) e em texto voltado pro usuário final (mensagens de erro exibidas na UI, alertas).
+
+**Texto pro usuário final é pra usuário leigo** (quem não conhece código nem tabela): erro na UI, alerta, aviso, descrição de auditoria. Nunca nome de tabela/coluna/model/classe (`ProductConfig`, `SupplierMapping`, `gtin`, `is_primary`, `external_id`) — usar o termo de negócio: "Configurações do produto", "Mapeamento DE x PARA", "Mapeamento de integração", "EAN", "Código no ERP", "Principal"; booleano como sim/não. Id técnico, quando precisar, vai no fim entre colchetes, nunca no lugar do nome. Referência: `global/audit-logs/helpers/description.ts` (`ENTITY_LABELS`/`FIELD_LABELS`).
 
 ## Contexto (`.claude/`)
 
@@ -68,6 +78,7 @@ Tudo dentro do código — nome de função, variável, classe, arquivo, chave d
 - Não usar para: correção pontual em 1 arquivo, pesquisa simples, tarefa de rotina.
 - Usar só quando: (a) tarefas paralelizáveis independentes entre si, ou (b) pesquisa exigiria ler 5+ arquivos/módulos.
 - Na dúvida: executar direto, sem subagent.
+- Modelo: subagente sempre com modelo de baixo consumo — `haiku`, ou `sonnet` pra tarefa média. Nunca `opus` nem outro modelo alto; passar `model` explicitamente no Agent.
 
 # Domain context — module reference
 
@@ -84,15 +95,18 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
 - `product/` — Product+ProductConfig+SupplierMapping como um sistema só
   - `index.md` — visão geral, link pros filhos
   - `core.md` — Product: tenant-scoping, code lookup, query config, category enum, FK-on-delete, resolução por external id
-  - `config.md` — ProductConfig, remoção do gtin_package
+  - `config.md` — ProductConfig, `gtin_erp` (só leitura), remoção do gtin_package
   - `supplier-mapping.md` — SupplierMapping schema, triggers, createFromUnmapped
   - `tecinco/automap-cascade.md` — fallback SKU/SupplierMapping (Bling + Tecinco)
   - `tecinco/catalog-preflight.md` — detecção de código duplicado no catálogo Tecinco antes do enqueue
   - `tecinco/duplicate-protection.md` — skuOmitted/eanOmitted, triggers DB, create/map manual de duplicata
   - `bling/deactivation.md` — Bling situacao=E
+  - `physical-ean-owner.md` — "Confirmar EAN físico" (`is_physical_override`), validação de EAN por integração com zero à esquerda, códigos de erro
+  - `tire-search.md` — auto busca de pneu: medida estrita no nome, pontuação por índice/marca, IN_BATCH vs NORMAL
   - `merge-duplicate.md` — runbook SQL manual pra substituir produto duplicado (antigo → novo) em todas as tabelas e apagar o antigo
 - `supplier-discount-rule.md` — matching engine, eixos de escopo, coluna computada `name`
-- `integration-mapping.md` — tabela `integration_mappings`, incidente de mapping órfão, regras cross-external-id
+- `integration-mapping.md` — tabela `integration_mappings`, `is_primary` (gate de sync) e `erp_data`, incidente de mapping órfão, regras cross-external-id
+- `audit-log.md` — tabela `audit_logs`: gravação explícita na service, description pra leigo, entrada principal + afetadas
 - `integration-error.md` — tabela genérica `integration_errors`, upsert-by-find/dedup, logger centralizado (`IntegrationLoggerService`, flag `createIntegrationError`)
 - `unmapped-invoice-product/` — fila de revisão manual
   - `index.md` — regras `type`/dedup, schema
@@ -131,12 +145,13 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `locks.md` — `BLING_SHARED_QUEUE_LOCK`, aging, lock por pedido
   - `rate-limit.md` — rate limit Bling compartilhado, race no dispatch, env docker-compose
 - `bling-nfe-scraping.md` — automação Playwright do Bling pra manifestação de NFe
-- `bling-api-client.md` — trava de escrita por `NODE_ENV` no client Bling (só GET fora de produção), token liberado (app Bling próprio em dev), o que não é coberto
+- `bling-api-client.md` — trava de escrita por `NODE_ENV` no client Bling (Tecinco e Magento têm a mesma trava: ver `tecinco-api.md`/`magento-sync.md`) (só GET fora de produção), token liberado (app Bling próprio em dev), o que não é coberto
 - `bling-poll.md` — TEMPORÁRIO (webhooks Bling fora): tasks no `BLING_RECONCILER` — novos a cada 1min (NF-e saída/cancelada/entrada + pedidos ausentes no banco) e alterações a cada 20min (até 50 pedidos por `dataAlteracaoInicial`, NF-e por mudança de situação); criação com prioridade sobre atualização (job de novos ignora pendentes `bling-poll-update`; atualização só com `BLING_API_FETCH`/`BLING_ORDER_INGESTION` vazias); flag `BLING_POLL_ENABLED`; quirks de filtro de data da API Bling
 - `bling-sync-routes.md` — rotas `/api/bling-sync` (populate em massa em background de produto/nota/pedido com limite), auth usuário ou application, lock/status em Redis
 - `manual-import.md` — import manual por integração (`/api/manual-import`, Bling: produto/nota/pedido; Tecinco: produto/nota): busca → escolha → fila com prioridade 1, lock por usuário + claim por item no Redis, andamento por polling
 - `tecinco-api.md` — sessão/login da API Tecinco, fix de race de login
 - `reports.md` — módulo de snapshot de sales-report
+- `integration-pending-report.md` — relatório de pendências de integração (overrides, produto com 2+ códigos no ERP, EAN duplicado no ERP, SKU duplicado no ERP, sem EAN, não mapeado), só admin/developer, sem paginação
 - `datafrete-cte-sync.md` — sync de CT-e (entidade `ctes`) com a API da Datafrete: fluxo `CteIngestionQueue`→`SyncDatafreteCteService`, coluna `synched`, client de endpoints de CT-e da Datafrete
 - `sieg-rate-limits.md` — limites documentados por rota da API Sieg (ex.: `/v1/baixar-xmls` = 2 req/min, 50 XMLs/req) vs. limite genérico não-confirmado, onde cada um é aplicado no código
 - `magento-sync.md` — sync Bling→Magento de produtos: `external_id` = `entity_id` do Magento (não sku), resolução por id (mapeado) vs. sku/nome (1ª vez)

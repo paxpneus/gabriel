@@ -1,4 +1,4 @@
-import { FindOptions, FindAndCountOptions, QueryTypes, Transaction, WhereOptions } from "sequelize";
+import { FindOptions, FindAndCountOptions, Op, QueryTypes, Transaction, WhereOptions } from "sequelize";
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import sequelize from "../../../../config/sequelize";
 import {
@@ -19,6 +19,7 @@ import {
 } from "../product.types";
 
 import { extractStockFilter } from "../product.query-config";
+import { productMappedToIntegrationLiteral } from "../helpers/integration-mapping-filters";
 
 export class ProductRepository extends BaseRepository<Product> {
   constructor() {
@@ -109,6 +110,53 @@ export class ProductRepository extends BaseRepository<Product> {
         },
       ],
     }, forcedWhere);
+  }
+
+  // Candidatos da auto busca de pneu: UNIT/TIRE ativos com a medida no nome, de qualquer integração, com a flag de
+  // mapeado na integração do usuário e config/estoque da loja dele. `productIds` restringe aos itens do lote.
+  async findTireCandidates(params: {
+    measureNameRegex: string;
+    productIds?: string[];
+    unitBusinessId: string;
+    integrationsId: string | null | undefined;
+  }): Promise<Product[]> {
+    const where: WhereOptions = {
+      type: "UNIT",
+      category: "TIRE",
+      is_active: true,
+      name: { [Op.iRegexp]: params.measureNameRegex },
+    };
+    if (params.productIds) Object.assign(where, { id: { [Op.in]: params.productIds } });
+
+    return this.model.findAll({
+      where,
+      attributes: [
+        "id",
+        "name",
+        "brand_id",
+        "brand",
+        "line",
+        [productMappedToIntegrationLiteral(params.integrationsId), "mapped_in_user_integration"],
+      ],
+      include: [
+        { model: Brand, as: "brandRegister", attributes: ["id", "name"], required: false },
+        {
+          model: ProductConfig,
+          as: "productConfigs",
+          where: { unit_business_id: params.unitBusinessId },
+          attributes: ["id", "sku", "gtin", "unit_business_id"],
+          required: false,
+        },
+        {
+          model: Stock,
+          as: "stocks",
+          where: { unit_business_id: params.unitBusinessId },
+          attributes: ["id", "quantity", "unit_business_id"],
+          required: false,
+        },
+      ],
+      order: [["name", "ASC"]],
+    });
   }
 
   async upsertByConflictFields(

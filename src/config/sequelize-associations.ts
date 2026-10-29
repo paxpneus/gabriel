@@ -10,6 +10,7 @@ import UnitBusinessConfig from "../modules/company/unit-business/unit-business-c
 import UnitBusinessGroup from "../modules/company/unit-business-groups/unit-business-group/unit-business-group.model";
 import UnitBusinessGroupMember from "../modules/company/unit-business-groups/unit-business-group-member/unit-business-group-member.model";
 import User from "../modules/company/users/users/user.model";
+import AuditLog from "../modules/global/audit-logs/audit-log.model";
 import UserConfig from "../modules/company/users/user_config/user_config.model";
 import UserUnitBusiness from "../modules/company/users/user_unit_business/user_unit_business.model";
 import Role from "../modules/company/users/roles/role.model";
@@ -952,6 +953,12 @@ UnitBusiness.belongsTo(ExpeditionBatch, {
   PdvSalesRequestReceipt.belongsTo(User, {
     foreignKey: "created_by_user_id",
     as: "createdBy",
+  });
+
+  // Quem fez a alteração auditada (user_id opcional — sync/sistema grava sem usuário).
+  AuditLog.belongsTo(User, {
+    foreignKey: "user_id",
+    as: "user",
   });
 }
 

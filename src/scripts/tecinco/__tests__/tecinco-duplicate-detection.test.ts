@@ -17,6 +17,8 @@ jest.mock("../../../modules/handlers/tecinco/queues/helpers/product.helpers", ()
 
 import { fetchTecincoCatalog, TecincoCatalogItem } from "../dump-tecinco-catalog";
 import {
+  buildTecincoDuplicateValueSets,
+  findTecincoCollidingCodes,
   getCachedTecincoDuplicateValueSets,
   setCachedTecincoDuplicateValueSets,
 } from "../tecinco-duplicate-detection";
@@ -75,13 +77,33 @@ describe("getCachedTecincoDuplicateValueSets", () => {
   it("setCachedTecincoDuplicateValueSets popula o cache sem precisar buscar", async () => {
     const branchIds = [903];
     setCachedTecincoDuplicateValueSets(branchIds, {
-      sku: new Set(["PRE-WARMED"]),
-      ean: new Set(),
+      sku: new Map([["PRE-WARMED", ["1", "2"]]]),
+      ean: new Map(),
     });
 
     const sets = await getCachedTecincoDuplicateValueSets(branchIds, "test");
 
     expect(fetchTecincoCatalog).not.toHaveBeenCalled();
     expect(sets.sku.has("PRE-WARMED")).toBe(true);
+  });
+});
+
+describe("findTecincoCollidingCodes", () => {
+  it("devolve os outros códigos do catálogo com o mesmo sku/ean, sem o próprio", () => {
+    const sets = buildTecincoDuplicateValueSets([
+      makeItem({ id_sistema: "13469", sku: "3526230000", ean: "789" }),
+      makeItem({ id_sistema: "15000", sku: "3526230000", ean: null }),
+      makeItem({ id_sistema: "20000", sku: "OUTRO", ean: "789" }),
+    ]);
+
+    expect(findTecincoCollidingCodes({ sku: "3526230000", ean: "789" }, sets, "13469")).toEqual({
+      sku: ["15000"],
+      ean: ["20000"],
+    });
+  });
+
+  it("valor sem duplicidade não traz código nenhum", () => {
+    const sets = buildTecincoDuplicateValueSets([makeItem({ id_sistema: "1", sku: "UNICO" })]);
+    expect(findTecincoCollidingCodes({ sku: "UNICO" }, sets, "1")).toEqual({ sku: [], ean: [] });
   });
 });

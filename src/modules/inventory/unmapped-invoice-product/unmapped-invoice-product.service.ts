@@ -203,6 +203,30 @@ export class UnmappedInvoiceProductService extends BaseService<
     return { buffer, extension: unmapped.image_path.split(".").pop() || "jpeg" };
   }
 
+  // Não mapeados pendentes da integração (ver repository) — sem paginação, pro relatório de pendências.
+  findPendingByIntegration(integrationsId: string): Promise<UnmappedInvoiceProduct[]> {
+    return this.repository.findPendingByIntegration(integrationsId);
+  }
+
+  // EAN resolvido (mapeado pela busca / "Confirmar EAN físico"): apaga os registros com foto (ERROR_SCAN) daquele EAN
+  // na integração — apaga em vez de marcar MAPPED porque unique_ean_integration_null_invoice impediria nova foto do mesmo EAN.
+  async closeScanRowsByEan(
+    codes: string[],
+    integrationsId: string,
+    transaction?: Transaction,
+  ): Promise<number> {
+    if (!codes.length) return 0;
+    return this.bulkDelete({
+      where: {
+        type: "ERROR_SCAN",
+        invoice_id: { [Op.is]: null },
+        integrations_id: integrationsId,
+        ean: { [Op.in]: codes },
+      },
+      transaction,
+    });
+  }
+
   async markMapped(ids: string[]): Promise<void> {
     return await sequelize.transaction(async (t) => {
       const unmapped = await this.findAll({

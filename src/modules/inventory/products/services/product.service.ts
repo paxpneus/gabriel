@@ -23,6 +23,10 @@ import {
   ProductDetailedWithMovementsSummary,
   ProductSalesReportFilters,
   ProductSalesReportRow,
+  TireMatchProbability,
+  TireSearchCandidate,
+  TireSearchMode,
+  TireSearchParams,
 } from "../product.types";
 import supplierMappingService from "../../supplier-mapping/supplier-mapping.service";
 import productConfigService from "../../product-config/product_config.service";
@@ -30,6 +34,7 @@ import {
   resolveIntegrationsIdForUnitBusiness,
   assertEanNotOwnedByAnotherProduct,
   normalizeEan,
+  buildEanZeroVariants,
 } from "../../../handlers/tecinco/queues/helpers/product.helpers";
 import productWithMovementsRepository from "../repository/product-with-movements";
 import KitComponent from "../../kit-components/kit-component.model";
@@ -38,6 +43,13 @@ import rimService from "../../rims/rim.service";
 import tireMeasureService from "../../tire-measures/tire-measure.service";
 import unitBusinessService from "../../../company/unit-business/unit-business.service";
 import { productMappedToIntegrationWhere } from "../helpers/integration-mapping-filters";
+import { buildMeasureNameRegex, buildTokenRegex } from "../helpers/tire-search";
+import brandsService from "../../brands/brands.service";
+import expeditionBatchService from "../../../warehouse/expedition/batch/batch.service";
+import expeditionBatchItemsService from "../../../warehouse/expedition/batch-items/batch-items.service";
+import auditLogService from "../../../global/audit-logs/audit-log.service";
+import AuditLog from "../../../global/audit-logs/audit-log.model";
+import { AuditEntity } from "../../../global/audit-logs/audit-log.types";
 
 export class ProductService extends BaseService<Product, ProductRepository> {
   constructor() {
@@ -128,79 +140,158 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     return this.repository.findByIdWithRelations(id, unitBusinessId, options);
   }
 
+  // Resolve o produto de um código lido (exato + variações de zero à esquerda) no gtin de qualquer loja da integração e
+  // no DE x PARA dela — validação sempre por integração. Mais de um produto (inclusive exato vs. variação) é erro.
+  private async resolveProductIdByCode(
+    code: string,
+    unitBusinessId: string,
+    transaction?: Transaction,
+  ): Promise<{ productId: string; matchedCode: string } | null> {
+    const normalized = normalizeEan(code);
+    if (!normalized) return null;
+
+    const codes = buildEanZeroVariants(normalized);
+    const integrationsId = await resolveIntegrationsIdForUnitBusiness(unitBusinessId, transaction);
+
+    const [configs, mappings] = await Promise.all([
+      productConfigService.findGtinOwnersInIntegration(codes, integrationsId, null, transaction),
+      supplierMappingService.findAll({
+        where: { supplier_product_code: { [Op.in]: codes }, integrations_id: integrationsId },
+        attributes: ["product_id", "supplier_product_code"],
+        transaction,
+      }),
+    ]);
+
+    const productIds = [...new Set([...configs, ...mappings].map((row) => row.product_id))];
+    if (!productIds.length) return null;
+    if (productIds.length > 1) {
+      throw new Error(
+        `Código ${normalized} corresponde a mais de um produto (considerando zeros à esquerda) — não é possível identificar o produto`,
+      );
+    }
+
+    // Código como está salvo (exato ou variação) — o scan da expedição confere ele contra a etiqueta.
+    const matchedCode = configs[0]?.gtin ?? mappings[0]?.supplier_product_code ?? normalized;
+    return { productId: productIds[0], matchedCode };
+  }
+
+  // Bipe da expedição/entrada (scan-logs) — ver resolveProductIdByCode.
   async findByCode(
     code: string,
     unitBusinessId: string,
     options?: { transaction?: Transaction },
   ): Promise<{ product: Product; matchedCode: string } | null> {
-    const config = await ProductConfig.findOne({
-      where: {
-        unit_business_id: unitBusinessId,
-        gtin: code,
-      },
+    const resolved = await this.resolveProductIdByCode(code, unitBusinessId, options?.transaction);
+    if (!resolved) return null;
+
+    const product = await this.findById(resolved.productId, {
       transaction: options?.transaction,
     });
-
-    if (config) {
-      const product = await this.findById(config.product_id, {
-        transaction: options?.transaction,
-      });
-      if (product) return { product, matchedCode: code };
-    }
-
-    const integrationsId = await resolveIntegrationsIdForUnitBusiness(
-      unitBusinessId,
-      options?.transaction,
-    );
-
-    const mapping = await supplierMappingService.findOne({
-      where: { supplier_product_code: code, integrations_id: integrationsId },
-      include: [{ model: Product, as: "product" }],
-      transaction: options?.transaction,
-    });
-
-    const product = (mapping as any)?.product ?? null;
     if (!product) return null;
-
-    return { product, matchedCode: code };
+    return { product, matchedCode: resolved.matchedCode };
   }
 
   /**
-   * Busca somente leitura por código (gtin), escopada pela unit_business do
-   * usuário logado (quem chama resolve isso, ex.: pelo controller via
-   * getUserContext). Prioriza ProductConfig da própria unit business; se
-   * não achar, cai pro SupplierMapping da integração dessa unit business.
-   * Não cria nem altera nada — apenas lookup.
+   * Busca somente leitura por código (GET /by-code/:code), mesma regra dos bipes (ver resolveProductIdByCode),
+   * devolvendo o produto com as relações da unit_business do usuário logado. Não cria nem altera nada.
    */
   async findProductByCode(
     code: string,
     unitBusinessId: string,
   ): Promise<Product | null> {
-    const normalized = normalizeEan(code);
-    if (!normalized) return null;
+    const resolved = await this.resolveProductIdByCode(code, unitBusinessId);
+    if (!resolved) return null;
 
-    const config = await productConfigService.findOne({
-      where: {
-        unit_business_id: unitBusinessId,
-        gtin: normalized,
-      },
-    });
-    if (config) {
-      return this.repository.findByIdWithRelations(
-        config.product_id,
-        unitBusinessId,
-      );
+    return this.repository.findByIdWithRelations(resolved.productId, unitBusinessId);
+  }
+
+  // Histórico de auditoria do produto (entradas PRODUCT já trazem em `changes.affected` o que a operação mexeu).
+  async findAuditLogs(productId: string, params: QueryParams): Promise<PaginatedResult<AuditLog>> {
+    const product = await this.findById(productId, { attributes: ["id"] });
+    if (!product) throw new Error("Produto não encontrado");
+    return auditLogService.paginateByEntity(AuditEntity.PRODUCT, productId, params);
+  }
+
+  /**
+   * Auto busca de pneu: medida obrigatória e estrita no nome; índice de carga e marca só pontuam e ordenam, nunca excluem.
+   * IN_BATCH restringe aos itens do lote (da loja do usuário) que faltam bipar; null = lote não encontrado.
+   */
+  async searchTireCandidates(
+    params: TireSearchParams,
+    unitBusinessId: string,
+  ): Promise<TireSearchCandidate[] | null> {
+    let productIds: string[] | undefined;
+    if (params.mode === TireSearchMode.IN_BATCH) {
+      const batch = await expeditionBatchService.findOne({
+        where: { id: params.expeditionBatchId, unit_business_id: unitBusinessId },
+        attributes: ["id"],
+      });
+      if (!batch) return null;
+      productIds = await expeditionBatchItemsService.findPendingProductIds(batch.id);
+      if (!productIds.length) return [];
     }
 
-    const mapping = await supplierMappingService.findByProductCode(
-      normalized,
-      unitBusinessId,
-    );
-    if (!mapping) return null;
+    const [unitBusiness, matchedBrand] = await Promise.all([
+      unitBusinessService.findById(unitBusinessId, { attributes: ["integrations_id"] }),
+      params.brand ? brandsService.findSimilarBrand(params.brand) : null,
+    ]);
 
-    return this.repository.findByIdWithRelations(
-      mapping.product_id,
+    const measureNameRegex = buildMeasureNameRegex(params.measure);
+    const products = await this.repository.findTireCandidates({
+      measureNameRegex,
+      productIds,
       unitBusinessId,
+      integrationsId: unitBusiness?.integrations_id,
+    });
+
+    const measurePattern = new RegExp(measureNameRegex, "gi");
+    const loadIndexPattern = params.loadIndex ? buildTokenRegex(params.loadIndex) : null;
+    const brandPattern = params.brand ? buildTokenRegex(params.brand) : null;
+    const total = Number(!!loadIndexPattern) + Number(!!brandPattern);
+
+    const candidates = products.map((item): TireSearchCandidate => {
+      const { mapped_in_user_integration, ...product } = item.get({ plain: true }) as unknown as Record<string, unknown>;
+      // Índice/marca procurados no nome sem a medida, pra não casar pedaço dela.
+      const nameWithoutMeasure = String(product.name).replace(measurePattern, " ");
+
+      let loadIndexMatch: boolean | null = null;
+      if (loadIndexPattern) loadIndexMatch = loadIndexPattern.test(nameWithoutMeasure);
+
+      // Marca bate pelo cadastro (brand_id da marca parecida) ou pelo texto no nome — pneu sem brand_id ainda pontua.
+      let brandMatch: boolean | null = null;
+      if (brandPattern) {
+        brandMatch =
+          (!!matchedBrand && product.brand_id === matchedBrand.id) ||
+          brandPattern.test(nameWithoutMeasure);
+      }
+
+      const matched = Number(!!loadIndexMatch) + Number(!!brandMatch);
+      let probability: TireMatchProbability | null = null;
+      if (total > 0 && matched === total) probability = TireMatchProbability.HIGH;
+      else if (total > 0 && matched === 0) probability = TireMatchProbability.UNLIKELY;
+      else if (total > 0) probability = TireMatchProbability.MEDIUM;
+
+      return {
+        product,
+        matches: { load_index: loadIndexMatch, brand: brandMatch },
+        score: { matched, total },
+        probability,
+        mapped_in_user_integration: !!mapped_in_user_integration,
+      };
+    });
+
+    // Ordem: probabilidade; empate em MEDIA → quem bateu o índice antes de quem bateu só a marca; depois nome.
+    const probabilityRank = (probability: TireMatchProbability | null): number => {
+      if (probability === TireMatchProbability.HIGH) return 0;
+      if (probability === TireMatchProbability.MEDIUM) return 1;
+      if (probability === TireMatchProbability.UNLIKELY) return 2;
+      return 0;
+    };
+    return candidates.sort(
+      (a, b) =>
+        probabilityRank(a.probability) - probabilityRank(b.probability) ||
+        Number(!!b.matches.load_index) - Number(!!a.matches.load_index) ||
+        String(a.product.name).localeCompare(String(b.product.name)),
     );
   }
 
@@ -208,7 +299,8 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     data: Partial<ProductCreationAttributes> & {
       config?: Partial<CreationAttributes<ProductConfig>>;
     },
-    options?: CreateOptions,
+    // userId: quem editou (auditoria da remoção de DE x PARA de outro produto); não vai pro Sequelize.
+    options?: CreateOptions & { userId?: string | null },
   ): Promise<Product> {
     const { config, ...productData } = data;
 
@@ -235,6 +327,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
               candidates: [{ field: "gtin", value: config.gtin }],
               logPrefix: `[ProductService.create] product_id=${product.id}`,
               transaction,
+              audit: { userId: options?.userId ?? null },
             });
           }
 
@@ -270,7 +363,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
     data: Partial<ProductCreationAttributes> & {
       config?: Partial<CreationAttributes<ProductConfig>>;
     },
-    options?: Partial<UpdateOptions>,
+    options?: Partial<UpdateOptions> & { userId?: string | null },
   ): Promise<Product> {
     const { config, ...productData } = data;
 
@@ -298,6 +391,7 @@ export class ProductService extends BaseService<Product, ProductRepository> {
               candidates: [{ field: "gtin", value: config.gtin }],
               logPrefix: `[ProductService.update] product_id=${id}`,
               transaction,
+              audit: { userId: options?.userId ?? null },
             });
           }
 

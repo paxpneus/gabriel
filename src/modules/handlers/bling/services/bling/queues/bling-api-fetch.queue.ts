@@ -30,6 +30,7 @@ import Contact from "../../../../../sales/contacts/contacts.model";
 import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import { UNMAPPED_REASON_NEW_CATALOG_PRODUCT } from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.types";
 import {
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,
@@ -50,6 +51,7 @@ import {
   findProductConfigBySku,
 } from "../../../../../../shared/utils/xml/invoice-xml";
 import brandsService from "../../../../../inventory/brands/brands.service";
+import { ProductConfigAttributes } from "../../../../../inventory/product-config/product_config.types";
 import Group from "../../../../../inventory/groups/group/group.model";
 import Subgroup from "../../../../../inventory/groups/subgroup/subgroup.model";
 import { GroupType } from "../../../../../inventory/groups/group/group.types";
@@ -60,7 +62,11 @@ import {
   assertEanNotOwnedByAnotherProduct,
   isProductOwnedByIntegration,
   EanConflictError,
+  isEanBlockedForProduct,
+  isCodeOwnedByAnotherProduct,
+  resolveProductIdBySupplierMappingEan,
 } from "../../../../tecinco/queues/helpers/product.helpers";
+import { buildBlingProductErpData } from "../helpers/erp-data";
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
 import { getMagentoIntegration } from "../../../../magentoV2/api/magentoV2_api";
 import stockMovementsService from "../../../../../inventory/stock/stock-movements/stock-movements.service";
@@ -756,40 +762,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     if (product || !ean) return product;
 
-    const supplierProductCode: string = ean;
-    const cleanSupplierCnpj = params.supplierCnpj
-      ? cleanDocument(params.supplierCnpj)
-      : null;
-
+    // DE x PARA pelo EAN da nota, com zero à esquerda; ambíguo → null (item vira não mapeado).
     const integration = await getBlingIntegration("Bling");
+    const productId = await resolveProductIdBySupplierMappingEan(ean, integration.id, params.logPrefix);
+    if (!productId) return null;
 
-    const supplierMapping = cleanSupplierCnpj
-      ? ((await SupplierMapping.findOne({
-          where: {
-            supplier_product_code: supplierProductCode,
-            supplier_cnpj: cleanSupplierCnpj,
-            integrations_id: integration.id,
-          },
-          order: [["updatedAt", "DESC"]],
-        })) ??
-        (await SupplierMapping.findOne({
-          where: {
-            supplier_product_code: supplierProductCode,
-            integrations_id: integration.id,
-          },
-          order: [["updatedAt", "DESC"]],
-        })))
-      : await SupplierMapping.findOne({
-          where: {
-            supplier_product_code: supplierProductCode,
-            integrations_id: integration.id,
-          },
-          order: [["updatedAt", "DESC"]],
-        });
-
-    if (!supplierMapping) return null;
-
-    product = await Product.findByPk(supplierMapping.product_id);
+    product = await Product.findByPk(productId);
 
     if (product) {
       console.log(
@@ -882,6 +860,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // Magento/kardex/estoque, e não registra unmapped — só tenta excluir
     // localmente o que já existir (ver handleDeactivatedBlingProduct).
     if (blingProduct.situacao === "E") {
+      // Criar Produto manual: falha com motivo (polling do front mostra "failed") em vez de terminar como sucesso.
+      if (opts.create) {
+        throw new UnrecoverableError(
+          `O produto "${blingProduct.nome}" está excluído ou desativado no Bling. Esse produto não pode ser criado. [blingId=${blingProduct.id}]`,
+        );
+      }
       await this.handleDeactivatedBlingProduct(
         blingProduct,
         unitBusiness,
@@ -890,13 +874,38 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       return;
     }
 
+    // Mapping não principal só resolve o produto e atualiza erp_data — nem o backfill de SupplierMapping roda.
+    let mapping = await integrationMappingService.findProductMappingByExternalId(
+      integration.id,
+      String(blingProduct.id),
+    );
+    const hadMapping = !!mapping;
+
+    // Criar Produto manual com o código já vinculado a um produto existente: não há o que criar — falha com o
+    // produto (antes do resolve, que já faria backfill de DE x PARA). Mapping órfão segue pra criação como antes.
+    if (opts.create && mapping) {
+      const linkedProduct = await productService.findById(mapping.internal_id, { attributes: ["id", "name"] });
+      if (linkedProduct) {
+        throw new UnrecoverableError(
+          `Este produto já existe no sistema: o código ${blingProduct.id} do Bling já está vinculado ao produto "${linkedProduct.name}". Em vez de criar, mapeie este item para esse produto. [blingId=${blingProduct.id}, produto ${linkedProduct.id}]`,
+        );
+      }
+    }
+
+    // EAN bloqueado pro produto (EAN físico confirmado de outro, ou outro zero à esquerda em outro produto):
+    // não grava gtin/DE x PARA nem checa conflito (gtin_erp continua).
+    let eanBlocked =
+      !!mapping && (await isEanBlockedForProduct(blingProduct.gtin, mapping.internal_id, integration.id));
+    // sku omitido só quando o produto é criado aqui com sku que já é de outro produto (ver criação abaixo).
+    let skuOmitted = false;
+
     // ─── Resolve o produto SÓ via integration mapping (fonte de verdade) ───────
     // Sem fallback por EAN/ProductConfig.sku/SupplierMapping — se não tem
     // mapping, não é esse produto, ponto final (ver resolveProductWithMapping).
     let existingProduct = await resolveProductWithMapping({
       unitBusinessId: unitBusiness.id,
       systemId: String(blingProduct.id),
-      ean: blingProduct.gtin,
+      ean: mapping?.is_primary === false || eanBlocked ? undefined : blingProduct.gtin,
       logPrefix,
     });
 
@@ -930,11 +939,27 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         // IntegrationMapping e cai pro resto da função normalmente — dali em
         // diante ela já trata `existingProduct` genericamente (KIT, Magento,
         // kardex, estoque).
+        // Igual à criação Tecinco: código já de outro produto na integração (gtin: exato, outro zero à esquerda ou
+        // EAN físico confirmado; sku: exato) não bloqueia — o produto nasce sem o campo e o resto do job também omite.
+        const gtin = blingProduct.gtin?.trim();
+        const [gtinTaken, skuTaken] = await Promise.all([
+          gtin ? isCodeOwnedByAnotherProduct({ code: gtin, field: "gtin", integrationsId: integration.id }) : false,
+          // KIT tem sku sintético (nunca colide), por isso fica fora da checagem.
+          !isKit && blingProduct.codigo
+            ? isCodeOwnedByAnotherProduct({ code: blingProduct.codigo, field: "sku", integrationsId: integration.id })
+            : false,
+        ]);
+        if (gtinTaken) console.warn(`${logPrefix} — gtin=${gtin} já pertence a outro produto nessa integração — produto criado sem gtin`);
+        if (skuTaken) console.warn(`${logPrefix} — sku=${blingProduct.codigo} já pertence a outro produto nessa integração — produto criado sem sku`);
+        eanBlocked = eanBlocked || gtinTaken;
+        skuOmitted = skuTaken;
+
         existingProduct = await this.createProductFromBlingData(
           blingProduct,
           unitBusiness,
           integration,
           logPrefix,
+          { gtin: gtinTaken, sku: skuTaken },
           apiFetch.cascadeMapUnmappedId,
         );
       } else {
@@ -978,7 +1003,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             external_id: String(blingProduct.id),
             product_name: blingProduct.nome,
             quantity: 0,
-            reason: "Produto novo, precisa de mapeamento manual",
+            reason: UNMAPPED_REASON_NEW_CATALOG_PRODUCT,
             type: "ERROR_CATALOG",
             status: "UNMAPPED",
           });
@@ -986,6 +1011,32 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
             `${logPrefix} — produto novo, registrado em unmapped_invoice_products pra revisão manual`,
           );
         }
+        return;
+      }
+    }
+
+    const physicalQuantity =
+      (await this.fetchPhysicalStock([blingProduct.id])).get(blingProduct.id) ??
+      0;
+
+    // Auto-map/criação acima acabaram de criar o mapping — busca de novo pra saber se nasceu principal.
+    mapping ??= await integrationMappingService.findProductMappingByExternalId(
+      integration.id,
+      String(blingProduct.id),
+    );
+    // Produto resolvido só agora (auto-map/criação): checa o override contra ele.
+    if (!hadMapping) {
+      eanBlocked = eanBlocked || (await isEanBlockedForProduct(blingProduct.gtin, existingProduct.id, integration.id));
+    }
+    if (mapping) {
+      await integrationMappingService.updateErpData(
+        mapping.id,
+        buildBlingProductErpData(blingProduct, physicalQuantity),
+      );
+      if (!mapping.is_primary) {
+        console.log(
+          `${logPrefix} — mapping não principal (produto id=${existingProduct.id}) — só erp_data atualizado, nada mais gravado`,
+        );
         return;
       }
     }
@@ -1003,7 +1054,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         productId: existingProduct.id,
         unitBusinessId: unitBusiness.id,
         candidates: [
-          { field: "ean", value: blingProduct.gtin },
+          { field: "ean", value: eanBlocked ? undefined : blingProduct.gtin },
           { field: "ean_tribut", value: blingProduct.gtinEmbalagem },
         ],
         logPrefix,
@@ -1015,6 +1066,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           title: "Conflito de EAN entre produtos (Bling)",
           message: `${error.message} | blingId=${blingProduct.id} | sku=${blingProduct.codigo}`,
         });
+        // gtin_erp/sku_erp são só leitura e precisam refletir o ERP mesmo no conflito.
+        await ProductConfig.update(
+          { gtin_erp: blingProduct.gtin?.trim() || null, sku_erp: blingProduct.codigo?.trim() || null },
+          { where: { product_id: existingProduct.id, unit_business_id: unitBusiness.id } },
+        );
       }
       throw error;
     }
@@ -1110,10 +1166,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // MAGENTO_SYNC (ver enqueue após a transaction, abaixo).
     const resolvedPrice = Number(blingProduct.preco);
 
-    const physicalQuantity =
-      (await this.fetchPhysicalStock([blingProduct.id])).get(blingProduct.id) ??
-      0;
-
     // ─── A partir daqui, tudo é escrita em banco → uma única transaction ───────
     let product: Product;
     let averageCostResolved: number | undefined;
@@ -1170,14 +1222,37 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           hasMagentoMapping = magentoIdMap.has(product.id);
         }
 
+        // Produto já existente com sku de outro produto na integração: sincroniza sem o sku (como o skuOmitted do
+        // Tecinco) — senão o trigger m273 derrubava o sync inteiro do produto. KIT tem sku sintético e fica fora.
+        if (
+          !skuOmitted &&
+          !isKit &&
+          configSku &&
+          (await isCodeOwnedByAnotherProduct({
+            code: configSku,
+            field: "sku",
+            integrationsId: integration.id,
+            excludeProductId: product.id,
+          }))
+        ) {
+          console.warn(`${logPrefix} — sku=${configSku} já pertence a outro produto nessa integração — sincronizado sem sku`);
+          skuOmitted = true;
+        }
+
+        // EAN bloqueado / sku já de outro produto: não grava o campo (gtin_erp/sku_erp abaixo continuam).
+        const codeFields: Pick<ProductConfigAttributes, "gtin" | "sku"> = {};
+        if (!skuOmitted) codeFields.sku = configSku;
+        if (!eanBlocked) codeFields.gtin = blingProduct.gtin;
+
         await ProductConfig.upsert(
           {
             product_id: product.id,
             unit_business_id: unitBusiness.id,
-            sku: configSku,
             ...(hasMagentoMapping ? {} : { price: resolvedPrice }),
-            gtin: blingProduct.gtin,
+            ...codeFields,
             gtin_package: blingProduct.gtinEmbalagem,
+            gtin_erp: blingProduct.gtin?.trim() || null,
+            sku_erp: blingProduct.codigo?.trim() || null,
             ncm: blingProduct.tributacao?.ncm,
             cest: blingProduct.tributacao?.cest,
             supplier_cost_price: newSupplierCost,
@@ -1220,10 +1295,27 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           );
         }
 
+        // Saldo da última movimentação prevalece sobre o físico da Bling; sem kardex ou com saldo negativo, fica o da Bling.
+        const lastMovement = await stockMovementsService.getCurrentBalance(
+          product.id,
+          unitBusiness.id,
+          transaction,
+        );
+        const kardexBalance = lastMovement
+          ? Number(lastMovement.balance_quantity)
+          : null;
+        let stockQuantity = physicalQuantity;
+        if (kardexBalance != null && kardexBalance >= 0 && kardexBalance !== physicalQuantity) {
+          console.warn(
+            `[BLING_API_FETCH] Estoque Bling divergente do kardex: sku=${configSku} | bling=${physicalQuantity} | kardex=${kardexBalance} — usando kardex`,
+          );
+          stockQuantity = kardexBalance;
+        }
+
         await this.syncStockAndBatches({
           product,
           unitBusiness,
-          newQuantity: physicalQuantity,
+          newQuantity: stockQuantity,
           averageCost: average_cost,
           transaction,
         });
@@ -1319,8 +1411,17 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     unitBusiness: UnitBusiness,
     integration: Awaited<ReturnType<typeof getBlingIntegration>>,
     logPrefix: string,
+    // Campos já de outro produto na integração (checados por quem chama): o produto nasce sem eles.
+    omit: { gtin: boolean; sku: boolean },
     cascadeMapUnmappedId?: string,
   ): Promise<Product> {
+    const config: Partial<ProductConfigAttributes> = {
+      unit_business_id: unitBusiness.id,
+      price: Number(blingProduct.preco) || 0,
+    };
+    if (!omit.sku) config.sku = blingProduct.codigo;
+    if (!omit.gtin) config.gtin = blingProduct.gtin;
+
     let newProduct: Product;
     try {
       newProduct = await productService.create({
@@ -1328,12 +1429,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         type: blingProduct.formato === "E" ? "KIT" : "UNIT",
         integrations_id: integration.id,
         category: "TIRE",
-        config: {
-          unit_business_id: unitBusiness.id,
-          sku: blingProduct.codigo,
-          gtin: blingProduct.gtin,
-          price: Number(blingProduct.preco) || 0,
-        },
+        config,
       });
     } catch (err: any) {
       // Qualquer erro aqui (conflito de EAN, constraint do banco, etc.) é
@@ -1429,6 +1525,26 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     unitBusiness: UnitBusiness,
     logPrefix: string,
   ): Promise<void> {
+    // Código não principal é só leitura: não desassocia/desativa o produto (o principal ainda pode estar ativo).
+    const blingIntegrationId = (await getBlingIntegration("Bling")).id;
+    const mapping = await integrationMappingService.findProductMappingByExternalId(
+      blingIntegrationId,
+      String(blingProduct.id),
+    );
+    if (mapping && !mapping.is_primary) {
+      console.log(`${logPrefix} — situacao=E na Bling em mapping não principal, ignorado.`);
+      return;
+    }
+    // Principal com outro código do produto na Bling (cadastro duplicado sendo limpo): só esse código sai e o próximo
+    // vira principal — o produto não é aposentado.
+    if (
+      mapping &&
+      (await integrationMappingService.retirePrimaryCodeIfDuplicated(mapping.id, mapping.internal_id, blingIntegrationId))
+    ) {
+      console.log(`${logPrefix} — situacao=E no código principal, produto segue pelo outro código Bling (promovido a principal).`);
+      return;
+    }
+
     const product = await resolveProductWithMapping({
       unitBusinessId: unitBusiness.id,
       systemId: String(blingProduct.id),

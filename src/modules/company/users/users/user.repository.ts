@@ -53,7 +53,7 @@ export class UserRepository extends BaseRepository<User> {
         {
           model: UnitBusiness,
           as: "availableUnitBusinesses",
-          attributes: ["id", "name", "number", "id_system", "cnpj"],
+          attributes: ["id", "name", "number", "id_system", "cnpj", "integrations_id"],
         },
         {
           model: UserConfig,

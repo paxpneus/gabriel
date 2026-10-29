@@ -31,7 +31,12 @@ import { InvoiceUnitBusinessAttributesStatus } from "../../../modules/warehouse/
 import unitBusinessService from "../../../modules/company/unit-business/unit-business.service";
 import { getTCarIntegration } from "../../../modules/handlers/tecinco/api/tecinco_api";
 import integrationsService from "../../../modules/integrations/integrations/integrations.service";
-import { resolveIntegrationsIdForUnitBusiness } from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
+import {
+  findAnotherProductUsingEan,
+  isCodeOwnedByAnotherProduct,
+  resolveIntegrationsIdForUnitBusiness,
+  resolveProductIdBySupplierMappingEan,
+} from "../../../modules/handlers/tecinco/queues/helpers/product.helpers";
 import transporterService from "../../../modules/warehouse/transporter/transporter.service";
 import { generateDanfePdfBuffer } from "./danfe-generator";
 import uploaderQueue from "../../../modules/handlers/uploader/uploader.queue";
@@ -240,12 +245,21 @@ async function upsertTecincoCrossConfig(
         await existingMapping.update({ supplier_cnpj: senderCnpj });
       }
     } else if (supplierProductCode) {
-      await SupplierMapping.create({
-        product_id: product.id,
-        supplier_cnpj: senderCnpj,
-        supplier_product_code: supplierProductCode,
-        integrations_id: integrationsId,
-      });
+      // Código já de outro produto (exato ou com zero à esquerda, inclui EAN físico confirmado): só pula o
+      // DE x PARA — nem quebra o import da nota (unique) nem cria variação ambígua pro bipe.
+      const otherOwnerId = await findAnotherProductUsingEan(supplierProductCode, product.id, integrationsId);
+      if (otherOwnerId) {
+        console.warn(
+          `${logPrefix} — código ${supplierProductCode} já pertence ao produto ${otherOwnerId} nessa integração — SupplierMapping do produto ${product.id} não criado`,
+        );
+      } else {
+        await SupplierMapping.create({
+          product_id: product.id,
+          supplier_cnpj: senderCnpj,
+          supplier_product_code: supplierProductCode,
+          integrations_id: integrationsId,
+        });
+      }
     }
 
     // ─── ProductConfig ──────────────────────────────────────────────────────
@@ -253,11 +267,22 @@ async function upsertTecincoCrossConfig(
       where: { product_id: product.id, unit_business_id: unitBusiness.id },
     });
 
+    // SKU já gravado vem do sync do ERP (pode ter sido omitido de propósito) — a nota nunca sobrescreve. Sem SKU,
+    // o cProd só entra se não for de outro produto na integração.
+    let configSku = existingConfig?.sku || "";
+    if (
+      !configSku &&
+      sku &&
+      !(await isCodeOwnedByAnotherProduct({ code: sku, field: "sku", integrationsId, excludeProductId: product.id }))
+    ) {
+      configSku = sku;
+    }
+
     await ProductConfig.upsert(
       {
         product_id: product.id,
         unit_business_id: unitBusiness.id,
-        sku: sku ?? existingConfig?.sku ?? "",
+        sku: configSku,
         price: existingConfig?.price ?? unitPrice, // não sobrescreve preço se já existe
         supplier_cost_price: unitPrice,
         average_cost: existingConfig?.average_cost // não sobrescreve custo médio já calculado
@@ -376,31 +401,11 @@ async function findProductForInvoiceItem(params: {
     return null;
   }
 
-  const cleanSupplierCnpj = params.supplierCnpj
-    ? cleanDocument(params.supplierCnpj)
-    : null;
+  // DE x PARA pelo EAN da nota, com zero à esquerda; ambíguo → null (item vira não mapeado).
+  const productId = await resolveProductIdBySupplierMappingEan(ean, integrationsId, params.logPrefix);
+  if (!productId) return null;
 
-  const supplierMapping = cleanSupplierCnpj
-    ? ((await SupplierMapping.findOne({
-        where: {
-          supplier_product_code: ean,
-          supplier_cnpj: cleanSupplierCnpj,
-          integrations_id: integrationsId,
-        },
-        order: [["updatedAt", "DESC"]],
-      })) ??
-      (await SupplierMapping.findOne({
-        where: { supplier_product_code: ean, integrations_id: integrationsId },
-        order: [["updatedAt", "DESC"]],
-      })))
-    : await SupplierMapping.findOne({
-        where: { supplier_product_code: ean, integrations_id: integrationsId },
-        order: [["updatedAt", "DESC"]],
-      });
-
-  if (!supplierMapping) return null;
-
-  product = await Product.findByPk(supplierMapping.product_id);
+  product = await Product.findByPk(productId);
 
   if (product) {
     console.log(

@@ -5,6 +5,7 @@ import {
   IntegrationMappingCreationAttributes,
   EntityType,
   ENTITY_TYPES,
+  ProductErpData,
 } from "./integration-mapping.types";
 import { v4 as uuidv4 } from "uuid";
 
@@ -21,6 +22,8 @@ class IntegrationMapping
   public integrations_id!: string;
   public external_id!: string;
   public unit_business_id!: string;
+  public is_primary!: boolean;
+  public erp_data!: ProductErpData | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -52,6 +55,15 @@ IntegrationMapping.init(
     external_id: {
       type: DataTypes.STRING(100),
       allowNull: false,
+    },
+    is_primary: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    erp_data: {
+      type: DataTypes.JSONB,
+      allowNull: true,
     },
   },
   {

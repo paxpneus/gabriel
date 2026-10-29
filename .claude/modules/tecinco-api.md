@@ -1,5 +1,6 @@
 # Tecinco API auth/session
 
+- **Trava de escrita por ambiente**: `TECINCO_WRITES_ENABLED = NODE_ENV === "production"` em `conferencias-estoque.service.ts` — `validarItem`/`conferir`/`autoConferir` (únicos POSTs de dado; disparados por `finishBatch` → `postTecincoConferencia` em lote de expedição Tecinco) lançam fora de produção. Login/logout/seleção de filial (POST de sessão) e GETs seguem liberados.
 `src/modules/handlers/tecinco/api/tecinco_api.ts`
 
 - `sessionPool` (a `Map<branchId, TCarBranchSession>`) caches one session token per branch, in memory only — lost on every process restart. Both `ensureSession` (cache-miss login) and `onResponseError`'s 401 handler (session-expired relogin) call `doTCarLogin(branchId)`, and each already serializes concurrent calls *for the same branch* via the branch's own `isRefreshing`/`failedQueue`.

@@ -8,6 +8,7 @@ import {
 import {
   findTecincoCollidingFields,
   getCachedTecincoDuplicateValueSets,
+  findTecincoCollidingCodes,
 } from "../../../../scripts/tecinco/tecinco-duplicate-detection";
 import { tecincoUnitBusinessForPopulate } from "../../../../shared/constants/tecinco-units";
 import { alertService } from "../../../../shared/providers/mail-provider/nodemailer.alert";
@@ -48,6 +49,10 @@ import { extractProductMeasureAndLine } from "../../bling/services/bling/queues/
 import {
   normalizeEan,
   ensureSupplierMappings,
+  isEanBlockedForProduct,
+  findAnotherProductUsingEan,
+  findPhysicalOverridesForEans,
+  buildEanZeroVariants,
   resolveProductWithMapping,
   resolveProductBySupplierMapping,
   assertEanNotOwnedByAnotherProduct,
@@ -58,8 +63,13 @@ import {
 } from "./helpers/product.helpers";
 import UnmappedInvoiceProduct from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
+import {
+  UNMAPPED_REASON_INVOICE_PRODUCT_NOT_IN_DB,
+  UNMAPPED_REASON_NEW_CATALOG_PRODUCT,
+} from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.types";
 import invoiceItemsService from "../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import { upsertCustomerFromTCar } from "./helpers/customer.helper";
+import { buildTecincoProductErpData } from "./helpers/erp-data";
 import {
   getCachedTCarIntegration,
   getCachedUnitBusinessByNumber,
@@ -468,6 +478,29 @@ export class TCarUpsertQueue extends BaseQueueService<
     };
   }
 
+  // Por campo duplicado no catálogo: true quando TODOS os outros códigos com o mesmo valor estão mapeados pro mesmo
+  // produto local (índice em cache no worker + uma query de mappings).
+  private async findDuplicatesOnlyAmongOwnCodes(
+    product: TCarProdutoPayload,
+    systemId: string,
+    productId: string,
+    integrationsId: string,
+    logPrefix: string,
+  ): Promise<{ sku: boolean; ean: boolean }> {
+    const duplicateSets = await getCachedTecincoDuplicateValueSets(tecincoUnitBusinessForPopulate.map(Number), logPrefix);
+    const colliding = findTecincoCollidingCodes(
+      { coded: product.epctb_coded, sku: product.epctb_codigofabrica, ean: product.epctb_ean },
+      duplicateSets,
+      systemId,
+    );
+    const owners = await integrationMappingService.findProductMappingsByExternalIds(integrationsId, [
+      ...new Set([...colliding.sku, ...colliding.ean]),
+    ]);
+    const onlyOwn = (codes: string[]) =>
+      codes.length > 0 && codes.every((code) => owners.get(code)?.internal_id === productId);
+    return { sku: onlyOwn(colliding.sku), ean: onlyOwn(colliding.ean) };
+  }
+
   private async processProduct(
     action: TCarAction,
     data: TCarProdutoPayload,
@@ -486,6 +519,23 @@ export class TCarUpsertQueue extends BaseQueueService<
       // Produto nunca mais é deletado pelo sistema — fica de histórico, só
       // desativado (is_active=false) quando encontrado via integration mapping.
       const integrations = await getCachedTCarIntegration();
+      // Código não principal é só leitura: não desativa o produto (o principal ainda pode estar ativo).
+      const deletedMapping = await integrationMappingService.findProductMappingByExternalId(
+        integrations.id,
+        systemId,
+      );
+      if (deletedMapping && !deletedMapping.is_primary) {
+        console.log(`${logPrefix} — mapping não principal, produto não desativado`);
+        return;
+      }
+      // Principal com outro código do produto na Tecinco: só esse código sai (o próximo vira principal).
+      if (
+        deletedMapping &&
+        (await integrationMappingService.retirePrimaryCodeIfDuplicated(deletedMapping.id, deletedMapping.internal_id, integrations.id))
+      ) {
+        console.log(`${logPrefix} — código principal excluído, produto segue ativo pelo outro código (promovido a principal)`);
+        return;
+      }
       const mapped = await integrationMappingService.findEntityByMapping(
         "PRODUCT",
         integrations.id,
@@ -510,10 +560,19 @@ export class TCarUpsertQueue extends BaseQueueService<
       // são lidos direto de `data`, então sem isso aqui o produto seria
       // criado sem esses dados.
       const produtoService = new TCarProdutoService();
-      const detalhe = await produtoService.obterProduto(
-        branchId ?? Number(data.fll_codigo),
-        systemId,
-      );
+      let detalhe: any;
+      try {
+        detalhe = await produtoService.obterProduto(branchId ?? Number(data.fll_codigo), systemId);
+      } catch (error: any) {
+        // 404 = código não existe na Tecinco: falha na hora com motivo legível (retry não resolve; sem isso o
+        // polling ficava ~15 min em "delayed"). Erro de rede/5xx segue com retry.
+        if (error?.response?.status === 404) {
+          throw new UnrecoverableError(
+            `O código ${systemId} não foi encontrado no Tecinco. Confira o código do produto pendente ou encaminhe para o time técnico. [id_system=${systemId}, HTTP 404]`,
+          );
+        }
+        throw error;
+      }
       const detalheData = (detalhe?.data ?? detalhe) as
         | TCarProdutoPayload
         | undefined;
@@ -524,7 +583,7 @@ export class TCarUpsertQueue extends BaseQueueService<
         // código — sinal de que o produto não existe mais na Tecinco pra
         // esse systemId, não uma falha transitória. Retry não resolve.
         throw new UnrecoverableError(
-          `${logPrefix} — não foi possível buscar detalhe do produto na Tecinco pra criação manual`,
+          `O Tecinco não devolveu os dados do código ${systemId}, então o produto não pode ser criado. Encaminhe para o time técnico. [id_system=${systemId}]`,
         );
       }
 
@@ -562,9 +621,13 @@ export class TCarUpsertQueue extends BaseQueueService<
     // manualmente (opts.create) a partir de um unmapped e o código já
     // pertence a outro produto na mesma integração — ver isCodeOwnedByAnotherProduct.
     let ean = normalizeEan(data.epctb_ean);
+    // EAN cru do ERP pra ProductConfig.gtin_erp — não é zerado pelas omissões abaixo.
+    const erpEan = ean ?? null;
     let codigoFabrica = data.epctb_codigofabrica
       ? String(data.epctb_codigofabrica).trim()
       : undefined;
+    // SKU cru do ERP pra ProductConfig.sku_erp — não é zerado pelas omissões/sanitização abaixo.
+    const erpSku = codigoFabrica ?? null;
 
     // A Tecinco opera por loja — toda resolução de produto por EAN/
     // SupplierMapping precisa saber exatamente qual unit business é a da
@@ -578,6 +641,12 @@ export class TCarUpsertQueue extends BaseQueueService<
       : null;
 
     if (!operationUnitBusiness) {
+      // Criar Produto manual: falha com motivo (polling do front mostra "failed"); no sync só ignora.
+      if (opts.create) {
+        throw new UnrecoverableError(
+          `Não foi possível identificar a loja do Tecinco para criar o produto. Encaminhe este erro para o time técnico. [branchId=${resolvedBranchId || "?"}, id_system=${systemId}]`,
+        );
+      }
       console.warn(
         `${logPrefix} — unit business não resolvida para branchId=${resolvedBranchId || "?"} — produto ignorado (sem loja da operação não há como resolver com segurança)`,
       );
@@ -632,6 +701,12 @@ export class TCarUpsertQueue extends BaseQueueService<
     );
 
     if (!isAllowedGroup) {
+      // Criar Produto manual: falha com motivo (polling do front mostra "failed"); no sync só ignora.
+      if (opts.create) {
+        throw new UnrecoverableError(
+          `O produto "${data.epctb_nome?.trim() ?? systemId}" é do grupo "${resolvedGroupName || "sem grupo"}" no Tecinco, e o sistema só cadastra pneus. Esse produto não pode ser criado. [id_system=${systemId}]`,
+        );
+      }
       console.log(
         `${logPrefix} — grupo "${resolvedGroupName || "(vazio)"}" fora dos grupos de pneus permitidos — produto ignorado`,
       );
@@ -665,11 +740,43 @@ export class TCarUpsertQueue extends BaseQueueService<
     let skuOmitted = !!opts.skuDuplicated;
     let eanOmitted = !!opts.eanDuplicated;
 
+    // Mapping não principal só resolve o produto e atualiza erp_data — nem o backfill de SupplierMapping roda.
+    let mapping = await integrationMappingService.findProductMappingByExternalId(
+      integrations.id,
+      systemId,
+    );
+    const hadMapping = !!mapping;
+
+    // Duplicidade só entre códigos do MESMO produto local (ex.: principal e não principal com o mesmo SKU) não é
+    // ambígua: o produto não perde o SKU/EAN por colidir consigo mesmo.
+    if (mapping && isDuplicatedInCatalog) {
+      const ownOnly = await this.findDuplicatesOnlyAmongOwnCodes(data, systemId, mapping.internal_id, integrations.id, logPrefix);
+      if (ownOnly.sku) skuOmitted = false;
+      if (ownOnly.ean) eanOmitted = false;
+    }
+
+    // Criar Produto manual com o código já vinculado a um produto existente: não há o que criar — falha com o
+    // produto (antes do resolve, que já faria backfill de DE x PARA). Mapping órfão segue pra criação como antes.
+    if (opts.create && mapping) {
+      const linkedProduct = await productService.findById(mapping.internal_id, { attributes: ["id", "name"] });
+      if (linkedProduct) {
+        throw new UnrecoverableError(
+          `Este produto já existe no sistema: o código ${systemId} do Tecinco já está vinculado ao produto "${linkedProduct.name}". Em vez de criar, mapeie este item para esse produto. [id_system=${systemId}, produto ${linkedProduct.id}]`,
+        );
+      }
+    }
+
+    // EAN bloqueado pro produto (EAN físico confirmado de outro, ou outro zero à esquerda em outro produto):
+    // omite gtin/DE x PARA (gtin_erp continua) e pula a checagem de conflito.
+    let eanBlocked =
+      !!mapping && (await isEanBlockedForProduct(ean, mapping.internal_id, integrations.id));
+    if (eanBlocked) eanOmitted = true;
+
     // ─── Resolve produto SÓ por integration mapping ────────────────────────────
     let product = await resolveProductWithMapping({
       unitBusinessId: operationUnitBusiness.id,
       systemId,
-      ean: eanOmitted ? undefined : ean,
+      ean: eanOmitted || mapping?.is_primary === false ? undefined : ean,
       logPrefix,
     });
 
@@ -765,7 +872,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             ]
               .filter(Boolean)
               .join(", ")}) — mais de um produto usa o mesmo valor, então não dá pra mapear automaticamente com segurança. Precisa de revisão manual.`
-          : "Produto novo, precisa de mapeamento manual";
+          : UNMAPPED_REASON_NEW_CATALOG_PRODUCT;
         const existingUnmapped = await UnmappedInvoiceProduct.findOne({
           where: {
             invoice_id: null,
@@ -810,6 +917,41 @@ export class TCarUpsertQueue extends BaseQueueService<
       }
     }
 
+    // Auto-map/criação acima acabaram de criar o mapping — busca de novo pra saber se nasceu principal.
+    mapping ??= await integrationMappingService.findProductMappingByExternalId(
+      integrations.id,
+      systemId,
+    );
+    // Produto resolvido só agora (auto-map/criação): checa o bloqueio contra ele.
+    if (!hadMapping && (await isEanBlockedForProduct(ean, product.id, integrations.id))) {
+      eanBlocked = true;
+      eanOmitted = true;
+    }
+    if (mapping) {
+      // Estoque por filial com a loja (id + nome) — o nome evita lookup no front.
+      const erpStocks = await Promise.all(
+        filiaisToProcess.map(async (filial) => {
+          const unitBusiness = await getCachedUnitBusinessByNumber(String(filial.fll_codigo).padStart(2, "0"));
+          return {
+            branch_id: filial.fll_codigo,
+            unit_business_id: unitBusiness?.id ?? null,
+            unit_business_name: unitBusiness?.name ?? null,
+            quantity: Math.round(filial.estoque),
+          };
+        }),
+      );
+      await integrationMappingService.updateErpData(
+        mapping.id,
+        buildTecincoProductErpData(data, erpStocks),
+      );
+      if (!mapping.is_primary) {
+        console.log(
+          `${logPrefix} — mapping não principal (produto id=${product.id}) — só erp_data atualizado, nada mais gravado`,
+        );
+        return;
+      }
+    }
+
     const isOwnProduct = isProductOwnedByIntegration(product, integrations.id);
 
     // ─── Produto de outra integração → apenas vincula, não sobrescreve ────────
@@ -846,7 +988,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             await assertEanNotOwnedByAnotherProduct({
               productId: product.id,
               unitBusinessId: unitBusiness.id,
-              candidates: [{ field: "ean", value: ean }],
+              candidates: [{ field: "ean", value: eanBlocked ? undefined : ean }],
               logPrefix,
             });
           } catch (error: any) {
@@ -864,6 +1006,11 @@ export class TCarUpsertQueue extends BaseQueueService<
               console.warn(
                 `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
               );
+              // gtin_erp/sku_erp são só leitura e precisam refletir o ERP mesmo no conflito.
+              await ProductConfig.update(
+                { gtin_erp: erpEan, sku_erp: erpSku },
+                { where: { product_id: product.id, unit_business_id: unitBusiness.id } },
+              );
               continue;
             }
             throw error;
@@ -879,6 +1026,8 @@ export class TCarUpsertQueue extends BaseQueueService<
               // confiável (omite o campo, não sobrescreve com o systemId).
               ...(skuOmitted ? {} : { sku: codigoFabrica ?? systemId }),
               ...(eanOmitted ? {} : { gtin: ean ?? undefined }),
+              gtin_erp: erpEan,
+              sku_erp: erpSku,
               price: filial.preco,
               supplier_cost_price: entryUnitCost,
               average_cost: newAverageCost,
@@ -1012,16 +1161,14 @@ export class TCarUpsertQueue extends BaseQueueService<
             : 0;
 
       // ─── EAN não pode "misturar" com outro product ─────────────────────────
-      // Checagem por filial — cada unit_business tem seu próprio ProductConfig,
-      // então uma colisão numa loja não implica colisão nas outras (ver o bug
-      // real que isso corrigiu: checar só a operationUnitBusiness antes do
-      // loop deixava passar colisão nas demais filiais).
+      // A checagem é por integração (gtin de qualquer loja dela); fica dentro do loop porque um conflito
+      // só pula a ProductConfig da filial em questão, sem travar as outras.
       let eanConflict = false;
       try {
         await assertEanNotOwnedByAnotherProduct({
           productId: product.id,
           unitBusinessId: unitBusiness.id,
-          candidates: [{ field: "ean", value: ean }],
+          candidates: [{ field: "ean", value: eanBlocked ? undefined : ean }],
           logPrefix,
         });
       } catch (error: any) {
@@ -1039,6 +1186,11 @@ export class TCarUpsertQueue extends BaseQueueService<
           console.warn(
             `${logPrefix} — ProductConfig da filial=${filialNumber} não atualizado por conflito de EAN`,
           );
+          // gtin_erp/sku_erp são só leitura e precisam refletir o ERP mesmo no conflito.
+          await ProductConfig.update(
+            { gtin_erp: erpEan, sku_erp: erpSku },
+            { where: { product_id: product.id, unit_business_id: unitBusiness.id } },
+          );
           eanConflict = true;
         } else {
           throw error;
@@ -1053,6 +1205,8 @@ export class TCarUpsertQueue extends BaseQueueService<
             // Ver comentário equivalente no branch "outra integração" acima.
             ...(skuOmitted ? {} : { sku: codigoFabrica ?? systemId }),
             ...(eanOmitted ? {} : { gtin: ean ?? undefined }),
+            gtin_erp: erpEan,
+            sku_erp: erpSku,
             price: filial.preco,
             supplier_cost_price: entryUnitCost,
             average_cost: newAverageCost,
@@ -1592,6 +1746,18 @@ export class TCarUpsertQueue extends BaseQueueService<
       return { operationalItems: [], unmappedItems: [] };
     }
 
+    // EANs definidos pelo físico (de qualquer produto) e mappings dos códigos da nota — uma query cada, usadas no loop.
+    const [physicalOverrides, itemMappings] = await Promise.all([
+      findPhysicalOverridesForEans(
+        [...productLookups.values()].map((payload) => payload?.epctb_ean),
+        integrations.id,
+      ),
+      integrationMappingService.findProductMappingsByExternalIds(
+        integrations.id,
+        itens.map((item) => String(item.epctb_codigo).trim()),
+      ),
+    ]);
+
     for (const item of itens) {
       // hasItemWithoutCode já garantiu, acima, que todo item aqui tem
       // epctb_codigo.
@@ -1604,16 +1770,24 @@ export class TCarUpsertQueue extends BaseQueueService<
         ? String(tcarPayload.epctb_codigofabrica).trim()
         : undefined;
       const ean: string | undefined = normalizeEan(tcarPayload?.epctb_ean);
+      // Donos de override físico desse EAN (exato ou com zero à esquerda).
+      let overrideOwnerIds: string[] = [];
+      if (ean) {
+        overrideOwnerIds = buildEanZeroVariants(ean).flatMap((code) => physicalOverrides.get(code) ?? []);
+      }
 
       // ─── Resolve produto SÓ por integration mapping ────────────────────────────
       // Fonte de verdade única: sem fallback por SupplierMapping/código de
       // fábrica aqui dentro (esse fallback fica exclusivo do catalog sync,
       // ver autoMapExistingProductBySupplierMapping). Não cria/atualiza
       // integration_mapping aqui — só resolve o produto pra este item da nota.
+      // Código não principal só resolve o produto (mesmo gate do processProduct): nada de DE x PARA nem config dele.
+      const isNonPrimary = itemMappings.get(systemId)?.is_primary === false;
       const product = await resolveProductWithMapping({
         unitBusinessId: unitBusiness.id,
         systemId,
-        ean,
+        // EAN com override físico não alimenta o backfill de DE x PARA (o dono já tem o dele).
+        ean: overrideOwnerIds.length || isNonPrimary ? undefined : ean,
         logPrefix,
       });
 
@@ -1625,7 +1799,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             ? String(tcarPayload.epctb_coded).trim()
             : undefined) ??
           null;
-        const reason = "Produto Tecinco presente na nota mas sem produto correspondente no banco";
+        const reason = UNMAPPED_REASON_INVOICE_PRODUCT_NOT_IN_DB;
         console.warn(`${logPrefix} — ${reason}`);
         unmappedItems.push({
           sku: skuToStore,
@@ -1639,21 +1813,26 @@ export class TCarUpsertQueue extends BaseQueueService<
         continue;
       }
 
-      // ─── Garante ProductConfig para a unit_business ───────────────────────────
-      if (unitBusiness) {
+      // ─── Garante ProductConfig para a unit_business (só pelo código principal) ─
+      if (unitBusiness && !isNonPrimary) {
         const existingConfig = await ProductConfig.findOne({
           where: { product_id: product.id, unit_business_id: unitBusiness.id },
         });
 
         if (!existingConfig) {
           const skuToUse = codigoFabrica ?? systemId;
+          // EAN físico confirmado de outro produto, ou outro zero à esquerda em outro produto: config nasce sem gtin
+          // (gtin_erp guarda o do ERP). Só roda quando a config ainda não existe (raro), então a query por item é ok.
+          const eanBlocked =
+            overrideOwnerIds.some((ownerId) => ownerId !== product.id) ||
+            !!(await findAnotherProductUsingEan(ean, product.id, integrations.id, { zeroVariantsOnly: true }));
 
           let eanConflict = false;
           try {
             await assertEanNotOwnedByAnotherProduct({
               productId: product.id,
               unitBusinessId: unitBusiness.id,
-              candidates: [{ field: "ean", value: ean }],
+              candidates: [{ field: "ean", value: eanBlocked ? undefined : ean }],
               logPrefix,
             });
           } catch (error: any) {
@@ -1683,7 +1862,9 @@ export class TCarUpsertQueue extends BaseQueueService<
                 product_id: product.id,
                 unit_business_id: unitBusiness.id,
                 sku: skuToUse,
-                gtin: ean ?? undefined,
+                gtin: eanBlocked ? undefined : (ean ?? undefined),
+                gtin_erp: ean ?? null,
+                sku_erp: codigoFabrica ?? null,
                 price: Number(tcarPayload?.epprc_preco ?? 0),
                 supplier_cost_price: Number(
                   tcarPayload?.epcte_custcont ?? item.epeit_vlrunit ?? 0,

@@ -1,5 +1,17 @@
 import { tcarRequest } from "../../api/tecinco_api";
 
+// Escrita na conferência da Tecinco (validar/conferir/auto-conferir) só em produção — em dev o banco é cópia de prod
+// e a API é a real, então finalizar lote local postaria conferência de verdade.
+export const TECINCO_WRITES_ENABLED = process.env.NODE_ENV === "production";
+
+const assertTecincoWritesEnabled = (action: string): void => {
+  if (!TECINCO_WRITES_ENABLED) {
+    throw new Error(
+      `[TCarApi] ${action} bloqueado: NODE_ENV="${process.env.NODE_ENV}" (apenas em "production" a Tecinco aceita escrita).`,
+    );
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Tipos
 // ---------------------------------------------------------------------------
@@ -250,6 +262,7 @@ export class TCarConferenciaEstoqueService {
     body: TCarValidarItemBody,
     extraParams: Partial<TCarNotaFiscalQueryParams> = {},
   ): Promise<any> {
+    assertTecincoWritesEnabled("POST validar-item");
     const params = this.buildParams(tipo, extraParams);
     return tcarRequest(branchId, (api) =>
       api
@@ -277,6 +290,7 @@ export class TCarConferenciaEstoqueService {
     body: TCarConferirBody,
     extraParams: Partial<TCarNotaFiscalQueryParams> = {},
   ): Promise<any> {
+    assertTecincoWritesEnabled("POST conferir");
     const params = this.buildParams(tipo, extraParams);
     console.log("numero:", numero, "branchId:", branchId, "body:", body);
     return tcarRequest(branchId, (api) =>
@@ -305,6 +319,7 @@ export class TCarConferenciaEstoqueService {
     body: TCarAutoConferirBody = {},
     extraParams: Partial<TCarNotaFiscalQueryParams> = {},
   ): Promise<any> {
+    assertTecincoWritesEnabled("POST auto-conferir");
     const params = this.buildParams(tipo, extraParams);
     return tcarRequest(branchId, (api) =>
       api

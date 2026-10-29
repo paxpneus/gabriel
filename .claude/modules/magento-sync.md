@@ -1,5 +1,6 @@
 # Sincronização Bling → Magento (produtos)
 
+- **Trava de escrita por ambiente**: `MAGENTO_WRITES_ENABLED = NODE_ENV === "production"` no `onRequest` da `magentoApi` (`magentoV2_api.ts`) — fora de produção só GET passa (o `api_url` vem do banco, que em dev é cópia de prod e aponta pra loja real).
 Desacoplada numa fila própria: `magento-sync.queue.ts` (`MagentoSyncQueue`, fila `MAGENTO_SYNC`). `bling-api-fetch.queue.ts` só enfileira um job `{kind:"sync-product", productId}` (jobId `magento-sync-product-<id>`) ao final de `fetchAndUpsertProduct` para produto UNIT (KIT nunca sincroniza com o Magento) e retorna — não fala mais com a API do Magento nem bloqueia nela. O worker da `MAGENTO_SYNC` (rodando no container `startBlingWorkers`, ver `queues/index.ts`) que tenta achar/mapear o produto correspondente no Magento e sincroniza preço/custo_medio.
 
 ## Por que existe uma fila separada

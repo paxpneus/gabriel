@@ -21,6 +21,7 @@ import {
 } from "../../../../shared/query/query.types";
 import product_configService from "../../product-config/product_config.service";
 import stockMovementSourceDataService from "../stock-movement-source-data/stock-movement-source-data.service";
+import stockService from "../stock/stock.service";
 import { computePurchaseEntryDiscounts } from "./helpers/purchase-entry-discount";
 import { InvoiceValueFill } from "./helpers/invoice-value-updates";
 
@@ -161,7 +162,7 @@ export class StockMovementService extends BaseService<
    * recalcularmos com `ignoreCutoff: true`, a correção fica presa dentro da
    * baseline congelada: nunca entra na timeline recalculada e nunca se
    * propaga até o resulting_average_cost do último movimento (o que
-   * `syncProductAverageCostConfig` lê pra atualizar product_configs).
+   * `syncProductFromLastMovement` lê pra atualizar product_configs).
    * Só pedimos o recálculo completo quando realmente necessário (a data do
    * ajuste cai dentro ou antes da baseline) pra não pagar o custo de
    * reprocessar histórico inteiro em toda correção "recente".
@@ -200,8 +201,8 @@ export class StockMovementService extends BaseService<
       : null;
   }
 
-  // Atualiza custo médio do produto considerando o custo médio da ultima movimentação de estoque
-  private async syncProductAverageCostConfig(
+  // Alinha custo médio (product_configs) e saldo (stocks) do produto com a última movimentação de estoque.
+  private async syncProductFromLastMovement(
     productId: string,
     unitBusinessId: string,
     transaction?: Transaction,
@@ -214,14 +215,53 @@ export class StockMovementService extends BaseService<
 
     if (!lastMovement) return;
 
+    const averageCost = Number(lastMovement.resulting_average_cost);
+
     await product_configService.findOneAndUpdate(
       { product_id: productId, unit_business_id: unitBusinessId },
       {
-        average_cost: Number(lastMovement.resulting_average_cost),
+        average_cost: averageCost,
         average_cost_updated_at: new Date(),
       },
       { transaction },
     );
+
+    // Saldo do kardex prevalece sobre o stock (webhook Bling perdido o deixa defasado); negativo é anomalia do kardex, não aplica.
+    const balance = Number(lastMovement.balance_quantity);
+    if (balance < 0) {
+      console.warn(
+        `[STOCK_MOVEMENT] Saldo negativo no kardex produto=${productId} (${balance}) — stock não alinhado.`,
+      );
+      return;
+    }
+
+    const stock = await stockService.findOne({
+      where: { product_id: productId, unit_business_id: unitBusinessId },
+      attributes: ["id", "quantity"],
+      transaction,
+    });
+    if (stock && Number(stock.quantity) === balance) return;
+
+    console.warn(
+      `[STOCK_MOVEMENT] Stock divergente do kardex produto=${productId}: stock=${stock?.quantity ?? "inexistente"}, kardex=${balance}. Alinhando pelo kardex.`,
+    );
+
+    if (stock) {
+      await stockService.bulkUpdate(
+        { quantity: balance, total_price: balance * averageCost },
+        { where: { id: stock.id }, transaction },
+      );
+    } else {
+      await stockService.create(
+        {
+          product_id: productId,
+          unit_business_id: unitBusinessId,
+          quantity: balance,
+          total_price: balance * averageCost,
+        },
+        { transaction },
+      );
+    }
   }
 
   /**
@@ -729,7 +769,7 @@ export class StockMovementService extends BaseService<
       transaction,
     );
 
-    await this.syncProductAverageCostConfig(
+    await this.syncProductFromLastMovement(
       productId,
       unitBusinessId,
       transaction,
@@ -790,13 +830,16 @@ export class StockMovementService extends BaseService<
       ...nextState,
     } as StockMovementCreationAttributes;
 
-    await this.syncProductAverageCostConfig(
+    const created = await this.repository.create(payload, { transaction } as any);
+
+    // Depois do create: a movimentação nova é a última que custo médio e stock devem refletir.
+    await this.syncProductFromLastMovement(
       input.product_id,
       input.unit_business_id,
       transaction,
     );
 
-    return this.repository.create(payload, { transaction } as any);
+    return created;
   }
 
   /**
@@ -1008,7 +1051,7 @@ export class StockMovementService extends BaseService<
       transaction,
     );
 
-    await this.syncProductAverageCostConfig(
+    await this.syncProductFromLastMovement(
       productId,
       unitBusinessId,
       transaction,
@@ -1275,7 +1318,7 @@ export class StockMovementService extends BaseService<
       transaction,
     );
 
-    await this.syncProductAverageCostConfig(
+    await this.syncProductFromLastMovement(
       productId,
       unitBusinessId,
       transaction,
@@ -2040,7 +2083,7 @@ export class StockMovementService extends BaseService<
       }
     }
 
-    await this.syncProductAverageCostConfig(
+    await this.syncProductFromLastMovement(
       productId,
       unitBusinessId,
       transaction,
@@ -2068,8 +2111,9 @@ export class StockMovementService extends BaseService<
   async getCurrentBalance(
     productId: string,
     unitBusinessId: string,
+    transaction?: Transaction,
   ): Promise<StockMovement | null> {
-    return this.repository.findLastMovement(productId, unitBusinessId);
+    return this.repository.findLastMovement(productId, unitBusinessId, transaction);
   }
 
   /**

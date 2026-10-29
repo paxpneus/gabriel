@@ -125,3 +125,33 @@ export interface ProductSalesReportRow {
   average_cost: number;
   commission_value: number;
 }
+
+// Modo da auto busca de pneu: IN_BATCH (bipe em lote de entrada/expedição) só sugere item do lote que falta bipar.
+export enum TireSearchMode {
+  IN_BATCH = "IN_BATCH",
+  NORMAL = "NORMAL",
+}
+
+// Probabilidade do candidato pelos opcionais batidos (índice de carga/marca) — a medida é obrigatória e estrita.
+export enum TireMatchProbability {
+  HIGH = "ALTA",
+  MEDIUM = "MEDIA",
+  UNLIKELY = "IMPROVAVEL",
+}
+
+export interface TireSearchParams {
+  mode: TireSearchMode;
+  measure: string;
+  loadIndex?: string;
+  brand?: string;
+  expeditionBatchId?: string;
+}
+
+// Item da resposta da auto busca; `matches` fica null no opcional não informado.
+export interface TireSearchCandidate {
+  product: Record<string, unknown>;
+  matches: { load_index: boolean | null; brand: boolean | null };
+  score: { matched: number; total: number };
+  probability: TireMatchProbability | null;
+  mapped_in_user_integration: boolean;
+}

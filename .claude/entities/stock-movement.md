@@ -16,6 +16,21 @@
   Has trigger `trigger_prevent_delete_manual_adjustment_with_cost`
   (BEFORE DELETE) that can block deleting a manual cost-adjustment
   movement.
+- **Kardex é a fonte do saldo em `stocks`** (`stocks` só vem da Bling por
+  webhook, que pode se perder). `syncProductFromLastMovement` roda no fim de
+  todo método que escreve na cadeia (`syncProductStockMovements`,
+  `upsertProductStockMovements` e quem delega pra ele, `syncCsvBaseline`,
+  `reindexProduct`, `processMovement` — depois do create): grava
+  `product_configs.average_cost` e, se `stocks.quantity` ≠
+  `balance_quantity` da última movimentação ativa, atualiza (ou cria) o stock
+  com `quantity = balance`, `total_price = balance * resulting_average_cost`.
+  Saldo negativo no kardex = anomalia, não aplica. Sem movimentação = no-op
+  (Tecinco não tem kardex, não é afetado). Não atualiza
+  `inventory_batch_items` de lote CYCLIC — só o webhook faz isso.
+- Webhook de produto/estoque Bling (`BlingApiFetchQueue.fetchAndUpsertProduct`):
+  depois do kardex sincronizado, `syncStockAndBatches` recebe o saldo da
+  última movimentação em vez do `saldoFisicoTotal` (sem kardex ou negativo:
+  fica o da Bling). `erp_data` continua com o saldo cru da Bling.
 - Ajuste manual (`MANUAL_ADJUSTMENT`) — regras de `refers_to`/custo:
   `refers_to` (sempre exigido no POST pelo schema) independe de
   `manual_average_cost_value`. Ajuste de entrada (`direction_type`

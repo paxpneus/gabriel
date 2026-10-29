@@ -7,6 +7,7 @@ import { BaseQueueService } from "../../../../../../shared/utils/base-models/bas
 import { Stock } from "../../../../../inventory/index";
 import { SupplierMapping } from "../../../../../inventory";
 import { Supplier } from "../../../../../inventory";
+import { SYNC_SUPPLIER_CNPJ_PREFIX } from "../../../../../inventory/supplier-mapping/supplier-mapping.types";
 import { alertService } from "../../../../../../shared/providers/mail-provider/nodemailer.alert";
 import { Invoice, UnitBusiness } from "../../../../../warehouse";
 import { blingApi, getBlingIntegration } from "../../../api/bling_api.service";
@@ -19,6 +20,7 @@ import productController from "../../../../../inventory/products/product.control
 import unitBusinessController from "../../../../../company/unit-business/unit-business.controller";
 import unitBusinessService from "../../../../../company/unit-business/unit-business.service";
 import integrationMappingService from "../../../../../integrations/integration-mapping/integration-mapping.service";
+import { findAnotherProductUsingEan } from "../../../../tecinco/queues/helpers/product.helpers";
 export interface DirectUpsertJobPayload extends WebhookQueuePayload {
   directUpsert: DirectUpsertPayload;
 }
@@ -96,6 +98,18 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
   ): Promise<void> {
     const integration = await getBlingIntegration("Bling");
 
+    // Só o código principal grava DE x PARA (mesmo gate do fetchAndUpsertProduct): o não principal é só leitura.
+    const mapping = await integrationMappingService.findProductMappingByExternalId(
+      integration.id,
+      String(data.productBlingId),
+    );
+    if (mapping && !mapping.is_primary) {
+      console.log(
+        `[BLING_DIRECT_UPSERT] blingId=${data.productBlingId} é código não principal do produto ${mapping.internal_id} — supplier mapping ignorado.`,
+      );
+      return;
+    }
+
     const product = await integrationMappingService.findEntityByMapping(
       "PRODUCT",
       integration.id,
@@ -109,8 +123,34 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       return;
     }
 
+    // Código do fornecedor já usado (exato ou com zero à esquerda) por outro produto na integração: não grava,
+    // senão o bipe passa a achar dois produtos (inclui EAN físico confirmado de outro produto).
+    const otherOwnerId = await findAnotherProductUsingEan(
+      data.supplier_product_code,
+      product.id,
+      integration.id,
+    );
+    if (otherOwnerId) {
+      console.warn(
+        `[BLING_DIRECT_UPSERT] Código ${data.supplier_product_code} já pertence ao produto ${otherOwnerId} nessa integração — SupplierMapping do produto ${product.id} não gravado.`,
+      );
+      return;
+    }
+
+    // Só reaproveita a linha que este sync criou pra esse fornecedor (cnpj PENDING-<id>): DE x PARA feito por pessoa
+    // (Mapear do bipe, override) nunca é reapontado. Mesmo código já no produto = nada a fazer.
+    const sameCode = await SupplierMapping.findOne({
+      where: { product_id: product.id, integrations_id: integration.id, supplier_product_code: data.supplier_product_code },
+      attributes: ["id"],
+    });
+    if (sameCode) return;
     const existing = await SupplierMapping.findOne({
-      where: { product_id: product.id, integrations_id: integration.id },
+      where: {
+        product_id: product.id,
+        integrations_id: integration.id,
+        is_physical_override: false,
+        supplier_cnpj: `${SYNC_SUPPLIER_CNPJ_PREFIX}${data.supplierBlingId}`,
+      },
     });
 
     if (existing) {
@@ -125,7 +165,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     } else {
       await SupplierMapping.create({
         product_id: product.id,
-        supplier_cnpj: `PENDING-${data.supplierBlingId}`,
+        supplier_cnpj: `${SYNC_SUPPLIER_CNPJ_PREFIX}${data.supplierBlingId}`,
         supplier_product_code: data.supplier_product_code,
         integrations_id: integration.id,
       });

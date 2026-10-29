@@ -606,4 +606,31 @@ describe("ManualImportService", () => {
       expect(status.run).toBeNull();
     });
   });
+
+  describe("enqueueProductSync (troca do mapping principal)", () => {
+    it("busca o código na integração e enfileira na fila de produto, sem lock nem claim", async () => {
+      handler.search.mockResolvedValue({ items: [found("27314")], truncated: false });
+
+      const jobRef = await service.enqueueProductSync(INTEGRATION_ID, "27314", queues as any);
+
+      expect(handler.search).toHaveBeenCalledWith("product", "id", "27314");
+      expect(jobRef?.queue).toBe("blingApiFetch");
+      expect(queues.blingApiFetch.add).toHaveBeenCalledWith({ id: "27314" }, jobRef?.jobId);
+      expect(fakeRedis.store.has(manualImportKeys.itemClaim(INTEGRATION_ID, "product", "27314"))).toBe(false);
+      expect(fakeRedis.store.has(manualImportKeys.userLock(requester.id))).toBe(false);
+    });
+
+    it("código não achado na integração: null, nada enfileirado", async () => {
+      handler.search.mockResolvedValue({ items: [], truncated: false });
+
+      expect(await service.enqueueProductSync(INTEGRATION_ID, "27314", queues as any)).toBeNull();
+      expect(queues.blingApiFetch.add).not.toHaveBeenCalled();
+    });
+
+    it("integração sem handler: null", async () => {
+      (resolveManualImportHandler as jest.Mock).mockResolvedValue(null);
+
+      expect(await service.enqueueProductSync("outra", "27314", queues as any)).toBeNull();
+    });
+  });
 });

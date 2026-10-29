@@ -1,6 +1,7 @@
 import { Router } from "express";
 import fs from "fs";
 import path from "path";
+import { INVOICE_PRODUCT_MAPPING_ENTITY, PHYSICAL_EAN_OWNER_ENTITY } from "../shared/constants/roles";
 
 const router = Router();
 const modulesPath = path.resolve(__dirname, "..", "modules");
@@ -8,8 +9,8 @@ const modulesPath = path.resolve(__dirname, "..", "modules");
 export const ROUTE_TO_TABLE: Record<string, string> = {};
 
 // Rotas que não precisam de verificação de permissão
+// integration-mapping saiu daqui: troca de principal/CRUD de mapping exige a permissão de Produtos (filho integration_mappings).
 const EXCLUDED_ROUTES = new Set([
-  "integration-mapping",
   "bling",
   "bling-orders",
   "stores",
@@ -81,6 +82,12 @@ const CUSTOM_ROUTE_MAP: Record<string, string> = {
   "multiplier-scan-inventory": "multiply-stk-inventory",
   "multiplier-scan-entrance": "multiply-stk-entrance",
    "all-unit-business": "visualize-all-unit-business",
+  "physical-owner": PHYSICAL_EAN_OWNER_ENTITY,
+  // Antes de "create-product" (casa por substring): polling do job é leitura de Produtos, não a permissão de criar.
+  "create-product/job": "unmapped_invoice_products",
+  // "Criar Produto" do não mapeado (unitário/lote) e criar+mapear na nota: mesma permissão.
+  "create-product": INVOICE_PRODUCT_MAPPING_ENTITY,
+  "invoice-items/add/item": INVOICE_PRODUCT_MAPPING_ENTITY,
 };
 
 /**

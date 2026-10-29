@@ -22,6 +22,9 @@ export const getMagentoIntegration = async (
   return integration;
 };
 
+// Escrita no Magento (POST/PUT/PATCH/DELETE) só em produção — o api_url vem do banco, que em dev é cópia de prod.
+export const MAGENTO_WRITES_ENABLED = process.env.NODE_ENV === "production";
+
 // ─── Instância Axios para Magento REST API ────────────────────────────────────
 //
 // A autenticação é via Bearer token (Access Token da Integration do Magento).
@@ -39,6 +42,13 @@ export const magentoApi: AxiosInstance = createAxiosInstance({
   baseURL: "",
 
   onRequest: async (config) => {
+    const method = (config.method ?? "get").toUpperCase();
+    if (method !== "GET" && !MAGENTO_WRITES_ENABLED) {
+      throw new Error(
+        `[MagentoApi] Requisição ${method} bloqueada: NODE_ENV="${process.env.NODE_ENV}" (apenas em "production" o Magento aceita escrita).`,
+      );
+    }
+
     const integration = await getMagentoIntegration("Magento");
     const token = integration.tokens;
 

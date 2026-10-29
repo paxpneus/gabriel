@@ -30,12 +30,33 @@ jest.mock("bullmq", () => ({
   UnrecoverableError: class UnrecoverableError extends Error {},
 }));
 
+// Troca de principal: transação roda o callback direto; auditoria e enqueue do sync mockados.
+jest.mock("../../../../config/sequelize", () => ({
+  __esModule: true,
+  default: { transaction: jest.fn((cb: (t: unknown) => unknown) => cb({})) },
+}));
+jest.mock("../../../global/audit-logs/audit-log.service", () => ({
+  __esModule: true,
+  default: { record: jest.fn() },
+}));
+jest.mock("../../manual-import/manual-import.service", () => ({
+  __esModule: true,
+  default: { enqueueProductSync: jest.fn() },
+}));
+// Escopo de integração do usuário: liberado por padrão; os testes de acesso negado sobrescrevem.
+jest.mock("../../../company/users/users/user.service", () => ({
+  __esModule: true,
+  default: { assertIntegrationAccess: jest.fn() },
+}));
+
 // IntegrationMapping (*.model.ts) é auto-mocado globalmente via
 // src/__tests__/setup.ts — usa o model direto (via o repository real,
 // que é só um wrapper fino) pra testar a lógica de matching de verdade.
 
 import IntegrationMapping from "../integration-mapping.model";
 import { IntegrationMappingService } from "../integration-mapping.service";
+import manualImportService from "../../manual-import/manual-import.service";
+import userService from "../../../company/users/users/user.service";
 
 describe("IntegrationMappingService.createOrUpdateIntegrationMapping", () => {
   let service: IntegrationMappingService;
@@ -141,5 +162,95 @@ describe("IntegrationMappingService.createOrUpdateIntegrationMapping", () => {
       expect.anything(),
     );
     expect(result).toEqual({ id: "second-mapping-id" });
+  });
+});
+
+describe("IntegrationMappingService.updateForProduct — sync do novo principal", () => {
+  let service: IntegrationMappingService;
+  const queues = {} as any;
+  const enqueue = manualImportService.enqueueProductSync as jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new IntegrationMappingService();
+    (IntegrationMapping.findAll as jest.Mock).mockResolvedValue([{ id: "old-primary", external_id: "100" }]);
+    (IntegrationMapping.findByPk as jest.Mock).mockResolvedValue({
+      update: jest.fn().mockResolvedValue({ id: "m-2", is_primary: true }),
+    });
+  });
+
+  it("marcou como principal: enfileira o sync do código na integração depois do commit", async () => {
+    (IntegrationMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "m-2", integrations_id: "tecinco", external_id: "27314", is_primary: false,
+    });
+    enqueue.mockResolvedValue({ queue: "tcarApiFetch", jobId: "j" });
+
+    const result = await service.updateForProduct("m-2", "product-1", { is_primary: true }, "user-1", queues);
+
+    expect(result).toEqual({ id: "m-2", is_primary: true });
+    expect(enqueue).toHaveBeenCalledWith("tecinco", "27314", queues);
+  });
+
+  it("já era o principal: não enfileira nada", async () => {
+    (IntegrationMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "m-2", integrations_id: "tecinco", external_id: "27314", is_primary: true,
+    });
+
+    await service.updateForProduct("m-2", "product-1", { is_primary: true }, "user-1", queues);
+
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("falha ao enfileirar não derruba a troca do principal", async () => {
+    (IntegrationMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "m-2", integrations_id: "tecinco", external_id: "27314", is_primary: false,
+    });
+    enqueue.mockRejectedValue(new Error("API fora"));
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      service.updateForProduct("m-2", "product-1", { is_primary: true }, "user-1", queues),
+    ).resolves.toEqual({ id: "m-2", is_primary: true });
+  });
+});
+
+describe("IntegrationMappingService.updateForProduct — escopo, validação e troca de código", () => {
+  let service: IntegrationMappingService;
+  const queues = {} as any;
+  const enqueue = manualImportService.enqueueProductSync as jest.Mock;
+  const update = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new IntegrationMappingService();
+    (IntegrationMapping.findAll as jest.Mock).mockResolvedValue([]);
+    update.mockResolvedValue({ id: "m-1" });
+    (IntegrationMapping.findByPk as jest.Mock).mockResolvedValue({ update });
+    (IntegrationMapping.findOne as jest.Mock).mockResolvedValue({
+      id: "m-1", integrations_id: "tecinco", external_id: "100", is_primary: true,
+    });
+    enqueue.mockResolvedValue({ queue: "tcarApiFetch", jobId: "j" });
+  });
+
+  it("integração fora das lojas do usuário: erro e nada muda", async () => {
+    (userService.assertIntegrationAccess as jest.Mock).mockRejectedValueOnce(new Error("Você não tem acesso a essa integração"));
+
+    await expect(
+      service.updateForProduct("m-1", "product-1", { is_primary: true }, "user-1", queues),
+    ).rejects.toThrow("Você não tem acesso a essa integração");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('is_primary como string ("false") é recusado em vez de virar "tornar principal"', async () => {
+    await expect(
+      service.updateForProduct("m-1", "product-1", { is_primary: "false" as any }, "user-1", queues),
+    ).rejects.toThrow("is_primary deve ser true ou false");
+  });
+
+  it("principal com código trocado: zera o erp_data e enfileira o sync do código novo", async () => {
+    await service.updateForProduct("m-1", "product-1", { external_id: "200" }, "user-1", queues);
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ external_id: "200", erp_data: null }), expect.anything());
+    expect(enqueue).toHaveBeenCalledWith("tecinco", "200", queues);
   });
 });
