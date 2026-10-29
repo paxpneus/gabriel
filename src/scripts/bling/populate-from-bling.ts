@@ -345,10 +345,10 @@ async function waitForQueuesToDrain(label: string) {
 async function migrateProducts() {
   console.log("─".repeat(55));
   console.log("📦  ETAPA 1 — Produtos");
-  console.log(`  🔄 Filtro: alterados desde ${DATA_ALTERACAO_INICIAL}`);
+  console.log("  🔄 Sem filtro de data: refetch do catálogo inteiro");
   console.log("─".repeat(55));
 
-  // ── 1a. Coleta produtos alterados/criados na janela incremental ──────────
+  // ── 1a. Coleta o catálogo inteiro (sem filtro), igual ao populate-from-bling-choose ──
   const allProducts: { id: number; nome: string; codigo: string }[] = [];
 
   for await (const page of paginateBling<{
@@ -925,7 +925,7 @@ async function main() {
 
   try {
     // Ordem garantida + espera entre cada etapa
-    // await migrateProducts(); // 1 — sem dependências
+    await migrateProducts(); // 1 — refetch/atualização de todos os produtos; estoque depende dele
     await migrateStocks(); // 4 — depende de produto (só produtos com stock_movement hoje)
     // await migrateSuppliers(); // 2 — sem dependências
     // await migrateSellers(); // 2.1 — sem dependências

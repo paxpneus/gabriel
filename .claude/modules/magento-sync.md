@@ -5,7 +5,7 @@ Desacoplada numa fila própria: `magento-sync.queue.ts` (`MagentoSyncQueue`, fil
 
 ## Por que existe uma fila separada
 
-Antes esse trabalho rodava embutido no job da `BLING_API_FETCH`, então só disparava quando a Bling mandava webhook. Isso bastava enquanto `populate-from-bling` varria o catálogo inteiro todo dia — mas esse script passou a buscar só produto com movimento de estoque, então o resto do catálogo parou de receber sync com o Magento. A fila `MAGENTO_SYNC` tem dois tipos de job:
+Antes esse trabalho rodava embutido no job da `BLING_API_FETCH`, então só disparava quando a Bling mandava webhook. `populate-from-bling` (fila `BLING_MIGRATION`, 24h) faz refetch do catálogo inteiro de produtos, e cada fetch de produto enfileira um `sync-product` — o `sync-all` abaixo é a cobertura garantida independente da Bling. A fila `MAGENTO_SYNC` tem dois tipos de job:
 
 - `sync-product` (`productId`): sincroniza 1 produto — disparado pela Bling a cada update/stock, ou pelo job diário abaixo.
 - `sync-all`: sem payload além do `kind`; agendado via cron fixo (`0 23 * * *` BRT, jobId `magento-sync-all-cron`, registrado em `startBlingWorkers`) — varre todo `ProductConfig` da unit business da Bling com `sku` preenchido, filtra só produto `type=UNIT`, e enfileira um `sync-product` por produto. Cobre o catálogo inteiro, substituindo a cobertura diária que `populate-from-bling` dava antes.
