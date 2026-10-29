@@ -900,7 +900,7 @@ async function bootstrap() {
 }
 
 // Janela = 30/dez do ano anterior até agora (2 dias de sobra cobrem a virada); sem fonte registrada, histórico todo desde INITIAL_CUTOFF_DATE.
-async function createScrapeWindow(): Promise<ScrapeWindow> {
+export async function createScrapeWindow(): Promise<ScrapeWindow> {
  const yearStartTz = nowTz().startOf("year");
  const yearStart = yearStartTz.toDate();
  const yearWindowStart = yearStartTz.subtract(2, "day").toDate();
