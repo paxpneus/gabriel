@@ -271,12 +271,13 @@ export class InventoryBatchService extends BaseService<
 
       // 3. Filtra somente os itens onde os usuários divergiram entre si
       const divergentItems = parentItems.filter((item) => {
-        const logs = (item as any).logs ?? [];
+        // Compara o total por usuário, não log a log: correção manual cria vários logs pro mesmo usuário
+        const userReads = this.summarizeReadsByUser((item as any).logs);
 
-        // precisa ter pelo menos 2 logs (2 usuários) para haver divergência entre eles
-        if (logs.length < 2) return false;
+        // precisa ter pelo menos 2 usuários para haver divergência entre eles
+        if (userReads.length < 2) return false;
 
-        const quantities = logs.map((l: any) => Number(l.quantity_read));
+        const quantities = userReads.map((r) => r.quantity_read);
         const min = Math.min(...quantities);
         const max = Math.max(...quantities);
 

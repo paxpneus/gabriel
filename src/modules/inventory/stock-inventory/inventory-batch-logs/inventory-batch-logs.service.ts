@@ -194,10 +194,8 @@ export class InventoryBatchLogsService extends BaseService<
         await inventoryBatchLogsRepository.syncDivergencyParent(
           {
             parentBatchId: inventoryBatch.BatchIdForDivergency,
-            productcode,
-            stockId: stock.id!,
-            userId,
             itemId: inventoryBatchItem.id,
+            unitPrice: config?.price ?? 0,
           },
           t,
         );

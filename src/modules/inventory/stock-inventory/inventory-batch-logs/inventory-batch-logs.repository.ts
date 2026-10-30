@@ -124,75 +124,86 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
     };
   }
 
+  // Item do lote de divergência finalizado → leva o total recontado de CADA conferente pro item do lote pai.
+  // Grava log de delta (nunca edita log existente): no pai um conferente pode ter vários logs (correções manuais).
   async syncDivergencyParent(
     {
       parentBatchId,
-      productcode,
-      stockId,
-      userId,
       itemId,
+      unitPrice,
     }: {
       parentBatchId: string;
-      productcode: string;
-      stockId: string;
-      userId: string;
       itemId: string;
+      unitPrice?: number;
     },
     t: Transaction,
   ): Promise<void> {
     const childItem = await InventoryBatchItems.findByPk(itemId, {
+      attributes: ["id", "product_id", "status"],
       transaction: t,
     });
     if (childItem?.status !== "FINISHED") return;
 
+    // Por product_id (unique no lote), não pelo código bipado: o bipado pode ser variação de zero/código da integração.
     const parentItem = await InventoryBatchItems.findOne({
+      attributes: ["id"],
       where: {
-        ean: productcode,
+        product_id: childItem.product_id,
         inventory_batch_id: parentBatchId,
-        stock_id: stockId,
       },
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
     if (!parentItem) return;
 
-    const childLog = await InventoryBatchLogs.findOne({
-      where: { user_id: userId, inventory_batch_item_id: itemId },
+    const logs = await InventoryBatchLogs.findAll({
+      attributes: ["user_id", "quantity_read", "inventory_batch_item_id"],
+      where: { inventory_batch_item_id: [childItem.id, parentItem.id] },
       transaction: t,
     });
-    const newUserRead = childLog ? Number(childLog.quantity_read) : 0;
 
-    const existingParentLog = await InventoryBatchLogs.findOne({
-      where: { user_id: userId, inventory_batch_item_id: parentItem.id },
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-
-    if (existingParentLog) {
-      await existingParentLog.update(
-        { quantity_read: newUserRead },
-        { transaction: t },
-      );
-    } else {
-      await InventoryBatchLogs.create(
-        {
-          user_id: userId,
-          quantity_read: newUserRead,
-          label_code: productcode,
-          inventory_batch_item_id: parentItem.id,
-          date: new Date(),
-        },
-        { transaction: t },
-      );
+    // Soma por conferente em cada lote: { userId: { child, parent } }
+    const totalsByUser = new Map<string, { child: number; parent: number }>();
+    for (const log of logs) {
+      const totals = totalsByUser.get(log.user_id) ?? { child: 0, parent: 0 };
+      if (log.inventory_batch_item_id === childItem.id) {
+        totals.child += Number(log.quantity_read);
+      } else {
+        totals.parent += Number(log.quantity_read);
+      }
+      totalsByUser.set(log.user_id, totals);
     }
+
+    // Só quem recontou no lote de divergência é ajustado no pai
+    const childUserIds = new Set(
+      logs
+        .filter((log) => log.inventory_batch_item_id === childItem.id)
+        .map((log) => log.user_id),
+    );
+    const deltaLogs = [...childUserIds]
+      .map((userId) => {
+        const totals = totalsByUser.get(userId)!;
+        return { userId, delta: totals.child - totals.parent };
+      })
+      .filter(({ delta }) => delta !== 0)
+      .map(({ userId, delta }) => ({
+        user_id: userId,
+        quantity_read: delta,
+        label_code: "DIVERGENCY_RECOUNT",
+        inventory_batch_item_id: parentItem.id,
+        date: new Date(),
+      }));
+    if (!deltaLogs.length) return;
+
+    await InventoryBatchLogs.bulkCreate(deltaLogs, { transaction: t });
 
     await this.syncItemAndBatchAfterScan(
       parentItem.id,
       parentBatchId,
-      userId,
+      deltaLogs[0].user_id,
       "REGULAR",
       t,
-      { skipInitialDivergency: true },
+      { skipInitialDivergency: true, unitPrice },
     );
   }
 }

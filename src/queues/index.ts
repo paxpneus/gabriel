@@ -396,13 +396,13 @@ export function startBlingWorkers() {
     blingOrderQueue,
     magentoSyncQueue,
   } = buildQueues([
-    "BLING_API_FETCH",
-    "BLING_DIRECT_UPSERT",
-    "BLING_TOKEN_REFRESH",
-    "BLING_MIGRATION",
-    "BLING_STOCK_SYNC",
-    "BLING_ORDER_INGESTION",
-    "MAGENTO_SYNC",
+    // "BLING_API_FETCH",
+    // "BLING_DIRECT_UPSERT",
+    // "BLING_TOKEN_REFRESH",
+    // "BLING_MIGRATION",
+    // "BLING_STOCK_SYNC",
+    // "BLING_ORDER_INGESTION",
+    // "MAGENTO_SYNC",
   ]);
 
   blingTokenRefreshQueue.scheduleRepeat({ every: 1 * 60 * 60 * 1000 });
