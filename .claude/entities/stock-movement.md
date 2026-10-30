@@ -29,6 +29,7 @@
   Trava: enquanto tem job ativo nela, jobs `product`/`stock` do `BLING_API_FETCH` voltam pra fila
   (`retryJobLater` 30s, não gasta tentativa); nota/vendedor seguem. Job de produto já em andamento
   quando o sync começa não é interrompido.
+  Não roda junto com a `BLING_MIGRATION`: com job ativo nela, a rodada do sync é pulada (job conclui sem fazer nada).
   Se religar `KARDEX_OVERRIDES_STOCK`, os dois brigam pelo `stocks` — desligar um dos dois.
 - **Kardex é a fonte do saldo em `stocks`** (`stocks` só vem da Bling por
   webhook, que pode se perder). `syncProductFromLastMovement` roda no fim de
