@@ -7,6 +7,7 @@ import {
   AuditEntity,
   AuditLogAttributes,
   AuditLogCreationAttributes,
+  AuditOrigin,
 } from "./audit-log.types";
 
 // Registro de auditoria — só inserção, nunca atualizado (por isso sem timestamps).
@@ -22,6 +23,7 @@ class AuditLog
   public action!: AuditAction;
   public description!: string;
   public changes!: AuditChanges | null;
+  public origin!: AuditOrigin;
 }
 
 AuditLog.init(
@@ -61,6 +63,12 @@ AuditLog.init(
     changes: {
       type: DataTypes.JSONB,
       allowNull: true,
+    },
+    // Quem gerou o log (AuditOrigin); STRING com enum só no TS, igual entity/action.
+    origin: {
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: AuditOrigin.USER,
     },
   },
   {

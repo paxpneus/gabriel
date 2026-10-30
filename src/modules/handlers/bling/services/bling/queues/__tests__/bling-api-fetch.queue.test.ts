@@ -127,6 +127,7 @@ jest.mock(
       create: jest.fn(),
       delete: jest.fn(),
       update: jest.fn(),
+      retireFromIntegration: jest.fn(),
     },
   }),
 );
@@ -735,54 +736,24 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
   // qualquer outro valor (incluindo "A"/ausente) preserva o fluxo normal.
 
   describe("situacao=E (produto desativado na Bling)", () => {
-    it("produto local mapeado: apaga integration_mappings/supplier_mappings/product_configs, marca is_active=false, e não segue pro resto do fluxo (sem unmapped, sem upsertWithComponents, Product/invoice_items/stock_movements intocados)", async () => {
+    it("desassocia pelo productService.retireFromIntegration (Bling + código) e não segue pro resto do fluxo", async () => {
       const blingProduct = makeBlingProduct({ situacao: "E" });
       makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
-      const existingProduct = { id: "existing-product-id", name: "Pneu Aro 14 Continental" };
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue(existingProduct);
 
       await runProductJob(blingProduct);
 
-      expect(integrationMappingService.bulkDelete).toHaveBeenCalledWith(
+      expect(productService.retireFromIntegration).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { entity_type: "PRODUCT", internal_id: existingProduct.id },
+          integration: expect.objectContaining({ id: INTEGRATION_ID }),
+          externalId: String(blingProduct.id),
         }),
       );
-      expect(supplierMappingService.bulkDelete).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { product_id: existingProduct.id },
-        }),
-      );
-      expect(productConfigService.bulkDelete).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { product_id: existingProduct.id },
-        }),
-      );
-      expect(productService.update).toHaveBeenCalledWith(
-        existingProduct.id,
-        { is_active: false },
-        expect.anything(),
-      );
-      expect(productService.delete).not.toHaveBeenCalled();
+      expect(resolveProductWithMapping).not.toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
       expect(productService.upsertWithComponents).not.toHaveBeenCalled();
       expect(
         integrationMappingService.createOrUpdateIntegrationMapping,
       ).not.toHaveBeenCalled();
-    });
-
-    it("sem produto local mapeado: ignora silenciosamente, não cria unmapped nem tenta desassociar nada", async () => {
-      const blingProduct = makeBlingProduct({ situacao: "E" });
-      makeFakeBlingApi({ blingId: blingProduct.id, blingProduct });
-      (resolveProductWithMapping as jest.Mock).mockResolvedValue(null);
-
-      await runProductJob(blingProduct);
-
-      expect(integrationMappingService.bulkDelete).not.toHaveBeenCalled();
-      expect(supplierMappingService.bulkDelete).not.toHaveBeenCalled();
-      expect(productConfigService.bulkDelete).not.toHaveBeenCalled();
-      expect(productService.update).not.toHaveBeenCalled();
-      expect(UnmappedInvoiceProduct.create).not.toHaveBeenCalled();
     });
 
     it("situacao !== 'E' (ex: 'A', ativo): preserva o fluxo normal, não entra no ramo de desativação", async () => {
@@ -792,7 +763,7 @@ describe("BlingApiFetchQueue.fetchAndUpsertProduct", () => {
 
       await runProductJob(blingProduct);
 
-      expect(integrationMappingService.bulkDelete).not.toHaveBeenCalled();
+      expect(productService.retireFromIntegration).not.toHaveBeenCalled();
       expect(UnmappedInvoiceProduct.create).toHaveBeenCalledWith(
         expect.objectContaining({ reason: "Produto novo, precisa de mapeamento manual" }),
       );

@@ -49,6 +49,8 @@ import brandsService from "../../brands/brands.service";
 import expeditionBatchService from "../../../warehouse/expedition/batch/batch.service";
 import expeditionBatchItemsService from "../../../warehouse/expedition/batch-items/batch-items.service";
 import auditLogService from "../../../global/audit-logs/audit-log.service";
+import integrationMappingService from "../../../integrations/integration-mapping/integration-mapping.service";
+import { productRetiredFromIntegrationAudit } from "../helpers/audit";
 import AuditLog from "../../../global/audit-logs/audit-log.model";
 import { AuditEntity } from "../../../global/audit-logs/audit-log.types";
 
@@ -572,6 +574,94 @@ export class ProductService extends BaseService<Product, ProductRepository> {
       }
       throw err;
     }
+  }
+
+  // Código excluído no ERP (Bling situacao=E, Tecinco deleted/404): desassocia o produto só dessa integração (mapping,
+  // DE x PARA, configs das lojas dela); nunca apaga o produto, e is_active=false só se ficar sem mapping em nenhuma.
+  async retireFromIntegration(params: {
+    integration: { id: string; name: string };
+    externalId: string;
+    logPrefix: string;
+  }): Promise<void> {
+    const { integration, externalId, logPrefix } = params;
+    // Código não principal é só leitura: não desassocia o produto (o principal ainda pode estar ativo).
+    const mapping = await integrationMappingService.findProductMappingByExternalId(integration.id, externalId);
+    if (mapping && !mapping.is_primary) {
+      console.log(`${logPrefix} — excluído no ${integration.name} em mapping não principal, ignorado`);
+      return;
+    }
+    // Principal com outro código do produto na integração (duplicado sendo limpo): só esse código sai, o próximo vira principal.
+    if (mapping && (await integrationMappingService.retirePrimaryCodeIfDuplicated(mapping.id, mapping.internal_id, integration))) {
+      console.log(`${logPrefix} — código principal excluído, produto segue pelo outro código (promovido a principal)`);
+      return;
+    }
+    const product = (await integrationMappingService.findEntityByMapping("PRODUCT", integration.id, externalId)) as Product | null;
+    if (!product) {
+      console.log(`${logPrefix} — excluído no ${integration.name}, sem produto local mapeado, ignorado`);
+      return;
+    }
+
+    const unitBusinesses = await unitBusinessService.findAll({ where: { integrations_id: integration.id }, attributes: ["id"] });
+    const mappingWhere = { entity_type: "PRODUCT", internal_id: product.id, integrations_id: integration.id };
+    const supplierMappingWhere = { product_id: product.id, integrations_id: integration.id };
+    const configWhere = { product_id: product.id, unit_business_id: { [Op.in]: unitBusinesses.map((u) => u.id) } };
+
+    const deactivated = await Product.sequelize!.transaction(async (t) => {
+      // Before do audit: lido e travado (FOR UPDATE) antes de alterar — ninguém muda essas linhas até o commit.
+      const lock = t.LOCK.UPDATE;
+      const [lockedProduct, mappings, supplierMappings, configs] = await Promise.all([
+        this.findOne({ where: { id: product.id }, attributes: ["id", "is_active"], lock, transaction: t }),
+        integrationMappingService.findAll({ where: mappingWhere, attributes: ["id", "external_id", "is_primary"], lock, transaction: t }),
+        supplierMappingService.findAll({
+          where: supplierMappingWhere,
+          attributes: ["id", "supplier_product_code", "is_physical_override"],
+          lock,
+          transaction: t,
+        }),
+        productConfigService.findAll({ where: configWhere, attributes: ["id", "sku", "gtin"], lock, transaction: t }),
+      ]);
+      // Apaga só as linhas lidas e confere a contagem: divergência desfaz tudo, pro audit nunca diferir do que saiu.
+      const [deletedMappings, deletedSupplierMappings, deletedConfigs] = await Promise.all([
+        integrationMappingService.bulkDelete({ where: { id: { [Op.in]: mappings.map((m) => m.id) } }, transaction: t }),
+        supplierMappingService.bulkDelete({ where: { id: { [Op.in]: supplierMappings.map((m) => m.id) } }, transaction: t }),
+        productConfigService.bulkDelete({ where: { id: { [Op.in]: configs.map((c) => c.id) } }, transaction: t }),
+      ]);
+      if (
+        deletedMappings !== mappings.length ||
+        deletedSupplierMappings !== supplierMappings.length ||
+        deletedConfigs !== configs.length
+      ) {
+        throw new Error(`[ProductService.retireFromIntegration] deleted rows differ from locked rows, rolling back | product_id=${product.id}`);
+      }
+      const remainingMapping = await integrationMappingService.findOne({
+        where: { entity_type: "PRODUCT", internal_id: product.id },
+        attributes: ["id"],
+        transaction: t,
+      });
+      let productAfter: { is_active: boolean } | null = null;
+      if (!remainingMapping) {
+        await this.repository.update(product.id, { is_active: false }, { transaction: t });
+        // After do audit lido do banco, na mesma transação.
+        productAfter = await this.findOne({ where: { id: product.id }, attributes: ["is_active"], transaction: t });
+      }
+      await auditLogService.record(
+        productRetiredFromIntegrationAudit({
+          integrationName: integration.name,
+          code: externalId,
+          productBefore: lockedProduct ?? product,
+          productAfter,
+          mappings,
+          supplierMappings,
+          configs,
+        }),
+        t,
+      );
+      return !remainingMapping;
+    });
+
+    console.log(
+      `${logPrefix} — produto "${product.name}" desassociado do ${integration.name}, is_active=${deactivated ? "false" : "mantido (mapping em outra integração)"} | product_id=${product.id}`,
+    );
   }
 
   async getKitComponents(productKitId: string): Promise<KitComponent[]> {

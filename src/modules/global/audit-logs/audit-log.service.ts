@@ -3,7 +3,7 @@ import { PaginatedResult, QueryParams } from "../../../shared/query/query.types"
 import BaseService from "../../../shared/utils/base-models/base-service";
 import AuditLog from "./audit-log.model";
 import auditLogRepository, { AuditLogRepository } from "./audit-log.repository";
-import { AuditAction, AuditEntity, AuditLogEntry, AuditLogAuthor } from "./audit-log.types";
+import { AuditAction, AuditEntity, AuditLogEntry, AuditLogAuthor, AuditOrigin } from "./audit-log.types";
 import { buildAuditDescription } from "./helpers/description";
 
 export class AuditLogService extends BaseService<AuditLog, AuditLogRepository> {
@@ -46,6 +46,7 @@ export class AuditLogService extends BaseService<AuditLog, AuditLogRepository> {
         action: entry.action,
         description: buildAuditDescription(entry.entity, entry.action, entry.changes),
         changes: entry.changes,
+        origin: entry.origin ?? AuditOrigin.USER,
       })),
       { transaction },
     );

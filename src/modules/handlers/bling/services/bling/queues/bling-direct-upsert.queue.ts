@@ -269,7 +269,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       // "product" não passa mais por aqui — o mapper (bling-webhook.mapper.ts)
       // roteia product.deleted pro mesmo requiresApiFetch de created/updated,
       // e quem decide o que fazer é BlingApiFetchQueue.fetchAndUpsertProduct
-      // (situacao=E → handleDeactivatedBlingProduct, exclusão de verdade com
+      // (situacao=E → productService.retireFromIntegration, exclusão de verdade com
       // limpeza de invoice_items/stock_movements). Esse case fica só de
       // salvaguarda pra um evento antigo/reenfileirado que ainda chegue aqui.
 

@@ -6,6 +6,13 @@ export enum AuditEntity {
   INTEGRATION_MAPPING = "INTEGRATION_MAPPING",
 }
 
+// Quem gerou o log: usuário logado, sistema (sync/fila) ou link do PDV (sem login, ainda sem fluxo auditado).
+export enum AuditOrigin {
+  USER = "USER",
+  SYSTEM = "SYSTEM",
+  PDV = "PDV",
+}
+
 export enum AuditAction {
   CREATE = "CREATE",
   UPDATE = "UPDATE",
@@ -42,11 +49,13 @@ export interface AuditLogAttributes {
   action: AuditAction;
   description: string;
   changes: AuditChanges | null;
+  origin: AuditOrigin;
 }
 
 export interface AuditLogCreationAttributes
-  extends Omit<AuditLogAttributes, "id" | "date"> {
+  extends Omit<AuditLogAttributes, "id" | "date" | "origin"> {
   date?: Date;
+  origin?: AuditOrigin;
 }
 
 // Entrada aceita por `auditLogService.record` — description é gerada pelo helper.
@@ -56,6 +65,8 @@ export interface AuditLogEntry {
   internalId: string;
   action: AuditAction;
   changes: AuditChanges;
+  // Sem valor = USER (fluxo manual).
+  origin?: AuditOrigin;
 }
 
 // Quem/quando da última alteração de uma entidade (ex.: quem definiu o EAN pelo físico).

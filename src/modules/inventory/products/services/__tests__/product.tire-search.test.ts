@@ -21,6 +21,7 @@ jest.mock("../../../../warehouse/expedition/batch-items/batch-items.service", ()
   default: { findPendingProductIds: jest.fn() },
 }));
 jest.mock("../../../supplier-mapping/supplier-mapping.service", () => ({ __esModule: true, default: {} }));
+jest.mock("../../../../integrations/integration-mapping/integration-mapping.service", () => ({ __esModule: true, default: {} }));
 jest.mock("../../../product-config/product_config.service", () => ({ __esModule: true, default: {} }));
 jest.mock("../../../../handlers/tecinco/queues/helpers/product.helpers", () => ({ __esModule: true }));
 jest.mock("../../repository/product-with-movements", () => ({ __esModule: true, default: {} }));

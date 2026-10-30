@@ -31,6 +31,7 @@ const FIELD_LABELS: Record<string, string> = {
   product_id: "Produto",
   unit_business_id: "Loja",
   integrations_id: "Integração",
+  is_active: "Ativo",
 };
 
 // Valor curto e estável pro texto: null/undefined viram "—", booleano vira sim/não, objeto vira JSON.

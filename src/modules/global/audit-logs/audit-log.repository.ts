@@ -36,7 +36,7 @@ export class AuditLogRepository extends BaseRepository<AuditLog> {
       params,
       config,
       {
-        attributes: ["id", "user_id", "date", "entity", "internal_id", "action", "description", "changes"],
+        attributes: ["id", "user_id", "date", "entity", "internal_id", "action", "description", "changes", "origin"],
         include: [{ model: User, as: "user", attributes: ["id", "name"] }],
       },
       { entity, internal_id: internalId },

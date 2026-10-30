@@ -22,6 +22,8 @@
 - Ao simplificar, não mude comportamento: rotas, status HTTP, formato de resposta, mensagens de erro e validações.
 - Se uma abstração parecer necessária, pergunte antes de criar.
 
+- **Audit log sempre pelo helper.** Montagem do audit (`changes`/`affected`) nunca inline na função de negócio. Genérico: `buildAuditEntries` (`global/audit-logs/helpers/audit-change.ts`) recebe as linhas mexidas (before lido e travado com `lock: t.LOCK.UPDATE` antes de alterar, after como ficou no banco — nunca o que se pretendia gravar) + `fields` + mensagem. Cada módulo tem o seu em `<módulo>/helpers/audit.ts`, só com o específico (mensagem pra leigo, fields, label); a função só chama `auditLogService.record(<helperDoModulo>(...), t)`. Referência: `inventory/products/helpers/audit.ts` (`productRetiredFromIntegrationAudit`). Exceção à regra de "não criar função pra uso único" acima.
+
 ## Layer separation: repository / service / controller
 
 Segue `BaseRepository`/`BaseService`/`BaseController` (`src/shared/utils/base-models/`). Cada camada só fala com a mesma camada de outras entidades — nunca pula pra camada de baixo.

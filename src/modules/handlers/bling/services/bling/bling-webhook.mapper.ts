@@ -63,7 +63,7 @@ function mapProduct(
 ): MappedWebhookResult {
   // "deleted" na Bling não é uma exclusão de fato — o produto continua
   // existindo lá, só passa a vir com situacao="E" (ver
-  // BlingApiFetchQueue.fetchAndUpsertProduct/handleDeactivatedBlingProduct,
+  // BlingApiFetchQueue.fetchAndUpsertProduct/productService.retireFromIntegration,
   // que decide o que fazer localmente a partir do dado fresco da API). Por
   // isso "deleted" cai no mesmo requiresApiFetch dos outros dois actions,
   // em vez do directUpsert de delete usado por invoice/product_supplier.

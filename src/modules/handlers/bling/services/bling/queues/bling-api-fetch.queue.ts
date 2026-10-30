@@ -331,7 +331,7 @@ interface BlingApiProduct {
   precoCusto: number;
   precoCompra: number;
   formato?: string;
-  // "A" = ativo, "E" = excluído/desativado na Bling — ver handleDeactivatedBlingProduct
+  // "A" = ativo, "E" = excluído/desativado na Bling — ver productService.retireFromIntegration
   situacao?: string;
   unidade?: string;
   pesoLiquido?: number;
@@ -876,7 +876,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     // situacao (incluindo undefined) cai no fluxo normal abaixo, sem exceção.
     // situacao=E interrompe TUDO: não cria/atualiza produto, não sincroniza KIT/
     // Magento/kardex/estoque, e não registra unmapped — só tenta excluir
-    // localmente o que já existir (ver handleDeactivatedBlingProduct).
+    // localmente o que já existir (ver productService.retireFromIntegration).
     if (blingProduct.situacao === "E") {
       // Criar Produto manual: falha com motivo (polling do front mostra "failed") em vez de terminar como sucesso.
       if (opts.create) {
@@ -884,11 +884,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           `O produto "${blingProduct.nome}" está excluído ou desativado no Bling. Esse produto não pode ser criado. [blingId=${blingProduct.id}]`,
         );
       }
-      await this.handleDeactivatedBlingProduct(
-        blingProduct,
-        unitBusiness,
-        logPrefix,
-      );
+      await productService.retireFromIntegration({ integration, externalId: String(blingProduct.id), logPrefix });
       return;
     }
 
@@ -1499,89 +1495,6 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       },
       unmapped.ean ?? "",
       unmapped.id,
-    );
-  }
-
-  // ─── Produto marcado situacao=E (desativado) na Bling ──────────────────────
-  // Só chamado quando fetchAndUpsertProduct já confirmou situacao === "E"
-  // (checagem estrita, ver ali). Se não existe produto local mapeado, não há
-  // nada a fazer — ignora silenciosamente (nunca cria unmapped pra isso).
-  //
-  // Nunca apaga o Product em si, nem invoice_items/stock_movements — só
-  // desassocia: apaga TODOS os integration_mappings desse produto (de
-  // qualquer integração, não só Bling — um produto desativado numa
-  // integração fica sem código de referência em nenhuma), todos os
-  // SupplierMapping, e todos os ProductConfig (o produto fica sem
-  // sku/gtin/preço em nenhuma loja) — e marca is_active=false. Isso faz o
-  // produto ficar "inútil" (sem como ser referenciado por código nenhum) mas
-  // preserva o histórico (invoice_items/stock_movements intactos).
-  //
-  // Ignorado dali pra frente automaticamente, sem lógica extra: sem
-  // integration_mapping, a próxima passagem de sync pra esse blingId não
-  // encontra o produto via resolveProductWithMapping e cai direto no "sem
-  // produto local mapeado, ignorado" acima — não recria unmapped, não tenta
-  // desassociar de novo.
-  private async handleDeactivatedBlingProduct(
-    blingProduct: BlingApiProduct,
-    unitBusiness: UnitBusiness,
-    logPrefix: string,
-  ): Promise<void> {
-    // Código não principal é só leitura: não desassocia/desativa o produto (o principal ainda pode estar ativo).
-    const blingIntegrationId = (await getBlingIntegration("Bling")).id;
-    const mapping = await integrationMappingService.findProductMappingByExternalId(
-      blingIntegrationId,
-      String(blingProduct.id),
-    );
-    if (mapping && !mapping.is_primary) {
-      console.log(`${logPrefix} — situacao=E na Bling em mapping não principal, ignorado.`);
-      return;
-    }
-    // Principal com outro código do produto na Bling (cadastro duplicado sendo limpo): só esse código sai e o próximo
-    // vira principal — o produto não é aposentado.
-    if (
-      mapping &&
-      (await integrationMappingService.retirePrimaryCodeIfDuplicated(mapping.id, mapping.internal_id, blingIntegrationId))
-    ) {
-      console.log(`${logPrefix} — situacao=E no código principal, produto segue pelo outro código Bling (promovido a principal).`);
-      return;
-    }
-
-    const product = await resolveProductWithMapping({
-      unitBusinessId: unitBusiness.id,
-      systemId: String(blingProduct.id),
-      ean: blingProduct.gtin,
-      logPrefix,
-    });
-
-    if (!product) {
-      console.log(
-        `${logPrefix} — situacao=E na Bling, sem produto local mapeado, ignorado.`,
-      );
-      return;
-    }
-
-    await sequelize.transaction(async (t) => {
-      await integrationMappingService.bulkDelete({
-        where: { entity_type: "PRODUCT", internal_id: product.id },
-        transaction: t,
-      });
-      await supplierMappingService.bulkDelete({
-        where: { product_id: product.id },
-        transaction: t,
-      });
-      await productConfigService.bulkDelete({
-        where: { product_id: product.id },
-        transaction: t,
-      });
-      await productService.update(
-        product.id,
-        { is_active: false },
-        { transaction: t },
-      );
-    });
-
-    console.log(
-      `${logPrefix} — produto "${product.name}" desativado (situacao=E na Bling): integration_mappings/supplier_mappings/product_configs removidos, is_active=false | product_id=${product.id}`,
     );
   }
 

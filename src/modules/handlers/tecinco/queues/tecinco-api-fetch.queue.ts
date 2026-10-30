@@ -516,37 +516,7 @@ export class TCarUpsertQueue extends BaseQueueService<
     const logPrefix = `[TCAR_UPSERT][processProduct] id_system=${systemId}`;
 
     if (action === "deleted") {
-      // Produto nunca mais é deletado pelo sistema — fica de histórico, só
-      // desativado (is_active=false) quando encontrado via integration mapping.
-      const integrations = await getCachedTCarIntegration();
-      // Código não principal é só leitura: não desativa o produto (o principal ainda pode estar ativo).
-      const deletedMapping = await integrationMappingService.findProductMappingByExternalId(
-        integrations.id,
-        systemId,
-      );
-      if (deletedMapping && !deletedMapping.is_primary) {
-        console.log(`${logPrefix} — mapping não principal, produto não desativado`);
-        return;
-      }
-      // Principal com outro código do produto na Tecinco: só esse código sai (o próximo vira principal).
-      if (
-        deletedMapping &&
-        (await integrationMappingService.retirePrimaryCodeIfDuplicated(deletedMapping.id, deletedMapping.internal_id, integrations.id))
-      ) {
-        console.log(`${logPrefix} — código principal excluído, produto segue ativo pelo outro código (promovido a principal)`);
-        return;
-      }
-      const mapped = await integrationMappingService.findEntityByMapping(
-        "PRODUCT",
-        integrations.id,
-        systemId,
-      );
-      if (mapped) {
-        await (mapped as typeof Product.prototype).update({ is_active: false });
-        console.log(`${logPrefix} — produto desativado (is_active=false), histórico mantido`);
-      } else {
-        console.log(`${logPrefix} — produto não encontrado via mapping, nada a desativar`);
-      }
+      await productService.retireFromIntegration({ integration: await getCachedTCarIntegration(), externalId: systemId, logPrefix });
       return;
     }
 
@@ -680,6 +650,15 @@ export class TCarUpsertQueue extends BaseQueueService<
             );
           }
         } catch (err: any) {
+          // 404 = código excluído na Tecinco: desassocia igual à ação deleted e não segue com o upsert.
+          if (err?.response?.status === 404) {
+            await productService.retireFromIntegration({
+              integration: await getCachedTCarIntegration(),
+              externalId: systemId,
+              logPrefix: `${logPrefix} [HTTP 404]`,
+            });
+            return;
+          }
           console.warn(
             `${logPrefix} — falha ao buscar detalhe do produto para resolver grupo/subgrupo: ${err?.message ?? err}`,
           );
@@ -1716,6 +1695,15 @@ export class TCarUpsertQueue extends BaseQueueService<
           const resultado = await produtoService.obterProduto(branchId, systemId);
           productLookups.set(systemId, resultado?.data ?? resultado);
         } catch (err: any) {
+          // 404 = código excluído na Tecinco: desassocia igual à ação deleted (o item segue sem o detalhe).
+          if (err?.response?.status === 404) {
+            await productService.retireFromIntegration({
+              integration: await getCachedTCarIntegration(),
+              externalId: systemId,
+              logPrefix: `${logPrefix} [HTTP 404]`,
+            });
+            return;
+          }
           console.warn(
             `${logPrefix} — falha ao buscar produto na Tecinco: ${err?.message ?? err}`,
           );

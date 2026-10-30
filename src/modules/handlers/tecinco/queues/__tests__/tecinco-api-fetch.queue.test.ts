@@ -128,7 +128,7 @@ jest.mock(
 
 jest.mock("../../../../inventory/products/services/product.service", () => ({
   __esModule: true,
-  default: { upsertWithComponents: jest.fn(), create: jest.fn() },
+  default: { upsertWithComponents: jest.fn(), create: jest.fn(), retireFromIntegration: jest.fn() },
 }));
 
 jest.mock(
@@ -303,37 +303,35 @@ describe("TCarUpsertQueue.processProduct", () => {
   }
 
   // ── ação deleted ─────────────────────────────────────────────────────────
-  // Produto nunca é deletado pelo sistema — só desativado (is_active=false)
-  // quando resolvido via integration mapping; histórico é mantido.
+  // Desassociação (e is_active=false só sem mapping em nenhuma integração) fica no productService.retireFromIntegration.
 
-  it("ação deleted: desativa (is_active=false) o produto encontrado via mapping, sem deletar", async () => {
-    const produto = makeTecincoProduto();
-    const mappedProduct = { id: "mapped-product-id", update: jest.fn() };
-    (integrationMappingService.findEntityByMapping as jest.Mock).mockResolvedValue(
-      mappedProduct,
+  const expectRetired = (produto: { epctb_codigo: number | string }) =>
+    expect(productService.retireFromIntegration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        integration: expect.objectContaining({ id: INTEGRATION_ID }),
+        externalId: String(produto.epctb_codigo),
+      }),
     );
+
+  it("ação deleted: desassocia pelo productService.retireFromIntegration (Tecinco + código), sem deletar nem fazer upsert", async () => {
+    const produto = makeTecincoProduto();
 
     await runProductJob("deleted", produto);
 
-    expect(integrationMappingService.findEntityByMapping).toHaveBeenCalledWith(
-      "PRODUCT",
-      INTEGRATION_ID,
-      String(produto.epctb_codigo),
-    );
-    expect(mappedProduct.update).toHaveBeenCalledWith({ is_active: false });
+    expectRetired(produto);
     expect(Product.destroy).not.toHaveBeenCalled();
     expect(productService.upsertWithComponents).not.toHaveBeenCalled();
   });
 
-  it("ação deleted: produto não encontrado via mapping — não desativa nem deleta nada", async () => {
-    const produto = makeTecincoProduto();
-    (integrationMappingService.findEntityByMapping as jest.Mock).mockResolvedValue(
-      null,
-    );
+  it("sync sem grupo e GET /produtos/:codigo 404: desassocia igual à ação deleted e não faz upsert", async () => {
+    const produto = makeTecincoProduto({ grupo_descricao: undefined });
+    (TCarProdutoService as unknown as jest.Mock).mockImplementation(() => ({
+      obterProduto: jest.fn().mockRejectedValue({ response: { status: 404 } }),
+    }));
 
-    await runProductJob("deleted", produto);
+    await runProductJob("updated", produto);
 
-    expect(Product.destroy).not.toHaveBeenCalled();
+    expectRetired(produto);
     expect(productService.upsertWithComponents).not.toHaveBeenCalled();
   });
 
@@ -1135,6 +1133,19 @@ describe("TCarUpsertQueue (privado) — ensureProductsFromInvoiceItems", () => {
     expect(result.operationalItems).toEqual([
       expect.objectContaining({ product_id: "matched-by-mapping-id" }),
     ]);
+  });
+
+  it("GET /produtos/:codigo 404 no item: desassocia o código igual à ação deleted", async () => {
+    (TCarProdutoService as unknown as jest.Mock).mockImplementation(() => ({
+      obterProduto: jest.fn().mockRejectedValue({ response: { status: 404 } }),
+    }));
+    const item = makeInvoiceItem();
+
+    await (queue as any).ensureProductsFromInvoiceItems([item], 1);
+
+    expect(productService.retireFromIntegration).toHaveBeenCalledWith(
+      expect.objectContaining({ integration: expect.objectContaining({ id: INTEGRATION_ID }), externalId: item.epctb_codigo }),
+    );
   });
 
   it("item de grupo fora de pneu presente na nota: nota inteira ignorada (nem unmapped nem operational)", async () => {

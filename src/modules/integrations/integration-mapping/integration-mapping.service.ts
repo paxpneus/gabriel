@@ -20,7 +20,7 @@ import Integration from "../integrations/integrations.model";
 import productService from "../../inventory/products/services/product.service";
 import { QueryParams, PaginatedResult } from "../../../shared/query/query.types";
 import auditLogService from "../../global/audit-logs/audit-log.service";
-import { AuditAction, AuditAffectedEntity, AuditEntity } from "../../global/audit-logs/audit-log.types";
+import { AuditAction, AuditAffectedEntity, AuditEntity, AuditOrigin } from "../../global/audit-logs/audit-log.types";
 import userService from "../../company/users/users/user.service";
 import manualImportService from "../manual-import/manual-import.service";
 import type { ManualImportQueues } from "../manual-import/manual-import.types";
@@ -182,13 +182,17 @@ export class IntegrationMappingService extends BaseService<
 
   // Código principal excluído/desativado no ERP, mas o produto tem outro código na mesma integração (cadastro duplicado
   // sendo limpo no ERP): remove só esse código e promove o próximo. true = era o caso (o chamador NÃO aposenta o produto).
-  async retirePrimaryCodeIfDuplicated(mappingId: string, productId: string, integrationsId: string): Promise<boolean> {
+  async retirePrimaryCodeIfDuplicated(
+    mappingId: string,
+    productId: string,
+    integration: { id: string; name: string },
+  ): Promise<boolean> {
     const sibling = await this.repository.findOne({
-      where: { entity_type: "PRODUCT", internal_id: productId, integrations_id: integrationsId, id: { [Op.ne]: mappingId } },
+      where: { entity_type: "PRODUCT", internal_id: productId, integrations_id: integration.id, id: { [Op.ne]: mappingId } },
       attributes: ["id"],
     });
     if (!sibling) return false;
-    await this.deleteForProduct(mappingId, productId);
+    await this.deleteForProduct(mappingId, productId, null, integration.name);
     return true;
   }
 
@@ -444,7 +448,13 @@ export class IntegrationMappingService extends BaseService<
 
   // Remove um mapping do produto; false = não pertence/não existe. Auditado (com a promoção, se houver).
   // Se era o principal, promove o mais antigo que sobrou na mesma integração (senão o produto pararia de sincronizar).
-  async deleteForProduct(id: string, productId: string, userId: string | null = null): Promise<boolean> {
+  // `deletedInIntegration` (nome da integração) = código excluído no ERP: audit com origem SYSTEM e mensagem do ERP.
+  async deleteForProduct(
+    id: string,
+    productId: string,
+    userId: string | null = null,
+    deletedInIntegration?: string,
+  ): Promise<boolean> {
     const existing = await this.repository.findOne({
       where: { id, entity_type: "PRODUCT", internal_id: productId },
       attributes: ["id", "integrations_id", "external_id", "is_primary"],
@@ -472,16 +482,24 @@ export class IntegrationMappingService extends BaseService<
           },
         ];
       }
+      let summary = `O código ${existing.external_id} no ERP foi desvinculado do produto`;
+      let origin = AuditOrigin.USER;
+      if (deletedInIntegration) {
+        origin = AuditOrigin.SYSTEM;
+        summary = `O código ${existing.external_id} foi excluído no ${deletedInIntegration} e desvinculado do produto`;
+        if (promoted) summary += `; o código ${promoted.external_id} virou o principal`;
+      }
       await this.recordProductMappingAudit(
         userId,
         productId,
         id,
         AuditAction.DELETE,
-        `O código ${existing.external_id} no ERP foi desvinculado do produto`,
+        summary,
         { external_id: existing.external_id, is_primary: existing.is_primary },
         null,
         transaction,
         affected,
+        origin,
       );
       return true;
     });
@@ -498,11 +516,13 @@ export class IntegrationMappingService extends BaseService<
     after: Record<string, unknown> | null,
     transaction: Transaction,
     affected: AuditAffectedEntity[] = [],
+    origin: AuditOrigin = AuditOrigin.USER,
   ): Promise<void> {
     await auditLogService.record(
       [
         {
           userId,
+          origin,
           entity: AuditEntity.INTEGRATION_MAPPING,
           internalId: mappingId,
           action,
@@ -510,6 +530,7 @@ export class IntegrationMappingService extends BaseService<
         },
         {
           userId,
+          origin,
           entity: AuditEntity.PRODUCT,
           internalId: productId,
           action: AuditAction.UPDATE,
