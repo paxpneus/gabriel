@@ -725,3 +725,26 @@ Em toda resposta/body de nota (`invoices`): `description` → `transfer_invoice_
 (o `"REF: <número>"` gravado na nota de venda ao vincular a transferência) e
 `bonded_invoice` → `return_invoice_reference` (vínculo saída ⇄ devolução). Nada
 muda nas rotas do PDV.
+
+## Mudou: gerar romaneio do PDV exige o operador
+
+`POST /api/batch/pdv-sales-requests/delivery-note` agora exige `operator_id`
+(uuid do usuário operador) no body, igual ao `userId` da rota padrão
+`/delivery-note/get` — não usa mais o usuário logado. Sem ele → `400 { "error": "Informe o operador do romaneio." }`.
+Lote que já tem operador mantém o dele.
+
+## Mudou: romaneio só com lote finalizado
+
+Gerar romaneio (PDV `POST /api/batch/pdv-sales-requests/delivery-note` e rota
+normal `GET /api/batch/delivery-note/get`) agora exige lote finalizado. No PDV,
+solicitações escolhidas em lote aberto → `400` (nenhum romaneio é gerado):
+`A solicitação do pedido 123 ainda não está em um lote finalizado.` /
+`Nem todas as solicitações estão em um lote finalizado. Sem lote ou com lote em aberto: pedidos 123, 456.`
+Rota normal com lote aberto → `400 { "error": "O lote 42 ainda não foi finalizado. Finalize o lote antes de gerar o romaneio." }`.
+
+## Mudou: operador do romaneio não pode ser trocado
+
+Depois de preenchido, o `operator_id` do lote não muda mais: `PUT /api/batch/:id`
+e `PUT /api/batch/bulk` com outro `operator_id` (ou `null`) → `400 { "error": "O operador do romaneio do lote 42 já foi definido e não pode ser alterado." }`.
+Reenviar o mesmo valor passa. Gerar romaneio de novo com outro operador segue
+mantendo o primeiro, sem erro.

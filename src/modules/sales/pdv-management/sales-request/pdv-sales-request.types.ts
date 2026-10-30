@@ -47,6 +47,8 @@ export enum PdvBatchStage {
   WITHOUT_BATCH = "WITHOUT_BATCH",
   IN_BATCH = "IN_BATCH",
   OPEN_BATCH = "OPEN_BATCH",
+  // Lote finalizado, com ou sem romaneio — o que gerar romaneio exige (igual à rota normal).
+  FINISHED_BATCH = "FINISHED_BATCH",
   FINISHED_WITHOUT_DELIVERY_NOTE = "FINISHED_WITHOUT_DELIVERY_NOTE",
 }
 

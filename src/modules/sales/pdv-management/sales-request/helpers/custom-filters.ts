@@ -155,6 +155,7 @@ function saleInvoiceCd21BatchStageSql(stage: PdvBatchStage): string {
     [PdvBatchStage.WITHOUT_BATCH]: `("PdvSalesRequest"."sale_invoice_id" IS NOT NULL AND NOT ${inCd21Batch()})`,
     [PdvBatchStage.IN_BATCH]: inCd21Batch(),
     [PdvBatchStage.OPEN_BATCH]: inCd21Batch(`AND b.status IN ('OPEN', 'PENDING')`),
+    [PdvBatchStage.FINISHED_BATCH]: inCd21Batch(`AND b.status = 'FINISHED'`),
     [PdvBatchStage.FINISHED_WITHOUT_DELIVERY_NOTE]: inCd21Batch(
       `AND b.status = 'FINISHED' AND b.delivery_note_generated_at IS NULL`,
     ),

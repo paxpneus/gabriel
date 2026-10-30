@@ -321,10 +321,15 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      // Rota só de login: o operador é sempre o usuário logado.
+      // Operador do romaneio obrigatório, como no userId da rota padrão (/delivery-note/get).
+      const operatorId = req.body?.operator_id;
+      if (!operatorId || typeof operatorId !== "string") {
+        return res.status(400).json({ error: "Informe o operador do romaneio." });
+      }
+
       const result = await this.service.generateDeliveryNoteFromPdv(
         this.pdvBatchParams(req),
-        (req as PdvAccessRequest).pdvAccess!.userId!,
+        operatorId,
       );
       return res.json(result);
     } catch (error: any) {

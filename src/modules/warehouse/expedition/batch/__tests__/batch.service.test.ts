@@ -255,12 +255,13 @@ describe("ExpeditionBatchService — bloqueio de nota com pedido PDV em CRITICAL
   it("generateDeliveryNote: rejeita sem gravar delivery_note_generated_at", async () => {
     jest.spyOn(service, "findByIdFullBatch").mockResolvedValue({
       id: "batch-1",
+      status: "FINISHED",
       delivery_note_generated_at: null,
       operator_id: null,
       batchInvoices: [{ invoice_id: "invoice-1" }],
     } as any);
     const update = jest
-      .spyOn((service as any).repository, "update")
+      .spyOn((service as any).repository, "bulkUpdate")
       .mockResolvedValue({} as any);
 
     await expect(
@@ -272,5 +273,121 @@ describe("ExpeditionBatchService — bloqueio de nota com pedido PDV em CRITICAL
     ).toHaveBeenCalledWith(["invoice-1"]);
     expect(update).not.toHaveBeenCalled();
     expect(pdvSalesRequestService.finishIfDeliveryNoteGenerated).not.toHaveBeenCalled();
+  });
+
+  it.each(["OPEN", "PENDING"])(
+    "generateDeliveryNote: lote %s → rejeita sem gravar romaneio",
+    async (status) => {
+      jest.spyOn(service, "findByIdFullBatch").mockResolvedValue({
+        id: "batch-1",
+        number: "42",
+        status,
+        delivery_note_generated_at: null,
+        operator_id: null,
+        batchInvoices: [{ invoice_id: "invoice-1" }],
+      } as any);
+      const update = jest
+        .spyOn((service as any).repository, "bulkUpdate")
+        .mockResolvedValue({} as any);
+
+      await expect(
+        service.generateDeliveryNote("batch-1", "user-1"),
+      ).rejects.toThrow(
+        "O lote 42 ainda não foi finalizado. Finalize o lote antes de gerar o romaneio.",
+      );
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("ExpeditionBatchService — operador do romaneio", () => {
+  let service: ExpeditionBatchService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // O describe anterior deixa este mock rejeitando.
+    (
+      pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock
+    ).mockResolvedValue(undefined);
+    service = new ExpeditionBatchService();
+  });
+
+  it("generateDeliveryNote: grava data e operador com COALESCE num UPDATE só (não sobrescreve o que já está no banco)", async () => {
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue({
+      id: "batch-1",
+      status: "FINISHED",
+      batchInvoices: [{ invoice_id: "invoice-1" }],
+    } as any);
+    const bulkUpdate = jest
+      .spyOn((service as any).repository, "bulkUpdate")
+      .mockResolvedValue([1] as any);
+    const update = jest.spyOn((service as any).repository, "update");
+
+    await service.generateDeliveryNote("batch-1", "user-1");
+
+    expect(update).not.toHaveBeenCalled();
+    const [data, options] = bulkUpdate.mock.calls[0] as any[];
+    expect(options).toEqual({ where: { id: "batch-1" } });
+    expect(data.operator_id).toMatchObject({
+      fn: "COALESCE",
+      args: [{ col: "operator_id" }, "user-1"],
+    });
+    expect(data.delivery_note_generated_at).toMatchObject({
+      fn: "COALESCE",
+      args: [{ col: "delivery_note_generated_at" }, { fn: "NOW" }],
+    });
+  });
+
+  it("update: lote com outro operador → rejeita sem gravar", async () => {
+    const findOne = jest
+      .spyOn(service, "findOne")
+      .mockResolvedValue({ number: "42" } as any);
+    const update = jest.spyOn((service as any).repository, "update");
+
+    await expect(
+      service.update("batch-1", { operator_id: "user-2" } as any),
+    ).rejects.toThrow(
+      "O operador do romaneio do lote 42 já foi definido e não pode ser alterado.",
+    );
+    expect(findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ attributes: ["number"] }),
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("bulkUpdate: algum lote com outro operador → rejeita sem gravar", async () => {
+    jest.spyOn(service, "findOne").mockResolvedValue({ number: "7" } as any);
+    const bulkUpdate = jest.spyOn((service as any).repository, "bulkUpdate");
+
+    await expect(
+      service.bulkUpdate({ operator_id: null } as any, {
+        where: { id: ["batch-1", "batch-2"] },
+      }),
+    ).rejects.toThrow(
+      "O operador do romaneio do lote 7 já foi definido e não pode ser alterado.",
+    );
+    expect(bulkUpdate).not.toHaveBeenCalled();
+  });
+
+  it("update: lote sem operador (ou mesmo valor) → grava", async () => {
+    jest.spyOn(service, "findOne").mockResolvedValue(null);
+    const update = jest
+      .spyOn((service as any).repository, "update")
+      .mockResolvedValue({ id: "batch-1" } as any);
+
+    await service.update("batch-1", { operator_id: "user-1" } as any);
+
+    expect(update).toHaveBeenCalledWith("batch-1", { operator_id: "user-1" }, undefined);
+  });
+
+  it("update sem operator_id no body → nem consulta", async () => {
+    const findOne = jest.spyOn(service, "findOne");
+    jest
+      .spyOn((service as any).repository, "update")
+      .mockResolvedValue({ id: "batch-1" } as any);
+
+    await service.update("batch-1", { status: "PENDING" } as any);
+
+    expect(findOne).not.toHaveBeenCalled();
   });
 });

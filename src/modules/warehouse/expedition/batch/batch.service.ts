@@ -28,7 +28,16 @@ import {
   PaginatedResult,
   QueryParams,
 } from "../../../../shared/query/query.types";
-import { DestroyOptions, FindOptions, Op, Transaction, WhereOptions } from "sequelize";
+import {
+  DestroyOptions,
+  FindOptions,
+  Op,
+  Transaction,
+  UpdateOptions,
+  WhereOptions,
+  col,
+  fn,
+} from "sequelize";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
 import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
@@ -64,6 +73,7 @@ const PDV_BATCH_STAGE_LABELS: Record<PdvBatchStage, string> = {
   [PdvBatchStage.WITHOUT_BATCH]: "sem lote",
   [PdvBatchStage.IN_BATCH]: "em lote",
   [PdvBatchStage.OPEN_BATCH]: "em lote pendente",
+  [PdvBatchStage.FINISHED_BATCH]: "em lote finalizado",
   [PdvBatchStage.FINISHED_WITHOUT_DELIVERY_NOTE]: "com lote finalizado aguardando romaneio",
 };
 
@@ -100,12 +110,12 @@ const PDV_BATCH_ACTION_RULES = {
   },
   deliveryNote: {
     defaultStage: PdvBatchStage.FINISHED_WITHOUT_DELIVERY_NOTE,
-    selectedStage: PdvBatchStage.IN_BATCH,
+    selectedStage: PdvBatchStage.FINISHED_BATCH,
     groupByTransporter: false,
     selectedNotInStage: (orders: string, single: boolean) =>
       single
-        ? `A solicitação do pedido ${orders} ainda não está em um lote.`
-        : `Nem todas as solicitações estão em um lote. Sem lote: pedidos ${orders}.`,
+        ? `A solicitação do pedido ${orders} ainda não está em um lote finalizado.`
+        : `Nem todas as solicitações estão em um lote finalizado. Sem lote ou com lote em aberto: pedidos ${orders}.`,
   },
 } satisfies Record<string, PdvBatchActionRule>;
 
@@ -788,8 +798,8 @@ async addInvoiceToLastOutgoingBatch(
     return this.pdvBatchActionResult(batches, skipped);
   }
 
-  // Um romaneio por lote distinto das notas; escolhidas só precisam estar em lote.
-  async generateDeliveryNoteFromPdv(params: PdvBatchActionParams, userId: string) {
+  // Um romaneio por lote distinto das notas; escolhidas precisam estar em lote finalizado. operatorId vem do front (obrigatório).
+  async generateDeliveryNoteFromPdv(params: PdvBatchActionParams, operatorId: string) {
     const cd21 = await this.getCd21();
     const { groups } = await this.resolvePdvBatchGroups(
       params,
@@ -799,7 +809,7 @@ async addInvoiceToLastOutgoingBatch(
     const batchIds = await this.batchIdsOfSaleInvoices(invoiceIds, cd21.id);
 
     const batches = await Promise.all(
-      batchIds.map((batchId) => this.generateDeliveryNote(batchId, userId)),
+      batchIds.map((batchId) => this.generateDeliveryNote(batchId, operatorId)),
     );
     await pdvSalesRequestService.notifyChangedBySaleInvoiceIds(invoiceIds);
     return { batches, skipped: [], warnings: [] };
@@ -1386,25 +1396,31 @@ async addInvoiceToLastOutgoingBatch(
   async generateDeliveryNote(batchId: string, userId: string) {
     const batchInfo = await this.findByIdFullBatch(batchId);
 
+    // Romaneio só de lote finalizado — vale pra rota normal e pro PDV.
+    if (batchInfo.status !== "FINISHED") {
+      throw new Error(
+        `O lote ${batchInfo.number} ainda não foi finalizado. Finalize o lote antes de gerar o romaneio.`,
+      );
+    }
+
     // Antes de gravar o romaneio: pedido PDV em CRITICAL_ERROR barra a geração.
     await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(
       (batchInfo.batchInvoices ?? []).map((bi) => bi.invoice_id),
     );
-    let generated_at: Date;
-    let operator_id: string;
 
-    !batchInfo.delivery_note_generated_at
-      ? (generated_at = new Date())
-      : (generated_at = batchInfo.delivery_note_generated_at);
-
-    !batchInfo.operator_id
-      ? (operator_id = userId)
-      : (operator_id = batchInfo.operator_id);
-
-    await this.repository.update(batchId, {
-      delivery_note_generated_at: generated_at,
-      operator_id: operator_id,
-    });
+    // COALESCE no próprio UPDATE: só grava data/operador se ainda vazios no banco — 2 gerações simultâneas não sobrescrevem.
+    // Direto no repository: o bulkUpdate do service barraria a troca de operator_id.
+    await this.repository.bulkUpdate(
+      {
+        delivery_note_generated_at: fn(
+          "COALESCE",
+          col("delivery_note_generated_at"),
+          fn("NOW"),
+        ) as unknown as Date,
+        operator_id: fn("COALESCE", col("operator_id"), userId) as unknown as string,
+      },
+      { where: { id: batchId } },
+    );
 
     const updatedBatch = await this.findByIdFullBatch(batchId);
 
@@ -1447,6 +1463,48 @@ async addInvoiceToLastOutgoingBatch(
     if (batchItem || batchInvoices.length || batchInvoiceItem || scanLog) {
       throw new Error("Não é possível excluir um lote com itens");
     }
+  }
+
+  // Operador do romaneio, uma vez preenchido, não muda pelo PUT /:id nem /bulk (reenviar o mesmo valor passa).
+  private async assertOperatorNotChanged(
+    data: Partial<ExpeditionBatch["_creationAttributes"]>,
+    where: WhereOptions,
+  ): Promise<void> {
+    if (!("operator_id" in data)) return;
+
+    const locked = await this.findOne({
+      attributes: ["number"],
+      where: {
+        [Op.and]: [
+          where,
+          { operator_id: { [Op.ne]: null } },
+          // Mandar null pra lote com operador também conta como troca.
+          { operator_id: { [Op.ne]: data.operator_id ?? null } },
+        ],
+      },
+    });
+    if (locked) {
+      throw new Error(
+        `O operador do romaneio do lote ${locked.number} já foi definido e não pode ser alterado.`,
+      );
+    }
+  }
+
+  async update(
+    id: string,
+    data: Partial<ExpeditionBatch["_creationAttributes"]>,
+    options?: Partial<UpdateOptions>,
+  ) {
+    await this.assertOperatorNotChanged(data, { id });
+    return super.update(id, data, options);
+  }
+
+  async bulkUpdate(
+    data: Partial<ExpeditionBatch["_creationAttributes"]>,
+    options: UpdateOptions,
+  ) {
+    await this.assertOperatorNotChanged(data, options.where);
+    return super.bulkUpdate(data, options);
   }
 
   async delete(id: string, options?: DestroyOptions): Promise<any> {

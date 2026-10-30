@@ -120,6 +120,7 @@ function fakeBatchTargets(rows: Row[]) {
           case PdvBatchStage.IN_BATCH:
             return row.stage !== "none";
           case PdvBatchStage.FINISHED_WITHOUT_DELIVERY_NOTE:
+          case PdvBatchStage.FINISHED_BATCH:
             return row.stage === "finished";
           default:
             return false;
@@ -516,27 +517,43 @@ describe("ExpeditionBatchService — lote pendente de saída pelo link CD21", ()
         );
       });
 
-      it("escolhidas só precisam estar em lote (finalizado ou não)", async () => {
+      it("escolhidas em lote finalizado → um romaneio por lote", async () => {
         const generate = jest
           .spyOn(service, "generateDeliveryNote")
           .mockImplementation(async (batchId) => ({ id: batchId }) as any);
 
         const result = await service.generateDeliveryNoteFromPdv(
-          { status: S.SHIPPING, salesRequestIds: ["sr-4", "sr-5"] },
+          { status: S.SHIPPING, salesRequestIds: ["sr-5"] },
           "user-1",
         );
 
-        expect(generate.mock.calls.map((call) => call[0])).toEqual(["b-open", "b-fin"]);
-        expect(result.batches).toHaveLength(2);
+        expect(generate.mock.calls.map((call) => call[0])).toEqual(["b-fin"]);
+        expect(result.batches).toHaveLength(1);
       });
 
-      it("escolhida fora de lote → mensagem amigável", async () => {
+      it("escolhida em lote aberto → bloqueia sem gerar nenhum romaneio", async () => {
+        const generate = jest.spyOn(service, "generateDeliveryNote");
+
+        await expect(
+          service.generateDeliveryNoteFromPdv(
+            { status: S.SHIPPING, salesRequestIds: ["sr-4", "sr-5"] },
+            "user-1",
+          ),
+        ).rejects.toThrow(
+          "Nem todas as solicitações estão em um lote finalizado. Sem lote ou com lote em aberto: pedidos P4.",
+        );
+        expect(generate).not.toHaveBeenCalled();
+      });
+
+      it("escolhidas fora de lote → mensagem amigável", async () => {
         await expect(
           service.generateDeliveryNoteFromPdv(
             { status: S.SHIPPING, salesRequestIds: ["sr-1", "sr-2", "sr-5"] },
             "user-1",
           ),
-        ).rejects.toThrow("Nem todas as solicitações estão em um lote. Sem lote: pedidos P1, P2.");
+        ).rejects.toThrow(
+          "Nem todas as solicitações estão em um lote finalizado. Sem lote ou com lote em aberto: pedidos P1, P2.",
+        );
       });
 
       it("1 escolhida fora de lote → mensagem no singular", async () => {
@@ -545,7 +562,7 @@ describe("ExpeditionBatchService — lote pendente de saída pelo link CD21", ()
             { status: S.SHIPPING, salesRequestIds: ["sr-1"] },
             "user-1",
           ),
-        ).rejects.toThrow("A solicitação do pedido P1 ainda não está em um lote.");
+        ).rejects.toThrow("A solicitação do pedido P1 ainda não está em um lote finalizado.");
       });
     });
 
