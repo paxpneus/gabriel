@@ -21,6 +21,8 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
       ean,
       sku,
       quantityStock,
+      reservedQuantity,
+      virtualStock,
       price,
     }: {
       batchId: string;
@@ -29,6 +31,9 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
       ean: string;
       sku: string;
       quantityStock: number;
+      // reserva/virtual do Stock, só leitura (guardados no item)
+      reservedQuantity?: number | null;
+      virtualStock?: number | null;
       // valor total do item (preço unitário × estoque); omitido no scan, cai no default 0 da coluna
       price?: number;
     },
@@ -59,6 +64,8 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
               ean,
               sku,
               quantity_stock: quantityStock,
+              reserved_quantity: reservedQuantity ?? null,
+              virtual_stock: virtualStock ?? null,
               quantity_read: 0,
               divergency: quantityStock,
               initial_divergency: quantityStock,

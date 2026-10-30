@@ -563,10 +563,11 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
   }
 
+  // Saldo físico (o que conta) e virtual (só leitura, físico menos reservas) por id Bling, numa chamada só.
   private async fetchPhysicalStock(
     blingIds: number[],
-  ): Promise<Map<number, number>> {
-    const map = new Map<number, number>();
+  ): Promise<Map<number, { physical: number; virtual: number }>> {
+    const map = new Map<number, { physical: number; virtual: number }>();
 
     if (!blingIds.length) return map;
 
@@ -574,11 +575,19 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     blingIds.forEach((id) => params.append("idsProdutos[]", String(id)));
 
     const { data } = await blingGet<{
-      data: Array<{ produto: { id: number }; saldoFisicoTotal: number }>;
+      data: Array<{
+        produto: { id: number };
+        saldoFisicoTotal: number;
+        saldoVirtualTotal: number;
+      }>;
     }>(`/estoques/saldos?${params.toString()}`, blingApi);
 
     for (const s of data?.data ?? []) {
-      map.set(s.produto.id, Number(s.saldoFisicoTotal ?? 0));
+      map.set(s.produto.id, {
+        physical: Number(s.saldoFisicoTotal ?? 0),
+        // sem saldo virtual na resposta = sem reserva (virtual = físico)
+        virtual: Number(s.saldoVirtualTotal ?? s.saldoFisicoTotal ?? 0),
+      });
     }
 
     return map;
@@ -615,11 +624,21 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     product: Product;
     unitBusiness: UnitBusiness;
     newQuantity: number;
+    // saldoVirtualTotal da Bling: só pra gravar reserved_quantity/virtual_stock (só leitura)
+    virtualQuantity: number;
     averageCost: number;
     transaction: Transaction;
   }): Promise<void> {
-    const { product, unitBusiness, newQuantity, averageCost, transaction } =
-      params;
+    const {
+      product,
+      unitBusiness,
+      newQuantity,
+      virtualQuantity,
+      averageCost,
+      transaction,
+    } = params;
+    // Reserva = físico - virtual; as duas colunas só exibem, quem conta é quantity.
+    const reservedQuantity = newQuantity - virtualQuantity;
     const logPrefix = `[BLING_API_FETCH] syncStockAndBatches product=${product.id}`;
 
     if (newQuantity < 0) {
@@ -641,6 +660,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         quantity: newQuantity,
         unit_business_id: unitBusiness.id,
         total_price: newTotalPrice,
+        reserved_quantity: reservedQuantity,
+        virtual_stock: virtualQuantity,
       },
       { conflictFields: ["product_id", "unit_business_id"], transaction },
     );
@@ -662,7 +683,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     }
 
     console.log(
-      `${logPrefix} Stock upsertado: product_id=${product.id} | qty=${newQuantity} | avg_cost=${averageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
+      `${logPrefix} Stock upsertado: product_id=${product.id} | qty=${newQuantity} | reserved=${reservedQuantity} | virtual=${virtualQuantity} | avg_cost=${averageCost.toFixed(4)} | total_price=${newTotalPrice.toFixed(2)}`,
     );
 
     const affectedBatches = await InventoryBatch.findAll({
@@ -682,8 +703,13 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     });
 
     for (const batch of affectedBatches) {
+      // CYCLIC acompanha o sync: reserva/virtual (só leitura) atualizam junto com quantity_stock
       await InventoryBatchItems.update(
-        { quantity_stock: newQuantity },
+        {
+          quantity_stock: newQuantity,
+          reserved_quantity: reservedQuantity,
+          virtual_stock: virtualQuantity,
+        },
         {
           where: { inventory_batch_id: batch.id, product_id: product.id },
           transaction,
@@ -1029,9 +1055,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       }
     }
 
-    const physicalQuantity =
-      (await this.fetchPhysicalStock([blingProduct.id])).get(blingProduct.id) ??
-      0;
+    const stockBalance = (
+      await this.fetchPhysicalStock([blingProduct.id])
+    ).get(blingProduct.id);
+    const physicalQuantity = stockBalance?.physical ?? 0;
+    // Virtual sem saldo na Bling = físico (sem reserva)
+    const virtualQuantity = stockBalance?.virtual ?? physicalQuantity;
 
     // Auto-map/criação acima acabaram de criar o mapping — busca de novo pra saber se nasceu principal.
     mapping ??= await integrationMappingService.findProductMappingByExternalId(
@@ -1313,6 +1342,7 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           product,
           unitBusiness,
           newQuantity: physicalQuantity,
+          virtualQuantity,
           averageCost: average_cost,
           transaction,
         });

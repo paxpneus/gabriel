@@ -9,6 +9,9 @@ class Stock extends Model<StockAttributes, StockCreationAttributes> implements S
   public quantity!: number;
   public unit_business_id!: string;
   public total_price?: number
+  // Só leitura (front), vindos da Bling; nenhum fluxo usa — quem conta é `quantity`.
+  public reserved_quantity?: number | null;
+  public virtual_stock?: number | null;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -46,6 +49,16 @@ Stock.init(
     quantity: {
       type: DataTypes.INTEGER,
       defaultValue: 0,
+    },
+    // saldoFisicoTotal - saldoVirtualTotal da Bling; só leitura, gravado pelo stock sync e pelo webhook.
+    reserved_quantity: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    // saldoVirtualTotal da Bling (físico descontando a reserva); só leitura.
+    virtual_stock: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
     },
   },
   {

@@ -16,6 +16,9 @@ export interface InventoryBatchItemsAttributes {
     inventory_batch_id: string
     price?: number;
     initial_divergency?: number
+    // Cópia só leitura do Stock na criação do item; não entra em cálculo.
+    reserved_quantity?: number | null;
+    virtual_stock?: number | null;
 }
 export interface inventoryBatchItemFull extends InventoryBatchItemsAttributes {
     product: ProductWithStock

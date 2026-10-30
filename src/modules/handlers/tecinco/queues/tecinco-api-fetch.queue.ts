@@ -564,16 +564,20 @@ export class TCarUpsertQueue extends BaseQueueService<
     // Estoque/preço por filial: quando a busca usa include=filiais, data.filiais
     // já traz todas de uma vez; senão (ex.: webhook de uma filial só), monta um
     // array de 1 posição a partir dos campos "planos" do payload (compat).
+    // estoque = físico (o que conta em stocks.quantity); estoqueDisponivel = só leitura (virtual_stock),
+    // sem disponível na resposta = sem reserva (igual ao físico).
     const filiaisToProcess: Array<{
       fll_codigo: number;
       estoque: number;
+      estoqueDisponivel: number;
       preco: number;
       custoContabil: number;
     }> =
       data.filiais && data.filiais.length > 0
         ? data.filiais.map((f) => ({
             fll_codigo: f.fll_codigo,
-            estoque: Number(f.estoque_disponivel ?? 0),
+            estoque: Number(f.estoque_fisico ?? 0),
+            estoqueDisponivel: Number(f.estoque_disponivel ?? f.estoque_fisico ?? 0),
             preco: Number(f.preco ?? 0),
             custoContabil: Number(f.custo_contabil ?? 0),
           }))
@@ -581,6 +585,7 @@ export class TCarUpsertQueue extends BaseQueueService<
             {
               fll_codigo: Number(data.fll_codigo ?? branchId ?? 0),
               estoque: Number(data.epcte_estoque ?? 0),
+              estoqueDisponivel: Number(data.epcte_estoquedisponivel ?? data.epcte_estoque ?? 0),
               preco: Number(data.epprc_preco ?? 0),
               custoContabil: Number(data.epcte_custcont ?? 0),
             },
@@ -950,6 +955,8 @@ export class TCarUpsertQueue extends BaseQueueService<
         if (supplierCnpj && unitBusiness) {
           const entryUnitCost = filial.custoContabil;
           const stockQty = Math.round(filial.estoque);
+          // Só leitura: disponível = virtual_stock, reserva = físico - disponível
+          const virtualQty = Math.round(filial.estoqueDisponivel);
 
           const existingStock = await Stock.findOne({
             where: { product_id: product.id, unit_business_id: unitBusiness.id },
@@ -1024,6 +1031,8 @@ export class TCarUpsertQueue extends BaseQueueService<
               unit_business_id: unitBusiness.id,
               quantity: stockQty,
               total_price: stockQty * newAverageCost,
+              reserved_quantity: stockQty - virtualQty,
+              virtual_stock: virtualQty,
             },
             { conflictFields: ["product_id", "unit_business_id"] },
           );
@@ -1126,6 +1135,8 @@ export class TCarUpsertQueue extends BaseQueueService<
 
       const entryUnitCost = filial.custoContabil;
       const stockQty = Math.round(filial.estoque);
+      // Só leitura: disponível = virtual_stock, reserva = físico - disponível
+      const virtualQty = Math.round(filial.estoqueDisponivel);
 
       const existingStock = await Stock.findOne({
         where: { product_id: product.id, unit_business_id: unitBusiness.id },
@@ -1201,12 +1212,14 @@ export class TCarUpsertQueue extends BaseQueueService<
           unit_business_id: unitBusiness.id,
           quantity: stockQty,
           total_price: stockQty * newAverageCost,
+          reserved_quantity: stockQty - virtualQty,
+          virtual_stock: virtualQty,
         },
         { conflictFields: ["product_id", "unit_business_id"] },
       );
 
       console.log(
-        `${logPrefix} — Stock upsertado (filial=${filialNumber}): qty=${stockQty} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${(stockQty * newAverageCost).toFixed(2)}`,
+        `${logPrefix} — Stock upsertado (filial=${filialNumber}): qty=${stockQty} | reserved=${stockQty - virtualQty} | virtual=${virtualQty} | avg_cost=${newAverageCost.toFixed(4)} | total_price=${(stockQty * newAverageCost).toFixed(2)}`,
       );
 
       // ─── SupplierMappings ───────────────────────────────────────────────────
@@ -1302,6 +1315,7 @@ export class TCarUpsertQueue extends BaseQueueService<
     filiaisToProcess: Array<{
       fll_codigo: number;
       estoque: number;
+      estoqueDisponivel: number;
       preco: number;
       custoContabil: number;
     }>;

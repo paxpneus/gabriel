@@ -201,7 +201,8 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
             as: "stocks",
             where: Object.keys(stockWhere).length ? stockWhere : undefined,
             required: !!stockFilter?.stockUnit,
-            attributes: ["id", "quantity", "unit_business_id", "total_price"],
+            // reserved_quantity/virtual_stock: só leitura pro front (listagem detalhada)
+            attributes: ["id", "quantity", "unit_business_id", "total_price", "reserved_quantity", "virtual_stock"],
           },
           {
             model: Subgroup,
@@ -330,7 +331,8 @@ export class ProductWithMovementsRepository extends BaseRepository<Product> {
           as: "stocks",
           where: Object.keys(stockWhere).length ? stockWhere : undefined,
           required: !!stockFilter?.stockUnit,
-          attributes: ["id", "quantity", "unit_business_id", "total_price"],
+          // reserved_quantity/virtual_stock: só leitura pro front (listagem detalhada)
+          attributes: ["id", "quantity", "unit_business_id", "total_price", "reserved_quantity", "virtual_stock"],
         },
         {
           model: Subgroup,

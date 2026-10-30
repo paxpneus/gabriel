@@ -142,6 +142,8 @@ export class InventoryBatchLogsService extends BaseService<
           ean: config?.gtin ?? "",
           sku: config?.sku ?? "",
           quantityStock: stock.quantity,
+          reservedQuantity: stock.reserved_quantity,
+          virtualStock: stock.virtual_stock,
         },
         t,
       );

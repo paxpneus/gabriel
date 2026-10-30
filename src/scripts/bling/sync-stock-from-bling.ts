@@ -1,5 +1,5 @@
 /**
- * Alinha `stocks.quantity` com o saldo físico da Bling (`/estoques/saldos`, em lote) só pros produtos divergentes.
+ * Alinha `stocks.quantity` com o saldo físico da Bling (e as colunas só leitura reserved_quantity/virtual_stock com o virtual) (`/estoques/saldos`, em lote) só pros produtos divergentes.
  * Uso: npx ts-node src/scripts/bling/sync-stock-from-bling.ts [--apply] (sem --apply só lista, não grava).
  * Também roda a cada 5min pela fila BLING_STOCK_SYNC (sempre gravando).
  */
@@ -34,8 +34,9 @@ export async function syncStockFromBling(
   const blingIds = [...productIdByBlingId.keys()];
   console.log(`[SYNC_STOCK] ${blingIds.length} produto(s) mapeados na Bling`);
 
-  // Saldo físico da Bling por product_id; lote que falhar é só logado e pulado.
+  // Saldo físico e virtual da Bling por product_id; lote que falhar é só logado e pulado.
   const blingQuantityByProductId = new Map<string, number>();
+  const blingVirtualByProductId = new Map<string, number>();
   let failedBatches = 0;
   for (let i = 0; i < blingIds.length; i += BATCH_SIZE) {
     const batch = blingIds.slice(i, i + BATCH_SIZE);
@@ -43,11 +44,14 @@ export async function syncStockFromBling(
     batch.forEach((id) => params.append("idsProdutos[]", id));
     try {
       const { data } = await blingGet<{
-        data: Array<{ produto: { id: number }; saldoFisicoTotal: number }>;
+        data: Array<{ produto: { id: number }; saldoFisicoTotal: number; saldoVirtualTotal: number }>;
       }>(`/estoques/saldos?${params.toString()}`, blingApi);
       for (const s of data?.data ?? []) {
         const productId = productIdByBlingId.get(String(s.produto.id));
-        if (productId) blingQuantityByProductId.set(productId, Number(s.saldoFisicoTotal ?? 0));
+        if (!productId) continue;
+        blingQuantityByProductId.set(productId, Number(s.saldoFisicoTotal ?? 0));
+        // sem saldo virtual na resposta = sem reserva (virtual = físico)
+        blingVirtualByProductId.set(productId, Number(s.saldoVirtualTotal ?? s.saldoFisicoTotal ?? 0));
       }
     } catch (error: any) {
       failedBatches++;
@@ -60,7 +64,7 @@ export async function syncStockFromBling(
   const [stocks, configs] = await Promise.all([
     stockService.findAll({
       where: { unit_business_id: UNIT_BUSINESS_ID, product_id: { [Op.in]: productIds } },
-      attributes: ["product_id", "quantity"],
+      attributes: ["product_id", "quantity", "virtual_stock"],
     }),
     product_configService.findAll({
       where: { unit_business_id: UNIT_BUSINESS_ID, product_id: { [Op.in]: productIds } },
@@ -68,16 +72,28 @@ export async function syncStockFromBling(
     }),
   ]);
   const localQuantityByProductId = new Map(stocks.map((s) => [s.product_id, Number(s.quantity)]));
+  const localVirtualByProductId = new Map(
+    stocks.map((s) => [s.product_id, s.virtual_stock == null ? null : Number(s.virtual_stock)]),
+  );
   const configByProductId = new Map(configs.map((c) => [c.product_id, c]));
 
-  // Divergente = sem linha de stock ou quantidade diferente; saldo negativo na Bling é anomalia, não grava (igual ao webhook).
-  let divergent: Array<{ productId: string; local: number | null; bling: number }> = [];
+  // Divergente = sem linha de stock, quantidade ou virtual diferente (reserva nova sem mudar o físico também grava);
+  // saldo negativo na Bling é anomalia, não grava (igual ao webhook).
+  let divergent: Array<{
+    productId: string;
+    local: number | null;
+    bling: number;
+    localVirtual: number | null;
+    blingVirtual: number;
+  }> = [];
   const negative: Array<{ productId: string; bling: number }> = [];
   for (const [productId, bling] of blingQuantityByProductId) {
     const local = localQuantityByProductId.get(productId) ?? null;
-    if (local === bling) continue;
+    const localVirtual = localVirtualByProductId.get(productId) ?? null;
+    const blingVirtual = blingVirtualByProductId.get(productId) ?? bling;
+    if (local === bling && localVirtual === blingVirtual) continue;
     if (bling < 0) negative.push({ productId, bling });
-    else divergent.push({ productId, local, bling });
+    else divergent.push({ productId, local, bling, localVirtual, blingVirtual });
   }
 
   const products = await productService.findAll({
@@ -95,7 +111,9 @@ export async function syncStockFromBling(
   console.log("═".repeat(60));
   console.log(`[SYNC_STOCK] Divergentes: ${divergent.length}`);
   for (const d of divergent) {
-    console.log(`  · ${label(d.productId)} | hub=${d.local ?? "sem stock"} → bling=${d.bling}`);
+    console.log(
+      `  · ${label(d.productId)} | hub=${d.local ?? "sem stock"} → bling=${d.bling} | virtual hub=${d.localVirtual ?? "-"} → bling=${d.blingVirtual}`,
+    );
   }
   if (negative.length) {
     console.log(`[SYNC_STOCK] Saldo negativo na Bling (não gravado): ${negative.length}`);
@@ -107,6 +125,7 @@ export async function syncStockFromBling(
   }
 
   // Upsert num comando só (unique product_id + unit_business_id); total_price segue o webhook: qty * custo médio.
+  // reserved_quantity/virtual_stock são só leitura: físico - virtual e virtual da Bling.
   if (!dryRun && divergent.length) {
     await stockService.bulkCreate(
       divergent.map((d) => ({
@@ -114,9 +133,11 @@ export async function syncStockFromBling(
         unit_business_id: UNIT_BUSINESS_ID,
         quantity: d.bling,
         total_price: d.bling * Number(configByProductId.get(d.productId)?.average_cost ?? 0),
+        reserved_quantity: d.bling - d.blingVirtual,
+        virtual_stock: d.blingVirtual,
       })),
       {
-        updateOnDuplicate: ["quantity", "total_price", "updatedAt"],
+        updateOnDuplicate: ["quantity", "total_price", "reserved_quantity", "virtual_stock", "updatedAt"],
         conflictAttributes: ["product_id", "unit_business_id"],
       },
     );

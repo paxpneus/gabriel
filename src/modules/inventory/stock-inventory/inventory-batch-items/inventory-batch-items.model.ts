@@ -27,6 +27,9 @@ class InventoryBatchItems
   public inventory_batch_id!: string;
   public price?: number;
   public initial_divergency?: number
+  // Cópia só leitura do Stock na criação do item (CYCLIC acompanha o sync da Bling); não entra em cálculo.
+  public reserved_quantity?: number | null;
+  public virtual_stock?: number | null;
 
    public product?: Product;
 }
@@ -77,6 +80,9 @@ InventoryBatchItems.init(
       allowNull: true,
       defaultValue: 0,
     },
+    // Stock.reserved_quantity/virtual_stock guardados no item; só leitura, nenhum total/divergência usa.
+    reserved_quantity: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+    virtual_stock: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
   },
   {
     sequelize,

@@ -31,6 +31,16 @@
   quando o sync começa não é interrompido.
   Não roda junto com a `BLING_MIGRATION`: com job ativo nela, a rodada do sync é pulada (job conclui sem fazer nada).
   Se religar `KARDEX_OVERRIDES_STOCK`, os dois brigam pelo `stocks` — desligar um dos dois.
+- **`stocks.reserved_quantity` / `stocks.virtual_stock`** (m329): só leitura pro front, nenhum fluxo/cálculo usa — quem conta é `quantity`.
+  `virtual_stock` = `saldoVirtualTotal`, `reserved_quantity` = `saldoFisicoTotal - saldoVirtualTotal` (sem virtual na resposta → virtual = físico).
+  Gravados só pelo `syncStockFromBling` (divergente = `quantity` OU `virtual_stock` diferente) e pelo `syncStockAndBatches` do
+  `BLING_API_FETCH` (webhook de produto/estoque), da mesma chamada `/estoques/saldos`.
+  Tecinco (`tecinco-api-fetch.queue.ts`, os 2 `Stock.upsert` por filial): `quantity` = `estoque_fisico`, `virtual_stock` = `estoque_disponivel`,
+  `reserved_quantity` = físico - disponível (payload plano: `epcte_estoque`/`epcte_estoquedisponivel`); sem disponível → igual ao físico.
+  `null` = linha nunca regravada por nenhum dos dois depois da m329.
+  Expostas no include `stocks` de `productRepository.findByIdWithRelations` (`/products/:id/full`, `/products/by-code/:code`)
+  e `paginateWithStock` (index, `/mapped/get`, `/tire-search/paginated/get`), e no `productWithMovementsRepository`
+  (`paginateDetailedWithMovements`/`findAllDetailedWithMovements`, `/products/detailed/get`).
 - **Kardex é a fonte do saldo em `stocks`** (`stocks` só vem da Bling por
   webhook, que pode se perder). `syncProductFromLastMovement` roda no fim de
   todo método que escreve na cadeia (`syncProductStockMovements`,

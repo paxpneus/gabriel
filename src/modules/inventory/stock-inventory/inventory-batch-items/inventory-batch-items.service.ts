@@ -52,7 +52,7 @@ export class InventoryBatchItemsService extends BaseService<
         unitBusinessService.findById(unitBusinessId, { attributes: ["integrations_id"] }),
         stockService.findOne({
           where: { product_id: productId, unit_business_id: unitBusinessId },
-          attributes: ["id", "quantity"],
+          attributes: ["id", "quantity", "reserved_quantity", "virtual_stock"],
         }),
         productConfigService.findOne({
           where: { product_id: productId, unit_business_id: unitBusinessId },
@@ -100,6 +100,8 @@ export class InventoryBatchItemsService extends BaseService<
           ean: config?.gtin ?? "",
           sku: config?.sku ?? "",
           quantityStock,
+          reservedQuantity: stock.reserved_quantity,
+          virtualStock: stock.virtual_stock,
           // mesmo cálculo do pré-cadastro FIXED: preço do product config × estoque
           price: Number(config?.price ?? 0) * quantityStock,
         },

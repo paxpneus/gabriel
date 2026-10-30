@@ -202,6 +202,9 @@ export class InventoryBatchService extends BaseService<
               ean: config?.gtin ?? "",
               sku: config?.sku ?? "",
               quantity_stock: stock.quantity,
+              // só leitura, guardados do Stock na criação do lote
+              reserved_quantity: stock.reserved_quantity ?? null,
+              virtual_stock: stock.virtual_stock ?? null,
               status: "OPEN",
               stock_id: stock.id,
               price: totalPrice,
@@ -322,6 +325,9 @@ export class InventoryBatchService extends BaseService<
             ean: item.ean,
             sku: item.sku,
             quantity_stock: item.quantity_stock,
+            // só leitura: herda o valor guardado no item do lote pai
+            reserved_quantity: item.reserved_quantity ?? null,
+            virtual_stock: item.virtual_stock ?? null,
             quantity_read: 0,
             divergency: item.quantity_stock,
             stock_id: item.stock_id,
@@ -425,6 +431,8 @@ export class InventoryBatchService extends BaseService<
               {
                 model: Stock,
                 as: "stock",
+                // reserva/virtual atuais do Stock não saem: vale o guardado no item
+                attributes: { exclude: ["reserved_quantity", "virtual_stock"] },
               },
               {
                 model: InventoryBatchLogs,
@@ -475,6 +483,8 @@ export class InventoryBatchService extends BaseService<
             {
               model: Stock,
               as: "stock",
+              // reserva/virtual atuais do Stock não saem: vale o guardado no item
+              attributes: { exclude: ["reserved_quantity", "virtual_stock"] },
             },
             {
               model: InventoryBatchLogs,

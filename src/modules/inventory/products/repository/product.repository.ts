@@ -52,7 +52,8 @@ export class ProductRepository extends BaseRepository<Product> {
             ? { unit_business_id: unitBusinessId }
             : undefined,
           required: false,
-          attributes: ["id", "quantity", "unit_business_id", "total_price"],
+          // reserved_quantity/virtual_stock: só leitura pro front (by id/full e by-code)
+          attributes: ["id", "quantity", "unit_business_id", "total_price", "reserved_quantity", "virtual_stock"],
         },
         {
           model: ProductConfig,
@@ -96,7 +97,8 @@ export class ProductRepository extends BaseRepository<Product> {
           as: "stocks",
           where: Object.keys(stockWhere).length ? stockWhere : undefined,
           required: !!stockFilter?.stockUnit,
-          attributes: ["id", "quantity", "unit_business_id", "total_price"],
+          // reserved_quantity/virtual_stock: só leitura pro front (paginate e busca de pneu paginada)
+          attributes: ["id", "quantity", "unit_business_id", "total_price", "reserved_quantity", "virtual_stock"],
         },
         {
           model: Brand,
