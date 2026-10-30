@@ -460,14 +460,16 @@ export function startAutomationWorkers() {
     reconcilerQueue,
     blingReconcilerQueue,
   } = buildQueues([
-    "NFE_EMISSION",
-    "ML_ORDER_SYNC",
-    "CNPJ_VERIFY_CNAE",
-    "NFE_RECONCILER",
+    // TEMP: automação travada (nada escreve na Bling); jobs acumulam na fila até descomentar.
+    // "NFE_EMISSION",
+    // "ML_ORDER_SYNC",
+    // "CNPJ_VERIFY_CNAE",
+    // "NFE_RECONCILER",
     "BLING_RECONCILER",
   ]);
 
-  reconcilerQueue.scheduleRepeat({ every: 15 * 60 * 1000 });
+  // TEMP: automação travada.
+  // reconcilerQueue.scheduleRepeat({ every: 15 * 60 * 1000 });
 
   blingReconcilerQueue.scheduleRepeat({
     every: 2 * 60 * 60 * 1000,
@@ -475,11 +477,12 @@ export function startAutomationWorkers() {
     data: { task: "reconcile-open-orders" },
   });
 
-  blingReconcilerQueue.scheduleRepeat({
-    every: 30 * 60 * 1000,
-    jobId: "bling-reconciler-invoiced-or-collected",
-    data: { task: "sync-invoiced-or-collected" },
-  });
+  // TEMP: automação travada (repeat persiste no Redis — o bloqueio real fica no process() do reconciler).
+  // blingReconcilerQueue.scheduleRepeat({
+  //   every: 30 * 60 * 1000,
+  //   jobId: "bling-reconciler-invoiced-or-collected",
+  //   data: { task: "sync-invoiced-or-collected" },
+  // });
 
   // TEMPORÁRIO (webhooks da Bling fora): polling de novos (1min) e alterações (20min). Flag desligada
   // remove os schedulers do Redis — só parar de agendar não basta, o repeat persiste.
@@ -635,12 +638,13 @@ export function startScrapingWorker() {
     { workless: false },
   );
 
-  const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
-    new BlingManifestacaoService(),
-    { workless: false },
-  );
+  // TEMP: automação travada — manifestação de NFe escreve na Bling pela UI.
+  // const blingNfeScrapingQueue = new BlingNfeScrapingQueue(
+  //   new BlingManifestacaoService(),
+  //   { workless: false },
+  // );
 
-  blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 60 * 1000 });
+  // blingNfeScrapingQueue.scheduleRepeat({ every: 3 * 60 * 60 * 1000 });
   blingStockMovementsScrapingQueue.scheduleRepeat({
     cron: "0 5 * * *",
     tz: "America/Sao_Paulo",
@@ -648,7 +652,7 @@ export function startScrapingWorker() {
   });
 
   void mlScrapingQueue;
-  void blingNfeScrapingQueue;
+  // void blingNfeScrapingQueue; // TEMP: automação travada
   void blingStockMovementsScrapingQueue;
 
   console.log(
