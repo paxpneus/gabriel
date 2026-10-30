@@ -63,6 +63,7 @@ import { MANUAL_IMPORT_PRIORITY } from "../../../integrations/manual-import/manu
 import {
   extractAccessKeyFromXmlContent,
   parseAccessKey,
+  extractReceiverCnpjFromXmlContent,
 } from "../../../../shared/utils/xml/access-key";
 import nfeEmissionService from "../../../handlers/bling/services/bling-nfe/nfe-emission.service";
 import paymentReceiptExtractionService from "./payment-receipt-extraction.service";
@@ -841,6 +842,29 @@ export class PdvSalesRequestService extends BaseService<
   // abriu a solicitação PDV (que só recebe a mercadoria) — as duas podem ser
   // unit_business diferentes, então a filial Tecinco tem que vir do CNPJ do
   // emitente lido no próprio documento, nunca do unit_business da solicitação.
+  // Transferência de verdade (mesma regra de GET /invoice/transfer/list): emitente e destinatário são lojas próprias e
+  // diferentes. receiverCnpj null = destinatário desconhecido (provisória antiga) → só o emitente.
+  private async assertTransferBetweenStores(
+    invoiceNumber: string,
+    senderCnpj: string,
+    receiverCnpj: string | null,
+  ): Promise<void> {
+    const ownCnpjs = new Set(
+      (
+        await unitBusinessService.findAll({
+          attributes: ["cnpj"],
+          where: { cnpj: [senderCnpj, receiverCnpj].filter((cnpj): cnpj is string => !!cnpj) },
+        })
+      ).map((unitBusiness) => unitBusiness.cnpj),
+    );
+    const receiverOk = receiverCnpj === null || (ownCnpjs.has(receiverCnpj) && receiverCnpj !== senderCnpj);
+    if (!ownCnpjs.has(senderCnpj) || !receiverOk) {
+      throw new Error(
+        `A nota ${invoiceNumber} não é uma transferência entre lojas — emitente e destinatário precisam ser lojas diferentes da empresa.`,
+      );
+    }
+  }
+
   private async resolveBranchIdByCnpj(
     cnpj: string,
   ): Promise<number | undefined> {
@@ -2311,6 +2335,12 @@ export class PdvSalesRequestService extends BaseService<
         const emitterCnpj = accessKey
           ? parseAccessKey(accessKey)?.emitterCnpj
           : undefined;
+        // Transferência conferida no próprio XML (emitente da chave, destinatário do <dest>) antes de importar a nota.
+        await this.assertTransferBetweenStores(
+          (accessKey && parseAccessKey(accessKey)?.number) || "",
+          emitterCnpj ?? "",
+          extractReceiverCnpjFromXmlContent(xmlContent) ?? "",
+        );
         const branchId =
           (emitterCnpj && (await this.resolveBranchIdByCnpj(emitterCnpj))) ||
           (await this.resolveBranchId(request.unit_business_id));
@@ -2340,6 +2370,7 @@ export class PdvSalesRequestService extends BaseService<
           accessKey,
           number,
           emitterCnpj: nativeEmitterCnpj,
+          receiverCnpj: nativeReceiverCnpj,
         } = await extractDanfeIdentification(
           params.danfeBuffer,
           params.danfeMimeType ?? "application/pdf",
@@ -2371,6 +2402,14 @@ export class PdvSalesRequestService extends BaseService<
             );
           }
 
+          if (!nativeReceiverCnpj) {
+            throw new Error(
+              "Não foi possível ler o CNPJ do destinatário no DANFE — envie o XML da nota",
+            );
+          }
+          // Transferência conferida no próprio DANFE, antes de criar a provisória e enfileirar o import.
+          await this.assertTransferBetweenStores(number, emitterCnpj, nativeReceiverCnpj);
+
           const branchId = await this.resolveBranchIdByCnpj(emitterCnpj);
           if (!branchId) {
             throw new Error(
@@ -2397,6 +2436,7 @@ export class PdvSalesRequestService extends BaseService<
             xmlKey: accessKey,
             danfePath: buildTempFileSentinelPath(tempFile.id),
             senderCnpj: emitterCnpj,
+            receiverCnpj: nativeReceiverCnpj,
           });
 
           await uploaderQueue.enqueueUpload(tempFile.id, "INVOICE_DANFE");
@@ -2438,6 +2478,30 @@ export class PdvSalesRequestService extends BaseService<
     if (invoice.integrations_id !== tecinco.id) {
       throw new Error(
         "A nota de transferência precisa ser da integração Tecinco",
+      );
+    }
+
+    // Vale pra todo caminho (id, XML, DANFE); provisória antiga sem destinatário gravado só confere o emitente.
+    await this.assertTransferBetweenStores(
+      invoice.number_system ?? "",
+      cleanDocument(invoice.sender_cnpj ?? ""),
+      cleanDocument(invoice.receiver_cnpj ?? "") || null,
+    );
+
+    // 1 nota de venda ↔ 1 transferência: barra transferência que já é de outra nota de venda, antes de vincular.
+    if (request.sale_invoice_id) {
+      const saleInvoice = await invoiceService.findById(request.sale_invoice_id, {
+        attributes: ["number_system"],
+      });
+      await invoiceService.assertTransferReferences(
+        [
+          {
+            invoiceId: request.sale_invoice_id,
+            invoiceNumber: saleInvoice?.number_system,
+            reference: invoice.number_system,
+          },
+        ],
+        "Escolha outra nota de transferência.",
       );
     }
 

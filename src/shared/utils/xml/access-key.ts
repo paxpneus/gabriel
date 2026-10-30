@@ -30,3 +30,10 @@ export function parseAccessKey(accessKey: string): AccessKeyParts | null {
     number: String(Number(accessKey.slice(25, 34))),
   };
 }
+
+// CNPJ do destinatário (<dest><CNPJ>) — mesma regex simples, sem o parser completo; destinatário pessoa física (CPF) → null.
+export function extractReceiverCnpjFromXmlContent(xmlContent: string): string | null {
+  const destMatch = xmlContent.match(/<dest>([\s\S]*?)<\/dest>/);
+  const cnpjMatch = destMatch?.[1].match(/<CNPJ>(\d{14})<\/CNPJ>/);
+  return cnpjMatch ? cnpjMatch[1] : null;
+}

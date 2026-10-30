@@ -28,12 +28,16 @@ const CNPJ_DIGITS = 14;
 // no texto — a nota sempre lista o emitente primeiro. Sem essa seção no
 // texto (raro), usa o primeiro CNPJ formatado que encontrar.
 const CNPJ_FORMATTED_REGEX = /\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/g;
-const DESTINATARIO_MARKER_REGEX = /DESTINAT[ÁA]RIO/i;
+// Cabeçalho da seção do destinatário — não o "DESTINATÁRIO:" do canhoto, que no layout Sefaz vem ANTES do emitente.
+const DESTINATARIO_MARKER_REGEX = /DESTINAT[ÁA]RIO\s*\/\s*REMETENTE/i;
+// Fim da seção do destinatário: o próximo CNPJ formatado dali pra frente já seria o da transportadora.
+const AFTER_DESTINATARIO_MARKER_REGEX = /C[ÁA]LCULO DO IMPOSTO|TRANSPORTADOR/i;
 
 export interface DanfeIdentification {
   accessKey: string | null;
   number: string | null;
   emitterCnpj: string | null;
+  receiverCnpj: string | null;
 }
 
 function onlyDigits(value: string): string {
@@ -79,6 +83,19 @@ function extractEmitterCnpjDigits(text: string): string | null {
   return digitsOnly.length === CNPJ_DIGITS ? digitsOnly : null;
 }
 
+// CNPJ do destinatário: primeiro CNPJ formatado entre o cabeçalho "DESTINATÁRIO / REMETENTE" e o cálculo do
+// imposto/transportador (destinatário pessoa física, CPF, ou seção fora do texto → null).
+function extractReceiverCnpjDigits(text: string): string | null {
+  const start = text.search(DESTINATARIO_MARKER_REGEX);
+  if (start === -1) return null;
+  const section = text.slice(start);
+  const end = section.search(AFTER_DESTINATARIO_MARKER_REGEX);
+  const match = (end === -1 ? section : section.slice(0, end)).match(CNPJ_FORMATTED_REGEX);
+  if (!match) return null;
+  const digitsOnly = cleanDocument(match[0]);
+  return digitsOnly.length === CNPJ_DIGITS ? digitsOnly : null;
+}
+
 // Só regex local sobre o texto nativo do PDF — SEM fallback de IA por
 // decisão explícita (era a causa de attachTransferInvoice levar ~10-30s por
 // anexo, mesmo pra nota já conhecida). Documento sem texto nativo (foto/
@@ -92,6 +109,7 @@ export async function extractDanfeIdentification(
   let accessKey: string | null = null;
   let number: string | null = null;
   let emitterCnpj: string | null = null;
+  let receiverCnpj: string | null = null;
   let nativeText = "";
 
   if (mimeType === "application/pdf") {
@@ -101,6 +119,7 @@ export async function extractDanfeIdentification(
       accessKey = extractAccessKeyDigits(nativeText);
       number = extractInvoiceNumberDigits(nativeText);
       emitterCnpj = extractEmitterCnpjDigits(nativeText);
+      receiverCnpj = extractReceiverCnpjDigits(nativeText);
     } catch (err) {
       console.log(
         `[DANFE_INTERPRETER] pdf-parse falhou: ${(err as Error)?.message ?? err}`,
@@ -117,5 +136,5 @@ export async function extractDanfeIdentification(
     );
   }
 
-  return { accessKey, number, emitterCnpj };
+  return { accessKey, number, emitterCnpj, receiverCnpj };
 }

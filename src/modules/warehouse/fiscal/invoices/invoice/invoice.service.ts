@@ -3,6 +3,7 @@ import {
   Op,
   Sequelize,
   Transaction,
+  UpdateOptions,
   WhereOptions,
 } from "sequelize";
 import {
@@ -43,6 +44,11 @@ import sequelize from "../../../../../config/sequelize";
 import batchInvoicesService from "../../../expedition/batch-invoices/batch-invoices.service";
 import { CLOSED_EXPEDITION_BATCH_STATUSES } from "../../../expedition/batch/batch.types";
 import { normalizeInvoiceNumber } from "./helpers/reference-description";
+import {
+  extractTransferReferenceNumber,
+  TransferReferenceInput,
+  transferReferenceProblems,
+} from "./helpers/transfer-reference";
 import {
   InvoiceViewPoint,
   InvoiceViewPointContext,
@@ -779,12 +785,56 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     attrWhere?: WhereOptions,
     transaction?: Transaction,
   ): Promise<void> {
+    await this.assertTransferReferenceWrite(data, { id: invoiceIds }, transaction);
     return this.repository.updateWithAttributes(
       invoiceIds,
       unitBusinessId,
       data,
       attrWhere,
       transaction,
+    );
+  }
+
+  // PUT /bulk genérico: mesma validação de transfer_invoice_reference do updateInvoices.
+  async bulkUpdate(data: Partial<Invoice["_creationAttributes"]>, options: UpdateOptions) {
+    await this.assertTransferReferenceWrite(data, options.where, options.transaction ?? undefined);
+    return super.bulkUpdate(data, options);
+  }
+
+  // 1 nota de venda ↔ 1 transferência: a referência tem número, existe nota de TRANSFERÊNCIA entre lojas com ele (real ou
+  // provisória) e, com checkAlreadyUsed
+  // (padrão), nenhuma outra nota (banco ou lista) aponta pra ela. Escritas checam tudo; o romaneio CD 12/17 só existência.
+  async assertTransferReferences(
+    refs: TransferReferenceInput[],
+    closingMessage: string,
+    { checkAlreadyUsed = true }: { checkAlreadyUsed?: boolean } = {},
+  ): Promise<void> {
+    const transferNumbers = [
+      ...new Set(refs.map((ref) => extractTransferReferenceNumber(ref.reference)).filter((n): n is string => !!n)),
+    ];
+    // Lista vazia = repository nem consulta.
+    let numbersToCheckUsage: string[] = [];
+    if (checkAlreadyUsed) numbersToCheckUsage = transferNumbers;
+    const [existing, referencing] = await Promise.all([
+      this.repository.findExistingTransferNumbers(transferNumbers),
+      this.repository.findByTransferReferenceNumbers(numbersToCheckUsage),
+    ]);
+    const problem = transferReferenceProblems(refs, existing, referencing, closingMessage);
+    if (problem) throw new Error(problem);
+  }
+
+  // Escrita de transfer_invoice_reference (PUT /:id, PUT /bulk, lote): valida as notas alvo; limpar (vazio/null) passa direto.
+  private async assertTransferReferenceWrite(
+    data: { transfer_invoice_reference?: string | null },
+    where: WhereOptions,
+    transaction?: Transaction,
+  ): Promise<void> {
+    const reference = data.transfer_invoice_reference;
+    if (typeof reference !== "string" || !reference.trim()) return;
+    const targets = await this.findAll({ where, attributes: ["id", "number_system"], transaction });
+    await this.assertTransferReferences(
+      targets.map((invoice) => ({ invoiceId: invoice.id, invoiceNumber: invoice.number_system, reference })),
+      "Revise a nota de transferência informada.",
     );
   }
 
@@ -872,7 +922,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     const pdf = await sequelize.transaction(async (transaction) => {
       const invoices = await this.repository.findAll({
         where: { id: { [Op.in]: invoiceIds } },
-        attributes: ["id", "xml_path"],
+        attributes: ["id", "xml_path", "danfe_path"],
         transaction,
       });
       if (!invoices.length) return null;
@@ -887,14 +937,15 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         );
       }
 
-      // TEMPORÁRIO: não consulta o danfe_path (nuvem), sempre gera do XML; depois volta a usar resolveDanfeBuffer(invoice).
+      // TEMPORÁRIO: com XML sempre gera do XML (não usa o danfe_path da nuvem); depois volta a usar resolveDanfeBuffer(invoice).
+      // Sem XML (provisória do PDV, ainda sem import) usa o DANFE salvo — senão a nota saía em branco.
       const invoicePdfs = await Promise.all(
         invoices.map(async (invoice) => {
           try {
             return await PDFDocument.load(
               await this.resolveDanfeBuffer({
                 id: invoice.id,
-                danfe_path: undefined,
+                danfe_path: invoice.xml_path ? undefined : invoice.danfe_path,
                 xml_path: invoice.xml_path,
               }),
             );
@@ -915,6 +966,11 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           invoicePdf.getPageIndices(),
         );
         pages.forEach((p) => mergedPdf.addPage(p));
+      }
+
+      // Nenhuma nota gerou DANFE: erro em vez de PDF em branco (e desfaz o danfe_printed).
+      if (!mergedPdf.getPageCount()) {
+        throw new Error("DANFE indisponível para as notas informadas (sem XML nem DANFE salvo)");
       }
 
       return Buffer.from(await mergedPdf.save());
@@ -946,6 +1002,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     danfePath?: string | null;
     senderCnpj?: string | null;
     senderName?: string | null;
+    receiverCnpj?: string | null;
   }): Promise<Invoice> {
     const defaultStore = await storeService.findOne({
       where: { name: "Outros" },
@@ -968,7 +1025,7 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
       customer_document: params.senderCnpj ?? "",
       sender_cnpj: params.senderCnpj ?? "",
       sender_name: params.senderName ?? "",
-      receiver_cnpj: "",
+      receiver_cnpj: params.receiverCnpj ?? "",
       receiver_name: "",
     });
   }

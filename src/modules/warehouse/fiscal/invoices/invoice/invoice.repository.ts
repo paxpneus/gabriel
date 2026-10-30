@@ -1403,6 +1403,43 @@ export class InvoiceRepository extends BaseRepository<Invoice> {
       attributes: ["id", "xml_path", "number_system"],
     });
   }
+
+  // Números (sem zeros à esquerda) de notas de TRANSFERÊNCIA — emitente e destinatário lojas próprias e diferentes, mesma
+  // definição de listTransferInvoices; real ou provisória (createStub do PDV já grava os dois CNPJs).
+  async findExistingTransferNumbers(numbers: string[]): Promise<Set<string>> {
+    if (!numbers.length) return new Set();
+    const unitBusinessCnpjs = await this.findAllUnitBusinessCnpjs();
+    const normalizedNumber = fn("LTRIM", col("number_system"), "0");
+    const rows = await this.model.findAll({
+      attributes: [[normalizedNumber, "normalized_number"]],
+      where: {
+        [Op.and]: [
+          Sequelize.where(normalizedNumber, { [Op.in]: numbers }),
+          { sender_cnpj: { [Op.in]: unitBusinessCnpjs } },
+          { receiver_cnpj: { [Op.in]: unitBusinessCnpjs } },
+          Sequelize.where(col("sender_cnpj"), Op.ne, col("receiver_cnpj")),
+        ],
+      },
+      group: [normalizedNumber],
+      raw: true,
+    });
+    return new Set(rows.map((row) => (row as unknown as { normalized_number: string }).normalized_number));
+  }
+
+  // Notas cuja transfer_invoice_reference aponta pra um desses números — mesma extração de extractTransferReferenceNumber
+  // (1º grupo de dígitos, sem zeros à esquerda).
+  async findByTransferReferenceNumbers(
+    numbers: string[],
+  ): Promise<Array<{ id: string; number_system: string; transfer_number: string }>> {
+    if (!numbers.length) return [];
+    const transferNumber = fn("LTRIM", fn("SUBSTRING", col("transfer_invoice_reference"), "\\d+"), "0");
+    const rows = await this.model.findAll({
+      attributes: ["id", "number_system", [transferNumber, "transfer_number"]],
+      where: Sequelize.where(transferNumber, { [Op.in]: numbers }),
+      raw: true,
+    });
+    return rows as unknown as Array<{ id: string; number_system: string; transfer_number: string }>;
+  }
 }
 
 export default new InvoiceRepository();

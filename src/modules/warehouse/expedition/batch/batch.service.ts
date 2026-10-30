@@ -62,6 +62,7 @@ import AuditLog from "../../../global/audit-logs/audit-log.model";
 import { AuditEntity } from "../../../global/audit-logs/audit-log.types";
 import userService from "../../../company/users/users/user.service";
 import { deliveryNoteGeneratedAudit } from "./helpers/audit";
+import { assertAdtBatchTransferReferences } from "./helpers/transfer-reference";
 import {
   assertAdtTransporterCd,
   describeTransporterSelector,
@@ -464,6 +465,7 @@ async addInvoiceToBatch(
       throw new Error(`Nota(s) não encontrada(s): ${missing.join(", ")}`);
     }
 
+
     const semItens = invoices.filter((i) => !(i as any).items?.length);
     if (semItens.length) {
       throw new Error(
@@ -595,6 +597,7 @@ async addInvoiceToBatch(
       });
 
       if (transferInvoiceReference) {
+        // updateInvoices valida 1 nota de venda ↔ 1 transferência — erro desfaz a transação inteira.
         await invoiceService.updateInvoices(
           plainInvoices.map((i) => i.id),
           unitBusinessId,
@@ -1432,6 +1435,9 @@ async addInvoiceToLastOutgoingBatch(
         `O lote ${batchInfo.number} ainda não foi finalizado. Finalize o lote antes de gerar o romaneio.`,
       );
     }
+
+    // Lote CD 12/17: toda nota referencia uma nota de transferência existente (ver helpers/transfer-reference.ts).
+    await assertAdtBatchTransferReferences(batchInfo);
 
     // Antes de gravar o romaneio: pedido PDV em CRITICAL_ERROR barra a geração.
     await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(

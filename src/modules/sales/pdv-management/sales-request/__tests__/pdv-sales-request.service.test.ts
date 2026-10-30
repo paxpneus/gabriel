@@ -80,6 +80,7 @@ jest.mock("../../../../warehouse/fiscal/invoices/invoice/invoice.service", () =>
     findDeliveryNoteGeneratedInvoiceIds: jest.fn(),
     createStub: jest.fn(),
     update: jest.fn(),
+    assertTransferReferences: jest.fn(),
   },
 }));
 
@@ -103,6 +104,10 @@ jest.mock("../../../../company/unit-business/unit-business.service", () => ({
     findOne: jest.fn(),
     getCd21UnitBusiness: jest.fn(),
     getPhysicalNumberedUnitBusinessIds: jest.fn(),
+    // Lojas próprias das notas de transferência dos testes (CD MG, CD SP, Loja 12).
+    findAll: jest
+      .fn()
+      .mockResolvedValue([{ cnpj: "02316749002111" }, { cnpj: "02316749002383" }, { cnpj: "02316749001220" }]),
   },
 }));
 
@@ -142,6 +147,8 @@ jest.mock("../helpers/danfe-interpreter", () => ({
 
 jest.mock("../../../../../shared/utils/xml/access-key", () => ({
   __esModule: true,
+  // parseAccessKey/extractReceiverCnpjFromXmlContent reais (regex pura); a chave é controlada por teste.
+  ...jest.requireActual("../../../../../shared/utils/xml/access-key"),
   extractAccessKeyFromXmlContent: jest.fn(),
 }));
 
@@ -185,6 +192,7 @@ import invoiceItemsService from "../../../../warehouse/fiscal/invoices/invoice-i
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import roleService from "../../../../company/users/roles/role.service";
 import tempFileService from "../../../../handlers/temp-file/temp-file.service";
+import { extractAccessKeyFromXmlContent } from "../../../../../shared/utils/xml/access-key";
 import transporterService from "../../../../warehouse/transporter/transporter.service";
 import uploaderQueue from "../../../../handlers/uploader/uploader.queue";
 import { getTCarIntegration } from "../../../../handlers/tecinco/api/tecinco_api";
@@ -2798,6 +2806,92 @@ describe("PdvSalesRequestService", () => {
   });
 
   describe("attachTransferInvoice", () => {
+    it("1 venda ↔ 1 transferência: valida a nota escolhida contra a nota de venda antes de vincular", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        sale_invoice_id: "invoice-sale",
+        transfer_invoice_id: null,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findById as jest.Mock).mockImplementation(async (invoiceId: string) =>
+        invoiceId === "invoice-sale"
+          ? { number_system: "019794" }
+          : {
+              id: "invoice-transfer",
+              integrations_id: "tecinco-1",
+              number_system: "28921",
+              sender_cnpj: "02316749002111",
+              receiver_cnpj: "02316749001220",
+              xml_path: null,
+            },
+      );
+      (invoiceService.assertTransferReferences as jest.Mock).mockRejectedValueOnce(new Error("já vinculada"));
+
+      await expect(
+        service.attachTransferInvoice("r1", { invoiceId: "invoice-transfer", tcarUpsertQueue: {} as any }),
+      ).rejects.toThrow("já vinculada");
+
+      expect(invoiceService.assertTransferReferences).toHaveBeenCalledWith(
+        [{ invoiceId: "invoice-sale", invoiceNumber: "019794", reference: "28921" }],
+        "Escolha outra nota de transferência.",
+      );
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["destinatário não é loja da empresa", "02316749002111", "99999999000199"],
+      ["emitente não é loja da empresa", "99999999000199", "02316749001220"],
+      ["emitente e destinatário são a mesma loja", "02316749002111", "02316749002111"],
+    ])("não é transferência (%s) → bloqueia sem vincular", async (_case, senderCnpj, receiverCnpj) => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        sale_invoice_id: "invoice-sale",
+        transfer_invoice_id: null,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-x",
+        integrations_id: "tecinco-1",
+        number_system: "28921",
+        sender_cnpj: senderCnpj,
+        receiver_cnpj: receiverCnpj,
+      });
+
+      await expect(
+        service.attachTransferInvoice("r1", { invoiceId: "invoice-x", tcarUpsertQueue: {} as any }),
+      ).rejects.toThrow(
+        "A nota 28921 não é uma transferência entre lojas — emitente e destinatário precisam ser lojas diferentes da empresa.",
+      );
+      expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("provisória ainda sem destinatário: só o emitente precisa ser loja da empresa", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+        transfer_invoice_id: null,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (invoiceService.findById as jest.Mock).mockResolvedValue({
+        id: "invoice-stub",
+        integrations_id: "tecinco-1",
+        number_system: "28921",
+        sender_cnpj: "02316749002111",
+        receiver_cnpj: "",
+        xml_path: null,
+      });
+      (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({ id: "r1" });
+
+      await service.attachTransferInvoice("r1", { invoiceId: "invoice-stub", tcarUpsertQueue: {} as any });
+
+      expect(pdvSalesRequestRepository.update).toHaveBeenCalledWith("r1", { transfer_invoice_id: "invoice-stub" });
+    });
+
     it("vincula nota já importada em PENDING_NF_TRANSFER e avança sozinho pra SHIPPING (sem confirm manual)", async () => {
       // 1ª leitura = antes do vínculo; confirmTransferInvoice relê já com a nota vinculada.
       (pdvSalesRequestRepository.findById as jest.Mock)
@@ -2817,6 +2911,8 @@ describe("PdvSalesRequestService", () => {
       (invoiceService.findById as jest.Mock).mockResolvedValue({
         id: "invoice-transfer",
         integrations_id: "tecinco-1",
+        sender_cnpj: "02316749002111",
+        receiver_cnpj: "02316749001220",
         xml_path: "/xmls/transfer.xml",
       });
       (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
@@ -2853,6 +2949,8 @@ describe("PdvSalesRequestService", () => {
       (invoiceService.findById as jest.Mock).mockResolvedValue({
         id: "invoice-stub",
         integrations_id: "tecinco-1",
+        sender_cnpj: "02316749002111",
+        receiver_cnpj: "02316749001220",
         xml_path: null,
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
@@ -2882,6 +2980,8 @@ describe("PdvSalesRequestService", () => {
       (invoiceService.findById as jest.Mock).mockResolvedValue({
         id: "invoice-nova",
         integrations_id: "tecinco-1",
+        sender_cnpj: "02316749002111",
+        receiver_cnpj: "02316749001220",
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -2921,6 +3021,8 @@ describe("PdvSalesRequestService", () => {
       (invoiceService.findById as jest.Mock).mockResolvedValue({
         id: "invoice-loja-06",
         integrations_id: "tecinco-1",
+        sender_cnpj: "02316749002111",
+        receiver_cnpj: "02316749001220",
       });
       (invoiceItemsService.findAll as jest.Mock).mockResolvedValue([]);
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
@@ -2960,6 +3062,8 @@ describe("PdvSalesRequestService", () => {
       (invoiceService.findById as jest.Mock).mockResolvedValue({
         id: "invoice-nova",
         integrations_id: "tecinco-1",
+        sender_cnpj: "02316749002111",
+        receiver_cnpj: "02316749001220",
       });
       (invoiceItemsService.findAll as jest.Mock).mockResolvedValue([]);
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
@@ -3073,6 +3177,8 @@ describe("PdvSalesRequestService", () => {
       (invoiceService.findById as jest.Mock).mockResolvedValue({
         id: "invoice-nova",
         integrations_id: "tecinco-1",
+        sender_cnpj: "02316749002111",
+        receiver_cnpj: "02316749001220",
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -3144,6 +3250,8 @@ describe("PdvSalesRequestService", () => {
       (invoiceService.findById as jest.Mock).mockResolvedValue({
         id: "invoice-local",
         integrations_id: "tecinco-1",
+        sender_cnpj: "02316749002111",
+        receiver_cnpj: "02316749001220",
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -3201,6 +3309,7 @@ describe("PdvSalesRequestService", () => {
         accessKey: "chave-44",
         number: "020309",
         emitterCnpj: "02316749002383",
+        receiverCnpj: "02316749001220",
       });
       (unitBusinessService.findOne as jest.Mock).mockResolvedValue({
         number: "12",
@@ -3215,6 +3324,8 @@ describe("PdvSalesRequestService", () => {
       (invoiceService.findById as jest.Mock).mockResolvedValue({
         id: "invoice-provisoria",
         integrations_id: "tecinco-1",
+        sender_cnpj: "02316749002111",
+        receiver_cnpj: "02316749001220",
       });
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({
         id: "r1",
@@ -3240,6 +3351,7 @@ describe("PdvSalesRequestService", () => {
           idSystem: "chave-44",
           xmlKey: "chave-44",
           senderCnpj: "02316749002383",
+          receiverCnpj: "02316749001220",
         }),
       );
       expect(uploaderQueue.enqueueUpload).toHaveBeenCalledWith(
@@ -3282,6 +3394,7 @@ describe("PdvSalesRequestService", () => {
         accessKey: "chave-44",
         number: "020309",
         emitterCnpj: "02316749002383",
+        receiverCnpj: "02316749001220",
       });
       (unitBusinessService.findOne as jest.Mock).mockResolvedValue(null);
       (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
@@ -3295,6 +3408,54 @@ describe("PdvSalesRequestService", () => {
       ).rejects.toThrow(/filial Tecinco a partir do CNPJ do emitente/);
       expect(invoiceService.createStub).not.toHaveBeenCalled();
       expect(pdvSalesRequestRepository.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["sem destinatário legível", null, /CNPJ do destinatário no DANFE/],
+      ["destinatário fora da empresa", "99999999000199", /não é uma transferência entre lojas/],
+      ["destinatário = emitente", "02316749002383", /não é uma transferência entre lojas/],
+    ])("danfeBuffer sem nota local, %s → recusa antes de criar a provisória", async (_case, receiverCnpj, error) => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        unit_business_id: "unit-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (extractDanfeIdentification as jest.Mock).mockResolvedValue({
+        accessKey: "chave-44",
+        number: "997",
+        emitterCnpj: "02316749002383",
+        receiverCnpj,
+      });
+      (invoiceService.findOne as jest.Mock).mockResolvedValue(null);
+      const tcarUpsertQueue = { add: jest.fn() } as any;
+
+      await expect(
+        service.attachTransferInvoice("r1", { danfeBuffer: Buffer.from(""), tcarUpsertQueue }),
+      ).rejects.toThrow(error);
+      expect(tempFileService.create).not.toHaveBeenCalled();
+      expect(invoiceService.createStub).not.toHaveBeenCalled();
+      expect(tcarUpsertQueue.add).not.toHaveBeenCalled();
+    });
+
+    it("xmlBuffer: destinatário do XML fora da empresa → recusa antes de importar a nota", async () => {
+      (pdvSalesRequestRepository.findById as jest.Mock).mockResolvedValue({
+        id: "r1",
+        order_id: "order-1",
+        unit_business_id: "unit-1",
+        status: PdvSalesRequestStatus.PENDING_NF_TRANSFER,
+      });
+      (getTCarIntegration as jest.Mock).mockResolvedValue({ id: "tecinco-1" });
+      (extractAccessKeyFromXmlContent as jest.Mock).mockReturnValue("35261002316749002383550010000009971423055876");
+      const tcarUpsertQueue = { upsertInvoiceFromXml: jest.fn() } as any;
+      const xml =
+        '<NFe><infNFe Id="NFe35261002316749002383550010000009971423055876"><dest><CNPJ>99999999000199</CNPJ></dest></infNFe></NFe>';
+
+      await expect(
+        service.attachTransferInvoice("r1", { xmlBuffer: Buffer.from(xml), tcarUpsertQueue }),
+      ).rejects.toThrow("A nota 997 não é uma transferência entre lojas");
+      expect(tcarUpsertQueue.upsertInvoiceFromXml).not.toHaveBeenCalled();
     });
   });
 
@@ -4774,7 +4935,7 @@ describe("PdvSalesRequestService", () => {
       (invoiceService.findById as jest.Mock).mockImplementation(async (id: string) =>
         id === "inv-sale"
           ? { id, transfer_invoice_reference: "REF: 900" }
-          : { id, integrations_id: "tecinco-1" },
+          : { id, integrations_id: "tecinco-1", sender_cnpj: "02316749002111", receiver_cnpj: "02316749001220" },
       );
       (invoiceItemsService.findAll as jest.Mock).mockResolvedValue([]);
       (pdvSalesRequestRepository.update as jest.Mock).mockResolvedValue({ id: "r1" });

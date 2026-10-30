@@ -46,6 +46,8 @@ jest.mock("../invoice.repository", () => ({
     findUnitBusinessesByCnpj: jest.fn(),
     findInvoiceAttribute: jest.fn(),
     createInvoiceAttributes: jest.fn(),
+    findAll: jest.fn(),
+    updateWithAttributes: jest.fn(),
   },
 }));
 
@@ -245,6 +247,31 @@ describe("InvoiceService.getDanfeBuffer", () => {
 
     expect(uploaderService.getFile).toHaveBeenCalledWith("/danfes/real.pdf");
     expect(buffer.toString()).toBe("uploaded-pdf");
+  });
+});
+
+describe("InvoiceService.getDanfeBatch", () => {
+  it("provisória sem XML (PDV, import pendente): usa o DANFE salvo em vez de devolver PDF em branco", async () => {
+    const { PDFDocument } = jest.requireActual("pdf-lib");
+    const saved = await PDFDocument.create();
+    saved.addPage();
+    (repo as any).findAll.mockResolvedValue([
+      { id: "invoice-stub", xml_path: null, danfe_path: buildTempFileSentinelPath("temp-1") },
+    ]);
+    (tempFileService.findById as jest.Mock).mockResolvedValue({ id: "temp-1", buffer: Buffer.from(await saved.save()) });
+
+    const pdf = await invoiceService.getDanfeBatch(["invoice-stub"]);
+
+    expect((await PDFDocument.load(pdf!)).getPageCount()).toBe(1);
+    expect(tempFileService.findById).toHaveBeenCalledWith("temp-1", expect.anything());
+  });
+
+  it("nenhuma nota gera DANFE (sem XML nem DANFE salvo) → erro, nunca PDF vazio", async () => {
+    (repo as any).findAll.mockResolvedValue([{ id: "invoice-x", xml_path: null, danfe_path: null }]);
+
+    await expect(invoiceService.getDanfeBatch(["invoice-x"])).rejects.toThrow(
+      "DANFE indisponível para as notas informadas (sem XML nem DANFE salvo)",
+    );
   });
 });
 

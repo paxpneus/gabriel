@@ -748,3 +748,25 @@ Depois de preenchido, o `operator_id` do lote não muda mais: `PUT /api/batch/:i
 e `PUT /api/batch/bulk` com outro `operator_id` (ou `null`) → `400 { "error": "O operador do romaneio do lote 42 já foi definido e não pode ser alterado." }`.
 Reenviar o mesmo valor passa. Gerar romaneio de novo com outro operador segue
 mantendo o primeiro, sem erro.
+
+## Mudou: romaneio da logística própria (CD 12/17) exige nota de transferência vinculada
+
+Gerar romaneio (PDV `POST /api/batch/pdv-sales-requests/delivery-note` e rota normal
+`GET /api/batch/delivery-note/get`) de lote da transportadora CD 12/17: toda nota do lote
+precisa de `transfer_invoice_reference` com o número de uma nota que exista no sistema (real ou
+provisória; formato livre: `REF: 172`, `REF 172`, `172`). Senão → `400`, nenhum romaneio gerado:
+`Nota(s) de venda sem número da nota de transferência: 019790. Nota(s) de transferência entre lojas não encontradas no sistema: 28921 (ref. a nota de venda 019794). Vincule a nota de transferência antes de gerar o romaneio.`
+
+## Novo: 1 nota de venda ↔ 1 nota de transferência
+
+Vincular a nota de transferência (`attachTransferInvoice`, por id/XML/DANFE) agora barra transferência
+que já é de outra nota de venda → `400`, nada vinculado:
+`Nota(s) de transferência já vinculadas a outra nota de venda: 920 (ref. a nota de venda 019320, já usada pela nota de venda 005743). Escolha outra nota de transferência.`
+Mesma regra em toda escrita de `transfer_invoice_reference`: rotas de lote (`add-invoice`, lote existente),
+`PUT /api/invoice/:id` e `PUT /api/invoice/bulk` — com `Revise a nota de transferência informada.` no fim
+(mandar vazio/`null` pra limpar continua livre).
+
+Ao vincular, a nota também precisa ser transferência de verdade (emitente e destinatário são lojas diferentes
+da empresa) → senão `400`: `A nota 28921 não é uma transferência entre lojas — emitente e destinatário precisam ser lojas diferentes da empresa.`
+Por XML/DANFE isso é conferido no próprio arquivo, antes de importar. DANFE sem CNPJ do destinatário legível →
+`400 Não foi possível ler o CNPJ do destinatário no DANFE — envie o XML da nota`.

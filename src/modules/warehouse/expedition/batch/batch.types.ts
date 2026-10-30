@@ -61,6 +61,8 @@ export interface ExpeditionBatchFull {
   batchWithTotalVolumes?: EnrichedBatchInvoice[];
   batchInvoices?: ExpeditionBatchInvoiceFull[];
   integration?: Integration;
+  // Transportadora do lote (include "transporter" do getFullBatch).
+  transporter?: { name: string } | null;
 }
 
 export interface ExpeditionBatchCreationAttributes extends Omit<

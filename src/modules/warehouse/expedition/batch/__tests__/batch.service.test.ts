@@ -97,9 +97,16 @@ jest.mock("../../../../company/users/users/user.service", () => ({
   default: { findById: jest.fn() },
 }));
 
+jest.mock("../helpers/transfer-reference", () => ({
+  __esModule: true,
+  assertAdtBatchTransferReferences: jest.fn().mockResolvedValue(undefined),
+}));
+
+import { assertAdtBatchTransferReferences } from "../helpers/transfer-reference";
 import auditLogService from "../../../../global/audit-logs/audit-log.service";
 import userService from "../../../../company/users/users/user.service";
 import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
+import batchInvoicesService from "../../batch-invoices/batch-invoices.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
 import { assertTransshipment } from "../../utils/helpers/transshipment-resolver";
@@ -175,6 +182,54 @@ describe("ExpeditionBatchService — bloqueio de lote com nota não mapeada", ()
   });
 
   describe("addInvoiceToBatch", () => {
+    describe("com transfer_invoice_reference (validação 1 venda ↔ 1 transferência fica no updateInvoices)", () => {
+      const keys = ["29260802036483000614550010004404561245674661", "29260802036483000614550010004404561245674662"];
+
+      beforeEach(() => {
+        (invoiceService.findAll as jest.Mock).mockResolvedValue([
+          makeInvoice({ id: "invoice-1", number_system: "1001", xml_key: keys[0] }),
+          makeInvoice({ id: "invoice-2", number_system: "1002", xml_key: keys[1] }),
+        ]);
+        (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue([]);
+        (pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock).mockResolvedValue(undefined);
+        (assertTransshipment as jest.Mock).mockResolvedValue(undefined);
+        (batchInvoicesService as any).findAll = jest.fn().mockResolvedValue([]);
+      });
+
+      it("lote existente: grava a referência nas notas novas na transação — erro do updateInvoices propaga", async () => {
+        jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-1" } as any);
+        jest
+          .spyOn(service, "findByIdFullBatch")
+          .mockResolvedValue({ id: "batch-1", status: "OPEN", mode: "REGULAR", transporters_id: null } as any);
+        (batchInvoicesService.createBatchInvoiceWithItems as jest.Mock).mockResolvedValue({ volumesAdded: 2 });
+        jest.spyOn(service, "increment").mockResolvedValue(undefined);
+        (invoiceService as any).updateInvoices = jest.fn().mockRejectedValue(new Error("já vinculada"));
+
+        await expect(
+          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", "batch-1", "REF: 28921"),
+        ).rejects.toThrow("já vinculada");
+
+        expect((invoiceService as any).updateInvoices).toHaveBeenCalledWith(
+          ["invoice-1", "invoice-2"],
+          "ub-1",
+          { transfer_invoice_reference: "REF: 28921" },
+          undefined,
+          mockTransaction,
+        );
+      });
+
+      it("lote novo (texto ignorado ao criar) → não grava nem valida a referência", async () => {
+        (invoiceService as any).updateInvoices = jest.fn();
+        jest.spyOn(service as any, "createBatchStructure").mockRejectedValue(new Error("SENTINEL_CRIOU"));
+
+        await expect(
+          service.addInvoiceToBatch(keys, "ub-1", "OUTGOING", undefined, "REF: 28921"),
+        ).rejects.toThrow("SENTINEL_CRIOU");
+
+        expect((invoiceService as any).updateInvoices).not.toHaveBeenCalled();
+      });
+    });
+
     it("nota com unmapped UNMAPPED: bloqueia ANTES de assertTransshipment, com a mensagem e o número da nota", async () => {
       const invoice = makeInvoice({
         xml_key: "29260802036483000614550010004404561245674661",
@@ -270,7 +325,7 @@ describe("ExpeditionBatchService — bloqueio de nota com pedido PDV em CRITICAL
       status: "FINISHED",
       delivery_note_generated_at: null,
       operator_id: null,
-      batchInvoices: [{ invoice_id: "invoice-1" }],
+      batchInvoices: [{ invoice_id: "invoice-1", invoice: { number_system: "1001" } }],
     } as any);
     const update = jest
       .spyOn((service as any).repository, "bulkUpdate")
@@ -296,7 +351,7 @@ describe("ExpeditionBatchService — bloqueio de nota com pedido PDV em CRITICAL
         status,
         delivery_note_generated_at: null,
         operator_id: null,
-        batchInvoices: [{ invoice_id: "invoice-1" }],
+        batchInvoices: [{ invoice_id: "invoice-1", invoice: { number_system: "1001" } }],
       } as any);
       const update = jest
         .spyOn((service as any).repository, "bulkUpdate")
@@ -329,7 +384,7 @@ describe("ExpeditionBatchService — operador do romaneio", () => {
       id: "batch-1",
       number: "42",
       status: "FINISHED",
-      batchInvoices: [{ invoice_id: "invoice-1" }],
+      batchInvoices: [{ invoice_id: "invoice-1", invoice: { number_system: "1001" } }],
     } as any);
     jest
       .spyOn(service, "findOne")
@@ -520,3 +575,19 @@ describe("ExpeditionBatchService — filtro por data do romaneio", () => {
     ).toThrow("Data do romaneio inválida (use AAAA-MM-DD)");
   });
 });
+
+describe("ExpeditionBatchService — romaneio da logística própria (CD 12/17)", () => {
+  it("helper de referência da transferência rejeita → bloqueia sem gravar", async () => {
+    jest.clearAllMocks();
+    const service = new ExpeditionBatchService();
+    const batch = { id: "batch-1", number: "42", status: "FINISHED", batchInvoices: [] } as any;
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue(batch);
+    (assertAdtBatchTransferReferences as jest.Mock).mockRejectedValueOnce(new Error("sem referência"));
+    const bulkUpdate = jest.spyOn((service as any).repository, "bulkUpdate");
+
+    await expect(service.generateDeliveryNote("batch-1", "user-1", "actor-1")).rejects.toThrow("sem referência");
+    expect(assertAdtBatchTransferReferences).toHaveBeenCalledWith(batch);
+    expect(bulkUpdate).not.toHaveBeenCalled();
+  });
+});
+
