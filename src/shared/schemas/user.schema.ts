@@ -28,6 +28,8 @@ const UserConfigUpdateFields = {
   visualize_only_current_unit_business: z.boolean().optional(),
   compact_mode: z.boolean().optional(),
   auto_advance_collector: z.boolean().optional(),
+  // Front reenvia o config do GET inteiro, que inclui a coluna type de user_configs.
+  type: z.string().optional(),
 };
 
 const UserConfigUpdateSchema = z.object(UserConfigUpdateFields).strict();
@@ -122,7 +124,7 @@ export const UpdateUserSchema = z
       .max(255, "Senha não pode ter mais de 255 caracteres")
       .optional(),
 
-    type: z.string().optional(), // <-- Adicionado aqui também para o fluxo de update
+    // type vem do spread de UserConfigUpdateFields abaixo.
     id_system: z
       .number()
       .int("ID do sistema deve ser um número inteiro")
