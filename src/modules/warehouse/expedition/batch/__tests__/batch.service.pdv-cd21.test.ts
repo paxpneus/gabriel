@@ -494,24 +494,24 @@ describe("ExpeditionBatchService — lote pendente de saída pelo link CD21", ()
         );
       });
 
-      it("só a coluna: todas com lote finalizado sem romaneio, com o usuário logado", async () => {
+      it("só a coluna: todas com lote finalizado sem romaneio, com operador e usuário logado", async () => {
         const generate = jest
           .spyOn(service, "generateDeliveryNote")
           .mockResolvedValue({ id: "b-fin" } as any);
 
-        const result = await service.generateDeliveryNoteFromPdv({ status: S.SHIPPING }, "user-1");
+        const result = await service.generateDeliveryNoteFromPdv({ status: S.SHIPPING }, "user-1", "actor-1");
 
         expect(batchInvoicesService.findBatchIdsByInvoiceIds).toHaveBeenCalledWith(
           ["inv-5"],
           "cd21-id",
         );
-        expect(generate).toHaveBeenCalledWith("b-fin", "user-1");
+        expect(generate).toHaveBeenCalledWith("b-fin", "user-1", "actor-1");
         expect(result).toEqual({ batches: [{ id: "b-fin" }], skipped: [], warnings: [] });
       });
 
       it("nenhuma com lote finalizado → mensagem amigável", async () => {
         await expect(
-          service.generateDeliveryNoteFromPdv({ status: S.SHIP_TODAY }, "user-1"),
+          service.generateDeliveryNoteFromPdv({ status: S.SHIP_TODAY }, "user-1", "actor-1"),
         ).rejects.toThrow(
           'Nenhuma solicitação com lote finalizado aguardando romaneio em "Embarca hoje".',
         );
@@ -525,6 +525,7 @@ describe("ExpeditionBatchService — lote pendente de saída pelo link CD21", ()
         const result = await service.generateDeliveryNoteFromPdv(
           { status: S.SHIPPING, salesRequestIds: ["sr-5"] },
           "user-1",
+          "actor-1",
         );
 
         expect(generate.mock.calls.map((call) => call[0])).toEqual(["b-fin"]);
@@ -538,6 +539,7 @@ describe("ExpeditionBatchService — lote pendente de saída pelo link CD21", ()
           service.generateDeliveryNoteFromPdv(
             { status: S.SHIPPING, salesRequestIds: ["sr-4", "sr-5"] },
             "user-1",
+            "actor-1",
           ),
         ).rejects.toThrow(
           "Nem todas as solicitações estão em um lote finalizado. Sem lote ou com lote em aberto: pedidos P4.",
@@ -550,6 +552,7 @@ describe("ExpeditionBatchService — lote pendente de saída pelo link CD21", ()
           service.generateDeliveryNoteFromPdv(
             { status: S.SHIPPING, salesRequestIds: ["sr-1", "sr-2", "sr-5"] },
             "user-1",
+            "actor-1",
           ),
         ).rejects.toThrow(
           "Nem todas as solicitações estão em um lote finalizado. Sem lote ou com lote em aberto: pedidos P1, P2.",
@@ -561,6 +564,7 @@ describe("ExpeditionBatchService — lote pendente de saída pelo link CD21", ()
           service.generateDeliveryNoteFromPdv(
             { status: S.SHIPPING, salesRequestIds: ["sr-1"] },
             "user-1",
+            "actor-1",
           ),
         ).rejects.toThrow("A solicitação do pedido P1 ainda não está em um lote finalizado.");
       });

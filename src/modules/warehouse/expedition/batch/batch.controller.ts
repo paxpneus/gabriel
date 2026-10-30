@@ -6,8 +6,9 @@ import { authenticate } from "../../../../middlewares/auth-token";
 import { userPermissions } from "../../../../middlewares/user-permissions";
 import User from "../../../company/users/users/user.model";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
-import { getUserContext } from "../../../../shared/query/get-logged-user";
+import { getRequestUserId, getUserContext } from "../../../../shared/query/get-logged-user";
 import { PdvBatchActionParams } from "./batch.types";
+import { assertUuid } from "../../../../shared/utils/validators/uuid";
 import {
   authenticateOrPdvLink,
   pdvAccess,
@@ -52,6 +53,7 @@ export class ExpeditionBatchController extends BaseController<
       downloadDeliveryNotes: [authenticate, userPermissions],
       isComplete: [authenticate, userPermissions],
       batchReport: [authenticate, userPermissions],
+      findAuditLogs: [authenticate, userPermissions],
       addInvoiceToLastOutgoingBatch: [authenticate],
       generateBatchFromPdv: [pdvLoginAccess([PdvAccessScreen.CD21])],
       addPdvToBatch: [pdvLoginAccess([PdvAccessScreen.CD21])],
@@ -153,6 +155,8 @@ export class ExpeditionBatchController extends BaseController<
     );
 
     this.router.get("/report/get", ...this.mw("batchReport"), (req, res) => this.batchReport(req, res))
+
+    this.router.get("/:id/audit-logs", ...this.mw("findAuditLogs"), this.findAuditLogs);
   }
 
   
@@ -327,9 +331,11 @@ export class ExpeditionBatchController extends BaseController<
         return res.status(400).json({ error: "Informe o operador do romaneio." });
       }
 
+      // Rota só de login: quem gerou (audit) é o usuário logado.
       const result = await this.service.generateDeliveryNoteFromPdv(
         this.pdvBatchParams(req),
         operatorId,
+        (req as PdvAccessRequest).pdvAccess!.userId!,
       );
       return res.json(result);
     } catch (error: any) {
@@ -446,9 +452,11 @@ export class ExpeditionBatchController extends BaseController<
     try {
       const { batchId, userId } = req.query;
 
+      // userId da query = operador escolhido; quem gerou (audit) é o usuário logado.
       const fullBatch = await this.service.generateDeliveryNote(
         batchId as string,
         userId as string,
+        getRequestUserId(req),
       );
 
       return res.json(fullBatch);
@@ -505,6 +513,20 @@ export class ExpeditionBatchController extends BaseController<
       return res.status(500).json({ error: error.message });
     }
   }
+
+  // GET /:id/audit-logs — histórico de auditoria do lote (404 se não existe), paginado (page/perPage/filters[action]).
+  findAuditLogs = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const result = await this.service.findAuditLogs(
+        assertUuid(req.params.id, "Lote"),
+        this.extractQueryParams(req),
+      );
+      return res.json(result);
+    } catch (error: any) {
+      if (error.message === "Lote não encontrado") return res.status(404).json({ error: error.message });
+      return res.status(400).json({ error: error.message });
+    }
+  };
 }
 
 export default new ExpeditionBatchController();

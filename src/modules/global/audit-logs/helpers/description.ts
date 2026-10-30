@@ -11,6 +11,7 @@ const ENTITY_LABELS: Record<AuditEntity, string> = {
   [AuditEntity.PRODUCT_CONFIG]: "Configurações do produto",
   [AuditEntity.SUPPLIER_MAPPING]: "Mapeamento DE x PARA",
   [AuditEntity.INTEGRATION_MAPPING]: "Mapeamento de integração",
+  [AuditEntity.EXPEDITION_BATCH]: "Lote de expedição",
 };
 
 const ACTION_LABELS: Record<AuditAction, string> = {
@@ -32,12 +33,15 @@ const FIELD_LABELS: Record<string, string> = {
   unit_business_id: "Loja",
   integrations_id: "Integração",
   is_active: "Ativo",
+  delivery_note_generated_at: "Romaneio gerado em",
+  operator_name: "Operador",
 };
 
-// Valor curto e estável pro texto: null/undefined viram "—", booleano vira sim/não, objeto vira JSON.
+// Valor curto e estável pro texto: null/undefined viram "—", booleano vira sim/não, data em horário de Brasília, objeto vira JSON.
 const formatValue = (value: unknown): string => {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "boolean") return value ? "sim" : "não";
+  if (value instanceof Date) return value.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
   if (typeof value === "object") return JSON.stringify(value);
   return `"${String(value)}"`;
 };

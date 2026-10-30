@@ -40,6 +40,7 @@ import {
 } from "sequelize";
 import UnitBusiness from "../../../company/unit-business/unit-business.model";
 import { setBatchNumber } from "../../../../shared/utils/normalizers/batch-nomenclature";
+import { endOfDayTz, startOfDayTz } from "../../../../shared/utils/normalizers/date";
 import invoiceService from "../../fiscal/invoices/invoice/invoice.service";
 import invoiceItemsService from "../../fiscal/invoices/invoice-items/invoice-items.service";
 import { ensureSameBy } from "../../../../shared/utils/validators/same-not-allowed";
@@ -56,6 +57,11 @@ import { FullInvoice } from "../../fiscal/invoices/invoice/invoice.types";
 import unmappedInvoiceProductService from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import scanLogsService from "../scan-logs/scan-logs.service";
 import pdvSalesRequestService from "../../../sales/pdv-management/sales-request/pdv-sales-request.service";
+import auditLogService from "../../../global/audit-logs/audit-log.service";
+import AuditLog from "../../../global/audit-logs/audit-log.model";
+import { AuditEntity } from "../../../global/audit-logs/audit-log.types";
+import userService from "../../../company/users/users/user.service";
+import { deliveryNoteGeneratedAudit } from "./helpers/audit";
 import {
   assertAdtTransporterCd,
   describeTransporterSelector,
@@ -160,6 +166,21 @@ export class ExpeditionBatchService extends BaseService<
             return { delivery_note_generated_at: { [Op.is]: null } };
           }
           return {};
+        },
+        // filters[delivery_note_generated_at][start|end]=AAAA-MM-DD, dias inteiros em horário de Brasília (o range genérico
+        // do QueryParser mistura UTC e fuso local e corta o dia). Em Op.and pra não sobrescrever o delivery_note_generated.
+        delivery_note_generated_at: (value) => {
+          const { start, end } = (value ?? {}) as unknown as { start?: string; end?: string };
+          for (const date of [start, end]) {
+            if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+              throw new Error("Data do romaneio inválida (use AAAA-MM-DD)");
+            }
+          }
+          const range: Record<symbol, Date> = {};
+          if (start) range[Op.gte] = startOfDayTz(start).toDate();
+          if (end) range[Op.lte] = endOfDayTz(end).toDate();
+          if (!start && !end) return {};
+          return { [Op.and]: [{ delivery_note_generated_at: range }] };
         },
       },
     };
@@ -799,7 +820,11 @@ async addInvoiceToLastOutgoingBatch(
   }
 
   // Um romaneio por lote distinto das notas; escolhidas precisam estar em lote finalizado. operatorId vem do front (obrigatório).
-  async generateDeliveryNoteFromPdv(params: PdvBatchActionParams, operatorId: string) {
+  async generateDeliveryNoteFromPdv(
+    params: PdvBatchActionParams,
+    operatorId: string,
+    actorUserId: string,
+  ) {
     const cd21 = await this.getCd21();
     const { groups } = await this.resolvePdvBatchGroups(
       params,
@@ -809,7 +834,7 @@ async addInvoiceToLastOutgoingBatch(
     const batchIds = await this.batchIdsOfSaleInvoices(invoiceIds, cd21.id);
 
     const batches = await Promise.all(
-      batchIds.map((batchId) => this.generateDeliveryNote(batchId, operatorId)),
+      batchIds.map((batchId) => this.generateDeliveryNote(batchId, operatorId, actorUserId)),
     );
     await pdvSalesRequestService.notifyChangedBySaleInvoiceIds(invoiceIds);
     return { batches, skipped: [], warnings: [] };
@@ -1393,7 +1418,12 @@ async addInvoiceToLastOutgoingBatch(
     );
   }
 
-  async generateDeliveryNote(batchId: string, userId: string) {
+  // operatorId = operador escolhido no front; actorUserId = usuário logado que gerou (vai pro audit log).
+  async generateDeliveryNote(
+    batchId: string,
+    operatorId: string,
+    actorUserId: string | null,
+  ) {
     const batchInfo = await this.findByIdFullBatch(batchId);
 
     // Romaneio só de lote finalizado — vale pra rota normal e pro PDV.
@@ -1408,19 +1438,56 @@ async addInvoiceToLastOutgoingBatch(
       (batchInfo.batchInvoices ?? []).map((bi) => bi.invoice_id),
     );
 
-    // COALESCE no próprio UPDATE: só grava data/operador se ainda vazios no banco — 2 gerações simultâneas não sobrescrevem.
-    // Direto no repository: o bulkUpdate do service barraria a troca de operator_id.
-    await this.repository.bulkUpdate(
-      {
-        delivery_note_generated_at: fn(
-          "COALESCE",
-          col("delivery_note_generated_at"),
-          fn("NOW"),
-        ) as unknown as Date,
-        operator_id: fn("COALESCE", col("operator_id"), userId) as unknown as string,
-      },
-      { where: { id: batchId } },
-    );
+    const auditFields = ["delivery_note_generated_at", "operator_id"];
+    await sequelize.transaction(async (t) => {
+      // Antes travado: o audit registra o estado real que o UPDATE encontrou.
+      const before = await this.findOne({
+        attributes: auditFields,
+        where: { id: batchId },
+        lock: t.LOCK.UPDATE,
+        transaction: t,
+      });
+
+      // COALESCE no próprio UPDATE: só grava data/operador se ainda vazios no banco — 2 gerações simultâneas não sobrescrevem.
+      // Direto no repository: o bulkUpdate do service barraria a troca de operator_id.
+      await this.repository.bulkUpdate(
+        {
+          delivery_note_generated_at: fn(
+            "COALESCE",
+            col("delivery_note_generated_at"),
+            fn("NOW"),
+          ) as unknown as Date,
+          operator_id: fn("COALESCE", col("operator_id"), operatorId) as unknown as string,
+        },
+        { where: { id: batchId }, transaction: t },
+      );
+
+      const after = await this.findOne({
+        attributes: auditFields,
+        where: { id: batchId },
+        transaction: t,
+      });
+      // O audit grava o nome do operador, não o id. Só o de depois: com o COALESCE, o de antes é ele ou vazio.
+      let operator: { name: string } | null = null;
+      if (after?.operator_id) {
+        operator = await userService.findById(after.operator_id, {
+          attributes: ["name"],
+          transaction: t,
+        });
+      }
+
+      await auditLogService.record(
+        deliveryNoteGeneratedAudit({
+          userId: actorUserId,
+          batchId,
+          batchNumber: batchInfo.number,
+          operatorName: operator?.name ?? null,
+          before: before!,
+          after: after!,
+        }),
+        t,
+      );
+    });
 
     const updatedBatch = await this.findByIdFullBatch(batchId);
 
@@ -1432,6 +1499,13 @@ async addInvoiceToLastOutgoingBatch(
     );
 
     return updatedBatch;
+  }
+
+  // Histórico de auditoria do lote (hoje: romaneios gerados, com quem gerou e o operador).
+  async findAuditLogs(batchId: string, params: QueryParams): Promise<PaginatedResult<AuditLog>> {
+    const batch = await this.findById(batchId, { attributes: ["id"] });
+    if (!batch) throw new Error("Lote não encontrado");
+    return auditLogService.paginateByEntity(AuditEntity.EXPEDITION_BATCH, batchId, params);
   }
 
   async downloadDeliveryNotes(batchesId: string[]) {

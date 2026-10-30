@@ -87,6 +87,18 @@ jest.mock(
   }),
 );
 
+jest.mock("../../../../global/audit-logs/audit-log.service", () => ({
+  __esModule: true,
+  default: { record: jest.fn(), paginateByEntity: jest.fn() },
+}));
+
+jest.mock("../../../../company/users/users/user.service", () => ({
+  __esModule: true,
+  default: { findById: jest.fn() },
+}));
+
+import auditLogService from "../../../../global/audit-logs/audit-log.service";
+import userService from "../../../../company/users/users/user.service";
 import invoiceService from "../../../fiscal/invoices/invoice/invoice.service";
 import unmappedInvoiceProductService from "../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
@@ -265,7 +277,7 @@ describe("ExpeditionBatchService — bloqueio de nota com pedido PDV em CRITICAL
       .mockResolvedValue({} as any);
 
     await expect(
-      service.generateDeliveryNote("batch-1", "user-1"),
+      service.generateDeliveryNote("batch-1", "user-1", "actor-1"),
     ).rejects.toThrow(CRITICAL_ERROR_MESSAGE);
 
     expect(
@@ -291,7 +303,7 @@ describe("ExpeditionBatchService — bloqueio de nota com pedido PDV em CRITICAL
         .mockResolvedValue({} as any);
 
       await expect(
-        service.generateDeliveryNote("batch-1", "user-1"),
+        service.generateDeliveryNote("batch-1", "user-1", "actor-1"),
       ).rejects.toThrow(
         "O lote 42 ainda não foi finalizado. Finalize o lote antes de gerar o romaneio.",
       );
@@ -312,22 +324,28 @@ describe("ExpeditionBatchService — operador do romaneio", () => {
     service = new ExpeditionBatchService();
   });
 
-  it("generateDeliveryNote: grava data e operador com COALESCE num UPDATE só (não sobrescreve o que já está no banco)", async () => {
+  it("generateDeliveryNote: grava data e operador com COALESCE num UPDATE só, na transação (não sobrescreve o que já está no banco)", async () => {
     jest.spyOn(service, "findByIdFullBatch").mockResolvedValue({
       id: "batch-1",
+      number: "42",
       status: "FINISHED",
       batchInvoices: [{ invoice_id: "invoice-1" }],
     } as any);
+    jest
+      .spyOn(service, "findOne")
+      .mockResolvedValueOnce({ delivery_note_generated_at: null, operator_id: null } as any)
+      .mockResolvedValueOnce({ delivery_note_generated_at: new Date(), operator_id: "user-1" } as any);
+    (userService.findById as jest.Mock).mockResolvedValue({ name: "Fulano" });
     const bulkUpdate = jest
       .spyOn((service as any).repository, "bulkUpdate")
       .mockResolvedValue([1] as any);
     const update = jest.spyOn((service as any).repository, "update");
 
-    await service.generateDeliveryNote("batch-1", "user-1");
+    await service.generateDeliveryNote("batch-1", "user-1", "actor-1");
 
     expect(update).not.toHaveBeenCalled();
     const [data, options] = bulkUpdate.mock.calls[0] as any[];
-    expect(options).toEqual({ where: { id: "batch-1" } });
+    expect(options).toEqual({ where: { id: "batch-1" }, transaction: mockTransaction });
     expect(data.operator_id).toMatchObject({
       fn: "COALESCE",
       args: [{ col: "operator_id" }, "user-1"],
@@ -336,6 +354,67 @@ describe("ExpeditionBatchService — operador do romaneio", () => {
       fn: "COALESCE",
       args: [{ col: "delivery_note_generated_at" }, { fn: "NOW" }],
     });
+  });
+
+  it("generateDeliveryNote: audita quem gerou (usuário logado) com antes travado e depois do banco", async () => {
+    const generatedAt = new Date("2026-10-30T13:00:00Z");
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue({
+      id: "batch-1",
+      number: "42",
+      status: "FINISHED",
+      batchInvoices: [],
+    } as any);
+    const findOne = jest
+      .spyOn(service, "findOne")
+      .mockResolvedValueOnce({ delivery_note_generated_at: null, operator_id: null } as any)
+      .mockResolvedValueOnce({ delivery_note_generated_at: generatedAt, operator_id: "user-1" } as any);
+    (userService.findById as jest.Mock).mockResolvedValue({ name: "Fulano" });
+    jest.spyOn((service as any).repository, "bulkUpdate").mockResolvedValue([1] as any);
+
+    await service.generateDeliveryNote("batch-1", "user-1", "actor-1");
+
+    expect(findOne.mock.calls[0][0]).toMatchObject({ lock: "UPDATE", transaction: mockTransaction });
+    const [entries, t] = (auditLogService.record as jest.Mock).mock.calls[0];
+    expect(t).toBe(mockTransaction);
+    expect(entries).toEqual([
+      expect.objectContaining({
+        userId: "actor-1",
+        entity: "EXPEDITION_BATCH",
+        internalId: "batch-1",
+        action: "UPDATE",
+        changes: expect.objectContaining({
+          summary: "Romaneio do lote 42 gerado. Operador: Fulano",
+          before: { delivery_note_generated_at: null, operator_name: null },
+          after: { delivery_note_generated_at: generatedAt, operator_name: "Fulano" },
+        }),
+      }),
+    ]);
+  });
+
+  it("generateDeliveryNote: romaneio já gerado → audita como gerado novamente, com o operador mantido", async () => {
+    const firstAt = new Date("2026-10-29T13:00:00Z");
+    jest.spyOn(service, "findByIdFullBatch").mockResolvedValue({
+      id: "batch-1",
+      number: "42",
+      status: "FINISHED",
+      batchInvoices: [],
+    } as any);
+    jest
+      .spyOn(service, "findOne")
+      .mockResolvedValue({ delivery_note_generated_at: firstAt, operator_id: "user-old" } as any);
+    (userService.findById as jest.Mock).mockResolvedValue({ name: "Beltrano" });
+    jest.spyOn((service as any).repository, "bulkUpdate").mockResolvedValue([1] as any);
+
+    await service.generateDeliveryNote("batch-1", "user-1", "actor-1");
+
+    expect(userService.findById).toHaveBeenCalledWith(
+      "user-old",
+      expect.objectContaining({ attributes: ["name"] }),
+    );
+    const [entries] = (auditLogService.record as jest.Mock).mock.calls[0];
+    expect(entries[0].changes.summary).toBe(
+      "Romaneio do lote 42 gerado novamente. Operador: Beltrano",
+    );
   });
 
   it("update: lote com outro operador → rejeita sem gravar", async () => {
@@ -389,5 +468,55 @@ describe("ExpeditionBatchService — operador do romaneio", () => {
     await service.update("batch-1", { status: "PENDING" } as any);
 
     expect(findOne).not.toHaveBeenCalled();
+  });
+});
+
+describe("ExpeditionBatchService — histórico de auditoria", () => {
+  let service: ExpeditionBatchService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new ExpeditionBatchService();
+  });
+
+  it("lote inexistente → Lote não encontrado (controller devolve 404)", async () => {
+    jest.spyOn(service, "findById").mockResolvedValue(null);
+
+    await expect(service.findAuditLogs("batch-1", {})).rejects.toThrow("Lote não encontrado");
+    expect(auditLogService.paginateByEntity).not.toHaveBeenCalled();
+  });
+
+  it("lote existe → paginação genérica pela entidade EXPEDITION_BATCH", async () => {
+    jest.spyOn(service, "findById").mockResolvedValue({ id: "batch-1" } as any);
+    (auditLogService.paginateByEntity as jest.Mock).mockResolvedValue({ data: [] });
+
+    await expect(service.findAuditLogs("batch-1", { page: 2 })).resolves.toEqual({ data: [] });
+    expect(auditLogService.paginateByEntity).toHaveBeenCalledWith("EXPEDITION_BATCH", "batch-1", { page: 2 });
+  });
+});
+
+describe("ExpeditionBatchService — filtro por data do romaneio", () => {
+  const { Op } = jest.requireActual("sequelize");
+  const { QueryParser } = jest.requireActual("../../../../../shared/query/query.parser");
+  const service = new ExpeditionBatchService();
+  const parse = (filters: Record<string, unknown>) =>
+    QueryParser.parse({ filters }, (service as any).queryConfig).where;
+
+  it("dia inteiro em horário de Brasília (00:00 a 23:59:59.999 SP), sem perder o delivery_note_generated", () => {
+    const where = parse({
+      delivery_note_generated: "true",
+      delivery_note_generated_at: { start: "2026-10-30", end: "2026-10-30" },
+    });
+
+    expect(where.delivery_note_generated_at).toEqual({ [Op.not]: null });
+    const range = where[Op.and][0].delivery_note_generated_at;
+    expect(range[Op.gte].toISOString()).toBe("2026-10-30T03:00:00.000Z");
+    expect(range[Op.lte].toISOString()).toBe("2026-10-31T02:59:59.999Z");
+  });
+
+  it("data fora de AAAA-MM-DD → erro", () => {
+    expect(() =>
+      parse({ delivery_note_generated_at: { start: "2026-10-30'; DROP TABLE x; --" } }),
+    ).toThrow("Data do romaneio inválida (use AAAA-MM-DD)");
   });
 });
