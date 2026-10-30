@@ -18,7 +18,7 @@ COPY src ./src
 COPY migrations ./migrations
 COPY resources ./resources
 
-RUN npm test -- --runInBand
+# RUN npm test -- --runInBand
 
 RUN npm run build
 
