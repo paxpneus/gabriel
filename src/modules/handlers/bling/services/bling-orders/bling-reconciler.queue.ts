@@ -109,10 +109,8 @@ export class BlingReconcilerQueue extends BaseQueueService<
 
     if (!(await this.automationQueuesAreClear())) return;
 
-    // TEMP: automação travada — esta rotina altera situação na Bling; return evita cair no reconcileOpenOrders.
     if (task === "sync-invoiced-or-collected") {
-      // return this.syncInvoicedOrCollectedOrders();
-      return;
+      return this.syncInvoicedOrCollectedOrders();
     }
 
     return this.reconcileOpenOrders();
