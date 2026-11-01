@@ -50,21 +50,39 @@ export class InventoryBatchService extends BaseService<
     return [...new Set(subgroupIds.filter(Boolean).map(String))];
   }
 
+  // Valor da divergência pelo preço de venda e pelo custo médio congelados no item, não pelos atuais da ProductConfig.
   private calculateDivergencyTotals(items: any[] = []) {
     return items.reduce(
-      (totals: { total_entries: number; total_outputs: number }, item: any) => {
+      (
+        totals: {
+          total_entries: number;
+          total_outputs: number;
+          total_entries_average_cost: number;
+          total_outputs_average_cost: number;
+        },
+        item: any,
+      ) => {
         const divergency = Number(item.divergency ?? 0);
-        const unitPrice = Number(
-          item.product?.productConfigs?.[0]?.price ?? item.price ?? 0,
-        );
-        const divergencyValue = divergency * unitPrice;
+        const divergencyValue = divergency * Number(item.unit_price ?? 0);
+        const divergencyCost = divergency * Number(item.average_cost ?? 0);
 
-        if (divergency < 0) totals.total_entries += divergencyValue;
-        if (divergency > 0) totals.total_outputs += divergencyValue;
+        if (divergency < 0) {
+          totals.total_entries += divergencyValue;
+          totals.total_entries_average_cost += divergencyCost;
+        }
+        if (divergency > 0) {
+          totals.total_outputs += divergencyValue;
+          totals.total_outputs_average_cost += divergencyCost;
+        }
 
         return totals;
       },
-      { total_entries: 0, total_outputs: 0 },
+      {
+        total_entries: 0,
+        total_outputs: 0,
+        total_entries_average_cost: 0,
+        total_outputs_average_cost: 0,
+      },
     );
   }
 
@@ -207,6 +225,9 @@ export class InventoryBatchService extends BaseService<
               virtual_stock: stock.virtual_stock ?? null,
               status: "OPEN",
               stock_id: stock.id,
+              // preço e custo médio da criação do lote ficam congelados no item
+              unit_price: unitPrice,
+              average_cost: config?.average_cost ?? null,
               price: totalPrice,
               divergency: 0,
               initial_divergency: 0,
@@ -317,6 +338,7 @@ export class InventoryBatchService extends BaseService<
       // 5. Cria os batch items do lote de divergência
       // quantity_stock = maior leitura entre os usuários (referência para recontar)
       let totalStock = 0;
+      let totalPrice = 0;
 
       for (const item of divergentItems) {
         await InventoryBatchItems.create(
@@ -333,15 +355,20 @@ export class InventoryBatchService extends BaseService<
             divergency: item.quantity_stock,
             stock_id: item.stock_id,
             status: "OPEN",
+            // mesmo inventário: herda preço, custo médio e valor congelados do item do pai
+            unit_price: item.unit_price ?? null,
+            average_cost: item.average_cost ?? null,
+            price: item.price,
           },
           { transaction: t },
         );
 
         totalStock += Number(item.quantity_stock);
+        totalPrice += Number(item.price ?? 0);
       }
 
       await newBatch.update(
-        { total_quantity_stock: totalStock },
+        { total_quantity_stock: totalStock, total_price: totalPrice },
         { transaction: t },
       );
     });

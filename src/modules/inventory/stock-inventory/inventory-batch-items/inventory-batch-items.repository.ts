@@ -23,7 +23,8 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
       quantityStock,
       reservedQuantity,
       virtualStock,
-      price,
+      unitPrice,
+      averageCost,
     }: {
       batchId: string;
       productId: string;
@@ -34,8 +35,9 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
       // reserva/virtual do Stock, só leitura (guardados no item)
       reservedQuantity?: number | null;
       virtualStock?: number | null;
-      // valor total do item (preço unitário × estoque); omitido no scan, cai no default 0 da coluna
-      price?: number;
+      // ProductConfig.price/average_cost de agora: congelados no item criado; item já existente não muda
+      unitPrice: number;
+      averageCost?: number | null;
     },
     t: Transaction,
   ): Promise<InventoryBatchItems> {
@@ -71,7 +73,9 @@ export class InventoryBatchItemsRepository extends BaseRepository<InventoryBatch
               initial_divergency: quantityStock,
               stock_id: stockId,
               status: "PENDING",
-              price,
+              unit_price: unitPrice,
+              average_cost: averageCost ?? null,
+              price: unitPrice * quantityStock,
             },
             { transaction: savepoint },
           ),

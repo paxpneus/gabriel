@@ -56,7 +56,7 @@ export class InventoryBatchItemsService extends BaseService<
         }),
         productConfigService.findOne({
           where: { product_id: productId, unit_business_id: unitBusinessId },
-          attributes: ["gtin", "sku", "price"],
+          attributes: ["gtin", "sku", "price", "average_cost"],
         }),
         inventorySubgroupsService.findAll({
           where: { inventory_batch_id: batchId },
@@ -102,8 +102,9 @@ export class InventoryBatchItemsService extends BaseService<
           quantityStock,
           reservedQuantity: stock.reserved_quantity,
           virtualStock: stock.virtual_stock,
-          // mesmo cálculo do pré-cadastro FIXED: preço do product config × estoque
-          price: Number(config?.price ?? 0) * quantityStock,
+          // preço e custo médio de agora ficam congelados no item (price = preço × estoque)
+          unitPrice: Number(config?.price ?? 0),
+          averageCost: config?.average_cost ?? null,
         },
         t,
       ),

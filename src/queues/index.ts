@@ -1,5 +1,6 @@
 import { SalesReportQueue } from "./../modules/reports/daily-sales/sales-report/sales-report.queue";
 import { Express } from "express";
+import crypto from "crypto";
 import { blingApi } from "../modules/handlers/bling/api/bling_api.service";
 
 import { createBullBoard } from "@bull-board/api";
@@ -358,7 +359,36 @@ export function registerQueues(app: Express) {
     serverAdapter,
   });
 
-  app.use("/admin/queues", serverAdapter.getRouter());
+  // Basic Auth com as mesmas credenciais do AdminJS; sem senha configurada, bloqueia (fail closed).
+  // Compara hashes sha256 pra timingSafeEqual não depender do tamanho da senha.
+  app.use(
+    "/admin/queues",
+    (req, res, next) => {
+      const expectedUser = process.env.ADMINJS_USER || "admin@paxhub.com";
+      const expectedPassword = process.env.ADMINJS_PASSWORD;
+      const [scheme, encoded] = (req.headers.authorization ?? "").split(" ");
+      const decoded = Buffer.from(encoded ?? "", "base64").toString();
+      const separatorIndex = decoded.indexOf(":");
+      const user = decoded.slice(0, separatorIndex);
+      const password = decoded.slice(separatorIndex + 1);
+      const hash = (value: string) =>
+        crypto.createHash("sha256").update(value).digest();
+
+      if (
+        expectedPassword &&
+        scheme === "Basic" &&
+        separatorIndex !== -1 &&
+        crypto.timingSafeEqual(hash(user), hash(expectedUser)) &&
+        crypto.timingSafeEqual(hash(password), hash(expectedPassword))
+      ) {
+        return next();
+      }
+
+      res.set("WWW-Authenticate", 'Basic realm="Admin Queues"');
+      return res.status(401).send("Unauthorized");
+    },
+    serverAdapter.getRouter(),
+  );
 
   queueMonitorService.registerFromLocals(app.locals, {
     NfeQueue: "NFE_EMISSION",

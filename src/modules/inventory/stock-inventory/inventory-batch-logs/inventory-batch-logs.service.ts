@@ -144,6 +144,9 @@ export class InventoryBatchLogsService extends BaseService<
           quantityStock: stock.quantity,
           reservedQuantity: stock.reserved_quantity,
           virtualStock: stock.virtual_stock,
+          // só valem na 1ª bipagem (criação do item): depois ficam congelados
+          unitPrice: Number(config?.price ?? 0),
+          averageCost: config?.average_cost ?? null,
         },
         t,
       );
@@ -183,7 +186,6 @@ export class InventoryBatchLogsService extends BaseService<
         userId,
         inventoryBatch.type,
         t,
-        { unitPrice: config?.price ?? 0 },
       );
 
       // ── 7. Propaga para batch pai se for DIVERGENCY ───────────────────────────
@@ -195,7 +197,6 @@ export class InventoryBatchLogsService extends BaseService<
           {
             parentBatchId: inventoryBatch.BatchIdForDivergency,
             itemId: inventoryBatchItem.id,
-            unitPrice: config?.price ?? 0,
           },
           t,
         );

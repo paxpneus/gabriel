@@ -26,6 +26,9 @@ class InventoryBatchItems
   public stock_id!: string;
   public inventory_batch_id!: string;
   public price?: number;
+  // Preço de venda e custo médio do produto congelados quando o item entra no lote.
+  public unit_price?: number | null;
+  public average_cost?: number | null;
   public initial_divergency?: number
   // Cópia só leitura do Stock na criação do item (CYCLIC acompanha o sync da Bling); não entra em cálculo.
   public reserved_quantity?: number | null;
@@ -80,6 +83,9 @@ InventoryBatchItems.init(
       allowNull: true,
       defaultValue: 0,
     },
+    // ProductConfig.price/average_cost no momento em que o item entrou no lote; não acompanham mudança de preço.
+    unit_price: { type: DataTypes.FLOAT, allowNull: true },
+    average_cost: { type: DataTypes.DECIMAL(14, 4), allowNull: true },
     // Stock.reserved_quantity/virtual_stock guardados no item; só leitura, nenhum total/divergência usa.
     reserved_quantity: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
     virtual_stock: { type: DataTypes.DECIMAL(10, 2), allowNull: true },

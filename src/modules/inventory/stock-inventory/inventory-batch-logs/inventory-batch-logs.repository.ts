@@ -17,7 +17,7 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
     userId: string,
     batchType: string,
     t: Transaction,
-    options?: { skipInitialDivergency?: boolean; unitPrice?: number },
+    options?: { skipInitialDivergency?: boolean },
   ): Promise<{
     newStatus: string;
     newUserRead: number;
@@ -91,11 +91,11 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
 
     const divergency = Number(item.quantity_stock) - newItemQuantityRead;
 
+    // price não entra: fica congelado desde a criação do item (unit_price × estoque)
     await item.update(
       {
         quantity_read: newItemQuantityRead,
         divergency,
-        price: newItemQuantityRead * (options?.unitPrice ?? 0),
         status: newStatus,
         ...(batchType === "REGULAR" &&
           !options?.skipInitialDivergency && {
@@ -130,11 +130,9 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
     {
       parentBatchId,
       itemId,
-      unitPrice,
     }: {
       parentBatchId: string;
       itemId: string;
-      unitPrice?: number;
     },
     t: Transaction,
   ): Promise<void> {
@@ -203,7 +201,7 @@ export class InventoryBatchLogsRepository extends BaseRepository<InventoryBatchL
       deltaLogs[0].user_id,
       "REGULAR",
       t,
-      { skipInitialDivergency: true, unitPrice },
+      { skipInitialDivergency: true },
     );
   }
 }

@@ -70,6 +70,41 @@ De onde vem o valor do item:
 
 Itens criados antes da mudança vêm com `null`.
 
+### Valores financeiros congelados
+
+O preço e o custo médio do produto ficam guardados no item quando ele entra no lote. Mudança de preço depois disso não altera nada do lote.
+
+```json
+{
+  "total_price": 12709.28,
+  "total_entries": 0,
+  "total_outputs": 794.33,
+  "total_entries_average_cost": 0,
+  "total_outputs_average_cost": 512.4,
+  "items": [
+    {
+      "quantity_stock": "4.00",
+      "unit_price": 794.33,
+      "average_cost": "512.4000",
+      "price": 3177.32
+    }
+  ]
+}
+```
+
+| Campo | O que é |
+|---|---|
+| `items[].unit_price` (number) | Preço de venda unitário quando o item entrou no lote |
+| `items[].average_cost` (string decimal ou `null`) | Custo médio unitário quando o item entrou no lote. `null` = produto sem custo médio |
+| `items[].price` (number) | Valor do estoque do item: `unit_price × quantity_stock`. **Não muda mais na bipagem.** Antes virava `quantidade lida × preço da bipagem` |
+| `total_price` | Soma de `items[].price` |
+| `total_entries` / `total_outputs` | Divergência × `unit_price` (sobra / falta), pelo preço guardado e não pelo preço atual |
+| `total_entries_average_cost` / `total_outputs_average_cost` (novos) | A mesma divergência valorizada pelo `average_cost` |
+
+- Lote CYCLIC: quando a Bling sincroniza o estoque, `quantity_stock` muda, mas `price` continua com o valor de quando o item entrou no lote.
+- Lote de divergência: herda `unit_price`, `average_cost` e `price` do item do lote original.
+- O preço exibido deve ser o `unit_price` do item. Não usar `product.productConfigs[0].price`, que é o preço atual.
+
 ---
 
 ## 3. Mudança no `quantity` de lojas Tecinco
