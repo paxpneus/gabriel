@@ -1,11 +1,14 @@
 export interface SalesReturnReportParams {
   startDate: string;
   endDate: string;
+  // products.brand (texto, mesmo filtro do stock flow); ausente = todas.
+  brands?: string[];
+  productIds?: string[];
 }
 
 type DecimalValue = string | number | null;
 
-/** Linha crua do repository: movimento CUSTOMER_RETURN (valores Bling) + nota/venda/pedido de origem + item vendido já proporcional. */
+/** Linha crua do repository: movimento CUSTOMER_RETURN (qtd e valor do lançamento Bling) + nota/venda/pedido de origem. */
 export interface SalesReturnLineRow {
   movement_id: string;
   return_invoice_id: string | null;
@@ -17,7 +20,7 @@ export interface SalesReturnLineRow {
   total_value: DecimalValue;
   has_price: boolean;
   product_name: string | null;
-  brand_name: string | null;
+  brand: string | null;
   sale_invoice_number: string | null;
   order_id: string | null;
   order_number_system: string | null;
@@ -25,16 +28,13 @@ export interface SalesReturnLineRow {
   store_name: string | null;
   seller_name: string | null;
   customer_name: string | null;
-  has_sale_item: boolean;
-  net_value: DecimalValue;
-  total_cost: DecimalValue;
-  contribution_value: DecimalValue;
-  discount_value: DecimalValue;
-  tax_commission: DecimalValue;
-  freight_cost: DecimalValue;
-  computed_icms_value: DecimalValue;
-  commission_value: DecimalValue;
-  supplier_discount_value: DecimalValue;
+  sales_channel: string | null;
+}
+
+/** Nota candidata a devolução sem movimento; xml_head = início do xml_path (finNFe conferido na service). */
+export interface ReturnInvoiceCandidateRow {
+  invoice_number: string | null;
+  xml_head: string | null;
 }
 
 export interface SalesReturnReportRow {
@@ -48,23 +48,16 @@ export interface SalesReturnReportRow {
   order_number: string | null;
   seller_name: string | null;
   customer_name: string | null;
+  sales_channel: string | null;
   invoice_number: string | null;
   brand: string | null;
   product: string | null;
   sku: string | null;
   quantity: number;
   total_value: number;
-  net_value: number;
-  unit_cost: number;
-  item_total_cost: number;
   order_total_value: number;
-  order_net_value: number;
-  order_total_cost: number;
-  profit: number;
-  order_profit: number;
   volumes: number;
   has_price: boolean;
-  has_sale_item: boolean;
 }
 
 export interface SalesReturnReportSummary {
@@ -72,20 +65,13 @@ export interface SalesReturnReportSummary {
   items_quantity: number;
   total_volumes: number;
   gross_revenue: number;
-  total_discount: number;
-  total_net_value: number;
-  total_marketplace_fees: number;
-  total_freight: number;
-  total_taxes: number;
-  total_commission: number;
-  total_cost: number;
-  total_supplier_discount: number;
-  contribution_value: number;
-  contribution_pct: number;
-  markup_pct: number;
-  average_ticket: number;
-  lines_without_sale_item: number;
   lines_without_price: number;
+}
+
+/** Divergência nota × movimento: quantas e quais notas. */
+export interface SalesReturnInvoiceWarning {
+  count: number;
+  invoice_numbers: string[];
 }
 
 export interface SalesReturnReport {
@@ -93,7 +79,15 @@ export interface SalesReturnReport {
     start_date: string;
     end_date: string;
     unit_business_id: string;
+    brand: string[] | null;
+    product_id: string[] | null;
   };
   rows: SalesReturnReportRow[];
   summary: SalesReturnReportSummary;
+  warnings: {
+    // Movimento de devolução cuja nota não existe no sistema.
+    movements_without_invoice: SalesReturnInvoiceWarning;
+    // NF de devolução não cancelada emitida no período sem movimento de estoque.
+    invoices_without_movement: SalesReturnInvoiceWarning;
+  };
 }
