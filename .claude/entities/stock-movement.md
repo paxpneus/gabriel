@@ -31,6 +31,7 @@
   quando o sync começa não é interrompido.
   Não roda junto com a `BLING_MIGRATION`: com job ativo nela, a rodada do sync é pulada (job conclui sem fazer nada).
   Se religar `KARDEX_OVERRIDES_STOCK`, os dois brigam pelo `stocks` — desligar um dos dois.
+- **`CUSTOMER_RETURN` = entrada (`INCOMING`) na unidade emitida pelo CNPJ da própria unidade** (`stock-movements.service.ts`, montagem a partir das notas) — não lê `finNFe`. Nota de entrada própria que não é devolução (`finNFe = 1`, ~7 no CD21 em 2026) vira `CUSTOMER_RETURN` e entra nas devoluções do `product-stock-flow` e do `sales-return-report` (mesma base, de propósito, pra bater).
 - **`stocks.reserved_quantity` / `stocks.virtual_stock`** (m329): só leitura pro front, nenhum fluxo/cálculo usa — quem conta é `quantity`.
   `virtual_stock` = `saldoVirtualTotal`, `reserved_quantity` = `saldoFisicoTotal - saldoVirtualTotal` (sem virtual na resposta → virtual = físico).
   Gravados só pelo `syncStockFromBling` (divergente = `quantity` OU `virtual_stock` diferente) e pelo `syncStockAndBatches` do
