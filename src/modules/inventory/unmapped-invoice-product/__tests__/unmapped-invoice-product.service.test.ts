@@ -48,7 +48,7 @@ jest.mock("../../../handlers/tecinco/queues/tecinco-api-fetch.queue", () => ({
 
 jest.mock("../../../warehouse/fiscal/invoices/invoice/invoice.service", () => ({
   __esModule: true,
-  default: { addMissingInvoiceItems: jest.fn() },
+  default: { addMissingInvoiceItems: jest.fn(), findById: jest.fn() },
 }));
 
 jest.mock("../../../warehouse/fiscal/invoices/invoice-items/invoice-items.service", () => ({
@@ -217,6 +217,22 @@ describe("UnmappedInvoiceProductService", () => {
       ]);
     });
 
+    it("não conciliado na Bling nunca entra na cascata, mesmo com o mesmo CNPJ", async () => {
+      jest.spyOn((service as any).repository, "findByCodeExcluding").mockResolvedValue([
+        { id: "ok", reason: "SKU e EAN presentes mas sem produto correspondente no banco", invoice: { sender_cnpj: "11222333000144" } },
+        { id: "not-reconciled", reason: "Produto não conciliado na Bling", invoice: { sender_cnpj: "11222333000144" } },
+        { id: "legacy-not-reconciled", reason: "SKU ausente — apenas EAN salvo", invoice: { sender_cnpj: "11222333000144" } },
+      ]);
+
+      const result = await service.findCascadeMatches({
+        supplierProductCode: "COD-1",
+        excludeId: "origin-id",
+        senderCnpj: "11222333000144",
+      });
+
+      expect(result.map((r: any) => r.id)).toEqual(["ok"]);
+    });
+
     it("candidato sem invoice (dado inconsistente): trata sender_cnpj como vazio, não bate com nenhum CNPJ real", async () => {
       jest
         .spyOn((service as any).repository, "findByCodeExcluding")
@@ -229,6 +245,54 @@ describe("UnmappedInvoiceProductService", () => {
       });
 
       expect(result).toEqual([]);
+    });
+  });
+
+  // ─── assertNotPendingBlingReconciliation ─────────────────────────────────
+  describe("assertNotPendingBlingReconciliation", () => {
+    it("motivo comum: passa sem consultar a nota", async () => {
+      await expect(
+        service.assertNotPendingBlingReconciliation({
+          reason: "EAN ausente — apenas SKU salvo",
+          invoice_id: "invoice-1",
+          product_name: "Pneu",
+        } as any),
+      ).resolves.toBeUndefined();
+      expect(invoiceService.findById).not.toHaveBeenCalled();
+    });
+
+    it("não conciliado na Bling: recusa com o link da nota de entrada", async () => {
+      (invoiceService.findById as jest.Mock).mockResolvedValue({ id_system: "27286128120", number_system: "522313" });
+
+      await expect(
+        service.assertNotPendingBlingReconciliation({
+          reason: "Produto não conciliado na Bling",
+          invoice_id: "invoice-1",
+          product_name: "Pneu 245/40R18",
+        } as any),
+      ).rejects.toThrow(
+        'O produto "Pneu 245/40R18" não está conciliado na Bling e não pode ser mapeado aqui. Concilie o produto na Bling da nota 522313: https://www.bling.com.br/notas.entrada.php#edit/27286128120 e aguarde a sincronização da nota.',
+      );
+    });
+
+    it("criar produto a partir do não conciliado: recusa antes do aviso de id do ERP, sem enfileirar", async () => {
+      jest.spyOn(service, "findById").mockResolvedValue({
+        id: "unmapped-1",
+        external_id: null,
+        invoice_id: "invoice-1",
+        reason: "Produto não conciliado na Bling",
+        product_name: "Pneu",
+      } as any);
+      (invoiceService.findById as jest.Mock).mockResolvedValue({ id_system: "1", number_system: "2" });
+      const blingQueue = { add: jest.fn() };
+
+      await expect(
+        service.createProduct("unmapped-1", {
+          blingApiFetchQueue: blingQueue as any,
+          tcarUpsertQueue: { add: jest.fn() } as any,
+        }),
+      ).rejects.toThrow(/não está conciliado na Bling/);
+      expect(blingQueue.add).not.toHaveBeenCalled();
     });
   });
 

@@ -74,6 +74,21 @@ import {
   PdvTransporterSelector,
 } from "../../../sales/pdv-management/sales-request/pdv-sales-request.types";
 import { CD21_STATUS_LABELS } from "../../../sales/pdv-management/sales-request/helpers/next-action.rules";
+import { randomUUID } from "crypto";
+import {
+  BLING_FETCH_CREATE_PRODUCT_PRIORITY,
+  BlingApiFetchQueue,
+  BlingInvoiceItemsCheckResult,
+  blingInvoiceResyncJobId,
+} from "../../../handlers/bling/services/bling/queues/bling-api-fetch.queue";
+import { getBlingIntegration } from "../../../handlers/bling/api/bling_api.service";
+import { FINAL_JOB_STATUSES, JobStatus, toJobStatus } from "../../../../shared/utils/queues/job-status";
+import { buildBlingEntranceInvoiceUrl } from "../../fiscal/invoices/invoice/helpers/bling-entrance-url";
+import { UNMAPPED_REASONS_NOT_RECONCILED_IN_BLING } from "../../../inventory/unmapped-invoice-product/unmapped-invoice-product.types";
+
+// Avaliação de conciliação na Bling (lote de entrada): prefixo do jobId e retenção do job concluído — a retenção é também a validade da avaliação.
+const BLING_RECONCILIATION_CHECK_JOB_PREFIX = "bling-invoice-items-check-";
+const BLING_RECONCILIATION_CHECK_RETENTION_SECONDS = 3600;
 
 // Complemento das mensagens de "nenhuma candidata" das ações de lote do PDV.
 const PDV_BATCH_STAGE_LABELS: Record<PdvBatchStage, string> = {
@@ -140,6 +155,9 @@ export class ExpeditionBatchService extends BaseService<
   ExpeditionBatch,
   ExpeditionBatchRepository
 > {
+  // Client workless da BLING_API_FETCH: só enfileira/lê o job de avaliação de conciliação.
+  private blingApiFetchQueue?: BlingApiFetchQueue;
+
   constructor() {
     super(expeditionBatchRepository);
 
@@ -248,11 +266,201 @@ export class ExpeditionBatchService extends BaseService<
     return { batch, batchInvoices, totalVolumesAdded };
   }
 
+  /**
+   * 1ª etapa do lote de entrada: enfileira na BLING_API_FETCH a busca dos itens das notas Bling e devolve o jobId
+   * pro front acompanhar. jobId null = nenhuma nota da Bling, pode gerar o lote direto.
+   */
+  async enqueueBlingReconciliationCheck(params: {
+    invoiceIds?: string[];
+    invoiceKeys?: string[];
+  }): Promise<{ jobId: string | null; message: string; syncing?: boolean }> {
+    const invoiceIds = [...new Set((params.invoiceIds ?? []).filter(Boolean))];
+    const invoiceKeys = [
+      ...new Set((params.invoiceKeys ?? []).map((k) => String(k).replace(/\s/g, "")).filter(Boolean)),
+    ];
+    if (!invoiceIds.length && !invoiceKeys.length) {
+      throw new Error("Informe ao menos uma nota fiscal");
+    }
+
+    let where: WhereOptions;
+    if (invoiceIds.length) {
+      where = { id: { [Op.in]: invoiceIds } };
+    } else {
+      where = { xml_key: { [Op.in]: invoiceKeys } };
+    }
+    const invoices = await invoiceService.findAll({
+      where,
+      attributes: ["id", "xml_key", "number_system", "id_system", "integrations_id"],
+    });
+
+    const expected = invoiceIds.length ? invoiceIds : invoiceKeys;
+    const found = new Set(invoices.map((i) => (invoiceIds.length ? i.id : i.xml_key)));
+    const missing = expected.filter((value) => !found.has(value));
+    if (missing.length) {
+      throw new Error(`Nota(s) não encontrada(s): ${missing.join(", ")}`);
+    }
+
+    const blingIntegration = await getBlingIntegration();
+    const blingInvoices = invoices.filter((i) => i.integrations_id === blingIntegration.id);
+    if (!blingInvoices.length) {
+      return { jobId: null, message: "Nenhuma nota da Bling — o lote pode ser gerado." };
+    }
+
+    const withoutBlingId = blingInvoices.filter((i) => !Number(i.id_system));
+    if (withoutBlingId.length) {
+      throw new Error(
+        `Nota(s) sem identificação da Bling: ${withoutBlingId.map((i) => i.number_system).join(", ")}`,
+      );
+    }
+
+    // Reprocesso da nota (disparado por avaliação anterior) ainda na fila: não avalia, front espera a sincronização.
+    const syncing = await this.findSyncingBlingInvoices(blingInvoices);
+    if (syncing.length) {
+      return {
+        jobId: null,
+        syncing: true,
+        message: `Aguarde a sincronização da(s) nota(s) ${syncing.map((i) => i.number_system).join(", ")} entre Bling e Hub e tente novamente.`,
+      };
+    }
+
+    // Notas com item não conciliado no hub: se a Bling já tiver todos os códigos, o job reprocessa a nota.
+    const pendingRows = await unmappedInvoiceProductService.findUnmappedByInvoiceIds(
+      blingInvoices.map((i) => i.id),
+    );
+    const pendingInvoiceIds = new Set(
+      pendingRows
+        .filter((row) => UNMAPPED_REASONS_NOT_RECONCILED_IN_BLING.includes(row.reason))
+        .map((row) => row.invoice_id),
+    );
+    const resyncBlingIds = blingInvoices
+      .filter((i) => pendingInvoiceIds.has(i.id))
+      .map((i) => Number(i.id_system));
+
+    // jobId único por avaliação: depois de conciliar na Bling, uma nova avaliação busca os itens de novo.
+    const blingIds = blingInvoices.map((i) => Number(i.id_system));
+    const jobId = `${BLING_RECONCILIATION_CHECK_JOB_PREFIX}${randomUUID()}`;
+    this.blingApiFetchQueue ??= new BlingApiFetchQueue({ workless: true });
+    await this.blingApiFetchQueue.add(
+      {
+        eventId: jobId,
+        resource: "invoice_items_check",
+        action: "updated",
+        companyId: "",
+        date: new Date().toISOString(),
+        rawData: null,
+        apiFetch: {
+          resource: "invoice_items_check",
+          blingId: blingIds[0],
+          blingIds,
+          resyncBlingIds,
+          action: "updated",
+          companyId: "",
+        },
+      },
+      jobId,
+      {
+        priority: BLING_FETCH_CREATE_PRODUCT_PRIORITY,
+        removeOnComplete: { age: BLING_RECONCILIATION_CHECK_RETENTION_SECONDS },
+      },
+    );
+
+    return {
+      jobId,
+      message: "Avaliando na Bling se todos os produtos da(s) nota(s) foram conciliados...",
+    };
+  }
+
+  // Notas Bling cujo reprocesso (enfileirado pela avaliação) ainda não terminou.
+  private async findSyncingBlingInvoices<T extends { id_system?: string }>(invoices: T[]): Promise<T[]> {
+    this.blingApiFetchQueue ??= new BlingApiFetchQueue({ workless: true });
+    const queue = this.blingApiFetchQueue.queue;
+    const statuses = await Promise.all(
+      invoices.map(async (invoice) => (await toJobStatus(await queue.getJob(blingInvoiceResyncJobId(invoice.id_system!)))).status),
+    );
+    return invoices.filter((_, idx) => !FINAL_JOB_STATUSES.has(statuses[idx]));
+  }
+
+  // Status do job de avaliação pro polling do front; só aceita jobs dessa avaliação.
+  async getBlingReconciliationCheckStatus(
+    jobId: string,
+  ): Promise<{ status: JobStatus; error?: string }> {
+    if (!jobId?.startsWith(BLING_RECONCILIATION_CHECK_JOB_PREFIX)) {
+      return { status: "not_found" };
+    }
+    this.blingApiFetchQueue ??= new BlingApiFetchQueue({ workless: true });
+    return toJobStatus(await this.blingApiFetchQueue.queue.getJob(jobId));
+  }
+
+  /**
+   * Trava do lote de entrada: as notas Bling precisam de uma avaliação concluída (blingCheckJobId) cobrindo todas
+   * elas, e todo item da nota na Bling precisa ter código (produto conciliado). Senão erro com o link de cada nota.
+   */
+  private async assertBlingEntranceReconciled(
+    invoices: { number_system?: string; id_system?: string; integrations_id?: string }[],
+    blingCheckJobId?: string,
+  ): Promise<void> {
+    const blingIntegration = await getBlingIntegration();
+    const blingInvoices = invoices.filter((i) => i.integrations_id === blingIntegration.id);
+    if (!blingInvoices.length) return;
+
+    if (!blingCheckJobId) {
+      throw new Error("Avalie a conciliação dos produtos na Bling antes de gerar o lote de entrada.");
+    }
+
+    this.blingApiFetchQueue ??= new BlingApiFetchQueue({ workless: true });
+    const job = blingCheckJobId.startsWith(BLING_RECONCILIATION_CHECK_JOB_PREFIX)
+      ? await this.blingApiFetchQueue.queue.getJob(blingCheckJobId)
+      : null;
+    const { status, error } = await toJobStatus(job);
+    if (status === "not_found") {
+      throw new Error("Avaliação da conciliação na Bling não encontrada ou expirada. Avalie novamente.");
+    }
+    if (status === "failed") {
+      throw new Error(`A avaliação da conciliação na Bling falhou: ${error}. Avalie novamente.`);
+    }
+    if (status !== "completed") {
+      throw new Error("A avaliação da conciliação na Bling ainda não terminou.");
+    }
+
+    const result = job!.returnvalue as BlingInvoiceItemsCheckResult;
+    const itemsByBlingId = new Map(
+      (result?.invoices ?? []).map((inv) => [String(inv.blingId), inv.items]),
+    );
+
+    const notEvaluated = blingInvoices.filter((i) => !itemsByBlingId.has(String(i.id_system)));
+    if (notEvaluated.length) {
+      throw new Error(
+        `A avaliação não inclui a(s) nota(s) ${notEvaluated.map((i) => i.number_system).join(", ")}. Avalie novamente.`,
+      );
+    }
+
+    const notReconciled = blingInvoices.filter((i) =>
+      itemsByBlingId.get(String(i.id_system))!.some((item) => !item.codigo?.trim()),
+    );
+    if (notReconciled.length) {
+      const links = notReconciled
+        .map((i) => `nota ${i.number_system} (${buildBlingEntranceInvoiceUrl(i.id_system!)})`)
+        .join(", ");
+      throw new Error(
+        `Nota(s) com produtos não conciliados na Bling. Concilie os produtos da nota antes de gerar o lote: ${links}`,
+      );
+    }
+
+    // Tudo conciliado na Bling, mas o reprocesso da nota no hub ainda roda: esperar antes de gerar.
+    const syncing = await this.findSyncingBlingInvoices(blingInvoices);
+    if (syncing.length) {
+      throw new Error(
+        `Aguarde a sincronização da(s) nota(s) ${syncing.map((i) => i.number_system).join(", ")} entre Bling e Hub e tente novamente.`,
+      );
+    }
+  }
+
   async generateBatchFromInvoices(
     invoiceIds: string[],
     unitBusinessId: string,
     type: string,
     mode?: string,
+    blingCheckJobId?: string,
   ): Promise<ExpeditionBatch> {
     let batchId: string;
 
@@ -348,6 +556,12 @@ export class ExpeditionBatchService extends BaseService<
         return;
       }
 
+      // Lote de entrada com nota Bling: todos os itens conciliados na Bling (avaliação prévia por job). Antes da trava de
+      // não mapeados, porque item sem código na Bling também vira não mapeado e a causa é a conciliação.
+      if (type !== "OUTGOING") {
+        await this.assertBlingEntranceReconciled(notBatched, blingCheckJobId);
+      }
+
       const unmappedRows =
         await unmappedInvoiceProductService.findUnmappedByInvoiceIds(
           notBatched.map((i) => i.id),
@@ -365,6 +579,7 @@ export class ExpeditionBatchService extends BaseService<
           `Nota(s) com produtos não mapeados: ${numbers.join(", ")}`,
         );
       }
+
 
       // Pedido PDV em CRITICAL_ERROR não entra em lote até o CD21 corrigir.
       await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(
@@ -427,6 +642,7 @@ async addInvoiceToBatch(
   batchId?: string,
   transferInvoiceReference?: string,
   externalTransaction?: Transaction,
+  blingCheckJobId?: string,
 ): Promise<ExpeditionBatch> {
   let resultBatchId: string;
 
@@ -477,6 +693,12 @@ async addInvoiceToBatch(
 
     const invoiceIds = invoices.map((i) => i.id);
 
+    // Lote de entrada com nota Bling: todos os itens conciliados na Bling (avaliação prévia por job). Antes da trava de
+    // não mapeados, porque item sem código na Bling também vira não mapeado e a causa é a conciliação.
+    if (type !== "OUTGOING") {
+      await this.assertBlingEntranceReconciled(invoices, blingCheckJobId);
+    }
+
     const invoiceUnmapped =
       await unmappedInvoiceProductService.findUnmappedByInvoiceIds(
         invoiceIds,
@@ -494,6 +716,7 @@ async addInvoiceToBatch(
         `Nota(s) com produtos não mapeados: ${numbers.join(", ")}`,
       );
     }
+
 
     // Pedido PDV em CRITICAL_ERROR não entra em lote até o CD21 corrigir.
     await pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices(invoiceIds);

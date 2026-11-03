@@ -31,6 +31,15 @@ export const UNMAPPED_REASON_NEW_CATALOG_PRODUCT = "Produto novo, precisa de map
 export const UNMAPPED_REASON_INVOICE_PRODUCT_NOT_IN_DB =
   "Produto Tecinco presente na nota mas sem produto correspondente no banco";
 
+// Item da nota Bling sem código (produto não conciliado na Bling): só resolve conciliando na Bling e reprocessando a nota.
+export const UNMAPPED_REASON_NOT_RECONCILED_IN_BLING = "Produto não conciliado na Bling";
+// Inclui os motivos antigos do mesmo caso (item sem código), gravados antes do motivo próprio existir.
+export const UNMAPPED_REASONS_NOT_RECONCILED_IN_BLING: readonly string[] = [
+  UNMAPPED_REASON_NOT_RECONCILED_IN_BLING,
+  "SKU ausente — apenas EAN salvo",
+  "SKU e EAN ausentes no item da API",
+];
+
 export interface UnmappedInvoiceProductAttributes {
   id: string;
   invoice_id: string | null;

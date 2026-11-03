@@ -8,7 +8,9 @@ export type BlingResource =
   | 'invoice'
   | 'consumer_invoice'
   | 'product_supplier'
-  | 'seller';
+  | 'seller'
+  // Interno (não vem de webhook): busca os itens de notas pra checar conciliação antes do lote de entrada.
+  | 'invoice_items_check';
 
 export type BlingAction = 'created' | 'updated' | 'deleted';
 
@@ -148,6 +150,10 @@ export interface ApiFetchRequest {
   create?: boolean;
   /** Id do UnmappedInvoiceProduct de origem que deve levar o mapeamento completo pra invoice (com cascata) assim que o produto for resolvido — ver UnmappedInvoiceProductService.createProductAndMapToInvoice */
   cascadeMapUnmappedId?: string;
+  /** Ids Bling das notas avaliadas num job `invoice_items_check` (blingId = o primeiro, só pra log) */
+  blingIds?: number[];
+  /** Ids Bling (de blingIds) com item não conciliado no hub: o job reprocessa a nota se a Bling já trouxer todos os códigos */
+  resyncBlingIds?: number[];
 }
 
 // ─── Mapped entity shapes (espelham os models) ────────────────────────────────

@@ -15,6 +15,7 @@ jest.mock(
       findById: jest.fn(),
       delete: jest.fn(),
       findCascadeMatches: jest.fn(),
+      assertNotPendingBlingReconciliation: jest.fn(),
     },
   }),
 );
@@ -135,6 +136,23 @@ describe("InvoiceItemsService.createInvoiceItemForUnmappedProducts (cascata de a
     expect(InvoiceItems.create).not.toHaveBeenCalled();
     expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();
     expect(unmappedInvoiceProductService.findCascadeMatches).not.toHaveBeenCalled();
+  });
+
+  it("não conciliado na Bling: recusa antes de criar qualquer InvoiceItem", async () => {
+    (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue(makeUnmapped());
+    (unmappedInvoiceProductService.assertNotPendingBlingReconciliation as jest.Mock).mockRejectedValueOnce(
+      new Error("não está conciliado na Bling"),
+    );
+
+    await expect(
+      service.createInvoiceItemForUnmappedProducts(
+        { product_id: "product-1", invoice_id: "invoice-1", quantity_expected: 1 },
+        "EAN-1",
+        "unmapped-1",
+      ),
+    ).rejects.toThrow(/conciliado na Bling/);
+
+    expect(InvoiceItems.create).not.toHaveBeenCalled();
   });
 
   it("sem match na cascata: mapeia só o unmapped alvo, chama findCascadeMatches com código+CNPJ+excludeId corretos, e não processa mais nada", async () => {

@@ -20,6 +20,12 @@ When an item later resolves, the matching rows are cleaned up two ways: the per-
 
 **Upsert, not just dedup-check**: a catalog-sync pass (`fetchAndUpsertProduct`/`processProduct`/`syncProductWithMagento`) finding an existing unmapped row for the same `sku`/`ean` used to no-op — a bug for `external_id`, since rows created before `m267` (or from a pass that didn't resolve it yet) would never get it backfilled, permanently blocking create-product for them. Now every pass calls `.update({ sku, ean, external_id, product_name })` instead of no-op'ing. `status` is deliberately left untouched by this update (never forced back to `"UNMAPPED"`) — a row a human already resolved to `"MAPPED"` via `markMapped` doesn't get silently reverted by a later sync.
 
+## Não conciliado na Bling (item de nota Bling sem código)
+
+- Reason `UNMAPPED_REASON_NOT_RECONCILED_IN_BLING` ("Produto não conciliado na Bling"), `type: ERROR_INVOICE`, sem `external_id`. Predicado: `UNMAPPED_REASONS_NOT_RECONCILED_IN_BLING` (types) — inclui os textos antigos do mesmo caso (`"SKU ausente — apenas EAN salvo"`, `"SKU e EAN ausentes no item da API"`), gravados antes do motivo próprio; sem migration.
+- **Não resolve no hub**: `assertNotPendingBlingReconciliation(unmapped)` (service) recusa com `O produto "<nome>" não está conciliado na Bling e não pode ser mapeado aqui. Concilie o produto na Bling da nota <nº>: <link #edit/id_system> e aguarde a sincronização da nota.` Chamado em: `/invoice-items/add/item` (`createInvoiceItemForUnmappedProductsInTx`), `SupplierMappingService.createFromUnmapped`, `createProduct`/`createProductAndMapToInvoice` (antes do check de `external_id`) e `enqueueCreateProduct` (cobre `createProducts`). `findCascadeMatches` nunca devolve esse tipo (não entra na cascata).
+- **Saída única**: conciliar na Bling e reprocessar a nota — o item resolve pelo SKU e a limpeza por passagem apaga a linha. O reprocesso é disparado pela avaliação de conciliação do lote de entrada (ver `../expedition-batch/index.md`), com prioridade de import manual.
+
 ## `type` column (`m269`)
 
 Categorizes *why* a row is unmapped, independent of `reason` (free text) and `integrations_id`:

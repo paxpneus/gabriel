@@ -1004,6 +1004,8 @@ export class SupplierMappingService extends BaseService<
     if (unmapped.status !== "UNMAPPED") {
       throw new Error("Esse produto não mapeado já foi resolvido");
     }
+    // Item não conciliado na Bling só resolve conciliando lá e reprocessando a nota.
+    await unmappedInvoiceProductService.assertNotPendingBlingReconciliation(unmapped);
     // internal_id do mapping não é FK: sem essa checagem, um produto inexistente viraria mapping órfão prendendo o código.
     const product = await productService.findById(params.productId, { attributes: ["id"] });
     if (!product) {

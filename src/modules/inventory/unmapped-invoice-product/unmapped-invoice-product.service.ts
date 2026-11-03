@@ -15,6 +15,7 @@ import {
   UnmappedInvoiceProductAttributes,
   UnmappedInvoiceProductCreationAttributes,
   UnmappedInvoiceProductWithImagePreview,
+  UNMAPPED_REASONS_NOT_RECONCILED_IN_BLING,
 } from "./unmapped-invoice-product.types";
 import uploaderService, {
   UploaderService,
@@ -42,6 +43,7 @@ import invoiceService from "../../warehouse/fiscal/invoices/invoice/invoice.serv
 import invoiceItemsService from "../../warehouse/fiscal/invoices/invoice-items/invoice-items.service";
 import pdvSalesRequestService from "../../sales/pdv-management/sales-request/pdv-sales-request.service";
 import { JobStatus, toJobStatus } from "../../../shared/utils/queues/job-status";
+import { buildBlingEntranceInvoiceUrl } from "../../warehouse/fiscal/invoices/invoice/helpers/bling-entrance-url";
 
 // Quanto tempo o job de criação de produto fica visível no Redis depois de
 // concluir (ver createProduct/getCreateProductJobStatus) — a fila por
@@ -352,6 +354,24 @@ export class UnmappedInvoiceProductService extends BaseService<
       );
   }
 
+  // Item de nota Bling sem código (não conciliado na Bling) não se resolve aqui: barra os fluxos manuais com o link da nota.
+  async assertNotPendingBlingReconciliation(
+    unmapped: Pick<UnmappedInvoiceProduct, "reason" | "invoice_id" | "product_name">,
+  ): Promise<void> {
+    if (!UNMAPPED_REASONS_NOT_RECONCILED_IN_BLING.includes(unmapped.reason)) return;
+
+    const invoice = unmapped.invoice_id
+      ? await invoiceService.findById(unmapped.invoice_id, { attributes: ["id_system", "number_system"] })
+      : null;
+    let where = "";
+    if (invoice?.id_system) {
+      where = ` da nota ${invoice.number_system}: ${buildBlingEntranceInvoiceUrl(invoice.id_system)}`;
+    }
+    throw new Error(
+      `O produto "${unmapped.product_name}" não está conciliado na Bling e não pode ser mapeado aqui. Concilie o produto na Bling${where} e aguarde a sincronização da nota.`,
+    );
+  }
+
   // Busca outros unmapped (em outras notas) com o mesmo código de
   // fornecedor de um unmapped que acabou de ser mapeado manualmente, para
   // avaliar se podem ser auto-mapeados também (ver
@@ -372,10 +392,12 @@ export class UnmappedInvoiceProductService extends BaseService<
 
     const normalizedSenderCnpj = cleanDocument(params.senderCnpj);
 
+    // Não conciliado na Bling nunca entra na cascata — só resolve conciliando na Bling.
     return candidates.filter(
       (candidate: any) =>
         cleanDocument(candidate.invoice?.sender_cnpj ?? "") ===
-        normalizedSenderCnpj,
+          normalizedSenderCnpj &&
+        !UNMAPPED_REASONS_NOT_RECONCILED_IN_BLING.includes(candidate.reason),
     );
   }
 
@@ -400,6 +422,8 @@ export class UnmappedInvoiceProductService extends BaseService<
       cascadeMapToInvoice?: boolean;
     },
   ): Promise<void> {
+    await this.assertNotPendingBlingReconciliation(unmapped);
+
     if (!unmapped.external_id) {
       throw new Error(
         "Produto não mapeado não tem id do ERP, não é possível criar produto automaticamente",
@@ -492,6 +516,8 @@ export class UnmappedInvoiceProductService extends BaseService<
     if (!unmapped) {
       throw new Error("Produto não mapeado não encontrado!");
     }
+    // Antes do external_id: o não conciliado de nota Bling não tem, e o motivo certo é a conciliação.
+    await this.assertNotPendingBlingReconciliation(unmapped);
     if (!unmapped.external_id) {
       throw new Error(
         "Produto não mapeado não tem id do ERP, não é possível criar produto automaticamente",
@@ -552,6 +578,8 @@ export class UnmappedInvoiceProductService extends BaseService<
         "Produto não mapeado não está vinculado a uma nota fiscal — use a criação de produto simples",
       );
     }
+    // Antes do external_id: o não conciliado de nota Bling não tem, e o motivo certo é a conciliação.
+    await this.assertNotPendingBlingReconciliation(unmapped);
     if (!unmapped.external_id) {
       throw new Error(
         "Produto não mapeado não tem id do ERP, não é possível criar produto automaticamente",

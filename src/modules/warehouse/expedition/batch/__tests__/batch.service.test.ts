@@ -102,6 +102,12 @@ jest.mock("../helpers/transfer-reference", () => ({
   assertAdtBatchTransferReferences: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("../../../../handlers/bling/api/bling_api.service", () => ({
+  __esModule: true,
+  ...jest.requireActual("../../../../handlers/bling/api/bling_api.service"),
+  getBlingIntegration: jest.fn().mockResolvedValue({ id: "bling-int", name: "Bling" }),
+}));
+
 import { assertAdtBatchTransferReferences } from "../helpers/transfer-reference";
 import auditLogService from "../../../../global/audit-logs/audit-log.service";
 import userService from "../../../../company/users/users/user.service";
@@ -591,3 +597,245 @@ describe("ExpeditionBatchService — romaneio da logística própria (CD 12/17)"
   });
 });
 
+
+// Lote de entrada com nota Bling: avaliação da conciliação por job (1ª etapa) e trava no gerar lote (2ª etapa).
+describe("ExpeditionBatchService — conciliação dos produtos na Bling (lote de entrada)", () => {
+  let service: ExpeditionBatchService;
+  let getJob: jest.Mock;
+  let add: jest.Mock;
+
+  const blingInvoice = (overrides: Partial<any> = {}) =>
+    makeInvoice({
+      number_system: "438864",
+      id_system: "26454378751",
+      integrations_id: "bling-int",
+      xml_key: "29260702036483000614550010004388641821277941",
+      ...overrides,
+    });
+
+  const completedJob = (invoices: any[]) => ({
+    getState: jest.fn().mockResolvedValue("completed"),
+    returnvalue: { invoices },
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new ExpeditionBatchService();
+    getJob = jest.fn();
+    add = jest.fn();
+    (service as any).blingApiFetchQueue = { queue: { getJob }, add };
+    (unitBusinessService.findOne as jest.Mock).mockResolvedValue({ id: "ub-1", number: "01" });
+    (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue([]);
+    (pdvSalesRequestService.assertNoCriticalErrorForSaleInvoices as jest.Mock).mockResolvedValue(undefined);
+    // Sentinela: só chega aqui se a trava de conciliação deixou passar.
+    (assertTransshipment as jest.Mock).mockRejectedValue(new Error("SENTINEL_PASSOU"));
+  });
+
+  describe("generateBatchFromInvoices", () => {
+    it("nota que não é da Bling: não exige avaliação", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([makeInvoice({ integrations_id: "tecinco-int" })]);
+
+      await expect(service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING")).rejects.toThrow(
+        "SENTINEL_PASSOU",
+      );
+      expect(getJob).not.toHaveBeenCalled();
+    });
+
+    it("lote de saída com nota Bling: não checa conciliação", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+
+      await expect(service.generateBatchFromInvoices(["invoice-1"], "ub-1", "OUTGOING")).rejects.toThrow(
+        "SENTINEL_PASSOU",
+      );
+    });
+
+    it("nota Bling sem jobId da avaliação: bloqueia antes de assertTransshipment", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+
+      await expect(service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING")).rejects.toThrow(
+        /Avalie a conciliação dos produtos na Bling/,
+      );
+      expect(assertTransshipment).not.toHaveBeenCalled();
+    });
+
+    it("jobId de outra fila/avaliação: tratado como não encontrado, sem consultar o Redis", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+
+      await expect(
+        service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING", undefined, "bling-product-create-x"),
+      ).rejects.toThrow(/não encontrada ou expirada/);
+      expect(getJob).not.toHaveBeenCalled();
+    });
+
+    it("avaliação ainda rodando: bloqueia", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+      getJob.mockResolvedValue({ getState: jest.fn().mockResolvedValue("active") });
+
+      await expect(
+        service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING", undefined, "bling-invoice-items-check-1"),
+      ).rejects.toThrow(/ainda não terminou/);
+    });
+
+    it("avaliação de outras notas: bloqueia pedindo nova avaliação", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+      getJob.mockResolvedValue(completedJob([{ blingId: 999, items: [{ codigo: "A", descricao: "x" }] }]));
+
+      await expect(
+        service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING", undefined, "bling-invoice-items-check-1"),
+      ).rejects.toThrow(/não inclui a\(s\) nota\(s\) 438864/);
+    });
+
+    it("item sem código na Bling: bloqueia com o link de edição da nota de entrada", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+      getJob.mockResolvedValue(
+        completedJob([
+          {
+            blingId: 26454378751,
+            items: [
+              { codigo: "04513950000", descricao: "Pneu 225/75R16C" },
+              { codigo: "", descricao: "Pneu 185/60R14 82H POWC 2" },
+            ],
+          },
+        ]),
+      );
+
+      await expect(
+        service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING", undefined, "bling-invoice-items-check-1"),
+      ).rejects.toThrow(
+        "nota 438864 (https://www.bling.com.br/notas.entrada.php#edit/26454378751)",
+      );
+      expect(assertTransshipment).not.toHaveBeenCalled();
+    });
+
+    it("todos os itens com código: passa", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+      getJob.mockResolvedValue(
+        completedJob([{ blingId: 26454378751, items: [{ codigo: "04513950000", descricao: "Pneu" }] }]),
+      );
+
+      await expect(
+        service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING", undefined, "bling-invoice-items-check-1"),
+      ).rejects.toThrow("SENTINEL_PASSOU");
+    });
+  });
+
+  it("trava da Bling vem antes da de não mapeados (item sem código na Bling também vira não mapeado)", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+    (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue([
+      { id: "u-1", invoice_id: "invoice-1", invoice: { number_system: "438864" } },
+    ]);
+
+    await expect(service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING")).rejects.toThrow(
+      /Avalie a conciliação dos produtos na Bling/,
+    );
+  });
+
+  it("tudo conciliado na Bling mas reprocesso da nota ainda na fila: pede pra aguardar a sincronização", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+    getJob.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === "bling-invoice-resync-26454378751"
+          ? { getState: jest.fn().mockResolvedValue("prioritized") }
+          : completedJob([{ blingId: 26454378751, items: [{ codigo: "A", descricao: "Pneu" }] }]),
+      ),
+    );
+
+    await expect(
+      service.generateBatchFromInvoices(["invoice-1"], "ub-1", "INCOMING", undefined, "bling-invoice-items-check-1"),
+    ).rejects.toThrow("Aguarde a sincronização da(s) nota(s) 438864 entre Bling e Hub");
+    expect(assertTransshipment).not.toHaveBeenCalled();
+  });
+
+  it("addInvoiceToBatch de entrada: item sem código na Bling bloqueia com o link", async () => {
+    (invoiceService.findAll as jest.Mock).mockResolvedValue([blingInvoice()]);
+    getJob.mockResolvedValue(
+      completedJob([{ blingId: 26454378751, items: [{ codigo: " ", descricao: "Pneu" }] }]),
+    );
+
+    await expect(
+      service.addInvoiceToBatch(
+        ["29260702036483000614550010004388641821277941"],
+        "ub-1",
+        "INCOMING",
+        undefined,
+        undefined,
+        undefined,
+        "bling-invoice-items-check-1",
+      ),
+    ).rejects.toThrow(/notas\.entrada\.php#edit\/26454378751/);
+    expect(assertTransshipment).not.toHaveBeenCalled();
+  });
+
+  describe("enqueueBlingReconciliationCheck", () => {
+    it("sem nota Bling: não enfileira e devolve jobId null", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { id: "invoice-1", integrations_id: "tecinco-int", number_system: "1" },
+      ]);
+
+      await expect(service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"] })).resolves.toMatchObject({
+        jobId: null,
+      });
+      expect(add).not.toHaveBeenCalled();
+    });
+
+    it("nota Bling: enfileira um job com os ids Bling e prioridade de usuário esperando", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { id: "invoice-1", integrations_id: "bling-int", id_system: "26454378751", number_system: "438864" },
+      ]);
+
+      const result = await service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"] });
+
+      expect(result.jobId).toMatch(/^bling-invoice-items-check-/);
+      expect(add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resource: "invoice_items_check",
+          apiFetch: expect.objectContaining({ blingId: 26454378751, blingIds: [26454378751] }),
+        }),
+        result.jobId,
+        expect.objectContaining({ priority: 1, removeOnComplete: { age: 3600 } }),
+      );
+    });
+
+    it("reprocesso da nota ainda na fila: não avalia, devolve syncing pro front esperar", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { id: "invoice-1", integrations_id: "bling-int", id_system: "26454378751", number_system: "438864" },
+      ]);
+      getJob.mockResolvedValue({ getState: jest.fn().mockResolvedValue("active") });
+
+      const result = await service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1"] });
+
+      expect(result).toMatchObject({ jobId: null, syncing: true });
+      expect(result.message).toMatch(/Aguarde a sincronização da\(s\) nota\(s\) 438864/);
+      expect(add).not.toHaveBeenCalled();
+    });
+
+    it("nota com não conciliado no hub: manda o id Bling pro job reprocessar se a Bling já estiver conciliada", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([
+        { id: "invoice-1", integrations_id: "bling-int", id_system: "111", number_system: "1" },
+        { id: "invoice-2", integrations_id: "bling-int", id_system: "222", number_system: "2" },
+      ]);
+      (unmappedInvoiceProductService.findUnmappedByInvoiceIds as jest.Mock).mockResolvedValue([
+        { invoice_id: "invoice-1", reason: "Produto não conciliado na Bling" },
+        { invoice_id: "invoice-2", reason: "EAN ausente — apenas SKU salvo" },
+      ]);
+
+      await service.enqueueBlingReconciliationCheck({ invoiceIds: ["invoice-1", "invoice-2"] });
+
+      expect(add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          apiFetch: expect.objectContaining({ blingIds: [111, 222], resyncBlingIds: [111] }),
+        }),
+        expect.any(String),
+        expect.any(Object),
+      );
+    });
+
+    it("nota não encontrada: erro com a chave", async () => {
+      (invoiceService.findAll as jest.Mock).mockResolvedValue([]);
+
+      await expect(service.enqueueBlingReconciliationCheck({ invoiceKeys: ["CHAVE-1"] })).rejects.toThrow(
+        "Nota(s) não encontrada(s): CHAVE-1",
+      );
+    });
+  });
+});

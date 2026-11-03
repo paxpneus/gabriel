@@ -43,6 +43,8 @@ export class ExpeditionBatchController extends BaseController<
       show: [authenticate, userPermissions],
       destroy: [authenticate, userPermissions],
       generateBatchesFromInvoices: [authenticate, userPermissions],
+      enqueueBlingReconciliationCheck: [authenticate, userPermissions],
+      getBlingReconciliationCheckStatus: [authenticate, userPermissions],
       getBatchesByInvoice: [authenticate, userPermissions],
       getBatches: [authenticate, userPermissions],
       getFullBatch: [authenticate, userPermissions],
@@ -73,6 +75,18 @@ export class ExpeditionBatchController extends BaseController<
       "/generate-from-invoices",
       ...this.mw("generateBatchesFromInvoices"),
       (req, res) => this.generateBatchesFromInvoices(req, res),
+    );
+
+    // Lote de entrada com nota Bling: 1ª etapa (avaliação na Bling por job) + polling do status; o jobId vai no gerar lote.
+    this.router.post(
+      "/bling-reconciliation-check",
+      ...this.mw("enqueueBlingReconciliationCheck"),
+      this.enqueueBlingReconciliationCheck,
+    );
+    this.router.get(
+      "/bling-reconciliation-check/:jobId",
+      ...this.mw("getBlingReconciliationCheckStatus"),
+      this.getBlingReconciliationCheckStatus,
     );
 
     // Tela CD21 do PDV, só login: 3 ações por coluna (+ transportadora/ids opcionais), ver pdvBatchParams.
@@ -185,7 +199,7 @@ export class ExpeditionBatchController extends BaseController<
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoiceIds, unitBusinessId, type, mode } = req.body;
+      const { invoiceIds, unitBusinessId, type, mode, blingCheckJobId } = req.body;
       if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
         return res
           .status(400)
@@ -197,6 +211,7 @@ export class ExpeditionBatchController extends BaseController<
         unitBusinessId,
         type,
         mode,
+        blingCheckJobId,
       );
       return res.status(201).json(batches);
     } catch (error: any) {
@@ -208,12 +223,42 @@ export class ExpeditionBatchController extends BaseController<
     }
   };
 
+  // POST /bling-reconciliation-check — body { invoiceIds } (gerar lote) ou { invoiceKey } (add-invoice); 202 com jobId, 200 sem nota Bling, 409 sincronizando.
+  enqueueBlingReconciliationCheck = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { invoiceIds, invoiceKey } = req.body ?? {};
+      let invoiceKeys: string[] = [];
+      if (Array.isArray(invoiceKey)) invoiceKeys = invoiceKey;
+      else if (invoiceKey) invoiceKeys = [invoiceKey];
+
+      const result = await this.service.enqueueBlingReconciliationCheck({
+        invoiceIds: Array.isArray(invoiceIds) ? invoiceIds : undefined,
+        invoiceKeys,
+      });
+      // Reprocesso da nota ainda rodando: 409 pro front avisar que espere a sincronização Bling x Hub.
+      if (result.syncing) return res.status(409).json({ error: result.message, syncing: true });
+      return res.status(result.jobId ? 202 : 200).json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // GET /bling-reconciliation-check/:jobId — status do job de avaliação (polling do front).
+  getBlingReconciliationCheckStatus = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const result = await this.service.getBlingReconciliationCheckStatus(req.params.jobId as string);
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
   addInvoiceToBatch = async (
     req: Request,
     res: Response,
   ): Promise<Response> => {
     try {
-      const { invoiceKey, unitBusinessId, type, batchId, transfer_invoice_reference } = req.body;
+      const { invoiceKey, unitBusinessId, type, batchId, transfer_invoice_reference, blingCheckJobId } = req.body;
 
       const chaves: string[] = Array.isArray(invoiceKey)
       ? invoiceKey
@@ -229,7 +274,9 @@ export class ExpeditionBatchController extends BaseController<
         unitBusinessResolved,
         type,
         batchId,
-        transfer_invoice_reference
+        transfer_invoice_reference,
+        undefined,
+        blingCheckJobId,
       );
       return res.status(201).json(batches);
     } catch (error: any) {

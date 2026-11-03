@@ -83,6 +83,9 @@ export class InvoiceItemsService extends BaseService<
         throw new Error("Produto não mapeado não encontrado!");
       }
 
+      // Item não conciliado na Bling só resolve conciliando lá e reprocessando a nota.
+      await unmappedInvoiceProductService.assertNotPendingBlingReconciliation(unMappedProduct);
+
       if (unMappedProduct.quantity != invoiceItemDto.quantity_expected) {
         throw new Error("Quantidade do item divergente da quantidade da nota");
       }

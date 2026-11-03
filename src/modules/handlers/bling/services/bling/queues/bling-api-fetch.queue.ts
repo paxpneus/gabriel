@@ -30,7 +30,10 @@ import Contact from "../../../../../sales/contacts/contacts.model";
 import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
-import { UNMAPPED_REASON_NEW_CATALOG_PRODUCT } from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.types";
+import {
+  UNMAPPED_REASON_NEW_CATALOG_PRODUCT,
+  UNMAPPED_REASON_NOT_RECONCILED_IN_BLING,
+} from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.types";
 import {
   formatBlingInvoiceCutoffForLog,
   getBlingInvoiceReferenceDate,
@@ -86,6 +89,7 @@ import { BlingDirectUpsertQueue } from "./bling-direct-upsert.queue";
 import { BlingStockSyncQueue } from "./bling-stock-sync.queue";
 import integrationLoggerService from "../../../../../integrations/integration-errors/integration-logger.service";
 import { IntegrationErrorEntity } from "../../../../../integrations/integration-errors/integration-error.types";
+import { MANUAL_IMPORT_PRIORITY } from "../../../../../integrations/manual-import/manual-import.constants";
 
 const BLING_UNIT_BUSINESS_ID = process.env.BLING_UNIT_BUSINESS_ID;
 const BLING_UNIT_BUSINESS_CNPJ = "02316749002111";
@@ -469,12 +473,26 @@ const BLING_RESOURCE_ERROR_ENTITY: Record<BlingResource, IntegrationErrorEntity>
   invoice: IntegrationErrorEntity.INVOICE,
   consumer_invoice: IntegrationErrorEntity.INVOICE,
   seller: IntegrationErrorEntity.SELLER,
+  invoice_items_check: IntegrationErrorEntity.INVOICE,
 };
+
+// jobId fixo do reprocesso de nota disparado pela avaliação: não duplica enquanto um está na fila e dá pra saber se ainda roda.
+export function blingInvoiceResyncJobId(blingId: number | string): string {
+  return `bling-invoice-resync-${blingId}`;
+}
+
+// returnvalue do job invoice_items_check: só o código/descrição dos itens — quem decide se está conciliado é o lote.
+export interface BlingInvoiceItemsCheckResult {
+  invoices: { blingId: number; items: { codigo: string; descricao: string }[] }[];
+}
 
 // Quanto o job de product/stock espera antes de tentar de novo enquanto o BLING_STOCK_SYNC roda (~30-40s).
 const STOCK_SYNC_RETRY_DELAY_MS = 30_000;
 
-export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
+export class BlingApiFetchQueue extends BaseQueueService<
+  ApiFetchJobPayload,
+  BlingInvoiceItemsCheckResult | void
+> {
   private api: AxiosInstance;
   // Client workless: só produz jobs na fila MAGENTO_SYNC (Redis), nunca
   // consome — o Worker real roda no container que registra essa fila (ver
@@ -785,9 +803,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
 
     // SKU (nf.itens[].codigo) é a chave mais confiável — vem direto do
     // catálogo da Bling e bate com ProductConfig.sku, sempre escopado na
-    // unit_business da Bling. SupplierMapping é o único fallback quando não
-    // há SKU ou não há ProductConfig correspondente — EAN via
-    // ProductConfig.gtin não é mais usado pra resolver produto da nota.
+    // unit_business da Bling. SupplierMapping é o único fallback quando o
+    // SKU não tem ProductConfig correspondente (item sem SKU nem chega aqui:
+    // vira não conciliado na Bling) — ProductConfig.gtin não é usado.
     if (sku) {
       const config = await findProductConfigBySku(sku, BLING_UNIT_BUSINESS_ID!);
       if (config) product = await Product.findByPk(config.product_id);
@@ -811,7 +829,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
     return product;
   }
 
-  async process(job: Job<ApiFetchJobPayload>): Promise<void> {
+  async process(
+    job: Job<ApiFetchJobPayload>,
+  ): Promise<BlingInvoiceItemsCheckResult | void> {
     const { eventId, resource, action, apiFetch } = job.data;
 
     console.log(
@@ -856,6 +876,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           await this.fetchAndUpsertSeller(apiFetch);
           break;
 
+        case "invoice_items_check":
+          return await this.fetchInvoiceItemCodes(apiFetch);
+
         default:
           console.warn(
             `[BLING_API_FETCH] Sem handler de fetch para resource=${resource}`,
@@ -871,6 +894,49 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
   }
 
   // ─── Handlers por recurso ─────────────────────────────────────────────────
+
+  // Itens das notas na Bling (leitura pura) — item sem código = produto não conciliado; o rate limiter do blingApi espaça as chamadas.
+  private async fetchInvoiceItemCodes(
+    apiFetch: ApiFetchRequest,
+  ): Promise<BlingInvoiceItemsCheckResult> {
+    const blingIds = apiFetch.blingIds?.length ? apiFetch.blingIds : [apiFetch.blingId];
+
+    const invoices = await Promise.all(
+      blingIds.map(async (blingId) => {
+        const { data } = await blingGet<{ data: BlingApiInvoice }>(`/nfe/${blingId}`, blingApi);
+        const items = (data.data?.itens ?? []).map((item) => ({
+          codigo: item.codigo ?? "",
+          descricao: item.descricao ?? "",
+        }));
+        return { blingId, items };
+      }),
+    );
+
+    // Nota com não conciliado no hub e já toda conciliada na Bling: reprocessa (prioridade de import manual) pra resolver pelo SKU.
+    const resyncIds = new Set(apiFetch.resyncBlingIds ?? []);
+    const toResync = invoices.filter(
+      (inv) => resyncIds.has(inv.blingId) && inv.items.every((item) => item.codigo.trim()),
+    );
+    await Promise.all(
+      toResync.map(({ blingId }) =>
+        this.add(
+          {
+            eventId: blingInvoiceResyncJobId(blingId),
+            resource: "invoice",
+            action: "updated",
+            companyId: "",
+            date: new Date().toISOString(),
+            rawData: null,
+            apiFetch: { resource: "invoice", blingId, action: "updated", companyId: "" },
+          },
+          blingInvoiceResyncJobId(blingId),
+          { priority: MANUAL_IMPORT_PRIORITY },
+        ),
+      ),
+    );
+
+    return { invoices };
+  }
 
   private async fetchAndUpsertProduct(
     apiFetch: ApiFetchRequest,
@@ -1893,6 +1959,18 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         const ean = item.gtin ? String(item.gtin).trim() : null;
         const qty = parseNum(item.quantidade);
 
+        // Sem código = produto não conciliado na Bling: vira não mapeado sem tentar o DE x PARA pelo EAN.
+        if (!sku) {
+          unmappedItems.push({
+            sku,
+            ean,
+            qty,
+            descricao: (item as any).descricao ?? null,
+            reason: UNMAPPED_REASON_NOT_RECONCILED_IN_BLING,
+          });
+          continue;
+        }
+
         const product = await this.findProductForInvoiceItem({
           sku,
           ean,
@@ -1901,14 +1979,9 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
         });
 
         if (!product) {
-          const reason =
-            !sku && !ean
-              ? "SKU e EAN ausentes no item da API"
-              : !sku
-                ? "SKU ausente — apenas EAN salvo"
-                : !ean
-                  ? "EAN ausente — apenas SKU salvo"
-                  : "SKU e EAN presentes mas sem produto correspondente no banco";
+          const reason = !ean
+            ? "EAN ausente — apenas SKU salvo"
+            : "SKU e EAN presentes mas sem produto correspondente no banco";
 
           unmappedItems.push({
             sku,
@@ -2117,10 +2190,12 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
           status: "UNMAPPED",
         });
       } else {
+        // reason acompanha a passagem atual (ex.: item que perdeu/ganhou código na Bling).
         await existing.update({
           quantity,
           integrations_id: unit_business.integrations_id ?? integration.id,
           type: "ERROR_INVOICE",
+          reason: u.reason,
         });
       }
 

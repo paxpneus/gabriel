@@ -15,7 +15,7 @@ Split by subject:
 
 ## FK on `invoices` row delete
 - **RESTRICT**: `stock_movements.invoice_id`, `orders.invoice_id`.
-- **SET NULL**: `operations.invoice_id`, `sales_order_snapshots.invoice_id`.
+- **SET NULL**: `operations.invoice_id`, `sales_order_snapshots.invoice_id`, `pdv_sales_requests.sale_invoice_id`, `pdv_sales_requests.transfer_invoice_id`.
 - **CASCADE**: `expedition_batch_invoices`, `invoice_fiscal_items`, `invoice_items`, `invoice_logistic_occurrences`, `invoice_operation_snapshots`, `invoice_unit_business_attributes`, `unmapped_invoice_products`.
 - **Invoice sem `invoice_unit_business_attributes`** (some de toda tela/filtro que depende de `unitBusinessAttributes`). Caminhos que deixam assim:
   - `invoiceService.createStub`: PDV (`pdv-sales-request.service.ts`) e pedido Bling (`bling-order.service.ts`, nota vinculada pelo pedido). Fica sem UB até o upsert real (Bling `fetchAndUpsertInvoice` / XML `invoice-xml.ts`) cair no UPDATE e chamar `ensureUnitBusinessAttributes`.

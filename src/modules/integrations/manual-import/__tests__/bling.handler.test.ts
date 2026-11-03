@@ -66,18 +66,15 @@ describe("BlingManualImportHandler", () => {
       });
     });
 
-    it("por id: NF-e de entrada volta importable:false (só nota de venda)", async () => {
+    it("por id: NF-e de entrada é importável", async () => {
       (blingGet as jest.Mock).mockResolvedValue({
         data: { data: { id: 78, numero: "50", tipo: 0, dataEmissao: "2026-09-01" } },
       });
 
       const { items } = await handler.search("invoice", "id", "78");
 
-      expect(items[0]).toMatchObject({
-        importable: false,
-        reason: expect.stringContaining("nota de venda"),
-        details: { type: "IN" },
-      });
+      expect(items[0]).toMatchObject({ importable: true, details: { type: "IN" } });
+      expect(items[0]).not.toHaveProperty("reason");
     });
 
     it("por id: 404 na /nfe não tenta /nfce — nenhum resultado", async () => {
@@ -90,18 +87,31 @@ describe("BlingManualImportHandler", () => {
       expect(blingGet).toHaveBeenCalledWith("/nfe/99", expect.anything());
     });
 
-    it("por número: só /nfe de saída (tipo=1), sem NFC-e", async () => {
-      (blingGet as jest.Mock).mockResolvedValue({
-        data: { data: [{ id: 2, numero: "500", situacao: 5, dataEmissao: "2026-09-01" }] },
-      });
+    it("por número: /nfe de entrada (tipo=0) e de saída (tipo=1), sem NFC-e", async () => {
+      (blingGet as jest.Mock).mockImplementation((_url, _api, config) =>
+        Promise.resolve({
+          data: {
+            data:
+              config.params.get("tipo") === "0"
+                ? [{ id: 3, numero: "500", situacao: 6, dataEmissao: "2026-09-01" }]
+                : [{ id: 2, numero: "500", situacao: 5, dataEmissao: "2026-09-01" }],
+          },
+        }),
+      );
 
       const { items, truncated } = await handler.search("invoice", "number", "500");
 
       const calls = (blingGet as jest.Mock).mock.calls;
-      expect(calls).toHaveLength(1);
-      expect(calls[0][0]).toBe("/nfe");
-      expect(paramsOf(calls[0])).toMatchObject({ numero: "500", tipo: "1" });
+      expect(calls).toHaveLength(2);
+      expect(calls.every((call) => call[0] === "/nfe")).toBe(true);
+      expect(calls.map((call) => paramsOf(call).tipo).sort()).toEqual(["0", "1"]);
+      expect(paramsOf(calls[0])).toMatchObject({ numero: "500" });
       expect(items).toEqual([
+        expect.objectContaining({
+          externalId: "3",
+          importable: true,
+          details: expect.objectContaining({ model: "NF-e", type: "IN" }),
+        }),
         expect.objectContaining({
           externalId: "2",
           importable: true,

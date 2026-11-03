@@ -1173,6 +1173,54 @@ describe("BlingApiFetchQueue.findBlingInvoiceIdByChave", () => {
   });
 });
 
+// Avaliação de conciliação do lote de entrada: só lê os itens na Bling e reprocessa a nota já toda conciliada.
+describe("BlingApiFetchQueue.fetchInvoiceItemCodes", () => {
+  let queue: BlingApiFetchQueue;
+  let add: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    queue = new BlingApiFetchQueue({ workless: true });
+    add = jest.spyOn(queue, "add").mockResolvedValue(undefined as any);
+    (blingApi as any).get = jest.fn((url: string) =>
+      Promise.resolve({
+        data: {
+          data: {
+            itens:
+              url === "/nfe/1"
+                ? [{ codigo: "A1", descricao: "Pneu A" }]
+                : [{ codigo: "", descricao: "Pneu B" }],
+          },
+        },
+      }),
+    );
+  });
+
+  it("devolve código/descrição dos itens de cada nota, sem falhar com item sem código", async () => {
+    const result = await (queue as any).fetchInvoiceItemCodes({ blingId: 1, blingIds: [1, 2] });
+
+    expect(result).toEqual({
+      invoices: [
+        { blingId: 1, items: [{ codigo: "A1", descricao: "Pneu A" }] },
+        { blingId: 2, items: [{ codigo: "", descricao: "Pneu B" }] },
+      ],
+    });
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it("nota com pendência no hub e toda conciliada na Bling: enfileira o reprocesso com prioridade de import manual", async () => {
+    await (queue as any).fetchInvoiceItemCodes({ blingId: 1, blingIds: [1, 2], resyncBlingIds: [1, 2] });
+
+    // Nota 2 ainda tem item sem código: não reprocessa.
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: "invoice", apiFetch: expect.objectContaining({ blingId: 1 }) }),
+      "bling-invoice-resync-1",
+      { priority: 1 },
+    );
+  });
+});
+
 describe("BlingApiFetchQueue.upsertInvoiceFromXml", () => {
   let queue: BlingApiFetchQueue;
 

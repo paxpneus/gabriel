@@ -69,8 +69,9 @@ interface BlingInvoiceEnqueueData {
   situacao?: number;
 }
 
-// Import manual da Bling só traz nota de venda: NF-e (sem NFC-e) de saída.
+// Import manual da Bling traz NF-e (sem NFC-e) de entrada e de saída.
 const INVOICE_ENDPOINT = "/nfe";
+const INCOMING_INVOICE_TYPE = 0;
 const SALE_INVOICE_TYPE = 1;
 
 const ORDER_ENDPOINT = "/pedidos/vendas";
@@ -124,14 +125,8 @@ function toProductItem(product: BlingProductSummary): ManualImportFoundItem {
   };
 }
 
-// Motivo de não importar a nota: entrada (busca por id acha qualquer tipo) ou anterior ao corte.
-function invoiceBlockReason(
-  invoice: BlingInvoiceSummary,
-  tipo: number | undefined,
-): string | undefined {
-  if (tipo !== undefined && tipo !== SALE_INVOICE_TYPE) {
-    return "Só nota de venda (NF-e de saída) pode ser importada";
-  }
+// Motivo de não importar a nota: só o corte de data (entrada e saída são importáveis).
+function invoiceBlockReason(invoice: BlingInvoiceSummary): string | undefined {
   const referenceDate = getBlingInvoiceReferenceDate(invoice);
   if (referenceDate && isKnownBlingInvoiceBeforeCutoff(referenceDate)) {
     return `Nota anterior ao corte (${BLING_INVOICE_CUTOFF_DATE_PARAM})`;
@@ -145,7 +140,7 @@ function toInvoiceItem(
   queriedType?: number,
 ): ManualImportFoundItem {
   const tipo = invoice.tipo ?? queriedType;
-  const reason = invoiceBlockReason(invoice, tipo);
+  const reason = invoiceBlockReason(invoice);
   const enqueueData: BlingInvoiceEnqueueData = {
     number: invoice.numero,
     situacao: invoice.situacao,
@@ -158,7 +153,7 @@ function toInvoiceItem(
       number: toNullableString(invoice.numero),
       series: toNullableString(invoice.serie),
       model: "NF-e",
-      type: tipo === 0 ? "IN" : tipo === SALE_INVOICE_TYPE ? "OUT" : null,
+      type: tipo === INCOMING_INVOICE_TYPE ? "IN" : tipo === SALE_INVOICE_TYPE ? "OUT" : null,
       issuedAt: toNullableString(invoice.dataEmissao ?? invoice.dataOperacao),
       contact: toNullableString(invoice.contato?.nome),
       status: toNullableString(invoice.situacao),
@@ -169,7 +164,7 @@ function toInvoiceItem(
   };
 }
 
-// Import manual da Bling: produto, nota de venda (NF-e de saída) e pedido.
+// Import manual da Bling: produto, NF-e (entrada e saída) e pedido.
 export class BlingManualImportHandler implements ManualImportHandler {
   supportedSearches: ManualImportHandler["supportedSearches"] = {
     product: ["id", "name"],
@@ -323,7 +318,7 @@ export class BlingManualImportHandler implements ManualImportHandler {
     };
   }
 
-  // Por id: detalhe da NF-e. Por número: listagem de NF-e de saída (tipo=1).
+  // Por id: detalhe da NF-e. Por número: listagem de entrada e de saída em paralelo (a /nfe exige `tipo`).
   private async searchInvoices(
     by: ManualImportExternalSearchBy,
     value: string,
@@ -336,13 +331,22 @@ export class BlingManualImportHandler implements ManualImportHandler {
       return { items: invoice ? [toInvoiceItem(invoice)] : [], truncated: false };
     }
 
-    const invoices = await fetchBlingListPage<BlingInvoiceSummary>(
-      INVOICE_ENDPOINT,
-      { numero: value, tipo: SALE_INVOICE_TYPE },
+    const [incoming, outgoing] = await Promise.all(
+      [INCOMING_INVOICE_TYPE, SALE_INVOICE_TYPE].map((tipo) =>
+        fetchBlingListPage<BlingInvoiceSummary>(INVOICE_ENDPOINT, {
+          numero: value,
+          tipo,
+        }),
+      ),
     );
     return {
-      items: invoices.map((invoice) => toInvoiceItem(invoice, SALE_INVOICE_TYPE)),
-      truncated: invoices.length >= BLING_LIST_PAGE_SIZE,
+      items: [
+        ...incoming.map((invoice) => toInvoiceItem(invoice, INCOMING_INVOICE_TYPE)),
+        ...outgoing.map((invoice) => toInvoiceItem(invoice, SALE_INVOICE_TYPE)),
+      ],
+      truncated:
+        incoming.length >= BLING_LIST_PAGE_SIZE ||
+        outgoing.length >= BLING_LIST_PAGE_SIZE,
     };
   }
 

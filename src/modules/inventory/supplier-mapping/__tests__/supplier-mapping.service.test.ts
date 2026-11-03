@@ -21,7 +21,12 @@ jest.mock(
   "../../unmapped-invoice-product/unmapped-invoice-product.service",
   () => ({
     __esModule: true,
-    default: { findById: jest.fn(), delete: jest.fn(), resolveFromCreatedProduct: jest.fn() },
+    default: {
+      findById: jest.fn(),
+      delete: jest.fn(),
+      resolveFromCreatedProduct: jest.fn(),
+      assertNotPendingBlingReconciliation: jest.fn(),
+    },
   }),
 );
 
@@ -190,6 +195,25 @@ describe("SupplierMappingService.createFromUnmapped", () => {
         unmappedInvoiceProductId: "unmapped-1",
       }),
     ).rejects.toThrow(/EAN\/SKU/i);
+
+    expect(SupplierMapping.create).not.toHaveBeenCalled();
+    expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();
+  });
+
+  it("não conciliado na Bling: recusa sem criar mapping nem apagar o unmapped", async () => {
+    (unmappedInvoiceProductService.findById as jest.Mock).mockResolvedValue({
+      status: "UNMAPPED",
+      id: "unmapped-1",
+      ean: "EAN-1",
+      integrations_id: "int-1",
+    });
+    (unmappedInvoiceProductService.assertNotPendingBlingReconciliation as jest.Mock).mockRejectedValueOnce(
+      new Error("não está conciliado na Bling"),
+    );
+
+    await expect(
+      service.createFromUnmapped({ productId: "product-1", unmappedInvoiceProductId: "unmapped-1" }),
+    ).rejects.toThrow(/conciliado na Bling/);
 
     expect(SupplierMapping.create).not.toHaveBeenCalled();
     expect(unmappedInvoiceProductService.delete).not.toHaveBeenCalled();

@@ -102,7 +102,7 @@ O mesmo que o `/options` devolve hoje, com o que vai em `value`. `integrationId`
 | Tecinco | `product` | `id`, `name`, `local_id` | código do produto na Tecinco / parte do nome / id local |
 | Tecinco | `invoice` | `access_key`, `local_id` | chave de acesso (44 dígitos; espaços e pontos são ignorados) / id local |
 
-- **Nota da Bling:** só nota de venda (NF-e de saída). NFC-e não é buscada. NF-e de entrada achada por id volta na lista como não importável.
+- **Nota da Bling:** NF-e de entrada e de saída, as duas importáveis (`details.type` `"IN"`/`"OUT"`). Busca por número traz as duas. NFC-e não é buscada. Só nota anterior ao corte volta como não importável.
 - **`local_id`:** id (UUID) de um registro que já existe no sistema, pra buscar de novo os dados dele na integração. Se o registro não existe ou não é daquela integração, a resposta é 422.
 - Uma entidade e um valor por busca.
 - Combinação fora da tabela → 400 `UNSUPPORTED_SEARCH`.
