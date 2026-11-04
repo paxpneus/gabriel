@@ -49,15 +49,27 @@ describe("SalesReturnReportService", () => {
 
   it("nota sem movimento só conta quando o XML diz devolução (finNFe = 4)", async () => {
     repository.findReturnInvoiceCandidatesWithoutMovement.mockResolvedValue([
-      { invoice_number: "100", xml_head: "<ide><tpNF>0</tpNF><finNFe>4</finNFe></ide>" },
-      { invoice_number: "101", xml_head: "<ide><tpNF>0</tpNF><finNFe>1</finNFe></ide>" },
-      { invoice_number: "102", xml_head: null },
+      { invoice_number: "100", emitted_date: "2026-05-10", xml_head: "<ide><tpNF>0</tpNF><finNFe>4</finNFe></ide>" },
+      { invoice_number: "101", emitted_date: "2026-05-10", xml_head: "<ide><tpNF>0</tpNF><finNFe>1</finNFe></ide>" },
+      { invoice_number: "102", emitted_date: "2026-05-10", xml_head: null },
     ]);
     const report = await service.getReport({ startDate: "2026-05-01", endDate: "2026-05-31", productIds: ["p1"] });
 
     expect(repository.findReturnInvoiceCandidatesWithoutMovement.mock.calls[0][3]).toEqual(["p1"]);
-    expect(report.warnings.invoices_without_movement).toEqual({ count: 1, invoice_numbers: ["100"] });
-    expect(report.warnings.movements_without_invoice).toEqual({ count: 0, invoice_numbers: [] });
+    expect(report.warnings.invoices_without_movement).toBe(1);
+    expect(report.warnings.movements_without_invoice).toBe(0);
+  });
+
+  it("findReturns devolve movimentos enriquecidos e só as NF de devolução sem movimento", async () => {
+    repository.findReturnInvoiceCandidatesWithoutMovement.mockResolvedValue([
+      { invoice_number: "100", emitted_date: "2026-05-10", xml_head: "<ide><tpNF>0</tpNF><finNFe>4</finNFe></ide>" },
+      { invoice_number: "101", emitted_date: "2026-05-11", xml_head: "<ide><tpNF>0</tpNF><finNFe>1</finNFe></ide>" },
+    ]);
+    const data = await service.findReturns("2026-05-01", "2026-05-31");
+
+    expect(data.unitBusinessId).toBe("ub-21");
+    expect(repository.findReturnLines).toHaveBeenCalledWith(["m1", "m2"]);
+    expect(data.invoicesWithoutMovement.map((invoice) => invoice.invoice_number)).toEqual(["100"]);
   });
 
   it("marca vira lista de produtos", async () => {

@@ -132,6 +132,6 @@ describe("movementsWithoutInvoice", () => {
       line({ movement_id: "m3", return_invoice_id: null, return_invoice_number: "777" }),
       line({ movement_id: "m4", return_invoice_id: null, return_invoice_number: null }),
     ]);
-    expect(warning).toEqual({ count: 2, invoice_numbers: ["777"] });
+    expect(warning).toBe(2);
   });
 });

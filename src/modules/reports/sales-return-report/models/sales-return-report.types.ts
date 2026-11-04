@@ -34,6 +34,7 @@ export interface SalesReturnLineRow {
 /** Nota candidata a devolução sem movimento; xml_head = início do xml_path (finNFe conferido na service). */
 export interface ReturnInvoiceCandidateRow {
   invoice_number: string | null;
+  emitted_date: string | null;
   xml_head: string | null;
 }
 
@@ -68,12 +69,6 @@ export interface SalesReturnReportSummary {
   lines_without_price: number;
 }
 
-/** Divergência nota × movimento: quantas e quais notas. */
-export interface SalesReturnInvoiceWarning {
-  count: number;
-  invoice_numbers: string[];
-}
-
 export interface SalesReturnReport {
   filters: {
     start_date: string;
@@ -84,10 +79,18 @@ export interface SalesReturnReport {
   };
   rows: SalesReturnReportRow[];
   summary: SalesReturnReportSummary;
+  // Só contagem; o detalhe fica no relatório de problemas de integração.
   warnings: {
-    // Movimento de devolução cuja nota não existe no sistema.
-    movements_without_invoice: SalesReturnInvoiceWarning;
+    // Notas dos movimentos de devolução que não existem no sistema.
+    movements_without_invoice: number;
     // NF de devolução não cancelada emitida no período sem movimento de estoque.
-    invoices_without_movement: SalesReturnInvoiceWarning;
+    invoices_without_movement: number;
   };
+}
+
+/** Devoluções do Kardex do CD21 no período e NF de devolução sem movimento: base do relatório e dos problemas de integração. */
+export interface SalesReturnData {
+  unitBusinessId: string;
+  lines: SalesReturnLineRow[];
+  invoicesWithoutMovement: ReturnInvoiceCandidateRow[];
 }

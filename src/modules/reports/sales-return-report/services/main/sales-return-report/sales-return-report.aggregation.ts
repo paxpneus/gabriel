@@ -4,7 +4,6 @@ import {
   toScaled,
 } from "../../../../../../shared/utils/normalizers/decimal";
 import {
-  SalesReturnInvoiceWarning,
   SalesReturnLineRow,
   SalesReturnReportRow,
   SalesReturnReportSummary,
@@ -81,14 +80,11 @@ export function buildSummary(lines: SalesReturnLineRow[]): SalesReturnReportSumm
   };
 }
 
-/** Notas dos movimentos sem nota achada no sistema (movimento sem número conta pelo id). */
-export function movementsWithoutInvoice(lines: SalesReturnLineRow[]): SalesReturnInvoiceWarning {
+/** Quantas notas dos movimentos não existem no sistema (movimento sem número conta pelo id). */
+export function movementsWithoutInvoice(lines: SalesReturnLineRow[]): number {
   const keys = new Set<string>();
-  const numbers = new Set<string>();
   for (const line of lines) {
-    if (line.return_invoice_id) continue;
-    keys.add(line.return_invoice_number ?? `movement:${line.movement_id}`);
-    if (line.return_invoice_number) numbers.add(line.return_invoice_number);
+    if (!line.return_invoice_id) keys.add(line.return_invoice_number ?? `movement:${line.movement_id}`);
   }
-  return { count: keys.size, invoice_numbers: [...numbers] };
+  return keys.size;
 }

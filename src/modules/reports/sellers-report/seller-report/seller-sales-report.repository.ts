@@ -425,9 +425,9 @@ JOIN affected a ON a.order_id = o.id
 LEFT JOIN states st ON st.acronym = o.destination_uf
 LEFT JOIN contacts sc ON sc.id = o.seller_id
 LEFT JOIN unit_businesses ub ON ub.id = o.unit_business_id
+-- Pedido "Sem Loja" (loja 0) com vendedor entra: é venda real do vendedor, só sem loja no cadastro.
 WHERE o.seller_id IS NOT NULL
   AND COALESCE(sc.name, '') <> 'Vendedor 0'
-  AND COALESCE(ub.number::varchar, '') <> '0'
 
       ),
 

@@ -3,6 +3,7 @@ import sequelize from "../../../../../../config/sequelize";
 import StockMovement from "../../../../../inventory/stock/stock-movements/stock-movements.model";
 import {
   customerReturnMovementsWhere,
+  movementInvoiceIdsSql,
   unitBusinessPeriodWhere,
 } from "../../../../../../shared/query/query-objects/stock-movements/stock-movement.filters";
 import { XML_HEAD_LENGTH } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/nfe-ide";
@@ -56,7 +57,8 @@ export class SalesReturnReportRepository {
             (SELECT i.id FROM invoices i WHERE i.id_system = m.bling_origin_id LIMIT 1)
           ) AS return_invoice_id
         FROM stock_movements m
-        WHERE m.id IN (:movementIds)
+        -- Ids num literal só: IN/ARRAY com milhares de literais levava segundos só pra montar.
+        JOIN UNNEST(string_to_array(:movementIds, ',')::uuid[]) AS selected(id) ON selected.id = m.id
       ),
       -- Join único (number_system não tem índice; LATERAL por linha varria invoices a cada movimento).
       sale AS (
@@ -125,7 +127,7 @@ export class SalesReturnReportRepository {
       LEFT JOIN stores channel ON channel.id = COALESCE(sos.store_id, sale.store_id, ret.store_id)
       ORDER BY mv.movement_date, return_invoice_number, mv.id
       `,
-      { type: QueryTypes.SELECT, replacements: { movementIds } },
+      { type: QueryTypes.SELECT, replacements: { movementIds: movementIds.join(",") } },
     );
   }
 
@@ -151,18 +153,20 @@ export class SalesReturnReportRepository {
 
     return sequelize.query<ReturnInvoiceCandidateRow>(
       `
-      SELECT i.number_system AS invoice_number, LEFT(i.xml_path, ${XML_HEAD_LENGTH}) AS xml_head
+      WITH moved AS (
+        ${movementInvoiceIdsSql("m.unit_business_id = :unitBusinessId AND m.is_active AND m.movement_type = 'CUSTOMER_RETURN'")}
+      )
+      SELECT
+        i.number_system                                                      AS invoice_number,
+        TO_CHAR(i.emitted_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD') AS emitted_date,
+        LEFT(i.xml_path, ${XML_HEAD_LENGTH})                                 AS xml_head
       FROM invoices i
       JOIN unit_businesses ub ON ub.id = :unitBusinessId AND ub.cnpj = i.sender_cnpj
       JOIN invoice_unit_business_attributes a
         ON a.invoice_id = i.id AND a.unit_business_id = ub.id
        AND a.type = 'INCOMING' AND a.status IN (:statuses)
       WHERE i.emitted_at BETWEEN :start AND :end
-        AND NOT EXISTS (
-          SELECT 1 FROM stock_movements m
-          WHERE m.unit_business_id = ub.id AND m.is_active AND m.movement_type = 'CUSTOMER_RETURN'
-            AND (m.invoice_id = i.id OR m.bling_origin_id = i.id_system)
-        )
+        AND NOT EXISTS (SELECT 1 FROM moved WHERE moved.invoice_id = i.id)
         ${productFilter}
       ORDER BY i.emitted_at, i.number_system
       `,

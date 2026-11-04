@@ -12,6 +12,7 @@ import {
   readNfeIde,
 } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/nfe-ide";
 import {
+  SalesReturnData,
   SalesReturnReport,
   SalesReturnReportParams,
 } from "../../../models/sales-return-report.types";
@@ -31,12 +32,6 @@ export class SalesReturnReportService {
 
   /** Devoluções do CD21 pelos movimentos do Kardex (mesma base e valor do stock flow), com dados da venda de origem quando houver. */
   async getReport(params: SalesReturnReportParams): Promise<SalesReturnReport> {
-    const store = await unitBusinessService.findOne({
-      where: { number: CD21_UNIT_BUSINESS_NUMBER },
-      attributes: ["id"],
-    });
-    if (!store) throw new Error("Unidade CD21 (Loja 21) não cadastrada");
-
     // Marca vira lista de product_id (como no stock flow); com produto também, fica a interseção.
     let productIds = params.productIds?.length ? params.productIds : undefined;
     if (params.brands?.length) {
@@ -50,8 +45,43 @@ export class SalesReturnReportService {
         : brandProductIds;
     }
 
-    const start = startOfDayTz(params.startDate).toDate();
-    const end = endOfDayTz(params.endDate).toDate();
+    const { unitBusinessId, lines, invoicesWithoutMovement } = await this.findReturns(
+      params.startDate,
+      params.endDate,
+      productIds,
+    );
+
+    return {
+      filters: {
+        start_date: params.startDate,
+        end_date: params.endDate,
+        unit_business_id: unitBusinessId,
+        brand: params.brands?.length ? params.brands : null,
+        product_id: params.productIds?.length ? params.productIds : null,
+      },
+      rows: buildReportRows(lines),
+      summary: buildSummary(lines),
+      warnings: {
+        movements_without_invoice: movementsWithoutInvoice(lines),
+        invoices_without_movement: invoicesWithoutMovement.length,
+      },
+    };
+  }
+
+  /** Movimentos de devolução do CD21 no período (enriquecidos) e NF de devolução sem movimento; também lido pelo relatório de problemas de integração. */
+  async findReturns(
+    startDate: string,
+    endDate: string,
+    productIds?: string[],
+  ): Promise<SalesReturnData> {
+    const store = await unitBusinessService.findOne({
+      where: { number: CD21_UNIT_BUSINESS_NUMBER },
+      attributes: ["id"],
+    });
+    if (!store) throw new Error("Unidade CD21 (Loja 21) não cadastrada");
+
+    const start = startOfDayTz(startDate).toDate();
+    const end = endOfDayTz(endDate).toDate();
     const [movementIds, candidates] = await Promise.all([
       this.repository.findReturnMovementIds(store.id, start, end, productIds),
       this.repository.findReturnInvoiceCandidatesWithoutMovement(store.id, start, end, productIds),
@@ -61,27 +91,7 @@ export class SalesReturnReportService {
     const invoicesWithoutMovement = candidates.filter(
       (candidate) => readNfeIde(candidate.xml_head)?.purpose === NFE_RETURN_PURPOSE,
     );
-
-    return {
-      filters: {
-        start_date: params.startDate,
-        end_date: params.endDate,
-        unit_business_id: store.id,
-        brand: params.brands?.length ? params.brands : null,
-        product_id: params.productIds?.length ? params.productIds : null,
-      },
-      rows: buildReportRows(lines),
-      summary: buildSummary(lines),
-      warnings: {
-        movements_without_invoice: movementsWithoutInvoice(lines),
-        invoices_without_movement: {
-          count: invoicesWithoutMovement.length,
-          invoice_numbers: invoicesWithoutMovement
-            .map((candidate) => candidate.invoice_number)
-            .filter((invoiceNumber): invoiceNumber is string => !!invoiceNumber),
-        },
-      },
-    };
+    return { unitBusinessId: store.id, lines, invoicesWithoutMovement };
   }
 }
 
