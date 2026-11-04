@@ -1,6 +1,7 @@
 import { SellerCommissionReportService } from "../services/main/seller-commission-report/seller-commission-report.service";
 import productService from "../../../inventory/products/services/product.service";
 import contactService from "../../../sales/contacts/contacts.service";
+import unitBusinessGroupMemberService from "../../../company/unit-business-groups/unit-business-group-member/unit-business-group-member.service";
 
 jest.mock("../../../inventory/products/services/product.service", () => ({
   __esModule: true,
@@ -8,6 +9,11 @@ jest.mock("../../../inventory/products/services/product.service", () => ({
 }));
 
 jest.mock("../../../sales/contacts/contacts.service", () => ({
+  __esModule: true,
+  default: { findAll: jest.fn() },
+}));
+
+jest.mock("../../../company/unit-business-groups/unit-business-group-member/unit-business-group-member.service", () => ({
   __esModule: true,
   default: { findAll: jest.fn() },
 }));
@@ -58,6 +64,22 @@ describe("SellerCommissionReportService", () => {
 
     expect((contactService.findAll as jest.Mock).mock.calls[0][0].where.type).toBe("SELLER_MANAGER");
     expect(repository.findCommissionRows.mock.calls[0][0].unitBusinessIds).toEqual(["ub-9"]);
+    expect(unitBusinessGroupMemberService.findAll).not.toHaveBeenCalled();
+  });
+
+  it("gerente regional (com grupo de lojas) soma as lojas do grupo à loja dele", async () => {
+    (contactService.findAll as jest.Mock).mockResolvedValue([
+      { unit_business_id: "ub-9", unit_business_group_id: null },
+      { unit_business_id: null, unit_business_group_id: "g-pr" },
+    ]);
+    (unitBusinessGroupMemberService.findAll as jest.Mock).mockResolvedValue([
+      { unit_business_id: "ub-11" },
+      { unit_business_id: "ub-13" },
+    ]);
+    await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31", managerIds: ["c1", "c2"] });
+
+    expect((unitBusinessGroupMemberService.findAll as jest.Mock).mock.calls[0][0].where.unit_business_group_id).toBeDefined();
+    expect(repository.findCommissionRows.mock.calls[0][0].unitBusinessIds).toEqual(["ub-9", "ub-11", "ub-13"]);
   });
 
   it("loja e gerente juntos ficam com a interseção das lojas", async () => {

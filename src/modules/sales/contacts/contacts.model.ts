@@ -18,6 +18,7 @@ class Contact
   public document?: string | null;
   public integrations_id?: string | null;
   public unit_business_id?: string | null;
+  public unit_business_group_id?: string | null;
   public user_id?: string | null;
 
   public readonly createdAt!: Date;
@@ -64,6 +65,17 @@ Contact.init(
       allowNull: true,
       references: {
         model: "unit_businesses",
+        key: "id",
+      },
+      onUpdate: "CASCADE",
+      onDelete: "SET NULL",
+    },
+    // Grupo de lojas do gerente regional (SELLER_MANAGER): comissão de gerente em todas as lojas do grupo.
+    unit_business_group_id: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: "unit_business_groups",
         key: "id",
       },
       onUpdate: "CASCADE",

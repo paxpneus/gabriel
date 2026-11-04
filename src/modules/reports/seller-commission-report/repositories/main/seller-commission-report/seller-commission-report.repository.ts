@@ -17,7 +17,7 @@ const ACTIVE_ORDER_SITUATIONS = BLING_STATUS_DEFAULTS.filter((status) => !status
   (status) => status.external_status_id,
 );
 
-/** Período (data do pedido) e filtros; lista ausente = sem restrição. `unitBusinessIds` = loja do pedido (e/ou dos gerentes). */
+/** Período (data do pedido) e filtros; lista ausente = sem restrição. `unitBusinessIds` = loja do pedido (e/ou dos gerentes, incl. lojas do grupo do regional). */
 export interface CommissionFilters {
   startDate: string;
   endDate: string;
@@ -28,7 +28,7 @@ export interface CommissionFilters {
 }
 
 export class SellerCommissionReportRepository {
-  /** Itens do seller report no período (mesma base dele) só de pedidos faturados, com vendedor, gerentes da loja, cliente e produto. */
+  /** Itens do seller report no período (mesma base dele) só de pedidos faturados, com vendedor, gerentes da loja e regionais, cliente e produto. */
   async findCommissionRows(filters: CommissionFilters): Promise<SellerCommissionItemRow[]> {
     const conditions = this.filterConditions(filters);
     if (!conditions) return [];
@@ -53,8 +53,17 @@ export class SellerCommissionReportRepository {
         s.commission_base,
         s.commission_rate,
         s.commission_value,
-        s.manager_commission_rate,
-        s.manager_commission_value
+        -- Comissão de gerente da loja só quando a loja tem gerente (SELLER_MANAGER) cadastrado; regional usa a taxa do item direto.
+        CASE WHEN managers.names IS NULL THEN 0 ELSE s.manager_commission_rate END
+                                                AS manager_commission_rate,
+        CASE WHEN managers.names IS NULL THEN 0 ELSE s.manager_commission_value END
+                                                AS manager_commission_value,
+        regional_managers.names                 AS regional_manager_names,
+        -- Gerente regional ganha a mesma taxa/valor de gerente do item, a mais (não divide com o gerente da loja).
+        CASE WHEN regional_managers.names IS NULL THEN 0 ELSE s.manager_commission_rate END
+                                                AS regional_manager_commission_rate,
+        CASE WHEN regional_managers.names IS NULL THEN 0 ELSE s.manager_commission_value END
+                                                AS regional_manager_commission_value
       FROM seller_sales_order_item_snapshots s
       JOIN orders o ON o.id = s.order_id
       LEFT JOIN invoices i ON i.id = o.invoice_id
@@ -70,6 +79,16 @@ export class SellerCommissionReportRepository {
         WHERE manager.type = :managerContactType
           AND manager.unit_business_id = s.unit_business_id
       ) managers ON TRUE
+      -- Gerente regional = contato SELLER_MANAGER cujo grupo de lojas (contacts.unit_business_group_id) tem a loja da venda;
+      -- a própria loja dele no grupo não conta de novo (já ganha como gerente da loja).
+      LEFT JOIN LATERAL (
+        SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
+        FROM contacts manager
+        JOIN unit_business_group_members member ON member.unit_business_group_id = manager.unit_business_group_id
+        WHERE manager.type = :managerContactType
+          AND member.unit_business_id = s.unit_business_id
+          AND manager.unit_business_id IS DISTINCT FROM s.unit_business_id
+      ) regional_managers ON TRUE
       WHERE s.is_valid_sale = TRUE
         AND ${orderInvoicedSql("o")}
         ${conditions}
