@@ -1,5 +1,6 @@
 import { SellerCommissionReportService } from "../services/main/seller-commission-report/seller-commission-report.service";
 import productService from "../../../inventory/products/services/product.service";
+import contactService from "../../../sales/contacts/contacts.service";
 
 jest.mock("../../../company/unit-business/unit-business.service", () => ({
   __esModule: true,
@@ -12,13 +13,17 @@ jest.mock("../../../inventory/products/services/product.service", () => ({
   default: { findAll: jest.fn() },
 }));
 
+jest.mock("../../../sales/contacts/contacts.service", () => ({
+  __esModule: true,
+  default: { findAll: jest.fn() },
+}));
+
 describe("SellerCommissionReportService", () => {
   const repository = {
     findSaleMovementIds: jest.fn(),
     findInvoicesWithoutMovement: jest.fn(),
     findMovementInvoices: jest.fn(),
     findCommissionRows: jest.fn(),
-    findManagerUnitBusinessIds: jest.fn(),
   };
   const service = new SellerCommissionReportService(repository as any);
 
@@ -35,7 +40,6 @@ describe("SellerCommissionReportService", () => {
       },
     ]);
     repository.findCommissionRows.mockResolvedValue([]);
-    repository.findManagerUnitBusinessIds.mockResolvedValue(["ub-1"]);
     (productService.findAll as jest.Mock).mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
   });
 
@@ -52,7 +56,7 @@ describe("SellerCommissionReportService", () => {
       productIds: undefined,
       sellerIds: undefined,
     });
-    expect(repository.findManagerUnitBusinessIds).not.toHaveBeenCalled();
+    expect(contactService.findAll).not.toHaveBeenCalled();
     expect(report.filters).toMatchObject({ unit_business_id: "ub-21", seller_id: null, manager_id: null });
   });
 
@@ -68,11 +72,11 @@ describe("SellerCommissionReportService", () => {
     expect(repository.findCommissionRows.mock.calls[0][1].productIds).toEqual(["p2"]);
   });
 
-  it("gerente vira as lojas dele; pedido de outra loja não entra", async () => {
-    repository.findManagerUnitBusinessIds.mockResolvedValue(["ub-9"]);
-    await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31", managerIds: ["u1"], sellerIds: ["s1"] });
+  it("gerente (contato SELLER_MANAGER) vira a loja dele; pedido de outra loja não entra", async () => {
+    (contactService.findAll as jest.Mock).mockResolvedValue([{ unit_business_id: "ub-9" }, { unit_business_id: null }]);
+    await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31", managerIds: ["c1"], sellerIds: ["s1"] });
 
-    expect(repository.findManagerUnitBusinessIds).toHaveBeenCalledWith(["u1"]);
+    expect((contactService.findAll as jest.Mock).mock.calls[0][0].where.type).toBe("SELLER_MANAGER");
     expect(repository.findCommissionRows).toHaveBeenCalledWith([], {
       productIds: undefined,
       sellerIds: ["s1"],

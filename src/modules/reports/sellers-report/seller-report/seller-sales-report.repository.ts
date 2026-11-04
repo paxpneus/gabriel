@@ -7,6 +7,7 @@ import {
 } from "../../../sales/orders/order/helpers/discount";
 import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
 import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
+import { SELLER_CONTACT_TYPES } from "../../../sales/contacts/contacts.types";
 import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
   AffectedSellerCustomerFactKey,
@@ -1049,11 +1050,12 @@ WHERE o.seller_id IS NOT NULL
       c.id                     AS contact_id
     FROM users u
     LEFT JOIN user_config uc ON uc.user_id = u.id
-    LEFT JOIN contacts c ON c.user_id = u.id AND c.type = 'SELLER'
+    -- Gerente (SELLER_MANAGER) também é vendedor: o escopo de seller acha o contato dele.
+    LEFT JOIN contacts c ON c.user_id = u.id AND c.type IN (:sellerContactTypes)
     WHERE u.id = :userId
     LIMIT 1
     `,
-    { type: QueryTypes.SELECT, replacements: { userId } },
+    { type: QueryTypes.SELECT, replacements: { userId, sellerContactTypes: SELLER_CONTACT_TYPES } },
   );
 
   if (!row) return null;

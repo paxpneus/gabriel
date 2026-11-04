@@ -15,6 +15,7 @@ import InventoryBatchItems from "../../../../../inventory/stock-inventory/invent
 import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-batch/inventory-batch.model";
 import { Op, UniqueConstraintError } from "sequelize";
 import Contact from "../../../../../sales/contacts/contacts.model";
+import { ContactType, SELLER_CONTACT_TYPES } from "../../../../../sales/contacts/contacts.types";
 import { logDbError } from "../../../../../../shared/utils/logging/db-errors-logs";
 import productController from "../../../../../inventory/products/product.controller";
 import unitBusinessController from "../../../../../company/unit-business/unit-business.controller";
@@ -202,6 +203,10 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     const unitBusinessId = data.unit_business_id ?? null;
     const logPrefix = `[BLING_DIRECT_UPSERT] upsertContact id_system=${data.id_system} type=${data.type}`;
 
+    // Vendedor do Bling pode já estar marcado como gerente (SELLER_MANAGER): acha os dois, senão duplicaria o contato.
+    let typeWhere: ContactType | { [Op.in]: ContactType[] } = data.type;
+    if (data.type === "SELLER") typeWhere = { [Op.in]: SELLER_CONTACT_TYPES };
+
     let existing = (await integrationMappingService.findEntityByMapping(
       "CONTACT",
       integrationsId,
@@ -214,7 +219,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       existing = await Contact.findOne({
         where: {
           id_system: data.id_system,
-          type: data.type,
+          type: typeWhere,
           integrations_id: integrationsId,
           unit_business_id: unitBusinessId,
         },
@@ -226,7 +231,7 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
       existing = await Contact.findOne({
         where: {
           id_system: data.id_system,
-          type: data.type,
+          type: typeWhere,
           integrations_id: integrationsId,
           unit_business_id: null,
         },

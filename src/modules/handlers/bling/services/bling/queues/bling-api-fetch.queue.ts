@@ -27,6 +27,7 @@ import { cleanDocument } from "../../../../../../shared/utils/normalizers/docume
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
 import Contact from "../../../../../sales/contacts/contacts.model";
+import { SELLER_CONTACT_TYPES } from "../../../../../sales/contacts/contacts.types";
 import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
@@ -1729,7 +1730,8 @@ export class BlingApiFetchQueue extends BaseQueueService<ApiFetchJobPayload> {
       const seller = await Contact.findOne({
         where: {
           id_system: String(nf.vendedor.id),
-          type: "SELLER",
+          // Gerente (SELLER_MANAGER) também é o vendedor do Bling.
+          type: { [Op.in]: SELLER_CONTACT_TYPES },
           integrations_id: integration.id,
         },
       });

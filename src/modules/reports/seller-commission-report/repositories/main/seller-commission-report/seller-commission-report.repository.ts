@@ -6,6 +6,7 @@ import {
   outputMovementsWhere,
   unitBusinessPeriodWhere,
 } from "../../../../../../shared/query/query-objects/stock-movements/stock-movement.filters";
+import { SELLER_MANAGER_CONTACT_TYPE } from "../../../../../sales/contacts/contacts.types";
 import { invoiceCancelledSql } from "../../../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
 import { InvoiceUnitBusinessAttributesStatus } from "../../../../../warehouse/fiscal/invoices/invoice-unit-business-attributes/invoice-unit-business-attributes.types";
 import {
@@ -205,12 +206,12 @@ export class SellerCommissionReportRepository {
       LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
       LEFT JOIN contacts seller ON seller.id = s.seller_id
       LEFT JOIN customers customer ON customer.id = s.customer_id
-      -- Gerente da loja = mesma regra do byManager do seller report.
+      -- Gerente = contato SELLER_MANAGER da loja da venda (contacts.unit_business_id).
       LEFT JOIN LATERAL (
-        SELECT STRING_AGG(u.name, ', ' ORDER BY u.name) AS names
-        FROM users u
-        JOIN user_config uc ON uc.user_id = u.id AND uc.type = 'manager'
-        WHERE u.main_unit_business_id = s.unit_business_id
+        SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
+        FROM contacts manager
+        WHERE manager.type = :managerContactType
+          AND manager.unit_business_id = s.unit_business_id
       ) managers ON TRUE
       WHERE s.order_id IN (:orderIds)
         AND s.is_valid_sale = TRUE
@@ -219,25 +220,9 @@ export class SellerCommissionReportRepository {
       `,
       {
         type: QueryTypes.SELECT,
-        replacements: { orderIds, productIds, sellerIds, unitBusinessIds },
+        replacements: { orderIds, productIds, sellerIds, unitBusinessIds, managerContactType: SELLER_MANAGER_CONTACT_TYPE },
       },
     );
-  }
-
-  /** Lojas dos gerentes (users com user_config.type = 'manager', loja = main_unit_business_id). */
-  async findManagerUnitBusinessIds(managerIds: string[]): Promise<string[]> {
-    if (!managerIds.length) return [];
-
-    const rows = await sequelize.query<{ unit_business_id: string }>(
-      `
-      SELECT DISTINCT u.main_unit_business_id AS unit_business_id
-      FROM users u
-      JOIN user_config uc ON uc.user_id = u.id AND uc.type = 'manager'
-      WHERE u.id IN (:managerIds) AND u.main_unit_business_id IS NOT NULL
-      `,
-      { type: QueryTypes.SELECT, replacements: { managerIds } },
-    );
-    return rows.map((row) => row.unit_business_id);
   }
 
   /**

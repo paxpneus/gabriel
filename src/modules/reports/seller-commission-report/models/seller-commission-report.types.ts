@@ -6,7 +6,7 @@ export interface SellerCommissionReportParams {
   productIds?: string[];
   // contacts.id do vendedor (orders.seller_id).
   sellerIds?: string[];
-  // users.id do gerente (user_config.type = 'manager'); vira as lojas dele (main_unit_business_id).
+  // contacts.id do gerente (type SELLER_MANAGER); vira a loja dele (contacts.unit_business_id).
   managerIds?: string[];
 }
 

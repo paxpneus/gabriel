@@ -7,6 +7,8 @@ import unitBusinessService, {
   CD21_UNIT_BUSINESS_NUMBER,
 } from "../../../../../company/unit-business/unit-business.service";
 import productService from "../../../../../inventory/products/services/product.service";
+import contactService from "../../../../../sales/contacts/contacts.service";
+import { SELLER_MANAGER_CONTACT_TYPE } from "../../../../../sales/contacts/contacts.types";
 import {
   SellerCommissionReport,
   SellerCommissionReportParams,
@@ -42,12 +44,18 @@ export class SellerCommissionReportService {
         : brandProductIds;
     }
 
-    // Gerente filtra pelas lojas dele (mesma regra do byManager do seller report).
+    // Gerente (contato SELLER_MANAGER) filtra pelas vendas da loja dele (contacts.unit_business_id).
     const peopleFilter: PeopleFilter = {
       sellerIds: params.sellerIds?.length ? params.sellerIds : undefined,
     };
     if (params.managerIds?.length) {
-      peopleFilter.unitBusinessIds = await this.repository.findManagerUnitBusinessIds(params.managerIds);
+      const managers = await contactService.findAll({
+        where: { id: { [Op.in]: params.managerIds }, type: SELLER_MANAGER_CONTACT_TYPE },
+        attributes: ["unit_business_id"],
+      });
+      peopleFilter.unitBusinessIds = managers
+        .map((manager) => manager.unit_business_id)
+        .filter((unitBusinessId): unitBusinessId is string => !!unitBusinessId);
     }
 
     const { unitBusinessId, invoices, withoutMovement } = await this.findSaleInvoices(

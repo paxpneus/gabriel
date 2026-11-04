@@ -42,9 +42,22 @@ Traz a comissão de vendedor e a de gerente por item vendido, com o total de cad
 | `brand` | não | texto, um ou vários | Marca do produto (mesmo texto do filtro de marca do relatório de devolução) |
 | `product_id` | não | UUID, um ou vários | Produto |
 | `seller_id` | não | UUID, um ou vários | Vendedor: o mesmo id de vendedor usado no relatório de vendedores |
-| `manager_id` | não | UUID, um ou vários | Gerente: id do usuário que é gerente. Filtra as vendas das lojas desse gerente |
+| `manager_id` | não | UUID, um ou vários | Gerente: id do **contato** do tipo `SELLER_MANAGER` (ver "Quem é o gerente" abaixo). Filtra as vendas da loja desse gerente |
 
 Com `brand` e `product_id` juntos, entram só os produtos que atendem aos dois.
+
+### Quem é o gerente
+
+O gerente é um contato (`/api/contacts`) com `type = "SELLER_MANAGER"` e com a loja dele em `unit_business_id`. Ele ganha a comissão de gerente de **todas as vendas com vendedor da loja dele**, inclusive as que ele mesmo vendeu: 30 vendas de vendedores na Loja 15 dão comissão de gerente das 30 para o gerente da Loja 15.
+
+Para tornar um vendedor gerente, atualizar o contato pela rota de edição de contatos que já existe:
+
+```http
+PUT /api/contacts/:id
+{ "type": "SELLER_MANAGER", "unit_business_id": "uuid-da-loja" }
+```
+
+Para voltar a ser só vendedor, mandar `"type": "SELLER"`. O gerente continua sendo vendedor: as vendas que ele fizer no Bling continuam com ele como vendedor. A lista de gerentes para o filtro sai da listagem de contatos com tipo `SELLER_MANAGER`.
 
 Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-10-31&seller_id=uuid`
 
@@ -116,7 +129,7 @@ Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-
 | `invoice_number` | texto ou `null` | Número da nota de venda |
 | `movement_date` | `YYYY-MM-DD` ou `null` | Data da saída no estoque (é a data que o período filtra) |
 | `seller_name` | texto ou `null` | Vendedor |
-| `manager_name` | texto ou `null` | Gerente(s) da loja. Com mais de um gerente, os nomes vêm juntos, separados por `, `. `null` quando a loja não tem gerente cadastrado; mesmo assim a comissão de gerente vem calculada |
+| `manager_name` | texto ou `null` | Gerente(s) da loja da venda (contatos `SELLER_MANAGER` daquela loja). Com mais de um gerente, os nomes vêm juntos, separados por `, `. `null` quando a loja não tem gerente cadastrado; mesmo assim a comissão de gerente vem calculada |
 | `customer_name` | texto ou `null` | Cliente |
 | `brand` | texto ou `null` | Marca do produto |
 | `product` | texto ou `null` | Nome do produto |

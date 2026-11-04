@@ -37,7 +37,7 @@ Contact.init(
       allowNull: false,
     },
     type: {
-      type: DataTypes.ENUM("SELLER", "CUSTOMER"),
+      type: DataTypes.ENUM("SELLER", "SELLER_MANAGER", "CUSTOMER"),
       allowNull: false,
     },
     id_system: {
