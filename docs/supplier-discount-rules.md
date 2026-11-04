@@ -9,6 +9,9 @@ Módulo de regras de repasse/desconto de fornecedor por marca/aro/medida/loja. N
 - **Fórmula REAL** (bloco fixo): a cada `quantity_step` unidades vendidas dentro do escopo, soma `discount_value` ao lucro. Ex.: "a cada 2 pneus, +R$200" — 4 pneus vendidos = +R$400.
 - **Fórmula PERCENTUAL**: aplica `discount_value`% sobre o valor bruto vendido, só se a quantidade total vendida no escopo atingir `quantity_step` (limiar, não multiplicador).
 - **Regras REAL podem se sobrepor entre si de propósito**, pra formar níveis por quantidade (ex.: regra A "a cada 2, R$200" + regra B "a cada 4, R$500" no mesmo escopo — o backend escolhe a melhor combinação de blocos sozinho). **PERCENTUAL nunca pode se sobrepor com nenhuma outra regra** (nem REAL nem PERCENTUAL) no mesmo escopo+período — o backend **rejeita a criação/edição** nesse caso (ver seção de erros).
+- **Vigência conta pela data de emissão da NF de venda**, não pela data do pedido: pedido feito dia 31/10 com nota emitida dia 01/11 cai na regra de novembro (e fica fora da de outubro).
+- **Só pedido faturado recebe desconto**: precisa ter nota vinculada, nota não cancelada e status Atendido, Enviado ou Entregue. Pedido em aberto, cancelado ou sem nota fica com desconto zero (e perde o desconto se for cancelado depois).
+- **Nos relatórios de venda (`sales-report`/`seller-sales-report`) o desconto aparece no dia do pedido**, como o resto dos valores. Então um pedido de setembro faturado em outubro mostra o desconto de uma regra de outubro no relatório de setembro. No relatório de produtos das notas (`/invoice/report/products`) ele aparece no dia da nota.
 - O valor calculado só aparece nos relatórios depois que o pedido é (re)processado — não há recálculo em tempo real na tela de detalhe do pedido.
 
 ## Rotas
