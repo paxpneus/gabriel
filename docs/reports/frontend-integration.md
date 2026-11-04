@@ -5,6 +5,7 @@ Dois relatórios novos, só leitura, e uma mudança no relatório de devolução
 1. **Comissão de vendedor**: `GET /api/seller-commission-report`
 2. **Problemas de integração**: `GET /api/integration-problems-report`
 3. **Relatório de devolução**: `GET /api/sales-return-report`. Os avisos passam a vir só com a contagem.
+4. **Relatório de vendedores**: `GET /api/seller-report`. Comissão de gerente só de loja com gerente e comissão dos gerentes regionais.
 
 Todas as rotas exigem autenticação e a permissão `financial-pdt`, a mesma dos relatórios de faturado e de devolução. A comissão é de todas as lojas; os relatórios de problemas de integração e de devolução são só da Loja 21 (CD21). Não há paginação: a resposta traz tudo do período.
 
@@ -347,3 +348,43 @@ Agora:
 ```
 
 O front que lia `warnings.*.count` passa a ler `warnings.*` direto, e quem mostrava `invoice_numbers` passa a apontar para o relatório de problemas de integração.
+
+---
+
+## 4. Mudança no relatório de vendedores: `GET /api/seller-report`
+
+A comissão de gerente segue as mesmas regras do relatório de comissão (seção 1, "Quem é o gerente" e "Gerente regional"). Parâmetros e os demais campos continuam iguais.
+
+- `summary.total_manager_commission`: passa a somar só as vendas de loja com gerente cadastrado. Loja sem gerente conta `0`.
+- `summary.total_regional_manager_commission` (novo): total de comissão dos gerentes regionais.
+- `managerCommissionByBrand[]`: `total_manager_commission` com a mesma regra, e `total_regional_manager_commission` (novo) por marca.
+
+As duas comissões são só informativas: não entram em custo, markup nem contribuição (só a comissão do vendedor entra no custo, como antes). O quadro `byManager` não mudou.
+
+```json
+"summary": {
+  "total_manager_commission": "3732.97",
+  "total_regional_manager_commission": "3617.04"
+},
+"managerCommissionByBrand": [
+  {
+    "product_brand": "Continental",
+    "total_revenue": "535700.65",
+    "total_manager_commission": "2815.32",
+    "total_regional_manager_commission": "2723.60"
+  }
+]
+```
+
+Nesse relatório os valores vêm como texto (`"3732.97"`), como os outros campos dele.
+
+### O que mostrar
+
+| Onde | Campo | Texto sugerido | O que muda na tela |
+|---|---|---|---|
+| Cards do resumo | `summary.total_manager_commission` | Comissão dos gerentes | Já existe; o valor fica menor quando o período tem venda de loja sem gerente (ex.: outubro/2026 passa de R$ 4.115,43 para R$ 3.732,97) |
+| Cards do resumo | `summary.total_regional_manager_commission` | Comissão dos regionais | Card novo, ao lado de "Comissão dos gerentes" |
+| Tabela de comissão de gerente por marca | `managerCommissionByBrand[].total_manager_commission` | Comissão gerentes | Já existe, com a mesma regra do card |
+| Tabela de comissão de gerente por marca | `managerCommissionByBrand[].total_regional_manager_commission` | Comissão regionais | Coluna nova, ao lado de "Comissão gerentes" |
+
+O card "Comissão dos regionais" mostra `0` quando o filtro não tem loja em grupo de regional (por exemplo, filtrando a Loja 21). Os campos de comissão do vendedor (`summary.total_commission`, `products[].commission_value` e os demais) não mudaram.

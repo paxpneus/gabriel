@@ -1,6 +1,9 @@
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../../../config/sequelize";
-import { SELLER_MANAGER_CONTACT_TYPE } from "../../../../../sales/contacts/contacts.types";
+import {
+  regionalManagersFromSql,
+  storeManagersFromSql,
+} from "../../../../../sales/contacts/helpers/managers";
 import { BLING_STATUS_DEFAULTS } from "../../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import {
   orderFinalSituationSql,
@@ -72,22 +75,14 @@ export class SellerCommissionReportRepository {
       LEFT JOIN products p ON p.id = s.product_id
       LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
       LEFT JOIN customers customer ON customer.id = s.customer_id
-      -- Gerente = contato SELLER_MANAGER da loja da venda (contacts.unit_business_id).
+      -- Gerentes da loja da venda e regionais do grupo dela (regra em contacts/helpers/managers.ts).
       LEFT JOIN LATERAL (
         SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
-        FROM contacts manager
-        WHERE manager.type = :managerContactType
-          AND manager.unit_business_id = s.unit_business_id
+        ${storeManagersFromSql("s.unit_business_id")}
       ) managers ON TRUE
-      -- Gerente regional = contato SELLER_MANAGER cujo grupo de lojas (contacts.unit_business_group_id) tem a loja da venda;
-      -- a própria loja dele no grupo não conta de novo (já ganha como gerente da loja).
       LEFT JOIN LATERAL (
         SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
-        FROM contacts manager
-        JOIN unit_business_group_members member ON member.unit_business_group_id = manager.unit_business_group_id
-        WHERE manager.type = :managerContactType
-          AND member.unit_business_id = s.unit_business_id
-          AND manager.unit_business_id IS DISTINCT FROM s.unit_business_id
+        ${regionalManagersFromSql("s.unit_business_id")}
       ) regional_managers ON TRUE
       WHERE s.is_valid_sale = TRUE
         AND ${orderInvoicedSql("o")}
@@ -96,7 +91,7 @@ export class SellerCommissionReportRepository {
       `,
       {
         type: QueryTypes.SELECT,
-        replacements: { ...filters, managerContactType: SELLER_MANAGER_CONTACT_TYPE },
+        replacements: { ...filters },
       },
     );
   }

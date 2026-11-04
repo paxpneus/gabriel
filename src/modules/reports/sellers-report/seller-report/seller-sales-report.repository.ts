@@ -13,6 +13,10 @@ import {
 } from "../../../inventory/supplier-discount-rules/helpers/reference-date";
 import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
 import { SELLER_CONTACT_TYPES } from "../../../sales/contacts/contacts.types";
+import {
+  regionalManagersFromSql,
+  storeManagersFromSql,
+} from "../../../sales/contacts/helpers/managers";
 import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
   AffectedSellerCustomerFactKey,
@@ -1155,6 +1159,12 @@ async getReport(filters: SellerSalesReportFilters) {
     )
   `;
 
+  // Comissão de gerente da loja só com gerente (SELLER_MANAGER) cadastrado na loja; regional = mesmo valor, a mais,
+  // nas lojas do grupo dele. Só exibição: nenhuma das duas entra em custo/markup/contribuição.
+  const storeManagerCommissionSql = `CASE WHEN EXISTS (SELECT 1 ${storeManagersFromSql("s.unit_business_id")})
+    THEN s.manager_commission_value ELSE 0 END`;
+  const regionalManagerCommissionSql = `CASE WHEN EXISTS (SELECT 1 ${regionalManagersFromSql("s.unit_business_id")})
+    THEN s.manager_commission_value ELSE 0 END`;
 
     const [summary] = await sequelize.query(
       `
@@ -1170,7 +1180,8 @@ async getReport(filters: SellerSalesReportFilters) {
         ${calculateMarkupSql("SUM(s.net_total)", "SUM(s.total_cost)").percent} AS average_markup_pct,
         COALESCE(SUM(s.contribution_value), 0) AS total_contribution_value,
         ${calculatePercentageSql("SUM(s.contribution_value)", "SUM(s.net_total)")} AS average_contribution_pct,
-        COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission,
+        COALESCE(SUM(${storeManagerCommissionSql}), 0) AS total_manager_commission,
+        COALESCE(SUM(${regionalManagerCommissionSql}), 0) AS total_regional_manager_commission,
         COALESCE(SUM(s.supplier_discount_value), 0) AS total_supplier_discount,
         COALESCE(SUM(s.icms_value_allocated), 0) AS total_icms
       FROM report_rows s
@@ -1434,7 +1445,8 @@ async getReport(filters: SellerSalesReportFilters) {
   SELECT
     s.product_brand,
     COALESCE(SUM(s.net_total), 0) AS total_revenue,
-    COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission
+    COALESCE(SUM(${storeManagerCommissionSql}), 0) AS total_manager_commission,
+    COALESCE(SUM(${regionalManagerCommissionSql}), 0) AS total_regional_manager_commission
   FROM report_rows s
   WHERE s.product_brand IS NOT NULL
   GROUP BY s.product_brand
