@@ -65,6 +65,7 @@ import unitBusinessService from "../../../../company/unit-business/unit-business
 import { Product, ProductConfig, Supplier } from "../../../../inventory";
 import Contact from "../../../../sales/contacts/contacts.model";
 import Order from "../../../../sales/orders/order/orders.model";
+import { BLING_CANCELLED_SITUACAO_ID } from "../../../../sales/orders/order/helpers/eligible-for-pdv-filters";
 import {
   InvoiceUnitBusinessAttributesCreationAttributes,
   InvoiceUnitBusinessAttributesStatus,
@@ -1262,14 +1263,28 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           : []
     ).filter(Boolean);
 
-    const { supplier_discount: _supplierDiscountFilter, ...restFilters } =
-      params.filters ?? {};
+    // Neste relatório `filters[brand]` são ids de `Brand` (não o texto legado do
+    // customField `brand`); filtra no include do produto, então só sai linha de item da marca.
+    const rawBrandFilter = params.filters?.brand;
+    const brandIdsFilter = (
+      Array.isArray(rawBrandFilter) ? rawBrandFilter : [rawBrandFilter]
+    ).filter(Boolean);
+    let productWhere: WhereOptions | undefined;
+    if (brandIdsFilter.length > 0) {
+      productWhere = { brand_id: { [Op.in]: brandIdsFilter } };
+    }
+
+    const {
+      supplier_discount: _supplierDiscountFilter,
+      brand: _brandFilter,
+      ...restFilters
+    } = params.filters ?? {};
     const queryParams: QueryParams = {
       ...params,
       filters: restFilters,
     };
 
-    const rows = await this.findAll(
+    const fetchedRows = await this.findAll(
       {
         subQuery: false,
         attributes: [
@@ -1281,6 +1296,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           "seller_id",
           "invoice_value",
           "emitted_at",
+          "xml_key",
+          "sender_name",
         ],
         include: [
           {
@@ -1291,6 +1308,8 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
             where: {
               unit_business_id: unitBusinessId,
               type: params.filters?.type ?? "OUTGOING",
+              // Nota cancelada na loja do relatório não entra.
+              status: { [Op.ne]: "CANCELLED" },
             },
           },
           {
@@ -1313,8 +1332,17 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
                 // isso, `item.product.id` vinha `undefined` e a correlação
                 // com o desconto nunca batia).
                 attributes: ["id", "line"],
+                where: productWhere,
                 required: true,
                 include: [
+                  // SKU do produto na loja do relatório (Loja 21 = SKU do Bling).
+                  {
+                    model: ProductConfig,
+                    as: "productConfigs",
+                    attributes: ["sku"],
+                    where: { unit_business_id: unitBusinessId },
+                    required: false,
+                  },
                   {
                     model: Brand,
                     as: "brandRegister",
@@ -1341,12 +1369,20 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
           {
             model: Order,
             as: "order",
-            attributes: ["id", "date", "unit_business_id"],
+            attributes: ["id", "date", "unit_business_id", "actual_situation"],
           },
         ],
       },
       queryParams,
       this.queryConfig,
+    );
+
+    // Pedido cancelado no Bling (situação 12) tira a nota do relatório; nota sem pedido ou com qualquer outro status entra.
+    // Pós-fetch porque o findAll com params sobrescreve o `where` (e condição no include só esconderia o pedido).
+    const rows = fetchedRows.filter(
+      (invoice) =>
+        (invoice as Invoice & { order?: Order | null }).order?.actual_situation !==
+        BLING_CANCELLED_SITUACAO_ID,
     );
 
     const supplierDiscountLookup = await this.buildSupplierDiscountLookup(
@@ -1370,8 +1406,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
         items?: (InvoiceItems & { product?: Product | null })[];
         order?: Order | null;
       };
+      // Vigência da regra conta pela emissão da nota (pedido só se a nota não tiver data).
       const referenceDate =
-        invoiceWithRelations.order?.date ?? invoice.emitted_at;
+        invoice.emitted_at ?? invoiceWithRelations.order?.date;
       if (!referenceDate) continue;
 
       for (const item of invoiceWithRelations.items ?? []) {
@@ -1406,6 +1443,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
     const result: {
       number_system: string | undefined;
+      xml_key: string | null;
+      corporate_name: string | null;
+      sku: string | null;
       seller: {
         id: string;
         name: string;
@@ -1429,7 +1469,9 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
     for (const invoice of rows) {
       const invoiceWithRelations = invoice as Invoice & {
         seller?: Contact | null;
-        items?: (InvoiceItems & { product?: Product | null })[];
+        items?: (InvoiceItems & {
+          product?: (Product & { productConfigs?: ProductConfig[] }) | null;
+        })[];
         order?: Order | null;
       };
 
@@ -1464,6 +1506,10 @@ export class InvoiceService extends BaseService<Invoice, InvoiceRepository> {
 
         result.push({
           number_system: invoice.number_system,
+          xml_key: invoice.xml_key ?? null,
+          // Razão social do emitente (ex.: PAX COMERCIO DE PNEUS LTDA).
+          corporate_name: invoice.sender_name ?? null,
+          sku: item.product?.productConfigs?.[0]?.sku ?? null,
           seller: invoiceWithRelations.seller
             ? {
                 id: invoiceWithRelations.seller.id,

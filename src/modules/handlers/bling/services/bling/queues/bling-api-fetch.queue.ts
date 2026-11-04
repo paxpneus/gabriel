@@ -117,15 +117,16 @@ export function extractProductMeasureAndLine(
 
   const tokens = nome.trim().split(/\s+/);
 
-  // Measure: primeiro token que começa com dígito e contém barra seguida de letra
-  // Exemplos válidos: 165/70R14, 192/20R, 205/55R16, 7.50R16
+  // Measure: {número}/{número}R{aro}, com letras opcionais antes (LT, T) e uma antes/depois do R (ZR, RF).
+  // Ex.: 205/55R16, 255/40ZR19, 225/40RF19, LT265/75R16; exigir o aro descarta índice de carga duplo (126/123R).
   const measureIndex = tokens.findIndex((t) =>
-    /^\d[\d.,]*\/\d+[A-Za-z]/i.test(t),
+    /^[A-Za-z]*\d[\d.,]*\/\d+[A-Za-z]?R[A-Za-z]?\d/i.test(t),
   );
 
   if (measureIndex === -1) return { measure: null, line: null, rim: null };
 
-  const measure = tokens[measureIndex];
+  // Prefixo (LT/T) sai da medida — fica só no nome; assim cai na mesma tire_measure (265/75) dos demais.
+  const measure = tokens[measureIndex].replace(/^[A-Za-z]+/, "");
   const rim = extractRimFromMeasure(measure);
 
   // Line: tokens após a measure
@@ -164,7 +165,8 @@ export function extractProductMeasureAndLine(
 export function extractRimFromMeasure(measure?: string | null): string | null {
   if (!measure) return null;
 
-  const match = measure.match(/R\s*(\d{1,2})/i);
+  // Letra opcional entre R e o aro (RF = run flat).
+  const match = measure.match(/R[A-Za-z]?\s*(\d{1,2})/i);
   return match?.[1] ?? null;
 }
 

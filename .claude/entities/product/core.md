@@ -13,3 +13,7 @@
 ## Product ↔ external id resolution
 
 No `id_system`-style column on `Product` — it was removed (`m275`) and doesn't exist anymore. Resolving a product by an external integration id always goes through `integrationMappingService.findEntityByMapping("PRODUCT", integrationsId, externalId)`. Reason it was removed, not just left alone: it was **globally unique** across the table, but a physical product can legitimately have more than one external id mapped to it (different integrations, or multiple Tecinco codes for the same product) — a single global-unique column can't represent that; `integration_mappings` scopes per integration and handles it correctly. Don't reintroduce a similar single-column mapping — always resolve via `integrationMappingService`.
+
+## Medida/aro/linha extraídos do nome
+
+`extractProductMeasureAndLine` (`bling-api-fetch.queue.ts`, usada também pela Tecinco): medida = 1º token `{número}/{número}R{aro}`, com letras opcionais antes (`LT`, `T`, tiradas do valor gravado — ficam só no nome) e uma letra opcional antes/depois do `R` (`ZR`, `RF` run flat); aro = número depois do `R` (aceita `RF19`). Exigir o aro depois do `R` descarta índice de carga duplo (`126/123R`, `102/100Q`), que antes virava medida falsa. Formatos antigos sem barra, com espaço ou em `X` (`185R14C`, `10.00R20`, `7.50-16`, `215/75 R17.5`, `10.5/80X18`) não são reconhecidos → medida/aro vazios. `rim_id`/`measure_id` saem do texto via `rimService`/`tireMeasureService.findOrCreate` (medida sem o aro: `265/75`).
