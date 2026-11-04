@@ -97,10 +97,11 @@ export class SupplierDiscountRuleRepository extends BaseRepository<SupplierDisco
 
     return sequelize.query<SupplierDiscountCandidateRow>(
       `
+      -- timestamptz[] (não timestamp[]): timestamp descartaria o offset da data e deslocaria 3h contra start/end_date.
       SELECT batch.order_item_id, r.id AS rule_id, r.discount_type, r.quantity_step, r.discount_value
       FROM unnest(
         ARRAY[:orderItemIds]::uuid[], ARRAY[:brandIds]::uuid[], ARRAY[:rimIds]::uuid[], ARRAY[:measureIds]::uuid[],
-        ARRAY[:unitBusinessIds]::uuid[], ARRAY[:orderDates]::timestamp[]
+        ARRAY[:unitBusinessIds]::uuid[], ARRAY[:orderDates]::timestamptz[]
       ) AS batch(order_item_id, brand_id, rim_id, measure_id, unit_business_id, order_date)
       JOIN supplier_discount_rules r
         ON r.active = true
@@ -152,10 +153,11 @@ export class SupplierDiscountRuleRepository extends BaseRepository<SupplierDisco
 
     return sequelize.query<SupplierDiscountBypassCandidateRow>(
       `
+      -- timestamptz[] pelo mesmo motivo do matchBatch (manter o offset da data).
       SELECT batch.item_id, r.id AS rule_id, r.quantity_step, r.discount_value
       FROM unnest(
         ARRAY[:itemIds]::text[], ARRAY[:brandIds]::uuid[], ARRAY[:rimIds]::uuid[], ARRAY[:measureIds]::uuid[],
-        ARRAY[:referenceDates]::timestamp[]
+        ARRAY[:referenceDates]::timestamptz[]
       ) AS batch(item_id, brand_id, rim_id, measure_id, reference_date)
       JOIN supplier_discount_rules r
         ON r.active = true

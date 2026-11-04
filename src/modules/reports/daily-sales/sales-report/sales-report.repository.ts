@@ -5,6 +5,7 @@ import {
   orderDiscountAmountSql,
   orderNetProductsSql,
 } from "../../../sales/orders/order/helpers/discount";
+import { orderInvoicedSql } from "../../../sales/orders/order/helpers/invoiced";
 import { itemNetValueSql, orderNetValueSql } from "./helpers/net-value";
 import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
 import {
@@ -18,6 +19,10 @@ import {
   deleteOrphanFactsSql,
 } from "./helpers/orphan-facts";
 import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
+import {
+  supplierDiscountReferenceDateJoinSql,
+  supplierDiscountReferenceDateSql,
+} from "../../../inventory/supplier-discount-rules/helpers/reference-date";
 import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
   SalesFactKey,
@@ -934,6 +939,7 @@ item_source_raw AS (
     END                                                     AS cost_source,
 
     COALESCE(oi.commission_rate, 0)                       AS commission_rate,
+    ${orderInvoicedSql("ord")}                            AS is_invoiced,
     pc.ncm                                               AS ncm,
     pc.cest                                               AS cest,
     NULL::varchar                                         AS cfop,
@@ -1041,9 +1047,12 @@ item_calc AS (
     ROUND(item_weight * order_tax_commission, 2)      AS tax_commission_allocated,
     ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated,
     ROUND(item_weight * order_computed_icms_value, 2) AS computed_icms_value_allocated,
-    -- Comissão sobre o preço de venda após o desconto do pedido, igual ao comissao.valor do Bling.
+    -- Comissão sobre o preço de venda após o desconto do pedido, igual ao comissao.valor do Bling; só pedido faturado gera comissão.
     ROUND(item_weight * order_net_products, 2)        AS commission_base,
-    ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2) AS commission_value
+    CASE
+      WHEN is_invoiced THEN ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2)
+      ELSE 0
+    END                                               AS commission_value
   FROM item_weighted
 ),
 
@@ -1266,11 +1275,14 @@ FROM item_calc
   private async applySupplierDiscounts(orderIds: string[]): Promise<string[]> {
     const resolveItems = await sequelize.query<SupplierDiscountResolveItemInput>(
       `
-      SELECT s.order_item_id, s.order_id, cp.brand_id, cp.rim_id, cp.measure_id, s.unit_business_id, s.order_date,
+      -- order_date aqui = data de referência da vigência (emissão da nota); NULL = pedido não elegível, desconto zera.
+      SELECT s.order_item_id, s.order_id, cp.brand_id, cp.rim_id, cp.measure_id, s.unit_business_id,
+             ${supplierDiscountReferenceDateSql("s")} AS order_date,
              s.quantity * COALESCE(kc.quantity, 1) AS real_quantity, s.gross_total
       FROM sales_order_item_snapshots s
       LEFT JOIN kit_components kc ON kc.product_kit_id = s.product_id
       LEFT JOIN products cp ON cp.id = COALESCE(kc.product_component_id, s.product_id)
+      ${supplierDiscountReferenceDateJoinSql("s")}
       WHERE s.order_id = ANY(ARRAY[:orderIds]::uuid[])
       `,
       { type: QueryTypes.SELECT, replacements: { orderIds } },
@@ -1354,9 +1366,11 @@ FROM item_calc
       FROM sales_order_item_snapshots s
       LEFT JOIN kit_components kc ON kc.product_kit_id = s.product_id
       LEFT JOIN products cp ON cp.id = COALESCE(kc.product_component_id, s.product_id)
+      ${supplierDiscountReferenceDateJoinSql("s")}
       JOIN supplier_discount_rules r
         ON r.updated_at >= :since
-        AND s.order_date BETWEEN r.start_date AND r.end_date
+        -- Mesma data de referência do applySupplierDiscounts (emissão da nota, só pedido elegível).
+        AND ${supplierDiscountReferenceDateSql("s")} BETWEEN r.start_date AND r.end_date
         AND EXISTS (
           SELECT 1 FROM supplier_discount_unit_businesses x
           WHERE x.supplier_discount_rule_id = r.id AND x.unit_business_id = s.unit_business_id

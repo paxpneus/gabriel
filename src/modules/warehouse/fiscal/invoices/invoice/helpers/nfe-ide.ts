@@ -6,7 +6,7 @@ import { InvoiceDirection } from "./invoice-direction";
 export const NFE_RETURN_PURPOSE = 4;
 
 // "<iv hex>:" + 2752 chars base64 (2064 bytes) — o <ide> fica antes de ~600 bytes em quase toda nota.
-const XML_HEAD_LENGTH = 33 + 2752;
+export const XML_HEAD_LENGTH = 33 + 2752;
 
 export interface NfeIde {
   operationType: InvoiceDirection | null;

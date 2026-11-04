@@ -1,4 +1,10 @@
-export type ContactType = "SELLER" | "CUSTOMER";
+// SELLER_MANAGER = gerente da loja (unit_business_id); também é vendedor (pode vender no Bling).
+export type ContactType = "SELLER" | "SELLER_MANAGER" | "CUSTOMER";
+
+export const SELLER_MANAGER_CONTACT_TYPE: ContactType = "SELLER_MANAGER";
+
+/** Tipos que contam como vendedor (busca do vendedor do Bling, escopo de vendedor); gerente também vende. */
+export const SELLER_CONTACT_TYPES: ContactType[] = ["SELLER", SELLER_MANAGER_CONTACT_TYPE];
 
 export interface ContactAttributes {
   id: string;

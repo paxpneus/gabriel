@@ -261,6 +261,25 @@ export class IntegrationMappingService extends BaseService<
     });
   }
 
+  // Mappings CONTACT (vendedor/gerente) do contato, paginados, com a integração; só leitura (sync do Bling é quem cria).
+  findByContactId(
+    params: QueryParams,
+    contactId: string,
+  ): Promise<PaginatedResult<IntegrationMapping>> {
+    return this.repository.findPaginated(params, this.queryConfig, {
+      include: [
+        {
+          model: Integration,
+          as: 'integration',
+          attributes: ['id', 'name']
+        }
+      ]
+    }, {
+      entity_type: "CONTACT",
+      internal_id: contactId,
+    });
+  }
+
   // Cria mapping PRODUCT manual pro produto; checa o produto antes porque internal_id não é FK (evita mapping órfão).
   // Com userId: a integração tem que ser de uma loja do usuário, e a criação é auditada (mapping + produto).
   async createForProduct(

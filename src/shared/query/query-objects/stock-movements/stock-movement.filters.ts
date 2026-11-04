@@ -60,6 +60,20 @@ export function saleUnitBusinessWhere(
   };
 }
 
+/**
+ * SQL cru: ids das notas dos movimentos de `stock_movements m` que casam com `movementWhere` (invoice_id ou id Bling).
+ * UNION em vez de `OR` no join: bling_origin_id não tem índice e o OR virava varredura do Kardex por nota.
+ */
+export function movementInvoiceIdsSql(movementWhere: string): string {
+  return `
+    SELECT m.invoice_id AS invoice_id FROM stock_movements m
+    WHERE m.invoice_id IS NOT NULL AND ${movementWhere}
+    UNION
+    SELECT i.id AS invoice_id FROM stock_movements m
+    JOIN invoices i ON i.id_system = m.bling_origin_id
+    WHERE ${movementWhere}`;
+}
+
 /** Movimentos ativos de uma unidade dentro de [start, end]. */
 export function unitBusinessPeriodWhere(
   unitBusinessId: string,

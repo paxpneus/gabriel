@@ -21,6 +21,11 @@ export class IntegrationMappingController extends BaseController<IntegrationMapp
       ...this.mw('findByProductId'),
       this.findByProductId,
     );
+    this.router.get(
+      '/contact/:contactId',
+      ...this.mw('findByContactId'),
+      this.findByContactId,
+    );
     this.router.post(
       '/product/:productId',
       ...this.mw('createForProduct'),
@@ -45,6 +50,20 @@ export class IntegrationMappingController extends BaseController<IntegrationMapp
       const result = await this.service.findByProductId(
         params,
         assertUuid(req.params.productId, 'Produto'),
+      );
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+  };
+
+  // GET /contact/:contactId — integration_mappings paginados do contato (entity_type CONTACT: id do vendedor no Bling).
+  findByContactId = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const params = this.extractQueryParams(req);
+      const result = await this.service.findByContactId(
+        params,
+        assertUuid(req.params.contactId, 'Contato'),
       );
       return res.json(result);
     } catch (error: any) {
@@ -122,6 +141,7 @@ export class IntegrationMappingController extends BaseController<IntegrationMapp
       destroy: [authenticate, userPermissions],
       bulkDestroy: [authenticate, userPermissions],
       findByProductId: [authenticate, userPermissions],
+      findByContactId: [authenticate, userPermissions],
       createForProduct: [authenticate, userPermissions],
       updateForProduct: [authenticate, userPermissions],
       deleteForProduct: [authenticate, userPermissions],

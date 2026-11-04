@@ -24,6 +24,7 @@ import {
   type BlingApiInvoice,
 } from "../bling/queues/bling-api-fetch.queue";
 import Contact from "../../../../sales/contacts/contacts.model";
+import { SELLER_CONTACT_TYPES } from "../../../../sales/contacts/contacts.types";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import { ProductAttributes } from "../../../../inventory/products/product.types";
 import Brand from "../../../../inventory/brands/brands.model";
@@ -394,7 +395,8 @@ export class BlingOrderService {
       (await Contact.findOne({
         where: {
           id_system: sellerSystemId,
-          type: "SELLER",
+          // Gerente (SELLER_MANAGER) também é o vendedor do Bling.
+          type: { [Op.in]: SELLER_CONTACT_TYPES },
           integrations_id: integrationId,
         },
         attributes: ["id"],

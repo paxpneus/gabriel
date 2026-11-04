@@ -123,7 +123,8 @@ export class SupplierDiscountRuleService extends BaseService<
     const result = await this.repository.findPaginated(
       params,
       this.queryConfig,
-      { include: SCOPE_INCLUDE },
+      // distinct: sem ele o count soma as linhas do join com as pivôs (regra × lojas × aros), não as regras.
+      { include: SCOPE_INCLUDE, distinct: true },
     );
     return { ...result, data: result.data.map(toDetail) };
   }

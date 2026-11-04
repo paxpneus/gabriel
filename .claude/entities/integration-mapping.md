@@ -41,3 +41,4 @@ Generic `POST/PUT/DELETE` (and bulk variants) return 405 — sync never repoints
 ## Auth
 
 Todas as rotas `[authenticate, userPermissions]`; `integration-mapping` saiu de `EXCLUDED_ROUTES` e resolve a entidade `integration_mappings`, filho de Produtos no `ROLE_PERMISSIONS` (= permissão de Produtos: leitura lista, update troca principal). Escopo por integração nas rotas por produto (acima) — ver `../modules/auth.md`.
+- `GET /api/integration-mapping/contact/:contactId` (`findByContactId`): mappings `CONTACT` do contato, paginados, com `integration { id, name }`; só leitura, mesmo formato do `GET /product/:productId` (CRUD genérico de mapping segue bloqueado, 405).

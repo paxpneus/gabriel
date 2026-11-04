@@ -1,0 +1,51 @@
+import { formatScaled, toScaled } from "../../../../../../shared/utils/normalizers/decimal";
+import {
+  SellerCommissionItemRow,
+  SellerCommissionReportRow,
+  SellerCommissionReportSummary,
+} from "../../../models/seller-commission-report.types";
+
+type DecimalValue = string | number | null | undefined;
+
+const scaled = (value: DecimalValue): bigint => toScaled(value ?? null) ?? 0n;
+const toNumber = (value: bigint): number => Number(formatScaled(value));
+
+/** Uma linha por item do seller report, com a nota de venda do pedido. */
+export function buildReportRows(items: SellerCommissionItemRow[]): SellerCommissionReportRow[] {
+  return items.map((item) => ({
+    order_item_id: item.order_item_id,
+    order_id: item.order_id,
+    store_name: item.store_name,
+    order_date: item.order_date,
+    order_number: item.order_number,
+    invoice_number: item.invoice_number,
+    seller_name: item.seller_name,
+    manager_name: item.manager_names,
+    customer_name: item.customer_name,
+    brand: item.brand,
+    product: item.product_name,
+    sku: item.sku,
+    quantity: toNumber(scaled(item.quantity)),
+    total_value: toNumber(scaled(item.net_total)),
+    commission_base: toNumber(scaled(item.commission_base)),
+    seller_commission_rate: toNumber(scaled(item.commission_rate)),
+    seller_commission_value: toNumber(scaled(item.commission_value)),
+    manager_commission_rate: toNumber(scaled(item.manager_commission_rate)),
+    manager_commission_value: toNumber(scaled(item.manager_commission_value)),
+  }));
+}
+
+/** Resumo somado das linhas (BigInt): totais de comissão de vendedores e de gerentes. */
+export function buildSummary(items: SellerCommissionItemRow[]): SellerCommissionReportSummary {
+  const sum = (pick: (item: SellerCommissionItemRow) => DecimalValue): number =>
+    toNumber(items.reduce((total, item) => total + scaled(pick(item)), 0n));
+
+  return {
+    orders_count: new Set(items.map((item) => item.order_id)).size,
+    items_quantity: sum((item) => item.quantity),
+    total_value: sum((item) => item.net_total),
+    commission_base: sum((item) => item.commission_base),
+    total_seller_commission: sum((item) => item.commission_value),
+    total_manager_commission: sum((item) => item.manager_commission_value),
+  };
+}
