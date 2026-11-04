@@ -5,6 +5,7 @@ import {
   orderDiscountAmountSql,
   orderNetProductsSql,
 } from "../../../sales/orders/order/helpers/discount";
+import { orderInvoicedSql } from "../../../sales/orders/order/helpers/invoiced";
 import supplierDiscountRuleService from "../../../inventory/supplier-discount-rules/supplier-discount-rule.service";
 import { invoiceCancelledSql } from "../../../warehouse/fiscal/invoices/invoice/helpers/custom-filters";
 import { SELLER_CONTACT_TYPES } from "../../../sales/contacts/contacts.types";
@@ -109,6 +110,7 @@ const STOCK_MOVEMENTS_UNIT_BUSINESS_ID = "361b5640-ec04-4b3f-8191-fe3ac5f134c4";
  *    comissao.valor do Bling: commission_base * (commission_rate | manager_commission_rate) / 100,
  *    só a taxa vem de order_items (commission_value de lá não é usado).
  *    A de vendedor é idêntica à de sales_report; a de gerente só existe aqui.
+ *    Pedido não faturado (orderInvoicedSql) fica com as duas = 0.
  *
  * ATENÇÃO / MIGRAÇÃO NECESSÁRIA (mantida de revisão anterior):
  * Esta versão grava tax_commission_allocated e freight_cost_allocated por
@@ -477,6 +479,7 @@ WHERE o.seller_id IS NOT NULL
 
           COALESCE(oi.commission_rate, 0)::numeric  AS commission_rate,
           COALESCE(oi.comission_manager_rate, 0)::numeric AS manager_commission_rate,
+          ${orderInvoicedSql("ord")} AS is_invoiced,
           os.total_products     AS order_total_products,
           ${orderNetProductsSql("ord")} AS order_net_products,
           os.tax_commission     AS order_tax_commission,
@@ -549,9 +552,12 @@ WHERE o.seller_id IS NOT NULL
           ROUND(item_weight * order_computed_icms_value, 2) AS icms_value_allocated,
           ROUND(item_weight * order_tax_commission, 2)      AS tax_commission_allocated,
           ROUND(item_weight * order_freight_cost, 2)        AS freight_cost_allocated,
-          -- Comissão (vendedor e gerente) sobre o preço de venda após o desconto do pedido, igual ao comissao.valor do Bling.
+          -- Comissão (vendedor e gerente) sobre o preço de venda após o desconto do pedido, igual ao comissao.valor do Bling; só pedido faturado gera comissão.
           ROUND(item_weight * order_net_products, 2)        AS commission_base,
-          ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2) AS commission_value
+          CASE
+            WHEN is_invoiced THEN ROUND(ROUND(item_weight * order_net_products, 2) * commission_rate / 100, 2)
+            ELSE 0
+          END                                               AS commission_value
         FROM item_weighted
       ),
 
@@ -578,7 +584,10 @@ WHERE o.seller_id IS NOT NULL
             snapshot_status = 'completed'
             AND BOOL_AND(average_cost_snapshot > 0) OVER (PARTITION BY order_id)
           ) AS is_valid_sale,
-          ROUND(commission_base * manager_commission_rate / 100, 2) AS manager_commission_value
+          CASE
+            WHEN is_invoiced THEN ROUND(commission_base * manager_commission_rate / 100, 2)
+            ELSE 0
+          END AS manager_commission_value
         FROM item_calc
       ),
 
@@ -693,7 +702,9 @@ WHERE o.seller_id IS NOT NULL
   private async applySupplierDiscounts(orderIds: string[]): Promise<string[]> {
     const resolveItems = await sequelize.query<SupplierDiscountResolveItemInput>(
       `
-      SELECT s.order_item_id, s.order_id, cp.brand_id, cp.rim_id, cp.measure_id, s.unit_business_id, s.order_date,
+      -- order_date é só dia: vira meia-noite de Brasília, senão a sessão UTC joga o 1º dia da regra pra fora.
+      SELECT s.order_item_id, s.order_id, cp.brand_id, cp.rim_id, cp.measure_id, s.unit_business_id,
+             (s.order_date::timestamp AT TIME ZONE 'America/Sao_Paulo') AS order_date,
              s.quantity * COALESCE(kc.quantity, 1) AS real_quantity, s.net_total AS gross_total
       FROM seller_sales_order_item_snapshots s
       LEFT JOIN kit_components kc ON kc.product_kit_id = s.product_id
@@ -770,7 +781,8 @@ WHERE o.seller_id IS NOT NULL
       LEFT JOIN products cp ON cp.id = COALESCE(kc.product_component_id, s.product_id)
       JOIN supplier_discount_rules r
         ON r.updated_at >= :since
-        AND s.order_date BETWEEN r.start_date AND r.end_date
+        -- Dia do pedido como meia-noite de Brasília (mesma conversão do applySupplierDiscounts).
+        AND (s.order_date::timestamp AT TIME ZONE 'America/Sao_Paulo') BETWEEN r.start_date AND r.end_date
         AND EXISTS (
           SELECT 1 FROM supplier_discount_unit_businesses x
           WHERE x.supplier_discount_rule_id = r.id AND x.unit_business_id = s.unit_business_id

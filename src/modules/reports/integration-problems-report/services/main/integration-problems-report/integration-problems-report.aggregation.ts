@@ -3,15 +3,11 @@ import {
   ReturnInvoiceCandidateRow,
 } from "../../../../sales-return-report/models/sales-return-report.types";
 import {
-  CommissionInvoiceRow,
-  InvoiceWithoutMovementRow,
-  SellerCommissionWarningReason,
-} from "../../../../seller-commission-report/models/seller-commission-report.types";
-import { exclusionReason } from "../../../../seller-commission-report/services/main/seller-commission-report/seller-commission-report.aggregation";
-import {
   IntegrationProblemRow,
   IntegrationProblemsReport,
   IntegrationProblemType,
+  SaleInvoiceWithoutMovementRow,
+  SaleMovementInvoiceRow,
 } from "../../../models/integration-problems-report.types";
 
 // Ordem das linhas e texto pro leigo de cada problema.
@@ -25,30 +21,30 @@ export const PROBLEM_DESCRIPTIONS: Record<IntegrationProblemType, string> = {
   return_invoice_without_movement: "Nota de devolução sem entrada no estoque",
 };
 
-// Motivos do relatório de comissão que são problema de nota/Kardex; os de pedido (vendedor, custo, situação) ficam lá.
-const SALE_REASON_TO_PROBLEM: Partial<Record<SellerCommissionWarningReason, IntegrationProblemType>> = {
-  movements_without_invoice: "sale_movement_without_invoice",
-  cancelled_invoices_return_without_movement: "cancelled_invoice_return_without_movement",
-  cancelled_invoices_without_return: "cancelled_invoice_without_return",
-  invoices_without_order: "sale_invoice_without_order",
-};
+/** Problema da nota de um movimento de saída, na ordem da cadeia movimento → nota → pedido; null = sem problema. */
+export function saleInvoiceProblem(row: SaleMovementInvoiceRow): IntegrationProblemType | null {
+  if (!row.invoice_id && !row.is_order_adjustment) return "sale_movement_without_invoice";
+  if (row.invoice_cancelled && row.has_return_invoice) return "cancelled_invoice_return_without_movement";
+  if (row.invoice_cancelled) return "cancelled_invoice_without_return";
+  if (!row.order_id) return "sale_invoice_without_order";
+  return null;
+}
 
 const problemRow = (
   problem: IntegrationProblemType,
   fields: Omit<IntegrationProblemRow, "problem" | "description">,
 ): IntegrationProblemRow => ({ problem, description: PROBLEM_DESCRIPTIONS[problem], ...fields });
 
-/** Problemas das saídas: notas dos movimentos (mesma cadeia do relatório de comissão) + notas de venda sem movimento. */
+/** Problemas das saídas: notas dos movimentos de saída do CD21 + notas de venda sem movimento. */
 export function saleProblems(
-  invoices: CommissionInvoiceRow[],
-  withoutMovement: InvoiceWithoutMovementRow[],
+  invoices: SaleMovementInvoiceRow[],
+  withoutMovement: SaleInvoiceWithoutMovementRow[],
 ): IntegrationProblemRow[] {
   const rows: IntegrationProblemRow[] = [];
   for (const invoice of invoices) {
     // Cancelada e devolvida: a saída já foi estornada no Kardex, não é problema.
     if (invoice.invoice_cancelled && invoice.has_return) continue;
-    const reason = exclusionReason(invoice);
-    const problem = reason ? SALE_REASON_TO_PROBLEM[reason] : undefined;
+    const problem = saleInvoiceProblem(invoice);
     if (!problem) continue;
     rows.push(problemRow(problem, {
       invoice_number: invoice.invoice_number,

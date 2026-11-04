@@ -25,6 +25,29 @@ export interface IntegrationProblemRow {
   return_invoice_number: string | null;
 }
 
+/** Uma linha por nota dos movimentos de saída do CD21 (ajuste do CSV = pedido), com o pedido e a devolução da cancelada. */
+export interface SaleMovementInvoiceRow {
+  invoice_id: string | null;
+  invoice_number: string | null;
+  is_order_adjustment: boolean;
+  movement_date: string;
+  invoice_cancelled: boolean;
+  // Cancelada com NF de devolução no sistema (movimentada ou não).
+  has_return_invoice: boolean;
+  return_invoice_number: string | null;
+  // Cancelada com NF de devolução movimentada no Kardex: saída já estornada, não é problema.
+  has_return: boolean;
+  order_id: string | null;
+  order_number: string | null;
+}
+
+/** Nota de saída do CD21 não cancelada emitida no período sem movimento de venda. */
+export interface SaleInvoiceWithoutMovementRow {
+  invoice_number: string | null;
+  emitted_date: string | null;
+  order_number: string | null;
+}
+
 export interface IntegrationProblemsReport {
   filters: {
     start_date: string;

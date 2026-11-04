@@ -12,12 +12,14 @@ const uuidList = (message: string) =>
     .optional()
     .transform((value) => (value === undefined ? undefined : [value].flat()));
 
-// Período e marca (uma ou `brand[]=`) iguais ao stock flow; produto, vendedor e gerente = um id ou vários.
+// Período e marca (uma ou `brand[]=`) iguais ao stock flow; produto, vendedor, gerente, loja e loja de origem = um id ou vários.
 export const SellerCommissionReportQuerySchema = ProductStockFlowQuerySchema.and(
   z.object({
     product_id: uuidList("Produto inválido"),
     seller_id: uuidList("Vendedor inválido"),
     manager_id: uuidList("Gerente inválido"),
+    unit_business_id: uuidList("Loja inválida"),
+    origin_unit_business_id: uuidList("Loja de origem inválida"),
   }),
 );
 
@@ -37,6 +39,8 @@ class SellerCommissionReportController {
       product_id: req.query.product_id,
       seller_id: req.query.seller_id,
       manager_id: req.query.manager_id,
+      unit_business_id: req.query.unit_business_id,
+      origin_unit_business_id: req.query.origin_unit_business_id,
     });
 
     if (!parsed.success) {
@@ -53,6 +57,8 @@ class SellerCommissionReportController {
         productIds: parsed.data.product_id,
         sellerIds: parsed.data.seller_id,
         managerIds: parsed.data.manager_id,
+        unitBusinessIds: parsed.data.unit_business_id,
+        originUnitBusinessIds: parsed.data.origin_unit_business_id,
       });
       return res.json(report);
     } catch (error: any) {

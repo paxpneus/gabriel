@@ -254,3 +254,18 @@ describe("IntegrationMappingService.updateForProduct — escopo, validação e t
     expect(enqueue).toHaveBeenCalledWith("tecinco", "200", queues);
   });
 });
+
+describe("IntegrationMappingService.findByContactId", () => {
+  it("busca só os mappings CONTACT do contato, com a integração", async () => {
+    const service = new IntegrationMappingService();
+    const findPaginated = jest
+      .spyOn((service as any).repository, "findPaginated")
+      .mockResolvedValue({ data: [], meta: {} } as never);
+
+    await service.findByContactId({ page: 1, perPage: 20 } as any, "contact-1");
+
+    const [, , options, forcedWhere] = findPaginated.mock.calls[0] as any[];
+    expect(forcedWhere).toEqual({ entity_type: "CONTACT", internal_id: "contact-1" });
+    expect(options.include[0]).toMatchObject({ as: "integration", attributes: ["id", "name"] });
+  });
+});

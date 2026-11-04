@@ -3,6 +3,8 @@
 `src/modules/inventory/supplier-discount-rules/`
 
 - Scope: 4 pivot tables (`ruleBrands`/`ruleRims`/`ruleMeasures`/`ruleUnitBusinesses`). Empty axis = wildcard (matches anything), except `unit_business_ids` — can never be empty (validated at runtime in `createOrUpdate`, "loja não é um eixo curinga"). `resolveForItems`/`matchBatch` (`supplier-discount-rule.repository.ts`) is the matching engine that decides which order items get the discount — same matching reused read-only from Invoices, see `invoice/supplier-discount/filter.md`'s filter entry.
+- Datas no matching: app conecta em UTC. `matchBatch`/`matchRealRulesIgnoringUnitBusiness` recebem as datas como `timestamptz[]` (`timestamp[]` descartava o offset → 3h de deslocamento). Snapshots dos relatórios guardam `order_date` só como dia (`date`): `applySupplierDiscounts` e `findOrderIdsAffectedBySupplierDiscountRuleChanges` (sales + seller report) convertem pra meia-noite de Brasília (`order_date::timestamp AT TIME ZONE 'America/Sao_Paulo'`) — sem isso o 1º dia da regra ficava sem desconto e o dia seguinte ao fim entrava.
+- Index (`paginateDetailed`) includes the 4 pivots (hasMany) → needs `distinct: true` in `findAndCountAll`, otherwise `meta.total` counts join rows (rule × stores × rims) instead of rules and pagination shows phantom empty pages.
 
 ## `name` column (`m278`/`m279`)
 

@@ -6,13 +6,13 @@ Dois relatórios novos, só leitura, e uma mudança no relatório de devolução
 2. **Problemas de integração**: `GET /api/integration-problems-report`
 3. **Relatório de devolução**: `GET /api/sales-return-report`. Os avisos passam a vir só com a contagem.
 
-Todas as rotas exigem autenticação e a permissão `financial-pdt`, a mesma dos relatórios de faturado e de devolução. Os dados são só da Loja 21 (CD21). Não há paginação: a resposta traz tudo do período.
+Todas as rotas exigem autenticação e a permissão `financial-pdt`, a mesma dos relatórios de faturado e de devolução. A comissão é de todas as lojas; os relatórios de problemas de integração e de devolução são só da Loja 21 (CD21). Não há paginação: a resposta traz tudo do período.
 
 ---
 
 ## Regras comuns
 
-**Período.** `start_date` e `end_date` são obrigatórios, no formato `YYYY-MM-DD`, e os dois dias entram inteiros (horário de Brasília). O período é aplicado à **data da saída no estoque**, não à data do pedido. Um pedido de setembro com nota que saiu em 1º de outubro aparece em outubro.
+**Período.** `start_date` e `end_date` são obrigatórios, no formato `YYYY-MM-DD`, e os dois dias entram inteiros (horário de Brasília). Na comissão, o período é aplicado à **data do pedido**, igual ao relatório de vendedores: um pedido de 29/09 com nota emitida em 05/10 aparece em setembro. Nos relatórios de problemas de integração e de devolução, o período é aplicado à **data da saída no estoque**.
 
 **Listas.** Os filtros que aceitam mais de um valor podem ser enviados uma vez (`seller_id=uuid`) ou repetidos (`seller_id[]=uuid1&seller_id[]=uuid2`).
 
@@ -31,7 +31,11 @@ As mensagens do `400` já estão em português e podem ser exibidas como estão.
 
 ## 1. Comissão de vendedor: `GET /api/seller-commission-report`
 
-Traz a comissão de vendedor e a de gerente por item vendido, com o total de cada uma. Entram as vendas cuja nota teve saída no estoque do CD21 no período e cujo pedido tem vendedor. Venda de marketplace ("Vendedor 0") não entra.
+Traz a comissão de vendedor e a de gerente por item vendido, com o total de cada uma. A base é a mesma do relatório de vendedores (`/api/seller-report`): pedidos com vendedor pela data do pedido, só vendas válidas (com custo e não canceladas). Venda de marketplace ("Vendedor 0") não entra.
+
+Só entram os pedidos **faturados no Bling**: situação Atendido, Enviado ou Entregue **e** com nota fiscal de venda vinculada e não cancelada. Os outros pedidos do período aparecem só na contagem de `warnings`.
+
+**Comissão só de pedido faturado, em todos os relatórios.** A mesma regra vale para o relatório de vendedores e para o relatório de vendas: pedido em aberto, ou em situação final ainda sem nota de venda, continua contando como venda (valor, quantidade, ticket), mas com comissão de vendedor e de gerente **0**. Quando o pedido é faturado, a comissão aparece no próximo processamento dos relatórios.
 
 ### Parâmetros
 
@@ -43,36 +47,82 @@ Traz a comissão de vendedor e a de gerente por item vendido, com o total de cad
 | `product_id` | não | UUID, um ou vários | Produto |
 | `seller_id` | não | UUID, um ou vários | Vendedor: o mesmo id de vendedor usado no relatório de vendedores |
 | `manager_id` | não | UUID, um ou vários | Gerente: id do **contato** do tipo `SELLER_MANAGER` (ver "Quem é o gerente" abaixo). Filtra as vendas da loja desse gerente |
+| `unit_business_id` | não | UUID, um ou vários | Loja do pedido (a mesma de `store_name`) |
+| `origin_unit_business_id` | não | UUID, um ou vários | Loja de origem gravada na nota de venda. Quase sempre é a loja do pedido; pedido sem nota não tem loja de origem e some com esse filtro (também dos `warnings`) |
 
-Com `brand` e `product_id` juntos, entram só os produtos que atendem aos dois.
+Com `brand` e `product_id` juntos, entram só os produtos que atendem aos dois. Com `manager_id` e `unit_business_id` juntos, entram só as lojas que atendem aos dois. Todos os filtros valem também para a contagem de `warnings`.
 
 ### Quem é o gerente
 
 O gerente é um contato (`/api/contacts`) com `type = "SELLER_MANAGER"` e com a loja dele em `unit_business_id`. Ele ganha a comissão de gerente de **todas as vendas com vendedor da loja dele**, inclusive as que ele mesmo vendeu: 30 vendas de vendedores na Loja 15 dão comissão de gerente das 30 para o gerente da Loja 15.
 
-Para tornar um vendedor gerente, atualizar o contato pela rota de edição de contatos que já existe:
+#### Rotas de contatos
+
+Todas exigem autenticação e permissão na tela de contatos.
+
+| Rota | O que faz |
+|---|---|
+| `GET /api/contacts` | Lista paginada (`page`, `perPage`, `search` busca por nome). Filtros por campo: `filters[type]=SELLER_MANAGER` lista os gerentes; `filters[unit_business_id]=uuid` lista os contatos da loja |
+| `GET /api/contacts/:id` | Um contato |
+| `POST /api/contacts` | Cria um contato |
+| `PUT /api/contacts/:id` | Edita um contato (usar para marcar o gerente) |
+| `DELETE /api/contacts/:id` | Remove um contato |
+| `GET /api/integration-mapping/contact/:id` | Códigos do contato em cada integração (ver abaixo) |
+
+Para tornar um vendedor gerente:
 
 ```http
 PUT /api/contacts/:id
 { "type": "SELLER_MANAGER", "unit_business_id": "uuid-da-loja" }
 ```
 
-Para voltar a ser só vendedor, mandar `"type": "SELLER"`. O gerente continua sendo vendedor: as vendas que ele fizer no Bling continuam com ele como vendedor. A lista de gerentes para o filtro sai da listagem de contatos com tipo `SELLER_MANAGER`.
+A loja do gerente deve ser a mesma do cadastro desse vendedor no Bling: quando o cadastro do vendedor muda no Bling, a sincronização regrava `unit_business_id` com a loja de lá (ou vazio, se ele não tiver loja). O `type` nunca é sobrescrito.
+
+Para voltar a ser só vendedor, mandar `"type": "SELLER"`. O gerente continua sendo vendedor: as vendas que ele fizer no Bling continuam com ele como vendedor. A lista de gerentes para o filtro sai de `GET /api/contacts?filters[type]=SELLER_MANAGER`.
+
+#### Mapeamentos do contato: `GET /api/integration-mapping/contact/:id`
+
+Códigos do vendedor/gerente em cada integração (por exemplo, o id dele no Bling e na Tecinco). Só leitura: os mapeamentos são criados pela sincronização. Aceita `page` e `perPage`; `:id` que não é UUID volta `400`.
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "entity_type": "CONTACT",
+      "internal_id": "uuid-do-contato",
+      "integrations_id": "uuid",
+      "external_id": "15596862610",
+      "is_primary": true,
+      "erp_data": null,
+      "createdAt": "2026-09-17T22:30:12.004Z",
+      "updatedAt": "2026-09-17T22:30:12.004Z",
+      "integration": { "id": "uuid", "name": "Bling" }
+    }
+  ],
+  "meta": { "total": 2, "page": 1, "perPage": 20, "totalPages": 1, "hasNext": false, "hasPrev": false }
+}
+```
+
+`external_id` é o código do contato naquela integração; `integration.name` é o nome a exibir.
 
 Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-10-31&seller_id=uuid`
 
 ### Resposta
+
+`filters` repete os filtros recebidos (`null` quando não veio). O campo `stock_unit_business_id` saiu: a comissão não depende mais do estoque do CD21.
 
 ```json
 {
   "filters": {
     "start_date": "2026-10-01",
     "end_date": "2026-10-31",
-    "unit_business_id": "uuid",
     "brand": null,
     "product_id": null,
     "seller_id": ["uuid"],
-    "manager_id": null
+    "manager_id": null,
+    "unit_business_id": null,
+    "origin_unit_business_id": null
   },
   "rows": [
     {
@@ -82,7 +132,6 @@ Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-
       "order_date": "2026-09-23",
       "order_number": "20503",
       "invoice_number": "019458",
-      "movement_date": "2026-10-01",
       "seller_name": "Carolina Nascimento A.",
       "manager_name": "Gerente A, Gerente B",
       "customer_name": "ELAINE CRISTINA FERREIRA DOS SANTOS",
@@ -107,12 +156,9 @@ Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-
     "total_manager_commission": 4198.19
   },
   "warnings": {
-    "invoices_without_movement": 1,
-    "cancelled_invoices_return_without_movement": 2,
-    "cancelled_invoices_without_return": 1,
-    "orders_not_in_seller_report": 0,
-    "orders_missing_cost": 0,
-    "orders_not_completed": 0
+    "orders_open": 3,
+    "orders_final_without_invoice": 1,
+    "orders_missing_cost": 0
   }
 }
 ```
@@ -124,10 +170,9 @@ Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-
 | `order_item_id` | UUID | Id do item; usar como chave da linha |
 | `order_id` | UUID | Id do pedido; vários itens do mesmo pedido repetem o valor |
 | `store_name` | texto ou `null` | Loja da venda |
-| `order_date` | `YYYY-MM-DD` | Data do pedido |
+| `order_date` | `YYYY-MM-DD` | Data do pedido (é a data que o período filtra) |
 | `order_number` | texto ou `null` | Número do pedido |
-| `invoice_number` | texto ou `null` | Número da nota de venda |
-| `movement_date` | `YYYY-MM-DD` ou `null` | Data da saída no estoque (é a data que o período filtra) |
+| `invoice_number` | texto | Número da nota de venda (todo pedido da comissão tem nota) |
 | `seller_name` | texto ou `null` | Vendedor |
 | `manager_name` | texto ou `null` | Gerente(s) da loja da venda (contatos `SELLER_MANAGER` daquela loja). Com mais de um gerente, os nomes vêm juntos, separados por `, `. `null` quando a loja não tem gerente cadastrado; mesmo assim a comissão de gerente vem calculada |
 | `customer_name` | texto ou `null` | Cliente |
@@ -159,22 +204,13 @@ As linhas vêm ordenadas por data do pedido e número do pedido.
 
 ### `warnings`: só contagem
 
-Quantas **vendas com vendedor** (as que deveriam entrar na comissão) ficaram fora do relatório, por motivo. Cada nota conta em um motivo só. Venda sem vendedor identificável não conta em nenhum aviso: marketplace ("Vendedor 0"), nota sem pedido no sistema e saída com nota inexistente. Essas aparecem só no relatório de problemas de integração (seção 2), que lista tudo. Aqui vêm só os números.
+Quantos pedidos do relatório de vendedores no período, com os mesmos filtros, ficaram fora da comissão, por motivo. Pedido cancelado não conta. Os problemas de nota fiscal × estoque (nota sem saída, cancelada sem devolução etc.) saíram daqui: estão no relatório de problemas de integração (seção 2), que lista tudo.
 
-Com filtro de vendedor ou de gerente, a contagem considera só as vendas desse vendedor ou das lojas desse gerente.
-
-Sugestão de texto para a tela:
-
-| Campo | Texto sugerido |
-|---|---|
-| `invoices_without_movement` | Notas de venda sem saída no estoque |
-| `cancelled_invoices_return_without_movement` | Notas canceladas com devolução no sistema, mas sem entrada da devolução no estoque |
-| `cancelled_invoices_without_return` | Notas canceladas sem devolução e com a saída ainda ativa no estoque |
-| `orders_not_in_seller_report` | Pedidos ainda não processados pelo relatório de vendedores |
-| `orders_missing_cost` | Pedidos com produto sem custo médio |
-| `orders_not_completed` | Pedidos não concluídos |
-
-Nota cancelada que já tem a devolução lançada no estoque não é aviso: ela simplesmente não aparece.
+| Campo | O que conta | Texto sugerido |
+|---|---|---|
+| `orders_open` | Pedido Em aberto no Bling. Conta como venda no relatório de vendedores, sem comissão | Pedidos em aberto no Bling (sem comissão até faturar) |
+| `orders_final_without_invoice` | Pedido Atendido, Enviado ou Entregue no Bling, mas sem nota de venda vinculada no sistema | Pedidos finalizados no Bling ainda sem nota fiscal de venda |
+| `orders_missing_cost` | Pedido com produto sem custo médio. Não entra no relatório de vendedores | Pedidos com produto sem custo médio |
 
 ---
 
@@ -260,7 +296,7 @@ A mesma situação pode aparecer em duas linhas, uma de cada lado. Exemplo: a no
 
 ### `summary`
 
-Quantidade de linhas por código, sempre com todos os códigos presentes (zero quando não há), e `total` com a soma. Ele lista todas as notas, inclusive marketplace e notas sem pedido, então os números de venda são maiores que os `warnings` do relatório de comissão, que contam só vendas com vendedor. Os de devolução batem com os `warnings` do relatório de devolução sem filtros.
+Quantidade de linhas por código, sempre com todos os códigos presentes (zero quando não há), e `total` com a soma. Ele lista todas as notas, inclusive marketplace e notas sem pedido. Os de devolução batem com os `warnings` do relatório de devolução sem filtros.
 
 ---
 

@@ -3,11 +3,10 @@ import {
   returnProblems,
   saleProblems,
 } from "../services/main/integration-problems-report/integration-problems-report.aggregation";
-import { CommissionInvoiceRow } from "../../seller-commission-report/models/seller-commission-report.types";
+import { SaleMovementInvoiceRow } from "../models/integration-problems-report.types";
 import { SalesReturnLineRow } from "../../sales-return-report/models/sales-return-report.types";
 
-const invoice = (overrides: Partial<CommissionInvoiceRow> = {}): CommissionInvoiceRow => ({
-  invoice_key: "inv-1",
+const invoice = (overrides: Partial<SaleMovementInvoiceRow> = {}): SaleMovementInvoiceRow => ({
   invoice_id: "inv-1",
   invoice_number: "1001",
   is_order_adjustment: false,
@@ -18,12 +17,6 @@ const invoice = (overrides: Partial<CommissionInvoiceRow> = {}): CommissionInvoi
   return_invoice_number: null,
   order_id: "o1",
   order_number: "P1",
-  seller_id: "s1",
-  unit_business_id: "ub-1",
-  has_seller: true,
-  snapshot_items: 1,
-  has_cost_data: true,
-  is_valid_sale: true,
   ...overrides,
 });
 
@@ -51,18 +44,17 @@ const returnLine = (overrides: Partial<SalesReturnLineRow> = {}): SalesReturnLin
 });
 
 describe("saleProblems", () => {
-  it("só os problemas de nota/Kardex; venda ok, cancelada devolvida e problemas de pedido ficam fora", () => {
+  it("só os problemas de nota/Kardex; venda ok e cancelada devolvida ficam fora", () => {
     const rows = saleProblems(
       [
         invoice(),
         invoice({ invoice_number: "1002", invoice_cancelled: true, has_return_invoice: true, has_return: true }),
-        invoice({ invoice_number: "1003", has_seller: false }),
         invoice({ invoice_number: "1004", invoice_id: null }),
         invoice({ invoice_number: "1005", invoice_cancelled: true, has_return_invoice: true, return_invoice_number: "900" }),
         invoice({ invoice_number: "1006", invoice_cancelled: true }),
         invoice({ invoice_number: "1007", order_id: null, order_number: null }),
       ],
-      [{ invoice_number: "1008", emitted_date: "2026-10-02", order_id: "o8", order_number: "P8", seller_id: null, unit_business_id: null, has_seller: false }],
+      [{ invoice_number: "1008", emitted_date: "2026-10-02", order_number: "P8" }],
     );
 
     expect(rows.map((row) => [row.problem, row.invoice_number])).toEqual([

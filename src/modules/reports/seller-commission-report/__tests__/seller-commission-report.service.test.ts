@@ -2,12 +2,6 @@ import { SellerCommissionReportService } from "../services/main/seller-commissio
 import productService from "../../../inventory/products/services/product.service";
 import contactService from "../../../sales/contacts/contacts.service";
 
-jest.mock("../../../company/unit-business/unit-business.service", () => ({
-  __esModule: true,
-  CD21_UNIT_BUSINESS_NUMBER: "21",
-  default: { findOne: jest.fn().mockResolvedValue({ id: "ub-21" }) },
-}));
-
 jest.mock("../../../inventory/products/services/product.service", () => ({
   __esModule: true,
   default: { findAll: jest.fn() },
@@ -19,68 +13,62 @@ jest.mock("../../../sales/contacts/contacts.service", () => ({
 }));
 
 describe("SellerCommissionReportService", () => {
+  const warnings = { orders_open: 2, orders_final_without_invoice: 1, orders_missing_cost: 0 };
   const repository = {
-    findSaleMovementIds: jest.fn(),
-    findInvoicesWithoutMovement: jest.fn(),
-    findMovementInvoices: jest.fn(),
     findCommissionRows: jest.fn(),
+    countOrderWarnings: jest.fn(),
   };
   const service = new SellerCommissionReportService(repository as any);
 
   beforeEach(() => {
     jest.clearAllMocks();
-    repository.findSaleMovementIds.mockResolvedValue(["m1"]);
-    repository.findInvoicesWithoutMovement.mockResolvedValue([]);
-    repository.findMovementInvoices.mockResolvedValue([
-      {
-        invoice_key: "inv-1", invoice_id: "inv-1", invoice_number: "1001", is_order_adjustment: false,
-        movement_date: "2026-10-05", invoice_cancelled: false, has_return_invoice: false, has_return: false, return_invoice_number: null, order_id: "o1", order_number: "P1",
-        seller_id: "s1", unit_business_id: "ub-1", has_seller: true, snapshot_items: 1,
-        has_cost_data: true, is_valid_sale: true,
-      },
-    ]);
     repository.findCommissionRows.mockResolvedValue([]);
+    repository.countOrderWarnings.mockResolvedValue(warnings);
     (productService.findAll as jest.Mock).mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
   });
 
-  it("busca as saídas do CD21 no período (dia inteiro em Brasília) e os itens só dos pedidos que entraram", async () => {
-    const report = await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31" });
+  it("busca linhas e avisos pelo período do pedido, com os mesmos filtros", async () => {
+    const report = await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31", sellerIds: ["s1"] });
 
-    const [unitBusinessId, start, end, productIds] = repository.findSaleMovementIds.mock.calls[0];
-    expect(unitBusinessId).toBe("ub-21");
-    expect(start.toISOString()).toBe("2026-10-01T03:00:00.000Z");
-    expect(end.toISOString()).toBe("2026-11-01T02:59:59.999Z");
-    expect(productIds).toBeUndefined();
-    expect(repository.findMovementInvoices).toHaveBeenCalledWith(["m1"]);
-    expect(repository.findCommissionRows).toHaveBeenCalledWith(["o1"], {
-      productIds: undefined,
-      sellerIds: undefined,
-    });
+    const filters = { startDate: "2026-10-01", endDate: "2026-10-31", productIds: undefined, sellerIds: ["s1"], unitBusinessIds: undefined, originUnitBusinessIds: undefined };
+    expect(repository.findCommissionRows).toHaveBeenCalledWith(filters);
+    expect(repository.countOrderWarnings).toHaveBeenCalledWith(filters);
     expect(contactService.findAll).not.toHaveBeenCalled();
-    expect(report.filters).toMatchObject({ unit_business_id: "ub-21", seller_id: null, manager_id: null });
+    expect(report.warnings).toEqual(warnings);
+    expect(report.filters).toEqual({
+      start_date: "2026-10-01", end_date: "2026-10-31", brand: null, product_id: null,
+      seller_id: ["s1"], manager_id: null, unit_business_id: null, origin_unit_business_id: null,
+    });
   });
 
-  it("marca e produto viram a interseção de product_id, nos movimentos e nas linhas", async () => {
+  it("marca e produto viram a interseção de product_id", async () => {
     await service.getReport({
       startDate: "2026-10-01",
       endDate: "2026-10-31",
       brands: ["Marca Y"],
       productIds: ["p2", "p3"],
     });
-    expect(repository.findSaleMovementIds.mock.calls[0][3]).toEqual(["p2"]);
-    expect(repository.findInvoicesWithoutMovement.mock.calls[0][3]).toEqual(["p2"]);
-    expect(repository.findCommissionRows.mock.calls[0][1].productIds).toEqual(["p2"]);
+    expect(repository.findCommissionRows.mock.calls[0][0].productIds).toEqual(["p2"]);
+    expect(repository.countOrderWarnings.mock.calls[0][0].productIds).toEqual(["p2"]);
   });
 
-  it("gerente (contato SELLER_MANAGER) vira a loja dele; pedido de outra loja não entra", async () => {
+  it("gerente (contato SELLER_MANAGER) vira a loja dele", async () => {
     (contactService.findAll as jest.Mock).mockResolvedValue([{ unit_business_id: "ub-9" }, { unit_business_id: null }]);
-    await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31", managerIds: ["c1"], sellerIds: ["s1"] });
+    await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31", managerIds: ["c1"] });
 
     expect((contactService.findAll as jest.Mock).mock.calls[0][0].where.type).toBe("SELLER_MANAGER");
-    expect(repository.findCommissionRows).toHaveBeenCalledWith([], {
-      productIds: undefined,
-      sellerIds: ["s1"],
-      unitBusinessIds: ["ub-9"],
+    expect(repository.findCommissionRows.mock.calls[0][0].unitBusinessIds).toEqual(["ub-9"]);
+  });
+
+  it("loja e gerente juntos ficam com a interseção das lojas", async () => {
+    (contactService.findAll as jest.Mock).mockResolvedValue([{ unit_business_id: "ub-1" }, { unit_business_id: "ub-9" }]);
+    await service.getReport({
+      startDate: "2026-10-01",
+      endDate: "2026-10-31",
+      managerIds: ["c1"],
+      unitBusinessIds: ["ub-1", "ub-2"],
     });
+
+    expect(repository.findCommissionRows.mock.calls[0][0].unitBusinessIds).toEqual(["ub-1"]);
   });
 });
