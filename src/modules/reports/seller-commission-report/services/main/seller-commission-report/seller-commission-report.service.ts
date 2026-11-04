@@ -1,4 +1,5 @@
 import { Op } from "sequelize";
+import unitBusinessGroupMemberService from "../../../../../company/unit-business-groups/unit-business-group-member/unit-business-group-member.service";
 import productService from "../../../../../inventory/products/services/product.service";
 import contactService from "../../../../../sales/contacts/contacts.service";
 import { SELLER_MANAGER_CONTACT_TYPE } from "../../../../../sales/contacts/contacts.types";
@@ -40,15 +41,25 @@ export class SellerCommissionReportService {
       unitBusinessIds: params.unitBusinessIds?.length ? params.unitBusinessIds : undefined,
       originUnitBusinessIds: params.originUnitBusinessIds?.length ? params.originUnitBusinessIds : undefined,
     };
-    // Gerente (contato SELLER_MANAGER) filtra pela loja dele (contacts.unit_business_id); com filtro de loja junto, fica a interseção.
+    // Gerente (contato SELLER_MANAGER) filtra pela loja dele + lojas do grupo do regional; com filtro de loja junto, fica a interseção.
     if (params.managerIds?.length) {
       const managers = await contactService.findAll({
         where: { id: { [Op.in]: params.managerIds }, type: SELLER_MANAGER_CONTACT_TYPE },
-        attributes: ["unit_business_id"],
+        attributes: ["unit_business_id", "unit_business_group_id"],
       });
       const managerUnitBusinessIds = managers
         .map((manager) => manager.unit_business_id)
         .filter((unitBusinessId): unitBusinessId is string => !!unitBusinessId);
+      const groupIds = managers
+        .map((manager) => manager.unit_business_group_id)
+        .filter((groupId): groupId is string => !!groupId);
+      if (groupIds.length) {
+        const members = await unitBusinessGroupMemberService.findAll({
+          where: { unit_business_group_id: { [Op.in]: groupIds } },
+          attributes: ["unit_business_id"],
+        });
+        managerUnitBusinessIds.push(...members.map((member) => member.unit_business_id));
+      }
       filters.unitBusinessIds = filters.unitBusinessIds
         ? filters.unitBusinessIds.filter((id) => managerUnitBusinessIds.includes(id))
         : managerUnitBusinessIds;

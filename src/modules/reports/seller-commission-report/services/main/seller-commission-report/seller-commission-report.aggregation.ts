@@ -32,20 +32,31 @@ export function buildReportRows(items: SellerCommissionItemRow[]): SellerCommiss
     seller_commission_value: toNumber(scaled(item.commission_value)),
     manager_commission_rate: toNumber(scaled(item.manager_commission_rate)),
     manager_commission_value: toNumber(scaled(item.manager_commission_value)),
+    regional_manager_name: item.regional_manager_names,
+    regional_manager_commission_rate: toNumber(scaled(item.regional_manager_commission_rate)),
+    regional_manager_commission_value: toNumber(scaled(item.regional_manager_commission_value)),
   }));
 }
 
-/** Resumo somado das linhas (BigInt): totais de comissão de vendedores e de gerentes. */
+/** Resumo somado das linhas (BigInt): totais de comissão de vendedores, gerentes de loja, gerentes regionais e o total dos três. */
 export function buildSummary(items: SellerCommissionItemRow[]): SellerCommissionReportSummary {
-  const sum = (pick: (item: SellerCommissionItemRow) => DecimalValue): number =>
-    toNumber(items.reduce((total, item) => total + scaled(pick(item)), 0n));
+  const sumScaled = (pick: (item: SellerCommissionItemRow) => DecimalValue): bigint =>
+    items.reduce((total, item) => total + scaled(pick(item)), 0n);
+  const sum = (pick: (item: SellerCommissionItemRow) => DecimalValue): number => toNumber(sumScaled(pick));
+
+  const sellerCommission = sumScaled((item) => item.commission_value);
+  const managerCommission = sumScaled((item) => item.manager_commission_value);
+  const regionalCommission = sumScaled((item) => item.regional_manager_commission_value);
 
   return {
     orders_count: new Set(items.map((item) => item.order_id)).size,
     items_quantity: sum((item) => item.quantity),
     total_value: sum((item) => item.net_total),
     commission_base: sum((item) => item.commission_base),
-    total_seller_commission: sum((item) => item.commission_value),
-    total_manager_commission: sum((item) => item.manager_commission_value),
+    total_seller_commission: toNumber(sellerCommission),
+    total_manager_commission: toNumber(managerCommission),
+    total_regional_manager_commission: toNumber(regionalCommission),
+    // Total pago de comissão: vendedor + gerente da loja + regional.
+    total_commission: toNumber(sellerCommission + managerCommission + regionalCommission),
   };
 }

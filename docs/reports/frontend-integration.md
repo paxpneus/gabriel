@@ -5,6 +5,7 @@ Dois relatórios novos, só leitura, e uma mudança no relatório de devolução
 1. **Comissão de vendedor**: `GET /api/seller-commission-report`
 2. **Problemas de integração**: `GET /api/integration-problems-report`
 3. **Relatório de devolução**: `GET /api/sales-return-report`. Os avisos passam a vir só com a contagem.
+4. **Relatório de vendedores**: `GET /api/seller-report`. Comissão de gerente só de loja com gerente e comissão dos gerentes regionais.
 
 Todas as rotas exigem autenticação e a permissão `financial-pdt`, a mesma dos relatórios de faturado e de devolução. A comissão é de todas as lojas; os relatórios de problemas de integração e de devolução são só da Loja 21 (CD21). Não há paginação: a resposta traz tudo do período.
 
@@ -46,7 +47,7 @@ Só entram os pedidos **faturados no Bling**: situação Atendido, Enviado ou En
 | `brand` | não | texto, um ou vários | Marca do produto (mesmo texto do filtro de marca do relatório de devolução) |
 | `product_id` | não | UUID, um ou vários | Produto |
 | `seller_id` | não | UUID, um ou vários | Vendedor: o mesmo id de vendedor usado no relatório de vendedores |
-| `manager_id` | não | UUID, um ou vários | Gerente: id do **contato** do tipo `SELLER_MANAGER` (ver "Quem é o gerente" abaixo). Filtra as vendas da loja desse gerente |
+| `manager_id` | não | UUID, um ou vários | Gerente: id do **contato** do tipo `SELLER_MANAGER` (ver "Quem é o gerente" abaixo). Filtra as vendas da loja desse gerente e, se ele for gerente regional, também das lojas do grupo dele |
 | `unit_business_id` | não | UUID, um ou vários | Loja do pedido (a mesma de `store_name`) |
 | `origin_unit_business_id` | não | UUID, um ou vários | Loja de origem gravada na nota de venda. Quase sempre é a loja do pedido; pedido sem nota não tem loja de origem e some com esse filtro (também dos `warnings`) |
 
@@ -54,7 +55,20 @@ Com `brand` e `product_id` juntos, entram só os produtos que atendem aos dois. 
 
 ### Quem é o gerente
 
-O gerente é um contato (`/api/contacts`) com `type = "SELLER_MANAGER"` e com a loja dele em `unit_business_id`. Ele ganha a comissão de gerente de **todas as vendas com vendedor da loja dele**, inclusive as que ele mesmo vendeu: 30 vendas de vendedores na Loja 15 dão comissão de gerente das 30 para o gerente da Loja 15.
+O gerente é um contato (`/api/contacts`) com `type = "SELLER_MANAGER"` e com a loja dele em `unit_business_id`. Ele ganha a comissão de gerente de **todas as vendas com vendedor da loja dele**, inclusive as que ele mesmo vendeu: 30 vendas de vendedores na Loja 15 dão comissão de gerente das 30 para o gerente da Loja 15. Loja sem gerente cadastrado (ex.: Loja 21, Site) tem comissão de gerente **0**: ninguém recebe.
+
+### Gerente regional
+
+Gerente regional é um contato `SELLER_MANAGER` ligado a um **grupo de lojas** (`unit_business_group_id`, grupos de `/api/unit-business-group`). Ele ganha a comissão de gerente de todas as vendas das lojas do grupo, **a mais**: a comissão do gerente de cada loja continua igual. A taxa e o valor são os mesmos da comissão de gerente do item. Exemplo: gerente regional ligado ao grupo "Paraná" (lojas 11, 13, 16, 17, 20 e 24) ganha a comissão de gerente de cada venda dessas lojas, e o gerente da Loja 11 continua ganhando a dele. O regional ganha mesmo em loja do grupo sem gerente de loja (ex.: Loja 20): lá só ele recebe.
+
+```http
+PUT /api/contacts/:id
+{ "type": "SELLER_MANAGER", "unit_business_group_id": "uuid-do-grupo" }
+```
+
+Para deixar de ser regional, mandar `"unit_business_group_id": null`. O mesmo contato pode ser gerente de uma loja (`unit_business_id`) e regional de um grupo ao mesmo tempo: ele ganha a comissão de gerente **uma vez por loja**, somando a loja dele e as do grupo. Gerente da Loja 01 com grupo 03, 04, 05 ganha pelas lojas 01, 03, 04 e 05. Gerente da Loja 01 com grupo 01, 02, 03 ganha pelas lojas 01, 02 e 03; na Loja 01 ele aparece só em `manager_name` (não em `regional_manager_name`), sem receber duas vezes.
+
+Um regional pode não ser vendedor no Bling (ex.: Marcos Orlando, Regional 2): o contato não tem integração e `GET /api/integration-mapping/contact/:id` vem com `data` vazio.
 
 #### Rotas de contatos
 
@@ -62,12 +76,13 @@ Todas exigem autenticação e permissão na tela de contatos.
 
 | Rota | O que faz |
 |---|---|
-| `GET /api/contacts` | Lista paginada (`page`, `perPage`, `search` busca por nome). Filtros por campo: `filters[type]=SELLER_MANAGER` lista os gerentes; `filters[unit_business_id]=uuid` lista os contatos da loja |
+| `GET /api/contacts` | Lista paginada (`page`, `perPage`, `search` busca por nome). Filtros por campo: `filters[type]=SELLER_MANAGER` lista os gerentes; `filters[unit_business_id]=uuid` lista os contatos da loja; `filters[unit_business_group_id]=uuid` lista os gerentes regionais do grupo. Cada contato traz `unit_business_group_id` (`null` se não é regional) |
 | `GET /api/contacts/:id` | Um contato |
 | `POST /api/contacts` | Cria um contato |
 | `PUT /api/contacts/:id` | Edita um contato (usar para marcar o gerente) |
 | `DELETE /api/contacts/:id` | Remove um contato |
 | `GET /api/integration-mapping/contact/:id` | Códigos do contato em cada integração (ver abaixo) |
+| `GET /api/unit-business-group` | Grupos de lojas, para escolher o grupo do gerente regional (`GET /api/unit-business-group/:id` traz as lojas do grupo em `unitBusinesses`) |
 
 Para tornar um vendedor gerente:
 
@@ -144,7 +159,10 @@ Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-
       "seller_commission_rate": 0.5,
       "seller_commission_value": 3.78,
       "manager_commission_rate": 0.5,
-      "manager_commission_value": 3.78
+      "manager_commission_value": 3.78,
+      "regional_manager_name": "Gerente Regional",
+      "regional_manager_commission_rate": 0.5,
+      "regional_manager_commission_value": 3.78
     }
   ],
   "summary": {
@@ -153,7 +171,9 @@ Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-
     "total_value": 870185.43,
     "commission_base": 867680.06,
     "total_seller_commission": 4198.19,
-    "total_manager_commission": 4198.19
+    "total_manager_commission": 4198.19,
+    "total_regional_manager_commission": 1520.4,
+    "total_commission": 9916.78
   },
   "warnings": {
     "orders_open": 3,
@@ -174,7 +194,7 @@ Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-
 | `order_number` | texto ou `null` | Número do pedido |
 | `invoice_number` | texto | Número da nota de venda (todo pedido da comissão tem nota) |
 | `seller_name` | texto ou `null` | Vendedor |
-| `manager_name` | texto ou `null` | Gerente(s) da loja da venda (contatos `SELLER_MANAGER` daquela loja). Com mais de um gerente, os nomes vêm juntos, separados por `, `. `null` quando a loja não tem gerente cadastrado; mesmo assim a comissão de gerente vem calculada |
+| `manager_name` | texto ou `null` | Gerente(s) da loja da venda (contatos `SELLER_MANAGER` daquela loja). Com mais de um gerente, os nomes vêm juntos, separados por `, `. `null` quando a loja não tem gerente cadastrado; nesse caso a comissão de gerente vem `0` |
 | `customer_name` | texto ou `null` | Cliente |
 | `brand` | texto ou `null` | Marca do produto |
 | `product` | texto ou `null` | Nome do produto |
@@ -184,8 +204,11 @@ Exemplo: `GET /api/seller-commission-report?start_date=2026-10-01&end_date=2026-
 | `commission_base` | número | Valor do item depois do desconto do pedido; é sobre ele que as duas comissões são calculadas |
 | `seller_commission_rate` | número | Taxa da comissão do vendedor, em % |
 | `seller_commission_value` | número | Comissão do vendedor, em R$ |
-| `manager_commission_rate` | número | Taxa da comissão do gerente, em % |
-| `manager_commission_value` | número | Comissão do gerente, em R$ |
+| `manager_commission_rate` | número | Taxa da comissão do gerente da loja, em %; `0` quando a loja não tem gerente |
+| `manager_commission_value` | número | Comissão do gerente da loja, em R$; `0` quando a loja não tem gerente |
+| `regional_manager_name` | texto ou `null` | Gerente(s) regional(is) da loja da venda (ver "Gerente regional"). Com mais de um, os nomes vêm separados por `, `. `null` quando a loja não está no grupo de nenhum regional, ou quando o regional do grupo já é o gerente daquela loja (já ganha em `manager_commission_value`) |
+| `regional_manager_commission_rate` | número | Taxa da comissão do gerente regional, em % (a mesma taxa de gerente do item); `0` sem regional |
+| `regional_manager_commission_value` | número | Comissão do gerente regional, em R$ (o mesmo valor de comissão de gerente do item, pago a mais); `0` sem regional |
 
 As linhas vêm ordenadas por data do pedido e número do pedido.
 
@@ -201,6 +224,8 @@ As linhas vêm ordenadas por data do pedido e número do pedido.
 | `commission_base` | Soma de `commission_base` |
 | `total_seller_commission` | **Total de comissão dos vendedores** |
 | `total_manager_commission` | **Total de comissão dos gerentes** |
+| `total_regional_manager_commission` | **Total de comissão dos gerentes regionais** |
+| `total_commission` | **Total de comissão**: vendedores + gerentes + regionais, o que a empresa paga no período |
 
 ### `warnings`: só contagem
 
@@ -323,3 +348,43 @@ Agora:
 ```
 
 O front que lia `warnings.*.count` passa a ler `warnings.*` direto, e quem mostrava `invoice_numbers` passa a apontar para o relatório de problemas de integração.
+
+---
+
+## 4. Mudança no relatório de vendedores: `GET /api/seller-report`
+
+A comissão de gerente segue as mesmas regras do relatório de comissão (seção 1, "Quem é o gerente" e "Gerente regional"). Parâmetros e os demais campos continuam iguais.
+
+- `summary.total_manager_commission`: passa a somar só as vendas de loja com gerente cadastrado. Loja sem gerente conta `0`.
+- `summary.total_regional_manager_commission` (novo): total de comissão dos gerentes regionais.
+- `managerCommissionByBrand[]`: `total_manager_commission` com a mesma regra, e `total_regional_manager_commission` (novo) por marca.
+
+As duas comissões são só informativas: não entram em custo, markup nem contribuição (só a comissão do vendedor entra no custo, como antes). O quadro `byManager` não mudou.
+
+```json
+"summary": {
+  "total_manager_commission": "3732.97",
+  "total_regional_manager_commission": "3617.04"
+},
+"managerCommissionByBrand": [
+  {
+    "product_brand": "Continental",
+    "total_revenue": "535700.65",
+    "total_manager_commission": "2815.32",
+    "total_regional_manager_commission": "2723.60"
+  }
+]
+```
+
+Nesse relatório os valores vêm como texto (`"3732.97"`), como os outros campos dele.
+
+### O que mostrar
+
+| Onde | Campo | Texto sugerido | O que muda na tela |
+|---|---|---|---|
+| Cards do resumo | `summary.total_manager_commission` | Comissão dos gerentes | Já existe; o valor fica menor quando o período tem venda de loja sem gerente (ex.: outubro/2026 passa de R$ 4.115,43 para R$ 3.732,97) |
+| Cards do resumo | `summary.total_regional_manager_commission` | Comissão dos regionais | Card novo, ao lado de "Comissão dos gerentes" |
+| Tabela de comissão de gerente por marca | `managerCommissionByBrand[].total_manager_commission` | Comissão gerentes | Já existe, com a mesma regra do card |
+| Tabela de comissão de gerente por marca | `managerCommissionByBrand[].total_regional_manager_commission` | Comissão regionais | Coluna nova, ao lado de "Comissão gerentes" |
+
+O card "Comissão dos regionais" mostra `0` quando o filtro não tem loja em grupo de regional (por exemplo, filtrando a Loja 21). Os campos de comissão do vendedor (`summary.total_commission`, `products[].commission_value` e os demais) não mudaram.

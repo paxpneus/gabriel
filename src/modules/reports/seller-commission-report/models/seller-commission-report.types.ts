@@ -6,7 +6,7 @@ export interface SellerCommissionReportParams {
   productIds?: string[];
   // contacts.id do vendedor (orders.seller_id).
   sellerIds?: string[];
-  // contacts.id do gerente (type SELLER_MANAGER); vira a loja dele (contacts.unit_business_id).
+  // contacts.id do gerente (type SELLER_MANAGER); vira a loja dele (unit_business_id) + lojas do grupo do regional (unit_business_group_id).
   managerIds?: string[];
   // Loja do pedido (orders.unit_business_id); com gerente junto, fica a interseção.
   unitBusinessIds?: string[];
@@ -37,6 +37,9 @@ export interface SellerCommissionItemRow {
   commission_value: DecimalValue;
   manager_commission_rate: DecimalValue;
   manager_commission_value: DecimalValue;
+  regional_manager_names: string | null;
+  regional_manager_commission_rate: DecimalValue;
+  regional_manager_commission_value: DecimalValue;
 }
 
 export interface SellerCommissionReportRow {
@@ -59,6 +62,10 @@ export interface SellerCommissionReportRow {
   seller_commission_value: number;
   manager_commission_rate: number;
   manager_commission_value: number;
+  // Gerente regional (grupo de lojas): comissão a mais, mesma taxa do gerente da loja; 0 quando a loja não tem regional.
+  regional_manager_name: string | null;
+  regional_manager_commission_rate: number;
+  regional_manager_commission_value: number;
 }
 
 export interface SellerCommissionReportSummary {
@@ -68,6 +75,9 @@ export interface SellerCommissionReportSummary {
   commission_base: number;
   total_seller_commission: number;
   total_manager_commission: number;
+  total_regional_manager_commission: number;
+  // Vendedores + gerentes de loja + regionais: total que a empresa paga de comissão.
+  total_commission: number;
 }
 
 /** Pedidos do seller report no período que ficaram fora da comissão, por motivo. */

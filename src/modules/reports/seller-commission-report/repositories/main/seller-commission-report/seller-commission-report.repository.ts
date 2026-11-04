@@ -1,6 +1,9 @@
 import { QueryTypes } from "sequelize";
 import sequelize from "../../../../../../config/sequelize";
-import { SELLER_MANAGER_CONTACT_TYPE } from "../../../../../sales/contacts/contacts.types";
+import {
+  regionalManagersFromSql,
+  storeManagersFromSql,
+} from "../../../../../sales/contacts/helpers/managers";
 import { BLING_STATUS_DEFAULTS } from "../../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import {
   orderFinalSituationSql,
@@ -17,7 +20,7 @@ const ACTIVE_ORDER_SITUATIONS = BLING_STATUS_DEFAULTS.filter((status) => !status
   (status) => status.external_status_id,
 );
 
-/** Período (data do pedido) e filtros; lista ausente = sem restrição. `unitBusinessIds` = loja do pedido (e/ou dos gerentes). */
+/** Período (data do pedido) e filtros; lista ausente = sem restrição. `unitBusinessIds` = loja do pedido (e/ou dos gerentes, incl. lojas do grupo do regional). */
 export interface CommissionFilters {
   startDate: string;
   endDate: string;
@@ -28,7 +31,7 @@ export interface CommissionFilters {
 }
 
 export class SellerCommissionReportRepository {
-  /** Itens do seller report no período (mesma base dele) só de pedidos faturados, com vendedor, gerentes da loja, cliente e produto. */
+  /** Itens do seller report no período (mesma base dele) só de pedidos faturados, com vendedor, gerentes da loja e regionais, cliente e produto. */
   async findCommissionRows(filters: CommissionFilters): Promise<SellerCommissionItemRow[]> {
     const conditions = this.filterConditions(filters);
     if (!conditions) return [];
@@ -53,8 +56,17 @@ export class SellerCommissionReportRepository {
         s.commission_base,
         s.commission_rate,
         s.commission_value,
-        s.manager_commission_rate,
-        s.manager_commission_value
+        -- Comissão de gerente da loja só quando a loja tem gerente (SELLER_MANAGER) cadastrado; regional usa a taxa do item direto.
+        CASE WHEN managers.names IS NULL THEN 0 ELSE s.manager_commission_rate END
+                                                AS manager_commission_rate,
+        CASE WHEN managers.names IS NULL THEN 0 ELSE s.manager_commission_value END
+                                                AS manager_commission_value,
+        regional_managers.names                 AS regional_manager_names,
+        -- Gerente regional ganha a mesma taxa/valor de gerente do item, a mais (não divide com o gerente da loja).
+        CASE WHEN regional_managers.names IS NULL THEN 0 ELSE s.manager_commission_rate END
+                                                AS regional_manager_commission_rate,
+        CASE WHEN regional_managers.names IS NULL THEN 0 ELSE s.manager_commission_value END
+                                                AS regional_manager_commission_value
       FROM seller_sales_order_item_snapshots s
       JOIN orders o ON o.id = s.order_id
       LEFT JOIN invoices i ON i.id = o.invoice_id
@@ -63,13 +75,15 @@ export class SellerCommissionReportRepository {
       LEFT JOIN products p ON p.id = s.product_id
       LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
       LEFT JOIN customers customer ON customer.id = s.customer_id
-      -- Gerente = contato SELLER_MANAGER da loja da venda (contacts.unit_business_id).
+      -- Gerentes da loja da venda e regionais do grupo dela (regra em contacts/helpers/managers.ts).
       LEFT JOIN LATERAL (
         SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
-        FROM contacts manager
-        WHERE manager.type = :managerContactType
-          AND manager.unit_business_id = s.unit_business_id
+        ${storeManagersFromSql("s.unit_business_id")}
       ) managers ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
+        ${regionalManagersFromSql("s.unit_business_id")}
+      ) regional_managers ON TRUE
       WHERE s.is_valid_sale = TRUE
         AND ${orderInvoicedSql("o")}
         ${conditions}
@@ -77,7 +91,7 @@ export class SellerCommissionReportRepository {
       `,
       {
         type: QueryTypes.SELECT,
-        replacements: { ...filters, managerContactType: SELLER_MANAGER_CONTACT_TYPE },
+        replacements: { ...filters },
       },
     );
   }
