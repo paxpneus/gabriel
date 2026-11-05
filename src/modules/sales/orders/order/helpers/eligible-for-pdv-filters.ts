@@ -1,6 +1,7 @@
 import { Sequelize } from "sequelize";
 import sequelize from "../../../../../config/sequelize";
 import { UNASSIGNED_SELLER_NAME } from "../../../contacts/contacts.types";
+import { CD21_UNIT_BUSINESS_NUMBER } from "../../../../company/unit-business/helpers/cd21-unit-business-number";
 
 // Código Bling (actual_situation) de pedido cancelado. Elegibilidade pro
 // PDV olha só esse código — qualquer outra situação (ex.: "21" em
@@ -13,28 +14,16 @@ export const BLING_CANCELLED_SITUACAO_ID = "12";
 export const isPdvCancelledSituation = (situacaoId: string | number): boolean =>
   String(situacaoId) === BLING_CANCELLED_SITUACAO_ID;
 
-// Pedido cujo invoice_id já tem romaneio gerado (ExpeditionBatch com
-// delivery_note_generated_at preenchido) NA LOJA DO PRÓPRIO PEDIDO — mesma
-// cadeia Invoice → batchInvoice → batch de
-// invoice.repository.ts#findDeliveryNoteGeneratedInvoiceIds, mas escopada
-// dinamicamente pelo unit_business de CADA pedido (não uma loja fixa como
-// CD21), por isso via subquery correlacionada em vez de include — o
-// unit_business_id que importa aqui varia por linha, o que um JOIN de
-// associação normal não expressa. invoice_unit_business_attributes.
-// batch_generated confirma que o romaneio é da própria loja do pedido, não
-// de outra loja que também recebeu essa nota. Pedido sem invoice_id ainda
-// nunca casa (NOT EXISTS com invoice_id NULL nunca é verdadeiro) — segue
-// elegível.
+// Pedido cujo invoice_id já tem romaneio gerado no CD21 (quem expede o PDV de toda loja, site Pax incluso) —
+// mesma escopagem de pdv-sales-request.service.ts::isSaleInvoiceDeliveryNoteGenerated. Sem invoice_id segue elegível.
 export function orderMissingGeneratedDeliveryNoteLiteral() {
   return Sequelize.literal(`NOT EXISTS (
     SELECT 1
-    FROM invoice_unit_business_attributes iuba
-    JOIN expedition_batch_invoices ebi ON ebi.invoice_id = iuba.invoice_id
+    FROM expedition_batch_invoices ebi
     JOIN expedition_batches eb ON eb.id = ebi.expedition_batch_id
-      AND eb.unit_business_id = iuba.unit_business_id
-    WHERE iuba.invoice_id = "Order"."invoice_id"
-      AND iuba.unit_business_id = "Order"."unit_business_id"
-      AND iuba.batch_generated = true
+    JOIN unit_businesses cd21 ON cd21.id = eb.unit_business_id
+      AND cd21.number = ${sequelize.escape(CD21_UNIT_BUSINESS_NUMBER)}
+    WHERE ebi.invoice_id = "Order"."invoice_id"
       AND eb.delivery_note_generated_at IS NOT NULL
   )`);
 }

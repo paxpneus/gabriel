@@ -1,4 +1,6 @@
 import { Sequelize } from "sequelize";
+import sequelize from "../../../../../config/sequelize";
+import { WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM } from "../../../../company/unit-business/helpers/website-pax-unit-business";
 
 // Compara por product_id (já resolvido pelo integration mapping de cada lado): nome/código diferente entre Bling e Tecinco não diverge.
 // Ao vivo, não persistido — mapear um item pendente depois já muda o resultado.
@@ -106,12 +108,18 @@ export function transferProductsUncheckedLiteral() {
 
 // Crítico: NF de transferência emitida por loja (sender_cnpj) diferente da loja do pedido.
 // CNPJ já é só dígitos nos dois lados; nota sem sender_cnpj (provisória sem CNPJ) não acusa.
+// Pedido do site Pax não acusa: o site não emite nota, a transferência sempre vem de outra loja.
 function transferSenderUnitBusinessMismatchSql(): string {
   return `(${TRANSFER_INVOICE} IS NOT NULL AND EXISTS (
     SELECT 1 FROM invoices ti
     JOIN orders o ON o.id = "PdvSalesRequest"."order_id"
     WHERE ti.id = ${TRANSFER_INVOICE}
       AND COALESCE(ti.sender_cnpj, '') <> ''
+      AND NOT EXISTS (
+        SELECT 1 FROM unit_businesses site
+        WHERE site.id = o.unit_business_id
+          AND site.id_system = ${sequelize.escape(WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM)}
+      )
       AND NOT EXISTS (
         SELECT 1 FROM unit_businesses ub
         WHERE ub.cnpj = ti.sender_cnpj AND ub.id = o.unit_business_id

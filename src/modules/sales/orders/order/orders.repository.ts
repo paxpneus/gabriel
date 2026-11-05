@@ -162,7 +162,7 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
   // olha direto o actual_situation (código Bling) e só exclui "12"
   // (cancelado); qualquer outra situação (ex.: "21" em digitação) conta
   // como aceito pro PDV. Também só entra se o invoice do pedido ainda não
-  // tiver romaneio gerado na loja do próprio pedido
+  // tiver romaneio gerado no CD21
   // (orderMissingGeneratedDeliveryNoteLiteral — pedido já expedido não
   // deveria abrir nova solicitação). Regra é específica desse fluxo, não
   // um "find genérico por loja" — nome reflete isso.
@@ -194,7 +194,7 @@ private orphanFutureInvoiceWhere(): WhereOptions | null {
   }
 
   // Mesmo critério de elegibilidade de findEligibleForPdvByUnitBusiness
-  // (actual_situation "12" fora, sem romaneio já gerado pro invoice/loja do
+  // (actual_situation "12" fora, sem romaneio já gerado no CD21 pro invoice do
   // pedido), só que pra UM pedido específico — usado por
   // bling-order.service.ts::createOrderFromBling pra decidir se a
   // PdvSalesRequest vazia nasce junto do pedido.

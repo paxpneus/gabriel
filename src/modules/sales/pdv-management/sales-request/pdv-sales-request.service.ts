@@ -769,8 +769,8 @@ export class PdvSalesRequestService extends BaseService<
   // se no-op). Mesmos 3 critérios de
   // findEligibleOrders/isEligibleForPdv: loja física normal (CD21 inclusa,
   // fora de PDV_EXCLUDED_STORE_NUMBERS, nunca marketplace sem
-  // unit_business_id), pedido não CANCELLED, sem romaneio já gerado pro
-  // invoice/loja do pedido. No-op silencioso pra qualquer pedido não
+  // unit_business_id), pedido não CANCELLED, sem romaneio já gerado no CD21 pro
+  // invoice do pedido. No-op silencioso pra qualquer pedido não
   // elegível ou que já tenha solicitação (de qualquer status).
   async createEmptyRequestForNewOrderIfEligible(
     orderId: string,
