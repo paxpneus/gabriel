@@ -37,6 +37,15 @@ jest.mock("../../../company/users/roles/role.service", () => ({
   },
 }));
 
+// Sem mock, a cadeia real de imports abre conexão Redis/BullMQ: trava o Jest local e dá exit 1 no build Docker.
+jest.mock("../../../integrations/integration-mapping/integration-mapping.service", () => ({
+  __esModule: true,
+  default: {
+    findEntityByMapping: jest.fn(),
+    createOrUpdateIntegrationMapping: jest.fn(),
+  },
+}));
+
 jest.mock("../contacts.repository", () => ({
   __esModule: true,
   default: {
@@ -71,6 +80,17 @@ const mockUrl = `https://hub.paxpneus.com.br/reports/sales/seller/${mockToken}`;
 
 describe("ContactService.createUserFromSellerName", () => {
   let service: ContactService;
+  const originalFrontendUrl = process.env.FRONTEND_URL;
+
+  // URL esperada é a default do service — sem isso o FRONTEND_URL do .env local quebra o teste.
+  beforeAll(() => {
+    delete process.env.FRONTEND_URL;
+  });
+
+  // process.env converte undefined em "undefined" — só restaura se existia.
+  afterAll(() => {
+    if (originalFrontendUrl !== undefined) process.env.FRONTEND_URL = originalFrontendUrl;
+  });
 
   beforeEach(() => {
     service = new ContactService();

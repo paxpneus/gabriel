@@ -22,7 +22,8 @@ function buildFrontendUrl(
   screenParam: string,
   unitBusinessNumber?: string,
 ): string {
-  const baseUrl = process.env.FRONTEND_URL ?? "https://hub.paxpneus.com.br";
+  // `||` e não `??`: docker-compose repassa FRONTEND_URL vazio ("") quando não definido no host.
+  const baseUrl = process.env.FRONTEND_URL || "https://hub.paxpneus.com.br";
   const params = new URLSearchParams({ token, screen: screenParam });
   if (unitBusinessNumber) params.set("number", unitBusinessNumber);
   return `${baseUrl}/pdv-management?${params.toString()}`;

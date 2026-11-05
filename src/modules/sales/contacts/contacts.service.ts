@@ -124,7 +124,8 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
    * em vez do back devolver o token "cru" pro chamador.
    */
   private buildSellerReportUrl(token: string): string {
-    const baseUrl = process.env.FRONTEND_URL ?? "https://hub.paxpneus.com.br";
+    // `||` e não `??`: docker-compose repassa FRONTEND_URL vazio ("") quando não definido no host.
+    const baseUrl = process.env.FRONTEND_URL || "https://hub.paxpneus.com.br";
     return `${baseUrl}${SELLER_REPORT_PATH}/${token}`;
   }
 
