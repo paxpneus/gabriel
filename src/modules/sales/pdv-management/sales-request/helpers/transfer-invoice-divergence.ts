@@ -1,5 +1,4 @@
 import { Sequelize } from "sequelize";
-import sequelize from "../../../../../config/sequelize";
 import { WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM } from "../../../../company/unit-business/helpers/website-pax-unit-business";
 
 // Compara por product_id (já resolvido pelo integration mapping de cada lado): nome/código diferente entre Bling e Tecinco não diverge.
@@ -118,7 +117,7 @@ function transferSenderUnitBusinessMismatchSql(): string {
       AND NOT EXISTS (
         SELECT 1 FROM unit_businesses site
         WHERE site.id = o.unit_business_id
-          AND site.id_system = ${sequelize.escape(WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM)}
+          AND site.id_system = '${WEBSITE_PAX_UNIT_BUSINESS_ID_SYSTEM}'
       )
       AND NOT EXISTS (
         SELECT 1 FROM unit_businesses ub
