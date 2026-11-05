@@ -579,6 +579,73 @@ describe("BlingOrderService", () => {
       expect(ordersService.touch).not.toHaveBeenCalled();
     });
 
+    it("item importado sem vendedor (comissão 0) ganha a comissão da marca quando o vendedor entra depois", async () => {
+      (service as any).resolveProductWithConfig.mockResolvedValue({
+        product: { brandRegister: { seller_comission_tax_rate: 0.5, manager_comission_tax_rate: 0.5 } },
+        averageCost: 50,
+        resolvedSku: "SKU-A",
+        kitMultiplier: 1,
+      });
+      (orderData as any).vendedor = { id: 123 };
+      jest.spyOn(service as any, "upsertSellerContact").mockResolvedValue("seller-1");
+      (orderData as any).desconto = undefined;
+      orderData.itens = [makeBlingItem("SKU-A", 1000)] as any;
+      (orderItemsService.findAll as jest.Mock).mockResolvedValue([
+        {
+          id: "item-a",
+          sku: "SKU-A",
+          commission_base: "0.00",
+          commission_rate: "0.0000",
+          comission_manager_rate: "0.0000",
+          commission_value: "0.00",
+          total_cost_snapshot: "50.00",
+        },
+      ]);
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      expect(orderItemsService.update).toHaveBeenCalledWith(
+        "item-a",
+        expect.objectContaining({
+          commission_base: 1000,
+          commission_rate: 0.5,
+          comission_manager_rate: 0.5,
+          commission_value: 5,
+          total_cost_snapshot: 55,
+        }),
+      );
+    });
+
+    it("item com comissão já gravada não é recalculado (taxa da marca mudou depois)", async () => {
+      (service as any).resolveProductWithConfig.mockResolvedValue({
+        product: { brandRegister: { seller_comission_tax_rate: 0.9, manager_comission_tax_rate: 0.9 } },
+        averageCost: 50,
+        resolvedSku: "SKU-A",
+        kitMultiplier: 1,
+      });
+      (orderData as any).vendedor = { id: 123 };
+      jest.spyOn(service as any, "upsertSellerContact").mockResolvedValue("seller-1");
+      orderData.itens = [makeBlingItem("SKU-A", 1000)] as any;
+      (orderItemsService.findAll as jest.Mock).mockResolvedValue([
+        {
+          id: "item-a",
+          sku: "SKU-A",
+          commission_base: "1000.00",
+          commission_rate: "0.5000",
+          comission_manager_rate: "0.5000",
+          commission_value: "5.00",
+          total_cost_snapshot: "55.00",
+        },
+      ]);
+
+      await service.updateOrderFromBling({ data: { id: orderData.id } } as any);
+
+      const fields = (orderItemsService.update as jest.Mock).mock.calls[0][1];
+      expect(fields).not.toHaveProperty("commission_rate");
+      expect(fields).not.toHaveProperty("commission_value");
+      expect(fields).not.toHaveProperty("total_cost_snapshot");
+    });
+
     it("payload sem itens não apaga nada", async () => {
       orderData.itens = [];
 

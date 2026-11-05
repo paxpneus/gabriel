@@ -651,29 +651,44 @@ export class BlingOrderService {
   ) {
     const update: Partial<orderItemsCreationAttributes> = {};
 
+    // Item gravado sem vendedor (base 0) e pedido agora com vendedor: grava a comissão, senão a taxa 0 fica congelada.
+    const sellerAddedLater =
+      existingItem.commission_base != null &&
+      Number(existingItem.commission_base) === 0 &&
+      Number(fields.commission_base ?? 0) > 0;
+
     if (
-      existingItem.commission_base == null &&
+      (existingItem.commission_base == null || sellerAddedLater) &&
       fields.commission_base !== undefined
     ) {
       update.commission_base = fields.commission_base;
     }
     if (
-      existingItem.commission_rate == null &&
+      (existingItem.commission_rate == null || sellerAddedLater) &&
       fields.commission_rate !== undefined
     ) {
       update.commission_rate = fields.commission_rate;
     }
     if (
-      existingItem.comission_manager_rate == null &&
+      (existingItem.comission_manager_rate == null || sellerAddedLater) &&
       fields.comission_manager_rate !== undefined
     ) {
       update.comission_manager_rate = fields.comission_manager_rate;
     }
     if (
-      existingItem.commission_value == null &&
+      (existingItem.commission_value == null || sellerAddedLater) &&
       fields.commission_value !== undefined
     ) {
       update.commission_value = fields.commission_value;
+    }
+    // Custo gravado já tinha comissão 0: soma a nova sem trocar o custo médio congelado.
+    if (
+      sellerAddedLater &&
+      existingItem.total_cost_snapshot != null &&
+      fields.commission_value !== undefined
+    ) {
+      update.total_cost_snapshot =
+        Number(existingItem.total_cost_snapshot) + fields.commission_value;
     }
     if (
       existingItem.average_cost_snapshot == null &&
