@@ -1,4 +1,5 @@
 
+import { Op } from "sequelize";
 import { SellerService } from "../services/sellers.service";
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
@@ -68,7 +69,7 @@ import roleService from "../../../../company/users/roles/role.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const mockTransaction = {} as any;
+const mockTransaction = { LOCK: { UPDATE: "UPDATE" } } as any;
 
 const mockRole = { id: "role-uuid", name: "Vendedor" };
 const mockSeller = {
@@ -267,6 +268,12 @@ describe("SellerService.createUserFromSellerName", () => {
 });
 
 describe("SellerService.updateManagerPeriods", () => {
+  const unitBusinessService = jest.requireMock("../../../../company/unit-business/unit-business.service").default;
+  const unitBusinessGroupService = jest.requireMock(
+    "../../../../company/unit-business-groups/unit-business-group/unit-business-group.service",
+  ).default;
+  // Toda loja/grupo pedido existe (devolve os ids do where), salvo quando o teste troca.
+  const existingIds = ({ where }: any) => Promise.resolve(where.id[Op.in].map((id: string) => ({ id })));
   let service: SellerService;
   const store10 = { unit_business_id: "loja-10", unit_business_group_id: null };
   const store15 = { unit_business_id: "loja-15", unit_business_group_id: null };
@@ -278,15 +285,35 @@ describe("SellerService.updateManagerPeriods", () => {
       // Volta o que foi gravado, como o model atualizado (withManagerPeriodNames lê via toJSON).
       update: jest.fn((id, data) => Promise.resolve({ toJSON: () => ({ id, ...data }) })),
     };
+    unitBusinessService.findAll.mockImplementation(existingIds);
+    unitBusinessGroupService.findAll.mockImplementation(existingIds);
+  });
+
+  it("recusa loja ou grupo que não existe (período que nunca pagaria)", async () => {
+    unitBusinessService.findAll.mockResolvedValue([]);
+    await expect(
+      service.updateManagerPeriods("c1", [{ ...store10, start_date: "2026-07-01", end_date: null }]),
+    ).rejects.toThrow("não existe");
+    expect((service as any).repository.update).not.toHaveBeenCalled();
+  });
+
+  it("lê o contato travado na transação", async () => {
+    await service.updateManagerPeriods("c1", []);
+    expect((service as any).repository.findById).toHaveBeenCalledWith(
+      "c1",
+      expect.objectContaining({ transaction: mockTransaction, lock: "UPDATE" }),
+    );
   });
 
   it("troca de loja: grava os dois períodos ordenados por início, mantendo as outras chaves", async () => {
     const before = { ...store10, start_date: "2023-01-01", end_date: "2026-06-30" };
     const after = { ...store15, start_date: "2026-07-01", end_date: null };
     await service.updateManagerPeriods("c1", [after, before]);
-    expect((service as any).repository.update).toHaveBeenCalledWith("c1", {
-      custom_data: { other: 1, manager_periods: [before, after] },
-    });
+    expect((service as any).repository.update).toHaveBeenCalledWith(
+      "c1",
+      { custom_data: { other: 1, manager_periods: [before, after] } },
+      { transaction: mockTransaction },
+    );
   });
 
   it("contato inexistente volta null (404 no controller)", async () => {
@@ -333,9 +360,11 @@ describe("SellerService.updateManagerPeriods", () => {
 
   it("lista vazia apaga os períodos (gerente deixa de ganhar em todo o histórico)", async () => {
     await service.updateManagerPeriods("c1", []);
-    expect((service as any).repository.update).toHaveBeenCalledWith("c1", {
-      custom_data: { other: 1, manager_periods: [] },
-    });
+    expect((service as any).repository.update).toHaveBeenCalledWith(
+      "c1",
+      { custom_data: { other: 1, manager_periods: [] } },
+      { transaction: mockTransaction },
+    );
   });
 });
 

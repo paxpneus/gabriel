@@ -1399,9 +1399,22 @@ async getReport(filters: SellerSalesReportFilters) {
           WITH ${reportRowsCte}
           SELECT
             s.*,
-            ct.name AS seller_name
+            ct.name AS seller_name,
+            -- manager_commission_value (s.*) é o valor cheio do item; o efetivo só existe com gerente vigente na data do pedido.
+            managers.names AS manager_names,
+            CASE WHEN managers.names IS NULL THEN 0 ELSE s.manager_commission_value END AS store_manager_commission_value,
+            regional_managers.names AS regional_manager_names,
+            CASE WHEN regional_managers.names IS NULL THEN 0 ELSE s.manager_commission_value END AS regional_manager_commission_value
           FROM report_rows s
           LEFT JOIN contacts ct ON ct.id = s.seller_id
+          LEFT JOIN LATERAL (
+            SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
+            ${storeManagersFromSql("s.unit_business_id", "s.order_date")}
+          ) managers ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
+            ${regionalManagersFromSql("s.unit_business_id", "s.order_date")}
+          ) regional_managers ON TRUE
           ORDER BY s.order_date DESC, s.last_updated_at DESC
           `,
           {
@@ -1412,8 +1425,8 @@ async getReport(filters: SellerSalesReportFilters) {
       : undefined;
 
     // -------------------------------------------------------------
-    // Comissão de Gerente por Filial (regra específica deste relatório,
-    // sem equivalente em sales_report — mantida como antes)
+    // Comissão de Gerente por Filial: usuário com user_config 'manager' ligado a um contato
+    // gerente; vendas da loja (ou do grupo, regional) só nas datas dos períodos dele.
     // -------------------------------------------------------------
     const byManager = await sequelize.query(
       `
@@ -1424,16 +1437,24 @@ async getReport(filters: SellerSalesReportFilters) {
     s.unit_business_id,
     MAX(ub.name) AS unit_business_name,
     MAX(ub.number) AS unit_business_number,
+    manager.is_regional,
     COALESCE(SUM(s.net_total), 0) AS branch_total_sold,
     COALESCE(SUM(s.manager_commission_value), 0) AS total_manager_commission
   FROM report_rows s
-  JOIN users u
-    ON u.main_unit_business_id = s.unit_business_id
+  -- Regional não pega a própria loja (já entra como gerente dela): uma linha por gerente, loja e papel.
+  JOIN LATERAL (
+    SELECT manager.user_id, FALSE AS is_regional
+    ${storeManagersFromSql("s.unit_business_id", "s.order_date")}
+    UNION ALL
+    SELECT manager.user_id, TRUE AS is_regional
+    ${regionalManagersFromSql("s.unit_business_id", "s.order_date")}
+  ) manager ON TRUE
+  JOIN users u ON u.id = manager.user_id
   JOIN user_config uc
     ON uc.user_id = u.id
    AND uc.type = 'manager'
   LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
-  GROUP BY u.id, u.name, s.unit_business_id
+  GROUP BY u.id, u.name, s.unit_business_id, manager.is_regional
   ORDER BY branch_total_sold DESC
   `,
       { type: QueryTypes.SELECT, replacements: baseFilterReplacements },

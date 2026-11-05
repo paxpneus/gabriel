@@ -96,7 +96,7 @@ PUT /api/contacts/:id/manager-periods
 - Cada período precisa de loja, de grupo ou dos dois.
 - Os períodos de um gerente não podem se sobrepor: cada um tem que terminar antes do próximo começar. Só o último pode ter `end_date = null`.
 - Lista vazia apaga todos os períodos: o gerente deixa de ganhar comissão de gerente em todo o histórico.
-- Resposta: o contato atualizado, com os períodos em ordem de início, já com `unit_business`/`unit_business_group` (`{ name }`). `400` com a mensagem em `error` (texto pronto para o usuário) para campo faltando ou inválido, fim antes do início, período sem loja nem grupo, períodos sobrepostos ou contato que não é gerente (marcar como gerente antes, pelo `PUT /api/contacts/:id`). `404` se o contato não existe.
+- Resposta: o contato atualizado, com os períodos em ordem de início, já com `unit_business`/`unit_business_group` (`{ name }`). `400` com a mensagem em `error` (texto pronto para o usuário) para campo faltando ou inválido, fim antes do início, período sem loja nem grupo, loja ou grupo que não existe, períodos sobrepostos ou contato que não é gerente (marcar como gerente antes, pelo `PUT /api/contacts/:id`). `404` se o contato não existe.
 - Os gerentes que já existiam começaram com um período com a loja e o grupo de hoje, `start_date = "2023-01-01"` e `end_date = null`.
 
 **Automático pelo cadastro** (`POST`/`PUT /api/contacts`, sem chamar a rota de períodos). O back usa a data de hoje, no fuso de São Paulo:
@@ -106,7 +106,7 @@ PUT /api/contacts/:id/manager-periods
 - Mandar a mesma loja e o mesmo grupo (tela que manda o cadastro inteiro) não mexe nos períodos.
 - **Gerente desligado** (todos os períodos com fim) que troca de loja ou de grupo no cadastro volta a ser gerente a partir de hoje.
 - **Volta para a mesma loja ou grupo de ontem:** se o período anterior terminou ontem com a mesma loja e o mesmo grupo, ele é reaberto em vez de criar outro. Exemplo: Paraná até 04/11, troca hoje para Paraná → Paraná desde 2023, sem fim. Ida e volta no mesmo dia (Paraná → Regional 1 → Paraná) também volta a ser um período só.
-- O `PUT /api/contacts/bulk` não mexe nos períodos.
+- O `PUT /api/contacts/bulk` segue a mesma regra, contato a contato.
 - A sincronização com o Bling segue a mesma regra (ver abaixo).
 
 **Pela rota de períodos** (`PUT /api/contacts/:id/manager-periods`, mandando a lista inteira): tudo que não é "a partir de hoje".
@@ -159,6 +159,8 @@ PUT /api/contacts/:id
 O back abre o período dele a partir de hoje com essa loja. Se ele começou antes, ajustar o `start_date` em `PUT /api/contacts/:id/manager-periods` (ver "Vigência do gerente"). É o período que define a loja e o grupo da comissão.
 
 Quando o cadastro do vendedor muda no Bling, a sincronização regrava `unit_business_id` do contato com a loja de lá (ou vazio, se ele não tiver loja) e, se ele é gerente, rola o período (ver "Vigência do gerente"). O `type` nunca é sobrescrito.
+
+Apagar contato (`DELETE /api/contacts/:id` e `/bulk`) volta `409 { "error": "..." }` quando ele tem períodos de gerente, pedidos ou notas fiscais, porque o histórico de comissão sumiria. O mesmo vale para grupo de lojas (`DELETE /api/unit-business-group/:id` e `/bulk`) que está em algum período de gerente: a mensagem traz o nome dos gerentes.
 
 Gerente desligado: mandar `end_date` no período aberto (ver "Vigência do gerente"), não `"type": "SELLER"`. `"type": "SELLER"` só para quem foi marcado como gerente por engano. O gerente continua sendo vendedor: as vendas que ele fizer no Bling continuam com ele como vendedor. A lista de gerentes para o filtro sai de `GET /api/contacts?filters[type]=SELLER_MANAGER`.
 
@@ -426,7 +428,10 @@ A comissão de gerente segue as mesmas regras do relatório de comissão (seçã
 - `summary.total_regional_manager_commission` (novo): total de comissão dos gerentes regionais.
 - `managerCommissionByBrand[]`: `total_manager_commission` com a mesma regra, e `total_regional_manager_commission` (novo) por marca.
 
-As duas comissões são só informativas: não entram em custo, markup nem contribuição (só a comissão do vendedor entra no custo, como antes). O quadro `byManager` não mudou.
+As duas comissões são só informativas: não entram em custo, markup nem contribuição (só a comissão do vendedor entra no custo, como antes).
+
+- `byManager[]`: continua listando só usuários com perfil de gerente (`user_config.type = "manager"`), mas agora o usuário precisa estar ligado a um contato gerente (`contacts.user_id`), e as vendas de cada linha seguem os períodos desse contato (loja ou grupo, só nas datas do período). Antes vinha pela loja principal do usuário, sem data. Campo novo `is_regional`: `false` = gerente da loja da linha, `true` = regional (a loja está no grupo dele). Um regional aparece em uma linha por loja do grupo. Usuário gerente sem contato ligado não aparece.
+- `drillDown=true` (`items[]`): cada item ganha `manager_names` e `store_manager_commission_value` (comissão do gerente da loja vigente na data do pedido, `0` sem gerente) e `regional_manager_names` e `regional_manager_commission_value` (mesma regra para o regional). O `manager_commission_value` do item continua sendo o valor cheio, pago só se houver gerente: para exibir, use os campos novos.
 
 ```json
 "summary": {

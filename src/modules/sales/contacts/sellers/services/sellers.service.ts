@@ -1,11 +1,12 @@
 import BaseService from "../../../../../shared/utils/base-models/base-service";
 import unitBusinessService from "../../../../company/unit-business/unit-business.service";
+import unitBusinessGroupService from "../../../../company/unit-business-groups/unit-business-group/unit-business-group.service";
 import userService from "../../../../company/users/users/user.service";
 import Contact from "../../contacts.model";
 import sellerRepository, { SellerRepository } from "../repositories/sellers.repository";
 import sequelize from "../../../../../config/sequelize";
 import roleService from "../../../../company/users/roles/role.service";
-import { Transaction, UniqueConstraintError } from "sequelize";
+import { Op, Transaction, UniqueConstraintError } from "sequelize";
 import { UserAttributes } from "../../../../company/users/users/user.types";
 import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
 import { SELLER_MANAGER_CONTACT_TYPE } from "../../contacts.types";
@@ -32,12 +33,6 @@ export class SellerService extends BaseService<Contact, SellerRepository> {
    * Sem sobreposição: o relatório casa um período por data, então loja/grupo de cada data é um só (sem comissão em dobro).
    */
   async updateManagerPeriods(id: string, periods: ManagerPeriod[]) {
-    const contact = await this.repository.findById(id, { attributes: ["id", "type", "custom_data"] });
-    if (!contact) return null;
-    if (contact.type !== SELLER_MANAGER_CONTACT_TYPE) {
-      throw new Error("O contato não é gerente: marque como gerente antes de informar os períodos.");
-    }
-
     // Datas YYYY-MM-DD comparam certo como texto; ordenado por início, sobrepõe se o anterior não termina antes do próximo começar.
     const sorted = [...periods].sort((a, b) => a.start_date.localeCompare(b.start_date));
     sorted.forEach((period, index) => {
@@ -55,8 +50,31 @@ export class SellerService extends BaseService<Contact, SellerRepository> {
       }
     });
 
-    const updated = await this.repository.update(id, {
-      custom_data: { ...contact.custom_data, manager_periods: sorted },
+    // Loja/grupo inexistente no JSON não casa venda nenhuma (sem FK): recusa em vez de gravar um período que nunca paga.
+    const storeIds = [...new Set(sorted.map((period) => period.unit_business_id).filter((value): value is string => !!value))];
+    const groupIds = [
+      ...new Set(sorted.map((period) => period.unit_business_group_id).filter((value): value is string => !!value)),
+    ];
+    const [stores, groups] = await Promise.all([
+      unitBusinessService.findAll({ where: { id: { [Op.in]: storeIds } }, attributes: ["id"] }),
+      unitBusinessGroupService.findAll({ where: { id: { [Op.in]: groupIds } }, attributes: ["id"] }),
+    ]);
+    if (stores.length !== storeIds.length || groups.length !== groupIds.length) {
+      throw new Error("A loja ou o grupo de lojas de um dos períodos do gerente não existe.");
+    }
+
+    // Lê e grava travado: sync do Bling rolando o período ao mesmo tempo não pode ser sobrescrito (nem sobrescrever este).
+    const updated = await sequelize.transaction(async (transaction) => {
+      const contact = await this.repository.findById(id, {
+        attributes: ["id", "type", "custom_data"],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!contact) return null;
+      if (contact.type !== SELLER_MANAGER_CONTACT_TYPE) {
+        throw new Error("O contato não é gerente: marque como gerente antes de informar os períodos.");
+      }
+      return this.repository.update(id, { custom_data: { ...contact.custom_data, manager_periods: sorted } }, { transaction });
     });
     if (!updated) return null;
     return withManagerPeriodNames(updated);

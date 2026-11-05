@@ -6,6 +6,7 @@ Agrupamento N:N de unit businesses (uma loja pode estar em vários grupos; um gr
 - `unit_business_groups`: `id`, `name` (unique), `description` (nullable).
 - `unit_business_group_members` (pivot): `unit_business_group_id`, `unit_business_id`.
   - FKs `ON DELETE CASCADE` dos dois lados — apagar grupo ou loja remove o vínculo.
+- Exclusão de grupo (`delete`/`bulkDelete` do service, 409 via `UnitBusinessGroupInUseError` no controller): recusada se o grupo está em algum período de gerente (`contactService.findManagerNamesByPeriodGroups`, importado de `sales/contacts/core` — a fachada da entidade fecha ciclo via sellers → `unit-business.service`). Sem isso os membros saíam em cascata e o regional perdia todo o histórico. Apagar **loja** usada em período não tem essa trava.
   - Unique `(unit_business_group_id, unit_business_id)`; índice extra em `unit_business_id`.
 
 ## Código

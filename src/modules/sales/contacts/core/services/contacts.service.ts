@@ -1,14 +1,36 @@
 import dayjs from "dayjs";
-import { BulkCreateOptions, CreateOptions, CreationAttributes, UpdateOptions } from "sequelize";
+import {
+  BulkCreateOptions,
+  Op,
+  CreateOptions,
+  CreationAttributes,
+  DestroyOptions,
+  ForeignKeyConstraintError,
+  Transaction,
+  UpdateOptions,
+} from "sequelize";
+import sequelize from "../../../../../config/sequelize";
 import BaseService from "../../../../../shared/utils/base-models/base-service";
 import Contact from "../../contacts.model";
 import { formatDate, nowTz } from "../../../../../shared/utils/normalizers/date";
 import { ContactAttributes, ContactCustomData, SELLER_MANAGER_CONTACT_TYPE } from "../../contacts.types";
 import contactRepository, { ContactRepository } from "../repositories/contacts.repository";
+import { ContactInUseError } from "../helpers/errors";
+
+const IN_USE_PERIODS_MESSAGE =
+  "Este contato tem períodos de gerente e não pode ser apagado: o histórico de comissão de gerente dele sumiria.";
+const IN_USE_ORDERS_MESSAGE =
+  "Este contato tem pedidos ou notas fiscais e não pode ser apagado: o histórico de comissão dele sumiria.";
+
+// FK RESTRICT de pedido/nota (m338) vira erro de negócio; o resto sobe como está.
+function rethrowInUse(error: unknown): never {
+  if (error instanceof ForeignKeyConstraintError) throw new ContactInUseError(IN_USE_ORDERS_MESSAGE);
+  throw error;
+}
 
 type ContactData = Partial<ContactAttributes>;
 
-// Campos que decidem se o contato é gerente com loja/grupo: update que não mexe neles não precisa checar.
+// Campos que decidem se o contato é gerente com loja/grupo: update que não mexe neles não precisa checar nem rolar período.
 const MANAGER_FIELDS = ["type", "unit_business_id", "unit_business_group_id"] as const;
 
 // Gerente (SELLER_MANAGER) sem loja e sem grupo no cadastro é recusado (vira 400 no BaseController).
@@ -86,9 +108,12 @@ function rolledManagerCustomData(before: ContactData, after: ContactData, reopen
   if (after.type !== SELLER_MANAGER_CONTACT_TYPE) return null;
 
   const periods = before.custom_data?.manager_periods ?? [];
-  const hasOpen = periods.some((period) => period.end_date === null);
+  const open = periods.find((period) => period.end_date === null);
+  const hasOpen = !!open;
   const becameManager = before.type !== SELLER_MANAGER_CONTACT_TYPE;
-  const refBefore = managerRef(before);
+  // Voltou a ser gerente com período aberto antigo: compara com a loja/grupo do período (cadastro pode ter mudado enquanto era SELLER).
+  let refBefore = managerRef(before);
+  if (becameManager && open) refBefore = managerRef(open);
   const refAfter = managerRef(after);
   // Compara valor, não presença: tela que manda o cadastro inteiro sem mudar loja/grupo não rola.
   const refChanged =
@@ -136,16 +161,25 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
   async update(id: string, data: Partial<ContactAttributes>, options?: Partial<UpdateOptions>) {
     if (!MANAGER_FIELDS.some((field) => field in data)) return super.update(id, data, options);
 
-    const current = await this.repository.findById(id, { attributes: [...MANAGER_FIELDS, "custom_data"] });
-    if (!current) return null;
-    const before = current.get() as ContactData;
-    const after = { ...before, ...data };
-    assertManagerHasStoreOrGroup([after]);
+    // Lê e grava travado: sync do Bling (ou outra edição) rolando o período ao mesmo tempo não se sobrescrevem.
+    const run = async (transaction: Transaction) => {
+      const current = await this.repository.findById(id, {
+        attributes: [...MANAGER_FIELDS, "custom_data"],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!current) return null;
+      const before = current.get() as ContactData;
+      const after = { ...before, ...data };
+      assertManagerHasStoreOrGroup([after]);
 
-    // Tela: trocar loja/grupo reativa até gerente desligado (quem edita quer ele gerente ali).
-    const customData = rolledManagerCustomData(before, after, true);
-    if (!customData) return super.update(id, data, options);
-    return super.update(id, { ...data, custom_data: customData }, options);
+      // Tela: trocar loja/grupo reativa até gerente desligado (quem edita quer ele gerente ali).
+      const customData = rolledManagerCustomData(before, after, true);
+      if (!customData) return super.update(id, data, { ...options, transaction });
+      return super.update(id, { ...data, custom_data: customData }, { ...options, transaction });
+    };
+    if (options?.transaction) return run(options.transaction);
+    return sequelize.transaction(run);
   }
 
   /**
@@ -153,20 +187,87 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
    * mas rola o período do gerente igual à tela (troca de loja fecha a antiga ontem e abre a nova hoje).
    */
   async updateFromIntegration(contact: Contact, data: Partial<ContactAttributes>) {
-    const before = contact.get() as ContactData;
-    // Bling não reativa gerente desligado: troca de loja de quem já saiu da gerência só atualiza o cadastro.
-    const customData = rolledManagerCustomData(before, { ...before, ...data }, false);
-    if (!customData) return this.repository.update(contact.id, data);
-    return this.repository.update(contact.id, { ...data, custom_data: customData });
+    // Relê travado (o `contact` do upsert pode estar velho) pra não perder período gravado pela tela no meio.
+    return sequelize.transaction(async (transaction) => {
+      const current = await this.repository.findById(contact.id, {
+        attributes: [...MANAGER_FIELDS, "custom_data"],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!current) return null;
+      const before = current.get() as ContactData;
+      // Bling não reativa gerente desligado: troca de loja de quem já saiu da gerência só atualiza o cadastro.
+      const customData = rolledManagerCustomData(before, { ...before, ...data }, false);
+      if (!customData) return this.repository.update(contact.id, data, { transaction });
+      return this.repository.update(contact.id, { ...data, custom_data: customData }, { transaction });
+    });
   }
 
-  // Bulk só trava (não rola período): troca de loja de gerente em lote não é fluxo da tela.
+  /** Bulk com tipo/loja/grupo: mesma trava e rolagem de período do update, contato a contato, numa transação. */
   async bulkUpdate(data: Partial<ContactAttributes>, options: UpdateOptions) {
-    if (MANAGER_FIELDS.some((field) => field in data)) {
-      const current = await this.repository.findAll({ where: options.where, attributes: [...MANAGER_FIELDS] });
-      assertManagerHasStoreOrGroup(current.map((contact) => ({ ...contact.get(), ...data })));
+    if (!MANAGER_FIELDS.some((field) => field in data)) return super.bulkUpdate(data, options);
+
+    // `ids` vem junto no body do BaseController (é o where), não é campo do contato.
+    const { ids: _ids, ...fields } = data as Partial<ContactAttributes> & { ids?: string[] };
+    return sequelize.transaction(async (transaction): Promise<[number]> => {
+      const rows = await this.repository.findAll({
+        where: options.where,
+        attributes: ["id", ...MANAGER_FIELDS, "custom_data"],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      const changes = rows.map((row) => {
+        const before = row.get() as ContactData;
+        return { id: row.id, before, after: { ...before, ...fields } };
+      });
+      assertManagerHasStoreOrGroup(changes.map((change) => change.after));
+
+      // Uma transação, updates em paralelo (sem await por item).
+      await Promise.all(
+        changes.map(({ id, before, after }) => {
+          const customData = rolledManagerCustomData(before, after, true);
+          if (!customData) return this.repository.update(id, fields, { transaction });
+          return this.repository.update(id, { ...fields, custom_data: customData }, { transaction });
+        }),
+      );
+      return [rows.length];
+    });
+  }
+
+  /** Nomes dos gerentes com algum período (vigente ou não) em um dos grupos de lojas: grupo usado no histórico de comissão. */
+  async findManagerNamesByPeriodGroups(groupIds: string[]): Promise<string[]> {
+    if (!groupIds.length) return [];
+    // jsonb @> por grupo (um período com aquele unit_business_group_id), numa query só.
+    const managers = await this.repository.findAll({
+      where: {
+        [Op.or]: groupIds.map((groupId) => ({
+          custom_data: { [Op.contains]: { manager_periods: [{ unit_business_group_id: groupId }] } },
+        })),
+      },
+      attributes: ["name"],
+    });
+    return managers.map((manager) => manager.name);
+  }
+
+  /** Recusa apagar contato com período de gerente ou com pedido/nota (FK RESTRICT): sumiria com o histórico de comissão. */
+  async delete(id: string, options?: DestroyOptions) {
+    const contact = await this.repository.findById(id, { attributes: ["id", "custom_data"], transaction: options?.transaction });
+    if (!contact) return false;
+    if (contact.custom_data?.manager_periods?.length) throw new ContactInUseError(IN_USE_PERIODS_MESSAGE);
+    return super.delete(id, options).catch(rethrowInUse);
+  }
+
+  /** Mesma trava do delete pra exclusão em lote: qualquer contato com período ou pedido/nota barra o lote inteiro. */
+  async bulkDelete(options: DestroyOptions) {
+    const contacts = await this.repository.findAll({
+      where: options.where,
+      attributes: ["id", "custom_data"],
+      transaction: options.transaction,
+    });
+    if (contacts.some((contact) => contact.custom_data?.manager_periods?.length)) {
+      throw new ContactInUseError(IN_USE_PERIODS_MESSAGE);
     }
-    return super.bulkUpdate(data, options);
+    return super.bulkDelete(options).catch(rethrowInUse);
   }
 }
 
