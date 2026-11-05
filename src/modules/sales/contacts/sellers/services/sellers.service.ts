@@ -1,30 +1,65 @@
-import BaseService from "../../../shared/utils/base-models/base-service";
-import unitBusinessService from "../../company/unit-business/unit-business.service";
-import userService from "../../company/users/users/user.service";
-import Contact from "./contacts.model";
-import contactRepository, { ContactRepository } from "./contacts.repository";
-import sequelize from "../../../config/sequelize";
-import roleService from "../../company/users/roles/role.service";
-import { Op, Transaction, UniqueConstraintError } from "sequelize";
-import User from "../../company/users/users/user.model";
-import { UserAttributes } from "../../company/users/users/user.types";
-import integrationMappingService from "../../integrations/integration-mapping/integration-mapping.service";
-import { SELLER_CONTACT_TYPES } from "./contacts.types";
+import BaseService from "../../../../../shared/utils/base-models/base-service";
+import unitBusinessService from "../../../../company/unit-business/unit-business.service";
+import userService from "../../../../company/users/users/user.service";
+import Contact from "../../contacts.model";
+import sellerRepository, { SellerRepository } from "../repositories/sellers.repository";
+import sequelize from "../../../../../config/sequelize";
+import roleService from "../../../../company/users/roles/role.service";
+import { Transaction, UniqueConstraintError } from "sequelize";
+import { UserAttributes } from "../../../../company/users/users/user.types";
+import integrationMappingService from "../../../../integrations/integration-mapping/integration-mapping.service";
+import { SELLER_MANAGER_CONTACT_TYPE } from "../../contacts.types";
+import { ManagerPeriod } from "../types/sellers.types";
+import { withManagerPeriodNames } from "../helpers/manager-period-names";
 
 const SELLER_REPORT_PATH = "/reports/sales/seller";
 
-export class ContactService extends BaseService<Contact, ContactRepository> {
+// Regra de vendedor/gerente (contatos SELLER/SELLER_MANAGER): vendedor da integração, usuário do vendedor, vigência do gerente.
+export class SellerService extends BaseService<Contact, SellerRepository> {
   constructor() {
-    super(contactRepository);
+    super(sellerRepository);
+  }
 
-    this.queryConfig = {
-      defaults: {
-        perPage: 20,
-        sortBy: ['created_at', 'name'],
-        sortDir: 'DESC',
-      },
-      searchFields: ['name'],
-    };
+  /** Detalhe do contato (GET /api/contacts/:id) com o nome da loja/grupo em cada período do gerente; null = não existe. */
+  async findDetail(id: string) {
+    const contact = await this.repository.findById(id);
+    if (!contact) return null;
+    return withManagerPeriodNames(contact);
+  }
+
+  /**
+   * Substitui os períodos do gerente (`custom_data.manager_periods`, mantendo as outras chaves) e volta com nome da loja/grupo; null = não existe.
+   * Sem sobreposição: o relatório casa um período por data, então loja/grupo de cada data é um só (sem comissão em dobro).
+   */
+  async updateManagerPeriods(id: string, periods: ManagerPeriod[]) {
+    const contact = await this.repository.findById(id, { attributes: ["id", "type", "custom_data"] });
+    if (!contact) return null;
+    if (contact.type !== SELLER_MANAGER_CONTACT_TYPE) {
+      throw new Error("O contato não é gerente: marque como gerente antes de informar os períodos.");
+    }
+
+    // Datas YYYY-MM-DD comparam certo como texto; ordenado por início, sobrepõe se o anterior não termina antes do próximo começar.
+    const sorted = [...periods].sort((a, b) => a.start_date.localeCompare(b.start_date));
+    sorted.forEach((period, index) => {
+      if (!period.unit_business_id && !period.unit_business_group_id) {
+        throw new Error("Cada período do gerente precisa de uma loja ou de um grupo de lojas.");
+      }
+      if (period.end_date !== null && period.end_date < period.start_date) {
+        throw new Error("A data de fim de um período do gerente não pode ser anterior à data de início.");
+      }
+      const previous = sorted[index - 1];
+      if (previous && (previous.end_date === null || previous.end_date >= period.start_date)) {
+        throw new Error(
+          `Os períodos do gerente não podem se sobrepor: o que começa em ${previous.start_date} precisa terminar antes de ${period.start_date}.`,
+        );
+      }
+    });
+
+    const updated = await this.repository.update(id, {
+      custom_data: { ...contact.custom_data, manager_periods: sorted },
+    });
+    if (!updated) return null;
+    return withManagerPeriodNames(updated);
   }
 
   /**
@@ -52,17 +87,7 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
     try {
       // Contato + mapping na mesma transação: se a criação perder a corrida, o rollback não deixa contato órfão.
       return await sequelize.transaction(async (t) => {
-        const legacy = await this.repository.findOne({
-          where: {
-            id_system: externalId,
-            // Gerente (SELLER_MANAGER) também é vendedor.
-            type: { [Op.in]: SELLER_CONTACT_TYPES },
-            integrations_id: integrationId,
-          },
-          attributes: ["id"],
-          order: [["createdAt", "ASC"]],
-          transaction: t,
-        });
+        const legacy = await this.repository.findLegacyIntegrationSeller(externalId, integrationId, t);
 
         let contactId = legacy?.id;
         if (!contactId) {
@@ -197,13 +222,7 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
         throw new Error('Role "Vendedor" não encontrada');
       }
 
-      const seller = await this.repository.findOne({
-        where: sequelize.where(
-          sequelize.fn("LOWER", sequelize.fn("TRIM", sequelize.col("name"))),
-          normalizedName
-        ) as any,
-        transaction: t,
-      });
+      const seller = await this.repository.findByNormalizedName(normalizedName, t);
 
       if (!seller) {
         throw new Error(`Vendedor "${name}" não encontrado`);
@@ -242,4 +261,4 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
   }
 }
 
-export default new ContactService();
+export default new SellerService();

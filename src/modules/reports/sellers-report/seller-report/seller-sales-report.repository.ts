@@ -16,7 +16,7 @@ import { SELLER_CONTACT_TYPES } from "../../../sales/contacts/contacts.types";
 import {
   regionalManagersFromSql,
   storeManagersFromSql,
-} from "../../../sales/contacts/helpers/managers";
+} from "../../../sales/contacts";
 import { SupplierDiscountResolveItemInput } from "../../../inventory/supplier-discount-rules/supplier-discount-rule.types";
 import {
   AffectedSellerCustomerFactKey,
@@ -1159,11 +1159,11 @@ async getReport(filters: SellerSalesReportFilters) {
     )
   `;
 
-  // Comissão de gerente da loja só com gerente (SELLER_MANAGER) cadastrado na loja; regional = mesmo valor, a mais,
+  // Comissão de gerente da loja só com gerente (SELLER_MANAGER) vigente na data do pedido; regional = mesmo valor, a mais,
   // nas lojas do grupo dele. Só exibição: nenhuma das duas entra em custo/markup/contribuição.
-  const storeManagerCommissionSql = `CASE WHEN EXISTS (SELECT 1 ${storeManagersFromSql("s.unit_business_id")})
+  const storeManagerCommissionSql = `CASE WHEN EXISTS (SELECT 1 ${storeManagersFromSql("s.unit_business_id", "s.order_date")})
     THEN s.manager_commission_value ELSE 0 END`;
-  const regionalManagerCommissionSql = `CASE WHEN EXISTS (SELECT 1 ${regionalManagersFromSql("s.unit_business_id")})
+  const regionalManagerCommissionSql = `CASE WHEN EXISTS (SELECT 1 ${regionalManagersFromSql("s.unit_business_id", "s.order_date")})
     THEN s.manager_commission_value ELSE 0 END`;
 
     const [summary] = await sequelize.query(

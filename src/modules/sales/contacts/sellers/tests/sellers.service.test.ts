@@ -1,10 +1,9 @@
-// src/__tests__/contacts/contacts.service.test.ts
 
-import { ContactService } from "../../contacts/contacts.service";
+import { SellerService } from "../services/sellers.service";
 
 // ─── Mocks dos módulos externos ───────────────────────────────────────────────
 
-jest.mock("../../../../config/sequelize", () => ({
+jest.mock("../../../../../config/sequelize", () => ({
   __esModule: true,
   default: {
     transaction: jest.fn((cb) => cb(mockTransaction)),
@@ -14,14 +13,22 @@ jest.mock("../../../../config/sequelize", () => ({
   },
 }));
 
-jest.mock("../../../company/unit-business/unit-business.service", () => ({
+jest.mock("../../../../company/unit-business/unit-business.service", () => ({
   __esModule: true,
   default: {
     findOne: jest.fn(),
+    findAll: jest.fn().mockResolvedValue([]),
   },
 }));
 
-jest.mock("../../../company/users/users/user.service", () => ({
+jest.mock("../../../../company/unit-business-groups/unit-business-group/unit-business-group.service", () => ({
+  __esModule: true,
+  default: {
+    findAll: jest.fn().mockResolvedValue([]),
+  },
+}));
+
+jest.mock("../../../../company/users/users/user.service", () => ({
   __esModule: true,
   default: {
     findOne: jest.fn(),
@@ -30,7 +37,7 @@ jest.mock("../../../company/users/users/user.service", () => ({
   },
 }));
 
-jest.mock("../../../company/users/roles/role.service", () => ({
+jest.mock("../../../../company/users/roles/role.service", () => ({
   __esModule: true,
   default: {
     findOne: jest.fn(),
@@ -38,7 +45,7 @@ jest.mock("../../../company/users/roles/role.service", () => ({
 }));
 
 // Sem mock, a cadeia real de imports abre conexão Redis/BullMQ: trava o Jest local e dá exit 1 no build Docker.
-jest.mock("../../../integrations/integration-mapping/integration-mapping.service", () => ({
+jest.mock("../../../../integrations/integration-mapping/integration-mapping.service", () => ({
   __esModule: true,
   default: {
     findEntityByMapping: jest.fn(),
@@ -46,18 +53,18 @@ jest.mock("../../../integrations/integration-mapping/integration-mapping.service
   },
 }));
 
-jest.mock("../contacts.repository", () => ({
+jest.mock("../repositories/sellers.repository", () => ({
   __esModule: true,
   default: {
-    findOne: jest.fn(),
+    findByNormalizedName: jest.fn(),
     update: jest.fn(),
   },
 }));
 
-import sequelize from "../../../../config/sequelize";
-import unitBusinessService from "../../../company/unit-business/unit-business.service";
-import userService from "../../../company/users/users/user.service";
-import roleService from "../../../company/users/roles/role.service";
+import sequelize from "../../../../../config/sequelize";
+import unitBusinessService from "../../../../company/unit-business/unit-business.service";
+import userService from "../../../../company/users/users/user.service";
+import roleService from "../../../../company/users/roles/role.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,8 +85,8 @@ const mockUrl = `https://hub.paxpneus.com.br/reports/sales/seller/${mockToken}`;
 
 // ─── Suite ────────────────────────────────────────────────────────────────────
 
-describe("ContactService.createUserFromSellerName", () => {
-  let service: ContactService;
+describe("SellerService.createUserFromSellerName", () => {
+  let service: SellerService;
   const originalFrontendUrl = process.env.FRONTEND_URL;
 
   // URL esperada é a default do service — sem isso o FRONTEND_URL do .env local quebra o teste.
@@ -93,11 +100,11 @@ describe("ContactService.createUserFromSellerName", () => {
   });
 
   beforeEach(() => {
-    service = new ContactService();
+    service = new SellerService();
 
     // Repositório interno do service
     (service as any).repository = {
-      findOne: jest.fn().mockResolvedValue(mockSeller),
+      findByNormalizedName: jest.fn().mockResolvedValue(mockSeller),
       update: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -133,7 +140,7 @@ describe("ContactService.createUserFromSellerName", () => {
 
       // O sequelize.fn('LOWER', ...) é chamado com o nome já trimado/lower do lado JS
       // e o banco recebe a versão normalizada para comparação
-      expect((service as any).repository.findOne).toHaveBeenCalled();
+      expect((service as any).repository.findByNormalizedName).toHaveBeenCalled();
     });
   });
 
@@ -149,7 +156,7 @@ describe("ContactService.createUserFromSellerName", () => {
     });
 
     it("lança erro se o seller não é encontrado pelo nome", async () => {
-      (service as any).repository.findOne.mockResolvedValue(null);
+      (service as any).repository.findByNormalizedName.mockResolvedValue(null);
 
       await expect(
         service.createUserFromSellerName("Nome Inexistente", 1, "calebe@email.com", "senha123")
@@ -169,7 +176,7 @@ describe("ContactService.createUserFromSellerName", () => {
 
   describe("sincronização do unit_business_id no contact", () => {
     it("atualiza o contact quando unit_business_id está vazio", async () => {
-      (service as any).repository.findOne.mockResolvedValue({
+      (service as any).repository.findByNormalizedName.mockResolvedValue({
         ...mockSeller,
         unit_business_id: null,
       });
@@ -184,7 +191,7 @@ describe("ContactService.createUserFromSellerName", () => {
     });
 
     it("atualiza o contact quando unit_business_id é diferente da loja recebida", async () => {
-      (service as any).repository.findOne.mockResolvedValue({
+      (service as any).repository.findByNormalizedName.mockResolvedValue({
         ...mockSeller,
         unit_business_id: "outro-ub-uuid",
       });
@@ -256,5 +263,131 @@ describe("ContactService.createUserFromSellerName", () => {
     );
 
     expect(result).toEqual({ url: mockUrl, user: mockUser });
+  });
+});
+
+describe("SellerService.updateManagerPeriods", () => {
+  let service: SellerService;
+  const store10 = { unit_business_id: "loja-10", unit_business_group_id: null };
+  const store15 = { unit_business_id: "loja-15", unit_business_group_id: null };
+
+  beforeEach(() => {
+    service = new SellerService();
+    (service as any).repository = {
+      findById: jest.fn().mockResolvedValue({ id: "c1", type: "SELLER_MANAGER", custom_data: { other: 1 } }),
+      // Volta o que foi gravado, como o model atualizado (withManagerPeriodNames lê via toJSON).
+      update: jest.fn((id, data) => Promise.resolve({ toJSON: () => ({ id, ...data }) })),
+    };
+  });
+
+  it("troca de loja: grava os dois períodos ordenados por início, mantendo as outras chaves", async () => {
+    const before = { ...store10, start_date: "2023-01-01", end_date: "2026-06-30" };
+    const after = { ...store15, start_date: "2026-07-01", end_date: null };
+    await service.updateManagerPeriods("c1", [after, before]);
+    expect((service as any).repository.update).toHaveBeenCalledWith("c1", {
+      custom_data: { other: 1, manager_periods: [before, after] },
+    });
+  });
+
+  it("contato inexistente volta null (404 no controller)", async () => {
+    (service as any).repository.findById.mockResolvedValue(null);
+    await expect(service.updateManagerPeriods("c1", [])).resolves.toBeNull();
+    expect((service as any).repository.update).not.toHaveBeenCalled();
+  });
+
+  it("recusa contato que não é gerente", async () => {
+    (service as any).repository.findById.mockResolvedValue({ id: "c1", type: "SELLER", custom_data: null });
+    await expect(service.updateManagerPeriods("c1", [])).rejects.toThrow("O contato não é gerente");
+  });
+
+  it("recusa fim antes do início", async () => {
+    await expect(
+      service.updateManagerPeriods("c1", [{ ...store10, start_date: "2026-07-01", end_date: "2026-06-30" }]),
+    ).rejects.toThrow("anterior à data de início");
+    expect((service as any).repository.update).not.toHaveBeenCalled();
+  });
+
+  it("recusa período sem loja e sem grupo", async () => {
+    await expect(
+      service.updateManagerPeriods("c1", [
+        { unit_business_id: null, unit_business_group_id: null, start_date: "2026-07-01", end_date: null },
+      ]),
+    ).rejects.toThrow("precisa de uma loja ou de um grupo");
+  });
+
+  it("recusa períodos sobrepostos (inclusive fim no mesmo dia do próximo início e período aberto antes de outro)", async () => {
+    await expect(
+      service.updateManagerPeriods("c1", [
+        { ...store10, start_date: "2023-01-01", end_date: "2026-07-01" },
+        { ...store15, start_date: "2026-07-01", end_date: null },
+      ]),
+    ).rejects.toThrow("não podem se sobrepor");
+    await expect(
+      service.updateManagerPeriods("c1", [
+        { ...store10, start_date: "2023-01-01", end_date: null },
+        { ...store15, start_date: "2026-07-01", end_date: null },
+      ]),
+    ).rejects.toThrow("não podem se sobrepor");
+    expect((service as any).repository.update).not.toHaveBeenCalled();
+  });
+
+  it("lista vazia apaga os períodos (gerente deixa de ganhar em todo o histórico)", async () => {
+    await service.updateManagerPeriods("c1", []);
+    expect((service as any).repository.update).toHaveBeenCalledWith("c1", {
+      custom_data: { other: 1, manager_periods: [] },
+    });
+  });
+});
+
+describe("SellerService.findDetail", () => {
+  const unitBusinessService = jest.requireMock("../../../../company/unit-business/unit-business.service").default;
+  const unitBusinessGroupService = jest.requireMock(
+    "../../../../company/unit-business-groups/unit-business-group/unit-business-group.service",
+  ).default;
+  let service: SellerService;
+
+  beforeEach(() => {
+    service = new SellerService();
+    (service as any).repository = { findById: jest.fn() };
+  });
+
+  it("põe { name } da loja e do grupo em cada período (null sem id), uma busca por tabela", async () => {
+    (service as any).repository.findById.mockResolvedValue({
+      toJSON: () => ({
+        id: "c1",
+        custom_data: {
+          manager_periods: [
+            { unit_business_id: "s10", unit_business_group_id: null, start_date: "2023-01-01", end_date: "2026-06-30" },
+            { unit_business_id: "s15", unit_business_group_id: "g1", start_date: "2026-07-01", end_date: null },
+          ],
+        },
+      }),
+    });
+    unitBusinessService.findAll.mockResolvedValue([
+      { id: "s10", name: "Loja 10" },
+      { id: "s15", name: "Loja 15" },
+    ]);
+    unitBusinessGroupService.findAll.mockResolvedValue([{ id: "g1", name: "Paraná" }]);
+
+    const result: any = await service.findDetail("c1");
+
+    expect(result.custom_data.manager_periods).toEqual([
+      expect.objectContaining({ unit_business: { name: "Loja 10" }, unit_business_group: null }),
+      expect.objectContaining({ unit_business: { name: "Loja 15" }, unit_business_group: { name: "Paraná" } }),
+    ]);
+    expect(unitBusinessService.findAll).toHaveBeenCalledTimes(1);
+    expect(unitBusinessGroupService.findAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("contato sem períodos volta como está, sem buscar loja/grupo", async () => {
+    unitBusinessService.findAll.mockClear();
+    (service as any).repository.findById.mockResolvedValue({ toJSON: () => ({ id: "c1", custom_data: null }) });
+    await expect(service.findDetail("c1")).resolves.toEqual({ id: "c1", custom_data: null });
+    expect(unitBusinessService.findAll).not.toHaveBeenCalled();
+  });
+
+  it("contato inexistente volta null (404 no controller)", async () => {
+    (service as any).repository.findById.mockResolvedValue(null);
+    await expect(service.findDetail("c1")).resolves.toBeNull();
   });
 });

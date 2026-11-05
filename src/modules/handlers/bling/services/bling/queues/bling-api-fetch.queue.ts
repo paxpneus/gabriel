@@ -26,7 +26,7 @@ import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
-import contactsService from "../../../../../sales/contacts/contacts.service";
+import { sellerService } from "../../../../../sales/contacts";
 import { buildBlingApiFetchPayload } from "../../bling-sync/helpers/bling-list";
 import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
@@ -1797,7 +1797,7 @@ export class BlingApiFetchQueue extends BaseQueueService<
     let sellerId: string | null = null;
     if (nf.vendedor?.id) {
       const sellerSystemId = String(nf.vendedor.id);
-      const seller = await contactsService.findOrCreateIntegrationSeller(
+      const seller = await sellerService.findOrCreateIntegrationSeller(
         sellerSystemId,
         null,
         integration.id,

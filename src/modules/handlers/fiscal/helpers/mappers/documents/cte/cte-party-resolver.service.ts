@@ -2,7 +2,7 @@
 import { cleanDocument } from "../../../../../../../shared/utils/normalizers/document";
 import unitBusinessService from "../../../../../../company/unit-business/unit-business.service";
 import supplierService from "../../../../../../inventory/suppliers/supplier.service";
-import contactsService from "../../../../../../sales/contacts/contacts.service";
+import { contactService as contactsService } from "../../../../../../sales/contacts";
 import transporterService from "../../../../../../warehouse/transporter/transporter.service";
 
 export type CtePartyType =

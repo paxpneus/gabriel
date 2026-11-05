@@ -3,6 +3,7 @@ import sequelize from "../../../config/sequelize";
 import {
   ContactAttributes,
   ContactCreationAttributes,
+  ContactCustomData,
   ContactType,
 } from "./contacts.types";
 import { v4 as uuidv4 } from "uuid";
@@ -20,6 +21,7 @@ class Contact
   public unit_business_id?: string | null;
   public unit_business_group_id?: string | null;
   public user_id?: string | null;
+  public custom_data?: ContactCustomData | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -90,6 +92,11 @@ Contact.init(
       },
       onUpdate: "CASCADE",
       onDelete: "SET NULL",
+    },
+    // Valores customizados por tipo (ver ContactCustomData); períodos do gerente (`manager_periods`) só pelo PUT /:id/manager-periods.
+    custom_data: {
+      type: DataTypes.JSONB,
+      allowNull: true,
     },
   },
   {

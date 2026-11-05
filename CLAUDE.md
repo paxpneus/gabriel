@@ -38,6 +38,112 @@ Segue `BaseRepository`/`BaseService`/`BaseController` (`src/shared/utils/base-mo
 
 Antes de criar método pra buscar dado de outra entidade: checar `BaseRepository`/`BaseService`/`BaseController` primeiro — geralmente já existe `findOne`/`findById`/`findAll` genérico; a solução costuma ser chamar `<entity>Service.findOne(...)`, não escrever query nova.
 
+Exceção (ver "Organização de módulos"): entidade principal → sub-entidade do **mesmo módulo** usa a repository da sub-entidade. Entidade de outro módulo continua pelo service dela.
+
+## Organização de módulos
+
+**Escopo: vale pra código novo e pra entidade que eu pedir pra refatorar.** Módulo/entidade que já existe fica como está — mexer nele por outra tarefa não é motivo pra reorganizar as pastas. Referência de nível 2 já aplicada: `sales/contacts/`.
+
+### Conceitos
+- Entidade: uma tabela (order, order_items, invoice...).
+- Módulo: agrupamento de entidades relacionadas (`sales/orders/` contém order, order_items, order_history, order_payment).
+- Domínio: uma responsabilidade DENTRO de uma entidade que cresceu (ingestão, cancelamento, relatórios...). Não dividir por variação de dado (entrada/saída, tipo, status): isso é filtro, não domínio.
+
+### Dois níveis: o padrão é o plano
+- Nível 1 (PADRÃO pra toda entidade): pasta plana.
+    ```
+    <entidade>/
+      <entidade>.model.ts
+      <entidade>.repository.ts
+      <entidade>.service.ts
+      <entidade>.controller.ts
+      <entidade>.types.ts
+      <entidade>.routes.ts
+    ```
+- Nível 2 (por domínios, abaixo): só pra ENTIDADE que cresceu.
+- Promover pro nível 2 quando houver pelo menos um destes:
+  - service com mais de ~400 linhas;
+  - dois ou mais grupos de métodos que mudam por motivos diferentes;
+  - dificuldade recorrente de achar onde algo está.
+- Promover = mover os arquivos atuais pra `core/` e extrair os domínios. Nunca criar a estrutura de nível 2 numa entidade nova.
+- Na dúvida, fica no nível 1.
+
+### Entidades dentro de um módulo
+- Num mesmo módulo, entidades em níveis diferentes convivem:
+    ```
+    orders/
+      order/           nível 2 (muitas funções)
+      order_items/     nível 1
+      order_history/   nível 1
+      order_payment/   nível 1
+    ```
+- Fluxos da entidade principal que envolvem sub-entidades (criar pedido com itens, registrar histórico) ficam na entidade principal e usam as repositories das sub-entidades. Sub-entidades guardam só o próprio CRUD e regras que dizem respeito só a elas.
+- Dependência entre entidades do módulo é de mão única: principal → sub-entidades. Sub-entidade nunca importa a principal; se precisar, a lógica pertence à principal.
+- Cada sub-entidade é promovida ao nível 2 sozinha, se crescer.
+
+### Nível 2: estrutura da entidade
+```
+<entidade>/
+  <entidade>.model.ts     model da entidade
+  <entidade>.types.ts     tipos usados por vários domínios
+  <entidade>.routes.ts    agrega os routers dos domínios (URLs não mudam)
+  index.ts                API pública pro resto do projeto
+  shared/                 o que 2+ domínios da entidade usam
+  core/                   CRUD, listagens e detalhe
+  <dominio>/              um por responsabilidade
+```
+`.model.ts` e `.routes.ts` ficam obrigatoriamente na raiz da entidade: o loader de `config/routes.ts` só procura neles ali (e não desce em pasta que tem `.routes`).
+
+### Nível 2: estrutura de cada domínio (e de `core/` e `shared/`)
+```
+<dominio>/
+  index.ts                fachada: única porta de entrada do domínio
+  controllers/
+  services/
+    <dominio>.service.ts  orquestra e delega pras operações
+    <subdominio>/         uma pasta por subdomínio, um arquivo por operação
+  repositories/
+  types/
+  helpers/
+  tests/
+```
+- A raiz de um domínio tem SÓ pastas de camada e o `index.ts`. Nenhum arquivo solto.
+- Só se criam as pastas de camada que o domínio usa (sem `controllers/` vazio se o domínio não tem rota).
+- Subdomínios existem dentro de `services/` (onde as operações vivem). Controllers, repositories e helpers ficam no nível do domínio.
+
+### Regras do nível 2
+1. Uma pasta = um motivo de mudança.
+2. Ancestral comum mais próximo: helper, type, repository ou constante mora no nível mais próximo que contém TODOS os seus usuários.
+   - usado por uma só operação → função privada no próprio arquivo
+   - usado só dentro de um subdomínio → na pasta do subdomínio
+   - usado por 2+ subdomínios ou camadas do domínio → `<dominio>/helpers/`
+   - usado por 2+ domínios da entidade → `<entidade>/shared/`
+   - usado por outro módulo → exportado pelo `index.ts` da entidade (se for regra da entidade) ou `src/shared/` global (se for genérico)
+   Se o uso mudar, o arquivo sobe ou desce de nível. (Mesma ideia da seção "Helpers de query/filtro reutilizáveis": no nível 2, `helpers/` é o do domínio ou o `shared/` da entidade.)
+3. Fachada: de fora de um domínio, importa-se só o `index.ts` dele, nunca arquivo interno. Outros módulos importam só do `index.ts` da entidade. Exceções (por import circular, ver abaixo): model, types e controllers.
+4. Domínios irmãos de uma mesma entidade nunca se importam; o que compartilham sobe pro `shared/` da entidade. (Vale entre domínios, não entre entidades do módulo.) Objetivo: zero import circular.
+5. Services dependem de repositories, não de services de outro domínio da mesma entidade. Orquestração fica no service de quem inicia o fluxo.
+6. Criar subdomínios em `services/` só quando houver mais de ~6 arquivos, um service com mais de ~300 linhas, ou grupos claramente distintos de operações.
+
+### Fachadas e import circular (ajustes deste projeto)
+- **`index.ts` nunca exporta controller.** Controller importa `user-permissions` → `config/routes.ts`, que carrega todas as rotas no import: controller numa fachada faz qualquer service (inclusive em worker) puxar a camada HTTP inteira. Só o `<entidade>.routes.ts` importa `<dominio>/controllers/*.controller.ts` direto.
+- **Model e types são importados direto** (`<entidade>.model.ts`/`.types.ts`), não pela fachada: são folhas sem dependência e são importados por `sequelize-associations` e por repositories de outras entidades; via `index.ts` puxariam os services e fechariam ciclo (ex.: `user.repository` → contacts → sellers.service → `user.service` → `user.repository`).
+- **Types seguem o ancestral comum**: tipo de um domínio só vai pra `<dominio>/types/<dominio>.types.ts`; `<entidade>.types.ts` fica com o que é da entidade toda (atributos do model, enums) e com constantes usadas por outros módulos. Se o `<entidade>.types.ts` precisar de um tipo de domínio, usa `import type` do `index.ts` do domínio (apagado no build, sem ciclo). Ex.: `ContactCustomData` (raiz) usa `ManagerPeriod` de `contacts/sellers`.
+- **Se o `index.ts` da entidade fechar ciclo, importar o `index.ts` do domínio** (nunca arquivo interno), com comentário dizendo o porquê. Ex.: `integration-mapping/helpers/map-repository.ts` importa `sales/contacts/core` (a fachada da entidade puxa sellers → `integration-mapping.service` → o próprio mapa).
+- Fachada reexporta com `export { default as x } from` (getter lazy); quem consome usa o valor dentro de método, nunca no carregamento do módulo.
+- Fachada carrega todos os services da entidade: teste de outro módulo que importa a fachada sem precisar dela real faz `jest.mock` da fachada (senão a cadeia abre Redis/BullMQ e o Jest não sai). Ex.: `seller-commission-report.service.test.ts` mocka `sales/contacts`.
+
+### Contra overengineering
+- Não criar pasta vazia nem "para o futuro".
+- Domínio com 2-3 métodos simples fica dentro do core.
+- Não criar interface ou abstração pra algo com uma só implementação.
+- Sem container de DI: dependências como parâmetro default do construtor e export default de instância (padrão atual do projeto).
+- Refatoração estrutural nunca muda comportamento. Mudança de regra ou limpeza de código é commit separado.
+
+### Testes
+- Nível 1: em `__tests__/` ao lado da entidade (padrão atual).
+- Nível 2: em `tests/` dentro do domínio que testam, espelhando `services/` (`jest.config.ts` já casa `**/tests/**/*.test.ts`).
+
 ## Helpers de query/filtro reutilizáveis
 
 Lógica de query (fragmento `where`, `Sequelize.literal`, etc.) não-trivial e reutilizável por mais de um filtro/método: função nomeada, exportada, parametrizada em `helpers/` da própria entidade (ex: `invoice/helpers/`) — nunca função solta/closure dentro do service/repository. Parametrizar pelo que varia entre chamadas (nome de loja, unit business id, alias de tabela, data de referência), não hardcoded pro primeiro caso de uso. Referência: `invoice/helpers/totals.ts` (`totalExpectedLiteral`/`totalReadLiteral`), `invoice/helpers/custom-filters.ts` (`storeCollectionDateTodayWhere`) — funções puras, importadas por `invoice.service.ts`/`invoice.repository.ts`. É organização de código, não muda layering acima: o helper pertence à mesma entidade e é usado pela camada que precisar.
@@ -121,7 +227,7 @@ Documentação por módulo (por que o código é como é, causa-raiz de bugs de 
   - `supplier-discount/report-value.md` — valor de desconto por linha nos relatórios
   - `supplier-discount/unit-business-bypass.md` — bypass de loja só no relatório de produto
 - `unit-business-group.md` — UnitBusinessGroup + pivot `unit_business_group_members` (N:N de unit businesses), rotas, permissão
-- `contact.md` — Contact (vendedores): tipos `SELLER`/`SELLER_MANAGER` (gerente da loja, comissão de gerente), `SELLER_CONTACT_TYPES` nas buscas de vendedor do Bling
+- `contact.md` — Contact (vendedores): tipos `SELLER`/`SELLER_MANAGER` (gerente da loja/regional, comissão de gerente por períodos em `custom_data.manager_periods`), `SELLER_CONTACT_TYPES` nas buscas de vendedor do Bling
 - `customer.md` — Customer: enum `type`, documento nullable, fallback quando Bling manda `tipoPessoa`/`numeroDocumento` vazios
 - `ticket.md` — Ticket: `requester_user_id` obrigatório no body (não é o logado), `opened_by`/`closed_by` pelo usuário logado, backfill m336
 - `store.md` — Store (tipo canal de venda, não filial), fix de dedup

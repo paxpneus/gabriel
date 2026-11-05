@@ -1,3 +1,11 @@
-import contactController from "./contacts.controller";
+import { Router } from "express";
+import contactController from "./core/controllers/contacts.controller";
+import sellerController from "./sellers/controllers/sellers.controller";
 
-export default contactController.router;
+const router = Router();
+
+// Vendedor/gerente antes do CRUD genérico: rotas específicas não caem nas genéricas.
+router.use("/", sellerController.router);
+router.use("/", contactController.router);
+
+export default router;

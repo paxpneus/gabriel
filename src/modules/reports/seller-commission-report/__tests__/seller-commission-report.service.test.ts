@@ -1,19 +1,14 @@
 import { SellerCommissionReportService } from "../services/main/seller-commission-report/seller-commission-report.service";
 import productService from "../../../inventory/products/services/product.service";
-import contactService from "../../../sales/contacts/contacts.service";
-import unitBusinessGroupMemberService from "../../../company/unit-business-groups/unit-business-group-member/unit-business-group-member.service";
+
+// Fachada de contacts carrega sellers.service (cadeia que abre Redis/BullMQ e não deixa o Jest sair); aqui só o SQL dos gerentes.
+jest.mock("../../../sales/contacts", () => ({
+  __esModule: true,
+  storeManagersFromSql: jest.fn(() => ""),
+  regionalManagersFromSql: jest.fn(() => ""),
+}));
 
 jest.mock("../../../inventory/products/services/product.service", () => ({
-  __esModule: true,
-  default: { findAll: jest.fn() },
-}));
-
-jest.mock("../../../sales/contacts/contacts.service", () => ({
-  __esModule: true,
-  default: { findAll: jest.fn() },
-}));
-
-jest.mock("../../../company/unit-business-groups/unit-business-group-member/unit-business-group-member.service", () => ({
   __esModule: true,
   default: { findAll: jest.fn() },
 }));
@@ -36,10 +31,9 @@ describe("SellerCommissionReportService", () => {
   it("busca linhas e avisos pelo período do pedido, com os mesmos filtros", async () => {
     const report = await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31", sellerIds: ["s1"] });
 
-    const filters = { startDate: "2026-10-01", endDate: "2026-10-31", productIds: undefined, sellerIds: ["s1"], unitBusinessIds: undefined, originUnitBusinessIds: undefined };
+    const filters = { startDate: "2026-10-01", endDate: "2026-10-31", productIds: undefined, sellerIds: ["s1"], managerIds: undefined, unitBusinessIds: undefined, originUnitBusinessIds: undefined };
     expect(repository.findCommissionRows).toHaveBeenCalledWith(filters);
     expect(repository.countOrderWarnings).toHaveBeenCalledWith(filters);
-    expect(contactService.findAll).not.toHaveBeenCalled();
     expect(report.warnings).toEqual(warnings);
     expect(report.filters).toEqual({
       start_date: "2026-10-01", end_date: "2026-10-31", brand: null, product_id: null,
@@ -58,39 +52,15 @@ describe("SellerCommissionReportService", () => {
     expect(repository.countOrderWarnings.mock.calls[0][0].productIds).toEqual(["p2"]);
   });
 
-  it("gerente (contato SELLER_MANAGER) vira a loja dele", async () => {
-    (contactService.findAll as jest.Mock).mockResolvedValue([{ unit_business_id: "ub-9" }, { unit_business_id: null }]);
-    await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31", managerIds: ["c1"] });
-
-    expect((contactService.findAll as jest.Mock).mock.calls[0][0].where.type).toBe("SELLER_MANAGER");
-    expect(repository.findCommissionRows.mock.calls[0][0].unitBusinessIds).toEqual(["ub-9"]);
-    expect(unitBusinessGroupMemberService.findAll).not.toHaveBeenCalled();
-  });
-
-  it("gerente regional (com grupo de lojas) soma as lojas do grupo à loja dele", async () => {
-    (contactService.findAll as jest.Mock).mockResolvedValue([
-      { unit_business_id: "ub-9", unit_business_group_id: null },
-      { unit_business_id: null, unit_business_group_id: "g-pr" },
-    ]);
-    (unitBusinessGroupMemberService.findAll as jest.Mock).mockResolvedValue([
-      { unit_business_id: "ub-11" },
-      { unit_business_id: "ub-13" },
-    ]);
-    await service.getReport({ startDate: "2026-10-01", endDate: "2026-10-31", managerIds: ["c1", "c2"] });
-
-    expect((unitBusinessGroupMemberService.findAll as jest.Mock).mock.calls[0][0].where.unit_business_group_id).toBeDefined();
-    expect(repository.findCommissionRows.mock.calls[0][0].unitBusinessIds).toEqual(["ub-9", "ub-11", "ub-13"]);
-  });
-
-  it("loja e gerente juntos ficam com a interseção das lojas", async () => {
-    (contactService.findAll as jest.Mock).mockResolvedValue([{ unit_business_id: "ub-1" }, { unit_business_id: "ub-9" }]);
+  it("gerente vai pro repository como managerIds (loja/regional e vigência resolvidas no SQL), junto com o filtro de loja", async () => {
     await service.getReport({
       startDate: "2026-10-01",
       endDate: "2026-10-31",
       managerIds: ["c1"],
-      unitBusinessIds: ["ub-1", "ub-2"],
+      unitBusinessIds: ["ub-1"],
     });
 
-    expect(repository.findCommissionRows.mock.calls[0][0].unitBusinessIds).toEqual(["ub-1"]);
+    expect(repository.findCommissionRows.mock.calls[0][0]).toMatchObject({ managerIds: ["c1"], unitBusinessIds: ["ub-1"] });
+    expect(repository.countOrderWarnings.mock.calls[0][0]).toMatchObject({ managerIds: ["c1"], unitBusinessIds: ["ub-1"] });
   });
 });

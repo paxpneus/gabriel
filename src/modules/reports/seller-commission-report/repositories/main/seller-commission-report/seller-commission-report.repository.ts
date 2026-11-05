@@ -3,7 +3,7 @@ import sequelize from "../../../../../../config/sequelize";
 import {
   regionalManagersFromSql,
   storeManagersFromSql,
-} from "../../../../../sales/contacts/helpers/managers";
+} from "../../../../../sales/contacts";
 import { BLING_STATUS_DEFAULTS } from "../../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import {
   orderFinalSituationSql,
@@ -20,12 +20,13 @@ const ACTIVE_ORDER_SITUATIONS = BLING_STATUS_DEFAULTS.filter((status) => !status
   (status) => status.external_status_id,
 );
 
-/** Período (data do pedido) e filtros; lista ausente = sem restrição. `unitBusinessIds` = loja do pedido (e/ou dos gerentes, incl. lojas do grupo do regional). */
+/** Período (data do pedido) e filtros; lista ausente = sem restrição. `managerIds` = vendas em que o gerente (loja ou regional) ganhou comissão. */
 export interface CommissionFilters {
   startDate: string;
   endDate: string;
   productIds?: string[];
   sellerIds?: string[];
+  managerIds?: string[];
   unitBusinessIds?: string[];
   originUnitBusinessIds?: string[];
 }
@@ -56,7 +57,7 @@ export class SellerCommissionReportRepository {
         s.commission_base,
         s.commission_rate,
         s.commission_value,
-        -- Comissão de gerente da loja só quando a loja tem gerente (SELLER_MANAGER) cadastrado; regional usa a taxa do item direto.
+        -- Comissão de gerente da loja só quando a loja tem gerente (SELLER_MANAGER) vigente na data do pedido; regional usa a taxa do item direto.
         CASE WHEN managers.names IS NULL THEN 0 ELSE s.manager_commission_rate END
                                                 AS manager_commission_rate,
         CASE WHEN managers.names IS NULL THEN 0 ELSE s.manager_commission_value END
@@ -75,14 +76,14 @@ export class SellerCommissionReportRepository {
       LEFT JOIN products p ON p.id = s.product_id
       LEFT JOIN unit_businesses ub ON ub.id = s.unit_business_id
       LEFT JOIN customers customer ON customer.id = s.customer_id
-      -- Gerentes da loja da venda e regionais do grupo dela (regra em contacts/helpers/managers.ts).
+      -- Gerentes da loja da venda e regionais do grupo dela vigentes na data do pedido (regra em contacts/sellers/helpers/managers.ts).
       LEFT JOIN LATERAL (
         SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
-        ${storeManagersFromSql("s.unit_business_id")}
+        ${storeManagersFromSql("s.unit_business_id", "s.order_date")}
       ) managers ON TRUE
       LEFT JOIN LATERAL (
         SELECT STRING_AGG(manager.name, ', ' ORDER BY manager.name) AS names
-        ${regionalManagersFromSql("s.unit_business_id")}
+        ${regionalManagersFromSql("s.unit_business_id", "s.order_date")}
       ) regional_managers ON TRUE
       WHERE s.is_valid_sale = TRUE
         AND ${orderInvoicedSql("o")}
@@ -139,11 +140,11 @@ export class SellerCommissionReportRepository {
 
   /**
    * WHERE comum (aliases s = item do seller report, o = pedido, i = nota, sc = vendedor), igual ao report_rows do seller report;
-   * null quando algum filtro veio vazio (ex.: marca sem produto, gerente sem loja) e não casa nada.
+   * null quando algum filtro veio vazio (ex.: marca sem produto) e não casa nada.
    */
   private filterConditions(filters: CommissionFilters): string | null {
-    const { productIds, sellerIds, unitBusinessIds, originUnitBusinessIds } = filters;
-    if ([productIds, sellerIds, unitBusinessIds, originUnitBusinessIds].some((ids) => ids && !ids.length)) {
+    const { productIds, sellerIds, managerIds, unitBusinessIds, originUnitBusinessIds } = filters;
+    if ([productIds, sellerIds, managerIds, unitBusinessIds, originUnitBusinessIds].some((ids) => ids && !ids.length)) {
       return null;
     }
 
@@ -162,6 +163,13 @@ export class SellerCommissionReportRepository {
       )`);
     }
     if (sellerIds) conditions.push("AND s.seller_id IN (:sellerIds)");
+    // Gerente: loja dele + lojas do grupo do regional, só nas vendas dentro da vigência dele (mesma regra da comissão).
+    if (managerIds) {
+      conditions.push(`AND (
+        EXISTS (SELECT 1 ${storeManagersFromSql("s.unit_business_id", "s.order_date")} AND manager.id IN (:managerIds))
+        OR EXISTS (SELECT 1 ${regionalManagersFromSql("s.unit_business_id", "s.order_date")} AND manager.id IN (:managerIds))
+      )`);
+    }
     if (unitBusinessIds) conditions.push("AND s.unit_business_id IN (:unitBusinessIds)");
     if (originUnitBusinessIds) conditions.push("AND i.origin_unit_business_id IN (:originUnitBusinessIds)");
     return conditions.join("\n        ");

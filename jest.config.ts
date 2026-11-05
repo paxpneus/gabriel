@@ -4,7 +4,8 @@ const config: Config = {
   preset: "ts-jest",
   testEnvironment: "node",
   roots: ["<rootDir>/src"],
-  testMatch: ["**/__tests__/**/*.test.ts", "**/__tests__/**/*.spec.ts"],
+  // tests/ = entidade no nível 2 (testes dentro do domínio, ver "Organização de módulos" no CLAUDE.md).
+  testMatch: ["**/__tests__/**/*.test.ts", "**/__tests__/**/*.spec.ts", "**/tests/**/*.test.ts", "**/tests/**/*.spec.ts"],
   testPathIgnorePatterns: ["/node_modules/", "setup\\.ts$"],
 
   transform: {

@@ -141,7 +141,7 @@ COMMIT;
 
 ## 4. `inventory_batch_items`
 
-User rule for batches where both products have an item: NEW's item keeps its id and receives OLD's data (sku, ean, quantities, divergencies, status, price — **not** `stock_id`); OLD's logs move to NEW's item; OLD's item is deleted. Other OLD items just swap `product_id`. Quantities are never recalculated/summed.
+User rule for batches where both products have an item: NEW's item keeps its id and receives OLD's data (sku, quantities, divergencies, status, price — **not** `stock_id`; ean keeps NEW's when filled, else OLD's); OLD's logs move to NEW's item; OLD's item is deleted. Other OLD items just swap `product_id`. Quantities are never recalculated/summed.
 
 ```sql
 BEGIN;
@@ -160,7 +160,7 @@ JOIN inventory_batch_items n ON n.id = p.new_item_id
 JOIN inventory_batches b ON b.id = n.inventory_batch_id;
 
 UPDATE inventory_batch_items n SET
-  sku = o.sku, ean = o.ean,
+  sku = o.sku, ean = COALESCE(NULLIF(n.ean, ''), o.ean),
   quantity_stock = o.quantity_stock, quantity_read = o.quantity_read,
   divergency = o.divergency, initial_divergency = o.initial_divergency,
   status = o.status, price = o.price
@@ -182,7 +182,7 @@ SELECT count(*) FROM inventory_batch_items WHERE product_id = :'old_id';  -- 0
 
 Only dependency on `stocks.id`: `inventory_batch_items.stock_id` (NOT NULL, FK `ON DELETE RESTRICT`; copied into re-count batches). Stocks are recreated/updated by the fetch, but a row can't be deleted while a batch item points to it.
 
-User rule for unit businesses where both have a stock: NEW's row receives OLD's `quantity`/`total_price`, batch items are repointed, OLD's row deleted. Elsewhere: swap `product_id`.
+User rule for unit businesses where both have a stock: the value kept is the one of the product that came from that unit business's integration (Tecinco store → Tecinco product's stock, Bling store → Bling product's stock). SQL below assumes OLD is the one from that integration (NEW receives OLD's `quantity`/`total_price`); if not, restore NEW's values before COMMIT. Batch items are repointed, OLD's row deleted. Elsewhere: swap `product_id`.
 
 ```sql
 BEGIN;

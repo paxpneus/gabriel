@@ -23,7 +23,7 @@ import {
   BlingApiFetchQueue,
   type BlingApiInvoice,
 } from "../bling/queues/bling-api-fetch.queue";
-import contactsService from "../../../../sales/contacts/contacts.service";
+import { sellerService } from "../../../../sales/contacts";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import { ProductAttributes } from "../../../../inventory/products/product.types";
 import Brand from "../../../../inventory/brands/brands.model";
@@ -377,7 +377,7 @@ export class BlingOrderService {
     const sellerName = seller?.nome ? String(seller.nome).trim() : null;
 
     const { id, newlyMapped } =
-      await contactsService.findOrCreateIntegrationSeller(
+      await sellerService.findOrCreateIntegrationSeller(
         sellerSystemId,
         sellerName,
         integrationId,

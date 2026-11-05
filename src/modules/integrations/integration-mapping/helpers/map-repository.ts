@@ -1,6 +1,7 @@
 import BaseRepository from "../../../../shared/utils/base-models/base-repository";
 import productRepository from "../../../inventory/products/repository/product.repository";
-import contactsRepository from "../../../sales/contacts/contacts.repository";
+// Fachada do core (não a de contacts): a da entidade puxa sellers → integration-mapping.service e fecha ciclo com este mapa.
+import { contactRepository as contactsRepository } from "../../../sales/contacts/core";
 import invoiceRepository from "../../../warehouse/fiscal/invoices/invoice/invoice.repository";
 import { EntityType } from "../integration-mapping.types";
 

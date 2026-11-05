@@ -16,6 +16,7 @@ import InventoryBatch from "../../../../../inventory/stock-inventory/inventory-b
 import { Op, UniqueConstraintError } from "sequelize";
 import Contact from "../../../../../sales/contacts/contacts.model";
 import { ContactType, SELLER_CONTACT_TYPES } from "../../../../../sales/contacts/contacts.types";
+import { contactService } from "../../../../../sales/contacts";
 import { logDbError } from "../../../../../../shared/utils/logging/db-errors-logs";
 import productController from "../../../../../inventory/products/product.controller";
 import unitBusinessController from "../../../../../company/unit-business/unit-business.controller";
@@ -241,7 +242,8 @@ export class BlingDirectUpsertQueue extends BaseQueueService<DirectUpsertJobPayl
     let contact: Contact;
 
     if (existing) {
-      await existing.update({
+      // Pelo contactService: gerente que trocou de loja no Bling tem o período de gerente rolado (fecha a antiga, abre a nova).
+      await contactService.updateFromIntegration(existing, {
         name: data.name,
         integrations_id: integrationsId,
         unit_business_id: unitBusinessId,

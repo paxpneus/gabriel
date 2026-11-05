@@ -6,7 +6,7 @@ export interface SellerCommissionReportParams {
   productIds?: string[];
   // contacts.id do vendedor (orders.seller_id).
   sellerIds?: string[];
-  // contacts.id do gerente (type SELLER_MANAGER); vira a loja dele (unit_business_id) + lojas do grupo do regional (unit_business_group_id).
+  // contacts.id do gerente (type SELLER_MANAGER): vendas da loja dele + lojas do grupo do regional, só dentro da vigência dele.
   managerIds?: string[];
   // Loja do pedido (orders.unit_business_id); com gerente junto, fica a interseção.
   unitBusinessIds?: string[];

@@ -47,7 +47,7 @@ Só entram os pedidos **faturados no Bling**: situação Atendido, Enviado ou En
 | `brand` | não | texto, um ou vários | Marca do produto (mesmo texto do filtro de marca do relatório de devolução) |
 | `product_id` | não | UUID, um ou vários | Produto |
 | `seller_id` | não | UUID, um ou vários | Vendedor: o mesmo id de vendedor usado no relatório de vendedores |
-| `manager_id` | não | UUID, um ou vários | Gerente: id do **contato** do tipo `SELLER_MANAGER` (ver "Quem é o gerente" abaixo). Filtra as vendas da loja desse gerente e, se ele for gerente regional, também das lojas do grupo dele |
+| `manager_id` | não | UUID, um ou vários | Gerente: id do **contato** do tipo `SELLER_MANAGER` (ver "Quem é o gerente" abaixo). Filtra as vendas da loja desse gerente e, se ele for gerente regional, também das lojas do grupo dele, só nas datas de pedido dentro dos períodos dele, com a loja/grupo de cada período (ver "Vigência do gerente") |
 | `unit_business_id` | não | UUID, um ou vários | Loja do pedido (a mesma de `store_name`) |
 | `origin_unit_business_id` | não | UUID, um ou vários | Loja de origem gravada na nota de venda. Quase sempre é a loja do pedido; pedido sem nota não tem loja de origem e some com esse filtro (também dos `warnings`) |
 
@@ -55,18 +55,80 @@ Com `brand` e `product_id` juntos, entram só os produtos que atendem aos dois. 
 
 ### Quem é o gerente
 
-O gerente é um contato (`/api/contacts`) com `type = "SELLER_MANAGER"` e com a loja dele em `unit_business_id`. Ele ganha a comissão de gerente de **todas as vendas com vendedor da loja dele**, inclusive as que ele mesmo vendeu: 30 vendas de vendedores na Loja 15 dão comissão de gerente das 30 para o gerente da Loja 15. Loja sem gerente cadastrado (ex.: Loja 21, Site) tem comissão de gerente **0**: ninguém recebe.
+O gerente é um contato (`/api/contacts`) com `type = "SELLER_MANAGER"` e com a loja dele nos períodos de gerente (ver "Vigência do gerente"). Ele ganha a comissão de gerente de **todas as vendas com vendedor da loja dele**, inclusive as que ele mesmo vendeu: 30 vendas de vendedores na Loja 15 dão comissão de gerente das 30 para o gerente da Loja 15. Loja sem gerente cadastrado (ex.: Loja 21, Site) tem comissão de gerente **0**: ninguém recebe.
+
+### Vigência do gerente
+
+Todo gerente (de loja ou regional) tem uma lista de **períodos**, que volta no contato em `custom_data.manager_periods`. Cada período diz de qual loja (`unit_business_id`) e/ou de qual grupo de lojas (`unit_business_group_id`, regional) ele foi gerente, e de quando até quando. Ele só ganha a comissão de gerente dos pedidos cuja **data do pedido** está dentro de um período, contando o primeiro e o último dia, e só da loja ou do grupo daquele período. Gerente sem período não ganha comissão de gerente em nenhuma venda. Assim, desligamento, troca de loja e troca de grupo guardam o histórico: cada venda fica com quem era o gerente da loja na data do pedido.
+
+```json
+"custom_data": {
+  "manager_periods": [
+    { "unit_business_id": "uuid-loja-10", "unit_business_group_id": null, "start_date": "2023-01-01", "end_date": "2026-06-30" },
+    { "unit_business_id": "uuid-loja-15", "unit_business_group_id": null, "start_date": "2026-07-01", "end_date": null }
+  ]
+}
+```
+
+`custom_data` vem `null` quando o contato não tem período nenhum.
+
+Em `GET /api/contacts/:id` e na resposta do `PUT /api/contacts/:id/manager-periods`, cada período vem também com `unit_business: { name }` e `unit_business_group: { name }`, ou `null` quando o período não tem loja ou grupo. A listagem `GET /api/contacts` traz só os ids.
+
+Os períodos têm rota própria: `custom_data` mandado no `POST`/`PUT /api/contacts` é ignorado. A rota recebe **a lista inteira**, que substitui a atual: para mudar um período, mandar todos de novo com a alteração.
+
+```http
+PUT /api/contacts/:id/manager-periods
+{
+  "manager_periods": [
+    { "unit_business_id": "uuid-loja-10", "unit_business_group_id": null, "start_date": "2023-01-01", "end_date": "2026-06-30" },
+    { "unit_business_id": "uuid-loja-15", "unit_business_group_id": null, "start_date": "2026-07-01", "end_date": null }
+  ]
+}
+```
+
+| Campo do período | Tipo | Regra |
+|---|---|---|
+| `unit_business_id` | UUID ou `null` | Loja de que foi gerente no período (ausente = `null`) |
+| `unit_business_group_id` | UUID ou `null` | Grupo de lojas de que foi regional no período (ausente = `null`) |
+| `start_date` | `YYYY-MM-DD` | Obrigatório, data válida |
+| `end_date` | `YYYY-MM-DD` ou `null` | `null` = ainda vigente. Não pode ser antes de `start_date` |
+
+- Cada período precisa de loja, de grupo ou dos dois.
+- Os períodos de um gerente não podem se sobrepor: cada um tem que terminar antes do próximo começar. Só o último pode ter `end_date = null`.
+- Lista vazia apaga todos os períodos: o gerente deixa de ganhar comissão de gerente em todo o histórico.
+- Resposta: o contato atualizado, com os períodos em ordem de início, já com `unit_business`/`unit_business_group` (`{ name }`). `400` com a mensagem em `error` (texto pronto para o usuário) para campo faltando ou inválido, fim antes do início, período sem loja nem grupo, períodos sobrepostos ou contato que não é gerente (marcar como gerente antes, pelo `PUT /api/contacts/:id`). `404` se o contato não existe.
+- Os gerentes que já existiam começaram com um período com a loja e o grupo de hoje, `start_date = "2023-01-01"` e `end_date = null`.
+
+**Automático pelo cadastro** (`POST`/`PUT /api/contacts`, sem chamar a rota de períodos). O back usa a data de hoje, no fuso de São Paulo:
+
+- **Contato criado já gerente**, ou **vendedor que vira gerente** (`"type": "SELLER_MANAGER"`) sem período aberto: abre um período de hoje, sem fim, com a loja e o grupo do cadastro.
+- **Gerente com período aberto que troca de loja ou de grupo no cadastro:** o período aberto fecha ontem e abre outro a partir de hoje com a loja e o grupo novos. Se o período aberto começou hoje (várias trocas no mesmo dia), só a loja e o grupo dele mudam. Exemplo: loja 5 desde 2023, troca para 8 e depois para 10 no mesmo dia → loja 5 de 2023-01-01 até ontem, loja 10 a partir de hoje.
+- Mandar a mesma loja e o mesmo grupo (tela que manda o cadastro inteiro) não mexe nos períodos.
+- **Gerente desligado** (todos os períodos com fim) que troca de loja ou de grupo no cadastro volta a ser gerente a partir de hoje.
+- **Volta para a mesma loja ou grupo de ontem:** se o período anterior terminou ontem com a mesma loja e o mesmo grupo, ele é reaberto em vez de criar outro. Exemplo: Paraná até 04/11, troca hoje para Paraná → Paraná desde 2023, sem fim. Ida e volta no mesmo dia (Paraná → Regional 1 → Paraná) também volta a ser um período só.
+- O `PUT /api/contacts/bulk` não mexe nos períodos.
+- A sincronização com o Bling segue a mesma regra (ver abaixo).
+
+**Pela rota de períodos** (`PUT /api/contacts/:id/manager-periods`, mandando a lista inteira): tudo que não é "a partir de hoje".
+
+- **Gerente desligado:** pôr `end_date` = último dia dele no período aberto. Manter `type = "SELLER_MANAGER"`: se ele voltar a `"type": "SELLER"`, some de todo o histórico de comissão de gerente.
+- **Troca de loja ou de grupo com data retroativa** (ex.: entrou na loja 15 em março): ajustar as datas dos períodos.
+- **Novo gerente que começou antes de hoje:** ajustar o `start_date` do período que o back abriu.
+
+**Automático pela sincronização com o Bling.** Quando a loja do vendedor muda no Bling, a sincronização grava a loja nova no cadastro e aplica a mesma regra ao período do gerente: a loja antiga fecha no dia anterior ao que a mudança chegou e a nova abre nesse dia. Vendedor que ficou sem loja no Bling: se o gerente não tem grupo, ele fica sem loja e o período só é fechado, sem erro; se tem grupo, segue como regional, com um período novo só com o grupo. A data é a do dia em que a sincronização recebe a mudança, não a da troca real no Bling. A sincronização não reativa gerente desligado: se todos os períodos dele já têm fim, a troca de loja no Bling só atualiza o cadastro.
+
+O que vale para a comissão de gerente são os períodos.
 
 ### Gerente regional
 
-Gerente regional é um contato `SELLER_MANAGER` ligado a um **grupo de lojas** (`unit_business_group_id`, grupos de `/api/unit-business-group`). Ele ganha a comissão de gerente de todas as vendas das lojas do grupo, **a mais**: a comissão do gerente de cada loja continua igual. A taxa e o valor são os mesmos da comissão de gerente do item. Exemplo: gerente regional ligado ao grupo "Paraná" (lojas 11, 13, 16, 17, 20 e 24) ganha a comissão de gerente de cada venda dessas lojas, e o gerente da Loja 11 continua ganhando a dele. O regional ganha mesmo em loja do grupo sem gerente de loja (ex.: Loja 20): lá só ele recebe.
+Gerente regional é um contato `SELLER_MANAGER` com um **grupo de lojas** (`unit_business_group_id`, grupos de `/api/unit-business-group`) nos períodos de gerente. Ele ganha a comissão de gerente de todas as vendas das lojas do grupo, **a mais**: a comissão do gerente de cada loja continua igual. A taxa e o valor são os mesmos da comissão de gerente do item. Exemplo: gerente regional ligado ao grupo "Paraná" (lojas 11, 13, 16, 17, 20 e 24) ganha a comissão de gerente de cada venda dessas lojas, e o gerente da Loja 11 continua ganhando a dele. O regional ganha mesmo em loja do grupo sem gerente de loja (ex.: Loja 20): lá só ele recebe.
 
 ```http
-PUT /api/contacts/:id
-{ "type": "SELLER_MANAGER", "unit_business_group_id": "uuid-do-grupo" }
+PUT /api/contacts/:id/manager-periods
+{ "manager_periods": [ { "unit_business_id": null, "unit_business_group_id": "uuid-do-grupo", "start_date": "2026-07-01", "end_date": null } ] }
 ```
 
-Para deixar de ser regional, mandar `"unit_business_group_id": null`. O mesmo contato pode ser gerente de uma loja (`unit_business_id`) e regional de um grupo ao mesmo tempo: ele ganha a comissão de gerente **uma vez por loja**, somando a loja dele e as do grupo. Gerente da Loja 01 com grupo 03, 04, 05 ganha pelas lojas 01, 03, 04 e 05. Gerente da Loja 01 com grupo 01, 02, 03 ganha pelas lojas 01, 02 e 03; na Loja 01 ele aparece só em `manager_name` (não em `regional_manager_name`), sem receber duas vezes.
+Para deixar de ser regional, fechar o período com `end_date` (e, se continua gerente da loja, abrir outro só com a loja). O mesmo período pode ter loja (`unit_business_id`) e grupo ao mesmo tempo: ele ganha a comissão de gerente **uma vez por loja**, somando a loja dele e as do grupo. Gerente da Loja 01 com grupo 03, 04, 05 ganha pelas lojas 01, 03, 04 e 05. Gerente da Loja 01 com grupo 01, 02, 03 ganha pelas lojas 01, 02 e 03; na Loja 01 ele aparece só em `manager_name` (não em `regional_manager_name`), sem receber duas vezes.
 
 Um regional pode não ser vendedor no Bling (ex.: Marcos Orlando, Regional 2): o contato não tem integração e `GET /api/integration-mapping/contact/:id` vem com `data` vazio.
 
@@ -76,13 +138,16 @@ Todas exigem autenticação e permissão na tela de contatos.
 
 | Rota | O que faz |
 |---|---|
-| `GET /api/contacts` | Lista paginada (`page`, `perPage`, `search` busca por nome). Filtros por campo: `filters[type]=SELLER_MANAGER` lista os gerentes; `filters[unit_business_id]=uuid` lista os contatos da loja; `filters[unit_business_group_id]=uuid` lista os gerentes regionais do grupo. Cada contato traz `unit_business_group_id` (`null` se não é regional) |
+| `GET /api/contacts` | Lista paginada (`page`, `perPage`, `search` busca por nome). Filtros por campo: `filters[type]=SELLER_MANAGER` lista os gerentes; `filters[unit_business_id]=uuid` lista os contatos da loja; `filters[unit_business_group_id]=uuid` lista os gerentes regionais do grupo. Cada contato traz `unit_business_group_id` e `custom_data` (períodos do gerente em `manager_periods`). Esses filtros usam o cadastro atual, não os períodos |
 | `GET /api/contacts/:id` | Um contato |
 | `POST /api/contacts` | Cria um contato |
 | `PUT /api/contacts/:id` | Edita um contato (usar para marcar o gerente) |
+| `PUT /api/contacts/:id/manager-periods` | Períodos do gerente: loja/grupo e datas (ver "Vigência do gerente") |
 | `DELETE /api/contacts/:id` | Remove um contato |
 | `GET /api/integration-mapping/contact/:id` | Códigos do contato em cada integração (ver abaixo) |
 | `GET /api/unit-business-group` | Grupos de lojas, para escolher o grupo do gerente regional (`GET /api/unit-business-group/:id` traz as lojas do grupo em `unitBusinesses`) |
+
+Gerente precisa ter loja (`unit_business_id`), grupo de lojas (`unit_business_group_id`) ou os dois no cadastro. `POST`/`PUT /api/contacts` (inclusive `/bulk`) com `"type": "SELLER_MANAGER"` e sem loja nem grupo (somando o que o contato já tem) volta `400` com `{ "error": "Gerente precisa ter uma loja ou um grupo de lojas." }`. Vale também para tirar a loja de um gerente que não tem grupo.
 
 Para tornar um vendedor gerente:
 
@@ -91,9 +156,11 @@ PUT /api/contacts/:id
 { "type": "SELLER_MANAGER", "unit_business_id": "uuid-da-loja" }
 ```
 
-A loja do gerente deve ser a mesma do cadastro desse vendedor no Bling: quando o cadastro do vendedor muda no Bling, a sincronização regrava `unit_business_id` com a loja de lá (ou vazio, se ele não tiver loja). O `type` nunca é sobrescrito.
+O back abre o período dele a partir de hoje com essa loja. Se ele começou antes, ajustar o `start_date` em `PUT /api/contacts/:id/manager-periods` (ver "Vigência do gerente"). É o período que define a loja e o grupo da comissão.
 
-Para voltar a ser só vendedor, mandar `"type": "SELLER"`. O gerente continua sendo vendedor: as vendas que ele fizer no Bling continuam com ele como vendedor. A lista de gerentes para o filtro sai de `GET /api/contacts?filters[type]=SELLER_MANAGER`.
+Quando o cadastro do vendedor muda no Bling, a sincronização regrava `unit_business_id` do contato com a loja de lá (ou vazio, se ele não tiver loja) e, se ele é gerente, rola o período (ver "Vigência do gerente"). O `type` nunca é sobrescrito.
+
+Gerente desligado: mandar `end_date` no período aberto (ver "Vigência do gerente"), não `"type": "SELLER"`. `"type": "SELLER"` só para quem foi marcado como gerente por engano. O gerente continua sendo vendedor: as vendas que ele fizer no Bling continuam com ele como vendedor. A lista de gerentes para o filtro sai de `GET /api/contacts?filters[type]=SELLER_MANAGER`.
 
 #### Mapeamentos do contato: `GET /api/integration-mapping/contact/:id`
 
