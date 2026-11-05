@@ -5,9 +5,11 @@ import Contact from "./contacts.model";
 import contactRepository, { ContactRepository } from "./contacts.repository";
 import sequelize from "../../../config/sequelize";
 import roleService from "../../company/users/roles/role.service";
-import { Transaction } from "sequelize";
+import { Op, Transaction, UniqueConstraintError } from "sequelize";
 import User from "../../company/users/users/user.model";
 import { UserAttributes } from "../../company/users/users/user.types";
+import integrationMappingService from "../../integrations/integration-mapping/integration-mapping.service";
+import { SELLER_CONTACT_TYPES } from "./contacts.types";
 
 const SELLER_REPORT_PATH = "/reports/sales/seller";
 
@@ -23,6 +25,90 @@ export class ContactService extends BaseService<Contact, ContactRepository> {
       },
       searchFields: ['name'],
     };
+  }
+
+  /**
+   * Acha o vendedor pelo código na integração (mapping → contato legado sem mapping) ou cria um provisório.
+   * `newlyMapped` = não tinha mapping (criado ou legado adotado agora): nome/loja ainda precisam vir da integração.
+   */
+  async findOrCreateIntegrationSeller(
+    externalId: string,
+    name: string | null,
+    integrationId: string,
+  ): Promise<{ id: string; newlyMapped: boolean }> {
+    const mapped = (await integrationMappingService.findEntityByMapping(
+      "CONTACT",
+      integrationId,
+      externalId,
+    )) as Contact | null;
+
+    if (mapped) {
+      if (name && mapped.name !== name) {
+        await this.repository.update(mapped.id, { name });
+      }
+      return { id: mapped.id, newlyMapped: false };
+    }
+
+    try {
+      // Contato + mapping na mesma transação: se a criação perder a corrida, o rollback não deixa contato órfão.
+      return await sequelize.transaction(async (t) => {
+        const legacy = await this.repository.findOne({
+          where: {
+            id_system: externalId,
+            // Gerente (SELLER_MANAGER) também é vendedor.
+            type: { [Op.in]: SELLER_CONTACT_TYPES },
+            integrations_id: integrationId,
+          },
+          attributes: ["id"],
+          order: [["createdAt", "ASC"]],
+          transaction: t,
+        });
+
+        let contactId = legacy?.id;
+        if (!contactId) {
+          const contact = await this.repository.create(
+            {
+              id_system: externalId,
+              name: name ?? `Vendedor ${externalId}`,
+              type: "SELLER",
+              integrations_id: integrationId,
+              unit_business_id: null,
+            },
+            { transaction: t },
+          );
+          contactId = contact.id;
+        }
+
+        const mapping =
+          await integrationMappingService.createOrUpdateIntegrationMapping(
+            {
+              entity_type: "CONTACT",
+              internal_id: contactId,
+              external_id: externalId,
+              integrations_id: integrationId,
+            },
+            t,
+          );
+
+        // Outro job mapeou o vendedor depois da busca acima: descarta o contato criado aqui e usa o dele.
+        if (mapping.internal_id !== contactId) {
+          if (!legacy) await this.repository.delete(contactId, { transaction: t });
+          return { id: mapping.internal_id, newlyMapped: false };
+        }
+
+        return { id: contactId, newlyMapped: true };
+      });
+    } catch (error) {
+      // Outro job ainda não commitado criou o mesmo mapping (unique estoura no insert): rollback e usa o contato dele.
+      if (!(error instanceof UniqueConstraintError)) throw error;
+      const winner = (await integrationMappingService.findEntityByMapping(
+        "CONTACT",
+        integrationId,
+        externalId,
+      )) as Contact | null;
+      if (!winner) throw error;
+      return { id: winner.id, newlyMapped: false };
+    }
   }
 
   private normalizeName(name: string): string {

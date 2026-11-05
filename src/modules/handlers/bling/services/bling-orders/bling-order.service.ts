@@ -23,8 +23,7 @@ import {
   BlingApiFetchQueue,
   type BlingApiInvoice,
 } from "../bling/queues/bling-api-fetch.queue";
-import Contact from "../../../../sales/contacts/contacts.model";
-import { SELLER_CONTACT_TYPES } from "../../../../sales/contacts/contacts.types";
+import contactsService from "../../../../sales/contacts/contacts.service";
 import integrationOrderStatusMappingService from "../../../../sales/orders/integration-order-status-mapping/integration-order-status-mapping.service";
 import { ProductAttributes } from "../../../../inventory/products/product.types";
 import Brand from "../../../../inventory/brands/brands.model";
@@ -377,50 +376,19 @@ export class BlingOrderService {
 
     const sellerName = seller?.nome ? String(seller.nome).trim() : null;
 
-    const mapped = (await integrationMappingService.findEntityByMapping(
-      "CONTACT",
-      integrationId,
-      sellerSystemId,
-    )) as Contact | null;
-
-    if (mapped) {
-      if (sellerName && mapped.name !== sellerName) {
-        await mapped.update({ name: sellerName });
-      }
-      return mapped.id;
-    }
-
-    // Contato legado (criado antes do mapping) é reaproveitado em vez de duplicar.
-    const contact =
-      (await Contact.findOne({
-        where: {
-          id_system: sellerSystemId,
-          // Gerente (SELLER_MANAGER) também é o vendedor do Bling.
-          type: { [Op.in]: SELLER_CONTACT_TYPES },
-          integrations_id: integrationId,
-        },
-        attributes: ["id"],
-        order: [["createdAt", "ASC"]],
-      })) ??
-      (await Contact.create({
-        id_system: sellerSystemId,
-        name: sellerName ?? `Vendedor ${sellerSystemId}`,
-        type: "SELLER",
-        integrations_id: integrationId,
-        unit_business_id: null,
-      }));
-
-    await integrationMappingService.createOrUpdateIntegrationMapping({
-      entity_type: "CONTACT",
-      internal_id: contact.id,
-      external_id: sellerSystemId,
-      integrations_id: integrationId,
-    });
+    const { id, newlyMapped } =
+      await contactsService.findOrCreateIntegrationSeller(
+        sellerSystemId,
+        sellerName,
+        integrationId,
+      );
 
     // "0" = pedido sem vendedor no Bling, não existe em /vendedores.
-    if (sellerSystemId !== "0") await this.enqueueSellerFetch(sellerSystemId);
+    if (newlyMapped && sellerSystemId !== "0") {
+      await this.enqueueSellerFetch(sellerSystemId);
+    }
 
-    return contact.id;
+    return id;
   }
 
   // Upsert completo da NF-e no BLING_API_FETCH (prioridade de nota, à frente de produto/estoque).
@@ -1148,7 +1116,8 @@ export class BlingOrderService {
         tax_base_value: Number(orderData.taxas?.valorBase ?? 0),
         total_price: orderFinancials.total_price,
         total_cost: orderFinancials.total_cost,
-        ...(sellerId ? { seller_id: sellerId } : {}),
+        // Pedido vem sempre do GET da Bling: sem vendedor lá = sem vendedor aqui (não mantém o anterior).
+        seller_id: sellerId,
         ...orderFiscalFieldsToUpdate,
         ...collectionDateFromBling(orderData.dataPrevista),
       };

@@ -53,7 +53,7 @@ export interface orderAttributes {
   id: string;
   integrations_id: string;
   customer_id: string;
-  seller_id?: string;
+  seller_id?: string | null;
   id_order_system?: string;
   number_order_system: string;
   number_order_channel: string;

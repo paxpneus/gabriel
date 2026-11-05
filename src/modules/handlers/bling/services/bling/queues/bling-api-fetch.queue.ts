@@ -26,8 +26,8 @@ import parser from "../../../../../../shared/utils/xml/xml-parser";
 import { cleanDocument } from "../../../../../../shared/utils/normalizers/document";
 import { encryptXml } from "../../../../../../shared/utils/xml/xml-cipher";
 import Store from "../../../../../sales/stores/stores.model";
-import Contact from "../../../../../sales/contacts/contacts.model";
-import { SELLER_CONTACT_TYPES } from "../../../../../sales/contacts/contacts.types";
+import contactsService from "../../../../../sales/contacts/contacts.service";
+import { buildBlingApiFetchPayload } from "../../bling-sync/helpers/bling-list";
 import { Op, Transaction } from "sequelize";
 import UnmappedInvoiceProduct from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.model";
 import unmappedInvoiceProductService from "../../../../../inventory/unmapped-invoice-product/unmapped-invoice-product.service";
@@ -1793,20 +1793,20 @@ export class BlingApiFetchQueue extends BaseQueueService<
 
     // ─── Seller ───────────────────────────────────────────────────────────────
 
+    // Nota pode chegar antes do pedido: vendedor ainda não visto é criado provisório e o nome/loja vêm do fetch.
     let sellerId: string | null = null;
     if (nf.vendedor?.id) {
-      const seller = await Contact.findOne({
-        where: {
-          id_system: String(nf.vendedor.id),
-          // Gerente (SELLER_MANAGER) também é o vendedor do Bling.
-          type: { [Op.in]: SELLER_CONTACT_TYPES },
-          integrations_id: integration.id,
-        },
-      });
-      sellerId = seller?.id ?? null;
-      if (!sellerId) {
-        console.warn(
-          `[BLING_API_FETCH] Vendedor Bling ${nf.vendedor.id} não encontrado em contacts. Invoice será gravada sem seller_id.`,
+      const sellerSystemId = String(nf.vendedor.id);
+      const seller = await contactsService.findOrCreateIntegrationSeller(
+        sellerSystemId,
+        null,
+        integration.id,
+      );
+      sellerId = seller.id;
+      if (seller.newlyMapped) {
+        await this.add(
+          buildBlingApiFetchPayload("seller", nf.vendedor.id),
+          `bling-seller-fetch-${sellerSystemId}`,
         );
       }
     }

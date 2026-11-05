@@ -15,7 +15,7 @@ class Order
   public id!: string;
   public integrations_id!: string;
   public customer_id!: string;
-  public seller_id!: string;
+  public seller_id!: string | null;
   public id_order_system?: string;
   public number_order_system!: string;
   public number_order_channel!: string;
